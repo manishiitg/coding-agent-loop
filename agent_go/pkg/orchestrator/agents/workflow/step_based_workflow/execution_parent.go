@@ -11,6 +11,6 @@ func currentWorkshopParentExecutionID(ctx context.Context) string {
 	if ctx == nil {
 		return ""
 	}
-	parentExecutionID, _ := ctx.Value(virtualtools.BackgroundAgentIDKey).(string)
+	parentExecutionID := virtualtools.SubAgentSpecFromContext(ctx).BackgroundAgentID
 	return strings.TrimSpace(parentExecutionID)
 }

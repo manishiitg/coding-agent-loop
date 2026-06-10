@@ -1076,7 +1076,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 	agentName := fmt.Sprintf("%s -> Generic (%s)", parentTodoTitle, taskTitle)
 	subAgentCtx, subAgentCancel := context.WithCancel(ctx)
 	defer subAgentCancel()
-	parentExecutionID, _ := ctx.Value(virtualtools.BackgroundAgentIDKey).(string)
+	parentExecutionID := virtualtools.SubAgentSpecFromContext(ctx).BackgroundAgentID
 	if hcpo.subAgentNotifier != nil {
 		hcpo.subAgentNotifier.OnSubAgentStart(WorkshopExecutionStart{
 			ID:                agentID,
@@ -1086,7 +1086,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 			Cancel:            subAgentCancel,
 		})
 	}
-	subAgentCtx = context.WithValue(subAgentCtx, virtualtools.BackgroundAgentIDKey, agentID)
+	subAgentCtx = virtualtools.WithBackgroundAgentID(subAgentCtx, agentID)
 	subAgentCtx = context.WithValue(subAgentCtx, events.ParentExecutionIDKey, agentID)
 
 	// Push context before sub-agent execution (preserve orchestrator context).
@@ -1374,7 +1374,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 	subAgentNotifName := fmt.Sprintf("%s -> %s (%s)", parentTodoTitle, route.RouteName, response.TodoIDToExecute)
 	subAgentCtx, subAgentCancel := context.WithCancel(ctx)
 	defer subAgentCancel()
-	parentExecutionID, _ := ctx.Value(virtualtools.BackgroundAgentIDKey).(string)
+	parentExecutionID := virtualtools.SubAgentSpecFromContext(ctx).BackgroundAgentID
 	if hcpo.subAgentNotifier != nil {
 		hcpo.subAgentNotifier.OnSubAgentStart(WorkshopExecutionStart{
 			ID:                subAgentNotifID,
@@ -1384,7 +1384,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 			Cancel:            subAgentCancel,
 		})
 	}
-	subAgentCtx = context.WithValue(subAgentCtx, virtualtools.BackgroundAgentIDKey, subAgentNotifID)
+	subAgentCtx = virtualtools.WithBackgroundAgentID(subAgentCtx, subAgentNotifID)
 	subAgentCtx = context.WithValue(subAgentCtx, events.ParentExecutionIDKey, subAgentNotifID)
 
 	// Push context before sub-agent execution (preserve orchestrator context).

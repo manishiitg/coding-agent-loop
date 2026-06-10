@@ -3850,8 +3850,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			MaxTurns:           req.MaxTurns,
 			ToolChoice:         "auto",
 			StreamingChunkSize: 50,
-			Timeout:            0, // No per-Invoke timeout; streamCtx is explicitly canceled when needed.
-			SelectedTools: selectedTools, // NEW: Pass selected tools
+			Timeout:            0,             // No per-Invoke timeout; streamCtx is explicitly canceled when needed.
+			SelectedTools:      selectedTools, // NEW: Pass selected tools
 
 			// Detailed LLM configuration from frontend (unified fallback structure)
 			Fallbacks: fallbacks,
@@ -3867,7 +3867,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			OpenCodePersistentInteractiveSession:   openCodePersistentInteractive,
 			ClaudeCodeTransport:                    claudeCodeTransport,
 			CodingAgentWorkingDir:                  chatWorkingDir,
-			APIKeys: mergedAPIKeys,
+			APIKeys:                                mergedAPIKeys,
 			// Tool timeout, context summarization/editing, large-output offloading,
 			// and parallel tool execution are set by applySharedLLMAgentTuning below
 			// (shared with sub-agent creation in executeDelegatedTask).
@@ -6647,11 +6647,10 @@ func (e *sessionEventEmitter) EmitBlockingHumanFeedback(requestID, question, con
 func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq QueryRequest, sessionID string, instruction string, onCreated ...func(wrapper *agent.LLMAgentWrapper)) (string, error) {
 	log.Printf("[DELEGATION] Creating sub-agent for delegated task in session %s", sessionID)
 
-	// Check delegation depth from context
-	currentDepth := 0
-	if depth, ok := ctx.Value(virtualtools.DelegationDepthKey).(int); ok {
-		currentDepth = depth
-	}
+	// The full delegation contract (depth, tier, template, servers, skills,
+	// browser sharing, background link) arrives as one typed spec.
+	spec := virtualtools.SubAgentSpecFromContext(ctx)
+	currentDepth := spec.Depth
 
 	if currentDepth >= virtualtools.MaxDelegationDepth {
 		return "", fmt.Errorf("maximum delegation depth (%d) reached", virtualtools.MaxDelegationDepth)
@@ -6679,7 +6678,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 
 	// Load sub-agent template if specified
 	var loadedTemplate *subagents.SubAgent
-	agentTemplateName, _ := ctx.Value(virtualtools.AgentTemplateKey).(string)
+	agentTemplateName := spec.AgentTemplate
 	if agentTemplateName != "" {
 		workspaceAPIURL := getWorkspaceAPIURL()
 		sa, err := subagents.GetSubAgent(workspaceAPIURL, agentTemplateName)
@@ -6692,7 +6691,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 	}
 
 	// Resolve reasoning level tier to specific provider/model if configured
-	reasoningLevel, _ := ctx.Value(virtualtools.ReasoningLevelKey).(string)
+	reasoningLevel := spec.ReasoningLevel
 	// Apply template defaults if not explicitly set
 	if reasoningLevel == "" && loadedTemplate != nil && loadedTemplate.Frontmatter.DefaultReasoningLevel != "" {
 		reasoningLevel = loadedTemplate.Frontmatter.DefaultReasoningLevel
@@ -6731,9 +6730,9 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 	// Build server name — use delegation-specific servers if provided, otherwise all parent servers
 	var serverName string
 	var serversList []string
-	if delegationServers, ok := ctx.Value(virtualtools.DelegationServersKey).([]string); ok && len(delegationServers) > 0 {
-		serverName = strings.Join(delegationServers, ",")
-		serversList = delegationServers
+	if len(spec.Servers) > 0 {
+		serverName = strings.Join(spec.Servers, ",")
+		serversList = spec.Servers
 		log.Printf("[DELEGATION] Using sub-agent specific servers: %s", serverName)
 	} else if len(parentReq.EnabledServers) > 0 {
 		serverName = strings.Join(parentReq.EnabledServers, ",")
@@ -6747,7 +6746,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 	useCodeExec := true
 
 	// Extract background agent ID if this delegation was spawned by a background agent
-	backgroundAgentID, _ := ctx.Value(virtualtools.BackgroundAgentIDKey).(string)
+	backgroundAgentID := spec.BackgroundAgentID
 
 	// Emit delegation_start event (after model and server resolution so we can include all info)
 	api.emitDelegationStartEvent(sessionID, delegationID, currentDepth, instruction, reasoningLevel, modelID, serversList, backgroundAgentID, agentTemplateName)
@@ -6764,7 +6763,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 
 	// Determine sub-agent session ID: isolated when share_browser=false, shared otherwise
 	subAgentSessionID := sessionID
-	if sb, ok := ctx.Value(virtualtools.ShareBrowserKey).(bool); ok && !sb {
+	if !spec.ShareBrowser {
 		subAgentSessionID = fmt.Sprintf("%s-isolated-%d", sessionID, time.Now().UnixNano())
 		log.Printf("[DELEGATION] Browser isolation: sub-agent gets new session ID %s (parent: %s)", subAgentSessionID, sessionID)
 	}
@@ -6832,9 +6831,9 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		// Phase 6 explicit-pass: sub-agents inherit NO skills from the
 		// parent. The parent must enumerate skills the sub-agent needs
 		// in its delegate() call (skills=[...]). delegation_tools.go
-		// threads those names through context via DelegationSkillsKey.
-		if delegationSkills, ok := ctx.Value(virtualtools.DelegationSkillsKey).([]string); ok && len(delegationSkills) > 0 {
-			if attached := skills.LoadAttachable(getWorkspaceAPIURL(), delegationSkills); len(attached) > 0 {
+		// threads those names through the SubAgentSpec.
+		if len(spec.Skills) > 0 {
+			if attached := skills.LoadAttachable(getWorkspaceAPIURL(), spec.Skills); len(attached) > 0 {
 				for _, s := range attached {
 					underlyingAgent.AttachSkill(s)
 				}
@@ -6927,7 +6926,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 
 		// Browser isolation: when share_browser=false, tell the sub-agent to use a unique
 		// session name with the agent_browser tool to avoid sharing browser state.
-		if sb, ok := ctx.Value(virtualtools.ShareBrowserKey).(bool); ok && !sb {
+		if !spec.ShareBrowser {
 			underlyingAgent.AppendSystemPrompt(fmt.Sprintf("## Browser Isolation\nYou have an isolated browser session. When using the agent_browser tool, use a unique session name (e.g., \"isolated-%d\") instead of \"default\" to avoid sharing browser state with other agents.", time.Now().UnixNano()))
 			log.Printf("[DELEGATION] Added browser isolation guidance to sub-agent system prompt")
 		}
@@ -7549,17 +7548,18 @@ func (api *StreamingAPI) executeBackgroundDelegatedTask(
 ) (string, error) {
 	agentID := api.bgAgentRegistry.NextID(name)
 	bgCtx, bgCancel := context.WithCancel(context.Background())
-	parentExecutionID, _ := ctx.Value(virtualtools.BackgroundAgentIDKey).(string)
 
-	// Copy only the context values actually needed by executeDelegatedTask.
-	// Note: DelegationDepthKey is NOT copied because background sub-agents don't have
-	// the delegate tool, so they can never create further sub-agents.
-	if rl, ok := ctx.Value(virtualtools.ReasoningLevelKey).(string); ok {
-		bgCtx = context.WithValue(bgCtx, virtualtools.ReasoningLevelKey, rl)
-	}
-	if at, ok := ctx.Value(virtualtools.AgentTemplateKey).(string); ok {
-		bgCtx = context.WithValue(bgCtx, virtualtools.AgentTemplateKey, at)
-	}
+	// Carry the delegation spec across the context boundary (bgCtx derives from
+	// Background(), not from ctx, so nothing is inherited automatically).
+	// Depth is reset to 0 because background sub-agents don't have the delegate
+	// tool, so they can never create further sub-agents.
+	// BackgroundAgentID is set to this agent so delegation_start can link back.
+	bgSpec := virtualtools.SubAgentSpecFromContext(ctx)
+	parentExecutionID := bgSpec.BackgroundAgentID
+	bgSpec.Depth = 0
+	bgSpec.BackgroundAgentID = agentID
+	bgCtx = virtualtools.WithSubAgentSpec(bgCtx, bgSpec)
+
 	// Propagate per-user memory + chats folders to background sub-agents so their
 	// shell commands against memories/ and Chats/ resolve to the right user's folder.
 	if mf, ok := ctx.Value(virtualtools.MemoryFolderKey).(string); ok && mf != "" {
@@ -7567,15 +7567,6 @@ func (api *StreamingAPI) executeBackgroundDelegatedTask(
 	}
 	if cf, ok := ctx.Value(virtualtools.ChatsFolderKey).(string); ok && cf != "" {
 		bgCtx = context.WithValue(bgCtx, virtualtools.ChatsFolderKey, cf)
-	}
-	if ds, ok := ctx.Value(virtualtools.DelegationServersKey).([]string); ok {
-		bgCtx = context.WithValue(bgCtx, virtualtools.DelegationServersKey, ds)
-	}
-	if dsk, ok := ctx.Value(virtualtools.DelegationSkillsKey).([]string); ok {
-		bgCtx = context.WithValue(bgCtx, virtualtools.DelegationSkillsKey, dsk)
-	}
-	if sb, ok := ctx.Value(virtualtools.ShareBrowserKey).(bool); ok && !sb {
-		bgCtx = context.WithValue(bgCtx, virtualtools.ShareBrowserKey, false)
 	}
 	// Pass user ID for per-user OAuth
 	if userID, ok := ctx.Value(common.UserIDKey).(string); ok {
@@ -7598,9 +7589,6 @@ func (api *StreamingAPI) executeBackgroundDelegatedTask(
 		cancel:            bgCancel,
 	}
 	api.bgAgentRegistry.Register(sessionID, bgAgent)
-
-	// Inject background agent ID so delegation_start event can link back to this agent
-	bgCtx = context.WithValue(bgCtx, virtualtools.BackgroundAgentIDKey, agentID)
 
 	// Inject tool event callback so executeDelegatedTask's observer tracks timing on bgAgent
 	bgCtx = context.WithValue(bgCtx, virtualtools.ToolEventCallbackKey, events.ToolEventCallback(

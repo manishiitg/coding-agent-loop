@@ -137,56 +137,62 @@ func TestHandleDelegatePrefersAsyncBackgroundDelegate(t *testing.T) {
 	}
 }
 
-// TestHandleDelegateExtractsExplicitSkillsList verifies that
-// delegate(skills=["pdf-extract", "agent-browser"]) extracts those
-// skill names from the tool args and threads them through context
-// via DelegationSkillsKey — the explicit-pass semantics from Phase 6.
-//
-// The sub-agent creation block in server.go reads
-// ctx.Value(DelegationSkillsKey) and AttachSkill's exactly that list.
-// If this propagation breaks, sub-agents silently get zero skills with
-// no diagnostic — this test catches it at the boundary.
-func TestHandleDelegateExtractsExplicitSkillsList(t *testing.T) {
-	var capturedSkills []string
+// TestHandleDelegateBuildsChildSpec verifies that delegate(...) translates its
+// tool args into the SubAgentSpec the sub-agent creation path consumes:
+// explicit-pass skills, server restriction, browser isolation, tier, and the
+// incremented depth. If this propagation breaks, sub-agents silently get the
+// defaults with no diagnostic — this test catches it at the boundary.
+func TestHandleDelegateBuildsChildSpec(t *testing.T) {
+	var captured SubAgentSpec
 
-	// The async background-delegate path captures the ctx that the
-	// handler builds. That ctx is where DelegationSkillsKey lives.
+	// The async background-delegate path captures the ctx the handler builds.
 	bgDelegate := BackgroundDelegateFunc(func(ctx context.Context, name, instruction string) (string, error) {
-		if s, ok := ctx.Value(DelegationSkillsKey).([]string); ok {
-			capturedSkills = s
-		}
+		captured = SubAgentSpecFromContext(ctx)
 		return "agent-xyz", nil
 	})
 
+	parentSpec := SubAgentSpec{Depth: 1, ShareBrowser: true}
 	ctx := context.WithValue(context.Background(), BackgroundDelegateKey, bgDelegate)
+	ctx = WithSubAgentSpec(ctx, parentSpec)
 
 	_, err := handleDelegate(ctx, map[string]interface{}{
-		"name":            "test-skill-pass",
+		"name":            "test-spec-pass",
 		"instruction":     "do the thing",
 		"reasoning_level": "low",
 		"skills":          []interface{}{"pdf-extract", "agent-browser"},
+		"servers":         []interface{}{"playwright"},
+		"share_browser":   false,
 	})
 	if err != nil {
 		t.Fatalf("handleDelegate returned error: %v", err)
 	}
 
-	if len(capturedSkills) != 2 {
-		t.Fatalf("expected 2 skills threaded via context, got %d: %v", len(capturedSkills), capturedSkills)
+	if len(captured.Skills) != 2 || captured.Skills[0] != "pdf-extract" || captured.Skills[1] != "agent-browser" {
+		t.Errorf("expected skills [pdf-extract agent-browser], got %v", captured.Skills)
 	}
-	if capturedSkills[0] != "pdf-extract" || capturedSkills[1] != "agent-browser" {
-		t.Errorf("expected [pdf-extract agent-browser], got %v", capturedSkills)
+	if len(captured.Servers) != 1 || captured.Servers[0] != "playwright" {
+		t.Errorf("expected servers [playwright], got %v", captured.Servers)
+	}
+	if captured.ShareBrowser {
+		t.Error("share_browser=false should produce ShareBrowser=false in the child spec")
+	}
+	if captured.ReasoningLevel != "low" {
+		t.Errorf("expected reasoning level low, got %q", captured.ReasoningLevel)
+	}
+	if captured.Depth != parentSpec.Depth+1 {
+		t.Errorf("expected child depth %d, got %d", parentSpec.Depth+1, captured.Depth)
 	}
 }
 
 // TestHandleDelegateNoSkillsArgMeansNoInheritance is the corollary:
-// when the parent omits skills=[...], the sub-agent's context must
-// NOT contain DelegationSkillsKey (so server.go's attach loop is a
-// no-op and the sub-agent starts clean). Phase 6 explicit-pass.
+// when the parent omits skills=[...], the child spec must carry no
+// skills (so server.go's attach loop is a no-op and the sub-agent
+// starts clean). Phase 6 explicit-pass.
 func TestHandleDelegateNoSkillsArgMeansNoInheritance(t *testing.T) {
-	var seenKey bool
+	var captured SubAgentSpec
 
 	bgDelegate := BackgroundDelegateFunc(func(ctx context.Context, _, _ string) (string, error) {
-		_, seenKey = ctx.Value(DelegationSkillsKey).([]string)
+		captured = SubAgentSpecFromContext(ctx)
 		return "agent-xyz", nil
 	})
 
@@ -202,8 +208,65 @@ func TestHandleDelegateNoSkillsArgMeansNoInheritance(t *testing.T) {
 		t.Fatalf("handleDelegate returned error: %v", err)
 	}
 
-	if seenKey {
-		t.Errorf("expected DelegationSkillsKey to be absent when args has no skills; got it set")
+	if len(captured.Skills) != 0 {
+		t.Errorf("expected no skills in child spec when args has no skills; got %v", captured.Skills)
+	}
+	if !captured.ShareBrowser {
+		t.Error("ShareBrowser should default to true when share_browser arg is omitted")
+	}
+}
+
+// TestHandleDelegateEnforcesMaxDepth verifies the recursion guard reads the
+// depth from the SubAgentSpec.
+func TestHandleDelegateEnforcesMaxDepth(t *testing.T) {
+	bgDelegate := BackgroundDelegateFunc(func(context.Context, string, string) (string, error) {
+		t.Fatal("delegate must not run at max depth")
+		return "", nil
+	})
+	ctx := context.WithValue(context.Background(), BackgroundDelegateKey, bgDelegate)
+	ctx = WithSubAgentSpec(ctx, SubAgentSpec{Depth: MaxDelegationDepth, ShareBrowser: true})
+
+	_, err := handleDelegate(ctx, map[string]interface{}{
+		"name":            "too-deep",
+		"instruction":     "do the thing",
+		"reasoning_level": "low",
+	})
+	if err == nil || !strings.Contains(err.Error(), "maximum delegation depth") {
+		t.Fatalf("expected max-depth error, got: %v", err)
+	}
+}
+
+// TestSubAgentSpecContextRoundTrip locks the spec accessor contract: defaults
+// when absent (root depth, shared browser), exact round-trip when set, and
+// WithBackgroundAgentID preserving other fields.
+func TestSubAgentSpecContextRoundTrip(t *testing.T) {
+	def := SubAgentSpecFromContext(context.Background())
+	if def.Depth != 0 || !def.ShareBrowser || def.ReasoningLevel != "" || def.BackgroundAgentID != "" {
+		t.Errorf("unexpected default spec: %+v", def)
+	}
+
+	want := SubAgentSpec{
+		Depth:          2,
+		ReasoningLevel: "high",
+		AgentTemplate:  "researcher",
+		Servers:        []string{"playwright"},
+		Skills:         []string{"pdf-extract"},
+		ShareBrowser:   false,
+	}
+	ctx := WithSubAgentSpec(context.Background(), want)
+	got := SubAgentSpecFromContext(ctx)
+	if got.Depth != want.Depth || got.ReasoningLevel != want.ReasoningLevel ||
+		got.AgentTemplate != want.AgentTemplate || got.ShareBrowser != want.ShareBrowser ||
+		len(got.Servers) != 1 || len(got.Skills) != 1 {
+		t.Errorf("spec round-trip mismatch: got %+v, want %+v", got, want)
+	}
+
+	linked := SubAgentSpecFromContext(WithBackgroundAgentID(ctx, "bg-42"))
+	if linked.BackgroundAgentID != "bg-42" {
+		t.Errorf("expected background agent ID bg-42, got %q", linked.BackgroundAgentID)
+	}
+	if linked.ReasoningLevel != "high" || linked.Depth != 2 {
+		t.Errorf("WithBackgroundAgentID must preserve other fields, got %+v", linked)
 	}
 }
 

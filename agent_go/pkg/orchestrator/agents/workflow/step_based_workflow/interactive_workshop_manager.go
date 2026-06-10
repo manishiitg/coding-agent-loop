@@ -2725,7 +2725,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						Cancel:            cancel,
 					})
 				}
-				execCtx = context.WithValue(execCtx, virtualtools.BackgroundAgentIDKey, execID)
+				execCtx = virtualtools.WithBackgroundAgentID(execCtx, execID)
 				execCtx = context.WithValue(execCtx, orchestrator_events.ParentExecutionIDKey, execID)
 
 				// Variables captured after execution for metadata
@@ -2927,7 +2927,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					Cancel:            cancel,
 				})
 			}
-			execCtx = context.WithValue(execCtx, virtualtools.BackgroundAgentIDKey, execID)
+			execCtx = virtualtools.WithBackgroundAgentID(execCtx, execID)
 			execCtx = context.WithValue(execCtx, orchestrator_events.ParentExecutionIDKey, execID)
 
 			go func() {

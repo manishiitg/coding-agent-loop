@@ -1322,7 +1322,7 @@ func RegisterRunFullEvaluationTool(
 					Cancel:            cancel,
 				})
 			}
-			execCtx = context.WithValue(execCtx, virtualtools.BackgroundAgentIDKey, execID)
+			execCtx = virtualtools.WithBackgroundAgentID(execCtx, execID)
 			execCtx = context.WithValue(execCtx, orchestrator_events.ParentExecutionIDKey, execID)
 
 			go func() {
@@ -1925,7 +1925,7 @@ func RegisterRunFullWorkflowTool(
 					Cancel:            cancel,
 				})
 			}
-			execCtx = context.WithValue(execCtx, virtualtools.BackgroundAgentIDKey, execID)
+			execCtx = virtualtools.WithBackgroundAgentID(execCtx, execID)
 			execCtx = context.WithValue(execCtx, orchestrator_events.ParentExecutionIDKey, execID)
 
 			go func() {

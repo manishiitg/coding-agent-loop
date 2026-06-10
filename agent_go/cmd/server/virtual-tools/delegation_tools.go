@@ -25,35 +25,19 @@ type delegationContextKey string
 const (
 	// ExecuteDelegatedTaskKey is the context key for the delegation execution function
 	ExecuteDelegatedTaskKey delegationContextKey = "execute_delegated_task"
-	// DelegationDepthKey is the context key for tracking delegation depth
-	DelegationDepthKey delegationContextKey = "delegation_depth"
 	// MaxDelegationDepth is the maximum allowed delegation depth to prevent infinite recursion
 	MaxDelegationDepth = 3
 	// WorkspaceClientKey is the context key for the workspace client (plan file I/O)
 	WorkspaceClientKey delegationContextKey = "workspace_client"
 	// DelegationTierConfigKey is the context key for the delegation tier configuration
 	DelegationTierConfigKey delegationContextKey = "delegation_tier_config"
-	// ReasoningLevelKey is the context key for the reasoning level of a delegation
-	ReasoningLevelKey delegationContextKey = "reasoning_level"
 	// CapabilitiesContextKey is the context key for available capabilities (MCP servers, skills, etc.)
 	CapabilitiesContextKey delegationContextKey = "capabilities_context"
-	// AgentTemplateKey is the context key for the sub-agent template folder name
-	AgentTemplateKey delegationContextKey = "agent_template"
 	// SessionEventEmitterKey is the context key for the session event emitter (used for human feedback UI)
 	SessionEventEmitterKey delegationContextKey = "session_event_emitter"
 	// BotNotificationDestinationKey carries the originating bot thread/channel
 	// so human tools can notify the same connector conversation.
 	BotNotificationDestinationKey delegationContextKey = "bot_notification_destination"
-	// DelegationServersKey is the context key for sub-agent specific MCP server selection
-	DelegationServersKey delegationContextKey = "delegation_servers"
-
-	// DelegationSkillsKey is the context key for the explicit skill list
-	// passed by a parent agent to a sub-agent via delegate(skills=[...]).
-	// Sub-agents start with no attached skills by default; the parent
-	// must pass any skills the sub-agent needs. This is the "explicit
-	// pass" semantics — there is no inheritance from the parent's own
-	// SelectedSkills.
-	DelegationSkillsKey delegationContextKey = "delegation_skills"
 	// ChatsFolderPath is the fallback per-user Chats folder when session context is unavailable.
 	// Always prefer GetChatsFolder(ctx) which reads the session-scoped per-user path.
 	ChatsFolderPath = "_users/default/Chats"
@@ -68,11 +52,11 @@ const (
 	ToolEventCallbackKey delegationContextKey = "tool_event_callback"
 	// BackgroundDelegateKey is the context key for the async delegate function
 	BackgroundDelegateKey delegationContextKey = "background_delegate_func"
-	// BackgroundAgentIDKey is the context key for linking background agents to their delegation
-	BackgroundAgentIDKey delegationContextKey = "background_agent_id"
-	// ShareBrowserKey is the context key for controlling browser session isolation in sub-agents
-	ShareBrowserKey delegationContextKey = "share_browser"
 )
+
+// Per-delegation configuration (depth, reasoning level, template, servers,
+// skills, browser sharing, background agent ID) travels as a single typed
+// SubAgentSpec — see sub_agent_spec.go.
 
 // SessionEventEmitter is the interface for emitting human-feedback events to the session event store
 type SessionEventEmitter interface {
@@ -438,13 +422,20 @@ func handleDelegate(ctx context.Context, args map[string]interface{}) (string, e
 	}
 
 	// Check delegation depth to prevent infinite recursion
-	currentDepth := 0
-	if depth, ok := ctx.Value(DelegationDepthKey).(int); ok {
-		currentDepth = depth
-	}
+	currentDepth := SubAgentSpecFromContext(ctx).Depth
 
 	if currentDepth >= MaxDelegationDepth {
 		return "", fmt.Errorf("maximum delegation depth (%d) reached - cannot delegate further to prevent infinite recursion", MaxDelegationDepth)
+	}
+
+	// The full sub-agent contract travels as one typed spec.
+	childSpec := SubAgentSpec{
+		Depth:          currentDepth + 1,
+		ReasoningLevel: reasoningLevel,
+		AgentTemplate:  agentTemplate,
+		Servers:        delegationServers,
+		Skills:         delegationSkills,
+		ShareBrowser:   shareBrowser,
 	}
 
 	// --- ASYNC PATH: Background delegation (plan/multi-agent mode) ---
@@ -453,23 +444,7 @@ func handleDelegate(ctx context.Context, args map[string]interface{}) (string, e
 			name = "Background Task" // Fallback name
 		}
 
-		// Pass context values to the background delegate function via context
-		bgCtx := context.WithValue(ctx, DelegationDepthKey, currentDepth+1)
-		if reasoningLevel != "" {
-			bgCtx = context.WithValue(bgCtx, ReasoningLevelKey, reasoningLevel)
-		}
-		if agentTemplate != "" {
-			bgCtx = context.WithValue(bgCtx, AgentTemplateKey, agentTemplate)
-		}
-		if len(delegationServers) > 0 {
-			bgCtx = context.WithValue(bgCtx, DelegationServersKey, delegationServers)
-		}
-		if len(delegationSkills) > 0 {
-			bgCtx = context.WithValue(bgCtx, DelegationSkillsKey, delegationSkills)
-		}
-		if !shareBrowser {
-			bgCtx = context.WithValue(bgCtx, ShareBrowserKey, false)
-		}
+		bgCtx := WithSubAgentSpec(ctx, childSpec)
 
 		agentID, err := bgDelegate(bgCtx, name, instruction)
 		if err != nil {
@@ -501,26 +476,8 @@ func handleDelegate(ctx context.Context, args map[string]interface{}) (string, e
 
 	startTime := time.Now()
 
-	// Increment depth in context for the sub-agent and pass reasoning level
-	subCtx := context.WithValue(ctx, DelegationDepthKey, currentDepth+1)
-	if reasoningLevel != "" {
-		subCtx = context.WithValue(subCtx, ReasoningLevelKey, reasoningLevel)
-	}
-	if agentTemplate != "" {
-		subCtx = context.WithValue(subCtx, AgentTemplateKey, agentTemplate)
-	}
-	if len(delegationServers) > 0 {
-		subCtx = context.WithValue(subCtx, DelegationServersKey, delegationServers)
-	}
-	if len(delegationSkills) > 0 {
-		subCtx = context.WithValue(subCtx, DelegationSkillsKey, delegationSkills)
-	}
-	if !shareBrowser {
-		subCtx = context.WithValue(subCtx, ShareBrowserKey, false)
-	}
-
-	// Execute the delegated task
-	result, err := executeFunc(subCtx, instruction)
+	// Execute the delegated task with the child spec in context
+	result, err := executeFunc(WithSubAgentSpec(ctx, childSpec), instruction)
 
 	executionTime := time.Since(startTime)
 

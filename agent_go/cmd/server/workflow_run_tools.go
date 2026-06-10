@@ -451,10 +451,7 @@ func runWorkflowInternal(ctx context.Context, api *StreamingAPI, workflowPath, g
 
 	// Register in the background agent registry so list_agents/terminate_agent see it
 	agentID := registry.NextID(agentName)
-	parentExecutionID := ""
-	if parentID, ok := ctx.Value(virtualtools.BackgroundAgentIDKey).(string); ok {
-		parentExecutionID = parentID
-	}
+	parentExecutionID := virtualtools.SubAgentSpecFromContext(ctx).BackgroundAgentID
 	bgAgent := &BackgroundAgent{
 		ID:                agentID,
 		ParentExecutionID: parentExecutionID,

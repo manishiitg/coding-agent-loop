@@ -244,7 +244,9 @@ execute_shell_command(command: "cat > ` + dateDir + `/{category}.md << 'MEMEOF'\
 	}
 
 	// Set medium reasoning level for memory save — needs judgment to write detailed, well-structured memories
-	bgCtx := context.WithValue(ctx, ReasoningLevelKey, "medium")
+	memSpec := SubAgentSpecFromContext(ctx)
+	memSpec.ReasoningLevel = "medium"
+	bgCtx := WithSubAgentSpec(ctx, memSpec)
 
 	agentName := "Save Memory"
 	log.Printf("[MEMORY] Starting background save_memory agent: %s", truncateString(content, 80))
@@ -350,7 +352,9 @@ You are a memory retrieval agent. Search the persistent memory system at ` + mem
 	}
 
 	// Set low reasoning level for memory ops (simple search/read)
-	bgCtx := context.WithValue(ctx, ReasoningLevelKey, "low")
+	memSpec := SubAgentSpecFromContext(ctx)
+	memSpec.ReasoningLevel = "low"
+	bgCtx := WithSubAgentSpec(ctx, memSpec)
 
 	agentName := "Recall Memory"
 	log.Printf("[MEMORY] Starting background recall_memory agent: %s", truncateString(query, 80))
@@ -604,7 +608,9 @@ Only after all six pass do you return control.
 	}
 
 	// Use medium reasoning level — compression requires judgment about what to keep/merge
-	bgCtx := context.WithValue(ctx, ReasoningLevelKey, "medium")
+	memSpec := SubAgentSpecFromContext(ctx)
+	memSpec.ReasoningLevel = "medium"
+	bgCtx := WithSubAgentSpec(ctx, memSpec)
 
 	agentName := "Enrich Memory"
 	if focus != "" {

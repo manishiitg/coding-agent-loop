@@ -2241,7 +2241,23 @@ func requestLogPath(r *http.Request) string {
 	return r.URL.Path + "?" + r.URL.RawQuery
 }
 
-// Query endpoint - handles POST requests to start agent streaming
+// Query endpoint - handles POST requests to start agent streaming.
+//
+// TWO PRODUCT MODES share this one handler (see the isWorkflowPhase block
+// below for the full explanation):
+//
+//  1. Multiagent chat  — agent_mode="multi-agent": the normal conversational
+//     agent with delegation/sub-agents.
+//  2. Workflow builder — agent_mode="workflow_phase" + phase_id: a chat whose
+//     job is to construct/edit a workflow.json. It is NOT a separate engine —
+//     it loads phase-specific config (prompt/tools/folder/LLM) from
+//     workflow.json and then sets req.AgentMode="multi-agent", falling through
+//     this same path. The two modes therefore diverge only via the ~30
+//     `isWorkflowPhase` / workflowPhase* checks scattered below, not via
+//     separate code paths.
+//
+// (A third, deprecated agent_mode="workflow" headless-run path is handled
+// separately right after the workflow_phase block.)
 func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
@@ -2549,8 +2565,27 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Session config isn't persisted anymore — follow-up messages rely on the
 	// frontend to pass the provider/model on every request.
 
-	// Handle workflow phase chat mode - convert to simple agent with phase-specific prompt + tools
-	// This runs BEFORE the workflow orchestrator branch to intercept and redirect
+	// === Workflow builder vs multiagent chat: the mode discriminator ===
+	//
+	// `isWorkflowPhase` is the single flag that distinguishes the WORKFLOW
+	// BUILDER from plain MULTIAGENT CHAT for the rest of this handler. There is
+	// no separate builder code path: the block just below loads the builder's
+	// config (LLM, servers, browser mode, secrets, working folder) from the
+	// preset's workflow.json, and then sets req.AgentMode="multi-agent" so the
+	// request continues down the shared chat path.
+	//
+	// Consequence: every place the builder must behave differently from chat is
+	// an `if isWorkflowPhase` / `if !isWorkflowPhase` check further down (~30 of
+	// them — folder guard, LLM resolution, tool registration, secrets injection,
+	// playwright session binding, chat-history persistence, etc.). Grep
+	// `isWorkflowPhase` to see the full set of divergence points. If you need
+	// the builder and chat to diverge more, prefer threading the difference
+	// through `workflowPhaseFolder`/config rather than adding yet another bool
+	// check here — the scattered checks are already the main source of
+	// confusion in this 3k-line function.
+	//
+	// This runs BEFORE the deprecated agent_mode=="workflow" orchestrator branch
+	// to intercept and redirect.
 	isWorkflowPhase := req.AgentMode == "workflow_phase"
 	workflowPhaseID := req.PhaseID
 	workflowPhaseFolder := "" // The preset's SelectedFolder — used to auto-grant write access in FolderGuard
@@ -5128,6 +5163,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Skip secret prompt injection for workflow phases — they inject secrets in the phase setup above.
 		// Only inject here for non-workflow chat agents (multi-agent, plain chat, etc.)
+		//
+		// NOTE: this SHADOWS the outer isWorkflowPhase and derives it from a
+		// DIFFERENT basis — req.PhaseID != "" here, vs req.AgentMode ==
+		// "workflow_phase" at the top of handleQuery. They usually agree but can
+		// diverge (e.g. a request with PhaseID set but a non-workflow_phase mode).
+		// Keep that in mind before relying on either one in this block.
 		isWorkflowPhase := req.PhaseID != ""
 		allChatSecrets := mergeGlobalSecrets(req.DecryptedSecrets, req.SelectedGlobalSecrets)
 		if len(allChatSecrets) > 0 && !isWorkflowPhase {

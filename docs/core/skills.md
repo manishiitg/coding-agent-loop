@@ -50,6 +50,11 @@ Review the code at `$ARGUMENTS` focusing on:
 | `argument-hint` | No | Hint for arguments the skill accepts |
 | `allowed-tools` | No | List of tools the skill is allowed to use. For current workflow agents, prefer exposed tools such as `execute_shell_command` and `diff_patch_workspace_file`; legacy workspace-basic names like `read_workspace_file`, `update_workspace_file`, and `delete_workspace_file` are internal/API wrappers unless explicitly exposed by the session. |
 | `model` | No | Preferred LLM model for this skill |
+| `disable-model-invocation` | No | When true, the model is not offered this skill for automatic invocation |
+| `user-invocable` | No | Whether the skill appears as user-invocable (e.g. as a slash command); auto-generated learnings skills set this to `false` |
+| `effort` | No | Effort hint for the skill's execution |
+| `context` | No | Context hint for skill matching |
+| `agent` | No | Agent hint for skill routing |
 
 ## Configuration Hierarchy
 
@@ -92,30 +97,41 @@ PresetQuery.selected_skills (workflow-wide default)
 
 ```
 agent_go/pkg/skills/
-├── types.go          # Skill, SkillFrontmatter structs
-├── parser.go         # Parse YAML frontmatter + markdown
-├── validator.go      # Validate skill folder against spec
-├── discovery.go      # Discover skills from workspace-docs/skills/
-├── github.go         # Download skill folders from GitHub URLs
-└── workspace_api.go  # Workspace file operations
+├── types.go                   # Skill, SkillFrontmatter structs
+├── parser.go                  # Parse YAML frontmatter + markdown
+├── validator.go               # Validate skill folder against spec
+├── discovery.go               # Discover skills from workspace-docs/skills/ (incl. custom/)
+├── github.go                  # Download skill folders from GitHub URLs
+├── workspace_api.go           # Workspace file operations
+├── runtime_loader.go          # LoadAttachable / LoadGlobalSkill — build attachable skills for agents
+├── builtin_browser_skills.go  # Builtin agent-browser / playwright skills (served from code, never on disk)
+├── cli.go                     # skills CLI integration (npx skills), lock-file update detection
+└── zip.go                     # Zip import/export of skill folders
 ```
 
 ### Key Types
 
 ```go
 type SkillFrontmatter struct {
-    Name         string   `yaml:"name" json:"name"`
-    Description  string   `yaml:"description" json:"description"`
-    ArgumentHint string   `yaml:"argument-hint,omitempty" json:"argument_hint,omitempty"`
-    AllowedTools []string `yaml:"allowed-tools,omitempty" json:"allowed_tools,omitempty"`
-    Model        string   `yaml:"model,omitempty" json:"model,omitempty"`
+    Name                   string   `yaml:"name,omitempty"`
+    Description            string   `yaml:"description"`
+    ArgumentHint           string   `yaml:"argument-hint,omitempty"`
+    AllowedTools           []string `yaml:"allowed-tools,omitempty"`
+    Model                  string   `yaml:"model,omitempty"`
+    DisableModelInvocation bool     `yaml:"disable-model-invocation,omitempty"`
+    UserInvocable          *bool    `yaml:"user-invocable,omitempty"`
+    Effort                 string   `yaml:"effort,omitempty"`
+    Context                string   `yaml:"context,omitempty"`
+    Agent                  string   `yaml:"agent,omitempty"`
 }
 
 type Skill struct {
     Frontmatter SkillFrontmatter `json:"frontmatter"`
-    Content     string           `json:"content"`      // Markdown after frontmatter
-    FolderName  string           `json:"folder_name"`  // Skill folder name
-    FilePath    string           `json:"file_path"`    // Relative path in workspace
+    Content     string           `json:"content"`               // Markdown after frontmatter
+    FolderName  string           `json:"folder_name"`           // Skill folder name
+    FilePath    string           `json:"file_path"`             // Relative path in workspace
+    SourceURL   string           `json:"source_url,omitempty"`  // Source URL (from lock file)
+    LockInfo    *CLILockEntry    `json:"lock_info,omitempty"`   // Version tracking from skills-lock.json
 }
 ```
 
@@ -138,37 +154,31 @@ Skills are integrated into workflow execution in `skills_integration.go`:
 // Get effective skills for a step (step override > preset default)
 func GetEffectiveSkills(stepConfig *AgentConfigs, orchestrator *BaseOrchestrator) []string
 
-// Build the system prompt section for skills
-func BuildWorkflowSkillPrompt(ctx context.Context, selectedSkills []string, bo *BaseOrchestrator) string
-
 // Build folder guard paths (skills are read-only)
 func BuildSkillFolderGuardPaths(selectedSkills []string) (readPaths, writePaths []string)
 ```
 
-### Execution Agent Prompt
+### How Skills Reach the Agent
 
-When skills are enabled, the following is added to the execution agent's system prompt:
+There is no hand-assembled "Active Skills" prompt section any more. Skill
+surfacing lives in the transport layer:
 
-```
-## Active Skills
-
-### What is a Skill?
-A skill is a reusable set of instructions that guides you on how to handle
-specific tasks or workflows. Skills are stored in the workspace under the
-"skills/" folder.
-
-### How to Use Skills in Workflow:
-1. Read the skill: Read the SKILL.md file from the workspace
-2. Follow the instructions: Apply the skill's methodology to the current step
-3. Check for additional files: List the skill folder to find supporting files
-
-### Activated Skills:
-- **lead-research-assistant**: Guides research workflows
-  - Path: `skills/lead-research-assistant/SKILL.md`
-
-**Action Required:** Read each skill's SKILL.md from the workspace before
-executing the step.
-```
+1. Builders call `skills.LoadAttachable(workspaceAPIURL, selectedSkills)`
+   (`pkg/skills/runtime_loader.go`), which parses each SKILL.md into an
+   attachable skill — full markdown body plus `SupportingFiles` (everything
+   under the skill folder except SKILL.md, e.g. `references/`, `scripts/`).
+2. Each skill is registered with `agent.AttachSkill(skill)`. The mcpagent
+   library injects a progressive-disclosure skill listing into the outgoing
+   system prompt at `ensureSystemPrompt()` time; CLI transports additionally
+   project the skill folder to disk via the SkillProjector contract.
+3. **Builtin skills**: `agent-browser` and `playwright` are served from code
+   (`builtin_browser_skills.go`), not from the skills/ folder. The loader
+   checks builtins first, so a disk folder with the same name would be
+   silently shadowed — never create one.
+4. **Global learnings pointer**: `LoadGlobalSkill()` attaches a tiny
+   "workflow-learnings" pointer skill that directs the agent to read
+   `learnings/_global/` from the workflow folder on demand, instead of
+   copying the (large, growing) learnings bundle into every session.
 
 ### Folder Guard
 

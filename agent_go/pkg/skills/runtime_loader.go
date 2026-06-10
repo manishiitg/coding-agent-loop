@@ -33,11 +33,15 @@ import (
 //
 // Why a pointer instead of a full bundle copy: the global learnings
 // can be large and grows over time, with multiple references/ files.
-// Copying the tree into .agents/skills/_global/ on every session
-// launch duplicates the content and risks drift if the workflow
+// Copying the tree into .agents/skills/workflow-learnings/ on every
+// session launch duplicates the content and risks drift if the workflow
 // updates _global/ mid-session. The pointer skill stays tiny (one
 // short SKILL.md), and the agent reads the authoritative files
 // from the workflow folder when it needs them.
+//
+// The skill is named "workflow-learnings" (not the on-disk folder name
+// "_global") so listings and description-based matching carry meaning;
+// the learnings folder itself keeps the _global name.
 //
 // Returns nil when the workflow has no _global/SKILL.md yet — no
 // point attaching a pointer to a file that doesn't exist.
@@ -65,7 +69,7 @@ These files are written by step agents during successful runs and shared across 
 If a referenced file does not exist, the workflow has not accumulated that piece of knowledge yet — proceed with general best practices for that area.
 `, workflowPath, workflowPath, workflowPath)
 	return &llmtypes.Skill{
-		Name:        "_global",
+		Name:        "workflow-learnings",
 		Description: "Pointer to the workflow's accumulated learnings (selectors, timings, API quirks, conventions). Read learnings/_global/ in the workflow folder for the full content.",
 		Content:     body,
 		Source:      llmtypes.SkillSource{Origin: "global-learnings"},
@@ -100,7 +104,7 @@ func loadOneAttachable(workspaceAPIURL, folderName string) (*llmtypes.Skill, err
 	skill := &llmtypes.Skill{
 		Name:                   folderName,
 		Description:            parsed.Frontmatter.Description,
-		Content:                parsed.Content,
+		Content:                lazySkillBody(parsed.FilePath, folderName, parsed.Content),
 		DisableModelInvocation: parsed.Frontmatter.DisableModelInvocation,
 		Source: llmtypes.SkillSource{
 			Origin:    "imported",
@@ -118,6 +122,37 @@ func loadOneAttachable(workspaceAPIURL, folderName string) (*llmtypes.Skill, err
 	// non-fatal — SKILL.md alone is still a valid attach.
 	skill.SupportingFiles = loadSkillSupportingFiles(workspaceAPIURL, folderName)
 	return skill, nil
+}
+
+// Imported skill bodies above lazySkillBodyLineThreshold lines are injected
+// as an excerpt plus a pointer instead of in full. Reference-heavy imported
+// skills run 300-800 lines (~1.5-3k tokens each), paid on every run of every
+// step that selects them whether or not the depth is needed. This mirrors the
+// LoadGlobalSkill pointer pattern: the prompt carries the quick-start head,
+// and the agent reads the authoritative on-disk SKILL.md (read access comes
+// from BuildSkillFolderGuardPaths) only when it needs more. Small skills are
+// injected whole — an excerpt of a skill that fits anyway just loses detail.
+const (
+	lazySkillBodyLineThreshold = 150
+	lazySkillExcerptLines      = 60
+)
+
+// lazySkillBody returns the prompt-injected body for an imported skill:
+// the full body when small, or the first lazySkillExcerptLines lines plus a
+// read-the-rest pointer when large. filePath is the workspace-relative
+// SKILL.md path (e.g. "skills/ffmpeg/SKILL.md").
+func lazySkillBody(filePath, folderName, body string) string {
+	lines := strings.Split(body, "\n")
+	if len(lines) <= lazySkillBodyLineThreshold {
+		return body
+	}
+	if strings.TrimSpace(filePath) == "" {
+		filePath = path.Join("skills", folderName, "SKILL.md")
+	}
+	excerpt := strings.TrimRight(strings.Join(lines[:lazySkillExcerptLines], "\n"), "\n")
+	return excerpt + fmt.Sprintf(
+		"\n\n---\n**This is an excerpt (%d of %d lines).** Before relying on any detail not shown above, read the full skill at `%s` (workspace-relative). Supporting files (references/, scripts/, assets/) live next to it under `%s/`.\n",
+		lazySkillExcerptLines, len(lines), filePath, path.Dir(filePath))
 }
 
 func filterFilesystemSkills(selectedSkills []string) []string {

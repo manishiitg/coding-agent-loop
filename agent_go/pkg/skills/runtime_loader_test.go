@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"fmt"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -156,4 +157,41 @@ func TestLoadAttachableHandlesEmptySelection(t *testing.T) {
 	if got := LoadAttachable("http://unused.example", []string{}); got != nil {
 		t.Errorf("expected nil for empty selection, got %+v", got)
 	}
+}
+
+func TestLazySkillBody(t *testing.T) {
+	t.Run("small body injected whole", func(t *testing.T) {
+		body := strings.Repeat("line\n", 100)
+		if got := lazySkillBody("skills/small/SKILL.md", "small", body); got != body {
+			t.Fatalf("small body should pass through unchanged")
+		}
+	})
+
+	t.Run("large body becomes excerpt plus pointer", func(t *testing.T) {
+		var sb strings.Builder
+		for i := 0; i < 400; i++ {
+			fmt.Fprintf(&sb, "line %d\n", i)
+		}
+		got := lazySkillBody("skills/big/SKILL.md", "big", sb.String())
+		if !strings.Contains(got, "line 0") || strings.Contains(got, "line 200") {
+			t.Fatalf("excerpt should keep the head and drop the tail:\n%s", got)
+		}
+		if !strings.Contains(got, "skills/big/SKILL.md") {
+			t.Fatalf("pointer should name the on-disk SKILL.md path:\n%s", got)
+		}
+		if !strings.Contains(got, "excerpt") {
+			t.Fatalf("pointer should say it is an excerpt:\n%s", got)
+		}
+	})
+
+	t.Run("empty filePath falls back to folder convention", func(t *testing.T) {
+		var sb strings.Builder
+		for i := 0; i < 400; i++ {
+			fmt.Fprintf(&sb, "line %d\n", i)
+		}
+		got := lazySkillBody("", "fallback-skill", sb.String())
+		if !strings.Contains(got, "skills/fallback-skill/SKILL.md") {
+			t.Fatalf("fallback pointer path missing:\n%s", got)
+		}
+	})
 }

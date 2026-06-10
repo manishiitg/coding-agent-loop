@@ -1721,7 +1721,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	fmt.Printf("🔄 Initializing tool cache on server startup...\n")
 	api.initializeToolCache()
 
-	// Sync system skills (skill-creator, agent-browser, etc.) in background
+	// Sync system skills (currently skill-creator; see GetSystemSkills) in
+	// background. Browser skills (agent-browser, playwright) are builtin —
+	// served from code, never installed to the skills/ folder.
 	go func() {
 		syncCtx, syncCancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer syncCancel()

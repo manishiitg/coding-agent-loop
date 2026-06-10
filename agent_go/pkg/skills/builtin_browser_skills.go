@@ -2,6 +2,14 @@ package skills
 
 import "github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
+// IsBuiltinSkill reports whether folderName is served from the hardcoded
+// builtin registry rather than the workspace skills/ folder. Builtin names
+// must not exist on disk — a disk copy would be shadowed at attach time and
+// could carry contradictory guidance.
+func IsBuiltinSkill(folderName string) bool {
+	return builtinAttachableSkill(folderName) != nil
+}
+
 func builtinAttachableSkill(folderName string) *llmtypes.Skill {
 	switch folderName {
 	case "agent-browser":

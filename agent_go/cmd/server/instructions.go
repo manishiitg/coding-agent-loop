@@ -794,7 +794,7 @@ func filesystemSelectedSkills(selectedSkills []string) []string {
 }
 
 func isRuntimeOnlySkill(skill string) bool {
-	return false
+	return skills.IsBuiltinSkill(skill)
 }
 
 // GetSubAgentBuilderInstructions returns the custom instructions for Sub-Agent Builder agents

@@ -10,9 +10,11 @@ import {
   Table2,
   TrendingUp,
   ShieldCheck,
+  Activity,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
+import { useWorkflowManifestStore } from '../../../stores/useWorkflowManifestStore'
 import { useChatStore } from '../../../stores/useChatStore'
 import { useAuthStore } from '../../../stores/useAuthStore'
 import type { VariablesManifest } from '../../../services/api-types'
@@ -183,6 +185,27 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       st.exists && !!st.last_modified && (!seenLm || new Date(st.last_modified).getTime() > new Date(seenLm).getTime())
     return isNewer(docsStatus.improve, seen.improve) || isNewer(docsStatus.review, seen.review)
   }, [workspacePath, docsStatus, docsSeenTick, readDocsSeen])
+
+  // Post-run monitor opt-in (workflow.json::post_run_monitor). When on, a cheap
+  // read-only triage pass runs after each scheduled run and records Bug + Goal
+  // verdicts into the workflow log.
+  const monitorOn = useWorkflowManifestStore((s) => {
+    const wf = s.workflows.find((w) => w.workspace_path === workspacePath)
+    return !!wf?.manifest.post_run_monitor
+  })
+  const updateWorkflowManifest = useWorkflowManifestStore((s) => s.updateWorkflow)
+  const [monitorSaving, setMonitorSaving] = useState(false)
+  const toggleMonitor = useCallback(async () => {
+    if (!workspacePath || monitorSaving) return
+    setMonitorSaving(true)
+    try {
+      await updateWorkflowManifest(workspacePath, { post_run_monitor: !monitorOn })
+    } catch (err) {
+      console.error('[WorkflowToolbar] Failed to toggle post-run monitor:', err)
+    } finally {
+      setMonitorSaving(false)
+    }
+  }, [workspacePath, monitorOn, monitorSaving, updateWorkflowManifest])
 
   // Versions popup state
   const [showVersionsPopup, setShowVersionsPopup] = useState(false)
@@ -375,6 +398,22 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               </button>
             </TooltipTrigger>
             <TooltipContent side="bottom"><p>Auto-improvement (metrics, trajectory, decisions){hasUnseenDocs ? ' — new review/improve update' : ''}</p></TooltipContent>
+          </Tooltip>
+        )}
+        {/* Post-run monitor opt-in — toggles workflow.json::post_run_monitor */}
+        {workspacePath && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => { void toggleMonitor() }}
+                disabled={monitorSaving}
+                aria-pressed={monitorOn}
+                className={`relative p-1.5 rounded-md transition-colors disabled:opacity-50 ${monitorOn ? 'bg-primary/15 text-primary hover:bg-primary/25' : 'bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground'}`}
+              >
+                <Activity className="w-3.5 h-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom"><p>Post-run monitor: {monitorOn ? 'on' : 'off'} — {monitorOn ? 'records Bug + Goal verdicts in the log after each scheduled run' : 'enable to catch silent breakage & drift'}</p></TooltipContent>
           </Tooltip>
         )}
 

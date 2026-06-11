@@ -66,10 +66,11 @@ Fill, in the skeleton:
 
 Leave the signal tiles, recent-runs strip, the `<!-- LOG ENTRIES: newest first -->` anchor, and the archive section in place and empty — they fill in after the first run and as work accrues. Do not invent metric values or runs that haven't happened.
 
-STEP 3 — Set the two hard-gate fields in workflow.json
+STEP 3 — Set the framework fields in workflow.json
 These are the only structured framework fields; they drive real behavior.
 
 - `oversight_mode` — `manual` / `supervised` (default) / `autonomous`. Recommended defaults: deterministic + ratcheting workflow → `manual`; exploratory → `autonomous`; contextual / business-context → `supervised`.
+- `post_run_monitor` — `true` / `false`. **Opt-in** (omit/false = off). Set `true` for workflows where a silently-broken or drifting run would matter and isn't watched live: scheduled QA, production, monitoring/alerting, compliance, and any business-critical workflow on a cron. Leave off for scratch, experimental, or interactive-only workflows where the extra per-run triage pass isn't worth it. When on, after each scheduled run a cheap read-only monitor records Bug + Goal verdicts and any finding into `builder/improve.html`. Recommend a value based on the profile, but it's the **user's choice** — confirm it, and tell them they can flip it anytime.
 
 STEP 4 — Bootstrap metrics.json
 Behavior depends on the profile from Step 1:
@@ -101,8 +102,9 @@ You're auditing existing setup, not bootstrapping. Walk through these checks and
 - Are primary type, secondary traits, and the four axes filled in with rationale, or are some empty / placeholder?
 - Are the behavioral implications still relevant?
 
-5.2 — **Hard-gate fields**
+5.2 — **Framework fields**
 - Verify `oversight_mode` in workflow.json matches the workflow profile. A "ratchet" stability with `oversight_mode: autonomous` is mismatched and should be flagged.
+- Check `post_run_monitor`. If the workflow is scheduled and a silent break would matter (QA, production, monitoring, compliance) but it's off, recommend turning it on. If it's a scratch/experimental workflow with the monitor on and the user is watching every run anyway, note they can turn it off to save the per-run pass. It's the user's call either way.
 
 5.3 — **Metric definitions**
 - Read every entry in `planning/metrics.json::metrics[]`.

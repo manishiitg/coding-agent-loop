@@ -47,6 +47,20 @@ type WorkflowManifest struct {
 	// — the agent reads improve.html on every improvement turn anyway, and prose
 	// captures nuance that enums can't.
 	OversightMode OversightMode `json:"oversight_mode,omitempty"`
+
+	// PostRunMonitor opts this workflow into the post-run monitor: a cheap
+	// read-only triage pass that runs after each scheduled run and records Bug +
+	// Goal verdicts (and any silent-failure / drift finding) into the workflow
+	// log. It is a deliberate choice — the user or the builder agent enables it
+	// for workflows where silent breakage matters (QA, production, monitoring,
+	// compliance). Unset/false = off (no monitor pass, no extra cost).
+	PostRunMonitor *bool `json:"post_run_monitor,omitempty"`
+}
+
+// MonitorEnabled reports whether the post-run monitor should run for this
+// workflow. It is opt-in: only an explicit true enables it.
+func (m *WorkflowManifest) MonitorEnabled() bool {
+	return m != nil && m.PostRunMonitor != nil && *m.PostRunMonitor
 }
 
 // WorkflowCapabilities stores workflow-wide agent and tool configuration.

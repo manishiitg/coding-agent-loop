@@ -148,6 +148,7 @@ type UpdateWorkflowManifestRequest struct {
 	Schedules         *[]WorkflowSchedule        `json:"schedules,omitempty"`
 	WorkshopMode      *string                    `json:"workshop_mode,omitempty"` // Standalone patch — avoids zeroing out other ExecutionDefaults fields
 	RunRetentionCount *int                       `json:"run_retention_count,omitempty"`
+	PostRunMonitor    *bool                      `json:"post_run_monitor,omitempty"` // Opt-in to the post-run monitor pass
 }
 
 func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *http.Request) {
@@ -200,6 +201,9 @@ func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *
 	}
 	if req.RunRetentionCount != nil {
 		manifest.RunRetentionCount = req.RunRetentionCount
+	}
+	if req.PostRunMonitor != nil {
+		manifest.PostRunMonitor = req.PostRunMonitor
 	}
 
 	// Write updated manifest

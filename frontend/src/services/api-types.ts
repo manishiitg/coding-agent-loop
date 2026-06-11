@@ -2083,6 +2083,7 @@ export interface WorkflowManifest {
   created_at?: string
   updated_at?: string
   run_retention_count?: number
+  post_run_monitor?: boolean
 }
 
 export interface WorkflowCapabilities {
@@ -2156,6 +2157,7 @@ export interface UpdateWorkflowManifestRequest {
   schedules?: WorkflowScheduleEntry[]
   workshop_mode?: string // Standalone patch — avoids zeroing out other execution_defaults fields
   run_retention_count?: number
+  post_run_monitor?: boolean
 }
 
 export interface DuplicateWorkflowManifestRequest {

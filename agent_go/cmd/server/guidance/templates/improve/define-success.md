@@ -8,7 +8,7 @@ Focus / hints from user: {{.Focus}}{{end}}
 
 DISCOVERY (read-only)
 1. Read workflow.json. Note any existing oversight_mode.
-2. Read builder/improve.html if present — note any existing "## Workflow Profile" section, Active Improvement Index, Archive Index, and recent entries. If there is no index/retention structure yet, read the file in full.
+2. Read builder/improve.html if present — note any existing Workflow Profile block, recent timeline entries, open findings, and archive rows. If it's short, read it in full.
 3. Read soul/soul.md to extract the workflow's objective and success_criteria.
 4. Read planning/plan.json — note the steps, their types, and overall structure (frozen plan vs in flux vs explore/exploit).
 5. Read evaluation/evaluation_plan.json if present — eval steps will be the natural source for many starter metrics.
@@ -19,8 +19,8 @@ DISCOVERY (read-only)
 STEP 0 — DETECT SETUP STATE AND BRANCH
 After Discovery, decide which mode this command runs in:
 
-- **FRESH SETUP** — `builder/improve.html` has no "## Workflow Profile" section AND `planning/metrics.json` is absent or empty. Proceed to STEP 1.
-- **REVIEW EXISTING** — `builder/improve.html` already has a "## Workflow Profile" section AND/OR `planning/metrics.json` already has metrics declared. **Skip STEPS 1–4 and go to STEP 5 (REVIEW PATH)** — do not re-bootstrap a workflow that already has a framework configured. Audit instead.
+- **FRESH SETUP** — `builder/improve.html` has no Workflow Profile block (no declared primary type) AND `planning/metrics.json` is absent or empty. Proceed to STEP 1.
+- **REVIEW EXISTING** — `builder/improve.html` already has a Workflow Profile block AND/OR `planning/metrics.json` already has metrics declared. **Skip STEPS 1–4 and go to STEP 5 (REVIEW PATH)** — do not re-bootstrap a workflow that already has a framework configured. Audit instead.
 - **PARTIAL** — one is present, the other isn't. Run STEP 5 first to surface what's there, then walk the user through completing the missing piece (Profile if absent → STEP 2; metrics if absent → STEP 4).
 
 STEP 1 — Classify the workflow profile
@@ -48,41 +48,20 @@ Then map the confirmed type/traits onto the internal axes:
 
 Show your inference + reasoning + the alternative answers you considered for primary type, secondary traits, and each axis. Ask the user to confirm.
 
-STEP 2 — Write the Workflow Profile to builder/improve.html
-Append (or replace, if a section already exists) the following section in builder/improve.html. Use `diff_patch_workspace_file` — do NOT `mkdir` via shell. Use workflow-relative paths.
+STEP 2 — Seed builder/improve.html (the single workflow log)
+If `builder/improve.html` does not exist yet, create it from the **Starter HTML skeleton** in `get_reference_doc(kind="review-improve-log")` — write that document verbatim with `diff_patch_workspace_file` (do NOT `mkdir` via shell; use workflow-relative paths), filling the header (workflow name, oversight chip) and the `<!-- PROFILE -->` placeholder. If the file already exists, edit the profile in place — don't overwrite the timeline.
 
-```markdown
-## Workflow Profile (auto-improvement framework)
+Fill the `<!-- PROFILE -->` placeholder with a short, readable **Workflow Profile** block — a `<div class="entry">` (or a small labelled section) containing:
 
-- **Primary type**: <chosen> — <one-line rationale>
-- **Secondary traits**: <comma-separated list or "none"> — <one-line rationale>
-- **Plan stability**: <chosen> — <one-line rationale>
-- **Runtime mode**: <single | dual> — <one-line rationale; if dual, name the modes: e.g., "explore (weekly reset) / exploit (daily default)">
-- **Business context**: <accumulating | none> — <one-line rationale>
-- **Improvement cadence**: <chosen> — <one-line rationale>
+- **Primary type** — <chosen> — <one-line rationale>
+- **Secondary traits** — <list or "none"> — <one-line rationale>
+- **Plan stability** — <mutable | ratchet | frozen> — <one-line rationale>
+- **Runtime mode** — <single | dual; if dual, name the modes> — <one-line rationale>
+- **Business context** — <accumulating | none> — <one-line rationale>
+- **Improvement cadence** — <chosen> — <one-line rationale>
+- **Behavioural implications the agent respects every turn** — 3–5 short lines, e.g. "Use harden_workflow for local reliability/contract failures; replan only when outcome trends show the path itself is weak"; "Plan is ratchet — do not delete_plan_steps without explicit user approval"; "Recognise user-supplied rules in conversation and offer capture_context."
 
-Behavioral implications the agent should respect on every turn:
-- <primary-type implication, e.g. "Use harden_workflow for local reliability/contract failures; use replan_workflow_from_results when outcome trends show the workflow path or strategy is weak.">
-- <secondary-trait implication, e.g. "Because this is also human-review production, track approval/edit burden and preserve provenance.">
-- <plan-stability implication, e.g. "Do not call replan_workflow_from_results or delete_plan_steps without explicit user approval.">
-- <runtime-mode implication, e.g. "When dual: branch step behavior on the workflow's chosen runtime signal.">
-- <business-context implication, e.g. "Recognize user-supplied rules in conversation and offer capture_context.">
-
-## Active Improvement Index
-
-- **Current focus:** setup pending
-- **Open findings / hypotheses:** none yet
-- **Current metric/eval gaps:** to be filled after first eval/metric review
-- **Latest semantic change:** none
-- **Recent evidence window:** iteration-0 after the next run
-
-## Archive Index
-
-| Archive | Date range | Entries | Unresolved ids | Summary |
-| --- | --- | ---: | --- | --- |
-
-## Recent Entries
-```
+Leave the signal tiles, recent-runs strip, the `<!-- LOG ENTRIES: newest first -->` anchor, and the archive section in place and empty — they fill in after the first run and as work accrues. Do not invent metric values or runs that haven't happened.
 
 STEP 3 — Set the two hard-gate fields in workflow.json
 These are the only structured framework fields; they drive real behavior.
@@ -115,7 +94,7 @@ STEP 5 — REVIEW PATH (when framework is already set up)
 You're auditing existing setup, not bootstrapping. Walk through these checks and surface any issues with proposed fixes. Apply nothing without user confirmation.
 
 5.1 — **Workflow Profile sanity**
-- Is the existing "## Workflow Profile" still accurate given the current plan? If the workflow has evolved (steps added/removed, mode changed) but the profile section is stale, propose updating it.
+- Is the existing Workflow Profile block still accurate given the current plan? If the workflow has evolved (steps added/removed, mode changed) but the profile is stale, propose updating it.
 - Are primary type, secondary traits, and the four axes filled in with rationale, or are some empty / placeholder?
 - Are the behavioral implications still relevant?
 
@@ -150,9 +129,9 @@ For each broken metric, name the metric, the resolve_error, and the recommended 
 
 After STEP 5 — Record what you reviewed and recommended in `builder/improve.html` as a prose timeline entry (a dated "Framework review" entry) summarizing the review, so the audit trail survives the session.
 
-If existing `builder/improve.html` is already long, preserve it as the ledger but compact it after the review:
-- keep Workflow Profile, Active Improvement Index, Archive Index, and latest 10-20 detailed entries in `builder/improve.html`
-- move older resolved/no-action/repeated detailed entries to `builder/improve-archive/YYYY-MM.html`
+If existing `builder/improve.html` is already long, preserve it as the log but compact it after the review:
+- keep the Workflow Profile, the latest ~10–20 timeline entries, and all open findings in `builder/improve.html`
+- move older resolved/no-action/superseded entries to `builder/improve-archive/YYYY-MM.html`
 - preserve prior entries in the archive
-- leave Archive Index rows with date range, entry count, unresolved ids, and summary
-- keep unresolved findings, active hypotheses, current metric/eval gaps, and latest semantic plan/eval/metric changes in the root file
+- leave an archive row with date range, entry count, any still-unresolved findings, and a one-line summary
+- keep open findings, current metric/eval gaps, and the latest semantic plan/eval/metric changes in the root file

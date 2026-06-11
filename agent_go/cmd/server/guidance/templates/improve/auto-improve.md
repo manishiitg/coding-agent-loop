@@ -17,11 +17,11 @@ DISCOVERY
 2. If existing candidate schedules exist, call get_schedule_runs on the most relevant ones to understand whether they are active, useful, stale, too frequent, or missing coverage.
 3. Read soul/soul.md to understand objective and success criteria.
 4. Read variables/variables.json to identify valid group names and enabled groups.
-5. Read builder/improve.html's active sections. This is mandatory: it contains the Workflow Profile, Active Improvement Index, Archive Index, Recent Entries, prior actions, deferred ideas, open replan proposals, and prior scheduled-improvement history. If the file has no retention/index structure yet, read it in full. Read only archive files referenced by unresolved ids, current focus, schedule drift, or the selected evidence window.
+5. Read builder/improve.html. This is mandatory: it contains the Workflow Profile, recent timeline entries, open findings, prior decisions, open replan proposals, and prior scheduled-improvement history. If it's short, read it in full. Read archive files only when an open finding, the current focus, schedule drift, or the selected evidence window points into one.
 6. Read any legacy builder/review.html if present and fold its unresolved findings into builder/improve.html. Carry unresolved open findings into the scheduled harden message.
 7. Read planning/metrics.json and recent db/metrics_history.jsonl rows. Metrics are evidence for harden and for replan proposals; they do not create a separate action path.
 8. Read planning/changelog/ if present and compare recent plan/config changes against builder/improve.html. Recent plan changes increase regression risk and require tighter harden cadence until one or two post-change runs have been reviewed.
-9. **Success must be defined before scheduling — check it FIRST and bootstrap it if missing.** auto-improve cannot optimize toward an undefined goal, so never set up an optimizer schedule for a workflow with no success definition. If builder/improve.html has no "## Workflow Profile" section — or the profile declares business-context accumulation or a frozen/ratchet plan and planning/metrics.json is empty — do NOT skip ahead and do NOT just tell the user to "run /define-success" and stop. Instead, run the define-success bootstrap **inline now**: call `get_workflow_command_guidance(kind="define-success")` and follow it to completion with the user (establish the Workflow Profile + metrics), then resume these steps and continue to scheduling. Only proceed directly to the schedule steps when a Workflow Profile already exists and metrics are defined.
+9. **Success must be defined before scheduling — check it FIRST and bootstrap it if missing.** auto-improve cannot optimize toward an undefined goal, so never set up an optimizer schedule for a workflow with no success definition. If builder/improve.html has no Workflow Profile block — or the profile declares business-context accumulation or a frozen/ratchet plan and planning/metrics.json is empty — do NOT skip ahead and do NOT just tell the user to "run /define-success" and stop. Instead, run the define-success bootstrap **inline now**: call `get_workflow_command_guidance(kind="define-success")` and follow it to completion with the user (establish the Workflow Profile + metrics), then resume these steps and continue to scheduling. Only proceed directly to the schedule steps when a Workflow Profile already exists and metrics are defined.
 
 SCHEDULE STRATEGY
 1. Prefer updating or reusing good existing schedules instead of creating duplicates.
@@ -126,7 +126,7 @@ Bootstrap it with:
 - next improvement hypotheses
 
 If builder/improve.html is already long, compact it while preserving the ledger:
-- keep Workflow Profile, Active Improvement Index, Archive Index, open replan proposals, and latest 10-20 detailed entries in builder/improve.html
+- keep the Workflow Profile, all open findings, open replan proposals, and the latest ~10-20 timeline entries in builder/improve.html
 - move older resolved/no-action/repeated detailed entries to `builder/improve-archive/YYYY-MM.html`
 - leave Archive Index rows naming date range, entry count, unresolved ids, and summary
 - never archive away unresolved findings, open replan proposals, active hypotheses, current schedule strategy, current metric/eval gaps, or the latest semantic plan/eval/metric change

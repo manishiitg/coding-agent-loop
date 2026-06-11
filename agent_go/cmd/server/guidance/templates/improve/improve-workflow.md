@@ -18,7 +18,7 @@ MIGRATION (one-time): if a legacy `builder/improve.md` or `builder/review.html`/
 
 SETUP
 1. Read soul/soul.md and extract the objective and success criteria.
-2. Read builder/improve.html's active sections: Workflow Profile, Active Improvement Index, Archive Index, Recent Entries, prior actions, deferred ideas, and next hypotheses. If the file has no retention/index structure yet, read it in full.
+2. Read builder/improve.html: the Workflow Profile, recent timeline entries, open findings, prior decisions, and archive rows. If it's short, read it in full.
    - If the Archive Index or recent entries reference older `builder/improve-archive/YYYY-MM.html` files relevant to the current focus, unresolved ids, metric/eval semantic changes, or selected run window, read only those archive files.
 3. Read any legacy builder/review.html if present and fold its unresolved findings into builder/improve.html. Carry unresolved open findings into your decision.
 4. Read planning/metrics.json and recent db/metrics_history.jsonl rows. Metrics reveal drift, failures, missing values, and whether previous changes are moving the workflow in the right direction.
@@ -131,7 +131,7 @@ After each applied change:
    - remaining gaps and next hypotheses
 
 4. If builder/improve.html is becoming too long (roughly >800 lines, >60 KB, or >20 detailed entries), compact it before finishing:
-   - keep Workflow Profile, Active Improvement Index, Archive Index, and the latest 10-20 detailed entries in builder/improve.html
+   - keep the Workflow Profile, all open findings, and the latest ~10-20 timeline entries in builder/improve.html
    - move older resolved/no-action/repeated detailed entries into `builder/improve-archive/YYYY-MM.html`
    - preserve prior entries in the monthly archive file
    - leave one Archive Index row per archive file with date range, entry count, unresolved ids, and a one-line summary
@@ -165,25 +165,7 @@ A **Decision** records what was applied or proposed, in prose:
 
 When a Decision resolves an open finding, also edit that finding's card in place to add the `Resolved YYYY-MM-DD — <how>` line (CLOSE-OUT above), rather than opening a duplicate.
 
-If compaction is needed, use this active index shape near the top of builder/improve.html:
-
-```md
-## Active Improvement Index
-
-- **Current focus:** <what the next improve pass should inspect first>
-- **Open findings / hypotheses:** <ids and one-line status>
-- **Current metric/eval gaps:** <metric ids / eval ids / resolver errors>
-- **Latest semantic change:** <plan/eval/metric change id and date, or "none">
-- **Recent evidence window:** <iterations/groups to inspect first>
-
-## Archive Index
-
-| Archive | Date range | Entries | Unresolved ids | Summary |
-| --- | --- | ---: | --- | --- |
-| `builder/improve-archive/YYYY-MM.html` | YYYY-MM-DD..YYYY-MM-DD | N | open-finding anchor ids still unresolved, or none | <one-line summary> |
-
-## Recent Entries
-```
+If compaction is needed, keep the Workflow Profile, all open findings, and the latest ~10–20 timeline entries in `builder/improve.html`; move older resolved/superseded entries into `builder/improve-archive/YYYY-MM.html` and leave an archive row in the document's Archive section (date range, entry count, any still-unresolved findings, one-line summary). Format per `get_reference_doc(kind="review-improve-log")`.
 
 FINAL REPORT
 Summarize:

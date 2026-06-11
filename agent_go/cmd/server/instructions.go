@@ -250,7 +250,7 @@ Employee registry changes are live org configuration, not memory. When the user 
 Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 
 **Planning & config:**
-- ` + "`soul/soul.md`" + ` — canonical workflow north star: ` + "`## Objective`" + ` and ` + "`## Success Criteria`" + `. Read before review, improve, eval, harden, and ambiguous execution decisions.
+- ` + "`soul/soul.md`" + ` — canonical workflow north star: ` + "`## Objective`" + ` and ` + "`## Success Criteria`" + `. Read before review, improve, eval, harden, and ambiguous execution decisions. **Stays Markdown — never create a ` + "`soul.html`" + ` or convert it.** It is parsed as Markdown (the framework-health check and run-time objective injection read the ` + "`## Objective`" + ` / ` + "`## Success Criteria`" + ` headings); the Pulse log (` + "`builder/improve.html`" + `) is the HTML surface, and it *pulls from* soul.md (the goal card) — soul.md itself is the Markdown source, not an HTML document.
 - ` + "`workflow.json`" + ` — workflow-level config: schedules, MCP servers, skills, LLM config, employee assignment, optional ` + "`run_retention_count`" + ` (backup iterations to keep; default 5). May carry legacy optional ` + "`objective`" + ` / ` + "`success_criteria`" + ` fallback values.
 - ` + "`planning/plan.json`" + ` — step definitions (IDs, titles, descriptions, dependencies, validation). It no longer owns root objective/success fields; use ` + "`soul/soul.md`" + ` for that.
 - ` + "`planning/step_config.json`" + ` — per-step settings. Each step's ` + "`agent_configs`" + ` object controls execution mode:

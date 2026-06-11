@@ -31,6 +31,8 @@ Tag each **Monitor**, **Open finding**, and **Decision** entry with the axis it 
 
 Directly under the verdicts, show **what the workflow is for**: the one-line objective plus the success criteria from `soul.md`, each with a live status — **Met / Short / At risk** — and the metric or evidence behind that status. This is what the **Goal** verdict is measured against; without it the verdict is opaque. Keep it current as criteria are met or slip. (`/define-success` seeds this from `soul.md` on bootstrap.)
 
+The goal card **reads from `soul.md`** — it does not replace it. `soul.md` stays Markdown (it's parsed for objective/success-criteria); **do not create a `soul.html`** or convert it. This Pulse log is the only HTML document; soul.md is its Markdown source.
+
 ### Signal tiles — grouped by verdict
 
 Render metrics as readable tiles (value + movement in words: `eval 0.78 ▶ target 0.90`, `cost ¢19 ▲ from ¢12`), grouped into **Bug tiles** (did it run: tests executed, last-run status) and **Goal tiles** (is it achieving: eval scores vs target, outcome metrics vs success criteria). Read every number from `planning/metrics.json`, `db/metrics_history.jsonl`, and `scores/evaluation/` — the deterministic source of truth. Never fabricate a value or a trend, and never use charts.

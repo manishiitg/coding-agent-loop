@@ -25,6 +25,7 @@ import {
   ReportView,
 } from '../ReportViewer'
 import { LogViewer, WORKFLOW_LOG_REFRESH_EVENT } from '../LogViewer'
+import { SoulViewer } from '../SoulViewer'
 import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
 import { useEvaluationPlanData } from '../hooks/useEvaluationPlanData'
 import { usePlanToFlow, type WorkflowNode, type WorkflowEdge, type WorkflowNodeData, type StepNodeData, type ConditionalNodeData, type EvaluationStepNodeData } from '../hooks/usePlanToFlow'
@@ -183,6 +184,7 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: 
   const canvasViewMode = useWorkflowStore(state => state.canvasViewMode)
   const isReport = canvasViewMode === 'report'
   const isLog = canvasViewMode === 'log'
+  const isSoul = canvasViewMode === 'soul'
   const devicePref = usePreviewDevice(scopeId)
   const setDevice = (mode: PreviewDevice) => setPreviewDevice(mode, scopeId)
   const showReport = () => {
@@ -199,6 +201,11 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: 
     const s = useWorkflowStore.getState()
     s.setWorkflowWorkspaceView('log')
     s.setCanvasViewMode('log')
+  }
+  const showSoul = () => {
+    const s = useWorkflowStore.getState()
+    s.setWorkflowWorkspaceView('soul')
+    s.setCanvasViewMode('soul')
   }
   const hidePane = () => useWorkflowStore.getState().setShowWorkspacePane(false)
   const download = () => {
@@ -234,7 +241,7 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: 
           aria-label="View controls"
           className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background/90 px-2 py-1 text-xs font-medium text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground"
         >
-          <span>{isReport ? 'Report' : isLog ? 'Log' : 'Plan'}</span>
+          <span>{isReport ? 'Report' : isLog ? 'Pulse' : isSoul ? 'Soul' : 'Plan'}</span>
           <SlidersHorizontal className="h-3.5 w-3.5" />
         </button>
         {canRefresh && (
@@ -259,7 +266,8 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: 
           <button type="button" onClick={showPlan} className={tabCls(canvasViewMode === 'flow')}>Plan</button>
         )}
         <button type="button" onClick={showReport} className={tabCls(isReport)}>Report</button>
-        <button type="button" onClick={showLog} className={tabCls(isLog)}>Log</button>
+        <button type="button" onClick={showLog} className={tabCls(isLog)}>Pulse</button>
+        <button type="button" onClick={showSoul} className={tabCls(isSoul)}>Soul</button>
       </div>
       {(
         <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/70 p-0.5 shadow-sm backdrop-blur-sm">
@@ -395,7 +403,9 @@ const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasPr
             <PreviewPaneControls hasPlan={Boolean(plan?.steps?.length)} scopeId={workspacePath} />
             {workspacePath && (paneMode === 'log'
               ? <LogViewer workspacePath={workspacePath} />
-              : <ReportView workspacePath={workspacePath} focusTier={reportFocusTier} />)}
+              : paneMode === 'soul'
+                ? <SoulViewer workspacePath={workspacePath} />
+                : <ReportView workspacePath={workspacePath} focusTier={reportFocusTier} />)}
           </div>
         )}
       </div>
@@ -2876,8 +2886,8 @@ export const WorkflowCanvasWithProvider = React.memo(forwardRef<WorkflowCanvasRe
   const canvasViewMode = useWorkflowStore(state => state.canvasViewMode)
   const effectiveCanvasViewMode = props.viewMode || canvasViewMode
 
-  // Report and Log are both lightweight preview-pane views (no React Flow tree).
-  if (effectiveCanvasViewMode === 'report' || effectiveCanvasViewMode === 'log') {
+  // Report, Pulse (log), and Soul are lightweight preview-pane views (no React Flow tree).
+  if (effectiveCanvasViewMode === 'report' || effectiveCanvasViewMode === 'log' || effectiveCanvasViewMode === 'soul') {
     return <WorkflowReportCanvasInner {...props} ref={ref} />
   }
 

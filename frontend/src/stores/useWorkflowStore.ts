@@ -51,11 +51,11 @@ import { resolveGroupFolderPath } from '../utils/workflowUtils'
 import { normalizeRunFolder } from '../utils/workflowStateNormalization'
 import { getRawActiveWorkspaceId, getWorkspaceScopedStorageKey } from './useWorkspaceConnectionStore'
 
-export type WorkflowWorkspaceView = 'builder' | 'report' | 'flow' | 'log' | null
+export type WorkflowWorkspaceView = 'builder' | 'report' | 'flow' | 'log' | 'soul' | null
 
 // Layout direction for workflow canvas
 export type LayoutDirection = 'LR' | 'TB'
-export type CanvasViewMode = 'flow' | 'report' | 'log'
+export type CanvasViewMode = 'flow' | 'report' | 'log' | 'soul'
 
 const SELECTED_GROUP_IDS_KEY = 'workflow_selected_group_ids'
 const CURRENT_RUNNING_GROUP_ID_KEY = 'workflow_current_running_group_id'
@@ -107,6 +107,7 @@ function normalizeWorkflowWorkspaceView(view: unknown): WorkflowWorkspaceView {
     case 'report':
     case 'flow':
     case 'log':
+    case 'soul':
     case null:
       return view
     case 'plan':
@@ -168,7 +169,8 @@ function loadWorkflowUIStateByPreset(): Record<string, PersistedWorkflowUIState>
         canvasViewMode:
           candidate.canvasViewMode === 'flow' ||
           candidate.canvasViewMode === 'report' ||
-          candidate.canvasViewMode === 'log'
+          candidate.canvasViewMode === 'log' ||
+          candidate.canvasViewMode === 'soul'
             ? candidate.canvasViewMode as CanvasViewMode
             : candidate.canvasViewMode === 'plan'
               ? 'flow'
@@ -581,7 +583,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
       canvasViewMode: (() => {
         try {
           const saved = getWorkflowStorageItem(CANVAS_VIEW_MODE_KEY)
-          if (saved === 'flow' || saved === 'report' || saved === 'log') {
+          if (saved === 'flow' || saved === 'report' || saved === 'log' || saved === 'soul') {
             return saved
           }
           if (saved === 'plan') return 'flow'

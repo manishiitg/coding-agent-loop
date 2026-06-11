@@ -1597,10 +1597,6 @@ export const agentApi = {
     const response = await api.get('/api/workflow/metrics-history', { params: { workspace_path: workspacePath } })
     return { ...response.data, rows: Array.isArray(response.data?.rows) ? response.data.rows : [] }
   },
-  getAutoImprovementEvalTrajectory: async (workspacePath: string): Promise<{ success: boolean; series: any[]; error?: string }> => {
-    const response = await api.get('/api/workflow/eval-trajectory', { params: { workspace_path: workspacePath } })
-    return { ...response.data, series: Array.isArray(response.data?.series) ? response.data.series : [] }
-  },
   getBuilderDoc: async (workspacePath: string, doc: 'improve' | 'review' | 'soul', filePath?: string): Promise<{ success: boolean; doc: string; path: string; exists: boolean; content: string; error?: string }> => {
     const response = await api.get('/api/workflow/builder-doc', { params: { workspace_path: workspacePath, doc, path: filePath || '' } })
     return response.data

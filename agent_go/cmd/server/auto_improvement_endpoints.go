@@ -14,84 +14,10 @@ import (
 // HTTP endpoints for the auto-improvement framework.
 //
 // Routes (registered in server.go alongside the other api/workflow/* routes):
-//   GET  /api/workflow/eval-trajectory?workspace_path=...
 //   GET  /api/workflow/metrics?workspace_path=...
 //
 // All read-only.
 // =====================================================================
-
-// EvalTrajectoryPoint is one (run_folder, score) sample for a single eval step.
-type EvalTrajectoryPoint struct {
-	RunFolder    string  `json:"run_folder"`
-	GeneratedAt  string  `json:"generated_at"`
-	Score        int     `json:"score"`
-	MaxScore     int     `json:"max_score"`
-	ScorePercent float64 `json:"score_percent"`
-}
-
-// EvalTrajectorySeries is one eval step's time series.
-type EvalTrajectorySeries struct {
-	StepID string                `json:"step_id"`
-	Points []EvalTrajectoryPoint `json:"points"`
-}
-
-// EvalTrajectoryResponse is the JSON shape of GET /api/workflow/eval-trajectory.
-type EvalTrajectoryResponse struct {
-	Success bool                   `json:"success"`
-	Series  []EvalTrajectorySeries `json:"series"`
-	Error   string                 `json:"error,omitempty"`
-}
-
-// (api *StreamingAPI) handleGetEvalTrajectory streams a per-eval-step time
-// series built from the existing /scores/evaluation/ daily files. Zero schema
-// change; this is the cheapest first step of the framework.
-func (api *StreamingAPI) handleGetEvalTrajectory(w http.ResponseWriter, r *http.Request) {
-	if !setupCORS(w, r, http.MethodGet) {
-		return
-	}
-	workspacePath, ok := requireWorkspacePath(w, r)
-	if !ok {
-		return
-	}
-	series, err := computeEvalTrajectory(r.Context(), workspacePath)
-	if err != nil {
-		writeAIJSON(w, EvalTrajectoryResponse{Success: false, Error: err.Error()})
-		return
-	}
-	writeAIJSON(w, EvalTrajectoryResponse{Success: true, Series: series})
-}
-
-func computeEvalTrajectory(ctx context.Context, workspacePath string) ([]EvalTrajectorySeries, error) {
-	reports, err := readAllEvaluationReportsFromScores(ctx, workspacePath)
-	if err != nil {
-		return nil, err
-	}
-	bySeries := make(map[string][]EvalTrajectoryPoint)
-	for runFolder, report := range reports {
-		for _, step := range report.StepScores {
-			pct := 0.0
-			if step.MaxScore > 0 {
-				pct = (float64(step.Score) / float64(step.MaxScore)) * 100.0
-			}
-			bySeries[step.StepID] = append(bySeries[step.StepID], EvalTrajectoryPoint{
-				RunFolder:    runFolder,
-				GeneratedAt:  report.GeneratedAt,
-				Score:        step.Score,
-				MaxScore:     step.MaxScore,
-				ScorePercent: pct,
-			})
-		}
-	}
-	out := make([]EvalTrajectorySeries, 0, len(bySeries))
-	for stepID, points := range bySeries {
-		sort.Slice(points, func(i, j int) bool {
-			return points[i].GeneratedAt < points[j].GeneratedAt
-		})
-		out = append(out, EvalTrajectorySeries{StepID: stepID, Points: points})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].StepID < out[j].StepID })
-	return out, nil
-}
 
 // MetricsResponse is the JSON shape of GET /api/workflow/metrics.
 type MetricsResponse struct {

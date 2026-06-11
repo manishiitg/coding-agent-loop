@@ -8,9 +8,6 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Line,
-  LineChart,
-  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -1422,53 +1419,6 @@ export const EmployeeDashboard: React.FC = () => {
     }
   }, [selectedWorkflow?.metricsSummary, latestMetricRows])
 
-  const metricTrends = useMemo(() => {
-    const byMetric = new Map<string, MetricSnapshotRow[]>()
-    for (const row of reviewState.metricsHistory) {
-      if (!row.has_value || typeof row.value !== 'number') continue
-      const rows = byMetric.get(row.metric_id) || []
-      rows.push(row)
-      byMetric.set(row.metric_id, rows)
-    }
-
-    return Array.from(byMetric.entries())
-      .map(([metricId, rows]) => {
-        const metric = metricById.get(metricId)
-        const sortedRows = [...rows].sort((a, b) => a.completed_at.localeCompare(b.completed_at))
-        const points = sortedRows.map(row => {
-          const parsed = new Date(row.completed_at)
-          return {
-            completedAt: row.completed_at,
-            dateLabel: Number.isNaN(parsed.getTime())
-              ? row.completed_at
-              : parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-            value: row.value,
-            runFolder: row.run_folder,
-            passed: row.passed,
-          }
-        })
-        const first = points[0]?.value ?? 0
-        const latest = points[points.length - 1]?.value ?? 0
-        return {
-          metricId,
-          label: metric?.label || metricId,
-          unit: metric?.unit,
-          direction: metric?.direction,
-          target: metric?.target,
-          floor: metric?.floor,
-          ceiling: metric?.ceiling,
-          points,
-          latest,
-          delta: latest - first,
-        }
-      })
-      .filter(trend => trend.points.length > 0)
-      .sort((a, b) => {
-        const rankDelta = metricRoleRank(metricById.get(a.metricId)) - metricRoleRank(metricById.get(b.metricId))
-        return rankDelta !== 0 ? rankDelta : a.label.localeCompare(b.label)
-      })
-  }, [metricById, reviewState.metricsHistory])
-
   // Cost trend: daily totals per day, split into execution / evaluation / phase
   // (phase = workflow-builder/planning/etc, not tied to a specific run).
   const costTrend = useMemo(() => {
@@ -2062,98 +2012,9 @@ export const EmployeeDashboard: React.FC = () => {
                       </div>
                     )}
 
-                    {metricTrends.length > 0 && (
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Metric trends</div>
-                          <div className="text-[11px] text-muted-foreground">
-                            {reviewState.metricsHistory.length} snapshot{reviewState.metricsHistory.length !== 1 ? 's' : ''}
-                          </div>
-                        </div>
-                        <div className="grid gap-3 xl:grid-cols-2">
-                          {metricTrends.map(trend => {
-                            const roleLabel = metricRoleLabel(metricById.get(trend.metricId))
-                            const referenceValue = typeof trend.target === 'number'
-                              ? trend.target
-                              : typeof trend.floor === 'number'
-                                ? trend.floor
-                                : typeof trend.ceiling === 'number'
-                                  ? trend.ceiling
-                                  : null
-                            const referenceLabel = typeof trend.target === 'number'
-                              ? 'Target'
-                              : typeof trend.floor === 'number'
-                                ? 'Floor'
-                                : typeof trend.ceiling === 'number'
-                                  ? 'Ceiling'
-                                  : null
-                            const hasImproved = trend.direction === 'lower_better' ? trend.delta <= 0 : trend.delta >= 0
-                            const deltaClass = trend.delta === 0
-                              ? 'text-muted-foreground'
-                              : hasImproved
-                                ? 'text-success'
-                                : 'text-destructive'
-                            return (
-                              <div key={trend.metricId} className="rounded-xl border border-border bg-card px-4 py-3">
-                                <div className="mb-2 flex items-start justify-between gap-3">
-                                  <div className="min-w-0">
-                                    <div className="flex min-w-0 flex-wrap items-center gap-2">
-                                      <div className="truncate text-sm font-medium text-foreground">{trend.label}</div>
-                                      {roleLabel && (
-                                        <span className={`rounded-full border px-1.5 py-0.5 text-[10px] font-semibold uppercase leading-none ${metricRoleClass(roleLabel)}`}>
-                                          {roleLabel}
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">{trend.metricId}</div>
-                                  </div>
-                                  <div className="text-right">
-                                    <div className="text-sm font-semibold text-foreground">{formatMetricDisplayValue(trend.latest, trend.unit)}</div>
-                                    <div className={`text-[11px] ${deltaClass}`}>
-                                      {trend.delta === 0 ? 'no change' : `${trend.delta > 0 ? '+' : ''}${formatMetricDisplayValue(trend.delta, trend.unit)}`}
-                                    </div>
-                                  </div>
-                                </div>
-                                <div className="h-32 w-full">
-                                  <ResponsiveContainer width="100%" height="100%">
-                                    <LineChart data={trend.points} margin={{ top: 8, right: 12, left: -8, bottom: 0 }}>
-                                      <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border" opacity={0.25} />
-                                      <XAxis dataKey="dateLabel" fontSize={10} tick={{ fill: 'currentColor' }} className="text-muted-foreground" />
-                                      <YAxis fontSize={10} tick={{ fill: 'currentColor' }} className="text-muted-foreground" width={36} />
-                                      <Tooltip
-                                        formatter={(value: unknown) => [
-                                          typeof value === 'number' ? formatMetricDisplayValue(value, trend.unit) : String(value),
-                                          trend.label,
-                                        ]}
-                                        labelFormatter={(_, payload) => {
-                                          const point = payload?.[0]?.payload as { completedAt?: string; runFolder?: string } | undefined
-                                          if (!point) return ''
-                                          const parsed = point.completedAt ? new Date(point.completedAt) : null
-                                          const label = parsed && !Number.isNaN(parsed.getTime())
-                                            ? parsed.toLocaleString()
-                                            : point.completedAt || ''
-                                          return point.runFolder ? `${label} · ${point.runFolder}` : label
-                                        }}
-                                        contentStyle={{ fontSize: 12, borderRadius: 6 }}
-                                      />
-                                      {referenceValue !== null && (
-                                        <ReferenceLine
-                                          y={referenceValue}
-                                          stroke="#94a3b8"
-                                          strokeDasharray="4 4"
-                                          label={{ value: referenceLabel || '', position: 'insideTopRight', fontSize: 10, fill: '#64748b' }}
-                                        />
-                                      )}
-                                      <Line type="monotone" dataKey="value" stroke="#6366f1" strokeWidth={2} dot={{ r: 2 }} activeDot={{ r: 4 }} isAnimationActive={false} />
-                                    </LineChart>
-                                  </ResponsiveContainer>
-                                </div>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    )}
+                    {/* Metric trends chart removed — per-metric latest values live in the
+                        summary tiles and the metric table below; trajectory now lives in the
+                        agent-curated workflow log. */}
 
                     {latestMetricRows.length > 0 && (
                       <div className="overflow-hidden rounded-xl border border-border bg-card">

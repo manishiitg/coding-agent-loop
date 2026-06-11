@@ -1,5 +1,5 @@
 import React from 'react'
-import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, GitBranch, CheckCircle, Search, BookOpen } from 'lucide-react'
+import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, GitBranch, CheckCircle, Search, BookOpen, Activity } from 'lucide-react'
 import type { CommandContext, CommandDefinition } from './types'
 
 function submitGuidedWorkflowCommand(
@@ -209,6 +209,18 @@ export const builtinCommands: CommandDefinition[] = [
     source: 'builtin',
     execute: (ctx) => {
       submitGuidedWorkflowCommand(ctx, 'review-code', { background: true })
+    }
+  },
+  {
+    command: 'monitor',
+    description: 'Post-run monitor: record Bug + Goal verdicts for the latest run into the workflow log',
+    icon: <Activity className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'workshop',
+    source: 'builtin',
+    execute: (ctx) => {
+      submitGuidedWorkflowCommand(ctx, 'monitor')
     }
   },
   {

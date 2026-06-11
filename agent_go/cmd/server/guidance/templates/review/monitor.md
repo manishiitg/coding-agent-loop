@@ -1,0 +1,7 @@
+Run the **post-run monitor** on this workflow's most recent run — the same read-only triage the scheduler runs automatically when `post_run_monitor` is enabled, but triggered on demand.
+
+1. Identify the run to check: the latest run folder under `runs/` — normally `iteration-0` (the active run). If the user named a specific run folder or run id, use that instead. If there is no run yet, tell the user there's nothing to monitor until the workflow has run once.
+2. Call `get_reference_doc(kind="post-run-monitor")` and follow it **exactly** for that run: read the run evidence, the plan changelog (`planning/changelog/`), and the eval/metric files (`scores/evaluation/`, `db/metrics_history.jsonl`); form a **Bug** verdict (did it run right) and a **Goal** verdict (is it hitting `soul.md` success criteria — health gates goal); then update `builder/improve.html` (verdict pills, goal card, signal tiles, one run row, and a Monitor entry only if something is wrong, correlated to the changelog) and write `builder/monitor-verdict.json`.
+3. This is a **read-only triage pass** — do NOT run the workflow, dispatch sub-agents, fix anything, or edit the plan. Diagnose and report only.
+
+When done, report to the user in two short lines — the **Bug** verdict and the **Goal** verdict — and whether you recorded a new finding (and if so, its one-line headline).{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}

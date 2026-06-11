@@ -2,7 +2,6 @@ package step_based_workflow
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 )
 
@@ -132,10 +131,9 @@ func stringsReplace(s, old, new string, n int) string {
 // prompt injection, readiness checks — MUST go through this rather than reading
 // plan.Objective / plan.SuccessCriteria directly.
 //
-// Resolution order:
-//  1. soul/soul.md `## Objective` and `## Success Criteria` sections (canonical).
-//  2. workflow.json `objective` / `success_criteria` (legacy fallback; pre-dated
-//     soul.md and is still written by the workflow creator for new workflows).
+// soul/soul.md `## Objective` and `## Success Criteria` are the SINGLE source of
+// truth. The old workflow.json root `objective` / `success_criteria` fallback was
+// removed — there is one place now.
 //
 // Scaffold placeholders (`<TODO: ...>`) are treated as empty so a freshly
 // created soul.md doesn't leak literal TODO text into prompts.
@@ -144,27 +142,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) ResolveWorkflowObjective(ctx context.
 	if err == nil {
 		objective = stripSoulTodoPlaceholder(soulObj)
 		successCriteria = stripSoulTodoPlaceholder(soulSC)
-	}
-	if objective != "" && successCriteria != "" {
-		return objective, successCriteria
-	}
-	// Legacy fallback: workflow.json root-level objective/success_criteria.
-	manifest, err := hcpo.ReadWorkspaceFile(ctx, "workflow.json")
-	if err != nil {
-		return objective, successCriteria
-	}
-	var wf struct {
-		Objective       string `json:"objective"`
-		SuccessCriteria string `json:"success_criteria"`
-	}
-	if json.Unmarshal([]byte(manifest), &wf) != nil {
-		return objective, successCriteria
-	}
-	if objective == "" {
-		objective = strings.TrimSpace(wf.Objective)
-	}
-	if successCriteria == "" {
-		successCriteria = strings.TrimSpace(wf.SuccessCriteria)
 	}
 	return objective, successCriteria
 }

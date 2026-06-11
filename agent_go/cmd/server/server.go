@@ -4779,29 +4779,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
-				// Extract workflow objective and success_criteria from soul/soul.md (the
-				// canonical source; plan.json no longer holds these fields). Falls back
-				// to workflow.json — see ResolveWorkflowObjective in soul_helpers.go for
-				// the same resolution order the runtime uses.
+				// Extract workflow objective and success_criteria from soul/soul.md —
+				// the single canonical source (plan.json and workflow.json no longer
+				// hold these fields). See ResolveWorkflowObjective in soul_helpers.go.
 				if workflowPhaseID == workflowtypes.WorkflowStatusWorkflowBuilder {
 					objective, successCriteria, _ := todo_creation_human.ReadWorkflowObjectiveFromSoul(setupCtx, phaseWorkspacePath, phaseReadFile)
-					if strings.TrimSpace(objective) == "" || strings.TrimSpace(successCriteria) == "" {
-						// Legacy fallback to workflow.json root fields.
-						if manifest, err := phaseReadFile(setupCtx, phaseWorkspacePath+"/workflow.json"); err == nil {
-							var wf struct {
-								Objective       string `json:"objective"`
-								SuccessCriteria string `json:"success_criteria"`
-							}
-							if json.Unmarshal([]byte(manifest), &wf) == nil {
-								if objective == "" {
-									objective = wf.Objective
-								}
-								if successCriteria == "" {
-									successCriteria = wf.SuccessCriteria
-								}
-							}
-						}
-					}
 					if objective != "" {
 						phaseTemplateVars["WorkflowObjective"] = objective
 					}

@@ -29,8 +29,6 @@ type WorkflowManifest struct {
 	SchemaVersion     int                       `json:"schema_version"`
 	ID                string                    `json:"id"`
 	Label             string                    `json:"label"`
-	Objective         string                    `json:"objective,omitempty"`
-	SuccessCriteria   string                    `json:"success_criteria,omitempty"`
 	Capabilities      WorkflowCapabilities      `json:"capabilities"`
 	ExecutionDefs     WorkflowExecutionDefaults `json:"execution_defaults"`
 	Ownership         WorkflowOwnership         `json:"ownership"`

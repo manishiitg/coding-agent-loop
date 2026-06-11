@@ -1140,9 +1140,51 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 		if err := UpdateScheduleRun(ctx, sctx.WorkspacePath, runID, status, errMsg, &durationMs, runFolder, sessionID); err != nil {
 			s.sessionLogf(sctx, sessionID, "[SCHEDULER] Failed to update run entry for %s: %v", schedID, err)
 		}
+
+		// Post-run monitor: a cheap, read-only triage pass that records Bug + Goal
+		// verdicts and any silent-failure / drift finding into the workflow log.
+		// Workflow (workshop) schedules only; never affects the run's recorded result.
+		if runFolder != "" {
+			s.runPostRunMonitor(ctx, sctx, status, runFolder)
+		}
 	}
 
 	return sessionID, execErr
+}
+
+// runPostRunMonitor fires a short, read-only agent pass after a scheduled
+// workflow run. It reads the run evidence, plan changelog, and eval/metric
+// files, then records a Bug verdict and a Goal verdict plus any finding into
+// builder/improve.html (the workflow log) and writes builder/monitor-verdict.json.
+// It never fixes anything and never changes the run's recorded status — failures
+// here are logged and swallowed. The monitor's behaviour is defined by the
+// post-run-monitor reference doc; this just hands it the run context.
+func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *ScheduleContext, runStatus, runFolder string) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.logf(sctx, "[MONITOR] post-run monitor panic (recovered): %v", r)
+		}
+	}()
+
+	sessionID := s.newScheduleSessionID(sctx)
+	reqMap := s.buildWorkshopRequest(ctx, sctx)
+	reqMap["query"] = fmt.Sprintf(
+		"You are the post-run monitor. A scheduled run of this workflow just finished: status=%q, run_folder=%q. "+
+			"Call get_reference_doc(kind=\"post-run-monitor\") and follow it exactly: read the run evidence, the plan changelog, and the eval/metric files; "+
+			"form a Bug verdict and a Goal verdict; update builder/improve.html (verdict pills, goal card, signal tiles, one run row, and a Monitor entry only if something is wrong); "+
+			"and write builder/monitor-verdict.json. Do NOT run the workflow, dispatch sub-agents, or fix anything — this is a read-only triage pass.",
+		runStatus, runFolder)
+
+	s.sessionLogf(sctx, sessionID, "[MONITOR] starting post-run monitor for %s (run_folder=%s status=%s)", sctx.Schedule.ID, runFolder, runStatus)
+	if err := s.api.startSessionInternal(ctx, reqMap, sessionID, "", nil); err != nil {
+		s.sessionLogf(sctx, sessionID, "[MONITOR] failed to start: %v", err)
+		return
+	}
+	if err := s.waitForWorkshopIdle(ctx, sessionID); err != nil {
+		s.sessionLogf(sctx, sessionID, "[MONITOR] idle wait failed: %v", err)
+		return
+	}
+	s.sessionLogf(sctx, sessionID, "[MONITOR] post-run monitor completed for %s", sctx.Schedule.ID)
 }
 
 // executeJob builds a session request from the manifest and runs it.

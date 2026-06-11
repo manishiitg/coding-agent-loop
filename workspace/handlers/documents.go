@@ -879,6 +879,13 @@ func GetDocument(c *gin.Context) {
 		Encoding: encoding,
 	}
 
+	// Opt-in last-modified: only set (and thus serialize, given omitempty) when
+	// the caller explicitly asks. Keeps the default single-file read response
+	// shape unchanged; used by the toolbar's "unseen builder docs" freshness dot.
+	if c.Query("need_last_modified") == "true" {
+		doc.LastModified = info.ModTime().UTC().Format("2006-01-02T15:04:05Z07:00")
+	}
+
 	// Check if this is a download request (query parameter or Accept header)
 	downloadParam := c.Query("download")
 	acceptHeader := c.GetHeader("Accept")

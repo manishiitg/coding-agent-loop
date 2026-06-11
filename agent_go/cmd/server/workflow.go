@@ -248,7 +248,9 @@ func readWorkspaceFileMeta(ctx context.Context, filePath string) (bool, string) 
 	for i, segment := range pathSegments {
 		encodedSegments[i] = url.PathEscape(segment)
 	}
-	apiURL := getWorkspaceAPIURL() + "/api/documents/" + strings.Join(encodedSegments, "/")
+	// need_last_modified=true: this meta read exists purely for the freshness
+	// timestamp, which GetDocument only serializes when explicitly requested.
+	apiURL := getWorkspaceAPIURL() + "/api/documents/" + strings.Join(encodedSegments, "/") + "?need_last_modified=true"
 	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
 		return false, ""

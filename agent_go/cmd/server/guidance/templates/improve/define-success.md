@@ -49,9 +49,12 @@ Then map the confirmed type/traits onto the internal axes:
 Show your inference + reasoning + the alternative answers you considered for primary type, secondary traits, and each axis. Ask the user to confirm.
 
 STEP 2 — Seed builder/improve.html (the single workflow log)
-If `builder/improve.html` does not exist yet, create it from the **Starter HTML skeleton** in `get_reference_doc(kind="review-improve-log")` — write that document verbatim with `diff_patch_workspace_file` (do NOT `mkdir` via shell; use workflow-relative paths), filling the header (workflow name, oversight chip) and the `<!-- PROFILE -->` placeholder. If the file already exists, edit the profile in place — don't overwrite the timeline.
+If `builder/improve.html` does not exist yet, create it from the **Starter HTML skeleton** in `get_reference_doc(kind="review-improve-log")` — write that document verbatim with `diff_patch_workspace_file` (do NOT `mkdir` via shell; use workflow-relative paths). If the file already exists, edit the goal card / profile in place — don't overwrite the timeline.
 
-Fill the `<!-- PROFILE -->` placeholder with a short, readable **Workflow Profile** block — a `<div class="entry">` (or a small labelled section) containing:
+Fill, in the skeleton:
+- **Header** — workflow name, the type/oversight chips, and both **verdict pills**. With no runs yet, set Bug = "Bug-free" and Goal = "Not yet measured" (warn) — be honest that the goal is unproven until the first run produces eval/metric evidence.
+- **The goal card** — the one-line **objective** from `soul.md` in `.obj`, then one `.crit` row per **success criterion** from `soul.md`. Until the first run, mark each criterion status as `short` ("not yet measured — needs a run") rather than `met`; the metric/evidence note can name the metric that will measure it.
+- **The Workflow Profile** — append a short readable profile block right after the goal card (a small labelled section or `<div class="entry">`) with:
 
 - **Primary type** — <chosen> — <one-line rationale>
 - **Secondary traits** — <list or "none"> — <one-line rationale>

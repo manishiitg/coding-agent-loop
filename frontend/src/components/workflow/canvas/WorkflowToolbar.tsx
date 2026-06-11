@@ -8,7 +8,6 @@ import {
   Package,
   Database,
   Table2,
-  TrendingUp,
   ShieldCheck,
   Activity,
 } from 'lucide-react'
@@ -30,7 +29,6 @@ import ExecutionLogsPopup from '../ExecutionLogsPopup'
 import CostsPopup from '../CostsPopup'
 import WorkflowVersionsPopup from '../WorkflowVersionsPopup'
 import WorkflowAccessPopup from '../WorkflowAccessPopup'
-import AutoImprovementPopup from '../AutoImprovementPopup'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
 import {
   resolveGroupFolderPath
@@ -142,50 +140,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // Costs popup state
   const [showCostsPopup, setShowCostsPopup] = useState(false)
 
-  const [showAutoImprovementPopup, setShowAutoImprovementPopup] = useState(false)
-
-  // "Unseen" badge for the auto-improvement (experiments) icon: show a dot when
-  // builder/review.html or builder/improve.html changed since the user last
-  // viewed that doc's tab. Per-doc "seen" timestamps persist in localStorage.
-  const [docsStatus, setDocsStatus] = useState<{
-    improve: { exists: boolean; last_modified?: string }
-    review: { exists: boolean; last_modified?: string }
-  } | null>(null)
-  const [docsSeenTick, setDocsSeenTick] = useState(0)
-  const refreshDocsStatus = useCallback(async () => {
-    if (!workspacePath) { setDocsStatus(null); return }
-    try {
-      const res = await agentApi.getBuilderDocsStatus(workspacePath)
-      if (res.success) setDocsStatus({ improve: res.improve, review: res.review })
-    } catch { /* leave prior status; this is a soft signal */ }
-  }, [workspacePath])
-  useEffect(() => {
-    void refreshDocsStatus()
-    const id = setInterval(() => { void refreshDocsStatus() }, 60000)
-    return () => clearInterval(id)
-  }, [refreshDocsStatus])
-  const readDocsSeen = useCallback((ws: string): { improve?: string; review?: string } => {
-    try { return (JSON.parse(localStorage.getItem('builderDocsSeen') || '{}')[ws]) || {} } catch { return {} }
-  }, [])
-  const markDocSeen = useCallback((which: 'improve' | 'review') => {
-    if (!workspacePath) return
-    const lm = which === 'improve' ? docsStatus?.improve?.last_modified : docsStatus?.review?.last_modified
-    try {
-      const all = JSON.parse(localStorage.getItem('builderDocsSeen') || '{}')
-      all[workspacePath] = { ...(all[workspacePath] || {}), [which]: lm || new Date().toISOString() }
-      localStorage.setItem('builderDocsSeen', JSON.stringify(all))
-    } catch { /* localStorage may be unavailable; badge just won't persist */ }
-    setDocsSeenTick((t) => t + 1)
-  }, [workspacePath, docsStatus])
-  const hasUnseenDocs = useMemo(() => {
-    if (!workspacePath || !docsStatus) return false
-    void docsSeenTick // recompute after markDocSeen
-    const seen = readDocsSeen(workspacePath)
-    const isNewer = (st: { exists: boolean; last_modified?: string }, seenLm?: string) =>
-      st.exists && !!st.last_modified && (!seenLm || new Date(st.last_modified).getTime() > new Date(seenLm).getTime())
-    return isNewer(docsStatus.improve, seen.improve) || isNewer(docsStatus.review, seen.review)
-  }, [workspacePath, docsStatus, docsSeenTick, readDocsSeen])
-
   // Post-run monitor opt-in (workflow.json::post_run_monitor). When on, a cheap
   // read-only triage pass runs after each scheduled run and records Bug + Goal
   // verdicts into the workflow log.
@@ -218,7 +172,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     setShowExecutionLogsPopup(false)
     setShowCostsPopup(false)
     setShowVersionsPopup(false)
-    setShowAutoImprovementPopup(false)
   }, [])
   
   // Close popups only when switching between two concrete workflows.
@@ -380,26 +333,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       {/* Right side - View controls */}
       <div data-tour="workflow-tools" data-testid="tour-workflow-tools" className="ml-auto flex shrink-0 items-center gap-1">
         <TooltipProvider delayDuration={150}>
-        {/* Auto-improvement framework — metrics, trajectory, decisions (read-only safe for run users) */}
-        {workspacePath && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => setShowAutoImprovementPopup(true)}
-                className="relative p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-              >
-                <TrendingUp className="w-3.5 h-3.5" />
-                {hasUnseenDocs && (
-                  <span
-                    className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-primary ring-2 ring-background"
-                    aria-label="New review/improve update"
-                  />
-                )}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom"><p>Auto-improvement (metrics, trajectory, decisions){hasUnseenDocs ? ' — new review/improve update' : ''}</p></TooltipContent>
-          </Tooltip>
-        )}
         {/* Post-run monitor opt-in — toggles workflow.json::post_run_monitor */}
         {workspacePath && (
           <Tooltip>
@@ -578,15 +511,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       workspacePath={workspacePath || null}
       runFolder={contextRunFolder}
       runFolders={runFoldersNames}
-    />
-
-    {/* Auto-improvement framework popup */}
-    <AutoImprovementPopup
-      isOpen={showAutoImprovementPopup}
-      onClose={() => { setShowAutoImprovementPopup(false); void refreshDocsStatus() }}
-      workspacePath={workspacePath || null}
-      selectedRunFolder={contextRunFolder}
-      onViewDoc={markDocSeen}
     />
 
     {/* Workflow Versions Popup */}

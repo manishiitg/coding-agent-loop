@@ -46,8 +46,7 @@ type WorkflowManifest struct {
 	// guidance, dual-mode declarations) lives as prose in builder/improve.html
 	// — the agent reads improve.html on every improvement turn anyway, and prose
 	// captures nuance that enums can't.
-	OversightMode         OversightMode         `json:"oversight_mode,omitempty"`
-	DecisionLogMutability DecisionLogMutability `json:"decision_log_mutability,omitempty"`
+	OversightMode OversightMode `json:"oversight_mode,omitempty"`
 }
 
 // WorkflowCapabilities stores workflow-wide agent and tool configuration.
@@ -175,14 +174,6 @@ func ValidateManifest(m *WorkflowManifest) error {
 			return fmt.Errorf("invalid oversight_mode: %s", m.OversightMode)
 		}
 	}
-	if m.DecisionLogMutability != "" {
-		switch m.DecisionLogMutability {
-		case DecisionLogAppendOnly, DecisionLogAppendOnlyStrict:
-		default:
-			return fmt.Errorf("invalid decision_log_mutability: %s", m.DecisionLogMutability)
-		}
-	}
-
 	return nil
 }
 
@@ -376,14 +367,11 @@ func applyManifestDefaults(m *WorkflowManifest) {
 		}
 	}
 
-	// Auto-improvement framework defaults. Only the two hard-gate fields
-	// default-fill — typology and plan-stability live as prose in
-	// builder/improve.html, not as manifest enums.
+	// Auto-improvement framework defaults. oversight_mode is the one hard-gate
+	// field that default-fills — typology, plan-stability, and decision-log
+	// handling live as prose in builder/improve.html, not as manifest enums.
 	if m.OversightMode == "" {
 		m.OversightMode = OversightSupervised
-	}
-	if m.DecisionLogMutability == "" {
-		m.DecisionLogMutability = DecisionLogAppendOnly
 	}
 }
 

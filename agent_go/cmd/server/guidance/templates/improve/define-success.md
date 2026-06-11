@@ -7,7 +7,7 @@ Either bootstrap the auto-improvement framework (one-time configuration: Workflo
 Focus / hints from user: {{.Focus}}{{end}}
 
 DISCOVERY (read-only)
-1. Read workflow.json. Note any existing oversight_mode / decision_log_mutability.
+1. Read workflow.json. Note any existing oversight_mode.
 2. Read builder/improve.html if present — note any existing "## Workflow Profile" section, Active Improvement Index, Archive Index, and recent entries. If there is no index/retention structure yet, read the file in full.
 3. Read soul/soul.md to extract the workflow's objective and success_criteria.
 4. Read planning/plan.json — note the steps, their types, and overall structure (frozen plan vs in flux vs explore/exploit).
@@ -88,7 +88,6 @@ STEP 3 — Set the two hard-gate fields in workflow.json
 These are the only structured framework fields; they drive real behavior.
 
 - `oversight_mode` — `manual` / `supervised` (default) / `autonomous`. Recommended defaults: deterministic + ratcheting workflow → `manual`; exploratory → `autonomous`; contextual / business-context → `supervised`.
-- `decision_log_mutability` — `append_only` (default) / `append_only_strict`. Set strict ONLY for compliance / audit workflows where structured improve.html decision entries are forensic.
 
 STEP 4 — Bootstrap metrics.json
 Behavior depends on the profile from Step 1:
@@ -96,7 +95,7 @@ Behavior depends on the profile from Step 1:
 - Primary `deterministic_harden_first` or plan stability `ratchet`/`frozen` + business context `none`: propose 3–5 SLO-mode metrics — success-rate (floor), schema/file validity, data freshness, `cost_per_run` (ceiling), `run_duration_seconds` (ceiling). Source: `telemetry` for cost/duration, `eval_step` for the rest.
 - Primary `open_metric_optimization`: propose 3–5 outcome metrics derived from success_criteria plus 1–2 operational SLOs. Outcome metrics should be target-mode where the workflow is trying to move a number; they drive experiments and replans.
 - Primary `business_context_accumulating` or business context `accumulating`: REQUIRED. Propose 3–5 outcome + rule-conformance metrics derived from success_criteria. Mix outcome metrics (mode=`target`, drive toward a value) with SLO metrics (mode=`slo`, stay above floor / below ceiling) — outcome metrics drive progress, SLOs enforce constraints.
-- Primary `compliance_audit`: propose evidence-completeness, false-negative, traceability, and policy-coverage SLOs. Prefer strict improve-ledger mutability and supervised/manual oversight.
+- Primary `compliance_audit`: propose evidence-completeness, false-negative, traceability, and policy-coverage SLOs. Prefer supervised/manual oversight, and keep the improve-ledger forensic (never edit past entries, only append).
 - Primary `human_review_production`: propose approval-rate, revision-count/edit-burden, provenance completeness, and draft-quality metrics.
 - Primary `monitoring_alerting`: propose false-positive, false-negative/missed-alert, alert-latency, and escalation-quality metrics.
 - Primary `research_synthesis`: propose citation/source freshness, source diversity, unsupported-claim count, and synthesis-usefulness metrics.
@@ -121,7 +120,7 @@ You're auditing existing setup, not bootstrapping. Walk through these checks and
 - Are the behavioral implications still relevant?
 
 5.2 — **Hard-gate fields**
-- Verify `oversight_mode` and `decision_log_mutability` in workflow.json match the workflow profile. A "ratchet" stability with `oversight_mode: autonomous` is mismatched and should be flagged.
+- Verify `oversight_mode` in workflow.json matches the workflow profile. A "ratchet" stability with `oversight_mode: autonomous` is mismatched and should be flagged.
 
 5.3 — **Metric definitions**
 - Read every entry in `planning/metrics.json::metrics[]`.

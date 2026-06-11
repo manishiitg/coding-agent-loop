@@ -42,15 +42,6 @@ const (
 	PlanStabilityFrozen  PlanStability = "frozen"
 )
 
-// DecisionLogMutability — controls whether structured improve.html decision
-// entries can be edited.
-type DecisionLogMutability string
-
-const (
-	DecisionLogAppendOnly       DecisionLogMutability = "append_only"
-	DecisionLogAppendOnlyStrict DecisionLogMutability = "append_only_strict"
-)
-
 // DecisionSource — who emitted this decision.
 type DecisionSource string
 

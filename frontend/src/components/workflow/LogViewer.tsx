@@ -47,7 +47,8 @@ export function LogViewer({ workspacePath }: LogViewerProps) {
     return () => window.removeEventListener(WORKFLOW_LOG_REFRESH_EVENT, onRefresh)
   }, [load])
 
-  const isHtml = content.trimStart().startsWith('<!DOCTYPE') || content.trimStart().startsWith('<html')
+  const head = content.trimStart().toLowerCase()
+  const isHtml = head.startsWith('<!doctype') || head.startsWith('<html')
 
   if (loading && !content) {
     return (

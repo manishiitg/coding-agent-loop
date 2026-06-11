@@ -139,7 +139,7 @@ const BuilderDocPanel: React.FC<BuilderDocPanelProps> = ({ which, doc, loading, 
         )}
         {doc && doc.exists && (
           <div className="border rounded-md p-3 bg-card">
-            {doc.content.trimStart().startsWith('<!DOCTYPE') || doc.content.trimStart().startsWith('<html') ? (
+            {(() => { const h = doc.content.trimStart().toLowerCase(); return h.startsWith('<!doctype') || h.startsWith('<html') })() ? (
               <div className="h-[70vh]">
                 <HtmlRenderer content={doc.content} />
               </div>

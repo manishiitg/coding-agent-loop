@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>confida-login · workflow log</title>
+<style>
+  :root{
+    --bg:#f6f6f4; --surface:#ffffff; --ink:#1a1a18; --ink-soft:#5b5b54;
+    --line:#e7e6e1; --line-strong:#d8d7d0;
+    --accent:#3a5a40; --accent-soft:#e7efe6;
+    --warn:#9a6b00; --warn-soft:#fbf1da;
+    --bad:#9b2c2c; --bad-soft:#fbe9e7;
+    --user:#3b4a8c; --user-soft:#e9ecf8;
+    --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;
+    --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:var(--bg); color:var(--ink); font-family:var(--sans);
+    line-height:1.5; -webkit-font-smoothing:antialiased;
+    font-feature-settings:"cv02","cv03","cv04","ss01";
+  }
+  .wrap{max-width:860px; margin:0 auto; padding:40px 28px 96px}
+
+  /* ---- header ---- */
+  .top{display:flex; align-items:flex-start; justify-content:space-between; gap:24px; margin-bottom:8px}
+  .crumb{font:500 12px/1 var(--mono); letter-spacing:.04em; color:var(--ink-soft); text-transform:uppercase}
+  h1{font-size:30px; line-height:1.1; letter-spacing:-.02em; margin:8px 0 0; font-weight:680}
+  .chips{display:flex; flex-wrap:wrap; gap:6px; margin-top:14px}
+  .chip{font:500 12px/1 var(--sans); padding:5px 10px; border-radius:999px; background:var(--surface); border:1px solid var(--line-strong); color:var(--ink-soft)}
+  .chip b{color:var(--ink); font-weight:600}
+  .pill{display:inline-flex; align-items:center; gap:7px; font:600 13px/1 var(--sans); padding:8px 14px; border-radius:999px; white-space:nowrap}
+  .pill.ok{background:var(--accent-soft); color:var(--accent)}
+  .pill.warn{background:var(--warn-soft); color:var(--warn)}
+  .dot{width:7px; height:7px; border-radius:50%; background:currentColor}
+
+  /* ---- signal tiles ---- */
+  .tiles{display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--line); border:1px solid var(--line); border-radius:14px; overflow:hidden; margin:28px 0 36px}
+  .tile{background:var(--surface); padding:16px 16px 14px}
+  .tile .k{font:500 11px/1 var(--mono); letter-spacing:.05em; text-transform:uppercase; color:var(--ink-soft)}
+  .tile .v{font-size:23px; font-weight:680; letter-spacing:-.01em; margin-top:9px}
+  .tile .d{font:500 12px/1.2 var(--sans); margin-top:5px; color:var(--ink-soft)}
+  .up{color:var(--accent)} .down{color:var(--bad)}
+
+  /* ---- recent runs (general run log) ---- */
+  .runs{border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--surface); margin-bottom:36px}
+  .run{display:flex; align-items:center; gap:14px; padding:11px 16px; border-top:1px solid var(--line); font:500 13px/1 var(--mono); color:var(--ink-soft)}
+  .run:first-child{border-top:none}
+  .run.flag{background:var(--warn-soft)}
+  .run .id{color:var(--ink); font-weight:700; width:38px}
+  .run .st{display:inline-flex; align-items:center; gap:6px; width:96px}
+  .run .st .d{width:6px; height:6px; border-radius:50%}
+  .run .st.ok .d{background:var(--accent)} .run .st.ok{color:var(--accent)}
+  .run .st.warn .d{background:var(--warn)} .run .st.warn{color:var(--warn)}
+  .run .col{width:78px} .run .col b{color:var(--ink); font-weight:600}
+  .run .ago{margin-left:auto; color:var(--line-strong)}
+  .run .note{color:var(--warn); font:500 12px/1 var(--sans)}
+
+  /* ---- timeline ---- */
+  .seclabel{font:600 12px/1 var(--mono); letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); margin:0 0 16px}
+  .entry{position:relative; background:var(--surface); border:1px solid var(--line); border-left:3px solid var(--line-strong);
+         border-radius:12px; padding:18px 20px; margin-bottom:14px}
+  .entry.monitor{border-left-color:var(--warn)}
+  .entry.agent{border-left-color:var(--accent)}
+  .entry.user{border-left-color:var(--user); background:linear-gradient(0deg,var(--user-soft),var(--user-soft)),var(--surface); background-blend-mode:normal}
+  .entry.open{border-left-color:var(--bad)}
+  .ehead{display:flex; align-items:center; gap:10px; margin-bottom:9px}
+  .tag{font:700 10px/1 var(--mono); letter-spacing:.07em; text-transform:uppercase; padding:4px 7px; border-radius:5px}
+  .tag.monitor{background:var(--warn-soft); color:var(--warn)}
+  .tag.agent{background:var(--accent-soft); color:var(--accent)}
+  .tag.user{background:var(--user-soft); color:var(--user)}
+  .tag.open{background:var(--bad-soft); color:var(--bad)}
+  .tag.note{background:#eeede; color:var(--ink-soft); background:#efeee9}
+  .entry.note{border-left-color:var(--line-strong)}
+  .etitle{font-weight:620; font-size:15px; letter-spacing:-.01em}
+  .when{margin-left:auto; font:500 12px/1 var(--mono); color:var(--ink-soft)}
+  .entry p{margin:0; color:var(--ink); font-size:14.5px}
+  .entry p + p{margin-top:9px}
+  .entry .meta{margin-top:11px; font:500 12px/1.4 var(--mono); color:var(--ink-soft)}
+  .entry .meta code{background:var(--bg); border:1px solid var(--line); border-radius:5px; padding:1px 6px; color:var(--ink)}
+  .ref{color:var(--accent); text-decoration:none; border-bottom:1px solid var(--accent-soft)}
+
+  /* ---- archive ---- */
+  .archive{margin-top:40px; border:1px solid var(--line); border-radius:12px; background:var(--surface); overflow:hidden}
+  .arow{display:flex; align-items:center; gap:14px; padding:14px 18px; border-top:1px solid var(--line); font-size:14px; color:var(--ink-soft); cursor:pointer}
+  .arow:first-child{border-top:none}
+  .arow b{color:var(--ink); font-weight:600}
+  .arow .n{margin-left:auto; font:500 12px/1 var(--mono)}
+  .arow .arr{color:var(--line-strong)}
+  .unres{font:600 11px/1 var(--sans); color:var(--bad); background:var(--bad-soft); padding:3px 7px; border-radius:999px}
+
+  footer{margin-top:48px; padding-top:20px; border-top:1px solid var(--line); font:500 12px/1.6 var(--mono); color:var(--ink-soft); display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <div>
+      <div class="crumb">workflow · log</div>
+      <h1>confida-login</h1>
+    </div>
+    <div class="pill warn"><span class="dot"></span>Needs attention</div>
+  </div>
+
+  <div class="chips">
+    <span class="chip">Type <b>QA / regression testing</b></span>
+    <span class="chip">Oversight <b>supervised</b></span>
+    <span class="chip">Last run <b>#41 · 2h ago</b></span>
+    <span class="chip">Schedule <b>daily 06:00</b></span>
+  </div>
+
+  <div class="tiles">
+    <div class="tile"><div class="k">Tests passing</div><div class="v">18 / 20</div><div class="d down">▼ 2 since run #39</div></div>
+    <div class="tile"><div class="k">Eval score</div><div class="v">0.86</div><div class="d up">▲ from 0.79</div></div>
+    <div class="tile"><div class="k">Cost / run</div><div class="v">¢19</div><div class="d down">▲ from ¢12</div></div>
+    <div class="tile"><div class="k">Last run</div><div class="v">completed</div><div class="d">no code errors</div></div>
+  </div>
+
+  <p class="seclabel">Recent runs</p>
+  <div class="runs">
+    <div class="run flag">
+      <span class="id">#41</span><span class="st warn"><span class="d"></span>completed</span>
+      <span class="col"><b>18</b>/20</span><span class="col">eval <b>0.86</b></span><span class="col"><b>¢19</b></span>
+      <span class="note">⚠ login-flow skipped</span><span class="ago">2h ago</span>
+    </div>
+    <div class="run">
+      <span class="id">#40</span><span class="st warn"><span class="d"></span>completed</span>
+      <span class="col"><b>18</b>/20</span><span class="col">eval <b>0.84</b></span><span class="col"><b>¢18</b></span>
+      <span class="note">⚠ login-flow skipped</span><span class="ago">1d ago</span>
+    </div>
+    <div class="run">
+      <span class="id">#39</span><span class="st ok"><span class="d"></span>completed</span>
+      <span class="col"><b>20</b>/20</span><span class="col">eval <b>0.86</b></span><span class="col"><b>¢14</b></span>
+      <span></span><span class="ago">2d ago</span>
+    </div>
+    <div class="run">
+      <span class="id">#38</span><span class="st ok"><span class="d"></span>completed</span>
+      <span class="col"><b>20</b>/20</span><span class="col">eval <b>0.79</b></span><span class="col"><b>¢12</b></span>
+      <span></span><span class="ago">3d ago</span>
+    </div>
+  </div>
+
+  <p class="seclabel">Latest — newest first</p>
+
+  <!-- MONITOR -->
+  <div class="entry monitor">
+    <div class="ehead"><span class="tag monitor">Monitor</span><span class="etitle">login-flow test silently regressed</span><span class="when">today 08:12</span></div>
+    <p>Run&nbsp;#41 completed “successfully,” but the <b>login-flow</b> test now returns <code style="font-family:var(--mono)">skipped</code> instead of running — it has produced no real evidence for 2 runs. Nothing errored, so the schedule reported green.</p>
+    <p>The plan changelog shows the <b>maker-reviewer</b> gate prompt was tightened on <b>run #39</b> (<i>your edit — reason: “reduce false approvals”</i>). The new gate rejects the login journey before it executes. <b>Most likely cause.</b></p>
+    <div class="meta">evidence: <code>runs/iteration-0/.../login-flow.json</code> · change: <code>changelog-2026-06-09 · update_regular_step(maker-reviewer)</code> · <a class="ref" href="#">open run →</a></div>
+  </div>
+
+  <!-- AGENT decision -->
+  <div class="entry agent">
+    <div class="ehead"><span class="tag agent">Agent · hardened</span><span class="etitle">Require non-empty screenshot before a test is committed</span><span class="when">yesterday 19:40</span></div>
+    <p>Added a pre-validation rule to <b>audit-finalizer</b>: a test cannot be marked PASS unless its screenshot file is present and &gt;0 bytes. Closes the empty-evidence finding from June&nbsp;7 — three tests had been committed on blank screenshots.</p>
+    <div class="meta">resolves finding from 2026-06-07 · touched <code>planning/step_config.json</code></div>
+  </div>
+
+  <!-- USER rule -->
+  <div class="entry user">
+    <div class="ehead"><span class="tag user">User rule · authoritative</span><span class="etitle">Don’t test journeys already logged as open bugs</span><span class="when">2 days ago</span></div>
+    <p>“Never write a test for a user journey that’s already an <b>open bug in Linear</b> — we know it’s broken, a failing test there is just noise.” Captured from chat; agents must treat this as a hard constraint, not a suggestion.</p>
+  </div>
+
+  <!-- NOTE / point to note -->
+  <div class="entry note">
+    <div class="ehead"><span class="tag note">Note</span><span class="etitle">Staging UI is mid-redesign — selectors will keep moving</span><span class="when">2 days ago</span></div>
+    <p>The Confida team is actively reworking the staging login screen this sprint. Expect <code style="font-family:var(--mono)">[data-testid]</code> churn and occasional flakiness through ~June&nbsp;20 — not a workflow bug. Worth holding off on aggressive harden passes against selectors until it settles.</p>
+  </div>
+
+  <!-- OPEN finding -->
+  <div class="entry open">
+    <div class="ehead"><span class="tag open">Open finding</span><span class="etitle">Cost per run climbing — flaky-selector retries</span><span class="when">3 days ago</span></div>
+    <p>Cost drifted ¢12 → ¢19 over 6 runs. Trace shows sub-agents retrying on a flaky <code style="font-family:var(--mono)">[data-testid]</code> selector that moved in the staging UI. Not yet fixed — candidate for the next harden pass.</p>
+    <div class="meta">status: <b style="color:var(--bad)">open</b> · first seen run #35</div>
+  </div>
+
+  <!-- archive -->
+  <p class="seclabel" style="margin-top:40px">Archive</p>
+  <div class="archive">
+    <div class="arow"><b>2026-05</b><span>34 entries</span><span class="unres">2 unresolved</span><span class="n">May 1 – 31</span><span class="arr">→</span></div>
+    <div class="arow"><b>2026-04</b><span>21 entries</span><span class="n">Apr 8 – 30</span><span class="arr">→</span></div>
+  </div>
+
+  <footer>
+    <span>generated by the workflow agent</span>
+    <span>newest first · older detail archived monthly</span>
+  </footer>
+
+</div>
+</body>
+</html>

@@ -77,66 +77,85 @@ Some workspaces still have legacy `builder/improve.md` / `builder/review.md`, or
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title><!-- WORKFLOW NAME --> · workflow log</title>
+<title><!-- WORKFLOW NAME --> · pulse</title>
 <style>
-  :root{--bg:#f6f6f4;--surface:#fff;--ink:#1a1a18;--ink-soft:#5b5b54;--line:#e7e6e1;--line-strong:#d8d7d0;
-    --accent:#3a5a40;--accent-soft:#e7efe6;--warn:#9a6b00;--warn-soft:#fbf1da;--bad:#9b2c2c;--bad-soft:#fbe9e7;
-    --user:#3b4a8c;--user-soft:#e9ecf8;--goal:#7a3b8c;--goal-soft:#f3e9f6;
-    --mono:"SF Mono",ui-monospace,Menlo,monospace;--sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;}
+  :root{
+    --bg:#f7f7f5;--surface:#fff;--surface-2:#fbfbfa;
+    --ink:#191917;--ink-2:#57564f;--ink-3:#8a897f;
+    --line:#eceae4;--line-2:#e0ded7;
+    --ok:#3f7a4a;--ok-bg:#eaf3ea;--warn:#9a6a05;--warn-bg:#fbf2dd;--bad:#b0322b;--bad-bg:#fbe9e6;
+    --goal:#7c4a90;--goal-bg:#f4ecf7;--user:#3a4a8f;--user-bg:#eceffb;
+    --shadow:0 1px 2px rgba(20,20,18,.04),0 4px 16px -8px rgba(20,20,18,.10);
+    --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;--sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;--r:14px;}
   /* Dark palette — the app injects data-theme="dark" on <html> when its theme is dark. Keep this block. */
-  html[data-theme="dark"]{--bg:#141413;--surface:#1d1d1b;--ink:#e8e7e2;--ink-soft:#a3a299;--line:#2c2b28;--line-strong:#3a3935;
-    --accent:#7fb086;--accent-soft:#1d2a20;--warn:#d9a441;--warn-soft:#2c2410;--bad:#e0726a;--bad-soft:#2c1614;
-    --user:#8a9bd8;--user-soft:#1a1f33;--goal:#c08ad0;--goal-soft:#271a2c;}
+  html[data-theme="dark"]{
+    --bg:#0a0a0c;--surface:#15151a;--surface-2:#101014;
+    --ink:#f1f0f4;--ink-2:#9b9ba6;--ink-3:#64646e;
+    --line:#212128;--line-2:#2e2e37;
+    --ok:#5fd08a;--ok-bg:#0f2419;--warn:#e6b450;--warn-bg:#241d0c;--bad:#f47e76;--bad-bg:#2a1412;
+    --goal:#d3a0e6;--goal-bg:#231829;--user:#92a6f5;--user-bg:#141a32;
+    --shadow:0 1px 0 rgba(255,255,255,.04) inset,0 1px 2px rgba(0,0,0,.45),0 10px 30px -14px rgba(0,0,0,.75);}
   html{color-scheme:light} html[data-theme="dark"]{color-scheme:dark}
-  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.5}
-  .wrap{max-width:880px;margin:0 auto;padding:40px 28px 96px}
-  .top{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;flex-wrap:wrap}
-  h1{font-size:30px;letter-spacing:-.02em;margin:6px 0 0;font-weight:680}
-  .crumb{font:500 12px/1 var(--mono);letter-spacing:.04em;color:var(--ink-soft);text-transform:uppercase}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.5;-webkit-font-smoothing:antialiased;font-feature-settings:"cv02","cv03","ss01";font-variant-numeric:tabular-nums}
+  html[data-theme="dark"] body{background:radial-gradient(1100px 520px at 50% -8%, #17171e 0%, var(--bg) 58%) fixed}
+  .wrap{max-width:820px;margin:0 auto;padding:clamp(20px,4vw,40px) clamp(16px,3.5vw,32px) 88px}
+  .top{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;flex-wrap:wrap}
+  .eyebrow{font:600 11px/1 var(--mono);letter-spacing:.14em;color:var(--ink-3);text-transform:uppercase}
+  h1{font-size:clamp(24px,4vw,31px);line-height:1.05;letter-spacing:-.025em;margin:9px 0 0;font-weight:660}
   .verdicts{display:flex;gap:8px;flex-wrap:wrap}
-  .pill{display:inline-flex;align-items:center;gap:7px;font:600 12.5px/1 var(--sans);padding:8px 13px;border-radius:999px}
-  .pill .lbl{font:700 9px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;opacity:.7}
-  .pill.ok{background:var(--accent-soft);color:var(--accent)} .pill.warn{background:var(--warn-soft);color:var(--warn)} .pill.bad{background:var(--bad-soft);color:var(--bad)}
-  .dot{width:7px;height:7px;border-radius:50%;background:currentColor}
-  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:16px} .chip{font:500 12px/1 var(--sans);padding:5px 10px;border-radius:999px;background:var(--surface);border:1px solid var(--line-strong);color:var(--ink-soft)} .chip b{color:var(--ink)}
-  .goalcard{margin-top:24px;border:1px solid var(--line);border-radius:14px;background:var(--surface);overflow:hidden}
-  .goalcard .obj{padding:16px 20px;font-size:15.5px;line-height:1.45} .goalcard .obj .l{display:block;font:700 9px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--goal);margin-bottom:7px} .goalcard .obj b{font-weight:680}
-  .crit{display:flex;gap:12px;align-items:baseline;padding:11px 20px;border-top:1px solid var(--line);font-size:14px}
-  .crit .cs{flex:none;width:74px;font:700 10px/1.3 var(--mono);letter-spacing:.04em;text-transform:uppercase;padding-top:1px}
-  .crit .cs.met{color:var(--accent)} .crit .cs.short{color:var(--warn)} .crit .cs.risk{color:var(--bad)}
-  .crit .ct{color:var(--ink)} .crit .ct .m{color:var(--ink-soft);font:500 12.5px/1.4 var(--mono)}
-  .grouplbl{font:600 11px/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);margin:26px 0 10px}
-  .tiles{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:14px;overflow:hidden}
-  .tile{background:var(--surface);padding:15px 16px} .tile .k{font:500 11px/1 var(--mono);letter-spacing:.04em;text-transform:uppercase;color:var(--ink-soft)}
-  .tile .v{font-size:22px;font-weight:680;margin-top:8px} .tile .d{font:500 12px/1.2 var(--sans);margin-top:5px;color:var(--ink-soft)} .up{color:var(--accent)} .down{color:var(--bad)} .flat{color:var(--warn)}
-  .seclabel{font:600 12px/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);margin:34px 0 14px}
-  .runs{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--surface)}
-  .run{display:flex;align-items:center;gap:14px;padding:11px 16px;border-top:1px solid var(--line);font:500 13px/1 var(--mono);color:var(--ink-soft)}
-  .run:first-child{border-top:none} .run.flag{background:var(--warn-soft)} .run .id{color:var(--ink);font-weight:700;width:40px}
-  .run .st{display:inline-flex;align-items:center;gap:6px;width:92px} .run .st.ok{color:var(--accent)} .run .st.warn{color:var(--warn)}
-  .run .st .d{width:6px;height:6px;border-radius:50%;background:currentColor} .run .col{width:74px} .run .col b{color:var(--ink)} .run .note{color:var(--warn);font:500 12px/1 var(--sans)} .run .ago{margin-left:auto;color:var(--line-strong)}
-  .entry{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--line-strong);border-radius:12px;padding:18px 20px;margin-bottom:14px}
-  .entry.monitor{border-left-color:var(--warn)} .entry.agent{border-left-color:var(--accent)} .entry.user{border-left-color:var(--user);background:var(--user-soft)} .entry.open{border-left-color:var(--bad)} .entry.note{border-left-color:var(--line-strong)}
-  .ehead{display:flex;align-items:center;gap:9px;margin-bottom:9px;flex-wrap:wrap}
-  .tag{font:700 10px/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;padding:4px 7px;border-radius:5px}
-  .tag.monitor{background:var(--warn-soft);color:var(--warn)} .tag.agent{background:var(--accent-soft);color:var(--accent)} .tag.user{background:var(--user-soft);color:var(--user)} .tag.open{background:var(--bad-soft);color:var(--bad)} .tag.note{background:#efeee9;color:var(--ink-soft)}
-  .kind{font:700 9px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:4px 7px;border-radius:5px;border:1px solid}
-  .kind.bug{color:var(--bad);border-color:var(--bad-soft);background:#fdf3f2} .kind.goal{color:var(--goal);border-color:var(--goal-soft);background:#faf4fb}
-  .etitle{font-weight:620;font-size:15px} .when{margin-left:auto;font:500 12px/1 var(--mono);color:var(--ink-soft)}
-  .entry p{margin:0;font-size:14.5px} .entry p+p{margin-top:9px} .entry .meta{margin-top:11px;font:500 12px/1.4 var(--mono);color:var(--ink-soft)} .resolved{margin-top:10px;font:600 12.5px/1.4 var(--sans);color:var(--accent)}
-  .archive{border:1px solid var(--line);border-radius:12px;background:var(--surface);overflow:hidden}
-  .arow{display:flex;gap:14px;align-items:center;padding:14px 18px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-soft)} .arow:first-child{border-top:none} .arow b{color:var(--ink)} .arow .n{margin-left:auto;font:500 12px/1 var(--mono)}
-  footer{margin-top:44px;padding-top:18px;border-top:1px solid var(--line);font:500 12px/1.4 var(--mono);color:var(--ink-soft)}
+  .pill{display:inline-flex;align-items:center;gap:8px;font:650 13px/1 var(--sans);padding:9px 14px 9px 12px;border-radius:999px;border:1px solid transparent}
+  .pill .lbl{font:700 8.5px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;opacity:.65}
+  .pill.ok{background:var(--ok-bg);color:var(--ok);border-color:color-mix(in srgb,var(--ok) 16%,transparent)}
+  .pill.warn{background:var(--warn-bg);color:var(--warn);border-color:color-mix(in srgb,var(--warn) 16%,transparent)}
+  .pill.bad{background:var(--bad-bg);color:var(--bad);border-color:color-mix(in srgb,var(--bad) 18%,transparent)}
+  .dot{width:7px;height:7px;border-radius:50%;background:currentColor;box-shadow:0 0 0 3px color-mix(in srgb,currentColor 18%,transparent)}
+  .chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:16px}
+  .chip{font:520 12px/1 var(--sans);padding:6px 11px;border-radius:8px;background:var(--surface);border:1px solid var(--line-2);color:var(--ink-2)} .chip b{color:var(--ink);font-weight:600}
+  .goalcard{margin-top:26px;border:1px solid var(--line-2);border-radius:var(--r);background:var(--surface);box-shadow:var(--shadow);overflow:hidden}
+  .goalcard .obj{padding:18px 22px 17px;font-size:16px;line-height:1.5} .goalcard .obj .l{display:block;font:700 9px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--goal);margin-bottom:9px} .goalcard .obj b{font-weight:670}
+  .crit{display:flex;gap:13px;align-items:baseline;padding:12px 22px;border-top:1px solid var(--line);font-size:14px}
+  .crit .cs{flex:none;width:78px;font:700 9.5px/1.3 var(--mono);letter-spacing:.03em;text-transform:uppercase;padding-top:2px}
+  .crit .cs.met{color:var(--ok)} .crit .cs.short{color:var(--warn)} .crit .cs.risk{color:var(--bad)}
+  .crit .ct{color:var(--ink)} .crit .ct .m{display:block;margin-top:3px;color:var(--ink-3);font:520 12px/1.45 var(--mono)}
+  .grouplbl{display:flex;align-items:center;gap:8px;font:650 11px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);margin:30px 2px 12px} .grouplbl::after{content:"";flex:1;height:1px;background:var(--line)}
+  .seclabel{font:650 11px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);margin:34px 2px 14px}
+  .tiles{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+  .tile{background:var(--surface);border:1px solid var(--line-2);border-radius:12px;padding:15px 16px;box-shadow:var(--shadow)}
+  .tile .k{font:600 10.5px/1 var(--mono);letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3)}
+  .tile .v{font-size:25px;font-weight:680;letter-spacing:-.02em;margin-top:10px;line-height:1} .tile .d{font:540 12px/1.3 var(--sans);margin-top:7px;color:var(--ink-2)}
+  .up{color:var(--ok)} .down{color:var(--bad)} .flat{color:var(--warn)}
+  .runs{border:1px solid var(--line-2);border-radius:12px;overflow:hidden;background:var(--surface);box-shadow:var(--shadow)}
+  .run{display:flex;align-items:center;gap:13px;padding:12px 16px;border-top:1px solid var(--line);font:540 13px/1 var(--mono);color:var(--ink-2)}
+  .run:first-child{border-top:none} .run.flag{background:color-mix(in srgb,var(--warn-bg) 60%,var(--surface))}
+  .run .id{color:var(--ink);font-weight:680;width:38px} .run .st{display:inline-flex;align-items:center;gap:6px;width:96px}
+  .run .st.ok{color:var(--ok)} .run .st.warn{color:var(--warn)} .run .st .d{width:5px;height:5px;border-radius:50%;background:currentColor}
+  .run .col{width:78px} .run .col b{color:var(--ink);font-weight:620} .run .note{color:var(--warn);font:560 12px/1 var(--sans)} .run .ago{margin-left:auto;color:var(--ink-3)}
+  .entry{position:relative;background:var(--surface);border:1px solid var(--line-2);border-radius:13px;padding:17px 19px 17px 22px;margin-bottom:12px;box-shadow:var(--shadow)}
+  .entry::before{content:"";position:absolute;left:0;top:14px;bottom:14px;width:3px;border-radius:3px;background:var(--line-2)}
+  .entry.monitor::before{background:var(--warn)} .entry.agent::before{background:var(--ok)} .entry.user::before{background:var(--user)} .entry.open::before{background:var(--bad)} .entry.note::before{background:var(--ink-3)}
+  .ehead{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+  .tag{font:700 9.5px/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;padding:4px 8px;border-radius:6px}
+  .tag.monitor{background:var(--warn-bg);color:var(--warn)} .tag.agent{background:var(--ok-bg);color:var(--ok)} .tag.user{background:var(--user-bg);color:var(--user)} .tag.open{background:var(--bad-bg);color:var(--bad)} .tag.note{background:var(--surface-2);color:var(--ink-2);border:1px solid var(--line-2)}
+  .kind{font:700 8.5px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;padding:4px 7px;border-radius:6px;border:1px solid}
+  .kind.bug{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 22%,transparent)} .kind.goal{color:var(--goal);border-color:color-mix(in srgb,var(--goal) 22%,transparent)}
+  .etitle{font-weight:630;font-size:15px;letter-spacing:-.01em} .when{margin-left:auto;font:540 12px/1 var(--mono);color:var(--ink-3)}
+  .entry p{margin:0;font-size:14.5px;color:var(--ink)} .entry p+p{margin-top:8px}
+  .entry .meta{margin-top:11px;padding-top:11px;border-top:1px solid var(--line);font:540 12px/1.5 var(--mono);color:var(--ink-3)} .entry .meta code{background:var(--surface-2);border:1px solid var(--line);border-radius:5px;padding:1px 6px;color:var(--ink-2)}
+  .resolved{margin-top:11px;display:inline-flex;align-items:center;gap:7px;font:620 12.5px/1.4 var(--sans);color:var(--ok)} .resolved::before{content:"✓";font-size:11px;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;background:var(--ok-bg)}
+  .archive{border:1px solid var(--line-2);border-radius:12px;background:var(--surface);overflow:hidden;box-shadow:var(--shadow)}
+  .arow{display:flex;gap:13px;align-items:center;padding:14px 18px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-2)} .arow:first-child{border-top:none} .arow b{color:var(--ink);font-weight:620} .arow .n{margin-left:auto;font:540 12px/1 var(--mono);color:var(--ink-3)}
+  footer{margin-top:42px;padding-top:18px;border-top:1px solid var(--line);font:540 11.5px/1.5 var(--mono);color:var(--ink-3)}
 </style>
 </head>
 <body><div class="wrap">
 
   <div class="top">
-    <div><div class="crumb">workflow · log</div><h1><!-- WORKFLOW NAME --></h1></div>
+    <div><div class="eyebrow">workflow · pulse</div><h1><!-- WORKFLOW NAME --></h1></div>
     <!-- TWO VERDICTS. Bug: did it run right (ok|warn|bad). Goal: is it hitting success criteria (ok|warn|bad). -->
     <div class="verdicts">
       <div class="pill ok"><span class="lbl">Bug</span><span class="dot"></span>Bug-free</div>
-      <div class="pill ok"><span class="lbl">Goal</span><span class="dot"></span>On-target</div>
+      <div class="pill warn"><span class="lbl">Goal</span><span class="dot"></span>Not yet measured</div>
     </div>
   </div>
   <div class="chips">
@@ -146,28 +165,28 @@ Some workspaces still have legacy `builder/improve.md` / `builder/review.md`, or
   </div>
 
   <!-- THE GOAL: objective + success criteria from soul.md, each with status (met|short|risk).
-       The Goal verdict above is measured against these. Keep the Workflow Profile prose here too. -->
+       The Goal verdict above is measured against these. Keep the Workflow Profile prose nearby. -->
   <div class="goalcard">
     <div class="obj"><span class="l">What this workflow is for</span><!-- one-line objective from soul.md --></div>
-    <div class="crit"><span class="cs met">✓ Met</span><span class="ct"><!-- success criterion --> <span class="m">— evidence/metric</span></span></div>
+    <div class="crit"><span class="cs short">↑ Short</span><span class="ct"><!-- success criterion --><span class="m">not yet measured — needs a run</span></span></div>
     <!-- one .crit row per success criterion; cs = met | short | risk -->
   </div>
 
   <!-- SIGNAL TILES grouped by verdict. Read every number from planning/metrics.json,
        db/metrics_history.jsonl, scores/evaluation/. Never invent. -->
-  <p class="grouplbl">● Bug — operational health</p>
+  <div class="grouplbl">Bug · operational health</div>
   <div class="tiles">
     <div class="tile"><div class="k">—</div><div class="v">—</div><div class="d">no runs yet</div></div>
   </div>
-  <p class="grouplbl">● Goal — success criteria</p>
+  <div class="grouplbl">Goal · success criteria</div>
   <div class="tiles">
     <div class="tile"><div class="k">—</div><div class="v">—</div><div class="d">no runs yet</div></div>
   </div>
 
-  <p class="seclabel">Recent runs</p>
+  <div class="seclabel">Recent runs</div>
   <div class="runs"><!-- one .run row per recent run; add .flag + a .note when something stands out --></div>
 
-  <p class="seclabel">Latest — newest first</p>
+  <div class="seclabel">Latest — newest first</div>
   <!-- LOG ENTRIES: newest first -->
   <!-- Insert each new entry card immediately below this anchor. Monitor/Open-finding/Decision carry a
        <span class="kind bug">Bug</span> or <span class="kind goal">Goal</span> chip. Card kinds:
@@ -178,10 +197,10 @@ Some workspaces still have legacy `builder/improve.md` / `builder/review.md`, or
        <div class="entry note"><div class="ehead"><span class="tag note">Note</span><span class="etitle">…</span><span class="when">…</span></div><p>…</p></div>
        Close an open finding by editing its card to add: <p class="resolved">Resolved YYYY-MM-DD — how.</p> -->
 
-  <p class="seclabel" style="margin-top:36px">Archive</p>
+  <div class="seclabel">Archive</div>
   <div class="archive"><!-- one .arow per monthly archive file once you start rolling entries off --></div>
 
-  <footer>generated by the workflow agent · newest first · bug + goal verdicts · older detail archived monthly</footer>
+  <footer>generated by the workflow agent · newest first · bug + goal verdicts · archived monthly</footer>
 
 </div></body>
 </html>

@@ -25,7 +25,7 @@ import {
   ReportView,
 } from '../ReportViewer'
 import { LogViewer, WORKFLOW_LOG_REFRESH_EVENT } from '../LogViewer'
-import { SoulViewer } from '../SoulViewer'
+import { SoulViewer, WORKFLOW_SOUL_REFRESH_EVENT } from '../SoulViewer'
 import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
 import { useEvaluationPlanData } from '../hooks/useEvaluationPlanData'
 import { usePlanToFlow, type WorkflowNode, type WorkflowEdge, type WorkflowNodeData, type StepNodeData, type ConditionalNodeData, type EvaluationStepNodeData } from '../hooks/usePlanToFlow'
@@ -215,10 +215,11 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: 
   const refresh = () => {
     if (isReport) window.dispatchEvent(new CustomEvent(WORKFLOW_REPORT_REFRESH_EVENT))
     else if (isLog) window.dispatchEvent(new CustomEvent(WORKFLOW_LOG_REFRESH_EVENT))
+    else if (isSoul) window.dispatchEvent(new CustomEvent(WORKFLOW_SOUL_REFRESH_EVENT))
     else onRefreshPlan?.()
   }
   const canDownload = isReport || Boolean(onExportPlan)
-  const canRefresh = isReport || isLog || Boolean(onRefreshPlan)
+  const canRefresh = isReport || isLog || isSoul || Boolean(onRefreshPlan)
   const tabCls = (active: boolean) =>
     `rounded px-2.5 py-1 text-xs font-medium transition-colors ${
       active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'

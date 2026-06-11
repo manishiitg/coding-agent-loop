@@ -3,6 +3,9 @@ import { Loader2 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 
+// Fired by the preview-pane controls' refresh button when the Soul view is active.
+export const WORKFLOW_SOUL_REFRESH_EVENT = 'workflow-soul-refresh'
+
 interface SoulViewerProps {
   workspacePath: string
 }
@@ -34,6 +37,12 @@ export function SoulViewer({ workspacePath }: SoulViewerProps) {
   }, [workspacePath])
 
   useEffect(() => { void load() }, [load])
+
+  useEffect(() => {
+    const onRefresh = () => { void load() }
+    window.addEventListener(WORKFLOW_SOUL_REFRESH_EVENT, onRefresh)
+    return () => window.removeEventListener(WORKFLOW_SOUL_REFRESH_EVENT, onRefresh)
+  }, [load])
 
   if (loading && !content) {
     return (

@@ -6,7 +6,6 @@ import {
   Target,
   TrendingUp,
   FileText,
-  ClipboardCheck,
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import ModalPortal from '../ui/ModalPortal'
@@ -14,11 +13,11 @@ import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 import { HtmlRenderer } from '../ui/HtmlRenderer'
 
 // =====================================================================
-// AutoImprovementPopup — surfaces a workflow's durable, agent-authored logs:
-// the soul (north star) plus the improve/review ledgers. Metric trajectory
-// charts and the per-run evaluation panel were removed in favour of a single
-// agent-curated HTML log (see docs/design/single-log-view-mockup.html); the
-// deterministic metric/eval evidence files remain as substrate the agent reads.
+// AutoImprovementPopup — the workflow's single agent-curated log
+// (builder/improve.html) plus its north-star soul. Metric/eval trajectory
+// charts and the legacy review-log tab were removed in favour of one HTML log
+// (see docs/design/single-log-view-mockup.html); review findings now live in
+// the log itself, and the deterministic metric/eval files remain as substrate.
 // =====================================================================
 
 interface AutoImprovementPopupProps {
@@ -27,25 +26,23 @@ interface AutoImprovementPopupProps {
   workspacePath: string | null
   // Retained for call-site compatibility; no longer consumed here.
   selectedRunFolder?: string | null
-  // Called when the user actually views the improve/review doc tab, so the
-  // toolbar can clear that doc's "unseen" badge dot.
+  // Called when the user actually views the log, so the toolbar can clear that
+  // doc's "unseen" badge dot.
   onViewDoc?: (which: 'improve' | 'review') => void
 }
 
-type Tab = 'soul' | 'improve' | 'review'
-type BuilderDocKind = 'soul' | 'improve' | 'review'
+type Tab = 'log' | 'soul'
+type BuilderDocKind = 'soul' | 'improve'
 type BuilderDoc = { exists: boolean; content: string; path: string }
 
 const emptyDocLoadingState = (): Record<BuilderDocKind, boolean> => ({
   soul: false,
   improve: false,
-  review: false,
 })
 
 const emptyDocErrorState = (): Record<BuilderDocKind, string | null> => ({
   soul: null,
   improve: null,
-  review: null,
 })
 
 interface BuilderDocArchiveFile {
@@ -68,26 +65,19 @@ const BuilderDocPanel: React.FC<BuilderDocPanelProps> = ({ which, doc, loading, 
   const copy = {
     soul: {
       title: 'Soul',
-      blurb: 'The workflow north star. Optimizer treats this as the source of truth for objective and success criteria; metrics, reviews, and plans are judged against it.',
+      blurb: 'The workflow north star. The optimizer treats this as the source of truth for objective and success criteria; metrics, the log, and plans are judged against it.',
       emptyHint: 'soul/soul.md is missing. Define ## Objective and ## Success Criteria before relying on metrics or improvement.',
     },
     improve: {
-      title: 'Improve log',
-      blurb: 'The optimizer agent\'s durable improvement ledger. Slash commands like /improve-evaluation, /improve-workflow, and /optimize-* read this on the way in and append structured decision blocks here.',
-      emptyHint: 'No entries yet. Run /define-success to bootstrap it, then use /improve-* commands for ongoing changes.',
-    },
-    review: {
-      title: 'Review log',
-      blurb: 'The reviewer agent\'s findings log. /review-* slash commands append dated entries with severity-ordered findings and follow-ups (REVIEW = recommend, not apply).',
-      emptyHint: 'No entries yet. Run any /review-* slash command to append the first entry.',
+      title: 'Workflow log',
+      blurb: 'The workflow\'s single durable journal: applied/proposed changes, review findings, per-run notes, monitor observations, and captured user rules — newest first. /improve-* and /review-* skills and the monitor append here.',
+      emptyHint: 'No entries yet. Run /define-success to bootstrap it, then use /improve-* and /review-* commands for ongoing work.',
     },
   }[which]
-  const showFileMenu = (which === 'improve' || which === 'review') && !!onSelectPath
+  const showFileMenu = which === 'improve' && !!onSelectPath
   const activePath = selectedPath || doc?.path || ''
-  const currentPath = which === 'review' ? 'builder/review.html' : 'builder/improve.html'
-  const currentLabel = which === 'review' ? 'Current review' : 'Current ledger'
-  const filesLabel = which === 'review' ? 'Review files' : 'Improve files'
-  const fileOptions = [{ path: currentPath, label: currentLabel }, ...archiveFiles]
+  const currentPath = 'builder/improve.html'
+  const fileOptions = [{ path: currentPath, label: 'Current log' }, ...archiveFiles]
 
   return (
     <div className="space-y-3">
@@ -119,7 +109,7 @@ const BuilderDocPanel: React.FC<BuilderDocPanelProps> = ({ which, doc, loading, 
       {showFileMenu && (
         <div className="flex items-center justify-between gap-3 rounded-md border bg-card px-3 py-2">
           <div className="min-w-0">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">{filesLabel}</div>
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Log files</div>
             <div className="truncate text-xs text-muted-foreground">{activePath || currentPath}</div>
           </div>
           <select
@@ -168,19 +158,16 @@ const BuilderDocPanel: React.FC<BuilderDocPanelProps> = ({ which, doc, loading, 
 }
 
 const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onClose, workspacePath, onViewDoc }) => {
-  const [tab, setTab] = useState<Tab>('improve')
+  const [tab, setTab] = useState<Tab>('log')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [improveDoc, setImproveDoc] = useState<BuilderDoc | null>(null)
-  const [reviewDoc, setReviewDoc] = useState<BuilderDoc | null>(null)
   const [soulDoc, setSoulDoc] = useState<BuilderDoc | null>(null)
   const [improveArchiveFiles, setImproveArchiveFiles] = useState<BuilderDocArchiveFile[]>([])
-  const [reviewArchiveFiles, setReviewArchiveFiles] = useState<BuilderDocArchiveFile[]>([])
   const [selectedImprovePath, setSelectedImprovePath] = useState('builder/improve.html')
-  const [selectedReviewPath, setSelectedReviewPath] = useState('builder/review.html')
   const [docLoading, setDocLoading] = useState<Record<BuilderDocKind, boolean>>(emptyDocLoadingState)
   const [docError, setDocError] = useState<Record<BuilderDocKind, string | null>>(emptyDocErrorState)
-  const docRequestSeq = useRef<Record<BuilderDocKind, number>>({ soul: 0, improve: 0, review: 0 })
+  const docRequestSeq = useRef<Record<BuilderDocKind, number>>({ soul: 0, improve: 0 })
   const [frameworkHealth, setFrameworkHealth] = useState<{
     soul_exists: boolean
     objective_ok: boolean
@@ -227,8 +214,7 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
       if (docRequestSeq.current[which] !== requestSeq) return
       const payload = { exists: !!res.exists, content: res.content || '', path: res.path || '' }
       if (which === 'soul') setSoulDoc(payload)
-      else if (which === 'improve') setImproveDoc(payload)
-      else setReviewDoc(payload)
+      else setImproveDoc(payload)
       if (!res.success && res.error) setDocError((prev) => ({ ...prev, [which]: res.error || null }))
     } catch (err) {
       if (docRequestSeq.current[which] === requestSeq) {
@@ -241,15 +227,14 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
     }
   }, [workspacePath])
 
-  const fetchDocArchives = useCallback(async (which: 'improve' | 'review') => {
+  const fetchImproveArchives = useCallback(async () => {
     if (!workspacePath) return
     try {
-      const res = await agentApi.getBuilderDocArchives(workspacePath, which)
-      if (which === 'improve') setImproveArchiveFiles(res.success ? res.files : [])
-      else setReviewArchiveFiles(res.success ? res.files : [])
-      if (!res.success && res.error) setDocError((prev) => ({ ...prev, [which]: res.error || null }))
+      const res = await agentApi.getBuilderDocArchives(workspacePath, 'improve')
+      setImproveArchiveFiles(res.success ? res.files : [])
+      if (!res.success && res.error) setDocError((prev) => ({ ...prev, improve: res.error || null }))
     } catch (err) {
-      setDocError((prev) => ({ ...prev, [which]: err instanceof Error ? err.message : String(err) }))
+      setDocError((prev) => ({ ...prev, improve: err instanceof Error ? err.message : String(err) }))
     }
   }, [workspacePath])
 
@@ -258,15 +243,11 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
     docRequestSeq.current = {
       soul: docRequestSeq.current.soul + 1,
       improve: docRequestSeq.current.improve + 1,
-      review: docRequestSeq.current.review + 1,
     }
     setSoulDoc(null)
     setImproveDoc(null)
-    setReviewDoc(null)
     setImproveArchiveFiles([])
-    setReviewArchiveFiles([])
     setSelectedImprovePath('builder/improve.html')
-    setSelectedReviewPath('builder/review.html')
     setDocLoading(emptyDocLoadingState())
     setDocError(emptyDocErrorState())
   }, [workspacePath, isOpen])
@@ -274,34 +255,25 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
   useEffect(() => {
     if (!isOpen || !workspacePath) return
     fetchDoc('improve')
-    fetchDoc('review')
-    fetchDocArchives('improve')
-    fetchDocArchives('review')
-  }, [isOpen, workspacePath, fetchDoc, fetchDocArchives])
+    fetchImproveArchives()
+  }, [isOpen, workspacePath, fetchDoc, fetchImproveArchives])
 
   useEffect(() => {
     if (!isOpen || !workspacePath) return
     if (tab === 'soul' && soulDoc === null) fetchDoc('soul')
-    if (tab === 'improve') {
-      fetchDocArchives('improve')
+    if (tab === 'log') {
+      fetchImproveArchives()
       if (improveDoc === null || improveDoc.path !== selectedImprovePath) {
         fetchDoc('improve', selectedImprovePath === 'builder/improve.html' ? undefined : selectedImprovePath)
       }
     }
-    if (tab === 'review') {
-      fetchDocArchives('review')
-      if (reviewDoc === null || reviewDoc.path !== selectedReviewPath) {
-        fetchDoc('review', selectedReviewPath === 'builder/review.html' ? undefined : selectedReviewPath)
-      }
-    }
-  }, [isOpen, workspacePath, tab, soulDoc, improveDoc, selectedImprovePath, reviewDoc, selectedReviewPath, fetchDoc, fetchDocArchives])
+  }, [isOpen, workspacePath, tab, soulDoc, improveDoc, selectedImprovePath, fetchDoc, fetchImproveArchives])
 
-  // When the user actually views the improve/review doc, clear its toolbar dot.
+  // When the user actually views the log, clear its toolbar dot.
   useEffect(() => {
     if (!isOpen) return
-    if (tab === 'improve' && improveDoc?.exists) onViewDoc?.('improve')
-    if (tab === 'review' && reviewDoc?.exists) onViewDoc?.('review')
-  }, [isOpen, tab, improveDoc?.exists, reviewDoc?.exists, onViewDoc])
+    if (tab === 'log' && improveDoc?.exists) onViewDoc?.('improve')
+  }, [isOpen, tab, improveDoc?.exists, onViewDoc])
 
   if (!isOpen) return null
 
@@ -332,9 +304,8 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
           <div className="flex border-b text-sm">
             {(
               [
+                { id: 'log', icon: FileText, label: 'Log' },
                 { id: 'soul', icon: Target, label: 'Soul' },
-                { id: 'improve', icon: FileText, label: 'Improve log' },
-                { id: 'review', icon: ClipboardCheck, label: 'Review log' },
               ] as const
             ).map((t) => {
               const Icon = t.icon
@@ -382,33 +353,23 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
 
           <div className="flex-1 overflow-y-auto p-4">
             <BuilderDocPanel
-              which={tab}
-              doc={tab === 'soul' ? soulDoc : tab === 'improve' ? improveDoc : reviewDoc}
-              loading={docLoading[tab]}
-              error={docError[tab]}
+              which={tab === 'soul' ? 'soul' : 'improve'}
+              doc={tab === 'soul' ? soulDoc : improveDoc}
+              loading={tab === 'soul' ? docLoading.soul : docLoading.improve}
+              error={tab === 'soul' ? docError.soul : docError.improve}
               onRefresh={() => {
-                if (tab === 'improve') fetchDocArchives('improve')
-                if (tab === 'review') fetchDocArchives('review')
-                const selectedPath = tab === 'improve'
-                  ? selectedImprovePath
-                  : tab === 'review'
-                    ? selectedReviewPath
-                    : ''
-                const rootPath = tab === 'improve'
-                  ? 'builder/improve.html'
-                  : tab === 'review'
-                    ? 'builder/review.html'
-                    : ''
-                fetchDoc(tab, selectedPath && selectedPath !== rootPath ? selectedPath : undefined)
+                if (tab === 'log') {
+                  fetchImproveArchives()
+                  fetchDoc('improve', selectedImprovePath !== 'builder/improve.html' ? selectedImprovePath : undefined)
+                } else {
+                  fetchDoc('soul')
+                }
               }}
-              archiveFiles={tab === 'improve' ? improveArchiveFiles : tab === 'review' ? reviewArchiveFiles : undefined}
-              selectedPath={tab === 'improve' ? selectedImprovePath : tab === 'review' ? selectedReviewPath : undefined}
-              onSelectPath={tab === 'improve' ? (path) => {
+              archiveFiles={tab === 'log' ? improveArchiveFiles : undefined}
+              selectedPath={tab === 'log' ? selectedImprovePath : undefined}
+              onSelectPath={tab === 'log' ? (path) => {
                 setSelectedImprovePath(path)
                 fetchDoc('improve', path === 'builder/improve.html' ? undefined : path)
-              } : tab === 'review' ? (path) => {
-                setSelectedReviewPath(path)
-                fetchDoc('review', path === 'builder/review.html' ? undefined : path)
               } : undefined}
             />
           </div>

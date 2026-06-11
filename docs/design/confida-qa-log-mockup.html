@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>confida-qa · workflow log</title>
+<style>
+  :root{--bg:#f6f6f4;--surface:#fff;--ink:#1a1a18;--ink-soft:#5b5b54;--line:#e7e6e1;--line-strong:#d8d7d0;
+    --accent:#3a5a40;--accent-soft:#e7efe6;--warn:#9a6b00;--warn-soft:#fbf1da;--bad:#9b2c2c;--bad-soft:#fbe9e7;
+    --user:#3b4a8c;--user-soft:#e9ecf8;--goal:#7a3b8c;--goal-soft:#f3e9f6;
+    --mono:"SF Mono",ui-monospace,Menlo,monospace;--sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;}
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.5;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:880px;margin:0 auto;padding:40px 28px 96px}
+  .top{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;flex-wrap:wrap}
+  .crumb{font:500 12px/1 var(--mono);letter-spacing:.04em;color:var(--ink-soft);text-transform:uppercase}
+  h1{font-size:30px;letter-spacing:-.02em;margin:6px 0 0;font-weight:680}
+  .verdicts{display:flex;gap:8px;flex-wrap:wrap}
+  .pill{display:inline-flex;align-items:center;gap:7px;font:600 12.5px/1 var(--sans);padding:8px 13px;border-radius:999px}
+  .pill .lbl{font:700 9px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;opacity:.7}
+  .pill.ok{background:var(--accent-soft);color:var(--accent)} .pill.warn{background:var(--warn-soft);color:var(--warn)} .pill.bad{background:var(--bad-soft);color:var(--bad)}
+  .dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:16px}
+  .chip{font:500 12px/1 var(--sans);padding:5px 10px;border-radius:999px;background:var(--surface);border:1px solid var(--line-strong);color:var(--ink-soft)}
+  .chip b{color:var(--ink)}
+  .goalcard{margin-top:24px;border:1px solid var(--line);border-radius:14px;background:var(--surface);overflow:hidden}
+  .goalcard .obj{padding:16px 20px;font-size:15.5px;line-height:1.45}
+  .goalcard .obj .l{display:block;font:700 9px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--goal);margin-bottom:7px}
+  .goalcard .obj b{font-weight:680}
+  .crit{display:flex;gap:12px;align-items:baseline;padding:11px 20px;border-top:1px solid var(--line);font-size:14px}
+  .crit .cs{flex:none;width:74px;font:700 10px/1.3 var(--mono);letter-spacing:.04em;text-transform:uppercase;padding-top:1px}
+  .crit .cs.met{color:var(--accent)} .crit .cs.short{color:var(--warn)} .crit .cs.risk{color:var(--bad)}
+  .crit .ct{color:var(--ink)} .crit .ct .m{color:var(--ink-soft);font:500 12.5px/1.4 var(--mono)}
+  .grouplbl{font:600 11px/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);margin:26px 0 10px}
+  .tiles{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .tile{background:var(--surface);padding:15px 16px} .tile .k{font:500 11px/1 var(--mono);letter-spacing:.04em;text-transform:uppercase;color:var(--ink-soft)}
+  .tile .v{font-size:22px;font-weight:680;margin-top:8px} .tile .d{font:500 12px/1.2 var(--sans);margin-top:5px;color:var(--ink-soft)}
+  .up{color:var(--accent)} .down{color:var(--bad)} .flat{color:var(--warn)}
+  .seclabel{font:600 12px/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);margin:34px 0 14px}
+  .runs{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--surface)}
+  .run{display:flex;align-items:center;gap:14px;padding:11px 16px;border-top:1px solid var(--line);font:500 13px/1 var(--mono);color:var(--ink-soft)}
+  .run:first-child{border-top:none} .run.flag{background:var(--warn-soft)} .run .id{color:var(--ink);font-weight:700;width:40px}
+  .run .st{display:inline-flex;align-items:center;gap:6px;width:92px} .run .st.ok{color:var(--accent)} .run .st.warn{color:var(--warn)}
+  .run .st .d{width:6px;height:6px;border-radius:50%;background:currentColor} .run .col{width:74px} .run .col b{color:var(--ink)}
+  .run .note{color:var(--warn);font:500 12px/1 var(--sans)} .run .ago{margin-left:auto;color:var(--line-strong)}
+  .entry{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--line-strong);border-radius:12px;padding:18px 20px;margin-bottom:14px}
+  .entry.monitor{border-left-color:var(--warn)} .entry.agent{border-left-color:var(--accent)}
+  .entry.user{border-left-color:var(--user);background:var(--user-soft)} .entry.open{border-left-color:var(--bad)} .entry.note{border-left-color:var(--line-strong)}
+  .ehead{display:flex;align-items:center;gap:9px;margin-bottom:9px;flex-wrap:wrap}
+  .tag{font:700 10px/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;padding:4px 7px;border-radius:5px}
+  .tag.monitor{background:var(--warn-soft);color:var(--warn)} .tag.agent{background:var(--accent-soft);color:var(--accent)}
+  .tag.user{background:var(--user-soft);color:var(--user)} .tag.open{background:var(--bad-soft);color:var(--bad)} .tag.note{background:#efeee9;color:var(--ink-soft)}
+  .kind{font:700 9px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:4px 7px;border-radius:5px;border:1px solid}
+  .kind.bug{color:var(--bad);border-color:var(--bad-soft);background:#fdf3f2} .kind.goal{color:var(--goal);border-color:var(--goal-soft);background:#faf4fb}
+  .etitle{font-weight:620;font-size:15px} .when{margin-left:auto;font:500 12px/1 var(--mono);color:var(--ink-soft)}
+  .entry p{margin:0;font-size:14.5px} .entry p+p{margin-top:9px} .entry .meta{margin-top:11px;font:500 12px/1.4 var(--mono);color:var(--ink-soft)}
+  .entry .meta code{background:var(--bg);border:1px solid var(--line);border-radius:5px;padding:1px 6px;color:var(--ink)}
+  .resolved{margin-top:10px;font:600 12.5px/1.4 var(--sans);color:var(--accent)}
+  .archive{border:1px solid var(--line);border-radius:12px;background:var(--surface);overflow:hidden}
+  .arow{display:flex;gap:14px;align-items:center;padding:14px 18px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-soft)}
+  .arow:first-child{border-top:none} .arow b{color:var(--ink)} .arow .n{margin-left:auto;font:500 12px/1 var(--mono)} .unres{font:600 11px/1 var(--sans);color:var(--bad);background:var(--bad-soft);padding:3px 7px;border-radius:999px}
+  footer{margin-top:44px;padding-top:18px;border-top:1px solid var(--line);font:500 12px/1.5 var(--mono);color:var(--ink-soft);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+</style>
+</head>
+<body><div class="wrap">
+
+  <div class="top">
+    <div><div class="crumb">workflow · log</div><h1>confida-qa</h1></div>
+    <div class="verdicts">
+      <div class="pill bad"><span class="lbl">Bug</span><span class="dot"></span>Broken</div>
+      <div class="pill warn"><span class="lbl">Goal</span><span class="dot"></span>Short of goal</div>
+    </div>
+  </div>
+  <div class="chips">
+    <span class="chip">Type <b>QA / regression testing</b></span>
+    <span class="chip">Oversight <b>supervised</b></span>
+    <span class="chip">Schedule <b>daily 06:00 IST</b></span>
+    <span class="chip">Last run <b>#41 · 2h ago</b></span>
+  </div>
+
+  <!-- THE GOAL: objective + success criteria from soul.md, each with status. The "Goal" verdict above is measured against these. -->
+  <div class="goalcard">
+    <div class="obj"><span class="l">What this workflow is for</span>Automatically catch <b>real regressions</b> in Confida's critical user journeys on staging <b>before they reach production</b> — and only flag things a human would call a genuine break.</div>
+    <div class="crit"><span class="cs met">✓ Met</span><span class="ct">No false passes, and never test a journey already logged as an open Linear bug. <span class="m">— audit-finalizer enforces both</span></span></div>
+    <div class="crit"><span class="cs short">↑ Short</span><span class="ct">Tests fail when the <b>user-facing behaviour</b> is wrong, not merely when the page changes. <span class="m">— assertion accuracy 0.71, want ≥0.85</span></span></div>
+    <div class="crit"><span class="cs risk">! At risk</span><span class="ct">Cover <b>every</b> critical journey each run (login, reset-password, checkout, account). <span class="m">— login &amp; reset-password skipped 2 runs</span></span></div>
+  </div>
+
+  <!-- TWO-VERDICT SIGNAL: health tiles answer "did it run right", goal tiles answer "is it achieving the success criteria" -->
+  <p class="grouplbl">● Bug — operational health</p>
+  <div class="tiles">
+    <div class="tile"><div class="k">Tests executed</div><div class="v">18 / 20</div><div class="d down">▼ 2 — login-flow &amp; reset-password skipped</div></div>
+    <div class="tile"><div class="k">Last run</div><div class="v">completed</div><div class="d down">no code error, but 2 journeys silently skipped</div></div>
+  </div>
+
+  <p class="grouplbl">● Goal — success criteria (soul.md)</p>
+  <div class="tiles">
+    <div class="tile"><div class="k">Real regressions caught (eval)</div><div class="v">0.78</div><div class="d flat">▶ target 0.90 · plateaued 4 runs</div></div>
+    <div class="tile"><div class="k">Assertion accuracy (eval)</div><div class="v">0.71</div><div class="d down">▼ from 0.83 — passes that don't verify the error message</div></div>
+  </div>
+
+  <p class="seclabel">Recent runs</p>
+  <div class="runs">
+    <div class="run flag"><span class="id">#41</span><span class="st warn"><span class="d"></span>completed</span><span class="col"><b>18</b>/20</span><span class="col">caught <b>0.78</b></span><span class="col"><b>¢19</b></span><span class="note">⚠ login-flow skipped</span><span class="ago">2h ago</span></div>
+    <div class="run"><span class="id">#40</span><span class="st warn"><span class="d"></span>completed</span><span class="col"><b>18</b>/20</span><span class="col">caught <b>0.77</b></span><span class="col"><b>¢18</b></span><span class="note">⚠ login-flow skipped</span><span class="ago">1d ago</span></div>
+    <div class="run"><span class="id">#39</span><span class="st ok"><span class="d"></span>completed</span><span class="col"><b>20</b>/20</span><span class="col">caught <b>0.79</b></span><span class="col"><b>¢14</b></span><span></span><span class="ago">2d ago</span></div>
+    <div class="run"><span class="id">#38</span><span class="st ok"><span class="d"></span>completed</span><span class="col"><b>20</b>/20</span><span class="col">caught <b>0.78</b></span><span class="col"><b>¢13</b></span><span></span><span class="ago">3d ago</span></div>
+  </div>
+
+  <p class="seclabel">Latest — newest first</p>
+  <!-- LOG ENTRIES: newest first -->
+
+  <!-- MONITOR · BUG -->
+  <div class="entry monitor">
+    <div class="ehead"><span class="tag monitor">Monitor</span><span class="kind bug">Bug</span><span class="etitle">login-flow &amp; reset-password silently stopped running</span><span class="when">today 08:12</span></div>
+    <p>Run #41 reported green, but the <b>login-flow</b> and <b>reset-password</b> tests have returned <code>skipped</code> for 2 runs — no real evidence produced, yet the schedule shows success because nothing errored.</p>
+    <p>The plan changelog shows the <b>maker-reviewer</b> gate prompt was tightened on run #39 (<i>your edit — reason: "reduce false approvals"</i>); the stricter gate now rejects these two journeys before they execute. <b>Most likely cause.</b> → routed to <b>harden</b>.</p>
+    <div class="meta">evidence: <code>runs/iteration-0/.../login-flow.json</code> · change: <code>changelog-2026-06-09 · update_regular_step(maker-reviewer)</code></div>
+  </div>
+
+  <!-- OPEN FINDING · GOAL -->
+  <div class="entry open" id="of-2026-06-09-assertion-accuracy">
+    <div class="ehead"><span class="tag open">Open finding</span><span class="kind goal">Goal</span><span class="etitle">Tests pass without actually verifying the error message</span><span class="when">today 08:14</span></div>
+    <p>Assertion-accuracy eval dropped 0.83 → 0.71. Several generated tests assert only that the page changed, not that the <i>correct</i> validation message appeared — so they'd pass even if Confida showed the wrong error. Coverage looks fine; the tests just aren't checking what the success criteria care about. Operationally green, but it misses the goal. → candidate for <b>rubric refine</b>, not harden.</p>
+    <div class="meta">status: <b style="color:var(--bad)">open</b> · first seen run #40 · soul.md: "tests must fail when the user-facing behaviour is wrong, not just when the page changes"</div>
+  </div>
+
+  <!-- AGENT · BUG (resolves an earlier finding) -->
+  <div class="entry agent">
+    <div class="ehead"><span class="tag agent">Agent · hardened</span><span class="kind bug">Bug</span><span class="etitle">Require non-empty screenshot before a test is committed</span><span class="when">yesterday 19:40</span></div>
+    <p>Added a pre-validation rule to <b>audit-finalizer</b>: a test can't be marked PASS without a screenshot file &gt;0 bytes. Three tests had been committed on blank screenshots.</p>
+    <div class="resolved">Resolved 2026-06-08 — closes the empty-evidence finding from June 7.</div>
+  </div>
+
+  <!-- USER RULE -->
+  <div class="entry user">
+    <div class="ehead"><span class="tag user">User rule · authoritative</span><span class="etitle">Don't test journeys already logged as open bugs in Linear</span><span class="when">2 days ago</span></div>
+    <p>"Never write a test for a journey that's already an open bug in Linear (team CON) — we know it's broken; a failing test there is just noise." Agents treat this as a hard constraint; audit-finalizer re-checks Linear before committing.</p>
+  </div>
+
+  <!-- NOTE -->
+  <div class="entry note">
+    <div class="ehead"><span class="tag note">Note</span><span class="etitle">Staging login screen is mid-redesign — selector churn expected</span><span class="when">2 days ago</span></div>
+    <p>Confida is reworking the staging login UI this sprint; expect <code>[data-testid]</code> churn and flakiness through ~June 20. Not a workflow bug — hold off aggressive selector hardening until it settles.</p>
+  </div>
+
+  <p class="seclabel" style="margin-top:36px">Archive</p>
+  <div class="archive">
+    <div class="arow"><b>2026-05</b><span>29 entries</span><span class="unres">1 unresolved</span><span class="n">May 6 – 31</span><span>→</span></div>
+  </div>
+
+  <footer><span>generated by the workflow agent</span><span>newest first · bug + goal verdicts · older detail archived monthly</span></footer>
+
+</div></body>
+</html>

@@ -24,6 +24,7 @@ import {
   reportPreviewPreferenceKey,
   ReportView,
 } from '../ReportViewer'
+import { LogViewer, WORKFLOW_LOG_REFRESH_EVENT } from '../LogViewer'
 import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
 import { useEvaluationPlanData } from '../hooks/useEvaluationPlanData'
 import { usePlanToFlow, type WorkflowNode, type WorkflowEdge, type WorkflowNodeData, type StepNodeData, type ConditionalNodeData, type EvaluationStepNodeData } from '../hooks/usePlanToFlow'
@@ -181,6 +182,7 @@ export function previewDeviceShellClass(device: PreviewDevice): string {
 function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: { hasPlan: boolean; onExportPlan?: () => void; onRefreshPlan?: () => void; scopeId?: string | null }) {
   const canvasViewMode = useWorkflowStore(state => state.canvasViewMode)
   const isReport = canvasViewMode === 'report'
+  const isLog = canvasViewMode === 'log'
   const devicePref = usePreviewDevice(scopeId)
   const setDevice = (mode: PreviewDevice) => setPreviewDevice(mode, scopeId)
   const showReport = () => {
@@ -193,6 +195,11 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: 
     s.setWorkflowWorkspaceView('flow')
     s.setCanvasViewMode('flow')
   }
+  const showLog = () => {
+    const s = useWorkflowStore.getState()
+    s.setWorkflowWorkspaceView('log')
+    s.setCanvasViewMode('log')
+  }
   const hidePane = () => useWorkflowStore.getState().setShowWorkspacePane(false)
   const download = () => {
     if (isReport) window.dispatchEvent(new CustomEvent(WORKFLOW_REPORT_EXPORT_EVENT))
@@ -200,10 +207,11 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: 
   }
   const refresh = () => {
     if (isReport) window.dispatchEvent(new CustomEvent(WORKFLOW_REPORT_REFRESH_EVENT))
+    else if (isLog) window.dispatchEvent(new CustomEvent(WORKFLOW_LOG_REFRESH_EVENT))
     else onRefreshPlan?.()
   }
   const canDownload = isReport || Boolean(onExportPlan)
-  const canRefresh = isReport || Boolean(onRefreshPlan)
+  const canRefresh = isReport || isLog || Boolean(onRefreshPlan)
   const tabCls = (active: boolean) =>
     `rounded px-2.5 py-1 text-xs font-medium transition-colors ${
       active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
@@ -226,7 +234,7 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: 
           aria-label="View controls"
           className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background/90 px-2 py-1 text-xs font-medium text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground"
         >
-          <span>{isReport ? 'Report' : 'Plan'}</span>
+          <span>{isReport ? 'Report' : isLog ? 'Log' : 'Plan'}</span>
           <SlidersHorizontal className="h-3.5 w-3.5" />
         </button>
         {canRefresh && (
@@ -251,6 +259,7 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: 
           <button type="button" onClick={showPlan} className={tabCls(canvasViewMode === 'flow')}>Plan</button>
         )}
         <button type="button" onClick={showReport} className={tabCls(isReport)}>Report</button>
+        <button type="button" onClick={showLog} className={tabCls(isLog)}>Log</button>
       </div>
       {(
         <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/70 p-0.5 shadow-sm backdrop-blur-sm">
@@ -301,8 +310,11 @@ const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasPr
   paneClassName = '',
   className = '',
   hideToolbar = false,
+  viewMode,
 }, ref) => {
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
+  const canvasViewMode = useWorkflowStore(state => state.canvasViewMode)
+  const paneMode = viewMode || canvasViewMode
   // Report renders mobile-framed when chat is focused AND the report pane actually
   // collapses to the narrow 480px column (desktop/mobile). An explicit Tablet choice
   // keeps its 880px frame even while chat is focused.
@@ -381,7 +393,9 @@ const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasPr
         {toolbarOnly ? null : (
           <div className="h-full min-h-0 relative">
             <PreviewPaneControls hasPlan={Boolean(plan?.steps?.length)} scopeId={workspacePath} />
-            {workspacePath && <ReportView workspacePath={workspacePath} focusTier={reportFocusTier} />}
+            {workspacePath && (paneMode === 'log'
+              ? <LogViewer workspacePath={workspacePath} />
+              : <ReportView workspacePath={workspacePath} focusTier={reportFocusTier} />)}
           </div>
         )}
       </div>
@@ -2862,7 +2876,8 @@ export const WorkflowCanvasWithProvider = React.memo(forwardRef<WorkflowCanvasRe
   const canvasViewMode = useWorkflowStore(state => state.canvasViewMode)
   const effectiveCanvasViewMode = props.viewMode || canvasViewMode
 
-  if (effectiveCanvasViewMode === 'report') {
+  // Report and Log are both lightweight preview-pane views (no React Flow tree).
+  if (effectiveCanvasViewMode === 'report' || effectiveCanvasViewMode === 'log') {
     return <WorkflowReportCanvasInner {...props} ref={ref} />
   }
 

@@ -47,8 +47,10 @@ export function LogViewer({ workspacePath }: LogViewerProps) {
     return () => window.removeEventListener(WORKFLOW_LOG_REFRESH_EVENT, onRefresh)
   }, [load])
 
-  const head = content.trimStart().toLowerCase()
-  const isHtml = head.startsWith('<!doctype') || head.startsWith('<html')
+  // The log is HTML by convention — a full <!doctype> document or (legacy) bare
+  // fragments like <div class="improvement-entry">. Either renders in the iframe;
+  // anything starting with a tag is HTML. (soul.md etc. are handled elsewhere.)
+  const isHtml = content.trimStart().startsWith('<')
 
   if (loading && !content) {
     return (

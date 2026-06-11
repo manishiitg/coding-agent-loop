@@ -1,6 +1,6 @@
 Define what success means for this workflow before optimization.
 
-Write to `builder/improve.html`. For the log/HTML format, the one-time `.md → .html` migration (both improve and review logs, including structured decision blocks), the `I-…` id scheme, and the decision-block format, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
+Write to `builder/improve.html` — the single durable log. For the log/HTML format, the one-time migration (folding any legacy `builder/review.html` findings in), and how entries are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
 
 Either bootstrap the auto-improvement framework (one-time configuration: Workflow Profile + metrics) or, if the framework is already in place, audit the existing setup and surface issues.{{if .Focus}}
 
@@ -148,11 +148,11 @@ For each broken metric, name the metric, the resolve_error, and the recommended 
 5.6 — **Telemetry SLOs present?**
 - If `cost_per_run` and `run_duration_seconds` (or `total.cost_usd` / `total.duration_seconds`) aren't defined as telemetry SLOs, suggest adding them. Free signal.
 
-After STEP 5 — Record what you reviewed and recommended in `builder/improve.html` under a "## Framework review YYYY-MM-DD" subsection so the audit trail survives the session. Include a structured `improve-decision` fenced JSON block summarizing the review.
+After STEP 5 — Record what you reviewed and recommended in `builder/improve.html` as a prose timeline entry (a dated "Framework review" entry) summarizing the review, so the audit trail survives the session.
 
 If existing `builder/improve.html` is already long, preserve it as the ledger but compact it after the review:
 - keep Workflow Profile, Active Improvement Index, Archive Index, and latest 10-20 detailed entries in `builder/improve.html`
 - move older resolved/no-action/repeated detailed entries to `builder/improve-archive/YYYY-MM.html`
-- preserve structured `improve-decision` blocks in the archive
+- preserve prior entries in the archive
 - leave Archive Index rows with date range, entry count, unresolved ids, and summary
 - keep unresolved findings, active hypotheses, current metric/eval gaps, and latest semantic plan/eval/metric changes in the root file

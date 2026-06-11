@@ -1,6 +1,6 @@
 Review and improve evaluation/evaluation_plan.json.
 
-Write to `builder/improve.html` (and `builder/review.html` for close-out markers). For the log/HTML format, the one-time `.md → .html` migration (including structured decision blocks), the `I-…` id scheme, and the decision-block format, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
+Write to `builder/improve.html` — the single durable log (close-outs are edits to existing open findings in this same file). For the log/HTML format, the one-time migration (folding any legacy `builder/review.html` findings in), and how entries are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
 
 Eval is the framework's measurement layer — it bridges "the plan ran" and "the goal was met." A good eval plan covers BOTH dimensions:
 
@@ -16,7 +16,7 @@ Focus on: {{.Focus}}.{{end}}
 PASS 0 — FRAMEWORK PRECHECK + METRIC HEALTH
 1. Read builder/improve.html's active sections: Workflow Profile, Active Improvement Index, Archive Index, and Recent Entries. If there is no index/retention structure yet, read it in full. If an archive row references an older eval/metric semantic change that affects a metric or eval step you may edit, read that `builder/improve-archive/YYYY-MM.html` file. If there is no "## Workflow Profile" section, stop and redirect: "Run /define-success first."
 2. Read <workflow>/planning/metrics.json. If absent or empty AND the Workflow Profile declares business-context accumulation OR a frozen/ratchet plan, stop and redirect to /define-success. Plain mutable+exploratory workflows may proceed without metrics.
-3. **Metric impact guard.** For every metric sourced from an eval step you might edit, note its `role` and `category`, then note whether the metric trajectory may change meaning. Primary metrics require extra care: preserve semantics unless the user explicitly agrees to a metric redesign. If the structured-output schema or value semantics change enough that pre/post values are no longer comparable, retire the old metric and propose a replacement with a new id; otherwise append a structured `improve-decision` rubric-change entry in builder/improve.html so future readers know where the line changed.
+3. **Metric impact guard.** For every metric sourced from an eval step you might edit, note its `role` and `category`, then note whether the metric trajectory may change meaning. Primary metrics require extra care: preserve semantics unless the user explicitly agrees to a metric redesign. If the structured-output schema or value semantics change enough that pre/post values are no longer comparable, retire the old metric and propose a replacement with a new id; otherwise add a prose entry in builder/improve.html noting the rubric changed at this point so future readers know pre/post scores aren't comparable.
 4. **Metric health check.** Read db/metrics_history.jsonl (the last ~10 rows per metric id is usually enough). For each metric, check whether the most recent rows have `has_value: true` or carry a `resolve_error`. Categorize each broken metric by what the eval would need to fix it:
    - **Missing structured output** — `resolve_error` says "no structured output (field=X)" or "field X not present". An eval_step metric's source is a PAIRED contract: `source.id` names the eval step AND `source.field` names the structured key — both must hold. Here the targeted eval step (`source.id`) does not emit the numeric key `X` in `output_content`. Two fix paths:
      (a) Update the eval step's Python so it emits a structured JSON object with key `X` (treat as a Pass 3 GOAL improvement — the eval should be measuring the named outcome explicitly).
@@ -79,7 +79,7 @@ If any of these are important to the workflow's reliability and the current eval
 }
 ```
 
-Also check threshold alignment against explicit business rules. If soul.md, improve.html, review.html, the user focus, or plan text says "15 follows/day", "zero hallucinations", "no unsupported claims", "must post every run", etc., the eval and metrics must encode that threshold directly. A weaker floor (for example 3 follows when the target is 15) is false confidence and must be proposed as an eval/metric fix.
+Also check threshold alignment against explicit business rules. If soul.md, improve.html, the user focus, or plan text says "15 follows/day", "zero hallucinations", "no unsupported claims", "must post every run", etc., the eval and metrics must encode that threshold directly. A weaker floor (for example 3 follows when the target is 15) is false confidence and must be proposed as an eval/metric fix.
 
 PASS 3 — IMPROVEMENT SUGGESTIONS
 Propose improvements in these categories. Tag each suggestion with which dimension it strengthens — **OPERATIONAL** (how well the plan ran) or **GOAL** (did the plan achieve success_criteria) — so the user sees both dimensions are getting attention.
@@ -117,10 +117,10 @@ Propose improvements in these categories. Tag each suggestion with which dimensi
 PASS 3.5 — METRIC IMPACT ANALYSIS (mandatory for every eval change)
 Most outcome/quality metrics are eval values extracted in a specific format — `source.type="eval_step"`, `source.id` points at an eval step, and `source.field` reads from its structured output. Telemetry metrics are different: `source.type="telemetry"` reads system data such as cost and duration from run/cost telemetry and is not affected by eval step edits. So **any change to an eval step ripples through every eval_step metric pointing at it, but not telemetry metrics.** Before proposing any eval change, walk through the impact. For each proposed eval change, classify it and list the paired metric actions:
 
-- **Step ID rename** (eval-sc10-nifty-baseline → eval-nifty-outperformance, say). Every metric with `source.id` matching the old id breaks. Paired action: for each affected metric, retire it (citing the eval rename in `reason`) and propose a fresh metric with the new id. The trajectory chart starts a new line — that's correct, the rubric changed.
+- **Step ID rename** (eval-sc10-nifty-baseline → eval-nifty-outperformance, say). Every metric with `source.id` matching the old id breaks. Paired action: for each affected metric, retire it (citing the eval rename in `reason`) and propose a fresh metric with the new id. The new metric id keeps comparability clean — that's correct, the rubric changed.
 - **Step removal**. Every metric with that `source.id` becomes unresolvable. Paired action: retire each affected metric.
 - **Structured-output schema change** (eval Python emits new / renamed / removed keys). For each metric whose `source.field` matches a removed/renamed key, retire+propose with the corrected field — or update the metric definition to use `field=""` / `field="score"` if the structured field is no longer needed. For NEW keys the eval now emits, suggest whether they're worth promoting to metrics.
-- **Scoring logic change** (e.g. threshold moves from 60% to 70%, or a new dimension joins the score). The metric id stays valid but value semantics shift. Paired action: a structured `improve-decision` rubric-change entry in builder/improve.html (Pass 4 already does this), and the trajectory chart should break the line at that timestamp. If the scoring change is large enough that pre/post values aren't comparable, propose retire+propose for affected metrics so the new metric tracks the new rubric cleanly.
+- **Scoring logic change** (e.g. threshold moves from 60% to 70%, or a new dimension joins the score). The metric id stays valid but value semantics shift. Paired action: a prose rubric-change entry in builder/improve.html (Pass 4 already does this) noting the rubric changed at this point so future readers know pre/post scores aren't comparable. If the scoring change is large enough that pre/post values aren't comparable, propose retire+propose for affected metrics so the new metric tracks the new rubric cleanly.
 - **No metric impact** (e.g. polishing the description, fixing a typo in reasoning). Note this explicitly: "no metrics affected — pure eval-side cleanup."
 
 For each proposed eval change, output a block like:
@@ -138,34 +138,25 @@ If any proposed eval change is "step rename" or "structured-output schema change
 Show ALL proposed changes as a diff (before/after snippets per eval step) before editing. Ask whether to apply all, some, or none. **Apply eval edits and the paired metric retire/propose calls together** — never apply an eval change first and leave metrics dangling. Don't edit evaluation/evaluation_plan.json until I confirm.
 
 PASS 4 — RECORD THE CHANGE (every eval edit)
-After applying any change to evaluation/evaluation_plan.json:
-1. Append a structured fenced block to builder/improve.html using diff_patch_workspace_file:
-   ```improve-decision
-   {"id": "<short-id-or-uuid>", "ts": "<ISO-8601 UTC>", "source": "agent", "trigger": "improve-evaluation", "applied_changes": ["evaluation/evaluation_plan.json"], "rationale": "<one-line summary of what changed and why>", "target_metrics": [<list of metric ids whose source.id points to edited eval steps, if any>]}
-   ```
-2. The improve-decision entry serves as a "rubric change" marker. Trajectory chart renderers should break the line at this timestamp because pre-change and post-change scores aren't comparable.
+After applying any change to evaluation/evaluation_plan.json, record a readable Decision entry at the top of builder/improve.html's timeline (newest on top, via diff_patch_workspace_file). In plain prose, state what changed and why, which file(s) were touched (`evaluation/evaluation_plan.json`), and — if any metrics' `source.id` points to the edited eval steps — which metric ids are affected. If the change shifts value semantics, say so explicitly so future readers know the rubric changed at this point and pre/post scores aren't comparable. Metric *versions* (retire+propose with a new id) remain how comparability is enforced; the prose entry just makes the change auditable.
 
 When you finish, update builder/improve.html with:
 - what workflow/eval evidence you reviewed (especially output-vs-rubric mismatches from Pass 2)
 - the main eval weaknesses you found
 - which eval steps you skipped because they're under active measurement (per Pass 0 guard)
 - what you recommended and what was applied
-- the improve-decision entries you appended (rubric-change markers)
+- the rubric-change Decision entries you recorded
 
-Each new entry that records a *proposed but not-yet-applied* eval change gets a stable id of the form `I-YYYY-MM-DD-NNN` — today's date plus a 3-digit sequence that restarts at `001` per day. Scan the file for today's highest existing sequence and continue from there; never reuse an id.
+If you record a *proposed but not-yet-applied* eval change as an open finding, give that finding a short anchor id (e.g. `id="of-2026-06-07-eval-coverage"`) **only** so a later decision can mark it resolved — no other entry kind needs an id.
 
 CLOSE-OUT EDITS — read this carefully.
 
-Before applying eval changes in this run, scan builder/review.html for findings that the change addresses (for example from /review-plan or /review-code findings that surface weak measurement or broken eval contracts). The match is by intent, not exact wording. Collect the matching `F-YYYY-MM-DD-NNN` ids before you apply.
+Before applying eval changes in this run, scan builder/improve.html for open findings that the change addresses (for example from /review-plan or /review-code findings that surface weak measurement or broken eval contracts). The match is by intent, not exact wording. Note which open findings you'll be resolving before you apply.
 
-After each eval change is applied:
+After each eval change is applied, close out each matched open finding **in place**: edit that finding's card in builder/improve.html to add, on its own line, a prose resolution:
+```
+Resolved YYYY-MM-DD — <one-line how it was fixed>.
+```
+Say "partially resolved" if only part of the finding was addressed, or "invalid" if the finding turned out to be wrong. Never delete or rewrite the original finding text. Reference the finding by its anchor id (or, if it has none, by its date + title), and mention the resolved finding in the Decision entry so the audit trail stays connected within this single source-of-truth file.
 
-1. **Edit builder/review.html** to append, on its own line immediately after each matched finding:
-   ```
-   **[RESOLVED YYYY-MM-DD — <one-line how it was fixed>]**
-   ```
-   Use `[PARTIALLY RESOLVED ...]` if only part of the finding was addressed; use `[INVALID YYYY-MM-DD — ...]` if the finding turned out to be wrong. Never delete or rewrite the original finding.
-
-2. **In the builder/improve.html `improve-decision` entry from Pass 4** (the rubric-change marker), include `linked_review_finding` populated with the array of matched `F-...` ids. This is what makes the audit trail searchable from the single source-of-truth file.
-
-This applies to chat-intent eval fixes too. If the user asks "tighten that eval check on segment coverage" outside of any slash command and you apply the fix, you still scan review.html for matching findings, update the resolved badge, and link the decision.
+This applies to chat-intent eval fixes too. If the user asks "tighten that eval check on segment coverage" outside of any slash command and you apply the fix, you still scan builder/improve.html for matching open findings, close them out in place, and record the Decision entry.

@@ -1,6 +1,6 @@
 Read planning/plan.json (+ step_config.json, variables/variables.json) and act as a senior workflow designer reviewing this plan WITH the user. Your job is to make the design better and to teach the user how to use each building block well — not just catch what's broken.
 
-Write recommendations to `builder/review.html` (read it first to carry prior recommendations forward). For the log/HTML format, badges, and the `F-…` id scheme follow `get_reference_doc(kind="review-improve-log")` (+ `get_reference_doc(kind="html-output")` for HTML style). Canonical detail lives in the step-types / plan-design reference and `get_reference_doc(kind="stores")` — cite them; don't restate them in full.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+Write recommendations into `builder/improve.html` as "Open finding" timeline entries (`builder/review.html` is legacy — fold any unresolved recommendations from it into `builder/improve.html`; read it first to carry prior recommendations forward). For the log/HTML format and how open findings are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (+ `get_reference_doc(kind="html-output")` for HTML style). Canonical detail lives in the step-types / plan-design reference and `get_reference_doc(kind="stores")` — cite them; don't restate them in full.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 ## The mental model to design against (current)
 
@@ -63,4 +63,4 @@ For each recommendation give: **what's there now** (one quoted sentence), **what
 PART 7 — TOP 3
 Close with "if you change three things, change these" — the highest-impact recommendations, prioritized.
 
-REVIEW LOG: append a dated entry to `builder/review.html` (read first; create if absent). Include what was reviewed, integrity issues by severity, recommendations grouped by part, the top-3, and follow-ups. Mark as REVIEW (recommend; do NOT apply).
+REVIEW LOG: record recommendations as "Open finding" timeline entries in `builder/improve.html` (read first; create if absent — newest on top). Include what was reviewed, integrity issues by severity, recommendations grouped by part, the top-3, and follow-ups. Mark as REVIEW (recommend; do NOT apply).

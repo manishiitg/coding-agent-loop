@@ -41,7 +41,7 @@ The viewer hands the HTML the live data and the HTML renders its own visuals (ch
 - **Variable groups** — `get('variables/variables.json')` → `groups: [{ name, enabled, values }]`
 - **Workflow config** — `get('workflow.json')` (id, label, schedule, …)
 - **Soul / persona** — `getHtml('soul.md')`
-- **Prior generated docs** — `getText('improve.html')`, `getText('review.html')`
+- **Prior generated docs** — `getText('improve.html')` (the single durable log; legacy `review.html` if present)
 
 Use this to make reports context-aware — e.g. show this run's cost and eval score, badge the active variable group, or include the workflow's purpose from `soul.md`. (`runs/` per-run transcripts are NOT exposed: per-run paths aren't knowable at authoring time and can be sensitive.)
 

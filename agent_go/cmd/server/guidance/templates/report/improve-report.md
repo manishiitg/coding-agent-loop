@@ -27,4 +27,4 @@ When you finish, update builder/improve.html with:
 - what you recommended
 - what was applied vs deferred
 
-Use the `I-…` id scheme, the `improve-decision` block, and the review.html close-out (`[RESOLVED …]` marker) per `get_reference_doc(kind="review-improve-log")` — set `trigger` to `improve-report` and `applied_changes` to the report file(s) touched (`reports/report_plan.json` or the report HTML). A matching `F-…` finding may exist to close out: `/review-plan`'s Phase 4 includes a report audit, so report findings can land in builder/review.html. This applies to chat-intent report fixes too.
+Record this as a prose Decision entry in `builder/improve.html` per `get_reference_doc(kind="review-improve-log")` — note what changed and the report file(s) touched (`reports/report_plan.json` or the report HTML). If it resolves a matching open finding, close that finding out in place (add a `Resolved YYYY-MM-DD — <how>` line): `/review-plan`'s Phase 4 includes a report audit, so report findings can land in builder/improve.html as open findings. This applies to chat-intent report fixes too.

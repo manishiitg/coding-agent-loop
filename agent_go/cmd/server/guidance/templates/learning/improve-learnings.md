@@ -1,6 +1,6 @@
 Improve the workflow learnings so `learnings/_global/` supports the current plan and objective.
 
-Write to `builder/improve.html`. For the log format, the one-time `.md → .html` migration, the `I-…` decision-id scheme, and the decision-block format, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
+Write to `builder/improve.html`. For the log format, the one-time migration, and how entries are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
 
 This command maintains reusable HOW-to-run knowledge such as selectors, tool/API patterns, auth quirks, timing/wait strategies, file-format pitfalls, reusable recovery steps, and common failure signatures.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
@@ -16,7 +16,7 @@ READ FIRST
 
 1. Read `soul/soul.md` if present to understand the workflow objective and success criteria.
 2. Read `planning/plan.json` and `planning/step_config.json` if present. Use them to understand current steps, `learnings_access`, `learning_objective`, `lock_learnings`, and `lock_code` decisions.
-3. Read `builder/review.html` and `builder/improve.html` if present. Carry unresolved learning/code findings, prior cleanup attempts, recent harden/replan actions, and recent plan changes into the instruction.
+3. Read `builder/improve.html` if present (and any legacy `builder/review.html`). Carry unresolved learning/code findings, prior cleanup attempts, recent harden/replan actions, and recent plan changes into the instruction.
 4. Read `learnings/_global/SKILL.md` and relevant files under `learnings/_global/references/`. Do not blindly load every large reference file; use the index and file names to pick relevant files.
 
 WHEN TO USE EACH MODE
@@ -42,7 +42,7 @@ If unsure, use `mode="auto"` or omit mode. Broad instructions like "optimize lea
 
 ACTION
 
-1. Build one concrete instruction. It must mention the objective from `soul.md` or `planning/plan.json`, the user's focus if provided, and any unresolved learning-related findings from `builder/review.html` or `builder/improve.html`.
+1. Build one concrete instruction. It must mention the objective from `soul.md` or `planning/plan.json`, the user's focus if provided, and any unresolved learning-related findings from `builder/improve.html`.
    - Always include this invariant in the instruction: keep `learnings/_global/SKILL.md` lean as an index/overview; move detailed HOW-to-run content into `learnings/_global/references/<topic>.md` and link those files from `SKILL.md`.
    - Always include this stale-content rule: compare learnings against current `planning/plan.json` step descriptions and `planning/step_config.json` learning objectives; remove or replace HOW guidance that belongs to old step behavior, obsolete selectors/API paths, removed dependencies, or previous descriptions.
 2. Call:
@@ -51,4 +51,4 @@ ACTION
 
 3. The tool runs in the background and returns an `execution_id`. If you need the result before answering, use `query_step(execution_id="<id>")` until it completes.
 4. When complete, summarize files changed under `learnings/_global/`, duplicate/stale HOW knowledge removed, reference files created or reorganized, declared learning objectives that still lack matching content, and any follow-up review/harden work needed.
-5. If the improvement resolves an existing `F-...` finding in `builder/review.html`, append a resolved marker immediately after that finding. If it is part of an optimizer/improvement pass, append a short note to `builder/improve.html`; otherwise report in chat only.
+5. If the improvement resolves an existing open finding in `builder/improve.html`, edit that finding's entry in place to add a `Resolved YYYY-MM-DD — <how>` line. If it is part of an optimizer/improvement pass, add a short entry to `builder/improve.html`; otherwise report in chat only.

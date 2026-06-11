@@ -10,17 +10,17 @@ Use this hierarchy when deciding harden vs replan:
 3. `runs/iteration-{N}/<group>/...` proves runtime reality: actual outputs, tool/execution logs, validation results, and eval reports show what the workflow really did. `iteration-0` is the latest/current run; older retained iterations are supporting evidence for trends, regressions, and whether a prior improve.html action helped.
 4. `evaluation/evaluation_plan.json` explains measurement: use it to understand scores, but if eval conflicts with `soul.md`, fix eval instead of optimizing to a bad rubric.
 5. `planning/plan.json` is only the current implementation attempt. Judge it against `soul.md` and retained run evidence; do not treat the current plan as proof that the workflow is correct.
-6. `builder/improve.html` and `builder/review.html` are memory/audit logs: use them to avoid repeating past decisions, carry unresolved findings, and link fixes. They are not the source of truth when they conflict with `soul.md` or current run/eval/metric evidence.
+6. `builder/improve.html` is the memory/audit log: use it to avoid repeating past decisions, carry unresolved findings, and link fixes. It is not the source of truth when it conflicts with `soul.md` or current run/eval/metric evidence.
 
-Write to `builder/improve.html` and `builder/review.html`. For the log/HTML format, the `I-…` id scheme, and the decision-block format, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
+Write to `builder/improve.html` — the single durable log. For the log/HTML format and how entries are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
 
-MIGRATION (one-time): if `builder/improve.md` exists, before reading the HTML logs extract its **Workflow Profile, Active Improvement Index, unresolved `I-…` entries, open hypotheses, and structured decision blocks** into `builder/improve.html` (and migrate `builder/review.md` → `builder/review.html`); migration mechanics per `get_reference_doc(kind="review-improve-log")`. Do this before SETUP so the HTML files are the only source of truth.
+MIGRATION (one-time): if a legacy `builder/improve.md` or `builder/review.html`/`builder/review.md` exists, before reading the HTML log carry forward its **Workflow Profile, unresolved findings, and recent entries** into `builder/improve.html` as readable timeline entries; migration mechanics per `get_reference_doc(kind="review-improve-log")`. Do this before SETUP so `builder/improve.html` is the only source of truth.
 
 SETUP
 1. Read soul/soul.md and extract the objective and success criteria.
 2. Read builder/improve.html's active sections: Workflow Profile, Active Improvement Index, Archive Index, Recent Entries, prior actions, deferred ideas, and next hypotheses. If the file has no retention/index structure yet, read it in full.
    - If the Archive Index or recent entries reference older `builder/improve-archive/YYYY-MM.html` files relevant to the current focus, unresolved ids, metric/eval semantic changes, or selected run window, read only those archive files.
-3. Read builder/review.html if present. Carry unresolved `F-...` findings into your decision.
+3. Read any legacy builder/review.html if present and fold its unresolved findings into builder/improve.html. Carry unresolved open findings into your decision.
 4. Read planning/metrics.json and recent db/metrics_history.jsonl rows. Metrics reveal drift, failures, missing values, and whether previous changes are moving the workflow in the right direction.
 5. Read evaluation/evaluation_plan.json so you understand how metrics and eval reports are produced.
 6. Read get_workflow_config, list_skills, and planning/step_config.json to understand workflow-selected skills, installed skills, and per-step `enabled_skills`. Step execution only receives skills listed in `enabled_skills`; workflow-selected skills are builder/workshop context and do not cascade into runtime steps.
@@ -112,15 +112,15 @@ If a direct fix was applied and one targeted verification would materially reduc
 This already runs evaluation by default, so do not call run_full_evaluation again unless run_full_workflow was explicitly called with disable_eval=true. Maximum one verification pass.
 
 CLOSE-OUT
-Before applying any change, scan builder/review.html for findings that the change addresses. Match by intent, not exact wording. Collect matching `F-...` ids.
+Before applying any change, scan builder/improve.html for open findings that the change addresses. Match by intent, not exact wording. Note which open findings you'll be resolving.
 
 After each applied change:
-1. Append a resolution marker immediately after each matched finding in builder/review.html:
+1. Close out each matched open finding **in place**: edit that finding's card in builder/improve.html to add, on its own line, a prose resolution:
    ```
-   **[RESOLVED YYYY-MM-DD — <one-line how it was fixed>]**
+   Resolved YYYY-MM-DD — <one-line how it was fixed>.
    ```
-   Use PARTIALLY RESOLVED or INVALID when appropriate. Never delete or rewrite the original finding.
-2. Ensure builder/improve.html has one structured `improve-decision` fenced JSON block for the action. If the underlying tool does not write one, append one via diff_patch_workspace_file with trigger `improve-workflow`, applied_changes, target_metrics, evidence_paths, linked_review_finding, linked_improve_entry, and action_type (`harden`, `replan`, `eval_update`, `metric_update`, `skill_update`, `kb_update`, `learning_update`, `db_update`, or `no_action`).
+   Say "partially resolved" or "invalid" when appropriate. Never delete or rewrite the original finding; reference it by its anchor id (or date + title).
+2. Ensure the action is recorded as a readable Decision entry in builder/improve.html (what changed, why, files touched, evidence, and the action_type — `harden`, `replan`, `eval_update`, `metric_update`, `skill_update`, `kb_update`, `learning_update`, `db_update`, or `no_action`). If the underlying tool does not write one, add it via diff_patch_workspace_file at the top of the timeline. Mention any open findings it resolved so the audit trail stays connected.
 3. Update builder/improve.html with:
    - timestamp
    - evidence reviewed
@@ -133,46 +133,37 @@ After each applied change:
 4. If builder/improve.html is becoming too long (roughly >800 lines, >60 KB, or >20 detailed entries), compact it before finishing:
    - keep Workflow Profile, Active Improvement Index, Archive Index, and the latest 10-20 detailed entries in builder/improve.html
    - move older resolved/no-action/repeated detailed entries into `builder/improve-archive/YYYY-MM.html`
-   - preserve structured `improve-decision` blocks in the monthly archive file
+   - preserve prior entries in the monthly archive file
    - leave one Archive Index row per archive file with date range, entry count, unresolved ids, and a one-line summary
    - do not archive away unresolved findings, current hypotheses, current metric/eval gaps, or the latest decision that changed plan/eval/metric semantics
 
-Use this markdown shape for new entries so future scheduled fires can parse the history quickly:
+Write entries as readable timeline cards (newest on top) so future scheduled fires and the user can follow the history quickly. An **open finding** that isn't yet fixed gets a short anchor id only so a later decision can close it out:
 
-```md
-### YYYY-MM-DD HH:MM UTC — /improve-workflow or /auto-improve (...) — OUTCOME: <action/result>
-
-**Evidence reviewed:**
-- `<path>` — <what it showed>
-
-**Findings:**
-- **F-YYYY-MM-DD-NNN (<severity>)** — <finding and evidence>
-
-**Action chosen: <harden|replan|eval_update|metric_update|skill_update|kb_update|learning_update|db_update|no_action>** — <one-line reason>
-
-```improve-decision
-{
-  "ts": "YYYY-MM-DDTHH:MM:SSZ",
-  "id": "dec-<workflow>-YYYYMMDD-001",
-  "source": "agent",
-  "trigger": "improve-workflow",
-  "action_type": "<harden|replan|eval_update|metric_update|skill_update|kb_update|learning_update|db_update|no_action>",
-  "applied_changes": [],
-  "target_metrics": [],
-  "evidence_paths": [],
-  "linked_review_finding": [],
-  "linked_improve_entry": []
-}
+```html
+<!-- Open finding -->
+<section id="of-YYYY-MM-DD-<slug>">
+  <h3>YYYY-MM-DD — Open finding (<severity>)</h3>
+  <p><what's wrong and the evidence that shows it (link the path)>.</p>
+</section>
 ```
 
-**Tool call:** `<tool>(...)` → <execution_id/status>
+A **Decision** records what was applied or proposed, in prose:
 
-**Expected impact:**
-- <metric/success-criteria impact>
-
-**Remaining gaps / next hypotheses:**
-- <what to check next, deferred blockers, or verification trigger>
+```html
+<!-- Decision -->
+<section>
+  <h3>YYYY-MM-DD HH:MM UTC — /improve-workflow (or /auto-improve) — <action_type></h3>
+  <p><strong>Evidence:</strong> `<path>` — <what it showed>.</p>
+  <p><strong>What changed &amp; why:</strong> <one-line summary>; action chosen
+     <harden|replan|eval_update|metric_update|skill_update|kb_update|learning_update|db_update|no_action>,
+     files touched <...>, tool call `<tool>(...)` → <execution_id/status>.</p>
+  <p><strong>Expected impact:</strong> <metric/success-criteria impact>.</p>
+  <p><strong>Resolves:</strong> <anchor id of any open finding this closes, or "none">.</p>
+  <p><strong>Remaining gaps / next hypotheses:</strong> <what to check next, deferred blockers, or verification trigger>.</p>
+</section>
 ```
+
+When a Decision resolves an open finding, also edit that finding's card in place to add the `Resolved YYYY-MM-DD — <how>` line (CLOSE-OUT above), rather than opening a duplicate.
 
 If compaction is needed, use this active index shape near the top of builder/improve.html:
 
@@ -189,7 +180,7 @@ If compaction is needed, use this active index shape near the top of builder/imp
 
 | Archive | Date range | Entries | Unresolved ids | Summary |
 | --- | --- | ---: | --- | --- |
-| `builder/improve-archive/YYYY-MM.html` | YYYY-MM-DD..YYYY-MM-DD | N | `I-...`, `F-...` or none | <one-line summary> |
+| `builder/improve-archive/YYYY-MM.html` | YYYY-MM-DD..YYYY-MM-DD | N | open-finding anchor ids still unresolved, or none | <one-line summary> |
 
 ## Recent Entries
 ```

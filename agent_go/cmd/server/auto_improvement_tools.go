@@ -170,7 +170,7 @@ func RegisterRetireMetricTool(agent *mcpagent.Agent, workspacePath, triggerSourc
 func RegisterCaptureContextTool(agent *mcpagent.Agent, workspacePath string, logger loggerv2.Logger) {
 	desc := "Capture durable user-supplied runtime business context for this workflow. " +
 		"Use only after the user confirms the item should be remembered across runs, and only when the Workflow Profile allows business-context accumulation. " +
-		"Writes to knowledgebase/context/context.md. Narrate the capture in builder/improve.html yourself (source=user, trigger=capture-context). " +
+		"Writes to knowledgebase/context/context.md. Record the capture in builder/improve.html yourself as a User rule (authoritative) entry. " +
 		"Every capture must name target_metrics so context stays tied to measurable outcomes. " +
 		"Use for persistent rules, preferences, constraints, assumptions, examples, ICP filters, approval rules, brand voice, or domain context that workflow steps must respect. " +
 		"Do not use for one-off instructions, general chat memory, workflow-discovered facts that belong in knowledgebase/notes, or execution recipes that belong in learnings."

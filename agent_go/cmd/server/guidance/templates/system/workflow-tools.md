@@ -36,7 +36,7 @@ returns the live JSON schema for the tool.
 - **`get_step_prompts(step_id, attempt?, iteration?)`** — System prompt and user message for a step.
 - **`get_workflow_config`** — Inspect the workflow's current MCP servers, selected skills, available secrets, and LLM config. Use this instead of `cat workflow.json`. For the global installed skill catalog, use `list_skills`.
 - **`get_llm_config`** — Per-step LLM overrides.
-- **`get_workflow_command_guidance(kind="review-artifact-drift", focus?)`** *(Workshop only)* — Canonical artifact drift audit after material plan/config changes. Checks `planning/changelog/` entries against learnings, saved `main.py`, KB, db, reports, and eval wiring. Writes its cursor in `builder/review.html`; do not create a new state file.
+- **`get_workflow_command_guidance(kind="review-artifact-drift", focus?)`** *(Workshop only)* — Canonical artifact drift audit after material plan/config changes. Checks `planning/changelog/` entries against learnings, saved `main.py`, KB, db, reports, and eval wiring. Writes its cursor in `builder/improve.html`; do not create a new state file.
 
 ## Plan Modification (Workshop mode)
 
@@ -155,7 +155,7 @@ When creating a schedule with `workshop_mode="optimizer"`, craft the message aro
 - Name the configured `group_names`.
 - Use only `runs/iteration-0` evidence for those groups.
 - Inspect run outputs plus execution/tool logs for failures, retries, wrong tool arguments, timeouts, validation errors, and stuck steps.
-- Read `planning/metrics.json` / `db/metrics_history.jsonl` / `builder/improve.html` / `builder/review.html` / recent `planning/changelog/` entries.
+- Read `planning/metrics.json` / `db/metrics_history.jsonl` / `builder/improve.html` (the single durable log; fold in any legacy `builder/review.html`) / recent `planning/changelog/` entries.
 - Handle report-layout work with report-plan tools only when the recurring job explicitly includes report quality or an unresolved review/improve item queues it.
 
 For active workflows, prefer a workshop optimizer-style check after every workflow run, or at worst after every two runs; if cron cannot trigger on run completion, approximate with a frequent lightweight schedule that no-ops when there is no new evidence. Weekly continuous improvement is appropriate for weekly or explicitly low-touch workflows. After material plan/config changes, tighten the improve cadence for 24–48 hours or until the next one or two post-change `iteration-0` runs have been reviewed.

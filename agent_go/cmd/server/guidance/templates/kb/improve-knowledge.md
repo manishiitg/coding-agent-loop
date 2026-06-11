@@ -1,6 +1,6 @@
 Improve the workflow knowledgebase notes so they support the current plan and objective.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
-Write to `builder/improve.html`. For the log format, the one-time `.md → .html` migration, the `I-…` decision-id scheme, and the decision-block format, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
+Write to `builder/improve.html`. For the log format, the one-time migration, and how entries are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
 
 BOUNDARIES
 
@@ -12,7 +12,7 @@ BOUNDARIES
 READ FIRST
 
 1. Read `soul/soul.md` if present to understand the workflow objective and success criteria.
-2. Read `builder/review.html` and `builder/improve.html` if present. Use unresolved KB/db/report findings, prior failed cleanup attempts, recent harden/replan actions, and plan changes as context.
+2. Read `builder/improve.html` if present (and any legacy `builder/review.html`). Use unresolved KB/db/report findings, prior failed cleanup attempts, recent harden/replan actions, and plan changes as context.
 3. Read `planning/plan.json` and `planning/step_config.json` if present so the KB improvement is aligned with the current plan.
 4. Read `knowledgebase/notes/_index.json` before opening topic files.
 5. Read only topic markdown files relevant to the requested cleanup or consolidation. Do not glob or load every `knowledgebase/notes/*.md` file.
@@ -42,11 +42,11 @@ If unsure, use `mode="auto"` or omit mode. Broad instructions like "optimize the
 
 ACTION
 
-1. Convert the user's request into one concrete instruction. If the focus is empty, base the instruction on `soul/soul.md`, `planning/plan.json`, unresolved `builder/review.html` findings, recent `builder/improve.html` entries, and the KB index.
+1. Convert the user's request into one concrete instruction. If the focus is empty, base the instruction on `soul/soul.md`, `planning/plan.json`, unresolved findings and recent entries in `builder/improve.html`, and the KB index.
 2. Call:
 
 `improve_kb(mode="auto", instruction="<specific KB improvement instruction>", focus="<optional focus>")`
 
 3. After the tool returns, inspect the summary. If it reports no change, explain why. If it reports changes, summarize the affected topics, contradictions surfaced, pattern notes written, and remaining uncertainty.
-4. If the improvement resolves an existing `F-...` finding in `builder/review.html`, append a resolved marker immediately after that finding. Otherwise do not create review findings from this command.
+4. If the improvement resolves an existing open finding in `builder/improve.html`, edit that finding's entry in place to add a `Resolved YYYY-MM-DD — <how>` line. Otherwise do not create review findings from this command.
 5. If this is part of an optimization action or scheduled improvement, append a short note to `builder/improve.html` with the instruction, evidence, mode, and tool result. Otherwise, report in chat only.

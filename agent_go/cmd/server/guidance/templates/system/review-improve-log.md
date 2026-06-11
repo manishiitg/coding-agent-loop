@@ -83,6 +83,11 @@ Some workspaces still have legacy `builder/improve.md` / `builder/review.md`, or
     --accent:#3a5a40;--accent-soft:#e7efe6;--warn:#9a6b00;--warn-soft:#fbf1da;--bad:#9b2c2c;--bad-soft:#fbe9e7;
     --user:#3b4a8c;--user-soft:#e9ecf8;--goal:#7a3b8c;--goal-soft:#f3e9f6;
     --mono:"SF Mono",ui-monospace,Menlo,monospace;--sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;}
+  /* Dark palette — the app injects data-theme="dark" on <html> when its theme is dark. Keep this block. */
+  html[data-theme="dark"]{--bg:#141413;--surface:#1d1d1b;--ink:#e8e7e2;--ink-soft:#a3a299;--line:#2c2b28;--line-strong:#3a3935;
+    --accent:#7fb086;--accent-soft:#1d2a20;--warn:#d9a441;--warn-soft:#2c2410;--bad:#e0726a;--bad-soft:#2c1614;
+    --user:#8a9bd8;--user-soft:#1a1f33;--goal:#c08ad0;--goal-soft:#271a2c;}
+  html{color-scheme:light} html[data-theme="dark"]{color-scheme:dark}
   *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.5}
   .wrap{max-width:880px;margin:0 auto;padding:40px 28px 96px}
   .top{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;flex-wrap:wrap}

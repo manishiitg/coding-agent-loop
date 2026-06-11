@@ -35,7 +35,8 @@ Apply these when writing or patching a step's `main.py`. Scripts must run identi
 **Output format — HTML vs JSON vs Markdown**
 
 - **JSON** — for structured data consumed by downstream steps or db writes. Always use JSON for `context_output` files other steps read.
-- **HTML** — for final human-readable reports, analyses, or dashboards. HTML renders richly in the file viewer with tables, charts, navigation, and colour. A step that synthesises data for a human to read should write `.html`, not `.md`.
-- **Markdown** — only for short prose notes or content appended into learnings/KB files.
+- **Markdown (`.md`) — the default for human-readable output**: reports, analyses, summaries. It renders richly in the file viewer (headings, tables, lists), gets clickable workspace file links that HTML doesn't, and is simpler and more robust to author than self-contained HTML.
+- **HTML** — only when you genuinely need rich/branded layout markdown can't express. For an actual dashboard, use the report system (`reports/report_plan.json` + `window.report`), which is the purpose-built HTML surface — don't hand-author a standalone `.html` report as the default.
+- Do NOT make HTML copies of Markdown stores (`soul.md`, learnings, KB) — those stay Markdown and are read as Markdown.
 
 Before writing a `.html` output file, call `get_reference_doc(kind="html-output")` — it has the full layout baseline, dark-mode styles, inline chart pattern, and quality checklist.

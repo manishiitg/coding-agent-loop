@@ -43,7 +43,7 @@ Every step reads from prior steps and writes for downstream steps:
 - **context_dependencies**: Files from prior steps this step needs (e.g., ["login_status.json"])
 - **context_output**: The file this step produces (e.g., "extracted_data.json")
 - **Flow must be forward-only** — no circular dependencies
-- Use JSON for structured data consumed by downstream steps. Keep output files < 100KB. For final human-readable reports or analyses, write a `.html` file (not `.md`) — HTML renders richly in the file viewer and supports tables, charts, and navigation. For prose appended into learnings/KB, use Markdown.
+- Use JSON for structured data consumed by downstream steps. Keep output files < 100KB. For a final human-readable report or analysis, **prefer `.md`** — markdown renders richly in the file viewer (headings, tables, lists) and, unlike HTML, gets clickable workspace file links; it's also simpler and more robust to author. Reach for a standalone `.html` file only when you genuinely need rich/branded layout markdown can't express — and for a real dashboard, use the report system (`reports/report_plan.json`) rather than hand-rolling HTML. For prose appended into learnings/KB, use Markdown.
 
 ### Step 4: When to Use Orchestrator (Sub-Workflow / Pipeline) with Sub-Agents
 

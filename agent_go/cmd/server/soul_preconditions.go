@@ -8,23 +8,18 @@ import (
 )
 
 // =====================================================================
-// soul_preconditions.go — gate the auto-improvement framework on soul.md.
+// soul_preconditions.go — read-only soul.md health signal.
 //
 // The framework's contract: metrics operationalize success_criteria, and
-// success_criteria are the user-facing outcome. If soul.md is missing or
-// empty, there is no north star, and metrics defined against it are arbitrary.
-// So before any metric can be added, both `## Objective` and
-// `## Success Criteria` must hold real content — not scaffold placeholders.
-//
-// Self-contained reader so the framework files don't pull a dependency
-// on the orchestrator package; the section-extraction logic mirrors
+// success_criteria are the user-facing outcome. We surface whether soul.md has
+// a real objective + success criteria as a non-blocking signal (the
+// framework-health banner / goal card); defining the soul before metrics is the
+// agent's responsibility, not a hard gate. The section-extraction logic mirrors
 // ReadWorkflowObjectiveFromSoul in soul_helpers.go.
 // =====================================================================
 
 // SoulPreconditions reports the populated/missing state of the two
-// load-bearing sections in soul.md. Used by propose_metric to refuse
-// adding metrics to a workflow that doesn't yet declare what success
-// looks like.
+// load-bearing sections in soul.md, for read-only health surfaces.
 type SoulPreconditions struct {
 	SoulPath          string
 	SoulExists        bool
@@ -32,30 +27,6 @@ type SoulPreconditions struct {
 	SuccessCriteria   string
 	ObjectiveOK       bool
 	SuccessCriteriaOK bool
-}
-
-// RequireSoulPreconditions returns nil iff soul.md exists and both
-// sections contain real (non-placeholder, non-empty) text. The returned
-// error message names exactly which section is missing so the caller can
-// repair without guessing.
-func RequireSoulPreconditions(ctx context.Context, workspacePath string) error {
-	pre, err := ReadSoulPreconditions(ctx, workspacePath)
-	if err != nil {
-		return err
-	}
-	if !pre.SoulExists {
-		return fmt.Errorf("soul/soul.md is missing — write it first with `## Objective` and `## Success Criteria` sections. Metrics without an objective are arbitrary; without success_criteria, the framework has no north star to measure against")
-	}
-	if !pre.ObjectiveOK && !pre.SuccessCriteriaOK {
-		return fmt.Errorf("soul/soul.md exists but `## Objective` and `## Success Criteria` are both empty or still TODO placeholders — fill them in before defining metrics")
-	}
-	if !pre.ObjectiveOK {
-		return fmt.Errorf("soul/soul.md `## Objective` section is empty or still a TODO placeholder — fill it in before defining metrics")
-	}
-	if !pre.SuccessCriteriaOK {
-		return fmt.Errorf("soul/soul.md `## Success Criteria` section is empty or still a TODO placeholder — fill it in before defining metrics. Success criteria are the north star metrics operationalize")
-	}
-	return nil
 }
 
 // ReadSoulPreconditions returns the parsed soul.md state without enforcing

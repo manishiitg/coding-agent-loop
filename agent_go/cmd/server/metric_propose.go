@@ -70,12 +70,10 @@ type ProposeMetricOutput struct {
 // context. The tool mutates only metrics.json; narrating the change into
 // builder/improve.html is the agent's job.
 func ProposeMetric(ctx context.Context, workspacePath, trigger string, input ProposeMetricInput) (*ProposeMetricOutput, error) {
-	// Soul precondition: an objective and success_criteria must exist before
-	// metrics are defined against them. Without that anchor, metrics are
-	// arbitrary and the framework has no north star to measure against.
-	if err := RequireSoulPreconditions(ctx, workspacePath); err != nil {
-		return nil, err
-	}
+	// Note: defining the soul (objective + success_criteria) before metrics is
+	// the agent's responsibility — /define-success establishes it first. There is
+	// deliberately no hard gate here; the framework-health signal surfaces a
+	// missing/empty soul, and the agent owns the ordering.
 
 	candidate := Metric{
 		ID:              strings.TrimSpace(input.ID),

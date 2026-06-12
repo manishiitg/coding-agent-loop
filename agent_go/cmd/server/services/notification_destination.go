@@ -8,9 +8,18 @@ package services
 // A nil *NotificationDestination is equivalent to "no hints, do whatever your
 // configured default is" and preserves the pre-routing behavior.
 type NotificationDestination struct {
-	Slack    *SlackDest    // Slack channel/thread hint
-	WhatsApp *WhatsAppDest // WhatsApp recipient hint
-	UserID   string        // workspace user ID, used to look up per-user preferences
+	Slack    *SlackDest           // Slack channel/thread hint
+	WhatsApp *WhatsAppDest        // WhatsApp recipient hint
+	Gmail    *GmailDest           // Gmail recipient hint
+	UserID   string               // workspace user ID, used to look up per-user preferences
+	Content  *NotificationContent // optional typed per-channel content (nil = plain message only)
+}
+
+// GmailDest is the Gmail-specific destination hint. Email is the recipient
+// address; the sending account is the single shared identity gws is
+// authenticated as.
+type GmailDest struct {
+	Email string
 }
 
 // SlackDest is the Slack-specific destination hint. ThreadTS is optional —

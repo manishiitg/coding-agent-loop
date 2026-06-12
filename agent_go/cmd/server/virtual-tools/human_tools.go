@@ -48,20 +48,38 @@ func CreateHumanTools() []llmtypes.Tool {
 	}
 	humanTools = append(humanTools, humanFeedbackTool)
 
+	// The email_* fields are exposed only when Gmail is an enabled channel, so
+	// the agent doesn't see email-specific knobs it can't use.
+	notifyProps := map[string]interface{}{
+		"message_for_user": map[string]interface{}{
+			"type":        "string",
+			"description": "Message to send to the user",
+		},
+	}
+	if gmailEnabled() {
+		notifyProps["email_subject"] = map[string]interface{}{
+			"type":        "string",
+			"description": "Optional. Custom subject line for the email rendering (Gmail). Other channels ignore this.",
+		}
+		notifyProps["email_body"] = map[string]interface{}{
+			"type":        "string",
+			"description": "Optional. Email-specific body, which can be longer/richer than message_for_user. If omitted, message_for_user is used as the email body.",
+		}
+		notifyProps["email_attachments"] = map[string]interface{}{
+			"type":        "array",
+			"items":       map[string]interface{}{"type": "string"},
+			"description": "Optional. Absolute file paths on the server host to attach to the email (Gmail only).",
+		}
+	}
 	notifyUserTool := llmtypes.Tool{
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "notify_via_bot",
-			Description: "Send a non-blocking notification to the human through configured bot connectors such as Slack or WhatsApp. Use this for FYIs, progress updates, alerts, and completion notices when you do not need to wait for a reply. If you need the human to answer before continuing, use human_feedback instead.",
+			Description: buildNotifyDescription(),
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"message_for_user": map[string]interface{}{
-						"type":        "string",
-						"description": "Message to send to the user",
-					},
-				},
-				"required": []string{"message_for_user"},
+				"type":       "object",
+				"properties": notifyProps,
+				"required":   []string{"message_for_user"},
 			}),
 		},
 	}
@@ -94,6 +112,85 @@ func CreateHumanTools() []llmtypes.Tool {
 	humanTools = append(humanTools, submitHumanAnswerTool)
 
 	return humanTools
+}
+
+// channelLabels maps connector Name() values to human-friendly labels used in
+// the dynamic notify_via_bot description.
+var channelLabels = map[string]string{
+	"slack":    "Slack",
+	"whatsapp": "WhatsApp",
+	"gmail":    "Gmail (email)",
+}
+
+// buildNotifyDescription renders the notify_via_bot description with the set of
+// channels enabled when the tool list is built (per session/run), so the agent
+// knows where its message will actually land. The always-on web UI connector is
+// not framed as an external channel.
+func buildNotifyDescription() string {
+	base := "Send a non-blocking notification to the human. Use this for FYIs, progress updates, alerts, and completion notices when you do not need to wait for a reply. If you need the human to answer before continuing, use human_feedback instead."
+
+	var labels []string
+	gmailOn := false
+	if nm := services.GetNotificationManager(); nm != nil {
+		for _, name := range nm.ListEnabledConnectors() {
+			if name == "web_simulator" {
+				continue
+			}
+			if name == "gmail" {
+				gmailOn = true
+			}
+			if l, ok := channelLabels[name]; ok {
+				labels = append(labels, l)
+			} else {
+				labels = append(labels, name)
+			}
+		}
+	}
+
+	if len(labels) == 0 {
+		return base + " NOTE: No external channels (Slack/WhatsApp/Gmail) are currently enabled, so the message only appears in the web UI."
+	}
+	desc := base + " Currently enabled delivery channels: " + strings.Join(labels, ", ") + ". The message is delivered to all enabled channels — you do not choose which."
+	if gmailOn {
+		desc += " Gmail is enabled, so you may optionally set email_subject, email_body, and email_attachments for the email rendering (other channels ignore these)."
+	}
+	return desc
+}
+
+// gmailEnabled reports whether the Gmail connector is currently an enabled
+// delivery channel.
+func gmailEnabled() bool {
+	if nm := services.GetNotificationManager(); nm != nil {
+		for _, n := range nm.ListEnabledConnectors() {
+			if n == "gmail" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// gmailContentFromArgs builds the per-channel Gmail content from notify_via_bot
+// tool args, or nil if no email-specific fields were provided.
+func gmailContentFromArgs(args map[string]interface{}) *services.GmailContent {
+	subject, _ := args["email_subject"].(string)
+	body, _ := args["email_body"].(string)
+	var attachments []string
+	if raw, ok := args["email_attachments"].([]interface{}); ok {
+		for _, a := range raw {
+			if s, ok := a.(string); ok && strings.TrimSpace(s) != "" {
+				attachments = append(attachments, strings.TrimSpace(s))
+			}
+		}
+	}
+	if strings.TrimSpace(subject) == "" && strings.TrimSpace(body) == "" && len(attachments) == 0 {
+		return nil
+	}
+	return &services.GmailContent{
+		Subject:     strings.TrimSpace(subject),
+		Body:        body,
+		Attachments: attachments,
+	}
 }
 
 // GetToolCategory returns the category name for human tools
@@ -146,7 +243,16 @@ func handleNotifyUser(ctx context.Context, args map[string]interface{}) (string,
 	if notificationManager == nil {
 		return "", fmt.Errorf("notification manager not available")
 	}
-	if err := notificationManager.SendUserNotification(ctx, messageForUser, "", NotificationDestinationFromContext(ctx)); err != nil {
+
+	dest := NotificationDestinationFromContext(ctx)
+	if gc := gmailContentFromArgs(args); gc != nil {
+		if dest == nil {
+			dest = &services.NotificationDestination{}
+		}
+		dest.Content = &services.NotificationContent{Gmail: gc}
+	}
+
+	if err := notificationManager.SendUserNotification(ctx, messageForUser, "", dest); err != nil {
 		return "", fmt.Errorf("failed to notify user: %w", err)
 	}
 
@@ -296,6 +402,14 @@ func cloneNotificationDestination(dest *services.NotificationDestination) *servi
 			PhoneE164: dest.WhatsApp.PhoneE164,
 		}
 	}
+	if dest.Gmail != nil {
+		clone.Gmail = &services.GmailDest{
+			Email: dest.Gmail.Email,
+		}
+	}
+	// Content is treated as read-only by connectors, so sharing the pointer is
+	// safe and avoids a deep copy of attachment lists.
+	clone.Content = dest.Content
 	return clone
 }
 
@@ -303,5 +417,6 @@ func notificationDestinationEmpty(dest *services.NotificationDestination) bool {
 	return dest == nil ||
 		(dest.UserID == "" &&
 			(dest.Slack == nil || dest.Slack.ChannelID == "") &&
-			(dest.WhatsApp == nil || (dest.WhatsApp.ChannelID == "" && dest.WhatsApp.PhoneE164 == "")))
+			(dest.WhatsApp == nil || (dest.WhatsApp.ChannelID == "" && dest.WhatsApp.PhoneE164 == "")) &&
+			(dest.Gmail == nil || dest.Gmail.Email == ""))
 }

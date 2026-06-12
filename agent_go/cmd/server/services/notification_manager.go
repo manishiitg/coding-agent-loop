@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"sync"
 )
 
@@ -170,6 +171,23 @@ func (nm *NotificationManager) GetConnector(name string) (NotificationConnector,
 	}
 
 	return connector, nil
+}
+
+// ListEnabledConnectors returns the sorted names of connectors that are
+// currently enabled (IsEnabled() == true). Used to surface the live set of
+// delivery channels — e.g. to bake into a tool description at session start.
+func (nm *NotificationManager) ListEnabledConnectors() []string {
+	nm.mu.RLock()
+	defer nm.mu.RUnlock()
+
+	names := make([]string, 0, len(nm.connectors))
+	for name, connector := range nm.connectors {
+		if connector.IsEnabled() {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 // ListConnectors returns a list of all registered connector names

@@ -41,6 +41,10 @@ import type {
   SlackConfigResponse,
   SlackTestResponse,
   SlackTestReplyResponse,
+  GmailConfigRequest,
+  GmailConfigResponse,
+  GmailAuthStatus,
+  GmailTestResponse,
   ExecutionLogsResponse,
   EvaluationReportsResponse,
   WorkflowReviewDataResponse,
@@ -1026,6 +1030,32 @@ export const agentApi = {
       }
       throw err
     }
+  },
+
+  // --- Gmail (outbound-only) feedback channel ---
+
+  getGmailFeedbackConfig: async (): Promise<GmailConfigResponse> => {
+    const apiResponse = await api.get('/api/human-feedback/gmail/config')
+    return apiResponse.data
+  },
+
+  updateGmailFeedbackConfig: async (config: GmailConfigRequest): Promise<GmailConfigResponse> => {
+    const apiResponse = await api.post('/api/human-feedback/gmail/config', config)
+    return apiResponse.data
+  },
+
+  // Auto-detected connection status (runs `gws auth status` server-side)
+  getGmailStatus: async (): Promise<GmailAuthStatus> => {
+    const apiResponse = await api.get('/api/human-feedback/gmail/status')
+    return apiResponse.data
+  },
+
+  // Send a test email; optional config tests a recipient before saving
+  testGmailConnection: async (config?: GmailConfigRequest): Promise<GmailTestResponse> => {
+    const apiResponse = config
+      ? await api.post('/api/human-feedback/gmail/test', config)
+      : await api.post('/api/human-feedback/gmail/test')
+    return apiResponse.data
   },
 
   // --- Bot Simulator API ---

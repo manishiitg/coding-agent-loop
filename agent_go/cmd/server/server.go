@@ -56,7 +56,7 @@ import (
 
 	eventbridge "mcp-agent-builder-go/agent_go/cmd/server/event_bridge"
 	"mcp-agent-builder-go/agent_go/cmd/server/guidance"
-	slackservice "mcp-agent-builder-go/agent_go/cmd/server/services"
+	"mcp-agent-builder-go/agent_go/cmd/server/services"
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/internal/terminals"
 	browserinstructions "mcp-agent-builder-go/agent_go/pkg/instructions"
@@ -357,11 +357,11 @@ type StreamingAPI struct {
 	logger loggerv2.Logger
 
 	// Bot conversation manager for Slack/Discord/Telegram bot sessions
-	botManager *slackservice.BotConversationManager
+	botManager *services.BotConversationManager
 
 	// Web simulator connector for testing bot flow without Slack
-	webSimulator    *slackservice.WebSimulatorConnector
-	whatsappManager *slackservice.WhatsAppServiceManager
+	webSimulator    *services.WebSimulatorConnector
+	whatsappManager *services.WhatsAppServiceManager
 
 	// API token for bearer auth on per-tool endpoints (code execution mode)
 	apiToken string
@@ -502,20 +502,20 @@ type QueryRequest struct {
 	userID string `json:"-"`
 }
 
-func notificationDestinationFromQuery(req QueryRequest, userID string) *slackservice.NotificationDestination {
+func notificationDestinationFromQuery(req QueryRequest, userID string) *services.NotificationDestination {
 	platform := strings.ToLower(strings.TrimSpace(req.BotPlatform))
-	dest := &slackservice.NotificationDestination{UserID: userID}
+	dest := &services.NotificationDestination{UserID: userID}
 	switch platform {
 	case "slack":
 		if req.BotChannelID != "" {
-			dest.Slack = &slackservice.SlackDest{
+			dest.Slack = &services.SlackDest{
 				ChannelID: req.BotChannelID,
 				ThreadTS:  req.BotThreadTS,
 			}
 		}
 	case "whatsapp":
 		if req.BotChannelID != "" {
-			dest.WhatsApp = &slackservice.WhatsAppDest{
+			dest.WhatsApp = &services.WhatsAppDest{
 				ChannelID: req.BotChannelID,
 			}
 		}
@@ -1011,7 +1011,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	costLedger := costledger.NewLedger(getWorkspaceAPIURL())
 	fmt.Printf("💾 Operator store: workspace API (%s)\n", getWorkspaceAPIURL())
 
-	notificationManager := slackservice.GetNotificationManager()
+	notificationManager := services.GetNotificationManager()
 	if notificationManager != nil {
 		notificationManager.SetFeedbackResponseFunc(
 			func(uniqueID string, response string) error {
@@ -1026,14 +1026,14 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Initialize Slack service. Notification delivery is registered through
 	// BotConversationManager.RegisterConnector when Slack bot mode is enabled.
-	slackSvc, err := slackservice.InitSlackService()
+	slackSvc, err := services.InitSlackService()
 	if err != nil {
 		log.Printf("⚠️  Failed to initialize Slack service: %v (Slack integration will be disabled)", err)
 	} else {
 		log.Printf("✅ Slack service initialized")
 		// Set feedback store function for test connections only
 		// Note: For receiving feedback, notification manager handles it
-		slackservice.SetFeedbackStoreFuncs(
+		services.SetFeedbackStoreFuncs(
 			func(uniqueID string, message string) error {
 				store := virtualtools.GetHumanFeedbackStore()
 				if store != nil {
@@ -1042,6 +1042,21 @@ func runServer(cmd *cobra.Command, args []string) {
 				return nil
 			},
 		)
+	}
+
+	// Initialize Gmail service (single-user, backed by the `gws` CLI). Unlike
+	// Slack/WhatsApp it is send-only, so it registers directly with the
+	// NotificationManager rather than the BotConversationManager.
+	gmailSvc, err := services.InitGmailService()
+	if err != nil {
+		log.Printf("⚠️  Failed to initialize Gmail service: %v (Gmail integration will be disabled)", err)
+	} else if gmailSvc.IsEnabled() {
+		log.Printf("✅ Gmail service initialized and enabled")
+		if notificationManager != nil {
+			notificationManager.RegisterConnector(gmailSvc)
+		}
+	} else {
+		log.Printf("✅ Gmail service initialized (disabled — set config/gmail-config.json)")
 	}
 
 	api := &StreamingAPI{
@@ -1426,6 +1441,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Slack Feedback API routes
 	SlackFeedbackRoutes(router, api)
 
+	// Gmail (outbound-only) config/status/test API routes
+	GmailFeedbackRoutes(router, api)
+
 	// Per-user notification preferences (Slack channel, WhatsApp number)
 	NotificationPreferencesRoutes(router)
 
@@ -1434,7 +1452,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	if workspaceURL == "" {
 		workspaceURL = "http://127.0.0.1:8081"
 	}
-	botManager := slackservice.NewBotConversationManager(chatStore, configPath, workspaceURL)
+	botManager := services.NewBotConversationManager(chatStore, configPath, workspaceURL)
 	botManager.SetEventSubscriber(NewBotEventSubscriberAdapter(eventStore))
 	// Bot sessions use ONLY delegation tier config from DB for LLM selection — no server defaults needed
 	api.botManager = botManager
@@ -1443,15 +1461,15 @@ func runServer(cmd *cobra.Command, args []string) {
 	botManager.SetFollowUpFunc(api.sendFollowUpInternal)
 	botManager.SetResumeTargetFunc(api.resolveBotResumeTarget)
 	botManager.SetResumeListFunc(api.listBotResumeTargets)
-	botManager.SetRunningWorkflowsFunc(func(userID string) []slackservice.BotRunningWorkflow {
+	botManager.SetRunningWorkflowsFunc(func(userID string) []services.BotRunningWorkflow {
 		running := api.listRunningWorkflowExecutions(userID)
-		out := make([]slackservice.BotRunningWorkflow, 0, len(running))
+		out := make([]services.BotRunningWorkflow, 0, len(running))
 		for _, wf := range running {
 			label := strings.TrimSpace(wf.PresetName)
 			if label == "" && wf.WorkspacePath != "" {
 				label = workflowNameFromWorkspacePath(wf.WorkspacePath)
 			}
-			out = append(out, slackservice.BotRunningWorkflow{
+			out = append(out, services.BotRunningWorkflow{
 				WorkflowLabel:    label,
 				WorkspacePath:    wf.WorkspacePath,
 				Status:           wf.Status,
@@ -1478,19 +1496,19 @@ func runServer(cmd *cobra.Command, args []string) {
 	// automatically mirror its background session's agent messages into the
 	// parent's Slack thread — no per-tool hooks required.
 	virtualtools.SetSpawnListener(botManager)
-	botManager.SetUserSecretsLoader(func(ctx context.Context, userID string) ([]slackservice.DecryptedSecret, error) {
+	botManager.SetUserSecretsLoader(func(ctx context.Context, userID string) ([]services.DecryptedSecret, error) {
 		stored, err := chatStore.ListUserSecrets(ctx, userID)
 		if err != nil {
 			return nil, err
 		}
-		var result []slackservice.DecryptedSecret
+		var result []services.DecryptedSecret
 		for _, s := range stored {
 			plaintext, err := decryptSecretValue(s.EncryptedValue, userID)
 			if err != nil {
 				log.Printf("[SECRETS] Failed to decrypt stored secret %q for user %s: %v", s.Name, userID, err)
 				continue // skip broken secrets
 			}
-			result = append(result, slackservice.DecryptedSecret{Name: s.Name, Value: plaintext})
+			result = append(result, services.DecryptedSecret{Name: s.Name, Value: plaintext})
 		}
 		return result, nil
 	})
@@ -1514,7 +1532,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 
 	// Register web simulator connector (always available, no config needed)
-	webSimulator := slackservice.NewWebSimulatorConnector()
+	webSimulator := services.NewWebSimulatorConnector()
 	botManager.RegisterConnector(webSimulator)
 	api.webSimulator = webSimulator
 	log.Printf("✅ Web bot simulator enabled")
@@ -1542,7 +1560,7 @@ func runServer(cmd *cobra.Command, args []string) {
 				sessionDir = filepath.Join(fsutil.WorkspaceDocsRoot(), "config", "whatsapp-sessions")
 			}
 		}
-		whatsappManager := slackservice.NewWhatsAppServiceManager(sessionDir)
+		whatsappManager := services.NewWhatsAppServiceManager(sessionDir)
 		botManager.RegisterConnector(whatsappManager)
 		api.whatsappManager = whatsappManager
 		if err := whatsappManager.StartListening(context.Background()); err != nil {

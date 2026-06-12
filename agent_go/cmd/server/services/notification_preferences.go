@@ -15,8 +15,10 @@ import (
 type NotificationPreference struct {
 	SlackChannelID   string `json:"slack_channel_id,omitempty"`
 	SlackDisabled    bool   `json:"slack_disabled,omitempty"`
-	WhatsAppPhone    string `json:"whatsapp_phone,omitempty"`    // E.164 (e.g. "+919000000000")
+	WhatsAppPhone    string `json:"whatsapp_phone,omitempty"` // E.164 (e.g. "+919000000000")
 	WhatsAppDisabled bool   `json:"whatsapp_disabled,omitempty"`
+	GmailEmail       string `json:"gmail_email,omitempty"` // recipient address
+	GmailDisabled    bool   `json:"gmail_disabled,omitempty"`
 }
 
 // notificationPreferences is the on-disk shape: { user_id: NotificationPreference }

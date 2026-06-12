@@ -398,6 +398,35 @@ export interface SlackTestReplyResponse {
   received: boolean
 }
 
+// Gmail is an outbound-only notification channel backed server-side by the
+// `gws` CLI. Auth is handled on the host (gws auth login / service account),
+// so the UI only sets an enable toggle + a default recipient and reads
+// auto-detected connection status.
+export interface GmailAuthStatus {
+  gws_installed: boolean
+  authenticated: boolean
+  has_gmail_scope: boolean
+  scopes?: string[]
+  detail?: string
+}
+
+export interface GmailConfigRequest {
+  enabled: boolean
+  default_to: string
+}
+
+export interface GmailConfigResponse {
+  enabled: boolean
+  default_to?: string
+  auth: GmailAuthStatus
+  ready: boolean  // enabled + recipient + authenticated + gmail scope
+}
+
+export interface GmailTestResponse {
+  success: boolean
+  message: string
+}
+
 export interface AgentStreamEvent {
   type: string
   query_id: string

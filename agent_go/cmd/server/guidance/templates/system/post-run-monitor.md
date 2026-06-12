@@ -15,7 +15,7 @@ You read the deterministic evidence and write only to `builder/improve.html` (an
 - **Which path ran** — if the workflow has routing or runs per-group, a single run usually exercises only **one** path. Read `route_selection.json` (`select_route`) and the run's group/variables to see *which route(s)/group this run actually took*, so you judge the run only against what that path was supposed to do.
 - **What changed** — `planning/changelog/changelog-*.json`. Recent plan/config/prompt edits (with the `reason` the author gave). This is how you explain a regression: correlate "what got worse this run" against "what we changed in the last few runs."
 - **The goal evidence** — `scores/evaluation/` (eval step scores) and `db/metrics_history.jsonl` (per-run metric snapshots, with `resolve_error`), judged against the success criteria in `soul/soul.md` and the targets in `planning/metrics.json`.
-- **The log so far** — read `builder/improve.html`: the current verdicts, the goal card, open findings, and recent entries, so you continue its style, don't duplicate a finding, and can tell a *transition* (healthy↔broken) from a steady state.
+- **The log so far** — read `builder/improve.html`: the current verdicts, the goal card, open findings, any **unconfirmed Decision** (a harden/replan card with no `.outcome` stamp yet — this run may be the one that confirms it), and recent entries, so you continue its style, don't duplicate a finding, and can tell a *transition* (healthy↔broken) from a steady state.
 
 ### 2. Form two verdicts
 
@@ -28,10 +28,12 @@ You read the deterministic evidence and write only to `builder/improve.html` (an
 
 Format per `get_reference_doc(kind="review-improve-log")` (single log, newest-on-top). **First check the file's format**: if it's an old-format log (an "Improvement Ledger" title, `## Active Improvement Index` / `## Recent Entries` headings, ```improve-decision``` `<script>` blocks, `F-`/`I-` ids, or ad-hoc `.summary`/`.badge` CSS), do NOT append into that stale shell — do the one-time **rewrite to the Starter HTML skeleton** first (per the reference doc's upgrade section), carrying existing unresolved findings/decisions forward as cards. Upgrading the log format is part of your job, not a "fix" to the workflow. Then, every run, even a clean one:
 
-- **Set both verdict pills** in the header (Bug, Goal).
-- **Refresh the goal card** — update each success criterion's Met/Short/At-risk status and the metric/evidence note from the files.
+- **Set both verdict pills** in the header (Bug, Goal), each stamped with the run it's as-of (`run #N`).
+- **Write the status headline** — the one `.status` banner: a single plain sentence (the same text as your `headline` below), class `ok|warn|bad` tracking the worse verdict, `.when` = run + age. Healthy run → say so plainly; never manufacture concern.
+- **Refresh the goal card** — update each success criterion's Met/Short/At-risk status and the metric/evidence note, ending each with `· run #N`. A criterion on a route this run didn't take is "not run this route", not Short.
 - **Refresh the signal tiles** (Bug tiles + Goal tiles) with the latest numbers.
 - **Prepend one Run row** to the recent-runs strip: id, status, key numbers, and a short note only if something stood out.
+- **Confirm the last unconfirmed Decision.** If a prior harden/replan Decision card is still unconfirmed (no `.outcome` stamp) and this run exercised its changed path, judge whether it worked against the effect it predicted and add **one** outcome stamp in place: `ok` (number moved the right way — cite before → after), `bad` (no effect/regressed — say so and open/reopen a finding), or `flat` (this run didn't hit the changed path — leave it pending). Per `get_reference_doc(kind="review-improve-log")`. Don't stamp a decision made on this same run.
 
 Then, **only if something is wrong, changed, or worth the user's attention**, prepend a **Monitor** entry tagged `Bug` or `Goal`:
 - one or two plain sentences: what you observed and, for a regression, the most likely cause correlated to a specific changelog entry ("login-flow has returned skipped for 2 runs; the maker-reviewer gate was tightened on run #39 — likely cause");

@@ -14,7 +14,15 @@ The workflow keeps a **single durable log** — `builder/improve.html` — the w
 
 `builder/review.html` is **legacy**. If you encounter one with unresolved findings, fold them into `builder/improve.html` as open-finding entries, then stop writing to it. Do not create new `review.html` files.
 
-It is a **self-contained, human-readable HTML document — not Markdown, not a data dump.** This is the page the user opens to understand the workflow, so make it genuinely good to read. Call `get_reference_doc(kind="html-output")` for the style baseline, and copy the **Starter HTML skeleton** at the bottom of this doc for the exact structure and polish. Top to bottom the document reads: **two verdicts → the goal → signal tiles → recent runs → newest-first timeline → archive**.
+It is a **self-contained, human-readable HTML document — not Markdown, not a data dump.** This is the page the user opens to understand the workflow, so make it genuinely good to read. Call `get_reference_doc(kind="html-output")` for the style baseline, and copy the **Starter HTML skeleton** at the bottom of this doc for the exact structure and polish. Top to bottom the document reads: **two verdicts → status headline → the goal → signal tiles → recent runs → newest-first timeline → archive**.
+
+### The status headline (the 1-second read)
+
+Directly under the verdicts, one `.status` banner carries a **single plain sentence** — the same one the monitor writes to `monitor-verdict.json`'s `headline` — so a user knows "am I OK?" without parsing pills or scrolling. Its `ok|warn|bad` class tracks the **worse** of the two verdicts, and its `.when` shows the run + how long ago. Keep it honest both ways: on a clean, on-target run say so plainly ("Healthy and on-target."); on a regression lead with what's wrong ("Goal drifting — eval 0.78, under 0.90 target for 3 runs."). Never manufacture concern to fill it.
+
+### Freshness — every status says which run it's "as of"
+
+A verdict, a goal-criterion status, or a tile can silently go stale if no recent run measured it. So **stamp the run each status reflects**: the verdict pills carry a small `run #N`, each goal-criterion `.m` line ends with `· run #N`, and the status banner's `.when` shows the run + age. A 4-runs-old "Met" must read as 4-runs-old, not as current truth — this is how the reader tells a live verdict from a stale one.
 
 ### Two verdicts: Bug and Goal
 
@@ -61,6 +69,22 @@ Resolved 2026-06-09 — added a non-empty-screenshot pre-validation rule to audi
 ```
 
 Reference the finding by its anchor id (or, if it has none, by its date + title). This keeps the "what's still outstanding vs. what's been handled" view honest.
+
+### Confirming a decision's outcome (did the change actually work?)
+
+A Decision card records what a harden/replan applied and *why* — but a journal that only ever says "applied X" never proves the system is working. So a Decision that changed behaviour stays **unconfirmed** until a later run measures its effect, and then it gets **one** outcome stamp added in place (never a second one, never a new card):
+
+```
+<p class="outcome ok">Confirmed by run #43 — login-skip gone, eval 0.72 → 0.81 over 2 runs.</p>
+<p class="outcome bad">No effect by run #44 — reopened as Goal finding of-2026-06-12-eval.</p>
+<p class="outcome flat">Inconclusive — run #44 didn't exercise the changed path; still pending.</p>
+```
+
+- **ok** — the expected number moved the right way (cite before → after and the run).
+- **bad** — it didn't help or regressed; say so plainly and open (or reopen) a finding for it. A change that quietly failed is worse than no change, so never hide it.
+- **flat** — the run that fired didn't exercise the changed path (routing), so the decision is still pending; leave it unconfirmed.
+
+So a Decision is checkable, **state the expected effect when you write it** ("expect login-skip to stop and eval to recover toward 0.85") — that's the bar the later run is judged against. The per-run monitor owns applying these stamps (below); don't stamp a decision on the same run that made it.
 
 ### Keep the active file small
 
@@ -117,10 +141,16 @@ After this one rewrite the file is in skeleton format; from then on you just pre
   .verdicts{display:flex;gap:8px;flex-wrap:wrap}
   .pill{display:inline-flex;align-items:center;gap:8px;font:650 13px/1 var(--sans);padding:9px 14px 9px 12px;border-radius:999px;border:1px solid transparent}
   .pill .lbl{font:700 8.5px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;opacity:.65}
+  .pill .as{font:540 10px/1 var(--mono);opacity:.55;margin-left:1px}
   .pill.ok{background:var(--ok-bg);color:var(--ok);border-color:color-mix(in srgb,var(--ok) 16%,transparent)}
   .pill.warn{background:var(--warn-bg);color:var(--warn);border-color:color-mix(in srgb,var(--warn) 16%,transparent)}
   .pill.bad{background:var(--bad-bg);color:var(--bad);border-color:color-mix(in srgb,var(--bad) 18%,transparent)}
   .dot{width:7px;height:7px;border-radius:50%;background:currentColor;box-shadow:0 0 0 3px color-mix(in srgb,currentColor 18%,transparent)}
+  /* Status headline — the 1-second read; mirrors the monitor's one-sentence verdict. */
+  .status{display:flex;align-items:center;gap:12px;margin:22px 0 0;padding:15px 19px;border-radius:13px;border:1px solid var(--line-2);background:var(--surface);box-shadow:var(--shadow);font-size:15.5px;font-weight:560}
+  .status .ic{flex:none;width:9px;height:9px;border-radius:50%;background:currentColor;box-shadow:0 0 0 4px color-mix(in srgb,currentColor 15%,transparent)}
+  .status.ok{color:var(--ok)} .status.warn{color:var(--warn)} .status.bad{color:var(--bad)}
+  .status .txt{color:var(--ink);font-weight:580} .status .when{margin-left:auto;font:540 12px/1 var(--mono);color:var(--ink-3);white-space:nowrap}
   .chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:16px}
   .chip{font:520 12px/1 var(--sans);padding:6px 11px;border-radius:8px;background:var(--surface);border:1px solid var(--line-2);color:var(--ink-2)} .chip b{color:var(--ink);font-weight:600}
   .goalcard{margin-top:26px;border:1px solid var(--line-2);border-radius:var(--r);background:var(--surface);box-shadow:var(--shadow);overflow:hidden}
@@ -154,6 +184,12 @@ After this one rewrite the file is in skeleton format; from then on you just pre
   .entry p{margin:0;font-size:14.5px;color:var(--ink)} .entry p+p{margin-top:8px}
   .entry .meta{margin-top:11px;padding-top:11px;border-top:1px solid var(--line);font:540 12px/1.5 var(--mono);color:var(--ink-3)} .entry .meta code{background:var(--surface-2);border:1px solid var(--line);border-radius:5px;padding:1px 6px;color:var(--ink-2)}
   .resolved{margin-top:11px;display:inline-flex;align-items:center;gap:7px;font:620 12.5px/1.4 var(--sans);color:var(--ok)} .resolved::before{content:"✓";font-size:11px;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;background:var(--ok-bg)}
+  /* Outcome stamp on a Decision card — did the change actually move the number, judged by a later run. */
+  .outcome{margin-top:11px;display:inline-flex;align-items:flex-start;gap:7px;font:600 12.5px/1.45 var(--sans)}
+  .outcome::before{flex:none;font-size:11px;width:16px;height:16px;margin-top:1px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%}
+  .outcome.ok{color:var(--ok)} .outcome.ok::before{content:"✓";background:var(--ok-bg)}
+  .outcome.bad{color:var(--bad)} .outcome.bad::before{content:"✗";background:var(--bad-bg)}
+  .outcome.flat{color:var(--warn)} .outcome.flat::before{content:"–";background:var(--warn-bg)}
   .archive{border:1px solid var(--line-2);border-radius:12px;background:var(--surface);overflow:hidden;box-shadow:var(--shadow)}
   .arow{display:flex;gap:13px;align-items:center;padding:14px 18px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-2)} .arow:first-child{border-top:none} .arow b{color:var(--ink);font-weight:620} .arow .n{margin-left:auto;font:540 12px/1 var(--mono);color:var(--ink-3)}
   footer{margin-top:42px;padding-top:18px;border-top:1px solid var(--line);font:540 11.5px/1.5 var(--mono);color:var(--ink-3)}
@@ -165,10 +201,21 @@ After this one rewrite the file is in skeleton format; from then on you just pre
     <div><div class="eyebrow">workflow · pulse</div><h1><!-- WORKFLOW NAME --></h1></div>
     <!-- TWO VERDICTS. Bug: did it run right (ok|warn|bad). Goal: is it hitting success criteria (ok|warn|bad). -->
     <div class="verdicts">
-      <div class="pill ok"><span class="lbl">Bug</span><span class="dot"></span>Bug-free</div>
+      <!-- Each pill carries the run it's as-of so a stale verdict can't read as current truth. -->
+      <div class="pill ok"><span class="lbl">Bug</span><span class="dot"></span>Bug-free<span class="as">run #—</span></div>
       <div class="pill warn"><span class="lbl">Goal</span><span class="dot"></span>Not yet measured</div>
     </div>
   </div>
+
+  <!-- STATUS HEADLINE — the 1-second read. ONE plain sentence, the same one the monitor writes to
+       monitor-verdict.json's "headline". Class ok|warn|bad tracks the worse of the two verdicts.
+       On a clean, on-target run say so plainly; don't manufacture concern. -->
+  <div class="status ok">
+    <span class="ic"></span>
+    <span class="txt"><!-- e.g. Healthy and on-target. --></span>
+    <span class="when"><!-- run #— · — ago --></span>
+  </div>
+
   <div class="chips">
     <span class="chip">Type <b><!-- primary type --></b></span>
     <span class="chip">Oversight <b><!-- oversight_mode --></b></span>
@@ -180,7 +227,10 @@ After this one rewrite the file is in skeleton format; from then on you just pre
   <div class="goalcard">
     <div class="obj"><span class="l">What this workflow is for</span><!-- one-line objective from soul.md --></div>
     <div class="crit"><span class="cs short">↑ Short</span><span class="ct"><!-- success criterion --><span class="m">not yet measured — needs a run</span></span></div>
-    <!-- one .crit row per success criterion; cs = met | short | risk -->
+    <!-- one .crit row per success criterion; cs = met | short | risk.
+         End each .m metric line with the run it's as-of so freshness is visible:
+         <span class="m">eval 0.81 ▶ 0.90 target · run #41</span>. A criterion whose route this run
+         didn't exercise is "not run this route" (cs short, neutral), never Short/At-risk. -->
   </div>
 
   <!-- SIGNAL TILES grouped by verdict. Read every number from planning/metrics.json,
@@ -206,7 +256,11 @@ After this one rewrite the file is in skeleton format; from then on you just pre
        <div class="entry open" id="of-YYYY-MM-DD-slug"><div class="ehead"><span class="tag open">Open finding</span><span class="kind goal">Goal</span><span class="etitle">…</span><span class="when">…</span></div><p>…</p></div>
        <div class="entry user"><div class="ehead"><span class="tag user">User rule · authoritative</span><span class="etitle">…</span><span class="when">…</span></div><p>…</p></div>
        <div class="entry note"><div class="ehead"><span class="tag note">Note</span><span class="etitle">…</span><span class="when">…</span></div><p>…</p></div>
-       Close an open finding by editing its card to add: <p class="resolved">Resolved YYYY-MM-DD — how.</p> -->
+       Close an open finding by editing its card to add: <p class="resolved">Resolved YYYY-MM-DD — how.</p>
+       Confirm a Decision worked (or didn't) by editing its card to add ONE outcome stamp once a later run measures it:
+       <p class="outcome ok">Confirmed by run #43 — login-skip gone, eval 0.72 → 0.81 over 2 runs.</p>
+       <p class="outcome bad">No effect by run #44 — reopened as <span class="kind goal">Goal</span> finding of-YYYY-MM-DD-slug.</p>
+       <p class="outcome flat">Inconclusive — run #44 didn't exercise the changed path; still pending. -->
 
   <div class="seclabel">Archive</div>
   <div class="archive"><!-- one .arow per monthly archive file once you start rolling entries off --></div>

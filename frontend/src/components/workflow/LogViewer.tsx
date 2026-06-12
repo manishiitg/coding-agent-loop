@@ -117,15 +117,20 @@ export function LogViewer({ workspacePath }: LogViewerProps) {
     )
   }
 
+  // Frame the log like a document on a page rather than a raw edge-to-edge iframe:
+  // a subtle backdrop with the content centered and width-capped, so a wide panel
+  // reads as a framed page (the way the report does) instead of a stretched column.
   return (
-    <div className="h-full w-full">
-      {isHtml ? (
-        <HtmlRenderer content={themedContent} />
-      ) : (
-        <div className="h-full overflow-y-auto p-4">
-          <MarkdownRenderer content={content} disablePathLinking />
-        </div>
-      )}
+    <div className="h-full w-full overflow-hidden bg-muted/30 dark:bg-black/20">
+      <div className="mx-auto h-full w-full max-w-[1040px]">
+        {isHtml ? (
+          <HtmlRenderer content={themedContent} />
+        ) : (
+          <div className="h-full overflow-y-auto p-4">
+            <MarkdownRenderer content={content} disablePathLinking />
+          </div>
+        )}
+      </div>
     </div>
   )
 }

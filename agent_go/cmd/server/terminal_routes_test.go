@@ -645,7 +645,7 @@ func TestTerminalRoutesGetTerminalCanHistoryRefreshSelectedPane(t *testing.T) {
 	}
 }
 
-func TestTerminalRoutesGetTerminalCapturesRunningTmuxShortHistory(t *testing.T) {
+func TestTerminalRoutesGetTerminalCapturesRunningTmuxScrollableHistory(t *testing.T) {
 	store := terminals.NewStore()
 	api := &StreamingAPI{terminalStore: store}
 	sessionID := "session-terminal-visible"
@@ -668,8 +668,8 @@ func TestTerminalRoutesGetTerminalCapturesRunningTmuxShortHistory(t *testing.T) 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get status = %d body=%s, want 200", rec.Code, rec.Body.String())
 	}
-	if got := strings.Join(gotArgs, " "); got != "capture-pane -p -e -J -t "+tmuxSession+" -S -300" {
-		t.Fatalf("tmux args = %q, want short-history capture", got)
+	if got := strings.Join(gotArgs, " "); got != "capture-pane -p -e -J -t "+tmuxSession+" -S -10000" {
+		t.Fatalf("tmux args = %q, want scrollable-history capture", got)
 	}
 	var response terminals.Snapshot
 	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {

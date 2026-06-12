@@ -20,7 +20,7 @@ import (
 const listTerminalContentMaxBytes = 64 * 1024
 const terminalTmuxActionTimeout = 5 * time.Second
 const terminalDefaultRefreshLines = 2000
-const terminalActiveDetailHistoryLines = 300
+const terminalActiveDetailHistoryLines = 10000
 const terminalDefaultDetailHistoryLines = 10000
 const terminalMaxCaptureLines = 20000
 
@@ -137,11 +137,12 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 	}
 	// Capture live tmux content when: explicitly requested via content=screen/history,
 	// OR when the terminal is inactive (active=false) and has a tmux session.
-	// Running content=screen requests capture a short scrollback window instead of
-	// deep history: CLIs like Agy repaint loading/spinner text in place, and tmux
-	// history can flatten those old frames into repeated "loading/generating"
-	// fragments before xterm.js ever sees them. Keeping a small window preserves
-	// user scrolling without feeding old spinner history back into the terminal.
+	// Running content=screen requests capture a bounded scrollback window instead
+	// of unbounded history: CLIs like Agy repaint loading/spinner text in place,
+	// and tmux history can flatten those old frames into repeated
+	// "loading/generating" fragments before xterm.js ever sees them. The window
+	// is still deep enough for users to scroll back through long Claude/Codex
+	// turns.
 	// Completed/inactive terminals still use deeper history so users can review
 	// the final transcript. Legacy content=tmux maps to screen/history based on
 	// active state; legacy content=deep maps to history.

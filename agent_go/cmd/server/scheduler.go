@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
+	slackservice "mcp-agent-builder-go/agent_go/cmd/server/services"
 	"mcp-agent-builder-go/agent_go/pkg/fsutil"
 	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 )
@@ -54,6 +55,7 @@ type ScheduleRuntimeState struct {
 	LastDurationMs      *int64     `json:"last_duration_ms,omitempty"`
 	RunCount            int        `json:"run_count"`
 	ConsecutiveFailures int        `json:"consecutive_failures"`
+	LastMonitorBad      bool       `json:"-"` // last post-run monitor verdict (in-memory; drives notify-on-transition)
 }
 
 // registeredJob is a schedule registered for wall-clock evaluation.
@@ -1190,6 +1192,68 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 		return
 	}
 	s.sessionLogf(sctx, sessionID, "[MONITOR] post-run monitor completed for %s", sctx.Schedule.ID)
+
+	// Push a notification if the verdict the monitor just wrote represents a
+	// state change worth interrupting the user for.
+	s.notifyOnMonitorVerdict(ctx, sctx)
+}
+
+// notifyOnMonitorVerdict reads builder/monitor-verdict.json (written by the
+// post-run monitor) and, on a state change — broke, recovered, or a new finding
+// while still broken — pushes a notification to whatever channels the user has
+// configured (Slack/WhatsApp). It fires only on transitions, not every run, so
+// a steadily-broken or steadily-healthy workflow doesn't spam. No connectors
+// configured = silent no-op; all errors are logged and swallowed.
+func (s *SchedulerService) notifyOnMonitorVerdict(ctx context.Context, sctx *ScheduleContext) {
+	nm := slackservice.GetNotificationManager()
+	if nm == nil {
+		return
+	}
+	verdictPath := strings.Trim(sctx.WorkspacePath, "/") + "/builder/monitor-verdict.json"
+	content, exists, err := readFileFromWorkspace(ctx, verdictPath)
+	if err != nil || !exists || strings.TrimSpace(content) == "" {
+		return
+	}
+	var v struct {
+		Bug        string `json:"bug"`
+		Goal       string `json:"goal"`
+		Headline   string `json:"headline"`
+		NewFinding bool   `json:"new_finding"`
+	}
+	if json.Unmarshal([]byte(content), &v) != nil {
+		return
+	}
+
+	bad := v.Bug == "broken" || v.Goal == "short" || v.Goal == "drifting"
+	state := s.getOrCreateRuntimeState(sctx.Schedule.ID)
+	wasBad := state.LastMonitorBad
+	state.LastMonitorBad = bad
+
+	label := sctx.WorkflowLabel
+	if label == "" {
+		label = sctx.WorkflowID
+	}
+
+	var headline string
+	switch {
+	case bad && !wasBad:
+		headline = fmt.Sprintf("⚠️ %s needs attention", label)
+	case !bad && wasBad:
+		headline = fmt.Sprintf("✅ %s recovered", label)
+	case bad && v.NewFinding:
+		headline = fmt.Sprintf("⚠️ %s — new issue found", label)
+	default:
+		return // steady state — nothing to interrupt the user for
+	}
+
+	msg := fmt.Sprintf("%s\nBug: %s · Goal: %s", headline, v.Bug, v.Goal)
+	if h := strings.TrimSpace(v.Headline); h != "" {
+		msg += "\n" + h
+	}
+	dest := &slackservice.NotificationDestination{UserID: sctx.UserID}
+	if nerr := nm.SendUserNotification(ctx, msg, "Post-run monitor", dest); nerr != nil {
+		s.logf(sctx, "[MONITOR] notification send failed: %v", nerr)
+	}
 }
 
 // executeJob builds a session request from the manifest and runs it.

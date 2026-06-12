@@ -66,9 +66,18 @@ Reference the finding by its anchor id (or, if it has none, by its date + title)
 
 The log must not grow without bound. When `builder/improve.html` passes roughly **800 lines, 60 KB, or 20 timeline entries**, move older **resolved** findings, superseded decisions, and routine run rows into a monthly archive `builder/improve-archive/YYYY-MM.html`, leaving a one-row entry in the Archive Index (date range, count, any still-unresolved ids). **Never archive** open findings, user rules, current notes, or the latest few entries — the active file should always answer "what's the state of this workflow right now and what still needs attention."
 
-### Legacy `.md` / structured-block migration (one-time)
+### Upgrading an old-format log (one-time, REQUIRED before appending)
 
-Some workspaces still have legacy `builder/improve.md` / `builder/review.md`, or an `improve.html` full of old ```improve-decision``` fenced JSON blocks and `F-…`/`I-…` ids. When you open such a file: read it in full, carry every unresolved finding and still-relevant decision forward as readable timeline entries in the new format, then delete the `.md` (via `execute_shell_command`) or replace the JSON blocks with prose cards. Do this once, before writing new entries, so nothing is lost. The structured JSON schema and the dual `F-/I-` id system are retired — write readable prose instead.
+An existing `builder/improve.html` is **old-format** — and must be upgraded, not appended to — if it has **any** of: a title like "Improvement Ledger"; `## Active Improvement Index` / `## Recent Entries` / `## Archive Index` headings; ```improve-decision``` fenced/`<script>` JSON blocks; `F-…` / `I-…` ids; or its own ad-hoc CSS (`.summary` / `.badge` / `.stats`, system-ui body) instead of the skeleton's. Legacy `builder/improve.md` / `builder/review.md` also count.
+
+**Do NOT append your new entry into the old structure** — that produces good content in a stale, off-brand shell. Instead, **rewrite the entire document to the Starter HTML skeleton above** as a one-time upgrade:
+
+1. Read the old file in full.
+2. Write the skeleton fresh: header + two verdict pills, the goal card (objective + success criteria from `soul.md`), the signal tiles, the recent-runs strip, the `<!-- LOG ENTRIES: newest first -->` anchor, the archive section.
+3. Carry every **unresolved finding** and **still-relevant recent decision/run** forward as timeline **cards** (newest first), dropping the `<script>` JSON blocks and the `F-`/`I-` ids — write readable prose, give an open finding a short anchor id only.
+4. Delete any legacy `.md` (`execute_shell_command`) so nothing is duplicated.
+
+After this one rewrite the file is in skeleton format; from then on you just prepend cards. The structured JSON schema and the dual `F-/I-` id system are retired.
 
 ### Starter HTML skeleton (copy this exactly)
 

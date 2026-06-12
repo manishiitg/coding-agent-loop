@@ -18,7 +18,7 @@ You read the deterministic evidence and write only to `builder/improve.html` (an
 
 ### 3. Update `builder/improve.html`
 
-Format per `get_reference_doc(kind="review-improve-log")` (single log, newest-on-top). Every run, even a clean one:
+Format per `get_reference_doc(kind="review-improve-log")` (single log, newest-on-top). **First check the file's format**: if it's an old-format log (an "Improvement Ledger" title, `## Active Improvement Index` / `## Recent Entries` headings, ```improve-decision``` `<script>` blocks, `F-`/`I-` ids, or ad-hoc `.summary`/`.badge` CSS), do NOT append into that stale shell — do the one-time **rewrite to the Starter HTML skeleton** first (per the reference doc's upgrade section), carrying existing unresolved findings/decisions forward as cards. Upgrading the log format is part of your job, not a "fix" to the workflow. Then, every run, even a clean one:
 
 - **Set both verdict pills** in the header (Bug, Goal).
 - **Refresh the goal card** — update each success criterion's Met/Short/At-risk status and the metric/evidence note from the files.

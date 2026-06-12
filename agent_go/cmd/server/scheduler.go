@@ -1144,8 +1144,10 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 		// Post-run monitor: a cheap, read-only triage pass that records Bug + Goal
 		// verdicts and any silent-failure / drift finding into the workflow log.
 		// Opt-in per workflow (post_run_monitor in workflow.json) — runs only when
-		// the user / builder enabled it. Never affects the run's recorded result.
-		if runFolder != "" {
+		// the user / builder enabled it. Only after an actual workflow RUN, not an
+		// optimizer/improvement pass (there's no fresh run output to triage there).
+		// Never affects the run's recorded result.
+		if runFolder != "" && sctx.Schedule.WorkshopMode != "optimizer" {
 			if manifest, found, mErr := ReadWorkflowManifest(ctx, sctx.WorkspacePath); mErr == nil && found && manifest.MonitorEnabled() {
 				s.runPostRunMonitor(ctx, sctx, status, runFolder)
 			}

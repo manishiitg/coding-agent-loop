@@ -26,10 +26,16 @@ func extractWorkspacePathFromObjective(objective string) string {
 		start := idx + len(prefix)
 		// Find the end of the workspace path (typically before a newline or end of string)
 		end := strings.Index(objective[start:], "\n")
+		var line string
 		if end == -1 {
-			return strings.TrimSpace(objective[start:])
+			line = strings.TrimSpace(objective[start:])
+		} else {
+			line = strings.TrimSpace(objective[start : start+end])
 		}
-		return strings.TrimSpace(objective[start : start+end])
+		if comma := strings.Index(line, ","); comma != -1 {
+			line = strings.TrimSpace(line[:comma])
+		}
+		return line
 	}
 	return ""
 }

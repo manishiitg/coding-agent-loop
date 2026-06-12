@@ -38,6 +38,17 @@ func TestExtractWorkflowContextFolders(t *testing.T) {
 	}
 }
 
+func TestExtractWorkspacePathFromObjectiveUsesFirstFileContextPath(t *testing.T) {
+	query := "Please inspect these files.\n📁 Files in context: Workflow/Main/input-a.png, Workflow/Main/input-b.png\n"
+
+	got := extractWorkspacePathFromObjective(query)
+	want := "Workflow/Main/input-a.png"
+
+	if got != want {
+		t.Fatalf("extractWorkspacePathFromObjective() = %q, want %q", got, want)
+	}
+}
+
 func TestIsToolBackedChatMode(t *testing.T) {
 	tests := []struct {
 		name      string

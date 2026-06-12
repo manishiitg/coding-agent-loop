@@ -1,22 +1,59 @@
 # 🚀 Runloop
 
-![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/manishiitg/mcp-agent-builder-go)
-[![Security Scan](https://github.com/manishiitg/mcp-agent-builder-go/workflows/Secret%20Scan/badge.svg)](https://github.com/manishiitg/mcp-agent-builder-go/actions)
-[![Dependency Scan](https://github.com/manishiitg/mcp-agent-builder-go/workflows/Dependency%20Scan/badge.svg)](https://github.com/manishiitg/mcp-agent-builder-go/actions)
-[![Go Version](https://img.shields.io/badge/Go-1.24.4-blue.svg)](https://golang.org/)
-[![React](https://img.shields.io/badge/React-19.1.1-blue.svg)](https://reactjs.org/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](#license--architecture-foundations)
-
 **Runloop** is a multi-model agent platform for building, orchestrating, and scheduling AI workflows across coding tools, chat channels, browser automation, and human approvals.
 
-### Install on macOS (Apple Silicon)
+## 💻 Desktop App (macOS)
+
+A standalone macOS app is available — no Docker, no manual server setup. Each release is published at [Releases](https://github.com/manishiitg/mcp-agent-builder-go/releases/latest).
+
+### Install (one-liner — recommended)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/manishiitg/mcp-agent-builder-go/main/install.sh | bash
 ```
 
-Downloads the latest dmg from [Releases](https://github.com/manishiitg/mcp-agent-builder-go/releases/latest), installs to `/Applications`, clears the Gatekeeper quarantine flag, and launches the app. See the [Desktop App section](#-desktop-app-macos) below for details + manual install.
+Downloads the latest dmg, installs `Runloop.app` to `/Applications`, ensures the MCP bridge used by Claude Code/Codex/Gemini CLI tool access is installed to `~/go/bin`, strips the macOS quarantine flag (no "damaged" warning), and launches the app. If Go is missing, the installer installs Go through Homebrew when available; otherwise it asks you to install Go and rerun the same curl command. Pin a specific version with `RUNLOOP_VERSION=v1.25.6 curl -fsSL … | bash`.
 
+### Install manually
+
+1. Download `Runloop-<version>-arm64.dmg` from the latest release.
+2. Open the dmg, drag **Runloop** to Applications.
+
+### First-launch error: *"Runloop is damaged and can't be opened"*
+
+The current build is **unsigned and not notarized**, so macOS Gatekeeper flags it on download. The app itself is fine — you just need to clear the quarantine flag macOS automatically attaches to downloaded files.
+
+**Recommended — Terminal (works on all macOS versions):**
+```bash
+xattr -cr /Applications/Runloop.app
+```
+Then double-click Runloop. If macOS still complains, also strip the dmg you downloaded:
+```bash
+xattr -cr ~/Downloads/Runloop-*.dmg
+```
+`sudo` is **not** needed — you own the app since you dragged it into Applications.
+
+**System Settings (sometimes works, depends on macOS version):**
+For "damaged" verdicts on Sequoia/Tahoe, macOS often hides the "Open Anyway" button entirely, so this path frequently doesn't appear. If it does:
+1. Open **System Settings → Privacy & Security**.
+2. Scroll to the Security section. If you see *"Runloop was blocked from use…"* with an **Open Anyway** button, click it.
+3. Confirm in the dialog. macOS remembers the decision.
+
+If the button isn't there, fall back to the `xattr` command above.
+
+### First-launch UX
+
+On first run the app prompts for two things:
+1. **Workspace folder** — pick where your `workspace-docs/` lives (skills, configs, schedules, WhatsApp DB, encrypted provider keys). Defaults to `~/Library/Application Support/runloop-desktop/workspace-docs/`.
+2. **AUTH_SECRET** — the secret used to encrypt `provider-api-keys.json`. If you're moving from a previous setup, enter the same secret you used there. Otherwise pick a strong value and remember it (you'll need it on every machine that opens this workspace).
+
+After that, add provider API keys (OpenAI, Gemini, Anthropic, etc.) through the in-app provider auth flow. They are encrypted at rest in `<workspace-docs>/config/provider-api-keys.json`.
+
+### Why no signing?
+
+Code signing + Apple notarization requires an Apple Developer ID ($99/yr) and is on the roadmap. Until then, the manual quarantine step is unavoidable on first install.
+
+---
 
 Run **Claude Code, Codex, Gemini CLI, and open models** in one system. Build visual workflows, launch complex orchestrators, schedule recurring jobs, and route agent conversations through **Slack, WhatsApp, and the web**.
 
@@ -63,8 +100,6 @@ Runloop is built for teams that want more than a chat box:
 - Use the right model for the right step instead of standardizing on one vendor
 - Bring coding agents, operational automations, and human approvals into one system
 - Ship agent workflows that can be monitored, evaluated, and improved over time
-
----
 
 ## ⚡ Platform Overview
 
@@ -126,59 +161,6 @@ Bring your existing CLI-based coding agents into the visual orchestrator via the
 *   **Claude Code**: Native integration with the `@anthropic-ai/claude-code` CLI through experimental interactive sessions.
 *   **Gemini CLI**: Integration with the `@google-gemini/gemini-cli`.
 *   **State Persistence**: Support for `--resume` functionality, allowing the visual orchestrator to maintain long-running coding sessions across CLI restarts.
-
----
-
-## 💻 Desktop App (macOS)
-
-A standalone macOS app is available — no Docker, no manual server setup. Each release is published at [Releases](https://github.com/manishiitg/mcp-agent-builder-go/releases/latest).
-
-### Install (one-liner — recommended)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/manishiitg/mcp-agent-builder-go/main/install.sh | bash
-```
-
-Downloads the latest dmg, installs `Runloop.app` to `/Applications`, strips the macOS quarantine flag (no "damaged" warning), and launches the app. Pin a specific version with `RUNLOOP_VERSION=v1.25.6 curl -fsSL … | bash`.
-
-### Install manually
-
-1. Download `Runloop-<version>-arm64.dmg` from the latest release.
-2. Open the dmg, drag **Runloop** to Applications.
-
-### First-launch error: *"Runloop is damaged and can't be opened"*
-
-The current build is **unsigned and not notarized**, so macOS Gatekeeper flags it on download. The app itself is fine — you just need to clear the quarantine flag macOS automatically attaches to downloaded files.
-
-**Recommended — Terminal (works on all macOS versions):**
-```bash
-xattr -cr /Applications/Runloop.app
-```
-Then double-click Runloop. If macOS still complains, also strip the dmg you downloaded:
-```bash
-xattr -cr ~/Downloads/Runloop-*.dmg
-```
-`sudo` is **not** needed — you own the app since you dragged it into Applications.
-
-**System Settings (sometimes works, depends on macOS version):**
-For "damaged" verdicts on Sequoia/Tahoe, macOS often hides the "Open Anyway" button entirely, so this path frequently doesn't appear. If it does:
-1. Open **System Settings → Privacy & Security**.
-2. Scroll to the Security section. If you see *"Runloop was blocked from use…"* with an **Open Anyway** button, click it.
-3. Confirm in the dialog. macOS remembers the decision.
-
-If the button isn't there, fall back to the `xattr` command above.
-
-### First-launch UX
-
-On first run the app prompts for two things:
-1. **Workspace folder** — pick where your `workspace-docs/` lives (skills, configs, schedules, WhatsApp DB, encrypted provider keys). Defaults to `~/Library/Application Support/runloop-desktop/workspace-docs/`.
-2. **AUTH_SECRET** — the secret used to encrypt `provider-api-keys.json`. If you're moving from a previous setup, enter the same secret you used there. Otherwise pick a strong value and remember it (you'll need it on every machine that opens this workspace).
-
-After that, add provider API keys (OpenAI, Gemini, Anthropic, etc.) through the in-app provider auth flow. They are encrypted at rest in `<workspace-docs>/config/provider-api-keys.json`.
-
-### Why no signing?
-
-Code signing + Apple notarization requires an Apple Developer ID ($99/yr) and is on the roadmap. Until then, the manual quarantine step is unavoidable on first install.
 
 ---
 

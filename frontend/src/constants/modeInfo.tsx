@@ -15,12 +15,16 @@ export const MODE_INFO: Record<Exclude<ModeCategory, null>, ModeInfo> = {
   'workflow': {
     icon: <Workflow className="w-16 h-16 text-blue-500" />,
     title: 'Workflow Mode',
-    description: 'Structured task execution with step-by-step control',
+    description: 'Structured task execution with step-by-step control, plus its own views for what ran, why, and how well.',
     features: [
-      'Sequential task execution',
-      'Human verification at each step',
-      'Progress tracking and reporting',
-      'Requires Workflow/ folder for organization'
+      'Sequential, step-by-step execution with human verification',
+      'Plan view — the live workflow plan and its changelog',
+      'Report view — the agent-built dashboard of run outputs',
+      'Pulse view — one agent-curated log of every run, with two verdicts: Bug (did it run right) and Goal (is it hitting its success criteria)',
+      'Soul view — the workflow\'s objective and success criteria (its source of truth)',
+      'Monitor — a per-run review that catches silent breakage and goal drift, and can notify you on Slack/WhatsApp',
+      'Auto-improve — scheduled hardening and replan proposals that act on what Monitor finds',
+      'Requires a Workflow/ folder for organization'
     ],
     examples: [],
     tips: []

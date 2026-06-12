@@ -92,6 +92,8 @@ Runloop is built for teams that want more than a chat box:
 
 See [examples](examples/README.md) for workflow blueprints, output artifacts, and a README demo GIF storyboard.
 
+See the [public roadmap](ROADMAP.md) for upcoming work on onboarding, memory-aware multi-agent chat, workflow notifications, Agent SDK support, OpenCode, and goal tracking.
+
 ## Works With
 
 ### Coding and LLM Models

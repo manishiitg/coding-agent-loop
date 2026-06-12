@@ -44,7 +44,7 @@ If everything is healthy and on-target, do **not** invent a problem — just the
 
 ### 4. Emit the verdict signal
 
-Write `builder/monitor-verdict.json` (overwrite each run) so the scheduler can decide whether to push a notification:
+Write `builder/monitor-verdict.json` (overwrite each run) as a machine-readable signal for the UI and other consumers:
 
 ```json
 {"run_folder":"<run_folder>","bug":"bug-free|broken","goal":"on-target|short|drifting|not-measured","headline":"<one sentence — what the user most needs to know>","new_finding":true|false}
@@ -52,10 +52,22 @@ Write `builder/monitor-verdict.json` (overwrite each run) so the scheduler can d
 
 This file is an internal signal, not the user surface — the log is the user surface. Keep `headline` to one honest sentence.
 
+### 5. Notify the user — only on a transition
+
+You own the notification. Decide it from the **state change**, which you read from the durable Pulse log (`builder/improve.html`) — its prior verdicts/status vs the verdict you just formed. A push is warranted in exactly these cases:
+
+- **broke** — Bug went `bug-free` → `broken`, or Goal slipped from `on-target` to `short`/`drifting`;
+- **recovered** — was bad last run and is healthy again this run;
+- **new finding while still bad** — already broken/short, but you opened a *new* Open finding this run.
+
+On any of those, call `notify_via_bot` **once** with a one-line `message_for_user` equal to your status headline (the same sentence you put in the log and the verdict signal). Lead with what's wrong, or "✅ recovered" — never a generic "needs attention". Example: `⚠️ login-flow returned skipped for 2 runs — maker-reviewer gate tightened on run #39`.
+
+On a **steady run** — healthy-and-still-healthy, or broken-and-still-broken with nothing new — do **not** call `notify_via_bot`. Silence is correct; the Pulse already has the detail. (If no bot channel is connected the call is a harmless no-op, but skip it on steady runs anyway to avoid a wasted turn.) This single transition notification is the **only** action you take — you still never fix, replan, or edit the plan.
+
 ### Cost discipline
 
 You are a cheap, read-only triage pass — not an improvement run. The biggest waste is reading one file per shell call; don't do that.
 
 - **Gather all your evidence in ONE shell command.** You know the fixed set up front: run status + key outputs under `runs/<run_folder>/`, `route_selection.json`, the latest `scores/evaluation/` report, the tail of `db/metrics_history.jsonl`, `planning/metrics.json`, `soul/soul.md`, recent `planning/changelog/`, and the current `builder/improve.html`. `cat`/`tail`/`grep`/`ls` them in a single script with clear `=== NAME ===` delimiters instead of ten separate reads. A second targeted read is fine only if the first surfaced something you must drill into.
 - **No exploration.** Don't `ls` around to discover layout, don't probe with `echo`/`pwd`, don't re-read files you already have. The paths above are the contract.
-- Read → judge → write the log + verdict → stop. Do not dispatch sub-agents, run the browser, execute the workflow, edit the plan, call propose_metric / harden / replan, or open speculative investigations. Those belong to the scheduled improve pass, never the monitor.
+- Read → judge → write the log + verdict → notify only on a transition → stop. That single `notify_via_bot` push (step 5) is the monitor's only side effect; otherwise do not dispatch sub-agents, run the browser, execute the workflow, edit the plan, call propose_metric / harden / replan, or open speculative investigations. Those belong to the scheduled improve pass, never the monitor.

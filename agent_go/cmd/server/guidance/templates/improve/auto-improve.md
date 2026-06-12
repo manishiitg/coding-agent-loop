@@ -4,11 +4,14 @@ Write to `builder/improve.html` — the single durable log. For the log/HTML for
 
 FIRST check what already exists before proposing or creating anything. Do this autonomously and avoid duplicate schedules.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
+Auto-improve runs at several cadences over the **one** workflow log (`builder/improve.html`), all sharing the Bug/Goal vocabulary: a cheap **per-run review** that detects every run, feeding two **scheduled** passes that fix. The per-run review and these schedules are the same system, not separate tools.
+
 GOAL
-Create or update THREE complementary schedules:
+Set up the per-run review **and** the complementary schedules:
+0. **Per-run review (detection, every run):** make sure the per-run monitor is ON for this workflow (`workflow.json::post_run_monitor`). When on, after every run a cheap review-only pass records Bug/Goal findings in the log — this is what the harden/replan schedules below consume. It never fixes; see `get_reference_doc(kind="post-run-monitor")`. If you can't set it programmatically, tell the user to flip the **Monitor** switch in the toolbar on.
 1. a workshop Run-mode schedule for recurring execution
-2. a workshop Optimizer-mode HARDEN schedule that wakes often — initially after every 1-2 runs — and APPLIES a hardening pass (local reliability/contract/artifact fixes + stale-description cleanup) off the latest run/eval evidence, widening its own interval as the workflow stabilizes
-3. a workshop Optimizer-mode REPLAN-PROPOSAL schedule that wakes less often — initially after every 3-4 runs — and does NOT rewrite the plan: it reviews accumulated evidence, decides what the plan/strategy SHOULD change, and records that as a proposal in builder/improve.html for human review, widening its own interval as the workflow matures.
+2. a workshop Optimizer-mode HARDEN schedule that wakes often — initially after every 1-2 runs — and APPLIES a hardening pass (local reliability/contract/artifact fixes + stale-description cleanup) off the latest run/eval evidence and the per-run **Bug** findings, widening its own interval as the workflow stabilizes
+3. a workshop Optimizer-mode REPLAN-PROPOSAL schedule that wakes less often — initially after every 3-4 runs — and does NOT rewrite the plan: it reviews accumulated evidence and the per-run **Goal** findings, decides what the plan/strategy SHOULD change, and records that as a proposal in builder/improve.html for human review, widening its own interval as the workflow matures.
 
 Harden is always the more frequent of the two improvement schedules; the replan-proposal schedule never fires more often than harden. The harden schedule APPLIES fixes; the replan-proposal schedule only RECOMMENDS — it never calls `replan_workflow_from_results` and never rewrites `planning/plan.json`.
 

@@ -1175,6 +1175,11 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 
 	sessionID := s.newScheduleSessionID(sctx)
 	reqMap := s.buildWorkshopRequest(ctx, sctx)
+	// Cost trim: the monitor is a cheap read-only triage pass — it never drives a
+	// browser and doesn't need the workflow's skills loaded. Strip both so the
+	// per-run pass (which now runs after every run) stays lean.
+	reqMap["browser_mode"] = "none"
+	reqMap["selected_skills"] = []string{}
 	reqMap["query"] = fmt.Sprintf(
 		"You are the post-run monitor. A scheduled run of this workflow just finished: status=%q, run_folder=%q. "+
 			"Call get_reference_doc(kind=\"post-run-monitor\") and follow it exactly: read the run evidence, the plan changelog, and the eval/metric files; "+

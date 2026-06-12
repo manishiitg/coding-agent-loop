@@ -84,6 +84,14 @@ Runloop is built for teams that want more than a chat box:
 - **Slack and WhatsApp agents** that continue conversations outside the dashboard
 - **Browser-powered workflows** that log in, click through apps, collect data, and complete tasks
 
+## Flagship Examples
+
+- **[Deep Research Agent](examples/README.md#1-deep-research-agent)**: source collection, evidence review, pricing/benchmark analysis, and report generation.
+- **[AI Software Engineer Workflow](examples/README.md#2-ai-software-engineer-workflow)**: planner, coder, reviewer, and tester agents producing a patch plus validation notes.
+- **[E-commerce Operations Agent](examples/README.md#3-e-commerce-operations-agent)**: catalog/support review with policy checks, recommended actions, and human approval.
+
+See [examples](examples/README.md) for workflow blueprints, output artifacts, and a README demo GIF storyboard.
+
 ## Works With
 
 ### Coding and LLM Models

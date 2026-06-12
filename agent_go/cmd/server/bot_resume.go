@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	slackservice "mcp-agent-builder-go/agent_go/cmd/server/services"
+	"mcp-agent-builder-go/agent_go/cmd/server/services"
 	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 )
 
-func (api *StreamingAPI) resolveBotResumeTarget(ctx context.Context, userID, selector string, filter slackservice.BotResumeFilter) (*slackservice.BotResumeTarget, error) {
+func (api *StreamingAPI) resolveBotResumeTarget(ctx context.Context, userID, selector string, filter services.BotResumeFilter) (*services.BotResumeTarget, error) {
 	selector = strings.ToLower(strings.TrimSpace(selector))
 	if selector == "" {
 		selector = "latest"
@@ -35,7 +35,7 @@ func (api *StreamingAPI) resolveBotResumeTarget(ctx context.Context, userID, sel
 		return &targets[n-1], nil
 	}
 
-	var matches []slackservice.BotResumeTarget
+	var matches []services.BotResumeTarget
 	for _, target := range targets {
 		sessionID := strings.ToLower(strings.TrimSpace(target.SessionID))
 		if sessionID == selector || strings.HasPrefix(sessionID, selector) {
@@ -51,7 +51,7 @@ func (api *StreamingAPI) resolveBotResumeTarget(ctx context.Context, userID, sel
 	return &matches[0], nil
 }
 
-func (api *StreamingAPI) listBotResumeTargets(ctx context.Context, userID string, filter slackservice.BotResumeFilter) ([]slackservice.BotResumeTarget, error) {
+func (api *StreamingAPI) listBotResumeTargets(ctx context.Context, userID string, filter services.BotResumeFilter) ([]services.BotResumeTarget, error) {
 	_ = ctx
 	api.activeSessionsMux.RLock()
 	candidates := make([]ActiveSessionInfo, 0, len(api.activeSessions))
@@ -71,7 +71,7 @@ func (api *StreamingAPI) listBotResumeTargets(ctx context.Context, userID string
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].LastActivity.After(candidates[j].LastActivity)
 	})
-	targets := make([]slackservice.BotResumeTarget, 0, len(candidates))
+	targets := make([]services.BotResumeTarget, 0, len(candidates))
 	for _, session := range candidates {
 		if !botResumeCandidateStatus(session.Status) || !botResumeCandidateMode(session.AgentMode) {
 			continue
@@ -110,7 +110,7 @@ func botResumeCandidateStatus(status string) bool {
 	}
 }
 
-func botResumeTargetFromActive(session *ActiveSessionInfo) *slackservice.BotResumeTarget {
+func botResumeTargetFromActive(session *ActiveSessionInfo) *services.BotResumeTarget {
 	if session == nil {
 		return nil
 	}
@@ -118,7 +118,7 @@ func botResumeTargetFromActive(session *ActiveSessionInfo) *slackservice.BotResu
 	if strings.TrimSpace(session.AgentMode) == "workflow_phase" && phaseID == "" {
 		phaseID = workflowtypes.WorkflowStatusWorkflowBuilder
 	}
-	return &slackservice.BotResumeTarget{
+	return &services.BotResumeTarget{
 		SessionID:     strings.TrimSpace(session.SessionID),
 		UserID:        strings.TrimSpace(session.UserID),
 		AgentMode:     strings.TrimSpace(session.AgentMode),

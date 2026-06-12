@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	slackservice "mcp-agent-builder-go/agent_go/cmd/server/services"
+	"mcp-agent-builder-go/agent_go/cmd/server/services"
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/internal/events"
 	agent "mcp-agent-builder-go/agent_go/pkg/agentwrapper"
@@ -541,7 +541,7 @@ func (api *StreamingAPI) executeBackgroundDelegatedTask(
 		bgCtx = context.WithValue(bgCtx, common.UserIDKey, userID)
 		log.Printf("[USER_ID_DEBUGGING] Background agent: copied UserIDKey=%q to bgCtx", userID)
 	}
-	if dest, ok := ctx.Value(virtualtools.BotNotificationDestinationKey).(*slackservice.NotificationDestination); ok && dest != nil {
+	if dest, ok := ctx.Value(virtualtools.BotNotificationDestinationKey).(*services.NotificationDestination); ok && dest != nil {
 		bgCtx = context.WithValue(bgCtx, virtualtools.BotNotificationDestinationKey, dest)
 	}
 

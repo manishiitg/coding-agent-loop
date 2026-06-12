@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
-	slackservice "mcp-agent-builder-go/agent_go/cmd/server/services"
+	"mcp-agent-builder-go/agent_go/cmd/server/services"
 	"mcp-agent-builder-go/agent_go/pkg/fsutil"
 	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 )
@@ -1205,7 +1205,7 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 // a steadily-broken or steadily-healthy workflow doesn't spam. No connectors
 // configured = silent no-op; all errors are logged and swallowed.
 func (s *SchedulerService) notifyOnMonitorVerdict(ctx context.Context, sctx *ScheduleContext) {
-	nm := slackservice.GetNotificationManager()
+	nm := services.GetNotificationManager()
 	if nm == nil {
 		return
 	}
@@ -1250,7 +1250,7 @@ func (s *SchedulerService) notifyOnMonitorVerdict(ctx context.Context, sctx *Sch
 	if h := strings.TrimSpace(v.Headline); h != "" {
 		msg += "\n" + h
 	}
-	dest := &slackservice.NotificationDestination{UserID: sctx.UserID}
+	dest := &services.NotificationDestination{UserID: sctx.UserID}
 	if nerr := nm.SendUserNotification(ctx, msg, "Post-run monitor", dest); nerr != nil {
 		s.logf(sctx, "[MONITOR] notification send failed: %v", nerr)
 	}

@@ -6,7 +6,7 @@ import (
 	"log"
 	"net/http"
 
-	slackservice "mcp-agent-builder-go/agent_go/cmd/server/services"
+	"mcp-agent-builder-go/agent_go/cmd/server/services"
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/chathistory"
 
@@ -15,7 +15,7 @@ import (
 
 // ChannelRoute maps a Slack channel to a specific workflow, including the workspace path
 // needed so the bot can read the workflow manifest (e.g. workshop_mode) without scanning all workspaces.
-type ChannelRoute = slackservice.ChannelRoute
+type ChannelRoute = services.ChannelRoute
 
 // SlackConfigRequest represents a request to update Slack config (Socket Mode only)
 type SlackConfigRequest struct {
@@ -65,12 +65,12 @@ func SlackFeedbackRoutes(router *mux.Router, api *StreamingAPI) {
 // ensureSlackService returns the global Slack service, initializing it lazily
 // on first use. The service reads its config from the filesystem now, so no
 // database handle is required.
-func ensureSlackService() (*slackservice.SlackService, error) {
-	slackService := slackservice.GetSlackService()
+func ensureSlackService() (*services.SlackService, error) {
+	slackService := services.GetSlackService()
 	if slackService != nil {
 		return slackService, nil
 	}
-	svc, err := slackservice.InitSlackService()
+	svc, err := services.InitSlackService()
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +135,7 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 			return
 		}
 
-		config := &slackservice.SlackConfig{
+		config := &services.SlackConfig{
 			Enabled:   req.Enabled,
 			BotToken:  req.BotToken,
 			AppToken:  req.AppToken,
@@ -225,7 +225,7 @@ func testSlackConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 		// If config provided, test with it directly; otherwise use saved config
 		var testUniqueID string
 		if testConfig != nil {
-			testUniqueID, err = slackService.TestConnectionWithConfig(r.Context(), &slackservice.SlackConfig{
+			testUniqueID, err = slackService.TestConnectionWithConfig(r.Context(), &services.SlackConfig{
 				Enabled:   testConfig.Enabled,
 				BotToken:  testConfig.BotToken,
 				AppToken:  testConfig.AppToken,

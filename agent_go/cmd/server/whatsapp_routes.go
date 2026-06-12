@@ -8,14 +8,14 @@ import (
 	"strconv"
 	"time"
 
-	slackservice "mcp-agent-builder-go/agent_go/cmd/server/services"
+	"mcp-agent-builder-go/agent_go/cmd/server/services"
 
 	"github.com/gorilla/mux"
 )
 
 // WhatsAppRoutes wires up per-user HTTP endpoints for pairing and status of
 // the WhatsApp bot connector.
-func WhatsAppRoutes(router *mux.Router, manager *slackservice.WhatsAppServiceManager) {
+func WhatsAppRoutes(router *mux.Router, manager *services.WhatsAppServiceManager) {
 	if manager == nil {
 		return
 	}
@@ -28,7 +28,7 @@ func WhatsAppRoutes(router *mux.Router, manager *slackservice.WhatsAppServiceMan
 	log.Printf("[WHATSAPP] Registered routes: GET /api/whatsapp/pair, GET /api/whatsapp/status, DELETE /api/whatsapp/session, GET|PUT /api/whatsapp/routing")
 }
 
-func whatsappServiceForRequest(r *http.Request, manager *slackservice.WhatsAppServiceManager) (*slackservice.WhatsAppService, *UserClaims, error) {
+func whatsappServiceForRequest(r *http.Request, manager *services.WhatsAppServiceManager) (*services.WhatsAppService, *UserClaims, error) {
 	user := GetUserFromContext(r.Context())
 	if user == nil || user.UserID == "" {
 		return nil, nil, context.Canceled
@@ -52,7 +52,7 @@ func whatsappServiceForRequest(r *http.Request, manager *slackservice.WhatsAppSe
 //
 // Returns 404 when there's no active QR (paired already, or StartListening
 // hasn't been called yet).
-func whatsappPairHandler(manager *slackservice.WhatsAppServiceManager) http.HandlerFunc {
+func whatsappPairHandler(manager *services.WhatsAppServiceManager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		svc, user, err := whatsappServiceForRequest(r, manager)
 		if err != nil {
@@ -97,7 +97,7 @@ func whatsappPairHandler(manager *slackservice.WhatsAppServiceManager) http.Hand
 // deletes the session DB, and restarts the service so a fresh QR is
 // available immediately from GET /api/whatsapp/pair. Idempotent — calling
 // twice in a row is safe.
-func whatsappUnpairHandler(manager *slackservice.WhatsAppServiceManager) http.HandlerFunc {
+func whatsappUnpairHandler(manager *services.WhatsAppServiceManager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		svc, _, err := whatsappServiceForRequest(r, manager)
 		if err != nil {
@@ -117,7 +117,7 @@ func whatsappUnpairHandler(manager *slackservice.WhatsAppServiceManager) http.Ha
 // used for in-message @<slug> routing. Response shape:
 //
 //	{"routing": {"<slug>": {"workflow_id":"…", "workspace_path":"…", "workshop_mode":"…"}, ...}}
-func whatsappGetRoutingHandler(manager *slackservice.WhatsAppServiceManager) http.HandlerFunc {
+func whatsappGetRoutingHandler(manager *services.WhatsAppServiceManager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		svc, _, err := whatsappServiceForRequest(r, manager)
 		if err != nil {
@@ -134,7 +134,7 @@ func whatsappGetRoutingHandler(manager *slackservice.WhatsAppServiceManager) htt
 // whatsappPutRoutingHandler replaces the entire routing map. Clients should
 // PUT the full desired state; partial edits are handled client-side. Request
 // body matches the GET response shape. Returns 400 on invalid slug names.
-func whatsappPutRoutingHandler(manager *slackservice.WhatsAppServiceManager) http.HandlerFunc {
+func whatsappPutRoutingHandler(manager *services.WhatsAppServiceManager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		svc, _, err := whatsappServiceForRequest(r, manager)
 		if err != nil {
@@ -142,7 +142,7 @@ func whatsappPutRoutingHandler(manager *slackservice.WhatsAppServiceManager) htt
 			return
 		}
 		var body struct {
-			Routing slackservice.WhatsAppRouting `json:"routing"`
+			Routing services.WhatsAppRouting `json:"routing"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
@@ -167,7 +167,7 @@ func whatsappPutRoutingHandler(manager *slackservice.WhatsAppServiceManager) htt
 //	own_jid   — paired account's JID ("" when unpaired)
 //	qr_expires_at — RFC3339 timestamp when the current QR expires (omitted
 //	                when no QR is active)
-func whatsappStatusHandler(manager *slackservice.WhatsAppServiceManager) http.HandlerFunc {
+func whatsappStatusHandler(manager *services.WhatsAppServiceManager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		svc, _, err := whatsappServiceForRequest(r, manager)
 		if err != nil {

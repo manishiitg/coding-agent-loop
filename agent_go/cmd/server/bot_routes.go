@@ -7,7 +7,7 @@ import (
 
 	"mcp-agent-builder-go/agent_go/pkg/chathistory"
 
-	slackservice "mcp-agent-builder-go/agent_go/cmd/server/services"
+	"mcp-agent-builder-go/agent_go/cmd/server/services"
 
 	"github.com/gorilla/mux"
 )
@@ -132,7 +132,7 @@ func testBotConnectorHandler(api *StreamingAPI) http.HandlerFunc {
 		}
 
 		// Test by sending a message to the configured channel
-		slackSvc := slackservice.GetSlackService()
+		slackSvc := services.GetSlackService()
 		if slackSvc != nil && platform == "slack" {
 			err := slackSvc.TestConnection(r.Context())
 			if err != nil {

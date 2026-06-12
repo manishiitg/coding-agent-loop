@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	slackservice "mcp-agent-builder-go/agent_go/cmd/server/services"
+	"mcp-agent-builder-go/agent_go/cmd/server/services"
 )
 
 func TestResolveBotResumeTargetLatestDashboardSession(t *testing.T) {
@@ -43,7 +43,7 @@ func TestResolveBotResumeTargetLatestDashboardSession(t *testing.T) {
 		},
 	}
 
-	target, err := api.resolveBotResumeTarget(context.Background(), "user-1", "latest", slackservice.BotResumeFilter{})
+	target, err := api.resolveBotResumeTarget(context.Background(), "user-1", "latest", services.BotResumeFilter{})
 	if err != nil {
 		t.Fatalf("resolveBotResumeTarget returned error: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestResolveBotResumeTargetByPrefix(t *testing.T) {
 		},
 	}
 
-	target, err := api.resolveBotResumeTarget(context.Background(), "user-1", "abc", slackservice.BotResumeFilter{})
+	target, err := api.resolveBotResumeTarget(context.Background(), "user-1", "abc", services.BotResumeFilter{})
 	if err != nil {
 		t.Fatalf("resolveBotResumeTarget returned error: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestResolveBotResumeTargetByOrdinalWithWorkflowFilter(t *testing.T) {
 		},
 	}
 
-	filter := slackservice.BotResumeFilter{WorkspacePath: "Workflow/report", PresetQueryID: "preset-report"}
+	filter := services.BotResumeFilter{WorkspacePath: "Workflow/report", PresetQueryID: "preset-report"}
 	target, err := api.resolveBotResumeTarget(context.Background(), "user-1", "2", filter)
 	if err != nil {
 		t.Fatalf("resolveBotResumeTarget returned error: %v", err)

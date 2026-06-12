@@ -11,7 +11,7 @@ import (
 
 	"mcp-agent-builder-go/agent_go/pkg/chathistory"
 
-	slackservice "mcp-agent-builder-go/agent_go/cmd/server/services"
+	"mcp-agent-builder-go/agent_go/cmd/server/services"
 
 	"github.com/gorilla/mux"
 )
@@ -83,7 +83,7 @@ func simulatorSendHandler(api *StreamingAPI) http.HandlerFunc {
 		// Store user message in the thread (for history)
 		api.webSimulator.AddUserMessage(threadTS, req.Message)
 
-		threadID := slackservice.ThreadID{
+		threadID := services.ThreadID{
 			Platform:  "web_simulator",
 			ChannelID: "simulator",
 			ThreadTS:  threadTS,
@@ -95,7 +95,7 @@ func simulatorSendHandler(api *StreamingAPI) http.HandlerFunc {
 		log.Printf("[SIM_SEND] Calling HandleMessageSync for thread %s (userID=%s)", threadID.Key(), userID)
 		startTime := time.Now()
 
-		result, err := api.botManager.HandleMessageSync(context.Background(), slackservice.BotIncomingMessage{
+		result, err := api.botManager.HandleMessageSync(context.Background(), services.BotIncomingMessage{
 			Platform:        "web_simulator",
 			UserID:          userID,
 			WorkspaceUserID: userID,
@@ -142,7 +142,7 @@ func simulatorMessagesHandler(api *StreamingAPI) http.HandlerFunc {
 
 		// Ensure non-null JSON array
 		if messages == nil {
-			messages = []slackservice.SimulatorMessage{}
+			messages = []services.SimulatorMessage{}
 		}
 
 		w.Header().Set("Content-Type", "application/json")

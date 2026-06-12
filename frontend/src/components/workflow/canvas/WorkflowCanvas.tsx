@@ -185,6 +185,42 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: 
   const isReport = canvasViewMode === 'report'
   const isLog = canvasViewMode === 'log'
   const isSoul = canvasViewMode === 'soul'
+
+  // "New Pulse" dot — show a dot on the Pulse tab when builder/improve.html
+  // changed since the user last viewed it. Per-workspace seen-timestamp persists
+  // in localStorage; cleared whenever the user opens the Pulse tab.
+  const [pulseLastModified, setPulseLastModified] = React.useState<string | null>(null)
+  const [pulseSeenTick, setPulseSeenTick] = React.useState(0)
+  React.useEffect(() => {
+    if (!scopeId) { setPulseLastModified(null); return }
+    let active = true
+    const poll = async () => {
+      try {
+        const res = await agentApi.getBuilderDocsStatus(scopeId)
+        if (active && res.success) setPulseLastModified(res.improve?.last_modified || null)
+      } catch { /* soft signal */ }
+    }
+    void poll()
+    const id = setInterval(() => { void poll() }, 60000)
+    return () => { active = false; clearInterval(id) }
+  }, [scopeId])
+  const hasUnseenPulse = React.useMemo(() => {
+    if (!scopeId || !pulseLastModified) return false
+    void pulseSeenTick
+    let seen: string | undefined
+    try { seen = JSON.parse(localStorage.getItem('pulseSeen') || '{}')[scopeId] } catch { /* ignore */ }
+    return !seen || new Date(pulseLastModified).getTime() > new Date(seen).getTime()
+  }, [scopeId, pulseLastModified, pulseSeenTick])
+  React.useEffect(() => {
+    if (!isLog || !scopeId || !pulseLastModified) return
+    try {
+      const all = JSON.parse(localStorage.getItem('pulseSeen') || '{}')
+      all[scopeId] = pulseLastModified
+      localStorage.setItem('pulseSeen', JSON.stringify(all))
+    } catch { /* localStorage may be unavailable */ }
+    setPulseSeenTick(t => t + 1)
+  }, [isLog, scopeId, pulseLastModified])
+
   const devicePref = usePreviewDevice(scopeId)
   const setDevice = (mode: PreviewDevice) => setPreviewDevice(mode, scopeId)
   const showReport = () => {
@@ -238,12 +274,13 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: 
           onMouseEnter={() => setExpanded(true)}
           onFocus={() => setExpanded(true)}
           onClick={() => setExpanded(true)}
-          title="View controls"
+          title={hasUnseenPulse ? 'View controls — new Pulse update' : 'View controls'}
           aria-label="View controls"
-          className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background/90 px-2 py-1 text-xs font-medium text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground"
+          className="relative inline-flex items-center gap-1.5 rounded-lg border border-border bg-background/90 px-2 py-1 text-xs font-medium text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground"
         >
           <span>{isReport ? 'Report' : isLog ? 'Pulse' : isSoul ? 'Soul' : 'Plan'}</span>
           <SlidersHorizontal className="h-3.5 w-3.5" />
+          {hasUnseenPulse && !isLog && <span className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-primary ring-2 ring-background" aria-label="New Pulse update" />}
         </button>
         {canRefresh && (
           <button type="button" onClick={refresh} title="Refresh" aria-label="Refresh" className={iconBtnCls}>
@@ -267,7 +304,10 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: 
           <button type="button" onClick={showPlan} className={tabCls(canvasViewMode === 'flow')}>Plan</button>
         )}
         <button type="button" onClick={showReport} className={tabCls(isReport)}>Report</button>
-        <button type="button" onClick={showLog} className={tabCls(isLog)}>Pulse</button>
+        <button type="button" onClick={showLog} className={`relative ${tabCls(isLog)}`} title={hasUnseenPulse ? 'Pulse — new update' : 'Pulse'}>
+          Pulse
+          {hasUnseenPulse && <span className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-primary ring-2 ring-background" aria-label="New Pulse update" />}
+        </button>
         <button type="button" onClick={showSoul} className={tabCls(isSoul)}>Soul</button>
       </div>
       {(

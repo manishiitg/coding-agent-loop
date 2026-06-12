@@ -117,6 +117,14 @@ type RuntimeConfig = {
   desktopAppOnly?: boolean | string
 }
 
+export interface CdpCheckResult {
+  connected: boolean
+  error?: string
+  browser?: string
+  endpoint?: string
+  source?: 'workspace' | 'agent'
+}
+
 export interface WorkflowOverviewRunFolderDetail {
   folder: RunFolderInfo
   total_steps: number
@@ -851,15 +859,43 @@ export const agentApi = {
   // CDP Port Check — checks from the workspace container (where agent-browser runs)
   // if Chrome's remote debugging port is reachable via host.docker.internal.
   // Falls back to agent server check (host localhost) if workspace is unavailable.
-  checkCdpPort: async (port: number): Promise<{ connected: boolean }> => {
+  checkCdpPort: async (port: number): Promise<CdpCheckResult> => {
+    const normalize = (data: unknown, source: 'workspace' | 'agent'): CdpCheckResult => {
+      const value = (data || {}) as Record<string, unknown>
+      return {
+        connected: value.connected === true,
+        error: typeof value.error === 'string' ? value.error : undefined,
+        browser: typeof value.browser === 'string' ? value.browser : undefined,
+        endpoint: typeof value.endpoint === 'string' ? value.endpoint : undefined,
+        source,
+      }
+    }
+
     try {
       // Primary: check from workspace container (matches actual agent-browser runtime)
       const response = await workspaceApi.get(`/api/cdp-check?port=${port}`, { timeout: 5000 })
-      return response.data
+      const workspaceResult = normalize(response.data, 'workspace')
+      if (!workspaceResult.connected) {
+        try {
+          const hostResponse = await api.get(`/api/cdp-check?port=${port}`, { timeout: 5000 })
+          const hostResult = normalize(hostResponse.data, 'agent')
+          if (hostResult.connected) {
+            return {
+              ...workspaceResult,
+              error: workspaceResult.error
+                ? `${workspaceResult.error}. Chrome CDP is reachable from the app host, but not from the workspace where browser tools run.`
+                : 'Chrome CDP is reachable from the app host, but not from the workspace where browser tools run.',
+            }
+          }
+        } catch {
+          // Keep the workspace failure, because the workspace is the runtime that matters.
+        }
+      }
+      return workspaceResult
     } catch {
       // Fallback: check from agent server (host machine)
       const response = await api.get(`/api/cdp-check?port=${port}`, { timeout: 5000 })
-      return response.data
+      return normalize(response.data, 'agent')
     }
   },
 

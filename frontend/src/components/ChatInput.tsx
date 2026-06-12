@@ -29,6 +29,7 @@ import { hasWorkflowWriteAccess } from '../utils/workflowPermissions'
 import { requestTerminalRefreshBurst } from '../utils/terminalRefresh'
 import { isMainAgentTerminal, terminalDisplayLabel, keyEventToTerminalAction } from '../utils/terminals'
 import { startRestoredTransportTerminal } from '../utils/restoredTerminal'
+import { chromeCdpLaunchCommand, chromeCdpVerifyCommand } from '../utils/cdpSetup'
 
 // Visible workshop modes in the UI. The merged "workshop" mode replaced
 // the pre-merge Builder / Optimize / Report buttons. Run remains separate
@@ -767,6 +768,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const isLocalMode = useCapabilitiesStore(state => state.capabilities?.local_mode ?? false)
   const workspaceActiveFolder = useWorkspaceStore(state => state.activeFolder)
   const [cdpConnected, setCdpConnected] = useState<boolean | null>(null)
+  const [cdpError, setCdpError] = useState<string | null>(null)
   const [cdpChecking, setCdpChecking] = useState(false)
   const [showCdpPopup, setShowCdpPopup] = useState(false)
   const [showReasoningPopup, setShowReasoningPopup] = useState(false)
@@ -947,11 +949,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const checkCdpConnection = useCallback(async (port: number) => {
     setCdpChecking(true)
     setCdpConnected(null)
+    setCdpError(null)
     try {
       const result = await agentApi.checkCdpPort(port)
       setCdpConnected(result.connected)
+      setCdpError(result.connected ? null : result.error || null)
     } catch {
       setCdpConnected(false)
+      setCdpError('Unable to check the CDP port.')
     } finally {
       setCdpChecking(false)
     }
@@ -961,6 +966,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   useEffect(() => {
     if (browserMode !== 'cdp') {
       setCdpConnected(null)
+      setCdpError(null)
       return
     }
     const timer = setTimeout(() => {
@@ -3940,7 +3946,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                                 ) : cdpConnected === false ? (
                                   <>
                                     <div className="w-2.5 h-2.5 rounded-full bg-red-500 mt-0.5 flex-shrink-0" />
-                                    <span className="text-xs text-red-400">Not reachable on port {cdpPort}.</span>
+                                    <span className="text-xs text-red-400">
+                                      Not reachable on port {cdpPort}.{cdpError ? ` ${cdpError}` : ''}
+                                    </span>
                                   </>
                                 ) : (
                                   <span className="text-xs text-gray-500">Click Check Connection to verify.</span>
@@ -3974,11 +3982,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                                   <p className="text-xs text-gray-600">then open it again, or right-click → Open.</p>
                                 </div>
                               )}
-                              <p className="text-xs text-gray-500">Or run in Terminal (close all Chrome windows first):</p>
+                              <p className="text-xs text-gray-500">Or run in Terminal with a separate Chrome profile:</p>
                               <code className="block bg-gray-950 px-2 py-1.5 rounded text-[10px] font-mono break-all text-green-400 border border-gray-700">
-                                {navigator.platform?.includes('Mac')
-                                  ? `/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=${cdpPort}`
-                                  : `google-chrome --remote-debugging-port=${cdpPort}`}
+                                {chromeCdpLaunchCommand(cdpPort, navigator.platform)}
+                              </code>
+                              <p className="text-xs text-gray-500">Verify Chrome is exposing CDP:</p>
+                              <code className="block bg-gray-950 px-2 py-1.5 rounded text-[10px] font-mono break-all text-blue-300 border border-gray-700">
+                                {chromeCdpVerifyCommand(cdpPort)}
                               </code>
                             </div>
                           </>)}

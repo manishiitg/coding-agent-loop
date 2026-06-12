@@ -21,6 +21,7 @@ import WorkflowLLMTierPreview from './WorkflowLLMTierPreview';
 import type { LLMOption } from '../types/llm';
 import ModalPortal from './ui/ModalPortal';
 import { agentLLMToPresetBase, getWorkflowLLMOptions, getWorkflowLLMTierDefaults, hasWorkflowLLMTierDefaults } from '../utils/workflowLLMTierDefaults';
+import { chromeCdpLaunchCommand, chromeCdpVerifyCommand } from '../utils/cdpSetup';
 
 interface PresetModalProps {
   isOpen: boolean;
@@ -65,6 +66,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [useCdp, setUseCdp] = useState(false);
   const [cdpPort, setCdpPort] = useState(9222);
   const [cdpConnected, setCdpConnected] = useState<boolean | null>(null);
+  const [cdpError, setCdpError] = useState<string | null>(null);
   const [cdpChecking, setCdpChecking] = useState(false);
   const [showDeleteWorkflowConfirm, setShowDeleteWorkflowConfirm] = useState(false);
   const [deletingWorkflow, setDeletingWorkflow] = useState(false);
@@ -150,11 +152,14 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const checkCdpConnection = useCallback(async (port: number) => {
     setCdpChecking(true);
     setCdpConnected(null);
+    setCdpError(null);
     try {
       const result = await agentApi.checkCdpPort(port);
       setCdpConnected(result.connected);
+      setCdpError(result.connected ? null : result.error || null);
     } catch {
       setCdpConnected(false);
+      setCdpError('Unable to check the CDP port.');
     } finally {
       setCdpChecking(false);
     }
@@ -164,6 +169,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   useEffect(() => {
     if (!useCdp || !enableBrowserAccess) {
       setCdpConnected(null);
+      setCdpError(null);
       return;
     }
     const timer = setTimeout(() => {
@@ -989,7 +995,9 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                               ) : cdpConnected === false ? (
                                 <>
                                   <div className="w-3 h-3 rounded-full bg-red-500 mt-0.5 flex-shrink-0" />
-                                  <span className="text-sm text-red-600 dark:text-red-400">Chrome is not reachable on port {cdpPort}.</span>
+                                  <span className="text-sm text-red-600 dark:text-red-400">
+                                    Chrome is not reachable on port {cdpPort}.{cdpError ? ` ${cdpError}` : ''}
+                                  </span>
                                 </>
                               ) : (
                                 <span className="text-xs text-gray-500">Click &quot;Check Connection&quot; to verify Chrome is reachable.</span>
@@ -1025,11 +1033,13 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                                 <p className="text-xs text-gray-400 dark:text-gray-600">then open it again, or right-click → Open.</p>
                               </div>
                             )}
-                            <p className="text-xs text-gray-500 dark:text-gray-400">Or run in Terminal (close all Chrome windows first):</p>
+                            <p className="text-xs text-gray-500 dark:text-gray-400">Or run in Terminal with a separate Chrome profile:</p>
                             <code className="block bg-gray-200 dark:bg-gray-950 px-2 py-1.5 rounded text-[11px] font-mono break-all text-green-700 dark:text-green-400 border border-gray-300 dark:border-gray-700">
-                              {typeof navigator !== 'undefined' && navigator.platform?.includes('Mac')
-                                ? `/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=${cdpPort}`
-                                : `google-chrome --remote-debugging-port=${cdpPort}`}
+                              {chromeCdpLaunchCommand(cdpPort, typeof navigator !== 'undefined' ? navigator.platform : undefined)}
+                            </code>
+                            <p className="text-xs text-gray-500 dark:text-gray-400">Verify Chrome is exposing CDP:</p>
+                            <code className="block bg-gray-200 dark:bg-gray-950 px-2 py-1.5 rounded text-[11px] font-mono break-all text-blue-700 dark:text-blue-300 border border-gray-300 dark:border-gray-700">
+                              {chromeCdpVerifyCommand(cdpPort)}
                             </code>
                           </div>
                         </div>

@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -253,7 +252,7 @@ func (api *StreamingAPI) handleCapabilities(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// handleCdpCheck checks if a CDP port is reachable on localhost
+// handleCdpCheck checks if Chrome DevTools is reachable on localhost.
 func (api *StreamingAPI) handleCdpCheck(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -272,18 +271,47 @@ func (api *StreamingAPI) handleCdpCheck(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 2*time.Second)
+	result, err := checkLocalChromeCdpVersion(port)
 	if err != nil {
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"connected": false,
+			"error":     fmt.Sprintf("Cannot reach Chrome CDP /json/version on port %d: %v", port, err),
 		})
 		return
 	}
-	conn.Close()
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	json.NewEncoder(w).Encode(result)
+}
+
+func checkLocalChromeCdpVersion(port int) (map[string]interface{}, error) {
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d/json/version", port)
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%s returned HTTP %d", endpoint, resp.StatusCode)
+	}
+
+	var payload struct {
+		Browser              string `json:"Browser"`
+		WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(payload.Browser) == "" && strings.TrimSpace(payload.WebSocketDebuggerURL) == "" {
+		return nil, fmt.Errorf("%s did not return Chrome DevTools metadata", endpoint)
+	}
+
+	return map[string]interface{}{
 		"connected": true,
-	})
+		"browser":   payload.Browser,
+		"endpoint":  endpoint,
+	}, nil
 }

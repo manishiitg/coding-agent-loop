@@ -1,12 +1,5 @@
 # 🚀 Runloop
 
-![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/manishiitg/mcp-agent-builder-go)
-[![Security Scan](https://github.com/manishiitg/mcp-agent-builder-go/workflows/Secret%20Scan/badge.svg)](https://github.com/manishiitg/mcp-agent-builder-go/actions)
-[![Dependency Scan](https://github.com/manishiitg/mcp-agent-builder-go/workflows/Dependency%20Scan/badge.svg)](https://github.com/manishiitg/mcp-agent-builder-go/actions)
-[![Go Version](https://img.shields.io/badge/Go-1.24.4-blue.svg)](https://golang.org/)
-[![React](https://img.shields.io/badge/React-19.1.1-blue.svg)](https://reactjs.org/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](#license--architecture-foundations)
-
 **Runloop** is a multi-model agent platform for building, orchestrating, and scheduling AI workflows across coding tools, chat channels, browser automation, and human approvals.
 
 ## 💻 Desktop App (macOS)
@@ -107,8 +100,6 @@ Runloop is built for teams that want more than a chat box:
 - Use the right model for the right step instead of standardizing on one vendor
 - Bring coding agents, operational automations, and human approvals into one system
 - Ship agent workflows that can be monitored, evaluated, and improved over time
-
----
 
 ## ⚡ Platform Overview
 

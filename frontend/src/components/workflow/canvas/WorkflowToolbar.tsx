@@ -10,7 +10,6 @@ import {
   Table2,
   ShieldCheck,
   Activity,
-  HelpCircle,
   X,
 } from 'lucide-react'
 import ModalPortal from '../../ui/ModalPortal'
@@ -337,41 +336,23 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       {/* Right side - View controls */}
       <div data-tour="workflow-tools" data-testid="tour-workflow-tools" className="ml-auto flex shrink-0 items-center gap-1">
         <TooltipProvider delayDuration={150}>
-        {/* Per-run review (monitor) on/off — toggles workflow.json::post_run_monitor.
-            Auto-improve's per-run, review-only cadence: after each scheduled run it
-            records Bug + Goal findings in the log (it never fixes; the scheduled
-            improve pass does that). */}
+        {/* Monitor — opens the per-run monitor popup (explains it, lets the user
+            enable it, and points to /auto-improve for scheduling). */}
         {workspacePath && (
           <Tooltip>
             <TooltipTrigger asChild>
               <button
                 type="button"
-                role="switch"
-                aria-checked={monitorOn}
-                onClick={() => { void toggleMonitor() }}
-                disabled={monitorSaving}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background/90 px-2 py-1 text-[11px] font-medium text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted disabled:opacity-50"
+                onClick={() => setShowMonitorHelp(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background/90 px-2 py-1 text-[11px] font-medium text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted"
               >
                 <Activity className={`w-3.5 h-3.5 ${monitorOn ? 'text-primary' : ''}`} />
                 <span className={monitorOn ? 'text-foreground' : ''}>Monitor</span>
-                <span className={`relative inline-block h-3.5 w-6 flex-none rounded-full transition-colors ${monitorOn ? 'bg-primary' : 'bg-muted-foreground/30'}`}>
-                  <span className={`absolute top-[3px] h-2.5 w-2.5 rounded-full bg-white shadow-sm transition-transform ${monitorOn ? 'translate-x-[11px]' : 'translate-x-[3px]'}`} />
-                </span>
+                <span className={`text-[10px] font-semibold tracking-wide ${monitorOn ? 'text-primary' : 'text-muted-foreground/60'}`}>{monitorOn ? 'ON' : 'OFF'}</span>
               </button>
             </TooltipTrigger>
-            <TooltipContent side="bottom"><p>Per-run monitor: {monitorOn ? 'on' : 'off'} — {monitorOn ? 'auto-improve reviews each run and records Bug + Goal findings in the log (it doesn\'t fix; the scheduled improve pass does)' : 'turn on to review every run and catch silent breakage & drift'}</p></TooltipContent>
+            <TooltipContent side="bottom"><p>Per-run monitor — click to learn more &amp; turn {monitorOn ? 'off' : 'on'}</p></TooltipContent>
           </Tooltip>
-        )}
-        {workspacePath && (
-          <button
-            type="button"
-            onClick={() => setShowMonitorHelp(true)}
-            title="What is the monitor?"
-            aria-label="What is the monitor?"
-            className="inline-flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors"
-          >
-            <HelpCircle className="h-3.5 w-3.5" />
-          </button>
         )}
 
         {/* Show Costs - opens popup with cost analysis across all iterations */}
@@ -559,7 +540,30 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 <li><span className="font-medium text-purple-600 dark:text-purple-400">Goal</span> — is it achieving what it's for? (vs your success criteria)</li>
               </ul>
               <p>It only <span className="font-medium text-foreground">watches and reports</span> — it never changes your workflow. The scheduled improve passes do the fixing (repairing bugs, and proposing plan changes for goals).</p>
-              <p className="rounded-md bg-muted/60 px-3 py-2 text-xs">Turn it on for workflows where a silent failure would matter (scheduled QA, production). Leave it off for scratch workflows to save the per-run check.</p>
+            </div>
+            {/* enable / disable */}
+            <div className="flex items-center justify-between border-t px-5 py-3.5">
+              <div>
+                <div className="text-sm font-medium text-foreground">Per-run monitor</div>
+                <div className="text-xs text-muted-foreground">{monitorOn ? 'On — reviewing every run' : 'Off — not reviewing runs'}</div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={monitorOn}
+                onClick={() => { void toggleMonitor() }}
+                disabled={monitorSaving}
+                className={`relative inline-block h-5 w-9 flex-none rounded-full transition-colors disabled:opacity-50 ${monitorOn ? 'bg-primary' : 'bg-muted-foreground/30'}`}
+                aria-label="Toggle per-run monitor"
+              >
+                <span className={`absolute top-[3px] h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${monitorOn ? 'translate-x-[19px]' : 'translate-x-[3px]'}`} />
+              </button>
+            </div>
+            {/* scheduling note */}
+            <div className="border-t px-5 py-4">
+              <p className="rounded-md bg-muted/60 px-3 py-2.5 text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">To run on a schedule:</span> the monitor only reviews when a run happens. Set up <code className="rounded bg-background px-1 py-0.5 font-medium text-foreground">/auto-improve</code> to schedule recurring runs plus the harden / replan passes that act on what the monitor finds.
+              </p>
             </div>
           </div>
         </div>

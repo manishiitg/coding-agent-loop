@@ -1979,7 +1979,7 @@ This is the one-line-per-category map. For full signatures, parameters, when-to-
 - **Read-only info**: `+"`get_step_prompts`"+`, `+"`get_workflow_config`"+`, `+"`get_llm_config`"+`{{if eq .WorkshopMode "workshop"}}, `+"`get_workflow_command_guidance(kind=\"review-artifact-drift\")`"+`{{else}}. Artifact drift reviews belong in Workshop — switch modes and run `+"`/review-artifact-drift`"+` if needed{{end}}.
 {{if eq .WorkshopMode "workshop"}}
 - **Plan modification**: `+"`create_plan`"+`, `+"`add_<type>_step`"+`, `+"`update_<type>_step`"+`, `+"`delete_plan_steps`"+`, `+"`cleanup_orphan_step_configs`"+`, todo-task route tools, `+"`update_validation_schema`"+`, `+"`publish_workflow_version`"+`, `+"`restore_workflow_version`"+`.
-- **Variables & config**: `+"`update_variable`"+`, `+"`add_group`"+`/`+"`update_group`"+`/`+"`delete_group`"+`, `+"`update_workflow_config`"+`. Use `+"`update_workflow_config`"+` for workflow MCP servers, workflow-level MCP tool allowlists, selected skills, selected secrets, browser_mode, KB lock, and run retention. Do NOT edit `+"`workflow.json`"+` manually.
+- **Variables & config**: `+"`update_variable`"+`, `+"`add_group`"+`/`+"`update_group`"+`/`+"`delete_group`"+`, `+"`update_workflow_config`"+`. Use `+"`update_workflow_config`"+` for workflow MCP servers, workflow-level MCP tool allowlists, selected skills, selected secrets, browser_mode, KB lock, run retention, and the per-run monitor (`+"`post_run_monitor`"+`). Do NOT edit `+"`workflow.json`"+` manually.
 - **Schedule management**: `+"`create_schedule`"+`, `+"`create_calendar_schedule`"+`, `+"`update_schedule`"+`, `+"`delete_schedule`"+`, `+"`trigger_schedule`"+`, `+"`get_schedule_runs`"+`. Cron / message-authoring rules, workshop run vs optimizer scheduling, the `+"`/auto-improve`"+` exception, infinite-loop prevention rules, and unattended-message discipline — all live in the `+"`workflow-tools`"+` ref doc. Workflow schedules always use the workshop path; do not create direct `+"`mode=\"workflow\"`"+` schedules. **Whenever you create a recurring schedule, also pair it with a backup** so unattended runs persist their state off-box — see `+"`get_reference_doc(kind=\"backup-strategy\")`"+`.
 {{end}}
 - **Shell & discovery**: `+"`execute_shell_command`"+`, `+"`human_feedback`"+`.
@@ -6819,6 +6819,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"maximum":     maxRunRetentionCount,
 					"description": "Number of backup run/eval iterations to keep, excluding active iteration-0. Defaults to 5 when omitted. Raise this for workflows whose harden/replan agents need a wider evidence window.",
 				},
+				"post_run_monitor": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Enable the per-run monitor (auto-improve's review-only cadence): after each scheduled run a cheap pass records Bug + Goal findings into builder/improve.html, which the harden/replan schedules consume. Set true for workflows where a silent failure matters (scheduled QA, production); default off. /auto-improve turns this on as part of setup.",
+				},
 			},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -7334,8 +7338,40 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				logger.Info(fmt.Sprintf("Updated workflow run_retention_count=%d", count))
 			}
 
+			// --- Per-run monitor ---
+			if raw, ok := args["post_run_monitor"]; ok && raw != nil {
+				enabled, isBool := raw.(bool)
+				if !isBool {
+					return "Error: post_run_monitor must be a boolean.", nil
+				}
+				content, err := iwm.controller.ReadWorkspaceFile(ctx, "workflow.json")
+				if err != nil {
+					return fmt.Sprintf("Failed to read workflow.json: %v", err), nil
+				}
+				var manifest map[string]interface{}
+				if err := json.Unmarshal([]byte(content), &manifest); err != nil {
+					return fmt.Sprintf("Failed to parse workflow.json: %v", err), nil
+				}
+				manifest["post_run_monitor"] = enabled
+				manifest["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+				out, err := json.MarshalIndent(manifest, "", "  ")
+				if err != nil {
+					return fmt.Sprintf("Failed to marshal workflow.json: %v", err), nil
+				}
+				if err := iwm.controller.WriteWorkspaceFile(ctx, "workflow.json", string(out)); err != nil {
+					return fmt.Sprintf("Failed to write workflow.json: %v", err), nil
+				}
+				anyChanged = true
+				state := "disabled"
+				if enabled {
+					state = "enabled"
+				}
+				sb.WriteString(fmt.Sprintf("\n### Per-run monitor (%s)\nThe per-run review-only pass is now %s for this workflow's scheduled runs.\n", state, state))
+				logger.Info(fmt.Sprintf("Updated workflow post_run_monitor=%v", enabled))
+			}
+
 			if !anyChanged {
-				return "No changes applied. Provide at least one of: add_servers, remove_servers, add_tools, remove_tools, add_skills, remove_skills, add_secrets, remove_secrets, update_tier_fallbacks, lock_knowledgebase, browser_mode, run_retention_count.", nil
+				return "No changes applied. Provide at least one of: add_servers, remove_servers, add_tools, remove_tools, add_skills, remove_skills, add_secrets, remove_secrets, update_tier_fallbacks, lock_knowledgebase, browser_mode, run_retention_count, post_run_monitor.", nil
 			}
 
 			// Persist config changes to workflow.json manifest (file-backed)

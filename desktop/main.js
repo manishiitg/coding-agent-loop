@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, shell, nativeTheme, Menu, Tray, ipcMain, nativeImage } = require('electron');
+const { app, BrowserWindow, dialog, shell, nativeTheme, Menu, Tray, ipcMain, nativeImage, session } = require('electron');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const http = require('http');
@@ -205,6 +205,37 @@ async function resolveDocsDir() {
 function saveSettings(settings) {
   const configPath = path.join(app.getPath('userData'), 'config.json');
   fs.writeFileSync(configPath, JSON.stringify(settings, null, 2));
+}
+
+async function clearFrontendCacheIfVersionChanged() {
+  if (!app.isPackaged) return;
+
+  const settings = loadSettings();
+  const currentVersion = app.getVersion();
+  if (settings.lastFrontendCacheVersion === currentVersion) return;
+
+  try {
+    console.log(`[main] Clearing frontend cache for version ${currentVersion}`);
+    await session.defaultSession.clearCache();
+    await session.defaultSession.clearStorageData({
+      storages: ['serviceworkers', 'cachestorage'],
+    });
+    saveSettings({ ...settings, lastFrontendCacheVersion: currentVersion });
+  } catch (err) {
+    diagLog('[main] Failed to clear frontend cache after version change:', String(err && err.message ? err.message : err));
+  }
+}
+
+function withDesktopVersionCacheBust(url) {
+  if (!app.isPackaged || process.env.DEV_URL) return url;
+
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set('runloop_version', app.getVersion());
+    return parsed.toString();
+  } catch (_) {
+    return url;
+  }
 }
 
 // IPC Handlers for Settings
@@ -1056,7 +1087,7 @@ function showErrorAndExit(message) {
 }
 
 function createWindow(initialUrl) {
-  const targetUrl = initialUrl || `http://127.0.0.1:${dynamicAgentPort}`;
+  const targetUrl = withDesktopVersionCacheBust(initialUrl || `http://127.0.0.1:${dynamicAgentPort}`);
   console.log('[main] Creating main window for:', targetUrl);
 
   mainWindow = new BrowserWindow({
@@ -1232,6 +1263,7 @@ app.whenReady().then(async () => {
     const agentHealthUrl = `http://127.0.0.1:${dynamicAgentPort}/api/health`;
     const workspaceHealthUrl = `http://127.0.0.1:${dynamicWorkspacePort}/health`;
     await waitForHealth(agentHealthUrl, workspaceHealthUrl);
+    await clearFrontendCacheIfVersionChanged();
   } catch (err) {
     showErrorAndExit(err.message || String(err));
     return;

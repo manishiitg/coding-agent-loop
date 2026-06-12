@@ -56,6 +56,51 @@ ensure_tmux() {
 
 ensure_tmux
 
+ensure_go_for_mcpbridge() {
+  if command -v go >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if command -v brew >/dev/null 2>&1; then
+    log "Go is required to install mcpbridge for this dmg; installing Go with Homebrew..."
+    if brew install go; then
+      return 0
+    fi
+    warn "Homebrew could not install Go. Claude Code/Codex/Gemini CLI tool access may fail until Go and mcpbridge are installed."
+    return 1
+  fi
+
+  warn "Go is not installed, so the installer cannot build mcpbridge for this dmg."
+  warn "Install Go from https://go.dev/dl/ or Homebrew, then run: GOBIN=\"\$HOME/go/bin\" go install github.com/manishiitg/mcpagent/cmd/mcpbridge@latest"
+  return 1
+}
+
+ensure_mcpbridge() {
+  local home_bridge="${HOME}/go/bin/mcpbridge"
+
+  if command -v mcpbridge >/dev/null 2>&1; then
+    log "MCP bridge found: $(command -v mcpbridge)"
+    return 0
+  fi
+
+  if [ -x "$home_bridge" ]; then
+    log "MCP bridge found: ${home_bridge}"
+    return 0
+  fi
+
+  if ! ensure_go_for_mcpbridge; then
+    return 0
+  fi
+
+  log "Installing MCP bridge for CLI provider tool access..."
+  mkdir -p "${HOME}/go/bin"
+  if GOBIN="${HOME}/go/bin" GOWORK=off go install github.com/manishiitg/mcpagent/cmd/mcpbridge@latest; then
+    log "MCP bridge installed: ${home_bridge}"
+    return 0
+  fi
+  warn "Failed to install mcpbridge. Claude Code/Codex/Gemini CLI tool access may fail until it is installed."
+}
+
 # ---- Resolve version --------------------------------------------------------
 
 VERSION="${RUNLOOP_VERSION:-}"
@@ -116,6 +161,8 @@ fi
 
 log "Copying ${APP_NAME}.app to ${INSTALL_DIR}…"
 cp -R "$SOURCE_APP" "$DEST_APP" || die "Copy failed. Make sure $INSTALL_DIR is writable, or run with sudo."
+
+ensure_mcpbridge
 
 detach_mount
 

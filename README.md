@@ -2,6 +2,11 @@
 
 **Runloop** is a multi-model agent platform for building, orchestrating, and scheduling AI workflows across coding tools, chat channels, browser automation, and human approvals.
 
+[![Latest Release](https://img.shields.io/github/v/release/manishiitg/mcp-agent-builder-go?label=release)](https://github.com/manishiitg/mcp-agent-builder-go/releases/latest)
+![macOS Apple Silicon](https://img.shields.io/badge/macOS-Apple%20Silicon-000000?logo=apple)
+![Installer](https://img.shields.io/badge/install-curl%20%7C%20bash-2ea44f)
+[![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](#license--architecture-foundations)
+
 ## 💻 Desktop App (macOS)
 
 A standalone macOS app is available — no Docker, no manual server setup. Each release is published at [Releases](https://github.com/manishiitg/mcp-agent-builder-go/releases/latest).

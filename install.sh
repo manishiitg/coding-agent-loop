@@ -29,7 +29,7 @@ case "$ARCH" in
   *)     die "Unsupported architecture: $ARCH" ;;
 esac
 
-for cmd in curl hdiutil xattr; do
+for cmd in curl hdiutil tar xattr; do
   command -v "$cmd" >/dev/null 2>&1 || die "Required command '$cmd' not found in PATH."
 done
 
@@ -71,7 +71,33 @@ ensure_go_for_mcpbridge() {
   fi
 
   warn "Go is not installed, so the installer cannot build mcpbridge for this dmg."
-  warn "Install Go from https://go.dev/dl/ or Homebrew, then run: GOBIN=\"\$HOME/go/bin\" go install github.com/manishiitg/mcpagent/cmd/mcpbridge@latest"
+  warn "Install Go from https://go.dev/dl/ or Homebrew, then rerun this installer."
+  return 1
+}
+
+install_mcpbridge_from_sources() {
+  local home_bridge="${HOME}/go/bin/mcpbridge"
+  local bridge_tmp
+  bridge_tmp="$(mktemp -d -t runloop-mcpbridge)"
+
+  log "Downloading MCP bridge source..."
+  if (
+    set -euo pipefail
+    cd "$bridge_tmp"
+    curl -fsSL "https://github.com/manishiitg/mcpagent/archive/refs/heads/main.tar.gz" | tar -xz
+    curl -fsSL "https://github.com/manishiitg/multi-llm-provider-go/archive/refs/heads/main.tar.gz" | tar -xz
+    mv mcpagent-main mcpagent
+    mv multi-llm-provider-go-main multi-llm-provider-go
+    mkdir -p "${HOME}/go/bin"
+    cd mcpagent
+    GOBIN="${HOME}/go/bin" GOWORK=off go install ./cmd/mcpbridge
+  ); then
+    rm -rf "$bridge_tmp"
+    log "MCP bridge installed: ${home_bridge}"
+    return 0
+  fi
+
+  rm -rf "$bridge_tmp"
   return 1
 }
 
@@ -93,9 +119,7 @@ ensure_mcpbridge() {
   fi
 
   log "Installing MCP bridge for CLI provider tool access..."
-  mkdir -p "${HOME}/go/bin"
-  if GOBIN="${HOME}/go/bin" GOWORK=off go install github.com/manishiitg/mcpagent/cmd/mcpbridge@latest; then
-    log "MCP bridge installed: ${home_bridge}"
+  if install_mcpbridge_from_sources; then
     return 0
   fi
   warn "Failed to install mcpbridge. Claude Code/Codex/Gemini CLI tool access may fail until it is installed."

@@ -125,7 +125,7 @@ gh release edit v1.25.7-test1 --prerelease --draft=false
 ### Host prerequisites
 
 - Claude Code experimental mode requires `tmux` 3.x or newer as a local runtime dependency. The curl installer attempts `brew install tmux` when Homebrew is available; otherwise install it manually with `brew install tmux`.
-- The curl installer ensures `mcpbridge` is installed to `~/go/bin` for Claude Code/Codex/Gemini CLI MCP bridge access. If Go is missing, it installs Go through Homebrew when available; otherwise it prints manual install steps.
+- The curl installer ensures `mcpbridge` is installed to `~/go/bin` for Claude Code/Codex/Gemini CLI MCP bridge access. If Go is missing, it installs Go through Homebrew when available; otherwise it asks the user to install Go and rerun the same curl command.
 
 ## Runtime Details
 

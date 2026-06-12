@@ -12,7 +12,7 @@ A standalone macOS app is available — no Docker, no manual server setup. Each 
 curl -fsSL https://raw.githubusercontent.com/manishiitg/mcp-agent-builder-go/main/install.sh | bash
 ```
 
-Downloads the latest dmg, installs `Runloop.app` to `/Applications`, ensures the MCP bridge used by Claude Code/Codex/Gemini CLI tool access is installed to `~/go/bin`, strips the macOS quarantine flag (no "damaged" warning), and launches the app. If Go is missing, the installer installs Go through Homebrew when available; otherwise it prints manual install steps. Pin a specific version with `RUNLOOP_VERSION=v1.25.6 curl -fsSL … | bash`.
+Downloads the latest dmg, installs `Runloop.app` to `/Applications`, ensures the MCP bridge used by Claude Code/Codex/Gemini CLI tool access is installed to `~/go/bin`, strips the macOS quarantine flag (no "damaged" warning), and launches the app. If Go is missing, the installer installs Go through Homebrew when available; otherwise it asks you to install Go and rerun the same curl command. Pin a specific version with `RUNLOOP_VERSION=v1.25.6 curl -fsSL … | bash`.
 
 ### Install manually
 

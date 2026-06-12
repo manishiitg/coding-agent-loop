@@ -872,8 +872,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   const addFileToContext = useCallback((file: { name: string; path: string; type: 'file' | 'folder' }) => {
     if (activeTabId && activeTab) {
-      const newFileContext = [...chatFileContext, file]
-      setTabConfig(activeTabId, { fileContext: newFileContext })
+      const existingContext = useChatStore.getState().getTabConfig(activeTabId)?.fileContext || chatFileContext
+      if (existingContext.some((item: { path: string }) => item.path === file.path)) return
+      setTabConfig(activeTabId, { fileContext: [...existingContext, file] })
     }
   }, [activeTabId, activeTab, chatFileContext, setTabConfig])
   
@@ -3033,16 +3034,27 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
 
     if (uploadedPaths.length > 0) {
-      uploadedPaths.forEach((path) => {
-        const exists = chatFileContext.some((item: { path: string }) => item.path === path)
-        if (!exists) {
-          addFileToContext({
+      if (activeTabId) {
+        const latestFileContext = useChatStore.getState().getTabConfig(activeTabId)?.fileContext || chatFileContext
+        const seenPaths = new Set(latestFileContext.map((item: { path: string }) => item.path))
+        const uploadedContextItems = uploadedPaths
+          .filter((path) => {
+            if (seenPaths.has(path)) return false
+            seenPaths.add(path)
+            return true
+          })
+          .map((path) => ({
             name: path.split('/').pop() || path,
             path,
-            type: 'file'
+            type: 'file' as const,
+          }))
+
+        if (uploadedContextItems.length > 0) {
+          setTabConfig(activeTabId, {
+            fileContext: [...latestFileContext, ...uploadedContextItems],
           })
         }
-      })
+      }
 
       const refs = uploadedPaths.map(path => `@${path}`).join(' ')
       const prefix = inputText.trim().length > 0 ? `${inputText} ` : ''
@@ -3074,7 +3086,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     console.info('[CHAT_UPLOAD] upload completed', { uploadedCount: uploadedPaths.length, failureCount: failures.length })
 
     setIsUploadingFiles(false)
-  }, [activeTabId, isUploadingFiles, uploadTargetFolder, chatFileContext, addFileToContext, inputText, setTabConfig, addToast])
+  }, [activeTabId, isUploadingFiles, uploadTargetFolder, chatFileContext, inputText, setTabConfig, addToast])
 
   useEffect(() => {
     uploadFilesToChatRef.current = uploadFilesToChat

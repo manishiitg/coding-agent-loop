@@ -12,6 +12,7 @@ You read the deterministic evidence and write only to `builder/improve.html` (an
 ### 1. Read the evidence
 
 - **The run itself** — `runs/<run_folder>/…` outputs, the run status passed to you, and any error. Did every expected step actually execute and produce a real, non-trivial artifact? Watch for the silent-failure smells: a step that wrote `{"status":"skipped"}`, an empty/zero-byte output, a missing file a later step needed, a journey that vanished from the results.
+- **Which path ran** — if the workflow has routing or runs per-group, a single run usually exercises only **one** path. Read `route_selection.json` (`select_route`) and the run's group/variables to see *which route(s)/group this run actually took*, so you judge the run only against what that path was supposed to do.
 - **What changed** — `planning/changelog/changelog-*.json`. Recent plan/config/prompt edits (with the `reason` the author gave). This is how you explain a regression: correlate "what got worse this run" against "what we changed in the last few runs."
 - **The goal evidence** — `scores/evaluation/` (eval step scores) and `db/metrics_history.jsonl` (per-run metric snapshots, with `resolve_error`), judged against the success criteria in `soul/soul.md` and the targets in `planning/metrics.json`.
 - **The log so far** — read `builder/improve.html`: the current verdicts, the goal card, open findings, and recent entries, so you continue its style, don't duplicate a finding, and can tell a *transition* (healthy↔broken) from a steady state.
@@ -20,6 +21,8 @@ You read the deterministic evidence and write only to `builder/improve.html` (an
 
 - **Bug** — did it run correctly? `bug-free` if every step ran and produced real evidence and nothing regressed operationally; `broken` if a step errored, skipped, produced empty/placeholder output, or a journey silently dropped. A `completed` run status does **not** mean bug-free — a run can finish green while a step quietly skipped.
 - **Goal** — is it achieving its success criteria? Compare eval scores / outcome metrics to `soul.md` + targets and to the recent trend. `on-target`, `short`, or `drifting`. **Health gates goal:** if Bug is `broken`, the goal numbers from this run are not trustworthy — mark Goal `not measured this run` and lean on the last clean run, rather than reporting a goal regression that's really just a bug.
+
+**Judge only the path that ran (routing / groups).** A step that belongs to a route this run did **not** take is **not** a bug — it simply didn't run; never flag it as broken or skipped. For Goal, only the evals scoped to the route that ran (their `applies_to_routes`) and the success criteria that path actually exercises count this run — an eval gated to an un-taken route is **not-applicable**, never a failure, and must not drag the Goal verdict or any criterion down. In the goal card, mark success criteria belonging to routes this run didn't exercise as **"not run this route"**, not Short/At-risk. (A route-specific eval with **no** `applies_to_routes` will mis-fire on runs it doesn't apply to — if you see that, record it as a Goal open finding: the eval needs route gating.)
 
 ### 3. Update `builder/improve.html`
 

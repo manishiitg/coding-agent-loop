@@ -52,4 +52,8 @@ This file is an internal signal, not the user surface — the log is the user su
 
 ### Cost discipline
 
-You are a cheap, read-only triage pass — not an improvement run. Read what you need, write the log + verdict, and stop. Do not dispatch sub-agents, run the browser, execute the workflow, or open speculative investigations.
+You are a cheap, read-only triage pass — not an improvement run. The biggest waste is reading one file per shell call; don't do that.
+
+- **Gather all your evidence in ONE shell command.** You know the fixed set up front: run status + key outputs under `runs/<run_folder>/`, `route_selection.json`, the latest `scores/evaluation/` report, the tail of `db/metrics_history.jsonl`, `planning/metrics.json`, `soul/soul.md`, recent `planning/changelog/`, and the current `builder/improve.html`. `cat`/`tail`/`grep`/`ls` them in a single script with clear `=== NAME ===` delimiters instead of ten separate reads. A second targeted read is fine only if the first surfaced something you must drill into.
+- **No exploration.** Don't `ls` around to discover layout, don't probe with `echo`/`pwd`, don't re-read files you already have. The paths above are the contract.
+- Read → judge → write the log + verdict → stop. Do not dispatch sub-agents, run the browser, execute the workflow, edit the plan, call propose_metric / harden / replan, or open speculative investigations. Those belong to the scheduled improve pass, never the monitor.

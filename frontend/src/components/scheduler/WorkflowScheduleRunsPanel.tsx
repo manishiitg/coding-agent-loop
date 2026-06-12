@@ -28,7 +28,24 @@ interface WorkflowScheduleRunsPanelProps {
 
 type ActivePopup = 'costs' | 'logs' | 'eval' | 'report' | 'live' | null
 type JobFilter = 'running' | 'enabled' | 'paused' | 'missed' | 'issues' | 'all'
-type SchedulePanelView = 'overview' | 'calendar' | 'workflows'
+type SchedulePanelView = 'overview' | 'calendar' | 'by-workflow' | 'schedules'
+
+const WORKFLOW_SCHEDULE_PANEL_LIMIT = 10_000
+
+type WorkflowScheduleGroup = {
+  key: string
+  label: string
+  workspacePath?: string
+  jobs: ScheduledJob[]
+  running: number
+  missed: number
+  issues: number
+  enabled: number
+  paused: number
+  nextRunAt?: string
+  lastRunAt?: string
+  runCount: number
+}
 
 type CalendarEntry = {
   job: ScheduledJob
@@ -510,7 +527,8 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expandedJobIds, setExpandedJobIds] = useState<string[]>([])
-  const [activeView, setActiveView] = useState<SchedulePanelView>('workflows')
+  const [expandedWorkflowKeys, setExpandedWorkflowKeys] = useState<string[]>([])
+  const [activeView, setActiveView] = useState<SchedulePanelView>('by-workflow')
   const [calendarMonth, setCalendarMonth] = useState(() => new Date())
   const [selectedCalendarDate, setSelectedCalendarDate] = useState<string | null>(null)
   const [activeFilter, setActiveFilter] = useState<JobFilter>('all')
@@ -519,7 +537,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   const [schedulerConfig, setSchedulerConfig] = useState<SchedulerConfig | null>(null)
   const [isUpdatingSchedulerPause, setIsUpdatingSchedulerPause] = useState(false)
 
-  // Keep a running workflow expanded so its live run history stays visible.
+  // Keep a running schedule expanded so its live run history stays visible.
   useEffect(() => {
     const runningJobIds = jobs
       .filter(j => j.last_status === 'running')
@@ -565,18 +583,38 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     return map
   }, [workflowPresets])
 
+  useEffect(() => {
+    const runningWorkflowKeys = new Set(
+      jobs
+        .filter(job => job.last_status === 'running')
+        .map(job => getWorkflowFilterMeta(job, presetMap).value)
+    )
+    if (runningWorkflowKeys.size === 0) return
+
+    setExpandedWorkflowKeys(prev => {
+      const next = [...prev]
+      runningWorkflowKeys.forEach((key) => {
+        if (!next.includes(key)) next.push(key)
+      })
+      return next.length === prev.length ? prev : next
+    })
+  }, [jobs, presetMap])
+
   const loadJobs = useCallback(async (showLoading = false) => {
     if (showLoading) setIsLoading(true)
     setError(null)
     try {
       const [resp, config] = await Promise.all([
-        schedulerApi.listJobs({ entity_type: 'workflow' }),
+        schedulerApi.listJobs({
+          entity_type: 'workflow',
+          limit: WORKFLOW_SCHEDULE_PANEL_LIMIT,
+        }),
         schedulerApi.getConfig().catch(() => null),
       ])
       setJobs(resp.jobs)
       setSchedulerConfig(config)
     } catch {
-      setError('Failed to load scheduled workflows')
+      setError('Failed to load workflow schedules')
     } finally {
       if (showLoading) setIsLoading(false)
     }
@@ -706,9 +744,9 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     } catch { /* ignore */ }
   }, [presetMap, jobs])
 
-  // Auto-refresh while any job is running: jobs list + runs + costs (every 5s)
+  // Auto-refresh while any schedule is running: jobs list + runs + costs (every 5s)
   const hasRunningJob = jobs.some(j => j.last_status === 'running')
-  const activeJobs = jobs.filter(j => j.enabled).length
+  const activeScheduleCount = jobs.filter(j => j.enabled).length
   const isSchedulerPaused = !!schedulerConfig?.globally_paused
 
   const previousHasRunningJobRef = useRef(hasRunningJob)
@@ -722,6 +760,19 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     previousHasRunningJobRef.current = hasRunningJob
   }, [hasRunningJob, expandedJobIds, loadRunsForJob])
 
+  const workflowScheduleSummary = useMemo(() => {
+    const workflowKeys = new Set<string>()
+
+    jobs.forEach((job) => {
+      const workflowKey = getWorkflowFilterMeta(job, presetMap).value
+      workflowKeys.add(workflowKey)
+    })
+
+    return {
+      workflows: workflowKeys.size,
+    }
+  }, [jobs, presetMap])
+
   const summary = useMemo(() => {
     const running = jobs.filter(j => j.last_status === 'running').length
     const missed = jobs.filter(isMissedSchedule).length
@@ -732,10 +783,10 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
       missed,
       issues,
       paused,
-      enabled: activeJobs,
+      enabled: activeScheduleCount,
       total: jobs.length,
     }
-  }, [jobs, activeJobs])
+  }, [jobs, activeScheduleCount])
 
   const normalizedSearch = searchQuery.trim().toLowerCase()
   const workflowOptions = useMemo(() => {
@@ -829,6 +880,59 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
         return haystack.includes(normalizedSearch)
       })
   }, [jobs, activeFilter, normalizedSearch, presetMap, selectedWorkflowFilter])
+
+  const workflowGroups = useMemo<WorkflowScheduleGroup[]>(() => {
+    const groups = new Map<string, WorkflowScheduleGroup>()
+
+    filteredJobs.forEach((job) => {
+      const preset = presetMap.get(job.preset_query_id ?? '')
+      const workflowMeta = getWorkflowFilterMeta(job, presetMap)
+      const existing = groups.get(workflowMeta.value)
+      const group = existing ?? {
+        key: workflowMeta.value,
+        label: workflowMeta.workflowLabel,
+        workspacePath: job.workspace_path || preset?.workspacePath || undefined,
+        jobs: [],
+        running: 0,
+        missed: 0,
+        issues: 0,
+        enabled: 0,
+        paused: 0,
+        nextRunAt: undefined,
+        lastRunAt: undefined,
+        runCount: 0,
+      }
+
+      group.jobs.push(job)
+      group.runCount += job.run_count || 0
+      if (job.last_status === 'running') group.running += 1
+      if (isMissedSchedule(job)) group.missed += 1
+      if (job.last_status === 'error') group.issues += 1
+      if (job.enabled) group.enabled += 1
+      else group.paused += 1
+
+      if (job.enabled && job.next_run_at && (!group.nextRunAt || job.next_run_at < group.nextRunAt)) {
+        group.nextRunAt = job.next_run_at
+      }
+      if (job.last_run_at && (!group.lastRunAt || job.last_run_at > group.lastRunAt)) {
+        group.lastRunAt = job.last_run_at
+      }
+
+      groups.set(workflowMeta.value, group)
+    })
+
+    return Array.from(groups.values())
+      .map(group => ({ ...group, jobs: [...group.jobs].sort(sortJobs) }))
+      .sort((a, b) => {
+        if (a.running !== b.running) return b.running - a.running
+        if (a.missed !== b.missed) return b.missed - a.missed
+        if (a.issues !== b.issues) return b.issues - a.issues
+        if (a.nextRunAt && b.nextRunAt) return a.nextRunAt.localeCompare(b.nextRunAt)
+        if (a.nextRunAt) return -1
+        if (b.nextRunAt) return 1
+        return a.label.localeCompare(b.label)
+      })
+  }, [filteredJobs, presetMap])
 
   const monthlyCalendar = useMemo(() => {
     const year = calendarMonth.getFullYear()
@@ -1179,6 +1283,222 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     }
   }
 
+  const toggleWorkflowGroup = useCallback((workflowKey: string) => {
+    setExpandedWorkflowKeys(prev => (
+      prev.includes(workflowKey)
+        ? prev.filter(key => key !== workflowKey)
+        : [...prev, workflowKey]
+    ))
+  }, [])
+
+  const showJobInWorkflowGroups = useCallback((job: ScheduledJob) => {
+    const workflowKey = getWorkflowFilterMeta(job, presetMap).value
+    setSelectedWorkflowFilter(workflowKey)
+    setExpandedWorkflowKeys(prev => prev.includes(workflowKey) ? prev : [...prev, workflowKey])
+    setExpandedJobIds(prev => prev.includes(job.id) ? prev : [...prev, job.id])
+    setActiveView('by-workflow')
+  }, [presetMap])
+
+  const showScheduleDetails = useCallback((job: ScheduledJob) => {
+    const workflowKey = getWorkflowFilterMeta(job, presetMap).value
+    setSelectedWorkflowFilter(workflowKey)
+    setExpandedJobIds(prev => prev.includes(job.id) ? prev : [...prev, job.id])
+    setActiveView('schedules')
+  }, [presetMap])
+
+  const renderWorkflowScheduleRow = (job: ScheduledJob) => {
+    const preset = presetMap.get(job.preset_query_id ?? '')
+    const cronDesc = describeCron(job.cron_expression)
+    const localizedJobName = getLocalizedJobName(job)
+    const isRunningJob = job.last_status === 'running'
+    const isMissedJob = isMissedSchedule(job)
+    const missedDelayMs = getMissedScheduleDelayMs(job)
+    const hasWorkspace = !!job.workspace_path || !!preset?.workspacePath
+
+    return (
+      <div key={job.id} className={`px-4 py-3 ${!job.enabled ? 'opacity-65' : ''}`}>
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-start gap-3">
+              <div className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
+                isRunningJob ? 'bg-amber-500 animate-pulse' :
+                isMissedJob ? 'bg-amber-500' :
+                job.last_status === 'error' ? 'bg-red-500' :
+                job.enabled ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'
+              }`} />
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <span className="truncate text-sm font-medium text-foreground" title={job.name}>
+                    {localizedJobName}
+                  </span>
+                  {isRunningJob && (
+                    <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                      Running
+                    </span>
+                  )}
+                  {isMissedJob && (
+                    <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                      Missed
+                    </span>
+                  )}
+                  {!job.enabled && (
+                    <span className="rounded-full border border-border bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                      Paused
+                    </span>
+                  )}
+                  {job.last_status === 'error' && (
+                    <span className="rounded-full border border-red-500/30 bg-red-500/10 px-1.5 py-0.5 text-[11px] font-medium text-red-600 dark:text-red-300">
+                      Issue
+                    </span>
+                  )}
+                </div>
+
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                  <span className="flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    {cronDesc}
+                  </span>
+                  <span>
+                    {job.enabled
+                      ? isMissedJob && missedDelayMs != null
+                        ? job.missed_run_count && job.missed_run_count > 1
+                          ? `${job.missed_run_count} missed · latest ${formatOverdueDuration(missedDelayMs)} ago`
+                          : `Missed by ${formatOverdueDuration(missedDelayMs)}`
+                        : `Next ${formatLocalScheduleTime(job.next_run_at)}`
+                      : 'Paused'}
+                  </span>
+                  <span>
+                    {isRunningJob
+                      ? job.last_run_at
+                        ? `Running since ${formatLocalScheduleTime(job.last_run_at)}`
+                        : 'Running now'
+                      : `Last ${timeAgo(job.last_run_at)}`}
+                  </span>
+                  <span>{job.run_count} run{job.run_count !== 1 ? 's' : ''}</span>
+                  {job.group_names && job.group_names.length > 0 && (
+                    <span className="truncate" title={`Groups: ${job.group_names.join(', ')}`}>
+                      Groups: {job.group_names.join(', ')}
+                    </span>
+                  )}
+                  {job.mode === 'workshop' && (
+                    <span className="rounded-full bg-purple-100 px-1.5 py-0.5 text-[11px] font-medium text-purple-600 dark:bg-purple-900/30 dark:text-purple-300">
+                      Workshop{job.workshop_mode ? ` · ${job.workshop_mode}` : ''}
+                    </span>
+                  )}
+                  {!hasWorkspace && (
+                    <span className="text-amber-600 dark:text-amber-300">Workspace missing</span>
+                  )}
+                </div>
+
+                {job.last_status === 'error' && job.last_error && (
+                  <div className="mt-1 truncate text-xs text-red-500" title={job.last_error}>
+                    {job.last_error}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex shrink-0 flex-wrap items-center gap-1 lg:justify-end">
+            {job.enabled ? (
+              isRunningJob ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => handleStopRun(job)}
+                      className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs font-medium text-red-600 transition-colors hover:bg-red-100 dark:border-red-800 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50"
+                    >
+                      <Square className="h-3 w-3" />
+                      Stop
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">Stop the running execution</TooltipContent>
+                </Tooltip>
+              ) : (
+                <>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => handleTrigger(job)}
+                        disabled={triggering === job.id}
+                        className={`rounded-md transition-colors disabled:opacity-40 ${
+                          isMissedJob
+                            ? 'inline-flex items-center gap-1 border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-900/30 dark:text-amber-300 dark:hover:bg-amber-900/50'
+                            : 'p-1.5 text-muted-foreground hover:bg-muted hover:text-green-600'
+                        }`}
+                      >
+                        <Play className="h-3.5 w-3.5" />
+                        {isMissedJob && <span>Run now</span>}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">{isMissedJob ? 'Run this missed schedule now' : 'Trigger a manual run now'}</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => handleToggle(job)}
+                        className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-amber-500"
+                      >
+                        <Pause className="h-3.5 w-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">Pause future cron runs</TooltipContent>
+                  </Tooltip>
+                </>
+              )
+            ) : (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => handleToggle(job)}
+                    className="inline-flex items-center gap-1 rounded-md border border-green-200 bg-green-50 px-2 py-1 text-xs font-medium text-green-600 transition-colors hover:bg-green-100 dark:border-green-800 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-900/50"
+                  >
+                    <Play className="h-3 w-3" />
+                    Resume
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Resume cron schedule</TooltipContent>
+              </Tooltip>
+            )}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setEditingJob(job)}
+                  className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-blue-500"
+                >
+                  <Clock className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Edit schedule</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => handleDelete(job)}
+                  className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-red-500"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Delete schedule</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => showScheduleDetails(job)}
+                  className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Open schedule details</TooltipContent>
+            </Tooltip>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   const filterPills: Array<{ key: JobFilter; label: string; count: number }> = [
     { key: 'running', label: 'Running', count: summary.running },
     { key: 'enabled', label: 'Enabled', count: summary.enabled },
@@ -1197,19 +1517,44 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
       <div className="w-full max-w-6xl mx-4 bg-card text-card-foreground rounded-xl shadow-2xl border border-border flex flex-col max-h-[85vh]">
 
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <Calendar className="w-5 h-5 text-amber-500" />
-            <h2 className="text-base font-semibold text-foreground">
-              Scheduled Workflows
-            </h2>
+        <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-border flex-shrink-0">
+          <div className="min-w-0 space-y-2">
+            <div className="flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-amber-500" />
+              <h2 className="text-base font-semibold text-foreground">
+                Workflow Schedules
+              </h2>
+            </div>
             {!isLoading && (
-              <span className="text-xs text-muted-foreground ml-1">
-                {summary.running} running · {summary.missed} missed · {isSchedulerPaused ? 'globally paused' : `${activeJobs} active`} · {jobs.length} total
-              </span>
+              <div className="flex flex-wrap gap-1.5">
+                <span className="rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground">
+                  {workflowScheduleSummary.workflows} workflow{workflowScheduleSummary.workflows === 1 ? '' : 's'}
+                </span>
+                <span className="rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground">
+                  {summary.total} schedule{summary.total === 1 ? '' : 's'}
+                </span>
+                {summary.running > 0 && (
+                  <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+                    {summary.running} running
+                  </span>
+                )}
+                {summary.missed > 0 && (
+                  <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+                    {summary.missed} missed
+                  </span>
+                )}
+                <span className={`rounded-full border px-2 py-0.5 text-xs ${
+                  isSchedulerPaused
+                    ? 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                    : 'border-border bg-background text-muted-foreground'
+                }`}
+                >
+                  {isSchedulerPaused ? 'globally paused' : `${summary.enabled} active`}
+                </span>
+              </div>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <button
               onClick={handleToggleGlobalPause}
               disabled={isUpdatingSchedulerPause}
@@ -1262,17 +1607,24 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                     Overview
                   </button>
                   <button
-                    onClick={() => {
-                      setActiveView('workflows')
-                      setSelectedWorkflowFilter('all')
-                    }}
+                    onClick={() => setActiveView('by-workflow')}
                     className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-                      activeView === 'workflows' && selectedWorkflowFilter === 'all'
+                      activeView === 'by-workflow'
                         ? 'bg-foreground text-background'
                         : 'border border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
                     }`}
                   >
-                    All Workflows
+                    By Workflow
+                  </button>
+                  <button
+                    onClick={() => setActiveView('schedules')}
+                    className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                      activeView === 'schedules'
+                        ? 'bg-foreground text-background'
+                        : 'border border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
+                    }`}
+                  >
+                    All Schedules
                   </button>
                   <button
                     onClick={() => setActiveView('calendar')}
@@ -1284,23 +1636,6 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                   >
                     Month Calendar
                   </button>
-                  {workflowOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      onClick={() => {
-                        setActiveView('workflows')
-                        setSelectedWorkflowFilter(option.value)
-                      }}
-                      className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-                        activeView === 'workflows' && selectedWorkflowFilter === option.value
-                          ? 'bg-foreground text-background'
-                          : 'border border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
-                      }`}
-                      title={option.label}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
                 </div>
 
                 <div className="text-xs text-muted-foreground">
@@ -1308,7 +1643,9 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                     ? 'Summary and schedule health'
                     : activeView === 'calendar'
                       ? `${monthlyCalendar.total} scheduled item${monthlyCalendar.total === 1 ? '' : 's'} this month`
-                      : `${filteredJobs.length} workflow${filteredJobs.length !== 1 ? 's' : ''} shown`}
+                      : activeView === 'by-workflow'
+                        ? `${workflowGroups.length} workflow${workflowGroups.length === 1 ? '' : 's'} · ${filteredJobs.length} schedule${filteredJobs.length === 1 ? '' : 's'} shown`
+                        : `${filteredJobs.length} schedule${filteredJobs.length !== 1 ? 's' : ''} shown`}
                 </div>
               </div>
             </div>
@@ -1321,7 +1658,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
           ) : jobs.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-40 gap-2 text-sm text-muted-foreground">
               <Clock className="w-8 h-8 opacity-30" />
-              <p>No scheduled workflows yet.</p>
+              <p>No workflow schedules yet.</p>
               <p className="text-xs">Click the clock icon on a workflow preset to add one.</p>
             </div>
           ) : activeView === 'overview' ? (
@@ -1349,11 +1686,11 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                 <button
                   onClick={() => {
                     setActiveFilter('running')
-                    setActiveView('workflows')
+                    setActiveView('by-workflow')
                   }}
                   className="text-left rounded-xl border border-border bg-background px-3 py-2 text-foreground shadow-sm hover:bg-muted transition-colors"
                 >
-                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Running now</div>
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Running schedules</div>
                   <div className="mt-1 flex items-center gap-2">
                     <Radio className="w-3.5 h-3.5 text-amber-500" />
                     <span className="text-lg font-semibold text-foreground">{summary.running}</span>
@@ -1362,31 +1699,31 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                 <button
                   onClick={() => {
                     setActiveFilter('enabled')
-                    setActiveView('workflows')
+                    setActiveView('by-workflow')
                   }}
                   className="text-left rounded-xl border border-border bg-background px-3 py-2 text-foreground shadow-sm hover:bg-muted transition-colors"
                 >
-                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Enabled</div>
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Enabled schedules</div>
                   <div className="mt-1 text-lg font-semibold text-foreground">{summary.enabled}</div>
                 </button>
                 <button
                   onClick={() => {
                     setActiveFilter('paused')
-                    setActiveView('workflows')
+                    setActiveView('by-workflow')
                   }}
                   className="text-left rounded-xl border border-border bg-background px-3 py-2 text-foreground shadow-sm hover:bg-muted transition-colors"
                 >
-                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Paused</div>
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Paused schedules</div>
                   <div className="mt-1 text-lg font-semibold text-foreground">{summary.paused}</div>
                 </button>
                 <button
                   onClick={() => {
                     setActiveFilter('issues')
-                    setActiveView('workflows')
+                    setActiveView('by-workflow')
                   }}
                   className="text-left rounded-xl border border-border bg-background px-3 py-2 text-foreground shadow-sm hover:bg-muted transition-colors"
                 >
-                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Issues</div>
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Schedule issues</div>
                   <div className="mt-1 text-lg font-semibold text-foreground">{summary.issues}</div>
                 </button>
               </div>
@@ -1415,10 +1752,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                       return (
                         <button
                           key={`missed-${job.id}`}
-                          onClick={() => {
-                            setExpandedJobIds(prev => prev.includes(job.id) ? prev : [...prev, job.id])
-                            setActiveView('workflows')
-                          }}
+                          onClick={() => showJobInWorkflowGroups(job)}
                           className="rounded-lg border border-amber-400/30 bg-card px-3 py-2 text-left hover:bg-muted transition-colors"
                         >
                           <div className="flex items-center justify-between gap-3">
@@ -1446,7 +1780,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                 <div className="flex items-center justify-between gap-3 mb-2">
                   <div>
                     <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Next scheduled</div>
-                    <div className="text-sm font-medium text-foreground">Which workflows will run soonest</div>
+                    <div className="text-sm font-medium text-foreground">Which schedules will run soonest</div>
                   </div>
                   <div className="text-xs text-muted-foreground whitespace-nowrap">
                     {upcomingJobs.length} upcoming
@@ -1467,10 +1801,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                       return (
                         <button
                           key={`upcoming-${job.id}`}
-                          onClick={() => {
-                            setExpandedJobIds(prev => prev.includes(job.id) ? prev : [...prev, job.id])
-                            setActiveView('workflows')
-                          }}
+                          onClick={() => showJobInWorkflowGroups(job)}
                           className="rounded-lg border border-border bg-card px-3 py-2 text-left hover:bg-muted transition-colors"
                         >
                           <div className="flex items-center justify-between gap-3">
@@ -1563,8 +1894,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                 key={`${cell.date}-${item.job.id}-${index}`}
                                 onClick={(event) => {
                                   event.stopPropagation()
-                                  setExpandedJobIds(prev => prev.includes(item.job.id) ? prev : [...prev, item.job.id])
-                                  setActiveView('workflows')
+                                  showJobInWorkflowGroups(item.job)
                                 }}
                                 className="block w-full truncate rounded-md border border-border bg-muted/40 px-1.5 py-1 text-left text-[11px] leading-tight text-foreground hover:border-amber-500/30 hover:bg-muted"
                                 title={`${item.time} ${item.label} - ${item.note || ''}`}
@@ -1618,10 +1948,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                           <button
                             key={`${selectedCalendarDate}-${item.job.id}-${index}`}
                             type="button"
-                            onClick={() => {
-                              setExpandedJobIds(prev => prev.includes(item.job.id) ? prev : [...prev, item.job.id])
-                              setActiveView('workflows')
-                            }}
+                            onClick={() => showJobInWorkflowGroups(item.job)}
                             className="flex w-full items-start gap-3 rounded-lg border border-border bg-background px-3 py-2 text-left hover:border-amber-500/40 hover:bg-muted/40"
                           >
                             <div className="min-w-14 rounded-md bg-amber-500/10 px-2 py-1 text-center text-xs font-semibold text-amber-600 dark:text-amber-300">
@@ -1652,7 +1979,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
             <>
               <div className="border-b border-border px-5 py-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="flex flex-1 max-w-3xl flex-col gap-3">
+                  <div className="flex flex-1 max-w-4xl flex-col gap-3 md:flex-row">
                     <div className="relative flex-1">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                       <input
@@ -1663,6 +1990,16 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                         className="w-full rounded-lg border border-border bg-background px-9 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-amber-400/50"
                       />
                     </div>
+                    <select
+                      value={selectedWorkflowFilter}
+                      onChange={(event) => setSelectedWorkflowFilter(event.target.value)}
+                      className="min-w-48 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+                    >
+                      <option value="all">All workflows</option>
+                      {workflowOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
                   </div>
 
                   <div className="flex flex-wrap gap-2">
@@ -1684,7 +2021,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
               </div>
             </>
           )}
-          {jobs.length > 0 && activeView === 'workflows' && filteredJobs.length === 0 && (
+          {jobs.length > 0 && activeView === 'by-workflow' && workflowGroups.length === 0 && (
             <div className="flex flex-col items-center justify-center h-40 gap-2 text-sm text-muted-foreground px-6 text-center">
               <Search className="w-8 h-8 opacity-30" />
               <p>No workflows match the current filter.</p>
@@ -1700,7 +2037,110 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
               </button>
             </div>
           )}
-          {jobs.length > 0 && activeView === 'workflows' && filteredJobs.length > 0 && (
+          {jobs.length > 0 && activeView === 'by-workflow' && workflowGroups.length > 0 && (
+            <div className="space-y-3 px-5 py-4">
+              {workflowGroups.map((group) => {
+                const forcedOpen = !!normalizedSearch || activeFilter !== 'all' || selectedWorkflowFilter !== 'all' || group.running > 0
+                const isExpanded = forcedOpen || expandedWorkflowKeys.includes(group.key)
+                const groupStatusClass = group.running > 0
+                  ? 'bg-amber-500 animate-pulse'
+                  : group.missed > 0
+                    ? 'bg-amber-500'
+                    : group.issues > 0
+                      ? 'bg-red-500'
+                      : group.enabled > 0
+                        ? 'bg-green-500'
+                        : 'bg-gray-300 dark:bg-gray-600'
+
+                return (
+                  <div key={group.key} className="overflow-hidden rounded-lg border border-border bg-background">
+                    <button
+                      type="button"
+                      onClick={() => toggleWorkflowGroup(group.key)}
+                      className="w-full px-4 py-3 text-left transition-colors hover:bg-muted/40"
+                    >
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div className="flex min-w-0 items-start gap-3">
+                          <div className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${groupStatusClass}`} />
+                          <div className="min-w-0">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <span className="truncate text-sm font-semibold text-foreground" title={group.label}>
+                                {group.label}
+                              </span>
+                              {isExpanded ? (
+                                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                              ) : (
+                                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                              )}
+                            </div>
+                            <div className="mt-1 truncate text-xs text-muted-foreground" title={group.workspacePath}>
+                              {group.workspacePath || 'Workspace path not recorded'}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap gap-1.5 lg:justify-end">
+                          <span className="rounded-full border border-border bg-card px-2 py-0.5 text-xs text-muted-foreground">
+                            {group.jobs.length} schedule{group.jobs.length === 1 ? '' : 's'}
+                          </span>
+                          {group.running > 0 && (
+                            <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+                              {group.running} running
+                            </span>
+                          )}
+                          {group.missed > 0 && (
+                            <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+                              {group.missed} missed
+                            </span>
+                          )}
+                          {group.issues > 0 && (
+                            <span className="rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-600 dark:text-red-300">
+                              {group.issues} issue{group.issues === 1 ? '' : 's'}
+                            </span>
+                          )}
+                          {group.paused > 0 && (
+                            <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                              {group.paused} paused
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 pl-5 text-xs text-muted-foreground">
+                        <span>{group.enabled} active</span>
+                        <span>{group.runCount} total run{group.runCount === 1 ? '' : 's'}</span>
+                        <span>Next {formatLocalScheduleTime(group.nextRunAt)}</span>
+                        <span>Last {timeAgo(group.lastRunAt)}</span>
+                      </div>
+                    </button>
+
+                    {isExpanded && (
+                      <div className="divide-y divide-border border-t border-border bg-card/40">
+                        {group.jobs.map(renderWorkflowScheduleRow)}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          {jobs.length > 0 && activeView === 'schedules' && filteredJobs.length === 0 && (
+            <div className="flex flex-col items-center justify-center h-40 gap-2 text-sm text-muted-foreground px-6 text-center">
+              <Search className="w-8 h-8 opacity-30" />
+              <p>No schedules match the current filter.</p>
+              <button
+                onClick={() => {
+                  setSearchQuery('')
+                  setActiveFilter('all')
+                  setSelectedWorkflowFilter('all')
+                }}
+                className="text-xs text-amber-600 dark:text-amber-400 hover:underline"
+              >
+                Clear search and show all schedules
+              </button>
+            </div>
+          )}
+          {jobs.length > 0 && activeView === 'schedules' && filteredJobs.length > 0 && (
             <div className="divide-y divide-gray-100 dark:divide-gray-700">
               {filteredJobs.map((job, index, jobsList) => {
                 const preset = presetMap.get(job.preset_query_id ?? '')
@@ -1726,11 +2166,11 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                       <div className="px-5 py-3 bg-amber-500/5 border-b border-amber-500/10">
                         <div className="flex items-center justify-between gap-3">
                           <div>
-                            <div className="text-[11px] uppercase tracking-wide text-amber-600 dark:text-amber-400">Running workflows</div>
-                            <div className="text-sm font-medium text-foreground">Workflows with an active execution right now</div>
+                            <div className="text-[11px] uppercase tracking-wide text-amber-600 dark:text-amber-400">Running schedules</div>
+                            <div className="text-sm font-medium text-foreground">Schedules with an active execution right now</div>
                           </div>
                           <div className="text-xs text-muted-foreground whitespace-nowrap">
-                            {summary.running} active
+                            {summary.running} active schedule{summary.running === 1 ? '' : 's'}
                           </div>
                         </div>
                       </div>
@@ -1740,7 +2180,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                       <div className="px-5 py-3 bg-muted/30 border-b border-border">
                         <div className="flex items-center justify-between gap-3">
                           <div>
-                            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Scheduled workflows</div>
+                            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Workflow schedules</div>
                             <div className="text-sm font-medium text-foreground">Saved schedules that are idle, paused, or waiting for their next run</div>
                           </div>
                           <div className="text-xs text-muted-foreground whitespace-nowrap">
@@ -1974,7 +2414,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                           }}
                           disabled={job.last_status === 'running'}
                           className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-gray-400"
-                          title={job.last_status === 'running' ? 'Running workflows stay expanded' : undefined}
+                          title={job.last_status === 'running' ? 'Running schedules stay expanded' : undefined}
                         >
                           {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                         </button>

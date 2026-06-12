@@ -3,7 +3,7 @@ import { Workflow, Users, Settings, Copy, DollarSign, Keyboard, SlidersHorizonta
 import { useModeStore } from '../stores/useModeStore'
 import { useGlobalPresetStore, usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
-import type { PlannerFile, PresetLLMConfig, WorkflowManifest } from '../services/api-types'
+import type { PlannerFile, PresetLLMConfig, ScheduledJob, WorkflowManifest } from '../services/api-types'
 import PresetModal from './PresetModal'
 import WorkflowScheduleRunsPanel from './scheduler/WorkflowScheduleRunsPanel'
 import MultiAgentSchedulesPopup from './scheduler/MultiAgentSchedulesPopup'
@@ -72,6 +72,54 @@ const MODE_PILLS = [
 const shortModelName = (modelId: string): string => {
   const name = modelId.split('/').pop() || modelId
   return name.length > 18 ? `${name.slice(0, 18)}…` : name
+}
+
+type WorkflowScheduleSummary = {
+  scheduledWorkflows: number
+  runningWorkflows: number
+  totalSchedules: number
+  runningSchedules: number
+}
+
+const EMPTY_WORKFLOW_SCHEDULE_SUMMARY: WorkflowScheduleSummary = {
+  scheduledWorkflows: 0,
+  runningWorkflows: 0,
+  totalSchedules: 0,
+  runningSchedules: 0,
+}
+
+const WORKFLOW_SCHEDULE_HEADER_LIMIT = 10_000
+
+const getWorkflowScheduleKey = (job: ScheduledJob): string => (
+  job.workflow_id ||
+  job.preset_query_id ||
+  job.workspace_path ||
+  job.workflow_label ||
+  job.name ||
+  job.id
+)
+
+const summarizeWorkflowSchedules = (jobs: ScheduledJob[]): WorkflowScheduleSummary => {
+  const scheduledWorkflowKeys = new Set<string>()
+  const runningWorkflowKeys = new Set<string>()
+  let runningSchedules = 0
+
+  jobs.forEach((job) => {
+    const key = getWorkflowScheduleKey(job)
+    scheduledWorkflowKeys.add(key)
+
+    if (job.last_status === 'running') {
+      runningSchedules += 1
+      runningWorkflowKeys.add(key)
+    }
+  })
+
+  return {
+    scheduledWorkflows: scheduledWorkflowKeys.size,
+    runningWorkflows: runningWorkflowKeys.size,
+    totalSchedules: jobs.length,
+    runningSchedules,
+  }
 }
 
 const workflowManifestToPreset = (manifest: WorkflowManifest, workspacePath: string): CustomPreset => {
@@ -160,8 +208,7 @@ export const ModePresetBar: React.FC = () => {
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showRunsPanel, setShowRunsPanel] = useState(false)
   const [showMultiAgentSchedules, setShowMultiAgentSchedules] = useState(false)
-  const [workflowScheduleCount, setWorkflowScheduleCount] = useState(0)
-  const [runningScheduledWorkflowCount, setRunningScheduledWorkflowCount] = useState(0)
+  const [workflowScheduleSummary, setWorkflowScheduleSummary] = useState<WorkflowScheduleSummary>(EMPTY_WORKFLOW_SCHEDULE_SUMMARY)
   const [multiAgentScheduleCount, setMultiAgentScheduleCount] = useState(0)
   const [showPlansManager, setShowPlansManager] = useState(false)
   const [showTierModal, setShowTierModal] = useState(false)
@@ -244,8 +291,7 @@ export const ModePresetBar: React.FC = () => {
   // running/total counts before the schedules popup is opened.
   useEffect(() => {
     if (!shouldShowScheduleHeader) {
-      setWorkflowScheduleCount(0)
-      setRunningScheduledWorkflowCount(0)
+      setWorkflowScheduleSummary(EMPTY_WORKFLOW_SCHEDULE_SUMMARY)
       return
     }
 
@@ -253,16 +299,17 @@ export const ModePresetBar: React.FC = () => {
 
     const loadScheduleState = async () => {
       try {
-        const resp = await schedulerApi.listJobs({ entity_type: 'workflow' })
+        const resp = await schedulerApi.listJobs({
+          entity_type: 'workflow',
+          limit: WORKFLOW_SCHEDULE_HEADER_LIMIT,
+        })
         if (cancelled) return
 
         const jobs = resp.jobs ?? []
-        setWorkflowScheduleCount(jobs.length)
-        setRunningScheduledWorkflowCount(jobs.filter(j => j.last_status === 'running').length)
+        setWorkflowScheduleSummary(summarizeWorkflowSchedules(jobs))
       } catch {
         if (cancelled) return
-        setWorkflowScheduleCount(0)
-        setRunningScheduledWorkflowCount(0)
+        setWorkflowScheduleSummary(EMPTY_WORKFLOW_SCHEDULE_SUMMARY)
       }
     }
 
@@ -329,6 +376,16 @@ export const ModePresetBar: React.FC = () => {
     if (delegationTierConfig?.low) lines.push(`Low: ${shortModelName(delegationTierConfig.low.model_id)} (${delegationTierConfig.low.provider})`)
     return lines
   }, [delegationTierConfig])
+
+  const workflowCountLabel = `${workflowScheduleSummary.scheduledWorkflows} workflow${workflowScheduleSummary.scheduledWorkflows !== 1 ? 's' : ''}`
+  const scheduleCountLabel = `${workflowScheduleSummary.totalSchedules} schedule${workflowScheduleSummary.totalSchedules !== 1 ? 's' : ''}`
+  const workflowScheduleHeaderLabel = workflowScheduleSummary.runningWorkflows > 0
+    ? `${workflowScheduleSummary.runningWorkflows}/${workflowScheduleSummary.scheduledWorkflows} workflows · ${workflowScheduleSummary.runningSchedules}/${workflowScheduleSummary.totalSchedules} schedules`
+    : `${workflowCountLabel} · ${scheduleCountLabel}`
+
+  const workflowScheduleTooltip = workflowScheduleSummary.runningWorkflows > 0
+    ? `${workflowScheduleSummary.runningWorkflows} of ${workflowScheduleSummary.scheduledWorkflows} scheduled workflows running now; ${workflowScheduleSummary.runningSchedules} of ${workflowScheduleSummary.totalSchedules} schedules running`
+    : `${workflowCountLabel} scheduled; ${scheduleCountLabel} total`
 
   const openTierModal = useCallback(() => {
     const shouldRestoreAfterClose = !workspaceMinimized
@@ -912,16 +969,16 @@ export const ModePresetBar: React.FC = () => {
                         data-tour="workflow-schedules"
                         data-testid="tour-workflow-schedules"
                         className={`relative flex items-center gap-2 px-2 py-1 rounded-md transition-colors ${
-                          runningScheduledWorkflowCount > 0
+                          workflowScheduleSummary.runningWorkflows > 0
                             ? 'text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/30'
                             : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200'
                         }`}
                       >
                         <Workflow className="w-4 h-4 flex-shrink-0" />
                         <span className="text-xs font-medium whitespace-nowrap">
-                          {runningScheduledWorkflowCount}/{workflowScheduleCount} schedules
+                          {workflowScheduleHeaderLabel}
                         </span>
-                        {runningScheduledWorkflowCount > 0 && (
+                        {workflowScheduleSummary.runningWorkflows > 0 && (
                           <>
                             <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-green-500 border border-white dark:border-gray-800" />
                             <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-green-500 animate-ping opacity-50" />
@@ -930,9 +987,7 @@ export const ModePresetBar: React.FC = () => {
                       </button>
                     </TooltipTrigger>
                     <TooltipContent side="bottom">
-                      {runningScheduledWorkflowCount > 0
-                        ? `${runningScheduledWorkflowCount} of ${workflowScheduleCount} scheduled workflows running now`
-                        : `${workflowScheduleCount} scheduled workflows`}
+                      {workflowScheduleTooltip}
                     </TooltipContent>
                   </Tooltip>
                 </>

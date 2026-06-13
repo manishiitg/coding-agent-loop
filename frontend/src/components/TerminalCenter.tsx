@@ -42,6 +42,11 @@ function hasAnsiCodes(s: string): boolean {
   return s.includes('\x1B[')
 }
 
+function isTmuxContentSource(source?: string): boolean {
+  const normalized = (source || '').trim().toLowerCase()
+  return normalized === 'tmux_pipe' || normalized === 'tmux_capture'
+}
+
 // rawAfterVisibleChars returns the substring of `raw` that starts after the
 // first `visibleCharCount` non-ANSI characters. Lets us slice the raw line
 // at a position discovered against the stripped version (e.g. "$ " prefix
@@ -2452,6 +2457,7 @@ function isSyntheticTerminal(terminal: TerminalSnapshot): boolean {
   if (transport === 'tmux') return false
   if (transport === 'api' || transport === 'structured' || transport === 'structured_cli' || transport === 'non_tmux') return true
   if (terminal.tmux_session) return false
+  if (isTmuxContentSource(terminal.content_source)) return false
   // Retained tmux snapshots can lose tmux_session after the pane is removed.
   // If the stored content still carries terminal escape sequences, keep the
   // xterm renderer so colors, alternate-screen redraws, and terminal spacing

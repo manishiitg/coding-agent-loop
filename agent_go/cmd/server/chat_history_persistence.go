@@ -15,6 +15,7 @@ import (
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	internalevents "mcp-agent-builder-go/agent_go/internal/events"
+	"mcp-agent-builder-go/agent_go/internal/terminals"
 	"mcp-agent-builder-go/agent_go/pkg/fsutil"
 )
 
@@ -85,9 +86,19 @@ type ChatHistoryCleanupResult struct {
 	Scope        string   `json:"scope"`
 }
 
+type restoredChatHistoryPersistTarget struct {
+	SessionID        string
+	ConversationPath string
+	History          []llmtypes.MessageContent
+	Runtime          *ChatHistoryAgentRuntime
+}
+
 const (
 	maxPersistedChatHistoryUIEvents = 200
 	maxChatHistoryFallbackScan      = 1000
+	maxChatHistoryTerminalSnapshots = 1
+	maxChatHistoryTerminalBytes     = 512 * 1024
+	maxChatHistoryTerminalLines     = 10000
 )
 
 // chatHistoryRoot returns the workspace-relative path to a user's chat_history root.
@@ -111,6 +122,14 @@ func chatHistoryConversationPath(userID, sessionID string, t time.Time) string {
 // the same format as the workflow builder: a single conversation.json with the
 // full message history. Called inline right after finalHistory is captured.
 func (api *StreamingAPI) persistChatConversation(sessionID, agentMode, userID string, persistedHistory []llmtypes.MessageContent, runtime *ChatHistoryAgentRuntime, uiEvents []internalevents.Event) {
+	api.persistChatConversationToPath(sessionID, agentMode, userID, persistedHistory, runtime, uiEvents, "")
+}
+
+func (api *StreamingAPI) persistChatConversationToPath(sessionID, agentMode, userID string, persistedHistory []llmtypes.MessageContent, runtime *ChatHistoryAgentRuntime, uiEvents []internalevents.Event, conversationPath string) {
+	api.persistChatConversationToPathWithTerminalSession(sessionID, sessionID, agentMode, userID, persistedHistory, runtime, uiEvents, conversationPath)
+}
+
+func (api *StreamingAPI) persistChatConversationToPathWithTerminalSession(sessionID, terminalSnapshotSessionID, agentMode, userID string, persistedHistory []llmtypes.MessageContent, runtime *ChatHistoryAgentRuntime, uiEvents []internalevents.Event, conversationPath string) {
 	if len(persistedHistory) == 0 {
 		return
 	}
@@ -129,6 +148,13 @@ func (api *StreamingAPI) persistChatConversation(sessionID, agentMode, userID st
 	if runtime != nil {
 		convData["runtime"] = runtime
 	}
+	snapshotSessionID := strings.TrimSpace(terminalSnapshotSessionID)
+	if snapshotSessionID == "" {
+		snapshotSessionID = sessionID
+	}
+	if terminalSnapshots := api.captureChatHistoryTerminalSnapshots(snapshotSessionID, runtime); len(terminalSnapshots) > 0 {
+		convData["terminal_snapshots"] = terminalSnapshots
+	}
 	uiEvents = trimChatHistoryUIEvents(uiEvents)
 	if len(uiEvents) > 0 {
 		convData["ui_events"] = uiEvents
@@ -140,13 +166,394 @@ func (api *StreamingAPI) persistChatConversation(sessionID, agentMode, userID st
 		return
 	}
 
-	convPath := chatHistoryConversationPath(userID, sessionID, now)
+	convPath := strings.TrimSpace(conversationPath)
+	if convPath == "" {
+		convPath = chatHistoryConversationPath(userID, sessionID, now)
+	}
 	if err := writeRawFileToWorkspace(context.Background(), convPath, string(convJSON)); err != nil {
 		logfWithContext(logCtx, "[CHAT_HISTORY] Failed to write %s: %v", convPath, err)
 		return
 	}
 
 	logfWithContext(logCtx, "[CHAT_HISTORY] Saved conversation (%d messages) to %s", len(persistedHistory), convPath)
+}
+
+var captureChatHistoryTerminalPaneLines = captureTerminalPaneLines
+
+func (api *StreamingAPI) captureChatHistoryTerminalSnapshots(sessionID string, runtime *ChatHistoryAgentRuntime) []terminals.Snapshot {
+	sessionID = strings.TrimSpace(sessionID)
+	if api == nil || sessionID == "" {
+		return nil
+	}
+
+	candidates := make([]terminals.Snapshot, 0)
+	if api.terminalStore != nil {
+		for _, snapshot := range api.terminalStore.List(sessionID) {
+			if strings.TrimSpace(snapshot.Content) == "" || !chatHistoryTerminalSnapshotIsTmux(snapshot) {
+				continue
+			}
+			prepared, ok := prepareChatHistoryTerminalSnapshot(snapshot)
+			if ok {
+				candidates = append(candidates, prepared)
+			}
+		}
+	}
+	if len(candidates) == 0 {
+		if snapshot, ok := api.captureChatHistoryRuntimeTmuxSnapshot(sessionID, runtime); ok {
+			candidates = append(candidates, snapshot)
+		}
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		iMain := chatHistoryTerminalSnapshotIsMainAgent(candidates[i])
+		jMain := chatHistoryTerminalSnapshotIsMainAgent(candidates[j])
+		if iMain != jMain {
+			return iMain
+		}
+		return candidates[i].UpdatedAt.After(candidates[j].UpdatedAt)
+	})
+	if len(candidates) > maxChatHistoryTerminalSnapshots {
+		candidates = candidates[:maxChatHistoryTerminalSnapshots]
+	}
+	return candidates
+}
+
+func (api *StreamingAPI) captureChatHistoryRuntimeTmuxSnapshot(sessionID string, runtime *ChatHistoryAgentRuntime) (terminals.Snapshot, bool) {
+	tmuxSession, ok, reason := restoredRuntimeTmuxSession(runtime)
+	if !ok {
+		if reason != "" && reason != "agent_session_handle_missing" && reason != "not_tmux_transport" {
+			api.logRestoredTerminalInfof("terminal snapshot runtime fallback skipped session=%s reason=%s", sessionID, reason)
+		}
+		return terminals.Snapshot{}, false
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), terminalTmuxActionTimeout)
+	defer cancel()
+	content, err := captureChatHistoryTerminalPaneLines(ctx, tmuxSession, terminalDefaultDetailHistoryLines)
+	if err != nil {
+		api.logRestoredTerminalf("Failed to capture runtime tmux snapshot session=%s tmux_session=%s: %v", sessionID, tmuxSession, err)
+		return terminals.Snapshot{}, false
+	}
+
+	provider := strings.TrimSpace(runtime.Provider)
+	if provider == "" && runtime.AgentSessionHandle != nil {
+		provider = strings.TrimSpace(runtime.AgentSessionHandle.Provider.Provider)
+	}
+	label := "Restored terminal"
+	if provider != "" {
+		label = "Restored " + provider
+	}
+	now := time.Now()
+	snapshot := terminals.Snapshot{
+		TerminalID:    sessionID + ":main:" + sessionID,
+		SessionID:     sessionID,
+		OwnerID:       "main:" + sessionID,
+		ExecutionID:   "main:" + sessionID,
+		ExecutionKind: "main_agent",
+		Label:         label,
+		Scope:         "main_agent",
+		WorkflowPath:  strings.TrimSpace(runtime.WorkspacePath),
+		StepID:        "main_agent:" + sessionID,
+		StepTransport: "tmux",
+		TmuxSession:   tmuxSession,
+		Content:       content,
+		ContentSource: "tmux_capture",
+		Active:        false,
+		State:         "stale",
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	return prepareChatHistoryTerminalSnapshot(snapshot)
+}
+
+func prepareChatHistoryTerminalSnapshot(snapshot terminals.Snapshot) (terminals.Snapshot, bool) {
+	content := terminals.RedactSensitiveTerminalText(snapshot.Content)
+	content = boundChatHistoryTerminalContent(content)
+	if strings.TrimSpace(content) == "" {
+		return terminals.Snapshot{}, false
+	}
+	snapshot.Content = content
+	snapshot.Rows = nil
+	snapshot.Active = false
+	if strings.TrimSpace(snapshot.State) == "" || snapshot.State == "running" || snapshot.State == "closing" {
+		snapshot.State = "stale"
+	}
+	snapshot.ClosesAt = nil
+	snapshot.RetentionSeconds = 0
+	if snapshot.ContentSource == "" {
+		snapshot.ContentSource = "tmux_capture"
+	}
+	return snapshot, true
+}
+
+func boundChatHistoryTerminalContent(content string) string {
+	content = terminalContentTail(content, maxChatHistoryTerminalBytes)
+	if maxChatHistoryTerminalLines <= 0 {
+		return content
+	}
+	lines := strings.Split(content, "\n")
+	if len(lines) <= maxChatHistoryTerminalLines {
+		return content
+	}
+	return strings.Join(lines[len(lines)-maxChatHistoryTerminalLines:], "\n")
+}
+
+func chatHistoryTerminalSnapshotIsTmux(snapshot terminals.Snapshot) bool {
+	if strings.TrimSpace(snapshot.TmuxSession) != "" {
+		return true
+	}
+	transport := strings.ToLower(strings.TrimSpace(snapshot.StepTransport))
+	if transport == "tmux" {
+		return true
+	}
+	source := strings.ToLower(strings.TrimSpace(snapshot.ContentSource))
+	return source == "tmux_pipe" || source == "tmux_capture"
+}
+
+func chatHistoryTerminalSnapshotIsMainAgent(snapshot terminals.Snapshot) bool {
+	if strings.Contains(snapshot.TerminalID, ":turn-") {
+		return false
+	}
+	kind := strings.ToLower(strings.TrimSpace(snapshot.ExecutionKind))
+	scope := strings.ToLower(strings.TrimSpace(snapshot.Scope))
+	return kind == "main_agent" || kind == "main" || kind == "chat" ||
+		scope == "main_agent" || scope == "main" || scope == "chat" ||
+		strings.HasPrefix(strings.TrimSpace(snapshot.OwnerID), "main:")
+}
+
+func (api *StreamingAPI) resolveRestoredCodingConversationPersistTarget(userID, currentSessionID, restoredConversationPath, restoredConversationSessionID, workspacePath, currentProvider, currentWorkshopMode string) (*restoredChatHistoryPersistTarget, bool, error) {
+	currentSessionID = strings.TrimSpace(currentSessionID)
+	restoredConversationPath = strings.TrimSpace(restoredConversationPath)
+	restoredConversationSessionID = strings.TrimSpace(restoredConversationSessionID)
+	if userID == "" {
+		userID = "default"
+	}
+
+	var target *restoredChatHistoryPersistTarget
+	var ok bool
+	var err error
+	if restoredConversationPath != "" {
+		target, ok, err = readRestoredChatHistoryPersistTargetFromPath(userID, restoredConversationPath)
+	} else if restoredConversationSessionID != "" {
+		target, ok, err = readRestoredChatHistoryPersistTargetForSession(userID, restoredConversationSessionID, workspacePath)
+	} else if api != nil {
+		target, ok = api.rememberedRestoredConversationPersistTarget(currentSessionID)
+		if ok {
+			target, ok, err = readRestoredChatHistoryPersistTargetFromPath(userID, target.ConversationPath)
+		}
+	}
+	if err != nil || !ok || target == nil {
+		return nil, false, err
+	}
+	if strings.TrimSpace(target.SessionID) == "" || strings.TrimSpace(target.ConversationPath) == "" {
+		return nil, false, nil
+	}
+	if !shouldPersistIntoRestoredCodingConversation(target.Runtime, currentProvider, currentWorkshopMode) {
+		if api != nil {
+			api.forgetRestoredConversationPersistTarget(currentSessionID)
+		}
+		return nil, false, nil
+	}
+	if api != nil && currentSessionID != "" {
+		api.rememberRestoredConversationPersistTarget(currentSessionID, *target)
+	}
+	return target, true, nil
+}
+
+func shouldPersistIntoRestoredCodingConversation(runtime *ChatHistoryAgentRuntime, currentProvider, currentWorkshopMode string) bool {
+	if runtime == nil || runtime.Kind != "coding_agent" {
+		return false
+	}
+	hasAgentSessionHandle := runtime.AgentSessionHandle != nil && !runtime.AgentSessionHandle.Empty()
+	if !runtime.ResumeSupported && !hasAgentSessionHandle {
+		return false
+	}
+	provider := strings.ToLower(strings.TrimSpace(runtime.Provider))
+	if provider == "" && hasAgentSessionHandle {
+		provider = strings.ToLower(strings.TrimSpace(runtime.AgentSessionHandle.Provider.Provider))
+	}
+	currentProvider = strings.ToLower(strings.TrimSpace(currentProvider))
+	if provider == "" || (currentProvider != "" && provider != currentProvider) {
+		return false
+	}
+	runtimeWorkshopMode := normalizeChatHistoryWorkshopMode(runtime.WorkshopMode)
+	currentWorkshopMode = normalizeChatHistoryWorkshopMode(currentWorkshopMode)
+	if runtimeWorkshopMode != "" && currentWorkshopMode != "" && runtimeWorkshopMode != currentWorkshopMode {
+		return false
+	}
+	return restoredRuntimeCodingAgentTransport(runtime) != ""
+}
+
+func (api *StreamingAPI) rememberRestoredConversationPersistTarget(currentSessionID string, target restoredChatHistoryPersistTarget) {
+	currentSessionID = strings.TrimSpace(currentSessionID)
+	if api == nil || currentSessionID == "" || strings.TrimSpace(target.ConversationPath) == "" {
+		return
+	}
+	api.restoredConversationPersistMux.Lock()
+	defer api.restoredConversationPersistMux.Unlock()
+	if api.restoredConversationPersistTargets == nil {
+		api.restoredConversationPersistTargets = make(map[string]restoredChatHistoryPersistTarget)
+	}
+	api.restoredConversationPersistTargets[currentSessionID] = restoredChatHistoryPersistTarget{
+		SessionID:        target.SessionID,
+		ConversationPath: target.ConversationPath,
+		Runtime:          target.Runtime,
+	}
+}
+
+func (api *StreamingAPI) rememberedRestoredConversationPersistTarget(currentSessionID string) (*restoredChatHistoryPersistTarget, bool) {
+	currentSessionID = strings.TrimSpace(currentSessionID)
+	if api == nil || currentSessionID == "" {
+		return nil, false
+	}
+	api.restoredConversationPersistMux.RLock()
+	defer api.restoredConversationPersistMux.RUnlock()
+	target, ok := api.restoredConversationPersistTargets[currentSessionID]
+	if !ok || strings.TrimSpace(target.ConversationPath) == "" {
+		return nil, false
+	}
+	return &target, true
+}
+
+func (api *StreamingAPI) forgetRestoredConversationPersistTarget(currentSessionID string) {
+	currentSessionID = strings.TrimSpace(currentSessionID)
+	if api == nil || currentSessionID == "" {
+		return
+	}
+	api.restoredConversationPersistMux.Lock()
+	defer api.restoredConversationPersistMux.Unlock()
+	delete(api.restoredConversationPersistTargets, currentSessionID)
+}
+
+func readRestoredChatHistoryPersistTargetFromPath(userID, conversationPath string) (*restoredChatHistoryPersistTarget, bool, error) {
+	normalizedPath, ok := normalizeRestoredChatHistoryConversationPath(userID, conversationPath)
+	if !ok {
+		return nil, false, nil
+	}
+	data, exists, err := readChatHistoryConversationDataFromPath(normalizedPath)
+	if err != nil || !exists {
+		return nil, exists, err
+	}
+	return parseRestoredChatHistoryPersistTarget(data, chatHistorySessionIDFromConversationPath(userID, normalizedPath), normalizedPath)
+}
+
+func readRestoredChatHistoryPersistTargetForSession(userID, sessionID, workspacePath string) (*restoredChatHistoryPersistTarget, bool, error) {
+	sessionID = sanitizeChatHistorySessionID(sessionID)
+	if sessionID == "" {
+		return nil, false, nil
+	}
+	data, err := ReadChatHistoryConversation(userID, sessionID, workspacePath)
+	if err != nil {
+		if strings.Contains(err.Error(), "conversation not found") {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	conversationPath := ""
+	if path, ok, err := FindChatHistoryConversationPathForSession(userID, sessionID, workspacePath); err != nil {
+		return nil, false, err
+	} else if ok {
+		conversationPath = path
+	}
+	return parseRestoredChatHistoryPersistTarget([]byte(data), sessionID, conversationPath)
+}
+
+func parseRestoredChatHistoryPersistTarget(data []byte, fallbackSessionID, conversationPath string) (*restoredChatHistoryPersistTarget, bool, error) {
+	var raw struct {
+		SessionID string                    `json:"session_id"`
+		Runtime   *ChatHistoryAgentRuntime  `json:"runtime,omitempty"`
+		Mode      string                    `json:"workshop_mode,omitempty"`
+		History   []llmtypes.MessageContent `json:"conversation_history"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, false, err
+	}
+	sessionID := sanitizeChatHistorySessionID(raw.SessionID)
+	if sessionID == "" {
+		sessionID = sanitizeChatHistorySessionID(fallbackSessionID)
+	}
+	if sessionID == "" || strings.TrimSpace(conversationPath) == "" {
+		return nil, false, nil
+	}
+	if raw.Runtime != nil && raw.Runtime.WorkshopMode == "" {
+		raw.Runtime.WorkshopMode = normalizeChatHistoryWorkshopMode(raw.Mode)
+	}
+	normalizeChatHistoryRuntime(raw.Runtime)
+	return &restoredChatHistoryPersistTarget{
+		SessionID:        sessionID,
+		ConversationPath: conversationPath,
+		History:          raw.History,
+		Runtime:          raw.Runtime,
+	}, true, nil
+}
+
+func chatHistorySessionIDFromConversationPath(userID, conversationPath string) string {
+	conversationPath = strings.Trim(pathpkg.Clean(filepath.ToSlash(conversationPath)), "/")
+	if id, ok := chatHistorySessionIDFromWorkspacePath(chatHistoryRoot(userID), conversationPath); ok {
+		return id
+	}
+	if id := chatHistorySessionIDFromFileName(pathpkg.Base(conversationPath)); id != "" {
+		return id
+	}
+	if pathpkg.Base(conversationPath) == "conversation.json" {
+		return sanitizeChatHistorySessionID(pathpkg.Base(pathpkg.Dir(conversationPath)))
+	}
+	return ""
+}
+
+func mergeRestoredChatHistory(existing, incoming []llmtypes.MessageContent) []llmtypes.MessageContent {
+	if len(existing) == 0 {
+		return incoming
+	}
+	if len(incoming) == 0 {
+		return existing
+	}
+	if chatHistoryHasPrefix(incoming, existing) {
+		return incoming
+	}
+	maxOverlap := len(existing)
+	if len(incoming) < maxOverlap {
+		maxOverlap = len(incoming)
+	}
+	for overlap := maxOverlap; overlap > 0; overlap-- {
+		matched := true
+		for i := 0; i < overlap; i++ {
+			if !chatHistoryMessagesEqual(existing[len(existing)-overlap+i], incoming[i]) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			merged := make([]llmtypes.MessageContent, 0, len(existing)+len(incoming)-overlap)
+			merged = append(merged, existing...)
+			merged = append(merged, incoming[overlap:]...)
+			return merged
+		}
+	}
+	merged := make([]llmtypes.MessageContent, 0, len(existing)+len(incoming))
+	merged = append(merged, existing...)
+	merged = append(merged, incoming...)
+	return merged
+}
+
+func chatHistoryHasPrefix(history, prefix []llmtypes.MessageContent) bool {
+	if len(prefix) > len(history) {
+		return false
+	}
+	for i := range prefix {
+		if !chatHistoryMessagesEqual(history[i], prefix[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func chatHistoryMessagesEqual(a, b llmtypes.MessageContent) bool {
+	aJSON, aErr := json.Marshal(a)
+	bJSON, bErr := json.Marshal(b)
+	return aErr == nil && bErr == nil && string(aJSON) == string(bJSON)
 }
 
 func trimChatHistoryUIEvents(uiEvents []internalevents.Event) []internalevents.Event {
@@ -914,21 +1321,9 @@ func ReadChatHistoryRuntimeFromPath(userID, conversationPath string) (*ChatHisto
 		return nil, false, nil
 	}
 
-	var data []byte
-	localPath := filepath.Join(fsutil.WorkspaceDocsRoot(), filepath.FromSlash(normalizedPath))
-	if localData, err := os.ReadFile(localPath); err == nil {
-		data = localData
-	} else if !os.IsNotExist(err) {
-		return nil, false, err
-	} else {
-		workspaceData, exists, err := readFileFromWorkspace(context.Background(), normalizedPath)
-		if err != nil {
-			return nil, false, err
-		}
-		if !exists {
-			return nil, false, nil
-		}
-		data = []byte(workspaceData)
+	data, exists, err := readChatHistoryConversationDataFromPath(normalizedPath)
+	if err != nil || !exists {
+		return nil, exists, err
 	}
 
 	runtime, err := chatHistoryRuntimeFromJSON(data)
@@ -951,6 +1346,257 @@ func ReadChatHistoryRuntimeForSession(userID, sessionID, workspacePath string) (
 		return nil, true, err
 	}
 	return runtime, true, nil
+}
+
+func ReadChatHistoryTerminalSnapshotsFromPath(userID, conversationPath string) ([]terminals.Snapshot, bool, error) {
+	normalizedPath, ok := normalizeRestoredChatHistoryConversationPath(userID, conversationPath)
+	if !ok {
+		return nil, false, nil
+	}
+
+	data, exists, err := readChatHistoryConversationDataFromPath(normalizedPath)
+	if err != nil || !exists {
+		return nil, exists, err
+	}
+
+	snapshots, err := chatHistoryTerminalSnapshotsFromJSON(data)
+	if err != nil {
+		return nil, true, err
+	}
+	return snapshots, true, nil
+}
+
+func ReadChatHistoryTerminalSnapshotsForSession(userID, sessionID, workspacePath string) ([]terminals.Snapshot, bool, error) {
+	data, err := ReadChatHistoryConversation(userID, sessionID, workspacePath)
+	if err != nil {
+		if strings.Contains(err.Error(), "conversation not found") {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	snapshots, err := chatHistoryTerminalSnapshotsFromJSON(data)
+	if err != nil {
+		return nil, true, err
+	}
+	return snapshots, true, nil
+}
+
+func readChatHistoryConversationDataFromPath(normalizedPath string) ([]byte, bool, error) {
+	normalizedPath = strings.TrimSpace(filepath.ToSlash(normalizedPath))
+	if normalizedPath == "" {
+		return nil, false, nil
+	}
+	localPath := filepath.Join(fsutil.WorkspaceDocsRoot(), filepath.FromSlash(normalizedPath))
+	if localData, err := os.ReadFile(localPath); err == nil {
+		return localData, true, nil
+	} else if !os.IsNotExist(err) {
+		return nil, false, err
+	}
+	workspaceData, exists, err := readFileFromWorkspace(context.Background(), normalizedPath)
+	if err != nil {
+		return nil, false, err
+	}
+	if !exists {
+		return nil, false, nil
+	}
+	return []byte(workspaceData), true, nil
+}
+
+func chatHistoryTerminalSnapshotsFromJSON(data []byte) ([]terminals.Snapshot, error) {
+	var raw struct {
+		TerminalSnapshots []terminals.Snapshot `json:"terminal_snapshots,omitempty"`
+		TerminalSnapshot  *terminals.Snapshot  `json:"terminal_snapshot,omitempty"`
+		SessionID         string               `json:"session_id,omitempty"`
+		Runtime           *ChatHistoryAgentRuntime
+		UIEvents          []chatHistoryTerminalUIEvent `json:"ui_events,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	snapshots := raw.TerminalSnapshots
+	if len(snapshots) == 0 && raw.TerminalSnapshot != nil {
+		snapshots = []terminals.Snapshot{*raw.TerminalSnapshot}
+	}
+	out := make([]terminals.Snapshot, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		prepared, ok := prepareChatHistoryTerminalSnapshot(snapshot)
+		if ok {
+			out = append(out, prepared)
+		}
+	}
+	if len(out) == 0 {
+		out = chatHistoryTerminalSnapshotsFromUIEvents(raw.SessionID, raw.Runtime, raw.UIEvents)
+	}
+	return out, nil
+}
+
+type chatHistoryTerminalUIEvent struct {
+	Type          string                 `json:"type,omitempty"`
+	Timestamp     time.Time              `json:"timestamp,omitempty"`
+	SessionID     string                 `json:"session_id,omitempty"`
+	ExecutionID   string                 `json:"execution_id,omitempty"`
+	ExecutionKind string                 `json:"execution_kind,omitempty"`
+	Data          *chatHistoryAgentEvent `json:"data,omitempty"`
+}
+
+type chatHistoryAgentEvent struct {
+	Type      string                         `json:"type,omitempty"`
+	Timestamp time.Time                      `json:"timestamp,omitempty"`
+	SessionID string                         `json:"session_id,omitempty"`
+	Content   string                         `json:"content,omitempty"`
+	Metadata  map[string]interface{}         `json:"metadata,omitempty"`
+	Data      *chatHistoryStreamingEventData `json:"data,omitempty"`
+}
+
+type chatHistoryStreamingEventData struct {
+	Timestamp  time.Time              `json:"timestamp,omitempty"`
+	SessionID  string                 `json:"session_id,omitempty"`
+	Content    string                 `json:"content,omitempty"`
+	ChunkIndex int                    `json:"chunk_index,omitempty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+}
+
+func chatHistoryTerminalSnapshotsFromUIEvents(sessionID string, runtime *ChatHistoryAgentRuntime, events []chatHistoryTerminalUIEvent) []terminals.Snapshot {
+	if len(events) == 0 {
+		return nil
+	}
+	sessionID = strings.TrimSpace(sessionID)
+
+	var selected terminals.Snapshot
+	for _, event := range events {
+		snapshot, ok := chatHistoryTerminalSnapshotFromUIEvent(sessionID, runtime, event)
+		if !ok {
+			continue
+		}
+		if selected.Content == "" || persistedTerminalSnapshotPreferred(snapshot, selected) {
+			selected = snapshot
+		}
+	}
+	if strings.TrimSpace(selected.Content) == "" {
+		return nil
+	}
+	return []terminals.Snapshot{selected}
+}
+
+func chatHistoryTerminalSnapshotFromUIEvent(sessionID string, runtime *ChatHistoryAgentRuntime, event chatHistoryTerminalUIEvent) (terminals.Snapshot, bool) {
+	if event.Data == nil {
+		return terminals.Snapshot{}, false
+	}
+	metadata := event.Data.Metadata
+	if event.Data.Data != nil && len(event.Data.Data.Metadata) > 0 {
+		metadata = event.Data.Data.Metadata
+	}
+	if strings.ToLower(strings.TrimSpace(chatHistoryMetadataString(metadata, "kind"))) != "terminal" {
+		return terminals.Snapshot{}, false
+	}
+	eventType := strings.ToLower(strings.TrimSpace(event.Type))
+	agentEventType := strings.ToLower(strings.TrimSpace(event.Data.Type))
+	if eventType != "streaming_chunk" && agentEventType != "streaming_chunk" {
+		return terminals.Snapshot{}, false
+	}
+	tmuxSession := chatHistoryMetadataString(metadata,
+		"tmux_session",
+		"codex_interactive_session",
+		"claude_code_interactive_session",
+		"gemini_interactive_session",
+	)
+	if tmuxSession == "" {
+		return terminals.Snapshot{}, false
+	}
+
+	content := event.Data.Content
+	chunkIndex := 0
+	if event.Data.Data != nil {
+		if strings.TrimSpace(event.Data.Data.Content) != "" {
+			content = event.Data.Data.Content
+		}
+		chunkIndex = event.Data.Data.ChunkIndex
+	}
+	if strings.TrimSpace(content) == "" {
+		return terminals.Snapshot{}, false
+	}
+
+	if sessionID == "" {
+		sessionID = strings.TrimSpace(event.SessionID)
+	}
+	if sessionID == "" && event.Data.Data != nil {
+		sessionID = strings.TrimSpace(event.Data.Data.SessionID)
+	}
+	if sessionID == "" {
+		return terminals.Snapshot{}, false
+	}
+
+	provider := chatHistoryMetadataString(metadata, "provider")
+	workflowPath := ""
+	if runtime != nil {
+		if provider == "" {
+			provider = strings.TrimSpace(runtime.Provider)
+		}
+		workflowPath = strings.TrimSpace(runtime.WorkspacePath)
+	}
+	label := "Restored terminal"
+	if provider != "" {
+		label = "Restored " + provider
+	}
+	updatedAt := chatHistoryTerminalEventTime(event)
+	snapshot := terminals.Snapshot{
+		TerminalID:    sessionID + ":main:" + sessionID,
+		SessionID:     sessionID,
+		OwnerID:       "main:" + sessionID,
+		ExecutionID:   strings.TrimSpace(event.ExecutionID),
+		ExecutionKind: strings.TrimSpace(event.ExecutionKind),
+		Label:         label,
+		Scope:         "main_agent",
+		WorkflowPath:  workflowPath,
+		StepID:        "main_agent:" + sessionID,
+		StepTransport: "tmux",
+		TmuxSession:   tmuxSession,
+		Content:       content,
+		ContentSource: "tmux_capture",
+		ChunkIndex:    chunkIndex,
+		Active:        false,
+		State:         "stale",
+		CreatedAt:     updatedAt,
+		UpdatedAt:     updatedAt,
+	}
+	if snapshot.ExecutionID == "" {
+		snapshot.ExecutionID = "main:" + sessionID
+	}
+	if snapshot.ExecutionKind == "" {
+		snapshot.ExecutionKind = "main_agent"
+	}
+	return prepareChatHistoryTerminalSnapshot(snapshot)
+}
+
+func chatHistoryTerminalEventTime(event chatHistoryTerminalUIEvent) time.Time {
+	if !event.Timestamp.IsZero() {
+		return event.Timestamp
+	}
+	if event.Data != nil {
+		if !event.Data.Timestamp.IsZero() {
+			return event.Data.Timestamp
+		}
+		if event.Data.Data != nil && !event.Data.Data.Timestamp.IsZero() {
+			return event.Data.Data.Timestamp
+		}
+	}
+	return time.Now()
+}
+
+func chatHistoryMetadataString(metadata map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		value, ok := metadata[key]
+		if !ok {
+			continue
+		}
+		switch typed := value.(type) {
+		case string:
+			if trimmed := strings.TrimSpace(typed); trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return ""
 }
 
 func chatHistoryRuntimeFromJSON(data []byte) (*ChatHistoryAgentRuntime, error) {

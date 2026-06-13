@@ -220,6 +220,12 @@ type StreamingAPI struct {
 	conversationHistory map[string][]llmtypes.MessageContent
 	conversationMux     sync.RWMutex
 
+	// Restored coding-agent persistence targets. Keyed by current Runloop
+	// sessionID so follow-up turns after a native resume continue updating the
+	// original conversation JSON instead of creating new chat-history entries.
+	restoredConversationPersistTargets map[string]restoredChatHistoryPersistTarget
+	restoredConversationPersistMux     sync.RWMutex
+
 	// Operator-state store: bot connector configs + per-user encrypted secrets.
 	chatStore chathistory.Store
 
@@ -1069,30 +1075,31 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 
 	api := &StreamingAPI{
-		config:                       config,
-		agentCancelFuncs:             make(map[string]context.CancelFunc),
-		workflowOrchestratorContexts: make(map[string]context.CancelFunc),
-		activeWorkflowExecutions:     make(map[string]*ActiveWorkflowExecution),
-		trackedWorkflowExecutions:    make(map[string]*TrackedWorkflowExecution),
-		sessionQueryIDs:              make(map[string][]string),
-		workflowObjectives:           make(map[string]string),
-		conversationHistory:          make(map[string][]llmtypes.MessageContent),
-		chatStore:                    chatStore,
-		costLedger:                   costLedger,
-		inspectorStore:               inspector.NewStore(),
-		eventStore:                   eventStore,
-		terminalStore:                terminalStore,
-		terminalPipeRecorder:         terminalPipeRecorder,
-		provider:                     config.Provider,
-		model:                        config.ModelID,
-		mcpConfigPath:                configPath,
-		temperature:                  config.Temperature,
-		workspaceRoot:                "./Tasks",
-		toolStatus:                   make(map[string]ToolStatus),
-		enabledTools:                 make(map[string][]string),
-		mcpConfig:                    mcpConfig,
-		serverLogs:                   make(map[string][]ServerLogEntry),
-		logger:                       createServerLogger(),
+		config:                             config,
+		agentCancelFuncs:                   make(map[string]context.CancelFunc),
+		workflowOrchestratorContexts:       make(map[string]context.CancelFunc),
+		activeWorkflowExecutions:           make(map[string]*ActiveWorkflowExecution),
+		trackedWorkflowExecutions:          make(map[string]*TrackedWorkflowExecution),
+		sessionQueryIDs:                    make(map[string][]string),
+		workflowObjectives:                 make(map[string]string),
+		conversationHistory:                make(map[string][]llmtypes.MessageContent),
+		restoredConversationPersistTargets: make(map[string]restoredChatHistoryPersistTarget),
+		chatStore:                          chatStore,
+		costLedger:                         costLedger,
+		inspectorStore:                     inspector.NewStore(),
+		eventStore:                         eventStore,
+		terminalStore:                      terminalStore,
+		terminalPipeRecorder:               terminalPipeRecorder,
+		provider:                           config.Provider,
+		model:                              config.ModelID,
+		mcpConfigPath:                      configPath,
+		temperature:                        config.Temperature,
+		workspaceRoot:                      "./Tasks",
+		toolStatus:                         make(map[string]ToolStatus),
+		enabledTools:                       make(map[string][]string),
+		mcpConfig:                          mcpConfig,
+		serverLogs:                         make(map[string][]ServerLogEntry),
+		logger:                             createServerLogger(),
 		// Initialize background discovery fields
 		discoveryRunning:       false,
 		lastDiscovery:          time.Time{},
@@ -5383,12 +5390,33 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			uiEvents = trimChatHistoryUIEvents(api.eventStore.GetAllEventsRaw(sessionID))
 		}
 
+		persistSessionID := sessionID
+		persistConversationPath := ""
+		persistedHistoryForDisk := persistedHistory
+		if target, ok, err := api.resolveRestoredCodingConversationPersistTarget(
+			currentUserID,
+			sessionID,
+			req.RestoredConversationPath,
+			req.RestoredConversationSessionID,
+			workflowPhaseFolder,
+			finalProvider,
+			newWorkshopMode,
+		); err != nil {
+			logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to resolve restored coding-agent persistence target: %v", err)
+		} else if ok && target != nil {
+			persistSessionID = target.SessionID
+			persistConversationPath = target.ConversationPath
+			persistedHistoryForDisk = mergeRestoredChatHistory(target.History, persistedHistory)
+			logfWithContext(queryLogCtx, "[CHAT_HISTORY] Continuing restored coding-agent conversation current_session=%s persisted_session=%s path=%s merged_messages=%d",
+				sessionID, persistSessionID, persistConversationPath, len(persistedHistoryForDisk))
+		}
+
 		// Persist normal chats to the user's global chat_history. Workflow
 		// conversations are persisted below in the workflow-scoped builder folder
 		// so /resume stays scoped to the workflow and global chat history is not
 		// polluted by workflow-only sessions.
 		if !isWorkflowPhase {
-			api.persistChatConversation(sessionID, req.AgentMode, currentUserID, persistedHistory, chatRuntime, uiEvents)
+			api.persistChatConversationToPathWithTerminalSession(persistSessionID, sessionID, req.AgentMode, currentUserID, persistedHistoryForDisk, chatRuntime, uiEvents, persistConversationPath)
 		}
 
 		// Store resolved workflowPhaseFolder so synthetic turns can persist builder conversations
@@ -5401,11 +5429,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Save builder conversation log + token_usage.json for workflow phase sessions.
 		// One file per session — overwrites on each follow-up with the full cumulative history.
 		// Resolve workspace-docs root so files are visible in the UI.
-		if isWorkflowPhase && workflowPhaseFolder != "" && len(persistedHistory) > 0 {
+		if isWorkflowPhase && workflowPhaseFolder != "" && len(persistedHistoryForDisk) > 0 {
 			convData := map[string]interface{}{
-				"session_id":           sessionID,
+				"session_id":           persistSessionID,
 				"phase_id":             workflowPhaseID,
-				"conversation_history": persistedHistory,
+				"conversation_history": persistedHistoryForDisk,
 				"updated_at":           time.Now().Format(time.RFC3339),
 			}
 			if newWorkshopMode != "" {
@@ -5414,11 +5442,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if chatRuntime != nil {
 				convData["runtime"] = chatRuntime
 			}
+			if terminalSnapshots := api.captureChatHistoryTerminalSnapshots(sessionID, chatRuntime); len(terminalSnapshots) > 0 {
+				convData["terminal_snapshots"] = terminalSnapshots
+			}
 			if len(uiEvents) > 0 {
 				convData["ui_events"] = uiEvents
 			}
 			if convJSON, err := json.MarshalIndent(convData, "", "  "); err == nil {
-				logPath := workflowBuilderConversationLogPath(workflowPhaseFolder, sessionID, time.Now())
+				logPath := persistConversationPath
+				if strings.TrimSpace(logPath) == "" {
+					logPath = workflowBuilderConversationLogPath(workflowPhaseFolder, persistSessionID, time.Now())
+				}
 				if err := writeRawFileToWorkspace(context.Background(), logPath, string(convJSON)); err != nil {
 					log.Printf("[BUILDER LOG] Failed to write conversation log: %v", err)
 				} else {

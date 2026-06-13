@@ -110,12 +110,23 @@ func startRestoredTerminalHandler(api *StreamingAPI) http.HandlerFunc {
 		if userID == "" {
 			userID = "default"
 		}
+		persistedTerminalSnapshots, _, snapshotErr := restoredTerminalSnapshots(userID, req)
+		if snapshotErr != nil {
+			api.logRestoredTerminalf("restore session=%s failed to read persisted terminal snapshots: %v", req.SessionID, snapshotErr)
+		}
 		runtime, ok, err := restoredTerminalRuntime(userID, req)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		if !ok || runtime == nil {
+			if terminal, started, reason := api.restorePersistedTerminalSnapshot(r.Context(), req.SessionID, nil, persistedTerminalSnapshots); started {
+				api.logRestoredTerminalInfof("restore session=%s tier=persisted_snapshot result=started no_runtime=true", req.SessionID)
+				_ = json.NewEncoder(w).Encode(startRestoredTerminalResponse{OK: true, Started: true, Terminal: terminal})
+				return
+			} else if reason != "" {
+				api.logRestoredTerminalInfof("restore session=%s tier=persisted_snapshot result=skip reason=%s no_runtime=true", req.SessionID, reason)
+			}
 			api.logRestoredTerminalInfof("restore session=%s user=%s path=%q result=fail reason=runtime_not_found", req.SessionID, userID, req.RestoredConversationPath)
 			_ = json.NewEncoder(w).Encode(startRestoredTerminalResponse{OK: true, Started: false, Reason: "runtime_not_found"})
 			return
@@ -156,6 +167,14 @@ func startRestoredTerminalHandler(api *StreamingAPI) http.HandlerFunc {
 			fallbackReason = reason
 		}
 
+		if terminal, started, reason := api.restorePersistedTerminalSnapshot(r.Context(), req.SessionID, runtime, persistedTerminalSnapshots); started {
+			api.logRestoredTerminalInfof("restore session=%s tier=persisted_snapshot result=started", req.SessionID)
+			_ = json.NewEncoder(w).Encode(startRestoredTerminalResponse{OK: true, Started: true, Terminal: terminal})
+			return
+		} else if reason != "" {
+			api.logRestoredTerminalInfof("restore session=%s tier=persisted_snapshot result=skip reason=%s", req.SessionID, reason)
+		}
+
 		if fallbackReason == "" {
 			fallbackReason = "tmux_session_not_running"
 		}
@@ -170,6 +189,16 @@ func restoredTerminalRuntime(userID string, req startRestoredTerminalRequest) (*
 	}
 	if sessionID := strings.TrimSpace(req.RestoredConversationSessionID); sessionID != "" {
 		return ReadChatHistoryRuntimeForSession(userID, sessionID, strings.TrimSpace(req.WorkspacePath))
+	}
+	return nil, false, nil
+}
+
+func restoredTerminalSnapshots(userID string, req startRestoredTerminalRequest) ([]terminals.Snapshot, bool, error) {
+	if path := strings.TrimSpace(req.RestoredConversationPath); path != "" {
+		return ReadChatHistoryTerminalSnapshotsFromPath(userID, path)
+	}
+	if sessionID := strings.TrimSpace(req.RestoredConversationSessionID); sessionID != "" {
+		return ReadChatHistoryTerminalSnapshotsForSession(userID, sessionID, strings.TrimSpace(req.WorkspacePath))
 	}
 	return nil, false, nil
 }
@@ -245,6 +274,58 @@ func (api *StreamingAPI) attachRestoredExistingTmuxTerminal(ctx context.Context,
 		return &enriched, true, ""
 	}
 	return nil, false, "terminal_snapshot_not_created"
+}
+
+func (api *StreamingAPI) restorePersistedTerminalSnapshot(ctx context.Context, sessionID string, runtime *ChatHistoryAgentRuntime, snapshots []terminals.Snapshot) (*terminals.Snapshot, bool, string) {
+	if api == nil || api.terminalStore == nil {
+		return nil, false, "terminal_store_unavailable"
+	}
+	snapshot, ok := selectPersistedTerminalSnapshot(snapshots)
+	if !ok {
+		return nil, false, "persisted_terminal_snapshot_missing"
+	}
+	if runtime != nil {
+		if snapshot.WorkflowPath == "" {
+			snapshot.WorkflowPath = strings.TrimSpace(runtime.WorkspacePath)
+		}
+		if snapshot.Label == "" {
+			provider := strings.TrimSpace(runtime.Provider)
+			if provider == "" && runtime.AgentSessionHandle != nil {
+				provider = strings.TrimSpace(runtime.AgentSessionHandle.Provider.Provider)
+			}
+			if provider != "" {
+				snapshot.Label = "Restored " + provider
+			}
+		}
+	}
+	stored, ok := api.terminalStore.UpsertStaticSnapshot(sessionID, snapshot)
+	if !ok {
+		return nil, false, "persisted_terminal_snapshot_empty"
+	}
+	enriched := api.enrichTerminalSnapshot(ctx, newTerminalPlanTypeResolver(ctx), stored)
+	return &enriched, true, ""
+}
+
+func selectPersistedTerminalSnapshot(snapshots []terminals.Snapshot) (terminals.Snapshot, bool) {
+	var selected terminals.Snapshot
+	for _, snapshot := range snapshots {
+		if strings.TrimSpace(snapshot.Content) == "" {
+			continue
+		}
+		if selected.Content == "" || persistedTerminalSnapshotPreferred(snapshot, selected) {
+			selected = snapshot
+		}
+	}
+	return selected, strings.TrimSpace(selected.Content) != ""
+}
+
+func persistedTerminalSnapshotPreferred(candidate, existing terminals.Snapshot) bool {
+	candidateMain := chatHistoryTerminalSnapshotIsMainAgent(candidate)
+	existingMain := chatHistoryTerminalSnapshotIsMainAgent(existing)
+	if candidateMain != existingMain {
+		return candidateMain
+	}
+	return candidate.UpdatedAt.After(existing.UpdatedAt)
 }
 
 func (api *StreamingAPI) startRestoredTerminalFromInMemoryAgent(ctx context.Context, sessionID string, runtime *ChatHistoryAgentRuntime) (*terminals.Snapshot, bool, string) {

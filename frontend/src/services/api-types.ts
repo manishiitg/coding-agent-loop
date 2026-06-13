@@ -873,6 +873,7 @@ export interface ChatHistoryConversation {
   runtime?: ChatHistoryAgentRuntime;
   workshop_mode?: 'workshop' | 'run' | string;
   conversation_history: ChatHistoryMessage[];
+  terminal_snapshots?: TerminalSnapshot[];
   ui_events?: PollingEventSchema[];
   updated_at?: string;
 }

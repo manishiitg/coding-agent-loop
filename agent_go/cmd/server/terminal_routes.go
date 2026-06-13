@@ -229,19 +229,23 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 			var refreshed terminals.Snapshot
 			var ok bool
 			if preserveScrollback {
-				refreshed, ok = api.terminalStore.RefreshContent(snapshot.TerminalID, content)
+				refreshed, ok = api.terminalStore.RefreshContentWithSource(snapshot.TerminalID, content, stats.ContentSource)
 			} else {
-				refreshed, ok = api.terminalStore.ReplaceContent(snapshot.TerminalID, content)
+				refreshed, ok = api.terminalStore.ReplaceContentWithSource(snapshot.TerminalID, content, stats.ContentSource)
 			}
 			if ok {
 				snapshot = refreshed
 			}
 			if haveDisplayContent {
-				snapshot.Content = displayContent
-				snapshot.Rows = nil
-				snapshot.ContentSource = displayStats.ContentSource
-				snapshot.ChunkIndex += displayStats.RawBytes
-				snapshot.UpdatedAt = time.Now()
+				if displayed, ok := api.terminalStore.SetDisplayContent(snapshot.TerminalID, displayContent, displayStats.ContentSource); ok {
+					snapshot = displayed
+				} else {
+					snapshot.Content = displayContent
+					snapshot.Rows = nil
+					snapshot.ContentSource = displayStats.ContentSource
+					snapshot.ChunkIndex += displayStats.RawBytes
+					snapshot.UpdatedAt = time.Now()
+				}
 			} else {
 				snapshot.ContentSource = stats.ContentSource
 			}
@@ -271,6 +275,11 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 				)
 			}
 		} else if isMissingTmuxTargetError(err) && !snapshot.Active {
+			if haveDisplayContent {
+				if displayed, ok := api.terminalStore.SetDisplayContent(snapshot.TerminalID, displayContent, displayStats.ContentSource); ok {
+					snapshot = displayed
+				}
+			}
 			// The backing tmux session is gone and no lifecycle event will
 			// arrive to close it. Mark the snapshot stale so the frontend's
 			// inactive-terminal probe stops capturing a dead session every 3s.

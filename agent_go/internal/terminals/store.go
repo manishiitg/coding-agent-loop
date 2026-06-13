@@ -321,6 +321,73 @@ func (s *Store) MarkStale(terminalID string) (Snapshot, bool) {
 	return snapshot, true
 }
 
+// UpsertStaticSnapshot publishes a persisted terminal buffer as a read-only
+// snapshot for a new/restored UI session. It intentionally clears TmuxSession:
+// this snapshot is only the last rendered pane, not a live tmux target.
+func (s *Store) UpsertStaticSnapshot(sessionID string, snapshot Snapshot) (Snapshot, bool) {
+	sessionID = strings.TrimSpace(sessionID)
+	if s == nil || sessionID == "" || strings.TrimSpace(snapshot.Content) == "" {
+		return Snapshot{}, false
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	ownerID := strings.TrimSpace(snapshot.OwnerID)
+	if ownerID == "" || strings.HasPrefix(ownerID, "main:") || currentTerminalIsMainAgent(snapshot) {
+		ownerID = "main:" + sessionID
+	}
+	terminalID := terminalIDFor(sessionID, ownerID)
+	snapshot.TerminalID = terminalID
+	snapshot.SessionID = sessionID
+	snapshot.OwnerID = ownerID
+	snapshot.TmuxSession = ""
+	snapshot.Active = false
+	if strings.TrimSpace(snapshot.State) == "" || snapshot.State == "running" || snapshot.State == "closing" {
+		snapshot.State = "stale"
+	}
+	snapshot.ClosesAt = nil
+	snapshot.RetentionSeconds = 0
+	if snapshot.ExecutionKind == "" {
+		snapshot.ExecutionKind = "main_agent"
+	}
+	if snapshot.Scope == "" {
+		snapshot.Scope = "main_agent"
+	}
+	if snapshot.StepID == "" && currentTerminalIsMainAgent(snapshot) {
+		snapshot.StepID = "main_agent:" + sessionID
+	}
+	if snapshot.StepTransport == "" {
+		snapshot.StepTransport = "tmux"
+	}
+	if snapshot.ContentSource == "" {
+		snapshot.ContentSource = "tmux_capture"
+	}
+	if snapshot.CreatedAt.IsZero() {
+		snapshot.CreatedAt = now
+	}
+	snapshot.UpdatedAt = now
+	snapshot.Rows = nil
+	previousStatus := snapshot.Status
+	snapshot.Status = DeriveStatus(snapshot.Content, nil)
+	preserveEphemeralStatusFields(&snapshot.Status, previousStatus)
+	fillDisplayContext(&snapshot)
+
+	if _, ok := s.dismissed[terminalID]; ok {
+		delete(s.dismissed, terminalID)
+	}
+	s.byID[terminalID] = snapshot
+	if s.bySession[sessionID] == nil {
+		s.bySession[sessionID] = make(map[string]struct{})
+	}
+	s.bySession[sessionID][terminalID] = struct{}{}
+	if currentTerminalIsMainAgent(snapshot) {
+		s.removeCurrentMainAgentAliasesLocked(sessionID, terminalID)
+	}
+	return snapshot, true
+}
+
 func (s *Store) markTerminalState(terminalID, state string) (Snapshot, bool) {
 	terminalID = strings.TrimSpace(terminalID)
 	if s == nil || terminalID == "" {
@@ -348,16 +415,59 @@ func (s *Store) markTerminalState(terminalID, state string) (Snapshot, bool) {
 // tmux capture. It keeps manual inactive overrides inactive, but otherwise lets
 // the same lifecycle heuristics classify the refreshed pane.
 func (s *Store) RefreshContent(terminalID, content string) (Snapshot, bool) {
-	return s.refreshContent(terminalID, content, true)
+	return s.RefreshContentWithSource(terminalID, content, "")
+}
+
+// RefreshContentWithSource is RefreshContent plus a display-source marker used
+// by the UI to keep retained tmux snapshots on the xterm rendering path.
+func (s *Store) RefreshContentWithSource(terminalID, content, contentSource string) (Snapshot, bool) {
+	return s.refreshContent(terminalID, content, contentSource, true)
 }
 
 // ReplaceContent refreshes a terminal pane with an authoritative capture. Unlike
 // RefreshContent, it does not preserve previously accumulated screen snapshots.
 func (s *Store) ReplaceContent(terminalID, content string) (Snapshot, bool) {
-	return s.refreshContent(terminalID, content, false)
+	return s.ReplaceContentWithSource(terminalID, content, "")
 }
 
-func (s *Store) refreshContent(terminalID, content string, preserveTmuxScrollback bool) (Snapshot, bool) {
+// ReplaceContentWithSource is ReplaceContent plus a display-source marker used
+// by the UI to keep retained tmux snapshots on the xterm rendering path.
+func (s *Store) ReplaceContentWithSource(terminalID, content, contentSource string) (Snapshot, bool) {
+	return s.refreshContent(terminalID, content, contentSource, false)
+}
+
+func (s *Store) SetDisplayContent(terminalID, content, contentSource string) (Snapshot, bool) {
+	terminalID = strings.TrimSpace(terminalID)
+	if s == nil || terminalID == "" {
+		return Snapshot{}, false
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snapshot, ok := s.byID[terminalID]
+	if !ok {
+		return Snapshot{}, false
+	}
+	now := time.Now()
+	contentSource = strings.TrimSpace(contentSource)
+	contentChanged := snapshot.Content != content
+	sourceChanged := contentSource != "" && snapshot.ContentSource != contentSource
+	if contentChanged {
+		snapshot.Content = content
+		snapshot.Rows = nil
+	}
+	if sourceChanged {
+		snapshot.ContentSource = contentSource
+	}
+	if contentChanged || sourceChanged {
+		snapshot.ChunkIndex++
+		snapshot.UpdatedAt = now
+	}
+	s.byID[terminalID] = snapshot
+	return snapshot, true
+}
+
+func (s *Store) refreshContent(terminalID, content, contentSource string, preserveTmuxScrollback bool) (Snapshot, bool) {
 	terminalID = strings.TrimSpace(terminalID)
 	if s == nil || terminalID == "" {
 		return Snapshot{}, false
@@ -382,6 +492,9 @@ func (s *Store) refreshContent(terminalID, content string, preserveTmuxScrollbac
 	snapshot.Content = nextContent
 	if contentChanged {
 		snapshot.ChunkIndex++
+	}
+	if contentSource = strings.TrimSpace(contentSource); contentSource != "" {
+		snapshot.ContentSource = contentSource
 	}
 	previousStatus := snapshot.Status
 	snapshot.Status = DeriveStatus(lifecycleContent, nil)

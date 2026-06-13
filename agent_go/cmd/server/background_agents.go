@@ -2015,14 +2015,47 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) bo
 			if chatRuntime != nil && chatRuntime.WorkshopMode == "" && workshopMode != "" {
 				chatRuntime.WorkshopMode = workshopMode
 			}
+			currentUserID := "default"
+			if hasReq && strings.TrimSpace(req.userID) != "" {
+				currentUserID = strings.TrimSpace(req.userID)
+			}
+			restoredConversationPath := ""
+			restoredConversationSessionID := ""
+			if hasReq {
+				restoredConversationPath = strings.TrimSpace(req.RestoredConversationPath)
+				restoredConversationSessionID = strings.TrimSpace(req.RestoredConversationSessionID)
+			}
+			providerForPersist := ""
+			if chatRuntime != nil {
+				providerForPersist = chatRuntime.Provider
+			}
+			persistSessionID := sessionID
+			persistedHistoryForDisk := persistedHistory
+			if target, ok, err := api.resolveRestoredCodingConversationPersistTarget(
+				currentUserID,
+				sessionID,
+				restoredConversationPath,
+				restoredConversationSessionID,
+				workflowPhaseFolder,
+				providerForPersist,
+				workshopMode,
+			); err != nil {
+				log.Printf("[BG AGENT] Failed to resolve restored coding-agent persistence target for %s: %v", sessionID, err)
+			} else if ok && target != nil {
+				persistSessionID = target.SessionID
+				logPath = target.ConversationPath
+				persistedHistoryForDisk = mergeRestoredChatHistory(target.History, persistedHistory)
+				log.Printf("[BG AGENT] Continuing restored coding-agent conversation current_session=%s persisted_session=%s path=%s merged_messages=%d",
+					sessionID, persistSessionID, logPath, len(persistedHistoryForDisk))
+			}
 			var uiEvents []events.Event
 			if api.eventStore != nil {
 				uiEvents = trimChatHistoryUIEvents(api.eventStore.GetAllEventsRaw(sessionID))
 			}
 			convData := map[string]interface{}{
-				"session_id":           sessionID,
+				"session_id":           persistSessionID,
 				"phase_id":             phaseID,
-				"conversation_history": persistedHistory,
+				"conversation_history": persistedHistoryForDisk,
 				"updated_at":           time.Now().Format(time.RFC3339),
 			}
 			if workshopMode != "" {
@@ -2030,6 +2063,9 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) bo
 			}
 			if chatRuntime != nil {
 				convData["runtime"] = chatRuntime
+			}
+			if terminalSnapshots := api.captureChatHistoryTerminalSnapshots(sessionID, chatRuntime); len(terminalSnapshots) > 0 {
+				convData["terminal_snapshots"] = terminalSnapshots
 			}
 			if len(uiEvents) > 0 {
 				convData["ui_events"] = uiEvents

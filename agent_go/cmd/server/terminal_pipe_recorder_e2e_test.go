@@ -80,6 +80,29 @@ func TestTerminalPipeRecorderHTTPE2EPreservesAnsiAndAppends(t *testing.T) {
 	if !strings.Contains(second.Content, "\x1b[34m") || !strings.Contains(second.Content, "blue-append") {
 		t.Fatalf("second content should preserve appended blue ANSI output, got:\n%q", second.Content)
 	}
+
+	store.HandleEvent(sessionID, terminalRouteEndEvent(sessionID, ownerID, sessionName, 0))
+	if err := runTerminalTmuxCommand(ctx, "", "kill-session", "-t", sessionName); err != nil {
+		t.Fatalf("kill tmux session: %v", err)
+	}
+
+	static := getTerminalScreenDetailNoHeaderCheck(t, api, terminalID)
+	if static.State != "stale" || static.TmuxSession != "" {
+		t.Fatalf("static terminal state/tmux = %q/%q, want stale with no tmux session", static.State, static.TmuxSession)
+	}
+	if static.ContentSource != "tmux_pipe" {
+		t.Fatalf("static content_source = %q, want tmux_pipe", static.ContentSource)
+	}
+	if !strings.Contains(static.Content, "\x1b[34m") || !strings.Contains(static.Content, "blue-append") {
+		t.Fatalf("static content should preserve pipe ANSI after tmux is gone, got:\n%q", static.Content)
+	}
+	stored, ok := store.Get(terminalID)
+	if !ok {
+		t.Fatalf("stored terminal missing after stale transition")
+	}
+	if stored.ContentSource != "tmux_pipe" || !strings.Contains(stored.Content, "\x1b[34m") {
+		t.Fatalf("stored static snapshot lost pipe color source/content: source=%q content=%q", stored.ContentSource, stored.Content)
+	}
 }
 
 func sendTmuxLiteralCommand(t *testing.T, ctx context.Context, sessionName, command string) {
@@ -122,6 +145,21 @@ func waitForTerminalDetail(t *testing.T, api *StreamingAPI, terminalID, needle s
 
 func getTerminalScreenDetail(t *testing.T, api *StreamingAPI, terminalID string) terminals.Snapshot {
 	t.Helper()
+	snapshot, header := getTerminalScreenDetailWithHeader(t, api, terminalID)
+	if header != "tmux_pipe" {
+		t.Fatalf("debug content source header = %q, want tmux_pipe", header)
+	}
+	return snapshot
+}
+
+func getTerminalScreenDetailNoHeaderCheck(t *testing.T, api *StreamingAPI, terminalID string) terminals.Snapshot {
+	t.Helper()
+	snapshot, _ := getTerminalScreenDetailWithHeader(t, api, terminalID)
+	return snapshot
+}
+
+func getTerminalScreenDetailWithHeader(t *testing.T, api *StreamingAPI, terminalID string) (terminals.Snapshot, string) {
+	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/terminals/"+terminalID+"?content=screen&debug=1", nil)
 	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
 	rec := httptest.NewRecorder()
@@ -129,12 +167,9 @@ func getTerminalScreenDetail(t *testing.T, api *StreamingAPI, terminalID string)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get terminal status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get("X-Runloop-Terminal-Content-Source"); got != "tmux_pipe" {
-		t.Fatalf("debug content source header = %q, want tmux_pipe", got)
-	}
 	var snapshot terminals.Snapshot
 	if err := json.NewDecoder(rec.Body).Decode(&snapshot); err != nil {
 		t.Fatalf("decode terminal detail: %v", err)
 	}
-	return snapshot
+	return snapshot, rec.Header().Get("X-Runloop-Terminal-Content-Source")
 }

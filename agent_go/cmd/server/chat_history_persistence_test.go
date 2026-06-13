@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	internalevents "mcp-agent-builder-go/agent_go/internal/events"
+	"mcp-agent-builder-go/agent_go/internal/terminals"
 	"mcp-agent-builder-go/agent_go/pkg/workspace"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
@@ -54,6 +56,318 @@ func TestAppendRestoredConversationContextAddsFallbackAndCleans(t *testing.T) {
 	}
 	if got := appendRestoredConversationContext(withContext, "_users/default/chat_history/other/conversation.json"); got != withContext {
 		t.Fatalf("expected existing restored context to remain unchanged")
+	}
+}
+
+func TestCaptureChatHistoryTerminalSnapshotsRedactsAndPreservesAnsi(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "chat-terminal-snapshot"
+	_, ok := store.UpsertStaticSnapshot(sessionID, terminals.Snapshot{
+		OwnerID:       "main:" + sessionID,
+		ExecutionKind: "main_agent",
+		StepTransport: "tmux",
+		ContentSource: "tmux_pipe",
+		TmuxSession:   "old-live-pane",
+		Content:       "\x1b[31mred output\x1b[0m\nMCP_API_TOKEN=super-secret\nSECRET_FOO=hidden-secret\n",
+		UpdatedAt:     time.Now(),
+	})
+	if !ok {
+		t.Fatal("expected terminal snapshot to be stored")
+	}
+
+	snapshots := api.captureChatHistoryTerminalSnapshots(sessionID, nil)
+	if len(snapshots) != 1 {
+		t.Fatalf("terminal snapshot count = %d, want 1", len(snapshots))
+	}
+	got := snapshots[0]
+	if got.ContentSource != "tmux_pipe" {
+		t.Fatalf("content source = %q, want tmux_pipe", got.ContentSource)
+	}
+	if !strings.Contains(got.Content, "\x1b[31m") || !strings.Contains(got.Content, "red output") {
+		t.Fatalf("expected ANSI terminal content to be preserved, got %q", got.Content)
+	}
+	for _, leaked := range []string{"super-secret", "hidden-secret"} {
+		if strings.Contains(got.Content, leaked) {
+			t.Fatalf("terminal snapshot leaked secret %q: %q", leaked, got.Content)
+		}
+	}
+	for _, redacted := range []string{"MCP_API_TOKEN=[redacted]", "SECRET_FOO=[redacted]"} {
+		if !strings.Contains(got.Content, redacted) {
+			t.Fatalf("terminal snapshot missing redacted marker %q: %q", redacted, got.Content)
+		}
+	}
+	if got.Active || got.State != "stale" || len(got.Rows) != 0 {
+		t.Fatalf("persisted snapshot lifecycle = active:%v state:%q rows:%d", got.Active, got.State, len(got.Rows))
+	}
+}
+
+func TestCaptureChatHistoryTerminalSnapshotsFallsBackToRuntimeTmux(t *testing.T) {
+	oldCapture := captureChatHistoryTerminalPaneLines
+	captureChatHistoryTerminalPaneLines = func(_ context.Context, tmuxSession string, lines int) (string, error) {
+		if tmuxSession != "live-runtime-pane" {
+			t.Fatalf("tmux session = %q, want live-runtime-pane", tmuxSession)
+		}
+		if lines != terminalDefaultDetailHistoryLines {
+			t.Fatalf("capture lines = %d, want %d", lines, terminalDefaultDetailHistoryLines)
+		}
+		return "\x1b[32mruntime output\x1b[0m\nMCP_API_TOKEN=super-secret\n", nil
+	}
+	defer func() { captureChatHistoryTerminalPaneLines = oldCapture }()
+
+	sessionID := "chat-runtime-terminal"
+	api := &StreamingAPI{}
+	runtime := &ChatHistoryAgentRuntime{
+		Kind:          "coding_agent",
+		Provider:      "codex-cli",
+		Transport:     llmtypes.CodingProviderTransportTmux,
+		WorkspacePath: "Workflow/substack",
+		AgentSessionHandle: &mcpagent.AgentSessionHandle{
+			SessionID: sessionID,
+			Provider: llmtypes.CodingProviderSessionHandle{
+				Provider:    "codex-cli",
+				Transport:   llmtypes.CodingProviderTransportTmux,
+				TmuxSession: "live-runtime-pane",
+			},
+		},
+	}
+
+	snapshots := api.captureChatHistoryTerminalSnapshots(sessionID, runtime)
+	if len(snapshots) != 1 {
+		t.Fatalf("terminal snapshot count = %d, want 1", len(snapshots))
+	}
+	got := snapshots[0]
+	if got.StepTransport != "tmux" || got.TmuxSession != "live-runtime-pane" || got.ContentSource != "tmux_capture" {
+		t.Fatalf("runtime fallback metadata = transport:%q tmux:%q source:%q", got.StepTransport, got.TmuxSession, got.ContentSource)
+	}
+	if got.WorkflowPath != "Workflow/substack" || got.OwnerID != "main:"+sessionID || got.ExecutionKind != "main_agent" {
+		t.Fatalf("runtime fallback identity = %#v", got)
+	}
+	if !strings.Contains(got.Content, "\x1b[32m") || !strings.Contains(got.Content, "runtime output") {
+		t.Fatalf("expected ANSI runtime terminal content, got %q", got.Content)
+	}
+	if strings.Contains(got.Content, "super-secret") || !strings.Contains(got.Content, "MCP_API_TOKEN=[redacted]") {
+		t.Fatalf("runtime fallback snapshot was not redacted: %q", got.Content)
+	}
+}
+
+func TestReadChatHistoryTerminalSnapshotsFromPath(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+
+	convDir := filepath.Join(root, "_users", "default", "chat_history", "2026-05-18")
+	if err := os.MkdirAll(convDir, 0o755); err != nil {
+		t.Fatalf("mkdir conversation dir: %v", err)
+	}
+	convPath := filepath.Join(convDir, "session-chat-1-conversation.json")
+	data := `{
+  "session_id": "chat-1",
+  "conversation_history": [],
+  "terminal_snapshots": [
+    {
+      "terminal_id": "chat-1:main:chat-1",
+      "session_id": "chat-1",
+      "owner_id": "main:chat-1",
+      "execution_kind": "main_agent",
+      "step_transport": "tmux",
+      "content_source": "tmux_pipe",
+      "content": "\u001b[34mblue output\u001b[0m\nMCP_API_TOKEN=super-secret",
+      "state": "running"
+    }
+  ]
+}`
+	if err := os.WriteFile(convPath, []byte(data), 0o600); err != nil {
+		t.Fatalf("write conversation: %v", err)
+	}
+
+	snapshots, ok, err := ReadChatHistoryTerminalSnapshotsFromPath("default", "_users/default/chat_history/2026-05-18/session-chat-1-conversation.json")
+	if err != nil {
+		t.Fatalf("read terminal snapshots error = %v", err)
+	}
+	if !ok || len(snapshots) != 1 {
+		t.Fatalf("snapshots ok=%v len=%d, want ok with 1", ok, len(snapshots))
+	}
+	got := snapshots[0]
+	if got.ContentSource != "tmux_pipe" || !strings.Contains(got.Content, "\x1b[34m") {
+		t.Fatalf("snapshot source/content = %q/%q", got.ContentSource, got.Content)
+	}
+	if strings.Contains(got.Content, "super-secret") || !strings.Contains(got.Content, "MCP_API_TOKEN=[redacted]") {
+		t.Fatalf("snapshot was not redacted: %q", got.Content)
+	}
+	if got.Active || got.State != "stale" {
+		t.Fatalf("snapshot lifecycle = active:%v state:%q", got.Active, got.State)
+	}
+}
+
+func TestReadChatHistoryTerminalSnapshotsFallsBackToUIEvents(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+
+	convDir := filepath.Join(root, "_users", "default", "chat_history", "2026-05-18")
+	if err := os.MkdirAll(convDir, 0o755); err != nil {
+		t.Fatalf("mkdir conversation dir: %v", err)
+	}
+	convPath := filepath.Join(convDir, "session-legacy-codex-conversation.json")
+	data := `{
+  "session_id": "legacy-codex",
+  "runtime": {
+    "kind": "coding_agent",
+    "provider": "codex-cli",
+    "transport": "tmux",
+    "workspace_path": "Workflow/substack"
+  },
+  "conversation_history": [],
+  "ui_events": [
+    {
+      "type": "streaming_chunk",
+      "timestamp": "2026-06-13T12:00:00Z",
+      "session_id": "legacy-codex",
+      "execution_id": "main:legacy-codex",
+      "execution_kind": "main_agent",
+      "data": {
+        "type": "streaming_chunk",
+        "timestamp": "2026-06-13T12:00:00Z",
+        "session_id": "legacy-codex",
+        "data": {
+          "timestamp": "2026-06-13T12:00:00Z",
+          "session_id": "legacy-codex",
+          "content": "\u001b[35mlegacy pane\u001b[0m\nSECRET_FOO=hidden-secret\n",
+          "chunk_index": 7,
+          "metadata": {
+            "kind": "terminal",
+            "provider": "codex-cli",
+            "tmux_session": "legacy-pane"
+          }
+        }
+      }
+    }
+  ]
+}`
+	if err := os.WriteFile(convPath, []byte(data), 0o600); err != nil {
+		t.Fatalf("write conversation: %v", err)
+	}
+
+	snapshots, ok, err := ReadChatHistoryTerminalSnapshotsFromPath("default", "_users/default/chat_history/2026-05-18/session-legacy-codex-conversation.json")
+	if err != nil {
+		t.Fatalf("read terminal snapshots error = %v", err)
+	}
+	if !ok || len(snapshots) != 1 {
+		t.Fatalf("snapshots ok=%v len=%d, want ok with 1", ok, len(snapshots))
+	}
+	got := snapshots[0]
+	if got.TmuxSession != "legacy-pane" || got.StepTransport != "tmux" || got.ContentSource != "tmux_capture" {
+		t.Fatalf("legacy snapshot metadata = tmux:%q transport:%q source:%q", got.TmuxSession, got.StepTransport, got.ContentSource)
+	}
+	if got.WorkflowPath != "Workflow/substack" || got.ChunkIndex != 7 {
+		t.Fatalf("legacy snapshot workflow/chunk = %q/%d", got.WorkflowPath, got.ChunkIndex)
+	}
+	if !strings.Contains(got.Content, "\x1b[35m") || !strings.Contains(got.Content, "legacy pane") {
+		t.Fatalf("expected ANSI legacy terminal content, got %q", got.Content)
+	}
+	if strings.Contains(got.Content, "hidden-secret") || !strings.Contains(got.Content, "SECRET_FOO=[redacted]") {
+		t.Fatalf("legacy snapshot was not redacted: %q", got.Content)
+	}
+}
+
+func TestResolveRestoredCodingConversationPersistTargetIsTransportSpecific(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+
+	convDir := filepath.Join(root, "_users", "default", "chat_history", "2026-05-18")
+	if err := os.MkdirAll(convDir, 0o755); err != nil {
+		t.Fatalf("mkdir conversation dir: %v", err)
+	}
+	codingPath := filepath.Join(convDir, "session-codex-old-conversation.json")
+	codingJSON := `{
+  "session_id": "codex-old",
+  "conversation_history": [
+    {"Role": "human", "Parts": [{"Text": "old request"}]},
+    {"Role": "ai", "Parts": [{"Text": "old answer"}]}
+  ],
+  "runtime": {
+    "kind": "coding_agent",
+    "provider": "codex-cli",
+    "transport": "tmux",
+    "external_session_id": "codex-native-thread",
+    "resume_supported": true
+  }
+}`
+	if err := os.WriteFile(codingPath, []byte(codingJSON), 0o600); err != nil {
+		t.Fatalf("write coding conversation: %v", err)
+	}
+
+	api := &StreamingAPI{}
+	target, ok, err := api.resolveRestoredCodingConversationPersistTarget(
+		"default",
+		"new-ui-session",
+		"_users/default/chat_history/2026-05-18/session-codex-old-conversation.json",
+		"",
+		"",
+		"codex-cli",
+		"",
+	)
+	if err != nil {
+		t.Fatalf("resolve coding target error = %v", err)
+	}
+	if !ok || target == nil {
+		t.Fatal("expected coding-agent target")
+	}
+	if target.SessionID != "codex-old" || target.ConversationPath != "_users/default/chat_history/2026-05-18/session-codex-old-conversation.json" {
+		t.Fatalf("target = %#v", target)
+	}
+	merged := mergeRestoredChatHistory(target.History, []llmtypes.MessageContent{{
+		Role:  llmtypes.ChatMessageTypeHuman,
+		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "new request"}},
+	}})
+	if len(merged) != 3 {
+		t.Fatalf("merged history length = %d, want 3", len(merged))
+	}
+
+	remembered, ok, err := api.resolveRestoredCodingConversationPersistTarget(
+		"default",
+		"new-ui-session",
+		"",
+		"",
+		"",
+		"codex-cli",
+		"",
+	)
+	if err != nil {
+		t.Fatalf("resolve remembered target error = %v", err)
+	}
+	if !ok || remembered == nil || remembered.SessionID != "codex-old" {
+		t.Fatalf("expected remembered coding target, ok=%v target=%#v", ok, remembered)
+	}
+
+	normalPath := filepath.Join(convDir, "session-normal-old-conversation.json")
+	normalJSON := `{
+  "session_id": "normal-old",
+  "conversation_history": [
+    {"Role": "human", "Parts": [{"Text": "normal old request"}]}
+  ],
+  "runtime": {
+    "kind": "llm_agent",
+    "provider": "openai",
+    "resume_supported": false
+  }
+}`
+	if err := os.WriteFile(normalPath, []byte(normalJSON), 0o600); err != nil {
+		t.Fatalf("write normal conversation: %v", err)
+	}
+	normalTarget, normalOK, err := api.resolveRestoredCodingConversationPersistTarget(
+		"default",
+		"normal-new-ui-session",
+		"_users/default/chat_history/2026-05-18/session-normal-old-conversation.json",
+		"",
+		"",
+		"openai",
+		"",
+	)
+	if err != nil {
+		t.Fatalf("resolve normal target error = %v", err)
+	}
+	if normalOK || normalTarget != nil {
+		t.Fatalf("normal llm restore should not reuse old persistence target, ok=%v target=%#v", normalOK, normalTarget)
 	}
 }
 

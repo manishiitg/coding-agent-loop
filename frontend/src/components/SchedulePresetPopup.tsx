@@ -20,6 +20,7 @@ interface SchedulePresetPopupProps {
   presetQueryId: string | null
   presetLabel: string
   entityType?: 'workflow' | 'multi-agent'
+  jobId?: string
   workspacePath?: string   // required to load variable groups
   onClose: () => void
 }
@@ -53,6 +54,7 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
   presetQueryId,
   presetLabel,
   entityType = 'multi-agent',
+  jobId,
   workspacePath,
   onClose,
 }) => {
@@ -114,7 +116,9 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
 
     const loadJobs = schedulerApi.listJobs({ entity_type: schedulerEntityType })
       .then((resp) => {
-        const job = resp.jobs.find((j) => j.preset_query_id === presetQueryId) ?? null
+        const job = jobId
+          ? resp.jobs.find((j) => j.id === jobId) ?? null
+          : resp.jobs.find((j) => j.preset_query_id === presetQueryId) ?? null
         setExistingJob(job)
         if (job) {
           const loadedType = job.schedule_type === 'calendar' ? 'calendar' : 'cron'
@@ -149,7 +153,7 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
     Promise.all([loadJobs, loadGroups, loadSchedulerConfig])
       .catch(() => {})
       .finally(() => setIsLoading(false))
-  }, [presetQueryId, schedulerEntityType, presetLabel, workspacePath])
+  }, [presetQueryId, schedulerEntityType, presetLabel, workspacePath, jobId])
 
   const toggleGroup = (groupId: string) => {
     setSelectedGroupIds((prev) => {

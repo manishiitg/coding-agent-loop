@@ -24,6 +24,11 @@ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../ui/
 
 interface WorkflowScheduleRunsPanelProps {
   onClose: () => void
+  workflowScope?: {
+    presetQueryId?: string | null
+    workspacePath?: string | null
+    label?: string | null
+  }
 }
 
 type ActivePopup = 'costs' | 'logs' | 'eval' | 'report' | 'live' | null
@@ -496,6 +501,45 @@ function getWorkflowFilterMeta(
   }
 }
 
+function normalizeWorkspacePath(path?: string | null): string {
+  return (path || '').replace(/\/+$/, '')
+}
+
+function getWorkflowScopeLabel(
+  workflowScope: WorkflowScheduleRunsPanelProps['workflowScope'],
+  presetMap: Map<string, { label: string; workspacePath: string | null }>
+): string {
+  if (!workflowScope) return 'Workflow Schedules'
+  if (workflowScope.label) return workflowScope.label
+  if (workflowScope.presetQueryId) {
+    const presetLabel = presetMap.get(workflowScope.presetQueryId)?.label
+    if (presetLabel) return presetLabel
+  }
+  const path = normalizeWorkspacePath(workflowScope.workspacePath)
+  return path.split('/').filter(Boolean).pop() || 'Workflow'
+}
+
+function jobMatchesWorkflowScope(
+  job: ScheduledJob,
+  workflowScope: WorkflowScheduleRunsPanelProps['workflowScope'],
+  presetMap: Map<string, { label: string; workspacePath: string | null }>
+): boolean {
+  if (!workflowScope) return true
+
+  if (workflowScope.presetQueryId && job.preset_query_id === workflowScope.presetQueryId) {
+    return true
+  }
+
+  const scopePath = normalizeWorkspacePath(workflowScope.workspacePath)
+  if (!scopePath) return false
+
+  const presetPath = job.preset_query_id
+    ? presetMap.get(job.preset_query_id)?.workspacePath
+    : null
+  return normalizeWorkspacePath(job.workspace_path) === scopePath ||
+    normalizeWorkspacePath(presetPath) === scopePath
+}
+
 function sortJobs(a: ScheduledJob, b: ScheduledJob): number {
   const rank = (job: ScheduledJob) => {
     if (job.last_status === 'running') return 0
@@ -522,13 +566,14 @@ function sortJobs(a: ScheduledJob, b: ScheduledJob): number {
   return bTime.localeCompare(aTime)
 }
 
-const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ onClose }) => {
+const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ onClose, workflowScope }) => {
   const [jobs, setJobs] = useState<ScheduledJob[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expandedJobIds, setExpandedJobIds] = useState<string[]>([])
   const [expandedWorkflowKeys, setExpandedWorkflowKeys] = useState<string[]>([])
-  const [activeView, setActiveView] = useState<SchedulePanelView>('by-workflow')
+  const isWorkflowScoped = !!workflowScope
+  const [activeView, setActiveView] = useState<SchedulePanelView>(isWorkflowScoped ? 'schedules' : 'by-workflow')
   const [calendarMonth, setCalendarMonth] = useState(() => new Date())
   const [selectedCalendarDate, setSelectedCalendarDate] = useState<string | null>(null)
   const [activeFilter, setActiveFilter] = useState<JobFilter>('all')
@@ -537,26 +582,6 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   const [schedulerConfig, setSchedulerConfig] = useState<SchedulerConfig | null>(null)
   const [isUpdatingSchedulerPause, setIsUpdatingSchedulerPause] = useState(false)
 
-  // Keep a running schedule expanded so its live run history stays visible.
-  useEffect(() => {
-    const runningJobIds = jobs
-      .filter(j => j.last_status === 'running')
-      .map(j => j.id)
-
-    if (runningJobIds.length === 0) return
-
-    setExpandedJobIds(prev => {
-      const next = [...prev]
-      let changed = false
-      runningJobIds.forEach((jobId) => {
-        if (!next.includes(jobId)) {
-          next.push(jobId)
-          changed = true
-        }
-      })
-      return changed ? next : prev
-    })
-  }, [jobs])
   const [triggering, setTriggering] = useState<string | null>(null)
   const [popupState, setPopupState] = useState<JobPopupState | null>(null)
   const [editingJob, setEditingJob] = useState<ScheduledJob | null>(null)
@@ -583,9 +608,39 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     return map
   }, [workflowPresets])
 
+  const panelJobs = useMemo(() => {
+    return jobs.filter(job => jobMatchesWorkflowScope(job, workflowScope, presetMap))
+  }, [jobs, workflowScope, presetMap])
+
+  const panelTitle = useMemo(() => {
+    if (!isWorkflowScoped) return 'Workflow Schedules'
+    return `Schedules for ${getWorkflowScopeLabel(workflowScope, presetMap)}`
+  }, [isWorkflowScoped, workflowScope, presetMap])
+
+  // Keep a running schedule expanded so its live run history stays visible.
+  useEffect(() => {
+    const runningJobIds = panelJobs
+      .filter(j => j.last_status === 'running')
+      .map(j => j.id)
+
+    if (runningJobIds.length === 0) return
+
+    setExpandedJobIds(prev => {
+      const next = [...prev]
+      let changed = false
+      runningJobIds.forEach((jobId) => {
+        if (!next.includes(jobId)) {
+          next.push(jobId)
+          changed = true
+        }
+      })
+      return changed ? next : prev
+    })
+  }, [panelJobs])
+
   useEffect(() => {
     const runningWorkflowKeys = new Set(
-      jobs
+      panelJobs
         .filter(job => job.last_status === 'running')
         .map(job => getWorkflowFilterMeta(job, presetMap).value)
     )
@@ -598,7 +653,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
       })
       return next.length === prev.length ? prev : next
     })
-  }, [jobs, presetMap])
+  }, [panelJobs, presetMap])
 
   const loadJobs = useCallback(async (showLoading = false) => {
     if (showLoading) setIsLoading(true)
@@ -745,8 +800,8 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   }, [presetMap, jobs])
 
   // Auto-refresh while any schedule is running: jobs list + runs + costs (every 5s)
-  const hasRunningJob = jobs.some(j => j.last_status === 'running')
-  const activeScheduleCount = jobs.filter(j => j.enabled).length
+  const hasRunningJob = panelJobs.some(j => j.last_status === 'running')
+  const activeScheduleCount = panelJobs.filter(j => j.enabled).length
   const isSchedulerPaused = !!schedulerConfig?.globally_paused
 
   const previousHasRunningJobRef = useRef(hasRunningJob)
@@ -763,7 +818,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   const workflowScheduleSummary = useMemo(() => {
     const workflowKeys = new Set<string>()
 
-    jobs.forEach((job) => {
+    panelJobs.forEach((job) => {
       const workflowKey = getWorkflowFilterMeta(job, presetMap).value
       workflowKeys.add(workflowKey)
     })
@@ -771,28 +826,28 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     return {
       workflows: workflowKeys.size,
     }
-  }, [jobs, presetMap])
+  }, [panelJobs, presetMap])
 
   const summary = useMemo(() => {
-    const running = jobs.filter(j => j.last_status === 'running').length
-    const missed = jobs.filter(isMissedSchedule).length
-    const issues = jobs.filter(j => j.last_status === 'error').length
-    const paused = jobs.filter(j => !j.enabled).length
+    const running = panelJobs.filter(j => j.last_status === 'running').length
+    const missed = panelJobs.filter(isMissedSchedule).length
+    const issues = panelJobs.filter(j => j.last_status === 'error').length
+    const paused = panelJobs.filter(j => !j.enabled).length
     return {
       running,
       missed,
       issues,
       paused,
       enabled: activeScheduleCount,
-      total: jobs.length,
+      total: panelJobs.length,
     }
-  }, [jobs, activeScheduleCount])
+  }, [panelJobs, activeScheduleCount])
 
   const normalizedSearch = searchQuery.trim().toLowerCase()
   const workflowOptions = useMemo(() => {
     const seen = new Map<string, string>()
 
-    jobs.forEach((job) => {
+    panelJobs.forEach((job) => {
       const meta = getWorkflowFilterMeta(job, presetMap)
       if (!meta.label) return
       if (!seen.has(meta.value)) seen.set(meta.value, meta.label)
@@ -801,10 +856,10 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     return Array.from(seen.entries())
       .map(([value, label]) => ({ value, label }))
       .sort((a, b) => a.label.localeCompare(b.label))
-  }, [jobs, presetMap])
+  }, [panelJobs, presetMap])
 
   const upcomingJobs = useMemo(() => {
-    return [...jobs]
+    return [...panelJobs]
       .filter(job => {
         if (!job.enabled || !job.next_run_at) return false
         if (isMissedSchedule(job)) return false
@@ -813,10 +868,10 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
       })
       .sort((a, b) => (a.next_run_at || '').localeCompare(b.next_run_at || ''))
       .slice(0, 4)
-  }, [jobs, presetMap, selectedWorkflowFilter])
+  }, [panelJobs, presetMap, selectedWorkflowFilter])
 
   const missedJobs = useMemo(() => {
-    return [...jobs]
+    return [...panelJobs]
       .filter(job => {
         if (!isMissedSchedule(job)) return false
         if (selectedWorkflowFilter === 'all') return true
@@ -828,10 +883,10 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
         return bDelay - aDelay
       })
       .slice(0, 4)
-  }, [jobs, presetMap, selectedWorkflowFilter])
+  }, [panelJobs, presetMap, selectedWorkflowFilter])
 
   const filteredJobs = useMemo(() => {
-    return [...jobs]
+    return [...panelJobs]
       .sort(sortJobs)
       .filter((job) => {
         switch (activeFilter) {
@@ -879,7 +934,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
 
         return haystack.includes(normalizedSearch)
       })
-  }, [jobs, activeFilter, normalizedSearch, presetMap, selectedWorkflowFilter])
+  }, [panelJobs, activeFilter, normalizedSearch, presetMap, selectedWorkflowFilter])
 
   const workflowGroups = useMemo<WorkflowScheduleGroup[]>(() => {
     const groups = new Map<string, WorkflowScheduleGroup>()
@@ -941,7 +996,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
     const byDate: Record<string, CalendarEntry[]> = {}
 
-    jobs.forEach((job) => {
+    panelJobs.forEach((job) => {
       const workflowMeta = getWorkflowFilterMeta(job, presetMap)
       const label = workflowMeta.workflowLabel || job.name
       const jobTimezone = job.timezone || localTimeZone
@@ -1005,7 +1060,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
       cells,
       total: Object.values(byDate).reduce((sum, items) => sum + items.length, 0),
     }
-  }, [calendarMonth, jobs, presetMap])
+  }, [calendarMonth, panelJobs, presetMap])
 
   const selectedCalendarCell = useMemo(
     () => monthlyCalendar.cells.find(cell => cell.date === selectedCalendarDate),
@@ -1522,14 +1577,16 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
             <div className="flex items-center gap-2">
               <Calendar className="w-5 h-5 text-amber-500" />
               <h2 className="text-base font-semibold text-foreground">
-                Workflow Schedules
+                {panelTitle}
               </h2>
             </div>
             {!isLoading && (
               <div className="flex flex-wrap gap-1.5">
-                <span className="rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground">
-                  {workflowScheduleSummary.workflows} workflow{workflowScheduleSummary.workflows === 1 ? '' : 's'}
-                </span>
+                {!isWorkflowScoped && (
+                  <span className="rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground">
+                    {workflowScheduleSummary.workflows} workflow{workflowScheduleSummary.workflows === 1 ? '' : 's'}
+                  </span>
+                )}
                 <span className="rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground">
                   {summary.total} schedule{summary.total === 1 ? '' : 's'}
                 </span>
@@ -1555,24 +1612,26 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
             )}
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <button
-              onClick={handleToggleGlobalPause}
-              disabled={isUpdatingSchedulerPause}
-              className={`inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-60 ${
-                isSchedulerPaused
-                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20'
-                  : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20'
-              }`}
-            >
-              {isUpdatingSchedulerPause ? (
-                <Loader className="w-3.5 h-3.5 animate-spin" />
-              ) : isSchedulerPaused ? (
-                <Play className="w-3.5 h-3.5" />
-              ) : (
-                <Pause className="w-3.5 h-3.5" />
-              )}
-              {isSchedulerPaused ? 'Resume schedules' : 'Pause all schedules'}
-            </button>
+            {!isWorkflowScoped && (
+              <button
+                onClick={handleToggleGlobalPause}
+                disabled={isUpdatingSchedulerPause}
+                className={`inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-60 ${
+                  isSchedulerPaused
+                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20'
+                    : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20'
+                }`}
+              >
+                {isUpdatingSchedulerPause ? (
+                  <Loader className="w-3.5 h-3.5 animate-spin" />
+                ) : isSchedulerPaused ? (
+                  <Play className="w-3.5 h-3.5" />
+                ) : (
+                  <Pause className="w-3.5 h-3.5" />
+                )}
+                {isSchedulerPaused ? 'Resume schedules' : 'Pause all schedules'}
+              </button>
+            )}
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
@@ -1592,30 +1651,34 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto">
-          {!isLoading && jobs.length > 0 && (
+          {!isLoading && panelJobs.length > 0 && (
             <div className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur px-5 py-3">
               <div className="space-y-2">
                 <div className="-mx-1 flex items-center gap-2 overflow-x-auto px-1 pb-1">
-                  <button
-                    onClick={() => setActiveView('overview')}
-                    className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-                      activeView === 'overview'
-                        ? 'bg-foreground text-background'
-                        : 'border border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
-                    }`}
-                  >
-                    Overview
-                  </button>
-                  <button
-                    onClick={() => setActiveView('by-workflow')}
-                    className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-                      activeView === 'by-workflow'
-                        ? 'bg-foreground text-background'
-                        : 'border border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
-                    }`}
-                  >
-                    By Workflow
-                  </button>
+                  {!isWorkflowScoped && (
+                    <>
+                      <button
+                        onClick={() => setActiveView('overview')}
+                        className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                          activeView === 'overview'
+                            ? 'bg-foreground text-background'
+                            : 'border border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
+                        }`}
+                      >
+                        Overview
+                      </button>
+                      <button
+                        onClick={() => setActiveView('by-workflow')}
+                        className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                          activeView === 'by-workflow'
+                            ? 'bg-foreground text-background'
+                            : 'border border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
+                        }`}
+                      >
+                        By Workflow
+                      </button>
+                    </>
+                  )}
                   <button
                     onClick={() => setActiveView('schedules')}
                     className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
@@ -1624,7 +1687,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                         : 'border border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
                     }`}
                   >
-                    All Schedules
+                    {isWorkflowScoped ? 'Schedules' : 'All Schedules'}
                   </button>
                   <button
                     onClick={() => setActiveView('calendar')}
@@ -1651,15 +1714,21 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
             </div>
           )}
 
-          {isLoading && jobs.length === 0 ? (
+          {isLoading && panelJobs.length === 0 ? (
             <div className="flex items-center justify-center h-40 text-sm text-muted-foreground">Loading...</div>
           ) : error ? (
             <div className="flex items-center justify-center h-40 text-sm text-red-500">{error}</div>
-          ) : jobs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-40 gap-2 text-sm text-muted-foreground">
+          ) : panelJobs.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-48 gap-3 px-6 text-center text-sm text-muted-foreground">
               <Clock className="w-8 h-8 opacity-30" />
-              <p>No workflow schedules yet.</p>
-              <p className="text-xs">Click the clock icon on a workflow preset to add one.</p>
+              <div>
+                <p>{isWorkflowScoped ? 'No schedules for this workflow yet.' : 'No workflow schedules yet.'}</p>
+                <p className="mt-1 text-xs">
+                  {isWorkflowScoped
+                    ? 'Ask chat to schedule this workflow when you are ready.'
+                    : 'Ask chat to schedule a workflow when you are ready.'}
+                </p>
+              </div>
             </div>
           ) : activeView === 'overview' ? (
             <div className="px-5 py-4 space-y-4">
@@ -1979,28 +2048,30 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
             <>
               <div className="border-b border-border px-5 py-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="flex flex-1 max-w-4xl flex-col gap-3 md:flex-row">
-                    <div className="relative flex-1">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                      <input
-                        type="text"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Search by workflow, preset, cron, workspace..."
-                        className="w-full rounded-lg border border-border bg-background px-9 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-amber-400/50"
-                      />
+                    <div className="flex flex-1 max-w-4xl flex-col gap-3 md:flex-row">
+                      <div className="relative flex-1">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                        <input
+                          type="text"
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          placeholder={isWorkflowScoped ? 'Search schedules, cron, workspace...' : 'Search by workflow, preset, cron, workspace...'}
+                          className="w-full rounded-lg border border-border bg-background px-9 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+                        />
+                      </div>
+                      {!isWorkflowScoped && (
+                        <select
+                          value={selectedWorkflowFilter}
+                          onChange={(event) => setSelectedWorkflowFilter(event.target.value)}
+                          className="min-w-48 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+                        >
+                          <option value="all">All workflows</option>
+                          {workflowOptions.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      )}
                     </div>
-                    <select
-                      value={selectedWorkflowFilter}
-                      onChange={(event) => setSelectedWorkflowFilter(event.target.value)}
-                      className="min-w-48 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-amber-400/50"
-                    >
-                      <option value="all">All workflows</option>
-                      {workflowOptions.map((option) => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
-                      ))}
-                    </select>
-                  </div>
 
                   <div className="flex flex-wrap gap-2">
                     {filterPills.map((pill) => (
@@ -2021,7 +2092,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
               </div>
             </>
           )}
-          {jobs.length > 0 && activeView === 'by-workflow' && workflowGroups.length === 0 && (
+          {panelJobs.length > 0 && activeView === 'by-workflow' && workflowGroups.length === 0 && (
             <div className="flex flex-col items-center justify-center h-40 gap-2 text-sm text-muted-foreground px-6 text-center">
               <Search className="w-8 h-8 opacity-30" />
               <p>No workflows match the current filter.</p>
@@ -2037,7 +2108,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
               </button>
             </div>
           )}
-          {jobs.length > 0 && activeView === 'by-workflow' && workflowGroups.length > 0 && (
+          {panelJobs.length > 0 && activeView === 'by-workflow' && workflowGroups.length > 0 && (
             <div className="space-y-3 px-5 py-4">
               {workflowGroups.map((group) => {
                 const forcedOpen = !!normalizedSearch || activeFilter !== 'all' || selectedWorkflowFilter !== 'all' || group.running > 0
@@ -2124,7 +2195,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
               })}
             </div>
           )}
-          {jobs.length > 0 && activeView === 'schedules' && filteredJobs.length === 0 && (
+          {panelJobs.length > 0 && activeView === 'schedules' && filteredJobs.length === 0 && (
             <div className="flex flex-col items-center justify-center h-40 gap-2 text-sm text-muted-foreground px-6 text-center">
               <Search className="w-8 h-8 opacity-30" />
               <p>No schedules match the current filter.</p>
@@ -2140,7 +2211,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
               </button>
             </div>
           )}
-          {jobs.length > 0 && activeView === 'schedules' && filteredJobs.length > 0 && (
+          {panelJobs.length > 0 && activeView === 'schedules' && filteredJobs.length > 0 && (
             <div className="divide-y divide-gray-100 dark:divide-gray-700">
               {filteredJobs.map((job, index, jobsList) => {
                 const preset = presetMap.get(job.preset_query_id ?? '')
@@ -2724,6 +2795,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
             presetQueryId={editingJob.preset_query_id ?? null}
             presetLabel={preset?.label ?? editingJob.name}
             entityType="workflow"
+            jobId={editingJob.id}
             workspacePath={editingJob.workspace_path || preset?.workspacePath || undefined}
             onClose={() => { setEditingJob(null); loadJobs() }}
           />

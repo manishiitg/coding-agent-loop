@@ -10,6 +10,7 @@ import {
   Table2,
   ShieldCheck,
   Activity,
+  CalendarClock,
   X,
 } from 'lucide-react'
 import ModalPortal from '../../ui/ModalPortal'
@@ -24,6 +25,7 @@ import type { WorkflowExecutionStatus } from '../hooks/useWorkflowExecution'
 import type { ExecutionOptions } from '../../../services/api-types'
 import { useCommandDialogStore } from '../../../stores/useCommandDialogStore'
 import { agentApi } from '../../../services/api'
+import { schedulerApi } from '../../../api/scheduler'
 import LearningsPopup from '../LearningsPopup'
 import KBPopup from '../KBPopup'
 import DatabasePopup from '../DatabasePopup'
@@ -31,6 +33,7 @@ import ExecutionLogsPopup from '../ExecutionLogsPopup'
 import CostsPopup from '../CostsPopup'
 import WorkflowVersionsPopup from '../WorkflowVersionsPopup'
 import WorkflowAccessPopup from '../WorkflowAccessPopup'
+import WorkflowScheduleRunsPanel from '../../scheduler/WorkflowScheduleRunsPanel'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
 import {
   resolveGroupFolderPath
@@ -39,6 +42,34 @@ import { hasWorkflowWriteAccess, hasWorkflowOwnerAccess } from '../../../utils/w
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
+const WORKFLOW_SCHEDULE_TOOLBAR_LIMIT = 10_000
+
+type WorkflowScheduleStats = {
+  total: number
+  running: number
+  enabled: number
+  paused: number
+  missed: number
+  issues: number
+}
+
+const EMPTY_WORKFLOW_SCHEDULE_STATS: WorkflowScheduleStats = {
+  total: 0,
+  running: 0,
+  enabled: 0,
+  paused: 0,
+  missed: 0,
+  issues: 0,
+}
+
+function normalizeWorkspacePath(path?: string | null): string {
+  return (path || '').replace(/\/+$/, '')
+}
+
+function formatWorkflowNameFromPath(path?: string | null): string {
+  const name = normalizeWorkspacePath(path).split('/').filter(Boolean).pop()
+  return name || 'Workflow'
+}
 
 interface WorkflowToolbarProps {
   status: WorkflowExecutionStatus
@@ -167,6 +198,47 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // Versions popup state
   const [showVersionsPopup, setShowVersionsPopup] = useState(false)
   const [showAccessPopup, setShowAccessPopup] = useState(false)
+  const [showWorkflowSchedulesPanel, setShowWorkflowSchedulesPanel] = useState(false)
+  const [workflowScheduleStats, setWorkflowScheduleStats] = useState<WorkflowScheduleStats>(EMPTY_WORKFLOW_SCHEDULE_STATS)
+
+  const workflowScheduleLabel = useMemo(
+    () => formatWorkflowNameFromPath(workspacePath),
+    [workspacePath]
+  )
+
+  const refreshWorkflowScheduleStats = useCallback(async () => {
+    if (!workspacePath && !presetQueryId) {
+      setWorkflowScheduleStats(EMPTY_WORKFLOW_SCHEDULE_STATS)
+      return
+    }
+
+    const normalizedWorkspacePath = normalizeWorkspacePath(workspacePath)
+    try {
+      const resp = await schedulerApi.listJobs({
+        entity_type: 'workflow',
+        limit: WORKFLOW_SCHEDULE_TOOLBAR_LIMIT,
+      })
+      const matchingJobs = (resp.jobs || []).filter((job) => {
+        if (presetQueryId && job.preset_query_id === presetQueryId) return true
+        if (!normalizedWorkspacePath) return false
+        return normalizeWorkspacePath(job.workspace_path) === normalizedWorkspacePath
+      })
+      setWorkflowScheduleStats({
+        total: matchingJobs.length,
+        running: matchingJobs.filter(job => job.last_status === 'running').length,
+        enabled: matchingJobs.filter(job => job.enabled).length,
+        paused: matchingJobs.filter(job => !job.enabled).length,
+        missed: matchingJobs.filter(job => job.enabled && (job.missed_run_count ?? 0) > 0).length,
+        issues: matchingJobs.filter(job => job.last_status === 'error').length,
+      })
+    } catch {
+      setWorkflowScheduleStats(EMPTY_WORKFLOW_SCHEDULE_STATS)
+    }
+  }, [workspacePath, presetQueryId])
+
+  useEffect(() => {
+    refreshWorkflowScheduleStats()
+  }, [refreshWorkflowScheduleStats])
 
   const closeAllPopups = useCallback(() => {
     setShowLearningsPopup(false)
@@ -175,6 +247,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     setShowExecutionLogsPopup(false)
     setShowCostsPopup(false)
     setShowVersionsPopup(false)
+    setShowWorkflowSchedulesPanel(false)
   }, [])
   
   // Close popups only when switching between two concrete workflows.
@@ -303,6 +376,24 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const isBuilderModeActive = workflowWorkspaceView === 'builder' || isBuilderPaneVisible
   const isReportWorkspace = showWorkspacePane && canvasViewMode === 'report'
   const isFlowWorkspace = showWorkspacePane && canvasViewMode === 'flow'
+  const scheduleTooltip = useMemo(() => {
+    if (workflowScheduleStats.total === 0) return 'No schedules for this workflow'
+    if (workflowScheduleStats.running > 0) {
+      return `${workflowScheduleStats.running} active schedule${workflowScheduleStats.running === 1 ? '' : 's'}`
+    }
+    if (workflowScheduleStats.enabled > 0) {
+      return `${workflowScheduleStats.enabled} active of ${workflowScheduleStats.total} schedule${workflowScheduleStats.total === 1 ? '' : 's'}`
+    }
+    return `${workflowScheduleStats.total} paused schedule${workflowScheduleStats.total === 1 ? '' : 's'}`
+  }, [workflowScheduleStats])
+  const scheduleStatusDotClass = workflowScheduleStats.issues > 0 || workflowScheduleStats.missed > 0
+    ? 'bg-red-500'
+    : workflowScheduleStats.running > 0
+      ? 'bg-green-500'
+      : workflowScheduleStats.enabled > 0
+        ? 'bg-amber-500'
+        : 'bg-muted-foreground/50'
+
   return (
     <>
     <div className={`
@@ -336,27 +427,52 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       {/* Right side - View controls */}
       <div data-tour="workflow-tools" data-testid="tour-workflow-tools" className="ml-auto flex shrink-0 items-center gap-1">
         <TooltipProvider delayDuration={150}>
-        {/* Monitor — opens the per-run monitor popup (explains it, lets the user
-            enable it, and points to /auto-improve for scheduling). */}
-        {workspacePath && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                onClick={() => setShowMonitorHelp(true)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background/90 px-2 py-1 text-[11px] font-medium text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted"
-              >
-                <Activity className={`w-3.5 h-3.5 ${monitorOn ? 'text-primary' : ''}`} />
-                <span className={monitorOn ? 'text-foreground' : ''}>Monitor</span>
-                <span className={`text-[10px] font-semibold tracking-wide ${monitorOn ? 'text-primary' : 'text-muted-foreground/60'}`}>{monitorOn ? 'ON' : 'OFF'}</span>
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom"><p>Per-run monitor — click to learn more &amp; turn {monitorOn ? 'off' : 'on'}</p></TooltipContent>
-          </Tooltip>
-        )}
+          {/* Monitor — opens the per-run monitor popup (explains it, lets the user
+              enable it, and points to /auto-improve for scheduling). */}
+          {workspacePath && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => setShowMonitorHelp(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background/90 px-2 py-1 text-[11px] font-medium text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted"
+                >
+                  <Activity className={`w-3.5 h-3.5 ${monitorOn ? 'text-primary' : ''}`} />
+                  <span className={monitorOn ? 'text-foreground' : ''}>Monitor</span>
+                  <span className={`text-[10px] font-semibold tracking-wide ${monitorOn ? 'text-primary' : 'text-muted-foreground/60'}`}>{monitorOn ? 'ON' : 'OFF'}</span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom"><p>Per-run monitor — click to learn more &amp; turn {monitorOn ? 'off' : 'on'}</p></TooltipContent>
+            </Tooltip>
+          )}
 
-        {/* Show Costs - opens popup with cost analysis across all iterations */}
-        {workspacePath && (
+          {workspacePath && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => setShowWorkflowSchedulesPanel(true)}
+                  className={`relative p-1.5 rounded-md transition-colors ${
+                    workflowScheduleStats.issues > 0 || workflowScheduleStats.missed > 0
+                      ? 'bg-muted text-red-600 hover:bg-accent dark:text-red-400'
+                      : workflowScheduleStats.running > 0
+                        ? 'bg-muted text-green-600 hover:bg-accent dark:text-green-400'
+                        : 'bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                  }`}
+                  aria-label={scheduleTooltip}
+                >
+                  <CalendarClock className="w-3.5 h-3.5" />
+                  {workflowScheduleStats.total > 0 && (
+                    <span className={`absolute right-1 top-1 h-1.5 w-1.5 rounded-full ${scheduleStatusDotClass}`} />
+                  )}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom"><p>{scheduleTooltip}</p></TooltipContent>
+            </Tooltip>
+          )}
+
+          {/* Show Costs - opens popup with cost analysis across all iterations */}
+          {workspacePath && (
           <Tooltip>
             <TooltipTrigger asChild>
               <button
@@ -517,6 +633,20 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       runFolder={contextRunFolder}
       runFolders={runFoldersNames}
     />
+
+    {showWorkflowSchedulesPanel && (
+      <WorkflowScheduleRunsPanel
+        workflowScope={{
+          presetQueryId,
+          workspacePath,
+          label: workflowScheduleLabel,
+        }}
+        onClose={() => {
+          setShowWorkflowSchedulesPanel(false)
+          refreshWorkflowScheduleStats()
+        }}
+      />
+    )}
 
     {/* Per-run monitor help */}
     {showMonitorHelp && (

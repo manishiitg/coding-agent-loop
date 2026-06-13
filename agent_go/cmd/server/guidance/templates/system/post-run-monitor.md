@@ -60,7 +60,14 @@ You own the notification. Decide it from the **state change**, which you read fr
 - **recovered** — was bad last run and is healthy again this run;
 - **new finding while still bad** — already broken/short, but you opened a *new* Open finding this run.
 
-On any of those, call `notify_via_bot` **once** with a one-line `message_for_user` equal to your status headline (the same sentence you put in the log and the verdict signal). Lead with what's wrong, or "✅ recovered" — never a generic "needs attention". Example: `⚠️ login-flow returned skipped for 2 runs — maker-reviewer gate tightened on run #39`.
+On any of those, call `notify_via_bot` **once** with a one-line `message_for_user` equal to your status headline (the same sentence you put in the log and the verdict signal). Lead with what's wrong, or "✅ recovered" — never a generic "needs attention". Example: `⚠️ login-flow returned skipped for 2 runs — maker-reviewer gate tightened on run #39`. The same call fans out to every connected channel (Slack, WhatsApp, email).
+
+**Per-channel rendering.** `message_for_user` is the terse line chat channels show. *If* the tool also offers `email_subject` / `email_body` params — it exposes them only when an email channel is connected — set them so the email reads like a proper alert instead of an emoji-led subject line; leave them off when the tool doesn't offer them:
+
+- `email_subject`: a clean inbox subject — `Monitor: <workflow> — broke` / `— recovered` / `— new issue`.
+- `email_body`: 2–3 lines — your headline, then `Bug: <state> · Goal: <state>`, then `See the Pulse log for detail.`
+
+One call, rendered terse on chat and fuller in email.
 
 On a **steady run** — healthy-and-still-healthy, or broken-and-still-broken with nothing new — do **not** call `notify_via_bot`. Silence is correct; the Pulse already has the detail. (If no bot channel is connected the call is a harmless no-op, but skip it on steady runs anyway to avoid a wasted turn.) This single transition notification is the **only** action you take — you still never fix, replan, or edit the plan.
 

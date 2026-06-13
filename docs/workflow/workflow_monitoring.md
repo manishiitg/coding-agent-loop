@@ -9,6 +9,7 @@ It is worth keeping. The workflow UI still exposes execution logs, cost analysis
 There are three practical scopes:
 
 ### 1. Workflow-level views
+- **Pulse**: the single agent-curated HTML log (`builder/improve.html`) — the primary at-a-glance surface (see below)
 - **Costs**: aggregated token and USD usage across run folders
 - **Evaluation reports**: benchmark-style scoring across runs, with single-run drill-down
 - **Learnings**: current persisted learning state, including the global workflow skill
@@ -20,6 +21,17 @@ There are three practical scopes:
 ### 3. Cross-workflow operational views
 - **Workflow overview**: recent run folders, status, timestamps, costs, and evaluation presence across workflows
 - **Scheduled runs panel**: cron job history, latest runs, live sessions, and drill-down into logs/costs/evaluation for scheduled executions
+
+## Pulse — the agent-curated log
+
+The **Pulse** (`builder/improve.html`) is the primary workflow-level monitoring surface and the user's main window into a workflow. It is a single, self-contained HTML document the workflow's agents curate, rendered as a first-class right-panel view alongside Plan, Report, and Soul, and it follows the app's light/dark theme.
+
+Top to bottom it reads: two verdicts → a one-line status headline → the goal card → signal tiles → recent runs → a newest-first timeline → archive. Every workflow is judged on two independent axes, each stamped with the run it's as-of:
+
+- **Bug** — did it run correctly (errors, skipped steps, missing/empty artifacts, regressions)? Fixed by hardening.
+- **Goal** — is it achieving its success criteria (eval scores and outcome metrics vs `soul.md`)? Fixed by refining or replanning.
+
+A **per-run monitor** writes to the Pulse after every run: a cheap, read-only pass that detects silent breakage and goal drift, refreshes the verdicts/tiles, records a finding only when something is wrong, and emits `builder/monitor-verdict.json` so the scheduler can notify on Slack/WhatsApp on a transition. It never fixes anything — scheduled **auto-improve** passes (harden for Bug, replan-proposal for Goal) do that, and each applied change is later confirmed against the run that proves it worked. Turn the monitor on with `/monitor` or the toolbar **Monitor** toggle; schedule the acting passes with `/auto-improve`. See the [Auto-Improvement Framework](auto_improvement_framework.md) for the full loop.
 
 ## Execution Logs
 

@@ -1,16 +1,34 @@
 # Auto-Improvement Framework
 
-The auto-improvement framework gives Optimizer durable evidence and audit logs for improving workflows. The current model is intentionally simple: metrics are evidence, and the optimizer chooses between hardening, replanning, eval-plan improvement, metric cleanup, or no action.
+Auto-improvement gives the optimizer durable evidence and an audit trail for improving a workflow. It is **one system running at several cadences** over a **single log** (`builder/improve.html`, the **Pulse**), all sharing the same **Bug / Goal** vocabulary:
+
+- **Per-run monitor (detect, every run):** a cheap, read-only pass after each run that records whether the workflow ran correctly and whether it is achieving its goal — it never fixes anything.
+- **Scheduled harden (act, frequent):** applies local reliability/contract/artifact fixes for **Bug** findings.
+- **Scheduled replan-proposal (act, less frequent):** recommends plan/strategy changes for **Goal** gaps — it proposes, it does not auto-rewrite the plan.
+
+The model is intentionally simple: metrics and run evidence are the inputs, and the optimizer chooses between hardening, replanning, eval-plan improvement, metric cleanup, or no action.
+
+## Two verdicts: Bug and Goal
+
+Every run is judged on two independent axes, shown as separate pills in the Pulse header — never collapsed into one "health":
+
+- **Bug** — did it *run correctly*? Errors, skipped steps, missing/empty artifacts, regressions vs the last run. Fixed by **hardening**. Roughly binary.
+- **Goal** — is it *achieving its success criteria*? Eval scores and outcome metrics vs `soul.md`, trending over runs. Fixed by **refining or replanning**. Continuous.
+
+They are orthogonal — a run can be Bug-broken while Goal-on-target, or Bug-clean while Goal-short. **Health gates goal:** a run that wasn't operationally clean produces no trustworthy goal signal, so the goal is never judged on a broken run. For routed workflows the monitor judges **only the path that ran** — a step or eval belonging to a route this run didn't take is not-applicable, never a failure.
 
 ## Files
 
-- `soul/soul.md`: objective and success criteria. This is the north star.
-- `builder/improve.md`: single source-of-truth entry point for improvement narrative, workflow profile, active findings/hypotheses, schedule state, archive index, recent decisions, and structured `improve-decision` fenced audit blocks for harden/replan/report/eval/metric/rule changes. Read the active sections before every improve pass.
-- `builder/improve-archive/YYYY-MM.md`: monthly archive files for old detailed improve entries. These are part of the improve ledger, but agents should read only the archive files referenced by the active index, unresolved ids, or selected evidence window.
-- `builder/review.md`: review findings. Read this before every improve pass as unresolved-risk memory, and close findings when fixes land. Findings do not override `soul.md` or current run evidence.
+- `soul/soul.md`: objective and success criteria. The north star (Markdown — parsed for objective/success-criteria; there is no `soul.html`).
+- `builder/improve.html`: the **Pulse** — the single, self-contained, human-readable HTML log and the user's primary window into the workflow. Holds the two verdicts, a status headline, the goal card, signal tiles, the recent-runs strip, and a newest-first timeline of monitor observations, decisions, open findings, user rules, and notes. Read it before every improve pass. See `get_reference_doc(kind="review-improve-log")` for the format.
+- `builder/improve-archive/YYYY-MM.html`: monthly archive files for old resolved findings and routine entries. Read only the archive files referenced by the active log's archive index or an unresolved id.
+- `builder/monitor-verdict.json`: a small per-run signal (`bug`, `goal`, `headline`, `new_finding`) the monitor overwrites each run so the scheduler can decide whether to notify. Internal signal, not the user surface.
 - `planning/metrics.json`: metric definitions. Mutated through metric tools.
 - `db/metrics_history.jsonl`: per-run metric time series.
+- `route_selection.json`: which route a run took (so the monitor judges only that path).
 - `runs/iteration-0`: current optimizer evidence target.
+
+`builder/review.html` / `builder/improve.md` / `builder/review.md` are **legacy**. If you find one with unresolved findings, fold them into `builder/improve.html` as open-finding entries and stop writing to it; do not create new ones. The old structured `improve-decision` JSON blocks and `F-`/`I-` ids are retired in favor of readable prose cards.
 
 ## Truth Hierarchy
 
@@ -21,52 +39,38 @@ Use this hierarchy when deciding what is true:
 3. `runs/iteration-0/<group>/...`: current reality from actual outputs, tool logs, validation, and eval reports.
 4. `evaluation/evaluation_plan.json`: measurement definition; fix it when it conflicts with `soul.md`.
 5. `planning/plan.json`: current implementation attempt, judged against `soul.md` and iteration-0 evidence.
-6. `builder/improve.md` + referenced `builder/improve-archive/*.md` + `builder/review.md`: memory and audit trail for past decisions, unresolved findings, deferred ideas, and resolution links.
+6. `builder/improve.html` + referenced `builder/improve-archive/*.html`: memory and audit trail for past decisions, unresolved findings, deferred ideas, and resolution links.
 
 ## Decision Model
 
-Then choose one bounded action:
+The per-run monitor only **detects and records**. The scheduled passes then choose one bounded action.
 
 Harden and replan are the two ends of an **exploit/explore** ladder against the metric+success definition — same plan tools, opposite intent:
 
 - `harden_workflow(group_name?, focus?)` — **exploit: refine the current strategy.** The approach is right but execution/wiring is weak: prompts, config, validation, KB, learnings, db/report wiring, eval coverage, or metric wiring need repair. Not a redesign. Harden removes stale `learnings/{step-id}/main.py` for `code_exec` steps; only `learn_code` steps should retain reusable `main.py`.
-- `replan_workflow_from_results(group_name?, focus?)` — **explore: a different strategy for better success.** The current approach is **capped** — even executed cleanly it cannot satisfy the success criteria / primary metric — or run evidence reveals a materially better, out-of-the-box approach. This is the escalation tier: reach for it when hardening has **plateaued** (primary metric / success stays short while secondary reliability/guardrail metrics are healthy) or when the path is structurally wrong for the goal. It rewrites `plan.json`, so the bet must be evidence-backed, not speculative. When replan keeps or converts a step to `code_exec`, it should remove stale `learnings/{step-id}/main.py` and clear `lock_code` to avoid confusing future improvement agents.
+- `replan_workflow_from_results(group_name?, focus?)` — **explore: a different strategy for better success.** The current approach is **capped** — even executed cleanly it cannot satisfy the success criteria / primary metric — or run evidence reveals a materially better approach. The escalation tier: reach for it when hardening has **plateaued** (primary metric / success stays short while reliability metrics are healthy) or when the path is structurally wrong for the goal. It rewrites `plan.json`, so the bet must be evidence-backed. When replan keeps or converts a step to `code_exec`, it should remove stale `learnings/{step-id}/main.py` and clear `lock_code`.
 - Eval-plan improvement: evaluation coverage, scoring, structured output, validation schema, or metric-to-eval wiring is weak enough that measurement cannot be trusted.
-- `propose_metric` or `retire_metric`: the metric definition is missing, stale, duplicated, unresolved, or no longer tied to the goal. Use `propose_metric` with `amend_existing:{id,reason}` to correct an existing metric definition/source under the same id; the previous definition is archived and the version increments.
+- `propose_metric` or `retire_metric`: the metric definition is missing, stale, duplicated, unresolved, or no longer tied to the goal. Use `propose_metric` with `amend_existing:{id,reason}` to correct an existing metric under the same id; the previous definition is archived and the version increments.
 - No action: evidence is weak, recent changes need more runs, or the workflow is already aligned.
 
 Each improve pass should perform at most one primary action unless the user explicitly asks for a broader pass.
 
 ## Commands
 
-- `/define-success`: writes the workflow profile and starter metrics.
-- `/improve-workflow`: reads prior improve/review logs and current evidence, then chooses harden, replan, eval-plan improvement, metric cleanup, or no action.
+- `/define-success`: writes the workflow profile and starter metrics, and seeds the Pulse goal card from `soul.md`.
+- `/monitor` (and the **Monitor** toggle in the workflow toolbar): turns on the per-run review-only pass via `post_run_monitor` so every run records Bug/Goal findings.
+- `/improve-workflow`: reads the Pulse and current evidence, then chooses harden, replan, eval-plan improvement, metric cleanup, or no action.
 - `/improve-evaluation`: improves eval coverage and rubric quality.
-- `/auto-improve`: creates or updates Run-mode and Optimizer-mode schedules. The Optimizer schedule delegates each improvement pass to canonical `/improve-workflow` guidance, then performs only schedule cadence/group-scope self-tuning. Active workflows should usually be checked after every run or every two runs, not weekly, unless the workflow itself runs weekly or the user asks for a low-touch cadence.
+- `/auto-improve`: turns on the per-run monitor, then creates or updates the Optimizer-mode **harden** schedule (frequent — ~every 1-2 runs) and **replan-proposal** schedule (less frequent — ~every 3-4 runs). Each Optimizer fire delegates the improvement pass to canonical `/improve-workflow` guidance, then self-tunes only its own cadence/scope.
 
 ## Audit Discipline
 
-When a fix addresses an item in `builder/review.md` or `builder/improve.md`, append a resolved or partially-resolved marker next to the original entry. When a fix writes a structured `improve-decision` block in `builder/improve.md`, include `linked_review_finding` or `linked_improve_entry` so the audit trail can be searched from the single source-of-truth file.
+- **Open findings** carry a short anchor id only so a later fix can close them; closing a finding edits its card in place to add a `Resolved …` line — never delete it, never open a duplicate.
+- **Decisions are confirmed, not assumed.** A harden/replan decision states the effect it expects when written, and stays **unconfirmed** until a later run measures it — at which point the monitor stamps the decision card once: confirmed (cite before → after), no-effect/regressed (reopen a finding), or inconclusive (the run didn't exercise the changed path). A change that quietly failed is worse than no change, so it is never hidden.
+- Metric movement is evidence, not proof. Do not claim an improvement worked until run/eval/metric evidence supports it, and call out confounds such as small sample size, source-data drift, rubric changes, or multiple decisions in the same window.
 
-Metric movement is evidence, not proof. Do not claim an improvement worked until run/eval/metric evidence supports it, and call out confounds such as small sample size, source-data drift, rubric changes, or multiple decisions in the same window.
+## Pulse Log Retention
 
-## Improve Log Retention
+`builder/improve.html` must stay readable for users and cheap for scheduled agents to load. When it passes roughly **800 lines, 60 KB, or 20 timeline entries**, move older **resolved** findings, superseded decisions, and routine run rows into a monthly archive `builder/improve-archive/YYYY-MM.html`, leaving a one-row entry in the archive index (date range, count, any still-unresolved ids).
 
-`builder/improve.md` should stay readable for users and cheap for scheduled agents to load. It is the canonical entry point, not necessarily the only physical file.
-
-Keep in `builder/improve.md`:
-
-- `## Workflow Profile (auto-improvement framework)`
-- `## Active Improvement Index`: unresolved findings, open hypotheses, current schedule/cadence state, current metric/eval gaps, and the latest run window to inspect
-- `## Archive Index`: one row per archive file with date range, entry count, unresolved ids, and a one-line summary
-- `## Recent Entries`: the latest 10-20 detailed entries or roughly the last 30 days, whichever is smaller and still readable
-
-Move to `builder/improve-archive/YYYY-MM.md`:
-
-- resolved detailed entries older than the recent window
-- repeated no-action schedule fires after summarizing the pattern in the active index
-- old structured `improve-decision` blocks whose ids are preserved in the archive index
-
-Do not archive away unresolved findings, active hypotheses, current workflow-profile implications, current metric/eval gaps, or the latest decision that changed plan/eval/metrics semantics. If old detail still matters, keep a one-line active pointer such as `See builder/improve-archive/2026-05.md#dec-social-media-20260505-002`.
-
-Recommended compaction trigger: when `builder/improve.md` exceeds roughly 800 lines, 60 KB, or contains more than 20 detailed entries. Compaction is append-preserving at the ledger level: move old detail to an archive file, leave an index row, and never rewrite the meaning of old decisions.
+**Never archive** open findings, user rules, current notes, the goal card, or the latest few entries — the active Pulse should always answer "what's the state of this workflow right now, and what still needs attention." Archiving is append-preserving: move old detail, leave an index row, and never rewrite the meaning of an old decision.

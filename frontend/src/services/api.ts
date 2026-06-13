@@ -669,11 +669,13 @@ export const agentApi = {
 
   getTerminal: async (
     terminalId: string,
-    options?: { content?: 'stored' | 'screen' | 'history' | 'tmux' | 'deep'; lines?: number },
+    options?: { content?: 'stored' | 'screen' | 'history' | 'tmux' | 'deep'; lines?: number; debug?: boolean; debugSource?: string },
   ): Promise<TerminalSnapshot> => {
     const params: Record<string, string | number> = {}
     if (options?.content && options.content !== 'stored') params.content = options.content
     if (options?.lines) params.lines = options.lines
+    if (options?.debug) params.debug = 1
+    if (options?.debugSource) params.debug_source = options.debugSource
     const response = await api.get(`/api/terminals/${encodeURIComponent(terminalId)}`, { params })
     return response.data
   },

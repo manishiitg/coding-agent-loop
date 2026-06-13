@@ -85,9 +85,11 @@ const TERMINAL_FAST_POLL_DURATION_MS = 7000
 type TerminalColorScheme = 'neon' | 'mono' | 'homebrew' | 'catppuccin' | 'nord' | 'gruvbox' | 'solarized' | 'tokyo'
 type TerminalDebugKey = 'enter' | 'esc' | 'ctrl-c' | 'ctrl-o' | 'tab' | 'up' | 'down'
 type TerminalRailFilter = 'all' | 'running' | 'non-running'
+type TerminalDetailOptions = { content?: 'stored' | 'screen' | 'history' | 'tmux' | 'deep'; lines?: number; debug?: boolean; debugSource?: string }
 
 const DEFAULT_TERMINAL_COLOR_SCHEME: TerminalColorScheme = 'homebrew'
 const TERMINAL_COLOR_SCHEME_STORAGE_KEY = 'terminal-color-scheme'
+const TERMINAL_SCROLL_DEBUG_STORAGE_KEY = 'runloop_terminal_debug'
 
 const TERMINAL_THEMES = {
   neon: {
@@ -1965,7 +1967,8 @@ const XtermTerminalPane: React.FC<{
   xtermTheme: ITheme
   xtermProfile: (typeof XTERM_PROFILE_OPTIONS)[TerminalColorScheme]
   onViewportStickChange?: (isNearBottom: boolean) => void
-}> = ({ content, className, contentRef, xtermTheme, xtermProfile, onViewportStickChange }) => {
+  debugLabel?: string
+}> = ({ content, className, contentRef, xtermTheme, xtermProfile, onViewportStickChange, debugLabel }) => {
   const mountRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<XTerm | null>(null)
   const lastContentRef = useRef<string>('')
@@ -1974,6 +1977,25 @@ const XtermTerminalPane: React.FC<{
   useEffect(() => {
     onViewportStickChangeRef.current = onViewportStickChange
   }, [onViewportStickChange])
+
+  const logXtermDebug = useCallback((phase: string, extra: Record<string, unknown> = {}) => {
+    if (!terminalScrollDebugEnabled()) return
+    const term = terminalRef.current
+    const buffer = term?.buffer.active
+    console.info('[TERMINAL_DEBUG] xterm', {
+      phase,
+      label: debugLabel,
+      rows: term?.rows,
+      cols: term?.cols,
+      baseY: buffer?.baseY,
+      viewportY: buffer?.viewportY,
+      cursorY: buffer?.cursorY,
+      scrollable: typeof buffer?.baseY === 'number' ? buffer.baseY > 0 : undefined,
+      content_lines: terminalTextLineCount(content),
+      content_bytes: content.length,
+      ...extra,
+    })
+  }, [content, debugLabel])
 
   useEffect(() => {
     const mount = mountRef.current
@@ -1998,11 +2020,13 @@ const XtermTerminalPane: React.FC<{
     const scrollDisposable = term.onScroll(viewportY => {
       const distanceFromBottom = Math.max(0, term.buffer.active.baseY - viewportY)
       onViewportStickChangeRef.current?.(distanceFromBottom <= 1)
+      logXtermDebug('scroll', { viewportY, distanceFromBottom })
     })
 
     const fitTerminal = () => {
       try {
         fit.fit()
+        logXtermDebug('fit')
       } catch {
         // Fit can fail during unmount or while the pane is display:none.
       }
@@ -2052,7 +2076,13 @@ const XtermTerminalPane: React.FC<{
     term.scrollLines(lines)
     const distanceFromBottom = Math.max(0, term.buffer.active.baseY - term.buffer.active.viewportY)
     onViewportStickChangeRef.current?.(distanceFromBottom <= 1)
-  }, [xtermProfile.fontSize, xtermProfile.lineHeight])
+    logXtermDebug('wheel', {
+      deltaY: event.deltaY,
+      deltaMode: event.deltaMode,
+      computed_lines: lines,
+      distanceFromBottom,
+    })
+  }, [logXtermDebug, xtermProfile.fontSize, xtermProfile.lineHeight])
 
   useEffect(() => {
     const term = terminalRef.current
@@ -2061,6 +2091,8 @@ const XtermTerminalPane: React.FC<{
     const buffer = term.buffer.active
     const distanceFromBottom = Math.max(0, buffer.baseY - buffer.viewportY)
     const shouldStickToBottom = distanceFromBottom <= 1
+    const previousBaseY = buffer.baseY
+    const previousViewportY = buffer.viewportY
     lastContentRef.current = content
     term.reset()
     const restoreScroll = () => {
@@ -2071,12 +2103,21 @@ const XtermTerminalPane: React.FC<{
       const nextBaseY = term.buffer.active.baseY
       term.scrollToLine(Math.max(0, nextBaseY - distanceFromBottom))
     }
-    if (!content) {
+    const afterWrite = () => {
       restoreScroll()
+      logXtermDebug('write', {
+        previousBaseY,
+        previousViewportY,
+        previousDistanceFromBottom: distanceFromBottom,
+        shouldStickToBottom,
+      })
+    }
+    if (!content) {
+      afterWrite()
       return
     }
-    term.write(content.replace(/\r?\n/g, '\r\n'), restoreScroll)
-  }, [content])
+    term.write(content.replace(/\r?\n/g, '\r\n'), afterWrite)
+  }, [content, logXtermDebug])
 
   return (
     <div
@@ -2398,7 +2439,7 @@ function isSyntheticTerminal(terminal: TerminalSnapshot): boolean {
   return true
 }
 
-function terminalTmuxDetailOptions(terminal: TerminalSnapshot, displayDetail = false): { content: 'screen' | 'history'; lines?: number } | undefined {
+function terminalTmuxDetailOptions(terminal: TerminalSnapshot, displayDetail = false): TerminalDetailOptions | undefined {
   if (!terminal.tmux_session) return undefined
   const state = terminalState(terminal)
   if (terminal.active && state !== 'stale' && state !== 'failed') {
@@ -2413,6 +2454,60 @@ function terminalTmuxDetailOptions(terminal: TerminalSnapshot, displayDetail = f
     }
   }
   return { content: 'history' }
+}
+
+function terminalScrollDebugEnabled(): boolean {
+  if (typeof window === 'undefined') return false
+  try {
+    const stored = window.localStorage.getItem(TERMINAL_SCROLL_DEBUG_STORAGE_KEY)
+    if (stored && ['1', 'true', 'yes', 'on'].includes(stored.toLowerCase())) return true
+    const query = new URLSearchParams(window.location.search)
+    return query.get('terminal_debug') === '1'
+  } catch {
+    return false
+  }
+}
+
+function withTerminalScrollDebug(options: TerminalDetailOptions | undefined, debugSource: string): TerminalDetailOptions | undefined {
+  if (!terminalScrollDebugEnabled()) return options
+  return {
+    ...(options || {}),
+    debug: true,
+    debugSource,
+  }
+}
+
+function terminalRequestOptions(terminal: TerminalSnapshot, displayDetail: boolean, debugSource: string): TerminalDetailOptions | undefined {
+  return withTerminalScrollDebug(terminalTmuxDetailOptions(terminal, displayDetail), debugSource)
+}
+
+function terminalTextLineCount(content?: string): number {
+  if (!content) return 0
+  return content.split(/\n/).length
+}
+
+function logTerminalScrollDebug(
+  debugSource: string,
+  requestTerminal: TerminalSnapshot | undefined,
+  options: TerminalDetailOptions | undefined,
+  detail?: TerminalSnapshot,
+): void {
+  if (!terminalScrollDebugEnabled()) return
+  const terminal = detail || requestTerminal
+  const payload = {
+    source: debugSource,
+    terminal_id: terminal?.terminal_id,
+    tmux_session: terminal?.tmux_session,
+    active: terminal?.active,
+    state: terminal ? terminalState(terminal) : undefined,
+    chunk_index: terminal?.chunk_index,
+    requested_content: options?.content || 'stored',
+    requested_lines: options?.lines,
+    content_lines: terminalTextLineCount(detail?.content),
+    content_bytes: detail?.content?.length || 0,
+    row_count: Array.isArray(detail?.rows) ? detail.rows.length : undefined,
+  }
+  console.info('[TERMINAL_DEBUG] frontend detail', payload)
 }
 
 // Error event types that should surface as a banner above the terminal
@@ -3286,7 +3381,9 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     if (missing.length === 0) return
     void Promise.all(missing.map(async t => {
       try {
-        const detail = await agentApi.getTerminal(t.terminal_id)
+        const detailOptions = withTerminalScrollDebug(undefined, 'archived-turn')
+        const detail = await agentApi.getTerminal(t.terminal_id, detailOptions)
+        logTerminalScrollDebug('archived-turn', t, detailOptions, detail)
         return { id: t.terminal_id, content: detail.content || '' }
       } catch (err) {
         console.warn('Failed to load archived turn content', t.terminal_id, err)
@@ -3347,9 +3444,10 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     detailRequestSeqRef.current = requestSeq
     let cancelled = false
     probeInFlightRef.current = true
-    const detailOptions = terminalTmuxDetailOptions(selectedTerminal, true)
+    const detailOptions = terminalRequestOptions(selectedTerminal, true, 'selected-detail')
     agentApi.getTerminal(selectedTerminal.terminal_id, detailOptions)
       .then(detail => {
+        logTerminalScrollDebug('selected-detail', selectedTerminal, detailOptions, detail)
         if (!cancelled && detailRequestSeqRef.current === requestSeq && terminalPaneKey(detail) === selectedTerminalKey) {
           cacheTerminalDetail(detail)
         }
@@ -3380,10 +3478,12 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       if (cancelled || inFlight) return
       inFlight = true
       void Promise.all(activeRailTmuxProbeTargets.map(async terminal => {
-        const detailOptions = terminalTmuxDetailOptions(terminal)
+        const detailOptions = terminalRequestOptions(terminal, false, 'rail-probe')
         if (!detailOptions) return null
         try {
-          return await agentApi.getTerminal(terminal.terminal_id, detailOptions)
+          const detail = await agentApi.getTerminal(terminal.terminal_id, detailOptions)
+          logTerminalScrollDebug('rail-probe', terminal, detailOptions, detail)
+          return detail
         } catch {
           return null
         }
@@ -3443,8 +3543,9 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       // concurrent capture-pane calls on the same tmux session race.
       if (probeInFlightRef.current) return
       probeInFlightRef.current = true
-      const detailOptions = terminalTmuxDetailOptions(selectedTerminalView, true)
+      const detailOptions = terminalRequestOptions(selectedTerminalView, true, 'selected-probe')
       void agentApi.getTerminal(terminalId, detailOptions).then(detail => {
+        logTerminalScrollDebug('selected-probe', selectedTerminalView, detailOptions, detail)
         cacheTerminalDetail(detail)
         // The detail carries the freshest active/state — react to it directly
         // instead of waiting a full list-poll cycle for selectedTerminalView to
@@ -3471,9 +3572,10 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       for (const terminal of candidates) {
         if (!terminal?.terminal_id || !terminal.tmux_session || seen.has(terminal.terminal_id)) continue
         seen.add(terminal.terminal_id)
-        const detailOptions = terminalTmuxDetailOptions(terminal, true)
+        const detailOptions = terminalRequestOptions(terminal, true, 'manual-refresh')
         void agentApi.getTerminal(terminal.terminal_id, detailOptions)
           .then(detail => {
+            logTerminalScrollDebug('manual-refresh', terminal, detailOptions, detail)
             cacheTerminalDetail(detail)
             void fetchTerminals()
           })
@@ -4356,6 +4458,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                       xtermTheme={XTERM_THEMES[terminalColorScheme]}
                       xtermProfile={XTERM_PROFILE_OPTIONS[terminalColorScheme]}
                       onViewportStickChange={handleXtermViewportStickChange}
+                      debugLabel={selectedTerminalView ? terminalPaneKey(selectedTerminalView) : undefined}
                       className={`min-w-0 flex-1 overflow-hidden overscroll-contain font-mono text-neutral-100 ${XTERM_PROFILE_OPTIONS[terminalColorScheme].panePaddingClass} ${terminalTheme.selection}`}
                     />
                   )}

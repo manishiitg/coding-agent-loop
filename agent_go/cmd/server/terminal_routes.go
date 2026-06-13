@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -77,6 +79,16 @@ type resizeTerminalRequest struct {
 type terminalActionResponse struct {
 	OK       bool               `json:"ok"`
 	Terminal terminals.Snapshot `json:"terminal,omitempty"`
+}
+
+type terminalPaneCaptureStats struct {
+	RequestedLines int
+	CaptureLines   int
+	RawLines       int
+	RawBytes       int
+	CollapsedLines int
+	CollapsedBytes int
+	Duration       time.Duration
 }
 
 // handleListTerminals returns current view-only terminal snapshots.
@@ -152,13 +164,46 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 	// Code context compaction), ChunkIndex increments, the list-poll returns the
 	// new value, and the frontend re-fetches automatically.
 	shouldCaptureTmux := shouldCaptureTerminalPaneForDetail(snapshot, r)
+	debugTerminal := terminalDebugEnabled(r)
+	debugSource := terminalDebugSource(r)
+	if debugTerminal {
+		log.Printf("[TERMINAL_DEBUG] detail start source=%q terminal_id=%q session_id=%q tmux_session=%q active=%t state=%q chunk=%d content_mode=%q lines_param=%q stored_lines=%d stored_bytes=%d should_capture=%t",
+			debugSource,
+			snapshot.TerminalID,
+			snapshot.SessionID,
+			snapshot.TmuxSession,
+			snapshot.Active,
+			snapshot.State,
+			snapshot.ChunkIndex,
+			strings.TrimSpace(r.URL.Query().Get("content")),
+			strings.TrimSpace(r.URL.Query().Get("lines")),
+			terminalLineCount(snapshot.Content),
+			len(snapshot.Content),
+			shouldCaptureTmux,
+		)
+	}
 	if shouldCaptureTmux {
 		ctx, cancel := context.WithTimeout(r.Context(), terminalTmuxActionTimeout)
-		content, err := captureTerminalPaneForDetail(ctx, snapshot, r)
+		content, stats, err := captureTerminalPaneForDetail(ctx, snapshot, r)
 		cancel()
 		if err == nil {
 			if refreshed, ok := api.terminalStore.RefreshContent(snapshot.TerminalID, content); ok {
 				snapshot = refreshed
+			}
+			if debugTerminal {
+				log.Printf("[TERMINAL_DEBUG] capture ok source=%q terminal_id=%q tmux_session=%q requested_lines=%d capture_lines=%d raw_lines=%d raw_bytes=%d collapsed_lines=%d collapsed_bytes=%d duration_ms=%d refreshed_chunk=%d",
+					debugSource,
+					snapshot.TerminalID,
+					snapshot.TmuxSession,
+					stats.RequestedLines,
+					stats.CaptureLines,
+					stats.RawLines,
+					stats.RawBytes,
+					stats.CollapsedLines,
+					stats.CollapsedBytes,
+					stats.Duration.Milliseconds(),
+					snapshot.ChunkIndex,
+				)
 			}
 		} else if isMissingTmuxTargetError(err) && !snapshot.Active {
 			// The backing tmux session is gone and no lifecycle event will
@@ -167,10 +212,28 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 			if stale, ok := api.terminalStore.MarkStale(snapshot.TerminalID); ok {
 				snapshot = stale
 			}
+			if debugTerminal {
+				log.Printf("[TERMINAL_DEBUG] capture stale source=%q terminal_id=%q tmux_session=%q err=%q", debugSource, snapshot.TerminalID, snapshot.TmuxSession, err.Error())
+			}
+		} else if debugTerminal {
+			log.Printf("[TERMINAL_DEBUG] capture error source=%q terminal_id=%q tmux_session=%q err=%q", debugSource, snapshot.TerminalID, snapshot.TmuxSession, err.Error())
 		}
 	}
 
-	_ = json.NewEncoder(w).Encode(api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot))
+	response := api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot)
+	if debugTerminal {
+		log.Printf("[TERMINAL_DEBUG] detail response source=%q terminal_id=%q active=%t state=%q chunk=%d content_lines=%d content_bytes=%d row_count=%d",
+			debugSource,
+			response.TerminalID,
+			response.Active,
+			response.State,
+			response.ChunkIndex,
+			terminalLineCount(response.Content),
+			len(response.Content),
+			len(response.Rows),
+		)
+	}
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 func shouldCaptureTerminalPaneForDetail(snapshot terminals.Snapshot, r *http.Request) bool {
@@ -186,12 +249,12 @@ func shouldCaptureTerminalPaneForDetail(snapshot terminals.Snapshot, r *http.Req
 	return terminalSnapshotHasPromptCompletionFallback(snapshot.Content)
 }
 
-func captureTerminalPaneForDetail(ctx context.Context, snapshot terminals.Snapshot, r *http.Request) (string, error) {
+func captureTerminalPaneForDetail(ctx context.Context, snapshot terminals.Snapshot, r *http.Request) (string, terminalPaneCaptureStats, error) {
 	lines := terminalCaptureLinesFromRequest(r, terminalDefaultDetailHistoryLines)
 	if shouldCaptureActiveTerminalHistoryForDetail(snapshot, r) {
 		lines = terminalCaptureLinesFromRequest(r, terminalActiveDetailHistoryLines)
 	}
-	return captureTerminalPaneLines(ctx, snapshot.TmuxSession, lines)
+	return captureTerminalPaneLinesWithStats(ctx, snapshot.TmuxSession, lines)
 }
 
 func shouldCaptureActiveTerminalHistoryForDetail(snapshot terminals.Snapshot, r *http.Request) bool {
@@ -545,9 +608,15 @@ func captureTerminalPane(ctx context.Context, tmuxSession string) (string, error
 }
 
 func captureTerminalPaneLines(ctx context.Context, tmuxSession string, lines int) (string, error) {
+	content, _, err := captureTerminalPaneLinesWithStats(ctx, tmuxSession, lines)
+	return content, err
+}
+
+func captureTerminalPaneLinesWithStats(ctx context.Context, tmuxSession string, lines int) (string, terminalPaneCaptureStats, error) {
+	stats := terminalPaneCaptureStats{RequestedLines: lines}
 	tmuxSession = strings.TrimSpace(tmuxSession)
 	if tmuxSession == "" {
-		return "", fmt.Errorf("tmux session is required")
+		return "", stats, fmt.Errorf("tmux session is required")
 	}
 	if lines <= 0 {
 		lines = terminalDefaultRefreshLines
@@ -555,6 +624,7 @@ func captureTerminalPaneLines(ctx context.Context, tmuxSession string, lines int
 	if lines > terminalMaxCaptureLines {
 		lines = terminalMaxCaptureLines
 	}
+	stats.CaptureLines = lines
 	// -e preserves ANSI SGR (color, bold, dim, …) so xterm.js can render the
 	// captured pane as a terminal. Without it, terminal refresh / completion
 	// fetches would silently strip color even though the running session emitted
@@ -566,11 +636,50 @@ func captureTerminalPaneLines(ctx context.Context, tmuxSession string, lines int
 	// double-wrapped (once by tmux, again by the browser) and shows a ragged
 	// right edge. -J only joins genuinely wrapped continuations — TUI box
 	// borders, which end at the pane edge deliberately, are left intact.
+	start := time.Now()
 	content, err := runTerminalTmuxOutputCommand(ctx, "capture-pane", "-p", "-e", "-J", "-t", tmuxSession, "-S", fmt.Sprintf("-%d", lines))
+	stats.Duration = time.Since(start)
 	if err != nil {
-		return "", fmt.Errorf("failed to capture terminal pane: %w", err)
+		return "", stats, fmt.Errorf("failed to capture terminal pane: %w", err)
 	}
-	return collapseBlankRuns(content), nil
+	stats.RawLines = terminalLineCount(content)
+	stats.RawBytes = len(content)
+	collapsed := collapseBlankRuns(content)
+	stats.CollapsedLines = terminalLineCount(collapsed)
+	stats.CollapsedBytes = len(collapsed)
+	return collapsed, stats, nil
+}
+
+func terminalLineCount(content string) int {
+	if content == "" {
+		return 0
+	}
+	return strings.Count(content, "\n") + 1
+}
+
+func terminalDebugEnabled(r *http.Request) bool {
+	for _, value := range []string{
+		r.URL.Query().Get("debug"),
+		r.Header.Get("X-Runloop-Terminal-Debug"),
+		os.Getenv("RUNLOOP_TERMINAL_DEBUG"),
+	} {
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "1", "true", "yes", "on":
+			return true
+		}
+	}
+	return false
+}
+
+func terminalDebugSource(r *http.Request) string {
+	source := strings.TrimSpace(r.URL.Query().Get("debug_source"))
+	if source == "" {
+		source = strings.TrimSpace(r.Header.Get("X-Runloop-Terminal-Debug-Source"))
+	}
+	if source == "" {
+		source = "unknown"
+	}
+	return source
 }
 
 // terminalMaxConsecutiveBlankLines caps how many blank rows survive a collapse.

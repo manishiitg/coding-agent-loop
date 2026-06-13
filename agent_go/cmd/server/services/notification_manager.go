@@ -6,6 +6,7 @@ import (
 	"log"
 	"sort"
 	"sync"
+	"time"
 )
 
 // ButtonOptions represents button configuration for interactive notifications
@@ -42,6 +43,16 @@ type NotificationConnector interface {
 // send a non-blocking message to a human without creating a feedback request.
 type UserNotificationConnector interface {
 	SendUserNotification(ctx context.Context, message string, contextMsg string, dest *NotificationDestination) (string, error)
+}
+
+// ConnectorResult is the per-connector outcome of a synchronous user notification.
+// Delivered = OK && MsgID != ""; a connector that had no destination to send to
+// returns OK with an empty MsgID (a "skip", not a delivery).
+type ConnectorResult struct {
+	Channel string
+	OK      bool
+	MsgID   string
+	Err     string
 }
 
 // FeedbackResponseFunc is a function type for submitting feedback responses (to avoid import cycle)
@@ -158,6 +169,47 @@ func (nm *NotificationManager) SendUserNotification(ctx context.Context, message
 	}
 
 	return nil
+}
+
+// SendUserNotificationSync sends to every enabled user-notification connector
+// SYNCHRONOUSLY and returns a per-connector result. Unlike SendUserNotification
+// (fire-and-forget, swallows errors), this waits for delivery so the caller — e.g.
+// the notify_user tool — can report real status back to the agent.
+//
+// Each send runs on a context that is DETACHED from the caller's cancellation
+// (context.WithoutCancel) but time-bounded, so it is not killed when the agent's
+// request context is cancelled at turn end (the cause of the "gws … signal: killed"
+// failures) and a stuck connector can't hang the turn forever.
+func (nm *NotificationManager) SendUserNotificationSync(ctx context.Context, message string, contextMsg string, dest *NotificationDestination) []ConnectorResult {
+	nm.mu.RLock()
+	connectors := make([]NotificationConnector, 0, len(nm.connectors))
+	for _, connector := range nm.connectors {
+		if connector.IsEnabled() {
+			connectors = append(connectors, connector)
+		}
+	}
+	nm.mu.RUnlock()
+
+	sendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
+	defer cancel()
+
+	results := make([]ConnectorResult, 0, len(connectors))
+	for _, connector := range connectors {
+		notifier, ok := connector.(UserNotificationConnector)
+		if !ok {
+			continue
+		}
+		msgID, err := notifier.SendUserNotification(sendCtx, message, contextMsg, dest)
+		res := ConnectorResult{Channel: connector.Name(), OK: err == nil, MsgID: msgID}
+		if err != nil {
+			res.Err = err.Error()
+			log.Printf("[NOTIFICATION_MANAGER] Failed to send user notification via %s: %v", connector.Name(), err)
+		} else if msgID != "" {
+			log.Printf("[NOTIFICATION_MANAGER] ✅ User notification sent via %s (msgID: %s)", connector.Name(), msgID)
+		}
+		results = append(results, res)
+	}
+	return results
 }
 
 // GetConnector returns a specific connector by name

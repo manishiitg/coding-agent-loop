@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestBuildGmailMIME(t *testing.T) {
@@ -16,7 +17,7 @@ func TestBuildGmailMIME(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	raw, err := buildGmailMIME("you@example.com", "Subject ☂", "body text", []string{att})
+	raw, err := buildGmailMIME("you@example.com", "Subject ☂", "body text", "", []string{att})
 	if err != nil {
 		t.Fatalf("buildGmailMIME: %v", err)
 	}
@@ -61,6 +62,26 @@ func TestBuildGmailMIME(t *testing.T) {
 	}
 }
 
+func TestBuildGmailMIMEHTML(t *testing.T) {
+	raw, err := buildGmailMIME("you@example.com", "Subj", "plain fallback", "<h1>Hello</h1>", nil)
+	if err != nil {
+		t.Fatalf("buildGmailMIME html: %v", err)
+	}
+	s := string(raw)
+	if !strings.Contains(s, "multipart/alternative") {
+		t.Error("HTML email should use multipart/alternative")
+	}
+	if !strings.Contains(s, "text/html; charset=UTF-8") {
+		t.Error("missing text/html part")
+	}
+	if !strings.Contains(s, "<h1>Hello</h1>") {
+		t.Error("missing HTML body content")
+	}
+	if !strings.Contains(s, "plain fallback") {
+		t.Error("missing plain-text fallback part")
+	}
+}
+
 // headerValue pulls a top-level header value out of the raw message.
 func headerValue(msg, key string) string {
 	for _, line := range strings.Split(msg, "\r\n") {
@@ -98,8 +119,15 @@ func TestGmailSubject(t *testing.T) {
 		long += "x"
 	}
 	got := gmailSubject(long)
-	if len([]rune(got)) > len("[Agent] ")+121 { // 120 chars + ellipsis
+	if len([]rune(got)) > len("[Agent] ")+151 { // 150 runes + ellipsis
 		t.Errorf("gmailSubject did not truncate long input: len=%d", len([]rune(got)))
+	}
+
+	// Rune-safe truncation: a long run of multi-byte chars must never be cut
+	// mid-rune into invalid UTF-8 (the bug that produced a broken subject char).
+	emDashes := strings.Repeat("—", 200) // 3 bytes each
+	if s := gmailSubject(emDashes); !utf8.ValidString(s) {
+		t.Errorf("gmailSubject produced invalid UTF-8 on multi-byte input: %q", s)
 	}
 }
 

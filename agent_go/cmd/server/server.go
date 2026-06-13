@@ -4201,8 +4201,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Add custom agent instructions based on agent mode
 		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
-			// Create custom tools for chat mode (workspace_advanced + workspace_image)
-			allTools, allExecutors, toolCategories := createCustomTools(false, currentUserID, sessionID) // Chat mode: session-aware
+			// Create custom tools for the agent. Workflow-phase (workshop) agents need
+			// the FULL human-tool set registered — notably notify_user — not just
+			// submit_human_answer. Chat mode stays minimal (workflowMode=false). Without
+			// this, notify_user was never registered as a custom tool, so it never landed
+			// in a.customTools and was invisible to CLI agents via get_api_spec.
+			allTools, allExecutors, toolCategories := createCustomTools(isWorkflowPhase, currentUserID, sessionID) // session-aware
 
 			// In plan delegation mode (multi-agent), also include human tools (human_feedback)
 			// Register each custom tool with the agent

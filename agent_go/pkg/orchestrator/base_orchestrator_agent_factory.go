@@ -302,8 +302,6 @@ func (bo *BaseOrchestrator) registerCustomToolsForAgent(
 		filteredTools, wrappedExecutors = bo.PrepareWorkspaceToolsWithFolderGuard(filteredTools, customToolExecutors)
 	}
 
-	// Removed excessive discovery logging
-
 	for _, tool := range filteredTools {
 		if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
 			// Convert Parameters to map[string]interface{}

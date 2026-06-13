@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -63,18 +65,26 @@ func CreateHumanTools() []llmtypes.Tool {
 		}
 		notifyProps["email_body"] = map[string]interface{}{
 			"type":        "string",
-			"description": "Optional. Email-specific body, which can be longer/richer than message_for_user. If omitted, message_for_user is used as the email body.",
+			"description": "Optional. PLAIN-TEXT email body (longer than message_for_user). Do NOT put HTML here — for a formatted email use email_html. If omitted, message_for_user is the body. (HTML accidentally placed here is auto-detected and rendered, but email_html is correct.)",
 		}
 		notifyProps["email_attachments"] = map[string]interface{}{
 			"type":        "array",
 			"items":       map[string]interface{}{"type": "string"},
 			"description": "Optional. Absolute file paths on the server host to attach to the email (Gmail only).",
 		}
+		notifyProps["email_html"] = map[string]interface{}{
+			"type":        "string",
+			"description": "Optional. Rich HTML body for a designed/formatted email (Gmail only). message_for_user / email_body remain the plain-text fallback for clients that don't render HTML. Other channels ignore this.",
+		}
+		notifyProps["email_html_file"] = map[string]interface{}{
+			"type":        "string",
+			"description": "Optional. Absolute path to an .html file on the server host to use as the HTML email body (alternative to email_html — e.g. a report you generated). If the file can't be read, the tool returns an error so you can fix the path.",
+		}
 	}
 	notifyUserTool := llmtypes.Tool{
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
-			Name:        "notify_via_bot",
+			Name:        "notify_user",
 			Description: buildNotifyDescription(),
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type":       "object",
@@ -115,19 +125,19 @@ func CreateHumanTools() []llmtypes.Tool {
 }
 
 // channelLabels maps connector Name() values to human-friendly labels used in
-// the dynamic notify_via_bot description.
+// the dynamic notify_user description.
 var channelLabels = map[string]string{
 	"slack":    "Slack",
 	"whatsapp": "WhatsApp",
 	"gmail":    "Gmail (email)",
 }
 
-// buildNotifyDescription renders the notify_via_bot description with the set of
+// buildNotifyDescription renders the notify_user description with the set of
 // channels enabled when the tool list is built (per session/run), so the agent
 // knows where its message will actually land. The always-on web UI connector is
 // not framed as an external channel.
 func buildNotifyDescription() string {
-	base := "Send a non-blocking notification to the human. Use this for FYIs, progress updates, alerts, and completion notices when you do not need to wait for a reply. If you need the human to answer before continuing, use human_feedback instead."
+	base := "Send a non-blocking notification to the human. Use this for FYIs, progress updates, alerts, and completion notices when you do not need to wait for a reply. If you need the human to answer before continuing, use human_feedback instead. Returns a JSON delivery result — status (delivered|partial|failed|no_recipient|no_channels_configured) plus delivered/skipped/failed channel lists. Report it honestly to the user: do NOT claim the message was sent if status is failed or no_channels_configured."
 
 	var labels []string
 	gmailOn := false
@@ -170,11 +180,46 @@ func gmailEnabled() bool {
 	return false
 }
 
-// gmailContentFromArgs builds the per-channel Gmail content from notify_via_bot
-// tool args, or nil if no email-specific fields were provided.
-func gmailContentFromArgs(args map[string]interface{}) *services.GmailContent {
+// htmlTagRe deterministically matches a real HTML start/end tag: "<" immediately
+// followed by a known tag name (optional "/" for a closing tag), then a tag
+// delimiter (space, "/", or ">"). Requiring the name right after "<" — with no
+// space — means prose like "a < b", "score <3", or "x<y" never matches, while
+// "<p>", "<div ...>", "<br/>", "</body>", "<!doctype html>" do.
+var htmlTagRe = regexp.MustCompile(`(?is)<(?:!doctype\s+html|/?(?:html|head|body|div|span|table|thead|tbody|tr|td|th|p|h[1-6]|br|hr|ul|ol|li|a|img|strong|em|b|i|u|style|center|font|pre|blockquote))[\s/>]`)
+
+// looksLikeHTML reports whether a string contains real HTML markup. Used to
+// rescue HTML an agent placed in email_body (plain) instead of email_html.
+func looksLikeHTML(s string) bool {
+	return htmlTagRe.MatchString(s)
+}
+
+// gmailContentFromArgs builds the per-channel Gmail content from notify_user
+// tool args, or (nil, nil) if no email-specific fields were provided. Returns an
+// error (surfaced to the agent) when a referenced file can't be read.
+func gmailContentFromArgs(args map[string]interface{}) (*services.GmailContent, error) {
 	subject, _ := args["email_subject"].(string)
 	body, _ := args["email_body"].(string)
+	html, _ := args["email_html"].(string)
+
+	// email_html_file: absolute path to an .html file on the server host; its
+	// contents become the HTML body (an alternative to inline email_html).
+	if hf, _ := args["email_html_file"].(string); strings.TrimSpace(hf) != "" {
+		data, err := os.ReadFile(strings.TrimSpace(hf))
+		if err != nil {
+			return nil, fmt.Errorf("email_html_file %q could not be read: %w", strings.TrimSpace(hf), err)
+		}
+		html = string(data)
+	}
+
+	// Robustness: agents frequently drop HTML into email_body (the plain field).
+	// If email_body clearly contains HTML and no explicit email_html was given,
+	// treat it as the HTML body so it renders instead of showing raw markup; the
+	// plain-text fallback then falls back to message_for_user.
+	if strings.TrimSpace(html) == "" && looksLikeHTML(body) {
+		html = body
+		body = ""
+	}
+
 	var attachments []string
 	if raw, ok := args["email_attachments"].([]interface{}); ok {
 		for _, a := range raw {
@@ -183,14 +228,15 @@ func gmailContentFromArgs(args map[string]interface{}) *services.GmailContent {
 			}
 		}
 	}
-	if strings.TrimSpace(subject) == "" && strings.TrimSpace(body) == "" && len(attachments) == 0 {
-		return nil
+	if strings.TrimSpace(subject) == "" && strings.TrimSpace(body) == "" && strings.TrimSpace(html) == "" && len(attachments) == 0 {
+		return nil, nil
 	}
 	return &services.GmailContent{
 		Subject:     strings.TrimSpace(subject),
 		Body:        body,
+		HTMLBody:    html,
 		Attachments: attachments,
-	}
+	}, nil
 }
 
 // GetToolCategory returns the category name for human tools
@@ -198,12 +244,26 @@ func GetHumanToolCategory() string {
 	return "human"
 }
 
+// WorkshopHumanToolNames is the SINGLE SOURCE OF TRUTH for which human tools a
+// workflow-builder / workshop / run agent may use. The workshop allow-list
+// (GetToolsForWorkshopMode) derives its human tools from here, and these are all
+// registered by createCustomTools(workflowMode=true) — so the allow-list can never
+// drift from what's actually registered (the drift that made notify_user invisible).
+//
+// human_feedback is intentionally excluded: the builder is already in a chat and
+// asks the user directly rather than blocking. notify_user is the non-blocking
+// outbound push (Slack/WhatsApp/Gmail); submit_human_answer resolves human_input
+// steps from launched workflows.
+func WorkshopHumanToolNames() []string {
+	return []string{"notify_user", "submit_human_answer"}
+}
+
 // CreateHumanToolExecutors creates the execution functions for human tools
 func CreateHumanToolExecutors() map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
 	executors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
 
 	executors["human_feedback"] = handleHumanFeedback
-	executors["notify_via_bot"] = handleNotifyUser
+	executors["notify_user"] = handleNotifyUser
 	executors["submit_human_answer"] = handleSubmitHumanAnswer
 
 	return executors
@@ -245,19 +305,54 @@ func handleNotifyUser(ctx context.Context, args map[string]interface{}) (string,
 	}
 
 	dest := NotificationDestinationFromContext(ctx)
-	if gc := gmailContentFromArgs(args); gc != nil {
+	gc, err := gmailContentFromArgs(args)
+	if err != nil {
+		return "", err // e.g. email_html_file not found — feed the problem back to the agent
+	}
+	if gc != nil {
 		if dest == nil {
 			dest = &services.NotificationDestination{}
 		}
 		dest.Content = &services.NotificationContent{Gmail: gc}
 	}
 
-	if err := notificationManager.SendUserNotification(ctx, messageForUser, "", dest); err != nil {
-		return "", fmt.Errorf("failed to notify user: %w", err)
+	// Synchronous send so we can report real per-channel delivery to the agent
+	// (and so the send isn't killed when this turn's context is cancelled).
+	results := notificationManager.SendUserNotificationSync(ctx, messageForUser, "", dest)
+
+	delivered := []string{}
+	skipped := []string{}
+	failed := map[string]string{}
+	for _, r := range results {
+		switch {
+		case !r.OK:
+			failed[r.Channel] = r.Err
+		case r.MsgID == "":
+			skipped = append(skipped, r.Channel) // connector had no destination for this recipient
+		default:
+			delivered = append(delivered, r.Channel)
+		}
+	}
+
+	var status string
+	switch {
+	case len(results) == 0:
+		status = "no_channels_configured" // nothing connected; not delivered anywhere
+	case len(delivered) == 0 && len(failed) == 0:
+		status = "no_recipient" // all connectors skipped (no destination resolved)
+	case len(delivered) == 0:
+		status = "failed"
+	case len(failed) > 0:
+		status = "partial"
+	default:
+		status = "delivered"
 	}
 
 	result := map[string]interface{}{
-		"status": "sent",
+		"status":    status,
+		"delivered": delivered,
+		"skipped":   skipped,
+		"failed":    failed,
 	}
 	b, _ := json.Marshal(result)
 	return string(b), nil

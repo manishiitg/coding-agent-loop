@@ -1177,7 +1177,7 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 		"You are the post-run monitor. A scheduled run of this workflow just finished: status=%q, run_folder=%q. "+
 			"Call get_reference_doc(kind=\"post-run-monitor\") and follow it exactly: read the run evidence, the plan changelog, and the eval/metric files; "+
 			"form a Bug verdict and a Goal verdict; update builder/improve.html (verdict pills, goal card, signal tiles, one run row, and a Monitor entry only if something is wrong); "+
-			"write builder/monitor-verdict.json; and if (and ONLY if) the state changed from the prior run recorded in the log — broke, recovered, or a new finding while still bad — call notify_via_bot once with your one-line headline. On a steady run, do not notify. "+
+			"write builder/monitor-verdict.json; and if (and ONLY if) the state changed from the prior run recorded in the log — broke, recovered, or a new finding while still bad — call notify_user once with your one-line headline. On a steady run, do not notify. "+
 			"Do NOT run the workflow, dispatch sub-agents, or fix anything — this is a read-only triage pass whose only side effect is that single transition notification.",
 		runStatus, runFolder)
 
@@ -1192,7 +1192,7 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 	}
 	s.sessionLogf(sctx, sessionID, "[MONITOR] post-run monitor completed for %s", sctx.Schedule.ID)
 	// The monitor agent owns its own notification: per its reference doc it calls
-	// notify_via_bot once, only on a state transition it reads from the durable
+	// notify_user once, only on a state transition it reads from the durable
 	// Pulse log. The scheduler no longer pushes a templated message — that avoids a
 	// double-send and lets the agent author the exact, nuanced sentence. It still
 	// writes builder/monitor-verdict.json as a machine signal for the UI.

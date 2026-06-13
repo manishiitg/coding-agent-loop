@@ -184,11 +184,11 @@ func TestCustomToolBundleIncludesHumanTools(t *testing.T) {
 	if _, ok := executors["human_feedback"]; ok {
 		t.Fatal("chat/workflow-builder bundle should not include blocking human_feedback executor")
 	}
-	if chatToolDefs["notify_via_bot"] {
-		t.Fatal("chat/workflow-builder bundle should not expose notify_via_bot")
+	if chatToolDefs["notify_user"] {
+		t.Fatal("chat/workflow-builder bundle should not expose notify_user")
 	}
-	if _, ok := executors["notify_via_bot"]; ok {
-		t.Fatal("chat/workflow-builder bundle should not include notify_via_bot executor")
+	if _, ok := executors["notify_user"]; ok {
+		t.Fatal("chat/workflow-builder bundle should not include notify_user executor")
 	}
 
 	workflowTools, workflowExecutors, workflowCategories := createCustomTools(true, "default", "tool-bundle-test-session")
@@ -199,7 +199,7 @@ func TestCustomToolBundleIncludesHumanTools(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"human_feedback", "notify_via_bot", "submit_human_answer"} {
+	for _, name := range []string{"human_feedback", "notify_user", "submit_human_answer"} {
 		if !workflowToolDefs[name] {
 			t.Fatalf("workflow bundle tool definitions missing %q", name)
 		}

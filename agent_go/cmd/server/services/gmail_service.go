@@ -306,6 +306,7 @@ func (g *GmailService) SendNotification(ctx context.Context, uniqueID string, me
 	// Typed Gmail content (if provided) overrides the derived subject/body and
 	// can carry attachments.
 	var attachments []string
+	var htmlBody string
 	if gc := gmailContentFrom(dest); gc != nil {
 		if s := strings.TrimSpace(gc.Subject); s != "" {
 			subject = s
@@ -313,10 +314,11 @@ func (g *GmailService) SendNotification(ctx context.Context, uniqueID string, me
 		if b := strings.TrimSpace(gc.Body); b != "" {
 			body = b
 		}
+		htmlBody = gc.HTMLBody
 		attachments = gc.Attachments
 	}
 
-	return g.deliver(ctx, to, subject, body, attachments)
+	return g.deliver(ctx, to, subject, body, htmlBody, attachments)
 }
 
 // SendUserNotification sends a non-blocking informational email.
@@ -334,6 +336,7 @@ func (g *GmailService) SendUserNotification(ctx context.Context, message string,
 		body += "\n\n" + c
 	}
 	var attachments []string
+	var htmlBody string
 	if gc := gmailContentFrom(dest); gc != nil {
 		if s := strings.TrimSpace(gc.Subject); s != "" {
 			subject = s
@@ -341,12 +344,13 @@ func (g *GmailService) SendUserNotification(ctx context.Context, message string,
 		if b := strings.TrimSpace(gc.Body); b != "" {
 			body = b
 		}
+		htmlBody = gc.HTMLBody
 		attachments = gc.Attachments
 	}
-	if strings.TrimSpace(body) == "" && len(attachments) == 0 {
+	if strings.TrimSpace(body) == "" && strings.TrimSpace(htmlBody) == "" && len(attachments) == 0 {
 		return "", nil
 	}
-	return g.deliver(ctx, to, subject, body, attachments)
+	return g.deliver(ctx, to, subject, body, htmlBody, attachments)
 }
 
 // send shells out to `gws gmail +send` and returns the sent message ID.
@@ -359,7 +363,12 @@ func (g *GmailService) send(ctx context.Context, to, subject, body string) (stri
 		gwsPath = "gws"
 	}
 
-	args := []string{"gmail", "+send", "--to", to, "--subject", subject, "--body", body, "--format", "json"}
+	// RFC 2047-encode the subject so non-ASCII (em dash, emoji, accents) renders
+	// correctly. gws passes --subject verbatim into the header and does NOT encode
+	// it, so a raw "Trading workflow — test" shows a broken character in the client.
+	// mime.QEncoding.Encode is a no-op for pure-ASCII subjects. (The attachment path,
+	// buildGmailMIME, already encodes — this brings the plain path in line.)
+	args := []string{"gmail", "+send", "--to", to, "--subject", mime.QEncoding.Encode("UTF-8", subject), "--body", body, "--format", "json"}
 	cmd := exec.CommandContext(ctx, gwsPath, args...)
 	cmd.Env = gmailChildEnv(cfg)
 
@@ -378,16 +387,18 @@ const maxGmailAttachmentBytes = 20 * 1024 * 1024 // 20 MB
 
 // deliver routes to the simple `+send` helper for plain text, or to the raw
 // MIME path when attachments are present (gws `+send` can't attach files).
-func (g *GmailService) deliver(ctx context.Context, to, subject, body string, attachments []string) (string, error) {
-	if len(attachments) == 0 {
+func (g *GmailService) deliver(ctx context.Context, to, subject, body, htmlBody string, attachments []string) (string, error) {
+	// The plain gws --body path can't carry HTML or attachments, so route through
+	// the raw-MIME path whenever either is present.
+	if htmlBody == "" && len(attachments) == 0 {
 		return g.send(ctx, to, subject, body)
 	}
-	return g.sendRaw(ctx, to, subject, body, attachments)
+	return g.sendRaw(ctx, to, subject, body, htmlBody, attachments)
 }
 
 // sendRaw builds an RFC 2822 MIME message (body + attachments) and posts it via
 // `gws gmail users messages send --json '{"raw": <base64url>}'`.
-func (g *GmailService) sendRaw(ctx context.Context, to, subject, body string, attachments []string) (string, error) {
+func (g *GmailService) sendRaw(ctx context.Context, to, subject, body, htmlBody string, attachments []string) (string, error) {
 	g.mu.RLock()
 	gwsPath := g.gwsPath
 	cfg := g.config
@@ -396,7 +407,7 @@ func (g *GmailService) sendRaw(ctx context.Context, to, subject, body string, at
 		gwsPath = "gws"
 	}
 
-	mimeBytes, err := buildGmailMIME(to, subject, body, attachments)
+	mimeBytes, err := buildGmailMIME(to, subject, body, htmlBody, attachments)
 	if err != nil {
 		return "", fmt.Errorf("build email: %w", err)
 	}
@@ -405,13 +416,18 @@ func (g *GmailService) sendRaw(ctx context.Context, to, subject, body string, at
 		return "", fmt.Errorf("marshal send request: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, gwsPath, "gmail", "users", "messages", "send", "--json", string(reqBody), "--format", "json")
+	// The raw users.messages.send API requires the userId path param ("me"); unlike
+	// the `+send` helper it is not implied, so without it gws returns 400
+	// "Required path parameter userId is missing".
+	cmd := exec.CommandContext(ctx, gwsPath, "gmail", "users", "messages", "send", "--params", `{"userId":"me"}`, "--json", string(reqBody), "--format", "json")
 	cmd.Env = gmailChildEnv(cfg)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("gws gmail users messages send failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+		// gws prints the API error JSON to stdout, so include both streams.
+		detail := strings.TrimSpace(stderr.String() + " " + stdout.String())
+		return "", fmt.Errorf("gws gmail users messages send failed: %w: %s", err, detail)
 	}
 	return parseGwsMessageID(stdout.Bytes()), nil
 }
@@ -419,19 +435,59 @@ func (g *GmailService) sendRaw(ctx context.Context, to, subject, body string, at
 // buildGmailMIME assembles a multipart/mixed RFC 2822 message: a UTF-8 text
 // body plus one base64 part per attachment. Attachment paths are read from the
 // host filesystem (the same host gws runs on), so any file type is supported.
-func buildGmailMIME(to, subject, body string, attachments []string) ([]byte, error) {
+func buildGmailMIME(to, subject, body, htmlBody string, attachments []string) ([]byte, error) {
 	parts := &bytes.Buffer{}
 	mw := multipart.NewWriter(parts)
 
-	tw, err := mw.CreatePart(textproto.MIMEHeader{
-		"Content-Type":              {"text/plain; charset=UTF-8"},
-		"Content-Transfer-Encoding": {"8bit"},
-	})
-	if err != nil {
-		return nil, err
-	}
-	if _, err := io.WriteString(tw, body); err != nil {
-		return nil, err
+	// Body part: a bare text/plain, or — when HTML is supplied — a
+	// multipart/alternative carrying both the plain fallback and the rich HTML
+	// (so clients without HTML rendering still show the text).
+	if strings.TrimSpace(htmlBody) != "" {
+		altBuf := &bytes.Buffer{}
+		altW := multipart.NewWriter(altBuf)
+		ptw, err := altW.CreatePart(textproto.MIMEHeader{
+			"Content-Type":              {"text/plain; charset=UTF-8"},
+			"Content-Transfer-Encoding": {"8bit"},
+		})
+		if err != nil {
+			return nil, err
+		}
+		if _, err := io.WriteString(ptw, body); err != nil {
+			return nil, err
+		}
+		htw, err := altW.CreatePart(textproto.MIMEHeader{
+			"Content-Type":              {"text/html; charset=UTF-8"},
+			"Content-Transfer-Encoding": {"8bit"},
+		})
+		if err != nil {
+			return nil, err
+		}
+		if _, err := io.WriteString(htw, htmlBody); err != nil {
+			return nil, err
+		}
+		if err := altW.Close(); err != nil {
+			return nil, err
+		}
+		aw, err := mw.CreatePart(textproto.MIMEHeader{
+			"Content-Type": {fmt.Sprintf("multipart/alternative; boundary=%q", altW.Boundary())},
+		})
+		if err != nil {
+			return nil, err
+		}
+		if _, err := aw.Write(altBuf.Bytes()); err != nil {
+			return nil, err
+		}
+	} else {
+		tw, err := mw.CreatePart(textproto.MIMEHeader{
+			"Content-Type":              {"text/plain; charset=UTF-8"},
+			"Content-Transfer-Encoding": {"8bit"},
+		})
+		if err != nil {
+			return nil, err
+		}
+		if _, err := io.WriteString(tw, body); err != nil {
+			return nil, err
+		}
 	}
 
 	var total int
@@ -553,9 +609,12 @@ func gmailSubject(message string) string {
 	if i := strings.IndexAny(line, "\r\n"); i >= 0 {
 		line = strings.TrimSpace(line[:i])
 	}
-	const maxLen = 120
-	if len(line) > maxLen {
-		line = strings.TrimSpace(line[:maxLen]) + "…"
+	// Only the auto-derived fallback is bounded (the agent's explicit email_subject
+	// is used verbatim, no truncation). Truncate by RUNES, never bytes, so a
+	// multi-byte char (em dash, emoji) is never cut in half into a broken character.
+	const maxRunes = 150
+	if r := []rune(line); len(r) > maxRunes {
+		line = strings.TrimSpace(string(r[:maxRunes])) + "…"
 	}
 	if line == "" {
 		return "[Agent] Action needed"

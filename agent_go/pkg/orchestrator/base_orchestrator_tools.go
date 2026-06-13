@@ -86,7 +86,7 @@ func ConvertOldFormatToNewFormat(enabledCategories []string, enabledTools []stri
 //   - "workspace_tools:read_workspace_file" → specific tool
 //   - "human_tools:*" → all tools from CreateHumanToolExecutors()
 //   - "human_tools:human_feedback" → specific blocking tool
-//   - "human_tools:notify_via_bot" → specific non-blocking bot notification tool
+//   - "human_tools:notify_user" → specific non-blocking bot notification tool
 //
 // Category identification uses the actual tool creation functions as the source of truth
 // If enabledTools is empty, return all tools (backward compatible - default behavior)

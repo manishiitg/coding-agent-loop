@@ -107,7 +107,7 @@ if len(config.SelectedServers) > 0 {
 - `workspace_tools`: All workspace tools (backward compatible - includes basic + advanced)
 - `workspace_basic`: Basic file/folder operations (list, read, update, diff_patch, regex_search, semantic_search, glob_discover, delete, move)
 - `workspace_advanced`: Advanced workspace tools (`execute_shell_command`, `diff_patch_workspace_file`, `read_image`, `read_video`, `read_pdf`, `generate_text_llm`, `search_web_llm`, plus the media generators `image_gen` / `image_edit` / `generate_video` / `text_to_speech` / `speech_to_text` / `generate_music`)
-- `human_tools`: `human_feedback` (blocking ask-the-user), `notify_via_bot` (non-blocking outbound push to Slack/WhatsApp/Gmail), `submit_human_answer` (resolves a launched workflow's human_input step)
+- `human_tools`: `human_feedback` (blocking ask-the-user), `notify_user` (non-blocking outbound push to Slack/WhatsApp/Gmail), `submit_human_answer` (resolves a launched workflow's human_input step)
 - `workspace_browser`: `agent_browser`
 
 ### 🛠️ Common Issues & Solutions
@@ -156,7 +156,7 @@ Tool availability is decided by **two independent gates**. Section 1 above is on
 | **1. Static config filter** | Which tools are *registered* on the agent | `enabled_custom_tools` / `selected_tools` → `FilterCustomToolsByCategory` / `ToolFilter` | step/workflow config |
 | **2. Dynamic workshop-mode allow-list** | Which *registered* tools the agent may use *this turn* | `GetToolsForWorkshopMode(mode)` → `Agent.SetToolAllowList` | current workshop mode (`workshop` / `run`) |
 
-A tool can be **registered** (layer 1) yet still **blocked** (layer 2). That is exactly what happened with `notify_via_bot`: it was registered via `human_tools:*`, but `GetToolsForWorkshopMode` did not list it, so every workflow-phase agent (including the post-run monitor) was denied it.
+A tool can be **registered** (layer 1) yet still **blocked** (layer 2). That is exactly what happened with `notify_user`: it was registered via `human_tools:*`, but `GetToolsForWorkshopMode` did not list it, so every workflow-phase agent (including the post-run monitor) was denied it.
 
 - **Layer 2 source of truth:** `GetToolsForWorkshopMode` in [`interactive_workshop_manager.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/interactive_workshop_manager.go). The `system` slice is "always available regardless of mode"; the `switch mode` adds the rest. To make a tool available to the builder/monitor, add its name here.
 

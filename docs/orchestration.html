@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCP Bridge Wiring & Tool Exposure · Runloop</title>
+<style>
+  :root{
+    --bg:#f7f7f5;--surface:#fff;--surface-2:#fbfbfa;--code:#f3f2ee;
+    --ink:#191917;--ink-2:#57564f;--ink-3:#8a897f;
+    --line:#eceae4;--line-2:#e0ded7;
+    --accent:#3a6ea5;--accent-bg:#eaf1f8;
+    --ok:#3f7a4a;--ok-bg:#eaf3ea;--warn:#9a6a05;--warn-bg:#fbf2dd;--bad:#b0322b;--bad-bg:#fbe9e6;
+    --shadow:0 1px 2px rgba(20,20,18,.04),0 4px 16px -8px rgba(20,20,18,.12);
+    --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;
+    --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;--r:12px;}
+  html[data-theme="dark"]{
+    --bg:#0a0a0c;--surface:#15151a;--surface-2:#101014;--code:#16161c;
+    --ink:#f1f0f4;--ink-2:#9b9ba6;--ink-3:#64646e;
+    --line:#212128;--line-2:#2e2e37;
+    --accent:#7fb0e8;--accent-bg:#13202e;
+    --ok:#5fd08a;--ok-bg:#0f2419;--warn:#e6b450;--warn-bg:#241d0c;--bad:#f47e76;--bad-bg:#2a1412;
+    --shadow:0 1px 0 rgba(255,255,255,.04) inset,0 1px 2px rgba(0,0,0,.45),0 10px 30px -14px rgba(0,0,0,.75);}
+  html{color-scheme:light}html[data-theme="dark"]{color-scheme:dark}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}
+  html[data-theme="dark"] body{background:radial-gradient(1100px 600px at 80% -10%, #16161e 0%, var(--bg) 55%) fixed}
+  a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+  code{font-family:var(--mono);font-size:.86em;background:var(--code);border:1px solid var(--line);border-radius:5px;padding:1px 5px}
+  .wrap{max-width:880px;margin:0 auto;padding:40px clamp(20px,5vw,40px) 120px}
+  .eyebrow{font:650 10.5px/1 var(--mono);letter-spacing:.16em;color:var(--ink-3);text-transform:uppercase}
+  h1{font-size:clamp(26px,4vw,36px);line-height:1.05;letter-spacing:-.03em;margin:11px 0 0;font-weight:680}
+  .sub{color:var(--ink-2);font-size:15.5px;margin-top:12px}
+  h2{font-size:22px;letter-spacing:-.02em;margin:48px 0 4px;font-weight:660;scroll-margin-top:16px}
+  h2 .n{font:650 12px/1 var(--mono);color:var(--accent);margin-right:9px}
+  h3{font-size:16px;margin:24px 0 6px;font-weight:640}
+  p{margin:10px 0}.lead{color:var(--ink-2)}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:13px;margin:16px 0}
+  .tile{background:var(--surface);border:1px solid var(--line-2);border-radius:11px;padding:15px 17px;box-shadow:var(--shadow)}
+  .tile h4{margin:0 0 6px;font-size:14px;font-weight:650;display:flex;align-items:center;gap:8px}
+  .tile p{font-size:13px;color:var(--ink-2);margin:5px 0 0}
+  .tag{font:700 9px/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;padding:3px 7px;border-radius:5px;white-space:nowrap}
+  .tag.acc{background:var(--accent-bg);color:var(--accent)}.tag.bad{background:var(--bad-bg);color:var(--bad)}.tag.ok{background:var(--ok-bg);color:var(--ok)}
+  .note{border-left:3px solid var(--accent);background:var(--accent-bg);border-radius:0 10px 10px 0;padding:13px 17px;margin:16px 0;font-size:14px}
+  .note.warn{border-left-color:var(--warn);background:var(--warn-bg)}
+  .note.bad{border-left-color:var(--bad);background:var(--bad-bg)}
+  .note.ok{border-left-color:var(--ok);background:var(--ok-bg)}
+  .note b{font-weight:660}
+  .pipe{display:flex;flex-wrap:wrap;align-items:stretch;gap:0;margin:18px 0}
+  .stage{flex:1;min-width:140px;background:var(--surface);border:1px solid var(--line-2);border-radius:11px;padding:13px 14px;box-shadow:var(--shadow)}
+  .stage .s-n{font:700 9px/1 var(--mono);color:var(--ink-3);letter-spacing:.08em}
+  .stage .s-t{font-weight:640;font-size:13px;margin-top:6px}
+  .stage .s-f{font:540 10px/1.3 var(--mono);color:var(--accent);margin-top:6px;word-break:break-word}
+  .arrow{align-self:center;color:var(--ink-3);font:600 11px/1 var(--mono);padding:0 7px;white-space:nowrap}
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font:650 10px/1.2 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
+  td code{font-size:12px}tbody tr:hover{background:var(--surface-2)}
+  pre{background:var(--code);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.55;color:var(--ink);margin:14px 0}
+  pre .c{color:var(--ink-3)}pre .k{color:var(--accent)}pre .b{color:var(--bad)}pre .g{color:var(--ok)}
+  .seq{counter-reset:step;margin:14px 0;padding:0;list-style:none}
+  .seq li{position:relative;padding:9px 0 9px 42px;border-left:2px solid var(--line);margin-left:14px}
+  .seq li::before{counter-increment:step;content:counter(step);position:absolute;left:-15px;top:8px;width:28px;height:28px;border-radius:50%;background:var(--accent-bg);color:var(--accent);font:700 12px/28px var(--mono);text-align:center;border:1px solid var(--line-2)}
+  .seq li b{color:var(--ink)}
+  .theme{position:fixed;top:16px;right:18px;z-index:20;background:var(--surface);border:1px solid var(--line-2);border-radius:999px;padding:8px 14px;font:600 12px/1 var(--sans);color:var(--ink-2);cursor:pointer;box-shadow:var(--shadow)}
+  footer{margin-top:56px;padding-top:18px;border-top:1px solid var(--line);font:540 12px/1.6 var(--mono);color:var(--ink-3)}
+</style>
+</head>
+<body>
+<button class="theme" onclick="var h=document.documentElement,t=h.getAttribute('data-theme')==='dark'?'light':'dark';h.setAttribute('data-theme',t)">◐ Theme</button>
+<div class="wrap">
+
+  <div class="eyebrow">Architecture · single topic</div>
+  <h1>MCP Bridge Wiring &amp; Tool Exposure</h1>
+  <p class="sub">How a CLI coding agent (Claude Code, etc.) discovers and calls tools through the MCP bridge — why it's fully dynamic even in the packaged DMG, and exactly why a registered tool can still be invisible to the agent.</p>
+
+  <!-- 01 -->
+  <h2 id="big"><span class="n">01</span>The big idea</h2>
+  <p class="lead">CLI agents never get tools as native function-calls. They run in <b>code-execution mode</b> and reach every tool through an HTTP <b>MCP bridge</b>. So the real question is never "does the agent have tool X" — it's "<b>is X published into the bridge for the exact agent instance this session is scoped to</b>". That scoping is the whole story.</p>
+
+  <!-- 02 -->
+  <h2 id="ship"><span class="n">02</span>What the DMG ships (static) vs what's dynamic</h2>
+  <div class="grid2">
+    <div class="tile"><h4>🖥️ Go agent server <span class="tag acc">static binary</span></h4><p>Holds the <b>live, per-session, per-agent</b> tool registry (<code>a.customTools</code>). Builds system prompts and answers <code>get_api_spec</code> + tool-execution HTTP calls.</p></div>
+    <div class="tile"><h4>🌉 <code>mcpbridge</code> <span class="tag acc">static binary</span></h4><p>In <code>~/go/bin/mcpbridge</code>. A generic stdio↔HTTP proxy. <b>Knows nothing about specific tools</b> — forwards calls, scoped by env headers, to the Go server.</p></div>
+    <div class="tile"><h4>⌨️ CLI agent <span class="tag acc">static binary</span></h4><p>Claude Code / Gemini / etc. Launched as a subprocess; connects to <code>mcpbridge</code> over stdio as an MCP server named <code>api-bridge</code>.</p></div>
+  </div>
+  <div class="note"><b>Nothing about tools is baked into the DMG.</b> The bridge and CLI are generic; the tool set is computed fresh, per session, by the Go server at runtime. A tool-registration fix ships by rebuilding the Go binary alone.</div>
+
+  <!-- 03 -->
+  <h2 id="wiring"><span class="n">03</span>Per-session wiring — <code>BuildBridgeMCPConfig()</code></h2>
+  <p class="lead">When a session uses a CLI provider, the Go server writes an MCP config telling the CLI to launch <code>mcpbridge</code>, passing everything through environment variables (<code>mcpagent/agent/coding_agents_bridge.go</code>):</p>
+  <table>
+    <thead><tr><th>Env var</th><th>Value</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td><code>MCP_API_URL</code></td><td>Go server HTTP base</td><td>Where the bridge forwards every call. Static across sessions.</td></tr>
+      <tr><td><code>MCP_SESSION_ID</code></td><td>this session</td><td>Sent as <code>X-Session-ID</code>; scopes to the session's registry &amp; allow-list.</td></tr>
+      <tr><td><code>MCP_VIRTUAL_SCOPE_ID</code></td><td>per-agent scope</td><td>Sent as <code>X-Virtual-Scope-ID</code>; routes <code>get_api_spec</code> to <b>one specific agent instance's</b> handler. <span class="tag bad">the crux</span></td></tr>
+      <tr><td><code>MCP_TOOLS</code></td><td>bridge tool defs (JSON)</td><td>The small <b>native</b> set the bridge advertises: <code>execute_shell_command</code>, <code>diff_patch_workspace_file</code>, <code>agent_browser</code>, <code>get_api_spec</code>. Everything else is discovered via <code>get_api_spec</code>.</td></tr>
+      <tr><td><code>MCP_API_TOKEN</code></td><td>auth token</td><td>Sent as <code>Authorization: Bearer …</code>.</td></tr>
+    </tbody>
+  </table>
+  <p>The bridge (<code>cmd/mcpbridge/main.go</code>) does exactly this on every call:</p>
+<pre>httpReq.Header.Set(<span class="g">"X-Virtual-Scope-ID"</span>, virtualScopeID) <span class="c">// main.go:114</span>
+httpReq.Header.Set(<span class="g">"X-Session-ID"</span>, sessionID)            <span class="c">// main.go:117</span></pre>
+
+  <!-- 04 -->
+  <h2 id="flow"><span class="n">04</span>Runtime flow</h2>
+  <div class="pipe">
+    <div class="stage"><div class="s-n">CLI</div><div class="s-t">Claude Code</div><div class="s-f">mcp__api-bridge__get_api_spec(category)</div></div>
+    <div class="arrow">→ stdio →</div>
+    <div class="stage"><div class="s-n">PROXY</div><div class="s-t">mcpbridge</div><div class="s-f">POST + X-Session-ID + X-Virtual-Scope-ID</div></div>
+    <div class="arrow">→ HTTP →</div>
+    <div class="stage"><div class="s-n">SERVER</div><div class="s-t">Go server</div><div class="s-f">resolve session + scope → one Agent instance</div></div>
+    <div class="arrow">→</div>
+    <div class="stage"><div class="s-n">REGISTRY</div><div class="s-t">that agent's a.customTools</div><div class="s-f">handleGetAPISpec → buildToolIndex</div></div>
+  </div>
+  <p><code>get_api_spec</code> is <b>not</b> a canned list in the bridge — every call round-trips to the Go server, which reads the <i>current</i> <code>a.customTools</code> of the <b>scoped agent instance</b> and returns it, grouped by category (category = the "server" name). The CLI's system prompt is built the same way (<code>buildToolIndex</code> + inlined pre-discovered specs) and rebuilt when the registry changes.</p>
+
+  <!-- 05 -->
+  <h2 id="dynamic"><span class="n">05</span>How it stays in sync — the dynamic link</h2>
+  <p class="lead">One shared structure connects the workflow code and the bridge: <code>Agent.customTools</code>. The workflow layer writes it; the bridge layer reads it.</p>
+<pre><span class="c">// workflow layer (agent_go) registers →</span>
+RegisterCustomTool(name, def, params, exec, category)  →  a.customTools[name] = {def, category}
+<span class="c">// bridge layer (mcpagent) reads, on demand and at prompt-build →</span>
+UpdateCodeExecutionRegistry()  →  buildToolIndex()              <span class="c">// the get_api_spec index</span>
+                               →  buildPreDiscoveredToolSpecs() <span class="c">// full specs inlined in the system prompt</span>
+                               →  rebuildSystemPromptWithUpdatedToolStructure()</pre>
+  <p>For a tool to be callable by a CLI agent, all three must hold for the <b>scoped</b> agent:</p>
+  <div class="grid2">
+    <div class="tile"><h4>1 · Registered</h4><p>In that agent's <code>a.customTools</code> with a non-empty category.</p></div>
+    <div class="tile"><h4>2 · Allow-listed</h4><p><code>GetToolsForWorkshopMode</code> → <code>SetToolAllowList</code>; gates both the index and execution.</p></div>
+    <div class="tile"><h4>3 · Prompt rebuilt</h4><p><code>UpdateCodeExecutionRegistry</code> triggers it; <code>SetToolAllowList</code> alone does not.</p></div>
+  </div>
+
+  <!-- 06 -->
+  <h2 id="bug"><span class="n">06</span>How this explains the bug</h2>
+  <p class="lead">Symptom: a tool (<code>notify_user</code>) is registered in the session, yet the CLI agent can't see or call it; <code>get_api_spec</code> shows <code>human_tools:[submit_human_answer]</code> only.</p>
+  <ol class="seq">
+    <li><b>The CLI sees one agent's registry.</b> <code>get_api_spec</code> is tagged with <code>X-Virtual-Scope-ID</code> → the Go server returns the <code>a.customTools</code> of <b>that one scoped instance</b> (the conversational/workshop "parent" agent), not the union of all agents in the session.</li>
+    <li><b>The tool registered on a different instance.</b> Logs show <code>Registered custom tool … notify …</code> for the session — but on the <b>child / step-execution agents</b> (their default tool set is <code>workspace_advanced:* + human_tools:*</code>), not the scoped parent.</li>
+    <li><b>So it's "registered" and "invisible" at once.</b> The scope routing is exactly the mechanism that lets both be true: present on the children, absent from the parent the CLI is pinned to.</li>
+    <li><b>The monitor is the clean proof.</b> Its scoped agent registered <b>zero</b> human tools, so <code>notify</code> could never appear there regardless.</li>
+  </ol>
+  <div class="note bad"><b>Root cause:</b> <code>notify_user</code> is not in the <code>a.customTools</code> of the <b>scoped (parent/conversational) agent</b> that serves <code>get_api_spec</code>. The allow-list fix (gate 2) was necessary but not sufficient — the tool must be <b>registered onto that parent agent</b> (gate 1).</div>
+
+  <!-- 07 -->
+  <h2 id="fix"><span class="n">07</span>The fix</h2>
+  <p class="lead">Register the human <i>notification</i> tool onto the workshop/phase (parent) agent's tool set, so it lands in that agent's <code>a.customTools</code> → appears in <code>get_api_spec</code> → callable.</p>
+  <p>The parent agent's tools come from <code>PreparePhaseAgentTools()</code> (<code>base_orchestrator_tools.go</code>), which selects <code>["workspace_advanced:execute_shell_command", "human_tools:*"]</code>. The fix ensures the phase-agent path actually carries <code>notify_user</code> through to registration on the parent (not only <code>submit_human_answer</code>), and that it is allow-listed for <code>workshop</code>/<code>run</code> modes.</p>
+  <div class="note ok"><b>Verify with the diagnostic, not the agent:</b> the temporary <code>🔬 [TOOLINDEX_DIAG]</code> log prints the scoped agent's full <code>a.customTools</code> with <code>agent_ptr</code>, category, and allow-state — confirming <code>notify_user</code> is present on the instance that serves <code>get_api_spec</code>. Then in a fresh chat: <code>get_api_spec</code> should list it under <code>human_tools</code>, and a call should execute.</p></div>
+
+  <!-- 08 -->
+  <h2 id="debug"><span class="n">08</span>Debug checklist — "agent can't call tool X"</h2>
+  <ol class="seq">
+    <li><b>Never trust the agent's self-report.</b> Have it run <code>get_api_spec</code> and show the category, or read the server log.</li>
+    <li><b>Which instance?</b> Match the <code>agent_ptr</code> / scope serving <code>get_api_spec</code> against where the tool was <code>Registered custom tool</code>. Mismatch → scope/instance bug (this case).</li>
+    <li><b>Registered on the scoped agent?</b> <code>TOOLINDEX_DIAG</code> / <code>Built tool index</code> for that instance.</li>
+    <li><b>Allow-listed?</b> <code>Applied tool allow list</code> / <code>buildToolIndex blocked custom tools</code>.</li>
+    <li><b>Mis-routed call?</b> <code>server=&lt;guess&gt; … not found in tool-to-server mapping</code> means the tool wasn't cleanly in the spec under its category, so the agent invented a server.</li>
+    <li><b>Right binary running?</b> Confirm the desktop app version and that the server restarted.</li>
+  </ol>
+
+  <!-- 09 -->
+  <h2 id="files"><span class="n">09</span>Key files</h2>
+  <table>
+    <thead><tr><th>Concern</th><th>File · symbol</th></tr></thead>
+    <tbody>
+      <tr><td>Bridge MCP config + scope headers</td><td><code>mcpagent/agent/coding_agents_bridge.go</code> · <code>BuildBridgeMCPConfig</code></td></tr>
+      <tr><td>Bridge proxy (stdio→HTTP)</td><td><code>mcpagent/cmd/mcpbridge/main.go</code></td></tr>
+      <tr><td><code>get_api_spec</code> handler + index</td><td><code>mcpagent/agent/code_execution_tools.go</code> · <code>handleGetAPISpec</code>, <code>buildToolIndex</code></td></tr>
+      <tr><td>Parent (phase) agent tools</td><td><code>agent_go/pkg/orchestrator/base_orchestrator_tools.go</code> · <code>PreparePhaseAgentTools</code></td></tr>
+      <tr><td>Child (step) agent tools</td><td><code>…/step_based_workflow/controller_agent_factory.go</code> · <code>prepareCustomTools</code></td></tr>
+      <tr><td>Tool registration on an agent</td><td><code>agent_go/pkg/orchestrator/base_orchestrator_agent_factory.go</code> · <code>registerCustomToolsForAgent</code></td></tr>
+      <tr><td>Workshop-mode allow-list</td><td><code>…/step_based_workflow/interactive_workshop_manager.go</code> · <code>GetToolsForWorkshopMode</code></td></tr>
+      <tr><td>Notify tool</td><td><code>agent_go/cmd/server/virtual-tools/human_tools.go</code> · <code>notify_user</code></td></tr>
+    </tbody>
+  </table>
+
+  <footer>Runloop · MCP bridge wiring &amp; tool exposure · file: docs/orchestration.html · toggle theme top-right</footer>
+</div>
+</body>
+</html>

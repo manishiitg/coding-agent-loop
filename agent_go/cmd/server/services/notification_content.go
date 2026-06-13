@@ -19,8 +19,9 @@ type NotificationContent struct {
 // plain message; Attachments → none.
 type GmailContent struct {
 	Subject     string
-	Body        string
-	Attachments []string // workspace-relative file paths (see Gmail raw send)
+	Body        string   // plain-text body (also the fallback when HTMLBody is set)
+	HTMLBody    string   // optional rich HTML body; sent as a text/html alternative
+	Attachments []string // absolute file paths on the server host (see Gmail raw send)
 }
 
 // gmailContentFrom returns the Gmail content slice from a destination, or nil.

@@ -1057,14 +1057,8 @@ func GetToolsForWorkshopMode(mode string) []string {
 		// Secret management tools. Global secrets are read-only; workflow/user
 		// encrypted stores are writable when the corresponding tools are registered.
 		"list_secrets", "set_workflow_secret", "delete_workflow_secret", "set_user_secret", "delete_user_secret",
-		// Human tools. human_feedback is omitted — the builder is already in a
-		// chat, so it asks users directly rather than blocking for input.
-		// notify_via_bot IS available like any other workspace tool: it's an
-		// outbound, non-blocking push to the user's connected channels
-		// (Slack/WhatsApp/Gmail). The post-run monitor uses it to alert on a
-		// state transition, and the builder may use it the same way.
-		// submit_human_answer resolves human_input steps from launched workflows.
-		"notify_via_bot", "submit_human_answer",
+		// Human tools are appended below from virtualtools.WorkshopHumanToolNames()
+		// (single source shared with registration, so the allow-list can't drift).
 		// Browser (if registered)
 		"agent_browser",
 		// mcpagent virtual tools (get_api_spec, get_prompt, get_resource)
@@ -1075,6 +1069,9 @@ func GetToolsForWorkshopMode(mode string) []string {
 		// sub-agents even though the restriction is intended only for the phase agent LLM.
 		"call_sub_agent", "call_generic_agent", "get_sub_agent_conversation", "get_route_description",
 	}
+	// Human tools from the single source shared with registration (createCustomTools),
+	// so the allow-list and what's actually registered cannot drift apart.
+	system = append(system, virtualtools.WorkshopHumanToolNames()...)
 
 	// Read-only info tools — safe in all modes
 	readOnly := []string{
@@ -1987,6 +1984,7 @@ This is the one-line-per-category map. For full signatures, parameters, when-to-
 - **Schedule management**: `+"`create_schedule`"+`, `+"`create_calendar_schedule`"+`, `+"`update_schedule`"+`, `+"`delete_schedule`"+`, `+"`trigger_schedule`"+`, `+"`get_schedule_runs`"+`. Cron / message-authoring rules, workshop run vs optimizer scheduling, the `+"`/auto-improve`"+` exception, infinite-loop prevention rules, and unattended-message discipline — all live in the `+"`workflow-tools`"+` ref doc. Workflow schedules always use the workshop path; do not create direct `+"`mode=\"workflow\"`"+` schedules. **Whenever you create a recurring schedule, also pair it with a backup** so unattended runs persist their state off-box — see `+"`get_reference_doc(kind=\"backup-strategy\")`"+`.
 {{end}}
 - **Shell & discovery**: `+"`execute_shell_command`"+`, `+"`human_feedback`"+`.
+- **Notify the user**: `+"`notify_user`"+` sends a non-blocking message to the user's connected channels (Slack / WhatsApp / email) — use it for FYIs, progress, alerts, or completion notices when you don't need a reply (use `+"`human_feedback`"+` when you do). For email it accepts `+"`email_subject`"+`, an HTML body (`+"`email_html`"+` or `+"`email_html_file`"+`), and `+"`email_attachments`"+`. It returns per-channel delivery status — report failures honestly. Workflow STEPS can also message the user this way: keep `+"`human_tools`"+` in the step's `+"`enabled_custom_tools`"+` (it's in the default set) and have the step call `+"`notify_user`"+`.
 - **Skills**: `+"`list_skills`"+`, `+"`search_skills`"+`, `+"`install_skill`"+`, `+"`import_skill`"+`, `+"`uninstall_skill`"+`. Skills live at `+"`{{.AbsDocsRoot}}/skills/{folder}/SKILL.md`"+` (workspace root, shared across workflows). `+"`update_workflow_config(add_skills=[...])`"+` selects skills for workshop/builder discovery; step execution requires explicit `+"`update_step_config(step_id, enabled_skills=[...])`"+`. Shared workflow-specific HOW belongs in `+"`learnings/_global/SKILL.md`"+`.
 - **Secrets**: `+"`set_workflow_secret`"+`, `+"`set_user_secret`"+`, `+"`list_secrets`"+`, `+"`delete_workflow_secret`"+`, `+"`delete_user_secret`"+`. Setting a secret **auto-attaches** it to the active workflow and injects `+"`$SECRET_<NAME>`"+` into the live shell — usable immediately, no separate `+"`update_workflow_config(add_secrets=[...])`"+` call needed (that's only for attaching an already-stored secret, e.g. a global or a reusable user secret you didn't just set). Three buckets (workflow / user / global). Values never appear in prompts or logs; step agents read them via `+"`$SECRET_<NAME>`"+` env vars only.
 
@@ -3554,7 +3552,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"enabled_custom_tools": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Workspace/custom tools to enable (format: 'category:tool' or 'category:*'). Categories: workspace_advanced (execute_shell_command, diff_patch_workspace_file, read_image, read_video, read_pdf, generate_text_llm, search_web_llm), human_tools (human_feedback, notify_via_bot), workspace_browser (agent_browser). Example: ['workspace_advanced:execute_shell_command', 'workspace_advanced:diff_patch_workspace_file']",
+					"description": "Workspace/custom tools to enable (format: 'category:tool' or 'category:*'). Categories: workspace_advanced (execute_shell_command, diff_patch_workspace_file, read_image, read_video, read_pdf, generate_text_llm, search_web_llm), human_tools (human_feedback, notify_user), workspace_browser (agent_browser). Example: ['workspace_advanced:execute_shell_command', 'workspace_advanced:diff_patch_workspace_file']",
 				},
 				"enabled_skills": map[string]interface{}{
 					"type":        "array",
@@ -4811,7 +4809,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						suggestions++
 						result.WriteString("⚠️ No `enabled_custom_tools` set — default includes **all** workspace_advanced + human_tools:\n")
 						result.WriteString("   - `workspace_advanced:*` → execute_shell_command, diff_patch_workspace_file, read_image, read_video, read_pdf, generate_text_llm, search_web_llm, generate_video, text_to_speech, speech_to_text, generate_music\n")
-						result.WriteString("   - `human_tools:*` → human_feedback, notify_via_bot\n")
+						result.WriteString("   - `human_tools:*` → human_feedback, notify_user\n")
 						result.WriteString("   Consider: does this step need `read_image`? `read_video`? `read_pdf`? `generate_text_llm`? `search_web_llm`? `human_feedback`?\n")
 						result.WriteString("   If not, set `enabled_custom_tools` to only what's needed, e.g.:\n")
 						result.WriteString("   `[\"workspace_advanced:execute_shell_command\", \"workspace_advanced:diff_patch_workspace_file\"]`\n")

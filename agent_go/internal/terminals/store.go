@@ -42,6 +42,7 @@ type Snapshot struct {
 	DisplayMeta       string     `json:"display_meta,omitempty"`
 	TmuxSession       string     `json:"tmux_session,omitempty"`
 	Content           string     `json:"content"`
+	ContentSource     string     `json:"content_source,omitempty"`
 	Rows              []Row      `json:"rows"`
 	ChunkIndex        int        `json:"chunk_index"`
 	Active            bool       `json:"active"`
@@ -729,6 +730,12 @@ func stripTerminalToolLines(content string) string {
 }
 
 func redactTerminalToolText(value string) string {
+	return RedactSensitiveTerminalText(value)
+}
+
+// RedactSensitiveTerminalText removes common secret shapes before terminal text
+// is surfaced outside the terminal package.
+func RedactSensitiveTerminalText(value string) string {
 	value = regexpMCPToken.ReplaceAllString(value, "$1[redacted]")
 	value = regexpBearerToken.ReplaceAllString(value, "$1[redacted]")
 	value = regexpSecretEnv.ReplaceAllString(value, "$1[redacted]")

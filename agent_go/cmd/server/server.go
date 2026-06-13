@@ -238,6 +238,9 @@ type StreamingAPI struct {
 	// View-only runtime terminal snapshots for coding-agent TUI streams.
 	terminalStore *terminals.Store
 
+	// Raw tmux pipe-pane recorder used for append/replay terminal display.
+	terminalPipeRecorder *terminalPipeRecorder
+
 	// Workflow orchestrator configuration
 	provider      string
 	model         string
@@ -998,7 +1001,13 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 	eventStore := events.NewEventStore(maxSessionEvents)
 	terminalStore := terminals.NewStore()
-	eventStore.SetEventAddedCallback(terminalStore.HandleEvent)
+	terminalPipeRecorder := newTerminalPipeRecorder()
+	eventStore.SetEventAddedCallback(func(sessionID string, event events.Event) {
+		terminalStore.HandleEvent(sessionID, event)
+		if terminalPipeRecorder != nil {
+			terminalPipeRecorder.ObserveSnapshots(terminalStore.List(sessionID))
+		}
+	})
 	log.Printf("📡 EventStore retention: max %d events per session", maxSessionEvents)
 
 	// Initialize the operator-state store (bot connector configs + user
@@ -1073,6 +1082,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		inspectorStore:               inspector.NewStore(),
 		eventStore:                   eventStore,
 		terminalStore:                terminalStore,
+		terminalPipeRecorder:         terminalPipeRecorder,
 		provider:                     config.Provider,
 		model:                        config.ModelID,
 		mcpConfigPath:                configPath,

@@ -1620,6 +1620,7 @@ function terminalWithCachedBody(base: TerminalSnapshot, detail: TerminalSnapshot
   return {
     ...snapshot,
     content: detail.content || base.content || '',
+    content_source: detail.content_source || base.content_source,
     rows: Array.isArray(detail.rows) && detail.rows.length > 0 ? detail.rows : base.rows,
   }
 }
@@ -1962,13 +1963,14 @@ const ColoredText: React.FC<{ rawText: string; className?: string }> = ({ rawTex
 
 const XtermTerminalPane: React.FC<{
   content: string
+  contentSource?: string
   className?: string
   contentRef: React.RefObject<HTMLDivElement | null>
   xtermTheme: ITheme
   xtermProfile: (typeof XTERM_PROFILE_OPTIONS)[TerminalColorScheme]
   onViewportStickChange?: (isNearBottom: boolean) => void
   debugLabel?: string
-}> = ({ content, className, contentRef, xtermTheme, xtermProfile, onViewportStickChange, debugLabel }) => {
+}> = ({ content, contentSource, className, contentRef, xtermTheme, xtermProfile, onViewportStickChange, debugLabel }) => {
   const mountRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<XTerm | null>(null)
   const lastContentRef = useRef<string>('')
@@ -1993,9 +1995,10 @@ const XtermTerminalPane: React.FC<{
       scrollable: typeof buffer?.baseY === 'number' ? buffer.baseY > 0 : undefined,
       content_lines: terminalTextLineCount(content),
       content_bytes: content.length,
+      content_source: contentSource,
       ...extra,
     })
-  }, [content, debugLabel])
+  }, [content, contentSource, debugLabel])
 
   useEffect(() => {
     const mount = mountRef.current
@@ -2087,14 +2090,16 @@ const XtermTerminalPane: React.FC<{
   useEffect(() => {
     const term = terminalRef.current
     if (!term) return
-    if (content === lastContentRef.current) return
+    const previousContent = lastContentRef.current
+    if (content === previousContent) return
     const buffer = term.buffer.active
     const distanceFromBottom = Math.max(0, buffer.baseY - buffer.viewportY)
     const shouldStickToBottom = distanceFromBottom <= 1
     const previousBaseY = buffer.baseY
     const previousViewportY = buffer.viewportY
+    const appendOnly = previousContent !== '' && content.startsWith(previousContent)
+    const writeContent = appendOnly ? content.slice(previousContent.length) : content
     lastContentRef.current = content
-    term.reset()
     const restoreScroll = () => {
       if (shouldStickToBottom) {
         term.scrollToBottom()
@@ -2114,15 +2119,19 @@ const XtermTerminalPane: React.FC<{
         previousDistanceFromBottom: distanceFromBottom,
         restoredViewportY: term.buffer.active.viewportY,
         restoredDistanceFromBottom: Math.max(0, term.buffer.active.baseY - term.buffer.active.viewportY),
+        appendOnly,
         shouldStickToBottom,
       })
     }
-    if (!content) {
+    if (!appendOnly) {
+      term.reset()
+    }
+    if (!writeContent) {
       afterWrite()
       return
     }
-    term.write(content.replace(/\r?\n/g, '\r\n'), afterWrite)
-  }, [content, logXtermDebug])
+    term.write(normalizeXtermWriteContent(writeContent, contentSource), afterWrite)
+  }, [content, contentSource, logXtermDebug])
 
   return (
     <div
@@ -2134,6 +2143,13 @@ const XtermTerminalPane: React.FC<{
       <div ref={mountRef} className="h-full w-full [&_.xterm]:h-full" />
     </div>
   )
+}
+
+function normalizeXtermWriteContent(content: string, contentSource?: string): string {
+  if (contentSource === 'tmux_pipe') {
+    return content
+  }
+  return content.replace(/\r?\n/g, '\r\n')
 }
 
 function normalizeTerminalRows(rows: TerminalSnapshot['rows'] | undefined): TerminalRow[] {
@@ -4460,6 +4476,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                     <XtermTerminalPane
                       contentRef={terminalOutputRef as React.RefObject<HTMLDivElement | null>}
                       content={selectedTerminalDisplayContent}
+                      contentSource={selectedTerminalView?.content_source}
                       xtermTheme={XTERM_THEMES[terminalColorScheme]}
                       xtermProfile={XTERM_PROFILE_OPTIONS[terminalColorScheme]}
                       onViewportStickChange={handleXtermViewportStickChange}

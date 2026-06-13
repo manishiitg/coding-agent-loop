@@ -89,6 +89,7 @@ type terminalPaneCaptureStats struct {
 	CollapsedLines int
 	CollapsedBytes int
 	Duration       time.Duration
+	ContentSource  string
 }
 
 type terminalPaneRuntimeStats struct {
@@ -126,6 +127,9 @@ func (api *StreamingAPI) handleListTerminals(w http.ResponseWriter, r *http.Requ
 		if api.canAccessTerminalSession(r, snapshot.SessionID) {
 			filtered = append(filtered, api.terminalSnapshotForList(r.Context(), planTypes, snapshot, contentMode))
 		}
+	}
+	if api.terminalPipeRecorder != nil {
+		api.terminalPipeRecorder.ObserveSnapshots(filtered)
 	}
 
 	_ = json.NewEncoder(w).Encode(listTerminalsResponse{
@@ -195,13 +199,32 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 	if shouldCaptureTmux {
 		ctx, cancel := context.WithTimeout(r.Context(), terminalTmuxActionTimeout)
 		preserveScrollback := shouldPreserveCapturedTerminalScrollback(r)
+		var displayContent string
+		var displayStats terminalPaneCaptureStats
+		var haveDisplayContent bool
+		if wantsScreenTerminalContent(r) && api.terminalPipeRecorder != nil {
+			pipeContent, pipeStats, ok, pipeErr := api.terminalPipeRecorder.Content(ctx, snapshot)
+			if pipeErr == nil && ok {
+				displayContent = pipeContent
+				displayStats = pipeStats
+				haveDisplayContent = true
+			} else if debugTerminal && pipeErr != nil {
+				log.Printf("[TERMINAL_DEBUG] pipe recorder fallback source=%q terminal_id=%q tmux_session=%q err=%q", debugSource, snapshot.TerminalID, snapshot.TmuxSession, pipeErr.Error())
+			}
+		}
 		content, stats, err := captureTerminalPaneForDetail(ctx, snapshot, r)
+		if stats.ContentSource == "" {
+			stats.ContentSource = "tmux_capture"
+		}
 		var runtimeStats terminalPaneRuntimeStats
 		var haveRuntimeStats bool
 		if err == nil {
 			if debugTerminal {
 				runtimeStats, haveRuntimeStats = inspectTerminalPaneRuntimeStats(ctx, snapshot.TmuxSession)
 				writeTerminalDebugHeaders(w, stats, preserveScrollback, runtimeStats, haveRuntimeStats)
+				if haveDisplayContent {
+					terminalPipeRecorderDebugHeaders(w, displayStats)
+				}
 			}
 			var refreshed terminals.Snapshot
 			var ok bool
@@ -213,8 +236,17 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 			if ok {
 				snapshot = refreshed
 			}
+			if haveDisplayContent {
+				snapshot.Content = displayContent
+				snapshot.Rows = nil
+				snapshot.ContentSource = displayStats.ContentSource
+				snapshot.ChunkIndex += displayStats.RawBytes
+				snapshot.UpdatedAt = time.Now()
+			} else {
+				snapshot.ContentSource = stats.ContentSource
+			}
 			if debugTerminal {
-				log.Printf("[TERMINAL_DEBUG] capture ok source=%q terminal_id=%q tmux_session=%q requested_lines=%d capture_lines=%d raw_lines=%d raw_bytes=%d collapsed_lines=%d collapsed_bytes=%d duration_ms=%d preserve_scrollback=%t refreshed_chunk=%d history_limit=%q history_size=%q alternate_on=%q pane_height=%q pane_width=%q pane_in_mode=%q scroll_position=%q",
+				log.Printf("[TERMINAL_DEBUG] capture ok source=%q terminal_id=%q tmux_session=%q requested_lines=%d capture_lines=%d raw_lines=%d raw_bytes=%d collapsed_lines=%d collapsed_bytes=%d duration_ms=%d preserve_scrollback=%t content_source=%q display_bytes=%d refreshed_chunk=%d history_limit=%q history_size=%q alternate_on=%q pane_height=%q pane_width=%q pane_in_mode=%q scroll_position=%q",
 					debugSource,
 					snapshot.TerminalID,
 					snapshot.TmuxSession,
@@ -226,6 +258,8 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 					stats.CollapsedBytes,
 					stats.Duration.Milliseconds(),
 					preserveScrollback,
+					snapshot.ContentSource,
+					displayStats.RawBytes,
 					snapshot.ChunkIndex,
 					runtimeStats.HistoryLimit,
 					runtimeStats.HistorySize,
@@ -649,7 +683,7 @@ func captureTerminalPaneLines(ctx context.Context, tmuxSession string, lines int
 }
 
 func captureTerminalPaneLinesWithStats(ctx context.Context, tmuxSession string, lines int) (string, terminalPaneCaptureStats, error) {
-	stats := terminalPaneCaptureStats{RequestedLines: lines}
+	stats := terminalPaneCaptureStats{RequestedLines: lines, ContentSource: "tmux_capture"}
 	tmuxSession = strings.TrimSpace(tmuxSession)
 	if tmuxSession == "" {
 		return "", stats, fmt.Errorf("tmux session is required")
@@ -720,6 +754,7 @@ func inspectTerminalPaneRuntimeStats(ctx context.Context, tmuxSession string) (t
 }
 
 func writeTerminalDebugHeaders(w http.ResponseWriter, stats terminalPaneCaptureStats, preserveScrollback bool, runtimeStats terminalPaneRuntimeStats, haveRuntimeStats bool) {
+	w.Header().Set("X-Runloop-Terminal-Content-Source", stats.ContentSource)
 	w.Header().Set("X-Runloop-Terminal-Requested-Lines", strconv.Itoa(stats.RequestedLines))
 	w.Header().Set("X-Runloop-Terminal-Capture-Lines", strconv.Itoa(stats.CaptureLines))
 	w.Header().Set("X-Runloop-Terminal-Raw-Lines", strconv.Itoa(stats.RawLines))

@@ -492,6 +492,7 @@ export interface TerminalSnapshot {
   display_title?: string
   display_meta?: string
   tmux_session?: string
+  content_source?: 'tmux_pipe' | 'tmux_capture' | 'event_stream' | string
   // Rich step context — populated by the orchestrator's bridge for
   // workflow-step terminals. Used to render the transport-class chip
   // and the "step 3/7 · attempt 1 · triggered by X" meta row.

@@ -2101,7 +2101,10 @@ const XtermTerminalPane: React.FC<{
         return
       }
       const nextBaseY = term.buffer.active.baseY
-      term.scrollToLine(Math.max(0, nextBaseY - distanceFromBottom))
+      // When the user is reading older output, keep the absolute viewport line
+      // stable across live refreshes. Preserving distance-from-bottom would drag
+      // the viewport downward every time new accumulated screen lines append.
+      term.scrollToLine(Math.max(0, Math.min(previousViewportY, nextBaseY)))
     }
     const afterWrite = () => {
       restoreScroll()
@@ -2109,6 +2112,8 @@ const XtermTerminalPane: React.FC<{
         previousBaseY,
         previousViewportY,
         previousDistanceFromBottom: distanceFromBottom,
+        restoredViewportY: term.buffer.active.viewportY,
+        restoredDistanceFromBottom: Math.max(0, term.buffer.active.baseY - term.buffer.active.viewportY),
         shouldStickToBottom,
       })
     }

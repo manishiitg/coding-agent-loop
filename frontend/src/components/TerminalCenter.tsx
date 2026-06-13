@@ -69,8 +69,9 @@ interface TerminalCenterProps {
 }
 
 const TERMINAL_REFRESH_HISTORY_LINES = 10000
-const TERMINAL_ACTIVE_MAIN_HISTORY_LINES = 600
-const TERMINAL_ACTIVE_STEP_HISTORY_LINES = 1200
+const TERMINAL_ACTIVE_DISPLAY_HISTORY_LINES = 10000
+const TERMINAL_ACTIVE_RAIL_MAIN_HISTORY_LINES = 600
+const TERMINAL_ACTIVE_RAIL_STEP_HISTORY_LINES = 1200
 const TERMINAL_DETAIL_CACHE_LIMIT = 40
 const MAX_PRIOR_ARCHIVED_TURNS_TO_INLINE = 3
 const PROMPT_COMPLETION_FALLBACK_SECONDS = 60
@@ -2397,13 +2398,18 @@ function isSyntheticTerminal(terminal: TerminalSnapshot): boolean {
   return true
 }
 
-function terminalTmuxDetailOptions(terminal: TerminalSnapshot): { content: 'screen' | 'history'; lines?: number } | undefined {
+function terminalTmuxDetailOptions(terminal: TerminalSnapshot, displayDetail = false): { content: 'screen' | 'history'; lines?: number } | undefined {
   if (!terminal.tmux_session) return undefined
   const state = terminalState(terminal)
   if (terminal.active && state !== 'stale' && state !== 'failed') {
+    const lines = displayDetail
+      ? TERMINAL_ACTIVE_DISPLAY_HISTORY_LINES
+      : isMainAgentTerminal(terminal)
+        ? TERMINAL_ACTIVE_RAIL_MAIN_HISTORY_LINES
+        : TERMINAL_ACTIVE_RAIL_STEP_HISTORY_LINES
     return {
       content: 'screen',
-      lines: isMainAgentTerminal(terminal) ? TERMINAL_ACTIVE_MAIN_HISTORY_LINES : TERMINAL_ACTIVE_STEP_HISTORY_LINES,
+      lines,
     }
   }
   return { content: 'history' }
@@ -3341,7 +3347,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     detailRequestSeqRef.current = requestSeq
     let cancelled = false
     probeInFlightRef.current = true
-    const detailOptions = terminalTmuxDetailOptions(selectedTerminal)
+    const detailOptions = terminalTmuxDetailOptions(selectedTerminal, true)
     agentApi.getTerminal(selectedTerminal.terminal_id, detailOptions)
       .then(detail => {
         if (!cancelled && detailRequestSeqRef.current === requestSeq && terminalPaneKey(detail) === selectedTerminalKey) {
@@ -3437,7 +3443,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       // concurrent capture-pane calls on the same tmux session race.
       if (probeInFlightRef.current) return
       probeInFlightRef.current = true
-      const detailOptions = terminalTmuxDetailOptions(selectedTerminalView)
+      const detailOptions = terminalTmuxDetailOptions(selectedTerminalView, true)
       void agentApi.getTerminal(terminalId, detailOptions).then(detail => {
         cacheTerminalDetail(detail)
         // The detail carries the freshest active/state — react to it directly
@@ -3465,7 +3471,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       for (const terminal of candidates) {
         if (!terminal?.terminal_id || !terminal.tmux_session || seen.has(terminal.terminal_id)) continue
         seen.add(terminal.terminal_id)
-        const detailOptions = terminalTmuxDetailOptions(terminal)
+        const detailOptions = terminalTmuxDetailOptions(terminal, true)
         void agentApi.getTerminal(terminal.terminal_id, detailOptions)
           .then(detail => {
             cacheTerminalDetail(detail)

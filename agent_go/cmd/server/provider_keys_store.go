@@ -70,6 +70,16 @@ type StoredAzureConfig struct {
 
 // SaveProviderKeys encrypts and stores provider API keys to the workspace.
 func SaveProviderKeys(ctx context.Context, keys *StoredProviderKeys) error {
+	if keys == nil {
+		return nil
+	}
+	if !hasStoredProviderKeys(keys) {
+		if err := deleteWorkspaceFile(ctx, providerKeysFilePath); err != nil {
+			return fmt.Errorf("failed to delete empty provider keys file: %w", err)
+		}
+		return nil
+	}
+
 	plaintext, err := json.Marshal(keys)
 	if err != nil {
 		return fmt.Errorf("failed to marshal keys: %w", err)
@@ -86,6 +96,47 @@ func SaveProviderKeys(ctx context.Context, keys *StoredProviderKeys) error {
 	}
 
 	return nil
+}
+
+func hasStoredProviderKeys(keys *StoredProviderKeys) bool {
+	if keys == nil {
+		return false
+	}
+
+	stringValues := []string{
+		keys.OpenRouter,
+		keys.OpenAI,
+		keys.Anthropic,
+		keys.ZAI,
+		keys.Kimi,
+		keys.Vertex,
+		keys.GeminiCLI,
+		keys.CodexCLI,
+		keys.CursorCLI,
+		keys.AgyCLI,
+		keys.OpenCodeCLI,
+		keys.MiniMax,
+		keys.MiniMaxCodingPlan,
+		keys.ElevenLabs,
+		keys.Deepgram,
+	}
+	for _, value := range stringValues {
+		if strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	if keys.Bedrock != nil && strings.TrimSpace(keys.Bedrock.Region) != "" {
+		return true
+	}
+	if keys.Azure != nil && strings.TrimSpace(keys.Azure.Endpoint) != "" && strings.TrimSpace(keys.Azure.APIKey) != "" {
+		return true
+	}
+	for _, value := range keys.OpenCodeCLISubKeys {
+		if strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // LoadProviderKeys reads and decrypts provider API keys from the workspace.
@@ -532,6 +583,7 @@ func mergeStoredProviderKeyValues(existing, incoming *StoredProviderKeys) *Store
 		ElevenLabs:  pick(existing.ElevenLabs, incoming.ElevenLabs),
 		Deepgram:    pick(existing.Deepgram, incoming.Deepgram),
 	}
+	merged.OpenCodeCLISubKeys = mergeStoredProviderKeyMap(existing.OpenCodeCLISubKeys, incoming.OpenCodeCLISubKeys)
 
 	// Bedrock / Azure: incoming wins if present, else keep existing
 	if incoming.Bedrock != nil {
@@ -545,6 +597,32 @@ func mergeStoredProviderKeyValues(existing, incoming *StoredProviderKeys) *Store
 		merged.Azure = existing.Azure
 	}
 
+	return merged
+}
+
+func mergeStoredProviderKeyMap(existing, incoming map[string]string) map[string]string {
+	if len(existing) == 0 && len(incoming) == 0 {
+		return nil
+	}
+
+	merged := make(map[string]string, len(existing)+len(incoming))
+	for key, value := range existing {
+		if strings.TrimSpace(value) != "" {
+			merged[key] = value
+		}
+	}
+	for key, value := range incoming {
+		if value == "__DELETE__" {
+			delete(merged, key)
+			continue
+		}
+		if strings.TrimSpace(value) != "" {
+			merged[key] = value
+		}
+	}
+	if len(merged) == 0 {
+		return nil
+	}
 	return merged
 }
 

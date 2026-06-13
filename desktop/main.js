@@ -5,6 +5,7 @@ const http = require('http');
 const https = require('https');
 const detect = require('detect-port');
 const fs = require('fs');
+const crypto = require('crypto');
 
 // Dynamic ports (assigned at runtime)
 let dynamicAgentPort = 0;
@@ -13,6 +14,7 @@ let dynamicWorkspacePort = 0;
 const HEALTH_TIMEOUT_MS = 90000;
 const HEALTH_POLL_MS = 500;
 const HEALTH_INITIAL_DELAY_MS = 3000;
+const DEFAULT_AUTH_SECRET = 'dev-secret-change-in-production';
 
 // Enforce dark mode for system UI (title bar, context menus)
 nativeTheme.themeSource = 'dark';
@@ -205,6 +207,141 @@ async function resolveDocsDir() {
 function saveSettings(settings) {
   const configPath = path.join(app.getPath('userData'), 'config.json');
   fs.writeFileSync(configPath, JSON.stringify(settings, null, 2));
+}
+
+function generateAuthSecret() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+function hasStoredProviderKeysPayload(keys) {
+  if (!keys || typeof keys !== 'object') return false;
+
+  const stringFields = [
+    'openrouter',
+    'openai',
+    'anthropic',
+    'zai',
+    'kimi',
+    'vertex',
+    'gemini_cli',
+    'codex_cli',
+    'cursor_cli',
+    'agy_cli',
+    'opencode_cli',
+    'minimax',
+    'minimax_coding_plan',
+    'elevenlabs',
+    'deepgram',
+  ];
+  if (stringFields.some((field) => typeof keys[field] === 'string' && keys[field].trim())) {
+    return true;
+  }
+  if (keys.bedrock && typeof keys.bedrock.region === 'string' && keys.bedrock.region.trim()) {
+    return true;
+  }
+  if (
+    keys.azure &&
+    typeof keys.azure.endpoint === 'string' &&
+    keys.azure.endpoint.trim() &&
+    typeof keys.azure.api_key === 'string' &&
+    keys.azure.api_key.trim()
+  ) {
+    return true;
+  }
+  if (keys.opencode_cli_sub_keys && typeof keys.opencode_cli_sub_keys === 'object') {
+    return Object.values(keys.opencode_cli_sub_keys).some((value) => typeof value === 'string' && value.trim());
+  }
+  return false;
+}
+
+function decryptProviderKeysContentWithSecret(content, secret) {
+  const data = Buffer.from(content, 'base64');
+  const nonceSize = 12;
+  const tagSize = 16;
+  if (data.length < nonceSize + tagSize) throw new Error('encrypted provider keys payload is too short');
+
+  const nonce = data.subarray(0, nonceSize);
+  const ciphertext = data.subarray(nonceSize, data.length - tagSize);
+  const tag = data.subarray(data.length - tagSize);
+  const key = crypto.createHmac('sha256', Buffer.from(secret)).update('secrets-encryption-key').digest();
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, nonce);
+  decipher.setAAD(Buffer.from('provider-keys'));
+  decipher.setAuthTag(tag);
+  const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
+  return JSON.parse(plaintext);
+}
+
+function encryptProviderKeysPayloadWithSecret(payload, secret) {
+  const plaintext = Buffer.from(JSON.stringify(payload));
+  const nonce = crypto.randomBytes(12);
+  const key = crypto.createHmac('sha256', Buffer.from(secret)).update('secrets-encryption-key').digest();
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, nonce);
+  cipher.setAAD(Buffer.from('provider-keys'));
+  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([nonce, ciphertext, tag]).toString('base64');
+}
+
+function removeFileIfPresent(filePath) {
+  try {
+    fs.rmSync(filePath, { force: true });
+  } catch (err) {
+    diagLog('[main] Failed to remove empty provider keys file:', String(err && err.message ? err.message : err));
+  }
+}
+
+function inspectProviderKeysFileForStartup(providerKeysPath) {
+  if (!fs.existsSync(providerKeysPath)) return { needsUnlock: false };
+
+  let content = '';
+  try {
+    content = fs.readFileSync(providerKeysPath, 'utf8').trim();
+  } catch (err) {
+    diagLog('[main] Failed to inspect provider keys file:', String(err && err.message ? err.message : err));
+    return { needsUnlock: true };
+  }
+
+  if (!content) {
+    removeFileIfPresent(providerKeysPath);
+    return { needsUnlock: false };
+  }
+
+  try {
+    const plaintext = JSON.parse(content);
+    if (!hasStoredProviderKeysPayload(plaintext)) {
+      removeFileIfPresent(providerKeysPath);
+      return { needsUnlock: false };
+    }
+    return { needsUnlock: false, migratableKeys: plaintext };
+  } catch (_) {}
+
+  try {
+    const plaintext = decryptProviderKeysContentWithSecret(content, DEFAULT_AUTH_SECRET);
+    if (!hasStoredProviderKeysPayload(plaintext)) {
+      removeFileIfPresent(providerKeysPath);
+      return { needsUnlock: false };
+    }
+    return { needsUnlock: false, migratableKeys: plaintext };
+  } catch (_) {}
+
+  return { needsUnlock: true };
+}
+
+function persistAuthSecret(settings, authSecret) {
+  saveSettings({ ...settings, authSecret });
+  process.env.AUTH_SECRET = authSecret;
+  return authSecret;
+}
+
+function persistGeneratedAuthSecret(settings) {
+  return persistAuthSecret(settings, generateAuthSecret());
+}
+
+function migrateProviderKeysToGeneratedSecret(providerKeysPath, keys, settings) {
+  const generated = generateAuthSecret();
+  const encoded = encryptProviderKeysPayloadWithSecret(keys, generated);
+  fs.writeFileSync(providerKeysPath, encoded);
+  return persistAuthSecret(settings, generated);
 }
 
 async function clearFrontendCacheIfVersionChanged() {
@@ -1228,19 +1365,27 @@ app.whenReady().then(async () => {
     return;
   }
 
-  // Prompt the user for AUTH_SECRET on first launch (regardless of whether
-  // provider-api-keys.json exists). 'unlock' mode if a file is already there,
-  // 'create' mode if not. The secret is used to encrypt/decrypt the workspace
-  // provider key store. Actual API keys (gemini, openai, etc.) are added later
-  // via the in-app provider auth flow.
+  // Prompt only when an existing provider key file needs a prior AUTH_SECRET.
+  // Fresh workspaces get an app-generated secret so first launch stays quiet.
   const settings = loadSettings();
   if (!settings.authSecret && !process.env.AUTH_SECRET) {
     const providerKeysPath = path.join(resolvedDocsDir, 'config', 'provider-api-keys.json');
-    const mode = fs.existsSync(providerKeysPath) ? 'unlock' : 'create';
-    const entered = await promptAuthSecret(mode);
-    if (entered) {
-      saveSettings({ ...settings, authSecret: entered });
-      process.env.AUTH_SECRET = entered;
+    const providerKeysState = inspectProviderKeysFileForStartup(providerKeysPath);
+    if (providerKeysState.migratableKeys) {
+      try {
+        migrateProviderKeysToGeneratedSecret(providerKeysPath, providerKeysState.migratableKeys, settings);
+      } catch (err) {
+        diagLog('[main] Failed to migrate provider keys:', String(err && err.message ? err.message : err));
+        process.env.AUTH_SECRET = DEFAULT_AUTH_SECRET;
+      }
+    } else if (providerKeysState.needsUnlock) {
+      const entered = await promptAuthSecret('unlock');
+      if (entered) {
+        saveSettings({ ...settings, authSecret: entered });
+        process.env.AUTH_SECRET = entered;
+      }
+    } else {
+      persistGeneratedAuthSecret(settings);
     }
   } else if (settings.authSecret) {
     process.env.AUTH_SECRET = settings.authSecret;

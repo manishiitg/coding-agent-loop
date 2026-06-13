@@ -105,9 +105,10 @@ if len(config.SelectedServers) > 0 {
 
 **Internal Category Names:**
 - `workspace_tools`: All workspace tools (backward compatible - includes basic + advanced)
-- `workspace_basic`: Basic file/folder operations (9 tools: list, read, update, diff_patch, regex_search, semantic_search, glob_discover, delete, move)
-- `workspace_advanced`: Advanced workspace tools (4 tools: execute_shell_command, read_image, fetch_web_content, read_pdf)
-- `human_tools`: Interaction tools (human_feedback)
+- `workspace_basic`: Basic file/folder operations (list, read, update, diff_patch, regex_search, semantic_search, glob_discover, delete, move)
+- `workspace_advanced`: Advanced workspace tools (`execute_shell_command`, `diff_patch_workspace_file`, `read_image`, `read_video`, `read_pdf`, `generate_text_llm`, `search_web_llm`, plus the media generators `image_gen` / `image_edit` / `generate_video` / `text_to_speech` / `speech_to_text` / `generate_music`)
+- `human_tools`: `human_feedback` (blocking ask-the-user), `notify_via_bot` (non-blocking outbound push to Slack/WhatsApp/Gmail), `submit_human_answer` (resolves a launched workflow's human_input step)
+- `workspace_browser`: `agent_browser`
 
 ### 🛠️ Common Issues & Solutions
 
@@ -143,5 +144,37 @@ The system implements a robust three-tier configuration model (Servers -> MCP To
 - **Centralized Enforcement**: `ToolFilter` provides a single source of truth for tool visibility during both initialization and discovery.
 - **Normalization**: Robust handling of hyphen/underscore differences (e.g., `google-sheets` vs `google_sheets`) prevents common configuration mismatches.
 - **Explicit Protocol Support**: `controller_agent_factory.go` explicitly recognizes the `NO_SERVERS` flag (via `mcpclient.NoServers`), correctly interpreting it as an instruction to bind to zero external servers without error.
+
+---
+
+## 2. The two filtering layers (don't confuse them)
+
+Tool availability is decided by **two independent gates**. Section 1 above is only the first. A tool must pass **both** to be usable.
+
+| Layer | Scope | Where | Keyed on |
+|-------|-------|-------|----------|
+| **1. Static config filter** | Which tools are *registered* on the agent | `enabled_custom_tools` / `selected_tools` → `FilterCustomToolsByCategory` / `ToolFilter` | step/workflow config |
+| **2. Dynamic workshop-mode allow-list** | Which *registered* tools the agent may use *this turn* | `GetToolsForWorkshopMode(mode)` → `Agent.SetToolAllowList` | current workshop mode (`workshop` / `run`) |
+
+A tool can be **registered** (layer 1) yet still **blocked** (layer 2). That is exactly what happened with `notify_via_bot`: it was registered via `human_tools:*`, but `GetToolsForWorkshopMode` did not list it, so every workflow-phase agent (including the post-run monitor) was denied it.
+
+- **Layer 2 source of truth:** `GetToolsForWorkshopMode` in [`interactive_workshop_manager.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/interactive_workshop_manager.go). The `system` slice is "always available regardless of mode"; the `switch mode` adds the rest. To make a tool available to the builder/monitor, add its name here.
+
+## 3. How CLI agents see tools — the mcpbridge gate
+
+CLI providers (`claude-code`, `gemini-cli`, `codex-cli`, `cursor-cli`, `agy-cli`, `opencode-cli`) do **not** receive tools as native tool-calling functions. They run in code-execution mode and reach every tool through the **api-bridge** (`mcp__api-bridge__*`), discovered at use-time via `get_api_spec`. So "do you have tool X?" asked of a CLI agent is unreliable — bridged tools aren't in its native list; it only sees them through `get_api_spec`.
+
+Crucially, the **layer-2 allow-list is the single gate for the bridge too**, enforced in two spots in `mcpagent` — both reading the same `sessionToolAllowLists[sessionID]` map (populated by `SetToolAllowList` → `codeexec.SetSessionToolAllowList`):
+
+1. **Discovery** — `agent/code_execution_tools.go` (`Respect toolAllowList … only include allowed custom tools in the index`): a blocked tool never appears in `get_api_spec`.
+2. **Execution** — `agent/codeexec/registry.go` `CallCustomToolWithSession`: a blocked tool's HTTP call returns `tool "<name>" is not available in the current workshop mode`.
+
+**Consequence:** adding a tool to `GetToolsForWorkshopMode` is sufficient for CLI agents — it makes the tool both *visible* in `get_api_spec` and *callable* via the bridge. No separate bridge registration is needed (registration already happened in layer 1 via `UpdateCodeExecutionRegistry`).
+
+### Debugging checklist — "the agent says it doesn't have tool X"
+
+1. Is X **registered**? (in the `human_tools`/`workspace_*` pool and `enabled_custom_tools`/`PreparePhaseAgentTools`) — layer 1.
+2. Is X in **`GetToolsForWorkshopMode`** for the current mode? — layer 2. *(Most common cause.)*
+3. For CLI agents, don't trust the agent's self-report — have it call `get_api_spec` (visibility) or invoke the tool (execution). The error `not available in the current workshop mode` means layer 2 is blocking it.
 
 ---

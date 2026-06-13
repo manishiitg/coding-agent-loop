@@ -187,7 +187,10 @@ func (api *StreamingAPI) captureChatHistoryTerminalSnapshots(sessionID string, r
 	}
 
 	candidates := make([]terminals.Snapshot, 0)
-	if api.terminalStore != nil {
+	if snapshot, ok := api.captureChatHistoryRuntimeTmuxSnapshot(sessionID, runtime); ok {
+		candidates = append(candidates, snapshot)
+	}
+	if len(candidates) == 0 && api.terminalStore != nil {
 		for _, snapshot := range api.terminalStore.List(sessionID) {
 			if strings.TrimSpace(snapshot.Content) == "" || !chatHistoryTerminalSnapshotIsTmux(snapshot) {
 				continue
@@ -196,11 +199,6 @@ func (api *StreamingAPI) captureChatHistoryTerminalSnapshots(sessionID string, r
 			if ok {
 				candidates = append(candidates, prepared)
 			}
-		}
-	}
-	if len(candidates) == 0 {
-		if snapshot, ok := api.captureChatHistoryRuntimeTmuxSnapshot(sessionID, runtime); ok {
-			candidates = append(candidates, snapshot)
 		}
 	}
 	if len(candidates) == 0 {

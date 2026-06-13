@@ -1343,8 +1343,22 @@ func terminalContentTail(content string, maxBytes int) string {
 	}
 
 	tail := content[start:]
+	tail = trimLeadingPartialTerminalControl(tail)
 	if newline := strings.IndexByte(tail, '\n'); newline >= 0 && newline < 4096 {
 		tail = tail[newline+1:]
 	}
 	return "[terminal output truncated; showing latest output]\n" + tail
+}
+
+func trimLeadingPartialTerminalControl(content string) string {
+	// A byte tail can start in the middle of an OSC title sequence:
+	// ESC ] 0;title BEL. If the ESC ] prefix is cut off, xterm renders
+	// "0;title" as visible text. Drop that orphaned fragment before replaying
+	// the saved tail.
+	if bel := strings.IndexByte(content, '\a'); bel >= 0 && bel < 1024 {
+		if esc := strings.IndexByte(content[:bel], '\x1b'); esc < 0 {
+			return content[bel+1:]
+		}
+	}
+	return content
 }

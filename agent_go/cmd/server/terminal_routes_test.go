@@ -112,6 +112,21 @@ func TestTerminalRoutesListCapsContentButGetKeepsFullContent(t *testing.T) {
 	}
 }
 
+func TestTerminalContentTailDropsPartialOSCTitle(t *testing.T) {
+	fragment := "0;bad-title\a\x1b[31mactual output\x1b[0m"
+	got := terminalContentTail(strings.Repeat("x", 100)+fragment, len(fragment))
+
+	if !strings.HasPrefix(got, "[terminal output truncated; showing latest output]\n") {
+		t.Fatalf("expected truncation marker, got %q", got)
+	}
+	if strings.Contains(got, "0;bad-title") || strings.Contains(got, "\a") {
+		t.Fatalf("expected orphaned OSC title fragment to be trimmed, got %q", got)
+	}
+	if !strings.Contains(got, "\x1b[31mactual output\x1b[0m") {
+		t.Fatalf("expected remaining ANSI output, got %q", got)
+	}
+}
+
 func TestTerminalCollapseBlankRunsKeepsCodexSeparatorTail(t *testing.T) {
 	input := strings.Join([]string{
 		"→ tool: api-bridge.execute_shell_command({\"command\":\"update plan\"})",

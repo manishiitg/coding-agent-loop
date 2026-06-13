@@ -102,7 +102,7 @@ func TestCaptureChatHistoryTerminalSnapshotsRedactsAndPreservesAnsi(t *testing.T
 	}
 }
 
-func TestCaptureChatHistoryTerminalSnapshotsFallsBackToRuntimeTmux(t *testing.T) {
+func TestCaptureChatHistoryTerminalSnapshotsPrefersRuntimeTmuxCapture(t *testing.T) {
 	oldCapture := captureChatHistoryTerminalPaneLines
 	captureChatHistoryTerminalPaneLines = func(_ context.Context, tmuxSession string, lines int) (string, error) {
 		if tmuxSession != "live-runtime-pane" {
@@ -116,7 +116,19 @@ func TestCaptureChatHistoryTerminalSnapshotsFallsBackToRuntimeTmux(t *testing.T)
 	defer func() { captureChatHistoryTerminalPaneLines = oldCapture }()
 
 	sessionID := "chat-runtime-terminal"
-	api := &StreamingAPI{}
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	if _, ok := store.UpsertStaticSnapshot(sessionID, terminals.Snapshot{
+		OwnerID:       "main:" + sessionID,
+		ExecutionKind: "main_agent",
+		StepTransport: "tmux",
+		ContentSource: "tmux_pipe",
+		TmuxSession:   "live-runtime-pane",
+		Content:       "[terminal output truncated; showing latest output]\n0;bad-title\a\x1b[13;2Hpipe output\n",
+		UpdatedAt:     time.Now(),
+	}); !ok {
+		t.Fatal("expected pipe terminal snapshot to be stored")
+	}
 	runtime := &ChatHistoryAgentRuntime{
 		Kind:          "coding_agent",
 		Provider:      "codex-cli",
@@ -145,6 +157,9 @@ func TestCaptureChatHistoryTerminalSnapshotsFallsBackToRuntimeTmux(t *testing.T)
 	}
 	if !strings.Contains(got.Content, "\x1b[32m") || !strings.Contains(got.Content, "runtime output") {
 		t.Fatalf("expected ANSI runtime terminal content, got %q", got.Content)
+	}
+	if strings.Contains(got.Content, "pipe output") || strings.Contains(got.Content, "0;bad-title") {
+		t.Fatalf("expected runtime capture to replace raw pipe snapshot, got %q", got.Content)
 	}
 	if strings.Contains(got.Content, "super-secret") || !strings.Contains(got.Content, "MCP_API_TOKEN=[redacted]") {
 		t.Fatalf("runtime fallback snapshot was not redacted: %q", got.Content)

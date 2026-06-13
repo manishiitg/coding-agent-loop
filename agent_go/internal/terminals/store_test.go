@@ -1579,6 +1579,65 @@ func TestStoreRefreshContentDoesNotRefreshUpdatedAtWhenPaneUnchanged(t *testing.
 	}
 }
 
+func TestStoreAccumulatesShortTmuxScreenSnapshots(t *testing.T) {
+	store := NewStore()
+	metadata := map[string]interface{}{"execution_kind": "main_agent", "scope": "main", "tmux_session": "mlp-claude-main-test"}
+	store.HandleEvent("session-1", terminalEventWithMetadata("main:session-1", "old answer\nshared prompt", 10, metadata, time.Now()))
+	store.HandleEvent("session-1", terminalEventWithMetadata("main:session-1", "shared prompt\nnew answer", 11, metadata, time.Now().Add(time.Second)))
+
+	snapshot, ok := store.Get("session-1:main:session-1")
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	want := "old answer\nshared prompt\nnew answer"
+	if snapshot.Content != want {
+		t.Fatalf("content = %q, want accumulated scrollback %q", snapshot.Content, want)
+	}
+}
+
+func TestStoreDoesNotAccumulateShortNonTmuxSnapshots(t *testing.T) {
+	store := NewStore()
+	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", "old screen", 10))
+	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", "new screen", 11))
+
+	snapshot, ok := store.Get("session-1:exec-1")
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if snapshot.Content != "new screen" {
+		t.Fatalf("content = %q, want latest non-tmux screen", snapshot.Content)
+	}
+}
+
+func TestStoreRefreshContentPreservesShortTmuxScrollback(t *testing.T) {
+	store := NewStore()
+	metadata := map[string]interface{}{"execution_kind": "workflow_step", "scope": "workflow_step", "tmux_session": "mlp-codex-cli-int-test"}
+	store.HandleEvent("session-1", terminalEventWithMetadata("exec-1", "old output\ncurrent prompt", 10, metadata, time.Now()))
+
+	refreshed, ok := store.RefreshContent("session-1:exec-1", "current prompt\nfresh output")
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	want := "old output\ncurrent prompt\nfresh output"
+	if refreshed.Content != want {
+		t.Fatalf("content = %q, want accumulated scrollback %q", refreshed.Content, want)
+	}
+}
+
+func TestStoreReplaceContentDoesNotPreserveTmuxScrollback(t *testing.T) {
+	store := NewStore()
+	metadata := map[string]interface{}{"execution_kind": "workflow_step", "scope": "workflow_step", "tmux_session": "mlp-codex-cli-int-test"}
+	store.HandleEvent("session-1", terminalEventWithMetadata("exec-1", "old output", 10, metadata, time.Now()))
+
+	refreshed, ok := store.ReplaceContent("session-1:exec-1", "fresh authoritative capture")
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if refreshed.Content != "fresh authoritative capture" {
+		t.Fatalf("content = %q, want replacement", refreshed.Content)
+	}
+}
+
 func TestStoreRefreshContentCompletesCapturedIdleWorkflowStep(t *testing.T) {
 	store := NewStore()
 	terminalID := "session-1:workflow-step:exec-step-check-reddit-1:step-check-reddit"

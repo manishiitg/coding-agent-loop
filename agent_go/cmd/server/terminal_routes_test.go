@@ -675,8 +675,51 @@ func TestTerminalRoutesGetTerminalCapturesRunningTmuxScrollableHistory(t *testin
 	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
 		t.Fatalf("decode visible response: %v", err)
 	}
-	if response.Content != "current visible pane" {
-		t.Fatalf("terminal content = %q, want visible content", response.Content)
+	if response.Content != "loading\nold frame\ncurrent visible pane" {
+		t.Fatalf("terminal content = %q, want accumulated visible content", response.Content)
+	}
+}
+
+func TestTerminalRoutesGetTerminalDebugHeadersIncludeTmuxStats(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-debug"
+	terminalID := sessionID + ":workflow-step:review-plan"
+	tmuxSession := "mlp-claude-code-debug"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, "old pane", 2))
+
+	oldRunOutput := runTerminalTmuxOutputCommand
+	runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
+		switch {
+		case len(args) > 0 && args[0] == "capture-pane":
+			return "fresh pane", nil
+		case len(args) > 0 && args[0] == "display-message":
+			return "20000\t4\t1\t23\t70\t0\t0", nil
+		default:
+			t.Fatalf("unexpected tmux args: %v", args)
+			return "", nil
+		}
+	}
+	defer func() { runTerminalTmuxOutputCommand = oldRunOutput }()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/terminals/"+terminalID+"?content=screen&debug=1", nil)
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
+	rec := httptest.NewRecorder()
+	api.handleGetTerminal(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("X-Runloop-Terminal-Preserve-Scrollback"); got != "true" {
+		t.Fatalf("preserve scrollback header = %q, want true", got)
+	}
+	if got := rec.Header().Get("X-Runloop-Terminal-Tmux-History-Size"); got != "4" {
+		t.Fatalf("tmux history size header = %q, want 4", got)
+	}
+	if got := rec.Header().Get("X-Runloop-Terminal-Tmux-Alternate-On"); got != "1" {
+		t.Fatalf("tmux alternate header = %q, want 1", got)
+	}
+	if got := rec.Header().Get("X-Runloop-Terminal-Collapsed-Lines"); got != "1" {
+		t.Fatalf("collapsed lines header = %q, want 1", got)
 	}
 }
 

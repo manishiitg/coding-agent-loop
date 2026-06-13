@@ -91,6 +91,16 @@ type terminalPaneCaptureStats struct {
 	Duration       time.Duration
 }
 
+type terminalPaneRuntimeStats struct {
+	HistoryLimit   string
+	HistorySize    string
+	AlternateOn    string
+	PaneHeight     string
+	PaneWidth      string
+	PaneInMode     string
+	ScrollPosition string
+}
+
 // handleListTerminals returns current view-only terminal snapshots.
 // GET /api/terminals?session_id=<session>
 func (api *StreamingAPI) handleListTerminals(w http.ResponseWriter, r *http.Request) {
@@ -184,14 +194,27 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 	}
 	if shouldCaptureTmux {
 		ctx, cancel := context.WithTimeout(r.Context(), terminalTmuxActionTimeout)
+		preserveScrollback := shouldPreserveCapturedTerminalScrollback(r)
 		content, stats, err := captureTerminalPaneForDetail(ctx, snapshot, r)
-		cancel()
+		var runtimeStats terminalPaneRuntimeStats
+		var haveRuntimeStats bool
 		if err == nil {
-			if refreshed, ok := api.terminalStore.RefreshContent(snapshot.TerminalID, content); ok {
+			if debugTerminal {
+				runtimeStats, haveRuntimeStats = inspectTerminalPaneRuntimeStats(ctx, snapshot.TmuxSession)
+				writeTerminalDebugHeaders(w, stats, preserveScrollback, runtimeStats, haveRuntimeStats)
+			}
+			var refreshed terminals.Snapshot
+			var ok bool
+			if preserveScrollback {
+				refreshed, ok = api.terminalStore.RefreshContent(snapshot.TerminalID, content)
+			} else {
+				refreshed, ok = api.terminalStore.ReplaceContent(snapshot.TerminalID, content)
+			}
+			if ok {
 				snapshot = refreshed
 			}
 			if debugTerminal {
-				log.Printf("[TERMINAL_DEBUG] capture ok source=%q terminal_id=%q tmux_session=%q requested_lines=%d capture_lines=%d raw_lines=%d raw_bytes=%d collapsed_lines=%d collapsed_bytes=%d duration_ms=%d refreshed_chunk=%d",
+				log.Printf("[TERMINAL_DEBUG] capture ok source=%q terminal_id=%q tmux_session=%q requested_lines=%d capture_lines=%d raw_lines=%d raw_bytes=%d collapsed_lines=%d collapsed_bytes=%d duration_ms=%d preserve_scrollback=%t refreshed_chunk=%d history_limit=%q history_size=%q alternate_on=%q pane_height=%q pane_width=%q pane_in_mode=%q scroll_position=%q",
 					debugSource,
 					snapshot.TerminalID,
 					snapshot.TmuxSession,
@@ -202,7 +225,15 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 					stats.CollapsedLines,
 					stats.CollapsedBytes,
 					stats.Duration.Milliseconds(),
+					preserveScrollback,
 					snapshot.ChunkIndex,
+					runtimeStats.HistoryLimit,
+					runtimeStats.HistorySize,
+					runtimeStats.AlternateOn,
+					runtimeStats.PaneHeight,
+					runtimeStats.PaneWidth,
+					runtimeStats.PaneInMode,
+					runtimeStats.ScrollPosition,
 				)
 			}
 		} else if isMissingTmuxTargetError(err) && !snapshot.Active {
@@ -218,6 +249,7 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 		} else if debugTerminal {
 			log.Printf("[TERMINAL_DEBUG] capture error source=%q terminal_id=%q tmux_session=%q err=%q", debugSource, snapshot.TerminalID, snapshot.TmuxSession, err.Error())
 		}
+		cancel()
 	}
 
 	response := api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot)
@@ -247,6 +279,10 @@ func shouldCaptureTerminalPaneForDetail(snapshot terminals.Snapshot, r *http.Req
 		return true
 	}
 	return terminalSnapshotHasPromptCompletionFallback(snapshot.Content)
+}
+
+func shouldPreserveCapturedTerminalScrollback(r *http.Request) bool {
+	return !wantsHistoryTerminalContent(r)
 }
 
 func captureTerminalPaneForDetail(ctx context.Context, snapshot terminals.Snapshot, r *http.Request) (string, terminalPaneCaptureStats, error) {
@@ -374,7 +410,7 @@ func (api *StreamingAPI) handleRefreshTerminal(w http.ResponseWriter, r *http.Re
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	updated, ok := api.terminalStore.RefreshContent(snapshot.TerminalID, content)
+	updated, ok := api.terminalStore.ReplaceContent(snapshot.TerminalID, content)
 	if !ok {
 		http.Error(w, "Terminal not found", http.StatusNotFound)
 		return
@@ -648,6 +684,59 @@ func captureTerminalPaneLinesWithStats(ctx context.Context, tmuxSession string, 
 	stats.CollapsedLines = terminalLineCount(collapsed)
 	stats.CollapsedBytes = len(collapsed)
 	return collapsed, stats, nil
+}
+
+func inspectTerminalPaneRuntimeStats(ctx context.Context, tmuxSession string) (terminalPaneRuntimeStats, bool) {
+	tmuxSession = strings.TrimSpace(tmuxSession)
+	if tmuxSession == "" {
+		return terminalPaneRuntimeStats{}, false
+	}
+	format := strings.Join([]string{
+		"#{history_limit}",
+		"#{history_size}",
+		"#{alternate_on}",
+		"#{pane_height}",
+		"#{pane_width}",
+		"#{pane_in_mode}",
+		"#{scroll_position}",
+	}, "\t")
+	output, err := runTerminalTmuxOutputCommand(ctx, "display-message", "-p", "-t", tmuxSession, format)
+	if err != nil {
+		return terminalPaneRuntimeStats{}, false
+	}
+	parts := strings.Split(strings.TrimSpace(output), "\t")
+	if len(parts) < 7 {
+		return terminalPaneRuntimeStats{}, false
+	}
+	return terminalPaneRuntimeStats{
+		HistoryLimit:   parts[0],
+		HistorySize:    parts[1],
+		AlternateOn:    parts[2],
+		PaneHeight:     parts[3],
+		PaneWidth:      parts[4],
+		PaneInMode:     parts[5],
+		ScrollPosition: parts[6],
+	}, true
+}
+
+func writeTerminalDebugHeaders(w http.ResponseWriter, stats terminalPaneCaptureStats, preserveScrollback bool, runtimeStats terminalPaneRuntimeStats, haveRuntimeStats bool) {
+	w.Header().Set("X-Runloop-Terminal-Requested-Lines", strconv.Itoa(stats.RequestedLines))
+	w.Header().Set("X-Runloop-Terminal-Capture-Lines", strconv.Itoa(stats.CaptureLines))
+	w.Header().Set("X-Runloop-Terminal-Raw-Lines", strconv.Itoa(stats.RawLines))
+	w.Header().Set("X-Runloop-Terminal-Raw-Bytes", strconv.Itoa(stats.RawBytes))
+	w.Header().Set("X-Runloop-Terminal-Collapsed-Lines", strconv.Itoa(stats.CollapsedLines))
+	w.Header().Set("X-Runloop-Terminal-Collapsed-Bytes", strconv.Itoa(stats.CollapsedBytes))
+	w.Header().Set("X-Runloop-Terminal-Preserve-Scrollback", strconv.FormatBool(preserveScrollback))
+	if !haveRuntimeStats {
+		return
+	}
+	w.Header().Set("X-Runloop-Terminal-Tmux-History-Limit", runtimeStats.HistoryLimit)
+	w.Header().Set("X-Runloop-Terminal-Tmux-History-Size", runtimeStats.HistorySize)
+	w.Header().Set("X-Runloop-Terminal-Tmux-Alternate-On", runtimeStats.AlternateOn)
+	w.Header().Set("X-Runloop-Terminal-Tmux-Pane-Height", runtimeStats.PaneHeight)
+	w.Header().Set("X-Runloop-Terminal-Tmux-Pane-Width", runtimeStats.PaneWidth)
+	w.Header().Set("X-Runloop-Terminal-Tmux-Pane-In-Mode", runtimeStats.PaneInMode)
+	w.Header().Set("X-Runloop-Terminal-Tmux-Scroll-Position", runtimeStats.ScrollPosition)
 }
 
 func terminalLineCount(content string) int {

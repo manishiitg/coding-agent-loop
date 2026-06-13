@@ -108,6 +108,8 @@ type Store struct {
 const terminalInactiveAfter = 2 * time.Minute
 const terminalPromptCompletionInactiveAfter = time.Minute
 const terminalToolTextMaxRunes = 2400
+const terminalShortPaneSnapshotMaxLines = 160
+const terminalAccumulatedScrollbackMaxLines = 10000
 
 var (
 	regexpMCPToken    = regexp.MustCompile(`(?i)(MCP_API_TOKEN=)[^\s"'\\]+`)
@@ -345,6 +347,16 @@ func (s *Store) markTerminalState(terminalID, state string) (Snapshot, bool) {
 // tmux capture. It keeps manual inactive overrides inactive, but otherwise lets
 // the same lifecycle heuristics classify the refreshed pane.
 func (s *Store) RefreshContent(terminalID, content string) (Snapshot, bool) {
+	return s.refreshContent(terminalID, content, true)
+}
+
+// ReplaceContent refreshes a terminal pane with an authoritative capture. Unlike
+// RefreshContent, it does not preserve previously accumulated screen snapshots.
+func (s *Store) ReplaceContent(terminalID, content string) (Snapshot, bool) {
+	return s.refreshContent(terminalID, content, false)
+}
+
+func (s *Store) refreshContent(terminalID, content string, preserveTmuxScrollback bool) (Snapshot, bool) {
 	terminalID = strings.TrimSpace(terminalID)
 	if s == nil || terminalID == "" {
 		return Snapshot{}, false
@@ -357,38 +369,46 @@ func (s *Store) RefreshContent(terminalID, content string) (Snapshot, bool) {
 		return Snapshot{}, false
 	}
 	now := time.Now()
-	contentChanged := snapshot.Content != content
-	snapshot.Content = content
+	lifecycleContent := content
+	nextContent := content
+	if preserveTmuxScrollback {
+		nextContent = mergeTmuxScreenSnapshot(snapshot, content)
+	}
+	if strings.TrimSpace(lifecycleContent) == "" {
+		lifecycleContent = nextContent
+	}
+	contentChanged := snapshot.Content != nextContent
+	snapshot.Content = nextContent
 	if contentChanged {
 		snapshot.ChunkIndex++
 	}
 	previousStatus := snapshot.Status
-	snapshot.Status = DeriveStatus(content, nil)
+	snapshot.Status = DeriveStatus(lifecycleContent, nil)
 	preserveEphemeralStatusFields(&snapshot.Status, previousStatus)
 	if _, forced := s.forcedInactive[terminalID]; !forced {
 		if snapshot.Active {
-			if terminalCanCompleteFromCapturedIdle(snapshot) && terminalContentLooksIdle(content) {
+			if terminalCanCompleteFromCapturedIdle(snapshot) && terminalContentLooksIdle(lifecycleContent) {
 				snapshot.Active = false
-				snapshot.State = terminalStateFromContent(content, false)
+				snapshot.State = terminalStateFromContent(lifecycleContent, false)
 				snapshot.ClosesAt = nil
 				snapshot.RetentionSeconds = 0
 			} else {
-				snapshot.State = terminalStateFromContent(content, true)
+				snapshot.State = terminalStateFromContent(lifecycleContent, true)
 			}
 		} else if snapshot.State == "stale" {
-			snapshot.Active = terminalStateFromContent(content, true) == "running" && !terminalContentLooksIdle(content)
-			snapshot.State = terminalStateFromContent(content, snapshot.Active)
-		} else if contentChanged && snapshot.State == "completed" && terminalContentLooksBusy(content) {
+			snapshot.Active = terminalStateFromContent(lifecycleContent, true) == "running" && !terminalContentLooksIdle(lifecycleContent)
+			snapshot.State = terminalStateFromContent(lifecycleContent, snapshot.Active)
+		} else if contentChanged && snapshot.State == "completed" && terminalContentLooksBusy(lifecycleContent) {
 			// tmux session restarted inside the same terminal (e.g. Claude Code
 			// context compaction: /exit then a fresh process in the same pane).
 			// The content changed and now looks busy — re-activate so the UI
 			// picks up the live output again.
 			snapshot.Active = true
 			snapshot.State = "running"
-		} else if terminalStateFromContent(content, false) == "failed" {
+		} else if terminalStateFromContent(lifecycleContent, false) == "failed" {
 			snapshot.State = "failed"
 		}
-	} else if contentChanged && snapshot.State == "completed" && terminalContentLooksBusy(content) {
+	} else if contentChanged && snapshot.State == "completed" && terminalContentLooksBusy(lifecycleContent) {
 		// Even force-completed terminals should restart when the tmux pane shows a
 		// new process running (e.g. after Claude Code compaction). Clear the
 		// forcedInactive entry so the terminal can participate in normal lifecycle.
@@ -517,6 +537,7 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	current.StepTransport = firstNonEmpty(stringValue(metadata, "step_transport"), current.StepTransport)
 	current.StepTriggeredBy = firstNonEmpty(stringValue(metadata, "step_triggered_by"), current.StepTriggeredBy)
 	current.AgentName = firstNonEmpty(stringValue(metadata, "agent_name"), stringValue(metadata, "orchestrator_agent_name"), current.AgentName)
+	previousTmuxSession := current.TmuxSession
 	current.TmuxSession = firstNonEmpty(
 		stringValue(metadata, "tmux_session"),
 		stringValue(metadata, "tmux_session_name"),
@@ -527,6 +548,10 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 		current.TmuxSession,
 	)
 	content = s.contentWithToolLinesLocked(terminalID, content)
+	lifecycleContent := content
+	if exists && !freshTurn && strings.TrimSpace(previousTmuxSession) != "" && strings.TrimSpace(previousTmuxSession) == strings.TrimSpace(current.TmuxSession) {
+		content = mergeTmuxScreenSnapshot(current, content)
+	}
 	contentChanged := !exists || current.Content != content
 	current.Content = content
 	if rows := terminalRowsFromMetadata(metadata); len(rows) > 0 {
@@ -539,11 +564,11 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	}
 	current.ChunkIndex = chunkIndex
 	current.Active = true
-	current.State = terminalStateFromContent(content, true)
+	current.State = terminalStateFromContent(lifecycleContent, true)
 	current.ClosesAt = nil
 	current.RetentionSeconds = 0
 	previousStatus := current.Status
-	current.Status = DeriveStatus(content, metadata)
+	current.Status = DeriveStatus(lifecycleContent, metadata)
 	preserveEphemeralStatusFields(&current.Status, previousStatus)
 	if contentChanged || current.UpdatedAt.IsZero() {
 		current.UpdatedAt = now
@@ -956,6 +981,110 @@ func terminalContentExtends(existing, next string) bool {
 		return false
 	}
 	return strings.HasPrefix(next, existing)
+}
+
+func mergeTmuxScreenSnapshot(snapshot Snapshot, next string) string {
+	if !shouldAccumulateTmuxScreenSnapshot(snapshot, next) {
+		return next
+	}
+	existing := strings.TrimRight(snapshot.Content, "\n")
+	next = strings.TrimRight(next, "\n")
+	if existing == "" || next == "" {
+		return next
+	}
+	if existing == next || terminalContentExtends(next, existing) || terminalContentContainsScreen(existing, next) {
+		return existing
+	}
+	if terminalContentExtends(existing, next) {
+		return next
+	}
+
+	existingLines := strings.Split(existing, "\n")
+	nextLines := strings.Split(next, "\n")
+	overlap := terminalLineOverlap(existingLines, nextLines)
+	if overlap >= len(nextLines) {
+		return existing
+	}
+	merged := append(existingLines, nextLines[overlap:]...)
+	if len(merged) > terminalAccumulatedScrollbackMaxLines {
+		merged = merged[len(merged)-terminalAccumulatedScrollbackMaxLines:]
+	}
+	return strings.Join(merged, "\n")
+}
+
+func shouldAccumulateTmuxScreenSnapshot(snapshot Snapshot, next string) bool {
+	if strings.TrimSpace(snapshot.TmuxSession) == "" {
+		return false
+	}
+	if strings.TrimSpace(snapshot.Content) == "" || strings.TrimSpace(next) == "" {
+		return false
+	}
+	if terminalContentLineCount(next) > terminalShortPaneSnapshotMaxLines {
+		return false
+	}
+	return true
+}
+
+func terminalContentContainsScreen(existing, screen string) bool {
+	existingLines := terminalCanonicalLines(existing)
+	screenLines := terminalCanonicalLines(screen)
+	if len(existingLines) == 0 || len(screenLines) == 0 || len(screenLines) > len(existingLines) {
+		return false
+	}
+	for start := 0; start <= len(existingLines)-len(screenLines); start++ {
+		matched := true
+		for i := range screenLines {
+			if existingLines[start+i] != screenLines[i] {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
+
+func terminalLineOverlap(existingLines, nextLines []string) int {
+	maxOverlap := len(nextLines)
+	if len(existingLines) < maxOverlap {
+		maxOverlap = len(existingLines)
+	}
+	for overlap := maxOverlap; overlap > 0; overlap-- {
+		matched := true
+		for i := 0; i < overlap; i++ {
+			if terminalCanonicalLine(existingLines[len(existingLines)-overlap+i]) != terminalCanonicalLine(nextLines[i]) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return overlap
+		}
+	}
+	return 0
+}
+
+func terminalCanonicalLines(content string) []string {
+	raw := strings.Split(strings.TrimRight(content, "\n"), "\n")
+	lines := make([]string, 0, len(raw))
+	for _, line := range raw {
+		lines = append(lines, terminalCanonicalLine(line))
+	}
+	return lines
+}
+
+func terminalCanonicalLine(line string) string {
+	line = ansiEscapePattern.ReplaceAllString(line, "")
+	return strings.TrimRight(line, " \t\r")
+}
+
+func terminalContentLineCount(content string) int {
+	if content == "" {
+		return 0
+	}
+	return strings.Count(content, "\n") + 1
 }
 
 func dedupeCurrentMainAgentSnapshots(snapshots []Snapshot) []Snapshot {

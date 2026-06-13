@@ -677,6 +677,30 @@ export const agentApi = {
     if (options?.debug) params.debug = 1
     if (options?.debugSource) params.debug_source = options.debugSource
     const response = await api.get(`/api/terminals/${encodeURIComponent(terminalId)}`, { params })
+    if (options?.debug) {
+      const headers = response.headers || {}
+      const debugHeaders = {
+        terminal_id: terminalId,
+        source: options.debugSource,
+        requested_lines: headers['x-runloop-terminal-requested-lines'],
+        capture_lines: headers['x-runloop-terminal-capture-lines'],
+        raw_lines: headers['x-runloop-terminal-raw-lines'],
+        raw_bytes: headers['x-runloop-terminal-raw-bytes'],
+        collapsed_lines: headers['x-runloop-terminal-collapsed-lines'],
+        collapsed_bytes: headers['x-runloop-terminal-collapsed-bytes'],
+        preserve_scrollback: headers['x-runloop-terminal-preserve-scrollback'],
+        tmux_history_limit: headers['x-runloop-terminal-tmux-history-limit'],
+        tmux_history_size: headers['x-runloop-terminal-tmux-history-size'],
+        tmux_alternate_on: headers['x-runloop-terminal-tmux-alternate-on'],
+        tmux_pane_height: headers['x-runloop-terminal-tmux-pane-height'],
+        tmux_pane_width: headers['x-runloop-terminal-tmux-pane-width'],
+        tmux_pane_in_mode: headers['x-runloop-terminal-tmux-pane-in-mode'],
+        tmux_scroll_position: headers['x-runloop-terminal-tmux-scroll-position'],
+      }
+      if (Object.values(debugHeaders).some(value => value !== undefined && value !== '')) {
+        console.info('[TERMINAL_DEBUG] response headers', debugHeaders)
+      }
+    }
     return response.data
   },
 

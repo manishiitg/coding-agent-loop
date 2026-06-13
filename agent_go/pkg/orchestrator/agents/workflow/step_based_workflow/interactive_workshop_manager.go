@@ -1057,10 +1057,14 @@ func GetToolsForWorkshopMode(mode string) []string {
 		// Secret management tools. Global secrets are read-only; workflow/user
 		// encrypted stores are writable when the corresponding tools are registered.
 		"list_secrets", "set_workflow_secret", "delete_workflow_secret", "set_user_secret", "delete_user_secret",
-		// Human tools — the builder is already in a chat, so it asks users
-		// directly instead of calling human_feedback. submit_human_answer is
-		// how it resolves human_input steps from workflows it launches.
-		"submit_human_answer",
+		// Human tools. human_feedback is omitted — the builder is already in a
+		// chat, so it asks users directly rather than blocking for input.
+		// notify_via_bot IS available like any other workspace tool: it's an
+		// outbound, non-blocking push to the user's connected channels
+		// (Slack/WhatsApp/Gmail). The post-run monitor uses it to alert on a
+		// state transition, and the builder may use it the same way.
+		// submit_human_answer resolves human_input steps from launched workflows.
+		"notify_via_bot", "submit_human_answer",
 		// Browser (if registered)
 		"agent_browser",
 		// mcpagent virtual tools (get_api_spec, get_prompt, get_resource)

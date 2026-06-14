@@ -90,6 +90,12 @@ const formatChatTime = (value?: string): string => {
   })
 }
 
+const formatMessageCount = (count?: number): string | undefined => {
+  if (typeof count !== 'number') return undefined
+  const formatted = new Intl.NumberFormat().format(count)
+  return `${formatted} ${count === 1 ? 'message' : 'messages'}`
+}
+
 const sessionHasMessages = (session: ChatHistorySession): boolean => {
   return (session.message_count ?? 0) > 0 || (session.preview_messages?.length ?? 0) > 0 || !!session.query?.trim()
 }
@@ -501,15 +507,9 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
               const isExpanded = expandedSessionIds.has(session.session_id)
               const isLoadingDetails = loadingExpandedSessionIds.has(session.session_id)
               const runtimeLabel = chatHistoryRuntimeLabel(session)
-              const workshopModeLabel = chatHistoryWorkshopModeLabel(session)
               const isDeleting = deletingSessionIds.has(session.session_id)
-              const metadataParts = [
-                formatChatTime(session.updated_at || session.created_at),
-                typeof session.message_count === 'number' ? `${session.message_count} messages` : '',
-                session.agent_mode ? session.agent_mode.replace(/_/g, ' ') : '',
-                workshopModeLabel || '',
-                runtimeLabel || '',
-              ].filter(Boolean)
+              const timeLabel = formatChatTime(session.updated_at || session.created_at)
+              const messageCountLabel = formatMessageCount(session.message_count)
 
               return (
                 <div key={session.session_id} className="group bg-background transition-colors hover:bg-muted/20">
@@ -530,9 +530,23 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                       className="min-w-0 flex-1 text-left"
                     >
                       <div className="line-clamp-1 text-sm font-medium text-foreground">{chatHistorySessionTitle(session)}</div>
-                      <div className={`mt-0.5 flex min-w-0 items-center gap-1 text-muted-foreground ${compact ? 'text-[10px]' : 'text-[11px]'}`}>
-                        {runtimeLabel && <Code2 className="h-3 w-3 shrink-0" />}
-                        <span className="line-clamp-1 min-w-0">{metadataParts.join(' · ')}</span>
+                      <div className={`mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground ${compact ? 'text-[10px]' : 'text-[11px]'}`}>
+                        <span className="inline-flex min-w-0 items-center gap-1">
+                          <CalendarClock className="h-3 w-3 shrink-0" />
+                          <span className="truncate">{timeLabel}</span>
+                        </span>
+                        {messageCountLabel && (
+                          <span className="inline-flex items-center gap-1">
+                            <MessageSquare className="h-3 w-3 shrink-0" />
+                            <span>{messageCountLabel}</span>
+                          </span>
+                        )}
+                        {runtimeLabel && (
+                          <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded border border-border/70 bg-muted/30 px-1.5 py-0.5">
+                            <Code2 className="h-3 w-3 shrink-0" />
+                            <span className="truncate">{runtimeLabel}</span>
+                          </span>
+                        )}
                       </div>
                     </button>
 

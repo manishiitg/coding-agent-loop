@@ -89,28 +89,6 @@ const formatChatTime = (value?: string): string => {
   })
 }
 
-const compactSnippet = (value?: string, maxLength = 180): string => {
-  const text = value?.replace(/\s+/g, ' ').trim() || ''
-  if (!text) return ''
-  return text.length > maxLength ? `${text.slice(0, maxLength).trim()}...` : text
-}
-
-const latestUserPreviewMessage = (messages: ChatHistoryPreviewMessage[]): ChatHistoryPreviewMessage | undefined => {
-  return [...messages].reverse().find(message => {
-    const role = (message.role || '').toLowerCase().trim()
-    return (role === 'human' || role === 'user') && message.text?.trim()
-  })
-}
-
-// The latest assistant/ai reply — so the list shows how each chat concluded, not
-// just what was asked. preview_messages already carries the tail of the convo.
-const latestResponsePreviewMessage = (messages: ChatHistoryPreviewMessage[]): ChatHistoryPreviewMessage | undefined => {
-  return [...messages].reverse().find(message => {
-    const role = (message.role || '').toLowerCase().trim()
-    return (role === 'ai' || role === 'assistant') && message.text?.trim()
-  })
-}
-
 const sessionHasMessages = (session: ChatHistorySession): boolean => {
   return (session.message_count ?? 0) > 0 || (session.preview_messages?.length ?? 0) > 0 || !!session.query?.trim()
 }
@@ -517,10 +495,13 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
               const runtimeLabel = chatHistoryRuntimeLabel(session)
               const workshopModeLabel = chatHistoryWorkshopModeLabel(session)
               const isDeleting = deletingSessionIds.has(session.session_id)
-              const firstUserText = compactSnippet(session.query, 180)
-              const lastUserMessageText = compactSnippet(latestUserPreviewMessage(messages)?.text, 180)
-              const showLastUserMessage = !!lastUserMessageText && lastUserMessageText !== firstUserText
-              const lastResponseText = compactSnippet(latestResponsePreviewMessage(messages)?.text, 180)
+              const metadataParts = [
+                formatChatTime(session.updated_at || session.created_at),
+                typeof session.message_count === 'number' ? `${session.message_count} messages` : '',
+                session.agent_mode ? session.agent_mode.replace(/_/g, ' ') : '',
+                workshopModeLabel || '',
+                runtimeLabel || '',
+              ].filter(Boolean)
 
               return (
                 <div key={session.session_id} className="group bg-background transition-colors hover:bg-muted/20">
@@ -541,46 +522,10 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                       className="min-w-0 flex-1 text-left"
                     >
                       <div className="line-clamp-1 text-sm font-medium text-foreground">{chatHistorySessionTitle(session)}</div>
-                      <div className={`mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-muted-foreground ${compact ? 'text-[10px]' : 'text-[11px]'}`}>
-                        <span>{formatChatTime(session.updated_at || session.created_at)}</span>
-                        {typeof session.message_count === 'number' && <span>{session.message_count} messages</span>}
-                        {session.agent_mode && <span>{session.agent_mode.replace(/_/g, ' ')}</span>}
-                        {!compact && workshopModeLabel && (
-                          <span className="inline-flex items-center rounded border border-border bg-muted/40 px-1.5 py-0.5 font-medium text-foreground">
-                            {workshopModeLabel}
-                          </span>
-                        )}
-                        {!compact && runtimeLabel && (
-                          <span className="inline-flex items-center gap-1 rounded border border-border bg-muted/40 px-1.5 py-0.5 font-medium text-foreground">
-                            <Code2 className="h-3 w-3" />
-                            {runtimeLabel}
-                          </span>
-                        )}
+                      <div className={`mt-0.5 flex min-w-0 items-center gap-1 text-muted-foreground ${compact ? 'text-[10px]' : 'text-[11px]'}`}>
+                        {runtimeLabel && <Code2 className="h-3 w-3 shrink-0" />}
+                        <span className="line-clamp-1 min-w-0">{metadataParts.join(' · ')}</span>
                       </div>
-                      {/* Compact rail: CLI + model on their own line, allowed to
-                          wrap to multiple lines so the full provider·model is legible. */}
-                      {compact && runtimeLabel && (
-                        <div className="mt-1 flex items-start gap-1 text-[10px] leading-snug text-muted-foreground">
-                          <Code2 className="mt-0.5 h-3 w-3 shrink-0" />
-                          <span className="min-w-0 break-words font-medium text-foreground/90">{runtimeLabel}</span>
-                        </div>
-                      )}
-                      {!compact && (showLastUserMessage || !!lastResponseText) && (
-                        <div className="mt-1 space-y-0.5 text-[11px] leading-snug text-muted-foreground">
-                          {showLastUserMessage && (
-                            <div className="flex min-w-0 gap-1">
-                              <span className="shrink-0 font-medium text-foreground/80">Last user:</span>
-                              <span className="line-clamp-1 min-w-0">{lastUserMessageText}</span>
-                            </div>
-                          )}
-                          {!!lastResponseText && (
-                            <div className="flex min-w-0 gap-1">
-                              <span className="shrink-0 font-medium text-foreground/80">Last reply:</span>
-                              <span className="line-clamp-1 min-w-0">{lastResponseText}</span>
-                            </div>
-                          )}
-                        </div>
-                      )}
                     </button>
 
                     <div className="flex shrink-0 items-center gap-1">

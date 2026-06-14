@@ -180,7 +180,9 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 	shouldCaptureTmux := shouldCaptureTerminalPaneForDetail(snapshot, r)
 	debugTerminal := terminalDebugEnabled(r)
 	debugSource := terminalDebugSource(r)
+	captureSkipReason := terminalCaptureSkipReason(snapshot, r, shouldCaptureTmux)
 	if debugTerminal {
+		writeTerminalDebugDecisionHeaders(w, snapshot, r, shouldCaptureTmux, captureSkipReason)
 		log.Printf("[TERMINAL_DEBUG] detail start source=%q terminal_id=%q session_id=%q tmux_session=%q active=%t state=%q chunk=%d content_mode=%q lines_param=%q stored_lines=%d stored_bytes=%d should_capture=%t",
 			debugSource,
 			snapshot.TerminalID,
@@ -322,6 +324,22 @@ func shouldCaptureTerminalPaneForDetail(snapshot terminals.Snapshot, r *http.Req
 		return true
 	}
 	return terminalSnapshotHasPromptCompletionFallback(snapshot.Content)
+}
+
+func terminalCaptureSkipReason(snapshot terminals.Snapshot, r *http.Request, shouldCapture bool) string {
+	if shouldCapture {
+		return ""
+	}
+	if strings.TrimSpace(snapshot.TmuxSession) == "" {
+		return "no_tmux_session"
+	}
+	if wantsStoredTerminalContent(r) {
+		return "requested_stored_content"
+	}
+	if snapshot.Active {
+		return "active_without_screen_or_history_request"
+	}
+	return "capture_not_requested"
 }
 
 func shouldPreserveCapturedTerminalScrollback(r *http.Request) bool {
@@ -781,6 +799,20 @@ func writeTerminalDebugHeaders(w http.ResponseWriter, stats terminalPaneCaptureS
 	w.Header().Set("X-Runloop-Terminal-Tmux-Pane-Width", runtimeStats.PaneWidth)
 	w.Header().Set("X-Runloop-Terminal-Tmux-Pane-In-Mode", runtimeStats.PaneInMode)
 	w.Header().Set("X-Runloop-Terminal-Tmux-Scroll-Position", runtimeStats.ScrollPosition)
+}
+
+func writeTerminalDebugDecisionHeaders(w http.ResponseWriter, snapshot terminals.Snapshot, r *http.Request, shouldCapture bool, skipReason string) {
+	w.Header().Set("X-Runloop-Terminal-Debug-Should-Capture", strconv.FormatBool(shouldCapture))
+	w.Header().Set("X-Runloop-Terminal-Debug-Skip-Reason", skipReason)
+	w.Header().Set("X-Runloop-Terminal-Debug-Tmux-Session", strings.TrimSpace(snapshot.TmuxSession))
+	w.Header().Set("X-Runloop-Terminal-Debug-Step-Transport", strings.TrimSpace(snapshot.StepTransport))
+	w.Header().Set("X-Runloop-Terminal-Debug-Active", strconv.FormatBool(snapshot.Active))
+	w.Header().Set("X-Runloop-Terminal-Debug-State", strings.TrimSpace(snapshot.State))
+	w.Header().Set("X-Runloop-Terminal-Debug-Chunk-Index", strconv.Itoa(snapshot.ChunkIndex))
+	w.Header().Set("X-Runloop-Terminal-Debug-Content-Mode", strings.TrimSpace(r.URL.Query().Get("content")))
+	w.Header().Set("X-Runloop-Terminal-Debug-Lines-Param", strings.TrimSpace(r.URL.Query().Get("lines")))
+	w.Header().Set("X-Runloop-Terminal-Debug-Stored-Lines", strconv.Itoa(terminalLineCount(snapshot.Content)))
+	w.Header().Set("X-Runloop-Terminal-Debug-Stored-Bytes", strconv.Itoa(len(snapshot.Content)))
 }
 
 func terminalLineCount(content string) int {

@@ -2100,10 +2100,11 @@ const XtermTerminalPane: React.FC<{
     // preventDefault a no-op and lets the page/container steal terminal scroll.
     const listenerOptions: AddEventListenerOptions = { passive: false, capture: true }
     node.addEventListener('wheel', handleWheel, listenerOptions)
+    logXtermDebug('wheel-listener', { passive: false, capture: true })
     return () => {
       node.removeEventListener('wheel', handleWheel, listenerOptions)
     }
-  }, [contentRef, handleWheel])
+  }, [contentRef, handleWheel, logXtermDebug])
 
   useEffect(() => {
     const term = terminalRef.current
@@ -2538,9 +2539,23 @@ function logTerminalScrollDebug(
     source: debugSource,
     terminal_id: terminal?.terminal_id,
     tmux_session: terminal?.tmux_session,
+    step_transport: terminal?.step_transport,
+    content_source: terminal?.content_source,
     active: terminal?.active,
     state: terminal ? terminalState(terminal) : undefined,
     chunk_index: terminal?.chunk_index,
+    request_tmux_session: requestTerminal?.tmux_session,
+    request_step_transport: requestTerminal?.step_transport,
+    request_content_source: requestTerminal?.content_source,
+    request_active: requestTerminal?.active,
+    request_state: requestTerminal ? terminalState(requestTerminal) : undefined,
+    request_chunk_index: requestTerminal?.chunk_index,
+    detail_tmux_session: detail?.tmux_session,
+    detail_step_transport: detail?.step_transport,
+    detail_content_source: detail?.content_source,
+    detail_active: detail?.active,
+    detail_state: detail ? terminalState(detail) : undefined,
+    detail_chunk_index: detail?.chunk_index,
     requested_content: options?.content || 'stored',
     requested_lines: options?.lines,
     content_lines: terminalTextLineCount(detail?.content),

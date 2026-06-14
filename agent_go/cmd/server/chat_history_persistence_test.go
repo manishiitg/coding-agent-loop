@@ -639,11 +639,13 @@ func TestListWorkflowChatHistorySessionsCollapsesScheduleRunsBySchedule(t *testi
 	}
 
 	oldScheduleSession := "schedule-cron--abc12345_100"
+	unindexedScheduleSession := "schedule-cron--abc12345_150"
 	latestScheduleSession := "schedule-cron--abc12345_200"
 	otherScheduleSession := "schedule-cron--def67890_100"
 	manualSession := "manual-chat-1"
 
 	writeConversation(oldScheduleSession, "2026-05-17T10:00:00Z", "old schedule run", time.Date(2026, 5, 17, 10, 0, 0, 0, time.UTC))
+	writeConversation(unindexedScheduleSession, "2026-05-17T11:00:00Z", "unindexed schedule run", time.Date(2026, 5, 17, 11, 0, 0, 0, time.UTC))
 	writeConversation(latestScheduleSession, "2026-05-18T10:00:00Z", "latest schedule run", time.Date(2026, 5, 18, 10, 0, 0, 0, time.UTC))
 	writeConversation(otherScheduleSession, "2026-05-17T12:00:00Z", "other schedule run", time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC))
 	writeConversation(manualSession, "2026-05-18T11:00:00Z", "manual chat", time.Date(2026, 5, 18, 11, 0, 0, 0, time.UTC))
@@ -676,6 +678,9 @@ func TestListWorkflowChatHistorySessionsCollapsesScheduleRunsBySchedule(t *testi
 	}
 	if ids[oldScheduleSession] {
 		t.Fatalf("old schedule session %q should be collapsed out: %#v", oldScheduleSession, sessions)
+	}
+	if ids[unindexedScheduleSession] {
+		t.Fatalf("unindexed schedule session %q should still collapse by schedule prefix: %#v", unindexedScheduleSession, sessions)
 	}
 }
 

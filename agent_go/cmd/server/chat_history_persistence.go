@@ -867,6 +867,9 @@ func workflowScheduleIDBySessionID(workflowPath string) map[string]string {
 		scheduleID := strings.TrimSpace(run.ScheduleID)
 		if sessionID != "" && scheduleID != "" {
 			out[sessionID] = scheduleID
+			if prefix := workflowScheduleSessionPrefix(sessionID); prefix != "" {
+				out["prefix:"+prefix] = scheduleID
+			}
 		}
 	}
 	return out
@@ -886,19 +889,27 @@ func workflowScheduleHistoryDisplayKey(sessionID string, scheduleIDBySessionID m
 	if scheduleID := strings.TrimSpace(scheduleIDBySessionID[sessionID]); scheduleID != "" {
 		return "schedule:" + scheduleID, true
 	}
+	prefix := workflowScheduleSessionPrefix(sessionID)
+	if prefix == "" {
+		return "schedule-session:" + sessionID, true
+	}
+	if scheduleID := strings.TrimSpace(scheduleIDBySessionID["prefix:"+prefix]); scheduleID != "" {
+		return "schedule:" + scheduleID, true
+	}
+	return "schedule-prefix:" + prefix, true
+}
+
+func workflowScheduleSessionPrefix(sessionID string) string {
 	parts := strings.SplitN(sessionID, "--", 2)
 	if len(parts) != 2 {
-		return "schedule-session:" + sessionID, true
+		return ""
 	}
 	prefix := parts[1]
 	if idx := strings.Index(prefix, "_"); idx > 0 {
 		prefix = prefix[:idx]
 	}
 	prefix = strings.TrimSpace(prefix)
-	if prefix == "" {
-		return "schedule-session:" + sessionID, true
-	}
-	return "schedule-prefix:" + prefix, true
+	return prefix
 }
 
 func workflowBuilderConversationFiles(workflowDir string) ([]string, error) {

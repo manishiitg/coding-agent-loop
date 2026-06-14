@@ -2066,7 +2066,7 @@ const XtermTerminalPane: React.FC<{
     term.options.cursorStyle = xtermProfile.cursorStyle
   }, [xtermProfile])
 
-  const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+  const handleWheel = useCallback((event: WheelEvent) => {
     const term = terminalRef.current
     if (!term) return
 
@@ -2091,6 +2091,18 @@ const XtermTerminalPane: React.FC<{
       distanceFromBottom,
     })
   }, [logXtermDebug, xtermProfile.fontSize, xtermProfile.lineHeight])
+
+  useEffect(() => {
+    const node = contentRef.current
+    if (!node) return
+
+    // React's delegated wheel listener can be passive in Chromium, which makes
+    // preventDefault a no-op and lets the page/container steal terminal scroll.
+    node.addEventListener('wheel', handleWheel, { passive: false })
+    return () => {
+      node.removeEventListener('wheel', handleWheel)
+    }
+  }, [contentRef, handleWheel])
 
   useEffect(() => {
     const term = terminalRef.current
@@ -2143,7 +2155,6 @@ const XtermTerminalPane: React.FC<{
       ref={contentRef}
       className={className}
       style={{ backgroundColor: xtermTheme.background }}
-      onWheel={handleWheel}
     >
       <div ref={mountRef} className="h-full w-full [&_.xterm]:h-full" />
     </div>

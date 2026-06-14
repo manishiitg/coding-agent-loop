@@ -221,8 +221,8 @@ export async function resolveOrCreateTab(params: {
 
     if (tabs.length === 0) {
       try {
-        const tabName = 'Agent Chat 1'
-        const newTabId = await chatStore.createChatTab(tabName, {
+        // Guarded by selectedModeCategory === 'multi-agent' above.
+        const newTabId = await chatStore.createChatTab('Chief of Staff', {
           mode: selectedModeCategory,
         })
         currentTab = chatStore.getTab(newTabId)

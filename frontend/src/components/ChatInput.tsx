@@ -1876,7 +1876,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
 
     try {
-      await chatStore.createChatTab('Agent Chat 1', { mode: 'multi-agent' })
+      await chatStore.createChatTab('Chief of Staff', { mode: 'multi-agent' })
       return true
     } catch (error) {
       console.error('Failed to create fallback multi-agent tab:', error)

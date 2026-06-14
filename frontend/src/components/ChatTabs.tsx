@@ -1,10 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { Plus, ArrowDown, ListTree, Terminal } from 'lucide-react'
+import { Plus, ArrowDown, ListTree, Terminal, History, X } from 'lucide-react'
 import { normalizeEventViewMode, useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useModeStore } from '../stores/useModeStore'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 import { TreeViewAlphaDialog, shouldShowTreeViewAlphaWarning } from './TreeViewAlphaDialog'
+import { PreviousChatHistoryPanel } from './PreviousChatHistoryPanel'
+import { useResumePreviousChat } from '../hooks/useResumePreviousChat'
+import type { ChatHistorySession } from '../services/api-types'
 
 interface ChatTabsProps {
   // For multi-agent mode: callback when starting a new chat (reset-in-place)
@@ -19,6 +22,12 @@ interface ChatTabsProps {
 // Workflow mode renders its own tabs (WorkflowChatTabs) inside the chat panel.
 export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onToggleAutoScroll }) => {
   const [pendingTreeViewTabId, setPendingTreeViewTabId] = useState<string | null>(null)
+  const [showHistory, setShowHistory] = useState(false)
+  const resumePreviousChat = useResumePreviousChat()
+  const handleSelectHistory = useCallback(async (session: ChatHistorySession) => {
+    await resumePreviousChat(session)
+    setShowHistory(false)
+  }, [resumePreviousChat])
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
   const showWorkflowsOverview = useAppStore(state => state.showWorkflowsOverview)
   const {
@@ -94,21 +103,41 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
   const activeTab = activeTabId ? chatTabs[activeTabId] : undefined
   const showHeaderContent =
     !!activeTab && activeTab.metadata?.mode === 'multi-agent' && !isHiddenOrganizationTab(activeTab)
-  const chatTitle = showHeaderContent ? (activeTab?.name || 'Agent Chat') : 'Agent Chat'
+  // The multi-agent chat is the user's "chief of staff" (single-tab — this is a
+  // header label, not a tab switcher). Show the resumed conversation's title when
+  // a previous chat is open, otherwise the chief-of-staff label.
+  const chatTitle = (showHeaderContent ? activeTab?.config?.restoredConversationTitle?.trim() : '') || 'Chief of Staff'
 
   return (
     <>
-    <div className="flex-shrink-0 flex items-center gap-2 bg-gray-50 dark:bg-gray-800 px-3 py-1.5 border-b border-gray-200 dark:border-gray-700">
+    <div className="relative flex-shrink-0 flex items-center gap-2 bg-gray-50 dark:bg-gray-800 px-3 py-1.5 border-b border-gray-200 dark:border-gray-700">
       {/* Single-chat title */}
       <span className="text-sm font-medium text-gray-900 dark:text-gray-100 whitespace-nowrap truncate">
         {chatTitle}
       </span>
 
       <div className="ml-auto flex items-center gap-1">
+        {/* History — open the previous-chats list to resume an earlier chat
+            without first clearing the current one. */}
+        <button
+          onClick={() => setShowHistory(v => !v)}
+          data-testid="chat-history-button"
+          aria-expanded={showHistory}
+          className={`flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors ${
+            showHistory
+              ? 'text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700'
+              : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'
+          }`}
+          title="Previous chats — resume an earlier conversation"
+        >
+          <History className="w-4 h-4" />
+          <span className="hidden sm:inline">History</span>
+        </button>
+
         {/* New Chat — resets the current chat in place (confirmation handled upstream) */}
         {onNewChat && (
           <button
-            onClick={onNewChat}
+            onClick={() => { setShowHistory(false); onNewChat() }}
             data-testid="new-chat-button"
             className="flex items-center gap-1 px-2 py-1 mr-1 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
             title="New chat — clears the current conversation and starts a fresh session"
@@ -177,6 +206,39 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
           )}
         </div>
         </div>
+
+        {showHistory && (
+          <>
+            {/* Click-away backdrop */}
+            <div className="fixed inset-0 z-40" onClick={() => setShowHistory(false)} aria-hidden />
+            <div
+              className="absolute right-2 top-[calc(100%+4px)] z-50 flex max-h-[70vh] w-[360px] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900"
+              role="dialog"
+              aria-label="Previous chats"
+            >
+              <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-3 py-2 dark:border-gray-800">
+                <span className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Previous chats</span>
+                <button
+                  onClick={() => setShowHistory(false)}
+                  className="text-gray-400 transition-colors hover:text-gray-600 dark:hover:text-gray-200"
+                  aria-label="Close previous chats"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="min-h-0 flex-1 overflow-auto">
+                <PreviousChatHistoryPanel
+                  activeSessionId={activeTab?.sessionId ?? undefined}
+                  title="Previous chats"
+                  actionLabel="Resume"
+                  emptyText="No previous chats yet."
+                  onSelectSession={handleSelectHistory}
+                  compact
+                />
+              </div>
+            </div>
+          </>
+        )}
       </div>
       <TreeViewAlphaDialog
         isOpen={pendingTreeViewTabId !== null}

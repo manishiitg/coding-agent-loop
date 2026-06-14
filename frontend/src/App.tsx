@@ -999,8 +999,9 @@ function App() {
       hasCreatedDefaultTabRef.current = selectedModeCategory
 
       try {
-        const tabName = 'Agent Chat 1'
-        await chatStore.createChatTab(tabName, { mode: selectedModeCategory as 'workflow' | 'multi-agent' })
+        // This effect only runs for multi-agent mode (guarded above); workflow
+        // tabs are created by WorkflowLayout.
+        await chatStore.createChatTab('Chief of Staff', { mode: 'multi-agent' })
       } catch (error) {
         console.error('Failed to create default tab:', error)
         // Reset flag on error so it can retry

@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMem
 import { useRenderLogger, useMemoLogger } from '../utils/renderLogger'
 import { useShallow } from 'zustand/react/shallow'
 import { agentApi, resetSessionId, getSessionId } from '../services/api'
-import type { PollingEvent, ExtendedLLMConfiguration, SSEEventMessage, SSEStatusMessage, ExecutionOptions, ChatHistorySession } from '../services/api-types'
+import type { PollingEvent, ExtendedLLMConfiguration, SSEEventMessage, SSEStatusMessage, ExecutionOptions } from '../services/api-types'
 import type { AgentMode } from '../stores/types'
 import { ChatInput } from './ChatInput'
 import { EventDisplay } from './EventDisplay'
@@ -15,7 +15,7 @@ import { WorkflowExplanation } from './WorkflowExplanation'
 import { useAppStore, useLLMStore, useMCPStore, useChatStore, useGlobalPresetStore } from '../stores'
 import { useModeStore, type ModeCategory } from '../stores/useModeStore'
 import { ModeEmptyState } from './ModeEmptyState'
-import { PreviousChatHistoryPanel, chatHistoryConversationPath, chatHistoryRuntimeLabel, chatHistorySessionTitle, chatHistorySupportsNativeResume, chatHistoryUsesTerminalRestore, chatHistoryWorkshopModeLabel } from './PreviousChatHistoryPanel'
+import { PreviousChatHistoryPanel } from './PreviousChatHistoryPanel'
 import { PresetSelectionOverlay } from './PresetSelectionOverlay'
 import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
 import { normalizeEventViewMode, type ChatTab } from '../stores/useChatStore'
@@ -26,7 +26,7 @@ import { summarizeEventForDebug } from '../utils/eventOrdering'
 import { secretsApi } from '../api/secrets'
 import { useSecretsStore } from '../stores'
 import { useSessionExecutionTree } from '../hooks/useSessionExecutionTree'
-import { startRestoredTransportTerminal } from '../utils/restoredTerminal'
+import { useResumePreviousChat } from '../hooks/useResumePreviousChat'
 import { requestTerminalRefreshBurst } from '../utils/terminalRefresh'
 import {
   determineModeFlag,
@@ -839,11 +839,22 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // State for session restoration loading
   const [isRestoringChatSessions, setIsRestoringChatSessions] = useState(false)
   const [hasPreviousNormalChats, setHasPreviousNormalChats] = useState(false)
+  // Once the user has resumed a chat or hit New Chat, stop auto-showing the
+  // landing "Previous chats" list — they get a clean conversation surface and
+  // can reopen history from the header History button. The list only auto-shows
+  // on the genuine first-entry empty state.
+  const [landingHistoryDismissed, setLandingHistoryDismissed] = useState(false)
   // Workflow-mode restore flag is owned by WorkflowLayout via useChatStore so we can show
   // an in-panel spinner here while reconnectWorkflowTabs() is replaying events.
   const isRestoringWorkflowSessions = useChatStore(state => state.isRestoringWorkflowSessions)
+  // A resumed chat sets restoredConversationPath on the tab (cleared by New Chat's
+  // resetTabChat); treat that as "a chat is active" so the list hides immediately,
+  // even before the first event arrives.
+  const activeTabHasRestoredConversation = !!activeTab?.config?.restoredConversationPath
   const showNormalPreviousChatsPanel = selectedModeCategory === 'multi-agent' &&
     !hasConversationContent &&
+    !activeTabHasRestoredConversation &&
+    !landingHistoryDismissed &&
     !isStreaming &&
     !isRestoringChatSessions
 
@@ -853,68 +864,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     }
   }, [showNormalPreviousChatsPanel])
 
-  const handleResumePreviousChat = useCallback(async (session: ChatHistorySession) => {
-    const chatStore = useChatStore.getState()
-    let targetTabId = chatStore.activeTabId || undefined
-    let targetTab = targetTabId ? chatStore.chatTabs[targetTabId] : undefined
-
-    if (!targetTab || targetTab.metadata?.mode !== 'multi-agent') {
-      targetTabId = await chatStore.createChatTab('Agent Chat 1', { mode: 'multi-agent' })
-      targetTab = useChatStore.getState().chatTabs[targetTabId]
-    }
-
-    if (!targetTabId || !targetTab) {
-      addToast('Failed to resume previous chat', 'error')
-      return
-    }
-
-    if (targetTab.sessionId === session.session_id) {
-      chatStore.resetTabChat(targetTabId)
-    }
-
-    const path = chatHistoryConversationPath(session)
-    const title = chatHistorySessionTitle(session)
-    const useTerminalRestore = chatHistoryUsesTerminalRestore(session)
-    const useNativeResume = chatHistorySupportsNativeResume(session)
-    const latestStore = useChatStore.getState()
-    const existingContext = latestStore.getTabConfig(targetTabId)?.fileContext || []
-    const shouldAttachFileFallback = !useTerminalRestore && !useNativeResume
-    const nextFileContext = shouldAttachFileFallback
-      ? existingContext.some(item => item.path === path)
-        ? existingContext
-        : [...existingContext, { name: title, path, type: 'file' as const }]
-      : existingContext.filter(item => item.path !== path)
-
-    latestStore.setTabConfig(targetTabId, {
-      fileContext: nextFileContext,
-      restoredConversationPath: path,
-      restoredConversationSummary: undefined,
-      restoredConversationTitle: title,
-      restoredConversationWorkshopModeLabel: chatHistoryWorkshopModeLabel(session),
-      restoredConversationRuntimeLabel: chatHistoryRuntimeLabel(session),
-      restoredConversationNativeResume: useTerminalRestore || useNativeResume,
-    })
-    // Both tmux terminal-restore and native-resume coding sessions reattach into
-    // a tmux terminal on the backend, so open the terminal view for either —
-    // otherwise native-resume shows the banner but never surfaces the terminal.
-    // Trace the gating decision so a missing terminal can be diagnosed from the
-    // browser console without re-running the resume.
-    console.info('[Resume] gating decision', {
-      sessionId: targetTab.sessionId,
-      path,
-      useTerminalRestore,
-      useNativeResume,
-      willOpenTerminal: useTerminalRestore || useNativeResume,
-      provider: session.runtime?.provider,
-      transport: session.runtime?.transport ?? session.runtime?.agent_session_handle?.provider?.transport,
-      externalSessionId: session.runtime?.external_session_id,
-    })
-    if (useTerminalRestore || useNativeResume) {
-      latestStore.setTabViewMode(targetTabId, 'terminal')
-      startRestoredTransportTerminal(targetTab.sessionId, path)
-    }
-    switchTab(targetTabId)
-  }, [addToast, switchTab])
+  // Resume a previous chat from the landing "Previous chats" panel. Shared with
+  // the in-chat History slide-out (ChatTabs) via this hook so both stay identical.
+  const handleResumePreviousChat = useResumePreviousChat()
 
   // State for mode switch dialog
   const [showModeSwitchDialog, setShowModeSwitchDialog] = useState(false)
@@ -2897,6 +2849,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // multi-agent tabs can coexist, so starting a fresh conversation in one tab
   // must not clear every tab/event/SSE connection in the app.
   const handleNewChat = useCallback(async () => {
+    // New Chat means a clean conversation surface, not the previous-chats list.
+    setLandingHistoryDismissed(true)
     const chatStore = useChatStore.getState()
     // Clear conversation history from backend first (if sessionId is available)
     const currentSessionId = getSessionId()

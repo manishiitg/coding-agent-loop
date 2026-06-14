@@ -77,7 +77,7 @@ When you turn `post_run_monitor` on, also **ask the user how they want to be not
 STEP 4 — Bootstrap metrics.json
 Behavior depends on the profile from Step 1:
 
-- Primary `deterministic_harden_first` or plan stability `ratchet`/`frozen` + business context `none`: propose 3–5 SLO-mode metrics — success-rate (floor), schema/file validity, data freshness, `cost_per_run` (ceiling), `run_duration_seconds` (ceiling). Source: `telemetry` for cost/duration, `eval_step` for the rest.
+- Primary `deterministic_harden_first` or plan stability `ratchet`/`frozen` + business context `none`: propose 3–5 SLO-mode metrics from the workflow's own outcomes — success-rate (floor), schema/file validity, data freshness. Source: `eval_step`. (Do not add cost/duration here — see the cost/duration note below.)
 - Primary `open_metric_optimization`: propose 3–5 outcome metrics derived from success_criteria plus 1–2 operational SLOs. Outcome metrics should be target-mode where the workflow is trying to move a number; they drive experiments and replans.
 - Primary `business_context_accumulating` or business context `accumulating`: REQUIRED. Propose 3–5 outcome + rule-conformance metrics derived from success_criteria. Mix outcome metrics (mode=`target`, drive toward a value) with SLO metrics (mode=`slo`, stay above floor / below ceiling) — outcome metrics drive progress, SLOs enforce constraints.
 - Primary `compliance_audit`: propose evidence-completeness, false-negative, traceability, and policy-coverage SLOs. Prefer supervised/manual oversight, and keep the improve-ledger forensic (never edit past entries, only append).
@@ -85,7 +85,7 @@ Behavior depends on the profile from Step 1:
 - Primary `monitoring_alerting`: propose false-positive, false-negative/missed-alert, alert-latency, and escalation-quality metrics.
 - Primary `research_synthesis`: propose citation/source freshness, source diversity, unsupported-claim count, and synthesis-usefulness metrics.
 - Primary `creative_generative`: propose human rating, style adherence, preference-match, and variant-performance metrics; keep thresholds softer unless the user has explicit quality bars.
-- Always include `cost_per_run` and `run_duration_seconds` as telemetry SLOs when the telemetry source is supported for this workflow surface; if telemetry metrics cannot resolve yet, surface that as a framework gap rather than creating noisy broken metrics.
+- **Cost/duration metrics — do NOT auto-add.** Per user preference, `cost_per_run` / `run_duration_seconds` (and other operational telemetry) are not seeded by default. Only add them if the user explicitly asks for cost/time tracking — confirm the source with them then (telemetry vs an eval-step wrapper), and set the threshold from real data (see the threshold gotcha below), never a guessed number.
 
 Metric roles:
 - Mark only 1–4 metrics as `role="primary"`: the north-star outcome metrics and any must-not-break guardrail whose failure invalidates the workflow. These are what improvement loops optimize first.
@@ -93,6 +93,7 @@ Metric roles:
 - Add `category` so the UI and future agents can group the signal. Use concise values such as `outcome`, `execution`, `guardrail`, `content_quality`, `strategy_learning`, `telemetry`, or a workflow-specific equivalent.
 
 For each proposed metric, supply id + label + role + category + unit + direction + mode + threshold + source + `success_criteria` (quote or summarize the soul.md success criterion it measures). Use `propose_metric` to write each one — never shell-write `planning/metrics.json` (it's folder-guarded). Common gotchas to avoid:
+- **Set thresholds from real data, not guesses.** Before choosing a floor/ceiling/target, read the actual recent values — `db/metrics_history.jsonl` for this metric (or the latest `scores/evaluation/` report, or the run's telemetry) — and set the number from those actuals plus a sensible buffer (e.g. cost/duration ceiling ≈ recent median × 1.5; success-rate floor just under the recent achieved rate). If there are **no runs yet** (fresh bootstrap), do not invent a number — propose the metric and note the threshold as "to set after first run", then set it on the next pass once `db/metrics_history.jsonl` has data. A made-up threshold produces false breaches or a meaningless bar.
 - For `source.type=eval_step`, prefer explicit structured-output keys emitted by the eval step's JSON output. Legacy final-score fields are not produced by new eval runs.
 - Telemetry source: only six wired fields exist (`run.total_cost_usd`, `run.duration_seconds`, `eval.total_cost_usd`, `eval.duration_seconds`, `total.cost_usd`, `total.duration_seconds`). Other names silently return no value.
 
@@ -131,8 +132,9 @@ For each broken metric, name the metric, the resolve_error, and the recommended 
 5.5 — **Unused / orphan metrics**
 - Are any metrics in `planning/metrics.json` stale, duplicated, or not represented in recent `db/metrics_history.jsonl` rows? If they're outcome metrics (i.e., genuinely meant to be tracked), that's fine — but flag metrics with no recent values, repeated resolve errors, or unclear success-criteria linkage.
 
-5.6 — **Telemetry SLOs present?**
-- If `cost_per_run` and `run_duration_seconds` (or `total.cost_usd` / `total.duration_seconds`) aren't defined as telemetry SLOs, suggest adding them. Free signal.
+5.6 — **Threshold sanity (data-driven)**
+- For each SLO/target metric, compare its threshold to the actual recent values in `db/metrics_history.jsonl`. Flag thresholds that are obviously made-up — never breached, always breached, or set before any run existed — and recommend resetting them from real data (recent median/achieved rate ± a buffer).
+- Do **not** suggest adding `cost_per_run` / `run_duration_seconds` — operational cost/duration metrics are not auto-added (user preference). Only add them if the user explicitly asks, and then prefer an eval-step wrapper.
 
 After STEP 5 — Record what you reviewed and recommended in `builder/improve.html` as a prose timeline entry (a dated "Framework review" entry) summarizing the review, so the audit trail survives the session.
 

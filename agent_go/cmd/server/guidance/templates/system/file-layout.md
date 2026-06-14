@@ -13,7 +13,7 @@ All paths below are relative to the workspace root (prepend the absolute root wh
 | planning/plan.json | Workflow plan — step definitions, descriptions, validation schemas |
 | planning/step_config.json | Step-level config overrides (LLM, execution mode, learnings, etc.) |
 | reports/report_plan.json | Registers the report's HTML/Markdown document(s) under db/reports/ (see persistent-stores design) |
-| soul/soul.md | Canonical workflow north star: objective and success criteria |
+| soul/soul.md | Canonical workflow north star: objective, success criteria, and an optional `## Notifications` section (user's preference for when/what the post-run monitor alerts on) |
 
 ### Execution Outputs (per run, per group)
 | Path | Contents |

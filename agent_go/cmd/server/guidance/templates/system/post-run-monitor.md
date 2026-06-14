@@ -14,7 +14,7 @@ You read the deterministic evidence and write only to `builder/improve.html` (an
 - **The run itself** — `runs/<run_folder>/…` outputs, the run status passed to you, and any error. Did every expected step actually execute and produce a real, non-trivial artifact? Watch for the silent-failure smells: a step that wrote `{"status":"skipped"}`, an empty/zero-byte output, a missing file a later step needed, a journey that vanished from the results.
 - **Which path ran** — if the workflow has routing or runs per-group, a single run usually exercises only **one** path. Read `route_selection.json` (`select_route`) and the run's group/variables to see *which route(s)/group this run actually took*, so you judge the run only against what that path was supposed to do.
 - **What changed** — `planning/changelog/changelog-*.json`. Recent plan/config/prompt edits (with the `reason` the author gave). This is how you explain a regression: correlate "what got worse this run" against "what we changed in the last few runs."
-- **The goal evidence** — `scores/evaluation/` (eval step scores) and `db/metrics_history.jsonl` (per-run metric snapshots, with `resolve_error`), judged against the success criteria in `soul/soul.md` and the targets in `planning/metrics.json`.
+- **The goal evidence** — `scores/evaluation/` (eval step scores) and `db/metrics_history.jsonl` (per-run metric snapshots, with `resolve_error`), judged against the success criteria in `soul/soul.md` and the targets in `planning/metrics.json`. While you have `soul.md` open, also note its optional `## Notifications` section — the user's preference for *when and what* to push (it drives step 5).
 - **The log so far** — read `builder/improve.html`: the current verdicts, the goal card, open findings, any **unconfirmed Decision** (a harden/replan card with no `.outcome` stamp yet — this run may be the one that confirms it), and recent entries, so you continue its style, don't duplicate a finding, and can tell a *transition* (healthy↔broken) from a steady state.
 
 ### 2. Form two verdicts
@@ -52,9 +52,20 @@ Write `builder/monitor-verdict.json` (overwrite each run) as a machine-readable 
 
 This file is an internal signal, not the user surface — the log is the user surface. Keep `headline` to one honest sentence.
 
-### 5. Notify the user — only on a transition
+### 5. Notify the user
 
-You own the notification. Decide it from the **state change**, which you read from the durable Pulse log (`builder/improve.html`) — its prior verdicts/status vs the verdict you just formed. A push is warranted in exactly these cases:
+You own the notification.
+
+**First, check for a user notification preference.** Read the optional `## Notifications` section of `soul/soul.md` (you already loaded soul.md in step 1). If the user wrote one, **it is the policy — honor it exactly, and it overrides the default below** (both *when* to push and *what* to say). Examples of what the user may have asked for and how you obey it:
+- *"notify me on every run with the eval score and cost"* → push every run (even steady ones), and put those numbers in the message.
+- *"only alert me on Bugs, never on Goal drift"* → push on a Bug transition; stay silent on a Goal-only change.
+- *"WhatsApp the one-liner, email me a fuller summary"* → still one `notify_user` call (it fans out), but set `email_subject`/`email_body` to the fuller version while keeping `message_for_user` terse.
+- *"always include the Pulse log link / the run folder"* → append it to the message/email.
+- *"don't notify me at all"* → never call `notify_user`; just keep the log current.
+
+Apply the preference within the same constraints: still **one** `notify_user` call per run at most, still read-only (the preference can change *what/when you notify*, never make you fix or replan). If the preference is silent on a case the default covers, fall back to the default for that case.
+
+**Default policy (when soul.md has no `## Notifications` section): notify only on a transition.** Decide it from the **state change**, which you read from the durable Pulse log (`builder/improve.html`) — its prior verdicts/status vs the verdict you just formed. A push is warranted in exactly these cases:
 
 - **broke** — Bug went `bug-free` → `broken`, or Goal slipped from `on-target` to `short`/`drifting`;
 - **recovered** — was bad last run and is healthy again this run;
@@ -69,7 +80,7 @@ On any of those, call `notify_user` **once** with a one-line `message_for_user` 
 
 One call, rendered terse on chat and fuller in email.
 
-On a **steady run** — healthy-and-still-healthy, or broken-and-still-broken with nothing new — do **not** call `notify_user`. Silence is correct; the Pulse already has the detail. (If no bot channel is connected the call is a harmless no-op, but skip it on steady runs anyway to avoid a wasted turn.) This single transition notification is the **only** action you take — you still never fix, replan, or edit the plan.
+On a **steady run** — healthy-and-still-healthy, or broken-and-still-broken with nothing new — do **not** call `notify_user` *unless the user's `## Notifications` preference asks you to* (e.g. "every run"). Otherwise silence is correct; the Pulse already has the detail. (If no bot channel is connected the call is a harmless no-op, but skip it on steady runs anyway to avoid a wasted turn.) This single notification is the **only** action you take — you still never fix, replan, or edit the plan.
 
 ### Cost discipline
 

@@ -72,6 +72,8 @@ These are the only structured framework fields; they drive real behavior.
 - `oversight_mode` — `manual` / `supervised` (default) / `autonomous`. Recommended defaults: deterministic + ratcheting workflow → `manual`; exploratory → `autonomous`; contextual / business-context → `supervised`.
 - `post_run_monitor` — `true` / `false`. **Opt-in** (omit/false = off). Set `true` for workflows where a silently-broken or drifting run would matter and isn't watched live: scheduled QA, production, monitoring/alerting, compliance, and any business-critical workflow on a cron. Leave off for scratch, experimental, or interactive-only workflows where the extra per-run triage pass isn't worth it. When on, after each scheduled run a cheap read-only monitor records Bug + Goal verdicts and any finding into `builder/improve.html`. Recommend a value based on the profile, but it's the **user's choice** — confirm it, and tell them they can flip it anytime.
 
+When you turn `post_run_monitor` on, also **ask the user how they want to be notified** — by default the monitor pings them once only on a transition (broke / recovered / new finding) and is silent on steady runs. If they want something different ("every run with the eval score", "only when it breaks, never on recovery", "always include the Pulse log link", "don't notify at all"), capture that in plain language as a `## Notifications` section in `soul/soul.md` (`diff_patch_workspace_file`). The monitor reads it and obeys, overriding the default. If they're happy with the default, leave the section out.
+
 STEP 4 — Bootstrap metrics.json
 Behavior depends on the profile from Step 1:
 

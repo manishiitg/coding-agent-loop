@@ -1177,7 +1177,7 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 		"You are the post-run monitor. A scheduled run of this workflow just finished: status=%q, run_folder=%q. "+
 			"Call get_reference_doc(kind=\"post-run-monitor\") and follow it exactly: read the run evidence, the plan changelog, and the eval/metric files; "+
 			"form a Bug verdict and a Goal verdict; update builder/improve.html (verdict pills, goal card, signal tiles, one run row, and a Monitor entry only if something is wrong); "+
-			"write builder/monitor-verdict.json; and if (and ONLY if) the state changed from the prior run recorded in the log — broke, recovered, or a new finding while still bad — call notify_user once with your one-line headline. On a steady run, do not notify. "+
+			"write builder/monitor-verdict.json; and notify the user per the doc's step 5 — which honors a user `## Notifications` preference in soul/soul.md if present, otherwise defaults to a single notify_user call only on a state transition (broke, recovered, or a new finding while still bad) and silence on a steady run. "+
 			"Do NOT run the workflow, dispatch sub-agents, or fix anything — this is a read-only triage pass whose only side effect is that single transition notification.",
 		runStatus, runFolder)
 

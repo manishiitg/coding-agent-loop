@@ -8,7 +8,7 @@ import { SecretsSection } from './secrets'
 import LLMConfigurationModal from './LLMConfigurationModal'
 import LLMDiscoveryOnboardingModal from './LLMDiscoveryOnboardingModal'
 import DelegationTierConfigModal from './DelegationTierConfigModal'
-import { WorkspaceConnectionSwitcher } from './WorkspaceConnectionSwitcher'
+import { WorkspaceConnectionSwitcher, WORKSPACE_SWITCHER_ENABLED } from './WorkspaceConnectionSwitcher'
 import { DesktopConnectButton } from './DesktopConnectButton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { useMCPStore, useLLMStore } from '../stores'
@@ -309,10 +309,12 @@ export default function WorkspaceSidebar({
       {/* User Info & Logout - Bottom Section (Expanded) */}
       {!minimized && (
         <div className="border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
-          <div className="border-b border-gray-200 p-3 dark:border-slate-700">
-            <WorkspaceConnectionSwitcher placement="sidebar-bottom" />
-            {!isElectron && <DesktopConnectButton />}
-          </div>
+          {(WORKSPACE_SWITCHER_ENABLED || !isElectron) && (
+            <div className="border-b border-gray-200 p-3 dark:border-slate-700">
+              <WorkspaceConnectionSwitcher placement="sidebar-bottom" />
+              {!isElectron && <DesktopConnectButton />}
+            </div>
+          )}
           <div className="p-3 flex items-center justify-between gap-2">
             {isMultiUserMode && user && (
               <div className="flex items-center gap-2 min-w-0 flex-1">

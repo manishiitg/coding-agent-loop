@@ -12,6 +12,11 @@ type WorkspaceConnectionSwitcherProps = {
   placement?: 'sidebar' | 'sidebar-bottom' | 'sidebar-minimized' | 'auth'
 }
 
+// Temporarily hidden from the UI: the multi-workspace (local/remote backend)
+// switching flow isn't reliable yet. Flip this back to `true` to re-enable the
+// switcher everywhere it's rendered (sidebar + auth screen).
+export const WORKSPACE_SWITCHER_ENABLED = false
+
 function normalizeUrl(value: string): string {
   return value.trim().replace(/\/+$/, '')
 }
@@ -122,6 +127,7 @@ export function WorkspaceConnectionSwitcher({ placement = 'sidebar' }: Workspace
     [profiles]
   )
 
+  if (!WORKSPACE_SWITCHER_ENABLED) return null
   if (!isElectron) return null
 
   const resetForm = () => {

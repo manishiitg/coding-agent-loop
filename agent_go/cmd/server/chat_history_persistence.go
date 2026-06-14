@@ -788,8 +788,8 @@ func listWorkflowScopedChatHistorySessionsFromDisk(userID, chatHistoryRootPath, 
 // listWorkflowBuilderHistoryFromDisk returns builder chat sessions for a workflow.
 // readBudget caps how many conversation files are actually READ+PARSED (the costly
 // part — preview building): we stat every file (cheap) and dedupe to the latest
-// file per session by filename+mtime WITHOUT reading, sort by mtime, then read
-// only the top readBudget. readBudget<=0 reads all (unlimited list).
+// display row by filename+mtime WITHOUT reading, sort by mtime, then read only
+// the top readBudget. readBudget<=0 reads all (unlimited list).
 func listWorkflowBuilderHistoryFromDisk(userID, workflowPath string, readBudget int) ([]ChatHistorySession, bool) {
 	workflowDir, ok := resolveLocalWorkflowDir(workflowPath)
 	if !ok {
@@ -800,11 +800,17 @@ func listWorkflowBuilderHistoryFromDisk(userID, workflowPath string, readBudget 
 		return nil, false
 	}
 
-	// Cheap pass: stat only, dedupe to the latest file per session id (parsed
-	// from the filename — no file read).
+	scheduleIDBySessionID := workflowScheduleIDBySessionID(workflowPath)
+
+	// Cheap pass: stat only, dedupe to the latest file per display key (parsed
+	// from the filename — no file read). Normal chats keep one row per session.
+	// Schedule chats keep one row per schedule because repeated runs already
+	// have detailed history in schedule-runs.json and may resume the same CLI
+	// thread underneath.
 	type fileRef struct {
-		convPath string
-		mtime    time.Time
+		sessionID string
+		convPath  string
+		mtime     time.Time
 	}
 	latest := make(map[string]fileRef)
 	for _, convPath := range matches {
@@ -813,8 +819,9 @@ func listWorkflowBuilderHistoryFromDisk(userID, workflowPath string, readBudget 
 			continue
 		}
 		sessionID := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(convPath), "session-"), "-conversation.json")
-		if cur, ok := latest[sessionID]; !ok || info.ModTime().After(cur.mtime) {
-			latest[sessionID] = fileRef{convPath: convPath, mtime: info.ModTime()}
+		dedupeKey := workflowBuilderHistoryDisplayKey(sessionID, scheduleIDBySessionID)
+		if cur, ok := latest[dedupeKey]; !ok || info.ModTime().After(cur.mtime) {
+			latest[dedupeKey] = fileRef{sessionID: sessionID, convPath: convPath, mtime: info.ModTime()}
 		}
 	}
 
@@ -823,8 +830,8 @@ func listWorkflowBuilderHistoryFromDisk(userID, workflowPath string, readBudget 
 		ref fileRef
 	}
 	refs := make([]sessionRef, 0, len(latest))
-	for id, r := range latest {
-		refs = append(refs, sessionRef{id: id, ref: r})
+	for _, r := range latest {
+		refs = append(refs, sessionRef{id: r.sessionID, ref: r})
 	}
 	sort.Slice(refs, func(i, j int) bool { return refs[i].ref.mtime.After(refs[j].ref.mtime) })
 	if readBudget > 0 && readBudget < len(refs) {
@@ -847,6 +854,51 @@ func listWorkflowBuilderHistoryFromDisk(userID, workflowPath string, readBudget 
 		sessions = append(sessions, session)
 	}
 	return sessions, true
+}
+
+func workflowScheduleIDBySessionID(workflowPath string) map[string]string {
+	runs, ok, err := readLocalScheduleRuns(workflowPath)
+	if err != nil || !ok {
+		return nil
+	}
+	out := make(map[string]string, len(runs))
+	for _, run := range runs {
+		sessionID := strings.TrimSpace(run.SessionID)
+		scheduleID := strings.TrimSpace(run.ScheduleID)
+		if sessionID != "" && scheduleID != "" {
+			out[sessionID] = scheduleID
+		}
+	}
+	return out
+}
+
+func workflowBuilderHistoryDisplayKey(sessionID string, scheduleIDBySessionID map[string]string) string {
+	if scheduleKey, ok := workflowScheduleHistoryDisplayKey(sessionID, scheduleIDBySessionID); ok {
+		return scheduleKey
+	}
+	return "session:" + sessionID
+}
+
+func workflowScheduleHistoryDisplayKey(sessionID string, scheduleIDBySessionID map[string]string) (string, bool) {
+	if !strings.HasPrefix(sessionID, "schedule-") {
+		return "", false
+	}
+	if scheduleID := strings.TrimSpace(scheduleIDBySessionID[sessionID]); scheduleID != "" {
+		return "schedule:" + scheduleID, true
+	}
+	parts := strings.SplitN(sessionID, "--", 2)
+	if len(parts) != 2 {
+		return "schedule-session:" + sessionID, true
+	}
+	prefix := parts[1]
+	if idx := strings.Index(prefix, "_"); idx > 0 {
+		prefix = prefix[:idx]
+	}
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return "schedule-session:" + sessionID, true
+	}
+	return "schedule-prefix:" + prefix, true
 }
 
 func workflowBuilderConversationFiles(workflowDir string) ([]string, error) {

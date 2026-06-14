@@ -31,6 +31,7 @@ export type LLMProvider =
   | 'minimax-coding-plan'
   | 'elevenlabs'
   | 'deepgram'
+  | 'ollama'
 
 // New LLM Configuration types (Tiered Fallback System)
 export interface LLMModel {

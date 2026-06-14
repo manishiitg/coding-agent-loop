@@ -158,6 +158,8 @@ function extractStoredProviderKeysFromState(state: {
     minimax: state.minimaxConfig?.api_key || undefined,
     elevenlabs: state.elevenlabsConfig?.api_key || undefined,
     deepgram: state.deepgramConfig?.api_key || undefined,
+    ollama_base_url: state.ollamaConfig?.endpoint || undefined,
+    ollama_api_key: state.ollamaConfig?.api_key || undefined,
     bedrock: state.bedrockConfig?.region ? { region: state.bedrockConfig.region } : undefined,
     azure: state.azureConfig?.endpoint && state.azureConfig?.api_key
       ? {
@@ -223,6 +225,7 @@ interface LLMState extends StoreActions {
   minimaxCodingPlanConfig: ExtendedLLMConfiguration
   elevenlabsConfig: ExtendedLLMConfiguration
   deepgramConfig: ExtendedLLMConfiguration
+  ollamaConfig: ExtendedLLMConfiguration
 
   // CLI provider API keys
   geminiCliApiKey: string
@@ -318,6 +321,7 @@ interface LLMState extends StoreActions {
   setMinimaxCodingPlanConfig: (config: ExtendedLLMConfiguration) => void
   setElevenlabsConfig: (config: ExtendedLLMConfiguration) => void
   setDeepgramConfig: (config: ExtendedLLMConfiguration) => void
+  setOllamaConfig: (config: ExtendedLLMConfiguration) => void
   setShowLLMModal: (show: boolean) => void
   loadDefaultsFromBackend: () => Promise<void>
   
@@ -460,6 +464,14 @@ export const useLLMStore = create<LLMState>()(
           fallback_models: [],
           cross_provider_fallback: undefined,
           api_key: ''
+        },
+        ollamaConfig: {
+          provider: 'ollama',
+          model_id: '',
+          fallback_models: [],
+          cross_provider_fallback: undefined,
+          api_key: '',
+          endpoint: 'http://localhost:11434',
         },
 
         // CLI provider API keys
@@ -669,6 +681,10 @@ export const useLLMStore = create<LLMState>()(
 
         setDeepgramConfig: (config) => {
           set({ deepgramConfig: config, error: null })
+        },
+
+        setOllamaConfig: (config) => {
+          set({ ollamaConfig: config, error: null })
         },
 
         setShowLLMModal: (show) => {
@@ -1057,6 +1073,17 @@ export const useLLMStore = create<LLMState>()(
                 api_key: ''
               }
             )
+            const ollamaConfig = preserveUserConfig(
+              currentState.ollamaConfig,
+              {
+                provider: 'ollama',
+                model_id: '',
+                fallback_models: [],
+                cross_provider_fallback: undefined,
+                api_key: '',
+                endpoint: 'http://localhost:11434',
+              }
+            )
 
             if (workspaceProviderKeys?.openai) openaiConfig.api_key = workspaceProviderKeys.openai
             if (workspaceProviderKeys?.anthropic) anthropicConfig.api_key = workspaceProviderKeys.anthropic
@@ -1066,6 +1093,8 @@ export const useLLMStore = create<LLMState>()(
             if (workspaceProviderKeys?.minimax) minimaxConfig.api_key = workspaceProviderKeys.minimax
             if (workspaceProviderKeys?.elevenlabs) elevenlabsConfig.api_key = workspaceProviderKeys.elevenlabs
             if (workspaceProviderKeys?.deepgram) deepgramConfig.api_key = workspaceProviderKeys.deepgram
+            if (workspaceProviderKeys?.ollama_base_url) ollamaConfig.endpoint = workspaceProviderKeys.ollama_base_url
+            if (workspaceProviderKeys?.ollama_api_key) ollamaConfig.api_key = workspaceProviderKeys.ollama_api_key
             if (workspaceProviderKeys?.bedrock?.region) {
               bedrockConfig.region = workspaceProviderKeys.bedrock.region
             }
@@ -1104,6 +1133,7 @@ export const useLLMStore = create<LLMState>()(
               minimaxCodingPlanConfig,
               elevenlabsConfig,
               deepgramConfig,
+              ollamaConfig,
               geminiCliApiKey: workspaceProviderKeys?.gemini_cli || '', // gitleaks:allow
               openCodeCliSubKeys: workspaceProviderKeys?.opencode_cli_sub_keys
                 ? { ...workspaceProviderKeys.opencode_cli_sub_keys }

@@ -28,6 +28,7 @@ var supportedLLMProviders = []string{
 	"vertex",
 	"anthropic",
 	"azure",
+	"ollama",
 	"minimax",
 	"elevenlabs",
 	"deepgram",
@@ -52,7 +53,7 @@ const claudeCodeDisableAutoMemoryEnv = "CLAUDE_CODE_DISABLE_AUTO_MEMORY"
 
 func isPublishedLLMProviderAllowed(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "bedrock", "openai", "vertex", "anthropic", "azure",
+	case "bedrock", "openai", "vertex", "anthropic", "azure", "ollama",
 		"claude-code", "gemini-cli", "codex-cli", "cursor-cli", "agy-cli", "opencode-cli",
 		"opencode-cli-kimi", "opencode-cli-deepseek", "opencode-cli-qwen",
 		"opencode-cli-minimax", "opencode-cli-glm", "opencode-cli-free":
@@ -311,6 +312,12 @@ func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 	if s := os.Getenv("DEEPGRAM_API_KEY"); s != "" {
 		keys.Deepgram = &s
 	}
+	if s := os.Getenv("OLLAMA_BASE_URL"); s != "" {
+		keys.OllamaBaseURL = &s
+	}
+	if s := os.Getenv("OLLAMA_API_KEY"); s != "" {
+		keys.OllamaAPIKey = &s
+	}
 	if endpoint := os.Getenv("AZURE_AI_ENDPOINT"); endpoint != "" {
 		apiKey := os.Getenv("AZURE_AI_API_KEY")
 		apiVer := os.Getenv("AZURE_AI_API_VERSION")
@@ -377,6 +384,8 @@ func providerDisplayLabel(provider string) string {
 		return "Z.AI"
 	case "kimi":
 		return "Kimi"
+	case "ollama":
+		return "Ollama"
 	case "minimax":
 		return "MiniMax"
 	default:
@@ -904,6 +913,16 @@ func (api *StreamingAPI) populateValidationCredentialsFromMergedKeys(ctx context
 		setAPIKey(keys.ZAI)
 	case "kimi":
 		setAPIKey(keys.Kimi)
+	case "ollama":
+		if keys.OllamaAPIKey != nil {
+			setAPIKey(keys.OllamaAPIKey)
+		}
+		if req.Options == nil {
+			req.Options = map[string]interface{}{}
+		}
+		if _, ok := req.Options["base_url"]; !ok && keys.OllamaBaseURL != nil {
+			req.Options["base_url"] = *keys.OllamaBaseURL
+		}
 	case "azure":
 		if keys.Azure != nil {
 			if req.APIKey == "" {

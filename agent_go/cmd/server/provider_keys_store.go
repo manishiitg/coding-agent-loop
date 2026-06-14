@@ -48,6 +48,11 @@ type StoredProviderKeys struct {
 	Bedrock           *StoredBedrockConfig `json:"bedrock,omitempty"`
 	Azure             *StoredAzureConfig   `json:"azure,omitempty"`
 
+	// Ollama: base URL for the Ollama server (e.g. "http://localhost:11434").
+	// API key is optional for local deployments but required for Ollama Cloud.
+	OllamaBaseURL string `json:"ollama_base_url,omitempty"`
+	OllamaAPIKey  string `json:"ollama_api_key,omitempty"`
+
 	// OpenCode CLI sub-provider credentials. Keys are env-var names
 	// understood by the OpenCode bundled SDKs:
 	//   KIMI_API_KEY, DEEPSEEK_API_KEY, DASHSCOPE_API_KEY,
@@ -159,6 +164,12 @@ func ProviderKeysToAPIKeysMap(keys *StoredProviderKeys) map[string]interface{} {
 	if keys.Deepgram != "" {
 		m["deepgram"] = keys.Deepgram
 	}
+	if keys.OllamaBaseURL != "" {
+		m["ollama_base_url"] = keys.OllamaBaseURL
+	}
+	if keys.OllamaAPIKey != "" {
+		m["ollama"] = keys.OllamaAPIKey
+	}
 	if keys.Bedrock != nil {
 		m["bedrock"] = map[string]interface{}{"region": keys.Bedrock.Region}
 	}
@@ -225,6 +236,12 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 	if keys.Deepgram != "" {
 		result.Deepgram = &keys.Deepgram
 	}
+	if keys.OllamaBaseURL != "" {
+		result.OllamaBaseURL = &keys.OllamaBaseURL
+	}
+	if keys.OllamaAPIKey != "" {
+		result.OllamaAPIKey = &keys.OllamaAPIKey
+	}
 	if keys.Bedrock != nil {
 		result.Bedrock = &llm.BedrockConfig{Region: keys.Bedrock.Region}
 	}
@@ -277,6 +294,9 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 	if result.Deepgram != nil {
 		loaded = append(loaded, "deepgram")
 	}
+	if result.OllamaBaseURL != nil {
+		loaded = append(loaded, "ollama")
+	}
 	if result.Bedrock != nil {
 		loaded = append(loaded, "bedrock")
 	}
@@ -314,19 +334,21 @@ func MergedProviderAPIKeys(ctx context.Context) *llm.ProviderAPIKeys {
 		return env
 	}
 	result := &llm.ProviderAPIKeys{
-		OpenAI:      pick(envKeys.OpenAI, wsKeys.OpenAI),
-		Anthropic:   pick(envKeys.Anthropic, wsKeys.Anthropic),
-		ZAI:         pick(envKeys.ZAI, wsKeys.ZAI),
-		Kimi:        pick(envKeys.Kimi, wsKeys.Kimi),
-		Vertex:      pick(envKeys.Vertex, wsKeys.Vertex),
-		GeminiCLI:   pick(envKeys.GeminiCLI, wsKeys.GeminiCLI),
-		CodexCLI:    pick(envKeys.CodexCLI, wsKeys.CodexCLI),
-		CursorCLI:   pick(envKeys.CursorCLI, wsKeys.CursorCLI),
-		AgyCLI:      pick(envKeys.AgyCLI, wsKeys.AgyCLI),
-		OpenCodeCLI: pick(envKeys.OpenCodeCLI, wsKeys.OpenCodeCLI),
-		MiniMax:     pick(envKeys.MiniMax, wsKeys.MiniMax),
-		ElevenLabs:  pick(envKeys.ElevenLabs, wsKeys.ElevenLabs),
-		Deepgram:    pick(envKeys.Deepgram, wsKeys.Deepgram),
+		OpenAI:        pick(envKeys.OpenAI, wsKeys.OpenAI),
+		Anthropic:     pick(envKeys.Anthropic, wsKeys.Anthropic),
+		ZAI:           pick(envKeys.ZAI, wsKeys.ZAI),
+		Kimi:          pick(envKeys.Kimi, wsKeys.Kimi),
+		Vertex:        pick(envKeys.Vertex, wsKeys.Vertex),
+		GeminiCLI:     pick(envKeys.GeminiCLI, wsKeys.GeminiCLI),
+		CodexCLI:      pick(envKeys.CodexCLI, wsKeys.CodexCLI),
+		CursorCLI:     pick(envKeys.CursorCLI, wsKeys.CursorCLI),
+		AgyCLI:        pick(envKeys.AgyCLI, wsKeys.AgyCLI),
+		OpenCodeCLI:   pick(envKeys.OpenCodeCLI, wsKeys.OpenCodeCLI),
+		MiniMax:       pick(envKeys.MiniMax, wsKeys.MiniMax),
+		ElevenLabs:    pick(envKeys.ElevenLabs, wsKeys.ElevenLabs),
+		Deepgram:      pick(envKeys.Deepgram, wsKeys.Deepgram),
+		OllamaBaseURL: pick(envKeys.OllamaBaseURL, wsKeys.OllamaBaseURL),
+		OllamaAPIKey:  pick(envKeys.OllamaAPIKey, wsKeys.OllamaAPIKey),
 	}
 	// Bedrock / Azure: workspace wins if present, else env
 	if wsKeys.Bedrock != nil {
@@ -518,19 +540,21 @@ func mergeStoredProviderKeyValues(existing, incoming *StoredProviderKeys) *Store
 	}
 
 	merged := &StoredProviderKeys{
-		OpenAI:      pick(existing.OpenAI, incoming.OpenAI),
-		Anthropic:   pick(existing.Anthropic, incoming.Anthropic),
-		ZAI:         pick(existing.ZAI, incoming.ZAI),
-		Kimi:        pick(existing.Kimi, incoming.Kimi),
-		Vertex:      pick(existing.Vertex, incoming.Vertex),
-		GeminiCLI:   pick(existing.GeminiCLI, incoming.GeminiCLI),
-		CodexCLI:    pick(existing.CodexCLI, incoming.CodexCLI),
-		CursorCLI:   pick(existing.CursorCLI, incoming.CursorCLI),
-		AgyCLI:      pick(existing.AgyCLI, incoming.AgyCLI),
-		OpenCodeCLI: pick(existing.OpenCodeCLI, incoming.OpenCodeCLI),
-		MiniMax:     pick(existing.MiniMax, incoming.MiniMax),
-		ElevenLabs:  pick(existing.ElevenLabs, incoming.ElevenLabs),
-		Deepgram:    pick(existing.Deepgram, incoming.Deepgram),
+		OpenAI:        pick(existing.OpenAI, incoming.OpenAI),
+		Anthropic:     pick(existing.Anthropic, incoming.Anthropic),
+		ZAI:           pick(existing.ZAI, incoming.ZAI),
+		Kimi:          pick(existing.Kimi, incoming.Kimi),
+		Vertex:        pick(existing.Vertex, incoming.Vertex),
+		GeminiCLI:     pick(existing.GeminiCLI, incoming.GeminiCLI),
+		CodexCLI:      pick(existing.CodexCLI, incoming.CodexCLI),
+		CursorCLI:     pick(existing.CursorCLI, incoming.CursorCLI),
+		AgyCLI:        pick(existing.AgyCLI, incoming.AgyCLI),
+		OpenCodeCLI:   pick(existing.OpenCodeCLI, incoming.OpenCodeCLI),
+		MiniMax:       pick(existing.MiniMax, incoming.MiniMax),
+		ElevenLabs:    pick(existing.ElevenLabs, incoming.ElevenLabs),
+		Deepgram:      pick(existing.Deepgram, incoming.Deepgram),
+		OllamaBaseURL: pick(existing.OllamaBaseURL, incoming.OllamaBaseURL),
+		OllamaAPIKey:  pick(existing.OllamaAPIKey, incoming.OllamaAPIKey),
 	}
 
 	// Bedrock / Azure: incoming wins if present, else keep existing

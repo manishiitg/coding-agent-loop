@@ -79,6 +79,8 @@ export interface StoredProviderKeys {
   minimax_coding_plan?: string
   elevenlabs?: string
   deepgram?: string
+  ollama_base_url?: string
+  ollama_api_key?: string
   bedrock?: { region: string }
   azure?: { endpoint: string; api_key: string; api_version?: string; region?: string }
   // OpenCode CLI sub-provider credentials keyed by the env-var name the

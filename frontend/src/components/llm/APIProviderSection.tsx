@@ -42,6 +42,7 @@ export function APIProviderSection({
   const isLocked = llmConfigLocked || lockedProviders.includes(provider.id)
   const isAzure = provider.id === 'azure'
   const isBedrock = provider.id === 'bedrock'
+  const isOllama = provider.id === 'ollama'
   const needsApiKey = provider.requires_api_key && !isBedrock
 
   useEffect(() => {
@@ -128,11 +129,14 @@ export function APIProviderSection({
     setIsSubmitting(true)
     setPublishError(null)
     try {
+      const ollamaOptions = isOllama
+        ? { ...config.options, base_url: endpoint || 'http://localhost:11434' }
+        : config.options
       const testResult = await testAPIKeyFromStore(
         provider.id as Parameters<typeof testAPIKeyFromStore>[0],
-        needsApiKey ? apiKey : '',
+        needsApiKey || isOllama ? apiKey : '',
         config.model_id,
-        config.options
+        isOllama ? ollamaOptions : config.options
       )
       if (testResult.valid) {
         const llmModel = {
@@ -140,8 +144,10 @@ export function APIProviderSection({
           model_id: config.model_id,
           ...(needsApiKey && config.api_key ? { api_key: config.api_key } : {}),
           ...(config.region ? { region: config.region } : {}),
-          ...(config.endpoint ? { endpoint: config.endpoint } : {}),
-          options: config.options,
+          ...(isOllama && endpoint ? { endpoint } : config.endpoint ? { endpoint: config.endpoint } : {}),
+          options: isOllama
+            ? { ...config.options, base_url: endpoint || 'http://localhost:11434' }
+            : config.options,
         }
         await saveLLM(llmModel, publishName.trim(), currentModelMetadata?.model_name, needsApiKey ? 'api_key' : 'none', currentModelMetadata)
         setPublishName('')
@@ -276,6 +282,69 @@ export function APIProviderSection({
               <p className="text-xs text-muted-foreground">
                 Bedrock uses IAM role credentials. No API key required.
               </p>
+            </div>
+          )}
+
+          {/* Ollama-specific: Server URL + optional API key */}
+          {isOllama && (
+            <div className="border-t border-border pt-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <Globe className="w-4 h-4 text-muted-foreground" />
+                <h5 className="text-sm font-medium text-foreground">Ollama Server URL</h5>
+              </div>
+              <input
+                type="text"
+                value={endpoint}
+                onChange={e => handleEndpointChange(e.target.value)}
+                placeholder="http://localhost:11434"
+                className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary"
+                disabled={isLocked}
+              />
+              <p className="text-xs text-muted-foreground">
+                Default is <code>http://localhost:11434</code> for local Ollama. Use your cloud endpoint URL for Ollama Cloud.
+              </p>
+              <div className="flex items-center gap-2 mt-1">
+                <Key className="w-4 h-4 text-muted-foreground" />
+                <h5 className="text-sm font-medium text-foreground">API Key <span className="font-normal text-muted-foreground">(optional for local)</span></h5>
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  value={apiKey}
+                  onChange={e => handleAPIKeyChange(e.target.value)}
+                  placeholder={isLocked ? '••••••••••••••••' : 'Enter Ollama API key (leave blank for local)'}
+                  className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary"
+                  disabled={isLocked}
+                />
+                {!isLocked && (
+                  <Button
+                    onClick={() => onTestAPIKey(apiKey, config.model_id, { ...config.options, base_url: endpoint || 'http://localhost:11434' })}
+                    disabled={apiKeyStatus === 'testing'}
+                    size="sm"
+                    variant="outline"
+                  >
+                    {apiKeyStatus === 'testing' ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : apiKeyStatus === 'valid' ? (
+                      <CheckCircle className="w-4 h-4 text-green-500" />
+                    ) : apiKeyStatus === 'invalid' ? (
+                      <AlertCircle className="w-4 h-4 text-red-500" />
+                    ) : (
+                      'Test'
+                    )}
+                  </Button>
+                )}
+              </div>
+              {!isLocked && apiKeyStatus === 'valid' && (
+                <div className="text-sm text-green-600 dark:text-green-400 flex items-center gap-1">
+                  <CheckCircle className="w-4 h-4" />Connected to Ollama successfully
+                </div>
+              )}
+              {!isLocked && (apiKeyStatus === 'invalid' || apiKeyStatus === 'timeout') && (
+                <div className="text-sm text-red-600 dark:text-red-400 flex items-center gap-1">
+                  <AlertCircle className="w-4 h-4" />{apiKeyError || 'Could not connect to Ollama'}
+                </div>
+              )}
             </div>
           )}
 

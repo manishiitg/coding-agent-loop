@@ -30,7 +30,7 @@ func listProviderModelsJSON(provider string) string {
 	}
 
 	if providerModelSelectionMode(provider) == "dynamic" {
-		resp := getDynamicModels(provider)
+		resp := getDynamicModels(context.Background(), provider)
 		return prettyJSON(resp)
 	}
 
@@ -475,6 +475,11 @@ func providerAuthConfigured(provider string, keys *llm.ProviderAPIKeys) (bool, s
 		return keys.Bedrock != nil && strings.TrimSpace(keys.Bedrock.Region) != "", "BEDROCK_REGION or workspace provider auth"
 	case string(llm.ProviderAzure):
 		return keys.Azure != nil && strings.TrimSpace(keys.Azure.APIKey) != "" && strings.TrimSpace(keys.Azure.Endpoint) != "", "AZURE_AI_ENDPOINT/AZURE_AI_API_KEY or workspace provider auth"
+	case string(llm.ProviderOllama):
+		// Ollama local deployments need only a reachable base URL (no auth key required).
+		// If a base URL is configured (env or workspace), auth is considered configured.
+		// With no explicit URL, we assume localhost:11434 is reachable.
+		return true, "OLLAMA_BASE_URL or workspace provider auth (defaults to http://localhost:11434)"
 	default:
 		return false, "unknown provider"
 	}
@@ -517,6 +522,7 @@ func buildChatLLMCapabilities(keys *llm.ProviderAPIKeys, includeModels bool) []l
 		string(llm.ProviderVertex),
 		string(llm.ProviderBedrock),
 		string(llm.ProviderAzure),
+		string(llm.ProviderOllama),
 	}
 	supportedSet := make(map[string]bool)
 	for _, provider := range getSupportedProviders() {

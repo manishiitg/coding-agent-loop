@@ -19,7 +19,7 @@ interface LLMConfigurationModalProps {
 }
 
 // Providers that use API keys in this modal (excludes local CLIs and hidden legacy chat providers)
-type APIKeyProviderType = 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'minimax' | 'elevenlabs' | 'deepgram'
+type APIKeyProviderType = 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'ollama' | 'minimax' | 'elevenlabs' | 'deepgram'
 
 type APIKeyStatusValue = 'idle' | 'testing' | 'valid' | 'invalid' | 'timeout'
 
@@ -35,7 +35,7 @@ const CHAT_CAPABILITIES = new Set(['chat', 'text'])
 const AUDIO_CAPABILITIES = new Set(['text_to_speech', 'speech_to_text', 'generate_music', 'audio_generation', 'audio_transcription', 'music_generation'])
 const HIDDEN_CHAT_PROVIDER_TABS = new Set<string>(['openrouter', 'z-ai', 'kimi', 'minimax', 'minimax-coding-plan'])
 const isMiniMaxAudioModel = (modelId: string) => /^(speech|music|audio|voice)[-_]/i.test(modelId)
-const API_KEY_PROVIDER_IDS = new Set<string>(['bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'minimax', 'elevenlabs', 'deepgram'])
+const API_KEY_PROVIDER_IDS = new Set<string>(['bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'ollama', 'minimax', 'elevenlabs', 'deepgram'])
 const CODING_AGENT_PROVIDER_ORDER = ['claude-code', 'codex-cli', 'gemini-cli', 'agy-cli', 'opencode-cli', 'cursor-cli']
 const CODING_AGENT_PROVIDER_RANK = new Map<string, number>(
   CODING_AGENT_PROVIDER_ORDER.map((provider, index) => [provider, index])
@@ -101,6 +101,7 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
     minimaxConfig,
     elevenlabsConfig,
     deepgramConfig,
+    ollamaConfig,
     availableVertexModels,
     availableMinimaxModels,
     availableElevenLabsModels,
@@ -113,6 +114,7 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
     setMinimaxConfig,
     setElevenlabsConfig,
     setDeepgramConfig,
+    setOllamaConfig,
     testAPIKey,
     defaultsLoaded,
     loadDefaultsFromBackend,
@@ -223,9 +225,10 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
     azure: { config: azureConfig, setConfig: setAzureConfig },
     minimax: { config: minimaxConfig, setConfig: setMinimaxConfig },
     elevenlabs: { config: elevenlabsConfig, setConfig: setElevenlabsConfig },
-    deepgram: { config: deepgramConfig, setConfig: setDeepgramConfig }
-  }), [bedrockConfig, openaiConfig, vertexConfig, anthropicConfig, azureConfig, minimaxConfig, elevenlabsConfig, deepgramConfig,
-      setBedrockConfig, setOpenaiConfig, setVertexConfig, setAnthropicConfig, setAzureConfig, setMinimaxConfig, setElevenlabsConfig, setDeepgramConfig])
+    deepgram: { config: deepgramConfig, setConfig: setDeepgramConfig },
+    ollama: { config: ollamaConfig, setConfig: setOllamaConfig },
+  }), [bedrockConfig, openaiConfig, vertexConfig, anthropicConfig, azureConfig, minimaxConfig, elevenlabsConfig, deepgramConfig, ollamaConfig,
+      setBedrockConfig, setOpenaiConfig, setVertexConfig, setAnthropicConfig, setAzureConfig, setMinimaxConfig, setElevenlabsConfig, setDeepgramConfig, setOllamaConfig])
 
   // Metadata state - Driven purely by backend
   const [metadata, setMetadata] = useState<ModelMetadata[]>([])
@@ -293,6 +296,7 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
     vertex: 'idle',
     anthropic: 'idle',
     azure: 'idle',
+    ollama: 'idle',
     minimax: 'idle',
     elevenlabs: 'idle',
     deepgram: 'idle'
@@ -304,6 +308,7 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
     vertex: null,
     anthropic: null,
     azure: null,
+    ollama: null,
     minimax: null,
     elevenlabs: null,
     deepgram: null

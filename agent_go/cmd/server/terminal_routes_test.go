@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -657,6 +659,62 @@ func TestTerminalRoutesGetTerminalCanHistoryRefreshSelectedPane(t *testing.T) {
 	}
 	if response.Content != "deep pane" {
 		t.Fatalf("terminal content = %q, want deep content", response.Content)
+	}
+}
+
+func TestTerminalRoutesGetTerminalHistoryPrefersLongerPipeRecording(t *testing.T) {
+	store := terminals.NewStore()
+	sessionID := "session-terminal-pipe-history"
+	terminalID := sessionID + ":workflow-step:review-plan"
+	tmuxSession := "mlp-claude-pipe-history"
+	pipeDir := t.TempDir()
+	pipePath := filepath.Join(pipeDir, terminalPipeRecorderFileName(tmuxSession))
+	pipeContent := "first line from pipe\nsecond line from pipe\nthird line from pipe\n"
+	if err := os.WriteFile(pipePath, []byte(pipeContent), 0o600); err != nil {
+		t.Fatalf("write pipe recording: %v", err)
+	}
+	api := &StreamingAPI{
+		terminalStore: store,
+		terminalPipeRecorder: &terminalPipeRecorder{
+			root: pipeDir,
+			sessions: map[string]*terminalPipeRecording{
+				tmuxSession: {
+					tmuxSession: tmuxSession,
+					path:        pipePath,
+					started:     true,
+				},
+			},
+		},
+	}
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, "short pane", 2))
+	store.HandleEvent(sessionID, terminalRouteEndEvent(sessionID, "workflow-step:review-plan", tmuxSession, 60))
+
+	oldRunOutput := runTerminalTmuxOutputCommand
+	runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "capture-pane" {
+			return "short pane", nil
+		}
+		t.Fatalf("unexpected tmux args: %v", args)
+		return "", nil
+	}
+	defer func() { runTerminalTmuxOutputCommand = oldRunOutput }()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/terminals/"+terminalID+"?content=history", nil)
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
+	rec := httptest.NewRecorder()
+	api.handleGetTerminal(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	var response terminals.Snapshot
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode history response: %v", err)
+	}
+	if response.Content != pipeContent {
+		t.Fatalf("terminal content = %q, want pipe content %q", response.Content, pipeContent)
+	}
+	if response.ContentSource != "tmux_pipe" {
+		t.Fatalf("content source = %q, want tmux_pipe", response.ContentSource)
 	}
 }
 

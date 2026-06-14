@@ -201,15 +201,15 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 	if shouldCaptureTmux {
 		ctx, cancel := context.WithTimeout(r.Context(), terminalTmuxActionTimeout)
 		preserveScrollback := shouldPreserveCapturedTerminalScrollback(r)
-		var displayContent string
-		var displayStats terminalPaneCaptureStats
-		var haveDisplayContent bool
-		if wantsScreenTerminalContent(r) && api.terminalPipeRecorder != nil {
-			pipeContent, pipeStats, ok, pipeErr := api.terminalPipeRecorder.Content(ctx, snapshot)
+		var pipeContent string
+		var pipeStats terminalPaneCaptureStats
+		var havePipeContent bool
+		if shouldReadTerminalPipeRecorderForDetail(r) && api.terminalPipeRecorder != nil {
+			var ok bool
+			var pipeErr error
+			pipeContent, pipeStats, ok, pipeErr = api.terminalPipeRecorder.Content(ctx, snapshot)
 			if pipeErr == nil && ok {
-				displayContent = pipeContent
-				displayStats = pipeStats
-				haveDisplayContent = true
+				havePipeContent = true
 			} else if debugTerminal && pipeErr != nil {
 				log.Printf("[TERMINAL_DEBUG] pipe recorder fallback source=%q terminal_id=%q tmux_session=%q err=%q", debugSource, snapshot.TerminalID, snapshot.TmuxSession, pipeErr.Error())
 			}
@@ -218,9 +218,13 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 		if stats.ContentSource == "" {
 			stats.ContentSource = "tmux_capture"
 		}
+		displayContent := pipeContent
+		displayStats := pipeStats
+		haveDisplayContent := havePipeContent
 		var runtimeStats terminalPaneRuntimeStats
 		var haveRuntimeStats bool
 		if err == nil {
+			haveDisplayContent = havePipeContent && shouldUseTerminalPipeContentForDetail(r, pipeStats, stats)
 			if debugTerminal {
 				runtimeStats, haveRuntimeStats = inspectTerminalPaneRuntimeStats(ctx, snapshot.TmuxSession)
 				writeTerminalDebugHeaders(w, stats, preserveScrollback, runtimeStats, haveRuntimeStats)
@@ -324,6 +328,17 @@ func shouldCaptureTerminalPaneForDetail(snapshot terminals.Snapshot, r *http.Req
 		return true
 	}
 	return terminalSnapshotHasPromptCompletionFallback(snapshot.Content)
+}
+
+func shouldReadTerminalPipeRecorderForDetail(r *http.Request) bool {
+	return wantsScreenTerminalContent(r) || wantsHistoryTerminalContent(r)
+}
+
+func shouldUseTerminalPipeContentForDetail(r *http.Request, pipeStats, captureStats terminalPaneCaptureStats) bool {
+	if !wantsHistoryTerminalContent(r) {
+		return true
+	}
+	return pipeStats.RawLines > captureStats.CollapsedLines || pipeStats.RawBytes > captureStats.CollapsedBytes
 }
 
 func terminalCaptureSkipReason(snapshot terminals.Snapshot, r *http.Request, shouldCapture bool) string {

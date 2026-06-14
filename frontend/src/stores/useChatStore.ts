@@ -326,6 +326,8 @@ const stripRestoreOnlyTabConfig = (config: ChatTabConfig): ChatTabConfig => {
   return nextConfig
 }
 
+const persistDurableTabConfig = (config: ChatTabConfig): ChatTabConfig => ({ ...config })
+
 // Generalized ChatTab interface (works for multi-agent and workflow modes)
 export interface ChatTab {
   tabId: string  // Unique ID: `chat_${timestamp}` or `phase_${phaseId}_${timestamp}`
@@ -2815,14 +2817,14 @@ export const useChatStore = create<ChatState>()(
                 
                 hideToolCalls: tab.hideToolCalls ?? true, // Default true — collapse tool calls by default
                 viewMode: normalizeEventViewMode(tab.viewMode), // Persist layout mode across reload
-                config: stripRestoreOnlyTabConfig(tab.config), // Persist durable config including:
+                config: persistDurableTabConfig(tab.config), // Persist durable config including:
                 // - selectedServers (MCP server selections)
                 // - llmConfig (LLM provider, model_id, fallback_models, etc.)
                 // - useCodeExecutionMode (Simple vs Code Exec mode)
                 // - fileContext (selected files/folders)
                 // - inputText (chat input text)
                 // - enableContextSummarization
-                // Restore-only fields are intentionally excluded; resume must be explicit.
+                // - restoredConversationPath metadata for resumed coding-agent tabs
                 createdAt: tab.createdAt, // Persist for ordering
                 lastAccessedAt: tab.lastAccessedAt || tab.createdAt,
                 lastViewedEventCount: 0, // @deprecated - Reset on reload
@@ -2868,10 +2870,6 @@ export const useChatStore = create<ChatState>()(
           // Migrate tabs: compute browserMode from enableBrowserAccess/useCdp if missing
           let migratedTabConfig = false
           for (const tab of Object.values(freshTabs)) {
-            if (tab.config?.restoredConversationPath) {
-              tab.config = stripRestoreOnlyTabConfig(tab.config)
-              migratedTabConfig = true
-            }
             if (tab.config && tab.config.browserMode === undefined) {
               if (tab.config.enableBrowserAccess) {
                 tab.config.browserMode = tab.config.useCdp ? 'cdp' : 'headless'

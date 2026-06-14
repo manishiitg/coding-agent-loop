@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useCallback, useRef, useState, forwardRef } from "react";
 import { ThemeProvider } from "./contexts/ThemeContext.tsx";
 import WorkspaceSidebar from "./components/WorkspaceSidebar";
+import { UpdateProgressToast } from "./components/UpdateProgressToast";
 import Workspace from "./components/Workspace.tsx";
 import ChatArea, { type ChatAreaRef } from "./components/ChatArea.tsx";
 import { MarkdownRenderer, MermaidDiagram } from "./components/ui/MarkdownRenderer";
@@ -1399,6 +1400,7 @@ function App() {
       <ThemeProvider>
         <AuthWrapper>
         <TooltipProvider>
+        <UpdateProgressToast />
         <div className="h-screen bg-background flex">
           {/* Left Sidebar */}
           <div className={`${sidebarMinimized ? 'w-16' : 'w-72'} transition-all duration-300 ease-in-out relative z-30`}>

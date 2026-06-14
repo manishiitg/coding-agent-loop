@@ -25,4 +25,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Forward uncaught renderer errors to the main process so they land in the
   // main log file even when DevTools can't be opened (blank-screen post-mortem).
   logRendererError: (payload) => ipcRenderer.send('renderer-error', payload),
+
+  // Auto-update: subscribe to background-download progress and trigger install.
+  // onUpdateProgress receives {status:'downloading'|'ready'|'error', version,
+  // percent, transferred, total, message}. Returns an unsubscribe function.
+  onUpdateProgress: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('update-progress', handler);
+    return () => ipcRenderer.removeListener('update-progress', handler);
+  },
+  restartToInstall: () => ipcRenderer.send('restart-to-install'),
 });

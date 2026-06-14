@@ -156,11 +156,20 @@ DMG_URL="https://github.com/${REPO}/releases/download/${VERSION}/${DMG_NAME}"
 
 TMP_DIR="$(mktemp -d -t runloop-install)"
 trap 'rm -rf "$TMP_DIR"' EXIT
-DMG_PATH="${TMP_DIR}/${DMG_NAME}"
 
-log "Downloading ${DMG_NAME} (~155 MB)…"
-if ! curl -fL --progress-bar -o "$DMG_PATH" "$DMG_URL"; then
-  die "Download failed. Check that ${VERSION} has an arm64 dmg asset: https://github.com/${REPO}/releases/tag/${VERSION}"
+# If the desktop app already downloaded the dmg (background update with progress),
+# it passes the path via RUNLOOP_DMG_PATH so we skip the slow re-download and the
+# post-quit gap is just mount+copy+relaunch.
+PREFETCHED_DMG="${RUNLOOP_DMG_PATH:-}"
+if [ -n "$PREFETCHED_DMG" ] && [ -s "$PREFETCHED_DMG" ]; then
+  log "Using pre-downloaded dmg: ${PREFETCHED_DMG}"
+  DMG_PATH="$PREFETCHED_DMG"
+else
+  DMG_PATH="${TMP_DIR}/${DMG_NAME}"
+  log "Downloading ${DMG_NAME} (~155 MB)…"
+  if ! curl -fL --progress-bar -o "$DMG_PATH" "$DMG_URL"; then
+    die "Download failed. Check that ${VERSION} has an arm64 dmg asset: https://github.com/${REPO}/releases/tag/${VERSION}"
+  fi
 fi
 
 # ---- Mount + copy app -------------------------------------------------------
@@ -202,5 +211,12 @@ fi
 # ---- Done -------------------------------------------------------------------
 
 log "Installed ${APP_NAME} ${VERSION} to ${DEST_APP}"
+
+# Clean up the app-prefetched dmg now that install succeeded (the in-TMP_DIR
+# download is handled by the EXIT trap; this is the app's cache file).
+if [ -n "$PREFETCHED_DMG" ] && [ "$PREFETCHED_DMG" = "$DMG_PATH" ]; then
+  rm -f "$PREFETCHED_DMG" 2>/dev/null || true
+fi
+
 log "Launching ${APP_NAME}…"
 open "$DEST_APP"

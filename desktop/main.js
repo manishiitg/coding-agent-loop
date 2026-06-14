@@ -1127,17 +1127,26 @@ function checkForUpdates(manual = false) {
         }
         return;
       }
+      if (updateState.downloading || (updateState.dmgPath && updateState.version === latestVersion)) {
+        // A download for this version is already in flight or finished — don't
+        // start a second one. Re-surface the ready prompt if it's done.
+        if (updateState.dmgPath) promptInstallReady(latestVersion);
+        else if (manual) {
+          dialog.showMessageBox({ type: 'info', title: 'Downloading update', message: `Runloop ${latestVersion} is downloading…`, buttons: ['OK'] });
+        }
+        return;
+      }
       const choice = await dialog.showMessageBox({
         type: 'info',
         title: 'Update Available',
         message: `Runloop ${latestVersion} is available.`,
-        detail: `You're on ${currentVersion}.\n\nInstalling will quit Runloop right now, download the new version (~150 MB), and relaunch automatically. The whole thing takes ~30 seconds.\n\nAny in-progress chats or workflow runs will be interrupted.`,
-        buttons: ['Quit & Install', 'Later'],
+        detail: `You're on ${currentVersion}.\n\nRunloop will download the new version (~150 MB) in the background — you can keep working. When it's ready you'll be asked to restart to install (a few seconds).`,
+        buttons: ['Download', 'Later'],
         defaultId: 0,
         cancelId: 1,
       });
       if (choice.response === 0) {
-        runUpdaterAndQuit(latestVersion);
+        downloadAndPrepareUpdate(latestVersion);
       }
     });
   });
@@ -1159,13 +1168,143 @@ function isNewerVersion(a, b) {
   return false;
 }
 
-function runUpdaterAndQuit(targetVersion) {
-  // Detached child shell so install.sh keeps running after we quit.
-  // RUNLOOP_VERSION pins the exact tag we just promised the user.
-  const innerCmd = `export RUNLOOP_VERSION='v${targetVersion}'; curl -fsSL https://raw.githubusercontent.com/manishiitg/mcp-agent-builder-go/main/install.sh | bash > /tmp/runloop-update.log 2>&1`;
+// Update state for the background-download flow. The DMG is fetched while the
+// app stays usable (progress to the dock + renderer); install is a fast
+// mount+copy+relaunch using the pre-downloaded file, triggered on user consent.
+let updateState = { downloading: false, version: null, dmgPath: null };
+
+function updateCacheDir() {
+  return path.join(app.getPath('userData'), 'updates');
+}
+
+// Remove any previously-cached update artifacts so a stale/partial dmg can't be
+// reused and the cache doesn't accumulate ~150 MB files across versions.
+function cleanUpdateCache() {
+  try {
+    const dir = updateCacheDir();
+    if (!fs.existsSync(dir)) return;
+    for (const f of fs.readdirSync(dir)) {
+      try { fs.unlinkSync(path.join(dir, f)); } catch (_) {}
+    }
+  } catch (_) {}
+}
+
+function sendUpdateProgress(payload) {
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-progress', payload);
+    }
+  } catch (_) {}
+}
+
+// Download url → destPath, following GitHub's redirect to the asset CDN, and
+// reporting (transferred, total) bytes as the body streams in.
+function downloadFileWithProgress(url, destPath, onProgress, redirectsLeft = 6) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { headers: { 'User-Agent': 'Runloop' } }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume();
+        if (redirectsLeft <= 0) { reject(new Error('Too many redirects')); return; }
+        downloadFileWithProgress(res.headers.location, destPath, onProgress, redirectsLeft - 1).then(resolve, reject);
+        return;
+      }
+      if (res.statusCode !== 200) {
+        res.resume();
+        reject(new Error(`HTTP ${res.statusCode}`));
+        return;
+      }
+      const total = parseInt(res.headers['content-length'] || '0', 10);
+      let transferred = 0;
+      const file = fs.createWriteStream(destPath);
+      res.on('data', (chunk) => {
+        transferred += chunk.length;
+        if (onProgress) onProgress(transferred, total);
+      });
+      res.on('error', (err) => { file.destroy(); try { fs.unlinkSync(destPath); } catch (_) {} reject(err); });
+      file.on('error', (err) => { try { fs.unlinkSync(destPath); } catch (_) {} reject(err); });
+      file.on('finish', () => file.close((err) => err ? reject(err) : resolve()));
+      res.pipe(file);
+    });
+    req.on('error', reject);
+  });
+}
+
+// Background download of the update dmg with progress, then prompt to install.
+// targetVersion is the bare version (no leading "v").
+async function downloadAndPrepareUpdate(targetVersion) {
+  if (updateState.downloading) return;
+  const versionNoV = String(targetVersion).replace(/^v/, '');
+  updateState.downloading = true;
+  updateState.version = versionNoV;
+  updateState.dmgPath = null;
+
+  const dmgName = `Runloop-${versionNoV}-arm64.dmg`;
+  const url = `https://github.com/manishiitg/mcp-agent-builder-go/releases/download/v${versionNoV}/${dmgName}`;
+  const dir = updateCacheDir();
+  try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
+  cleanUpdateCache();
+  const destPath = path.join(dir, dmgName);
+
+  console.log('[update] downloading v' + versionNoV + ' in background → ' + destPath);
+  sendUpdateProgress({ status: 'downloading', version: versionNoV, percent: 0, transferred: 0, total: 0 });
+  if (tray) { try { tray.setToolTip(`Runloop — downloading v${versionNoV}…`); } catch (_) {} }
+
+  let lastEmit = 0;
+  try {
+    await downloadFileWithProgress(url, destPath, (transferred, total) => {
+      const percent = total > 0 ? transferred / total : 0;
+      try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setProgressBar(percent > 0 ? percent : -1); } catch (_) {}
+      const now = Date.now();
+      if (now - lastEmit > 200 || (total > 0 && transferred >= total)) {
+        lastEmit = now;
+        sendUpdateProgress({ status: 'downloading', version: versionNoV, percent, transferred, total });
+      }
+    });
+  } catch (err) {
+    updateState.downloading = false;
+    try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setProgressBar(-1); } catch (_) {}
+    if (tray) { try { tray.setToolTip('Runloop'); } catch (_) {} }
+    console.error('[update] download failed:', err?.message || err);
+    sendUpdateProgress({ status: 'error', version: versionNoV, message: String(err?.message || err) });
+    dialog.showErrorBox('Update download failed', `Could not download Runloop ${versionNoV}.\n\n${String(err?.message || err)}`);
+    return;
+  }
+
+  updateState.downloading = false;
+  updateState.dmgPath = destPath;
+  try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setProgressBar(-1); } catch (_) {}
+  if (tray) { try { tray.setToolTip(`Runloop — v${versionNoV} ready to install`); } catch (_) {} }
+  sendUpdateProgress({ status: 'ready', version: versionNoV, percent: 1 });
+
+  promptInstallReady(versionNoV);
+}
+
+// Non-blocking "Restart & Install / Later" prompt once the dmg is downloaded.
+async function promptInstallReady(versionNoV) {
+  if (!updateState.dmgPath || !fs.existsSync(updateState.dmgPath)) return;
+  const choice = await dialog.showMessageBox({
+    type: 'info',
+    title: 'Update Ready',
+    message: `Runloop ${versionNoV} is downloaded and ready to install.`,
+    detail: 'Installing takes a few seconds and relaunches the app. Any in-progress chats or workflow runs will be interrupted.',
+    buttons: ['Restart & Install', 'Later'],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  if (choice.response === 0) installDownloadedUpdate();
+}
+
+// Fast install of the already-downloaded dmg: install.sh skips the download via
+// RUNLOOP_DMG_PATH, so the post-quit gap is just mount+copy+relaunch.
+function installDownloadedUpdate() {
+  if (!updateState.dmgPath || !fs.existsSync(updateState.dmgPath)) {
+    dialog.showErrorBox('Update error', 'The downloaded update was not found. Please check for updates again.');
+    return;
+  }
+  const innerCmd = `export RUNLOOP_VERSION='v${updateState.version}'; export RUNLOOP_DMG_PATH='${updateState.dmgPath}'; curl -fsSL https://raw.githubusercontent.com/manishiitg/mcp-agent-builder-go/main/install.sh | bash > /tmp/runloop-update.log 2>&1`;
   const wrapped = `nohup bash -c ${JSON.stringify(innerCmd)} >/dev/null 2>&1 &`;
 
-  console.log('[update] spawning detached installer for v' + targetVersion);
+  console.log('[update] spawning detached installer for v' + updateState.version + ' (pre-downloaded)');
   try {
     const child = spawn('/bin/bash', ['-lc', wrapped], { detached: true, stdio: 'ignore' });
     child.unref();
@@ -1174,28 +1313,26 @@ function runUpdaterAndQuit(targetVersion) {
     return;
   }
 
-  // Show a non-blocking native notification so the user sees confirmation
-  // that the update started, even after the window closes.
   try {
     const { Notification } = require('electron');
     if (Notification.isSupported()) {
       new Notification({
-        title: 'Updating Runloop…',
-        body: `Downloading v${targetVersion}. The app will reopen automatically in ~30 seconds.`,
+        title: 'Installing Runloop…',
+        body: `Installing v${updateState.version}. The app will reopen automatically in a few seconds.`,
         silent: false,
       }).show();
     }
   } catch (_) {}
+  if (tray) { try { tray.setToolTip(`Runloop — installing v${updateState.version}…`); } catch (_) {} }
 
-  // Tray tooltip update for ambient awareness while the app quits.
-  if (tray) {
-    try { tray.setToolTip(`Runloop — installing v${targetVersion}…`); } catch (_) {}
-  }
-
-  // Give the installer a moment to fork the curl + the user a moment to read
-  // the notification, then quit so install.sh's pkill doesn't race with us.
+  // Brief delay so the installer forks before our pkill-prone quit.
   setTimeout(() => app.quit(), 1000);
 }
+
+// Renderer-driven install trigger (the in-app "Restart to install" button).
+ipcMain.on('restart-to-install', () => {
+  if (updateState.dmgPath) installDownloadedUpdate();
+});
 
 function killChildren() {
   if (workspaceProcess) {

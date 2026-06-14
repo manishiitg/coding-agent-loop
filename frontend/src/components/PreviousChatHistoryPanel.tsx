@@ -16,6 +16,7 @@ import {
 
 const PAGE_SIZE = 5
 const FETCH_LIMIT = 100
+const EXPANDED_MESSAGE_LIMIT = 6
 
 type PreviousChatFilter = 'chat' | 'schedule' | 'bot' | 'all'
 
@@ -108,7 +109,7 @@ const getChatKind = (session: ChatHistorySession): Exclude<PreviousChatFilter, '
 const previewMessages = (session: ChatHistorySession): ChatHistoryPreviewMessage[] => {
   return (session.preview_messages || [])
     .filter(message => message.text?.trim())
-    .slice(-6)
+    .slice(-EXPANDED_MESSAGE_LIMIT)
 }
 
 const messageRole = (message: ChatHistoryMessage): string => {
@@ -157,6 +158,12 @@ const conversationMessages = (conversation: ChatHistoryConversation): ChatHistor
         message.role === 'ai' ||
         message.role === 'assistant'
     })
+}
+
+const recentConversationMessages = (messages: ChatHistoryPreviewMessage[]): ChatHistoryPreviewMessage[] => {
+  return messages
+    .filter(message => message.text?.trim())
+    .slice(-EXPANDED_MESSAGE_LIMIT)
 }
 
 const mergeSessions = (current: ChatHistorySession[], next: ChatHistorySession[]): ChatHistorySession[] => {
@@ -301,10 +308,11 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     try {
       const conversation = await agentApi.getChatHistoryConversation(sessionId, workspacePath)
       const messages = conversationMessages(conversation)
+      const recentMessages = recentConversationMessages(messages)
       setExpandedMessagesBySession(current => {
         const next = {
           ...current,
-          [sessionId]: messages.length > 0 ? messages : previewMessages(session),
+          [sessionId]: recentMessages.length > 0 ? recentMessages : previewMessages(session),
         }
         expandedMessagesRef.current = next
         return next
@@ -556,7 +564,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                         {isLoadingDetails && (
                           <div className="flex items-center gap-2 text-muted-foreground">
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            <span>Loading full chat...</span>
+                            <span>Loading recent messages...</span>
                           </div>
                         )}
                         {!isLoadingDetails && messages.length === 0 && (

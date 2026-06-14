@@ -256,7 +256,15 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 			}
 		}
 	} else {
+		// Chat mode. submit_human_answer resolves a launched workflow's
+		// human_input step. notify_user is the proactive outbound push
+		// (Slack/WhatsApp/Gmail) the chat agent uses to report back when an
+		// async delegation, workflow run, or schedule it kicked off finishes —
+		// work that returns immediately and completes detached from this turn.
+		// human_feedback (blocking ask-the-user) stays out: in chat the agent
+		// just asks in its reply.
 		humanToolAllowed["submit_human_answer"] = true
+		humanToolAllowed["notify_user"] = true
 	}
 	for _, tool := range virtualtools.CreateHumanTools() {
 		if tool.Function != nil && humanToolAllowed[tool.Function.Name] {

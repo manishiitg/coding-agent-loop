@@ -3810,11 +3810,29 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Chat mode: LLM-visible workspace tools (advanced + media/provider tools).
 			// Basic tools (list/read/write/search) and git tools are not needed — shell is sufficient.
 			// These tools are restricted to the current workspace/chat folder guard.
+			//
+			// Inject the session's secrets as $SECRET_<NAME> shell env so the CHAT
+			// agent's own execute_shell_command can access them — not just the
+			// step-execution controller. Without this the workflow builder could
+			// set_workflow_secret but never read the value back (its own shell had
+			// no SECRET_* env), even though attached secrets reach real step runs.
+			// req.DecryptedSecrets is loaded from the workflow manifest above
+			// (workflow_phase), so it picks up secrets attached in earlier turns;
+			// multi-agent chat without loaded secrets yields an empty map (no-op).
+			chatAgentSecrets := mergeGlobalSecrets(req.DecryptedSecrets, req.SelectedGlobalSecrets)
+			chatAgentSecretEnv := make(map[string]string, len(chatAgentSecrets))
+			for _, s := range chatAgentSecrets {
+				chatAgentSecretEnv["SECRET_"+s.Name] = s.Value
+			}
 			workspaceRegistry := virtualtools.CreateWorkspaceToolRegistry(virtualtools.WorkspaceToolRegistryConfig{
 				WorkspaceAPIURL: getWorkspaceAPIURL(),
 				UserID:          currentUserID,
 				SessionID:       sessionID,
+				ExtraEnvVars:    chatAgentSecretEnv,
 			})
+			if len(chatAgentSecretEnv) > 0 {
+				logfWithContext(queryLogCtx, "[SECRETS] Injected %d secret(s) into chat agent shell env (isWorkflowPhase=%v)", len(chatAgentSecretEnv), isWorkflowPhase)
+			}
 			workspaceTools := workspaceRegistry.Tools
 			workspaceExecutors := workspaceRegistry.Executors
 			workspaceEnv = workspaceRegistry.Env

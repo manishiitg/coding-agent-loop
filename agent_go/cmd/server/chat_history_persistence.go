@@ -1015,7 +1015,7 @@ func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackS
 	}
 	normalizeChatHistoryRuntime(raw.Runtime)
 
-	query := firstHumanText(raw.History)
+	query := latestHumanText(raw.History)
 	if len(query) > 200 {
 		query = query[:200] + "..."
 	}
@@ -1099,26 +1099,32 @@ func normalizeChatHistoryWorkspacePath(workspacePath string) string {
 	return cleaned
 }
 
-func firstHumanText(history []llmtypes.MessageContent) string {
-	firstText := ""
-	for _, msg := range history {
+func latestHumanText(history []llmtypes.MessageContent) string {
+	fallbackText := ""
+	for i := len(history) - 1; i >= 0; i-- {
+		msg := history[i]
 		role := strings.ToLower(strings.TrimSpace(string(msg.Role)))
 		if role != "human" && role != "user" {
 			continue
 		}
+		textParts := []string{}
 		for _, part := range msg.Parts {
-			if text := chatHistoryPartText(part); text != "" {
-				cleaned := cleanChatHistoryQuery(text)
-				if firstText == "" {
-					firstText = cleaned
-				}
-				if !isLowSignalChatHistoryQuery(cleaned) {
-					return cleaned
-				}
+			if text := strings.TrimSpace(chatHistoryPartText(part)); text != "" {
+				textParts = append(textParts, text)
 			}
 		}
+		cleaned := cleanChatHistoryQuery(strings.Join(textParts, "\n\n"))
+		if cleaned == "" || shouldSkipChatHistoryPreviewText(cleaned) {
+			continue
+		}
+		if fallbackText == "" {
+			fallbackText = cleaned
+		}
+		if !isLowSignalChatHistoryQuery(cleaned) {
+			return cleaned
+		}
 	}
-	return firstText
+	return fallbackText
 }
 
 func isLowSignalChatHistoryQuery(text string) bool {

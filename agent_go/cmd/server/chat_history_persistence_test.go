@@ -917,6 +917,66 @@ func TestParseLocalChatHistorySessionSkipsLowSignalTitle(t *testing.T) {
 	}
 }
 
+func TestParseLocalChatHistorySessionUsesLatestSubstantiveTitle(t *testing.T) {
+	data := `{
+  "session_id": "session-1",
+  "agent_mode": "workflow",
+  "conversation_history": [
+    {
+      "Role": "human",
+      "Parts": [{"Text": "Explain this codebase"}]
+    },
+    {
+      "Role": "ai",
+      "Parts": [{"Text": "Sure."}]
+    },
+    {
+      "Role": "human",
+      "Parts": [{"Text": "what did you fix last time?"}]
+    }
+  ],
+  "updated_at": "2026-05-15T10:00:00Z"
+}`
+
+	session, ok := parseLocalChatHistorySession("default", "Workflow/example", "Workflow/example", "fallback", data, time.Date(2026, 5, 15, 10, 0, 0, 0, time.UTC))
+	if !ok {
+		t.Fatal("expected session to parse")
+	}
+	if session.Query != "what did you fix last time?" {
+		t.Fatalf("expected latest substantive query title, got %q", session.Query)
+	}
+}
+
+func TestParseLocalChatHistorySessionIgnoresTrailingLowSignalTitle(t *testing.T) {
+	data := `{
+  "session_id": "session-1",
+  "agent_mode": "workflow",
+  "conversation_history": [
+    {
+      "Role": "human",
+      "Parts": [{"Text": "Explain this codebase"}]
+    },
+    {
+      "Role": "human",
+      "Parts": [{"Text": "what did you fix last time?"}]
+    },
+    {
+      "Role": "human",
+      "Parts": [{"Text": "ok"}]
+    }
+  ],
+  "updated_at": "2026-05-15T10:00:00Z"
+}`
+
+	session, ok := parseLocalChatHistorySession("default", "Workflow/example", "Workflow/example", "fallback", data, time.Date(2026, 5, 15, 10, 0, 0, 0, time.UTC))
+	if !ok {
+		t.Fatal("expected session to parse")
+	}
+	if session.Query != "what did you fix last time?" {
+		t.Fatalf("expected latest substantive query title, got %q", session.Query)
+	}
+}
+
 func TestCaptureChatHistoryAgentRuntimeStoresCLIResumeID(t *testing.T) {
 	api := &StreamingAPI{}
 

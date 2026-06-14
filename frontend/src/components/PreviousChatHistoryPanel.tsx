@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, LayoutList, Loader2, MessageSquare, Paperclip, Trash2 } from 'lucide-react'
+import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, LayoutList, Loader2, MessageSquare, Paperclip, Trash2, type LucideIcon } from 'lucide-react'
 import { agentApi } from '../services/api'
 import {
   type ChatHistoryConversation,
@@ -19,6 +19,56 @@ const FETCH_LIMIT = 100
 const EXPANDED_MESSAGE_LIMIT = 6
 
 type PreviousChatFilter = 'chat' | 'schedule' | 'bot' | 'all'
+type EmptyStateIcon = LucideIcon
+
+const emptyStateContent: Record<PreviousChatFilter, {
+  icon: EmptyStateIcon
+  title: string
+  body: string
+}> = {
+  chat: {
+    icon: MessageSquare,
+    title: 'No chats yet',
+    body: 'Start a conversation from the composer. Saved threads will appear here when there is something to resume.',
+  },
+  schedule: {
+    icon: CalendarClock,
+    title: 'No scheduled chats yet',
+    body: 'Create a schedule for recurring work. Its runs will appear here after they start.',
+  },
+  bot: {
+    icon: Bot,
+    title: 'No bot chats yet',
+    body: 'Connect a bot in Settings. Sessions started or resumed from that bot will appear here.',
+  },
+  all: {
+    icon: LayoutList,
+    title: 'No previous chats yet',
+    body: 'Chats, scheduled runs, and bot sessions will appear here after the first saved thread.',
+  },
+}
+
+const firstRunHints: Array<{
+  icon: EmptyStateIcon
+  label: string
+  body: string
+}> = [
+  {
+    icon: MessageSquare,
+    label: 'Chat',
+    body: 'Ask anything, then return here to resume the thread.',
+  },
+  {
+    icon: CalendarClock,
+    label: 'Schedules',
+    body: 'Run recurring work on a schedule and review the latest run.',
+  },
+  {
+    icon: Bot,
+    label: 'Bots',
+    body: 'Connect a bot so external messages can attach to sessions.',
+  },
+]
 
 export function chatHistorySessionTitle(session: ChatHistorySession, maxLength = 110): string {
   const query = session.query?.replace(/\s+/g, ' ').trim()
@@ -179,6 +229,47 @@ const mergeSessions = (current: ChatHistorySession[], next: ChatHistorySession[]
   }
   return Array.from(byId.values()).sort((a, b) =>
     Date.parse(b.updated_at || b.created_at || '') - Date.parse(a.updated_at || a.created_at || '')
+  )
+}
+
+const PreviousChatEmptyState: React.FC<{
+  filter: PreviousChatFilter
+  hasAnySessions: boolean
+  fallbackText: string
+}> = ({ filter, hasAnySessions, fallbackText }) => {
+  const content = hasAnySessions
+    ? emptyStateContent[filter]
+    : { ...emptyStateContent[filter], body: emptyStateContent[filter].body || fallbackText }
+  const Icon = content.icon
+
+  return (
+    <div className="px-3 py-4">
+      <div className="rounded-md border border-dashed border-border bg-muted/15 px-3 py-4">
+        <div className="flex items-start gap-3">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-background text-muted-foreground">
+            <Icon className="h-4 w-4" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium text-foreground">{content.title}</div>
+            <p className="mt-1 max-w-xl text-xs leading-5 text-muted-foreground">{content.body || fallbackText}</p>
+
+            {!hasAnySessions && (
+              <div className="mt-3 grid gap-x-4 gap-y-2 border-t border-border/70 pt-3 sm:grid-cols-3">
+                {firstRunHints.map(({ icon: HintIcon, label, body }) => (
+                  <div key={label} className="min-w-0">
+                    <div className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+                      <HintIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                      <span>{label}</span>
+                    </div>
+                    <p className="mt-1 text-[11px] leading-4 text-muted-foreground">{body}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -454,7 +545,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
 
           {isLoading ? (
             <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
-          ) : visibleSessions.length > 0 ? (
+          ) : (
             <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
               <div className="flex max-w-full items-center gap-0.5 overflow-x-auto rounded-md border border-border bg-muted/30 p-0.5">
                 {filterItems.map(({ filter, label, icon: Icon }) => {
@@ -491,15 +582,23 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                 />
               )}
             </div>
-          ) : null}
+          )}
         </div>
 
         {isLoading ? (
           <div className="px-3 py-3 text-xs text-muted-foreground">Loading previous chats...</div>
         ) : visibleSessions.length === 0 ? (
-          <div className="px-3 py-3 text-xs text-muted-foreground">{emptyText}</div>
+          <PreviousChatEmptyState
+            filter={activeFilter}
+            hasAnySessions={false}
+            fallbackText={emptyText}
+          />
         ) : filteredSessions.length === 0 ? (
-          <div className="px-3 py-3 text-xs text-muted-foreground">No previous {activeFilter === 'schedule' ? 'schedule' : activeFilter} chats yet.</div>
+          <PreviousChatEmptyState
+            filter={activeFilter}
+            hasAnySessions
+            fallbackText={`No previous ${activeFilter === 'schedule' ? 'schedule' : activeFilter} chats yet.`}
+          />
         ) : (
           <div className="divide-y divide-border">
             {displayedSessions.map(session => {

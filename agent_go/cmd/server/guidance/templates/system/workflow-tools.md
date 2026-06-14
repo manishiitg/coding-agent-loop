@@ -123,10 +123,12 @@ Workflow schedules always use the workshop builder execution path. Do not create
 
 ### Back up scheduled workflows
 
-Scheduled runs execute unattended and accumulate state (`workflow.json`, `planning/`, `knowledgebase/`, `learnings/`, `db/`, reports) that otherwise lives only on local disk. **Whenever you set up a recurring schedule, also arrange a backup** so each run persists its output off-box. Load `get_reference_doc(kind="backup-strategy")` and follow it once to initialise the workflow's backup remote, then wire the per-run backup into the workshop message:
+Scheduled runs execute unattended and accumulate state (`workflow.json`, `planning/`, `knowledgebase/`, `learnings/`, `db/`, reports) that otherwise lives only on local disk. **Whenever you set up a recurring schedule, also arrange a backup** so each run persists its output off-box. Load `get_reference_doc(kind="backup-strategy")`, follow it once to initialise the workflow's backup destination, and persist the result in `workflow.json.backup`.
 
-- Append a final backup turn to `messages`, e.g. `"After the run completes, follow the backup-strategy skill to commit and push workflow.json, planning/, db/, knowledgebase/ and learnings/ to the workflow's backup remote. Do not ask for confirmation."`
-- If you rely on the default full-workflow message, replace it with an explicit message that includes both the run instruction and backup requirement.
+- Set `workflow.json.backup.enabled=true`, `mode="agent"`, `triggers.after_scheduled_run=true`, and a `destinations` entry for each backup target (git/github for config, R2/S3/B2/HuggingFace for large artifacts as needed).
+- After each backup attempt, write `backup/status.json` with the destination results, timestamps, summary, and errors. Do not put changing backup status in `workflow.json`.
+- If an explicit schedule message is needed, append a final backup turn to `messages`, e.g. `"After the run completes, follow workflow.json.backup and the backup-strategy skill, perform the configured backup, and update backup/status.json. Do not ask for confirmation."`
+- If you rely on the default full-workflow message, the auto-notification after `run_full_workflow` will still ask the builder to honor `workflow.json.backup` and write `backup/status.json`.
 
 Confirm with the user before skipping backup on a recurring schedule.
 

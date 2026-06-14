@@ -120,8 +120,8 @@ func TestWhatsAppResumeCommandBindsExistingSession(t *testing.T) {
 		if userID != "user-1" {
 			t.Fatalf("resume userID = %q, want user-1", userID)
 		}
-		if selector != "latest" {
-			t.Fatalf("resume selector = %q, want latest", selector)
+		if selector != "1" {
+			t.Fatalf("resume selector = %q, want 1", selector)
 		}
 		if filter.WorkspacePath != "" || filter.PresetQueryID != "" {
 			t.Fatalf("resume filter = %+v, want empty", filter)
@@ -136,6 +136,59 @@ func TestWhatsAppResumeCommandBindsExistingSession(t *testing.T) {
 			PresetQueryID: "preset-report",
 			PhaseID:       "workflow-builder",
 			WorkshopMode:  "run",
+			WorkflowName:  "report",
+		}, nil
+	})
+
+	manager.HandleIncomingMessage(BotIncomingMessage{
+		Platform:        "whatsapp",
+		UserID:          "phone",
+		WorkspaceUserID: "user-1",
+		UserName:        "User",
+		ChannelID:       "dm",
+		Text:            "@resume 1",
+		IsMention:       true,
+	})
+
+	if len(connector.sent) != 1 || !strings.Contains(connector.sent[0], "chat-1") || !strings.Contains(connector.sent[0], "report") {
+		t.Fatalf("resume ack = %#v, want one ack naming the workflow and session chat-1", connector.sent)
+	}
+	threadID := ThreadID{Platform: "whatsapp", ChannelID: "dm", ThreadTS: "dm"}
+	manager.mu.RLock()
+	active := manager.sessions[threadID.Key()]
+	manager.mu.RUnlock()
+	if active == nil {
+		t.Fatal("expected resumed session to be bound to WhatsApp thread")
+	}
+	if active.SessionID != "chat-1" || active.AgentMode != "workflow_phase" || active.PresetQueryID != "preset-report" || active.WorkspacePath != "Workflow/report" {
+		t.Fatalf("active metadata = %+v", active)
+	}
+	// Resuming a live (running) session auto-enables full detail so workflow
+	// progress isn't suppressed by concise mode.
+	active.mu.Lock()
+	full := active.sendFullDetails
+	active.mu.Unlock()
+	if !full {
+		t.Fatal("expected full detail to be auto-enabled when resuming a running session")
+	}
+}
+
+func TestBareResumeShowsPickerWithoutBinding(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	connector := &testBotConnector{}
+	manager.RegisterConnector(connector)
+
+	manager.SetResumeTargetFunc(func(_ context.Context, _ string, _ string, _ BotResumeFilter) (*BotResumeTarget, error) {
+		t.Fatal("bare @resume must not resolve/bind a target")
+		return nil, nil
+	})
+	manager.SetResumeListFunc(func(_ context.Context, userID string, _ BotResumeFilter) ([]BotResumeTarget, error) {
+		if userID != "user-1" {
+			t.Fatalf("resume list userID = %q, want user-1", userID)
+		}
+		return []BotResumeTarget{
+			{SessionID: "chat-1", WorkflowName: "report", Status: "running", Activity: "Step 2: gather data"},
+			{SessionID: "chat-2", WorkflowName: "linkedin", Status: "running", HasBackgroundActivity: true, Activity: "background work running"},
 		}, nil
 	})
 
@@ -149,18 +202,22 @@ func TestWhatsAppResumeCommandBindsExistingSession(t *testing.T) {
 		IsMention:       true,
 	})
 
-	if len(connector.sent) != 1 || !strings.Contains(connector.sent[0], "chat-1") {
-		t.Fatalf("resume ack = %#v, want one ack mentioning chat-1", connector.sent)
+	if len(connector.sent) != 1 {
+		t.Fatalf("bare resume sent = %#v, want one picker message", connector.sent)
 	}
+	reply := connector.sent[0]
+	for _, want := range []string{"Sessions you can connect to:", "1. ", "report", "running", "Step 2: gather data", "linkedin", "@resume <number>"} {
+		if !strings.Contains(reply, want) {
+			t.Fatalf("picker reply %q missing %q", reply, want)
+		}
+	}
+
 	threadID := ThreadID{Platform: "whatsapp", ChannelID: "dm", ThreadTS: "dm"}
 	manager.mu.RLock()
 	active := manager.sessions[threadID.Key()]
 	manager.mu.RUnlock()
-	if active == nil {
-		t.Fatal("expected resumed session to be bound to WhatsApp thread")
-	}
-	if active.SessionID != "chat-1" || active.AgentMode != "workflow_phase" || active.PresetQueryID != "preset-report" || active.WorkspacePath != "Workflow/report" {
-		t.Fatalf("active metadata = %+v", active)
+	if active != nil {
+		t.Fatalf("bare resume must not bind a session, got %+v", active)
 	}
 }
 

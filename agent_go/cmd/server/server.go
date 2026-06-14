@@ -1680,6 +1680,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/versions/publish", requireWorkflowWriteAccess(api.handlePublishVersion)).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/versions/revert", requireWorkflowWriteAccess(api.handleRevertVersion)).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/versions", requireWorkflowWriteAccess(api.handleDeleteVersion)).Methods("DELETE", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/backup", api.handleGetWorkflowBackup).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/backup/config", requireWorkflowWriteAccess(api.handleUpdateWorkflowBackupConfig)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/backup/run", requireWorkflowWriteAccess(api.handleRunWorkflowBackup)).Methods("POST", "OPTIONS")
 
 	// Manifest-backed workflow API routes (file-backed workflow definitions)
 	apiRouter.HandleFunc("/workflows/summary", api.handleGetWorkflowsSummary).Methods("GET", "OPTIONS")

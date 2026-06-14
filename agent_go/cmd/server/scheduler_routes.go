@@ -47,6 +47,7 @@ type ScheduledJobResponse struct {
 	ConsecutiveFailures int                    `json:"consecutive_failures"`
 	MissedRunCount      int                    `json:"missed_run_count,omitempty"`
 	LatestMissedRunAt   *time.Time             `json:"latest_missed_run_at,omitempty"`
+	MissedRunReason     string                 `json:"missed_run_reason,omitempty"`
 	CreatedAt           string                 `json:"created_at,omitempty"`
 	UpdatedAt           string                 `json:"updated_at,omitempty"`
 }
@@ -119,6 +120,7 @@ func buildJobResponse(workspacePath string, manifest *WorkflowManifest, sched Wo
 		ConsecutiveFailures: state.ConsecutiveFailures,
 		MissedRunCount:      missed.MissedRunCount,
 		LatestMissedRunAt:   missed.LatestMissedRunAt,
+		MissedRunReason:     missed.MissedRunReason,
 		CreatedAt:           manifest.CreatedAt,
 		UpdatedAt:           manifest.UpdatedAt,
 	}
@@ -214,9 +216,9 @@ func newWorkflowMissedStatusResolver(ctx context.Context) *workflowMissedStatusR
 }
 
 func (r *workflowMissedStatusResolver) get(workspacePath string, sched WorkflowSchedule) WorkflowScheduleMissedStatus {
-	if !sched.Enabled {
-		return WorkflowScheduleMissedStatus{}
-	}
+	now := time.Now().UTC()
+	workflowScheduleExecutionHistoryMu.Lock()
+	defer workflowScheduleExecutionHistoryMu.Unlock()
 
 	history, ok := r.history[workspacePath]
 	if !ok {
@@ -231,14 +233,25 @@ func (r *workflowMissedStatusResolver) get(workspacePath string, sched WorkflowS
 		r.history[workspacePath] = history
 	}
 	if history == nil || history.Schedules == nil {
-		return WorkflowScheduleMissedStatus{}
+		history = &WorkflowScheduleExecutionHistoryFile{
+			Version:   workflowScheduleExecutionHistoryVersion,
+			Schedules: map[string]WorkflowScheduleExecutionTrack{},
+		}
+		r.history[workspacePath] = history
 	}
 
-	tracker, ok := history.Schedules[sched.ID]
-	if !ok {
+	tracker, changed := ensureWorkflowScheduleExecutionTracker(history, sched, now)
+	if changed {
+		history.Schedules[sched.ID] = tracker
+		if err := WriteWorkflowScheduleExecutionHistory(r.ctx, workspacePath, history); err != nil {
+			// Listing schedules should still work if the history sync fails.
+			scheduleLogf("[SCHEDULER] Warning: failed to sync execution history for %s: %v", sched.ID, err)
+		}
+	}
+	if !sched.Enabled {
 		return WorkflowScheduleMissedStatus{}
 	}
-	return ComputeWorkflowScheduleMissedStatus(sched, &tracker, time.Now().UTC())
+	return ComputeWorkflowScheduleMissedStatus(sched, &tracker, now)
 }
 
 // SchedulerRoutes registers the scheduler API routes.

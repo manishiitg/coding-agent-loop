@@ -10,6 +10,90 @@ If the workflow does not yet have a remote git repo configured, ask the
 operator before initialising one — repo creation is a one-time setup
 decision (account/org, visibility, naming).
 
+## App contract: config vs status
+
+The app reads backup configuration from `workflow.json.backup` and backup
+health from `backup/status.json`. Keep these separate:
+
+- `workflow.json.backup` is the declarative contract: whether backup is
+  enabled, which trigger should run it, which destinations exist, and what
+  each destination covers.
+- `backup/status.json` is the operational result of the latest backup
+  attempt. Update it after every configure or backup attempt, including
+  partial and failed attempts.
+- Do not write frequently changing status fields into `workflow.json`.
+
+Recommended `workflow.json.backup` shape:
+
+```json
+{
+  "enabled": true,
+  "mode": "agent",
+  "triggers": {
+    "after_scheduled_run": true,
+    "after_manual_run": false
+  },
+  "destinations": [
+    {
+      "id": "config-repo",
+      "type": "git",
+      "provider": "github",
+      "repo": "owner/workflow-backup",
+      "branch": "main",
+      "covers": ["workflow", "planning", "knowledgebase", "learnings"],
+      "secret_refs": []
+    },
+    {
+      "id": "artifacts",
+      "type": "object_store",
+      "provider": "r2",
+      "bucket": "workflow-artifacts",
+      "prefix": "workflow-id/",
+      "covers": ["runs", "media", "large-artifacts"],
+      "secret_refs": ["R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"]
+    }
+  ],
+  "notes": "Human-readable restore and provider notes."
+}
+```
+
+Required `backup/status.json` shape:
+
+```json
+{
+  "version": 1,
+  "state": "healthy",
+  "last_attempt_at": "2026-06-14T10:30:00Z",
+  "last_success_at": "2026-06-14T10:30:00Z",
+  "last_agent_session_id": "workflow-backup-...",
+  "last_source_hash": "...",
+  "summary": "Pushed config repo and synced artifacts.",
+  "destinations": [
+    {
+      "id": "config-repo",
+      "type": "git",
+      "provider": "github",
+      "state": "healthy",
+      "last_success_at": "2026-06-14T10:30:00Z",
+      "commit": "abc1234",
+      "objects_synced": 0,
+      "summary": "Committed workflow config and pushed origin/main."
+    }
+  ],
+  "last_error": "",
+  "updated_at": "2026-06-14T10:30:00Z"
+}
+```
+
+Status values:
+
+- `healthy`: all required configured destinations succeeded.
+- `partial`: at least one configured destination succeeded and at least one
+  failed or was skipped.
+- `failed`: no required configured destination succeeded.
+- `configured_not_verified`: backup is not fully set up or could not be
+  verified yet.
+
 ## What goes where
 
 Use git when content is small, mostly text, benefits from per-line diffs,
@@ -127,11 +211,10 @@ lint failure) — fix the issue rather than skip the gate.
 
 ## Large-file backends — pick one per workflow
 
-Decide a backend once per workflow and persist the choice (e.g.
-`workflow.json` field or a one-line `.backup-destination` file at the
-workflow root). When chatting with the user, offer the options below
-and ask which they prefer — defaults vary by content type and existing
-account access.
+Decide a backend once per workflow and persist the choice in
+`workflow.json.backup.destinations`. When chatting with the user, offer the
+options below and ask which they prefer — defaults vary by content type and
+existing account access.
 
 | Backend                         | Strongest fit                                  | Egress cost      | Free tier         | Auth env var              |
 |---------------------------------|------------------------------------------------|------------------|-------------------|---------------------------|

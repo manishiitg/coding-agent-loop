@@ -53,12 +53,43 @@ type WorkflowManifest struct {
 	// for workflows where silent breakage matters (QA, production, monitoring,
 	// compliance). Unset/false = off (no monitor pass, no extra cost).
 	PostRunMonitor *bool `json:"post_run_monitor,omitempty"`
+
+	// Backup is declarative configuration for builder-agent managed backup.
+	// Operational status is written separately to backup/status.json so normal
+	// backup attempts do not churn workflow.json.
+	Backup *WorkflowBackupConfig `json:"backup,omitempty"`
 }
 
 // MonitorEnabled reports whether the post-run monitor should run for this
 // workflow. It is opt-in: only an explicit true enables it.
 func (m *WorkflowManifest) MonitorEnabled() bool {
 	return m != nil && m.PostRunMonitor != nil && *m.PostRunMonitor
+}
+
+type WorkflowBackupConfig struct {
+	Enabled      bool                        `json:"enabled"`
+	Mode         string                      `json:"mode,omitempty"` // "agent" (default)
+	Triggers     WorkflowBackupTriggers      `json:"triggers,omitempty"`
+	Destinations []WorkflowBackupDestination `json:"destinations,omitempty"`
+	Notes        string                      `json:"notes,omitempty"`
+}
+
+type WorkflowBackupTriggers struct {
+	AfterScheduledRun bool `json:"after_scheduled_run,omitempty"`
+	AfterManualRun    bool `json:"after_manual_run,omitempty"`
+}
+
+type WorkflowBackupDestination struct {
+	ID         string   `json:"id"`
+	Type       string   `json:"type"`     // git, object_store, huggingface, local_zip
+	Provider   string   `json:"provider"` // github, git, r2, s3, b2, huggingface, local
+	Repo       string   `json:"repo,omitempty"`
+	Branch     string   `json:"branch,omitempty"`
+	Bucket     string   `json:"bucket,omitempty"`
+	Prefix     string   `json:"prefix,omitempty"`
+	Covers     []string `json:"covers,omitempty"`
+	SecretRefs []string `json:"secret_refs,omitempty"`
+	Notes      string   `json:"notes,omitempty"`
 }
 
 // WorkflowCapabilities stores workflow-wide agent and tool configuration.
@@ -371,6 +402,9 @@ func applyManifestDefaults(m *WorkflowManifest) {
 	}
 	if m.Schedules == nil {
 		m.Schedules = []WorkflowSchedule{}
+	}
+	if m.Backup != nil && m.Backup.Mode == "" {
+		m.Backup.Mode = "agent"
 	}
 	// Auto-assign IDs to schedules that pre-date the ID field.
 	for i := range m.Schedules {

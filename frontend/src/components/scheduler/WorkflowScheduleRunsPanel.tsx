@@ -288,6 +288,26 @@ function timeAgo(dateStr?: string): string {
   return `${days}d ago`
 }
 
+function formatLastRunLabel(dateStr?: string): string {
+  return dateStr ? timeAgo(dateStr) : 'never'
+}
+
+function formatExactDateTime(dateStr?: string): string {
+  if (!dateStr) return 'No scheduled runs recorded yet'
+  try {
+    return new Date(dateStr).toLocaleString([], {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    })
+  } catch {
+    return dateStr
+  }
+}
+
 function formatDuration(ms?: number): string {
   if (!ms) return ''
   if (ms < 1000) return `${ms}ms`
@@ -421,6 +441,15 @@ function getMissedScheduleDelayMs(job: ScheduledJob): number | null {
 
 function isMissedSchedule(job: ScheduledJob): boolean {
   return !!job.enabled && (job.missed_run_count ?? 0) > 0
+}
+
+function formatMissedScheduleReason(job: ScheduledJob): string {
+  switch (job.missed_run_reason) {
+    case 'no_execution_recorded':
+      return 'No run started at the scheduled time'
+    default:
+      return 'No run record was found for the scheduled time'
+  }
 }
 
 function formatOverdueDuration(durationMs: number): string {
@@ -833,6 +862,10 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     const missed = panelJobs.filter(isMissedSchedule).length
     const issues = panelJobs.filter(j => j.last_status === 'error').length
     const paused = panelJobs.filter(j => !j.enabled).length
+    const lastRunAt = panelJobs.reduce<string | undefined>((latest, job) => {
+      if (!job.last_run_at) return latest
+      return !latest || job.last_run_at > latest ? job.last_run_at : latest
+    }, undefined)
     return {
       running,
       missed,
@@ -840,6 +873,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
       paused,
       enabled: activeScheduleCount,
       total: panelJobs.length,
+      lastRunAt,
     }
   }, [panelJobs, activeScheduleCount])
 
@@ -1368,6 +1402,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     const isRunningJob = job.last_status === 'running'
     const isMissedJob = isMissedSchedule(job)
     const missedDelayMs = getMissedScheduleDelayMs(job)
+    const missedReason = isMissedJob ? formatMissedScheduleReason(job) : ''
     const hasWorkspace = !!job.workspace_path || !!preset?.workspacePath
 
     return (
@@ -1422,12 +1457,17 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                         : `Next ${formatLocalScheduleTime(job.next_run_at)}`
                       : 'Paused'}
                   </span>
-                  <span>
+                  {isMissedJob && (
+                    <span className="text-amber-700 dark:text-amber-300" title={missedReason}>
+                      {missedReason}
+                    </span>
+                  )}
+                  <span title={formatExactDateTime(job.last_run_at)}>
                     {isRunningJob
                       ? job.last_run_at
                         ? `Running since ${formatLocalScheduleTime(job.last_run_at)}`
                         : 'Running now'
-                      : `Last ${timeAgo(job.last_run_at)}`}
+                      : `Last ran ${formatLastRunLabel(job.last_run_at)}`}
                   </span>
                   <span>{job.run_count} run{job.run_count !== 1 ? 's' : ''}</span>
                   {job.group_names && job.group_names.length > 0 && (
@@ -1590,6 +1630,14 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                 <span className="rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground">
                   {summary.total} schedule{summary.total === 1 ? '' : 's'}
                 </span>
+                {summary.total > 0 && (
+                  <span
+                    className="rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground"
+                    title={formatExactDateTime(summary.lastRunAt)}
+                  >
+                    Last ran {formatLastRunLabel(summary.lastRunAt)}
+                  </span>
+                )}
                 {summary.running > 0 && (
                   <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
                     {summary.running} running
@@ -1817,6 +1865,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                         job.next_run_at
                       )
                       const overdueMs = getMissedScheduleDelayMs(job) ?? 0
+                      const missedReason = formatMissedScheduleReason(job)
 
                       return (
                         <button
@@ -1837,6 +1886,9 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                           <div className="mt-1 flex items-center justify-between gap-3 text-xs text-muted-foreground">
                             <span className="truncate" title={job.name}>{getLocalizedJobName(job)}</span>
                             <span className="whitespace-nowrap">{formatLocalScheduleTime(job.latest_missed_run_at || job.next_run_at)}</span>
+                          </div>
+                          <div className="mt-1 truncate text-xs text-amber-700 dark:text-amber-300" title={missedReason}>
+                            {missedReason}
                           </div>
                         </button>
                       )
@@ -2181,7 +2233,9 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                         <span>{group.enabled} active</span>
                         <span>{group.runCount} total run{group.runCount === 1 ? '' : 's'}</span>
                         <span>Next {formatLocalScheduleTime(group.nextRunAt)}</span>
-                        <span>Last {timeAgo(group.lastRunAt)}</span>
+                        <span title={formatExactDateTime(group.lastRunAt)}>
+                          Last ran {formatLastRunLabel(group.lastRunAt)}
+                        </span>
                       </div>
                     </button>
 
@@ -2226,6 +2280,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                 const isRunningJob = job.last_status === 'running'
                 const isMissedJob = isMissedSchedule(job)
                 const missedDelayMs = getMissedScheduleDelayMs(job)
+                const missedReason = isMissedJob ? formatMissedScheduleReason(job) : ''
                 const showRunningHeader = isRunningJob && (!previousJob || previousJob.last_status !== 'running')
                 const previousJobWasMissed = previousJob ? isMissedSchedule(previousJob) : false
                 const showMissedHeader = isMissedJob && (!previousJob || previousJob.last_status === 'running' || !previousJobWasMissed)
@@ -2345,7 +2400,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
 
                         {/* Run stats */}
                         <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-gray-500 dark:text-gray-400">
-                          <span className="flex items-center gap-1">
+                          <span className="flex items-center gap-1" title={formatExactDateTime(job.last_run_at)}>
                             {job.last_status === 'running' ? (
                               <Loader className="w-3 h-3 text-amber-500 animate-spin" />
                             ) : job.last_status === 'success' ? (
@@ -2359,7 +2414,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                               ? job.last_run_at
                                 ? `Running since ${formatLocalScheduleTime(job.last_run_at)} (${timeAgo(job.last_run_at)})`
                                 : 'Running...'
-                              : `Last: ${timeAgo(job.last_run_at)}`}
+                              : `Last ran: ${formatLastRunLabel(job.last_run_at)}`}
                           </span>
                           <span>
                             {job.enabled
@@ -2370,6 +2425,11 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                 : `Next: ${formatLocalScheduleTime(job.next_run_at)}`
                               : 'paused'}
                           </span>
+                          {isMissedJob && (
+                            <span className="text-amber-700 dark:text-amber-300" title={missedReason}>
+                              {missedReason}
+                            </span>
+                          )}
                           <span>{job.run_count} run{job.run_count !== 1 ? 's' : ''}</span>
                           {job.last_duration_ms != null && job.last_status !== 'running' && (
                             <span>Duration: {formatDuration(job.last_duration_ms)}</span>

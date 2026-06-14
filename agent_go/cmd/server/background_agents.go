@@ -1603,7 +1603,7 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 // workflowRunBackupDirective returns a directive asking the builder to back up the
 // workflow after a full run (run_full_workflow) completes successfully, or "" when
 // this completion isn't a finished workflow run. The builder decides what and where
-// to back up based on the backup-strategy skill — we only ask, we don't prescribe.
+// to back up based on workflow.json.backup and the backup-strategy skill.
 func workflowRunBackupDirective(snap BackgroundAgentSnapshot) string {
 	if snap.Status != BGAgentCompleted || snap.Metadata == nil {
 		return ""
@@ -1611,7 +1611,7 @@ func workflowRunBackupDirective(snap BackgroundAgentSnapshot) string {
 	if snap.Kind != "workflow_run_tool" && snap.Metadata["type"] != "workflow_run" {
 		return ""
 	}
-	return "\n\nThe run is complete — now back up this project per the backup-strategy skill: call get_reference_doc(kind=\"backup-strategy\") and follow it for THIS project (e.g. commit & push state to its git remote, route large artifacts to the configured backend). If this project has NO backup configured yet, prompt the user to set one up (tell them backup isn't configured and offer to set it up per the skill) — do not silently skip. If the run is unattended (a scheduled/cron run with no user to answer), note the missing backup in your reply and continue without blocking."
+	return "\n\nThe run is complete - now handle backup for this workflow. Call get_reference_doc(kind=\"backup-strategy\"), read workflow.json.backup, and use it as the backup contract. If backup is enabled, perform the configured destinations (git/github, object store, HuggingFace, etc.) and always write backup/status.json with state, last attempt/success timestamps, destination results, errors, and the current source hash when available. Do not write operational backup status into workflow.json. If workflow.json.backup is missing or disabled, do not silently skip: in an interactive run, tell the user backup is not configured and offer to set it up; in an unattended scheduled run, write backup/status.json with state \"configured_not_verified\" and a concise summary, then continue without blocking."
 }
 
 // buildAutoNotificationMessage formats the [AUTO-NOTIFICATION] user message for a

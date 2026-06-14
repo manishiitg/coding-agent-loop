@@ -118,6 +118,14 @@ func botResumeTargetFromActive(session *ActiveSessionInfo) *services.BotResumeTa
 	if strings.TrimSpace(session.AgentMode) == "workflow_phase" && phaseID == "" {
 		phaseID = workflowtypes.WorkflowStatusWorkflowBuilder
 	}
+	activity := strings.TrimSpace(session.CurrentExecutionName)
+	if activity == "" && session.HasRunningBackgroundAgents {
+		if session.RunningBackgroundAgentCount > 1 {
+			activity = fmt.Sprintf("%d background agents running", session.RunningBackgroundAgentCount)
+		} else {
+			activity = "background work running"
+		}
+	}
 	return &services.BotResumeTarget{
 		SessionID:     strings.TrimSpace(session.SessionID),
 		UserID:        strings.TrimSpace(session.UserID),
@@ -128,7 +136,25 @@ func botResumeTargetFromActive(session *ActiveSessionInfo) *services.BotResumeTa
 		PresetQueryID: strings.TrimSpace(session.PresetQueryID),
 		PhaseID:       phaseID,
 		WorkshopMode:  strings.TrimSpace(session.WorkshopMode),
+		WorkflowName: firstNonEmptyTrimmed(
+			session.WorkflowName,
+			session.WorkflowLabel,
+			session.PresetName,
+		),
+		Activity:              activity,
+		HasBackgroundActivity: session.HasRunningBackgroundAgents,
 	}
+}
+
+// firstNonEmptyTrimmed returns the first argument that is non-empty after
+// trimming surrounding whitespace.
+func firstNonEmptyTrimmed(values ...string) string {
+	for _, v := range values {
+		if trimmed := strings.TrimSpace(v); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func botResumeStatusWithActivity(status string, lastActivity time.Time) string {

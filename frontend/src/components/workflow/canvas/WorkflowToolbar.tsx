@@ -195,7 +195,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   }, [workspacePath, monitorOn, monitorSaving, updateWorkflowManifest])
   const [showMonitorHelp, setShowMonitorHelp] = useState(false)
 
-  // Versions popup state
+  // Backup and versions popup state
   const [showVersionsPopup, setShowVersionsPopup] = useState(false)
   const [showAccessPopup, setShowAccessPopup] = useState(false)
   const [showWorkflowSchedulesPanel, setShowWorkflowSchedulesPanel] = useState(false)
@@ -546,7 +546,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </Tooltip>
         )}
 
-        {/* Show Versions - read-only list view safe; publish/revert backend-gated */}
+        {/* Backup & Versions - read-only backup status view; write actions are backend-gated */}
         {workspacePath && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -557,7 +557,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 <Package className="w-3.5 h-3.5" />
               </button>
             </TooltipTrigger>
-            <TooltipContent side="bottom"><p>Versions</p></TooltipContent>
+            <TooltipContent side="bottom"><p>Backup & Versions</p></TooltipContent>
           </Tooltip>
         )}
 
@@ -700,7 +700,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       </ModalPortal>
     )}
 
-    {/* Workflow Versions Popup */}
+    {/* Backup & Versions Popup */}
     <WorkflowVersionsPopup
       isOpen={showVersionsPopup}
       onClose={() => setShowVersionsPopup(false)}

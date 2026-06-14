@@ -176,13 +176,10 @@ func (s *SchedulerService) Start(ctx context.Context) error {
 	loaded := 0
 	for _, wf := range workflows {
 		for _, sched := range wf.Manifest.Schedules {
-			if !sched.Enabled {
-				continue
-			}
 			sctx := buildScheduleContext(wf.WorkspacePath, wf.Manifest, sched)
 			if err := s.LoadSchedule(sctx); err != nil {
 				scheduleLogf("[SCHEDULER] Failed to load schedule %s (%s): %v", sched.ID, sched.Name, err)
-			} else {
+			} else if sched.Enabled {
 				loaded++
 			}
 		}
@@ -217,13 +214,10 @@ func (s *SchedulerService) Start(ctx context.Context) error {
 
 		for _, ma := range maScheds {
 			for _, sched := range MergeBuiltinSchedules(ma.ScheduleFile.Schedules) {
-				if !sched.Enabled {
-					continue
-				}
 				sctx := buildMultiAgentScheduleContext(ma.UserID, sched, ma.ScheduleFile.Capabilities)
 				if err := s.LoadSchedule(sctx); err != nil {
 					scheduleLogf("[SCHEDULER] Failed to load multi-agent schedule %s (%s) for user %s: %v", sched.ID, sched.Name, ma.UserID, err)
-				} else {
+				} else if sched.Enabled {
 					loaded++
 				}
 			}
@@ -437,6 +431,24 @@ func (s *SchedulerService) LoadSchedule(sctx *ScheduleContext) error {
 	// Remove existing registration if any.
 	delete(s.jobs, sched.ID)
 
+	// Update workspace index
+	s.workspaceIndexMu.Lock()
+	s.workspaceIndex[sched.ID] = sctx.WorkspacePath
+	s.workspaceIndexMu.Unlock()
+
+	if sctx.SourceType == "workflow" {
+		if err := EnsureWorkflowScheduleExecutionTracker(context.Background(), sctx.WorkspacePath, sched, time.Now().UTC()); err != nil {
+			s.logf(sctx, "[SCHEDULER] Warning: failed to initialize execution history for %s: %v", sched.ID, err)
+		}
+	}
+
+	// Update user index for multi-agent schedules
+	if sctx.UserID != "" {
+		s.userIndexMu.Lock()
+		s.userIndex[sched.ID] = sctx.UserID
+		s.userIndexMu.Unlock()
+	}
+
 	if !sched.Enabled {
 		return nil
 	}
@@ -488,24 +500,6 @@ func (s *SchedulerService) LoadSchedule(sctx *ScheduleContext) error {
 			lastFired: time.Now().Add(-30 * time.Second), // don't fire immediately on registration
 		}
 		nextRun = getNextRunTime(sched.CronExpression, sched.Timezone)
-	}
-
-	// Update workspace index
-	s.workspaceIndexMu.Lock()
-	s.workspaceIndex[sched.ID] = sctx.WorkspacePath
-	s.workspaceIndexMu.Unlock()
-
-	if sctx.SourceType == "workflow" {
-		if err := EnsureWorkflowScheduleExecutionTracker(context.Background(), sctx.WorkspacePath, sched, time.Now().UTC()); err != nil {
-			s.logf(sctx, "[SCHEDULER] Warning: failed to initialize execution history for %s: %v", sched.ID, err)
-		}
-	}
-
-	// Update user index for multi-agent schedules
-	if sctx.UserID != "" {
-		s.userIndexMu.Lock()
-		s.userIndex[sched.ID] = sctx.UserID
-		s.userIndexMu.Unlock()
 	}
 
 	// Initialize runtime state with next run
@@ -1016,6 +1010,9 @@ func (s *SchedulerService) triggerSchedule(sctx *ScheduleContext) {
 			return
 		}
 		if !currentSched.Enabled {
+			if err := EnsureWorkflowScheduleExecutionTracker(context.Background(), sctx.WorkspacePath, *currentSched, time.Now().UTC()); err != nil {
+				s.logf(sctx, "[SCHEDULER] Warning: failed to sync disabled execution history for %s: %v", schedID, err)
+			}
 			s.logf(sctx, "[SCHEDULER] ⏭️ Schedule %s is disabled, skipping", schedID)
 			return
 		}

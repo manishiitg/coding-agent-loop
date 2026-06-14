@@ -16,6 +16,8 @@ const (
 	workflowScheduleHistoryRetention        = 7 * 24 * time.Hour
 	workflowScheduleMissedGracePeriod       = 1 * time.Minute
 	workflowScheduleMatchTolerance          = 5 * time.Minute
+
+	workflowScheduleMissedReasonNoExecution = "no_execution_recorded"
 )
 
 var workflowScheduleExecutionHistoryMu sync.Mutex
@@ -42,6 +44,7 @@ type WorkflowScheduleExecutionRecord struct {
 type WorkflowScheduleMissedStatus struct {
 	MissedRunCount    int
 	LatestMissedRunAt *time.Time
+	MissedRunReason   string
 }
 
 func workflowScheduleExecutionHistoryPath(workspacePath string) string {
@@ -161,6 +164,13 @@ func ComputeWorkflowScheduleMissedStatus(sched WorkflowSchedule, tracker *Workfl
 	sort.Slice(actualRuns, func(i, j int) bool {
 		return actualRuns[i].Before(actualRuns[j])
 	})
+	if len(actualRuns) > 0 {
+		latestActualRun := actualRuns[len(actualRuns)-1]
+		if latestActualRun.After(windowStart) {
+			windowStart = latestActualRun
+			actualRuns = nil
+		}
+	}
 
 	expectedRuns := make([]time.Time, 0)
 	cursor := windowStart.In(loc).Add(-time.Second)
@@ -203,6 +213,7 @@ func ComputeWorkflowScheduleMissedStatus(sched WorkflowSchedule, tracker *Workfl
 	return WorkflowScheduleMissedStatus{
 		MissedRunCount:    missedCount,
 		LatestMissedRunAt: &latestMissedUTC,
+		MissedRunReason:   workflowScheduleMissedReasonNoExecution,
 	}
 }
 

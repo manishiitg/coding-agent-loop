@@ -76,6 +76,8 @@ import type {
   StartRestoredTerminalRequest,
   StartRestoredTerminalResponse,
   WorkflowCapabilities,
+  WorkflowBackupConfig,
+  WorkflowBackupInfoResponse,
 } from './api-types'
 import type { PlanStep, AgentConfigs } from '../utils/stepConfigMatching'
 
@@ -1916,6 +1918,29 @@ export const agentApi = {
   deleteVersion: async (workspacePath: string, version: number): Promise<{ success: boolean; message: string }> => {
     const response = await api.delete('/api/workflow/versions', {
       params: { workspace_path: workspacePath, version: version }
+    })
+    return response.data
+  },
+
+  getWorkflowBackup: async (workspacePath: string): Promise<WorkflowBackupInfoResponse> => {
+    const response = await api.get('/api/workflow/backup', {
+      params: { workspace_path: workspacePath }
+    })
+    return response.data
+  },
+
+  updateWorkflowBackupConfig: async (workspacePath: string, backup: WorkflowBackupConfig): Promise<{ success: boolean; backup: WorkflowBackupConfig }> => {
+    const response = await api.post('/api/workflow/backup/config', {
+      workspace_path: workspacePath,
+      backup
+    })
+    return response.data
+  },
+
+  runWorkflowBackup: async (workspacePath: string, action: 'backup' | 'configure' = 'backup'): Promise<{ success: boolean; session_id: string; message: string }> => {
+    const response = await api.post('/api/workflow/backup/run', {
+      workspace_path: workspacePath,
+      action
     })
     return response.data
   },

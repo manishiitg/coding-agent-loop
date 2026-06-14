@@ -1993,6 +1993,76 @@ export interface WorkflowVersionMeta {
   files_count: number
 }
 
+// Workflow Backup
+export interface WorkflowBackupConfig {
+  enabled: boolean
+  mode?: string
+  triggers?: WorkflowBackupTriggers
+  destinations?: WorkflowBackupDestination[]
+  notes?: string
+}
+
+export interface WorkflowBackupTriggers {
+  after_scheduled_run?: boolean
+  after_manual_run?: boolean
+}
+
+export interface WorkflowBackupDestination {
+  id: string
+  type: 'git' | 'object_store' | 'huggingface' | 'local_zip' | string
+  provider: 'github' | 'git' | 'r2' | 's3' | 'b2' | 'huggingface' | 'local' | string
+  repo?: string
+  branch?: string
+  bucket?: string
+  prefix?: string
+  covers?: string[]
+  secret_refs?: string[]
+  notes?: string
+}
+
+export interface WorkflowBackupStatus {
+  version: number
+  state: 'not_configured' | 'configured_not_verified' | 'running' | 'healthy' | 'stale' | 'partial' | 'failed' | string
+  last_attempt_at?: string
+  last_success_at?: string
+  last_agent_session_id?: string
+  last_source_hash?: string
+  summary?: string
+  destinations?: WorkflowBackupDestinationStatus[]
+  last_error?: string
+  updated_at?: string
+}
+
+export interface WorkflowBackupDestinationStatus {
+  id: string
+  type?: string
+  provider?: string
+  state: 'healthy' | 'failed' | 'skipped' | 'running' | string
+  last_success_at?: string
+  commit?: string
+  objects_synced?: number
+  summary?: string
+  error?: string
+}
+
+export interface WorkflowBackupStrategyInfo {
+  id: string
+  label: string
+  description: string
+  best_for: string[]
+}
+
+export interface WorkflowBackupInfoResponse {
+  success: boolean
+  config?: WorkflowBackupConfig
+  status?: WorkflowBackupStatus
+  effective_state: 'not_configured' | 'configured_not_verified' | 'running' | 'healthy' | 'stale' | 'partial' | 'failed' | string
+  current_source_hash?: string
+  tracked_files_count?: number
+  supported: WorkflowBackupStrategyInfo[]
+  status_path: string
+}
+
 // Scheduled Jobs
 export interface ScheduledJob {
   id: string
@@ -2026,6 +2096,7 @@ export interface ScheduledJob {
   consecutive_failures: number
   missed_run_count?: number
   latest_missed_run_at?: string
+  missed_run_reason?: string
   created_at?: string
   updated_at?: string
 }
@@ -2115,6 +2186,7 @@ export interface WorkflowManifest {
   updated_at?: string
   run_retention_count?: number
   post_run_monitor?: boolean
+  backup?: WorkflowBackupConfig
 }
 
 export interface WorkflowCapabilities {

@@ -296,6 +296,12 @@ type BotResumeTarget struct {
 	PresetQueryID string
 	PhaseID       string
 	WorkshopMode  string
+	// Display-only fields for the resume picker / ack. WorkflowName is the
+	// human-friendly workflow or preset name (never the raw session id);
+	// Activity is the current step/phase or background work.
+	WorkflowName          string
+	Activity              string
+	HasBackgroundActivity bool
 }
 
 type BotResumeFilter struct {
@@ -996,11 +1002,19 @@ func (m *BotConversationManager) handleBotResumeCommand(msg BotIncomingMessage, 
 	if connector == nil {
 		return
 	}
+	workspaceUserID := m.resolveWorkspaceUserID(msg)
+
+	// Bare `@resume` opens the picker instead of silently binding to the most
+	// recent session — the user chooses which running session to connect to.
+	if strings.TrimSpace(selector) == "" {
+		connector.SendThreadMessage(context.Background(), threadID, m.formatBotResumePicker(workspaceUserID, filter))
+		return
+	}
+
 	if m.resumeTarget == nil {
 		connector.SendThreadMessage(context.Background(), threadID, "Resume is not available for this bot connector.")
 		return
 	}
-	workspaceUserID := m.resolveWorkspaceUserID(msg)
 	target, err := m.resumeTarget(context.Background(), workspaceUserID, selector, filter)
 	if err != nil {
 		connector.SendThreadMessage(context.Background(), threadID, fmt.Sprintf("Could not resume that chat: %v", err))
@@ -1027,6 +1041,15 @@ func (m *BotConversationManager) handleBotResumeCommand(msg BotIncomingMessage, 
 		WorkshopMode:  strings.TrimSpace(target.WorkshopMode),
 	}
 
+	// Connecting to a live session means the user wants to watch it, so default
+	// to full detail — otherwise concise mode suppresses every workflow-scoped
+	// event (step starts/ends, runtime progress) and the thread stays silent
+	// until the final answer. They can dial it back with `@concise`.
+	live := botResumeTargetIsLive(target)
+	if live {
+		active.sendFullDetails = true
+	}
+
 	m.mu.Lock()
 	if previous := m.sessions[threadKey]; previous != nil {
 		previous.mu.Lock()
@@ -1039,7 +1062,10 @@ func (m *BotConversationManager) handleBotResumeCommand(msg BotIncomingMessage, 
 	m.sessions[threadKey] = active
 	m.mu.Unlock()
 
-	if status == chathistory.BotSessionStatusRunning || status == chathistory.BotSessionStatusAwaitingPlanApproval {
+	// Start streaming live events to this thread whenever there's anything in
+	// flight to mirror — a running/awaiting workflow or background agents still
+	// working. This is what turns @resume into "I get notifications here".
+	if status == chathistory.BotSessionStatusRunning || status == chathistory.BotSessionStatusAwaitingPlanApproval || target.HasBackgroundActivity {
 		m.startMirroringExistingSession(active)
 	}
 
@@ -1062,20 +1088,41 @@ func botSessionStatusFromActiveStatus(status string) string {
 }
 
 func formatBotResumeAck(target *BotResumeTarget) string {
-	label := strings.TrimSpace(target.Query)
-	if label == "" {
-		label = strings.TrimSpace(target.WorkspacePath)
+	label := botResumeTargetLabel(*target)
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Connected to *%s*", label))
+	if status := strings.TrimSpace(target.Status); status != "" {
+		sb.WriteString(fmt.Sprintf(" (%s)", status))
 	}
-	if label == "" {
-		label = strings.TrimSpace(target.AgentMode)
+	sb.WriteString(".")
+	if activity := strings.TrimSpace(target.Activity); activity != "" {
+		sb.WriteString(fmt.Sprintf("\nCurrently: %s.", activity))
 	}
-	if len([]rune(label)) > 120 {
-		label = string([]rune(label)[:120]) + "..."
+	if botResumeTargetIsLive(target) {
+		sb.WriteString("\nYou'll get live progress here (full detail — send `@concise` for less). Send a message any time to chat with it.")
+	} else {
+		sb.WriteString("\nSend your next message here to continue this chat.")
 	}
-	if label == "" {
-		return fmt.Sprintf("Connected this chat to session `%s`. Send your next message here to continue it.", target.SessionID)
+	sb.WriteString(fmt.Sprintf("\n_session `%s`_", target.SessionID))
+	return sb.String()
+}
+
+// botResumeTargetIsLive reports whether the target is actively doing work, so
+// resuming it will stream notifications rather than just bind a finished chat.
+func botResumeTargetIsLive(target *BotResumeTarget) bool {
+	if target == nil {
+		return false
 	}
-	return fmt.Sprintf("Connected this chat to session `%s` (%s). Send your next message here to continue it.", target.SessionID, label)
+	if target.HasBackgroundActivity {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(target.Status)) {
+	case "running", "paused", "waiting_for_input", "awaiting_plan_approval":
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *BotConversationManager) setActiveBotDetailMode(active *activeBotSession, full bool) {
@@ -1429,15 +1476,15 @@ func parseBotResumeCommand(text string, requirePrefix bool) (string, bool) {
 	if !ok {
 		return "", false
 	}
+	// Bare `@resume` / `@continue` (no selector) opens the picker: list the
+	// running sessions and let the user choose one. An explicit selector
+	// (`@resume 2`, `@resume <session-id>`) connects directly.
 	if normalized == "resume" || normalized == "continue" {
-		return "latest", true
+		return "", true
 	}
 	for _, prefix := range []string{"resume ", "continue "} {
 		if strings.HasPrefix(normalized, prefix) {
 			selector := strings.TrimSpace(strings.TrimPrefix(normalized, prefix))
-			if selector == "" {
-				selector = "latest"
-			}
 			return selector, true
 		}
 	}
@@ -1512,9 +1559,14 @@ func (m *BotConversationManager) formatResumeList(userID string, filter BotResum
 }
 
 func botResumeTargetLabel(target BotResumeTarget) string {
-	label := strings.TrimSpace(target.Query)
+	// Prefer a human-friendly workflow/preset name over the raw query or the
+	// session id — the session id alone looks like an opaque "schedule id".
+	label := strings.TrimSpace(target.WorkflowName)
 	if label == "" {
-		label = strings.TrimSpace(target.WorkspacePath)
+		label = strings.TrimSpace(target.Query)
+	}
+	if label == "" {
+		label = workflowNameFromBotWorkspacePath(target.WorkspacePath)
 	}
 	if label == "" {
 		label = strings.TrimSpace(target.AgentMode)
@@ -1527,6 +1579,64 @@ func botResumeTargetLabel(target BotResumeTarget) string {
 		label = string(runes[:72]) + "..."
 	}
 	return label
+}
+
+// workflowNameFromBotWorkspacePath extracts the trailing workflow folder name
+// from a workspace path like "Workflow/report" -> "report".
+func workflowNameFromBotWorkspacePath(workspacePath string) string {
+	trimmed := strings.Trim(strings.TrimSpace(workspacePath), "/")
+	if trimmed == "" {
+		return ""
+	}
+	parts := strings.Split(trimmed, "/")
+	return parts[len(parts)-1]
+}
+
+// botResumeTargetDescription renders one picker line: workflow name, status,
+// and what it's currently doing.
+func botResumeTargetDescription(target BotResumeTarget) string {
+	status := strings.TrimSpace(target.Status)
+	if status == "" {
+		status = "active"
+	}
+	desc := fmt.Sprintf("*%s* — %s", botResumeTargetLabel(target), status)
+	if activity := strings.TrimSpace(target.Activity); activity != "" {
+		desc += fmt.Sprintf(" · %s", activity)
+	}
+	return desc
+}
+
+// formatBotResumePicker lists the sessions the user can connect to. Bare
+// `@resume` sends this so the user picks a session instead of being silently
+// bound to whichever ran most recently.
+func (m *BotConversationManager) formatBotResumePicker(userID string, filter BotResumeFilter) string {
+	if m.resumeList == nil || strings.TrimSpace(userID) == "" {
+		return "Resume is not available for this bot connector."
+	}
+	targets, err := m.resumeList(context.Background(), userID, filter)
+	if err != nil {
+		log.Printf("[BOT_MANAGER] Failed to list resumable bot sessions: %v", err)
+		return "Couldn't list sessions right now. Please try again."
+	}
+	if len(targets) == 0 {
+		return "No active sessions to connect to right now. Start a workflow or open a chat in the dashboard, then send `@resume`."
+	}
+	var sb strings.Builder
+	if strings.TrimSpace(filter.WorkspacePath) != "" || strings.TrimSpace(filter.PresetQueryID) != "" {
+		sb.WriteString("Sessions you can connect to for this workflow:")
+	} else {
+		sb.WriteString("Sessions you can connect to:")
+	}
+	const maxPickerItems = 9
+	for i, target := range targets {
+		if i >= maxPickerItems {
+			sb.WriteString(fmt.Sprintf("\n+%d more", len(targets)-i))
+			break
+		}
+		sb.WriteString(fmt.Sprintf("\n%d. %s", i+1, botResumeTargetDescription(target)))
+	}
+	sb.WriteString("\n\nReply `@resume <number>` to connect — you'll get live updates here and can chat with it.")
+	return sb.String()
 }
 
 func formatRunningWorkflowsStatus(workflows []BotRunningWorkflow) string {

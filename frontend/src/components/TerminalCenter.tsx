@@ -2098,9 +2098,10 @@ const XtermTerminalPane: React.FC<{
 
     // React's delegated wheel listener can be passive in Chromium, which makes
     // preventDefault a no-op and lets the page/container steal terminal scroll.
-    node.addEventListener('wheel', handleWheel, { passive: false })
+    const listenerOptions: AddEventListenerOptions = { passive: false, capture: true }
+    node.addEventListener('wheel', handleWheel, listenerOptions)
     return () => {
-      node.removeEventListener('wheel', handleWheel)
+      node.removeEventListener('wheel', handleWheel, listenerOptions)
     }
   }, [contentRef, handleWheel])
 
@@ -2478,7 +2479,8 @@ function isSyntheticTerminal(terminal: TerminalSnapshot): boolean {
 }
 
 function terminalTmuxDetailOptions(terminal: TerminalSnapshot, displayDetail = false): TerminalDetailOptions | undefined {
-  if (!terminal.tmux_session) return undefined
+  const transport = (terminal.step_transport || '').toLowerCase()
+  if (!terminal.tmux_session && transport !== 'tmux') return undefined
   const state = terminalState(terminal)
   if (terminal.active && state !== 'stale' && state !== 'failed') {
     const lines = displayDetail

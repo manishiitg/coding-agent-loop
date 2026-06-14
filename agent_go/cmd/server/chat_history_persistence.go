@@ -586,6 +586,7 @@ func ListChatHistorySessions(userID string, limit, offset int, workspacePath str
 		return nil, err
 	}
 
+	scheduleIDBySessionID := chatHistoryScheduleIDBySessionID(userID, workspacePath)
 	sessionsByID := make(map[string]ChatHistorySession)
 	for _, convPath := range filePaths {
 		sessionID, ok := chatHistorySessionIDFromWorkspacePath(root, convPath)
@@ -606,8 +607,9 @@ func ListChatHistorySessions(userID string, limit, offset int, workspacePath str
 			continue
 		}
 		session.ConversationPath = convPath
-		if existing, ok := sessionsByID[session.SessionID]; !ok || session.UpdatedAt > existing.UpdatedAt || (session.UpdatedAt == existing.UpdatedAt && session.ConversationPath > existing.ConversationPath) {
-			sessionsByID[session.SessionID] = session
+		displayKey := chatHistoryDisplayKey(session.SessionID, scheduleIDBySessionID)
+		if existing, ok := sessionsByID[displayKey]; !ok || session.UpdatedAt > existing.UpdatedAt || (session.UpdatedAt == existing.UpdatedAt && session.ConversationPath > existing.ConversationPath) {
+			sessionsByID[displayKey] = session
 		}
 	}
 
@@ -635,6 +637,7 @@ func ListChatHistorySessions(userID string, limit, offset int, workspacePath str
 
 type localChatHistoryFile struct {
 	sessionID     string
+	dedupeKey     string
 	convPath      string
 	workspacePath string
 	modTime       time.Time
@@ -657,6 +660,7 @@ func listChatHistorySessionsFromDisk(userID, workspaceRoot, workflowPath string,
 		return nil, true, err
 	}
 
+	scheduleIDBySessionID := multiAgentScheduleIDBySessionID(userID)
 	filesBySession := make(map[string]localChatHistoryFile)
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -669,6 +673,7 @@ func listChatHistorySessionsFromDisk(userID, workspaceRoot, workflowPath string,
 		if info, err := os.Stat(legacyConvPath); err == nil && !info.IsDir() {
 			addLocalChatHistoryFile(filesBySession, localChatHistoryFile{
 				sessionID:     entryName,
+				dedupeKey:     chatHistoryDisplayKey(entryName, scheduleIDBySessionID),
 				convPath:      legacyConvPath,
 				workspacePath: pathpkg.Join(workspaceRoot, entryName, "conversation.json"),
 				modTime:       info.ModTime(),
@@ -692,6 +697,7 @@ func listChatHistorySessionsFromDisk(userID, workspaceRoot, workflowPath string,
 			}
 			addLocalChatHistoryFile(filesBySession, localChatHistoryFile{
 				sessionID:     sessionID,
+				dedupeKey:     chatHistoryDisplayKey(sessionID, scheduleIDBySessionID),
 				convPath:      convPath,
 				workspacePath: pathpkg.Join(workspaceRoot, entryName, filepath.Base(convPath)),
 				modTime:       info.ModTime(),
@@ -734,8 +740,12 @@ func addLocalChatHistoryFile(filesBySession map[string]localChatHistoryFile, fil
 	if file.sessionID == "" {
 		return
 	}
-	if existing, ok := filesBySession[file.sessionID]; !ok || file.modTime.After(existing.modTime) || (file.modTime.Equal(existing.modTime) && file.workspacePath > existing.workspacePath) {
-		filesBySession[file.sessionID] = file
+	key := strings.TrimSpace(file.dedupeKey)
+	if key == "" {
+		key = file.sessionID
+	}
+	if existing, ok := filesBySession[key]; !ok || file.modTime.After(existing.modTime) || (file.modTime.Equal(existing.modTime) && file.workspacePath > existing.workspacePath) {
+		filesBySession[key] = file
 	}
 }
 
@@ -861,13 +871,33 @@ func workflowScheduleIDBySessionID(workflowPath string) map[string]string {
 	if err != nil || !ok {
 		return nil
 	}
+	return scheduleIDBySessionIDFromRuns(runs)
+}
+
+func multiAgentScheduleIDBySessionID(userID string) map[string]string {
+	runs, ok, err := readLocalMultiAgentScheduleRuns(userID)
+	if err != nil || !ok {
+		return nil
+	}
+	return scheduleIDBySessionIDFromRuns(runs)
+}
+
+func chatHistoryScheduleIDBySessionID(userID, workspacePath string) map[string]string {
+	workspacePath = normalizeChatHistoryWorkspacePath(workspacePath)
+	if workspacePath != "" {
+		return workflowScheduleIDBySessionID(workspacePath)
+	}
+	return multiAgentScheduleIDBySessionID(userID)
+}
+
+func scheduleIDBySessionIDFromRuns(runs []ScheduleRunEntry) map[string]string {
 	out := make(map[string]string, len(runs))
 	for _, run := range runs {
 		sessionID := strings.TrimSpace(run.SessionID)
 		scheduleID := strings.TrimSpace(run.ScheduleID)
 		if sessionID != "" && scheduleID != "" {
 			out[sessionID] = scheduleID
-			if prefix := workflowScheduleSessionPrefix(sessionID); prefix != "" {
+			if prefix := chatHistoryScheduleSessionPrefix(sessionID); prefix != "" {
 				out["prefix:"+prefix] = scheduleID
 			}
 		}
@@ -876,20 +906,24 @@ func workflowScheduleIDBySessionID(workflowPath string) map[string]string {
 }
 
 func workflowBuilderHistoryDisplayKey(sessionID string, scheduleIDBySessionID map[string]string) string {
-	if scheduleKey, ok := workflowScheduleHistoryDisplayKey(sessionID, scheduleIDBySessionID); ok {
+	return chatHistoryDisplayKey(sessionID, scheduleIDBySessionID)
+}
+
+func chatHistoryDisplayKey(sessionID string, scheduleIDBySessionID map[string]string) string {
+	if scheduleKey, ok := chatHistoryScheduleDisplayKey(sessionID, scheduleIDBySessionID); ok {
 		return scheduleKey
 	}
 	return "session:" + sessionID
 }
 
-func workflowScheduleHistoryDisplayKey(sessionID string, scheduleIDBySessionID map[string]string) (string, bool) {
-	if !strings.HasPrefix(sessionID, "schedule-") {
+func chatHistoryScheduleDisplayKey(sessionID string, scheduleIDBySessionID map[string]string) (string, bool) {
+	if !chatHistoryIsScheduleSessionID(sessionID) {
 		return "", false
 	}
 	if scheduleID := strings.TrimSpace(scheduleIDBySessionID[sessionID]); scheduleID != "" {
 		return "schedule:" + scheduleID, true
 	}
-	prefix := workflowScheduleSessionPrefix(sessionID)
+	prefix := chatHistoryScheduleSessionPrefix(sessionID)
 	if prefix == "" {
 		return "schedule-session:" + sessionID, true
 	}
@@ -899,17 +933,33 @@ func workflowScheduleHistoryDisplayKey(sessionID string, scheduleIDBySessionID m
 	return "schedule-prefix:" + prefix, true
 }
 
-func workflowScheduleSessionPrefix(sessionID string) string {
-	parts := strings.SplitN(sessionID, "--", 2)
-	if len(parts) != 2 {
+func chatHistoryIsScheduleSessionID(sessionID string) bool {
+	return strings.HasPrefix(sessionID, "schedule-") || strings.HasPrefix(sessionID, "sched_")
+}
+
+func chatHistoryScheduleSessionPrefix(sessionID string) string {
+	if strings.HasPrefix(sessionID, "schedule-") {
+		parts := strings.SplitN(sessionID, "--", 2)
+		if len(parts) != 2 {
+			return ""
+		}
+		return chatHistorySchedulePrefixBeforeTimestamp(parts[1])
+	}
+	if strings.HasPrefix(sessionID, "sched_") {
+		return chatHistorySchedulePrefixBeforeTimestamp(strings.TrimPrefix(sessionID, "sched_"))
+	}
+	return ""
+}
+
+func chatHistorySchedulePrefixBeforeTimestamp(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
 		return ""
 	}
-	prefix := parts[1]
-	if idx := strings.Index(prefix, "_"); idx > 0 {
-		prefix = prefix[:idx]
+	if idx := strings.Index(value, "_"); idx > 0 {
+		value = value[:idx]
 	}
-	prefix = strings.TrimSpace(prefix)
-	return prefix
+	return strings.TrimSpace(value)
 }
 
 func workflowBuilderConversationFiles(workflowDir string) ([]string, error) {

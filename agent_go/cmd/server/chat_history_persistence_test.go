@@ -611,6 +611,82 @@ func TestListChatHistorySessionsFromDiskReadsDateBucketLayout(t *testing.T) {
 	}
 }
 
+func TestListChatHistorySessionsFromDiskCollapsesMultiAgentScheduleRunsBySchedule(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+
+	convDir := filepath.Join(root, "_users", "default", "chat_history", "2026-05-17")
+	if err := os.MkdirAll(convDir, 0o755); err != nil {
+		t.Fatalf("mkdir conversation dir: %v", err)
+	}
+
+	writeConversation := func(sessionID, updatedAt, text string, mtime time.Time) {
+		t.Helper()
+		data := fmt.Sprintf(`{
+  "session_id": %q,
+  "agent_mode": "simple",
+  "conversation_history": [{"Role": "human", "Parts": [{"Text": %q}]}],
+  "updated_at": %q
+}`, sessionID, text, updatedAt)
+		path := filepath.Join(convDir, "session-"+sessionID+"-conversation.json")
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+			t.Fatalf("write conversation %s: %v", sessionID, err)
+		}
+		if err := os.Chtimes(path, mtime, mtime); err != nil {
+			t.Fatalf("chtimes conversation %s: %v", sessionID, err)
+		}
+	}
+
+	oldCronSession := "schedule-cron--abc12345_100"
+	legacySession := "sched_abc12345_150"
+	latestManualSession := "schedule-manual--abc12345_300"
+	otherScheduleSession := "schedule-cron--def67890_100"
+	normalSession := "normal-chat-1"
+
+	writeConversation(oldCronSession, "2026-05-17T10:00:00Z", "old cron run", time.Date(2026, 5, 17, 10, 0, 0, 0, time.UTC))
+	writeConversation(legacySession, "2026-05-17T11:00:00Z", "legacy schedule run", time.Date(2026, 5, 17, 11, 0, 0, 0, time.UTC))
+	writeConversation(latestManualSession, "2026-05-18T10:00:00Z", "latest manual run", time.Date(2026, 5, 18, 10, 0, 0, 0, time.UTC))
+	writeConversation(otherScheduleSession, "2026-05-17T12:00:00Z", "other schedule run", time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC))
+	writeConversation(normalSession, "2026-05-18T11:00:00Z", "normal chat", time.Date(2026, 5, 18, 11, 0, 0, 0, time.UTC))
+
+	runsPath := filepath.Join(root, "_users", "default", "multiagent-schedule-runs.json")
+	runsJSON := fmt.Sprintf(`[
+  {"id":"run-new","schedule_id":"sched-a","session_id":%q,"status":"success","started_at":"2026-05-18T10:00:00Z"},
+  {"id":"run-legacy","schedule_id":"sched-a","session_id":%q,"status":"success","started_at":"2026-05-17T11:00:00Z"},
+  {"id":"run-old","schedule_id":"sched-a","session_id":%q,"status":"success","started_at":"2026-05-17T10:00:00Z"},
+  {"id":"run-other","schedule_id":"sched-b","session_id":%q,"status":"success","started_at":"2026-05-17T12:00:00Z"}
+]`, latestManualSession, legacySession, oldCronSession, otherScheduleSession)
+	if err := os.WriteFile(runsPath, []byte(runsJSON), 0o600); err != nil {
+		t.Fatalf("write multiagent schedule runs: %v", err)
+	}
+
+	sessions, ok, err := listChatHistorySessionsFromDisk("default", "_users/default/chat_history", "", 10, 0)
+	if err != nil {
+		t.Fatalf("list error = %v", err)
+	}
+	if !ok {
+		t.Fatal("list ok = false, want true")
+	}
+
+	ids := map[string]bool{}
+	for _, session := range sessions {
+		ids[session.SessionID] = true
+	}
+	if len(sessions) != 3 {
+		t.Fatalf("session count = %d, want 3: %#v", len(sessions), sessions)
+	}
+	for _, want := range []string{normalSession, latestManualSession, otherScheduleSession} {
+		if !ids[want] {
+			t.Fatalf("missing session %q in %#v", want, sessions)
+		}
+	}
+	for _, collapsed := range []string{oldCronSession, legacySession} {
+		if ids[collapsed] {
+			t.Fatalf("collapsed schedule session %q should not be listed: %#v", collapsed, sessions)
+		}
+	}
+}
+
 func TestListWorkflowChatHistorySessionsCollapsesScheduleRunsBySchedule(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("WORKSPACE_DOCS_PATH", root)

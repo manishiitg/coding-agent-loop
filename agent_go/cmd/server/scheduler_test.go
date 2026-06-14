@@ -164,11 +164,91 @@ func TestMaybeResumeLatestWorkflowThreadIgnoresNormalUserChat(t *testing.T) {
 	}
 }
 
+func TestMaybeResumeLatestMultiAgentThreadUsesPreviousScheduledSessionOnly(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+
+	userID := "default"
+	scheduleID := "schedule-1"
+	writeUserChatRuntime(t, root, userID, "normal-user-chat", "claude-code", true)
+	writeUserChatRuntime(t, root, userID, "previous-schedule-chat", "claude-code", true)
+	writeMultiAgentScheduleRunsForTest(t, root, userID, []ScheduleRunEntry{
+		{
+			ID:         "current-run",
+			ScheduleID: scheduleID,
+			SessionID:  "current-schedule-chat",
+			Status:     "running",
+			StartedAt:  time.Now().UTC(),
+		},
+		{
+			ID:         "previous-run",
+			ScheduleID: scheduleID,
+			SessionID:  "previous-schedule-chat",
+			Status:     "success",
+			StartedAt:  time.Now().Add(-time.Hour).UTC(),
+		},
+	})
+
+	reqMap := map[string]interface{}{}
+	resumed := (&SchedulerService{}).maybeResumeLatestMultiAgentThread(context.Background(), resumeTestMultiAgentScheduleContext(userID, scheduleID), reqMap, "current-schedule-chat")
+	if resumed != "previous-schedule-chat" {
+		t.Fatalf("resumed session = %q, want previous scheduled session", resumed)
+	}
+	if got := reqMap["restored_conversation_session_id"]; got != "previous-schedule-chat" {
+		t.Fatalf("restored_conversation_session_id = %#v, want previous scheduled session", got)
+	}
+}
+
+func TestMaybeResumeLatestMultiAgentThreadIgnoresNormalUserChat(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+
+	userID := "default"
+	scheduleID := "schedule-1"
+	writeUserChatRuntime(t, root, userID, "normal-user-chat", "claude-code", true)
+	writeMultiAgentScheduleRunsForTest(t, root, userID, []ScheduleRunEntry{
+		{
+			ID:         "current-run",
+			ScheduleID: scheduleID,
+			SessionID:  "current-schedule-chat",
+			Status:     "running",
+			StartedAt:  time.Now().UTC(),
+		},
+	})
+
+	reqMap := map[string]interface{}{}
+	resumed := (&SchedulerService{}).maybeResumeLatestMultiAgentThread(context.Background(), resumeTestMultiAgentScheduleContext(userID, scheduleID), reqMap, "current-schedule-chat")
+	if resumed != "" {
+		t.Fatalf("resumed session = %q, want empty because normal user chats are not schedule runs", resumed)
+	}
+	if _, ok := reqMap["restored_conversation_session_id"]; ok {
+		t.Fatalf("restored_conversation_session_id was set for a normal user chat: %#v", reqMap)
+	}
+}
+
 func resumeTestScheduleContext(workspacePath, scheduleID string) *ScheduleContext {
 	resumePrevious := true
 	return &ScheduleContext{
 		WorkspacePath: workspacePath,
 		UserID:        "default",
+		Schedule: WorkflowSchedule{
+			ID:             scheduleID,
+			ResumePrevious: &resumePrevious,
+		},
+		Capabilities: WorkflowCapabilities{
+			LLMConfig: &workflowtypes.PresetLLMConfig{
+				Provider: "claude-code",
+				ModelID:  "claude-opus-4-6",
+			},
+		},
+	}
+}
+
+func resumeTestMultiAgentScheduleContext(userID, scheduleID string) *ScheduleContext {
+	resumePrevious := true
+	return &ScheduleContext{
+		UserID:     userID,
+		SourceType: "multi-agent",
 		Schedule: WorkflowSchedule{
 			ID:             scheduleID,
 			ResumePrevious: &resumePrevious,
@@ -197,6 +277,21 @@ func writeScheduleRunsForTest(t *testing.T, root, workspacePath string, runs []S
 	}
 }
 
+func writeMultiAgentScheduleRunsForTest(t *testing.T, root, userID string, runs []ScheduleRunEntry) {
+	t.Helper()
+	dir := filepath.Join(root, "_users", userID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.MarshalIndent(runs, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "multiagent-schedule-runs.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func writeWorkflowChatRuntime(t *testing.T, root, workspacePath, sessionID, provider string, resumeSupported bool) {
 	t.Helper()
 	convDir := filepath.Join(root, filepath.FromSlash(workspacePath), "builder", "conversation", "2026-05-20")
@@ -216,6 +311,33 @@ func writeWorkflowChatRuntime(t *testing.T, root, workspacePath, sessionID, prov
 			"resume_flag":          "--resume",
 			"workspace_path":       workspacePath,
 			"workshop_mode":        "workshop",
+			"agent_session_handle": map[string]interface{}{},
+		},
+	}, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(convDir, "session-"+sessionID+"-conversation.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeUserChatRuntime(t *testing.T, root, userID, sessionID, provider string, resumeSupported bool) {
+	t.Helper()
+	convDir := filepath.Join(root, "_users", userID, "chat_history", "2026-05-20")
+	if err := os.MkdirAll(convDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.MarshalIndent(map[string]interface{}{
+		"session_id": sessionID,
+		"agent_mode": "simple",
+		"runtime": map[string]interface{}{
+			"kind":                 "coding_agent",
+			"provider":             provider,
+			"model_id":             "claude-opus-4-6",
+			"external_session_id":  "external-" + sessionID,
+			"resume_supported":     resumeSupported,
+			"resume_flag":          "--resume",
 			"agent_session_handle": map[string]interface{}{},
 		},
 	}, "", "  ")

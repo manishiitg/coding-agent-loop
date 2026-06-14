@@ -101,7 +101,7 @@ const isSessionOlderThanDays = (session: ChatHistorySession, days: number): bool
 }
 
 const getChatKind = (session: ChatHistorySession): Exclude<PreviousChatFilter, 'all'> => {
-  if (session.session_id.startsWith('schedule-cron--')) return 'schedule'
+  if (session.session_id.startsWith('schedule-') || session.session_id.startsWith('sched_')) return 'schedule'
   if (session.session_id.startsWith('bot-')) return 'bot'
   return 'chat'
 }

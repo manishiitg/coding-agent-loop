@@ -1303,16 +1303,31 @@ func (s *SchedulerService) maybeResumeLatestWorkflowThread(ctx context.Context, 
 		return ""
 	}
 
+	runs, err := listScheduleRunsForResume(ctx, sctx.WorkspacePath, sctx.Schedule.ID)
+	if err != nil || len(runs) == 0 {
+		return ""
+	}
+	return s.maybeResumeLatestScheduledThread(sctx, reqMap, currentSessionID, runs, sctx.WorkspacePath)
+}
+
+func (s *SchedulerService) maybeResumeLatestMultiAgentThread(ctx context.Context, sctx *ScheduleContext, reqMap map[string]interface{}, currentSessionID string) string {
+	if !sctx.Schedule.ShouldResumePrevious() {
+		return ""
+	}
+
+	runs, err := listMultiAgentScheduleRunsForResume(ctx, sctx.UserID, sctx.Schedule.ID)
+	if err != nil || len(runs) == 0 {
+		return ""
+	}
+	return s.maybeResumeLatestScheduledThread(sctx, reqMap, currentSessionID, runs, "")
+}
+
+func (s *SchedulerService) maybeResumeLatestScheduledThread(sctx *ScheduleContext, reqMap map[string]interface{}, currentSessionID string, runs []ScheduleRunEntry, workspacePath string) string {
 	currentProvider := ""
 	if sctx.Capabilities.LLMConfig != nil {
 		currentProvider = strings.TrimSpace(sctx.Capabilities.LLMConfig.Provider)
 	}
 	if currentProvider == "" {
-		return ""
-	}
-
-	runs, err := listScheduleRunsForResume(ctx, sctx.WorkspacePath, sctx.Schedule.ID)
-	if err != nil || len(runs) == 0 {
 		return ""
 	}
 
@@ -1336,7 +1351,7 @@ func (s *SchedulerService) maybeResumeLatestWorkflowThread(ctx context.Context, 
 			break
 		}
 
-		rt, ok, rErr := ReadChatHistoryRuntimeForSession(sctx.UserID, sessionID, sctx.WorkspacePath)
+		rt, ok, rErr := ReadChatHistoryRuntimeForSession(sctx.UserID, sessionID, workspacePath)
 		if rErr != nil || !ok || rt == nil {
 			continue
 		}
@@ -1382,6 +1397,34 @@ func readLocalScheduleRuns(workspacePath string) ([]ScheduleRunEntry, bool, erro
 		return nil, true, err
 	}
 	return runs, true, nil
+}
+
+func readLocalMultiAgentScheduleRuns(userID string) ([]ScheduleRunEntry, bool, error) {
+	userID = sanitizeUserIDForPath(userID)
+	localPath := filepath.Join(fsutil.WorkspaceDocsRoot(), filepath.FromSlash(multiAgentScheduleRunsPath(userID)))
+	data, err := os.ReadFile(localPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, false, nil
+		}
+		return nil, true, err
+	}
+	var runs []ScheduleRunEntry
+	if err := json.Unmarshal(data, &runs); err != nil {
+		return nil, true, err
+	}
+	return runs, true, nil
+}
+
+func listMultiAgentScheduleRunsForResume(ctx context.Context, userID, scheduleID string) ([]ScheduleRunEntry, error) {
+	if localRuns, ok, err := readLocalMultiAgentScheduleRuns(userID); ok || err != nil {
+		if err != nil {
+			return nil, err
+		}
+		return filterScheduleRunsNewestFirst(localRuns, scheduleID), nil
+	}
+	runs, _, err := ListMultiAgentScheduleRuns(ctx, userID, scheduleID, maxScheduleRuns, 0)
+	return runs, err
 }
 
 func filterScheduleRunsNewestFirst(runs []ScheduleRunEntry, scheduleID string) []ScheduleRunEntry {
@@ -1437,6 +1480,10 @@ func (s *SchedulerService) executeMultiAgentJob(ctx context.Context, sctx *Sched
 
 	// Apply LLM config and secrets
 	s.applyLLMAndSecretsToReqMap(ctx, reqMap, sctx)
+
+	if resumed := s.maybeResumeLatestMultiAgentThread(ctx, sctx, reqMap, sessionID); resumed != "" {
+		s.sessionLogf(sctx, sessionID, "[SCHEDULER] Resuming previous multi-agent schedule thread %s for %s", resumed, sctx.Schedule.ID)
+	}
 
 	// Load user-level secrets if configured
 	if len(sctx.Capabilities.SelectedSecrets) > 0 && sctx.UserID != "" {

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, LayoutList, Loader2, MessageSquare, Paperclip, Trash2, type LucideIcon } from 'lucide-react'
+import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, Loader2, MessageSquare, Paperclip, Trash2, type LucideIcon } from 'lucide-react'
 import { agentApi } from '../services/api'
 import {
   type ChatHistoryConversation,
@@ -18,7 +18,7 @@ const PAGE_SIZE = 5
 const FETCH_LIMIT = 100
 const EXPANDED_MESSAGE_LIMIT = 6
 
-type PreviousChatFilter = 'chat' | 'schedule' | 'bot' | 'all'
+type PreviousChatFilter = 'chat' | 'schedule' | 'bot'
 type EmptyStateIcon = LucideIcon
 
 const emptyStateContent: Record<PreviousChatFilter, {
@@ -29,22 +29,17 @@ const emptyStateContent: Record<PreviousChatFilter, {
   chat: {
     icon: MessageSquare,
     title: 'No chats yet',
-    body: 'Start a conversation from the composer. Saved threads will appear here when there is something to resume.',
+    body: 'Start a chat from the composer below. After the first saved turn, it will appear here so you can resume it later.',
   },
   schedule: {
     icon: CalendarClock,
     title: 'No scheduled chats yet',
-    body: 'Create a schedule for recurring work. Its runs will appear here after they start.',
+    body: 'Use the Schedules control in the top bar to create a recurring task. After a run starts, the latest scheduled chat will appear here.',
   },
   bot: {
     icon: Bot,
     title: 'No bot chats yet',
-    body: 'Connect a bot in Settings. Sessions started or resumed from that bot will appear here.',
-  },
-  all: {
-    icon: LayoutList,
-    title: 'No previous chats yet',
-    body: 'Chats, scheduled runs, and bot sessions will appear here after the first saved thread.',
+    body: 'Use the Bot connector button in the top bar to connect and configure a bot. Sessions started or resumed from that bot will appear here.',
   },
 }
 
@@ -66,7 +61,7 @@ const firstRunHints: Array<{
   {
     icon: Bot,
     label: 'Bots',
-    body: 'Connect a bot so external messages can attach to sessions.',
+    body: 'Use the Bot connector button to configure the external bot.',
   },
 ]
 
@@ -156,7 +151,7 @@ const isSessionOlderThanDays = (session: ChatHistorySession, days: number): bool
   return timestamp < Date.now() - days * 24 * 60 * 60 * 1000
 }
 
-const getChatKind = (session: ChatHistorySession): Exclude<PreviousChatFilter, 'all'> => {
+const getChatKind = (session: ChatHistorySession): PreviousChatFilter => {
   if (session.session_id.startsWith('schedule-') || session.session_id.startsWith('sched_')) return 'schedule'
   if (session.session_id.startsWith('bot-')) return 'bot'
   return 'chat'
@@ -354,7 +349,6 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
       chat: 0,
       schedule: 0,
       bot: 0,
-      all: visibleSessions.length,
     }
     for (const session of visibleSessions) {
       counts[getChatKind(session)] += 1
@@ -363,9 +357,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   }, [visibleSessions])
 
   const filteredSessions = useMemo(
-    () => activeFilter === 'all'
-      ? visibleSessions
-      : visibleSessions.filter(session => getChatKind(session) === activeFilter),
+    () => visibleSessions.filter(session => getChatKind(session) === activeFilter),
     [activeFilter, visibleSessions]
   )
 
@@ -527,7 +519,6 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     { filter: 'chat' as const, label: 'Chat', icon: MessageSquare },
     { filter: 'schedule' as const, label: 'Schedules', icon: CalendarClock },
     { filter: 'bot' as const, label: 'Bots', icon: Bot },
-    { filter: 'all' as const, label: 'All', icon: LayoutList },
   ]
 
   return (

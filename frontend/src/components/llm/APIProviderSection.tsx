@@ -37,6 +37,8 @@ export function APIProviderSection({
   const [publishError, setPublishError] = useState<string | null>(null)
   const [azureModels, setAzureModels] = useState<string[]>([])
   const [isFetchingModels, setIsFetchingModels] = useState(false)
+  const [ollamaModels, setOllamaModels] = useState<string[]>([])
+  const [ollamaFetchError, setOllamaFetchError] = useState<string | null>(null)
 
   const { saveLLM, testAPIKey: testAPIKeyFromStore, lockedProviders, llmConfigLocked } = useLLMStore()
   const isLocked = llmConfigLocked || lockedProviders.includes(provider.id)
@@ -102,6 +104,27 @@ export function APIProviderSection({
     }
   }
 
+  const fetchOllamaModels = async () => {
+    setIsFetchingModels(true)
+    setOllamaFetchError(null)
+    try {
+      const result = await llmConfigService.getOllamaModels(
+        endpoint || 'http://localhost:11434',
+        apiKey
+      )
+      const ids = (result.models || []).map((m: { model_id: string }) => m.model_id).filter(Boolean)
+      if (ids.length > 0) {
+        setOllamaModels(ids)
+      } else {
+        setOllamaFetchError('No models found. Make sure Ollama is running and has models pulled.')
+      }
+    } catch {
+      setOllamaFetchError('Could not reach Ollama server. Check the URL and try again.')
+    } finally {
+      setIsFetchingModels(false)
+    }
+  }
+
   const generateDefaultName = (): string => {
     if (!config.model_id) return ''
     const parts: string[] = []
@@ -143,6 +166,7 @@ export function APIProviderSection({
           provider: provider.id as ExtendedLLMConfiguration['provider'],
           model_id: config.model_id,
           ...(needsApiKey && config.api_key ? { api_key: config.api_key } : {}),
+          ...(isOllama && apiKey ? { api_key: apiKey } : {}),
           ...(config.region ? { region: config.region } : {}),
           ...(isOllama && endpoint ? { endpoint } : config.endpoint ? { endpoint: config.endpoint } : {}),
           options: isOllama
@@ -152,7 +176,7 @@ export function APIProviderSection({
         await saveLLM(llmModel, publishName.trim(), currentModelMetadata?.model_name, needsApiKey ? 'api_key' : 'none', currentModelMetadata)
         setPublishName('')
         setIsPublishing(false)
-        await onTestAPIKey(apiKey, config.model_id, config.options)
+        await onTestAPIKey(apiKey, config.model_id, isOllama ? { ...config.options, base_url: endpoint || 'http://localhost:11434' } : config.options)
       } else {
         setPublishError(testResult.error || 'Validation failed. Check your credentials and try again.')
       }
@@ -184,25 +208,27 @@ export function APIProviderSection({
             </div>
           )}
 
-          <div>
-            <label className="block text-sm font-medium text-muted-foreground mb-2">Primary Model</label>
-            <ModelSelector
-              value={config.model_id}
-              onChange={val => onUpdate({ ...config, model_id: val })}
-              models={allModels}
-              metadata={metadata}
-              placeholder={`Select a ${provider.display_name} model`}
-              disabled={isLocked}
-            />
-            {currentModelMetadata && (
-              <ModelOptionsConfig
-                metadata={currentModelMetadata}
-                options={config.options || {}}
-                onChange={handleOptionsChange}
+          {!isOllama && (
+            <div>
+              <label className="block text-sm font-medium text-muted-foreground mb-2">Primary Model</label>
+              <ModelSelector
+                value={config.model_id}
+                onChange={val => onUpdate({ ...config, model_id: val })}
+                models={allModels}
+                metadata={metadata}
+                placeholder={`Select a ${provider.display_name} model`}
                 disabled={isLocked}
               />
-            )}
-          </div>
+              {currentModelMetadata && (
+                <ModelOptionsConfig
+                  metadata={currentModelMetadata}
+                  options={config.options || {}}
+                  onChange={handleOptionsChange}
+                  disabled={isLocked}
+                />
+              )}
+            </div>
+          )}
 
           {/* Azure-specific: Endpoint + Region */}
           {isAzure && (
@@ -285,7 +311,7 @@ export function APIProviderSection({
             </div>
           )}
 
-          {/* Ollama-specific: Server URL + optional API key */}
+          {/* Ollama-specific: Server URL + Model + API key */}
           {isOllama && (
             <div className="border-t border-border pt-4 space-y-3">
               <div className="flex items-center gap-2">
@@ -303,52 +329,99 @@ export function APIProviderSection({
               <p className="text-xs text-muted-foreground">
                 Default is <code>http://localhost:11434</code> for local Ollama. Use your cloud endpoint URL for Ollama Cloud.
               </p>
-              <div className="flex items-center gap-2 mt-1">
-                <Key className="w-4 h-4 text-muted-foreground" />
-                <h5 className="text-sm font-medium text-foreground">API Key <span className="font-normal text-muted-foreground">(optional for local)</span></h5>
-              </div>
-              <div className="flex gap-2">
-                <input
-                  type="password"
-                  value={apiKey}
-                  onChange={e => handleAPIKeyChange(e.target.value)}
-                  placeholder={isLocked ? '••••••••••••••••' : 'Enter Ollama API key (leave blank for local)'}
-                  className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary"
-                  disabled={isLocked}
-                />
-                {!isLocked && (
-                  <Button
-                    onClick={() => onTestAPIKey(apiKey, config.model_id, { ...config.options, base_url: endpoint || 'http://localhost:11434' })}
-                    disabled={apiKeyStatus === 'testing'}
-                    size="sm"
-                    variant="outline"
+
+              {/* Model selection — fetch from server then pick from dropdown */}
+              <div className="border-t border-border pt-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium text-foreground">Model</label>
+                  {!isLocked && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={fetchOllamaModels}
+                      disabled={isFetchingModels}
+                    >
+                      {isFetchingModels ? (
+                        <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Fetching...</>
+                      ) : (
+                        <><RefreshCw className="w-3.5 h-3.5 mr-1.5" />Fetch Models</>
+                      )}
+                    </Button>
+                  )}
+                </div>
+                {ollamaModels.length > 0 ? (
+                  <select
+                    value={config.model_id || ''}
+                    onChange={e => onUpdate({ ...config, model_id: e.target.value })}
+                    disabled={isLocked}
+                    className="w-full px-3 py-2 text-sm border border-border rounded-md bg-background text-foreground focus:ring-1 focus:ring-primary disabled:opacity-50"
                   >
-                    {apiKeyStatus === 'testing' ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : apiKeyStatus === 'valid' ? (
-                      <CheckCircle className="w-4 h-4 text-green-500" />
-                    ) : apiKeyStatus === 'invalid' ? (
-                      <AlertCircle className="w-4 h-4 text-red-500" />
-                    ) : (
-                      'Test'
-                    )}
-                  </Button>
+                    <option value="">Select a model...</option>
+                    {ollamaModels.map(m => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Click <strong>Fetch Models</strong> to load available models from your Ollama server.
+                  </p>
+                )}
+                {ollamaFetchError && (
+                  <div className="text-xs text-red-500 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5" />{ollamaFetchError}
+                  </div>
                 )}
               </div>
-              {!isLocked && apiKeyStatus === 'valid' && (
-                <div className="text-sm text-green-600 dark:text-green-400 flex items-center gap-1">
-                  <CheckCircle className="w-4 h-4" />Connected to Ollama successfully
+
+              {/* Ollama API key (optional for local) */}
+              <div className="border-t border-border pt-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  <Key className="w-4 h-4 text-muted-foreground" />
+                  <h5 className="text-sm font-medium text-foreground">API Key <span className="font-normal text-muted-foreground">(optional for local)</span></h5>
                 </div>
-              )}
-              {!isLocked && (apiKeyStatus === 'invalid' || apiKeyStatus === 'timeout') && (
-                <div className="text-sm text-red-600 dark:text-red-400 flex items-center gap-1">
-                  <AlertCircle className="w-4 h-4" />{apiKeyError || 'Could not connect to Ollama'}
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    value={apiKey}
+                    onChange={e => handleAPIKeyChange(e.target.value)}
+                    placeholder={isLocked ? '••••••••••••••••' : 'Enter Ollama API key (leave blank for local)'}
+                    className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary"
+                    disabled={isLocked}
+                  />
+                  {!isLocked && (
+                    <Button
+                      onClick={() => onTestAPIKey(apiKey, config.model_id, { ...config.options, base_url: endpoint || 'http://localhost:11434' })}
+                      disabled={apiKeyStatus === 'testing'}
+                      size="sm"
+                      variant="outline"
+                    >
+                      {apiKeyStatus === 'testing' ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : apiKeyStatus === 'valid' ? (
+                        <CheckCircle className="w-4 h-4 text-green-500" />
+                      ) : apiKeyStatus === 'invalid' ? (
+                        <AlertCircle className="w-4 h-4 text-red-500" />
+                      ) : (
+                        'Test'
+                      )}
+                    </Button>
+                  )}
                 </div>
-              )}
+                {!isLocked && apiKeyStatus === 'valid' && (
+                  <div className="text-sm text-green-600 dark:text-green-400 flex items-center gap-1">
+                    <CheckCircle className="w-4 h-4" />Connected to Ollama successfully
+                  </div>
+                )}
+                {!isLocked && (apiKeyStatus === 'invalid' || apiKeyStatus === 'timeout') && (
+                  <div className="text-sm text-red-600 dark:text-red-400 flex items-center gap-1">
+                    <AlertCircle className="w-4 h-4" />{apiKeyError || 'Could not connect to Ollama'}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
-          {/* API Key */}
+          {/* API Key — non-Ollama providers */}
           {needsApiKey && (
             <div className="border-t border-border pt-4 space-y-3">
               <div className="flex items-center gap-2">

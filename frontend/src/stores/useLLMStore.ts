@@ -755,6 +755,7 @@ export const useLLMStore = create<LLMState>()(
         },
 
         // Library management
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         saveLLM: async (llm, name, _modelName, _authMethod, _metadata) => {
           const { refreshAvailableLLMs, supportedProviders, providerManifest } = get()
           const knownProvider =
@@ -1192,7 +1193,7 @@ export const useLLMStore = create<LLMState>()(
           try {
             // Only check for empty API key for providers that require it (not bedrock, not vertex)
             // Vertex supports OAuth fallback, so API key is optional
-            if (provider !== 'bedrock' && provider !== 'vertex' && !apiKey.trim()) {
+            if (provider !== 'bedrock' && provider !== 'vertex' && provider !== 'ollama' && !apiKey.trim()) {
               return { valid: false, error: 'API key is empty', correctedOptions: undefined }
             }
 
@@ -1614,6 +1615,8 @@ function syncProviderKeysToServer() {
         minimax: s.minimaxConfig?.api_key || undefined,
         elevenlabs: s.elevenlabsConfig?.api_key || undefined,
         deepgram: s.deepgramConfig?.api_key || undefined,
+        ollama_base_url: s.ollamaConfig?.endpoint || undefined,
+        ollama_api_key: s.ollamaConfig?.api_key || undefined,
         bedrock: s.bedrockConfig?.region ? { region: s.bedrockConfig.region } : undefined,
         azure: s.azureConfig?.endpoint && s.azureConfig?.api_key
           ? {
@@ -1644,6 +1647,8 @@ const getProviderKeySnapshot = (state: LLMState) => ([
   state.deepgramConfig?.api_key,
   state.bedrockConfig?.region,
   state.geminiCliApiKey,
+  state.ollamaConfig?.api_key,
+  state.ollamaConfig?.endpoint,
   // Watch every OpenCode sub-provider credential so editing a Kimi key
   // (or DeepSeek/Qwen/MiniMax/GLM) triggers the same workspace-encrypted
   // server sync as the legacy keys.

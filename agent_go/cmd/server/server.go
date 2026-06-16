@@ -3672,6 +3672,50 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Load merged API keys (env + workspace) while r.Context() is still valid (before goroutine)
 	mergedAPIKeys := MergedProviderAPIKeys(r.Context())
 
+	// If the selected provider is Ollama, resolve the base_url from (in priority order):
+	// 1. LLMConfig.Primary.Options["base_url"] (workflow/preset path sends nested AgentLLMConfiguration)
+	// 2. The published LLM record matching finalModelID (chat path sends flat LLMConfiguration)
+	// This is needed because the chat UI sends a flat llm_config without Primary.Options,
+	// so the base_url must be recovered from the published LLM store.
+	if finalProvider == "ollama" {
+		var ollamaBaseURL string
+		// Check nested options first
+		if req.LLMConfig != nil {
+			if rawURL, ok := req.LLMConfig.Primary.Options["base_url"].(string); ok {
+				ollamaBaseURL = strings.TrimSpace(rawURL)
+			}
+		}
+		// Fall back to published LLM record if not found in options
+		if ollamaBaseURL == "" && finalModelID != "" {
+			if publishedLLMs, err := LoadPublishedLLMs(r.Context()); err == nil {
+				for _, entry := range publishedLLMs {
+					if entry.Provider == "ollama" && entry.ModelID == finalModelID {
+						if rawURL, ok := entry.Options["base_url"].(string); ok {
+							ollamaBaseURL = strings.TrimSpace(rawURL)
+						}
+						// Also recover API key from published LLM record options
+						if rawKey, ok := entry.Options["api_key"].(string); ok && rawKey != "" && (mergedAPIKeys == nil || mergedAPIKeys.OllamaAPIKey == nil) {
+							if mergedAPIKeys == nil {
+								mergedAPIKeys = &llm.ProviderAPIKeys{}
+							}
+							mergedAPIKeys.OllamaAPIKey = &rawKey
+							log.Printf("[OLLAMA] Resolved OllamaAPIKey from published LLM record")
+						}
+						break
+					}
+				}
+			}
+		}
+		if ollamaBaseURL != "" {
+			trimmedURL := strings.TrimSuffix(strings.TrimRight(ollamaBaseURL, "/"), "/v1")
+			if mergedAPIKeys == nil {
+				mergedAPIKeys = &llm.ProviderAPIKeys{}
+			}
+			mergedAPIKeys.OllamaBaseURL = &trimmedURL
+			log.Printf("[OLLAMA] Resolved OllamaBaseURL: %s", trimmedURL)
+		}
+	}
+
 	// Process the query in the background
 	go func() {
 		// Clear session busy when the agent turn completes

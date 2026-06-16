@@ -232,7 +232,7 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
 
   // Metadata state - Driven purely by backend
   const [metadata, setMetadata] = useState<ModelMetadata[]>([])
-  const [isLoadingMetadata, setIsLoadingMetadata] = useState(false)
+  const [, setIsLoadingMetadata] = useState(false)
 
   // Fetch metadata on mount
   useEffect(() => {
@@ -333,7 +333,7 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
   // Handle API key testing
   const handleTestAPIKey = useCallback(async (provider: APIKeyProviderType, apiKey: string, modelId?: string, options?: Record<string, unknown>) => {
     // Allow testing without API key for Bedrock and Vertex (they support OAuth/credentials)
-    if (provider !== 'bedrock' && provider !== 'vertex' && !apiKey.trim()) {
+    if (provider !== 'bedrock' && provider !== 'vertex' && provider !== 'ollama' && !apiKey.trim()) {
       return
     }
 

@@ -286,7 +286,7 @@ func (api *StreamingAPI) handleGetProviderManifest(w http.ResponseWriter, r *htt
 		"opencode-cli-kimi", "opencode-cli-deepseek", "opencode-cli-qwen",
 		"opencode-cli-minimax", "opencode-cli-glm", "opencode-cli-free",
 		"claude-code", "gemini-cli",
-		"openai", "anthropic", "vertex", "bedrock", "azure",
+		"openai", "anthropic", "vertex", "bedrock", "azure", "ollama",
 		"elevenlabs", "deepgram", "minimax",
 	}
 
@@ -421,6 +421,18 @@ func (api *StreamingAPI) handleGetProviderModels(w http.ResponseWriter, r *http.
 	mode := providerModelSelectionMode(provider)
 
 	if mode == "dynamic" {
+		// Ollama accepts optional base_url + api_key query params so the UI
+		// can fetch models with unsaved credentials (before the user clicks Save).
+		if provider == "ollama" {
+			baseURLParam := strings.TrimSpace(r.URL.Query().Get("base_url"))
+			apiKeyParam := strings.TrimSpace(r.URL.Query().Get("api_key"))
+			if baseURLParam != "" || apiKeyParam != "" {
+				resp := fetchOllamaModelsWithCredentials(baseURLParam, apiKeyParam)
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(resp)
+				return
+			}
+		}
 		resp := getDynamicModels(r.Context(), provider)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
@@ -497,9 +509,9 @@ func fetchOllamaModels(ctx context.Context) *dynamicModelsResponse {
 
 	baseURL := "http://localhost:11434"
 	if keys != nil && keys.OllamaBaseURL != nil && strings.TrimSpace(*keys.OllamaBaseURL) != "" {
-		baseURL = strings.TrimRight(strings.TrimSpace(*keys.OllamaBaseURL), "/")
+		baseURL = strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(*keys.OllamaBaseURL), "/"), "/v1")
 	} else if v := strings.TrimSpace(os.Getenv("OLLAMA_BASE_URL")); v != "" {
-		baseURL = strings.TrimRight(v, "/")
+		baseURL = strings.TrimSuffix(strings.TrimRight(v, "/"), "/v1")
 	}
 
 	apiKey := ""
@@ -572,6 +584,137 @@ func fetchOllamaModels(ctx context.Context) *dynamicModelsResponse {
 		ModelSelectionMode: "dynamic",
 		Models:             models,
 		Source:             "ollama_tags",
+	}
+}
+
+// fetchOllamaModelsWithCredentials fetches models from an Ollama (or
+// OpenAI-compatible) server using caller-supplied credentials. It first tries
+// the OpenAI-compatible GET /v1/models endpoint; if that returns no usable
+// data it falls back to the Ollama-native GET /api/tags endpoint.
+func fetchOllamaModelsWithCredentials(rawBaseURL, apiKey string) *dynamicModelsResponse {
+	baseURL := strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(rawBaseURL), "/"), "/v1")
+	if baseURL == "" {
+		baseURL = "http://localhost:11434"
+	}
+
+	doGet := func(url string) ([]dynamicModelEntry, error) {
+		reqCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, err
+		}
+		if apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+		}
+		return nil, nil // parsed below per-format
+	}
+	_ = doGet // used inline below
+
+	empty := func(source, reason string) *dynamicModelsResponse {
+		log.Printf("[OLLAMA] fetchOllamaModelsWithCredentials: %s (base_url=%s)", reason, baseURL)
+		return &dynamicModelsResponse{
+			Provider:           "ollama",
+			ModelSelectionMode: "dynamic",
+			Models:             []dynamicModelEntry{},
+			Source:             source,
+		}
+	}
+
+	// Try OpenAI-compatible /v1/models first.
+	{
+		type openAIModel struct {
+			ID string `json:"id"`
+		}
+		type openAIModelsResp struct {
+			Data []openAIModel `json:"data"`
+		}
+		reqCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		req, _ := http.NewRequestWithContext(reqCtx, http.MethodGet, baseURL+"/v1/models", nil)
+		if apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		cancel()
+		if err == nil && resp.StatusCode == http.StatusOK {
+			var parsed openAIModelsResp
+			if json.NewDecoder(resp.Body).Decode(&parsed) == nil && len(parsed.Data) > 0 {
+				resp.Body.Close()
+				models := make([]dynamicModelEntry, 0, len(parsed.Data))
+				for _, m := range parsed.Data {
+					if m.ID == "" {
+						continue
+					}
+					models = append(models, dynamicModelEntry{ModelID: m.ID, ModelName: m.ID})
+				}
+				if len(models) > 0 {
+					log.Printf("[OLLAMA] fetchOllamaModelsWithCredentials: found %d models via /v1/models at %s", len(models), baseURL)
+					return &dynamicModelsResponse{
+						Provider:           "ollama",
+						ModelSelectionMode: "dynamic",
+						Models:             models,
+						Source:             "openai_models",
+					}
+				}
+			}
+			if resp.Body != nil {
+				resp.Body.Close()
+			}
+		}
+	}
+
+	// Fallback: Ollama-native /api/tags.
+	{
+		type ollamaModel struct {
+			Name string `json:"name"`
+		}
+		type ollamaTagsResp struct {
+			Models []ollamaModel `json:"models"`
+		}
+		reqCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, baseURL+"/api/tags", nil)
+		if err != nil {
+			cancel()
+			return empty("ollama_tags_error", "failed to build /api/tags request: "+err.Error())
+		}
+		if apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		cancel()
+		if err != nil {
+			return empty("ollama_tags_error", "request to /api/tags failed: "+err.Error())
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return empty("ollama_tags_error", fmt.Sprintf("HTTP %d from /api/tags", resp.StatusCode))
+		}
+		var parsed ollamaTagsResp
+		if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+			return empty("ollama_tags_error", "failed to decode /api/tags: "+err.Error())
+		}
+		models := make([]dynamicModelEntry, 0, len(parsed.Models))
+		for _, m := range parsed.Models {
+			if m.Name == "" {
+				continue
+			}
+			models = append(models, dynamicModelEntry{ModelID: m.Name, ModelName: m.Name})
+		}
+		log.Printf("[OLLAMA] fetchOllamaModelsWithCredentials: found %d models via /api/tags at %s", len(models), baseURL)
+		return &dynamicModelsResponse{
+			Provider:           "ollama",
+			ModelSelectionMode: "dynamic",
+			Models:             models,
+			Source:             "ollama_tags",
+		}
 	}
 }
 

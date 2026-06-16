@@ -174,6 +174,15 @@ export const llmConfigService = {
     return response.data
   },
 
+  // Fetch Ollama models using caller-supplied credentials (before saving)
+  getOllamaModels: async (baseUrl: string, apiKey: string): Promise<DynamicModelsResponse> => {
+    const params = new URLSearchParams()
+    if (baseUrl) params.set('base_url', baseUrl)
+    if (apiKey) params.set('api_key', apiKey)
+    const response = await llmConfigApi.get(`/api/llm-config/providers/ollama/models?${params.toString()}`)
+    return response.data
+  },
+
   // Get delegation tier defaults from environment variables
   getDelegationTierDefaults: async (): Promise<DelegationTierConfig> => {
     const response = await llmConfigApi.get('/api/llm-config/delegation-tiers')

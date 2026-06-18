@@ -15,6 +15,24 @@ const HEALTH_TIMEOUT_MS = 90000;
 const HEALTH_POLL_MS = 500;
 const HEALTH_INITIAL_DELAY_MS = 3000;
 const DEFAULT_AUTH_SECRET = 'dev-secret-change-in-production';
+const DEFAULT_MANAGED_LOG_MAX_BYTES = 25 * 1024 * 1024;
+const LOG_TRIM_KEEP_RATIO = 0.75;
+const DEFAULT_AGENT_PROMPT_LOG_MAX_SESSIONS = 10;
+const AGENT_PROMPT_LOG_PRUNE_INTERVAL_MS = 10 * 60 * 1000;
+
+function parsePositiveIntegerEnv(name, fallback) {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseNonNegativeIntegerEnv(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
 
 // Enforce dark mode for system UI (title bar, context menus)
 nativeTheme.themeSource = 'dark';
@@ -62,11 +80,18 @@ for (const [k, v] of Object.entries(LOGIN_ENV)) {
 if (LOGIN_ENV.PATH) process.env.PATH = LOGIN_ENV.PATH; // PATH must always come from login shell
 console.log('[main] Imported', Object.keys(LOGIN_ENV).length, 'env vars from login shell');
 
+const MANAGED_LOG_MAX_BYTES = parsePositiveIntegerEnv('RUNLOOP_MAX_LOG_BYTES', DEFAULT_MANAGED_LOG_MAX_BYTES);
+const AGENT_PROMPT_LOG_MAX_SESSIONS = parseNonNegativeIntegerEnv(
+  'RUNLOOP_AGENT_PROMPTS_MAX_SESSIONS',
+  parseNonNegativeIntegerEnv('LOG_AGENT_PROMPTS_MAX_SESSIONS', DEFAULT_AGENT_PROMPT_LOG_MAX_SESSIONS)
+);
+
 let workspaceProcess = null;
 let agentProcess = null;
 let mainWindow = null;
 let settingsWindow = null;
 let tray = null;
+let agentPromptLogPruneInterval = null;
 
 // --- Diagnostic logging -----------------------------------------------------
 // Console output is lost when the renderer blanks out and DevTools/terminal
@@ -76,6 +101,137 @@ let diagLogStream = null;
 function safeStringify(value) {
   try { return JSON.stringify(value); } catch (_e) { return String(value); }
 }
+
+function toLogBuffer(chunk) {
+  if (Buffer.isBuffer(chunk)) return chunk;
+  if (chunk instanceof Uint8Array) return Buffer.from(chunk);
+  return Buffer.from(String(chunk));
+}
+
+function trimLogFileToTail(filePath, maxBytes = MANAGED_LOG_MAX_BYTES, keepBytesOverride = null) {
+  if (!maxBytes || maxBytes <= 0) return 0;
+
+  let stat;
+  try {
+    stat = fs.statSync(filePath);
+  } catch (_e) {
+    return 0;
+  }
+
+  if (!stat.isFile()) return 0;
+
+  const targetKeepBytes = keepBytesOverride == null
+    ? Math.floor(maxBytes * LOG_TRIM_KEEP_RATIO)
+    : Math.max(0, keepBytesOverride);
+  if (stat.size <= maxBytes && stat.size <= targetKeepBytes) return stat.size;
+
+  const header = Buffer.from(
+    `[${new Date().toISOString()}] Log truncated by Runloop to stay under ${maxBytes} bytes; kept the tail of a ${stat.size} byte file.\n`
+  );
+  const readBytes = Math.min(targetKeepBytes, Math.max(0, maxBytes - header.length), stat.size);
+  let tail = Buffer.alloc(0);
+
+  if (readBytes > 0) {
+    const fd = fs.openSync(filePath, 'r');
+    try {
+      tail = Buffer.allocUnsafe(readBytes);
+      fs.readSync(fd, tail, 0, readBytes, stat.size - readBytes);
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+
+  const nextContent = Buffer.concat([header, tail]);
+  fs.writeFileSync(filePath, nextContent, { mode: 0o600 });
+  return nextContent.length;
+}
+
+function createBoundedLogWriter(filePath, maxBytes = MANAGED_LOG_MAX_BYTES) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  let currentSize = trimLogFileToTail(filePath, maxBytes);
+
+  return {
+    write(chunk) {
+      const buffer = toLogBuffer(chunk);
+      if (buffer.length === 0) return;
+
+      try {
+        if (maxBytes > 0 && buffer.length >= maxBytes) {
+          const header = Buffer.from(
+            `[${new Date().toISOString()}] Oversized log chunk truncated by Runloop; kept the final bytes of a ${buffer.length} byte write.\n`
+          );
+          const tailBudget = Math.max(0, maxBytes - header.length);
+          const tail = buffer.subarray(Math.max(0, buffer.length - tailBudget));
+          const nextContent = Buffer.concat([header, tail]);
+          fs.writeFileSync(filePath, nextContent, { mode: 0o600 });
+          currentSize = nextContent.length;
+          return;
+        }
+
+        if (maxBytes > 0 && currentSize + buffer.length > maxBytes) {
+          const keepBudget = Math.max(0, maxBytes - buffer.length - 1024);
+          currentSize = trimLogFileToTail(filePath, maxBytes, keepBudget);
+        }
+
+        fs.appendFileSync(filePath, buffer, { mode: 0o600 });
+        currentSize += buffer.length;
+      } catch (err) {
+        console.warn('[main] Failed to write bounded log:', err && err.message ? err.message : err);
+      }
+    },
+    end() {
+      // Synchronous writer; retained for compatibility with stream-like call sites.
+    }
+  };
+}
+
+function pruneAgentPromptLogs(userDataPath) {
+  if (AGENT_PROMPT_LOG_MAX_SESSIONS <= 0) return;
+
+  const promptRoot = path.join(userDataPath, 'logs', 'agent_prompts');
+  let entries;
+  try {
+    entries = fs.readdirSync(promptRoot, { withFileTypes: true });
+  } catch (_e) {
+    return;
+  }
+
+  const sessionDirs = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const fullPath = path.join(promptRoot, entry.name);
+    try {
+      const stat = fs.statSync(fullPath);
+      sessionDirs.push({ name: entry.name, fullPath, mtimeMs: stat.mtimeMs });
+    } catch (_e) {
+      /* best-effort cleanup */
+    }
+  }
+
+  if (sessionDirs.length <= AGENT_PROMPT_LOG_MAX_SESSIONS) return;
+
+  sessionDirs.sort((a, b) => {
+    if (b.mtimeMs !== a.mtimeMs) return b.mtimeMs - a.mtimeMs;
+    return b.name.localeCompare(a.name);
+  });
+
+  for (const dir of sessionDirs.slice(AGENT_PROMPT_LOG_MAX_SESSIONS)) {
+    try {
+      fs.rmSync(dir.fullPath, { recursive: true, force: true });
+      console.log(`[main] Pruned old agent prompt log session: ${dir.name}`);
+    } catch (err) {
+      console.warn('[main] Failed to prune agent prompt log session:', dir.name, err && err.message ? err.message : err);
+    }
+  }
+}
+
+function startAgentPromptLogPruning(userDataPath) {
+  pruneAgentPromptLogs(userDataPath);
+  if (agentPromptLogPruneInterval) clearInterval(agentPromptLogPruneInterval);
+  agentPromptLogPruneInterval = setInterval(() => pruneAgentPromptLogs(userDataPath), AGENT_PROMPT_LOG_PRUNE_INTERVAL_MS);
+  if (agentPromptLogPruneInterval.unref) agentPromptLogPruneInterval.unref();
+}
+
 function diagLog(...args) {
   const text = args.map((a) => (typeof a === 'string' ? a : safeStringify(a))).join(' ');
   const line = `[${new Date().toISOString()}] ${text}\n`;
@@ -84,7 +240,7 @@ function diagLog(...args) {
     if (!diagLogStream) {
       const logsDir = path.join(app.getPath('userData'), 'logs');
       if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
-      diagLogStream = fs.createWriteStream(path.join(logsDir, 'main.log'), { flags: 'a' });
+      diagLogStream = createBoundedLogWriter(path.join(logsDir, 'main.log'));
     }
     diagLogStream.write(line);
   } catch (_e) {
@@ -439,6 +595,7 @@ function restartServers() {
   // Small delay to ensure ports freed
   setTimeout(() => {
     const userDataPath = app.getPath('userData');
+    startAgentPromptLogPruning(userDataPath);
     spawnWorkspace(userDataPath)
       .then(() => spawnAgent(userDataPath))
       .then(() => {
@@ -809,7 +966,7 @@ function spawnWorkspace(userDataPath) {
     }
 
     const logFile = path.join(logsDir, 'workspace.log');
-    const logStream = fs.createWriteStream(logFile, { flags: 'a' });
+    const logStream = createBoundedLogWriter(logFile);
 
     // Load Settings
     const settings = loadSettings();
@@ -881,7 +1038,7 @@ function spawnAgent(userDataPath) {
     }
 
     const logFile = path.join(logsDir, 'agent.log');
-    const logStream = fs.createWriteStream(logFile, { flags: 'a' });
+    const logStream = createBoundedLogWriter(logFile);
 
     // Load settings + resolve docsDir up-front so the MCP rewrite below
     // (and the env block further down) can both use them.
@@ -983,8 +1140,13 @@ function spawnAgent(userDataPath) {
     // Debug: persist the final system prompt + user message + tool calls for
     // every LLM call to <cwd>/logs/agent_prompts/{session_id}/. Off by default
     // because output is verbose; useful when debugging why the LLM produced
-    // a particular shell command or chose a tool.
-    if (settings.logAgentPrompts === true) env.LOG_AGENT_PROMPTS = 'true';
+    // a particular shell command or chose a tool. Do not inherit this from the
+    // user's shell in production; the explicit app setting is authoritative.
+    if (settings.logAgentPrompts === true) {
+      env.LOG_AGENT_PROMPTS = 'true';
+    } else {
+      delete env.LOG_AGENT_PROMPTS;
+    }
 
     detect(45678).then((port) => {
       const portIdx = args.indexOf('--port');
@@ -1347,6 +1509,10 @@ function killChildren() {
     } catch (_) {}
     agentProcess = null;
   }
+  if (agentPromptLogPruneInterval) {
+    clearInterval(agentPromptLogPruneInterval);
+    agentPromptLogPruneInterval = null;
+  }
 }
 
 function showErrorAndExit(message) {
@@ -1531,6 +1697,7 @@ app.whenReady().then(async () => {
   // 2. Spawn servers (in sequence: Workspace first, then Agent)
   try {
     unifyAgentLogsDir(userDataPath);
+    startAgentPromptLogPruning(userDataPath);
     console.log('[main] Spawning local servers...');
     await spawnWorkspace(userDataPath);
     await spawnAgent(userDataPath);

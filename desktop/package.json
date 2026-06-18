@@ -1,6 +1,6 @@
 {
   "name": "runloop-desktop",
-  "version": "1.25.40",
+  "version": "1.25.48",
   "description": "Standalone Mac app for Runloop",
   "repository": "github:manishiitg/mcp-agent-builder-go",
   "main": "main.js",

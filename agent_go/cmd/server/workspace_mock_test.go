@@ -3,13 +3,11 @@ package server
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
-	"testing"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 )
@@ -230,21 +228,4 @@ func writeJSON(w http.ResponseWriter, status int, payload map[string]interface{}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
-}
-
-func TestWorkflowVersionPublishRejectsEmptyLabel(t *testing.T) {
-	api := &StreamingAPI{}
-
-	req := httptest.NewRequest(http.MethodPost, "/api/workflow/versions/publish", strings.NewReader(
-		`{"workspace_path":"Workflow/Test","label":"   "}`,
-	))
-	rec := httptest.NewRecorder()
-	api.handlePublishVersion(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for empty label, got %d: %s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "label is required") {
-		t.Fatalf("expected label validation error, got %q", rec.Body.String())
-	}
 }

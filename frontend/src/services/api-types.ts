@@ -1985,12 +1985,28 @@ export interface SimulatorInteractResponse {
   success: boolean;
 }
 
-// Workflow Versions
-export interface WorkflowVersionMeta {
-  version: number
-  label: string
-  created_at: string
-  files_count: number
+// Workflow plan changelog (History view "Plan edits" feed)
+export interface PlanChangelogFieldChange {
+  step_id: string
+  field: string
+  old_value: unknown
+  new_value: unknown
+}
+
+export interface PlanChangelogEntry {
+  timestamp: string
+  tool: string
+  reason: string
+  step_ids?: string[]
+  changes?: PlanChangelogFieldChange[]
+  file?: string
+}
+
+export interface PlanChangelogResponse {
+  success: boolean
+  entries: PlanChangelogEntry[]
+  count: number
+  error?: string
 }
 
 // Workflow Backup

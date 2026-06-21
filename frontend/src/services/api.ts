@@ -1733,6 +1733,10 @@ export const agentApi = {
     const response = await api.get('/api/workflow/builder-doc-archives', { params: { workspace_path: workspacePath, doc } })
     return { ...response.data, files: Array.isArray(response.data?.files) ? response.data.files : [] }
   },
+  getPlanChangelog: async (workspacePath: string): Promise<import('./api-types').PlanChangelogResponse> => {
+    const response = await api.get('/api/workflow/plan-changelog', { params: { workspace_path: workspacePath } })
+    return { success: !!response.data?.success, entries: Array.isArray(response.data?.entries) ? response.data.entries : [], count: response.data?.count ?? 0, error: response.data?.error }
+  },
   getFrameworkHealth: async (workspacePath: string): Promise<{
     success: boolean
     soul_exists: boolean
@@ -1913,37 +1917,6 @@ export const agentApi = {
     return response.data
   },
 
-  // Workflow Versions API
-  publishVersion: async (workspacePath: string, label: string): Promise<{ success: boolean; version: { version: number; label: string; created_at: string; files_count: number } }> => {
-    const response = await api.post('/api/workflow/versions/publish', {
-      workspace_path: workspacePath,
-      label: label
-    })
-    return response.data
-  },
-
-  listVersions: async (workspacePath: string): Promise<{ success: boolean; versions: import('./api-types').WorkflowVersionMeta[] }> => {
-    const response = await api.get('/api/workflow/versions', {
-      params: { workspace_path: workspacePath }
-    })
-    return response.data
-  },
-
-  revertToVersion: async (workspacePath: string, version: number): Promise<{ success: boolean; files_restored: number }> => {
-    const response = await api.post('/api/workflow/versions/revert', {
-      workspace_path: workspacePath,
-      version: version
-    })
-    return response.data
-  },
-
-  deleteVersion: async (workspacePath: string, version: number): Promise<{ success: boolean; message: string }> => {
-    const response = await api.delete('/api/workflow/versions', {
-      params: { workspace_path: workspacePath, version: version }
-    })
-    return response.data
-  },
-
   getWorkflowBackup: async (workspacePath: string): Promise<WorkflowBackupInfoResponse> => {
     const response = await api.get('/api/workflow/backup', {
       params: { workspace_path: workspacePath }
@@ -1959,10 +1932,15 @@ export const agentApi = {
     return response.data
   },
 
-  runWorkflowBackup: async (workspacePath: string, action: 'backup' | 'configure' = 'backup'): Promise<{ success: boolean; session_id: string; message: string }> => {
+  runWorkflowBackup: async (
+    workspacePath: string,
+    action: 'backup' | 'configure' | 'restore' = 'backup',
+    targetRef?: string
+  ): Promise<{ success: boolean; session_id: string; message: string }> => {
     const response = await api.post('/api/workflow/backup/run', {
       workspace_path: workspacePath,
-      action
+      action,
+      target_ref: targetRef
     })
     return response.data
   },

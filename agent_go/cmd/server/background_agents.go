@@ -1600,10 +1600,13 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 	}
 }
 
-// workflowRunBackupDirective returns a directive asking the builder to back up the
-// workflow after a full run (run_full_workflow) completes successfully, or "" when
-// this completion isn't a finished workflow run. The builder decides what and where
-// to back up based on workflow.json.backup and the backup-strategy skill.
+// workflowRunBackupDirective returns the directive that backs up the workflow after
+// a full run (run_full_workflow) completes, or "" when this completion isn't a
+// finished workflow run. This is the *interactive* arm of the post-run backup: for
+// scheduled runs the Pulse pass (scheduler.go runPostRunMonitor, step 1) owns backup.
+// Both arms share ONE backup contract — same default (zero-config local git), same
+// source-hash skip — so a run backed up by one is recognized as current by the other
+// (no double push). Keep this text in sync with Pulse's backup step.
 func workflowRunBackupDirective(snap BackgroundAgentSnapshot) string {
 	if snap.Status != BGAgentCompleted || snap.Metadata == nil {
 		return ""
@@ -1611,7 +1614,7 @@ func workflowRunBackupDirective(snap BackgroundAgentSnapshot) string {
 	if snap.Kind != "workflow_run_tool" && snap.Metadata["type"] != "workflow_run" {
 		return ""
 	}
-	return "\n\nThe run is complete - now handle backup for this workflow. Call get_reference_doc(kind=\"backup-strategy\"), read workflow.json.backup, and use it as the backup contract. If backup is enabled, perform the configured destinations (git/github, object store, HuggingFace, etc.) and always write backup/status.json with state, last attempt/success timestamps, destination results, errors, and the current source hash when available. Do not write operational backup status into workflow.json. If workflow.json.backup is missing or disabled, do not silently skip: in an interactive run, tell the user backup is not configured and offer to set it up; in an unattended scheduled run, write backup/status.json with state \"configured_not_verified\" and a concise summary, then continue without blocking."
+	return "\n\nThe run is complete - now back up this workflow. Call get_reference_doc(kind=\"backup-strategy\"), read workflow.json.backup, and use it as the backup contract. If backup is enabled, perform the configured destinations (git/github, object store, HuggingFace, etc.). If backup is missing or disabled, do not silently skip: set it up with the zero-config local-git default (a local git repo needs no credentials) and back up. Skip the push only when backup/status.json shows the current source is already backed up (unchanged source hash) — i.e. a Pulse pass or an earlier turn already captured this state. Always write backup/status.json with state, last attempt/success timestamps, destination results, errors, and the current source hash; do not write operational backup status into workflow.json."
 }
 
 // buildAutoNotificationMessage formats the [AUTO-NOTIFICATION] user message for a

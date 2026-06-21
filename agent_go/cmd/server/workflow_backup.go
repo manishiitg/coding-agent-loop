@@ -72,7 +72,8 @@ type WorkflowBackupInfoResponse struct {
 
 type workflowBackupRunRequest struct {
 	WorkspacePath string `json:"workspace_path"`
-	Action        string `json:"action,omitempty"` // "backup" or "configure"
+	Action        string `json:"action,omitempty"`     // "backup", "configure", or "restore"
+	TargetRef     string `json:"target_ref,omitempty"` // optional git commit / snapshot id for restore (empty = latest)
 }
 
 func workflowBackupStatusPath(workspacePath string) string {
@@ -83,8 +84,8 @@ func supportedWorkflowBackupStrategies() []WorkflowBackupStrategyInfo {
 	return []WorkflowBackupStrategyInfo{
 		{
 			ID:          "git",
-			Label:       "Git / GitHub",
-			Description: "Best for text, workflow config, planning, knowledgebase, learnings, scripts, and small JSON data.",
+			Label:       "Git / GitHub (default)",
+			Description: "Default. A local git repo gives zero-config rollback; add a GitHub remote for off-box durability. Best for workflow config, planning, knowledgebase, learnings, scripts, and small JSON.",
 			BestFor:     []string{"workflow", "planning", "knowledgebase", "learnings", "small-db"},
 		},
 		{
@@ -98,12 +99,6 @@ func supportedWorkflowBackupStrategies() []WorkflowBackupStrategyInfo {
 			Label:       "HuggingFace Hub",
 			Description: "Best for dataset/model-style backups, generated media, and revisioned ML artifacts.",
 			BestFor:     []string{"datasets", "models", "media", "large-artifacts"},
-		},
-		{
-			ID:          "local_versions",
-			Label:       "Local workflow versions",
-			Description: "App-managed local snapshots for quick config rollback. This is not an off-box backup.",
-			BestFor:     []string{"workflow", "planning", "learnings"},
 		},
 		{
 			ID:          "local_zip",
@@ -358,8 +353,8 @@ func (api *StreamingAPI) handleRunWorkflowBackup(w http.ResponseWriter, r *http.
 	if req.Action == "" {
 		req.Action = "backup"
 	}
-	if req.Action != "backup" && req.Action != "configure" {
-		http.Error(w, "action must be backup or configure", http.StatusBadRequest)
+	if req.Action != "backup" && req.Action != "configure" && req.Action != "restore" {
+		http.Error(w, "action must be backup, configure, or restore", http.StatusBadRequest)
 		return
 	}
 
@@ -372,14 +367,30 @@ func (api *StreamingAPI) handleRunWorkflowBackup(w http.ResponseWriter, r *http.
 		http.Error(w, "workflow not found", http.StatusNotFound)
 		return
 	}
-	if req.Action == "backup" && (manifest.Backup == nil || !manifest.Backup.Enabled) {
-		http.Error(w, "backup is not enabled for this workflow; configure backup first", http.StatusBadRequest)
+	// Both running a backup and restoring need a configured durable destination.
+	if (req.Action == "backup" || req.Action == "restore") && (manifest.Backup == nil || !manifest.Backup.Enabled) {
+		msg := "backup is not enabled for this workflow; configure backup first"
+		if req.Action == "restore" {
+			msg = "no backup is configured for this workflow; configure a durable destination before restoring"
+		}
+		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
 
 	sourceHash, trackedFiles := computeWorkflowBackupSourceHash(r.Context(), req.WorkspacePath)
-	sessionID := fmt.Sprintf("workflow-backup-%d", time.Now().UnixNano())
-	query := buildWorkflowBackupAgentPrompt(req, manifest, sourceHash, trackedFiles, sessionID)
+	sessionPrefix := "workflow-backup"
+	runningSummary := "Builder backup task started."
+	if req.Action == "restore" {
+		sessionPrefix = "workflow-restore"
+		runningSummary = "Builder restore task started."
+	}
+	sessionID := fmt.Sprintf("%s-%d", sessionPrefix, time.Now().UnixNano())
+	var query string
+	if req.Action == "restore" {
+		query = buildWorkflowRestoreAgentPrompt(req, manifest, sessionID)
+	} else {
+		query = buildWorkflowBackupAgentPrompt(req, manifest, sourceHash, trackedFiles, sessionID)
+	}
 	reqMap := map[string]interface{}{
 		"query":                   query,
 		"agent_mode":              "workflow_phase",
@@ -407,7 +418,7 @@ func (api *StreamingAPI) handleRunWorkflowBackup(w http.ResponseWriter, r *http.
 		LastAttemptAt:      now,
 		LastAgentSessionID: sessionID,
 		LastSourceHash:     sourceHash,
-		Summary:            "Builder backup task started.",
+		Summary:            runningSummary,
 	}); err != nil {
 		log.Printf("[BACKUP] Failed to write running backup status for %s: %v", req.WorkspacePath, err)
 	}
@@ -420,7 +431,7 @@ func (api *StreamingAPI) handleRunWorkflowBackup(w http.ResponseWriter, r *http.
 			LastAttemptAt:      now,
 			LastAgentSessionID: sessionID,
 			LastSourceHash:     sourceHash,
-			Summary:            "Failed to start builder backup task.",
+			Summary:            "Failed to start builder " + req.Action + " task.",
 			LastError:          err.Error(),
 		}); statusErr != nil {
 			log.Printf("[BACKUP] Failed to write failed backup status for %s: %v", req.WorkspacePath, statusErr)
@@ -429,11 +440,15 @@ func (api *StreamingAPI) handleRunWorkflowBackup(w http.ResponseWriter, r *http.
 		return
 	}
 
+	doneMessage := "Builder backup task started. The builder will update backup/status.json when it finishes."
+	if req.Action == "restore" {
+		doneMessage = "Builder restore task started. The builder will check out the requested backup and update backup/status.json when it finishes."
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":    true,
 		"session_id": sessionID,
-		"message":    "Builder backup task started. The builder will update backup/status.json when it finishes.",
+		"message":    doneMessage,
 	})
 }
 
@@ -450,17 +465,17 @@ Task: %s.
 Rules:
 1. Call get_reference_doc(kind="backup-strategy") and follow it.
 2. Read workflow.json, especially the backup field below.
-3. If configuring backup, update workflow.json.backup with enabled=true, mode="agent", triggers, and destinations once the strategy is clear. If critical destination details are missing, ask the user in this builder chat and write backup/status.json with state "configured_not_verified".
+3. If configuring backup, update workflow.json.backup with enabled=true, mode="agent", triggers, and destinations once the strategy is clear. DEFAULT to a local git repository in the workspace as the zero-config primary destination (instant rollback, no credentials), then recommend adding a GitHub remote for off-box durability. Only add object_store (R2/S3/B2) or HuggingFace when the workflow produces run folders, media, or large artifacts that should not live in git. If critical destination details are missing, ask the user in this builder chat and write backup/status.json with state "configured_not_verified".
 4. If running backup, use workflow.json.backup as the contract. Do not invent destinations. If a destination is missing credentials or setup, mark that destination failed and continue with any other configured destinations.
 5. Always write backup/status.json before you finish, even on failure. Do not write changing backup status into workflow.json.
 6. Use this exact source hash for the status file when the backup covers current config/text state: %s. Tracked files counted by the app: %d.
 7. Set last_agent_session_id to %q.
 
-Supported strategy summary:
-- git/github: config, planning, knowledgebase, learnings, scripts, small JSON.
+Supported strategy summary (tiered):
+- git (default, primary): a local git repo gives a zero-config rollback timeline; add a GitHub remote for off-box durability. Holds config, planning, knowledgebase, learnings, scripts, small JSON.
 - object_store: Cloudflare R2, S3, Backblaze B2 for runs, media, large artifacts.
 - huggingface: dataset/model-style backups and generated media.
-- local_zip and local workflow versions are manual/local recovery, not remote automatic backup.
+- local_zip is manual/local recovery, not remote automatic backup.
 
 Current workflow.json.backup:
 %s
@@ -491,4 +506,41 @@ Required backup/status.json schema:
   "updated_at": "<ISO timestamp>"
 }
 `, req.WorkspacePath, actionText, sourceHash, trackedFiles, sessionID, string(backupJSON), sessionID, sourceHash)
+}
+
+// buildWorkflowRestoreAgentPrompt builds the builder task that restores tracked
+// config/text files from a durable backup destination (git commit or object-store
+// snapshot). This is the rollback path that replaced local workflow versions.
+func buildWorkflowRestoreAgentPrompt(req workflowBackupRunRequest, manifest *WorkflowManifest, sessionID string) string {
+	backupJSON, _ := json.MarshalIndent(manifest.Backup, "", "  ")
+	targetText := "the most recent healthy backup"
+	if ref := strings.TrimSpace(req.TargetRef); ref != "" {
+		targetText = fmt.Sprintf("backup ref %q", ref)
+	}
+	return fmt.Sprintf(`You are the workflow restore operator for %s.
+
+Task: restore this workflow's tracked config/text files from %s.
+
+Rules:
+1. Call get_reference_doc(kind="backup-strategy") and follow it.
+2. Read workflow.json.backup below to find a durable destination to restore from. Prefer a git destination (local repo or GitHub); fall back to an object_store snapshot only if git is not configured.
+3. For git: fetch/check out the requested ref (or the most recent backup commit if none was given) and copy the tracked files back into the workspace, overwriting the current versions. This is a one-way checkout INTO the workspace only. Do NOT force-push, delete, or rewrite any remote history.
+4. Restore only the tracked config/text set: workflow.json, planning/*, reports/report_plan.json, variables/variables.json, evaluation/evaluation_plan.json, and the knowledgebase/ and learnings/ folders. Never touch run folders or generated media.
+5. If the requested ref does not exist, or no durable git/object_store destination is configured, do nothing destructive and write backup/status.json with state "failed" and a clear last_error.
+6. Always write backup/status.json before you finish, even on failure. Set last_agent_session_id to %q. In the summary, state which ref was restored and how many files were written.
+
+Current workflow.json.backup:
+%s
+
+Required backup/status.json schema:
+{
+  "version": 1,
+  "state": "healthy | partial | failed",
+  "last_attempt_at": "<ISO timestamp>",
+  "last_agent_session_id": "%s",
+  "summary": "<e.g. Restored 12 files from commit abc1234>",
+  "last_error": "<empty on success; concise error on failure>",
+  "updated_at": "<ISO timestamp>"
+}
+`, req.WorkspacePath, targetText, sessionID, string(backupJSON), sessionID)
 }

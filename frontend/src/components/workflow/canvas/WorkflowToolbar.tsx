@@ -5,7 +5,7 @@ import {
   Settings,
   FileText,
   DollarSign,
-  Package,
+  Cloud,
   Database,
   Table2,
   ShieldCheck,
@@ -14,7 +14,6 @@ import {
   X,
 } from 'lucide-react'
 import ModalPortal from '../../ui/ModalPortal'
-import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
 import { useWorkflowManifestStore } from '../../../stores/useWorkflowManifestStore'
 import { useChatStore } from '../../../stores/useChatStore'
@@ -31,7 +30,8 @@ import KBPopup from '../KBPopup'
 import DatabasePopup from '../DatabasePopup'
 import ExecutionLogsPopup from '../ExecutionLogsPopup'
 import CostsPopup from '../CostsPopup'
-import WorkflowVersionsPopup from '../WorkflowVersionsPopup'
+import WorkflowBackupPopup from '../WorkflowBackupPopup'
+import { getBackupDotClass, formatBackupStateLabel } from '../backupStatus'
 import WorkflowAccessPopup from '../WorkflowAccessPopup'
 import WorkflowScheduleRunsPanel from '../../scheduler/WorkflowScheduleRunsPanel'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
@@ -105,7 +105,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   isLoadingWorkspaceState = false,
   onStartPhase,
   showChatArea = false,
-  onRefresh,
   chatTabsSlot,
   className = ''
 }) => {
@@ -115,7 +114,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const canManageAccess = useAuthStore(state => state.isMultiUserMode && hasWorkflowOwnerAccess(state.user, state.isMultiUserMode))
 
   // Workspace store for opening folders
-  const fetchFiles = useWorkspaceStore(state => state.fetchFiles)
 
   // Workflow store - use useShallow to prevent unnecessary re-renders
   // Note: runFolders, variablesManifest come from props (passed from WorkflowCanvas)
@@ -195,8 +193,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   }, [workspacePath, monitorOn, monitorSaving, updateWorkflowManifest])
   const [showMonitorHelp, setShowMonitorHelp] = useState(false)
 
-  // Backup and versions popup state
-  const [showVersionsPopup, setShowVersionsPopup] = useState(false)
+  // Backup popup state
+  const [showBackupPopup, setShowBackupPopup] = useState(false)
+  const [backupState, setBackupState] = useState<string>('not_configured')
   const [showAccessPopup, setShowAccessPopup] = useState(false)
   const [showWorkflowSchedulesPanel, setShowWorkflowSchedulesPanel] = useState(false)
   const [workflowScheduleStats, setWorkflowScheduleStats] = useState<WorkflowScheduleStats>(EMPTY_WORKFLOW_SCHEDULE_STATS)
@@ -240,13 +239,31 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     refreshWorkflowScheduleStats()
   }, [refreshWorkflowScheduleStats])
 
+  // Lightweight backup-status poll so the toolbar dot reflects health at a glance.
+  const refreshBackupState = useCallback(async () => {
+    if (!workspacePath) {
+      setBackupState('not_configured')
+      return
+    }
+    try {
+      const resp = await agentApi.getWorkflowBackup(workspacePath)
+      setBackupState(resp.effective_state || 'not_configured')
+    } catch {
+      // Leave the last known state; a transient fetch failure shouldn't flip the dot.
+    }
+  }, [workspacePath])
+
+  useEffect(() => {
+    refreshBackupState()
+  }, [refreshBackupState])
+
   const closeAllPopups = useCallback(() => {
     setShowLearningsPopup(false)
     setShowKBPopup(false)
     setShowDatabasePopup(false)
     setShowExecutionLogsPopup(false)
     setShowCostsPopup(false)
-    setShowVersionsPopup(false)
+    setShowBackupPopup(false)
     setShowWorkflowSchedulesPanel(false)
   }, [])
   
@@ -427,8 +444,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       {/* Right side - View controls */}
       <div data-tour="workflow-tools" data-testid="tour-workflow-tools" className="ml-auto flex shrink-0 items-center gap-1">
         <TooltipProvider delayDuration={150}>
-          {/* Monitor — opens the per-run monitor popup (explains it, lets the user
-              enable it, and points to /auto-improve for scheduling). */}
+          {/* Pulse — opens the Pulse popup (explains it, lets the user enable it,
+              and points to /auto-improve for scheduling). */}
           {workspacePath && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -438,11 +455,11 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background/90 px-2 py-1 text-[11px] font-medium text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted"
                 >
                   <Activity className={`w-3.5 h-3.5 ${monitorOn ? 'text-primary' : ''}`} />
-                  <span className={monitorOn ? 'text-foreground' : ''}>Monitor</span>
+                  <span className={monitorOn ? 'text-foreground' : ''}>Pulse</span>
                   <span className={`text-[10px] font-semibold tracking-wide ${monitorOn ? 'text-primary' : 'text-muted-foreground/60'}`}>{monitorOn ? 'ON' : 'OFF'}</span>
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="bottom"><p>Per-run monitor — click to learn more &amp; turn {monitorOn ? 'off' : 'on'}</p></TooltipContent>
+              <TooltipContent side="bottom"><p>Pulse — click to learn more &amp; turn {monitorOn ? 'off' : 'on'}</p></TooltipContent>
             </Tooltip>
           )}
 
@@ -546,18 +563,21 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </Tooltip>
         )}
 
-        {/* Backup & Versions - read-only backup status view; write actions are backend-gated */}
+        {/* Backup - dedicated remote backup status + strategy; status dot reflects health */}
         {workspacePath && (
           <Tooltip>
             <TooltipTrigger asChild>
               <button
-                onClick={() => setShowVersionsPopup(true)}
-                className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+                onClick={() => setShowBackupPopup(true)}
+                className="relative p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
               >
-                <Package className="w-3.5 h-3.5" />
+                <Cloud className="w-3.5 h-3.5" />
+                <span
+                  className={`absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full border border-background ${getBackupDotClass(backupState)}`}
+                />
               </button>
             </TooltipTrigger>
-            <TooltipContent side="bottom"><p>Backup & Versions</p></TooltipContent>
+            <TooltipContent side="bottom"><p>Backup &middot; {formatBackupStateLabel(backupState)}</p></TooltipContent>
           </Tooltip>
         )}
 
@@ -648,7 +668,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       />
     )}
 
-    {/* Per-run monitor help */}
+    {/* Pulse help */}
     {showMonitorHelp && (
       <ModalPortal>
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowMonitorHelp(false)}>
@@ -656,7 +676,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             <div className="flex items-center justify-between border-b px-5 py-3.5">
               <div className="flex items-center gap-2">
                 <Activity className="h-4 w-4 text-primary" />
-                <h2 className="text-sm font-semibold">Per-run monitor</h2>
+                <h2 className="text-sm font-semibold">Pulse</h2>
               </div>
               <button onClick={() => setShowMonitorHelp(false)} className="rounded-md p-1 hover:bg-accent" aria-label="Close">
                 <X className="h-4 w-4" />
@@ -674,7 +694,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             {/* enable / disable */}
             <div className="flex items-center justify-between border-t px-5 py-3.5">
               <div>
-                <div className="text-sm font-medium text-foreground">Per-run monitor</div>
+                <div className="text-sm font-medium text-foreground">Pulse</div>
                 <div className="text-xs text-muted-foreground">{monitorOn ? 'On — reviewing every run' : 'Off — not reviewing runs'}</div>
               </div>
               <button
@@ -684,7 +704,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 onClick={() => { void toggleMonitor() }}
                 disabled={monitorSaving}
                 className={`relative inline-flex h-5 w-9 flex-none items-center rounded-full p-0 transition-colors disabled:opacity-50 ${monitorOn ? 'bg-primary' : 'bg-muted-foreground/30'}`}
-                aria-label="Toggle per-run monitor"
+                aria-label="Toggle Pulse"
               >
                 <span className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${monitorOn ? 'translate-x-[18px]' : 'translate-x-[2px]'}`} />
               </button>
@@ -692,7 +712,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             {/* scheduling note */}
             <div className="border-t px-5 py-4">
               <p className="rounded-md bg-muted/60 px-3 py-2.5 text-xs text-muted-foreground">
-                <span className="font-medium text-foreground">To run on a schedule:</span> the monitor only reviews when a run happens. Set up <code className="rounded bg-background px-1 py-0.5 font-medium text-foreground">/auto-improve</code> to schedule recurring runs plus the harden / replan passes that act on what the monitor finds.
+                <span className="font-medium text-foreground">To run on a schedule:</span> Pulse only reviews when a run happens. Set up <code className="rounded bg-background px-1 py-0.5 font-medium text-foreground">/auto-improve</code> to schedule recurring runs plus the harden / replan passes that act on what Pulse finds.
               </p>
             </div>
           </div>
@@ -700,15 +720,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       </ModalPortal>
     )}
 
-    {/* Backup & Versions Popup */}
-    <WorkflowVersionsPopup
-      isOpen={showVersionsPopup}
-      onClose={() => setShowVersionsPopup(false)}
+    {/* Backup Popup (dedicated remote backup status + strategy) */}
+    <WorkflowBackupPopup
+      isOpen={showBackupPopup}
+      onClose={() => { setShowBackupPopup(false); refreshBackupState() }}
       workspacePath={workspacePath || null}
-      onRefresh={async () => {
-        if (onRefresh) await onRefresh()
-        fetchFiles()
-      }}
+      onStateLoaded={setBackupState}
     />
 
     {/* Workflow Access Popup (multi-user owners only) */}

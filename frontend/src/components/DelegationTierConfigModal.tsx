@@ -225,7 +225,7 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-700 shrink-0">
           <div>
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Multi-Agent Mode</h2>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Chief of Staff</h2>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Configure how your AI team works together</p>
           </div>
           <div className="flex items-center gap-2">

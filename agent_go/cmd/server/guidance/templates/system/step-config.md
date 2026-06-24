@@ -29,7 +29,9 @@ Only pass a lock field when you are explicitly changing it — passing `lock_lea
 ### Execution mode + which model runs the step
 
 - **`declared_execution_mode`**: `agentic` (default for workshop-created steps) vs `scripted`. Two different paths, don't conflate them:
-  - **User explicitly asks for a scripted step** (e.g. "make this scripted so I can test it") → set `scripted` right away. The user owns that call; let them create and iterate on the script. **No run-count gate.**
+  - **Scripts are for DETERMINISTIC work** — a saved `main.py` does the same thing every run (API calls, parsing, math, data transforms, fixed SQL). If the step's behavior **varies run-to-run or needs adaptive judgment** (most browser/UI flows, LLM reasoning, fuzzy extraction, anything that reads a fresh page or decides differently per input), scripted is the wrong tool: it will drift and need constant repair. Keep those `agentic`.
+  - **And SMALL** — a scripted step should do ONE focused job (one source → one transform → one table), not carry a big branching pipeline. Split deterministic work into small scripted steps that coordinate through the db; large/adaptive logic stays agentic.
+  - **User explicitly asks for a scripted step** (e.g. "make this scripted so I can test it") → set `scripted` right away — the user owns that call; **no run-count gate**. But if the work isn't deterministic, say so plainly first ("this flow reads live UI state, so a frozen script will break often — agentic is more reliable; want me to script it anyway?") and honor their decision.
   - **Builder promoting agentic→scripted on its own initiative** → only when behavior is deterministic AND proven across 10+ scenario-covering successful runs. That's the guardrail against silently freezing a brittle script the user didn't ask to freeze.
   - Set `declared_execution_mode_reason` either way.
 - **`use_code_execution_mode`**: per-step override of the preset's code-execution toggle (nil = inherit).

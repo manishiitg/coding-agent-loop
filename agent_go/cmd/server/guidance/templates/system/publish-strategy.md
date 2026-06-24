@@ -26,15 +26,15 @@ source. This gives each view full width, avoids the double-scroll / collapse pro
 side-by-side embed, and never modifies the two inner pages:
 
 ```html
-<!doctype html><html><head>
+<!doctype html><html class="dark" data-theme="dark"><head>
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="color-scheme" content="light dark">
+  <meta name="color-scheme" content="dark">
   <style>
-    html,body{margin:0;height:100%;font-family:system-ui,-apple-system,sans-serif}
-    nav{display:flex;gap:.25rem;padding:.5rem .75rem;border-bottom:1px solid #8884}
+    html,body{margin:0;height:100%;font-family:system-ui,-apple-system,sans-serif;background:#141413;color:#e8e7e2}
+    nav{display:flex;align-items:center;gap:.25rem;padding:.5rem .75rem;border-bottom:1px solid #2c2b28}
     nav button{border:0;background:transparent;padding:.4rem .85rem;border-radius:.4rem;
       cursor:pointer;font:inherit;color:inherit;opacity:.65}
-    nav button.active{background:#8882;opacity:1;font-weight:600}
+    nav button.active{background:#ffffff22;opacity:1;font-weight:600}
     iframe{border:0;width:100%;height:calc(100vh - 49px);display:block}
   </style>
 </head><body>
@@ -44,19 +44,20 @@ side-by-side embed, and never modifies the two inner pages:
   </nav>
   <iframe id="view" src="dashboard.html" title="view"></iframe>
   <script>
-    document.querySelectorAll('nav button').forEach(function(b){
-      b.onclick=function(){
-        document.getElementById('view').src=b.dataset.src;
-        document.querySelectorAll('nav button').forEach(function(x){x.classList.toggle('active',x===b)});
-      };
+    var view=document.getElementById('view');
+    // Inner pages already force dark; re-assert both hooks on each load as a backstop.
+    view.addEventListener('load',function(){try{var d=view.contentDocument.documentElement;d.classList.add('dark');d.dataset.theme='dark';}catch(e){}});
+    document.querySelectorAll('nav button[data-src]').forEach(function(b){
+      b.onclick=function(){view.src=b.dataset.src;document.querySelectorAll('nav button[data-src]').forEach(function(x){x.classList.toggle('active',x===b)});};
     });
   </script>
 </body></html>
 ```
 
 (Prefer a **left sidebar** instead of a top nav if the user asks — same idea, nav on the
-left, iframe filling the rest.) Apply the theme shim (below) to `dashboard.html` and
-`pulse.html`; the wrapper already uses `color-scheme: light dark` + neutral colors. Never
+left, iframe filling the rest.) The wrapper above is **dark only** and re-asserts dark on the
+iframe each load; apply the matching dark shim (below) to `dashboard.html` and `pulse.html` so
+they force dark too. Never
 publish secrets, `db/db.sqlite` raw, credentials, or `.env`/key files.
 
 ## Generating the static dashboard snapshot (the report)
@@ -82,24 +83,33 @@ A live report won't work on static hosting. Bake it to static HTML at publish ti
 
 (Do not ship `db.sqlite` to the client or stand up a server — snapshot only.)
 
-## Make the published HTML theme-aware (both artifacts)
+## Force the published HTML to DARK (both artifacts)
 
-In the app, dark mode is set by the app **injecting `data-theme="dark"` onto `<html>`** — a
-published static page has no app, so it would render **light only**. For **every** published
-HTML file (the Pulse log AND the report snapshot), inject this shim in `<head>` so the page
-follows the **viewer's** system theme:
+The output must be **dark only**, matching the app. Match exactly what the app sets on `<html>`:
+
+- The app themes via **Tailwind's `dark` class** (`ThemeContext` does `classList.add('dark')`).
+- Report/dashboard widgets honor **both** — `HtmlWidgetFrame` sets `class="dark"` **and**
+  `data-theme="dark"`.
+- The Pulse-log skeleton keys on **`data-theme="dark"`**.
+
+So set **both** hooks, hard-coded to dark. Do **NOT** use `prefers-color-scheme` (it follows
+the viewer's OS, usually light) and do **NOT** add a light/auto toggle — dark only.
+
+For **every** published HTML file (the Pulse log AND the report snapshot), inject this in
+`<head>` BEFORE the page's own styles/scripts:
 
 ```html
-<meta name="color-scheme" content="light dark">
+<meta name="color-scheme" content="dark">
 <script>
-  document.documentElement.dataset.theme =
-    matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  var de = document.documentElement;
+  de.classList.add('dark');   // Tailwind / :root.dark report widgets + app parity
+  de.dataset.theme = 'dark';  // data-theme="dark" widgets + the Pulse-log skeleton
 </script>
 ```
 
-This reuses the page's existing `html[data-theme="dark"]` CSS, so dark-mode viewers get dark
-and light-mode viewers get light — no app needed. (If a page has no dark CSS at all, also add
-a minimal dark palette under `@media (prefers-color-scheme: dark)`.)
+Setting both is exactly what the in-app `HtmlWidgetFrame` does, so the page reuses the existing
+dark CSS. (If a widget has no dark styling at all, add a minimal dark palette under
+`html.dark, html[data-theme="dark"]`.)
 
 ## Every publish rebuilds from source — never redeploy a stale file
 

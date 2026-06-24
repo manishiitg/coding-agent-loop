@@ -23,6 +23,16 @@ After Discovery, decide which mode this command runs in:
 - **REVIEW EXISTING** — `builder/improve.html` already has a Workflow Profile block AND/OR `planning/metrics.json` already has metrics declared. **Skip STEPS 1–4 and go to STEP 5 (REVIEW PATH)** — do not re-bootstrap a workflow that already has a framework configured. Audit instead.
 - **PARTIAL** — one is present, the other isn't. Run STEP 5 first to surface what's there, then walk the user through completing the missing piece (Profile if absent → STEP 2; metrics if absent → STEP 4).
 
+STEP 0.5 — Confirm the goal with the user (the gate everything else rests on)
+The auto-improve loop optimizes toward THIS goal, so a vague or stale one makes the whole loop aimless. Establish a real, user-confirmed goal before classifying or scheduling anything — do not infer it silently from `soul.md` and move on.
+
+- Show the user the workflow's **objective** and each **success_criterion** read from `soul.md`, and ask: "Is this still what success means here? Anything to change, add, or drop?"
+- Push for **measurable** criteria — a metric, threshold, or checkable outcome, not "works well." Refine vague ones together.
+- **If `soul.md` has no success_criteria, or they're vague/placeholder, STOP and ask directly: "What does success look like for this workflow — what measurable outcomes tell you it's working?"** Do not proceed to classification or scheduling without an answer.
+- Write the confirmed objective + success_criteria back to `soul.md` — it's the single source of truth that the goal card and the Goal verdict both read from.
+
+Only once the goal is confirmed, continue to STEP 1.
+
 STEP 1 — Classify the workflow profile
 Walk the user through a **primary type** plus optional **secondary traits**, then map that to the internal axes. Real workflows mix types; do not force a single enum.
 

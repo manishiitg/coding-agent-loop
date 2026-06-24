@@ -4174,25 +4174,15 @@ func validateMessageSequenceStepFieldsTyped(step *MessageSequencePlanStep) error
 			return fmt.Errorf("message_sequence step %q item %q has unsupported type %q", step.ID, item.ID, item.Type)
 		}
 
-		// Writes are item-scoped and default-deny; reads of db/kb/learnings are
-		// always open. An item whose message or output_files say it writes to
-		// db/, the knowledgebase, or learnings but that has no matching
-		// write_access (or inferred kind) would silently fail at execution — the
-		// file write is blocked by the folder guard. Reject it at plan time with
-		// an actionable message so the grant is added up front.
-		needsDB, needsKB, needsLearnings := messageSequenceItemWriteIntent(item)
-		if needsDB || needsKB || needsLearnings {
-			access := resolveMessageSequenceItemWriteAccess(item)
-			if needsDB && !access.DB {
-				return fmt.Errorf("message_sequence step %q item %q writes to db/ (per its message or output_files) but has no db write access; add \"write_access\": {\"db\": true} to the item (or set \"kind\": \"db\"). Reads are always open; writes are item-scoped.", step.ID, item.ID)
-			}
-			if needsKB && !access.Knowledgebase {
-				return fmt.Errorf("message_sequence step %q item %q writes to the knowledgebase but has no kb write access; add \"write_access\": {\"knowledgebase\": true} to the item (or set \"kind\": \"knowledgebase\"). Reads are always open; writes are item-scoped.", step.ID, item.ID)
-			}
-			if needsLearnings && !access.Learnings {
-				return fmt.Errorf("message_sequence step %q item %q writes to learnings/ (per its message or output_files) but has no learnings write access; add \"write_access\": {\"learnings\": true} to the item (or set \"kind\": \"learning\"). Reads are always open; writes are item-scoped.", step.ID, item.ID)
-			}
-		}
+		// NOTE: per-item write access (db/kb/learnings) is intentionally NOT
+		// validated from the message prose here. Detecting "this item writes the
+		// db" from natural language is unreliable (false negatives like "upsert
+		// into trade_ideas", false positives on descriptive text), so we don't
+		// gate plans on a guess. Enforcement lives at the runtime folder guard
+		// (the source of truth — it blocks the write and emits an actionable
+		// "grant write_access.db" failure), and structured signals (kind /
+		// output_files) auto-grant via resolveMessageSequenceItemWriteAccess. The
+		// authoring contract is carried by guidance, not a prose regex.
 	}
 	return nil
 }

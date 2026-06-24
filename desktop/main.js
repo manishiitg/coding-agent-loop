@@ -1298,17 +1298,23 @@ function checkForUpdates(manual = false) {
         }
         return;
       }
+      const notes = formatReleaseNotes(release.body);
       const choice = await dialog.showMessageBox({
         type: 'info',
         title: 'Update Available',
         message: `Runloop ${latestVersion} is available.`,
-        detail: `You're on ${currentVersion}.\n\nRunloop will download the new version (~150 MB) in the background — you can keep working. When it's ready you'll be asked to restart to install (a few seconds).`,
-        buttons: ['Download', 'Later'],
+        detail:
+          `You're on ${currentVersion}.\n\n` +
+          (notes ? `What's new in ${latestVersion}:\n${notes}\n\n` : '') +
+          `Runloop will download the new version (~150 MB) in the background — you can keep working. When it's ready you'll be asked to restart to install (a few seconds).`,
+        buttons: ['Download', 'Full Notes…', 'Later'],
         defaultId: 0,
-        cancelId: 1,
+        cancelId: 2,
       });
       if (choice.response === 0) {
         downloadAndPrepareUpdate(latestVersion);
+      } else if (choice.response === 1) {
+        if (release.html_url) shell.openExternal(release.html_url);
       }
     });
   });
@@ -1328,6 +1334,26 @@ function isNewerVersion(a, b) {
     if (x < y) return false;
   }
   return false;
+}
+
+// Render a GitHub release body (markdown) down to plain text for the native
+// update dialog's `detail` field, so users see what's in the update before
+// downloading it. Strips markdown syntax and caps the length to keep it sane.
+function formatReleaseNotes(body, maxLen = 1400) {
+  if (!body || !body.trim()) return '';
+  let text = body
+    .replace(/```[\s\S]*?```/g, '')        // drop fenced code blocks
+    .replace(/^#{1,6}\s*/gm, '')           // strip header marks (## …)
+    .replace(/\*\*(.*?)\*\*/g, '$1')       // bold
+    .replace(/`([^`]+)`/g, '$1')           // inline code
+    .replace(/^\s*[-*]\s+/gm, '• ')        // bullets
+    .replace(/^\s*---+\s*$/gm, '')         // horizontal rules
+    .replace(/\n{3,}/g, '\n\n')            // collapse blank runs
+    .trim();
+  if (text.length > maxLen) {
+    text = text.slice(0, maxLen).replace(/\s+\S*$/, '') + '…';
+  }
+  return text;
 }
 
 // Update state for the background-download flow. The DMG is fetched while the

@@ -123,27 +123,47 @@ artifacts fresh, then deploys:
   re-publish must not silently stay single-artifact just because the old config did.
 - After deploy, open the URL and confirm BOTH panes render and the page respects dark mode.
 
-## Public or private? Ask first
+## Private by default — a simple password gate
 
-Publishing puts the data on a URL. **Before choosing a host, ask the user whether the page
-should be public (anyone with the link) or private (behind a login).** For a dashboard with
-real data, recommend **private** by default.
+Publishing puts the data on a URL, so **default to private.** The catch: no major static host
+gives you a simple shared password for free — Netlify/Vercel site passwords are paid, and
+Cloudflare/Azure "private" means a full **login** (OAuth/email), not a password. So don't reach
+for those by default, and **never ask the user for an access token** to make a page private.
 
-**Private for free — prefer these when the data is sensitive:**
-- **Azure Static Web Apps** — built-in auth + route authorization on the **free** tier. Add a
-  `staticwebapp.config.json` route rule with `"allowedRoles": ["authenticated"]` so the site
-  requires login (GitHub / Microsoft Entra ID). No extra service. Cleanest free-private option.
-- **Cloudflare Pages + Cloudflare Access** — Cloudflare Zero Trust **free** tier (≤50 users):
-  deploy to Pages, then put an Access policy (email OTP / Google / etc.) in front of it.
+Instead, gate it **client-side** with a passphrase — free, one command, identical on every
+host. Encrypt the static HTML with **StatiCrypt** *after* baking + theming, in the staging dir,
+in **one invocation** so a single unlock covers the whole site for the browser session:
 
-**Private with a workaround:**
-- **Netlify** (free) — HTTP Basic Auth via a `_headers` file (per-path, manual). Site-wide
-  password is a paid (Pro) feature.
-- **Vercel** — "Vercel Authentication" restricts to team members on all plans, but the free
-  Hobby plan allows only one external user; a shared password is a paid add-on.
+```
+cd /tmp/publish-<workflow>
+npx staticrypt dashboard.html pulse.html index.html \
+  -p "$SECRET_PUBLISH_PASSWORD" --remember --salt <fixed-32-hex> -d .
+```
 
-**Public-only-free / paid-private** — GitHub Pages (private = Enterprise), Surge, Firebase
-(add app-level auth yourself). Use these when the page is meant to be public.
+Then deploy the (now-encrypted) files. Use `--remember` **plus a shared `--salt`** (any fixed
+32-hex string, reused across all three files) so the unlock carries across the nav and its
+iframes in one browser session — the viewer types the password **once** on `index.html`.
+Verify after deploy; if a frame still prompts, inline the two views into the single nav page
+and encrypt just that one file.
+
+**Store the password as a named secret — never in plaintext.** Put it in the workflow's secret
+store (e.g. `PUBLISH_PASSWORD`) and read it as `$SECRET_PUBLISH_PASSWORD`, so the **auto-republish
+(Pulse)** step can re-encrypt without the user. In `workflow.json.publish` / `publish/status.json`
+record only `visibility: "private"` and the `secret_name` — **never the password itself**.
+
+**Honest limit:** a client-side gate is good *casual* privacy (keeps it out of public/search
+view, needs the password to read) but not strong security — a weak password on the encrypted
+file can be brute-forced offline. We already forbid publishing raw secrets; for genuinely
+sensitive data, offer a **login host** instead.
+
+**Stronger private (opt-in, only if the user asks):**
+- **Azure Static Web Apps** — built-in auth + route authz on the **free** tier
+  (`staticwebapp.config.json`, `"allowedRoles": ["authenticated"]`); login via GitHub / Entra.
+- **Cloudflare Pages + Cloudflare Access** — free Zero Trust (≤50 users): deploy to Pages, then
+  put an Access policy (email OTP / Google) in front.
+
+**Public (opt-in, only when the user says so):** skip the gate and deploy the baked files as-is.
+Fine when the dashboard has no sensitive data.
 
 Whatever the choice, before the first publish of a destination:
 - State plainly what will be visible (which artifacts; for the dashboard, which queries/rows)
@@ -160,25 +180,42 @@ finished static files — `dashboard.html`, `pulse.html`, `index.html` — into 
 with an explicit `--dir`, skipping any build step (the files are already built). Don't try to
 `cd` inside the workspace or let the CLI build in place.
 
+**Then come back and persist state INTO the workflow folder — this is not optional.** The
+`/tmp` dir is throwaway; the record the UI reads lives in the workflow. A deploy that succeeds
+but leaves no `publish/status.json` + no `workflow.json.publish` block shows up as a **grey
+"not configured"** dot — i.e. it looks like you never published. After the CLI returns the URL,
+return to the workflow folder and, before you finish: (1) set `workflow.json.publish.enabled =
+true` with the destination + top-level `url`, and (2) write `publish/status.json` with
+`state: "published"`, the `url`, and `last_source_hash` (see the two sections below). Never
+write these into the `/tmp` staging dir.
+
 Read the destination's `provider`, `method`, and `site`, then deploy:
 
-1. **Provider CLI** (`method: cli`) — the host's own CLI, which **handles its own auth**.
-   Almost every major static host ships a CLI, most installable with `npm i -g`. Before
-   deploying:
-   - **Check it's installed** (`command -v netlify`). If missing, tell the user the exact
-     install command (table) and ask them to run it — CLIs install per machine, a one-time
-     user step; never install silently.
+1. **Provider CLI** (`method: cli`) — the default, and the host's own CLI **handles its own
+   auth**. Almost every major static host ships a CLI, most installable with `npm i -g`.
+   **Do NOT ask the user for an access token / API key.** The auth path is always: *install the
+   CLI → the user runs `<cli> login` once (browser) → you deploy.* Before deploying:
+   - **Auto-check + install.** As soon as the user names a host, check its CLI
+     (`command -v vercel`). If it's missing, **install it for them**: say what you're doing
+     ("Installing the Vercel CLI…") and run the table's install command (`npm i -g vercel`).
+     Don't just hand over the command and wait — drive it. Pick the command for the host they
+     named: Vercel → `npm i -g vercel`, Netlify → `npm i -g netlify-cli`, Cloudflare
+     Pages/R2 → `npm i -g wrangler`, Firebase → `npm i -g firebase-tools`, AWS → `brew install
+     awscli`. If the global install fails (e.g. `EACCES` on the npm prefix, or needs sudo), then
+     fall back to giving the user the exact command to run. Announce, don't silently install.
    - **Check it's logged in** (`netlify status`, `vercel whoami`, `firebase login:list`,
      `wrangler whoami`, …). **You do NOT handle tokens or secrets — the CLI uses its own
      stored login session.** If it isn't authenticated, tell the user to run the one-time
      login command (e.g. `netlify login`); it opens a browser, so you can't do it for them.
-     Then deploy.
+     Then deploy. If a login command stalls, the fix is to re-run `<cli> login` — **not** to
+     fall back to pasting a token.
 
    | Host | Install | Log in (one-time, user) | Deploy |
    |------|------|------|------|
    | Netlify | `npm i -g netlify-cli` | `netlify login` | `netlify deploy --prod --dir <dir>` |
    | Vercel | `npm i -g vercel` | `vercel login` | `vercel deploy --prod --yes` |
    | Cloudflare Pages | `npm i -g wrangler` | `wrangler login` | `wrangler pages deploy <dir> --project-name <site>` |
+   | Cloudflare R2 | `npm i -g wrangler` | `wrangler login` | `wrangler r2 object put <bucket>/<key> --file <f>` (serve via the public r2.dev / custom domain) |
    | Firebase Hosting | `npm i -g firebase-tools` | `firebase login` | `firebase deploy --only hosting` |
    | Surge | `npm i -g surge` | `surge login` | `surge <dir> <site>.surge.sh` |
    | Azure Static Web Apps | `npm i -g @azure/static-web-apps-cli` | `az login` | `swa deploy <dir> --env production` |
@@ -247,6 +284,16 @@ Before you finish — even on failure:
 Do not write operational publish status into `workflow.json`/the CoS config — only into
 `publish/status.json`. If a destination is missing credentials or setup, mark it `failed` and
 continue with any others.
+
+**Get `last_source_hash` right or the dot lies.** The backend computes the source hash itself
+(a sha256 over `builder/improve.html`, `db/db.sqlite`, and `reports/`) and reports it as
+`current_source_hash` in the workflow publish status. Set `last_source_hash` to **that exact
+value** (read it back after writing the files). If you write any other string, a successful
+publish immediately reads as **`stale`** (amber) and Pulse will keep re-publishing. If you
+genuinely can't obtain it, leave `last_source_hash` empty — the dot stays green `published`,
+only change-detection is disabled. The two states this controls:
+- `published` (green) = config enabled + status `published` + hash matches.
+- `stale` (amber) = published but the source changed since — Pulse re-publishes on the next run.
 
 ## Discipline
 

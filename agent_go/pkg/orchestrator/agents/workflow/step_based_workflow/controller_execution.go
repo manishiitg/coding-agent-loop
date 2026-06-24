@@ -1251,6 +1251,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 	// Note: Conditional steps emit their own step_started event in executeConditionalStep before calling executeSingleStep for branch steps
 	hcpo.emitStepStartedEvent(ctx, step, stepIndex, stepPath, isBranchStep)
 
+	// Guarantee the step leaves "running" on EVERY return path. This function has
+	// many early returns between here and the bottom (scripted fast-path failures,
+	// dependency/agent errors, context cancellations) — without this defer they'd
+	// skip the finished event and the UI would show the step stuck on "running"
+	// even after it completed or pre-validation failed. Emit "failed" on an error
+	// return, "end" otherwise. Use a background context so a cancellation-driven
+	// return still reaches the bridge. (Replaces the single success-path emit that
+	// used to live at the end of the function.)
+	defer func() {
+		emitCtx := context.Background()
+		if err != nil {
+			hcpo.emitStepFailedEvent(emitCtx, step, stepIndex, stepPath, isBranchStep, err.Error())
+		} else {
+			hcpo.emitStepFinishedEvent(emitCtx, step, stepIndex, stepPath, isBranchStep)
+		}
+	}()
+
 	// Narrow the session-level folder guard to this step's paths for the duration of
 	// the step. Session guard is set workspace-wide by the interactive builder and batch
 	// execution (server.go:4002, controller_batch_execution.go:323). Because shell commands
@@ -2795,10 +2812,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		updatedContextFiles = append(updatedContextFiles, contextOutput)
 	}
 
-	// Emit step_finished event (also emits step progress with status="end")
-	// Note: Conditional steps emit their own step_finished event in executeConditionalStep after branch execution completes
-	hcpo.emitStepFinishedEvent(ctx, step, stepIndex, stepPath, isBranchStep)
-
+	// step_finished (status="end") is emitted by the defer at the top of this
+	// function, which covers this success path AND every early return.
 	return executionResult, updatedContextFiles, nil
 }
 

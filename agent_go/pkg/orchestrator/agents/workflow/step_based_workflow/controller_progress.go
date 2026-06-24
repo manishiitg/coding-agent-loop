@@ -71,6 +71,25 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitStepFinishedEvent(ctx context.Con
 	hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted step_progress_updated (end) for step %d: %s", stepIndex+1, stepTitle))
 }
 
+// emitStepFailedEvent emits a step "failed" progress event so the UI moves the
+// step out of "running" when a step ends in error. Mirrors emitStepFinishedEvent
+// but with status "failed" + the error message.
+func (hcpo *StepBasedWorkflowOrchestrator) emitStepFailedEvent(ctx context.Context, step PlanStepInterface, stepIndex int, stepPath string, isBranchStep bool, errorMsg string) {
+	bridge := hcpo.GetContextAwareBridge()
+	if bridge == nil {
+		return
+	}
+	stepId := step.GetID()
+	if stepId == "" {
+		stepId = fmt.Sprintf("step-%d", stepIndex+1)
+	}
+	progress, err := hcpo.loadStepProgress(ctx)
+	if err == nil && progress != nil {
+		hcpo.emitStepProgressUpdatedEvent(ctx, progress, "failed", stepId, errorMsg)
+	}
+	hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted step_progress_updated (failed) for step %d: %s", stepIndex+1, step.GetTitle()))
+}
+
 // emitStepProgressUpdatedEvent emits an event when step progress is updated
 // status can be "start" (step started), "stop" (step stopped), "end" (step ended), "failed" (step failed), or empty (regular progress update)
 // errorMsg is populated when status is "failed"

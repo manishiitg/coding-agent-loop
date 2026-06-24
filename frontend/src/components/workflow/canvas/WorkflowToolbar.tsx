@@ -812,7 +812,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="min-h-0 flex-1">
+            <div className="min-h-0 flex-1 overflow-y-auto">
               <PlanChangelogFeed workspacePath={workspacePath} />
             </div>
           </div>

@@ -2,10 +2,12 @@ package server
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"path"
 	"sort"
 	"strings"
+	"time"
 )
 
 // planChangelogFieldChange mirrors PlanFieldChange written by the planning agent
@@ -106,4 +108,67 @@ func (api *StreamingAPI) handleGetPlanChangelog(w http.ResponseWriter, r *http.R
 	}
 
 	writeAIJSON(w, PlanChangelogResponse{Success: true, Entries: entries, Count: total})
+}
+
+// handlePrunePlanChangelog deletes plan-changelog files older than a cutoff —
+// the "consolidate" / drop-old-edits action. Each file is named
+// changelog-YYYY-MM-DD-HH-MM-SS.json; we delete whole files older than the
+// cutoff (the agent can't shell-write planning/, so the server prunes here).
+// POST body: {workspace_path, older_than_days}.
+func (api *StreamingAPI) handlePrunePlanChangelog(w http.ResponseWriter, r *http.Request) {
+	if !setupCORS(w, r, http.MethodPost) {
+		return
+	}
+	var req struct {
+		WorkspacePath string `json:"workspace_path"`
+		OlderThanDays int    `json:"older_than_days"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	req.WorkspacePath = strings.TrimSpace(req.WorkspacePath)
+	if req.WorkspacePath == "" {
+		http.Error(w, "workspace_path is required", http.StatusBadRequest)
+		return
+	}
+	if req.OlderThanDays <= 0 {
+		http.Error(w, "older_than_days must be > 0", http.StatusBadRequest)
+		return
+	}
+
+	cutoff := time.Now().AddDate(0, 0, -req.OlderThanDays)
+	folder := path.Join(strings.Trim(req.WorkspacePath, "/"), "planning", "changelog")
+	listing, exists, err := listWorkspaceFolder(r.Context(), folder, 1)
+	if err != nil {
+		writeAIJSON(w, map[string]interface{}{"success": false, "error": err.Error()})
+		return
+	}
+	if !exists {
+		writeAIJSON(w, map[string]interface{}{"success": true, "deleted": 0})
+		return
+	}
+
+	var filePaths []string
+	collectWorkspaceFilePaths(listing, &filePaths)
+	deleted := 0
+	for _, fp := range filePaths {
+		base := path.Base(fp)
+		if !strings.HasPrefix(base, "changelog-") || !strings.HasSuffix(strings.ToLower(base), ".json") {
+			continue
+		}
+		stamp := strings.TrimSuffix(strings.TrimPrefix(base, "changelog-"), ".json")
+		t, perr := time.Parse("2006-01-02-15-04-05", stamp)
+		if perr != nil {
+			continue // unrecognized name — keep it to be safe
+		}
+		if t.Before(cutoff) {
+			if derr := deleteWorkspaceFile(r.Context(), fp); derr != nil {
+				log.Printf("[PLAN-CHANGELOG] failed to prune %s: %v", fp, derr)
+				continue
+			}
+			deleted++
+		}
+	}
+	writeAIJSON(w, map[string]interface{}{"success": true, "deleted": deleted})
 }

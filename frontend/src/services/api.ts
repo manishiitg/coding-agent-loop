@@ -1736,6 +1736,10 @@ export const agentApi = {
     const response = await api.get('/api/workflow/plan-changelog', { params: { workspace_path: workspacePath } })
     return { success: !!response.data?.success, entries: Array.isArray(response.data?.entries) ? response.data.entries : [], count: response.data?.count ?? 0, error: response.data?.error }
   },
+  prunePlanChangelog: async (workspacePath: string, olderThanDays: number): Promise<{ success: boolean; deleted: number; error?: string }> => {
+    const response = await api.post('/api/workflow/plan-changelog/prune', { workspace_path: workspacePath, older_than_days: olderThanDays })
+    return { success: !!response.data?.success, deleted: response.data?.deleted ?? 0, error: response.data?.error }
+  },
   getFrameworkHealth: async (workspacePath: string): Promise<{
     success: boolean
     soul_exists: boolean

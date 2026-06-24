@@ -8,47 +8,56 @@ config is the contract.
 
 ## What you publish
 
-Publish **both** artifacts by default. Use the config's `targets`; if `targets` is empty or
-absent, publish both — do **not** publish only one unless the user explicitly asked for one.
+Publish **BOTH** artifacts — the dashboard **and** the Pulse log. This is **mandatory** unless
+the user explicitly says "dashboard only" (or "pulse only"). Do not skip the Pulse log just
+because the saved `publish.targets` only lists the dashboard — if both should go out, **update
+`targets` to include both** before you build. Deploy `dashboard.html` AND `pulse.html`; if
+only one file ends up on the host, you did it wrong.
 
 - **Reporting dashboard** (`reports/`) — **live** HTML: it calls `window.report.query(sql)`
   against `db/db.sqlite` inside the app, which doesn't exist on a static host. **Generate a
-  static snapshot** first (next section).
+  static snapshot** first (next section) → `dashboard.html`.
 - **Pulse log** (`builder/improve.html`, or the org's `pulse/org-pulse.html`) — a
-  **self-contained** HTML document. Publish it as-is (after the theme step below).
+  **self-contained** HTML document → `pulse.html`. Publish it as-is (after the theme step).
 
-When publishing both, deploy three files: `dashboard.html` (the report snapshot),
-`pulse.html` (the Pulse log), and a small **`index.html` wrapper** that shows them together in
-a responsive layout via two `<iframe>`s — keep them as separate files (iframes isolate their
-CSS/scripts; never merge the two documents). Wrapper:
+Deploy three files: `dashboard.html`, `pulse.html`, and an **`index.html` wrapper** with a
+**top nav** (Dashboard | Pulse) over a single iframe — clicking a tab swaps the iframe's
+source. This gives each view full width, avoids the double-scroll / collapse problems of a
+side-by-side embed, and never modifies the two inner pages:
 
 ```html
 <!doctype html><html><head>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <style>
-    html,body{margin:0;height:100%}
-    .grid{display:grid;grid-template-columns:1fr 380px;height:100vh}
-    .grid iframe{border:0;width:100%;height:100%;display:block}
-    /* Mobile: iframes can't auto-size to content, so let the PAGE scroll and give
-       each iframe an explicit height (don't use `auto` rows — the iframe collapses). */
-    @media (max-width:820px){
-      html,body{height:auto}
-      .grid{display:block;height:auto}
-      .grid iframe{height:88vh}
-    }
+    html,body{margin:0;height:100%;font-family:system-ui,-apple-system,sans-serif}
+    nav{display:flex;gap:.25rem;padding:.5rem .75rem;border-bottom:1px solid #8884}
+    nav button{border:0;background:transparent;padding:.4rem .85rem;border-radius:.4rem;
+      cursor:pointer;font:inherit;color:inherit;opacity:.65}
+    nav button.active{background:#8882;opacity:1;font-weight:600}
+    iframe{border:0;width:100%;height:calc(100vh - 49px);display:block}
   </style>
 </head><body>
-  <div class="grid">
-    <iframe src="dashboard.html" title="Dashboard"></iframe>
-    <iframe src="pulse.html" title="Pulse"></iframe>
-  </div>
+  <nav>
+    <button data-src="dashboard.html" class="active">Dashboard</button>
+    <button data-src="pulse.html">Pulse</button>
+  </nav>
+  <iframe id="view" src="dashboard.html" title="view"></iframe>
+  <script>
+    document.querySelectorAll('nav button').forEach(function(b){
+      b.onclick=function(){
+        document.getElementById('view').src=b.dataset.src;
+        document.querySelectorAll('nav button').forEach(function(x){x.classList.toggle('active',x===b)});
+      };
+    });
+  </script>
 </body></html>
 ```
 
-Desktop/tablet → dashboard main + Pulse as a right rail; mobile (≤820px) → stacked, dashboard
-on top. Apply the theme shim (below) to `dashboard.html` and `pulse.html` (the iframed pages),
-not the wrapper. Never publish secrets, `db/db.sqlite` raw, credentials, or `.env`/key files.
+(Prefer a **left sidebar** instead of a top nav if the user asks — same idea, nav on the
+left, iframe filling the rest.) Apply the theme shim (below) to `dashboard.html` and
+`pulse.html`; the wrapper already uses `color-scheme: light dark` + neutral colors. Never
+publish secrets, `db/db.sqlite` raw, credentials, or `.env`/key files.
 
 ## Generating the static dashboard snapshot (the report)
 
@@ -92,6 +101,18 @@ This reuses the page's existing `html[data-theme="dark"]` CSS, so dark-mode view
 and light-mode viewers get light — no app needed. (If a page has no dark CSS at all, also add
 a minimal dark palette under `@media (prefers-color-scheme: dark)`.)
 
+## Every publish rebuilds from source — never redeploy a stale file
+
+A publish (including a **re-publish** and the auto-republish) ALWAYS regenerates the
+artifacts fresh, then deploys:
+- **Re-snapshot** the dashboard (re-run the queries → current data), **re-inject the theme
+  shim**, and **rebuild the `index.html` wrapper**. Do NOT redeploy a previously-baked
+  `dashboard.html` — stale data, a missing theme, and the old layout persist otherwise.
+- **Honor "publish both."** If the existing `publish.targets` lists only one artifact but
+  both should go out (the default), update `targets` to include both before rebuilding — a
+  re-publish must not silently stay single-artifact just because the old config did.
+- After deploy, open the URL and confirm BOTH panes render and the page respects dark mode.
+
 ## Public or private? Ask first
 
 Publishing puts the data on a URL. **Before choosing a host, ask the user whether the page
@@ -121,6 +142,13 @@ Whatever the choice, before the first publish of a destination:
   scope it out or use a private host — ask rather than publish.
 
 ## Deploying — three universal paths (pick what the host supports)
+
+**Stage outside the workspace first.** The workspace folder is write-guarded, so deploy CLIs
+that write working files into it (`.netlify/`, build output, lock files) will fail. Copy the
+finished static files — `dashboard.html`, `pulse.html`, `index.html` — into a scratch dir
+**outside** the workspace (e.g. `/tmp/publish-<workflow>/`), and run the deploy CLI from there
+with an explicit `--dir`, skipping any build step (the files are already built). Don't try to
+`cd` inside the workspace or let the CLI build in place.
 
 Read the destination's `provider`, `method`, and `site`, then deploy:
 

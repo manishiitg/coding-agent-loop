@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { Loader2, GitCommitVertical, RefreshCw } from 'lucide-react'
+import { Loader2, GitCommitVertical, RefreshCw, Trash2 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { PlanChangelogEntry, PlanChangelogFieldChange } from '../../services/api-types'
 import { WORKFLOW_LOG_REFRESH_EVENT } from './LogViewer'
@@ -106,6 +106,21 @@ export function PlanChangelogFeed({ workspacePath }: PlanChangelogFeedProps) {
 
   useEffect(() => { void load() }, [load])
 
+  const [pruneDays, setPruneDays] = useState(30)
+  const [pruning, setPruning] = useState(false)
+  const prune = useCallback(async () => {
+    if (!workspacePath || pruning) return
+    setPruning(true)
+    try {
+      await agentApi.prunePlanChangelog(workspacePath, pruneDays)
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setPruning(false)
+    }
+  }, [workspacePath, pruneDays, pruning, load])
+
   // Refresh alongside the timeline when a run completes or the user hits the
   // pane refresh control.
   useEffect(() => {
@@ -146,15 +161,37 @@ export function PlanChangelogFeed({ workspacePath }: PlanChangelogFeedProps) {
   return (
     <div className="h-full overflow-y-auto bg-muted/20 px-4 py-4 dark:bg-black/20">
       <div className="mx-auto max-w-[880px]">
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <span className="text-xs text-muted-foreground">{entries.length} plan edit{entries.length !== 1 ? 's' : ''}</span>
-          <button
-            onClick={load}
-            disabled={loading}
-            className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
-          >
-            <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} /> Refresh
-          </button>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] text-muted-foreground">Consolidate: drop older than</span>
+            <select
+              value={pruneDays}
+              onChange={(e) => setPruneDays(Number(e.target.value))}
+              className="rounded-md border border-border bg-background px-1.5 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+              aria-label="Drop plan edits older than"
+            >
+              <option value={7}>7 days</option>
+              <option value={30}>30 days</option>
+              <option value={90}>90 days</option>
+              <option value={180}>180 days</option>
+            </select>
+            <button
+              onClick={prune}
+              disabled={pruning}
+              title={`Permanently delete plan-edit history older than ${pruneDays} days`}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+            >
+              {pruning ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />} Consolidate
+            </button>
+            <button
+              onClick={load}
+              disabled={loading}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} /> Refresh
+            </button>
+          </div>
         </div>
         <div className="space-y-4 border-l border-border pl-1">
           {entries.map((entry, i) => (

@@ -249,9 +249,9 @@ Always write backup/status.json; never write operational status into workflow.js
     requiredWorkshopMode: 'workshop',
     source: 'builtin',
     execute: (ctx) => {
-      const instruction = `Help me set up or run publish for this workflow. Call get_reference_doc(kind="publish-strategy"), then read workflow.json.publish and publish/status.json.
-- If publish is NOT configured: set it up — ask me which static host (Netlify / Vercel / Cloudflare Pages / GitHub Pages / S3 / any) and for the deploy token, then write workflow.json.publish and publish/status.json with state "configured_not_verified". Do not publish yet.
-- If publish IS configured: publish now — snapshot the report dashboard to static HTML first per the reference doc — and give me the public URL. Confirm what becomes public before the first publish.
+      const instruction = `Help me set up or run publish for this workflow. Call get_reference_doc(kind="publish-strategy") and follow it exactly, then read workflow.json.publish and publish/status.json.
+- If publish is NOT configured: set it up — ask me which static host (Netlify / Vercel / Cloudflare Pages / GitHub Pages / S3 / any), confirm the CLI is installed and logged in, then write workflow.json.publish and publish/status.json with state "configured_not_verified". Do not publish yet.
+- If publish IS configured: publish now. Publish BOTH artifacts — bake the report dashboard to static HTML AND publish the Pulse log (builder/improve.html); deploy dashboard.html + pulse.html + the nav index.html wrapper per the reference doc. If publish.targets only lists one, update it to include both first. Make every page theme-aware (inject the prefers-color-scheme shim). Then give me the public URL and confirm what's public.
 Always write publish/status.json.`
       ctx.onSubmit(ctx.beforeSlash ? `${ctx.beforeSlash}\n\n${instruction}` : instruction)
     }

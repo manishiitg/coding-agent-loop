@@ -1147,7 +1147,8 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 		// Never affects the run's recorded result.
 		if runFolder != "" && sctx.Schedule.WorkshopMode != "optimizer" {
 			if manifest, found, mErr := ReadWorkflowManifest(ctx, sctx.WorkspacePath); mErr == nil && found && manifest.MonitorEnabled() {
-				s.runPostRunMonitor(ctx, sctx, status, runFolder)
+				// Pass the run's sessionID so Pulse resumes the SAME chat (not a fresh one).
+				s.runPostRunMonitor(ctx, sctx, status, runFolder, sessionID)
 			}
 		}
 	}
@@ -1163,34 +1164,57 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 // Goal) and notifies on a transition. It never changes the run's recorded status
 // — failures here are logged and swallowed. Pulse's behavior is defined by the
 // post-run-monitor reference doc; this just hands it the run context.
-func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *ScheduleContext, runStatus, runFolder string) {
+func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *ScheduleContext, runStatus, runFolder, runSessionID string) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.logf(sctx, "[PULSE] post-run pulse panic (recovered): %v", r)
 		}
 	}()
 
-	sessionID := s.newScheduleSessionID(sctx)
+	// Resume the SAME session the workflow run just used, so Pulse continues in the
+	// run's chat thread — the user sees the run and its post-run steward as one
+	// conversation, not a fresh session spun up out of nowhere. Fall back to a new id
+	// only if the run somehow didn't record one.
+	sessionID := strings.TrimSpace(runSessionID)
+	if sessionID == "" {
+		sessionID = s.newScheduleSessionID(sctx)
+	}
 	reqMap := s.buildWorkshopRequest(ctx, sctx)
-	reqMap["query"] = fmt.Sprintf(
+
+	// Run Pulse as a SEQUENCE of smaller turns — one step per message — rather than
+	// one giant prompt that asks the agent to juggle backup→triage→fix→publish→notify
+	// in a single reply. Each turn does one focused job and builds on the prior turns'
+	// context in the same resumed session, the way a message_sequence works, and the
+	// user watches it progress step by step.
+	intro := fmt.Sprintf(
 		"You are Pulse, the post-run steward. A scheduled run of this workflow just finished: status=%q, run_folder=%q. "+
-			"Call get_reference_doc(kind=\"post-run-monitor\") and follow it exactly, performing these five steps in order:\n"+
-			"1. BACK UP (always). Read workflow.json.backup and back up per get_reference_doc(kind=\"backup-strategy\"). If backup is disabled, set it up with the zero-config local-git default and back up. Skip the actual push only when backup/status.json shows the current source is already backed up (unchanged). Always write backup/status.json.\n"+
-			"2. TRIAGE. Read the run evidence, the plan changelog, and the eval/metric files; form a Bug verdict and a Goal verdict; update builder/improve.html (verdict pills, goal card, signal tiles, one run row, a Pulse entry only if something is wrong); write builder/monitor-verdict.json.\n"+
-			"3. FIX (only if triage found a problem). For a Bug finding, apply a LOW-RISK, reversible harden per get_reference_doc(kind=\"optimize-playbook\") and record it in the log as an applied fix. For a Goal finding, record a replan PROPOSAL — do NOT rewrite the plan wholesale. A clean run gets no fix.\n"+
-			"4. PUBLISH (only if publish is on). If workflow.json.publish is enabled, re-publish the updated HTML per get_reference_doc(kind=\"publish-strategy\") — but ONLY when the destination is already VERIFIED (publish/status.json shows a prior successful publish) AND the published artifacts changed since then (source hash). Never do the first/verifying publish here unattended — that is the user's manual set-up step. Always write publish/status.json.\n"+
-			"5. NOTIFY once on a state transition per the doc's step 5 — honor a user `## Notifications` preference in soul/soul.md, otherwise a single notify_user call only on broke/recovered/new-finding and silence on a steady run.\n"+
-			"Stay scoped: back up, apply only low-risk reversible fixes, and re-publish an already-verified site; never rewrite the plan wholesale or dispatch a full improvement run here.",
+			"Call get_reference_doc(kind=\"post-run-monitor\") and follow it. We'll go one step at a time — do ONLY the step in each message, finish it, then stop and wait for the next.",
 		runStatus, runFolder)
 
-	s.sessionLogf(sctx, sessionID, "[PULSE] starting pulse for %s (run_folder=%s status=%s)", sctx.Schedule.ID, runFolder, runStatus)
-	if err := s.api.startSessionInternal(ctx, reqMap, sessionID, "", nil); err != nil {
-		s.sessionLogf(sctx, sessionID, "[PULSE] failed to start: %v", err)
-		return
+	steps := []struct{ label, query string }{
+		{"backup", "STEP 1 — BACK UP (always). Read workflow.json.backup and back up per get_reference_doc(kind=\"backup-strategy\"). If backup is disabled, set it up with the zero-config local-git default and back up. Skip the actual push only when backup/status.json shows the current source is already backed up (unchanged). Always write backup/status.json. Report the backup result, then stop."},
+		{"triage", "STEP 2 — TRIAGE. Read the run evidence, the plan changelog, and the eval/metric files; form a Bug verdict and a Goal verdict; update builder/improve.html (verdict pills, goal card, signal tiles, one run row, a Pulse entry only if something is wrong); write builder/monitor-verdict.json. Report the two verdicts, then stop."},
+		{"fix", "STEP 3 — FIX (only if triage found a problem). For a Bug finding, apply a LOW-RISK, reversible harden per get_reference_doc(kind=\"optimize-playbook\") and record it in the log as an applied fix. For a Goal finding, record a replan PROPOSAL — do NOT rewrite the plan wholesale. A clean run gets no fix. Report what you applied (or that the run was clean), then stop."},
+		{"publish", "STEP 4 — PUBLISH (only if publish is on). If workflow.json.publish is enabled, re-publish the updated HTML per get_reference_doc(kind=\"publish-strategy\") — but ONLY when the destination is already VERIFIED (publish/status.json shows a prior successful publish) AND the published artifacts changed since then (source hash). Never do the first/verifying publish here unattended — that is the user's manual set-up step. Always write publish/status.json. Report the result, then stop."},
+		{"notify", "STEP 5 — NOTIFY once on a state transition per the post-run-monitor doc's step 5 — honor a user `## Notifications` preference in soul/soul.md, otherwise a single notify_user call only on broke/recovered/new-finding, and silence on a steady run. Stay scoped: never rewrite the plan wholesale or dispatch a full improvement run here."},
 	}
-	if err := s.waitForWorkshopIdle(ctx, sessionID); err != nil {
-		s.sessionLogf(sctx, sessionID, "[PULSE] idle wait failed: %v", err)
-		return
+
+	s.sessionLogf(sctx, sessionID, "[PULSE] starting pulse for %s (run_folder=%s status=%s) across %d steps", sctx.Schedule.ID, runFolder, runStatus, len(steps))
+	for i, st := range steps {
+		query := st.query
+		if i == 0 {
+			query = intro + "\n\n" + query
+		}
+		reqMap["query"] = query
+		if err := s.api.startSessionInternal(ctx, reqMap, sessionID, "", nil); err != nil {
+			s.sessionLogf(sctx, sessionID, "[PULSE] step %q failed to start: %v", st.label, err)
+			return
+		}
+		if err := s.waitForWorkshopIdle(ctx, sessionID); err != nil {
+			s.sessionLogf(sctx, sessionID, "[PULSE] step %q idle wait failed: %v", st.label, err)
+			return
+		}
+		s.sessionLogf(sctx, sessionID, "[PULSE] step %q done for %s", st.label, sctx.Schedule.ID)
 	}
 	s.sessionLogf(sctx, sessionID, "[PULSE] pulse completed for %s", sctx.Schedule.ID)
 	// Pulse owns its own notification: per its reference doc it calls notify_user

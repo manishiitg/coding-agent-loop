@@ -9,31 +9,39 @@ proceed.
 
 ## Step composition defaults
 
-Default to `regular` unless the task clearly needs branching,
-iteration, sub-agents, or same-context ordered turns that should share
-one conversation. Every step must have a `validation_schema`. Context
-flow is forward-only via `context_dependencies` → `context_output`.
+**Default to `message_sequence`.** Modern agents do a lot in a single
+turn and run for a long time, so the strongest shape is one
+shared-context conversation that does the work and then **verifies it in
+follow-up items** — e.g. `[do the task] → [verify the result against the
+success criteria] → [fix what verification caught]`. Building the
+verification in as later messages of the same sequence keeps the agent's
+full working context instead of forcing a fresh `regular` step to
+reconstruct it from artifacts. Every step still needs a
+`validation_schema`; context flow stays forward-only via
+`context_dependencies` → `context_output`.
+
+Use `regular` only when the step is genuinely **one atomic action with no
+verify-and-fix follow-up**, or when a turn needs its own **durable
+artifact, hard validation gate, retry/failure domain, different
+tool/security context, or a distinct downstream consumer** — those are
+the real reasons to split into separate steps.
 
 For fixed branch choices the user already gave the builder, prefer a
 deterministic `routing` step and pass `route_selections` when running.
-Do not add a `human_input` step just to ask the same branch choice
-again.
-
-If multiple ordered agent actions share the same context and mainly
-need to build on each other, prefer `message_sequence` over multiple
-regular steps. Split into regular steps only when a durable output,
-validation gate, retry/failure domain, different tool/security context,
-or downstream consumer needs a separate artifact.
+Use `todo_task` when the step manages multiple discrete tasks or needs
+sub-agent delegation. Do not add a `human_input` step just to ask the
+same branch choice again.
 
 ## Step types
 
-- **`regular`** — single agentic step
+- **`message_sequence`** (default) — ordered turns sharing one
+  conversation: do the work, then verify/fix in follow-up user messages
+- **`regular`** — single atomic action with no verify-and-fix follow-up
 - **`todo_task`** — orchestrator with `predefined_routes`; each route
-  is `regular` / `message_sequence` / nested `todo_task` (1 level
+  is `message_sequence` / `regular` / nested `todo_task` (1 level
   deep only)
 - **`routing`** — choose next step from a fixed route map
 - **`human_input`** — pause for operator input
-- **`message_sequence`** — ordered turns sharing one conversation/context
 - **orphan** (`is_orphan: true`) — reusable across orchestrators via
   `shared_with.orchestrator_ids` + `orphan_step_ref`
 

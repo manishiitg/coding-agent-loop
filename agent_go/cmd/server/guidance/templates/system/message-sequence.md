@@ -1,8 +1,19 @@
-## WHEN TO USE MESSAGE SEQUENCE
+## MESSAGE SEQUENCE — THE DEFAULT STEP TYPE
 
-Use `message_sequence` when a unit of work needs multiple ordered agent turns that share the same context and should build on each other. It is the best-practice shape for "do A, then critique/check it, then improve/write the final output" when those turns use the same files, tools, credentials, security context, and final validation boundary.
+`message_sequence` is the **first-class default** for agentic work: one shared-context
+conversation that does the work and then **verifies it in follow-up user-message turns** —
+"do A, then check/critique it against the success criteria, then fix and write the final
+output." Modern agents do a lot in a single long-running turn, so this beats the old habit of
+splitting a task into several smaller `regular` steps that hand off context through
+intermediate `.md`/`.json` files.
 
-Prefer `message_sequence` over several regular steps when:
+**Prefer one larger `message_sequence` with verification turns over many small regular steps.**
+Where you used to chain `extract → validate → transform → check → write` as five regular steps
+passing files between them, author one sequence: the work happens in shared context, and
+**verification user-messages confirm each part is done and complete** before the final output —
+no lossy file handoffs, no fresh step reconstructing what the last one was thinking.
+
+Use it when (i.e. the common case):
 - The turns mostly read the same upstream context.
 - The later turns need the earlier turns' transient reasoning, critique, tool output, or accumulated conversation state.
 - There is one final durable output, or tightly coupled outputs that can be validated together.

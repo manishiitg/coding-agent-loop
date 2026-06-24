@@ -110,8 +110,11 @@ export function LogViewer({ workspacePath }: LogViewerProps) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-center">
         <div className="max-w-md text-sm text-muted-foreground">
-          No workflow log yet. Run <code className="rounded bg-muted px-1">/define-success</code> to bootstrap it, then
-          improvements, reviews, and the post-run monitor will record entries here.
+          No Pulse log yet. Entries appear here after the post-run monitor runs on a{' '}
+          <strong>scheduled</strong> run (Pulse must be enabled), and when improvement or review
+          passes run. <code className="rounded bg-muted px-1">/define-success</code> seeds the
+          success-criteria section the Goal verdict is measured against — it's optional, not
+          required for the log.
         </div>
       </div>
     )

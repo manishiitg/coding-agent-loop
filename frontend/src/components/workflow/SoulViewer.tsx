@@ -66,8 +66,8 @@ export function SoulViewer({ workspacePath }: SoulViewerProps) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-center">
         <div className="max-w-md text-sm text-muted-foreground">
-          No soul yet — the workflow's north star. Run <code className="rounded bg-muted px-1">/define-success</code> to
-          write <code className="rounded bg-muted px-1">## Objective</code> and <code className="rounded bg-muted px-1">## Success Criteria</code>.
+          No soul yet — the workflow's north star. Run <code className="rounded bg-muted px-1">/auto-improve</code> to
+          confirm the <code className="rounded bg-muted px-1">## Objective</code> and <code className="rounded bg-muted px-1">## Success Criteria</code> and set up improvement.
         </div>
       </div>
     )

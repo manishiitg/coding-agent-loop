@@ -24,8 +24,7 @@ import {
   reportPreviewPreferenceKey,
   ReportView,
 } from '../ReportViewer'
-import { WORKFLOW_LOG_REFRESH_EVENT } from '../LogViewer'
-import { PulseView } from '../PulseView'
+import { LogViewer, WORKFLOW_LOG_REFRESH_EVENT } from '../LogViewer'
 import { SoulViewer, WORKFLOW_SOUL_REFRESH_EVENT } from '../SoulViewer'
 import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
 import { useEvaluationPlanData } from '../hooks/useEvaluationPlanData'
@@ -444,7 +443,7 @@ const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasPr
           <div className="h-full min-h-0 relative">
             <PreviewPaneControls hasPlan={Boolean(plan?.steps?.length)} scopeId={workspacePath} />
             {workspacePath && (paneMode === 'log'
-              ? <PulseView workspacePath={workspacePath} />
+              ? <LogViewer workspacePath={workspacePath} />
               : paneMode === 'soul'
                 ? <SoulViewer workspacePath={workspacePath} />
                 : <ReportView workspacePath={workspacePath} focusTier={reportFocusTier} />)}

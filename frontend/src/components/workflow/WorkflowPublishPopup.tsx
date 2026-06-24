@@ -8,9 +8,7 @@ import {
   Info,
   ExternalLink,
   Copy,
-  Check,
-  Play,
-  Settings2
+  Check
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type {
@@ -73,7 +71,6 @@ const WorkflowPublishPopup: React.FC<WorkflowPublishPopupProps> = ({ isOpen, onC
   const [info, setInfo] = useState<WorkflowPublishInfoResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [action, setAction] = useState<'publish' | 'configure' | null>(null)
   const [copied, setCopied] = useState(false)
 
   const load = useCallback(async () => {
@@ -98,22 +95,6 @@ const WorkflowPublishPopup: React.FC<WorkflowPublishPopupProps> = ({ isOpen, onC
     }
   }, [isOpen, workspacePath, load])
 
-  const handleRun = async (act: 'publish' | 'configure') => {
-    if (!workspacePath) return
-    setAction(act)
-    setError(null)
-    setNotice(null)
-    try {
-      const resp = await agentApi.runWorkflowPublish(workspacePath, act)
-      setNotice(resp.message || 'Builder publish task started.')
-      await load()
-    } catch (err) {
-      setError(extractErrorMessage(err, act === 'configure' ? 'Failed to start publish setup' : 'Failed to start publish'))
-    } finally {
-      setAction(null)
-    }
-  }
-
   const copyUrl = async (url: string) => {
     try {
       await navigator.clipboard.writeText(url)
@@ -128,10 +109,12 @@ const WorkflowPublishPopup: React.FC<WorkflowPublishPopupProps> = ({ isOpen, onC
   const visual = getPublishStateVisual(state)
   const StateIcon = visual.Icon
   const configEnabled = Boolean(info?.config?.enabled)
-  const canPublish = configEnabled && state !== 'publishing'
   const url = info?.url || info?.status?.url || ''
   const destinations = info?.config?.destinations || []
   const targets = info?.config?.targets || []
+  const targetLabel = targets.length
+    ? targets.map(t => (typeof t === 'string' ? t : (t.id || t.artifact || 'artifact'))).join(', ')
+    : 'pulse, report'
   const supported = info?.supported?.length ? info.supported : FALLBACK_SUPPORTED
 
   return (
@@ -197,16 +180,9 @@ const WorkflowPublishPopup: React.FC<WorkflowPublishPopupProps> = ({ isOpen, onC
                           <TooltipContent side="bottom"><p>Refresh publish status</p></TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
-                      {configEnabled && (
-                        <button onClick={() => handleRun('publish')} disabled={!canPublish || action !== null} className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50">
-                          {action === 'publish' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                          Publish now
-                        </button>
-                      )}
-                      <button onClick={() => handleRun('configure')} disabled={action !== null} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50">
-                        {action === 'configure' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Settings2 className="h-3.5 w-3.5" />}
-                        {configEnabled ? 'Edit setup' : 'Set up'}
-                      </button>
+                      <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-2.5 py-1.5 text-[11px] text-muted-foreground">
+                        Set up · publish in chat with <code className="rounded bg-background px-1 font-medium text-foreground">/publish</code>
+                      </span>
                     </div>
                   </div>
 
@@ -236,7 +212,7 @@ const WorkflowPublishPopup: React.FC<WorkflowPublishPopupProps> = ({ isOpen, onC
                     </div>
                     <div className="px-4 py-3">
                       <div className="text-xs text-muted-foreground">Publishing</div>
-                      <div className="mt-1 font-medium text-foreground">{targets.length ? targets.join(', ') : 'pulse, report'}</div>
+                      <div className="mt-1 font-medium text-foreground">{targetLabel}</div>
                     </div>
                   </div>
                 </section>

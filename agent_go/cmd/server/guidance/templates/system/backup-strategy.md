@@ -22,6 +22,10 @@ health from `backup/status.json`. Keep these separate:
   attempt. Update it after every configure or backup attempt, including
   partial and failed attempts.
 - Do not write frequently changing status fields into `workflow.json`.
+- **Edit workflow.json safely:** change only the `backup` block, preserve every other field,
+  and after writing re-read it with a JSON parser
+  (`python3 -c "import json; json.load(open('workflow.json'))"`) — a malformed workflow.json
+  drops the workflow's config and can hide the workflow from the UI.
 
 Recommended `workflow.json.backup` shape:
 

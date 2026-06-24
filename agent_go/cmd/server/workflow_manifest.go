@@ -64,6 +64,12 @@ type WorkflowManifest struct {
 	// Operational status (incl. the URL) is written to publish/status.json so
 	// publish attempts do not churn workflow.json.
 	Publish *WorkflowPublishConfig `json:"publish,omitempty"`
+
+	// MalformedConfig lists optional config blocks (e.g. "backup", "publish") that
+	// failed to parse and were dropped so the workflow could still load. Transient
+	// (never serialized): set during ReadWorkflowManifest, used to avoid clobbering
+	// the on-disk config on write-back and to flag the issue.
+	MalformedConfig []string `json:"-"`
 }
 
 // MonitorEnabled reports whether the post-run monitor should run for this
@@ -102,12 +108,17 @@ type WorkflowBackupDestination struct {
 // artifacts to a public URL. Provider-agnostic: the destination's provider is a
 // free-form string and the per-host deploy logic lives in the publish-strategy
 // reference doc, not in Go.
+// NOTE: this config is authored by the builder agent, so its sub-fields are kept
+// deliberately tolerant. Free-form / variable-shape fields (e.g. targets, which the
+// agent may write as plain strings OR rich objects) use json.RawMessage so a shape
+// the agent chose can never fail manifest parsing and drop the whole workflow.
 type WorkflowPublishConfig struct {
 	Enabled       bool                         `json:"enabled"`
 	Mode          string                       `json:"mode,omitempty"`           // "agent" (default)
-	Targets       []string                     `json:"targets,omitempty"`        // "pulse", "report"
-	DashboardMode string                       `json:"dashboard_mode,omitempty"` // "snapshot" (static HTML; only mode for now)
-	Triggers      WorkflowBackupTriggers       `json:"triggers,omitempty"`       // reuse the after-run trigger flags
+	Targets       []json.RawMessage            `json:"targets,omitempty"`        // strings ("pulse"/"report") or objects — agent's choice
+	DashboardMode string                       `json:"dashboard_mode,omitempty"` // "snapshot" (static HTML)
+	URL           string                       `json:"url,omitempty"`            // last published URL (agent-written, mirror of status)
+	Triggers      WorkflowBackupTriggers       `json:"triggers,omitempty"`
 	Destinations  []WorkflowPublishDestination `json:"destinations,omitempty"`
 	Notes         string                       `json:"notes,omitempty"`
 }
@@ -117,8 +128,10 @@ type WorkflowPublishDestination struct {
 	Provider      string   `json:"provider"`                  // free-form: netlify, vercel, cloudflare-pages, github-pages, s3, ...
 	Method        string   `json:"method,omitempty"`          // cli | git | sync
 	Site          string   `json:"site,omitempty"`            // project / site / bucket / repo identifier
-	SecretName    string   `json:"secret_name,omitempty"`     // global secret holding the deploy token
+	SecretName    string   `json:"secret_name,omitempty"`     // global secret holding the deploy token (CI only)
+	Visibility    string   `json:"visibility,omitempty"`      // public | private | unguessable-link (agent's choice)
 	PublicBaseURL string   `json:"public_base_url,omitempty"` // filled in by the agent after first deploy
+	URL           string   `json:"url,omitempty"`             // this destination's published URL
 	Covers        []string `json:"covers,omitempty"`
 	Notes         string   `json:"notes,omitempty"`
 }
@@ -360,7 +373,22 @@ func ReadWorkflowManifest(ctx context.Context, workspacePath string) (*WorkflowM
 
 	var m WorkflowManifest
 	if err := json.Unmarshal([]byte(content), &m); err != nil {
-		return nil, false, fmt.Errorf("failed to parse workflow.json: %w", err)
+		// Resilience: the backup/publish blocks are authored by the builder agent,
+		// so a shape it chose (e.g. a richer `targets`) must NEVER make the whole
+		// manifest unparseable and hide the workflow from the UI. Retry with those
+		// optional blocks dropped so the workflow still loads; only a genuinely
+		// broken core manifest is a hard error.
+		stripped, droppedKeys := stripOptionalConfigBlocks([]byte(content))
+		if len(droppedKeys) > 0 {
+			if err2 := json.Unmarshal(stripped, &m); err2 == nil {
+				log.Printf("[MANIFEST] %s: dropped malformed config block(s) %v so the workflow still loads (parse error: %v)", workspacePath, droppedKeys, err)
+				m.MalformedConfig = droppedKeys
+			} else {
+				return nil, false, fmt.Errorf("failed to parse workflow.json: %w", err)
+			}
+		} else {
+			return nil, false, fmt.Errorf("failed to parse workflow.json: %w", err)
+		}
 	}
 
 	// Track whether any schedule IDs need auto-assignment before applying defaults.
@@ -376,13 +404,42 @@ func ReadWorkflowManifest(ctx context.Context, workspacePath string) (*WorkflowM
 	applyManifestDefaults(&m)
 
 	// Persist auto-assigned schedule IDs so subsequent lookups find the same UUID.
-	if hadEmptyScheduleID {
+	// Skip the write-back when we had to drop a malformed config block on read —
+	// rewriting now would silently erase the user's backup/publish config from disk.
+	if hadEmptyScheduleID && len(m.MalformedConfig) == 0 {
 		if err := WriteWorkflowManifest(ctx, workspacePath, &m); err != nil {
 			log.Printf("[WARN] ReadWorkflowManifest: failed to persist auto-assigned schedule IDs for %s: %v", workspacePath, err)
 		}
 	}
 
 	return &m, true, nil
+}
+
+// stripOptionalConfigBlocks removes the agent-authored optional config blocks
+// ("backup", "publish") from raw workflow.json so a malformed one of them can't
+// fail the whole manifest parse. Returns the stripped bytes and the keys removed.
+// If the top-level JSON itself can't be parsed, returns no dropped keys (the
+// caller then surfaces the original, genuine parse error).
+func stripOptionalConfigBlocks(content []byte) ([]byte, []string) {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(content, &top); err != nil {
+		return content, nil
+	}
+	var dropped []string
+	for _, key := range []string{"backup", "publish"} {
+		if _, ok := top[key]; ok {
+			delete(top, key)
+			dropped = append(dropped, key)
+		}
+	}
+	if len(dropped) == 0 {
+		return content, nil
+	}
+	stripped, err := json.Marshal(top)
+	if err != nil {
+		return content, nil
+	}
+	return stripped, dropped
 }
 
 // WriteWorkflowManifest validates and writes workflow.json to a workspace.

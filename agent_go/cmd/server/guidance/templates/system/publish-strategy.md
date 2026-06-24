@@ -8,16 +8,47 @@ config is the contract.
 
 ## What you publish
 
-You are told which artifacts to publish (from the `publish` config's `targets`):
+Publish **both** artifacts by default. Use the config's `targets`; if `targets` is empty or
+absent, publish both — do **not** publish only one unless the user explicitly asked for one.
 
-- **Pulse log** (`builder/improve.html`, or the org's `pulse/org-pulse.html`) — a
-  **self-contained** HTML document. Publish it as-is.
 - **Reporting dashboard** (`reports/`) — **live** HTML: it calls `window.report.query(sql)`
-  against `db/db.sqlite` inside the app, which does not exist on a static host. You must
-  **generate a static snapshot** first (next section).
+  against `db/db.sqlite` inside the app, which doesn't exist on a static host. **Generate a
+  static snapshot** first (next section).
+- **Pulse log** (`builder/improve.html`, or the org's `pulse/org-pulse.html`) — a
+  **self-contained** HTML document. Publish it as-is (after the theme step below).
 
-Only publish what the config lists. Never publish secrets, `db/db.sqlite` raw, credentials,
-or `.env`/key files.
+When publishing both, deploy three files: `dashboard.html` (the report snapshot),
+`pulse.html` (the Pulse log), and a small **`index.html` wrapper** that shows them together in
+a responsive layout via two `<iframe>`s — keep them as separate files (iframes isolate their
+CSS/scripts; never merge the two documents). Wrapper:
+
+```html
+<!doctype html><html><head>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <style>
+    html,body{margin:0;height:100%}
+    .grid{display:grid;grid-template-columns:1fr 380px;height:100vh}
+    .grid iframe{border:0;width:100%;height:100%;display:block}
+    /* Mobile: iframes can't auto-size to content, so let the PAGE scroll and give
+       each iframe an explicit height (don't use `auto` rows — the iframe collapses). */
+    @media (max-width:820px){
+      html,body{height:auto}
+      .grid{display:block;height:auto}
+      .grid iframe{height:88vh}
+    }
+  </style>
+</head><body>
+  <div class="grid">
+    <iframe src="dashboard.html" title="Dashboard"></iframe>
+    <iframe src="pulse.html" title="Pulse"></iframe>
+  </div>
+</body></html>
+```
+
+Desktop/tablet → dashboard main + Pulse as a right rail; mobile (≤820px) → stacked, dashboard
+on top. Apply the theme shim (below) to `dashboard.html` and `pulse.html` (the iframed pages),
+not the wrapper. Never publish secrets, `db/db.sqlite` raw, credentials, or `.env`/key files.
 
 ## Generating the static dashboard snapshot (the report)
 
@@ -42,27 +73,86 @@ A live report won't work on static hosting. Bake it to static HTML at publish ti
 
 (Do not ship `db.sqlite` to the client or stand up a server — snapshot only.)
 
-## Privacy — confirm before exposing data
+## Make the published HTML theme-aware (both artifacts)
 
-**Publishing puts the data on a public URL.** Before the first publish of a destination:
-- State plainly what will become public (which artifacts; for the dashboard, which
-  queries/rows), and confirm the scope with the user.
-- If the config scopes the report to specific views/queries, honor it — publish only those.
-- Never expose raw credential/secret rows. If a query would surface sensitive data, flag it
-  and ask rather than publish.
+In the app, dark mode is set by the app **injecting `data-theme="dark"` onto `<html>`** — a
+published static page has no app, so it would render **light only**. For **every** published
+HTML file (the Pulse log AND the report snapshot), inject this shim in `<head>` so the page
+follows the **viewer's** system theme:
+
+```html
+<meta name="color-scheme" content="light dark">
+<script>
+  document.documentElement.dataset.theme =
+    matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+</script>
+```
+
+This reuses the page's existing `html[data-theme="dark"]` CSS, so dark-mode viewers get dark
+and light-mode viewers get light — no app needed. (If a page has no dark CSS at all, also add
+a minimal dark palette under `@media (prefers-color-scheme: dark)`.)
+
+## Public or private? Ask first
+
+Publishing puts the data on a URL. **Before choosing a host, ask the user whether the page
+should be public (anyone with the link) or private (behind a login).** For a dashboard with
+real data, recommend **private** by default.
+
+**Private for free — prefer these when the data is sensitive:**
+- **Azure Static Web Apps** — built-in auth + route authorization on the **free** tier. Add a
+  `staticwebapp.config.json` route rule with `"allowedRoles": ["authenticated"]` so the site
+  requires login (GitHub / Microsoft Entra ID). No extra service. Cleanest free-private option.
+- **Cloudflare Pages + Cloudflare Access** — Cloudflare Zero Trust **free** tier (≤50 users):
+  deploy to Pages, then put an Access policy (email OTP / Google / etc.) in front of it.
+
+**Private with a workaround:**
+- **Netlify** (free) — HTTP Basic Auth via a `_headers` file (per-path, manual). Site-wide
+  password is a paid (Pro) feature.
+- **Vercel** — "Vercel Authentication" restricts to team members on all plans, but the free
+  Hobby plan allows only one external user; a shared password is a paid add-on.
+
+**Public-only-free / paid-private** — GitHub Pages (private = Enterprise), Surge, Firebase
+(add app-level auth yourself). Use these when the page is meant to be public.
+
+Whatever the choice, before the first publish of a destination:
+- State plainly what will be visible (which artifacts; for the dashboard, which queries/rows)
+  and confirm scope. If the config scopes the report to specific views/queries, honor it.
+- Never expose raw credential/secret rows. If a query would surface sensitive data, either
+  scope it out or use a private host — ask rather than publish.
 
 ## Deploying — three universal paths (pick what the host supports)
 
-Read the destination's `provider`, `method`, `site`, and `secret_name`. Export the token from
-the named secret, then deploy:
+Read the destination's `provider`, `method`, and `site`, then deploy:
 
-1. **Provider CLI** (`method: cli`) — the host's own command. Examples:
-   - Netlify: `netlify deploy --prod --dir <dir> --site <site>` (`NETLIFY_AUTH_TOKEN`)
-   - Vercel: `vercel deploy --prod --token $TOKEN --yes`
-   - Cloudflare Pages: `wrangler pages deploy <dir> --project-name <site>` (`CLOUDFLARE_API_TOKEN`)
-   - GitHub Pages: `gh-pages -d <dir>` or push to the `gh-pages` branch
-   - Surge: `surge <dir> <site>.surge.sh`
-   - Firebase: `firebase deploy --only hosting`
+1. **Provider CLI** (`method: cli`) — the host's own CLI, which **handles its own auth**.
+   Almost every major static host ships a CLI, most installable with `npm i -g`. Before
+   deploying:
+   - **Check it's installed** (`command -v netlify`). If missing, tell the user the exact
+     install command (table) and ask them to run it — CLIs install per machine, a one-time
+     user step; never install silently.
+   - **Check it's logged in** (`netlify status`, `vercel whoami`, `firebase login:list`,
+     `wrangler whoami`, …). **You do NOT handle tokens or secrets — the CLI uses its own
+     stored login session.** If it isn't authenticated, tell the user to run the one-time
+     login command (e.g. `netlify login`); it opens a browser, so you can't do it for them.
+     Then deploy.
+
+   | Host | Install | Log in (one-time, user) | Deploy |
+   |------|------|------|------|
+   | Netlify | `npm i -g netlify-cli` | `netlify login` | `netlify deploy --prod --dir <dir>` |
+   | Vercel | `npm i -g vercel` | `vercel login` | `vercel deploy --prod --yes` |
+   | Cloudflare Pages | `npm i -g wrangler` | `wrangler login` | `wrangler pages deploy <dir> --project-name <site>` |
+   | Firebase Hosting | `npm i -g firebase-tools` | `firebase login` | `firebase deploy --only hosting` |
+   | Surge | `npm i -g surge` | `surge login` | `surge <dir> <site>.surge.sh` |
+   | Azure Static Web Apps | `npm i -g @azure/static-web-apps-cli` | `az login` | `swa deploy <dir> --env production` |
+   | AWS S3 + CloudFront | `brew install awscli` | `aws configure` | `aws s3 sync <dir> s3://<bucket>` |
+   | GitHub Pages | `gh` CLI (`brew install gh`) | `gh auth login` | `gh-pages -d <dir>` or push the `gh-pages` branch |
+
+   If the host isn't listed, it almost certainly still has a CLI — check its docs for the
+   install + login + deploy commands; the user logs in once, you deploy.
+
+   *(Headless/CI only: most CLIs also accept a token env var — `NETLIFY_AUTH_TOKEN`,
+   `VERCEL_TOKEN`, `CLOUDFLARE_API_TOKEN`, etc. — via the destination's optional `secret_name`.
+   For a person at the keyboard, prefer interactive `<cli> login`.)*
 2. **Git-push-to-deploy** (`method: git`) — commit the static files to the repo/branch the
    host auto-builds (Netlify/Vercel/Pages/Render watch a branch). Use the git discipline from
    `get_reference_doc(kind="backup-strategy")` (atomic commit, `--force-with-lease`).
@@ -78,10 +168,18 @@ named secret; never hardcode a token.
 
 Follow the same set-up-then-prove flow as backup:
 
-1. **Configure** (`action: "configure"`) — if the strategy/destination isn't set yet, update
-   `<config>.publish` with `enabled=true`, `mode="agent"`, the destination(s), and the
-   token's `secret_name`. If critical details are missing, ask in this chat and write
-   `publish/status.json` with state `configured_not_verified`. Do not publish yet.
+1. **Configure** (`action: "configure"`) — if the destination isn't set yet, add it to
+   `<config>.publish` (`enabled=true`, `mode="agent"`, the destination's provider / method /
+   site). For a CLI host, **proactively suggest the one-time CLI install** (exact command from
+   the table) and confirm the CLI is installed and **logged in** (`<cli> login`) — the CLI
+   handles auth, so you don't store tokens. If critical details are missing, ask in this chat
+   and write `publish/status.json` with state `configured_not_verified`. Do not publish yet.
+
+   **Edit workflow.json safely.** Change ONLY the `publish` block and preserve every other
+   field. The `targets` value must be a JSON array (of strings like `"report"`/`"pulse"`, or
+   objects). After writing, re-read it with a JSON parser
+   (`python3 -c "import json; json.load(open('workflow.json'))"`) to confirm it still parses —
+   a malformed workflow.json drops the workflow's config and can hide the workflow from the UI.
 2. **Verify** — on the first real publish, deploy, fetch the returned URL to confirm it loads,
    and only then mark `published`. Record the URL in both the destination and the top-level
    `url`.

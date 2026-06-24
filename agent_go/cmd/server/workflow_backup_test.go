@@ -58,33 +58,3 @@ func TestWorkflowBackupEffectiveState(t *testing.T) {
 		})
 	}
 }
-
-func TestNormalizeWorkflowBackupConfig(t *testing.T) {
-	got := normalizeWorkflowBackupConfig(WorkflowBackupConfig{
-		Enabled: true,
-		Destinations: []WorkflowBackupDestination{
-			{
-				ID:       " repo ",
-				Type:     " git ",
-				Provider: " github ",
-			},
-		},
-	})
-
-	if got.Mode != "agent" {
-		t.Fatalf("Mode = %q, want agent", got.Mode)
-	}
-	if len(got.Destinations) != 1 {
-		t.Fatalf("Destinations length = %d, want 1", len(got.Destinations))
-	}
-	destination := got.Destinations[0]
-	if destination.ID != "repo" || destination.Type != "git" || destination.Provider != "github" {
-		t.Fatalf("destination was not trimmed: %+v", destination)
-	}
-	if destination.Covers == nil {
-		t.Fatalf("Covers is nil, want empty slice")
-	}
-	if destination.SecretRefs == nil {
-		t.Fatalf("SecretRefs is nil, want empty slice")
-	}
-}

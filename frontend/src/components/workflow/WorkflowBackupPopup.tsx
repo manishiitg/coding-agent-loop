@@ -8,10 +8,7 @@ import {
   RefreshCw,
   Info,
   GitBranch,
-  HardDrive,
-  Play,
-  RotateCcw,
-  Settings2
+  HardDrive
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type {
@@ -20,7 +17,6 @@ import type {
   WorkflowBackupInfoResponse,
   WorkflowBackupStrategyInfo
 } from '../../services/api-types'
-import ConfirmationDialog from '../ui/ConfirmationDialog'
 import ModalPortal from '../ui/ModalPortal'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
 import { formatBackupStateLabel, getBackupStateVisual } from './backupStatus'
@@ -137,9 +133,7 @@ const WorkflowBackupPopup: React.FC<WorkflowBackupPopupProps> = ({
   const [backupInfo, setBackupInfo] = useState<WorkflowBackupInfoResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [backupAction, setBackupAction] = useState<'backup' | 'configure' | 'restore' | null>(null)
   const [isExportingZip, setIsExportingZip] = useState(false)
-  const [showRestoreConfirm, setShowRestoreConfirm] = useState(false)
 
   const loadBackup = useCallback(async () => {
     if (!workspacePath) return
@@ -163,41 +157,6 @@ const WorkflowBackupPopup: React.FC<WorkflowBackupPopupProps> = ({
       loadBackup()
     }
   }, [isOpen, workspacePath, loadBackup])
-
-  const handleRunBackup = async (action: 'backup' | 'configure') => {
-    if (!workspacePath) return
-    setBackupAction(action)
-    setError(null)
-    setNotice(null)
-    try {
-      const resp = await agentApi.runWorkflowBackup(workspacePath, action)
-      setNotice(resp.message || 'Builder backup task started.')
-      await loadBackup()
-    } catch (err) {
-      setError(extractErrorMessage(err, action === 'configure' ? 'Failed to start backup setup' : 'Failed to start backup'))
-      console.error('Failed to run workflow backup:', err)
-    } finally {
-      setBackupAction(null)
-    }
-  }
-
-  const handleRunRestore = async () => {
-    if (!workspacePath) return
-    setShowRestoreConfirm(false)
-    setBackupAction('restore')
-    setError(null)
-    setNotice(null)
-    try {
-      const resp = await agentApi.runWorkflowBackup(workspacePath, 'restore')
-      setNotice(resp.message || 'Builder restore task started.')
-      await loadBackup()
-    } catch (err) {
-      setError(extractErrorMessage(err, 'Failed to start restore'))
-      console.error('Failed to run workflow restore:', err)
-    } finally {
-      setBackupAction(null)
-    }
-  }
 
   const handleExportZip = async () => {
     if (!workspacePath) return
@@ -228,8 +187,6 @@ const WorkflowBackupPopup: React.FC<WorkflowBackupPopupProps> = ({
   const backupState = backupInfo?.effective_state || 'not_configured'
   const backupVisual = getBackupStateVisual(backupState)
   const BackupStateIcon = backupVisual.Icon
-  const configEnabled = Boolean(backupInfo?.config?.enabled)
-  const canRunBackup = configEnabled && backupState !== 'running'
   const supportedStrategies = backupInfo?.supported?.length ? backupInfo.supported : FALLBACK_SUPPORTED_STRATEGIES
 
   return (
@@ -305,35 +262,9 @@ const WorkflowBackupPopup: React.FC<WorkflowBackupPopupProps> = ({
                           <TooltipContent side="bottom"><p>Refresh backup status</p></TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
-                      {configEnabled && (
-                        <button
-                          onClick={() => handleRunBackup('backup')}
-                          disabled={!canRunBackup || backupAction !== null}
-                          className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {backupAction === 'backup' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                          Run backup
-                        </button>
-                      )}
-                      {configEnabled && (
-                        <button
-                          onClick={() => setShowRestoreConfirm(true)}
-                          disabled={backupState === 'running' || backupAction !== null}
-                          className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                          title="Restore tracked files from a backup commit/snapshot"
-                        >
-                          {backupAction === 'restore' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
-                          Restore
-                        </button>
-                      )}
-                      <button
-                        onClick={() => handleRunBackup('configure')}
-                        disabled={backupAction !== null}
-                        className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {backupAction === 'configure' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Settings2 className="h-3.5 w-3.5" />}
-                        {configEnabled ? 'Edit setup' : 'Set up'}
-                      </button>
+                      <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-2.5 py-1.5 text-[11px] text-muted-foreground">
+                        Set up · run · restore in chat with <code className="rounded bg-background px-1 font-medium text-foreground">/backup</code>
+                      </span>
                     </div>
                   </div>
 
@@ -461,17 +392,6 @@ const WorkflowBackupPopup: React.FC<WorkflowBackupPopupProps> = ({
           </div>
         </div>
       </div>
-
-      <ConfirmationDialog
-        isOpen={showRestoreConfirm}
-        onClose={() => setShowRestoreConfirm(false)}
-        onConfirm={handleRunRestore}
-        title="Restore from latest backup?"
-        message="The builder will check out the most recent backup and overwrite the current workflow config, planning, knowledgebase, and learnings files in this workspace. Run a backup first if you want to keep the current state."
-        confirmText="Restore"
-        type="warning"
-        isLoading={backupAction === 'restore'}
-      />
     </ModalPortal>
   )
 }

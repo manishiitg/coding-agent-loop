@@ -76,7 +76,6 @@ import type {
   StartRestoredTerminalRequest,
   StartRestoredTerminalResponse,
   WorkflowCapabilities,
-  WorkflowBackupConfig,
   WorkflowBackupInfoResponse,
 } from './api-types'
 import type { PlanStep, AgentConfigs } from '../utils/stepConfigMatching'
@@ -1924,39 +1923,8 @@ export const agentApi = {
     return response.data
   },
 
-  updateWorkflowBackupConfig: async (workspacePath: string, backup: WorkflowBackupConfig): Promise<{ success: boolean; backup: WorkflowBackupConfig }> => {
-    const response = await api.post('/api/workflow/backup/config', {
-      workspace_path: workspacePath,
-      backup
-    })
-    return response.data
-  },
-
-  runWorkflowBackup: async (
-    workspacePath: string,
-    action: 'backup' | 'configure' | 'restore' = 'backup',
-    targetRef?: string
-  ): Promise<{ success: boolean; session_id: string; message: string }> => {
-    const response = await api.post('/api/workflow/backup/run', {
-      workspace_path: workspacePath,
-      action,
-      target_ref: targetRef
-    })
-    return response.data
-  },
-
   getWorkflowPublish: async (workspacePath: string): Promise<import('./api-types').WorkflowPublishInfoResponse> => {
     const response = await api.get('/api/workflow/publish', { params: { workspace_path: workspacePath } })
-    return response.data
-  },
-
-  updateWorkflowPublishConfig: async (workspacePath: string, publish: import('./api-types').WorkflowPublishConfig): Promise<{ success: boolean; publish: import('./api-types').WorkflowPublishConfig }> => {
-    const response = await api.post('/api/workflow/publish/config', { workspace_path: workspacePath, publish })
-    return response.data
-  },
-
-  runWorkflowPublish: async (workspacePath: string, action: 'publish' | 'configure' = 'publish'): Promise<{ success: boolean; session_id: string; message: string }> => {
-    const response = await api.post('/api/workflow/publish/run', { workspace_path: workspacePath, action })
     return response.data
   },
 

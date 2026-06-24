@@ -2083,8 +2083,10 @@ export interface WorkflowBackupInfoResponse {
 export interface WorkflowPublishConfig {
   enabled: boolean
   mode?: string
-  targets?: string[]          // "pulse", "report"
+  // Agent-authored: may be plain strings ("pulse"/"report") or rich objects.
+  targets?: Array<string | { id?: string; artifact?: string; [k: string]: unknown }>
   dashboard_mode?: string     // "snapshot"
+  url?: string
   triggers?: WorkflowBackupTriggers
   destinations?: WorkflowPublishDestination[]
   notes?: string
@@ -2096,7 +2098,9 @@ export interface WorkflowPublishDestination {
   method?: 'cli' | 'git' | 'sync' | string
   site?: string
   secret_name?: string
+  visibility?: string         // public | private | unguessable-link
   public_base_url?: string
+  url?: string
   covers?: string[]
   notes?: string
 }

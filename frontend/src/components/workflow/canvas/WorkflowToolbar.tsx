@@ -12,9 +12,11 @@ import {
   ShieldCheck,
   Activity,
   CalendarClock,
+  GitCommitVertical,
   X,
 } from 'lucide-react'
 import ModalPortal from '../../ui/ModalPortal'
+import PlanChangelogFeed from '../PlanChangelogFeed'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
 import { useWorkflowManifestStore } from '../../../stores/useWorkflowManifestStore'
 import { useChatStore } from '../../../stores/useChatStore'
@@ -201,6 +203,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const [backupState, setBackupState] = useState<string>('not_configured')
   const [showPublishPopup, setShowPublishPopup] = useState(false)
   const [publishState, setPublishState] = useState<string>('not_configured')
+  const [showPlanEditsPopup, setShowPlanEditsPopup] = useState(false)
   const [showAccessPopup, setShowAccessPopup] = useState(false)
   const [showWorkflowSchedulesPanel, setShowWorkflowSchedulesPanel] = useState(false)
   const [workflowScheduleStats, setWorkflowScheduleStats] = useState<WorkflowScheduleStats>(EMPTY_WORKFLOW_SCHEDULE_STATS)
@@ -287,6 +290,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     setShowCostsPopup(false)
     setShowBackupPopup(false)
     setShowPublishPopup(false)
+    setShowPlanEditsPopup(false)
     setShowWorkflowSchedulesPanel(false)
   }, [])
   
@@ -511,6 +515,57 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             </Tooltip>
           )}
 
+          {/* Backup - dedicated remote backup status + strategy; status dot reflects health */}
+          {workspacePath && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setShowBackupPopup(true)}
+                  className="relative p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+                >
+                  <Cloud className="w-3.5 h-3.5" />
+                  <span
+                    className={`absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full border border-background ${getBackupDotClass(backupState)}`}
+                  />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom"><p>Backup &middot; {formatBackupStateLabel(backupState)}</p></TooltipContent>
+            </Tooltip>
+          )}
+
+          {/* Publish - share the workflow's HTML (Pulse + report) to a public URL; dot reflects publish state */}
+          {workspacePath && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setShowPublishPopup(true)}
+                  className="relative p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+                >
+                  <Globe className="w-3.5 h-3.5" />
+                  <span
+                    className={`absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full border border-background ${getPublishDotClass(publishState)}`}
+                  />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom"><p>Publish &middot; {formatPublishStateLabel(publishState)}</p></TooltipContent>
+            </Tooltip>
+          )}
+
+          {/* Plan edits - the per-change audit trail (planning/changelog): tool · reason · field diffs */}
+          {workspacePath && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setShowPlanEditsPopup(true)}
+                  className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+                >
+                  <GitCommitVertical className="w-3.5 h-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom"><p>Plan edits</p></TooltipContent>
+            </Tooltip>
+          )}
+
           {/* Show Costs - opens popup with cost analysis across all iterations */}
           {workspacePath && (
           <Tooltip>
@@ -583,42 +638,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               </button>
             </TooltipTrigger>
             <TooltipContent side="bottom"><p>Database</p></TooltipContent>
-          </Tooltip>
-        )}
-
-        {/* Backup - dedicated remote backup status + strategy; status dot reflects health */}
-        {workspacePath && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => setShowBackupPopup(true)}
-                className="relative p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-              >
-                <Cloud className="w-3.5 h-3.5" />
-                <span
-                  className={`absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full border border-background ${getBackupDotClass(backupState)}`}
-                />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom"><p>Backup &middot; {formatBackupStateLabel(backupState)}</p></TooltipContent>
-          </Tooltip>
-        )}
-
-        {/* Publish - share the workflow's HTML (Pulse + report) to a public URL; dot reflects publish state */}
-        {workspacePath && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => setShowPublishPopup(true)}
-                className="relative p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-              >
-                <Globe className="w-3.5 h-3.5" />
-                <span
-                  className={`absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full border border-background ${getPublishDotClass(publishState)}`}
-                />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom"><p>Publish &middot; {formatPublishStateLabel(publishState)}</p></TooltipContent>
           </Tooltip>
         )}
 
@@ -724,13 +743,15 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               </button>
             </div>
             <div className="space-y-3 px-5 py-4 text-sm text-muted-foreground">
-              <p>When <span className="font-medium text-foreground">on</span>, your workflow reviews itself after <span className="font-medium text-foreground">every run</span> and records what it finds in the <span className="font-medium text-foreground">Pulse</span> log — so you catch problems the moment they happen, not days later.</p>
-              <p className="text-foreground font-medium">It checks two things:</p>
+              <p>When <span className="font-medium text-foreground">on</span>, your workflow looks after itself after <span className="font-medium text-foreground">every run</span> and records what it does in the <span className="font-medium text-foreground">Pulse</span> log — so you catch problems the moment they happen, not days later.</p>
+              <p className="text-foreground font-medium">Each run it:</p>
               <ul className="space-y-1.5 pl-1">
-                <li><span className="font-medium text-red-600 dark:text-red-400">Bug</span> — did it run correctly? (errors, skipped steps, empty results)</li>
-                <li><span className="font-medium text-purple-600 dark:text-purple-400">Goal</span> — is it achieving what it's for? (vs your success criteria)</li>
+                <li><span className="font-medium text-foreground">Backs up</span> — saves the workflow first, so any change is reversible.</li>
+                <li><span className="font-medium text-foreground">Reviews</span> — <span className="font-medium text-red-600 dark:text-red-400">Bug</span> (did it run correctly?) and <span className="font-medium text-purple-600 dark:text-purple-400">Goal</span> (is it hitting its success criteria?).</li>
+                <li><span className="font-medium text-foreground">Fixes the small stuff</span> — applies low-risk repairs for Bugs; flags bigger plan changes as proposals.</li>
+                <li><span className="font-medium text-foreground">Notifies</span> — only when something changes (broke, recovered, or a new finding).</li>
               </ul>
-              <p>It only <span className="font-medium text-foreground">watches and reports</span> — it never changes your workflow. The scheduled improve passes do the fixing (repairing bugs, and proposing plan changes for goals).</p>
+              <p>If Publish is set up, it also re-publishes your report so the shared link stays current. Bigger changes (replan) stay with the scheduled <code className="rounded bg-muted px-1 text-foreground">/auto-improve</code> loop.</p>
             </div>
             {/* enable / disable */}
             <div className="flex items-center justify-between border-t px-5 py-3.5">
@@ -776,6 +797,28 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       workspacePath={workspacePath || null}
       onStateLoaded={setPublishState}
     />
+
+    {/* Plan edits Popup (planning/changelog audit trail) */}
+    {showPlanEditsPopup && workspacePath && (
+      <ModalPortal>
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-2 backdrop-blur-sm sm:p-4" onClick={() => setShowPlanEditsPopup(false)}>
+          <div className="relative flex max-h-[calc(100dvh-1rem)] w-full max-w-2xl flex-col rounded-lg border border-border bg-background shadow-xl sm:max-h-[86vh]" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+              <div className="flex items-center gap-2">
+                <GitCommitVertical className="h-4.5 w-4.5 text-primary" />
+                <h2 className="text-sm font-semibold text-foreground">Plan edits</h2>
+              </div>
+              <button onClick={() => setShowPlanEditsPopup(false)} className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Close">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1">
+              <PlanChangelogFeed workspacePath={workspacePath} />
+            </div>
+          </div>
+        </div>
+      </ModalPortal>
+    )}
 
     {/* Workflow Access Popup (multi-user owners only) */}
     <WorkflowAccessPopup

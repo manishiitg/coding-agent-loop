@@ -110,11 +110,12 @@ export function LogViewer({ workspacePath }: LogViewerProps) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-center">
         <div className="max-w-md text-sm text-muted-foreground">
-          No Pulse log yet. Entries appear here after the post-run monitor runs on a{' '}
-          <strong>scheduled</strong> run (Pulse must be enabled), and when improvement or review
-          passes run. <code className="rounded bg-muted px-1">/define-success</code> seeds the
-          success-criteria section the Goal verdict is measured against — it's optional, not
-          required for the log.
+          No Pulse log yet. Run <code className="rounded bg-muted px-1">/auto-improve</code> to set
+          up recurring runs + self-improvement — its scheduled runs and improvement passes record
+          entries here, and it seeds the success criteria along the way. (The post-run monitor also
+          records here after any scheduled run;{' '}
+          <code className="rounded bg-muted px-1">/define-success</code> just seeds the criteria on
+          its own.)
         </div>
       </div>
     )

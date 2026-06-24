@@ -1,9 +1,14 @@
-## regular — Single-Step Worker
+## regular — Single-Action Worker
 
 A `regular` step is one agent doing one unit of work in a single execution (with a
-validation-driven retry loop). It is the **default** step type — reach for it unless
-the task needs branching (`routing`), sub-agent coordination (`todo_task`), same-context
-ordered turns / re-entrant conversation (`message_sequence`), or operator input (`human_input`).
+validation-driven retry loop). It is the **single-action** type — reach for it only when a step
+is **one atomic action with no verify-and-fix follow-up**. The **default** step type is
+**`message_sequence`**: instead of splitting work into several smaller regular steps that hand
+off context through intermediate `.md`/`.json` files, prefer one larger `message_sequence` that
+does the work and then uses **verification user-message turns** to confirm everything is done
+and complete — all in one shared conversation. See `get_reference_doc(kind="message-sequence")`.
+Use the others for branching (`routing`), sub-agent coordination (`todo_task`), or operator
+input (`human_input`).
 
 ## When to use
 

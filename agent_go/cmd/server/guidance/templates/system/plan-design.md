@@ -23,8 +23,8 @@ Combine actions into one step when they share one objective and output contract,
 
 | Scenario | Step Type | Why |
 |----------|-----------|-----|
-| Agent performs a task and writes output | **Regular** | Simplest type — one agent, one output |
-| Several ordered agent turns share the same context and need to build on each other | **Message Sequence** | Keeps the work in one conversation instead of creating handoff artifacts between similar regular steps |
+| Agent does work, then verifies/fixes it against the success criteria (the common case) | **Message Sequence** (default) | One shared conversation: do → verify → fix, as ordered items. Keeps the agent's full working context instead of handoff artifacts between regular steps |
+| One atomic action with **no** verify-and-fix follow-up | **Regular** | Simplest type — one agent, one output; use when there's nothing to check in-context afterward |
 | Task has multiple known sub-tasks that repeat | **Todo Task** (sub-workflow/pipeline) with sub-agents | Each sub-task gets its own learning, validation, and tools |
 | Need to branch based on prior step output or context | **Routing** | Supported branch primitive — reads `route_selection.json` and picks a route |
 | Need user input before proceeding | **Human Input** | Blocks until user responds |
@@ -32,7 +32,7 @@ Combine actions into one step when they share one objective and output contract,
 | The running workflow must ask a human before it can continue | **Human Input** | Use only when the answer is not already known at launch. If the answer branches, use `option_routes` for a small in-run menu or feed a later deterministic router. |
 | Utility/debug tool available but not auto-run | **Orphan** (is_orphan: true) | Not in main flow; manual execution from workshop only |
 
-**Default to Regular** unless the task clearly needs branching, iteration, sub-agents, or same-context ordered turns that should share one conversation.
+**Default to Message Sequence.** Modern agents do a lot in a single long-running turn, so the strongest default is one shared-context conversation that does the work and then verifies it in follow-up items (`[do the task] → [verify against the success criteria] → [fix what verification caught]`). Use **Regular** only for a single atomic action with no verify-and-fix follow-up, or when a turn needs its own durable artifact, hard validation gate, retry/failure domain, or different tool/security context. Use **Todo Task** for multiple discrete repeating sub-tasks or sub-agent delegation, and **Routing** for fixed branch choices.
 
 **For recurring multi-step shapes** (Phase Router, Scoped Investigation, Linear Pipeline, Fan-out & Consolidate, Verification Gate, Pre-flight Probe, Human Checkpoint, Critique Loop, Persistence Tail), call `get_reference_doc(kind="workflow-patterns")` — load when starting a new plan or restructuring an existing one.
 
@@ -72,8 +72,9 @@ Use a `message_sequence` route when the parent orchestrator should be able to ca
 
 ### Step 5: When to Use Message Sequence
 
-Use `message_sequence` when multiple ordered agent turns should share the same working context and build on each other, and the boundary between turns is not a durable workflow boundary. This is usually better than several regular steps that all read the same files, need each other's transient reasoning, and produce only one final output.
+`message_sequence` is the **default** step type (see Step 2). Use it whenever ordered agent turns share the same working context and build on each other, and the boundary between turns is not a durable workflow boundary — which is most agentic work, since the natural shape is **do the task, then verify and fix it in follow-up items of the same conversation**. This is better than several regular steps that re-read the same files, need each other's transient reasoning, and produce only one final output.
 
+- **Make verification a follow-up item, not a separate step.** A typical sequence is `[do the task] → [verify the output against the success criteria, list any gaps] → [fix the gaps]`. The verifier turn has the full context of what was just done, so it catches more than a fresh regular step reconstructing from artifacts.
 - Break one large task into small user_message items: one instruction per turn.
 - Prefer it when turns share the same inputs, tools, credentials, runtime, and security context; fail/retry together; and can be validated as one unit.
 - Keep separate regular steps when each turn has its own durable artifact, validation gate, retry/failure domain, tool/security context, or downstream consumer.
@@ -104,7 +105,7 @@ Step-level `success_criteria` is deprecated. Rely on a strong `description` plus
 ### Step 8: Think About Failure Modes
 
 - If a step might fail due to external factors (login, API), add clear error handling in the description
-- If a step's output needs semantic validation (not just structural), add a separate validation step after it
+- If a step's output needs semantic validation (not just structural), add a verification item right after it in the `message_sequence` (the default) — reach for a separate validation step only when the check needs its own durable artifact, different tools, or its own failure domain
 - If a step is flaky, add explicit retry/polling instructions inside the step or split the unstable part into a dedicated regular step with strong validation
 
 ### Design Anti-Patterns to Avoid
@@ -119,9 +120,9 @@ Step-level `success_criteria` is deprecated. Rely on a strong `description` plus
 
 ### Step Types Reference
 
-- **Regular** (type: "regular"): Standard task. Executes an agent that produces a context_output file.
-- **Orchestrator / Todo Task / Sub-Workflow** (type: "todo_task"): Also called "orchestrator" by users. Manages a dynamic todo list. Has a **todo_task_step** (orchestrator) and **predefined_routes**. Each route can either define an inline **sub_agent_step** or reuse a plan-local orphan definition via **orphan_step_ref**. Route sub-agents are usually **regular** steps, can be **message_sequence** when the route needs persistent specialist memory with re-entry/restart behavior, and can be another **todo_task** (nested orchestrator) when that route needs its own nested orchestration. Only one nested todo_task layer is allowed: top-level todo_task -> nested todo_task is valid, but a nested todo_task must not contain another nested todo_task.
-- **Message Sequence** (type: "message_sequence"): Single-agent ordered conversation with `items`. Use it for same-context ordered turns, short user_message items, optional prevalidation items, and optional Python code items. As a top-level step the queue runs once; as a todo_task route it can be re-entered during the same workflow run and receive new instructions without replaying the queue.
+- **Message Sequence** (type: "message_sequence") — **the default**: single-agent ordered conversation with `items`. Do the work, then **verify and fix it in follow-up user_message items** — all in one shared context — instead of splitting into several regular steps that hand off via `.md`/`.json` files. Supports short user_message items, optional prevalidation items, and optional Python code items. As a top-level step the queue runs once; as a todo_task route it can be re-entered during the same workflow run and receive new instructions without replaying the queue.
+- **Regular** (type: "regular"): one atomic action with no verify-and-fix follow-up. Executes an agent that produces a context_output file.
+- **Orchestrator / Todo Task / Sub-Workflow** (type: "todo_task"): Also called "orchestrator" by users. Manages a dynamic todo list. Has a **todo_task_step** (orchestrator) and **predefined_routes**. Each route can either define an inline **sub_agent_step** or reuse a plan-local orphan definition via **orphan_step_ref**. Route sub-agents default to **message_sequence** (specialist conversation with re-entry/restart memory), can be a **regular** step for stateless one-off work, and can be another **todo_task** (nested orchestrator) when that route needs its own nested orchestration. Only one nested todo_task layer is allowed: top-level todo_task -> nested todo_task is valid, but a nested todo_task must not contain another nested todo_task.
 - **Routing** (type: "routing"): N-way deterministic branching. Reads `route_selection.json` (or caller `route_selections`) and picks exactly one **routes[]** entry. Each route has **route_id**, **condition**, and **next_step_id** (pointer to an existing step). Optional **default_route_id** is a missing-file fallback. Optional **route_source_file** points at a prior step's route file.
 - **Human Input** (type: "human_input"): Asks a question to the user and blocks until response. Supports: 'text', 'yesno', 'multiple_choice'. Can route based on response.
 - **Orphan** (is_orphan: true): Not part of the main execution flow. Orphan steps are plan-local reusable definitions and manual utility agents. Use them for data checks, environment validation, one-off investigations, or shared sub-agent definitions that multiple orchestrators in the same plan may reuse. Reuse is explicit: an orphan step must declare `shared_with.orchestrator_ids`, and a todo_task route must point to it with `orphan_step_ref`. Do not assume every orphan step is shared with every orchestrator.

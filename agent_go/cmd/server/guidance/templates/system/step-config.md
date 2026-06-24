@@ -21,14 +21,17 @@ A step's access to each store is independent and defaults differently. Grant the
 | Lock | Scope | Effect | Set when |
 |---|---|---|---|
 | `lock_learnings` | per-step | Freezes `learnings/{step}/SKILL.md` — still read, no new writes | deliberate builder/user decision; never a runtime side effect |
-| `lock_code` | per-step (scripted) | Freezes `learnings/{step}/main.py`, skips the fix loop | only after user-explicit scripted + 10+ scenario-covering runs |
+| `lock_code` | per-step (scripted) | Freezes `learnings/{step}/main.py`, skips the fix loop | **user asks to lock** → allow it; **builder auto-locking on its own** → only after 10+ scenario-covering runs |
 | `lock_knowledgebase` | workflow-wide | Freezes `knowledgebase/notes/` auto-updates | when KB is curated and should stop auto-evolving |
 
 Only pass a lock field when you are explicitly changing it — passing `lock_learnings:false` while editing other fields resets a previously set value.
 
 ### Execution mode + which model runs the step
 
-- **`declared_execution_mode`**: `agentic` (default for workshop-created steps) vs `scripted`. Promote agentic→scripted only with an explicit user ask, deterministic behavior, and 10+ scenario-covering successful runs. Set `declared_execution_mode_reason` when you do.
+- **`declared_execution_mode`**: `agentic` (default for workshop-created steps) vs `scripted`. Two different paths, don't conflate them:
+  - **User explicitly asks for a scripted step** (e.g. "make this scripted so I can test it") → set `scripted` right away. The user owns that call; let them create and iterate on the script. **No run-count gate.**
+  - **Builder promoting agentic→scripted on its own initiative** → only when behavior is deterministic AND proven across 10+ scenario-covering successful runs. That's the guardrail against silently freezing a brittle script the user didn't ask to freeze.
+  - Set `declared_execution_mode_reason` either way.
 - **`use_code_execution_mode`**: per-step override of the preset's code-execution toggle (nil = inherit).
 - **Model selection**: `execution_tier` (`high`/`medium`/`low`) maps to the workflow's tiered allocation; `execution_llm` / `validation_llm` / `learning_llm` pin a specific published model for that role. Prefer tiers over hard pins. Full framework: `get_reference_doc(kind="llm-selection")`.
 

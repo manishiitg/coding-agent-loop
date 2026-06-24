@@ -122,3 +122,46 @@ no Go.
    **Non-goal (decided 2026-06-21):** do NOT move the source-hash skip into deterministic
    Go code. The whole post-run/backup loop stays agent-driven — the agent reads
    `backup/status.json` and decides. No Go-side gating coupling.
+
+## Phase 4 — Publish folded into the Pulse loop (2026-06-24)
+
+Publish (the public-URL twin of Backup — see `docs/workflow/publish_design.md`) is now a
+step of the Pulse pass, so a workflow's public dashboard stays current automatically:
+
+```
+Pulse → after every run:
+  1. Back up    — guaranteed, source-hash gated (unchanged).
+  2. Triage     — Bug + Goal verdicts, Pulse log (unchanged).
+  3. Fix        — low-risk harden / replan proposal (unchanged).
+  4. Re-publish — ONLY if publish is configured + enabled; rebuilds from source and
+                  redeploys both artifacts. Skipped when publish is off.
+  5. Notify     — one transition notification (unchanged).
+```
+
+`post-run-monitor.md` gained a "### 4b. Re-publish (only if publish is on)" section. Like
+backup, publish is **agent-driven and read-only in the UI**: setup/run/restore/publish all
+happen in the builder chat via the **`/backup`** and **`/publish`** slash commands; the
+toolbar popups are status-only. The dead write endpoints (`/workflow/{backup,publish}/{config,run}`)
+were removed.
+
+### Publish output contract (what `/publish` ships)
+- **Both artifacts, always** — the baked report **dashboard** (`dashboard.html`) AND the
+  **Pulse log** (`pulse.html`, from `builder/improve.html`), joined by a top-nav
+  `index.html` wrapper (Dashboard | Pulse tabs). Publishing only one is a bug.
+- **Dark only, matching the app** — the published pages must set **both** theming hooks on
+  `<html>`: `class="dark"` (the app's Tailwind mechanism, `ThemeContext`) **and**
+  `data-theme="dark"` (what report widgets `HtmlWidgetFrame` and the Pulse-log skeleton
+  key on). Setting only `data-theme` left the dashboard light, because report widgets key
+  primarily off the `.dark` class. No toggle, no `prefers-color-scheme` (that follows the
+  viewer's OS). See `[[project_published_page_theme_contract]]`.
+- **Stage outside the workspace** — deploy CLIs (`netlify`, `vercel`, …) write state
+  (`.netlify/`, `.vercel/`) to their CWD. The workflow folder is writable EXCEPT
+  `planning/`, but the CLI's CWD is often the docs root (above the folder, outside the
+  write allow-list), so it gets rejected. Copy the finished static files to
+  `/tmp/publish-<workflow>/` and run the deploy from there.
+
+### Plan-edits consolidation (2026-06-24)
+The toolbar **Plan edits** popup (the granular `planning/changelog/*.json` audit feed) got a
+**Consolidate** control — drop edits older than 7/30/90/180 days — backed by
+`POST /workflow/plan-changelog/prune`. The server prunes (deletes whole `changelog-*.json`
+files older than the cutoff) because `planning/` is shell-guarded from the agent.

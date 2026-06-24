@@ -6,6 +6,7 @@ import {
   FileText,
   DollarSign,
   Cloud,
+  Globe,
   Database,
   Table2,
   ShieldCheck,
@@ -32,6 +33,8 @@ import ExecutionLogsPopup from '../ExecutionLogsPopup'
 import CostsPopup from '../CostsPopup'
 import WorkflowBackupPopup from '../WorkflowBackupPopup'
 import { getBackupDotClass, formatBackupStateLabel } from '../backupStatus'
+import WorkflowPublishPopup from '../WorkflowPublishPopup'
+import { getPublishDotClass, formatPublishStateLabel } from '../publishStatus'
 import WorkflowAccessPopup from '../WorkflowAccessPopup'
 import WorkflowScheduleRunsPanel from '../../scheduler/WorkflowScheduleRunsPanel'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
@@ -196,6 +199,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // Backup popup state
   const [showBackupPopup, setShowBackupPopup] = useState(false)
   const [backupState, setBackupState] = useState<string>('not_configured')
+  const [showPublishPopup, setShowPublishPopup] = useState(false)
+  const [publishState, setPublishState] = useState<string>('not_configured')
   const [showAccessPopup, setShowAccessPopup] = useState(false)
   const [showWorkflowSchedulesPanel, setShowWorkflowSchedulesPanel] = useState(false)
   const [workflowScheduleStats, setWorkflowScheduleStats] = useState<WorkflowScheduleStats>(EMPTY_WORKFLOW_SCHEDULE_STATS)
@@ -257,6 +262,23 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     refreshBackupState()
   }, [refreshBackupState])
 
+  const refreshPublishState = useCallback(async () => {
+    if (!workspacePath) {
+      setPublishState('not_configured')
+      return
+    }
+    try {
+      const resp = await agentApi.getWorkflowPublish(workspacePath)
+      setPublishState(resp.effective_state || 'not_configured')
+    } catch {
+      // Leave the last known state.
+    }
+  }, [workspacePath])
+
+  useEffect(() => {
+    refreshPublishState()
+  }, [refreshPublishState])
+
   const closeAllPopups = useCallback(() => {
     setShowLearningsPopup(false)
     setShowKBPopup(false)
@@ -264,6 +286,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     setShowExecutionLogsPopup(false)
     setShowCostsPopup(false)
     setShowBackupPopup(false)
+    setShowPublishPopup(false)
     setShowWorkflowSchedulesPanel(false)
   }, [])
   
@@ -581,6 +604,24 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </Tooltip>
         )}
 
+        {/* Publish - share the workflow's HTML (Pulse + report) to a public URL; dot reflects publish state */}
+        {workspacePath && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => setShowPublishPopup(true)}
+                className="relative p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+              >
+                <Globe className="w-3.5 h-3.5" />
+                <span
+                  className={`absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full border border-background ${getPublishDotClass(publishState)}`}
+                />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom"><p>Publish &middot; {formatPublishStateLabel(publishState)}</p></TooltipContent>
+          </Tooltip>
+        )}
+
         {/* Workflow Access (multi-user mode only, owners only) */}
         {canManageAccess && (
           <Tooltip>
@@ -726,6 +767,14 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       onClose={() => { setShowBackupPopup(false); refreshBackupState() }}
       workspacePath={workspacePath || null}
       onStateLoaded={setBackupState}
+    />
+
+    {/* Publish Popup (share HTML to a public URL) */}
+    <WorkflowPublishPopup
+      isOpen={showPublishPopup}
+      onClose={() => { setShowPublishPopup(false); refreshPublishState() }}
+      workspacePath={workspacePath || null}
+      onStateLoaded={setPublishState}
     />
 
     {/* Workflow Access Popup (multi-user owners only) */}

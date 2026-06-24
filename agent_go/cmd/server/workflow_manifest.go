@@ -58,6 +58,12 @@ type WorkflowManifest struct {
 	// Operational status is written separately to backup/status.json so normal
 	// backup attempts do not churn workflow.json.
 	Backup *WorkflowBackupConfig `json:"backup,omitempty"`
+
+	// Publish is declarative config for builder-agent managed publishing of the
+	// workflow's HTML artifacts (Pulse log, report dashboard) to a public URL.
+	// Operational status (incl. the URL) is written to publish/status.json so
+	// publish attempts do not churn workflow.json.
+	Publish *WorkflowPublishConfig `json:"publish,omitempty"`
 }
 
 // MonitorEnabled reports whether the post-run monitor should run for this
@@ -90,6 +96,31 @@ type WorkflowBackupDestination struct {
 	Covers     []string `json:"covers,omitempty"`
 	SecretRefs []string `json:"secret_refs,omitempty"`
 	Notes      string   `json:"notes,omitempty"`
+}
+
+// WorkflowPublishConfig is declarative config for publishing the workflow's HTML
+// artifacts to a public URL. Provider-agnostic: the destination's provider is a
+// free-form string and the per-host deploy logic lives in the publish-strategy
+// reference doc, not in Go.
+type WorkflowPublishConfig struct {
+	Enabled       bool                         `json:"enabled"`
+	Mode          string                       `json:"mode,omitempty"`           // "agent" (default)
+	Targets       []string                     `json:"targets,omitempty"`        // "pulse", "report"
+	DashboardMode string                       `json:"dashboard_mode,omitempty"` // "snapshot" (static HTML; only mode for now)
+	Triggers      WorkflowBackupTriggers       `json:"triggers,omitempty"`       // reuse the after-run trigger flags
+	Destinations  []WorkflowPublishDestination `json:"destinations,omitempty"`
+	Notes         string                       `json:"notes,omitempty"`
+}
+
+type WorkflowPublishDestination struct {
+	ID            string   `json:"id"`
+	Provider      string   `json:"provider"`                  // free-form: netlify, vercel, cloudflare-pages, github-pages, s3, ...
+	Method        string   `json:"method,omitempty"`          // cli | git | sync
+	Site          string   `json:"site,omitempty"`            // project / site / bucket / repo identifier
+	SecretName    string   `json:"secret_name,omitempty"`     // global secret holding the deploy token
+	PublicBaseURL string   `json:"public_base_url,omitempty"` // filled in by the agent after first deploy
+	Covers        []string `json:"covers,omitempty"`
+	Notes         string   `json:"notes,omitempty"`
 }
 
 // WorkflowCapabilities stores workflow-wide agent and tool configuration.

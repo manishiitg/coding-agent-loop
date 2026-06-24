@@ -1174,12 +1174,13 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 	reqMap := s.buildWorkshopRequest(ctx, sctx)
 	reqMap["query"] = fmt.Sprintf(
 		"You are Pulse, the post-run steward. A scheduled run of this workflow just finished: status=%q, run_folder=%q. "+
-			"Call get_reference_doc(kind=\"post-run-monitor\") and follow it exactly, performing these four steps in order:\n"+
+			"Call get_reference_doc(kind=\"post-run-monitor\") and follow it exactly, performing these five steps in order:\n"+
 			"1. BACK UP (always). Read workflow.json.backup and back up per get_reference_doc(kind=\"backup-strategy\"). If backup is disabled, set it up with the zero-config local-git default and back up. Skip the actual push only when backup/status.json shows the current source is already backed up (unchanged). Always write backup/status.json.\n"+
 			"2. TRIAGE. Read the run evidence, the plan changelog, and the eval/metric files; form a Bug verdict and a Goal verdict; update builder/improve.html (verdict pills, goal card, signal tiles, one run row, a Pulse entry only if something is wrong); write builder/monitor-verdict.json.\n"+
 			"3. FIX (only if triage found a problem). For a Bug finding, apply a LOW-RISK, reversible harden per get_reference_doc(kind=\"optimize-playbook\") and record it in the log as an applied fix. For a Goal finding, record a replan PROPOSAL — do NOT rewrite the plan wholesale. A clean run gets no fix.\n"+
-			"4. NOTIFY once on a state transition per the doc's step 5 — honor a user `## Notifications` preference in soul/soul.md, otherwise a single notify_user call only on broke/recovered/new-finding and silence on a steady run.\n"+
-			"Stay scoped: back up and apply only low-risk reversible fixes; never rewrite the plan wholesale or dispatch a full improvement run here.",
+			"4. PUBLISH (only if publish is on). If workflow.json.publish is enabled, re-publish the updated HTML per get_reference_doc(kind=\"publish-strategy\") — but ONLY when the destination is already VERIFIED (publish/status.json shows a prior successful publish) AND the published artifacts changed since then (source hash). Never do the first/verifying publish here unattended — that is the user's manual set-up step. Always write publish/status.json.\n"+
+			"5. NOTIFY once on a state transition per the doc's step 5 — honor a user `## Notifications` preference in soul/soul.md, otherwise a single notify_user call only on broke/recovered/new-finding and silence on a steady run.\n"+
+			"Stay scoped: back up, apply only low-risk reversible fixes, and re-publish an already-verified site; never rewrite the plan wholesale or dispatch a full improvement run here.",
 		runStatus, runFolder)
 
 	s.sessionLogf(sctx, sessionID, "[PULSE] starting pulse for %s (run_folder=%s status=%s)", sctx.Schedule.ID, runFolder, runStatus)

@@ -1945,6 +1945,21 @@ export const agentApi = {
     return response.data
   },
 
+  getWorkflowPublish: async (workspacePath: string): Promise<import('./api-types').WorkflowPublishInfoResponse> => {
+    const response = await api.get('/api/workflow/publish', { params: { workspace_path: workspacePath } })
+    return response.data
+  },
+
+  updateWorkflowPublishConfig: async (workspacePath: string, publish: import('./api-types').WorkflowPublishConfig): Promise<{ success: boolean; publish: import('./api-types').WorkflowPublishConfig }> => {
+    const response = await api.post('/api/workflow/publish/config', { workspace_path: workspacePath, publish })
+    return response.data
+  },
+
+  runWorkflowPublish: async (workspacePath: string, action: 'publish' | 'configure' = 'publish'): Promise<{ success: boolean; session_id: string; message: string }> => {
+    const response = await api.post('/api/workflow/publish/run', { workspace_path: workspacePath, action })
+    return response.data
+  },
+
   // Test image generation config by attempting to generate a sample image
   testImageGen: async (config: { provider: string; model_id: string; api_key?: string }): Promise<{ valid: boolean; message?: string; error?: string; image_url?: string; image_data?: string }> => {
     const response = await api.post('/api/image-gen/test', config)

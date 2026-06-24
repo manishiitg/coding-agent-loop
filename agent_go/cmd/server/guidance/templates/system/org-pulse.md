@@ -102,6 +102,20 @@ high-value suggestion. Honor a `## Notifications` preference in the user's memor
 present; otherwise one `notify_user` call at most, and silence on a steady day. Mirror the
 per-workflow Pulse's transition discipline.
 
+### 6. Publish the org log (only if org publish is on)
+
+If the user has set up org publish (a `publish` block in your CoS config / `pulse/publish.json`),
+keep the public org page current — `pulse/org-pulse.html` is the artifact to publish:
+
+- Publish per `get_reference_doc(kind="publish-strategy")`, **only** to an already-**verified**
+  destination (`pulse/publish-status.json` shows a prior successful publish) and **only when
+  the log changed** since the last publish. The first/verifying publish is the user's manual
+  setup, never something you do unattended.
+- Always write `pulse/publish-status.json` with the URL. Never publish secrets or anything
+  beyond the org log.
+
+If org publish isn't configured, skip this — it's opt-in.
+
 ### Cost discipline
 
 You are a cheap daily steward, not an improvement run.

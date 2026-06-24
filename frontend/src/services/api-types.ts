@@ -2079,6 +2079,71 @@ export interface WorkflowBackupInfoResponse {
   status_path: string
 }
 
+// Workflow Publish (share HTML artifacts to a public URL)
+export interface WorkflowPublishConfig {
+  enabled: boolean
+  mode?: string
+  targets?: string[]          // "pulse", "report"
+  dashboard_mode?: string     // "snapshot"
+  triggers?: WorkflowBackupTriggers
+  destinations?: WorkflowPublishDestination[]
+  notes?: string
+}
+
+export interface WorkflowPublishDestination {
+  id: string
+  provider: string            // free-form: netlify, vercel, cloudflare-pages, github-pages, s3, ...
+  method?: 'cli' | 'git' | 'sync' | string
+  site?: string
+  secret_name?: string
+  public_base_url?: string
+  covers?: string[]
+  notes?: string
+}
+
+export interface WorkflowPublishStatus {
+  version: number
+  state: 'not_configured' | 'configured_not_verified' | 'publishing' | 'published' | 'stale' | 'failed' | string
+  url?: string
+  last_published_at?: string
+  last_attempt_at?: string
+  last_agent_session_id?: string
+  last_source_hash?: string
+  summary?: string
+  destinations?: WorkflowPublishDestinationStatus[]
+  last_error?: string
+  updated_at?: string
+}
+
+export interface WorkflowPublishDestinationStatus {
+  id: string
+  provider?: string
+  method?: string
+  state: 'published' | 'failed' | 'skipped' | 'publishing' | string
+  url?: string
+  last_success_at?: string
+  summary?: string
+  error?: string
+}
+
+export interface WorkflowPublishStrategyInfo {
+  id: string
+  label: string
+  method: string
+  description: string
+}
+
+export interface WorkflowPublishInfoResponse {
+  success: boolean
+  config?: WorkflowPublishConfig
+  status?: WorkflowPublishStatus
+  effective_state: 'not_configured' | 'configured_not_verified' | 'publishing' | 'published' | 'stale' | 'failed' | string
+  url?: string
+  current_source_hash?: string
+  supported: WorkflowPublishStrategyInfo[]
+  status_path: string
+}
+
 // Scheduled Jobs
 export interface ScheduledJob {
   id: string

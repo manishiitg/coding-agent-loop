@@ -64,6 +64,16 @@ Write `builder/monitor-verdict.json` (overwrite each run) as a machine-readable 
 
 This file is an internal signal, not the user surface — the log is the user surface. Keep `headline` to one honest sentence.
 
+### 4b. Re-publish (only if publish is on)
+
+If `workflow.json.publish` is enabled, keep the public URL current — but only when it's safe to do so unattended:
+
+- **Only an already-verified destination.** If `publish/status.json` shows a prior successful publish, re-publish the updated artifacts per `get_reference_doc(kind="publish-strategy")`. If publish is configured but never verified (`configured_not_verified`), **do nothing** — the first/verifying publish is the user's manual setup step, not yours.
+- **Only when changed.** Skip if the published artifacts haven't changed since the last publish (source hash). A steady run doesn't republish.
+- Always write `publish/status.json` with the URL. Never publish secrets or raw sensitive rows; the publish-strategy doc owns the static-snapshot + scope rules.
+
+This is a re-publish of an already-set-up site, nothing more — never configure a new destination or expose new data here.
+
 ### 5. Notify the user
 
 You own the notification.

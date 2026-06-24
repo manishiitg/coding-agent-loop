@@ -26,6 +26,22 @@ Do not use it when:
 - The workflow needs deterministic branching; use `routing`.
 - The workflow needs independent sub-agent delegation or progress over many tasks; use `todo_task`.
 
+## ITEM ACCESS — reads are open, writes are per-item (declare them!)
+
+Every item in a sequence can **read** `db/`, the knowledgebase, learnings, and soul — always, no
+config. But **writes are off by default, scoped per item** (least-privilege, so a read/verify
+turn can't mutate shared state). **Any item that writes must declare it** — this is the single
+most common message-sequence mistake, so set it up front:
+
+- writes a db table (`upsert into trade_ideas`, inserts/updates `db/db.sqlite`) → `"write_access": {"db": true}` (or `"kind": "db"`)
+- writes a knowledgebase note → `"write_access": {"knowledgebase": true}` (or `"kind": "knowledgebase"`)
+- writes durable learnings → `"write_access": {"learnings": true}` (or `"kind": "learning"`)
+- a `code` item is auto-granted from its `output_files` paths (an `output_files` under `db/` enables db writes)
+
+An undeclared write is **not** silently dropped — the runtime folder guard blocks it and the item
+fails with `STATUS: FAILED — grant write_access.db on the item`. Grant it in the plan so the write
+lands the first time. Reads never need a grant.
+
 ## MESSAGE SEQUENCE ROUTE PATTERNS
 
 Use these patterns when designing or hardening todo_task predefined routes:

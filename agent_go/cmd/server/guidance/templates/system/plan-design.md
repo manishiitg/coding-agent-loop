@@ -80,7 +80,7 @@ Use a `message_sequence` route when the parent orchestrator should be able to ca
 - Keep separate regular steps when each turn has its own durable artifact, validation gate, retry/failure domain, tool/security context, or downstream consumer.
 - Add learning / knowledgebase / db update items as user messages at the exact point they should happen.
 - Add explicit reference-check, hallucination-check, critique, or self-validation items when reliability needs it.
-- Reads for KB, db, and learnings are always available. Writes are item-scoped through `write_access`.
+- Reads for KB, db, and learnings are always available. Writes are off by default, per item — **any item that writes db/KB/learnings must declare it** (`write_access: {"db": true}` etc., or `kind`/`output_files`), or the runtime folder guard blocks the write. See `get_reference_doc(kind="message-sequence")`.
 - Python `code` items are for deterministic parsing/transforms. On success, the next user_message gets script path, output paths, and summarized logs as prepended context.
 - As a todo_task predefined route, a message_sequence behaves like a reusable specialist sub-agent: reuse the same route for critique, test feedback, validation feedback, or follow-up work that should keep prior context; restart only when the prior conversation is stale, wrong, or contaminated.
 - For row/item iteration, use a `foreach` item inside message_sequence when one shared conversation should process every row. Use todo_task when each item needs independent sub-agent delegation.

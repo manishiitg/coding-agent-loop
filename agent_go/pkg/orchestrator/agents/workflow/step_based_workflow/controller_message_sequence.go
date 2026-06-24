@@ -919,25 +919,6 @@ func closeMessageSequenceCodingSession(provider string, ownerSessionID string, r
 	}
 }
 
-// A write verb followed (within one sentence, a short window) by a db/ or kb/
-// path. The verbs are stems so writes/writing/saved/appending/... all match.
-// The bounded, non-greedy gap and \b anchor keep this from firing on reads
-// ("read db/x.json" has no preceding write verb) or on a write whose target is
-// elsewhere ("compare against db/baseline and write the report" — the verb
-// comes after the path, and is too far / wrong order).
-var messageSequenceWriteVerbStem = `\b(writ|sav|append|updat|persist|stor|record|creat|produc|output|overwrit|populat|emit|dump|flush)[a-z]*`
-
-var messageSequenceDBWriteIntentRe = regexp.MustCompile(messageSequenceWriteVerbStem + `[^\n.;!?]{0,40}?\bdb/`)
-
-var messageSequenceKBWriteIntentRe = regexp.MustCompile(messageSequenceWriteVerbStem + `[^\n.;!?]{0,40}?\b(knowledgebase|kb)/`)
-var messageSequenceLearningWriteIntentRe = regexp.MustCompile(messageSequenceWriteVerbStem + `[^\n.;!?]{0,40}?\blearnings/`)
-
-// messageSequenceItemWriteIntent reports whether an item is going to WRITE to
-// db/ or the knowledgebase, inferred from its declared output_files (definitive)
-// and its message prose (write verb adjacent to a db/ or kb/ path). It is the
-// counterpart to resolveMessageSequenceItemWriteAccess: the former says what the
-// item is GRANTED, this says what it APPEARS to need, and validation flags the
-// gap so an item can't quietly ask to write a file it has no access to.
 // messageSequenceItemReportedFailure reports whether an LLM turn ended with the
 // agent's terminal STATUS: FAILED marker (the execution_only Completion
 // contract). When a turn self-reports failure there's no point running the rest
@@ -962,35 +943,6 @@ func messageSequenceItemReportedFailure(summary string) (reason string, failed b
 	return "", false
 }
 
-func messageSequenceItemWriteIntent(item MessageSequenceItem) (needsDB, needsKB, needsLearnings bool) {
-	for _, out := range item.OutputFiles {
-		clean := filepath.ToSlash(filepath.Clean(strings.TrimSpace(out)))
-		if clean == "" || clean == "." {
-			continue
-		}
-		if clean == DBFolderName || strings.HasPrefix(clean, DBFolderName+"/") || strings.Contains(clean, "/"+DBFolderName+"/") {
-			needsDB = true
-		}
-		if strings.HasPrefix(clean, KnowledgebaseFolderName+"/notes/") || strings.Contains(clean, "/"+KnowledgebaseFolderName+"/notes/") {
-			needsKB = true
-		}
-		if clean == LearningsFolderName || strings.HasPrefix(clean, LearningsFolderName+"/") || strings.Contains(clean, "/"+LearningsFolderName+"/") {
-			needsLearnings = true
-		}
-	}
-	if msg := strings.ToLower(item.Message); msg != "" {
-		if messageSequenceDBWriteIntentRe.MatchString(msg) {
-			needsDB = true
-		}
-		if messageSequenceKBWriteIntentRe.MatchString(msg) {
-			needsKB = true
-		}
-		if messageSequenceLearningWriteIntentRe.MatchString(msg) {
-			needsLearnings = true
-		}
-	}
-	return needsDB, needsKB, needsLearnings
-}
 
 func resolveMessageSequenceItemWriteAccess(item MessageSequenceItem) MessageSequenceWriteAccess {
 	if item.WriteAccess != (MessageSequenceWriteAccess{}) {

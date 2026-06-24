@@ -1,5 +1,5 @@
 import React from 'react'
-import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, GitBranch, CheckCircle, Search, BookOpen, Activity } from 'lucide-react'
+import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, GitBranch, CheckCircle, Search, BookOpen, Activity, Cloud, Globe } from 'lucide-react'
 import type { CommandContext, CommandDefinition } from './types'
 
 function submitGuidedWorkflowCommand(
@@ -221,6 +221,39 @@ export const builtinCommands: CommandDefinition[] = [
     source: 'builtin',
     execute: (ctx) => {
       submitGuidedWorkflowCommand(ctx, 'monitor')
+    }
+  },
+  {
+    command: 'backup',
+    description: 'Set up, run, or restore this workflow’s backup',
+    icon: <Cloud className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'workshop',
+    source: 'builtin',
+    execute: (ctx) => {
+      const instruction = `Help me set up or run backup for this workflow. Call get_reference_doc(kind="backup-strategy"), then read workflow.json.backup and backup/status.json.
+- If backup is NOT configured yet: set it up — recommend the zero-config local-git default and ask me for any destination details or credentials you need. Write backup/status.json with state "configured_not_verified" and do not back up until I confirm.
+- If backup IS configured: run a backup now and report the result (destinations, commit/ref).
+- If I asked to restore: restore the tracked files from the latest backup (or a commit I name) instead.
+Always write backup/status.json; never write operational status into workflow.json.`
+      ctx.onSubmit(ctx.beforeSlash ? `${ctx.beforeSlash}\n\n${instruction}` : instruction)
+    }
+  },
+  {
+    command: 'publish',
+    description: 'Set up or publish this workflow’s Pulse log & report to a public URL',
+    icon: <Globe className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'workshop',
+    source: 'builtin',
+    execute: (ctx) => {
+      const instruction = `Help me set up or run publish for this workflow. Call get_reference_doc(kind="publish-strategy") and follow it exactly, then read workflow.json.publish and publish/status.json.
+- If publish is NOT configured: set it up — ask me which static host (Netlify / Vercel / Cloudflare Pages / GitHub Pages / S3 / any), confirm the CLI is installed and logged in, then write workflow.json.publish and publish/status.json with state "configured_not_verified". Do not publish yet.
+- If publish IS configured: publish now. Publish BOTH artifacts — bake the report dashboard to static HTML AND publish the Pulse log (builder/improve.html); deploy dashboard.html + pulse.html + the nav index.html wrapper per the reference doc. If publish.targets only lists one, update it to include both first. Force every page to **DARK only** (matching the app) — set BOTH class="dark" and data-theme="dark" on the html element per the reference doc; no toggle, do NOT use prefers-color-scheme. Stage the files in a /tmp dir and run the deploy CLI from there. Then give me the public URL and confirm what's public.
+Always write publish/status.json.`
+      ctx.onSubmit(ctx.beforeSlash ? `${ctx.beforeSlash}\n\n${instruction}` : instruction)
     }
   },
   {

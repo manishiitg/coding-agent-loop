@@ -610,6 +610,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   const [selectedWorkflowFilter, setSelectedWorkflowFilter] = useState('all')
   const [schedulerConfig, setSchedulerConfig] = useState<SchedulerConfig | null>(null)
   const [isUpdatingSchedulerPause, setIsUpdatingSchedulerPause] = useState(false)
+  const [bulkUpdatingGroupKey, setBulkUpdatingGroupKey] = useState<string | null>(null)
 
   const [triggering, setTriggering] = useState<string | null>(null)
   const [popupState, setPopupState] = useState<JobPopupState | null>(null)
@@ -1174,6 +1175,29 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
         : await schedulerApi.enableJob(job.id)
       setJobs(prev => prev.map(j => j.id === job.id ? updated : j))
     } catch { /* ignore */ }
+  }
+
+  // Pause (or resume) every schedule belonging to a single workflow group in one click.
+  // If any schedule in the group is enabled, pause them all; otherwise resume all paused ones.
+  const handleToggleWorkflowGroupPause = async (group: WorkflowScheduleGroup) => {
+    const targets = group.enabled > 0
+      ? group.jobs.filter(j => j.enabled)
+      : group.jobs.filter(j => !j.enabled)
+    if (targets.length === 0) return
+    const shouldPause = group.enabled > 0
+    setBulkUpdatingGroupKey(group.key)
+    try {
+      const updated = await Promise.all(
+        targets.map(j => shouldPause ? schedulerApi.disableJob(j.id) : schedulerApi.enableJob(j.id))
+      )
+      const updatedById = new Map(updated.map(u => [u.id, u]))
+      setJobs(prev => prev.map(j => updatedById.get(j.id) ?? j))
+    } catch (e) {
+      console.error('Failed to toggle workflow schedules:', e)
+      loadJobs()
+    } finally {
+      setBulkUpdatingGroupKey(null)
+    }
   }
 
   const handleDelete = async (job: ScheduledJob) => {
@@ -2177,10 +2201,17 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
 
                 return (
                   <div key={group.key} className="overflow-hidden rounded-lg border border-border bg-background">
-                    <button
-                      type="button"
+                    <div
+                      role="button"
+                      tabIndex={0}
                       onClick={() => toggleWorkflowGroup(group.key)}
-                      className="w-full px-4 py-3 text-left transition-colors hover:bg-muted/40"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          toggleWorkflowGroup(group.key)
+                        }
+                      }}
+                      className="w-full cursor-pointer px-4 py-3 text-left transition-colors hover:bg-muted/40"
                     >
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                         <div className="flex min-w-0 items-start gap-3">
@@ -2202,7 +2233,32 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                           </div>
                         </div>
 
-                        <div className="flex flex-wrap gap-1.5 lg:justify-end">
+                        <div className="flex flex-wrap items-center gap-1.5 lg:justify-end">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleToggleWorkflowGroupPause(group)
+                            }}
+                            disabled={bulkUpdatingGroupKey === group.key}
+                            title={group.enabled > 0
+                              ? `Pause all ${group.enabled} active schedule${group.enabled === 1 ? '' : 's'} in this workflow`
+                              : `Resume all ${group.paused} paused schedule${group.paused === 1 ? '' : 's'} in this workflow`}
+                            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium transition-colors disabled:opacity-60 ${
+                              group.enabled > 0
+                                ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20'
+                                : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20'
+                            }`}
+                          >
+                            {bulkUpdatingGroupKey === group.key ? (
+                              <Loader className="h-3 w-3 animate-spin" />
+                            ) : group.enabled > 0 ? (
+                              <Pause className="h-3 w-3" />
+                            ) : (
+                              <Play className="h-3 w-3" />
+                            )}
+                            {group.enabled > 0 ? 'Pause all' : 'Resume all'}
+                          </button>
                           <span className="rounded-full border border-border bg-card px-2 py-0.5 text-xs text-muted-foreground">
                             {group.jobs.length} schedule{group.jobs.length === 1 ? '' : 's'}
                           </span>
@@ -2237,7 +2293,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                           Last ran {formatLastRunLabel(group.lastRunAt)}
                         </span>
                       </div>
-                    </button>
+                    </div>
 
                     {isExpanded && (
                       <div className="divide-y divide-border border-t border-border bg-card/40">

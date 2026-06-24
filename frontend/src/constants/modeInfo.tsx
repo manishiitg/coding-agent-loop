@@ -31,8 +31,8 @@ export const MODE_INFO: Record<Exclude<ModeCategory, null>, ModeInfo> = {
   },
   'multi-agent': {
     icon: <Users className="w-16 h-16 text-indigo-500" />,
-    title: 'Multi Agent Chat',
-    description: 'Use this chat as the operations hub for memory, employee ownership, and workflow work.',
+    title: 'Chief of Staff',
+    description: 'Your operations hub — it runs your workflows, remembers what matters across them, and surfaces what needs your attention.',
     features: [
       'Autonomous spawn delegation',
       'Optional planner usage',

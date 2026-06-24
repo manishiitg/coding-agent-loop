@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { Plus, ArrowDown, ListTree, Terminal, History, X } from 'lucide-react'
 import { normalizeEventViewMode, useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useAppStore } from '../stores/useAppStore'
+import { OrgPulseControl } from './OrgPulseControl'
 import { useModeStore } from '../stores/useModeStore'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 import { TreeViewAlphaDialog, shouldShowTreeViewAlphaWarning } from './TreeViewAlphaDialog'
@@ -117,6 +118,10 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
       </span>
 
       <div className="ml-auto flex items-center gap-1">
+        {/* Org Pulse — enable/disable the daily CoS pass + open its log on the
+            right. Self-contained control, mirrors the workflow Pulse toggle. */}
+        <OrgPulseControl />
+
         {/* History — open the previous-chats list to resume an earlier chat
             without first clearing the current one. */}
         <button

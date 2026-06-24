@@ -53,7 +53,7 @@ New entries go at the **top** of the timeline, not appended at the bottom. The f
 
 Each entry is a small card: a date, a kind tag, a one-line title, and a short prose body (2–4 sentences, plain language — explain *what* and *why*, link the evidence file or changelog entry when relevant). Use these kinds:
 
-- **Run** — a one-line row in the recent-runs strip: run id, status, key numbers (tests, eval, cost), and a short note only when something stands out. Routine runs stay terse; flag a run only when it regressed.
+- **Run** — a one-line row in the recent-runs strip: run id, status, key numbers (tests, eval, cost), the **backup result** (`backed up ✓ <commit/ref>`, `unchanged — already backed up`, or `backup ✗ <reason>`), and a short note only when something stands out. Routine runs stay terse; flag a run only when it regressed or the backup failed.
 - **Monitor** — a post-run observation: what changed in the output and the most likely cause, correlated against the plan changelog ("output regressed at run N; you tightened step X two runs earlier — likely cause").
 - **Decision** — a change applied or proposed, with the one-line rationale and the file(s) touched. If it fixes an open finding, close that finding out (below).
 - **User rule** — a constraint the user stated. Mark it clearly as authoritative ("USER RULE — authoritative") so future agents treat it as a hard constraint, never silently override it. This replaces the old `source: "user"` field — say it in words.

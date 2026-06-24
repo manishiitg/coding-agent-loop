@@ -1662,6 +1662,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/builder-doc", api.handleGetBuilderDoc).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/builder-docs-status", api.handleGetBuilderDocsStatus).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/builder-doc-archives", api.handleGetBuilderDocArchives).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/plan-changelog", api.handleGetPlanChangelog).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/plan-changelog/prune", requireWorkflowWriteAccess(api.handlePrunePlanChangelog)).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/framework-health", api.handleGetFrameworkHealth).Methods("GET", "OPTIONS")
 
 	// Plan and Step Config API routes
@@ -1675,14 +1677,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	// and db/db.sqlite (via the query endpoint) / knowledgebase files via the workspace service's
 	// /api/documents/{path} endpoint (agentApi.getPlannerFileContent).
 
-	// Workflow Version API routes
-	apiRouter.HandleFunc("/workflow/versions", api.handleListVersions).Methods("GET", "OPTIONS")
-	apiRouter.HandleFunc("/workflow/versions/publish", requireWorkflowWriteAccess(api.handlePublishVersion)).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/workflow/versions/revert", requireWorkflowWriteAccess(api.handleRevertVersion)).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/workflow/versions", requireWorkflowWriteAccess(api.handleDeleteVersion)).Methods("DELETE", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/backup", api.handleGetWorkflowBackup).Methods("GET", "OPTIONS")
-	apiRouter.HandleFunc("/workflow/backup/config", requireWorkflowWriteAccess(api.handleUpdateWorkflowBackupConfig)).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/workflow/backup/run", requireWorkflowWriteAccess(api.handleRunWorkflowBackup)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/publish", api.handleGetWorkflowPublish).Methods("GET", "OPTIONS")
 
 	// Manifest-backed workflow API routes (file-backed workflow definitions)
 	apiRouter.HandleFunc("/workflows/summary", api.handleGetWorkflowsSummary).Methods("GET", "OPTIONS")

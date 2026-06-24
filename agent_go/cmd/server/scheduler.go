@@ -1138,10 +1138,11 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 			s.sessionLogf(sctx, sessionID, "[SCHEDULER] Failed to update run entry for %s: %v", schedID, err)
 		}
 
-		// Post-run monitor: a cheap, read-only triage pass that records Bug + Goal
-		// verdicts and any silent-failure / drift finding into the workflow log.
+		// Pulse: the post-run steward. When enabled it backs up the workflow,
+		// triages the run (Bug + Goal verdicts into the Pulse log), applies low-risk
+		// fixes, and notifies on a transition — see runPostRunMonitor.
 		// Opt-in per workflow (post_run_monitor in workflow.json) — runs only when
-		// the user / builder enabled it. Only after an actual workflow RUN, not an
+		// the user / builder enabled Pulse. Only after an actual workflow RUN, not an
 		// optimizer/improvement pass (there's no fresh run output to triage there).
 		// Never affects the run's recorded result.
 		if runFolder != "" && sctx.Schedule.WorkshopMode != "optimizer" {
@@ -1154,45 +1155,49 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 	return sessionID, execErr
 }
 
-// runPostRunMonitor fires a short, read-only agent pass after a scheduled
-// workflow run. It reads the run evidence, plan changelog, and eval/metric
-// files, then records a Bug verdict and a Goal verdict plus any finding into
-// builder/improve.html (the workflow log) and writes builder/monitor-verdict.json.
-// It never fixes anything and never changes the run's recorded status — failures
-// here are logged and swallowed. The monitor's behaviour is defined by the
+// runPostRunMonitor fires the Pulse pass after a scheduled workflow run. Pulse
+// backs the workflow up, then reads the run evidence, plan changelog, and
+// eval/metric files to form a Bug verdict and a Goal verdict (recorded into
+// builder/improve.html — the Pulse log — plus builder/monitor-verdict.json),
+// then applies low-risk reversible fixes (harden for Bug, replan PROPOSAL for
+// Goal) and notifies on a transition. It never changes the run's recorded status
+// — failures here are logged and swallowed. Pulse's behavior is defined by the
 // post-run-monitor reference doc; this just hands it the run context.
 func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *ScheduleContext, runStatus, runFolder string) {
 	defer func() {
 		if r := recover(); r != nil {
-			s.logf(sctx, "[MONITOR] post-run monitor panic (recovered): %v", r)
+			s.logf(sctx, "[PULSE] post-run pulse panic (recovered): %v", r)
 		}
 	}()
 
 	sessionID := s.newScheduleSessionID(sctx)
 	reqMap := s.buildWorkshopRequest(ctx, sctx)
 	reqMap["query"] = fmt.Sprintf(
-		"You are the post-run monitor. A scheduled run of this workflow just finished: status=%q, run_folder=%q. "+
-			"Call get_reference_doc(kind=\"post-run-monitor\") and follow it exactly: read the run evidence, the plan changelog, and the eval/metric files; "+
-			"form a Bug verdict and a Goal verdict; update builder/improve.html (verdict pills, goal card, signal tiles, one run row, and a Monitor entry only if something is wrong); "+
-			"write builder/monitor-verdict.json; and notify the user per the doc's step 5 — which honors a user `## Notifications` preference in soul/soul.md if present, otherwise defaults to a single notify_user call only on a state transition (broke, recovered, or a new finding while still bad) and silence on a steady run. "+
-			"Do NOT run the workflow, dispatch sub-agents, or fix anything — this is a read-only triage pass whose only side effect is that single transition notification.",
+		"You are Pulse, the post-run steward. A scheduled run of this workflow just finished: status=%q, run_folder=%q. "+
+			"Call get_reference_doc(kind=\"post-run-monitor\") and follow it exactly, performing these five steps in order:\n"+
+			"1. BACK UP (always). Read workflow.json.backup and back up per get_reference_doc(kind=\"backup-strategy\"). If backup is disabled, set it up with the zero-config local-git default and back up. Skip the actual push only when backup/status.json shows the current source is already backed up (unchanged). Always write backup/status.json.\n"+
+			"2. TRIAGE. Read the run evidence, the plan changelog, and the eval/metric files; form a Bug verdict and a Goal verdict; update builder/improve.html (verdict pills, goal card, signal tiles, one run row, a Pulse entry only if something is wrong); write builder/monitor-verdict.json.\n"+
+			"3. FIX (only if triage found a problem). For a Bug finding, apply a LOW-RISK, reversible harden per get_reference_doc(kind=\"optimize-playbook\") and record it in the log as an applied fix. For a Goal finding, record a replan PROPOSAL — do NOT rewrite the plan wholesale. A clean run gets no fix.\n"+
+			"4. PUBLISH (only if publish is on). If workflow.json.publish is enabled, re-publish the updated HTML per get_reference_doc(kind=\"publish-strategy\") — but ONLY when the destination is already VERIFIED (publish/status.json shows a prior successful publish) AND the published artifacts changed since then (source hash). Never do the first/verifying publish here unattended — that is the user's manual set-up step. Always write publish/status.json.\n"+
+			"5. NOTIFY once on a state transition per the doc's step 5 — honor a user `## Notifications` preference in soul/soul.md, otherwise a single notify_user call only on broke/recovered/new-finding and silence on a steady run.\n"+
+			"Stay scoped: back up, apply only low-risk reversible fixes, and re-publish an already-verified site; never rewrite the plan wholesale or dispatch a full improvement run here.",
 		runStatus, runFolder)
 
-	s.sessionLogf(sctx, sessionID, "[MONITOR] starting post-run monitor for %s (run_folder=%s status=%s)", sctx.Schedule.ID, runFolder, runStatus)
+	s.sessionLogf(sctx, sessionID, "[PULSE] starting pulse for %s (run_folder=%s status=%s)", sctx.Schedule.ID, runFolder, runStatus)
 	if err := s.api.startSessionInternal(ctx, reqMap, sessionID, "", nil); err != nil {
-		s.sessionLogf(sctx, sessionID, "[MONITOR] failed to start: %v", err)
+		s.sessionLogf(sctx, sessionID, "[PULSE] failed to start: %v", err)
 		return
 	}
 	if err := s.waitForWorkshopIdle(ctx, sessionID); err != nil {
-		s.sessionLogf(sctx, sessionID, "[MONITOR] idle wait failed: %v", err)
+		s.sessionLogf(sctx, sessionID, "[PULSE] idle wait failed: %v", err)
 		return
 	}
-	s.sessionLogf(sctx, sessionID, "[MONITOR] post-run monitor completed for %s", sctx.Schedule.ID)
-	// The monitor agent owns its own notification: per its reference doc it calls
-	// notify_user once, only on a state transition it reads from the durable
-	// Pulse log. The scheduler no longer pushes a templated message — that avoids a
-	// double-send and lets the agent author the exact, nuanced sentence. It still
-	// writes builder/monitor-verdict.json as a machine signal for the UI.
+	s.sessionLogf(sctx, sessionID, "[PULSE] pulse completed for %s", sctx.Schedule.ID)
+	// Pulse owns its own notification: per its reference doc it calls notify_user
+	// once, only on a state transition it reads from the durable Pulse log. The
+	// scheduler no longer pushes a templated message — that avoids a double-send and
+	// lets the agent author the exact, nuanced sentence. It still writes
+	// builder/monitor-verdict.json as a machine signal for the UI.
 }
 
 // executeJob builds a session request from the manifest and runs it.
@@ -1265,10 +1270,13 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 		s.sessionLogf(sctx, sessionID, "[SCHEDULER] Workshop message %d/%d completed", i+1, len(messages))
 	}
 
-	// Note: backup-on-completion is no longer appended here. It is driven by the
-	// run_full_workflow completion AUTO-NOTIFICATION (workflowRunBackupDirective in
-	// server.go), which covers both scheduled and interactive runs — appending a
-	// backup turn here too would double-back up scheduled runs.
+	// Note: backup-on-completion is not appended here as a message turn. Backup is
+	// owned by two arms that share one source-hash-gated contract: the Pulse pass
+	// (runPostRunMonitor, step 1) for scheduled runs when Pulse is enabled, and the
+	// run_full_workflow completion directive (workflowRunBackupDirective) for
+	// interactive runs (and as the fallback when Pulse is off). The shared source-hash
+	// gate means whichever arm runs second sees the state already backed up and skips
+	// the push — so the overlap can't double-back up.
 
 	// Previously auto-generated a static markdown report here via the report agent.
 	// The dynamic report (design doc §2) is a live frontend view over db/ + graph.json;

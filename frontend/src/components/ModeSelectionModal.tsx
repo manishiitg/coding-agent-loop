@@ -115,7 +115,7 @@ const ModeCard: React.FC<ModeCardProps> = ({
                 )}
                 {category === 'multi-agent' && (
                   <div>
-                    <p className="font-semibold mb-2">Multi Agent Chat</p>
+                    <p className="font-semibold mb-2">Chief of Staff</p>
                     <p className="mb-2">Plan-driven delegation with AI sub-agents. Features:</p>
                     <ul className="list-disc list-inside space-y-1">
                       <li>Automatic plan creation and task breakdown</li>
@@ -264,11 +264,11 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
 
           {/* Mode Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 justify-items-center max-w-4xl mx-auto">
-            {/* Multi Agent Chat Mode */}
+            {/* Chief of Staff Mode */}
             <ModeCard
               category="multi-agent"
-              title="Multi Agent Chat"
-              description="Autonomous multi-agent chat with optional planning when needed."
+              title="Chief of Staff"
+              description="Your operations hub — runs workflows, keeps shared memory, and delegates ad-hoc work."
               icon={<Users className="w-5 h-5 text-indigo-600" />}
               features={getModeInfoForModal('multi-agent').features}
               exampleQueries={getModeInfoForModal('multi-agent').examples}

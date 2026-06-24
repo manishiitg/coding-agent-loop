@@ -1985,12 +1985,28 @@ export interface SimulatorInteractResponse {
   success: boolean;
 }
 
-// Workflow Versions
-export interface WorkflowVersionMeta {
-  version: number
-  label: string
-  created_at: string
-  files_count: number
+// Workflow plan changelog (History view "Plan edits" feed)
+export interface PlanChangelogFieldChange {
+  step_id: string
+  field: string
+  old_value: unknown
+  new_value: unknown
+}
+
+export interface PlanChangelogEntry {
+  timestamp: string
+  tool: string
+  reason: string
+  step_ids?: string[]
+  changes?: PlanChangelogFieldChange[]
+  file?: string
+}
+
+export interface PlanChangelogResponse {
+  success: boolean
+  entries: PlanChangelogEntry[]
+  count: number
+  error?: string
 }
 
 // Workflow Backup
@@ -2060,6 +2076,75 @@ export interface WorkflowBackupInfoResponse {
   current_source_hash?: string
   tracked_files_count?: number
   supported: WorkflowBackupStrategyInfo[]
+  status_path: string
+}
+
+// Workflow Publish (share HTML artifacts to a public URL)
+export interface WorkflowPublishConfig {
+  enabled: boolean
+  mode?: string
+  // Agent-authored: may be plain strings ("pulse"/"report") or rich objects.
+  targets?: Array<string | { id?: string; artifact?: string; [k: string]: unknown }>
+  dashboard_mode?: string     // "snapshot"
+  url?: string
+  triggers?: WorkflowBackupTriggers
+  destinations?: WorkflowPublishDestination[]
+  notes?: string
+}
+
+export interface WorkflowPublishDestination {
+  id: string
+  provider: string            // free-form: netlify, vercel, cloudflare-pages, github-pages, s3, ...
+  method?: 'cli' | 'git' | 'sync' | string
+  site?: string
+  secret_name?: string
+  visibility?: string         // public | private | unguessable-link
+  public_base_url?: string
+  url?: string
+  covers?: string[]
+  notes?: string
+}
+
+export interface WorkflowPublishStatus {
+  version: number
+  state: 'not_configured' | 'configured_not_verified' | 'publishing' | 'published' | 'stale' | 'failed' | string
+  url?: string
+  last_published_at?: string
+  last_attempt_at?: string
+  last_agent_session_id?: string
+  last_source_hash?: string
+  summary?: string
+  destinations?: WorkflowPublishDestinationStatus[]
+  last_error?: string
+  updated_at?: string
+}
+
+export interface WorkflowPublishDestinationStatus {
+  id: string
+  provider?: string
+  method?: string
+  state: 'published' | 'failed' | 'skipped' | 'publishing' | string
+  url?: string
+  last_success_at?: string
+  summary?: string
+  error?: string
+}
+
+export interface WorkflowPublishStrategyInfo {
+  id: string
+  label: string
+  method: string
+  description: string
+}
+
+export interface WorkflowPublishInfoResponse {
+  success: boolean
+  config?: WorkflowPublishConfig
+  status?: WorkflowPublishStatus
+  effective_state: 'not_configured' | 'configured_not_verified' | 'publishing' | 'published' | 'stale' | 'failed' | string
+  url?: string
+  current_source_hash?: string
+  supported: WorkflowPublishStrategyInfo[]
   status_path: string
 }
 

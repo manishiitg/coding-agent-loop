@@ -31,6 +31,14 @@ const builtinAutoEnrichQuery = `Check for chats needing memory enrichment, then 
 2. If the count is 0, reply "No new chats to enrich — skipping." and STOP. Do not call any other tools.
 3. If the count is > 0, call enrich_memory() with no arguments.`
 
+const builtinOrgPulseID = "builtin-org-pulse"
+
+const builtinOrgPulseQuery = `You are running the daily Org Pulse — the Chief of Staff's heartbeat over the whole org.
+
+First, check whether anything has changed since your last Org Pulse (any workflow runs, new chats, or new outputs). If nothing has changed, write nothing and stop.
+
+Otherwise, call get_reference_doc(kind="org-pulse") and follow it exactly: review the org (each workflow's monitor-verdict.json + reports + knowledgebase + global learnings, plus recent conversations), judge the org's endgame, harvest what's worth keeping into your memory (curate and merge in your own words — never copy/import files), propose any promotions (a repeated ad-hoc task -> turn it into a workflow), and record everything — org health, what you harvested, and suggestion cards — in the single pulse/org-pulse.html log (no separate JSON). Notify the user only on a decision-worthy change; stay silent on a steady day.`
+
 // DefaultBuiltinSchedules returns the list of product-provided schedules that
 // run for every user unless overridden.
 func DefaultBuiltinSchedules() []WorkflowSchedule {
@@ -44,6 +52,21 @@ func DefaultBuiltinSchedules() []WorkflowSchedule {
 			Enabled:        true,
 			Mode:           "multi-agent",
 			Query:          builtinAutoEnrichQuery,
+		},
+		{
+			// Opt-in (Enabled:false): the user turns Org Pulse on via the chat
+			// toggle / Scheduled Tasks popup, which writes a same-ID override with
+			// enabled:true and their chosen cron. Default cadence is once a day; the
+			// pass self-gates agentically (wakes, cheap "anything new?" check, exits
+			// if not) rather than via a Go pre-fire check.
+			ID:             builtinOrgPulseID,
+			Name:           "Org Pulse (daily)",
+			Description:    "The Chief of Staff's daily heartbeat: review every workflow's outcome, harvest reports/learnings into memory, and surface suggestions. Off by default; turn it on to opt in. Default once a day, editable.",
+			CronExpression: "0 8 * * *",
+			Timezone:       "UTC",
+			Enabled:        false,
+			Mode:           "multi-agent",
+			Query:          builtinOrgPulseQuery,
 		},
 	}
 }

@@ -756,6 +756,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) execScriptedScript(
 		hcpo.UnlockWorkspaceEnv()
 	}
 
+	// DB_PATH: the scripted fast path execs python3 directly — it does NOT go
+	// through the agent's execute_shell_command wrapper (injectStepEnvIntoShellExecutor)
+	// that injects DB_PATH. Without it a saved main.py doing os.environ['DB_PATH']
+	// fails with "DB_PATH unset and no root found". Set it here to the same absolute
+	// path the agent path uses. Set AFTER the workspace-env merge so it always wins.
+	extraEnv["DB_PATH"] = filepath.Join(docsRoot, hcpo.GetWorkspacePath(), DBFolderName, "db.sqlite")
+
 	envKeys := make([]string, 0, len(extraEnv))
 	for k := range extraEnv {
 		envKeys = append(envKeys, k)

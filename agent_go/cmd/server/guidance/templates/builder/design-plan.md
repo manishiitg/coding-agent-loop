@@ -56,7 +56,7 @@ PART 6 — DESIGN LENSES (recommend the better shape, even when nothing is broke
 - **Gate everything** — every produces-output step needs a `validation_schema`; prefer db checks on the source of truth. A gate catches drift the moment it lands, not three steps downstream.
 - **Human gates** — consequential actions (sending messages, spending, medical/legal/irreversible decisions) without a `human_input` step are usually under-gated. Ask whether one belongs.
 - **Naming** — "process_data"/"do_step" are generic; "classify_emails_by_buyer_intent" makes the plan self-documenting.
-- **Mode** — new executable steps stay **agentic** in Builder; scripted promotion is Optimizer-only, after the user asks + 10+ scenario-covering successful runs prove determinism.
+- **Mode** — new executable steps default to **agentic**; don't flip a step to scripted on your own. But if the **user explicitly asks** for a scripted step (e.g. to build and test it), set `scripted` — that's their call, and they need it scripted to gather run evidence. The 10+-run determinism bar is for *freezing* it (`lock_code`) / the Optimizer trusting it as the stable fast path, not for honoring a user's request to create one.
 
 For each recommendation give: **what's there now** (one quoted sentence), **what to consider** (better shape + concrete example), **why** (which practice it serves).
 

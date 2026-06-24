@@ -183,9 +183,10 @@ When the orchestrator's routing decisions are **stable and
 deterministic** — the set of route calls is known in advance and only
 branches on success/failure — you can author a
 `learnings/{step-id}/main.py` and mark the step
-`declared_execution_mode="scripted"` (only after the user explicitly
-asks and 10+ scenario-covering successful runs prove the route behavior
-is stable).
+`declared_execution_mode="scripted"` when the user explicitly asks
+(don't auto-promote on your own). 10+ scenario-covering successful runs
+proving the route behavior is stable are the bar for freezing it
+(`lock_code`), not for creating the scripted route the user requested.
 
 At runtime the script runs first; any failure falls back to the normal
 LLM orchestrator with a fresh start. The orchestrator scripted path is

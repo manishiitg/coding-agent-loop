@@ -2012,16 +2012,52 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       })
   }, [addToast, exitKeyboardMode])
 
+  // Keyboard passthrough coalescing: merge consecutive printable characters into
+  // a single sendTerminalInput over a short window instead of one HTTP + tmux
+  // paste per keystroke (which floods the backend on fast typing). Any control
+  // key flushes the buffer first so ordering/semantics are preserved.
+  const kbTextBufferRef = useRef('')
+  const kbFlushTimerRef = useRef<number | null>(null)
+
+  const flushKbTextBuffer = useCallback(() => {
+    if (kbFlushTimerRef.current !== null) {
+      window.clearTimeout(kbFlushTimerRef.current)
+      kbFlushTimerRef.current = null
+    }
+    const text = kbTextBufferRef.current
+    if (!text) return
+    kbTextBufferRef.current = ''
+    const terminal = kbTerminal
+    if (!terminal) return
+    const terminalId = terminal.terminal_id
+    enqueueKbSend(() => agentApi.sendTerminalInput(terminalId, text, false))
+  }, [enqueueKbSend, kbTerminal])
+
   const forwardKeyboardEvent = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const terminal = kbTerminal
     if (!terminal) return
     const action = keyEventToTerminalAction(e)
     if (!action) return
     const terminalId = terminal.terminal_id
-    enqueueKbSend(() => action.kind === 'key'
-      ? agentApi.sendTerminalKey(terminalId, action.key)
-      : agentApi.sendTerminalInput(terminalId, action.text, false))
-  }, [enqueueKbSend, kbTerminal])
+    if (action.kind === 'text') {
+      // Buffer printable chars and flush them as one paste after a brief window,
+      // so a burst of typing becomes a single send.
+      kbTextBufferRef.current += action.text
+      if (kbFlushTimerRef.current === null) {
+        kbFlushTimerRef.current = window.setTimeout(flushKbTextBuffer, 30)
+      }
+      return
+    }
+    // Control key (enter, ctrl-*, arrows, backspace, tab, …): flush any buffered
+    // text first so it lands before the key, then send the key immediately.
+    flushKbTextBuffer()
+    enqueueKbSend(() => agentApi.sendTerminalKey(terminalId, action.key))
+  }, [enqueueKbSend, kbTerminal, flushKbTextBuffer])
+
+  // Flush any buffered keystrokes when leaving keyboard mode so nothing is lost.
+  useEffect(() => {
+    if (!keyboardMode) flushKbTextBuffer()
+  }, [keyboardMode, flushKbTextBuffer])
 
   // Leave keyboard mode if the session changes or becomes view-only.
   useEffect(() => {

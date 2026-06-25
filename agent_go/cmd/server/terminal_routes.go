@@ -549,7 +549,10 @@ func (api *StreamingAPI) handleSendTerminalInput(w http.ResponseWriter, r *http.
 		http.Error(w, "Invalid terminal input request", http.StatusBadRequest)
 		return
 	}
-	if strings.TrimSpace(req.Text) == "" && !req.Submit {
+	// Reject only a genuinely empty payload — NOT whitespace-only. A lone space
+	// (or tab) is a valid keystroke in keyboard-passthrough mode; TrimSpace here
+	// would drop it, so spaces never reach the CLI.
+	if req.Text == "" && !req.Submit {
 		http.Error(w, "Text or submit=true is required", http.StatusBadRequest)
 		return
 	}

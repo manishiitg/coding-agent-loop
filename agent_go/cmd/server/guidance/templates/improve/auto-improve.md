@@ -4,16 +4,18 @@ Write to `builder/improve.html` — the single durable log. For the log/HTML for
 
 FIRST check what already exists before proposing or creating anything. Do this autonomously and avoid duplicate schedules.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
-Auto-improve runs at several cadences over the **one** workflow log (`builder/improve.html`), all sharing the Bug/Goal vocabulary: a cheap **per-run review** that detects every run, feeding two **scheduled** passes that fix. The per-run review and these schedules are the same system, not separate tools.
+Auto-improve runs over the **one** workflow log (`builder/improve.html`), all sharing the Bug/Goal vocabulary: a cheap **per-run review** that detects every run, feeding **one scheduled improve pass** that acts on what it found — it decides, per fire, whether to apply a harden, record a replan proposal, both, or nothing. The per-run review and the improve schedule are the same system, not separate tools.
 
 GOAL
 Set up the per-run review **and** the complementary schedules:
 0. **Per-run review (detection, every run):** turn the per-run monitor ON — call `update_workflow_config(post_run_monitor=true)`. From then on, after every run a cheap review-only pass records Bug/Goal findings in the log — this is what the harden/replan schedules below consume. It never fixes; see `get_reference_doc(kind="post-run-monitor")`. Tell the user in plain terms it's on (or that they can toggle it from the **Monitor** control in the toolbar).
 1. a workshop Run-mode schedule for recurring execution
-2. a workshop Optimizer-mode HARDEN schedule that wakes often — initially after every 1-2 runs — and APPLIES a hardening pass (local reliability/contract/artifact fixes + stale-description cleanup) off the latest run/eval evidence and the per-run **Bug** findings, widening its own interval as the workflow stabilizes
-3. a workshop Optimizer-mode REPLAN-PROPOSAL schedule that wakes less often — initially after every 3-4 runs — and does NOT rewrite the plan: it reviews accumulated evidence and the per-run **Goal** findings, decides what the plan/strategy SHOULD change, and records that as a proposal in builder/improve.html for human review, widening its own interval as the workflow matures.
+2. a workshop Optimizer-mode **IMPROVE** schedule that wakes on a regular cadence (initially after every 1-2 runs, widening as the workflow stabilizes) and, **each fire, decides from the evidence what the workflow needs** — it runs the `improve-workflow` decision model over the latest run/eval evidence and the per-run Bug/Goal findings, then acts:
+   - **Bug / reliability evidence → APPLY a low-risk, reversible harden** (local reliability/contract/artifact fixes, KB/db/report/eval contracts, learning hygiene, stale-description cleanup).
+   - **Goal / strategy evidence → RECORD a replan PROPOSAL** for human review (what to change and why) — it does NOT rewrite the plan.
+   - It may do both, one, or neither (no-action + widen cadence) in a single fire. The agent picks from the evidence — there is no separate harden-vs-replan schedule.
 
-Harden is always the more frequent of the two improvement schedules; the replan-proposal schedule never fires more often than harden. The harden schedule APPLIES fixes; the replan-proposal schedule only RECOMMENDS — it never calls `replan_workflow_from_results` and never rewrites `planning/plan.json`.
+The apply-vs-propose split is the safety rail, not a second schedule: harden APPLIES low-risk reversible fixes; structural plan change is always a recorded PROPOSAL — the improve schedule never calls `replan_workflow_from_results` and never rewrites `planning/plan.json` unattended.
 
 DISCOVERY
 1. Call get_workflow_config and inspect the current schedule list.
@@ -23,17 +25,17 @@ DISCOVERY
 5. Read builder/improve.html. This is mandatory: it contains the Workflow Profile, recent timeline entries, open findings, prior decisions, open replan proposals, and prior scheduled-improvement history. If it's short, read it in full. Read archive files only when an open finding, the current focus, schedule drift, or the selected evidence window points into one.
 6. Read any legacy builder/review.html if present and fold its unresolved findings into builder/improve.html. Carry unresolved open findings into the scheduled harden message.
 7. Read planning/metrics.json and recent db/metrics_history.jsonl rows. Metrics are evidence for harden and for replan proposals; they do not create a separate action path.
-8. Read planning/changelog/ if present and compare recent plan/config changes against builder/improve.html. Recent plan changes increase regression risk and require tighter harden cadence until one or two post-change runs have been reviewed.
+8. Read planning/changelog/ if present and compare recent plan/config changes against builder/improve.html. Recent plan changes increase regression risk and require a tighter improve cadence until one or two post-change runs have been reviewed.
 9. **Success must be defined before scheduling — check it FIRST and bootstrap it if missing.** auto-improve cannot optimize toward an undefined goal, so never set up an optimizer schedule for a workflow with no success definition. If builder/improve.html has no Workflow Profile block — or the profile declares business-context accumulation or a frozen/ratchet plan and planning/metrics.json is empty — do NOT skip ahead and do NOT just tell the user to "run /define-success" and stop. Instead, run the define-success bootstrap **inline now**: call `get_workflow_command_guidance(kind="define-success")` and follow it to completion with the user (establish the Workflow Profile + metrics), then resume these steps and continue to scheduling. Only proceed directly to the schedule steps when a Workflow Profile already exists and metrics are defined.
 
 SCHEDULE STRATEGY
 1. Prefer updating or reusing good existing schedules instead of creating duplicates.
 2. Only create a new schedule when no existing schedule already serves the purpose.
-3. The HARDEN schedule is frequent: initial cadence ≈ every 1-2 runs (fire shortly after a run or two so it hardens off fresh evidence), widening as the workflow stabilizes. The REPLAN-PROPOSAL schedule is less frequent: initial cadence ≈ every 3-4 runs, widening further as the workflow matures. Harden never fires less often than the replan-proposal.
+3. The IMPROVE schedule fires on a regular cadence: initial ≈ every 1-2 runs (fire shortly after a run or two so it acts off fresh evidence), widening as the workflow stabilizes. It decides harden vs replan-proposal **per fire** from the evidence — there is no separate cadence for the two.
 4. If cadence is not obvious:
    - choose a practical recurring run cadence based on the workflow objective and existing schedules
-   - start harden ≈ every 1-2 runs and the replan-proposal ≈ every 3-4 runs; for unknown active workflows base the run cadence at every 6-12 hours, not weekly
-5. If planning/changelog shows material plan/config changes since the last builder/improve.html entry or unresolved open finding, tighten the harden schedule for the next 24-48 hours or until the next one or two post-change runs have been reviewed.
+   - start the improve schedule ≈ every 1-2 runs; for unknown active workflows base the run cadence at every 6-12 hours, not weekly
+5. If planning/changelog shows material plan/config changes since the last builder/improve.html entry or unresolved open finding, tighten the improve schedule for the next 24-48 hours or until the next one or two post-change runs have been reviewed.
 6. Because `/auto-improve` runs in Optimizer mode, each scheduled fire may call schedule tools itself. It should review cadence on every fire and use update_schedule when builder/improve.html history, schedule run history, recent planning/changelog entries, or run/eval/metric evidence shows the cadence is too slow, too fast, stale, or mis-scoped.
 7. Preserve a good existing timezone if one is already in use. Otherwise use the workflow's local/current timezone.
 
@@ -49,35 +51,26 @@ The run schedule message must encode:
 - Do not ask for confirmation; proceed autonomously.
 - Read variables/variables.json only if needed to verify configured group names.
 - For each configured group_name, call run_full_workflow(group_name="<group>").
-- Use default evaluation behavior so latest run evidence, retained-run history, and metric history are available for the harden and replan-proposal schedules.
+- Use default evaluation behavior so latest run evidence, retained-run history, and metric history are available for the improve schedule.
 - Stop after the configured group_names have run and report the run status plainly.
 
-HARDEN SCHEDULE
-Create or update the frequent hardening schedule with:
+IMPROVE SCHEDULE
+Create or update a single optimizer-mode improve schedule with:
 - mode="workshop", workshop_mode="optimizer"
 - valid group_names
-- a clear name and description marking it the frequent HARDEN schedule
-- initial cadence ≈ every 1-2 runs
-- a single scheduled message that APPLIES a hardening pass off the latest run/eval evidence: improve local reliability, validation, artifact shape, KB/db/report/eval contracts, learning hygiene, and stale-description cleanup. It does NOT redesign strategy — the replan-proposal schedule owns path redesign.
+- a clear name and description marking it the IMPROVE schedule (it both APPLIES harden and RECORDS replan proposals — one schedule, decided per fire)
+- a regular cadence (initial ≈ every 1-2 runs, widening as the workflow stabilizes)
+- a single scheduled message that, each fire, runs the `improve-workflow` decision model over the latest evidence and the per-run Bug/Goal findings, then ACTS on what it found.
 
-The harden message must be a short wrapper around `improve-workflow` (steered to harden via focus), not a duplicate copy of the improve decision model. Write the wrapper explicitly into the schedule message; the agent that fires has no other context.
-
-REPLAN-PROPOSAL SCHEDULE
-Create or update the less-frequent replan-proposal schedule with:
-- mode="workshop", workshop_mode="optimizer"
-- valid group_names
-- a clear name and description marking it the REPLAN-PROPOSAL schedule
-- initial cadence ≈ every 3-4 runs
-- a single scheduled message that REVIEWS accumulated evidence and decides what the workflow's strategy/path SHOULD change to reach the success criteria — and WRITES that as a proposal, WITHOUT applying it.
-
-The replan-proposal message must NOT call `replan_workflow_from_results` and must NOT rewrite `planning/plan.json` or any step. Each fire (mechanical, on cadence, whenever there is fresh run evidence to reason about) it:
+The improve message must be a short wrapper around `improve-workflow` (the decision model), not a duplicate copy of it. Write the wrapper explicitly into the schedule message; the agent that fires has no other context. Each fire (mechanical, on cadence, whenever there is fresh run evidence to reason about) it:
 - reads the evidence: builder/improve.html, soul/soul.md, planning/metrics.json + recent db/metrics_history.jsonl, the latest eval reports and run outputs, and planning/changelog/
-- assesses whether the current approach is capped on the primary metric/success (executed well yet still short), or whether the evidence reveals a materially better different approach
-- writes a REPLAN PROPOSAL entry into builder/improve.html as a prose timeline entry (tagged as an open proposal, newest on top) containing: the **evidence** (what is capping the metric / why the current path falls short), the **recommended plan/strategy change** (which steps to add/remove/reorder/redraw, what business work or capability to change, what output artifact or collected evidence to change), the **expected impact** against the success criteria, and the **risk**. Give it a short anchor id (e.g. `id="of-2026-06-07-replan"`) only so a later decision can mark it resolved.
-- does NOT apply anything — a human, or a later explicit `/improve-workflow` or `replan_workflow_from_results`, decides and applies.
-- if the evidence is too thin to propose anything useful, logs no-action and widens its own cadence.
+- **Bug / reliability findings → APPLY a low-risk, reversible harden:** improve local reliability, validation, artifact shape, KB/db/report/eval contracts, learning hygiene, and stale-description cleanup. Reversible fixes only; record each as an applied Decision in the log. It does NOT redesign strategy here.
+- **Goal / strategy findings → RECORD a replan PROPOSAL, do NOT apply it:** assess whether the current approach is capped on the primary metric/success (executed well yet still short) or whether the evidence reveals a materially better different approach, and write a REPLAN PROPOSAL entry into builder/improve.html as a prose timeline entry (tagged as an open proposal, newest on top) containing: the **evidence** (what is capping the metric / why the current path falls short), the **recommended plan/strategy change** (which steps to add/remove/reorder/redraw, what business work or capability to change, what output artifact or collected evidence to change), the **expected impact** against the success criteria, and the **risk**. Give it a short anchor id (e.g. `id="of-2026-06-07-replan"`) only so a later decision can mark it resolved.
+- may do **both, one, or neither** in a single fire — if the evidence is too thin to act, log no-action and widen its own cadence. The agent decides from the evidence.
 
-OPENING (every improve fire — harden or replan-proposal):
+It must NEVER call `replan_workflow_from_results` or rewrite `planning/plan.json` or any step unattended — structural change is always a recorded proposal that a human (or a later explicit `/improve-workflow` / `replan_workflow_from_results`) applies.
+
+OPENING (every improve fire):
 - call get_workflow_config and inspect schedules; call get_schedule_runs for the run schedule and the firing improve schedule when deciding whether cadence or group scope needs adjustment
 - read builder/improve.html's active sections; read only referenced `builder/improve-archive/YYYY-MM.html` files when older history matters
 - read any legacy builder/review.html if present and fold its unresolved findings into builder/improve.html
@@ -87,30 +80,28 @@ OPENING (every improve fire — harden or replan-proposal):
 - carry unresolved KB and learning findings into the harden focus when builder/improve.html names stale `knowledgebase/notes/`, `learnings/_global/`, saved scripts, or plan-change drift
 - if group_names, schedule ids, cadence, or recent plan changes indicate schedule drift, prepare a concise cadence note before continuing
 
-HARDEN DELEGATION (harden fire only):
-After the opening check, the harden message must call:
-`get_workflow_command_guidance(kind="improve-workflow", focus="<harden focus>")`
+IMPROVE DELEGATION (every fire):
+After the opening check, the improve message must call:
+`get_workflow_command_guidance(kind="improve-workflow", focus="<improve focus>")`
 Then follow the returned `improve-workflow` instructions verbatim. Do not inline or paraphrase the `improve-workflow` decision model in the schedule message.
 
 The focus string must include:
-- this is a scheduled HARDEN fire — apply local reliability/contract/artifact + stale-description fixes off the latest run/eval evidence; do NOT replan (the replan-proposal schedule owns strategy)
+- this is a scheduled IMPROVE fire — decide from the evidence: APPLY low-risk harden (local reliability/contract/artifact, KB/db/report/eval contracts, learning hygiene, stale-description cleanup) for Bug/reliability findings, AND/OR RECORD a replan PROPOSAL (do NOT apply structural change) for Goal/strategy findings
 - the configured group_names
 - any unresolved open findings or recent planning/changelog concern found during opening
-- any KB/learnings hygiene concern found during opening
+- any KB/learnings/eval/report hygiene concern found during opening
 - any cadence note that affects evidence freshness{{if .Focus}}
 - user focus: {{.Focus}}{{end}}
 
 SCHEDULE SELF-TUNING RULES (evidence-based backoff):
 - If the run schedule is too infrequent to produce evidence for metrics and eval, update the run cadence or log the blocker when changing cadence would be risky.
-- HARDEN cadence: start ≈ every 1-2 runs. When recent harden fires increasingly find nothing to fix and metrics stay healthy, WIDEN the interval step by step (1-2 runs → 3-4 → weekly). When a material plan/config change lands (planning/changelog) or a regression appears, TIGHTEN back toward every 1-2 runs for 24-48h or until one or two post-change runs are reviewed.
-- REPLAN-PROPOSAL cadence: start ≈ every 3-4 runs. When recent proposals stop surfacing materially new strategy changes (repeated "no new proposal", or the same unresolved proposal still pending), WIDEN the interval further (3-4 runs → 6 → 8+). Tighten again only on a major objective/success change or a sustained metric regression that hardening cannot close.
-- Never let the replan-proposal fire more often than harden; harden is always the more frequent of the two.
-- If group_names drift from variables/variables.json or from the intended measurement surface, update all three schedules to the correct explicit group_names.
-- Never create duplicate run/harden/replan-proposal schedules when an existing schedule can be updated.
+- IMPROVE cadence: start ≈ every 1-2 runs. When recent fires increasingly find nothing to apply AND surface no materially new strategy proposal (and metrics stay healthy), WIDEN the interval step by step (1-2 runs → 3-4 → weekly). When a material plan/config change lands (planning/changelog) or a regression appears, TIGHTEN back toward every 1-2 runs for 24-48h or until one or two post-change runs are reviewed.
+- If group_names drift from variables/variables.json or from the intended measurement surface, update both schedules (run + improve) to the correct explicit group_names.
+- Never create duplicate run/improve schedules when an existing schedule can be updated.
 
 POST-FIRE CADENCE CHECK (every improve fire):
-After the harden pass or the replan-proposal write finishes, do one short schedule check:
-- if a harden fire changed the workflow, or a replan-proposal fire surfaced a new proposal, keep or tighten cadence per the backoff rules
+After the improve pass finishes, do one short schedule check:
+- if the fire changed the workflow (applied a harden) or surfaced a new replan proposal, keep or tighten cadence per the backoff rules
 - if no action was taken because there was no fresh evidence, widen cadence only when repeated recent schedule runs show no useful observation
 - append the schedule decision to builder/improve.html if it was not already recorded
 
@@ -120,8 +111,7 @@ Bootstrap it with:
 - objective and success criteria snapshot
 - current schedule strategy
 - run cadence
-- harden cadence
-- replan-proposal cadence
+- improve cadence
 - current known workflow gaps
 - current known eval/metric gaps
 - current known KB/learnings hygiene gaps
@@ -137,7 +127,7 @@ If builder/improve.html is already long, compact it while preserving the ledger:
 SCHEDULE CREATION RULES
 1. Do NOT delete schedules unless they are clearly redundant and safe to remove. Prefer update over delete.
 2. If an existing run schedule already serves the purpose, keep it and refine it if needed. For /auto-improve, convert/update direct mode="workflow" run schedules to mode="workshop", workshop_mode="run" rather than leaving them as direct workflow schedules.
-3. If an existing optimizer/improve schedule already serves harden or replan-proposal, keep it and refine it. If a single legacy optimizer schedule does both, split it into a frequent harden schedule and a less-frequent replan-proposal schedule.
+3. If an existing optimizer/improve schedule already serves harden or replan-proposal, keep it and refine it into the single IMPROVE schedule. If there are TWO legacy optimizer schedules (a separate harden and a separate replan-proposal), consolidate them into one improve schedule rather than maintaining both.
 4. Use create_schedule / update_schedule as appropriate.
 
 FINAL REPORT
@@ -145,9 +135,7 @@ Summarize:
 - what schedules already existed
 - what you created vs updated
 - run schedule: ID, name, cadence, timezone, groups, mode, workshop_mode
-- harden schedule: ID, name, cadence, timezone, groups
-- replan-proposal schedule: ID, name, cadence, timezone, groups
+- improve schedule: ID, name, cadence, timezone, groups
 - the exact Run-mode schedule message you configured
-- the exact harden-schedule message you configured
-- the exact replan-proposal-schedule message you configured
+- the exact improve-schedule message you configured
 - where you saved builder/improve.html

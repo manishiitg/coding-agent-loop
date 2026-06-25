@@ -306,41 +306,7 @@ func TestCanSteerSessionRequiresActiveForegroundTurn(t *testing.T) {
 	}
 }
 
-func TestIdleCompletionWaitsForPendingBusyTurn(t *testing.T) {
-	sessionID := "pending-turn-session"
-	api := &StreamingAPI{
-		sessionBusy:      map[string]bool{sessionID: true},
-		sessionBusySince: map[string]time.Time{sessionID: time.Now()},
-		sessionBusyMu:    sync.RWMutex{},
-		agentCancelFuncs: map[string]context.CancelFunc{},
-		agentCancelMux:   sync.RWMutex{},
-		runningAgents:    map[string]*mcpagent.Agent{},
-		runningAgentsMux: sync.RWMutex{},
-	}
-
-	if api.shouldCompleteIdleForegroundSession(sessionID, "running", false) {
-		t.Fatal("fresh busy turn was marked completed before foreground agent registration")
-	}
-}
-
-func TestIdleCompletionWaitsForActiveCancelBeforeAgentRegistration(t *testing.T) {
-	sessionID := "active-cancel-no-agent-session"
-	api := &StreamingAPI{
-		sessionBusy:      map[string]bool{sessionID: true},
-		sessionBusySince: map[string]time.Time{sessionID: time.Now().Add(-time.Minute)},
-		sessionBusyMu:    sync.RWMutex{},
-		agentCancelFuncs: map[string]context.CancelFunc{sessionID: func() {}},
-		agentCancelMux:   sync.RWMutex{},
-		runningAgents:    map[string]*mcpagent.Agent{},
-		runningAgentsMux: sync.RWMutex{},
-	}
-
-	if api.shouldCompleteIdleForegroundSession(sessionID, "running", false) {
-		t.Fatal("active turn cancel should keep session running even before runningAgents is populated")
-	}
-}
-
-func TestIdleCompletionClearsStaleBusyTurn(t *testing.T) {
+func TestIdleCompletionDoesNotClearStaleBusyTurn(t *testing.T) {
 	sessionID := "stale-busy-session"
 	api := &StreamingAPI{
 		sessionBusy:      map[string]bool{sessionID: true},
@@ -353,10 +319,10 @@ func TestIdleCompletionClearsStaleBusyTurn(t *testing.T) {
 	}
 
 	if !api.shouldCompleteIdleForegroundSession(sessionID, "running", false) {
-		t.Fatal("stale busy turn without active foreground work should be completed")
+		t.Fatal("stale busy turn without steerable foreground work should still look idle")
 	}
-	if api.isSessionBusy(sessionID) {
-		t.Fatal("stale busy flag should be cleared during idle-completion check")
+	if !api.isSessionBusy(sessionID) {
+		t.Fatal("idle-completion check must not clear the busy flag")
 	}
 }
 

@@ -3,7 +3,6 @@ package server
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -60,27 +59,10 @@ func (api *StreamingAPI) shouldCompleteIdleForegroundSession(sessionID, status s
 	if hasRunningBackgroundAgents || api.isSyntheticTurn(sessionID) {
 		return false
 	}
-	if api.hasPendingForegroundTurn(sessionID) {
-		return false
-	}
 	if api.hasRunningTrackedExecutionForSession(sessionID) {
 		return false
 	}
 	return !api.canSteerSession(sessionID)
-}
-
-func (api *StreamingAPI) hasPendingForegroundTurn(sessionID string) bool {
-	if !api.isSessionBusy(sessionID) {
-		return false
-	}
-	if api.hasActiveTurnCancel(sessionID) {
-		return true
-	}
-	if api.clearStaleBusyIfNeeded(sessionID) {
-		log.Printf("[SESSION STATUS] Session %s busy flag looks stale; clearing before idle-completion check", sessionID)
-		return false
-	}
-	return true
 }
 
 func (api *StreamingAPI) hasRunningTrackedExecutionForSession(sessionID string) bool {

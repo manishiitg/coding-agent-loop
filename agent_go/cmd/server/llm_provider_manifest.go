@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -618,21 +621,151 @@ func cursorFallbackModels() []dynamicModelEntry {
 }
 
 func fetchPiCLIModels() *dynamicModelsResponse {
+	models := piFallbackModels()
+	source := "curated_fallback"
+	if _, err := runtimeAvailableForProvider("pi-cli"); err == nil {
+		source = "curated_runtime_available"
+		if listed, listErr := listPiCLIModels(); listErr == nil && len(listed) > 0 {
+			models = listed
+			source = "pi_cli_list_models"
+		}
+	}
+
 	resp := &dynamicModelsResponse{
 		Provider:           "pi-cli",
 		ModelSelectionMode: "dynamic",
-		Models:             piFallbackModels(),
-		Groups:             []string{"Google", "Google Vertex"},
+		Models:             models,
+		Groups:             dynamicModelGroups(models),
 		SupportsCustom:     true,
 		CustomModelHint:    "Enter any Pi model as provider/model, e.g. google/gemini-3.5-flash",
-		Source:             "curated_fallback",
+		Source:             source,
 		CacheTTLSeconds:    300,
 		CachedAt:           time.Now().UTC().Format(time.RFC3339),
 	}
-	if _, err := runtimeAvailableForProvider("pi-cli"); err == nil {
-		resp.Source = "curated_runtime_available"
-	}
 	return resp
+}
+
+func listPiCLIModels() ([]dynamicModelEntry, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	runtimePath, err := runtimeAvailableForProvider("pi-cli")
+	if err != nil {
+		return nil, err
+	}
+	args := []string{"--list-models"}
+	if filepath.Base(runtimePath) == "npx" {
+		args = []string{"--yes", "@earendil-works/pi-coding-agent", "--list-models"}
+	}
+	cmd := exec.CommandContext(ctx, runtimePath, args...)
+	cmd.Env = os.Environ()
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	return parsePiCLIModelList(string(output)), nil
+}
+
+func parsePiCLIModelList(output string) []dynamicModelEntry {
+	lines := strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n")
+	models := make([]dynamicModelEntry, 0, len(lines))
+	seen := map[string]bool{}
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		if strings.EqualFold(fields[0], "provider") || strings.EqualFold(fields[0], "no") {
+			continue
+		}
+		provider := strings.TrimSpace(fields[0])
+		model := strings.TrimSpace(fields[1])
+		if provider == "" || model == "" {
+			continue
+		}
+		modelID := provider + "/" + model
+		if seen[modelID] {
+			continue
+		}
+		seen[modelID] = true
+		entry := dynamicModelEntry{
+			ModelID:   modelID,
+			ModelName: piModelDisplayName(provider, model),
+			Group:     piModelGroup(provider),
+			IsDefault: modelID == "google/gemini-3.5-flash",
+		}
+		if len(fields) >= 3 {
+			entry.ContextWindow = parsePiCompactCount(fields[2])
+		}
+		models = append(models, entry)
+	}
+	return models
+}
+
+func parsePiCompactCount(value string) int {
+	value = strings.TrimSpace(strings.ToUpper(value))
+	if value == "" {
+		return 0
+	}
+	multiplier := 1.0
+	switch {
+	case strings.HasSuffix(value, "K"):
+		multiplier = 1_000
+		value = strings.TrimSuffix(value, "K")
+	case strings.HasSuffix(value, "M"):
+		multiplier = 1_000_000
+		value = strings.TrimSuffix(value, "M")
+	}
+	n, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0
+	}
+	return int(n * multiplier)
+}
+
+func piModelDisplayName(provider, model string) string {
+	return model + " (" + provider + ")"
+}
+
+func piModelGroup(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "google":
+		return "Google"
+	case "google-vertex":
+		return "Google Vertex"
+	case "anthropic":
+		return "Anthropic"
+	case "openai":
+		return "OpenAI"
+	case "openrouter":
+		return "OpenRouter"
+	case "bedrock":
+		return "Amazon Bedrock"
+	case "deepseek":
+		return "DeepSeek"
+	default:
+		if provider == "" {
+			return "Other"
+		}
+		return provider
+	}
+}
+
+func dynamicModelGroups(models []dynamicModelEntry) []string {
+	seen := map[string]bool{}
+	groups := make([]string, 0)
+	for _, model := range models {
+		group := strings.TrimSpace(model.Group)
+		if group == "" {
+			group = "Other"
+		}
+		if seen[group] {
+			continue
+		}
+		seen[group] = true
+		groups = append(groups, group)
+	}
+	return groups
 }
 
 func piFallbackModels() []dynamicModelEntry {

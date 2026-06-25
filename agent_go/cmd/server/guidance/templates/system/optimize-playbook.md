@@ -60,6 +60,14 @@ Mature workflows accumulate three kinds of state that you can freeze independent
 - Pure **rewording** (clarifying existing instructions without changing intent) may still change the description hash used in metadata. Treat the hash as review evidence, not as an automatic lock lifecycle.
 - When you meaningfully change a step's description, clear `description_reviewed` so future reviewers know the description needs a fresh eyeballing.
 
+**Reviewing descriptions as part of harden**: Treat each touched step's `description` as a first-class review target, not just something to fix when it's obviously stale. Ask: does it still describe what the step actually does and should produce this run? A drifted or vague description silently corrupts the learnings and scripted code generated against it. Realign it when it no longer matches, then clear the matching `lock_learnings`/`lock_code` and `description_reviewed` so the regenerated artifacts track the real intent.
+
+**Hallucination hardening**: A step can report success while its output is *ungrounded* — fabricated values, an action claimed with no backing tool call/artifact, numbers that contradict the run trace, or a generic/templated result that ignores this run's real inputs. That is a reliability bug even when the step “passed.” Harden a hallucination-prone step by making fabrication hard to pass:
+- **Demand evidence in `validation_schema`** — require real, run-specific fields (IDs, URLs, timestamps, counts that must trace to this run) and anti-staleness checks, not a bare `success: true`, so a made-up or leftover output can't validate.
+- **Add a verification step** after it that reads the output and reconciles it against the actual artifacts / tool results / source data, failing if they don't match.
+- **Require grounding in the description** — instruct the step to derive values only from real tool output / fetched data and to cite where each value came from, never to infer or fill them in.
+Trust output you can trace back to real evidence, not a self-reported success.
+
 **Workflow-level KB lock**: Separate from the per-step locks, the workflow as a whole can be frozen against KB drift with `update_workflow_config(lock_knowledgebase=true)`. This is the right move once the domain is well-understood and the post-step update agent mostly produces no-op confirmations. While locked, you can still curate `knowledgebase/notes/` intentionally via the `improve_kb` tool or direct edits; only the automatic per-step updater is suppressed.
 
 ### 3. Managing Learnings

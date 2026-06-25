@@ -90,6 +90,8 @@ Apply the preference within the same constraints: still **one** `notify_user` ca
 
 On any of those, call `notify_user` **once** with a one-line `message_for_user` equal to your status headline (the same sentence you put in the log and the verdict signal). Lead with what's wrong, or "✅ recovered" — never a generic "needs attention". Example: `⚠️ login-flow returned skipped for 2 runs — maker-reviewer gate tightened on run #39`. The same call fans out to every connected channel (Slack, WhatsApp, email).
 
+**If publish is on, link the live dashboard.** When you push a notification and `workflow.json.publish` is enabled, read the public URL from `publish/status.json` and append it to the message (and the email body, if you set one) so the user can open the live report in one tap — e.g. `… · Dashboard: https://<host>/…`. Only include a URL when `publish/status.json.state` is `published` (and you re-published it in step 4b if the source changed); never invent or guess a URL. If a user `## Notifications` preference asked for the dashboard link, this satisfies it.
+
 **Per-channel rendering.** `message_for_user` is the terse line chat channels show. *If* the tool also offers `email_subject` / `email_body` params — it exposes them only when an email channel is connected — set them so the email reads like a proper alert instead of an emoji-led subject line; leave them off when the tool doesn't offer them:
 
 - `email_subject`: a clean inbox subject — `Monitor: <workflow> — broke` / `— recovered` / `— new issue`.

@@ -210,17 +210,22 @@ Read the destination's `provider`, `method`, and `site`, then deploy:
      Then deploy. If a login command stalls, the fix is to re-run `<cli> login` — **not** to
      fall back to pasting a token.
 
-   | Host | Install | Log in (one-time, user) | Deploy |
-   |------|------|------|------|
-   | Netlify | `npm i -g netlify-cli` | `netlify login` | `netlify deploy --prod --dir <dir>` |
-   | Vercel | `npm i -g vercel` | `vercel login` | `vercel deploy --prod --yes` |
-   | Cloudflare Pages | `npm i -g wrangler` | `wrangler login` | `wrangler pages deploy <dir> --project-name <site>` |
-   | Cloudflare R2 | `npm i -g wrangler` | `wrangler login` | `wrangler r2 object put <bucket>/<key> --file <f>` (serve via the public r2.dev / custom domain) |
-   | Firebase Hosting | `npm i -g firebase-tools` | `firebase login` | `firebase deploy --only hosting` |
-   | Surge | `npm i -g surge` | `surge login` | `surge <dir> <site>.surge.sh` |
-   | Azure Static Web Apps | `npm i -g @azure/static-web-apps-cli` | `az login` | `swa deploy <dir> --env production` |
-   | AWS S3 + CloudFront | `brew install awscli` | `aws configure` | `aws s3 sync <dir> s3://<bucket>` |
-   | GitHub Pages | `gh` CLI (`brew install gh`) | `gh auth login` | `gh-pages -d <dir>` or push the `gh-pages` branch |
+   **Default to a FREE CLI host** unless the user asks for a specific one or already uses a
+   paid provider. Good free defaults: **Surge** (simplest, instant `*.surge.sh`), **Cloudflare
+   Pages** (most generous — unlimited bandwidth), or **Netlify**. The table is ordered free-first;
+   AWS is the only paid option — only use it if the user already lives in AWS or asks.
+
+   | Host | Tier | Install | Log in (one-time, user) | Deploy |
+   |------|------|------|------|------|
+   | Surge | **free** | `npm i -g surge` | `surge login` | `surge <dir> <site>.surge.sh` |
+   | Cloudflare Pages | **free** (unlimited bandwidth) | `npm i -g wrangler` | `wrangler login` | `wrangler pages deploy <dir> --project-name <site>` |
+   | Netlify | **free** | `npm i -g netlify-cli` | `netlify login` | `netlify deploy --prod --dir <dir>` |
+   | Vercel | **free** (Hobby) | `npm i -g vercel` | `vercel login` | `vercel deploy --prod --yes` |
+   | Firebase Hosting | **free** (Spark) | `npm i -g firebase-tools` | `firebase login` | `firebase deploy --only hosting` |
+   | GitHub Pages | **free** (public sites) | `gh` CLI (`brew install gh`) | `gh auth login` | `gh-pages -d <dir>` or push the `gh-pages` branch |
+   | Azure Static Web Apps | **free** (+ built-in login auth) | `npm i -g @azure/static-web-apps-cli` | `az login` | `swa deploy <dir> --env production` |
+   | Cloudflare R2 | free storage, **+setup** | `npm i -g wrangler` | `wrangler login` | `wrangler r2 object put <bucket>/<key> --file <f>` (serve via the public r2.dev / custom domain) |
+   | AWS S3 + CloudFront | **paid** (pay-as-you-go) | `brew install awscli` | `aws configure` | `aws s3 sync <dir> s3://<bucket>` |
 
    If the host isn't listed, it almost certainly still has a CLI — check its docs for the
    install + login + deploy commands; the user logs in once, you deploy.

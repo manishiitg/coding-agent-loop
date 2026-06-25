@@ -6554,6 +6554,18 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 	api.runningAgentsMux.RUnlock()
 
 	if !exists || runningAgent == nil {
+		// No retained Go agent object — typically the brief gap *between* turns
+		// where the foreground-turn object is torn down/rebuilt while the
+		// coding-CLI tmux session is still alive. Returning 404 here is exactly
+		// what the UI surfaces as "the live coding-agent turn has ended" and then
+		// queues the message locally — a race, not a real failure. For a CLI
+		// session the tmux pane is the source of truth, so instead of rejecting,
+		// start the next turn from this message (the CLI resumes its session and
+		// processes it natively). Only if there's no prior query to template a
+		// turn from do we fall through to the 404.
+		if api.startNextTurnFromSteer(w, r, sessionID, req.Message, nil) {
+			return
+		}
 		http.Error(w, "No running agent for this session", http.StatusNotFound)
 		return
 	}

@@ -916,6 +916,8 @@ func closeMessageSequenceCodingSession(provider string, ownerSessionID string, r
 		llmproviders.CloseCursorCLIInteractiveSessionForOwner(ownerSessionID, reason)
 	case string(llmproviders.ProviderGeminiCLI):
 		llmproviders.CloseGeminiCLIInteractiveSessionForOwner(ownerSessionID, reason)
+	case string(llmproviders.ProviderPiCLI):
+		llmproviders.ClosePiCLIInteractiveSessionForOwner(ownerSessionID, reason)
 	}
 }
 
@@ -942,7 +944,6 @@ func messageSequenceItemReportedFailure(summary string) (reason string, failed b
 	}
 	return "", false
 }
-
 
 func resolveMessageSequenceItemWriteAccess(item MessageSequenceItem) MessageSequenceWriteAccess {
 	if item.WriteAccess != (MessageSequenceWriteAccess{}) {

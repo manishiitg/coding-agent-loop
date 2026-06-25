@@ -104,3 +104,15 @@ func TestResolvePricingProviderAndModelUsesGemini3Aliases(t *testing.T) {
 		})
 	}
 }
+
+func TestResolvePricingProviderAndModelUsesPiDefault(t *testing.T) {
+	gotProvider, gotModel := resolvePricingProviderAndModel("pi-cli", "")
+	if gotProvider != "pi-cli" || gotModel != "google/gemini-3.5-flash" {
+		t.Fatalf("resolvePricingProviderAndModel(pi-cli, empty) = (%q, %q), want (pi-cli, google/gemini-3.5-flash)", gotProvider, gotModel)
+	}
+
+	gotProvider, gotModel = resolvePricingProviderAndModel("pi-cli", "google/gemini-2.5-flash")
+	if gotProvider != "pi-cli" || gotModel != "google/gemini-2.5-flash" {
+		t.Fatalf("resolvePricingProviderAndModel(pi-cli, explicit) = (%q, %q)", gotProvider, gotModel)
+	}
+}

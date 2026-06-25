@@ -383,7 +383,6 @@ function hasStoredProviderKeysPayload(keys) {
     'codex_cli',
     'cursor_cli',
     'agy_cli',
-    'opencode_cli',
     'minimax',
     'minimax_coding_plan',
     'elevenlabs',
@@ -403,9 +402,6 @@ function hasStoredProviderKeysPayload(keys) {
     keys.azure.api_key.trim()
   ) {
     return true;
-  }
-  if (keys.opencode_cli_sub_keys && typeof keys.opencode_cli_sub_keys === 'object') {
-    return Object.values(keys.opencode_cli_sub_keys).some((value) => typeof value === 'string' && value.trim());
   }
   return false;
 }

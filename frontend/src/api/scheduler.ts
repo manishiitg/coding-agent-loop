@@ -74,18 +74,13 @@ export interface StoredProviderKeys {
   gemini_cli?: string
   codex_cli?: string
   cursor_cli?: string
-  opencode_cli?: string
+  pi_cli?: string
   minimax?: string
   minimax_coding_plan?: string
   elevenlabs?: string
   deepgram?: string
   bedrock?: { region: string }
   azure?: { endpoint: string; api_key: string; api_version?: string; region?: string }
-  // OpenCode CLI sub-provider credentials keyed by the env-var name the
-  // OpenCode bundled SDK reads (KIMI_API_KEY, DEEPSEEK_API_KEY,
-  // DASHSCOPE_API_KEY, MINIMAX_API_KEY, ZHIPU_API_KEY). Only the env var
-  // matching the active sub-provider is exported at launch.
-  opencode_cli_sub_keys?: Record<string, string>
 }
 
 export const providerKeysApi = {

@@ -62,7 +62,7 @@ cd deploy/dedicated-vm
 What `quick-deploy.sh all` does:
 1. Rsyncs `agent_go/`, `workspace/`, `mcpagent/`, `multi-llm-provider-go/` to `/opt/mcp-agent/src/`
 2. Builds the frontend locally (`npm run build`) and rsyncs `dist/` → `src/frontend-dist/`
-3. Bumps bare-metal CLI tools: `agent-browser`, `@anthropic-ai/claude-code`, `@google/gemini-cli` (all `@latest`)
+3. Bumps bare-metal CLI tools: `agent-browser`, `@anthropic-ai/claude-code`, `@google/gemini-cli`, `@earendil-works/pi-coding-agent` (all `@latest`)
 4. Fixes `go.mod` replace directives in-place (paths differ on server)
 5. Rebuilds `mcpbridge` (`go install ./cmd/mcpbridge/`)
 6. `systemctl restart mcp-agent` and waits for `/api/health` → 200

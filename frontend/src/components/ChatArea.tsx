@@ -2154,7 +2154,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // TerminalCenter's /api/terminals poll covered everything. That was
     // true while every coding-agent provider was tmux-backed (live pane
     // state came from polling). For structured CLI providers (gemini-cli
-    // since the contract flip, opencode-cli) the synthetic terminal is
+    // since the contract flip, structured providers) the synthetic terminal is
     // built from streaming_chunk events, so skipping SSE means the pane
     // never updates and user messages appear lost. Connect SSE for every
     // active tab regardless of view mode.

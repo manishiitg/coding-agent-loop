@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Terminal, CheckCircle, AlertCircle, Loader2, KeyRound, ExternalLink } from 'lucide-react'
+import { Terminal, CheckCircle, AlertCircle, Loader2 } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { TierModelSelector } from '../ui/TierModelSelector'
@@ -7,12 +7,6 @@ import { DynamicModelSelector } from '../ui/DynamicModelSelector'
 import { CodingAgentCapabilities } from './CodingAgentCapabilities'
 import { useLLMStore } from '../../stores'
 import { llmConfigService, type ModelMetadata, type ProviderManifestEntry } from '../../services/llm-config-api'
-
-// isOpenCodeSubProvider identifies tiles whose API key should be stored in
-// the per-env-var sub-key map rather than the legacy single OpenCode key.
-function isOpenCodeSubProvider(id: string): boolean {
-  return id.startsWith('opencode-cli-')
-}
 
 interface CodingAgentSectionProps {
   provider: ProviderManifestEntry
@@ -23,9 +17,6 @@ export function CodingAgentSection({ provider, onPublished }: CodingAgentSection
   const {
     saveLLM,
     savedLLMs,
-    openCodeCliSubKeys,
-    setOpenCodeCliSubKey,
-    clearOpenCodeCliSubKey,
   } = useLLMStore()
   const [selectedModel, setSelectedModel] = useState(provider.default_model_id || provider.id)
   const [effortLevel, setEffortLevel] = useState('high')
@@ -36,23 +27,6 @@ export function CodingAgentSection({ provider, onPublished }: CodingAgentSection
   const [publishError, setPublishError] = useState<string | null>(null)
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'valid' | 'invalid'>('idle')
   const [testMessage, setTestMessage] = useState<string | null>(null)
-
-  // --- Credential card state (OpenCode sub-provider tiles only) ---
-  const showCredentialCard =
-    provider.requires_api_key &&
-    !!provider.api_key_env &&
-    isOpenCodeSubProvider(provider.id)
-  const storedSubKey = provider.api_key_env
-    ? openCodeCliSubKeys?.[provider.api_key_env] || ''
-    : ''
-  const [credentialDraft, setCredentialDraft] = useState(storedSubKey)
-  const [credentialDirty, setCredentialDirty] = useState(false)
-  const [revealCredential, setRevealCredential] = useState(false)
-  useEffect(() => {
-    // Sync the input when the underlying stored key changes outside this
-    // component (e.g. on initial workspace load or another tab editing it).
-    if (!credentialDirty) setCredentialDraft(storedSubKey)
-  }, [storedSubKey, credentialDirty])
 
   const models = useMemo(() => provider.models || [], [provider.models])
   const currentModelMetadata = models.find(m => m.model_id === selectedModel) as ModelMetadata | undefined
@@ -73,40 +47,13 @@ export function CodingAgentSection({ provider, onPublished }: CodingAgentSection
     llm => llm.provider === provider.id && llm.model_id === selectedModel
   )
 
-  const handleSaveCredential = () => {
-    if (!provider.api_key_env) return
-    const trimmed = credentialDraft.trim()
-    if (trimmed) {
-      setOpenCodeCliSubKey(provider.api_key_env, trimmed)
-    } else {
-      clearOpenCodeCliSubKey(provider.api_key_env)
-    }
-    setCredentialDirty(false)
-    setTestStatus('idle')
-    setTestMessage(null)
-  }
-  const handleClearCredential = () => {
-    if (!provider.api_key_env) return
-    clearOpenCodeCliSubKey(provider.api_key_env)
-    setCredentialDraft('')
-    setCredentialDirty(false)
-    setTestStatus('idle')
-    setTestMessage(null)
-  }
-
   const handleTestConnection = async () => {
     setTestStatus('testing')
     setTestMessage(null)
     try {
-      // For OpenCode sub-provider tiles, send the in-memory draft key so
-      // the user can verify a credential without first hitting "Save".
-      const inlineApiKey = showCredentialCard
-        ? credentialDraft.trim() || storedSubKey
-        : undefined
       const response = await llmConfigService.validateAPIKey({
         provider: provider.id as Parameters<typeof llmConfigService.validateAPIKey>[0]['provider'],
         model_id: selectedModel !== provider.id ? selectedModel : undefined,
-        api_key: inlineApiKey,
       })
       if (response.valid) {
         setTestStatus('valid')
@@ -130,10 +77,6 @@ export function CodingAgentSection({ provider, onPublished }: CodingAgentSection
       if (showEffort) options.reasoning_effort = effortLevel
 
       const llmModel = {
-        // provider.id may be one of the legacy CLI ids (claude-code,
-        // codex-cli, gemini-cli, cursor-cli, opencode-cli) or one of the
-        // OpenCode sub-provider tiles (opencode-cli-kimi, ...,
-        // opencode-cli-free). The LLMProvider union covers all of them.
         provider: provider.id as Parameters<typeof saveLLM>[0]['provider'],
         model_id: selectedModel,
         ...(Object.keys(options).length > 0 ? { options } : {}),
@@ -179,89 +122,6 @@ export function CodingAgentSection({ provider, onPublished }: CodingAgentSection
 
       {/* Capabilities */}
       <CodingAgentCapabilities provider={provider.id} modelId={selectedModel} />
-
-      {/* API key entry — only for OpenCode sub-provider tiles that require
-          a credential. The legacy `opencode-cli` tile and the other CLI
-          providers (Claude Code, Codex, Gemini, Cursor) authenticate via
-          their own native flows and don't render this card. */}
-      {showCredentialCard && (
-        <Card className="p-4">
-          <div className="flex items-start gap-3 mb-3">
-            <KeyRound className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
-            <div className="flex-1">
-              <h4 className="font-medium text-foreground">{provider.display_name} API key</h4>
-              <p className="text-sm text-muted-foreground">
-                Stored encrypted in your workspace and exported as
-                <code className="bg-secondary px-1 py-0.5 rounded mx-1">{provider.api_key_env}</code>
-                only when this tile is the active provider.
-              </p>
-              {provider.api_key_url && (
-                <a
-                  href={provider.api_key_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-1 inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                >
-                  Get a key <ExternalLink className="w-3 h-3" />
-                </a>
-              )}
-            </div>
-          </div>
-          <div className="space-y-2">
-            <div className="flex gap-2">
-              <input
-                type={revealCredential ? 'text' : 'password'}
-                value={credentialDraft}
-                onChange={(e) => {
-                  setCredentialDraft(e.target.value)
-                  setCredentialDirty(e.target.value !== storedSubKey)
-                  setTestStatus('idle')
-                  setTestMessage(null)
-                }}
-                placeholder={storedSubKey ? '••••••• (stored, paste a new key to replace)' : `Paste your ${provider.api_key_env} key`}
-                className="flex-1 px-3 py-2 text-sm bg-background border border-border rounded-md font-mono focus:outline-none focus:ring-1 focus:ring-primary"
-                spellCheck={false}
-                autoCorrect="off"
-                autoCapitalize="off"
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setRevealCredential((v) => !v)}
-                type="button"
-              >
-                {revealCredential ? 'Hide' : 'Show'}
-              </Button>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                onClick={handleSaveCredential}
-                disabled={!credentialDirty}
-              >
-                {storedSubKey ? 'Update key' : 'Save key'}
-              </Button>
-              {storedSubKey && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleClearCredential}
-                >
-                  Remove key
-                </Button>
-              )}
-              {!credentialDirty && storedSubKey && (
-                <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-                  <CheckCircle className="w-3.5 h-3.5" /> Stored
-                </span>
-              )}
-              {credentialDirty && (
-                <span className="text-xs text-muted-foreground">Unsaved changes</span>
-              )}
-            </div>
-          </div>
-        </Card>
-      )}
 
       {/* Model selection */}
       <Card className="p-4">

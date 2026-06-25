@@ -43,6 +43,9 @@ export interface ProviderManifestEntry {
   auth_source?: string
   usable: boolean
   setup_hint?: string
+  deprecated?: boolean
+  deprecation_reason?: string
+  replacement_provider?: string
   requires_api_key: boolean
   supports_dynamic_models: boolean
   default_model_id: string
@@ -53,6 +56,11 @@ export interface ProviderManifestEntry {
     transport: 'tmux' | 'structured' | string
     supports_live_input: boolean
     supports_interrupt: boolean
+    supports_status_line?: boolean
+    uses_mcp_bridge?: boolean
+    supports_bridge_only_tools?: boolean
+    supports_native_resume?: boolean
+    handles_tmux_session_loss?: boolean
   }
   api_key_env?: string
   api_key_url?: string
@@ -168,7 +176,7 @@ export const llmConfigService = {
     return response.data
   },
 
-  // Get dynamic model list for a provider (cursor-cli, opencode-cli, etc.)
+  // Get dynamic model list for a provider (cursor-cli, pi-cli, etc.)
   getProviderModels: async (provider: string): Promise<DynamicModelsResponse> => {
     const response = await llmConfigApi.get(`/api/llm-config/providers/${provider}/models`)
     return response.data

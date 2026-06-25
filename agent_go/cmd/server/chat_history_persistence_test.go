@@ -1141,6 +1141,24 @@ func TestCaptureChatHistoryAgentRuntimeStoresAgyConversationID(t *testing.T) {
 	}
 }
 
+func TestCaptureChatHistoryAgentRuntimeStoresPiSessionID(t *testing.T) {
+	api := &StreamingAPI{}
+
+	runtime := api.captureChatHistoryAgentRuntime("pi-session", "pi-cli", "google/gemini-3.5-flash", "Workflow/example", &mcpagent.Agent{
+		PiSessionID: "mlp-pi-session-1",
+	})
+
+	if runtime == nil {
+		t.Fatal("expected runtime metadata")
+	}
+	if runtime.Kind != "coding_agent" || runtime.Provider != "pi-cli" {
+		t.Fatalf("unexpected runtime identity: %#v", runtime)
+	}
+	if runtime.ExternalSessionID != "mlp-pi-session-1" || !runtime.ResumeSupported || runtime.ResumeFlag != "--session-id" {
+		t.Fatalf("unexpected Pi resume metadata: %#v", runtime)
+	}
+}
+
 func TestCaptureChatHistoryAgentRuntimePersistsAgentSessionHandle(t *testing.T) {
 	api := &StreamingAPI{}
 
@@ -1427,6 +1445,25 @@ func TestSeedCodingAgentRuntimeFromRestoredConversationRestoresAgy(t *testing.T)
 
 	if agent.AgySessionID != "agy-conversation-restored" {
 		t.Fatalf("agent AgySessionID = %q", agent.AgySessionID)
+	}
+}
+
+func TestSeedCodingAgentRuntimeFromRestoredConversationRestoresPi(t *testing.T) {
+	api := &StreamingAPI{}
+	agent := &mcpagent.Agent{}
+	runtime := &ChatHistoryAgentRuntime{
+		Kind:              "coding_agent",
+		Provider:          "pi-cli",
+		ExternalSessionID: "mlp-pi-restored",
+		ResumeSupported:   true,
+	}
+
+	if !api.seedCodingAgentRuntimeFromRestoredConversation("pi-ui-session", "pi-cli", "", runtime, agent) {
+		t.Fatal("expected Pi resume state to be seeded")
+	}
+
+	if agent.PiSessionID != "mlp-pi-restored" {
+		t.Fatalf("agent PiSessionID = %q", agent.PiSessionID)
 	}
 }
 

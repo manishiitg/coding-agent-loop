@@ -124,7 +124,7 @@ type OrchestratorAgentConfig struct {
 	// keepalive outside this orchestrator config.
 	CodingAgentKeepAlive bool `json:"coding_agent_keep_alive,omitempty"`
 	// ForceStructuredCodingAgent forces the coding-agent CLI providers
-	// (claude-code, codex-cli, cursor-cli, gemini-cli) to use the
+	// (claude-code, codex-cli, cursor-cli, gemini-cli, pi-cli) to use the
 	// structured JSON transport (--print / --exec) for this step,
 	// even when tmux would otherwise be used. Wired from the workflow
 	// step config's AgentConfigs.Transport == "structured".

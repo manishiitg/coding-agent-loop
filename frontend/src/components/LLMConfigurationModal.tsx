@@ -36,13 +36,12 @@ const AUDIO_CAPABILITIES = new Set(['text_to_speech', 'speech_to_text', 'generat
 const HIDDEN_CHAT_PROVIDER_TABS = new Set<string>(['openrouter', 'z-ai', 'kimi', 'minimax', 'minimax-coding-plan'])
 const isMiniMaxAudioModel = (modelId: string) => /^(speech|music|audio|voice)[-_]/i.test(modelId)
 const API_KEY_PROVIDER_IDS = new Set<string>(['bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'minimax', 'elevenlabs', 'deepgram'])
-const CODING_AGENT_PROVIDER_ORDER = ['claude-code', 'codex-cli', 'gemini-cli', 'agy-cli', 'opencode-cli', 'cursor-cli']
+const CODING_AGENT_PROVIDER_ORDER = ['claude-code', 'codex-cli', 'agy-cli', 'pi-cli', 'cursor-cli']
 const CODING_AGENT_PROVIDER_RANK = new Map<string, number>(
   CODING_AGENT_PROVIDER_ORDER.map((provider, index) => [provider, index])
 )
-const isOpenCodeSubProvider = (provider: string) => provider.startsWith('opencode-cli-')
 const codingAgentProviderRank = (provider: string) =>
-  CODING_AGENT_PROVIDER_RANK.get(isOpenCodeSubProvider(provider) ? 'opencode-cli' : provider) ?? 999
+  CODING_AGENT_PROVIDER_RANK.get(provider) ?? 999
 
 const FALLBACK_AUDIO_PROVIDER_ITEMS: Array<{
   tab: LLMProvider | AudioProviderTab
@@ -145,6 +144,7 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
 
   const manifestProviderEntries = useMemo(() => (
     providerManifest.filter(entry => {
+      if (entry.deprecated) return false
       if (HIDDEN_CHAT_PROVIDER_TABS.has(entry.id)) return false
       return isProviderSupported(entry.id as LLMProvider)
     })
@@ -161,7 +161,7 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
 
   const codingAgentProviderEntries = useMemo(
     () => manifestProviderEntries
-      .filter(entry => entry.integration_kind === 'coding_agent' && !isOpenCodeSubProvider(entry.id))
+      .filter(entry => entry.integration_kind === 'coding_agent')
       .sort((a, b) =>
         codingAgentProviderRank(a.id) - codingAgentProviderRank(b.id) ||
         a.display_name.localeCompare(b.display_name)

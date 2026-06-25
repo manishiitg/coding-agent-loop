@@ -21,7 +21,7 @@ data:
   VERTEX_AVAILABLE_MODELS: "gemini-3-flash-preview,gemini-3-pro-preview"
   # LLM lock removed — empty SUPPORTED_LLM_PROVIDERS exposes all built-in providers
   # (vertex, openrouter, anthropic, openai, bedrock, azure, claude-code, gemini-cli,
-  # codex-cli, minimax, minimax-coding-plan). LLM_CONFIG_LOCKED unset → users can
+  # codex-cli, pi-cli, minimax, minimax-coding-plan). LLM_CONFIG_LOCKED unset → users can
   # configure providers / models from the UI again. Required so workflows that
   # reference gemini-cli / minimax-coding-plan in tiered_config can run.
   SUPPORTED_LLM_PROVIDERS: ""

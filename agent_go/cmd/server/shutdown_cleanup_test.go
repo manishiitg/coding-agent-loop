@@ -234,11 +234,13 @@ func TestCleanupCodingAgentInteractiveSessionsCallsEveryProvider(t *testing.T) {
 	oldCodex := cleanupCodexCLIProviderSessions
 	oldGemini := cleanupGeminiCLIProviderSessions
 	oldCursor := cleanupCursorCLIProviderSessions
+	oldPi := cleanupPiCLIProviderSessions
 	t.Cleanup(func() {
 		cleanupClaudeCodeProviderSessions = oldClaude
 		cleanupCodexCLIProviderSessions = oldCodex
 		cleanupGeminiCLIProviderSessions = oldGemini
 		cleanupCursorCLIProviderSessions = oldCursor
+		cleanupPiCLIProviderSessions = oldPi
 	})
 
 	called := map[string]bool{}
@@ -258,10 +260,14 @@ func TestCleanupCodingAgentInteractiveSessionsCallsEveryProvider(t *testing.T) {
 		called["cursor"] = true
 		return nil
 	}
+	cleanupPiCLIProviderSessions = func(context.Context) error {
+		called["pi"] = true
+		return nil
+	}
 
 	cleanupCodingAgentInteractiveSessions("test")
 
-	for _, provider := range []string{"claude", "codex", "gemini", "cursor"} {
+	for _, provider := range []string{"claude", "codex", "gemini", "cursor", "pi"} {
 		if !called[provider] {
 			t.Fatalf("cleanup for %s was not called", provider)
 		}

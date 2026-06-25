@@ -44,9 +44,19 @@ WITH_FRONTEND=false
 ONLY_FRONTEND=false
 UPDATE_MMX_CLI=false
 FRONTEND_BUILD_MODE=false
+MCP_SERVER_API_TOKEN_ARG=""
+MCP_SERVER_API_TOKEN_ARG_SET=false
+EXPECT_MCP_SERVER_API_TOKEN_VALUE=false
 POSITIONAL_ARGS=()
 
 for arg in "$@"; do
+    if [ "$EXPECT_MCP_SERVER_API_TOKEN_VALUE" = true ]; then
+        MCP_SERVER_API_TOKEN_ARG="$arg"
+        MCP_SERVER_API_TOKEN_ARG_SET=true
+        EXPECT_MCP_SERVER_API_TOKEN_VALUE=false
+        continue
+    fi
+
     case "$arg" in
         --test-connections|--test-mcp|-t)
             TEST_CONNECTIONS=true
@@ -69,11 +79,32 @@ for arg in "$@"; do
         --update)
             UPDATE_MMX_CLI=true
             ;;
+        --mcp-api-token)
+            EXPECT_MCP_SERVER_API_TOKEN_VALUE=true
+            ;;
+        --mcp-api-token=*)
+            MCP_SERVER_API_TOKEN_ARG="${arg#--mcp-api-token=}"
+            MCP_SERVER_API_TOKEN_ARG_SET=true
+            ;;
         *)
             POSITIONAL_ARGS+=("$arg")
             ;;
     esac
 done
+
+if [ "$EXPECT_MCP_SERVER_API_TOKEN_VALUE" = true ]; then
+    echo "❌ Error: --mcp-api-token requires a token value"
+    exit 1
+fi
+
+if [ "$MCP_SERVER_API_TOKEN_ARG_SET" = true ] && [ -z "$MCP_SERVER_API_TOKEN_ARG" ]; then
+    echo "❌ Error: --mcp-api-token requires a non-empty token value"
+    exit 1
+fi
+
+if [ "$MCP_SERVER_API_TOKEN_ARG_SET" = true ]; then
+    export MCP_SERVER_API_TOKEN="$MCP_SERVER_API_TOKEN_ARG"
+fi
 
 FRONTEND_PORT_EXPLICIT="${FRONTEND_PORT:-}"
 LOCALHOST_BASE_URL="${LOCALHOST_BASE_URL:-http://localhost}"
@@ -166,7 +197,7 @@ cleanup_coding_agent_tmux_sessions() {
     local count=0
     while IFS= read -r session; do
         case "$session" in
-            mlp-claude-code-exp*|mlp-codex-cli-int*|mlp-gemini-cli-int*|mlp-cursor-cli-int*|mlp-agy-cli-int*)
+            mlp-claude-code-exp*|mlp-codex-cli-int*|mlp-gemini-cli-int*|mlp-cursor-cli-int*|mlp-agy-cli-int*|mlp-pi-cli-int*)
                 tmux kill-session -t "$session" 2>/dev/null || true
                 count=$((count + 1))
                 ;;
@@ -646,6 +677,13 @@ elif [ -f ".env" ]; then
     echo "✅ Environment variables loaded (including Langfuse configuration)"
 else
     echo "⚠️  No .env file found. Langfuse tracing will be disabled."
+fi
+
+if [ "$MCP_SERVER_API_TOKEN_ARG_SET" = true ]; then
+    export MCP_SERVER_API_TOKEN="$MCP_SERVER_API_TOKEN_ARG"
+fi
+if [ -n "${MCP_SERVER_API_TOKEN:-}" ]; then
+    echo "🔐 MCP server API token override is configured for this server process"
 fi
 
 # Browser session limits (explicit export so child process inherits them)

@@ -18,6 +18,7 @@ type PublishedLLMMetadataSnapshot = {
 
 const DEFAULT_CHAT_PROVIDER: LLMProvider = 'codex-cli'
 const DEFAULT_CHAT_MODEL = 'codex-cli'
+const FRONTEND_DEPRECATED_PROVIDER_IDS = new Set<string>(['gemini-cli'])
 const SUPPORTED_PROVIDERS_FALLBACK: LLMProvider[] = [
   'bedrock',
   'openai',
@@ -25,16 +26,9 @@ const SUPPORTED_PROVIDERS_FALLBACK: LLMProvider[] = [
   'anthropic',
   'azure',
   'claude-code',
-  'gemini-cli',
   'codex-cli',
   'cursor-cli',
-  'opencode-cli',
-  'opencode-cli-kimi',
-  'opencode-cli-deepseek',
-  'opencode-cli-qwen',
-  'opencode-cli-minimax',
-  'opencode-cli-glm',
-  'opencode-cli-free',
+  'pi-cli',
   'minimax',
   'elevenlabs',
   'deepgram',
@@ -94,7 +88,10 @@ function sanitizeSavedLLM(llm: SavedLLM): SavedLLM {
 }
 
 function filterPublishedLLMs(llms: SavedLLM[]): SavedLLM[] {
-  return llms.filter(llm => hasUsableLLMIdentity(llm))
+  return llms.filter(llm =>
+    hasUsableLLMIdentity(llm) &&
+    !FRONTEND_DEPRECATED_PROVIDER_IDS.has(llm.provider)
+  )
 }
 
 function sanitizeAgentConfig(config: AgentLLMConfiguration | null): AgentLLMConfiguration | null {
@@ -123,7 +120,7 @@ function hasStoredProviderKeys(keys?: StoredProviderKeys | null): boolean {
     keys?.gemini_cli ||
     keys?.codex_cli ||
     keys?.cursor_cli ||
-    keys?.opencode_cli ||
+    keys?.pi_cli ||
     keys?.minimax ||
     keys?.elevenlabs ||
     keys?.deepgram ||
@@ -176,7 +173,7 @@ function extractStoredProviderKeysFromState(state: {
     if (llm.provider === 'kimi' && llm.api_key && !keys.kimi) keys.kimi = llm.api_key
     if (llm.provider === 'vertex' && llm.api_key && !keys.vertex) keys.vertex = llm.api_key
     if (llm.provider === 'codex-cli' && llm.api_key && !keys.codex_cli) keys.codex_cli = llm.api_key
-    if (llm.provider === 'opencode-cli' && llm.api_key && !keys.opencode_cli) keys.opencode_cli = llm.api_key
+    if (llm.provider === 'pi-cli' && llm.api_key && !keys.pi_cli) keys.pi_cli = llm.api_key
     if (llm.provider === 'minimax' && llm.api_key && !keys.minimax) keys.minimax = llm.api_key
     if (llm.provider === 'bedrock' && llm.region && !keys.bedrock) keys.bedrock = { region: llm.region }
     if (llm.provider === 'azure' && llm.endpoint && llm.api_key && !keys.azure) {
@@ -229,14 +226,6 @@ interface LLMState extends StoreActions {
   setGeminiCliApiKey: (key: string) => void
   geminiCliModel: string
   setGeminiCliModel: (model: string) => void
-
-  // OpenCode CLI sub-provider credentials. Keyed by env-var name
-  // (KIMI_API_KEY, DEEPSEEK_API_KEY, DASHSCOPE_API_KEY,
-  // MINIMAX_API_KEY, ZHIPU_API_KEY). Persisted both locally and to the
-  // workspace-encrypted store on the backend.
-  openCodeCliSubKeys: Record<string, string>
-  setOpenCodeCliSubKey: (envVar: string, apiKey: string) => void
-  clearOpenCodeCliSubKey: (envVar: string) => void
 
   // Custom models for each provider
   customBedrockModels: string[]
@@ -470,37 +459,6 @@ export const useLLMStore = create<LLMState>()(
         geminiCliModel: 'auto',
         setGeminiCliModel: (model) => {
           set({ geminiCliModel: model })
-        },
-
-        // OpenCode CLI sub-provider credentials (Kimi / DeepSeek / Qwen /
-        // MiniMax / GLM). Free tile has no key. Each entry maps the
-        // env-var the OpenCode bundled SDK reads to the user-entered key.
-        openCodeCliSubKeys: {},
-        setOpenCodeCliSubKey: (envVar, apiKey) => {
-          const trimmedVar = envVar.trim()
-          if (!trimmedVar) return
-          set((state) => {
-            const next = { ...(state.openCodeCliSubKeys || {}) }
-            const trimmedKey = apiKey.trim()
-            if (trimmedKey) {
-              next[trimmedVar] = trimmedKey
-            } else {
-              delete next[trimmedVar]
-            }
-            return { openCodeCliSubKeys: next }
-          })
-        },
-        clearOpenCodeCliSubKey: (envVar) => {
-          const trimmedVar = envVar.trim()
-          if (!trimmedVar) return
-          set((state) => {
-            if (!state.openCodeCliSubKeys || state.openCodeCliSubKeys[trimmedVar] === undefined) {
-              return state
-            }
-            const next = { ...state.openCodeCliSubKeys }
-            delete next[trimmedVar]
-            return { openCodeCliSubKeys: next }
-          })
         },
 
         // Custom models for each provider
@@ -742,8 +700,10 @@ export const useLLMStore = create<LLMState>()(
         saveLLM: async (llm, name, _modelName, _authMethod, _metadata) => {
           const { refreshAvailableLLMs, supportedProviders, providerManifest } = get()
           const knownProvider =
-            supportedProviders.includes(llm.provider) ||
-            providerManifest.some(provider => provider.id === llm.provider)
+            !FRONTEND_DEPRECATED_PROVIDER_IDS.has(llm.provider) && (
+              supportedProviders.includes(llm.provider) ||
+              providerManifest.some(provider => provider.id === llm.provider && !provider.deprecated)
+            )
           if (!knownProvider) {
             throw new Error(`Provider ${llm.provider} is not available as a published chat LLM`)
           }
@@ -1105,9 +1065,6 @@ export const useLLMStore = create<LLMState>()(
               elevenlabsConfig,
               deepgramConfig,
               geminiCliApiKey: workspaceProviderKeys?.gemini_cli || '', // gitleaks:allow
-              openCodeCliSubKeys: workspaceProviderKeys?.opencode_cli_sub_keys
-                ? { ...workspaceProviderKeys.opencode_cli_sub_keys }
-                : {},
               savedLLMs: newSavedLLMs,
               availableBedrockModels: defaults.available_models.bedrock,
               availableOpenRouterModels: defaults.available_models.openrouter || [],
@@ -1478,7 +1435,6 @@ export const useLLMStore = create<LLMState>()(
             },
             savedLLMs: [],
             geminiCliApiKey: '',
-            openCodeCliSubKeys: {},
             showLLMModal: false,
             availableLLMs: [],
             modelMetadataCatalog: [],
@@ -1568,12 +1524,6 @@ function syncProviderKeysToServer() {
   _syncTimer = setTimeout(async () => {
     try {
       const s = useLLMStore.getState()
-      const subKeys = s.openCodeCliSubKeys || {}
-      const cleanedSubKeys: Record<string, string> = {}
-      for (const [envVar, val] of Object.entries(subKeys)) {
-        const trimmed = (val || '').trim()
-        if (trimmed) cleanedSubKeys[envVar] = trimmed
-      }
       await providerKeysApi.save({
         openai: s.openaiConfig?.api_key || undefined,
         anthropic: s.anthropicConfig?.api_key || undefined,
@@ -1581,6 +1531,7 @@ function syncProviderKeysToServer() {
         kimi: s.kimiConfig?.api_key || undefined,
         vertex: s.vertexConfig?.api_key || undefined,
         gemini_cli: s.geminiCliApiKey || undefined,
+        pi_cli: s.savedLLMs.find(llm => llm.provider === 'pi-cli' && llm.api_key)?.api_key || undefined,
         minimax: s.minimaxConfig?.api_key || undefined,
         elevenlabs: s.elevenlabsConfig?.api_key || undefined,
         deepgram: s.deepgramConfig?.api_key || undefined,
@@ -1593,7 +1544,6 @@ function syncProviderKeysToServer() {
               region: s.azureConfig.region || undefined,
             }
           : undefined,
-        opencode_cli_sub_keys: Object.keys(cleanedSubKeys).length > 0 ? cleanedSubKeys : undefined,
       })
     } catch (error) {
       console.warn('Failed to sync provider keys to workspace config:', error)
@@ -1614,10 +1564,6 @@ const getProviderKeySnapshot = (state: LLMState) => ([
   state.deepgramConfig?.api_key,
   state.bedrockConfig?.region,
   state.geminiCliApiKey,
-  // Watch every OpenCode sub-provider credential so editing a Kimi key
-  // (or DeepSeek/Qwen/MiniMax/GLM) triggers the same workspace-encrypted
-  // server sync as the legacy keys.
-  JSON.stringify(state.openCodeCliSubKeys || {}),
 ])
 
 // Watch for changes to any provider config or API key

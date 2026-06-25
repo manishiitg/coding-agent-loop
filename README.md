@@ -92,7 +92,7 @@ Runloop is built for teams that want more than a chat box:
 
 See [examples](examples/README.md) for workflow blueprints, output artifacts, and a README demo GIF storyboard.
 
-See the [public roadmap](ROADMAP.md) for upcoming work on onboarding, memory-aware multi-agent chat, workflow notifications, Agent SDK support, OpenCode, and goal tracking.
+See the [public roadmap](ROADMAP.md) for upcoming work on onboarding, memory-aware multi-agent chat, workflow notifications, Agent SDK support, Pi CLI, and goal tracking.
 
 ## Works With
 
@@ -101,6 +101,7 @@ See the [public roadmap](ROADMAP.md) for upcoming work on onboarding, memory-awa
 - **Claude Code** via the `@anthropic-ai/claude-code` CLI experimental mode
 - **Codex-style agentic models** through OpenAI and Azure AI Foundry
 - **Gemini CLI** via the `@google-gemini/gemini-cli`
+- **Pi CLI** via `@earendil-works/pi-coding-agent` with Pi provider/model IDs
 - **Open-source and frontier models** through OpenRouter, Bedrock, Vertex AI, and direct provider integrations
 
 ### Channels, Tools, and Connectors

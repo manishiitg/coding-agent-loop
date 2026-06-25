@@ -23,7 +23,7 @@ latest sync:
 | `llmtypes.CodingProviderSessionHandle` | **Done** | `multi-llm-provider-go/llmtypes/coding_provider_session_handle.go:21` |
 | Attach/Extract helpers | **Done** | `AttachCodingProviderSessionHandle`, `ExtractCodingProviderSessionHandleFromResponse` |
 | Provider adapters emit handle | **Done** | Claude Code, Codex CLI, Gemini CLI all attach |
-| `ContinueCodingAgentSession` | **Done** | `multi-llm-provider-go/coding_agent_continuation.go:49`. Wired for Claude Code, Codex CLI, Gemini CLI. Cursor and OpenCode return `non_continuable`. |
+| `ContinueCodingAgentSession` | **Done** | `multi-llm-provider-go/coding_agent_continuation.go:49`. Wired for Claude Code, Codex CLI, Gemini CLI. Cursor and Pi return `non_continuable` until certified. |
 | Typed continuation errors | **Done** | `CodingAgentContinuationError` with kinds `non_applicable`, `non_continuable`, `stale_handle` |
 | `mcpagent.AgentSessionHandle` | **Done** | `mcpagent/agent/session_handle.go:14` |
 | `Agent.ContinueAgentSession` | **Done** | `session_handle.go:81`; also `ContinueAgentSessionWithHistory` |
@@ -210,7 +210,7 @@ Benefits:
 - tmux loss is recoverable by the provider adapter
 - terminal panes become observations, not source of truth
 - continuation behavior can be certified per provider
-- Cursor/OpenCode or future providers implement one contract
+- Cursor/Pi or future providers implement one contract
 
 ## Transport Types
 
@@ -464,7 +464,7 @@ testing multi-turn memory, not recovery.
 
 - **Done:** Gemini CLI is wired in the same `ContinueCodingAgentSession`
   switch (`WithGeminiResumeSessionID` + `WithGeminiProjectDirID`).
-- **Done:** Cursor CLI and OpenCode CLI explicitly return `non_continuable`
+- **Done:** Cursor CLI and Pi CLI explicitly return `non_continuable`
   from `ContinueCodingAgentSession` until they are certified.
 - **Pending:** Gemini structured-mode E2E test for the workflow-step path.
 

@@ -27,7 +27,6 @@ import (
 	geminicliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/geminicli"
 	minimaxadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/minimax"
 	openaiadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai"
-	opencodecliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/opencodecli"
 	vertexadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/vertex"
 )
 
@@ -117,12 +116,6 @@ func TestTerminalPaneCrossTransportReal(t *testing.T) {
 			provider: "cursor-cli",
 			gate:     "RUN_CURSOR_CLI_REAL_E2E",
 			build:    buildCursorCLITerminalAdapter,
-		},
-		{
-			class:    "structured_cli",
-			provider: "opencode-cli",
-			gate:     "RUN_OPENCODE_CLI_REAL_E2E",
-			build:    buildOpenCodeCLITerminalAdapter,
 		},
 		{
 			class:    "tmux",
@@ -432,18 +425,6 @@ func buildCursorCLITerminalAdapter(t *testing.T) (llmtypes.Model, []llmtypes.Cal
 		model = "cursor-cli"
 	}
 	return cursorcliadapter.NewCursorCLIAdapter("", model, silentLogger{}), nil, ""
-}
-
-func buildOpenCodeCLITerminalAdapter(t *testing.T) (llmtypes.Model, []llmtypes.CallOption, string) {
-	t.Helper()
-	if _, err := exec.LookPath("opencode"); err != nil {
-		return nil, nil, "opencode CLI not in PATH"
-	}
-	model := strings.TrimSpace(os.Getenv("OPENCODE_CLI_REAL_E2E_MODEL"))
-	if model == "" {
-		model = "opencode-cli"
-	}
-	return opencodecliadapter.NewOpenCodeCLIAdapter("", model, silentLogger{}), nil, ""
 }
 
 func buildGeminiCLITmuxTerminalAdapter(t *testing.T) (llmtypes.Model, []llmtypes.CallOption, string) {

@@ -74,19 +74,6 @@ func TestNormalizeImageAnalysisProviderAndModelCursorDefault(t *testing.T) {
 	}
 }
 
-func TestNormalizeImageAnalysisProviderAndModelOpenCodeDefault(t *testing.T) {
-	provider, modelID, err := normalizeImageAnalysisProviderAndModel("opencode-cli", "")
-	if err != nil {
-		t.Fatalf("normalizeImageAnalysisProviderAndModel returned error: %v", err)
-	}
-	if provider != "opencode-cli" {
-		t.Fatalf("provider = %q, want opencode-cli", provider)
-	}
-	if modelID != "opencode-cli" {
-		t.Fatalf("modelID = %q, want opencode-cli", modelID)
-	}
-}
-
 func TestNormalizeImageAnalysisProviderAndModelAgyDefault(t *testing.T) {
 	provider, modelID, err := normalizeImageAnalysisProviderAndModel("agy-cli", "")
 	if err != nil {
@@ -126,19 +113,6 @@ func TestNormalizeImageAnalysisProviderAndModelInfersCursorFromModel(t *testing.
 	}
 }
 
-func TestNormalizeImageAnalysisProviderAndModelInfersOpenCodeFromModel(t *testing.T) {
-	provider, modelID, err := normalizeImageAnalysisProviderAndModel("", "anthropic/claude-sonnet-4-5")
-	if err != nil {
-		t.Fatalf("normalizeImageAnalysisProviderAndModel returned error: %v", err)
-	}
-	if provider != "opencode-cli" {
-		t.Fatalf("provider = %q, want opencode-cli", provider)
-	}
-	if modelID != "anthropic/claude-sonnet-4-5" {
-		t.Fatalf("modelID = %q, want anthropic/claude-sonnet-4-5", modelID)
-	}
-}
-
 func TestNormalizeImageAnalysisProviderAndModelInfersAgyFromModel(t *testing.T) {
 	provider, modelID, err := normalizeImageAnalysisProviderAndModel("", "agy-cli")
 	if err != nil {
@@ -166,7 +140,7 @@ func TestNormalizeImageAnalysisProviderAndModelInfersKimiFromVisionModel(t *test
 }
 
 func TestPathBasedImageAnalysisProviderIncludesAgy(t *testing.T) {
-	for _, provider := range []string{"codex-cli", "cursor-cli", "opencode-cli", "agy-cli", "claude-code"} {
+	for _, provider := range []string{"codex-cli", "cursor-cli", "agy-cli", "claude-code"} {
 		if !pathBasedImageAnalysisProvider(provider) {
 			t.Fatalf("pathBasedImageAnalysisProvider(%q) = false, want true", provider)
 		}

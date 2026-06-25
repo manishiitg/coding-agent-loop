@@ -141,6 +141,15 @@ RUN if [ "$INSTALL_GEMINI_CLI" = "true" ]; then \
         echo "Skipping @google/gemini-cli install (INSTALL_GEMINI_CLI=$INSTALL_GEMINI_CLI)"; \
     fi
 
+# Optionally install Pi CLI. The adapter can fall back to npx, but installing
+# the binary avoids first-run network latency in tmux-backed coding-agent runs.
+ARG INSTALL_PI_CLI=false
+RUN if [ "$INSTALL_PI_CLI" = "true" ]; then \
+        npm install -g @earendil-works/pi-coding-agent && which pi && pi --version; \
+    else \
+        echo "Skipping @earendil-works/pi-coding-agent install (INSTALL_PI_CLI=$INSTALL_PI_CLI)"; \
+    fi
+
 # Install uv (uvx for Python MCP servers) and pypdf (for read_pdf tool)
 RUN pip3 install --break-system-packages uv pypdf
 

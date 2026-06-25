@@ -41,7 +41,7 @@ type PublishedLLM struct {
 func isPublishedLLMProviderAllowed(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "bedrock", "openai", "vertex", "anthropic", "azure",
-		"claude-code", "gemini-cli", "codex-cli", "cursor-cli", "opencode-cli":
+		"claude-code", "gemini-cli", "codex-cli", "cursor-cli", "agy-cli", "pi-cli":
 		return true
 	default:
 		return false
@@ -353,18 +353,18 @@ func LoadProviderKeys(ctx context.Context, workspaceURL string) (map[string]inte
 	}
 
 	var stored struct {
-		OpenAI      string `json:"openai,omitempty"`
-		Anthropic   string `json:"anthropic,omitempty"`
-		ZAI         string `json:"zai,omitempty"`
-		Kimi        string `json:"kimi,omitempty"`
-		Vertex      string `json:"vertex,omitempty"`
-		GeminiCLI   string `json:"gemini_cli,omitempty"`
-		CodexCLI    string `json:"codex_cli,omitempty"`
-		OpenCodeCLI string `json:"opencode_cli,omitempty"`
-		MiniMax     string `json:"minimax,omitempty"`
-		ElevenLabs  string `json:"elevenlabs,omitempty"`
-		Deepgram    string `json:"deepgram,omitempty"`
-		Bedrock     *struct {
+		OpenAI     string `json:"openai,omitempty"`
+		Anthropic  string `json:"anthropic,omitempty"`
+		ZAI        string `json:"zai,omitempty"`
+		Kimi       string `json:"kimi,omitempty"`
+		Vertex     string `json:"vertex,omitempty"`
+		GeminiCLI  string `json:"gemini_cli,omitempty"`
+		CodexCLI   string `json:"codex_cli,omitempty"`
+		PiCLI      string `json:"pi_cli,omitempty"`
+		MiniMax    string `json:"minimax,omitempty"`
+		ElevenLabs string `json:"elevenlabs,omitempty"`
+		Deepgram   string `json:"deepgram,omitempty"`
+		Bedrock    *struct {
 			Region string `json:"region"`
 		} `json:"bedrock,omitempty"`
 		Azure *struct {
@@ -400,8 +400,8 @@ func LoadProviderKeys(ctx context.Context, workspaceURL string) (map[string]inte
 	if stored.CodexCLI != "" {
 		m["codex_cli"] = stored.CodexCLI
 	}
-	if stored.OpenCodeCLI != "" {
-		m["opencode_cli"] = stored.OpenCodeCLI
+	if stored.PiCLI != "" {
+		m["pi_cli"] = stored.PiCLI
 	}
 	if stored.MiniMax != "" {
 		m["minimax"] = stored.MiniMax

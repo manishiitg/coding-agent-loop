@@ -27,9 +27,8 @@ const (
 	InvMCPBridgeSessionScoped BuilderInvariantID = "mcp_bridge_session_scoped"
 
 	// InvTmuxLifecyclePolicy: workflow steps + sub-agents + background agents
-	// default to bounded tmux lifecycle for tmux-contract providers; gemini
-	// and opencode force structured; chat defaults to persistent for tmux
-	// providers only.
+	// default to bounded tmux lifecycle for tmux-contract providers; chat
+	// defaults to persistent for tmux providers only.
 	InvTmuxLifecyclePolicy BuilderInvariantID = "tmux_lifecycle_policy"
 
 	// InvTerminalRetentionWindow: bounded terminals stay viewable for the
@@ -205,7 +204,7 @@ var builderInvariantCertifications = map[BuilderInvariantID]BuilderInvariantCert
 		TestFile:    "agent_go/cmd/server/multi_turn_chat_e2e_real_test.go",
 		TestName:    "TestMultiTurnChatE2E_ClaudeCode",
 		Env:         []string{"RUN_CLAUDE_CODE_EXPERIMENTAL_LIVE_E2E=1"},
-		Description: "Multi-turn chat with canary tokens injected in turn 1, verified in turn 2 — proves the provider's persistent session carries memory across turns and the orchestrator doesn't accidentally drop history. Per-CLI variants (_Codex, _Cursor, _Agy, _OpenCode) follow the same shape. _OpenCode uses opencode's native --session resume (structured transport) instead of a tmux interactive session, and pins to the hosted free tier so no API key is required.",
+		Description: "Multi-turn chat with canary tokens injected in turn 1, verified in turn 2 — proves the provider's persistent session carries memory across turns and the orchestrator doesn't accidentally drop history. Per-CLI variants (_Codex, _Cursor, _Agy, _Pi) follow the same shape.",
 		RealE2E:     true,
 	},
 	InvTerminalLifecycleAPI: {
@@ -235,7 +234,7 @@ var builderInvariantCertifications = map[BuilderInvariantID]BuilderInvariantCert
 		TestFile:    "agent_go/cmd/server/cost_ledger_e2e_real_test.go",
 		TestName:    "TestCostLedgerCapturesRealAnthropicTurn",
 		Env:         []string{"RUN_ANTHROPIC_REAL_E2E=1", "ANTHROPIC_API_KEY"},
-		Description: "Real Anthropic API call → adapter GenerationInfo → orchestrator token event → cost ledger persist → /api/cost HTTP surface. Per-CLI variants exist (cost_http_e2e_codex/cursor/opencode_real_test.go) that prove the same pipeline for each CLI provider; cost_http_e2e_real_test.go covers the API-provider HTTP path.",
+		Description: "Real Anthropic API call → adapter GenerationInfo → orchestrator token event → cost ledger persist → /api/cost HTTP surface. Per-CLI variants prove the same pipeline for supported CLI providers; cost_http_e2e_real_test.go covers the API-provider HTTP path.",
 		RealE2E:     true,
 	},
 	InvInspectorDebugVisibility: {
@@ -243,7 +242,7 @@ var builderInvariantCertifications = map[BuilderInvariantID]BuilderInvariantCert
 		TestFile:    "agent_go/cmd/server/inspector_e2e_real_test.go",
 		TestName:    "TestInspectorHTTPCapturesRealAnthropicEvents",
 		Env:         []string{"RUN_ANTHROPIC_REAL_E2E=1", "ANTHROPIC_API_KEY"},
-		Description: "Drives a real Anthropic turn through the orchestrator and asserts /api/inspector returns the full event chain (system prompt, LLM generation, streaming chunks, token usage) for the live session. Per-CLI variants (inspector_e2e_cursor/opencode_real_test.go) prove the same surface for CLI providers. Companion TestInspectorHTTPUnknownSessionReturns404 covers the empty-session branch.",
+		Description: "Drives a real Anthropic turn through the orchestrator and asserts /api/inspector returns the full event chain (system prompt, LLM generation, streaming chunks, token usage) for the live session. Per-CLI variants prove the same surface for supported CLI providers. Companion TestInspectorHTTPUnknownSessionReturns404 covers the empty-session branch.",
 		RealE2E:     true,
 	},
 	InvProviderAPIKeyValidation: {

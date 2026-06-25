@@ -5,12 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gorilla/mux"
+	mcpexecutor "github.com/manishiitg/mcpagent/executor"
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 
@@ -19,40 +23,15 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 )
 
-// TestWorkflowE2ESingleRegularStepVertex is the tracer-bullet for
-// the workflow engine. Smallest possible end-to-end: one regular
-// step, real Vertex/Gemini direct-API call, no MCP servers, no
-// skills, no browser. If this passes, we extend with routing +
-// conditional steps and additional transports (gemini-cli
-// structured, opencode-cli structured, cursor-cli tmux) in
-// follow-up tests.
+// TestWorkflowE2ESingleRegularStepPiCLI is the tracer-bullet for the workflow
+// engine on the Pi coding-agent transport. It runs regular, routing,
+// todo_task/sub-agent, and message_sequence steps against real Pi CLI tmux
+// sessions with the MCP bridge enabled by the agent layer.
 //
-// Why vertex for the first transport: GEMINI_API_KEY is already in
-// the dev .env, and the API path returns in seconds (gemini-cli was
-// hanging the CLI invocation for 10+ min on this host, blocking
-// iteration). The transport-diversity coverage the user asked for
-// rides on three sibling tests once this baseline is green.
-//
-// Gated on RUN_WORKFLOW_REAL_E2E=1 + RUN_VERTEX_REAL_E2E=1 +
-// GEMINI_API_KEY (or VERTEX_API_KEY / GOOGLE_API_KEY).
-func TestWorkflowE2ESingleRegularStepVertex(t *testing.T) {
-	if os.Getenv("RUN_WORKFLOW_REAL_E2E") == "" {
-		t.Skip("set RUN_WORKFLOW_REAL_E2E=1 to run the workflow e2e")
-	}
-	if os.Getenv("RUN_VERTEX_REAL_E2E") == "" {
-		t.Skip("set RUN_VERTEX_REAL_E2E=1 to run the vertex variant")
-	}
-	var apiKey string
-	for _, name := range []string{"GEMINI_API_KEY", "VERTEX_API_KEY", "GOOGLE_API_KEY"} {
-		if v := strings.TrimSpace(os.Getenv(name)); v != "" {
-			apiKey = v
-			break
-		}
-	}
-	if apiKey == "" {
-		t.Skip("GEMINI_API_KEY (or VERTEX_API_KEY / GOOGLE_API_KEY) required")
-	}
-
+// Gated on RUN_WORKFLOW_REAL_E2E=1 + RUN_PI_CLI_WORKFLOW_E2E=1 (or the
+// provider-level RUN_PI_CLI_REAL_E2E=1) plus a Pi-compatible key.
+func TestWorkflowE2ESingleRegularStepPiCLI(t *testing.T) {
+	apiKey, model := requirePiCLIWorkflowE2E(t)
 	// The workflow engine reads workspace files via an HTTP documents
 	// API (see base_orchestrator.go:250 — WORKSPACE_API_URL). The
 	// user's running mcp-agent-builder-go server hosts this API at
@@ -78,6 +57,7 @@ func TestWorkflowE2ESingleRegularStepVertex(t *testing.T) {
 	if wsRoot == "" {
 		wsRoot = "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs"
 	}
+	t.Setenv("WORKSPACE_DOCS_PATH", wsRoot)
 	relWorkspace := "Workflow/_e2e_test_" + filepath.Base(t.TempDir())
 	workspace := relWorkspace
 	planningDir := filepath.Join(wsRoot, relWorkspace, "planning")
@@ -225,20 +205,13 @@ func TestWorkflowE2ESingleRegularStepVertex(t *testing.T) {
 		t.Fatalf("write variables.json: %v", err)
 	}
 
-	// Vertex direct-API config: GEMINI_API_KEY in APIKeys, model id
-	// passed through Primary. The vertex adapter reads APIKeys at
-	// call time so the merged map is what matters here.
-	model := strings.TrimSpace(os.Getenv("VERTEX_REAL_E2E_MODEL"))
-	if model == "" {
-		model = "gemini-3.5-flash"
-	}
 	llmCfg := &orchestrator.LLMConfig{
 		Primary: orchestrator.LLMModel{
-			Provider: "vertex",
+			Provider: string(llm.ProviderPiCLI),
 			ModelID:  model,
 		},
 		APIKeys: &llm.ProviderAPIKeys{
-			Vertex: &apiKey,
+			PiCLI: &apiKey,
 		},
 	}
 	// Step execution agent selection (controller_agent_factory.go:575
@@ -250,11 +223,11 @@ func TestWorkflowE2ESingleRegularStepVertex(t *testing.T) {
 	// points at the same model. PhaseLLM separately handles planning
 	// and evaluation phase agents (workflow_orchestrator.go:316).
 	agentLLM := &workflowtypes.AgentLLMConfig{
-		Provider: "vertex",
+		Provider: string(llm.ProviderPiCLI),
 		ModelID:  model,
 	}
 	presetCfg := &workflowtypes.PresetLLMConfig{
-		Provider: "vertex",
+		Provider: string(llm.ProviderPiCLI),
 		ModelID:  model,
 		PhaseLLM: agentLLM,
 		TieredConfig: &workflowtypes.TieredLLMConfig{
@@ -294,10 +267,9 @@ func TestWorkflowE2ESingleRegularStepVertex(t *testing.T) {
 		},
 	})
 
-	// Generous budget: 5 step types × ~30-60s each on vertex/Flash
-	// plus workflow scaffolding overhead. Cold runs land in ~3-5 min;
-	// budget 15 min for safety.
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	// Generous budget: this is a real Pi tmux + MCP bridge workflow with
+	// top-level steps, a todo-task orchestrator, and two delegated sub-agents.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 
 	result, err := wo.Execute(ctx, "Compute 6*7 and verify the answer through routing, regular, todo, and message-sequence steps.", workspace, map[string]interface{}{
@@ -313,17 +285,10 @@ func TestWorkflowE2ESingleRegularStepVertex(t *testing.T) {
 	walkRoot := filepath.Join(wsRoot, relWorkspace)
 	assertAllStepsExecutedAndDecisionsMatch(t, walkRoot, stepIDs)
 	assertSeededRouteSelectionFile(t, walkRoot, stepIDs[1], "route_even")
-	// step-compute: the top-level workflow agent receives a "code_exec
-	// mode" preamble (see prompts injected at controller_execution.go
-	// agent factory) even when useCodeExecutionMode=false is passed to
-	// the orchestrator. The preamble nudges the LLM to emit Python
-	// instead of literal text; under vertex/gemini-3.5-flash with no
-	// tools attached, the agent writes `result = 6 * 7` and a print
-	// statement instead of the requested `RESULT=42`. We therefore
-	// accept any of the equivalent forms — what matters is that the
-	// engine delivered the math task and the LLM produced something
-	// computationally on-topic. If a future engine change suppresses
-	// the code preamble for tool-less runs, tighten to RESULT=42.
+	// step-compute: CLI workflow steps receive the code-exec/MCP bridge
+	// preamble, so models sometimes answer with a small code-like computation
+	// instead of the exact literal token. Accept equivalent forms while keeping
+	// the downstream delegated-token assertions strict.
 	assertStepExecutionResultContainsAny(t, walkRoot, "step-compute", []string{"RESULT=42", "result = 6 * 7", "6 * 7 = 42", "6 × 7", "= 42"})
 	// step-report uses the message_sequence path — its final reply is exact. The
 	// session.json glob in assertStepExecutionResult confirms the sequence wrote
@@ -336,26 +301,11 @@ func TestWorkflowE2ESingleRegularStepVertex(t *testing.T) {
 	// its expected token.
 	assertStepExecutionResultContains(t, walkRoot, "verify-add", "VERIFY_ADD_OK")
 	assertStepExecutionResultContains(t, walkRoot, "verify-mul", "VERIFY_MUL_OK")
-	t.Logf("✅ workflow e2e (%d step types, vertex): result-len=%d", len(stepIDs), len(result))
+	t.Logf("✅ workflow e2e (%d step types, pi-cli/%s): result-len=%d", len(stepIDs), model, len(result))
 }
 
-func TestWorkflowE2EMessageSequenceVertex(t *testing.T) {
-	if os.Getenv("RUN_WORKFLOW_REAL_E2E") == "" {
-		t.Skip("set RUN_WORKFLOW_REAL_E2E=1 to run the workflow e2e")
-	}
-	if os.Getenv("RUN_VERTEX_REAL_E2E") == "" {
-		t.Skip("set RUN_VERTEX_REAL_E2E=1 to run the vertex variant")
-	}
-	var apiKey string
-	for _, name := range []string{"GEMINI_API_KEY", "VERTEX_API_KEY", "GOOGLE_API_KEY"} {
-		if v := strings.TrimSpace(os.Getenv(name)); v != "" {
-			apiKey = v
-			break
-		}
-	}
-	if apiKey == "" {
-		t.Skip("GEMINI_API_KEY (or VERTEX_API_KEY / GOOGLE_API_KEY) required")
-	}
+func TestWorkflowE2EMessageSequencePiCLI(t *testing.T) {
+	apiKey, model := requirePiCLIWorkflowE2E(t)
 	wsAPI := strings.TrimSpace(os.Getenv("WORKSPACE_API_URL"))
 	if wsAPI == "" {
 		wsAPI = "http://127.0.0.1:18744"
@@ -369,6 +319,7 @@ func TestWorkflowE2EMessageSequenceVertex(t *testing.T) {
 	if wsRoot == "" {
 		wsRoot = "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs"
 	}
+	t.Setenv("WORKSPACE_DOCS_PATH", wsRoot)
 	relWorkspace := "Workflow/_e2e_msgseq_" + filepath.Base(t.TempDir())
 	workspaceDisk := filepath.Join(wsRoot, relWorkspace)
 	if os.Getenv("KEEP_E2E_WORKSPACE") == "" {
@@ -407,19 +358,15 @@ func TestWorkflowE2EMessageSequenceVertex(t *testing.T) {
 		t.Fatalf("write plan.json: %v", err)
 	}
 
-	model := strings.TrimSpace(os.Getenv("VERTEX_REAL_E2E_MODEL"))
-	if model == "" {
-		model = "gemini-3.5-flash"
-	}
 	llmCfg := &orchestrator.LLMConfig{
-		Primary: orchestrator.LLMModel{Provider: "vertex", ModelID: model},
+		Primary: orchestrator.LLMModel{Provider: string(llm.ProviderPiCLI), ModelID: model},
 		APIKeys: &llm.ProviderAPIKeys{
-			Vertex: &apiKey,
+			PiCLI: &apiKey,
 		},
 	}
-	agentLLM := &workflowtypes.AgentLLMConfig{Provider: "vertex", ModelID: model}
+	agentLLM := &workflowtypes.AgentLLMConfig{Provider: string(llm.ProviderPiCLI), ModelID: model}
 	presetCfg := &workflowtypes.PresetLLMConfig{
-		Provider:     "vertex",
+		Provider:     string(llm.ProviderPiCLI),
 		ModelID:      model,
 		PhaseLLM:     agentLLM,
 		TieredConfig: &workflowtypes.TieredLLMConfig{Tier1: agentLLM, Tier2: agentLLM, Tier3: agentLLM},
@@ -429,7 +376,7 @@ func TestWorkflowE2EMessageSequenceVertex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWorkflowOrchestrator: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 	if _, err := wo.Execute(ctx, "Run the message sequence runtime check.", relWorkspace, map[string]interface{}{"workflowStatus": workflowtypes.WorkflowStatusPreVerification}); err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -467,7 +414,180 @@ func TestWorkflowE2EMessageSequenceVertex(t *testing.T) {
 	if !strings.Contains(string(body), "MS_FIRST_ALPHA") || !strings.Contains(string(body), "MS_SECOND_SEES_FIRST_ALPHA") {
 		t.Fatalf("session.json missing expected message sequence tokens\nsession=%s", body)
 	}
-	t.Logf("✅ message_sequence e2e: runtime_session_id=%s session=%s", session.RuntimeSessionID, matches[len(matches)-1])
+	t.Logf("✅ message_sequence e2e (pi-cli/%s): runtime_session_id=%s session=%s", model, session.RuntimeSessionID, matches[len(matches)-1])
+}
+
+func requirePiCLIWorkflowE2E(t *testing.T) (apiKey string, model string) {
+	t.Helper()
+	if os.Getenv("RUN_WORKFLOW_REAL_E2E") == "" {
+		t.Skip("set RUN_WORKFLOW_REAL_E2E=1 to run the workflow e2e")
+	}
+	if os.Getenv("RUN_PI_CLI_WORKFLOW_E2E") == "" && os.Getenv("RUN_PI_CLI_REAL_E2E") == "" {
+		t.Skip("set RUN_PI_CLI_WORKFLOW_E2E=1 or RUN_PI_CLI_REAL_E2E=1 to run the Pi workflow e2e")
+	}
+	for _, bin := range []string{"tmux", "node"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s binary not found: %v", bin, err)
+		}
+	}
+	if _, err := exec.LookPath("pi"); err != nil {
+		if _, npxErr := exec.LookPath("npx"); npxErr != nil {
+			t.Skipf("pi binary not found and npx fallback unavailable: pi=%v npx=%v", err, npxErr)
+		}
+	}
+	apiKey = firstNonEmptyEnv("PI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY")
+	if apiKey == "" {
+		t.Skip("PI_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY required for pi-cli workflow e2e")
+	}
+	requireLocalMCPBridgeForPiWorkflowE2E(t)
+	model = strings.TrimSpace(os.Getenv("PI_CLI_WORKFLOW_E2E_MODEL"))
+	if model == "" {
+		model = strings.TrimSpace(os.Getenv("PI_CLI_REAL_E2E_MODEL"))
+	}
+	if model == "" {
+		model = "google/gemini-3.5-flash"
+	}
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", t.TempDir())
+	t.Cleanup(func() { _ = llm.CleanupPiCLIInteractiveSessions(context.Background()) })
+	return apiKey, model
+}
+
+func requireLocalMCPBridgeForPiWorkflowE2E(t *testing.T) {
+	t.Helper()
+	if os.Getenv("PI_CLI_WORKFLOW_E2E_EXTERNAL_MCP_BRIDGE") == "" {
+		startLocalMCPBridgeForPiWorkflowE2E(t)
+		return
+	}
+	if os.Getenv("MCP_API_URL") == "" && os.Getenv("MCP_BRIDGE_API_URL") == "" {
+		t.Skip("MCP_API_URL or MCP_BRIDGE_API_URL is required when PI_CLI_WORKFLOW_E2E_EXTERNAL_MCP_BRIDGE=1")
+	}
+	if os.Getenv("MCP_API_TOKEN") == "" {
+		t.Skip("MCP_API_TOKEN is required when PI_CLI_WORKFLOW_E2E_EXTERNAL_MCP_BRIDGE=1")
+	}
+	requireMCPBridgeBinaryForPiWorkflowE2E(t)
+	requireMCPBridgeAuthForPiWorkflowE2E(t)
+}
+
+func requireMCPBridgeBinaryForPiWorkflowE2E(t *testing.T) {
+	t.Helper()
+	if os.Getenv("MCP_BRIDGE_BINARY") != "" {
+		return
+	}
+	if bridgePath, err := exec.LookPath("mcpbridge"); err == nil {
+		t.Setenv("MCP_BRIDGE_BINARY", bridgePath)
+		return
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		bridgePath := filepath.Join(home, "go", "bin", "mcpbridge")
+		if st, statErr := os.Stat(bridgePath); statErr == nil && !st.IsDir() {
+			t.Setenv("MCP_BRIDGE_BINARY", bridgePath)
+			return
+		}
+	}
+	t.Skip("mcpbridge binary required for pi-cli workflow e2e; run `go install ./cmd/mcpbridge` in mcpagent")
+}
+
+func startLocalMCPBridgeForPiWorkflowE2E(t *testing.T) {
+	t.Helper()
+	requireMCPBridgeBinaryForPiWorkflowE2E(t)
+
+	token := fmt.Sprintf("pi-workflow-e2e-%d", time.Now().UnixNano())
+	handlers := mcpexecutor.NewExecutorHandlers("configs/mcp_servers_clean.json", loggerv2.NewNoop())
+	router := mux.NewRouter()
+	router.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}).Methods("GET")
+
+	routeMCPRequest := func(w http.ResponseWriter, r *http.Request, server, tool string) {
+		normalized := strings.ReplaceAll(server, "-", "_")
+		switch normalized {
+		case "workspace", "workspace_browser", "workspace_advanced", "workspace_image", "workspace_image_gen", "workspace_image_edit",
+			"human", "workflow", "workflow_creator", "llm_config_tools", "secret_tools", "skill_tools", "mcp_server_tools",
+			"activity_status", "auto_improvement":
+			handlers.HandlePerToolCustomRequest(w, r, tool)
+		case "memory":
+			handlers.HandlePerToolVirtualRequest(w, r, tool)
+		default:
+			handlers.HandlePerToolMCPRequest(w, r, server, tool)
+		}
+	}
+
+	toolsRouter := router.PathPrefix("/tools").Subrouter()
+	toolsRouter.Use(mcpexecutor.AuthMiddleware(token))
+	toolsRouter.HandleFunc("/mcp/{server}/{tool}", func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		routeMCPRequest(w, r, vars["server"], vars["tool"])
+	}).Methods("POST", "OPTIONS")
+	toolsRouter.HandleFunc("/custom/{tool}", func(w http.ResponseWriter, r *http.Request) {
+		handlers.HandlePerToolCustomRequest(w, r, mux.Vars(r)["tool"])
+	}).Methods("POST", "OPTIONS")
+	toolsRouter.HandleFunc("/virtual/{tool}", func(w http.ResponseWriter, r *http.Request) {
+		handlers.HandlePerToolVirtualRequest(w, r, mux.Vars(r)["tool"])
+	}).Methods("POST", "OPTIONS")
+
+	sessionToolsRouter := router.PathPrefix("/s/{session_id}/tools").Subrouter()
+	sessionToolsRouter.Use(mcpexecutor.AuthMiddleware(token))
+	sessionToolsRouter.HandleFunc("/mcp/{server}/{tool}", func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		r.Header.Set("X-Session-ID", vars["session_id"])
+		routeMCPRequest(w, r, vars["server"], vars["tool"])
+	}).Methods("POST", "OPTIONS")
+	sessionToolsRouter.HandleFunc("/custom/{tool}", func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		r.Header.Set("X-Session-ID", vars["session_id"])
+		handlers.HandlePerToolCustomRequest(w, r, vars["tool"])
+	}).Methods("POST", "OPTIONS")
+	sessionToolsRouter.HandleFunc("/virtual/{tool}", func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		r.Header.Set("X-Session-ID", vars["session_id"])
+		handlers.HandlePerToolVirtualRequest(w, r, vars["tool"])
+	}).Methods("POST", "OPTIONS")
+
+	srv := httptest.NewServer(router)
+	t.Cleanup(srv.Close)
+	t.Setenv("MCP_API_URL", srv.URL)
+	t.Setenv("MCP_BRIDGE_API_URL", srv.URL)
+	t.Setenv("MCP_API_TOKEN", token)
+	requireMCPBridgeAuthForPiWorkflowE2E(t)
+}
+
+func requireMCPBridgeAuthForPiWorkflowE2E(t *testing.T) {
+	t.Helper()
+	apiURL := strings.TrimRight(strings.TrimSpace(firstNonEmptyEnv("MCP_BRIDGE_API_URL", "MCP_API_URL")), "/")
+	if apiURL == "" {
+		t.Skip("MCP_BRIDGE_API_URL or MCP_API_URL is required for pi-cli workflow e2e")
+	}
+	token := strings.TrimSpace(os.Getenv("MCP_API_TOKEN"))
+	if token == "" {
+		t.Skip("MCP_API_TOKEN is required for pi-cli workflow e2e")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL+"/tools/virtual/get_api_spec", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatalf("build MCP bridge auth preflight request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Skipf("MCP bridge API at %s unreachable: %v", apiURL, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		t.Fatalf("MCP bridge API at %s rejected MCP_API_TOKEN; run against the same dev server that generated the token", apiURL)
+	}
+}
+
+func firstNonEmptyEnv(names ...string) string {
+	for _, name := range names {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // assertStepExecutionResultContains reads the per-step execution

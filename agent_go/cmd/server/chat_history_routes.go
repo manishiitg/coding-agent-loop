@@ -496,7 +496,7 @@ func (api *StreamingAPI) startRestoredTerminalFromNewAgent(ctx context.Context, 
 		common.SetSessionBrowserMode(sessionID, restoredBrowserMode)
 	}
 
-	claudeCodePersistent, codexPersistent, geminiPersistent, cursorPersistent, agyPersistent, openCodePersistent := codingAgentPersistentInteractiveFlags(provider)
+	claudeCodePersistent, codexPersistent, geminiPersistent, cursorPersistent, agyPersistent, piPersistent := codingAgentPersistentInteractiveFlags(provider)
 	cfg := agent.LLMAgentConfig{
 		Name:                                   "restored-terminal-agent",
 		ServerName:                             restoredServerName,
@@ -513,7 +513,7 @@ func (api *StreamingAPI) startRestoredTerminalFromNewAgent(ctx context.Context, 
 		CursorPersistentInteractiveSession:     cursorPersistent,
 		AgyPersistentInteractiveSession:        agyPersistent,
 		CursorBridgeToolsMode:                  cursorPersistent,
-		OpenCodePersistentInteractiveSession:   openCodePersistent,
+		PiPersistentInteractiveSession:         piPersistent,
 		ClaudeCodeTransport:                    codingAgentClaudeCodeChatTransport(provider),
 		CodingAgentWorkingDir:                  workingDir,
 		APIKeys:                                MergedProviderAPIKeys(ctx),

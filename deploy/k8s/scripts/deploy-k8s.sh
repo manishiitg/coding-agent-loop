@@ -154,9 +154,9 @@ get_build_args_for_image() {
             echo "--build-arg VITE_API_BASE_URL=https://analytics-agent.citymall.live --build-arg VITE_WORKSPACE_API_URL=https://analytics-agent.citymall.live/workspace"
             ;;
         mcpagent-agent)
-            # Install @google/gemini-cli in the k8s agent image so the `gemini-cli` LLM
-            # provider adapter works on prod. Other deploy targets skip this to stay lean.
-            echo "--build-arg INSTALL_GEMINI_CLI=true"
+            # Install coding-agent CLIs in the k8s agent image so local CLI LLM
+            # provider adapters work on prod. Other deploy targets skip this to stay lean.
+            echo "--build-arg INSTALL_GEMINI_CLI=true --build-arg INSTALL_PI_CLI=true"
             ;;
         *)
             echo ""

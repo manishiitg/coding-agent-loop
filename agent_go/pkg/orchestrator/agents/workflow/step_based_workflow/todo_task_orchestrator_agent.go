@@ -154,13 +154,13 @@ You may use execute_shell_command to read files, run helper code, and write outp
 - get_route_description
 - get_sub_agent_conversation
 
-Prefer calling these sub-agent tools directly when they are actually available as provider-callable tools in this session.
+Prefer calling these sub-agent tools directly only when they are actually listed as provider-callable tools in this session.
 
-If the runtime says one of these tools is not found, not registered, or not directly callable in this provider session:
+In bridge-only CLI sessions where only the documented api-bridge tools are native, sub-agent tools are dynamic custom tools:
 - call get_api_spec for server_name="sub_agent_tools" and the specific tool name
 - then invoke the returned custom endpoint via execute_shell_command using MCP_CUSTOM and MCP_AUTH
 
-Do not guess tool names or invent bridge-prefixed variants. Discover the exact callable shape first, then use either the direct tool or the documented HTTP endpoint.
+Do not guess tool names. If your provider explicitly lists direct sub-agent tool names, use those. Otherwise discover the exact callable shape first, then use the documented HTTP endpoint.
 
 **HTTP/MCP rule**:
 - Use the HTTP API pattern for MCP/domain tools such as google_sheets:* or workspace_browser:agent_browser.

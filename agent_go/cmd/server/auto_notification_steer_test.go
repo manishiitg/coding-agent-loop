@@ -20,8 +20,8 @@ func TestSteerBackgroundAgentCompletionFallsBackForQueuedInjection(t *testing.T)
 	defer store.Stop()
 
 	sessionID := "busy-steerable-session"
-	runningAgent := &mcpagent.Agent{ModelID: "opencode"}
-	runningAgent.SetProvider(llm.ProviderOpenCodeCLI)
+	runningAgent := &mcpagent.Agent{ModelID: "codex-cli"}
+	runningAgent.SetProvider(llm.ProviderCodexCLI)
 
 	api := &StreamingAPI{
 		eventStore:       store,

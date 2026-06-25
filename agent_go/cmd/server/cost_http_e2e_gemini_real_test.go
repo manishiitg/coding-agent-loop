@@ -19,10 +19,9 @@ import (
 )
 
 // TestCostSummaryHTTPCapturesRealGeminiCLITurn is the HTTP cost e2e
-// for Gemini CLI, mirroring cost_http_e2e_codex_real_test.go and
-// cost_http_e2e_opencode_real_test.go. Drives a real gemini turn
-// through the structured (stream-json) transport, then asserts
-// tokens surface on /api/cost/summary.
+// for Gemini CLI, mirroring cost_http_e2e_codex_real_test.go. Drives a real
+// gemini turn through the structured transport, then asserts tokens surface on
+// /api/cost/summary.
 //
 // Why this exists: gemini's TokenUsageSource is "transcript-file"
 // (see coding_agent_contract.go) — the adapter parses tokens from
@@ -36,10 +35,9 @@ import (
 //   - tokens flow through costObserver to /api/cost/summary keyed
 //     by the effective model name.
 //
-// Cost assertion is intentionally non-fatal here (like the opencode
-// cost test) because gemini's adapter doesn't currently emit
-// cost_usd_estimated. When the adapter starts surfacing cost, the
-// t.Logf below should become a t.Fatalf assertion.
+// Cost assertion is intentionally non-fatal here because gemini's adapter
+// doesn't currently emit cost_usd_estimated. When the adapter starts surfacing
+// cost, the t.Logf below should become a t.Fatalf assertion.
 //
 // Gated on RUN_GEMINI_CLI_REAL_E2E=1 + GEMINI_API_KEY + gemini
 // binary in PATH.

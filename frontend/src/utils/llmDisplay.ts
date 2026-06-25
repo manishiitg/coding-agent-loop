@@ -16,7 +16,7 @@ export type ProviderType =
   | 'codex-cli'
   | 'cursor-cli'
   | 'agy-cli'
-  | 'opencode-cli'
+  | 'pi-cli'
   | 'minimax'
   | 'minimax-coding-plan'
   | 'elevenlabs'
@@ -60,7 +60,7 @@ export const LLM_INTEGRATION_DISPLAY_INFO: Record<LLMIntegrationKind, LLMIntegra
   },
 }
 
-export const CODING_AGENT_PROVIDERS = new Set(['claude-code', 'gemini-cli', 'codex-cli', 'cursor-cli', 'agy-cli', 'opencode-cli'])
+export const CODING_AGENT_PROVIDERS = new Set(['claude-code', 'gemini-cli', 'codex-cli', 'cursor-cli', 'agy-cli', 'pi-cli'])
 const AUDIO_PROVIDER_PROVIDERS = new Set(['elevenlabs', 'deepgram'])
 
 const PROVIDER_DISPLAY_INFO: Record<ProviderType, ProviderDisplayInfo> = {
@@ -129,10 +129,10 @@ const PROVIDER_DISPLAY_INFO: Record<ProviderType, ProviderDisplayInfo> = {
     authDescription: 'Local CLI (Agy sign-in)',
     colorClass: 'text-zinc-600 dark:text-zinc-300',
   },
-  'opencode-cli': {
-    name: 'OpenCode CLI',
-    authDescription: 'Local CLI (API key optional)',
-    colorClass: 'text-cyan-600 dark:text-cyan-400',
+  'pi-cli': {
+    name: 'Pi CLI',
+    authDescription: 'Local CLI (PI/Gemini key)',
+    colorClass: 'text-lime-700 dark:text-lime-300',
   },
   minimax: {
     name: 'MiniMax',
@@ -159,9 +159,8 @@ const PROVIDER_DISPLAY_INFO: Record<ProviderType, ProviderDisplayInfo> = {
 export const PROVIDER_ORDER: ProviderType[] = [
   'codex-cli',
   'cursor-cli',
-  'opencode-cli',
+  'pi-cli',
   'claude-code',
-  'gemini-cli',
   'bedrock',
   'openai',
   'vertex',
@@ -196,7 +195,7 @@ export function getProviderIntegrationKind(provider?: string, modelId?: string):
   const normalizedProvider = (provider || '').trim().toLowerCase()
   const normalizedModel = (modelId || '').trim().toLowerCase()
 
-  if (CODING_AGENT_PROVIDERS.has(normalizedProvider) || normalizedProvider.startsWith('opencode-cli-')) {
+  if (CODING_AGENT_PROVIDERS.has(normalizedProvider)) {
     return 'coding_agent'
   }
   if (AUDIO_PROVIDER_PROVIDERS.has(normalizedProvider)) {

@@ -52,14 +52,14 @@ func (api *StreamingAPI) handleCancelCurrentTurn(w http.ResponseWriter, r *http.
 // every tmux provider. Each adapter's CloseXxxInteractiveSessionForOwner runs
 // its own graceful-then-force shutdown (e.g. agy: tmux send-keys "/exit" →
 // tmux kill-session) and is a no-op when no session is registered for the
-// owner, so calling all five is safe and provider-agnostic. (OpenCode is a
-// structured transport with no persistent tmux session, so it needs no close.)
+// owner, so calling all tmux providers is safe and provider-agnostic.
 func closeAllCodingCLIInteractiveSessionsForOwner(owner, reason string) {
 	llmproviders.CloseAgyCLIInteractiveSessionForOwner(owner, reason)
 	llmproviders.CloseCursorCLIInteractiveSessionForOwner(owner, reason)
 	llmproviders.CloseGeminiCLIInteractiveSessionForOwner(owner, reason)
 	llmproviders.CloseCodexCLIInteractiveSessionForOwner(owner, reason)
 	llmproviders.CloseClaudeCodeInteractiveSessionForOwner(owner, reason)
+	llmproviders.ClosePiCLIInteractiveSessionForOwner(owner, reason)
 }
 
 // gracefulCloseCodingCLITmuxByName runs the provider-specific graceful shutdown
@@ -87,6 +87,8 @@ func gracefulCloseCodingCLITmuxByName(tmuxName, reason string) bool {
 		llmproviders.CloseCursorCLIInteractiveSessionByTmux(name, reason)
 	case strings.HasPrefix(name, "mlp-gemini-cli"):
 		llmproviders.CloseGeminiCLIInteractiveSessionByTmux(name, reason)
+	case strings.HasPrefix(name, "mlp-pi-cli"):
+		llmproviders.ClosePiCLIInteractiveSessionByTmux(name, reason)
 	default:
 		return false
 	}

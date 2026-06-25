@@ -37,7 +37,7 @@ const builtinOrgPulseQuery = `You are running the daily Org Pulse — the Chief 
 
 First, check whether anything has changed since your last Org Pulse (any workflow runs, new chats, or new outputs). If nothing has changed, write nothing and stop.
 
-Otherwise, call get_reference_doc(kind="org-pulse") and follow it exactly: review the org (each workflow's monitor-verdict.json + reports + knowledgebase + global learnings, plus recent conversations), judge the org's endgame, harvest what's worth keeping into your memory (curate and merge in your own words — never copy/import files), propose any promotions (a repeated ad-hoc task -> turn it into a workflow), and record everything — org health, what you harvested, and suggestion cards — in the single pulse/org-pulse.html log (no separate JSON). Notify the user only on a decision-worthy change; stay silent on a steady day.`
+Otherwise, call get_reference_doc(kind="org-pulse") and follow it exactly: review the org (each workflow's builder/improve.html (verdict pills + headline) + reports + knowledgebase + global learnings, plus recent conversations), judge the org's endgame, harvest what's worth keeping into your memory (curate and merge in your own words — never copy/import files), propose any promotions (a repeated ad-hoc task -> turn it into a workflow), and record everything — org health, what you harvested, and suggestion cards — in the single pulse/org-pulse.html log (no separate JSON). Notify the user only on a decision-worthy change; stay silent on a steady day.`
 
 // DefaultBuiltinSchedules returns the list of product-provided schedules that
 // run for every user unless overridden.

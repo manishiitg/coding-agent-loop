@@ -18,7 +18,7 @@ It is a **self-contained, human-readable HTML document — not Markdown, not a d
 
 ### The status headline (the 1-second read)
 
-Directly under the verdicts, one `.status` banner carries a **single plain sentence** — the same one the monitor writes to `monitor-verdict.json`'s `headline` — so a user knows "am I OK?" without parsing pills or scrolling. Its `ok|warn|bad` class tracks the **worse** of the two verdicts, and its `.when` shows the run + how long ago. Keep it honest both ways: on a clean, on-target run say so plainly ("Healthy and on-target."); on a regression lead with what's wrong ("Goal drifting — eval 0.78, under 0.90 target for 3 runs."). Never manufacture concern to fill it.
+Directly under the verdicts, one `.status` banner carries a **single plain sentence** — the workflow's one-sentence verdict headline (there is no separate verdict file — this banner is the source of truth) — so a user knows "am I OK?" without parsing pills or scrolling. Its `ok|warn|bad` class tracks the **worse** of the two verdicts, and its `.when` shows the run + how long ago. Keep it honest both ways: on a clean, on-target run say so plainly ("Healthy and on-target."); on a regression lead with what's wrong ("Goal drifting — eval 0.78, under 0.90 target for 3 runs."). Never manufacture concern to fill it.
 
 ### Freshness — every status says which run it's "as of"
 
@@ -207,8 +207,8 @@ After this one rewrite the file is in skeleton format; from then on you just pre
     </div>
   </div>
 
-  <!-- STATUS HEADLINE — the 1-second read. ONE plain sentence, the same one the monitor writes to
-       monitor-verdict.json's "headline". Class ok|warn|bad tracks the worse of the two verdicts.
+  <!-- STATUS HEADLINE — the 1-second read. ONE plain sentence, the workflow's verdict headline (the
+       source of truth — there is no separate file). Class ok|warn|bad tracks the worse of the two verdicts.
        On a clean, on-target run say so plainly; don't manufacture concern. -->
   <div class="status ok">
     <span class="ic"></span>

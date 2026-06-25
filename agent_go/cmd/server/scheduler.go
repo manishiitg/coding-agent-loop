@@ -1159,7 +1159,7 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 // runPostRunMonitor fires the Pulse pass after a scheduled workflow run. Pulse
 // backs the workflow up, then reads the run evidence, plan changelog, and
 // eval/metric files to form a Bug verdict and a Goal verdict (recorded into
-// builder/improve.html — the Pulse log — plus builder/monitor-verdict.json),
+// builder/improve.html — the Pulse log, the single source of truth),
 // then applies low-risk reversible fixes (harden for Bug, replan PROPOSAL for
 // Goal) and notifies on a transition. It never changes the run's recorded status
 // — failures here are logged and swallowed. Pulse's behavior is defined by the
@@ -1193,7 +1193,7 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 
 	steps := []struct{ label, query string }{
 		{"backup", "STEP 1 — BACK UP (always). Read workflow.json.backup and back up per get_reference_doc(kind=\"backup-strategy\"). If backup is disabled, set it up with the zero-config local-git default and back up. Skip the actual push only when backup/status.json shows the current source is already backed up (unchanged). Always write backup/status.json. Report the backup result, then stop."},
-		{"triage", "STEP 2 — TRIAGE. Read the run evidence, the plan changelog, and the eval/metric files; form a Bug verdict and a Goal verdict; update builder/improve.html (verdict pills, goal card, signal tiles, one run row, a Pulse entry only if something is wrong); write builder/monitor-verdict.json. Report the two verdicts, then stop."},
+		{"triage", "STEP 2 — TRIAGE. Read the run evidence, the plan changelog, and the eval/metric files; form a Bug verdict and a Goal verdict; update builder/improve.html (verdict pills, goal card, signal tiles, one run row, a Pulse entry only if something is wrong). Report the two verdicts, then stop."},
 		{"fix", "STEP 3 — FIX (only if triage found a problem). For a Bug finding, apply a LOW-RISK, reversible harden per get_reference_doc(kind=\"optimize-playbook\") and record it in the log as an applied fix. For a Goal finding, record a replan PROPOSAL — do NOT rewrite the plan wholesale. A clean run gets no fix. Report what you applied (or that the run was clean), then stop."},
 		{"publish", "STEP 4 — PUBLISH (only if publish is on). If workflow.json.publish is enabled, re-publish the updated HTML per get_reference_doc(kind=\"publish-strategy\") — but ONLY when the destination is already VERIFIED (publish/status.json shows a prior successful publish) AND the published artifacts changed since then (source hash). Never do the first/verifying publish here unattended — that is the user's manual set-up step. Always write publish/status.json. Report the result, then stop."},
 		{"notify", "STEP 5 — NOTIFY once on a state transition per the post-run-monitor doc's step 5 — honor a user `## Notifications` preference in soul/soul.md, otherwise a single notify_user call only on broke/recovered/new-finding, and silence on a steady run. Stay scoped: never rewrite the plan wholesale or dispatch a full improvement run here."},
@@ -1220,8 +1220,8 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 	// Pulse owns its own notification: per its reference doc it calls notify_user
 	// once, only on a state transition it reads from the durable Pulse log. The
 	// scheduler no longer pushes a templated message — that avoids a double-send and
-	// lets the agent author the exact, nuanced sentence. It still writes
-	// builder/monitor-verdict.json as a machine signal for the UI.
+	// lets the agent author the exact, nuanced sentence. The Bug/Goal verdict lives in
+	// builder/improve.html (pills + headline) — the single source of truth, no separate file.
 }
 
 // executeJob builds a session request from the manifest and runs it.

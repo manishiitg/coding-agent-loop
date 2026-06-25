@@ -33,7 +33,7 @@ Rule of thumb: **an employee's work → `run_workflow`/`run_step`; your own ad-h
 When the user asks *"what did <employee> do?"*, *"show me <employee>'s results / reports"*, or *"what have the workflows found?"* — **do not answer from memory.** Sweep that employee's assigned workflows and synthesize:
 
 For **each** workflow the employee owns:
-1. **Health verdict** — `Workflow/<name>/builder/monitor-verdict.json` (the workflow's **own** Pulse verdict: `{bug, goal, headline}`). This is the cheap "is it healthy / hitting its goal" answer — trust it instead of re-deriving from raw runs; only drill into the run when the verdict is missing, stale, or surprising.
+1. **Health verdict** — `Workflow/<name>/builder/improve.html` (the verdict pills + status headline its **own** Pulse formed — Bug, Goal, headline). This is the cheap "is it healthy / hitting its goal" answer — trust it instead of re-deriving from raw runs; only drill into the run when the verdict is missing, stale, or surprising.
 2. **Latest run** — `Workflow/<name>/runs/iteration-0/<group>/execution/` (per-step outputs from the most recent run).
 3. **Accumulated results** — `Workflow/<name>/db/db.sqlite` (rows built up across runs; `sqlite3 db/db.sqlite ".tables"` then `SELECT * FROM <table> LIMIT 5` to learn the shape first).
 4. **Reports** — `Workflow/<name>/reports/`: the live report registers HTML/Markdown document(s) in `reports/report_plan.json`; HTML reports read `db/db.sqlite` live via `window.report.query`; finished-run reports are `reports/<group>/<timestamp>.md`. To summarize, query the report's tables plus read the latest `<timestamp>.md`.

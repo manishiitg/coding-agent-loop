@@ -25,7 +25,7 @@ You know the fixed set up front — read it in a few batched shell commands with
 `=== NAME ===` delimiters, not one file per call. Don't explore.
 
 For **each** workflow under `Workflow/<name>/`:
-- `builder/monitor-verdict.json` — the Bug/Goal verdict its **own** Pulse already formed
+- `builder/improve.html` — the Bug/Goal verdict pills + status headline its **own** Pulse already formed
   (`{bug, goal, headline}`). This is your endgame signal; trust it.
 - the latest `reports/` (query the report's tables + read the newest finished-run
   `reports/<group>/<timestamp>.md`) — what the workflow actually produced.

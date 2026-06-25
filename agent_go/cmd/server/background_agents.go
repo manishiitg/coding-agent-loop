@@ -787,6 +787,9 @@ func (api *StreamingAPI) isSessionBusyForAutoNotification(sessionID string) bool
 	if api.isSyntheticTurn(sessionID) || api.hasActiveTurnCancel(sessionID) {
 		return true
 	}
+	if api.terminalStore != nil && api.terminalStore.SessionHasBusyCodingTmux(sessionID) {
+		return true
+	}
 
 	if api.clearStaleBusyIfNeeded(sessionID) {
 		log.Printf("[BG AGENT] Session %s busy flag looks stale; clearing so queued auto-notification can resume main agent", sessionID)

@@ -62,6 +62,9 @@ func (api *StreamingAPI) shouldCompleteIdleForegroundSession(sessionID, status s
 	if api.hasRunningTrackedExecutionForSession(sessionID) {
 		return false
 	}
+	if api.isSessionBusy(sessionID) {
+		return false
+	}
 	return !api.canSteerSession(sessionID)
 }
 

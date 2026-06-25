@@ -36,7 +36,7 @@ The builder must prove these user-facing flows end to end:
    MCP bridge URL/token and must not accidentally use a different session.
 3. Workflow steps, workflow-runtime sub-agents (execution, learning, KB,
    conditional, todo orchestrator), and background agents default to bounded tmux
-   lifecycle when the provider contract is tmux. Gemini CLI and OpenCode CLI use
+   lifecycle when the provider contract is tmux. Gemini CLI uses
    structured transport. Chat defaults to persistent tmux lifecycle only for
    tmux-contract providers.
 4. Bounded tmux terminals must remain viewable for the configured retention
@@ -122,7 +122,7 @@ environment supports. At minimum:
   hidden from default published provider lists until rollout is approved.
 - Gemini CLI structured stream-json transport.
 - Cursor CLI tmux transport when installed.
-- OpenCode structured JSON transport when enabled.
+- Pi CLI tmux transport when installed.
 
 Provider-specific certification remains in the provider contract. Builder E2E
 only needs to verify that the builder passes the correct runtime context and

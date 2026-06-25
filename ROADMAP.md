@@ -15,7 +15,7 @@ This roadmap describes the main product directions for Runloop. It is not a rele
 Runloop should feel usable immediately after install.
 
 Planned work:
-- Detect installed coding-agent CLIs such as Claude Code, Codex, Gemini CLI, and OpenCode.
+- Detect installed coding-agent CLIs such as Claude Code, Codex, Gemini CLI, Pi CLI, and Antigravity CLI.
 - Create sensible default LLM configuration when one usable CLI is found.
 - Show setup diagnostics for required runtime pieces such as `mcpbridge`, Go, `tmux`, provider auth, and workspace configuration.
 - Let users start a chat or build a workflow without manually wiring every provider first.
@@ -50,13 +50,13 @@ Planned work:
 - Support workflow and chat sessions that can choose the Agent SDK runtime where it is the best fit.
 - Preserve Runloop observability, event history, and human-in-the-loop behavior across the new runtime.
 
-### 5. OpenCode and Cost-Effective Model Support
+### 5. Pi CLI and Cost-Effective Model Support
 
-OpenCode should become a first-class coding-agent runtime with dependable tool access and model coverage.
+Pi CLI should become the preferred multi-model coding-agent runtime with dependable tmux behavior and model coverage.
 
 Planned work:
-- Improve OpenCode terminal, resume, and workspace behavior to match the expectations set by Claude Code, Codex, and Gemini CLI integrations.
-- Add and certify support for Kimi, GLM, MiniMax, DeepSeek, and other cost-effective coding models.
+- Improve Pi terminal, resume, and workspace behavior to match the expectations set by Claude Code, Codex, and Gemini CLI integrations.
+- Add and certify support for Google/Pi-routed models and other cost-effective coding models.
 - Provide low-cost default plans for users who want useful workflows without frontier-model pricing.
 - Document which providers support tool access, resume, streaming, and long-running workflow execution.
 
@@ -97,4 +97,3 @@ The roadmap should be mirrored into GitHub issues over time. A good issue should
 - The intended behavior.
 - The first concrete implementation step.
 - A small verification plan.
-

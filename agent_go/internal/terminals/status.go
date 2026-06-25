@@ -78,6 +78,8 @@ func providerLabel(content string, metadata map[string]interface{}) string {
 			return "Codex CLI"
 		case "cursor-cli", "cursorcli":
 			return "Cursor CLI"
+		case "pi-cli", "picli":
+			return "Pi CLI"
 		default:
 			return provider
 		}

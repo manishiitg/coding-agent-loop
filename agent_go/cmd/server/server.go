@@ -37,6 +37,7 @@ import (
 	orchtypes "mcp-agent-builder-go/agent_go/pkg/orchestrator/types"
 	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 
+	"github.com/manishiitg/mcpagent/agent/codeexec"
 	unifiedevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/executor"
 	"github.com/manishiitg/mcpagent/llm"
@@ -69,13 +70,13 @@ import (
 )
 
 var (
-	cleanupClaudeCodeProviderSessions  = llmproviders.CleanupClaudeCodeTmuxSessions
-	cleanupCodexCLIProviderSessions    = llmproviders.CleanupCodexCLIInteractiveSessions
-	cleanupGeminiCLIProviderSessions   = llmproviders.CleanupGeminiCLIInteractiveSessions
-	cleanupCursorCLIProviderSessions   = llmproviders.CleanupCursorCLIInteractiveSessions
-	cleanupAgyCLIProviderSessions      = llmproviders.CleanupAgyCLIInteractiveSessions
-	cleanupOpenCodeCLIProviderSessions = llmproviders.CleanupOpenCodeCLIInteractiveSessions
-	sweepOrphanedTmuxSessions          = llmproviders.SweepOrphanedInteractiveTmuxSessions
+	cleanupClaudeCodeProviderSessions = llmproviders.CleanupClaudeCodeTmuxSessions
+	cleanupCodexCLIProviderSessions   = llmproviders.CleanupCodexCLIInteractiveSessions
+	cleanupGeminiCLIProviderSessions  = llmproviders.CleanupGeminiCLIInteractiveSessions
+	cleanupCursorCLIProviderSessions  = llmproviders.CleanupCursorCLIInteractiveSessions
+	cleanupAgyCLIProviderSessions     = llmproviders.CleanupAgyCLIInteractiveSessions
+	cleanupPiCLIProviderSessions      = llmproviders.CleanupPiCLIInteractiveSessions
+	sweepOrphanedTmuxSessions         = llmproviders.SweepOrphanedInteractiveTmuxSessions
 )
 
 // stepDelegationRegistry maps a workshop step's ForceCorrelationID ("workshop-step-*") to the
@@ -110,6 +111,32 @@ func cleanupStepDelegation(workshopStepCorrelationID string) {
 	stepDelegationMu.Lock()
 	defer stepDelegationMu.Unlock()
 	delete(stepDelegationMap, workshopStepCorrelationID)
+}
+
+const envMCPServerAPIToken = "MCP_SERVER_API_TOKEN"
+
+func resolveServerAPIToken() string {
+	if token := strings.TrimSpace(os.Getenv(envMCPServerAPIToken)); token != "" {
+		return token
+	}
+	return executor.GenerateAPIToken()
+}
+
+func seedMCPBridgeCodeExecRegistry(logger loggerv2.Logger) {
+	advancedExecutors := virtualtools.CreateWorkspaceAdvancedToolExecutors()
+	browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutors()
+
+	bridgeExecutors := make(map[string]func(context.Context, map[string]interface{}) (string, error), 3)
+	for _, name := range []string{"execute_shell_command", "diff_patch_workspace_file"} {
+		if exec, ok := advancedExecutors[name]; ok {
+			bridgeExecutors[name] = exec
+		}
+	}
+	if exec, ok := browserExecutors["agent_browser"]; ok {
+		bridgeExecutors["agent_browser"] = exec
+	}
+
+	codeexec.InitRegistryWithVirtualTools(nil, bridgeExecutors, nil, nil, logger)
 }
 
 // ServerCmd represents the server command
@@ -1170,8 +1197,11 @@ func runServer(cmd *cobra.Command, args []string) {
 		}
 	}()
 
-	// Generate API token for code execution mode per-tool endpoints
-	api.apiToken = executor.GenerateAPIToken()
+	// Generate API token for code execution mode per-tool endpoints. Tests and
+	// local harnesses may set MCP_SERVER_API_TOKEN before startup so sibling
+	// E2E processes can authenticate against this same server without exposing
+	// a token read endpoint.
+	api.apiToken = resolveServerAPIToken()
 
 	// Set env vars for code execution mode (mcpagent reads these as fallback)
 	// MCP_API_URL = Docker-reachable URL (for shell commands inside Docker + OpenAPI spec base URLs)
@@ -1179,6 +1209,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	os.Setenv("MCP_API_URL", api.GetCodeExecAPIURL())
 	os.Setenv("MCP_BRIDGE_API_URL", api.GetAPIURL())
 	os.Setenv("MCP_API_TOKEN", api.apiToken)
+	seedMCPBridgeCodeExecRegistry(api.logger)
 
 	// Load global secrets from GLOBAL_SECRET_* environment variables
 	loadGlobalSecrets()
@@ -1897,7 +1928,7 @@ func cleanupCodingAgentInteractiveSessions(phase string) {
 	cleanupProvider("GEMINI-CLI", cleanupGeminiCLIProviderSessions)
 	cleanupProvider("CURSOR-CLI", cleanupCursorCLIProviderSessions)
 	cleanupProvider("AGY-CLI", cleanupAgyCLIProviderSessions)
-	cleanupProvider("OPENCODE-CLI", cleanupOpenCodeCLIProviderSessions)
+	cleanupProvider("PI-CLI", cleanupPiCLIProviderSessions)
 }
 
 func (api *StreamingAPI) cancelActiveWorkForShutdown() {
@@ -3629,7 +3660,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Create new agent with streamCtx instead of r.Context()
 		log.Printf("[AGENT CONFIG DEBUG] Creating agent with ServerName: %s, UseCodeExecutionMode: %v", serverList, useCodeExecutionMode)
-		claudeCodePersistentInteractive, codexPersistentInteractive, geminiPersistentInteractive, cursorPersistentInteractive, agyPersistentInteractive, openCodePersistentInteractive := codingAgentPersistentInteractiveFlags(finalProvider)
+		claudeCodePersistentInteractive, codexPersistentInteractive, geminiPersistentInteractive, cursorPersistentInteractive, agyPersistentInteractive, piPersistentInteractive := codingAgentPersistentInteractiveFlags(finalProvider)
 		claudeCodeTransport := codingAgentClaudeCodeChatTransport(finalProvider)
 		chatWorkingFolder := perUserChatsFolder
 		if isWorkflowPhase && workflowPhaseFolder != "" && workflowPhaseFolder != "default_workspace" {
@@ -3661,7 +3692,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			CursorPersistentInteractiveSession:     cursorPersistentInteractive,
 			AgyPersistentInteractiveSession:        agyPersistentInteractive,
 			CursorBridgeToolsMode:                  cursorPersistentInteractive,
-			OpenCodePersistentInteractiveSession:   openCodePersistentInteractive,
+			PiPersistentInteractiveSession:         piPersistentInteractive,
 			ClaudeCodeTransport:                    claudeCodeTransport,
 			CodingAgentWorkingDir:                  chatWorkingDir,
 			APIKeys:                                mergedAPIKeys,
@@ -5143,9 +5174,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// earlier RemoveAll patch) and lets the next turn relaunch with
 			// the new prompt, producing the correct rule file content.
 			//
-			// Symmetric across all five tmux-backed coding-CLI providers;
-			// opencode is structured (no persistent tmux session) so it
-			// re-reads project files per turn and needs no close.
+			// Symmetric across the tmux-backed coding-CLI providers.
 			reason := fmt.Sprintf("workshop mode changed %q -> %q", modeChangePrevMode, newWorkshopMode)
 			switch strings.ToLower(strings.TrimSpace(finalProvider)) {
 			case "agy-cli":
@@ -5158,6 +5187,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				llmproviders.CloseCodexCLIInteractiveSessionForOwner(sessionID, reason)
 			case "claude-code":
 				llmproviders.CloseClaudeCodeInteractiveSessionForOwner(sessionID, reason)
+			case "pi-cli":
+				llmproviders.ClosePiCLIInteractiveSessionForOwner(sessionID, reason)
 			}
 		}
 
@@ -5731,7 +5762,9 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 			}
 			if handle.Provider.NativeSessionID != "" {
 				runtime.ExternalSessionID = handle.Provider.NativeSessionID
-				runtime.ResumeSupported = true
+				if codingAgentProviderSupportsNativeResume(runtime.Provider, runtime.ModelID) {
+					runtime.ResumeSupported = true
+				}
 			}
 			if handle.Provider.ProjectDirID != "" {
 				runtime.ProjectDirID = handle.Provider.ProjectDirID
@@ -5784,12 +5817,12 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 				runtime.ResumeFlag = "--conversation"
 				log.Printf("[AGY CLI] Saved conversation ID %s for session %s", sid, sessionID)
 			}
-		case "opencode-cli":
-			if sid := strings.TrimSpace(underlyingAgent.OpenCodeSessionID); sid != "" {
+		case "pi-cli":
+			if sid := strings.TrimSpace(underlyingAgent.PiSessionID); sid != "" {
 				runtime.ExternalSessionID = sid
 				runtime.ResumeSupported = true
-				runtime.ResumeFlag = "--session"
-				log.Printf("[OPENCODE CLI] Saved session ID %s for session %s", sid, sessionID)
+				runtime.ResumeFlag = "--session-id"
+				log.Printf("[PI CLI] Saved session ID %s for session %s", sid, sessionID)
 			}
 		}
 		// Persist the agent's MCP server+tool selection and browser capability so
@@ -5838,11 +5871,20 @@ func codingAgentHasNativeResume(provider string, underlyingAgent *mcpagent.Agent
 		return strings.TrimSpace(underlyingAgent.CursorSessionID) != ""
 	case "agy-cli":
 		return strings.TrimSpace(underlyingAgent.AgySessionID) != ""
-	case "opencode-cli":
-		return strings.TrimSpace(underlyingAgent.OpenCodeSessionID) != ""
+	case "pi-cli":
+		return strings.TrimSpace(underlyingAgent.PiSessionID) != ""
 	default:
 		return false
 	}
+}
+
+func codingAgentProviderSupportsNativeResume(provider, modelID string) bool {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" {
+		return false
+	}
+	contract, ok := llmproviders.GetCodingAgentProviderContract(llmproviders.Provider(provider), strings.TrimSpace(modelID))
+	return ok && contract.SupportsNativeResume
 }
 
 func (api *StreamingAPI) seedCodingAgentRuntimeFromRestoredConversation(sessionID, currentProvider, currentWorkshopMode string, runtime *ChatHistoryAgentRuntime, underlyingAgent *mcpagent.Agent) bool {
@@ -5953,12 +5995,12 @@ func (api *StreamingAPI) seedCodingAgentRuntimeFromRestoredConversation(sessionI
 		underlyingAgent.AgySessionID = externalSessionID
 		log.Printf("[AGY CLI] Restored native conversation %s from chat history for session %s", externalSessionID, sessionID)
 		return true
-	case "opencode-cli":
+	case "pi-cli":
 		if externalSessionID == "" {
 			return false
 		}
-		underlyingAgent.OpenCodeSessionID = externalSessionID
-		log.Printf("[OPENCODE CLI] Restored native session %s from chat history for session %s", externalSessionID, sessionID)
+		underlyingAgent.PiSessionID = externalSessionID
+		log.Printf("[PI CLI] Restored native session %s from chat history for session %s", externalSessionID, sessionID)
 		return true
 	}
 	return false
@@ -6512,6 +6554,18 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 	api.runningAgentsMux.RUnlock()
 
 	if !exists || runningAgent == nil {
+		// No retained Go agent object — typically the brief gap *between* turns
+		// where the foreground-turn object is torn down/rebuilt while the
+		// coding-CLI tmux session is still alive. Returning 404 here is exactly
+		// what the UI surfaces as "the live coding-agent turn has ended" and then
+		// queues the message locally — a race, not a real failure. For a CLI
+		// session the tmux pane is the source of truth, so instead of rejecting,
+		// start the next turn from this message (the CLI resumes its session and
+		// processes it natively). Only if there's no prior query to template a
+		// turn from do we fall through to the 404.
+		if api.startNextTurnFromSteer(w, r, sessionID, req.Message, nil) {
+			return
+		}
 		http.Error(w, "No running agent for this session", http.StatusNotFound)
 		return
 	}
@@ -7690,7 +7744,7 @@ func (api *StreamingAPI) buildLLMToolsCallbacks() *todo_creation_human.LLMToolsC
 				return "provider is required.", nil
 			}
 			if !isPublishedLLMProviderAllowed(provider) {
-				return fmt.Sprintf("unsupported chat LLM provider %q. Use coding agents or direct API providers: codex-cli, cursor-cli, opencode-cli, claude-code, gemini-cli, bedrock, openai, anthropic, vertex, or azure.", provider), nil
+				return fmt.Sprintf("unsupported chat LLM provider %q. Use coding agents or direct API providers: codex-cli, cursor-cli, agy-cli, pi-cli, claude-code, gemini-cli, bedrock, openai, anthropic, vertex, or azure.", provider), nil
 			}
 
 			validationOptions := cloneOptionsMap(options)
@@ -7700,42 +7754,28 @@ func (api *StreamingAPI) buildLLMToolsCallbacks() *todo_creation_human.LLMToolsC
 			if strings.TrimSpace(apiKey) == "" {
 				keys, err := LoadProviderKeys(ctx)
 				if err == nil && keys != nil {
+					if value := getStoredProviderAPIKey(keys, provider); value != "" {
+						apiKey = value
+						usedWorkspaceAuth = true
+					}
 					switch provider {
-					case "openai":
-						if keys.OpenAI != "" {
-							apiKey = keys.OpenAI
-							usedWorkspaceAuth = true
-						}
-					case "anthropic":
-						if keys.Anthropic != "" {
-							apiKey = keys.Anthropic
-							usedWorkspaceAuth = true
-						}
-					case "vertex":
-						if keys.Vertex != "" {
-							apiKey = keys.Vertex
-							usedWorkspaceAuth = true
-						}
-					case "minimax":
-						if keys.MiniMax != "" {
-							apiKey = keys.MiniMax
-							usedWorkspaceAuth = true
-						}
 					case "bedrock":
-						if keys.Bedrock.Region != "" {
+						if keys.Bedrock != nil && keys.Bedrock.Region != "" {
 							region = keys.Bedrock.Region
 							usedWorkspaceAuth = true
 						}
 					case "azure":
-						if keys.Azure.APIKey != "" {
-							apiKey = keys.Azure.APIKey
-							usedWorkspaceAuth = true
-						}
-						if endpoint == "" && keys.Azure.Endpoint != "" {
-							endpoint = keys.Azure.Endpoint
-						}
-						if apiVersion == "" && keys.Azure.APIVersion != "" {
-							apiVersion = keys.Azure.APIVersion
+						if keys.Azure != nil {
+							if keys.Azure.APIKey != "" {
+								apiKey = keys.Azure.APIKey
+								usedWorkspaceAuth = true
+							}
+							if endpoint == "" && keys.Azure.Endpoint != "" {
+								endpoint = keys.Azure.Endpoint
+							}
+							if apiVersion == "" && keys.Azure.APIVersion != "" {
+								apiVersion = keys.Azure.APIVersion
+							}
 						}
 					}
 				}

@@ -232,7 +232,6 @@ func NewStepBasedWorkflowOrchestrator(
 	baseOrchestrator.SetMCPSessionID(workflowSessionID)
 	logger.Info(fmt.Sprintf("🔗 Set MCP session ID for workflow: %s (will be overridden with actual group name in batch execution)", workflowSessionID))
 
-
 	hcpo := &StepBasedWorkflowOrchestrator{
 		BaseOrchestrator: baseOrchestrator,
 		sessionID:        workflowSessionID, // Use the same session ID set on BaseOrchestrator for MCP connection sharing
@@ -1325,7 +1324,7 @@ func requiresCodeExecutionForProvider(config *AgentLLMConfig) bool {
 }
 
 // isCliProviderForPrompt checks if the given provider is a CLI runtime
-// (claude-code, gemini-cli, codex-cli, kimi). CLI providers have their own
+// (claude-code, gemini-cli, codex-cli, pi-cli, kimi). CLI providers have their own
 // tool-calling capabilities and use a different prompt template than the
 // generic code-execution one, even though every agent now runs in
 // code-execution mode for HTTP-bridge tool routing.

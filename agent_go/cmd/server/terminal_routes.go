@@ -549,7 +549,7 @@ func (api *StreamingAPI) handleSendTerminalInput(w http.ResponseWriter, r *http.
 		http.Error(w, "Invalid terminal input request", http.StatusBadRequest)
 		return
 	}
-	if strings.TrimSpace(req.Text) == "" && !req.Submit {
+	if req.Text == "" && !req.Submit {
 		http.Error(w, "Text or submit=true is required", http.StatusBadRequest)
 		return
 	}

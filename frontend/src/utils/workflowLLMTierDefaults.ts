@@ -97,7 +97,6 @@ export function getWorkflowLLMOptions(
   providerManifest.forEach(entry => {
     if (entry.integration_kind !== 'coding_agent') return
     if (!entry.default_tier_models) return
-    if (entry.id.startsWith('opencode-cli-')) return
 
     const main = entry.default_tier_models.main
     const key = `${main.provider}/${main.model_id}`

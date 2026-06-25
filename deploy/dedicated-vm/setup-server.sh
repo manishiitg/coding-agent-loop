@@ -165,7 +165,7 @@ if ! command -v tmux &>/dev/null; then
   apt-get install -y --no-install-recommends tmux
 fi
 echo "==> Installing CLI tools (agent-browser, claude, gemini)..."
-npm install -g agent-browser@latest @anthropic-ai/claude-code@latest @google/gemini-cli@latest
+npm install -g agent-browser@latest @anthropic-ai/claude-code@latest @google/gemini-cli@latest @earendil-works/pi-coding-agent@latest
 
 # Google Chrome — required for browser automation via agent-browser/playwright.
 # Some tools (and shell-exec calls like `which google-chrome`) look for

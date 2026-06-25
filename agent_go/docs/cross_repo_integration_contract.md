@@ -68,7 +68,7 @@ The agent's `executeLLM()` builds provider-specific options and calls
 | codex-cli | `WithCodexDisableShellTool`, `WithCodexApprovalPolicy`, `WithCodexConfigOverrides`, `WithCodexResumeSessionID` |
 | cursor-cli | `WithCursorMCPConfig`, `WithCursorApproveMCPs`, `WithCursorForce` |
 | agy-cli | `WithAgyMCPConfig`, `WithAgyDangerouslySkipPermissions`, `WithAgyWorkingDir`, `WithAgyResumeSessionID`, persistent tmux session options |
-| opencode-cli | `opencodecli.WithMCPConfig`, `opencodecli.WithWorkingDir`, `opencodecli.WithOpenCodeModel`, `opencodecli.WithResumeSessionID`, `opencodecli.WithAgent`, `opencodecli.WithWriteProjectInstructionFile` (writes AGENTS.md + `tools` deny block into `opencode.jsonc`) |
+| pi-cli | `WithPiWorkingDir`, `WithPiProvider`, `WithPiMCPConfig`, `WithPiBridgeOnlyTools`, `WithPiResumeSessionID`, persistent tmux session options |
 
 **Universal options (all providers):**
 - `WithReasoningEffort()`
@@ -158,7 +158,7 @@ subsequent turns to resume the conversation.
 
 **Provider-specific session-id keys** (in `GenerationInfo.Additional`):
 - `claude_code_session_id`, `gemini_session_id`, `codex_thread_id`,
-  `cursor_session_id`, `agy_session_id`, `opencode_session_id`
+  `cursor_session_id`, `agy_session_id`, `pi_session_id`
 
 **Risk:** key drift → mcpagent reads wrong key → resume silently starts a
 fresh session.
@@ -174,7 +174,7 @@ auto-routing/composer/etc.) must be available downstream.
 | Gemini CLI | `gemini_effective_model` (tmux) / `gemini_model` (structured) |
 | Codex CLI | `codex_effective_model` |
 | Cursor CLI | `cursor_model` |
-| OpenCode CLI | `opencode_effective_model` (adapter synthesizes from `--model` flag; cross-checked against `opencode export <id>` info.model.id) |
+| Pi CLI | requested Pi model ID or provider/model route |
 | Direct API adapters | `cost_model_id` (the canonical key all adapters emit) |
 
 **Risk:** CLI doesn't report → fallback to requested model ID, accept it
@@ -210,10 +210,6 @@ history for subsequent turns. CLI providers receive tool context as text
 `WithCursorMCPConfig(json)` → Cursor `.cursor/mcp.json`
 `WithAgyMCPConfig(json)` → Antigravity `.agents/mcp_config.json`
 `WithAgyResumeSessionID(id)` → Antigravity `agy --conversation <id>`
-`opencodecli.WithMCPConfig(json)` → OpenCode `opencode.jsonc` `mcp` block
-(adapter translates the standard `{"mcpServers":{name:{command:"<exe>",args:[...]}}}`
-shape into opencode 1.15.4's required `{"mcp":{name:{command:["<exe>",...]}}}` —
-single-array command, no separate `args` field)
 MCP tool calls work through the bridge end-to-end.
 
 ---
@@ -423,7 +419,7 @@ Each contract area should be verified for all supported providers.
   contract.
 
 **Coding agents (structured JSON transport):**
-- gemini-cli, opencode-cli
+- gemini-cli
 
 **API providers (direct HTTP):**
 - anthropic, openai, vertex (Gemini API), bedrock, azure, z-ai, kimi, minimax, openrouter

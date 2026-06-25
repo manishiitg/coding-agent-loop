@@ -17,16 +17,7 @@ export type LLMProvider =
   | 'codex-cli'
   | 'cursor-cli'
   | 'agy-cli'
-  | 'opencode-cli'
-  // OpenCode CLI sub-provider tiles. Each routes through the `opencode`
-  // binary with sub-provider-scoped credentials and a curated model
-  // catalog.
-  | 'opencode-cli-kimi'
-  | 'opencode-cli-deepseek'
-  | 'opencode-cli-qwen'
-  | 'opencode-cli-minimax'
-  | 'opencode-cli-glm'
-  | 'opencode-cli-free'
+  | 'pi-cli'
   | 'minimax'
   | 'minimax-coding-plan'
   | 'elevenlabs'
@@ -77,7 +68,7 @@ export interface LLMConfiguration {
   options?: Record<string, unknown>
   fallback_models: string[]
   cross_provider_fallback?: {
-    provider: 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli' | 'cursor-cli' | 'agy-cli' | 'opencode-cli'
+    provider: 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli' | 'cursor-cli' | 'agy-cli' | 'pi-cli'
     models: string[]
   }
   // API keys for each provider
@@ -91,7 +82,7 @@ export interface LLMConfiguration {
     anthropic?: string
     vertex?: string
     kimi?: string
-    opencode_cli?: string
+    pi_cli?: string
     minimax?: string
     minimax_coding_plan?: string
     elevenlabs?: string
@@ -215,7 +206,7 @@ export interface LLMDefaultsResponse {
   azure_config?: ExtendedLLMConfiguration
   zai_config?: ExtendedLLMConfiguration
   kimi_config?: ExtendedLLMConfiguration
-  opencode_cli_config?: ExtendedLLMConfiguration
+  pi_cli_config?: ExtendedLLMConfiguration
   minimax_config?: ExtendedLLMConfiguration
   minimax_coding_plan_config?: ExtendedLLMConfiguration
   elevenlabs_config?: ExtendedLLMConfiguration
@@ -229,7 +220,7 @@ export interface LLMDefaultsResponse {
     azure?: string[]
     'z-ai'?: string[]
     kimi?: string[]
-    'opencode-cli'?: string[]
+    'pi-cli'?: string[]
     minimax?: string[]
     'minimax-coding-plan'?: string[]
     elevenlabs?: string[]

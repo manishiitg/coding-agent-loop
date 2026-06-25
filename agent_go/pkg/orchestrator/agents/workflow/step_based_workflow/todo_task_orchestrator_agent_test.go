@@ -35,7 +35,8 @@ func TestTodoTaskOrchestratorPromptIncludesSharedCodeExecutionSection(t *testing
 
 	requiredSnippets := []string{
 		"**Sub-agent tool rule**:",
-		"Prefer calling these sub-agent tools directly when they are actually available as provider-callable tools in this session.",
+		"Prefer calling these sub-agent tools directly only when they are actually listed as provider-callable tools in this session.",
+		"In bridge-only CLI sessions where only the documented api-bridge tools are native, sub-agent tools are dynamic custom tools:",
 		"**CODE EXECUTION MODE — Access MCP Tools via HTTP API:**",
 		"{{TOOL_STRUCTURE}}",
 		"MCP_CUSTOM and MCP_AUTH",

@@ -3600,7 +3600,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"transport": map[string]interface{}{
 					"type":        "string",
 					"enum":        []interface{}{"tmux", "structured"},
-					"description": "Transport for coding-agent CLI providers (claude-code, codex-cli, cursor-cli, gemini-cli) on this step.\n\n- \"tmux\" (default for Claude/Codex/Cursor): interactive tmux session with a live TUI. Best for steps where you want the user to watch progress live or for long-running iterative work. The terminal pane in the UI shows the running TUI.\n- \"structured\": one-shot --print/--exec/stream-json invocation per turn. Faster startup (no tmux acquisition delay), no tmux TUI pane to manage. Best for steps that just need a single deterministic answer (math/text/format conversions, fast probes).\n\nGemini CLI workflow steps always use structured stream-json; \"tmux\" is ignored there. Gemini CLI chat can still use the persistent tmux TUI. Non-coding-agent providers (anthropic, openai, vertex, ...) ignore this field. Switching transport per step lets you mix fast structured steps with watch-the-screen tmux steps in the same workflow.",
+					"description": "Transport for coding-agent CLI providers (claude-code, codex-cli, cursor-cli, gemini-cli, pi-cli) on this step.\n\n- \"tmux\" (default for Claude/Codex/Cursor/Pi): interactive tmux session with a live TUI. Best for steps where you want the user to watch progress live or for long-running iterative work. The terminal pane in the UI shows the running TUI.\n- \"structured\": one-shot --print/--exec/stream-json invocation per turn. Faster startup (no tmux acquisition delay), no tmux TUI pane to manage. Best for steps that just need a single deterministic answer (math/text/format conversions, fast probes).\n\nGemini CLI workflow steps always use structured stream-json; \"tmux\" is ignored there. Gemini CLI chat can still use the persistent tmux TUI. Non-coding-agent providers (anthropic, openai, vertex, ...) ignore this field. Switching transport per step lets you mix fast structured steps with watch-the-screen tmux steps in the same workflow.",
 				},
 				"use_code_execution_mode": map[string]interface{}{
 					"type":        "boolean",
@@ -7647,7 +7647,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"resume_previous": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Optional opt-in when this workflow runs on a coding-agent CLI (claude-code, cursor-cli, codex-cli, gemini-cli, opencode-cli, agy-cli). When true, each scheduled run resumes the previous run's thread (same CLI) instead of starting a fresh session, so the agent keeps prior context across runs. API model providers and non-resumable runs start fresh. Defaults to false; omit for fresh sessions.",
+					"description": "Optional opt-in when this workflow runs on a coding-agent CLI (claude-code, cursor-cli, codex-cli, gemini-cli, pi-cli, agy-cli). When true, each scheduled run resumes the previous run's thread (same CLI) instead of starting a fresh session, so the agent keeps prior context across runs. API model providers and non-resumable runs start fresh. Defaults to false; omit for fresh sessions.",
 				},
 			},
 			"required": []string{"name", "cron_expression", "timezone", "group_names"},
@@ -8245,7 +8245,7 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagen
 			"properties": map[string]interface{}{
 				"provider": map[string]interface{}{
 					"type":        "string",
-					"description": "Provider id such as openai, openrouter, anthropic, vertex, azure, minimax, bedrock, gemini-cli, claude-code.",
+					"description": "Provider id such as openai, openrouter, anthropic, vertex, azure, minimax, bedrock, gemini-cli, pi-cli, claude-code.",
 				},
 			},
 			"required": []string{"provider"},
@@ -8271,7 +8271,7 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagen
 			"properties": map[string]interface{}{
 				"provider": map[string]interface{}{
 					"type":        "string",
-					"description": "Provider id such as openai, openrouter, anthropic, vertex, azure, minimax, bedrock, gemini-cli, claude-code, codex-cli.",
+					"description": "Provider id such as openai, openrouter, anthropic, vertex, azure, minimax, bedrock, gemini-cli, pi-cli, claude-code, codex-cli.",
 				},
 				"model_id": map[string]interface{}{
 					"type":        "string",

@@ -22,7 +22,7 @@ type TierKey = 'main' | 'high' | 'medium' | 'low'
 type VisibleTierKey = Exclude<TierKey, 'main'>
 
 const PRIMARY_CODING_CLI_ORDER = ['claude-code', 'codex-cli'] as const
-const SECONDARY_CODING_CLI_ORDER = ['gemini-cli', 'agy-cli', 'opencode-cli', 'cursor-cli'] as const
+const SECONDARY_CODING_CLI_ORDER = ['agy-cli', 'pi-cli', 'cursor-cli'] as const
 const FALLBACK_CODING_CLI_ORDER = [...PRIMARY_CODING_CLI_ORDER, ...SECONDARY_CODING_CLI_ORDER] as const
 const CODING_CLI_DISPLAY_ORDER = new Map<string, number>(
   FALLBACK_CODING_CLI_ORDER.map((provider, index) => [provider, index])
@@ -63,17 +63,11 @@ const CODING_CLI_INFO: Record<typeof FALLBACK_CODING_CLI_ORDER[number], {
     setupCommand: 'agy',
     installHint: 'Install Antigravity CLI so the agy command is available on the backend PATH.',
   },
-  'opencode-cli': {
-    label: 'OpenCode CLI',
-    binary: 'opencode',
-    setupCommand: 'opencode auth login',
-    installHint: 'Install OpenCode CLI so the opencode command is available on the backend PATH, or set OPENCODE_BIN.',
-  },
-  'gemini-cli': {
-    label: 'Gemini CLI',
-    binary: 'gemini',
-    setupCommand: 'gemini',
-    installHint: 'Install Gemini CLI so the gemini command is available on the backend PATH.',
+  'pi-cli': {
+    label: 'Pi CLI',
+    binary: 'pi',
+    setupCommand: 'npm install -g @earendil-works/pi-coding-agent',
+    installHint: 'Install Pi CLI so the pi command is available on the backend PATH, or ensure npx is available.',
   },
 }
 
@@ -83,11 +77,8 @@ const isFallbackCodingCLIProvider = (provider: string): provider is typeof FALLB
 const isPrimaryCodingCLIProvider = (provider: string) =>
   (PRIMARY_CODING_CLI_ORDER as readonly string[]).includes(provider)
 
-const isOpenCodeSubProvider = (provider: string) =>
-  provider.startsWith('opencode-cli-')
-
 const codingCliDisplayRank = (provider: string) =>
-  CODING_CLI_DISPLAY_ORDER.get(isOpenCodeSubProvider(provider) ? 'opencode-cli' : provider) ?? 999
+  CODING_CLI_DISPLAY_ORDER.get(provider) ?? 999
 
 function sortCodingCliCandidates(candidates: LLMDiscoveryCandidate[]) {
   return [...candidates].sort((a, b) =>
@@ -117,6 +108,7 @@ function fallbackCodingCandidate(provider: typeof FALLBACK_CODING_CLI_ORDER[numb
 }
 
 function manifestProviderCandidate(provider: ProviderManifestEntry): LLMDiscoveryCandidate | null {
+  if (provider.deprecated) return null
   const defaultModel = provider.models.find(model => model.model_id === provider.default_model_id) || provider.models[0]
   const modelID = provider.default_model_id || defaultModel?.model_id || provider.id
   if (!modelID) return null
@@ -126,7 +118,7 @@ function manifestProviderCandidate(provider: ProviderManifestEntry): LLMDiscover
     provider: provider.id as LLMProvider,
     model_id: modelID,
     model_name: defaultModel?.model_name || provider.display_name,
-    label: provider.id === 'opencode-cli-free' ? 'OpenCode Free Models' : provider.display_name,
+    label: provider.display_name,
     kind: provider.kind,
     detection_source: provider.description,
     auth_source: provider.auth_source,
@@ -236,10 +228,8 @@ function visibleTierEntries(candidate: LLMDiscoveryCandidate, metadata: ModelMet
 function publishedName(candidate: LLMDiscoveryCandidate, selectedModelId?: string): string {
   if (candidate.provider === 'codex-cli') return 'Codex CLI'
   if (candidate.provider === 'cursor-cli') return 'Cursor CLI'
-  if (candidate.provider === 'opencode-cli') return 'OpenCode CLI'
-  if (candidate.provider === 'opencode-cli-free') return 'OpenCode Free Models'
+  if (candidate.provider === 'pi-cli') return `Pi CLI (${selectedModelId || candidate.model_id})`
   if (candidate.provider === 'claude-code') return 'Claude Code'
-  if (candidate.provider === 'gemini-cli') return `Gemini CLI (${selectedModelId || candidate.model_id})`
   return candidate.label
 }
 
@@ -273,7 +263,7 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
     const byProvider = new Map<string, LLMDiscoveryCandidate>()
     const byRuntime = new Map<string, LLMDiscoveryCandidate>()
     for (const candidate of candidates) {
-      if (candidate.kind === 'local_cli' && !isOpenCodeSubProvider(candidate.provider) && !byProvider.has(candidate.provider)) {
+      if (candidate.kind === 'local_cli' && !byProvider.has(candidate.provider)) {
         byProvider.set(candidate.provider, candidate)
         const runtimeKey = candidate.runtime_command || candidate.provider
         if (!byRuntime.has(runtimeKey)) byRuntime.set(runtimeKey, candidate)
@@ -282,8 +272,8 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
 
     const seenRuntimeKeys = new Set<string>()
     const manifestCodingProviders = providerManifest.filter(provider => {
+      if (provider.deprecated) return false
       if (provider.integration_kind !== 'coding_agent') return false
-      if (isOpenCodeSubProvider(provider.id)) return false
       const runtimeKey = provider.runtime_command || provider.id
       if (seenRuntimeKeys.has(runtimeKey)) return false
       seenRuntimeKeys.add(runtimeKey)
@@ -384,9 +374,6 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
       : undefined
     const setupCommand = providerInfo?.setupCommand || (readiness === 'needs_setup' ? candidate.runtime_command || candidate.provider : undefined)
     const tierChips = visibleTierEntries(candidate, metadata, providerManifest)
-    const popularOpenCodeProviders = candidate.provider === 'opencode-cli'
-      ? ['Kimi', 'GLM', 'MiniMax', 'DeepSeek', 'Qwen', 'free models']
-      : []
     const isPrimaryProvider = isPrimaryCodingCLIProvider(candidate.provider)
     const statusClasses = readiness === 'ready'
       ? 'bg-success/10 text-success'
@@ -434,21 +421,6 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
               </span>
             ))}
           </div>
-          {popularOpenCodeProviders.length > 0 ? (
-            <div>
-              <div className="mb-1 text-muted-foreground">OpenCode integrations</div>
-              <div className="flex flex-wrap gap-1.5">
-                {popularOpenCodeProviders.map(provider => (
-                  <span
-                    key={provider}
-                    className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground"
-                  >
-                    {provider}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ) : null}
           {readiness === 'not_detected' ? (
             <p className="line-clamp-2">{candidate.setup_hint || candidate.reason}</p>
           ) : null}

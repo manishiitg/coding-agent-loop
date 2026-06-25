@@ -248,7 +248,7 @@ Example:
 
 func init() {
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.serverURL, "server-url", "http://localhost:18743", "mcp-agent-builder-go server URL")
-	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.provider, "provider", "gemini-cli", "coding CLI provider: gemini-cli, codex-cli, cursor-cli, agy-cli, opencode-cli, or claude-code")
+	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.provider, "provider", "gemini-cli", "coding CLI provider: gemini-cli, codex-cli, cursor-cli, agy-cli, pi-cli, or claude-code")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.model, "model", "", "model ID; defaults to the provider-specific E2E model")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.sessionID, "session-id", "", "session ID to reuse; generated when omitted")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.selectedFolder, "selected-folder", "_users/default/Chats", "workspace-relative folder for the chat session")
@@ -290,8 +290,8 @@ func defaultCodingAgentE2EModel(provider string) string {
 		return "agy-cli"
 	case "claude-code":
 		return "claude-code"
-	case "opencode-cli":
-		return "opencode-cli"
+	case "pi-cli":
+		return "google/gemini-3.5-flash"
 	default:
 		return ""
 	}

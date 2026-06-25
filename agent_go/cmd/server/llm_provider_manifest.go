@@ -3,9 +3,11 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +35,9 @@ type providerManifestEntry struct {
 	AuthSource            string                            `json:"auth_source,omitempty"`
 	Usable                bool                              `json:"usable"`
 	SetupHint             string                            `json:"setup_hint,omitempty"`
+	Deprecated            bool                              `json:"deprecated,omitempty"`
+	DeprecationReason     string                            `json:"deprecation_reason,omitempty"`
+	ReplacementProvider   string                            `json:"replacement_provider,omitempty"`
 	RequiresAPIKey        bool                              `json:"requires_api_key"`
 	SupportsDynamicModels bool                              `json:"supports_dynamic_models"`
 	DefaultModelID        string                            `json:"default_model_id"`
@@ -45,9 +50,14 @@ type providerManifestEntry struct {
 }
 
 type providerCodingAgentInfo struct {
-	Transport         string `json:"transport"`
-	SupportsLiveInput bool   `json:"supports_live_input"`
-	SupportsInterrupt bool   `json:"supports_interrupt"`
+	Transport               string `json:"transport"`
+	SupportsLiveInput       bool   `json:"supports_live_input"`
+	SupportsInterrupt       bool   `json:"supports_interrupt"`
+	SupportsStatusLine      bool   `json:"supports_status_line"`
+	UsesMCPBridge           bool   `json:"uses_mcp_bridge"`
+	SupportsBridgeOnlyTools bool   `json:"supports_bridge_only_tools"`
+	SupportsNativeResume    bool   `json:"supports_native_resume"`
+	HandlesTmuxSessionLoss  bool   `json:"handles_tmux_session_loss"`
 }
 
 type integrationKindInfo struct {
@@ -117,12 +127,14 @@ var providerStaticInfoMap = map[string]providerStaticInfo{
 		authDescription: "Local CLI (Agy sign-in)",
 		requiresAPIKey:  false,
 	},
-	"opencode-cli": {
-		displayName:     "OpenCode CLI",
-		description:     "Uses the locally installed opencode CLI through tmux. Supports multiple model providers.",
+	"pi-cli": {
+		displayName:     "Pi CLI",
+		description:     "Uses Pi CLI through tmux marker transport. Default route uses Gemini via PI_API_KEY/GEMINI_API_KEY; custom Pi provider/model IDs are supported.",
 		integrationKind: "coding_agent",
-		authDescription: "Local CLI (API key optional)",
+		authDescription: "Local CLI (PI/Gemini API key)",
 		requiresAPIKey:  false,
+		apiKeyEnv:       "PI_API_KEY or GEMINI_API_KEY",
+		apiKeyURL:       "https://aistudio.google.com/apikey",
 	},
 	"claude-code": {
 		displayName:     "Claude Code",
@@ -132,8 +144,8 @@ var providerStaticInfoMap = map[string]providerStaticInfo{
 		requiresAPIKey:  false,
 	},
 	"gemini-cli": {
-		displayName:     "Gemini CLI",
-		description:     "Uses the locally installed gemini CLI. Provide a Gemini API key or use gcloud auth.",
+		displayName:     "Gemini CLI (Deprecated)",
+		description:     "Deprecated for new setup. Existing sessions remain runnable; use Antigravity CLI for new Google-backed coding-agent work.",
 		integrationKind: "coding_agent",
 		authDescription: "Local CLI (API key optional)",
 		requiresAPIKey:  false,
@@ -213,7 +225,7 @@ var providerStaticInfoMap = map[string]providerStaticInfo{
 
 func providerModelSelectionMode(provider string) string {
 	switch provider {
-	case "cursor-cli", "opencode-cli":
+	case "cursor-cli", "pi-cli":
 		return "dynamic"
 	default:
 		return "fixed_tier"
@@ -228,18 +240,19 @@ func providerKind(provider string) string {
 }
 
 func providerCodingAgentManifestInfo(provider, modelID string) *providerCodingAgentInfo {
-	contractProvider := provider
-	if strings.HasPrefix(provider, "opencode-cli-") {
-		contractProvider = "opencode-cli"
-	}
-	contract, ok := llm.GetCodingAgentProviderContract(llm.Provider(contractProvider), modelID)
+	contract, ok := llm.GetCodingAgentProviderContract(llm.Provider(provider), modelID)
 	if !ok {
 		return nil
 	}
 	return &providerCodingAgentInfo{
-		Transport:         string(contract.Transport),
-		SupportsLiveInput: contract.SupportsLiveInput,
-		SupportsInterrupt: contract.SupportsInterrupt,
+		Transport:               string(contract.Transport),
+		SupportsLiveInput:       contract.SupportsLiveInput,
+		SupportsInterrupt:       contract.SupportsInterrupt,
+		SupportsStatusLine:      contract.SupportsStatusLine,
+		UsesMCPBridge:           contract.UsesMCPBridge,
+		SupportsBridgeOnlyTools: contract.SupportsBridgeOnlyTools,
+		SupportsNativeResume:    contract.SupportsNativeResume,
+		HandlesTmuxSessionLoss:  contract.HandlesTmuxSessionLoss,
 	}
 }
 
@@ -271,10 +284,8 @@ func (api *StreamingAPI) handleGetProviderManifest(w http.ResponseWriter, r *htt
 	capabilitiesByProvider := buildProviderCapabilities(ctx)
 
 	providerOrder := []string{
-		"codex-cli", "cursor-cli", "agy-cli", "opencode-cli",
-		"opencode-cli-kimi", "opencode-cli-deepseek", "opencode-cli-qwen",
-		"opencode-cli-minimax", "opencode-cli-glm", "opencode-cli-free",
-		"claude-code", "gemini-cli",
+		"codex-cli", "cursor-cli", "agy-cli", "pi-cli", "claude-code",
+		"gemini-cli",
 		"openai", "anthropic", "vertex", "bedrock", "azure",
 		"elevenlabs", "deepgram", "minimax",
 	}
@@ -285,26 +296,8 @@ func (api *StreamingAPI) handleGetProviderManifest(w http.ResponseWriter, r *htt
 		supportedSet[p] = true
 	}
 
-	// Resolve OpenCode CLI runtime once; sub-provider tiles share it.
-	_, _, openCodeRuntimeOK := providerUsable("opencode-cli", true)
-	openCodeRuntimeAvailable := openCodeRuntimeOK != nil && *openCodeRuntimeOK
-	openCodeSubKeys := MergedOpenCodeSubProviderKeys(ctx)
-	openCodeSubEntries := openCodeSubProviderManifestEntries(openCodeRuntimeAvailable, openCodeSubKeys)
-	openCodeSubByID := make(map[string]providerManifestEntry, len(openCodeSubEntries))
-	for _, e := range openCodeSubEntries {
-		openCodeSubByID[e.ID] = e
-	}
-
 	entries := make([]providerManifestEntry, 0, len(providerOrder))
 	for _, provider := range providerOrder {
-		// OpenCode sub-provider tiles short-circuit the generic
-		// static-info pipeline — their entries are fully constructed
-		// from the opencodecli sub-provider catalog.
-		if subEntry, ok := openCodeSubByID[provider]; ok {
-			entries = append(entries, subEntry)
-			continue
-		}
-
 		if !supportedSet[provider] {
 			continue
 		}
@@ -358,6 +351,9 @@ func (api *StreamingAPI) handleGetProviderManifest(w http.ResponseWriter, r *htt
 			AuthSource:            authSource,
 			Usable:                usable,
 			SetupHint:             setupHint,
+			Deprecated:            isDeprecatedLLMProvider(provider),
+			DeprecationReason:     providerDeprecationReason(provider),
+			ReplacementProvider:   providerReplacementProvider(provider),
 			RequiresAPIKey:        info.requiresAPIKey,
 			SupportsDynamicModels: selectionMode == "dynamic",
 			DefaultModelID:        defaultModel,
@@ -458,8 +454,8 @@ func getDynamicModels(provider string) *dynamicModelsResponse {
 	switch provider {
 	case "cursor-cli":
 		resp = fetchCursorCLIModels()
-	case "opencode-cli":
-		resp = fetchOpenCodeCLIModels()
+	case "pi-cli":
+		resp = fetchPiCLIModels()
 	default:
 		resp = &dynamicModelsResponse{
 			Provider:           provider,
@@ -624,146 +620,174 @@ func cursorFallbackModels() []dynamicModelEntry {
 	return models
 }
 
-func fetchOpenCodeCLIModels() *dynamicModelsResponse {
+func fetchPiCLIModels() *dynamicModelsResponse {
+	models := piFallbackModels()
+	source := "curated_fallback"
+	if _, err := runtimeAvailableForProvider("pi-cli"); err == nil {
+		source = "curated_runtime_available"
+		if listed, listErr := listPiCLIModels(); listErr == nil && len(listed) > 0 {
+			models = listed
+			source = "pi_cli_list_models"
+		}
+	}
+
 	resp := &dynamicModelsResponse{
-		Provider:           "opencode-cli",
+		Provider:           "pi-cli",
 		ModelSelectionMode: "dynamic",
+		Models:             models,
+		Groups:             dynamicModelGroups(models),
 		SupportsCustom:     true,
-		CustomModelHint:    "Enter as provider/model (e.g., openai/gpt-5.1)",
-		Source:             "cli_dynamic",
+		CustomModelHint:    "Enter any Pi model as provider/model, e.g. google/gemini-3.5-flash",
+		Source:             source,
 		CacheTTLSeconds:    300,
 		CachedAt:           time.Now().UTC().Format(time.RFC3339),
 	}
-
-	binPath, err := runtimeAvailableForProvider("opencode-cli")
-	if err != nil {
-		resp.Source = "fallback_metadata"
-		resp.Models = opencodeFallbackModels()
-		return resp
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	out, err := exec.CommandContext(ctx, binPath, "models", "--verbose").Output()
-	if err != nil {
-		resp.Source = "fallback_metadata"
-		resp.Models = opencodeFallbackModels()
-		return resp
-	}
-
-	models, groups := parseOpenCodeModelList(string(out))
-	if len(models) == 0 {
-		resp.Source = "fallback_metadata"
-		resp.Models = opencodeFallbackModels()
-		return resp
-	}
-
-	resp.Models = models
-	resp.Groups = groups
 	return resp
 }
 
-type openCodeModelJSON struct {
-	ID         string `json:"id"`
-	ProviderID string `json:"providerID"`
-	Name       string `json:"name"`
-	Status     string `json:"status"`
-	Cost       struct {
-		Input  float64 `json:"input"`
-		Output float64 `json:"output"`
-	} `json:"cost"`
-	Limit struct {
-		Context int `json:"context"`
-		Output  int `json:"output"`
-	} `json:"limit"`
-	Capabilities struct {
-		Reasoning  bool `json:"reasoning"`
-		ToolCall   bool `json:"toolcall"`
-		Attachment bool `json:"attachment"`
-	} `json:"capabilities"`
-}
+func listPiCLIModels() ([]dynamicModelEntry, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 
-func parseOpenCodeModelList(output string) ([]dynamicModelEntry, []string) {
-	lines := strings.Split(output, "\n")
-	models := make([]dynamicModelEntry, 0)
-	groupSet := map[string]bool{}
-	groupOrder := []string{}
-
-	var currentModelID string
-	var jsonBuf strings.Builder
-	inJSON := false
-	braceDepth := 0
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		if !inJSON && trimmed != "" && !strings.HasPrefix(trimmed, "{") {
-			currentModelID = trimmed
-			continue
-		}
-
-		if !inJSON && strings.HasPrefix(trimmed, "{") {
-			inJSON = true
-			braceDepth = 0
-			jsonBuf.Reset()
-		}
-
-		if inJSON {
-			jsonBuf.WriteString(line)
-			jsonBuf.WriteString("\n")
-
-			braceDepth += strings.Count(trimmed, "{") - strings.Count(trimmed, "}")
-
-			if braceDepth <= 0 {
-				inJSON = false
-				braceDepth = 0
-				var model openCodeModelJSON
-				if err := json.Unmarshal([]byte(jsonBuf.String()), &model); err == nil {
-					group := model.ProviderID
-					if group == "" {
-						group = "OpenCode"
-					}
-					if !groupSet[group] {
-						groupSet[group] = true
-						groupOrder = append(groupOrder, group)
-					}
-
-					fullID := currentModelID
-					if fullID == "" {
-						fullID = fmt.Sprintf("%s/%s", model.ProviderID, model.ID)
-					}
-
-					models = append(models, dynamicModelEntry{
-						ModelID:       fullID,
-						ModelName:     model.Name,
-						Group:         group,
-						ContextWindow: model.Limit.Context,
-						CostInput:     model.Cost.Input,
-						CostOutput:    model.Cost.Output,
-					})
-				}
-				currentModelID = ""
-			}
-		}
+	runtimePath, err := runtimeAvailableForProvider("pi-cli")
+	if err != nil {
+		return nil, err
 	}
-
-	return models, groupOrder
+	args := []string{"--list-models"}
+	if filepath.Base(runtimePath) == "npx" {
+		args = []string{"--yes", "@earendil-works/pi-coding-agent", "--list-models"}
+	}
+	cmd := exec.CommandContext(ctx, runtimePath, args...)
+	cmd.Env = os.Environ()
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	return parsePiCLIModelList(string(output)), nil
 }
 
-func opencodeFallbackModels() []dynamicModelEntry {
-	allMetadata := utils.GetAllModelMetadata()
-	models := make([]dynamicModelEntry, 0)
-	for _, m := range allMetadata {
-		if m == nil || m.Provider != "opencode-cli" {
+func parsePiCLIModelList(output string) []dynamicModelEntry {
+	lines := strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n")
+	models := make([]dynamicModelEntry, 0, len(lines))
+	seen := map[string]bool{}
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
 			continue
 		}
-		models = append(models, dynamicModelEntry{
-			ModelID:   m.ModelID,
-			ModelName: m.ModelName,
-			Group:     "Default",
-			IsDefault: m.ModelID == "opencode-cli",
-		})
+		if strings.EqualFold(fields[0], "provider") || strings.EqualFold(fields[0], "no") {
+			continue
+		}
+		provider := strings.TrimSpace(fields[0])
+		model := strings.TrimSpace(fields[1])
+		if provider == "" || model == "" {
+			continue
+		}
+		modelID := provider + "/" + model
+		if seen[modelID] {
+			continue
+		}
+		seen[modelID] = true
+		entry := dynamicModelEntry{
+			ModelID:   modelID,
+			ModelName: piModelDisplayName(provider, model),
+			Group:     piModelGroup(provider),
+			IsDefault: modelID == "google/gemini-3.5-flash",
+		}
+		if len(fields) >= 3 {
+			entry.ContextWindow = parsePiCompactCount(fields[2])
+		}
+		models = append(models, entry)
 	}
 	return models
+}
+
+func parsePiCompactCount(value string) int {
+	value = strings.TrimSpace(strings.ToUpper(value))
+	if value == "" {
+		return 0
+	}
+	multiplier := 1.0
+	switch {
+	case strings.HasSuffix(value, "K"):
+		multiplier = 1_000
+		value = strings.TrimSuffix(value, "K")
+	case strings.HasSuffix(value, "M"):
+		multiplier = 1_000_000
+		value = strings.TrimSuffix(value, "M")
+	}
+	n, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0
+	}
+	return int(n * multiplier)
+}
+
+func piModelDisplayName(provider, model string) string {
+	return model + " (" + provider + ")"
+}
+
+func piModelGroup(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "google":
+		return "Google"
+	case "google-vertex":
+		return "Google Vertex"
+	case "anthropic":
+		return "Anthropic"
+	case "openai":
+		return "OpenAI"
+	case "openrouter":
+		return "OpenRouter"
+	case "bedrock":
+		return "Amazon Bedrock"
+	case "deepseek":
+		return "DeepSeek"
+	default:
+		if provider == "" {
+			return "Other"
+		}
+		return provider
+	}
+}
+
+func dynamicModelGroups(models []dynamicModelEntry) []string {
+	seen := map[string]bool{}
+	groups := make([]string, 0)
+	for _, model := range models {
+		group := strings.TrimSpace(model.Group)
+		if group == "" {
+			group = "Other"
+		}
+		if seen[group] {
+			continue
+		}
+		seen[group] = true
+		groups = append(groups, group)
+	}
+	return groups
+}
+
+func piFallbackModels() []dynamicModelEntry {
+	return []dynamicModelEntry{
+		{
+			ModelID:       "google/gemini-3.5-flash",
+			ModelName:     "Gemini 3.5 Flash",
+			Group:         "Google",
+			IsDefault:     true,
+			ContextWindow: 1048576,
+		},
+		{
+			ModelID:       "google/gemini-2.5-flash",
+			ModelName:     "Gemini 2.5 Flash",
+			Group:         "Google",
+			ContextWindow: 1048576,
+		},
+		{
+			ModelID:       "google-vertex/gemini-3.5-flash",
+			ModelName:     "Gemini 3.5 Flash (Vertex)",
+			Group:         "Google Vertex",
+			ContextWindow: 1048576,
+		},
+	}
 }

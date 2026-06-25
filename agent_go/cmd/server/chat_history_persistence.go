@@ -1767,6 +1767,24 @@ func normalizeChatHistoryRuntime(runtime *ChatHistoryAgentRuntime) {
 			runtime.Transport = strings.ToLower(string(contract.Transport))
 		}
 	}
+	if runtime.ResumeSupported && strings.TrimSpace(runtime.ResumeFlag) == "" {
+		runtime.ResumeFlag = defaultCodingAgentResumeFlag(runtime.Provider)
+	}
+}
+
+func defaultCodingAgentResumeFlag(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "claude-code", "gemini-cli", "cursor-cli":
+		return "--resume"
+	case "codex-cli":
+		return "resume"
+	case "agy-cli":
+		return "--conversation"
+	case "pi-cli":
+		return "--session-id"
+	default:
+		return ""
+	}
 }
 
 func normalizeRestoredChatHistoryConversationPath(userID, conversationPath string) (string, bool) {

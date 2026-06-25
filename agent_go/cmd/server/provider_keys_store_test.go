@@ -13,24 +13,15 @@ func TestMergeStoredProviderKeyValuesPreservesAndUpdatesProviderKeys(t *testing.
 		ZAI:               "zai-existing",
 		Kimi:              "kimi-existing",
 		CodexCLI:          "codex-existing",
-		OpenCodeCLI:       "opencode-existing",
+		PiCLI:             "pi-existing",
 		MiniMax:           "minimax-existing",
 		MiniMaxCodingPlan: "coding-existing",
 		OpenRouter:        "openrouter-existing",
-		OpenCodeCLISubKeys: map[string]string{
-			"KIMI_API_KEY":     "kimi-sub-existing",
-			"DEEPSEEK_API_KEY": "deepseek-existing",
-		},
 	}
 
 	incoming := &StoredProviderKeys{
 		ZAI:     "zai-new",
 		MiniMax: "__DELETE__",
-		OpenCodeCLISubKeys: map[string]string{
-			"KIMI_API_KEY":      "kimi-sub-new",
-			"DEEPSEEK_API_KEY":  "__DELETE__",
-			"DASHSCOPE_API_KEY": "dashscope-new",
-		},
 	}
 
 	merged := mergeStoredProviderKeyValues(existing, incoming)
@@ -47,8 +38,8 @@ func TestMergeStoredProviderKeyValuesPreservesAndUpdatesProviderKeys(t *testing.
 	if merged.CodexCLI != "codex-existing" {
 		t.Fatalf("expected Codex CLI key to be preserved, got %q", merged.CodexCLI)
 	}
-	if merged.OpenCodeCLI != "opencode-existing" {
-		t.Fatalf("expected OpenCode CLI key to be preserved, got %q", merged.OpenCodeCLI)
+	if merged.PiCLI != "pi-existing" {
+		t.Fatalf("expected Pi CLI key to be preserved, got %q", merged.PiCLI)
 	}
 	if merged.MiniMax != "" {
 		t.Fatalf("expected MiniMax key to be deleted, got %q", merged.MiniMax)
@@ -58,15 +49,6 @@ func TestMergeStoredProviderKeyValuesPreservesAndUpdatesProviderKeys(t *testing.
 	}
 	if merged.OpenRouter != "" {
 		t.Fatalf("expected OpenRouter key to be removed, got %q", merged.OpenRouter)
-	}
-	if merged.OpenCodeCLISubKeys["KIMI_API_KEY"] != "kimi-sub-new" {
-		t.Fatalf("expected Kimi sub-provider key to be updated, got %q", merged.OpenCodeCLISubKeys["KIMI_API_KEY"])
-	}
-	if _, ok := merged.OpenCodeCLISubKeys["DEEPSEEK_API_KEY"]; ok {
-		t.Fatal("expected DeepSeek sub-provider key to be deleted")
-	}
-	if merged.OpenCodeCLISubKeys["DASHSCOPE_API_KEY"] != "dashscope-new" {
-		t.Fatalf("expected DashScope sub-provider key to be added, got %q", merged.OpenCodeCLISubKeys["DASHSCOPE_API_KEY"])
 	}
 }
 
@@ -80,6 +62,7 @@ func TestHasStoredProviderKeysRequiresMeaningfulValues(t *testing.T) {
 		{name: "empty", keys: &StoredProviderKeys{}, want: false},
 		{name: "whitespace key", keys: &StoredProviderKeys{OpenAI: "   "}, want: false},
 		{name: "api key", keys: &StoredProviderKeys{OpenAI: "sk-test"}, want: true},
+		{name: "pi cli key", keys: &StoredProviderKeys{PiCLI: "pi-key"}, want: true},
 		{name: "bedrock region", keys: &StoredProviderKeys{Bedrock: &StoredBedrockConfig{Region: "us-east-1"}}, want: true},
 		{
 			name: "azure requires endpoint and key",
@@ -89,11 +72,6 @@ func TestHasStoredProviderKeysRequiresMeaningfulValues(t *testing.T) {
 		{
 			name: "azure endpoint and key",
 			keys: &StoredProviderKeys{Azure: &StoredAzureConfig{Endpoint: "https://example.openai.azure.com", APIKey: "azure-key"}},
-			want: true,
-		},
-		{
-			name: "opencode sub key",
-			keys: &StoredProviderKeys{OpenCodeCLISubKeys: map[string]string{"KIMI_API_KEY": "kimi-key"}},
 			want: true,
 		},
 	}

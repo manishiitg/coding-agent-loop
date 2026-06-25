@@ -186,8 +186,6 @@ func defaultImageAnalysisModelForProvider(provider string) string {
 		return "gpt-5.4-mini"
 	case "cursor-cli":
 		return "cursor-cli"
-	case "opencode-cli":
-		return "opencode-cli"
 	case "agy-cli":
 		return "agy-cli"
 	case "claude-code":
@@ -222,8 +220,6 @@ func inferImageAnalysisProviderFromModel(modelID string) string {
 		return "claude-code"
 	case modelID == "cursor-cli", modelID == "gpt-5", modelID == "sonnet-4", modelID == "sonnet-4-thinking":
 		return "cursor-cli"
-	case modelID == "opencode-cli", strings.HasPrefix(modelID, "openai/"), strings.HasPrefix(modelID, "anthropic/"):
-		return "opencode-cli"
 	case modelID == "agy-cli":
 		return "agy-cli"
 	default:
@@ -269,7 +265,7 @@ func normalizeImageAnalysisProviderAndModel(provider, modelID string) (string, s
 	}
 
 	switch provider {
-	case "vertex", "z-ai", "kimi", "codex-cli", "cursor-cli", "opencode-cli", "agy-cli", "claude-code":
+	case "vertex", "z-ai", "kimi", "codex-cli", "cursor-cli", "agy-cli", "claude-code":
 		return provider, modelID, nil
 	default:
 		return "", "", fmt.Errorf("unsupported image analysis provider %q. %s", provider, supportedImageAnalysisProviderSummary())
@@ -291,7 +287,7 @@ func hasImageProviderAuth(provider string, apiKeys *llm.ProviderAPIKeys) bool {
 
 func hasImageAnalysisProviderAuth(provider string, apiKeys *llm.ProviderAPIKeys) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "codex-cli", "cursor-cli", "opencode-cli", "agy-cli", "claude-code":
+	case "codex-cli", "cursor-cli", "agy-cli", "claude-code":
 		return true
 	case "z-ai":
 		return apiKeys != nil && apiKeys.ZAI != nil && strings.TrimSpace(*apiKeys.ZAI) != ""
@@ -307,12 +303,12 @@ func supportedImageProviderSummary() string {
 }
 
 func supportedImageAnalysisProviderSummary() string {
-	return "Supported image analysis providers: vertex (Gemini vision models), codex-cli (codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, gpt-5.3-codex-spark), cursor-cli (cursor-cli, gpt-5, sonnet-4-thinking, sonnet-4), opencode-cli (opencode-cli, openai/gpt-5.1, anthropic/claude-sonnet-4-5), agy-cli (agy-cli), claude-code (claude-code)"
+	return "Supported image analysis providers: vertex (Gemini vision models), codex-cli (codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, gpt-5.3-codex-spark), cursor-cli (cursor-cli, gpt-5, sonnet-4-thinking, sonnet-4), agy-cli (agy-cli), claude-code (claude-code)"
 }
 
 func pathBasedImageAnalysisProvider(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "codex-cli", "cursor-cli", "opencode-cli", "agy-cli", "claude-code":
+	case "codex-cli", "cursor-cli", "agy-cli", "claude-code":
 		return true
 	default:
 		return false

@@ -9,7 +9,7 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 )
 
-func codingAgentPersistentInteractiveFlags(provider string) (claudeCode bool, codexCLI bool, geminiCLI bool, cursorCLI bool, agyCLI bool, openCodeCLI bool) {
+func codingAgentPersistentInteractiveFlags(provider string) (claudeCode bool, codexCLI bool, geminiCLI bool, cursorCLI bool, agyCLI bool, piCLI bool) {
 	normalizedProvider := strings.ToLower(strings.TrimSpace(provider))
 	if !llm.IsTmuxCodingAgentProvider(llm.Provider(normalizedProvider), "") {
 		return false, false, false, false, false, false
@@ -26,7 +26,7 @@ func codingAgentPersistentInteractiveFlags(provider string) (claudeCode bool, co
 		return false, false, false, true, false, false
 	case strings.ToLower(string(llm.ProviderAgyCLI)):
 		return false, false, false, false, true, false
-	case strings.ToLower(string(llm.ProviderOpenCodeCLI)):
+	case strings.ToLower(string(llm.ProviderPiCLI)):
 		return false, false, false, false, false, true
 	default:
 		return false, false, false, false, false, false

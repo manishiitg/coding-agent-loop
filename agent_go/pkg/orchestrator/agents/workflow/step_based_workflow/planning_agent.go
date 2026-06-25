@@ -247,7 +247,7 @@ type AgentConfigs struct {
 	DisableParallelToolExecution *bool           `json:"disable_parallel_tool_execution,omitempty"` // Disable parallel tool execution for this step (nil = enabled by default, true = disabled, false = explicitly enabled)
 	CodingAgentTmuxLifecycle     string          `json:"coding_agent_tmux_lifecycle,omitempty"`     // Tmux lifecycle for CLI coding providers: "close_on_completion" (default for steps) or "keep_alive" (only when a step intentionally needs the native coding session after completion).
 	// Transport selects the CLI transport for coding-agent providers
-	// (claude-code, codex-cli, cursor-cli, gemini-cli, opencode-cli)
+	// (claude-code, codex-cli, cursor-cli, gemini-cli, pi-cli)
 	// for this step:
 	//   ""           — inherit the agent/preset default (tmux interactive)
 	//   "tmux"       — force tmux interactive transport
@@ -552,7 +552,7 @@ type TodoTaskPlanStep struct {
 	CommonStepFields                          // Embeds ID, Title, Description, SuccessCriteria, ContextDependencies, ContextOutput, ValidationSchema
 	PredefinedRoutes []PlanOrchestrationRoute `json:"predefined_routes,omitempty"` // Predefined sub-agents (with learning/prevalidation)
 	NextStepID       string                   `json:"next_step_id,omitempty"`      // ID of step after todo task completes (or "end")
-	Messages         []MessageSequenceItem        `json:"messages,omitempty"`          // Optional scripted message sequence fed into the orchestrator's own conversation after its first turn
+	Messages         []MessageSequenceItem    `json:"messages,omitempty"`          // Optional scripted message sequence fed into the orchestrator's own conversation after its first turn
 	TodoTaskResponse *TodoTaskResponse        `json:"-"`                           // runtime: stores orchestrator decisions - not stored in plan.json
 	AgentConfigs     *AgentConfigs            `json:"-"`                           // runtime: per-agent configuration - not stored in plan.json
 }
@@ -632,7 +632,7 @@ func (t *TodoTaskPlanStep) UnmarshalJSON(data []byte) error {
 			OrphanStepRef string          `json:"orphan_step_ref,omitempty"`
 			ContextToPass string          `json:"context_to_pass,omitempty"`
 		} `json:"predefined_routes,omitempty"`
-		NextStepID string            `json:"next_step_id,omitempty"`
+		NextStepID string                `json:"next_step_id,omitempty"`
 		Messages   []MessageSequenceItem `json:"messages,omitempty"`
 	}
 
@@ -855,7 +855,7 @@ type PartialPlanStep struct {
 	// Todo task step fields
 	TodoTaskStep     map[string]interface{}   `json:"todo_task_step,omitempty"`    // Optional: Updated todo task step - will be converted to PlanStepInterface
 	PredefinedRoutes []PlanOrchestrationRoute `json:"predefined_routes,omitempty"` // Optional: Updated predefined routes for todo task steps
-	Messages         []MessageSequenceItem        `json:"messages,omitempty"`          // Optional: Updated scripted message sequence for todo task steps
+	Messages         []MessageSequenceItem    `json:"messages,omitempty"`          // Optional: Updated scripted message sequence for todo task steps
 	// Routing fields
 	NextStepID string `json:"next_step_id,omitempty"` // Optional: Updated next_step_id (for routing steps)
 	// Routing step fields

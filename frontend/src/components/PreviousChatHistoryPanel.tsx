@@ -97,6 +97,7 @@ function chatHistoryRuntimeTransport(session: ChatHistorySession): string {
 export function chatHistorySupportsNativeResume(session: ChatHistorySession): boolean {
   const runtime = session.runtime
   if (!runtime || runtime.kind !== 'coding_agent') return false
+  if (runtime.resume_supported === false) return false
   const handle = runtime.agent_session_handle?.provider
   return Boolean(
     runtime.resume_supported ||

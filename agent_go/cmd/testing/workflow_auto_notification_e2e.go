@@ -66,7 +66,7 @@ the private session-scoped custom-tool HTTP endpoint.`,
 		if err != nil {
 			return err
 		}
-		relWorkflow, cleanup, err := createWorkflowAutoNotificationFixture(workspaceDocs, workflowAutoNotificationE2EFlags.keepFixture)
+		relWorkflow, cleanup, err := createWorkflowAutoNotificationFixture(workspaceDocs, workflowAutoNotificationE2EFlags.keepFixture, provider, model)
 		if err != nil {
 			return err
 		}
@@ -142,7 +142,7 @@ func resolveWorkflowAutoNotificationWorkspaceDocs() (string, error) {
 	return "", fmt.Errorf("workspace-docs not found; pass --workspace-docs or set WORKSPACE_DOCS_PATH")
 }
 
-func createWorkflowAutoNotificationFixture(workspaceDocs string, keep bool) (string, func(), error) {
+func createWorkflowAutoNotificationFixture(workspaceDocs string, keep bool, provider, model string) (string, func(), error) {
 	shortID := strings.ReplaceAll(uuid.NewString(), "-", "")[:10]
 	relWorkflow := "Workflow/_e2e_auto_notification_" + shortID
 	absWorkflow := filepath.Join(workspaceDocs, filepath.FromSlash(relWorkflow))
@@ -175,6 +175,11 @@ func createWorkflowAutoNotificationFixture(workspaceDocs string, keep bool) (str
 			"selected_global_secret_names": noGlobalSecrets,
 			"browser_mode":                 "none",
 			"use_code_execution_mode":      false,
+			"llm_config": map[string]interface{}{
+				"provider":            provider,
+				"model_id":            model,
+				"llm_allocation_mode": "coding_agent",
+			},
 		},
 		"execution_defaults": map[string]interface{}{
 			"always_use_same_run": true,
@@ -263,10 +268,11 @@ func (c *codingAgentChatE2EClient) waitForWorkflowStartAutoNotification(ctx cont
 			if !strings.HasPrefix(trimmed, "[AUTO-NOTIFICATION]") {
 				continue
 			}
-			if !strings.Contains(content, "started") {
+			if !strings.Contains(strings.ToLower(content), "started") {
 				return startedAgentID, fmt.Errorf("workflow auto-notification did not say started: %s", truncateE2E(content, 1500))
 			}
-			if !strings.Contains(content, workflowPath) {
+			workflowSpace := filepath.Base(filepath.Clean(workflowPath))
+			if !strings.Contains(content, workflowPath) && !strings.Contains(content, workflowSpace) {
 				return startedAgentID, fmt.Errorf("workflow auto-notification did not include workflow path %s: %s", workflowPath, truncateE2E(content, 1500))
 			}
 			notificationAgentID := extractWorkflowAutoNotificationAgentID(content)

@@ -152,9 +152,9 @@ const formatSteerProviderLabel = (provider?: string | null) => {
     case 'cursor-cli':
     case 'cursor_cli':
       return 'Cursor CLI'
-    case 'opencode-cli':
-    case 'opencode_cli':
-      return 'OpenCode CLI'
+    case 'pi-cli':
+    case 'pi_cli':
+      return 'Pi CLI'
     default:
       return provider ? provider.replace(/[-_]/g, ' ') : 'live agent'
   }
@@ -268,8 +268,8 @@ import { chatHistorySupportsNativeResume, chatHistoryUsesTerminalRestore } from 
 // MCP servers managed by dedicated toolbar buttons — excluded from the general server dropdown.
 const DEDICATED_MCP_SERVERS = new Set(['playwright'])
 const AUTO_NOTIFICATION_PREFIX = '[AUTO-NOTIFICATION]'
-const FALLBACK_CODING_AGENT_PROVIDERS = new Set(['claude-code', 'gemini-cli', 'codex-cli', 'cursor-cli', 'agy-cli', 'opencode-cli'])
-const FALLBACK_LIVE_INPUT_PROVIDERS = new Set(['claude-code', 'gemini-cli', 'codex-cli', 'cursor-cli', 'agy-cli'])
+const FALLBACK_CODING_AGENT_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'agy-cli', 'pi-cli'])
+const FALLBACK_LIVE_INPUT_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'agy-cli', 'pi-cli'])
 
 const formatResumeChatTime = (value?: string): string => {
   if (!value) return 'Unknown time'
@@ -1285,7 +1285,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
 
       // CLI providers always require code execution mode
-      if (llm.provider === 'claude-code' || llm.provider === 'gemini-cli' || llm.provider === 'codex-cli' || llm.provider === 'cursor-cli' || llm.provider === 'opencode-cli') {
+      if (llm.provider === 'claude-code' || llm.provider === 'codex-cli' || llm.provider === 'cursor-cli' || llm.provider === 'agy-cli' || llm.provider === 'pi-cli') {
         setTabConfig(activeTabId, { llmConfig: newConfig, useCodeExecutionMode: true })
       } else {
         setTabConfig(activeTabId, { llmConfig: newConfig })
@@ -1379,7 +1379,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [primaryLLM?.model, primaryLLM?.provider])
 
   // The main agent runs in a tmux pane only for coding-agent CLI providers
-  // (claude-code, gemini-cli, codex-cli, cursor-cli, …). This drives whether
+  // (claude-code, codex-cli, cursor-cli, agy-cli, pi-cli, ...). This drives whether
   // the "keyboard → terminal" toggle is offered. Derived from primaryLLM
   // (which always resolves) rather than effectiveProviderForSteer (which is
   // null until a model is explicitly chosen on the tab).
@@ -2640,11 +2640,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
 
     // Handle Escape key when streaming. For tmux-transport CLI providers
-    // (claude-code, gemini-cli, codex-cli, cursor-cli) ESC is forwarded into
+    // (claude-code, codex-cli, cursor-cli, agy-cli, pi-cli) ESC is forwarded into
     // the CLI's own tmux pane so the CLI interrupts its current turn but the
     // session stays alive — matching the native CLI UX. For non-tmux
-    // transports (opencode-cli structured, API providers) it falls back to
-    // cancelling the agent context as before. The toolbar Stop button is the
+    // non-tmux/API providers it falls back to cancelling the agent context
+    // as before. The toolbar Stop button is the
     // unconditional escape hatch.
     if (e.key === 'Escape' && isStreaming) {
       e.preventDefault()
@@ -3706,7 +3706,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       </TooltipProvider>
                     )}
                     {/* Keyboard → terminal toggle — only for tmux-transport CLI
-                        agents (claude-code, gemini-cli, codex-cli, cursor-cli),
+                        agents (claude-code, codex-cli, cursor-cli, agy-cli, pi-cli),
                         where typing into the pane actually drives the agent. */}
                     {!hideExtras && mainAgentIsTmuxCLI && (
                       <TooltipProvider>

@@ -12,7 +12,7 @@ func TestIsCLIProvider(t *testing.T) {
 		{"codex-cli", true},
 		{"cursor-cli", true},
 		{"agy-cli", true},
-		{"opencode-cli", true},
+		{"pi-cli", true},
 		{"kimi", false},
 		{"KIMI", false},
 		{" kimi ", false},

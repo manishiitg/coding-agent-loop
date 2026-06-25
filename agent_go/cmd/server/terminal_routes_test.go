@@ -1005,6 +1005,44 @@ func TestTerminalRoutesSendInputUsesTmuxPasteAndOptionalEnter(t *testing.T) {
 	}
 }
 
+func TestTerminalRoutesSendInputAllowsWhitespaceKeystroke(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-space-input"
+	terminalID := sessionID + ":workflow-step:review-plan"
+	tmuxSession := "mlp-pi-cli-int-test"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, "pane", 2))
+
+	type call struct {
+		stdin string
+		args  []string
+	}
+	var calls []call
+	oldRun := runTerminalTmuxCommand
+	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
+		calls = append(calls, call{stdin: stdin, args: append([]string(nil), args...)})
+		return nil
+	}
+	defer func() { runTerminalTmuxCommand = oldRun }()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/terminals/"+terminalID+"/input", strings.NewReader(`{"text":" ","submit":false}`))
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
+	rec := httptest.NewRecorder()
+	api.handleSendTerminalInput(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("send space input status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	if len(calls) != 2 {
+		t.Fatalf("tmux call count = %d, want 2: %#v", len(calls), calls)
+	}
+	if calls[0].stdin != " " || calls[0].args[0] != "load-buffer" {
+		t.Fatalf("first tmux call = %#v, want load-buffer with single-space stdin", calls[0])
+	}
+	if calls[1].args[0] != "paste-buffer" || !containsString(calls[1].args, tmuxSession) {
+		t.Fatalf("second tmux call = %#v, want paste-buffer into session", calls[1])
+	}
+}
+
 func TestTerminalRoutesSendEscKeyUsesTmuxSendKeys(t *testing.T) {
 	store := terminals.NewStore()
 	api := &StreamingAPI{terminalStore: store}

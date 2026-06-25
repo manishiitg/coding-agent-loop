@@ -4,7 +4,7 @@
 
 68. implement agent sdk closer to 15th june when claude will have the plan for it 
 
-68. optimize open code for kimi, glm, minimax, deepseek and free plans and go plan
+68. optimize Pi.dev routing for kimi, glm, minimax, deepseek, free plans, and Go plan
 
 69. also to make onboarding easily.. most users might start with a single coding plan cli.. so need to make it easy to start chat and workflows ... maybe by setting some default cli right now user needs to manually set llm always
 

@@ -73,8 +73,7 @@ func TestInspectorHTTPCapturesRealCursorEvents(t *testing.T) {
 
 	adapter := cursorcliadapter.NewCursorCLIAdapter("", model, &e2eMockLogger{})
 
-	// cursor-agent's structured mode is faster than opencode but still
-	// allow a generous budget: cold start + the run itself.
+	// Allow a generous budget for cold start + the run itself.
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	_, err := adapter.GenerateContent(ctx,

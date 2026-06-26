@@ -1139,8 +1139,9 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 		}
 
 		// Pulse: the post-run steward. When enabled it backs up the workflow,
-		// triages the run (Bug + Goal verdicts into the Pulse log), applies low-risk
-		// fixes, and notifies on a transition — see runPostRunMonitor.
+		// triages the run (Bug + Goal verdicts into the Pulse log), applies the full
+		// plan-step harden for Bug findings, and notifies on a transition — see
+		// runPostRunMonitor.
 		// Opt-in per workflow (post_run_monitor in workflow.json) — runs only when
 		// the user / builder enabled Pulse. Only after an actual workflow RUN, not an
 		// optimizer/improvement pass (there's no fresh run output to triage there).
@@ -1160,8 +1161,9 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 // backs the workflow up, then reads the run evidence, plan changelog, and
 // eval/metric files to form a Bug verdict and a Goal verdict (recorded into
 // builder/improve.html — the Pulse log, the single source of truth),
-// then applies low-risk reversible fixes (harden for Bug, replan PROPOSAL for
-// Goal) and notifies on a transition. It never changes the run's recorded status
+// then applies the full plan-step harden for Bug findings (recording the Goal
+// finding + evidence for the scheduled improve loop, which applies the replan)
+// and notifies on a transition. It never changes the run's recorded status
 // — failures here are logged and swallowed. Pulse's behavior is defined by the
 // post-run-monitor reference doc; this just hands it the run context.
 func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *ScheduleContext, runStatus, runFolder, runSessionID string) {

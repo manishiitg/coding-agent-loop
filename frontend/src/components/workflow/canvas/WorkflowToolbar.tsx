@@ -774,7 +774,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             {/* scheduling note */}
             <div className="border-t px-5 py-4">
               <p className="rounded-md bg-muted/60 px-3 py-2.5 text-xs text-muted-foreground">
-                <span className="font-medium text-foreground">To run on a schedule:</span> Pulse only reviews when a run happens. Set up <code className="rounded bg-background px-1 py-0.5 font-medium text-foreground">/auto-improve</code> to schedule recurring runs plus the harden / replan passes that act on what Pulse finds.
+                <span className="font-medium text-foreground">To run on a schedule:</span> Pulse reviews and hardens after each run. Set up <code className="rounded bg-background px-1 py-0.5 font-medium text-foreground">/auto-improve</code> to schedule recurring runs plus a periodic pass that refreshes aging learnings/KB and applies plan changes when evidence is strong.
               </p>
             </div>
           </div>

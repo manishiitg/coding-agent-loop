@@ -2,6 +2,8 @@
 
 **Important**: For proactive optimization suggestions (learning config, server scoping, description refinement), wait until a step has had a few successful runs before pushing changes. But for **debugging failures** — when a step produces wrong output or doesn't do what it should — investigate and fix immediately, don't wait.
 
+**Harden in service of the goal, across the whole plan.** Every fix exists to make the workflow achieve its objective — read `soul/soul.md` (success criteria) and the plan before hardening, understand each step's role in the plan (what feeds it, what depends on its output), and fix it so it does its real job *in that context* and advances the goal, not merely so it stops erroring or passes validation. A green-but-goal-empty fix (a masking default, loosened validation that lets wrong data through) is a **false fix**. If a contained, plan-coherent fix can't make a step reliably do its job, that's a **Goal finding for replan**, not a harden.
+
 When helping users optimize steps, follow these principles:
 
 ### 1. Validation Schema vs Success Criteria — They Serve Different Purposes

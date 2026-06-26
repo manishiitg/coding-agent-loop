@@ -36,6 +36,8 @@ Combine actions into one step when they share one objective and output contract,
 
 **For recurring multi-step shapes** (Phase Router, Scoped Investigation, Linear Pipeline, Fan-out & Consolidate, Verification Gate, Pre-flight Probe, Human Checkpoint, Critique Loop, Persistence Tail), call `get_reference_doc(kind="workflow-patterns")` — load when starting a new plan or restructuring an existing one.
 
+**Whenever you change an existing plan** — add / remove / reorder a step, or change a step's output contract, db writes, or behavior — run `get_reference_doc(kind="plan-change-impact")` before treating it as done and reconcile the blast radius (downstream steps, evals, report dashboard, db, learnings, KB). A step change ripples into everything that reads it; don't leave silent breakage behind.
+
 ### Step 3: Design Context Flow
 
 Every step reads from prior steps and writes for downstream steps:

@@ -31,7 +31,6 @@ type WorkflowManifest struct {
 	Label             string                    `json:"label"`
 	Capabilities      WorkflowCapabilities      `json:"capabilities"`
 	ExecutionDefs     WorkflowExecutionDefaults `json:"execution_defaults"`
-	Ownership         WorkflowOwnership         `json:"ownership"`
 	Schedules         []WorkflowSchedule        `json:"schedules"`
 	CreatedAt         string                    `json:"created_at,omitempty"`
 	UpdatedAt         string                    `json:"updated_at,omitempty"`
@@ -158,11 +157,6 @@ type WorkflowExecutionDefaults struct {
 	ExecutionMaxTurns            *int     `json:"execution_max_turns,omitempty"`
 	EnabledCustomTools           []string `json:"enabled_custom_tools,omitempty"`
 	WorkshopMode                 string   `json:"workshop_mode,omitempty"` // Workshop builder mode: "builder", "optimizer", "run" (legacy values "ask"/"debugger"/"runner"/"eval"/"output" auto-migrated by server)
-}
-
-// WorkflowOwnership tracks workflow assignment.
-type WorkflowOwnership struct {
-	EmployeeID *string `json:"employee_id"`
 }
 
 // WorkflowSchedule represents a cron or calendar schedule stored in the manifest.
@@ -346,7 +340,6 @@ func NewWorkflowManifest(label string) *WorkflowManifest {
 			BrowserMode:               "none",
 		},
 		ExecutionDefs: WorkflowExecutionDefaults{},
-		Ownership:     WorkflowOwnership{},
 		Schedules:     []WorkflowSchedule{},
 		CreatedAt:     now,
 		UpdatedAt:     now,

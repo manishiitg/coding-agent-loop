@@ -11,6 +11,13 @@ import (
 	"github.com/google/uuid"
 )
 
+// setCORS sets permissive CORS headers shared across workflow/manifest/config route handlers.
+func setCORS(w http.ResponseWriter) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+}
+
 // --- List / Discovery ---
 
 // handleListWorkflowManifests returns all workflows discovered from workspace manifests.
@@ -144,7 +151,6 @@ type UpdateWorkflowManifestRequest struct {
 	Label             *string                    `json:"label,omitempty"`
 	Capabilities      *WorkflowCapabilities      `json:"capabilities,omitempty"`
 	ExecutionDefaults *WorkflowExecutionDefaults `json:"execution_defaults,omitempty"`
-	Ownership         *WorkflowOwnership         `json:"ownership,omitempty"`
 	Schedules         *[]WorkflowSchedule        `json:"schedules,omitempty"`
 	WorkshopMode      *string                    `json:"workshop_mode,omitempty"` // Standalone patch — avoids zeroing out other ExecutionDefaults fields
 	RunRetentionCount *int                       `json:"run_retention_count,omitempty"`
@@ -189,9 +195,6 @@ func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *
 	}
 	if req.ExecutionDefaults != nil {
 		manifest.ExecutionDefs = *req.ExecutionDefaults
-	}
-	if req.Ownership != nil {
-		manifest.Ownership = *req.Ownership
 	}
 	if req.Schedules != nil {
 		manifest.Schedules = *req.Schedules

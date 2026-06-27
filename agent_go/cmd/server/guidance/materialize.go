@@ -43,7 +43,7 @@ func referenceSkillSpecForMode(mode string) referenceSkillSpec {
 		return referenceSkillSpec{
 			Name: "multiagent-reference",
 			Description: "Multi-agent chat reference docs — detailed contracts and rules to consult before specific actions: " +
-				"LLM/provider configuration via tools, employee management, delegation, skill management, memory, browser/media tools, " +
+				"LLM/provider configuration via tools, delegation, skill management, memory, browser/media tools, " +
 				"schedule and secret management, backup, debugging, and MCP bridge usage. Match this skill when you need deep " +
 				"multi-agent chat reference material, then read the matching file under references/.",
 			Intro: "This skill bundles multi-agent chat reference documentation. Match it when you need detailed rules, patterns, or contracts for any of the topics below — especially LLM/provider configuration, which is managed through dedicated tools and not by reading or editing `config/` files. Read the single matching file under `references/`. You don't need to read more than one unless the action spans multiple topics.",

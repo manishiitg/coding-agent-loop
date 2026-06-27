@@ -1660,9 +1660,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/active-executions", api.handleGetActiveExecutions).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/builder-session", api.handleGetWorkflowBuilderSession).Methods("GET", "OPTIONS")
 
-	// Employee API routes (in employee_routes.go)
-	EmployeeRoutes(apiRouter)
-
 	// Per-user multi-agent chat capabilities (skills/servers) — read by bots
 	MultiAgentConfigRoutes(apiRouter)
 
@@ -4512,13 +4509,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				logfWithContext(queryLogCtx, "[ACTIVITY STATUS] Registered get_activity_status tool")
 
-				if err := api.registerEmployeeManagementTools(underlyingAgent); err != nil {
-					logfWithContext(queryLogCtx, "[EMPLOYEE TOOLS] Failed to register employee management tools: %v", err)
-					sendError(fmt.Sprintf("Failed to register employee management tools: %v", err), true)
-					return
-				}
-				logfWithContext(queryLogCtx, "[EMPLOYEE TOOLS] Registered employee management tools")
-
 				if err := api.registerSecretManagementTools(underlyingAgent, currentUserID, "", "secret_tools", nil, nil); err != nil {
 					logfWithContext(queryLogCtx, "[SECRET TOOLS] Failed to register multi-agent secret tools: %v", err)
 					sendError(fmt.Sprintf("Failed to register multi-agent secret tools: %v", err), true)
@@ -4589,13 +4579,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[LLM TOOLS] Added LLM/media capability snapshot to system prompt")
 			}
 
-			// 3. CONTEXT — employees, workflow references, skills (what the agent needs to know).
-			if !isWorkflowPhase {
-				if empSection := buildEmployeesWorkflowsContext(); empSection != "" {
-					underlyingAgent.AppendSystemPrompt(empSection)
-					log.Printf("[EMPLOYEES] Injected employees & workflow assignments into system prompt")
-				}
-			}
+			// 3. CONTEXT — workflow references, skills (what the agent needs to know).
 			if len(req.WorkflowContextPaths) > 0 {
 				if workflowPrompt := buildWorkflowContextPrompt(req.WorkflowContextPaths, getWorkspaceAPIURL()); workflowPrompt != "" {
 					underlyingAgent.AppendSystemPrompt(workflowPrompt)

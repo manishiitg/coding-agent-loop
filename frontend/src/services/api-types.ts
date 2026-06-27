@@ -1751,15 +1751,6 @@ export interface ActiveWorkflowExecution {
   started_at: string;
 }
 
-export interface Employee {
-  id: string;
-  name: string;
-  avatar_color: string;
-  description: string;
-  created_at: string;
-  updated_at: string;
-}
-
 export interface RunMetadataLLM {
   provider?: string;
   model_id?: string;

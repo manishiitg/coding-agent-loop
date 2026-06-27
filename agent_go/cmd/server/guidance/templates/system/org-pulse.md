@@ -23,8 +23,10 @@ A 1:1 copy of any source file is a failure of this pass.
 ### 1. Cheap freshness gate
 
 First, check whether anything has changed since your last Org Pulse — no new workflow runs,
-no new chats, and no new outputs means there is nothing to do. Write nothing and stop. A daily
-run over an idle org is correctly a no-op.
+no new chats, no new outputs, **and no change to `pulse/goals.html`** — means there is nothing
+to do. Write nothing and stop. A daily run over an idle org is correctly a no-op. A created or
+edited `pulse/goals.html` counts as a change even with zero other activity: the scorecard and
+alignment must be re-evaluated against the new goals, so do not stop at this gate when goals changed.
 
 Only when something is new do you continue.
 
@@ -85,7 +87,10 @@ If `pulse/goals.html` exists, evaluate each goal first:
   a proxy metric.
 - Surface workflow gaps as suggestions, not fixes.
 
-Then evaluate workflow alignment:
+Then evaluate workflow alignment — **only when `pulse/goals.html` exists.** With no goals file
+there is nothing to align to: do **not** classify workflows as Unaligned or emit attach/retire
+suggestions — the single "no explicit goals yet, create them" suggestion from the evidence sweep
+covers that case. When goals exist:
 - **Aligned** — named as contributing to one or more goals and producing relevant evidence.
 - **Supporting** — operational/maintenance work with a clear reason to exist but no direct
   goal metric.

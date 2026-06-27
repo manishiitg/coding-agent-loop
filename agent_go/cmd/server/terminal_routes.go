@@ -210,7 +210,13 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 		var pipeContent string
 		var pipeStats terminalPaneCaptureStats
 		var havePipeContent bool
-		if shouldReadTerminalPipeRecorderForDetail(r) && api.terminalPipeRecorder != nil {
+		// Only use the pipe-pane recording (the appended live byte stream) while the
+		// pane is ACTIVE. Once the agent is idle/completed it keeps repainting its
+		// prompt/footer/spinner, and pipe-pane appends every one of those raw frames;
+		// replayed onto the seed buffer (different geometry) they land at the wrong
+		// rows and pile up as duplicate lines. For an idle pane fall through to the
+		// single static full-buffer capture-pane (-S) below, which renders once.
+		if snapshot.Active && shouldReadTerminalPipeRecorderForDetail(r) && api.terminalPipeRecorder != nil {
 			var ok bool
 			var pipeErr error
 			pipeContent, pipeStats, ok, pipeErr = api.terminalPipeRecorder.Content(ctx, snapshot, wantsHistoryTerminalContent(r))

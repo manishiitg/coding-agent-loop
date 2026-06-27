@@ -716,7 +716,7 @@ func TestTerminalRoutesGetTerminalCanHistoryRefreshSelectedPane(t *testing.T) {
 	}
 }
 
-func TestTerminalRoutesGetTerminalHistoryPrefersLongerPipeRecording(t *testing.T) {
+func TestTerminalRoutesGetTerminalHistoryIdlePaneUsesCaptureNotPipe(t *testing.T) {
 	store := terminals.NewStore()
 	sessionID := "session-terminal-pipe-history"
 	terminalID := sessionID + ":workflow-step:review-plan"
@@ -764,11 +764,15 @@ func TestTerminalRoutesGetTerminalHistoryPrefersLongerPipeRecording(t *testing.T
 	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
 		t.Fatalf("decode history response: %v", err)
 	}
-	if response.Content != pipeContent {
-		t.Fatalf("terminal content = %q, want pipe content %q", response.Content, pipeContent)
+	// An idle/completed pane must NOT use the appended pipe recording (it
+	// accumulates duplicate repaint frames replayed on a mismatched seed buffer);
+	// it serves the static full-buffer capture instead. The pipe recording exists
+	// on disk here only to prove it is deliberately ignored once the pane is inactive.
+	if response.Content != "short pane" {
+		t.Fatalf("idle terminal content = %q, want capture %q", response.Content, "short pane")
 	}
-	if response.ContentSource != "tmux_pipe" {
-		t.Fatalf("content source = %q, want tmux_pipe", response.ContentSource)
+	if response.ContentSource == "tmux_pipe" {
+		t.Fatalf("idle pane used the pipe recording (source %q); want the static capture", response.ContentSource)
 	}
 }
 

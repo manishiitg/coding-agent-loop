@@ -1125,6 +1125,9 @@ func mergeTmuxScreenSnapshot(snapshot Snapshot, next string) string {
 	if overlap >= len(nextLines) {
 		return existing
 	}
+	if terminalScreensMostlySame(existingLines, nextLines) && overlap < terminalSmallScreenOverlapThreshold(nextLines) {
+		return next
+	}
 	merged := append(existingLines, nextLines[overlap:]...)
 	if len(merged) > terminalAccumulatedScrollbackMaxLines {
 		merged = merged[len(merged)-terminalAccumulatedScrollbackMaxLines:]
@@ -1184,6 +1187,66 @@ func terminalLineOverlap(existingLines, nextLines []string) int {
 		}
 	}
 	return 0
+}
+
+func terminalSmallScreenOverlapThreshold(nextLines []string) int {
+	threshold := len(nextLines) / 2
+	if threshold < 2 {
+		return 1
+	}
+	if threshold > 3 {
+		return 3
+	}
+	return threshold
+}
+
+func terminalScreensMostlySame(existingLines, nextLines []string) bool {
+	existing := terminalMeaningfulCanonicalLines(existingLines)
+	next := terminalMeaningfulCanonicalLines(nextLines)
+	minLen := len(existing)
+	if len(next) < minLen {
+		minLen = len(next)
+	}
+	if minLen < 4 {
+		return false
+	}
+	common := terminalLineLCS(existing, next)
+	return common*3 >= minLen*2
+}
+
+func terminalMeaningfulCanonicalLines(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		canonical := strings.TrimSpace(terminalCanonicalLine(line))
+		if canonical != "" {
+			out = append(out, canonical)
+		}
+	}
+	return out
+}
+
+func terminalLineLCS(a, b []string) int {
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	prev := make([]int, len(b)+1)
+	curr := make([]int, len(b)+1)
+	for i := 1; i <= len(a); i++ {
+		for j := 1; j <= len(b); j++ {
+			if a[i-1] == b[j-1] {
+				curr[j] = prev[j-1] + 1
+			} else if prev[j] >= curr[j-1] {
+				curr[j] = prev[j]
+			} else {
+				curr[j] = curr[j-1]
+			}
+		}
+		prev, curr = curr, prev
+		for j := range curr {
+			curr[j] = 0
+		}
+	}
+	return prev[len(b)]
 }
 
 func terminalCanonicalLines(content string) []string {

@@ -325,7 +325,7 @@ func waitForTerminalPipeRecorderRealDetail(t *testing.T, api *StreamingAPI, term
 
 func getTerminalPipeRecorderRealDetail(t *testing.T, api *StreamingAPI, terminalID string) terminals.Snapshot {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/api/terminals/"+terminalID+"?content=screen&debug=1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/terminals/"+terminalID+"?content=history&debug=1", nil)
 	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
 	rec := httptest.NewRecorder()
 	api.handleGetTerminal(rec, req)

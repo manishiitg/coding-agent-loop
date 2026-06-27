@@ -263,8 +263,9 @@ Follow the same set-up-then-prove flow as backup:
 2. **Verify** — on the first real publish, deploy, fetch the returned URL to confirm it loads,
    and only then mark `published`. Record the URL in both the destination and the top-level
    `url`.
-3. Auto-republish (the post-run Pulse step) only runs against a **verified** destination, and
-   only when the source artifacts changed.
+3. Auto-republish (the post-run Pulse step) runs against a **verified** destination on **every**
+   run — the source artifacts (`builder/improve.html` + `db/db.sqlite`) change every run (a fresh
+   Pulse entry + new data), so there is no unchanged run to skip; it always re-publishes.
 
 ## Always write `publish/status.json`
 
@@ -298,7 +299,7 @@ publish immediately reads as **`stale`** (amber) and Pulse will keep re-publishi
 genuinely can't obtain it, leave `last_source_hash` empty — the dot stays green `published`,
 only change-detection is disabled. The two states this controls:
 - `published` (green) = config enabled + status `published` + hash matches.
-- `stale` (amber) = published but the source changed since — Pulse re-publishes on the next run.
+- `stale` (amber) = published but the source changed since (it changes every run) — the next Pulse fire re-publishes and returns it to green.
 
 ## Discipline
 

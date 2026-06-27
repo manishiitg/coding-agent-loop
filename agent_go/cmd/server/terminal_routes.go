@@ -199,7 +199,14 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 	}
 	if shouldCaptureTmux {
 		ctx, cancel := context.WithTimeout(r.Context(), terminalTmuxActionTimeout)
-		preserveScrollback := shouldPreserveCapturedTerminalScrollback(r)
+		// Only accumulate/merge captured snapshots while the pane is ACTIVE (live).
+		// Once it's idle/ended, captureTerminalPaneForDetail grabs tmux's full
+		// scrollback buffer directly — that IS the complete, correctly-formatted
+		// content, so merging it into the previously-accumulated snapshots only
+		// re-introduces duplicate lines and formatting drift. Use the real buffer
+		// as-is. (The merge heuristic only exists to fake scrollback from
+		// visible-pane snapshots during a live run.)
+		preserveScrollback := snapshot.Active && shouldPreserveCapturedTerminalScrollback(r)
 		var pipeContent string
 		var pipeStats terminalPaneCaptureStats
 		var havePipeContent bool

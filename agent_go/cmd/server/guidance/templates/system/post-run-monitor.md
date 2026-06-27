@@ -89,14 +89,15 @@ Apply the preference within the same constraints: still **one** `notify_user` ca
 - **recovered** — was bad last run and is healthy again this run;
 - **new finding while still bad** — already broken/short, but you opened a *new* Open finding this run.
 
-On any of those, call `notify_user` **once** with a one-line `message_for_user` equal to your status headline (the same sentence you put in the log and the verdict signal). Lead with what's wrong, or "✅ recovered" — never a generic "needs attention". Example: `⚠️ login-flow returned skipped for 2 runs — maker-reviewer gate tightened on run #39`. The same call fans out to every connected channel (Slack, WhatsApp, email).
+On any of those, call `notify_user` **once**. Use this **standard one-line `message_for_user` format** so every workflow's push reads the same: `<emoji> <workflow> — <headline> · <state/metric> · <dashboard url>`. `<emoji>` is the transition (`⚠️` broke · `✅` recovered · `🔎` new finding); `<workflow>` is **always present** (the user gets pushes from many workflows); `<headline>` is your one honest status sentence (the same one in the log); append `<state/metric>` (e.g. `Goal on-target`, the primary metric) only when it adds signal; append the public dashboard URL when publish is on. Never a generic "needs attention". Examples: `⚠️ Day-Trade Signals — score-and-plan overwrote all rationales (fixed) · Goal on-target · tectonic-daytrading.surge.sh` · `✅ login-flow — recovered after the maker-reviewer gate tightened on run #39`. The same call fans out to every connected channel (Slack, WhatsApp, email).
 
 **If publish is on, link the live dashboard.** When you push a notification and `workflow.json.publish` is enabled, read the public URL from `publish/status.json` and append it to the message (and the email body, if you set one) so the user can open the live report in one tap — e.g. `… · Dashboard: https://<host>/…`. Only include a URL when `publish/status.json.state` is `published` (and you re-published it in step 4b if the source changed); never invent or guess a URL. If a user `## Notifications` preference asked for the dashboard link, this satisfies it.
 
-**Per-channel rendering.** `message_for_user` is the terse line chat channels show. *If* the tool also offers `email_subject` / `email_body` params — it exposes them only when an email channel is connected — set them so the email reads like a proper alert instead of an emoji-led subject line; leave them off when the tool doesn't offer them:
+**Per-channel rendering.** `message_for_user` is the terse line chat channels show. *If* the tool exposes email params (only when an email/Gmail channel is connected), set them — and **prefer a formatted HTML email** for consistency and readability across workflows:
 
-- `email_subject`: a clean inbox subject — `Monitor: <workflow> — broke` / `— recovered` / `— new issue`.
-- `email_body`: 2–3 lines — your headline, then `Bug: <state> · Goal: <state>`, then `See the Pulse log for detail.`
+- `email_subject`: a clean inbox subject — `<workflow> — broke` / `— recovered` / `— new issue`.
+- **`email_html` (preferred when offered):** a small, designed HTML email with a consistent skeleton — a status header (`<emoji> <workflow> — <broke|recovered|new finding>`), the headline sentence, a `Bug: <state> · Goal: <state>` line, a **Dashboard** link/button when publish is on, and a footer pointing to the Pulse log. Keep it compact, **inline-styled** (email clients strip `<style>`/external CSS) and dark-text-on-light so it renders everywhere.
+- **`email_body` (plain-text fallback):** the same content as plain text for clients that don't render HTML — your headline, then `Bug: <state> · Goal: <state>`, then `See the Pulse log for detail.` Set it alongside `email_html`; never put HTML in `email_body`.
 
 One call, rendered terse on chat and fuller in email.
 

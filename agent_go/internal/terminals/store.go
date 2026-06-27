@@ -1125,6 +1125,28 @@ func mergeTmuxScreenSnapshot(snapshot Snapshot, next string) string {
 	if overlap >= len(nextLines) {
 		return existing
 	}
+	// Idle re-capture dedup: when the visible pane is polled repeatedly while a
+	// CLI sits at the prompt, only the bottom status line (timer/spinner/token
+	// count) changes between polls. That defeats the overlap and exact-contains
+	// checks above, so without this guard the whole pane would be appended again
+	// every poll. If the TAIL of the accumulated content is mostly the same as
+	// the incoming pane, this is a re-capture of the same visible pane: replace
+	// that tail in place with the fresh capture instead of appending a duplicate.
+	// This preserves any real scrollback that sits ABOVE the visible pane. When
+	// there is genuine new output (next mostly different from the tail), the
+	// tail is NOT mostly-same and we fall through to the overlap-based append.
+	if len(existingLines) >= len(nextLines) {
+		tailStart := len(existingLines) - len(nextLines)
+		if terminalScreensMostlySame(existingLines[tailStart:], nextLines) {
+			merged := make([]string, 0, tailStart+len(nextLines))
+			merged = append(merged, existingLines[:tailStart]...)
+			merged = append(merged, nextLines...)
+			if len(merged) > terminalAccumulatedScrollbackMaxLines {
+				merged = merged[len(merged)-terminalAccumulatedScrollbackMaxLines:]
+			}
+			return strings.Join(merged, "\n")
+		}
+	}
 	if terminalScreensMostlySame(existingLines, nextLines) && overlap < terminalSmallScreenOverlapThreshold(nextLines) {
 		return next
 	}

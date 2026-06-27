@@ -92,7 +92,7 @@ This is a recommendation for the workflow builder to verify later, not an applie
 
 Then:
 - **Recent conversations** — the stored chat files for ad-hoc tasks you ran since the last
-  Org Pulse. This is how you see repeated asks (step 6).
+  Org Pulse. This is how you see repeated asks (step 7).
 - **Your own current memory** — your `entities/*.md` and topic notes, so you build on what
   you know and never duplicate it.
 
@@ -125,7 +125,57 @@ against what its report shows. Note anything that changed since yesterday (a wor
 broke, recovered, or started drifting) — that delta is what the user cares about, not the
 steady state.
 
-### 5. Harvest into memory (the core — curate, merge, in your words)
+### 5. Generate recommendations (be proactive, not just diagnostic)
+
+Measuring a goal tells the user *where* they stand. This step tells them *what to do about
+it*. For **each** goal — especially the at-risk, off-track, and capped ones — propose grounded,
+prioritized recommendations that would actually move it. This is the proactive heart of the
+pass: a diagnosis without a recommendation is half a job.
+
+Every recommendation must be:
+
+- **Tied to a goal + evidence.** Name the goal/KPI target from `pulse/goals.html` and the
+  concrete evidence (run, report, table, Pulse headline, conversation) that motivates it. No
+  evidence, no recommendation — never invent a metric or a need.
+- **Ranked by impact / effort.** State the expected goal movement (impact) and the rough cost
+  to try it (effort), and order recommendations so the highest-impact / lowest-effort ones come
+  first. The user should be able to read the top one and act.
+- **PROPOSAL-ONLY.** You recommend; the user (or the workflow builder) decides and applies. You
+  **never** edit a plan, config, prompt, report, DB, KB, or learnings to "act on" a
+  recommendation, and you never auto-trigger an improvement or replan run. The only thing you
+  write is the recommendation itself, into the surfaces below.
+
+**Think beyond the obvious.** Don't stop at "harden workflow X." The org-level moves are the
+ones no single workflow can see:
+
+- a **new automation** for a goal nothing currently serves;
+- a **different approach** for a goal a workflow has plateaued/capped on (the current method
+  has hit its ceiling — propose the change of method, not just more of the same);
+- **cross-automation synergies** — two workflows whose outputs/learnings should feed each other,
+  or a shared failure (rate-limit, selector, subject-line) worth fixing once across all of them;
+- a **promotion** (a repeated ad-hoc task that should become a workflow — see the promotions
+  step), surfaced here as a goal-serving recommendation when it maps to a goal.
+
+Write recommendations to the **right surface**, never both:
+
+- **Per-automation recommendation → that automation's `builder/improve.html`.** When the move is
+  internal to one workflow (harden, retarget a metric, change a prompt/approach inside it), add a
+  newest-first Chief of Staff recommendation card to that workflow's `builder/improve.html` — the
+  per-automation recommendation ledger, the one workflow-internal surface you may write. Include
+  goal/KPI, alignment verdict, evidence, gap, priority, suggested builder action, and expected
+  impact (the card fields from step 3). It is a recommendation for the builder to verify later,
+  not an applied fix.
+- **Org-level recommendation → the Recommendations section of `pulse/goals.html`.** When the move
+  spans the org — a new automation for an unserved goal, a different approach for a capped goal,
+  a cross-automation synergy, or a promotion — write it to the **Recommendations** section of
+  `pulse/goals.html` (see `get_reference_doc(kind="org-html")` for the structure), newest-first,
+  each marked as a proposal with goal, impact/effort, and status. Update an existing open
+  recommendation instead of duplicating it; mark accepted/dismissed ones rather than deleting.
+
+Also summarize the recommendations in today's Org Pulse log entry (step 8) so the user sees them
+in the narrative, but the durable home is the two surfaces above.
+
+### 6. Harvest into memory (the core — curate, merge, in your words)
 
 From the reports, learnings, and conversations, decide what is **worth remembering**. The
 test: would this change a future decision, or explain a future result? If not, skip it —
@@ -144,7 +194,7 @@ For each keeper:
 
 If a day produced nothing worth keeping, write nothing. That is a correct outcome.
 
-### 6. Spot promotions (recurring task → workflow)
+### 7. Spot promotions (recurring task → workflow)
 
 Review the recent conversations/tasks for **recurrence** — work the user keeps asking you to
 do ad-hoc. When you see the same *shape* repeated (judge it; there is no fixed count),
@@ -155,7 +205,7 @@ task IS a workflow. Name it, describe the generalized procedure (parameterize th
 Propose only — you don't create the workflow here. The user accepts in the suggestions
 surface, and the proposal becomes one `create_workflow` call.
 
-### 7. Surface it in the Org Pulse log
+### 8. Surface it in the Org Pulse log
 
 Your single user-facing content output is **`pulse/org-pulse.html`** — one readable HTML
 document, newest-on-top, the page the user opens (on the right) to see how the org is going.
@@ -181,6 +231,9 @@ Prepend **one dated entry** for today (a steady day warrants a short one — or 
 - **Org health** — the one-liner: which workflows are on-target / drifting / broken, and the
   delta since yesterday (what broke, recovered, or started drifting), framed against the
   org goals when they exist.
+- **Recommendations** — a brief summary of the proposal-only recommendations you generated in
+  step 5 and where they live (per-automation cards in each `builder/improve.html`; org-level
+  recs in the Recommendations section of `pulse/goals.html`). Lead with the highest-impact one.
 - **Harvested** — a brief note of what you folded into memory (not a dump — a sentence).
 - **Suggestions** — each as a small card the user can act on: a short title, the reason, the
   workflow/entity it concerns, and the action it implies (e.g. "promote \<recurring task\>
@@ -195,7 +248,7 @@ high-value suggestion. Honor any notification preference in the user's memory if
 otherwise one `notify_user` call at most, and silence on a steady day. Mirror the
 per-workflow Pulse's transition discipline and its standard notify format (`<emoji> <workflow> — <headline> · <metric> · <url>`; prefer a formatted `email_html` body).
 
-### 8. Publish the org pages (only if org publish is on)
+### 9. Publish the org pages (only if org publish is on)
 
 If the user has set up org publish in `pulse/publish.json`, keep the public org pages current.
 The org-level publish pair is:
@@ -221,7 +274,8 @@ You are a cheap daily steward, not an improvement run.
   exploratory `ls`/`echo`/`pwd`.
 - **Trust the per-workflow verdicts** instead of re-judging from raw runs; drill in only on a
   surprise.
-- Back up → read → judge the endgame → curate the keepers into memory → propose promotions →
-  surface suggestions → publish only if verified/configured → notify only if decision-worthy →
-  stop. You never run a workflow, dispatch a full improvement pass, edit workflow internals,
-  or create the skill/workflow yourself — those are the user's to trigger from your suggestions.
+- Back up → read → judge the endgame → generate proposal-only recommendations → curate the
+  keepers into memory → propose promotions → surface suggestions → publish only if
+  verified/configured → notify only if decision-worthy → stop. You never run a workflow,
+  dispatch a full improvement pass, edit workflow internals, apply a recommendation, or create
+  the skill/workflow yourself — those are the user's to trigger from your suggestions.

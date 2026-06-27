@@ -218,6 +218,20 @@ export function CodingAgentSection({ provider, onPublished }: CodingAgentSection
     llm => llm.provider === provider.id && llm.model_id === selectedModel
   )
 
+  const savePiAuthKey = async () => {
+    if (!piAuthSpec) return
+    const value = piAuthKey.trim()
+    const payload: StoredProviderKeys = {
+      pi_provider_keys: {
+        [piAuthSpec.providerKey]: value || '__DELETE__',
+      },
+    }
+    if (piAuthSpec.topLevelKey) {
+      ;(payload as Record<string, unknown>)[piAuthSpec.topLevelKey] = value || '__DELETE__'
+    }
+    await providerKeysApi.save(payload)
+  }
+
   const handleTestConnection = async () => {
     setTestStatus('testing')
     setTestMessage(null)
@@ -228,8 +242,17 @@ export function CodingAgentSection({ provider, onPublished }: CodingAgentSection
         ...(provider.id === 'pi-cli' && piAuthSpec && piAuthKey.trim() ? { api_key: piAuthKey.trim() } : {}),
       })
       if (response.valid) {
+        let successMessage = response.message || `${provider.display_name} is working.`
+        if (provider.id === 'pi-cli' && piAuthSpec && piAuthKey.trim()) {
+          await savePiAuthKey()
+          setPiAuthStatus('saved')
+          setTimeout(() => setPiAuthStatus('idle'), 2500)
+          successMessage = `${successMessage} Provider key saved for runtime.`
+        } else if (provider.id === 'pi-cli' && piAuthSpec) {
+          successMessage = `${successMessage} No key was saved; this test used existing server or CLI auth. Add and save a provider key if this model must work on another machine.`
+        }
         setTestStatus('valid')
-        setTestMessage(response.message || `${provider.display_name} is working.`)
+        setTestMessage(successMessage)
       } else {
         setTestStatus('invalid')
         setTestMessage(response.message || response.error || 'Validation failed.')
@@ -244,17 +267,8 @@ export function CodingAgentSection({ provider, onPublished }: CodingAgentSection
     if (!piAuthSpec) return
     setPiAuthStatus('saving')
     setPiAuthError(null)
-    const value = piAuthKey.trim()
-    const payload: StoredProviderKeys = {
-      pi_provider_keys: {
-        [piAuthSpec.providerKey]: value || '__DELETE__',
-      },
-    }
-    if (piAuthSpec.topLevelKey) {
-      ;(payload as Record<string, unknown>)[piAuthSpec.topLevelKey] = value || '__DELETE__'
-    }
     try {
-      await providerKeysApi.save(payload)
+      await savePiAuthKey()
       setPiAuthStatus('saved')
       setTimeout(() => setPiAuthStatus('idle'), 2500)
     } catch (err) {
@@ -270,6 +284,12 @@ export function CodingAgentSection({ provider, onPublished }: CodingAgentSection
     try {
       const options: Record<string, unknown> = {}
       if (showEffort) options.reasoning_effort = effortLevel
+
+      if (provider.id === 'pi-cli' && piAuthSpec && piAuthKey.trim()) {
+        await savePiAuthKey()
+        setPiAuthStatus('saved')
+        setTimeout(() => setPiAuthStatus('idle'), 2500)
+      }
 
       const llmModel = {
         provider: provider.id as Parameters<typeof saveLLM>[0]['provider'],
@@ -390,7 +410,7 @@ export function CodingAgentSection({ provider, onPublished }: CodingAgentSection
               </div>
             </div>
             <p className="text-xs leading-relaxed text-muted-foreground">
-              {piAuthSpec.help} Stored encrypted in workspace provider auth and exported to Pi as {piAuthSpec.envNames.join(' / ')}.
+              {piAuthSpec.help} Test Connection and Publish both save this key encrypted for runtime, then export it to Pi as {piAuthSpec.envNames.join(' / ')}.
             </p>
             {piAuthStatus === 'saved' && (
               <div className="flex items-start gap-2 text-sm text-green-600 dark:text-green-400">
@@ -433,7 +453,7 @@ export function CodingAgentSection({ provider, onPublished }: CodingAgentSection
       <Card className="p-4">
         <h4 className="font-medium text-foreground mb-3">Test Connection</h4>
         <p className="text-sm text-muted-foreground mb-3">
-          Sends a test prompt to verify the CLI is installed and authenticated.
+          Sends a test prompt to verify the CLI is installed and authenticated. For Pi, a typed key is saved encrypted after a successful test.
         </p>
         <div className="space-y-3">
           <Button

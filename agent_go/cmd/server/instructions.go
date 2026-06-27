@@ -3,7 +3,6 @@ package server
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"path"
 	"sort"
 	"strings"
@@ -226,35 +225,15 @@ Image understanding for the ` + "`read_image`" + ` tool can be routed via worksp
 ## Video Analysis
 Direct provider-backed video understanding is not advertised by default. Prefer a published coding-agent model for local video workflows until a dedicated video provider is configured and exposed by ` + "`list_llm_capabilities(capability=\"read_video\", include_models=true)`" + `.
 
-## Employees & Workflows
-Employees are virtual team members assigned to workflows. The employee UI shows employee ` + "`name`" + ` only; do not invent or display designations unless the user explicitly asks for them.
-
-**Naming rule — read before creating any employee:**
-- ` + "`name`" + ` should be the employee display name the user wants to see.
-- When the user asks to add an employee and only gives a name, save only that name.
-- If the user gives a job title or function as the employee name, keep it as the name only when that is clearly the label they want in the org page.
-- Do not add a ` + "`role`" + ` or ` + "`description`" + ` just to fill metadata.
-
-### Quick Reference
-- Employees and assignments: use ` + "`list_employees`" + `.
-- List workflows: ` + "`execute_shell_command(command: \"ls " + absWorkflow + "/\")`" + `
-
-### Managing employees from chat
-Use the employee tools for org employee changes:
-- ` + "`list_employees`" + ` — inspect employees and assignments.
-- ` + "`create_employee(name, avatar_color?)`" + ` — add an employee.
-- ` + "`update_employee(id, name?, avatar_color?, status?)`" + ` — edit an employee.
-- ` + "`delete_employee(id)`" + ` — remove an employee.
-- ` + "`assign_workflow_employee(workspace_path, employee_id)`" + ` — assign or unassign a workflow.
-
-Employee registry changes are live org configuration, not memory. When the user asks to add, edit, delete, or assign an employee, call the employee tool and do **not** call ` + "`save_memory`" + ` for that change.
+## Workflows
+List workflows with ` + "`execute_shell_command(command: \"ls " + absWorkflow + "/\")`" + `.
 
 ### Workflow Structure
 Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 
 **Planning & config:**
 - ` + "`soul/soul.md`" + ` — canonical workflow north star: ` + "`## Objective`" + ` and ` + "`## Success Criteria`" + `. Read before review, improve, eval, harden, and ambiguous execution decisions. **Stays Markdown — never create a ` + "`soul.html`" + `, a "readable mirror", or any HTML copy.** It is parsed as Markdown (the framework-health check and run-time objective injection read the ` + "`## Objective`" + ` / ` + "`## Success Criteria`" + ` headings); the Pulse log (` + "`builder/improve.html`" + `) is the only HTML surface, and it *pulls from* soul.md (the goal card). The Soul view already renders ` + "`soul.md`" + ` directly as styled markdown — there is **no readability reason** to make an HTML copy, and a copy is just a second file to keep in sync. soul.md is the single source; leave it Markdown.
-- ` + "`workflow.json`" + ` — workflow-level config: schedules, MCP servers, skills, LLM config, employee assignment, optional ` + "`run_retention_count`" + ` (backup iterations to keep; default 5). May carry legacy optional ` + "`objective`" + ` / ` + "`success_criteria`" + ` fallback values.
+- ` + "`workflow.json`" + ` — workflow-level config: schedules, MCP servers, skills, LLM config, optional ` + "`run_retention_count`" + ` (backup iterations to keep; default 5). May carry legacy optional ` + "`objective`" + ` / ` + "`success_criteria`" + ` fallback values.
 - ` + "`planning/plan.json`" + ` — step definitions (IDs, titles, descriptions, dependencies, validation). It no longer owns root objective/success fields; use ` + "`soul/soul.md`" + ` for that.
 - ` + "`planning/step_config.json`" + ` — per-step settings. Each step's ` + "`agent_configs`" + ` object controls execution mode:
   - ` + "`use_code_execution_mode`" + ` (bool) — ` + "`false`" + ` = direct tool calls, ` + "`true`" + ` = scripted Python (main.py)
@@ -282,7 +261,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 
 **Interactive builder / workshop:**
 - ` + "`builder/conversation/YYYY-MM-DD/session-{id}-conversation.json`" + ` — workshop (interactive builder) conversation histories. These are JSON files with ` + "`conversation_history`" + ` entries. User messages have ` + "`Role`" + `=` + "`human`" + `/` + "`user`" + ` and text in ` + "`Parts[].Text`" + `; assistant replies have ` + "`Role`" + `=` + "`ai`" + `/` + "`assistant`" + `. Tool calls/results are interleaved and noisy, so scan from the end for the latest user/assistant text instead of assuming the final JSON entry is the latest user request. Used by workshop agents to avoid repeating failed approaches.
-- ` + "`builder/improve.html`" + ` — the workflow's single durable log and the user's primary window into it. Read on every improvement turn. One self-contained, human-readable HTML document, newest-on-top: current health, the Workflow Profile, metric tiles, a recent-run strip, an Archive Index, and a timeline of applied/proposed changes, review findings, monitor notes, and user rules. Older detail moves to referenced ` + "`builder/improve-archive/YYYY-MM.html`" + ` files. Format: see the **Workflow log conventions**.
+- ` + "`builder/improve.html`" + ` — the workflow's single durable log and the user's primary window into it. Read on every improvement turn. One self-contained, human-readable HTML document, newest-on-top: current health, the Workflow Profile, metric tiles, a recent-run strip, an Archive Index, and a timeline of applied/proposed changes, review findings, monitor notes, Chief of Staff recommendations, and user rules. Chief of Staff recommendation cards are external findings: verify the cited evidence, then decide whether to harden, replan/refine, or mark no-action. Older detail moves to referenced ` + "`builder/improve-archive/YYYY-MM.html`" + ` files. Format: see the **Workflow log conventions**.
 - ` + "`planning/changelog/changelog-YYYY-MM-DD-HH-MM-SS.json`" + ` — per-session log of every plan-mod tool call (` + "`update_*_step`" + `, ` + "`add_*_step`" + `, ` + "`delete_plan_steps`" + `, ` + "`*_todo_task_route`" + `, ` + "`update_validation_schema`" + `, ` + "`update_step_config`" + `). Each entry carries timestamp, tool, the mandatory ` + "`reason`" + ` you supplied at invocation, affected step ids, per-field old/new values, and full JSON of added/deleted steps for revert. **Read this** before proposing plan edits to see what's already been tried this session and why; complements workflow-level history in ` + "`builder/improve.html`" + ` with per-session, per-mutation detail. Files rotate hourly. Read-only via shell — entries are written automatically by the plan-mod tools, never edit them by hand.
 
 **Auto-improvement framework files (opt-in per workflow):**
@@ -321,29 +300,28 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 - **Latest final reports:** ` + "`execute_shell_command(command: \"ls " + absWorkflow + "/<name>/reports/\")`" + `
 - **Full config (when needed):** ` + "`execute_shell_command(command: \"cat " + absWorkflow + "/<name>/workflow.json\")`" + `
 
-### When the user addresses or mentions an employee by name
-**Trigger**: any message that names an employee — direct address ("Hey Manish, …", "Priya, can you …"), reference ("what did Arjun's workflows find?", "tell me about Sarah's reports"), or any other mention of a name present in the employee list. Match case-insensitively and tolerate first-name-only references.
+### When the user asks about a workflow by name
+**Trigger**: any message that names or refers to a workflow — "what did the market-scan find?", "tell me about the weekly-digest reports", or any other reference to a workflow under ` + "`" + absWorkflow + "/`" + `. Match case-insensitively and tolerate partial names.
 
-**When triggered, treat the employee's assigned workflows as the primary source of truth for answering.** Do not answer from general knowledge or ask the user for more context until you have looked at the relevant workflows.
+**When triggered, treat that workflow's state as the primary source of truth for answering.** Do not answer from general knowledge or ask the user for more context until you have looked at the relevant workflow.
 
 **Flow:**
-1. **Identify the employee.** Use the employee list already injected into this prompt (see "Current Employees & Workflow Assignments" section below). If the list is missing or stale, use the dedicated employee tools; do not read employee registry files directly.
-2. **Look up their assigned workflows.** Every workflow path listed under that employee is in scope.
-3. **Read workflow state to answer the question.** Pick the right source per the question:
+1. **Identify the workflow.** Resolve the name to a folder under ` + "`" + absWorkflow + "/`" + ` (` + "`ls`" + ` it if unsure).
+2. **Read workflow state to answer the question.** Pick the right source per the question:
    - "What has the workflow produced / found / extracted?" → ` + "`runs/iteration-0/`" + ` (latest run outputs) or ` + "`db/db.sqlite`" + ` (accumulated structured state across runs; query tables with sqlite3).
    - "What does the workflow know about X?" → ` + "`knowledgebase/graph.json`" + ` (entities/relationships) and ` + "`knowledgebase/notes/`" + ` (narratives).
    - "How does the workflow do X?" → ` + "`learnings/_global/SKILL.md`" + `.
    - "Why does the workflow exist / what's its goal?" → ` + "`soul/soul.md`" + ` (objective, success criteria).
    - "Latest results / most recent report?" → ` + "`reports/`" + ` (most recent markdown file).
-4. **Synthesize a direct answer** grounded in what you read. If an employee has multiple workflows, scan all of them before answering "I don't know." If none of the workflows cover the question, say so explicitly and offer to look elsewhere.
+3. **Synthesize a direct answer** grounded in what you read. If none of the workflow state covers the question, say so explicitly and offer to look elsewhere.
 
-**Do not**: answer a question about a named employee without first consulting their workflows, even if the question seems general ("tell me about some recent findings") — the user's intent is almost always "via this employee's workflows."
+**Do not**: answer a question about a named workflow without first consulting its state, even if the question seems general ("tell me about some recent findings").
 
 ### What You Can Do
 - **Reuse global workflow learnings**: ` + "`learnings/_global/SKILL.md`" + ` contains accumulated domain knowledge for a workflow (how to log into a bank, parsing quirks, conventions). Read it and reuse the guidance in your own delegated tasks for related work.
 - **Reuse saved step scripts**: For ` + "`scripted`" + ` steps, the canonical working script lives at ` + "`learnings/<step-id>/main.py`" + `. Read it to understand what a step does, or borrow patterns into your own scripts.
 - **Inspect recent runs**: ` + "`runs/iteration-0/`" + ` always holds the most recent execution. Older ` + "`runs/iteration-{N}/`" + ` folders are retained history; use them for trends, regressions, and before/after comparisons against builder/improve.html timestamps.
-- **Use memory**: save patterns and trends about what each employee's workflows produce over time.
+- **Use memory**: save patterns and trends about what each workflow produces over time.
 
 ## Auto-Improvement Framework — When to Use the Tools
 
@@ -469,6 +447,8 @@ There is no slash command for context capture because it should happen naturally
 
 The ` + "`Workflow/`" + ` folder is read-only via raw shell writes — but several aspects can be modified through dedicated chat tools that go through privileged server-side I/O. **Do not refuse modification requests on the basis of "Workflow/ is read-only" without first checking whether a tool exists for what's being asked.**
 
+**Chief of Staff recommendations** — Chief of Staff may write only to existing workflow Pulse logs at ` + "`Workflow/<name>/builder/improve.html`" + `, and only to add newest-first recommendation/open-finding cards. Use this when org-goal evidence, reports, or workflow Pulse verdicts show an improvement the workflow builder should consider. Every card must be grounded in goal alignment: name the org goal/KPI target or say "supporting/no explicit goal", give the alignment verdict (` + "`aligned`" + `, ` + "`supporting`" + `, ` + "`unaligned`" + `, or ` + "`unknown-measurement`" + `), cite evidence paths, state the gap, assign priority, propose the builder action (` + "`harden_workflow`" + `, ` + "`replan_workflow_from_results`" + `, metric/eval/report measurement fix, manual review, or no-action watchpoint), and describe the expected KPI/success-criteria impact. Do not use this exception to edit any other workflow file.
+
 **Cron schedules** — fully managed from chat. Tools:
 - ` + "`list_all_schedules`" + ` / ` + "`list_workflow_schedules(workflow_path)`" + ` — view existing schedules. Run ` + "`list_all_schedules`" + ` *before* creating a new one to avoid cron-time overlap with other workflows.
 - ` + "`create_workflow_schedule(workflow_path, name, cron_expression, ...)`" + ` — add a new schedule to a workflow.json. Workflow schedules always run through the workshop builder path; omit ` + "`mode`" + ` or use ` + "`mode=\"workshop\"`" + `. Multi-agent schedules live in the separate multi-agent schedule store.
@@ -481,7 +461,7 @@ Default mode rule: workflow schedules use ` + "`mode=\"workshop\"`" + `. Do not 
 
 **Back up scheduled workflows** — whenever you create a recurring schedule, also arrange a backup so unattended runs persist their state off-box. Load ` + "`get_reference_doc(kind=\"backup-strategy\")`" + ` and append a final backup turn to ` + "`messages`" + ` when a schedule has explicit messages. If messages are omitted and the default full-workflow run message is used, add the backup instruction to that message. Confirm before skipping backup on a recurring schedule.
 
-**Other config (LLM tiers, MCP servers, skills, secrets, variables, plan steps)** — *not* editable from multi-agent chat. These live in the workshop builder. If the user asks to change LLM config, MCP servers, selected skills, or plan steps, tell them to open the workflow in the canvas / workflow builder. (You can still *read* these fields from ` + "`workflow.json`" + ` to answer questions about them.)
+**Other config (LLM tiers, MCP servers, skills, secrets, variables, plan steps)** — *not* editable from multi-agent chat. These live in the workshop builder. If the user asks to change LLM config, MCP servers, selected skills, or plan steps, tell them to open the workflow in the canvas / workflow builder. (You can still *read* these fields from ` + "`workflow.json`" + ` to answer questions about them, and you can leave a recommendation in ` + "`builder/improve.html`" + `.)
 
 ## Creating New Workflows
 
@@ -537,7 +517,6 @@ Workflow-level manifest. **Required fields**: ` + "`schema_version`" + ` (int, 1
   "execution_defaults": {
     "execution_max_turns": 10
   },
-  "ownership": { "employee_id": null },
   "schedules": []
 }
 ` + "```" + `
@@ -609,99 +588,6 @@ Step definitions. **Required field**: ` + "`steps`" + ` (array, at least 1 step)
 
 `
 	return instructions
-}
-
-// buildEmployeesWorkflowsContext reads the employee registry and workflow-assignment map
-// and returns a compact markdown section listing each employee with their assigned workflows.
-// Injected into the multi-agent chat system prompt so the agent already knows who exists
-// and which workflows each person owns — no need to inspect config files just to resolve a name.
-// Returns an empty string when no employees are registered.
-func buildEmployeesWorkflowsContext() string {
-	employees, err := readEmployeesFile()
-	if err != nil {
-		log.Printf("[PROMPT CONTEXT] Failed to read employees.json: %v", err)
-		return ""
-	}
-	if len(employees) == 0 {
-		return ""
-	}
-
-	assignments, err := readEmployeeWorkflowsFile()
-	if err != nil {
-		log.Printf("[PROMPT CONTEXT] Failed to read employee-workflows.json: %v", err)
-		// Still render employees even if assignments file is missing — names are useful on their own
-		assignments = map[string]string{}
-	}
-
-	// Group workflows by employee ID
-	byEmployee := map[string][]string{}
-	for workflowPath, employeeID := range assignments {
-		byEmployee[employeeID] = append(byEmployee[employeeID], workflowPath)
-	}
-	for _, paths := range byEmployee {
-		sort.Strings(paths)
-	}
-
-	// Build a stable employee order (by name, then ID as tiebreaker)
-	sortedEmployees := make([]EmployeeFile, len(employees))
-	copy(sortedEmployees, employees)
-	sort.Slice(sortedEmployees, func(i, j int) bool {
-		ni := strings.ToLower(strings.TrimSpace(sortedEmployees[i].Name))
-		nj := strings.ToLower(strings.TrimSpace(sortedEmployees[j].Name))
-		if ni != nj {
-			return ni < nj
-		}
-		return sortedEmployees[i].ID < sortedEmployees[j].ID
-	})
-
-	var sb strings.Builder
-	sb.WriteString("\n## Current Employees & Workflow Assignments\n\n")
-	sb.WriteString("This workspace has the following employees with their assigned workflows. **If the user's message names any employee below — whether addressing them directly (\"Hey Priya, …\"), asking about them (\"what has Arjun's workflows found?\"), or mentioning them in passing — treat that employee's assigned workflows as the primary source of truth.** Go straight to inspecting the relevant workflow folder (runs, reports, knowledgebase, learnings) to ground your answer; do not answer from general knowledge without checking the workflow state first. Match names case-insensitively and accept first-name-only references.\n\n")
-	sb.WriteString("**To run an employee's work**, call `run_workflow(workflow_path, group_name)` (or `run_step`) on their assigned workflow — that runs the workflow with its own config. Use `delegate` only for ad-hoc tasks you do yourself with skills/MCP servers, not to run a built workflow. **To report what an employee did**, sweep each of their assigned workflows: `runs/iteration-0/<group>/execution/` (latest outputs), `db/db.sqlite` (accumulated results; query with sqlite3), and `reports/` (`report_plan.json` + the `db/db.sqlite` tables it binds to for the live dashboard, or `reports/<group>/<timestamp>.md` for finished reports), then summarize per employee. See `get_reference_doc(kind=\"employee-management\")` for the full playbook.\n\n")
-
-	for _, emp := range sortedEmployees {
-		name := strings.TrimSpace(emp.Name)
-		if name == "" {
-			name = emp.ID
-		}
-
-		line := fmt.Sprintf("- **%s**", name)
-		if emp.ID != "" {
-			line += fmt.Sprintf(" (`%s`)", emp.ID)
-		}
-		sb.WriteString(line + "\n")
-
-		workflows := byEmployee[emp.ID]
-		if len(workflows) == 0 {
-			sb.WriteString("  - _No workflows assigned_\n")
-		} else {
-			for _, wp := range workflows {
-				sb.WriteString(fmt.Sprintf("  - `%s`\n", wp))
-			}
-		}
-	}
-
-	// Call out any assignments referencing an employee ID that no longer exists in the registry
-	employeeIDs := map[string]bool{}
-	for _, emp := range employees {
-		employeeIDs[emp.ID] = true
-	}
-	var orphans []string
-	for workflowPath, employeeID := range assignments {
-		if !employeeIDs[employeeID] {
-			orphans = append(orphans, workflowPath)
-		}
-	}
-	if len(orphans) > 0 {
-		sort.Strings(orphans)
-		sb.WriteString("\n**Workflows with stale assignments** (pointing at unknown employee IDs):\n")
-		for _, wp := range orphans {
-			sb.WriteString(fmt.Sprintf("- `%s`\n", wp))
-		}
-	}
-
-	sb.WriteString("\n")
-	return sb.String()
 }
 
 // GetSkillBuilderInstructions returns the custom instructions for Skill Builder agents
@@ -898,7 +784,7 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 	manifestContent := readFileContent(client, path.Join(wsPath, "workflow.json"))
 	if manifestContent != "" {
 		parts = append(parts, "**Workflow Manifest (workflow.json):**")
-		parts = append(parts, "This file defines the workflow's configuration — selected MCP servers, tools, skills, LLM config, browser mode, schedules, and employee assignment.")
+		parts = append(parts, "This file defines the workflow's configuration — selected MCP servers, tools, skills, LLM config, browser mode, and schedules.")
 		parts = append(parts, "```json")
 		parts = append(parts, manifestContent)
 		parts = append(parts, "```")

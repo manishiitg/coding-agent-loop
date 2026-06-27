@@ -408,6 +408,23 @@ func isChatsWriteFolder(folder string) bool {
 	return false
 }
 
+func isExactFolderGuardFilePath(folder string) bool {
+	base := filepath.Base(filepath.Clean(strings.TrimSpace(folder)))
+	return strings.Contains(base, ".")
+}
+
+func isPathAllowedByFolderGuard(cleanedPath, allowedPath string) bool {
+	allowedClean := filepath.Clean(allowedPath)
+	if cleanedPath == allowedClean {
+		return true
+	}
+	if isExactFolderGuardFilePath(allowedPath) {
+		return false
+	}
+	return strings.HasPrefix(cleanedPath, allowedClean+"/") ||
+		strings.HasPrefix(cleanedPath, allowedClean+"\\")
+}
+
 func chatModeWriteFolders(additionalWriteFolders ...string) []string {
 	allowedWriteFolders := []string{"Downloads/"}
 	allowedWriteFolders = append(allowedWriteFolders, additionalWriteFolders...)
@@ -529,10 +546,7 @@ func wrapExecutorsWithFolderGuard(executors map[string]func(ctx context.Context,
 	// Helper: check if a cleaned path is within any allowed write folder
 	isPathAllowed := func(cleanedPath string) bool {
 		for _, folder := range allowedWriteFolders {
-			folderClean := filepath.Clean(folder)
-			if cleanedPath == folderClean ||
-				strings.HasPrefix(cleanedPath, folderClean+"/") ||
-				strings.HasPrefix(cleanedPath, folderClean+"\\") {
+			if isPathAllowedByFolderGuard(cleanedPath, folder) {
 				return true
 			}
 		}
@@ -696,8 +710,7 @@ func wrapExecutorsWithPlanFolderGuard(executors map[string]func(ctx context.Cont
 	isWriteAllowed := func(cleanedPath string) bool {
 		pathLower := strings.ToLower(cleanedPath)
 		for _, folder := range allowedWriteFolders {
-			folderLower := strings.ToLower(folder)
-			if strings.HasPrefix(pathLower, folderLower) || pathLower == strings.TrimSuffix(folderLower, "/") {
+			if isPathAllowedByFolderGuard(pathLower, strings.ToLower(folder)) {
 				return true
 			}
 		}

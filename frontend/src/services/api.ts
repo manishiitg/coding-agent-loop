@@ -1948,35 +1948,6 @@ export const agentApi = {
     return response.data
   },
 
-  // Employee API
-  listEmployees: async (): Promise<{ employees: import('./api-types').Employee[] }> => {
-    return dedupedGet('employees', async () => {
-      const response = await api.get('/api/employees')
-      return response.data
-    })
-  },
-
-  createEmployee: async (employee: { name: string; avatar_color?: string; description?: string }): Promise<import('./api-types').Employee> => {
-    const response = await api.post('/api/employees', employee)
-    return response.data
-  },
-
-  updateEmployee: async (id: string, employee: { name?: string; avatar_color?: string; description?: string }): Promise<import('./api-types').Employee> => {
-    const response = await api.put(`/api/employees/${id}`, employee)
-    return response.data
-  },
-
-  deleteEmployee: async (id: string): Promise<void> => {
-    await api.delete(`/api/employees/${id}`)
-  },
-
-  assignWorkflowEmployee: async (workspacePath: string, employeeId: string | null): Promise<void> => {
-    await api.post('/api/employees/assign-workflow', {
-      workspace_path: workspacePath,
-      employee_id: employeeId,
-    })
-  },
-
   // --- Workflow Manifest API (file-backed workflow definitions) ---
 
   listWorkflowManifests: async (): Promise<ListWorkflowManifestsResponse> => {

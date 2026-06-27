@@ -20,7 +20,7 @@ If the user gives a vague goal, ask only for the missing pieces needed to make i
   (`increase`, `decrease`, `maintain`, `milestone`), and target date.
 - **Source of truth** — which workflow report, db table, external system, or manual update will
   supply the value?
-- **Owner** — employee/person accountable for moving or reviewing the target.
+- **Owner** — person accountable for moving or reviewing the target.
 - **Contributing workflows** — which existing workflows should move this goal, or is a new
   workflow needed?
 - **Cadence** — how often should progress be reviewed?
@@ -60,8 +60,8 @@ When creating a workflow because of an org goal, make the alignment explicit:
   goal target,
 - add the new workflow to `pulse/goals.html` under the goal's contributing workflows.
 
-When assigning workflows to employees, prefer assigning them in goal-aligned groups. The
-employee owns execution; the goal remains in `pulse/goals.html`.
+Group goal-aligned workflows together so each goal's contributing workflows are easy to see.
+The workflows own execution; the goal remains in `pulse/goals.html`.
 
 ### 3. Workflow Runs Must Measure Goal Performance
 
@@ -88,6 +88,11 @@ For each relevant goal, report an **Org goal alignment** summary:
 
 Do not invent proxy metrics. If the workflow does not produce the evidence needed for a
 goal target, say `unknown` and suggest adding that exact measurement to the workflow.
+When the next action is workflow-specific improvement or missing measurement, pass it to the
+workflow builder by adding a Chief of Staff recommendation card to that workflow's
+`builder/improve.html`. Include the goal/KPI target, alignment verdict, evidence path, gap,
+priority, suggested builder action, and expected KPI/success-criteria impact. Do not edit the
+workflow plan/config directly from Chief of Staff chat.
 
 Update `pulse/goals.html` only when the run provides concrete new evidence that changes the
 scorecard (status, latest evidence, confidence, or history). Before editing, load

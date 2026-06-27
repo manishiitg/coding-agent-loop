@@ -237,6 +237,12 @@ func validatePathAgainstGuard(guard *FolderGuardConfig, inputPath string, isWrit
 	// Check if path is under any allowed path
 	for _, allowed := range allowedPaths {
 		allowed = filepath.Clean(allowed)
+		if inputPath == allowed {
+			return nil
+		}
+		if isExactFolderGuardFilePath(allowed) {
+			continue
+		}
 		if isPathUnder(inputPath, allowed) {
 			return nil
 		}
@@ -258,6 +264,11 @@ func validatePathAgainstGuard(guard *FolderGuardConfig, inputPath string, isWrit
 	}
 
 	return fmt.Errorf("ACCESS DENIED: Cannot %s %q.%s Writable folders: %s", opType, inputPath, hint, strings.Join(quotedPaths, ", "))
+}
+
+func isExactFolderGuardFilePath(path string) bool {
+	base := filepath.Base(filepath.Clean(strings.TrimSpace(path)))
+	return strings.Contains(base, ".")
 }
 
 // isPathUnder checks if inputPath is equal to or under basePath

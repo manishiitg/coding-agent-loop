@@ -35,6 +35,8 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
   const [showMultiAgentSchedules, setShowMultiAgentSchedules] = useState(false)
   const [multiAgentScheduleCount, setMultiAgentScheduleCount] = useState(0)
   const [multiAgentRunningScheduleCount, setMultiAgentRunningScheduleCount] = useState(0)
+  const [multiAgentEnabledScheduleCount, setMultiAgentEnabledScheduleCount] = useState(0)
+  const [multiAgentIssueScheduleCount, setMultiAgentIssueScheduleCount] = useState(0)
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
   const showWorkflowsOverview = useAppStore(state => state.showWorkflowsOverview)
   const {
@@ -153,6 +155,8 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
     if (selectedModeCategory !== 'multi-agent' || showWorkflowsOverview) {
       setMultiAgentScheduleCount(0)
       setMultiAgentRunningScheduleCount(0)
+      setMultiAgentEnabledScheduleCount(0)
+      setMultiAgentIssueScheduleCount(0)
       return
     }
 
@@ -164,12 +168,23 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
         if (cancelled) return
 
         const jobs = resp.jobs ?? []
+        const now = Date.now()
+        const issueCount = jobs.filter(job => {
+          if (job.last_status === 'error') return true
+          if (!job.enabled || !job.next_run_at) return false
+          const nextRunAt = Date.parse(job.next_run_at)
+          return Number.isFinite(nextRunAt) && now - nextRunAt > 60_000
+        }).length
         setMultiAgentScheduleCount(jobs.length)
         setMultiAgentRunningScheduleCount(jobs.filter(job => job.last_status === 'running').length)
+        setMultiAgentEnabledScheduleCount(jobs.filter(job => job.enabled).length)
+        setMultiAgentIssueScheduleCount(issueCount)
       } catch {
         if (cancelled) return
         setMultiAgentScheduleCount(0)
         setMultiAgentRunningScheduleCount(0)
+        setMultiAgentEnabledScheduleCount(0)
+        setMultiAgentIssueScheduleCount(0)
       }
     }
 
@@ -181,6 +196,33 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
       window.clearInterval(interval)
     }
   }, [selectedModeCategory, showWorkflowsOverview, showMultiAgentSchedules])
+
+  const multiAgentScheduleStatusDotClass = multiAgentIssueScheduleCount > 0
+    ? 'bg-red-500'
+    : multiAgentRunningScheduleCount > 0
+      ? 'bg-green-500'
+      : multiAgentEnabledScheduleCount > 0
+        ? 'bg-amber-500'
+        : 'bg-muted-foreground/50'
+
+  const multiAgentScheduleTooltip = useMemo(() => {
+    if (multiAgentScheduleCount === 0) return 'No scheduled Chief of Staff tasks'
+    if (multiAgentIssueScheduleCount > 0) {
+      return `${multiAgentIssueScheduleCount} Chief of Staff schedule issue${multiAgentIssueScheduleCount === 1 ? '' : 's'}`
+    }
+    if (multiAgentRunningScheduleCount > 0) {
+      return `${multiAgentRunningScheduleCount} active Chief of Staff schedule${multiAgentRunningScheduleCount === 1 ? '' : 's'}`
+    }
+    if (multiAgentEnabledScheduleCount > 0) {
+      return `${multiAgentEnabledScheduleCount} active of ${multiAgentScheduleCount} scheduled Chief of Staff task${multiAgentScheduleCount === 1 ? '' : 's'}`
+    }
+    return `${multiAgentScheduleCount} paused Chief of Staff schedule${multiAgentScheduleCount === 1 ? '' : 's'}`
+  }, [
+    multiAgentEnabledScheduleCount,
+    multiAgentIssueScheduleCount,
+    multiAgentRunningScheduleCount,
+    multiAgentScheduleCount,
+  ])
 
   // Auto-select the single multi-agent tab if none is active (e.g. after refresh)
   useEffect(() => {
@@ -369,28 +411,23 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
             <button
               type="button"
               onClick={() => setShowMultiAgentSchedules(true)}
-              className={`relative rounded-md bg-muted p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground ${
-                multiAgentRunningScheduleCount > 0 ? 'text-green-600 dark:text-green-300' : ''
+              className={`relative rounded-md bg-muted p-1.5 transition-colors hover:bg-accent ${
+                multiAgentIssueScheduleCount > 0
+                  ? 'text-red-600 dark:text-red-400'
+                  : multiAgentRunningScheduleCount > 0
+                    ? 'text-green-600 dark:text-green-400'
+                    : 'text-muted-foreground hover:text-accent-foreground'
               }`}
               aria-label="Scheduled Chief of Staff tasks"
             >
               <CalendarClock className="h-3.5 w-3.5" />
               {multiAgentScheduleCount > 0 && (
-                <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full border border-background bg-primary px-1 text-[9px] font-semibold leading-none text-primary-foreground">
-                  {multiAgentScheduleCount > 9 ? '9+' : multiAgentScheduleCount}
-                </span>
-              )}
-              {multiAgentRunningScheduleCount > 0 && (
-                <span className="absolute -left-0.5 -top-0.5 h-2 w-2 rounded-full border border-background bg-green-500" />
+                <span className={`absolute right-1 top-1 h-1.5 w-1.5 rounded-full ${multiAgentScheduleStatusDotClass}`} />
               )}
             </button>
           </TooltipTrigger>
           <TooltipContent>
-            <p>
-              {multiAgentScheduleCount > 0
-                ? `${multiAgentScheduleCount} scheduled Chief of Staff task${multiAgentScheduleCount !== 1 ? 's' : ''}`
-                : 'Scheduled Chief of Staff tasks'}
-            </p>
+            <p>{multiAgentScheduleTooltip}</p>
           </TooltipContent>
         </Tooltip>
         <OrgPulseControl />

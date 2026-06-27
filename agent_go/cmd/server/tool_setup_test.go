@@ -354,6 +354,61 @@ func TestPlanFolderGuardBlocksConfigWriteByDefault(t *testing.T) {
 	}
 }
 
+func TestChiefOfStaffRecommendationWriteAccessIsImproveLogOnly(t *testing.T) {
+	const chatsFolder = "_users/default/Chats"
+	const workflowRoot = "Workflow/rtslatency"
+	const improveLog = workflowRoot + "/builder/improve.html"
+
+	noop := func(ctx context.Context, args map[string]interface{}) (string, error) {
+		return "OK", nil
+	}
+
+	mainWrapped := wrapExecutorsWithPlanFolderGuard(
+		map[string]func(ctx context.Context, args map[string]interface{}) (string, error){
+			"diff_patch_workspace_file": noop,
+		},
+		chatsFolder,
+		nil,
+		improveLog,
+	)
+	delegatedWrapped := wrapExecutorsWithChatModeFolderGuard(
+		map[string]func(ctx context.Context, args map[string]interface{}) (string, error){
+			"diff_patch_workspace_file": noop,
+		},
+		nil,
+		nil,
+		improveLog,
+	)
+
+	cases := []struct {
+		name      string
+		wrapped   map[string]func(ctx context.Context, args map[string]interface{}) (string, error)
+		filepath  string
+		wantError bool
+	}{
+		{name: "main can write improve log", wrapped: mainWrapped, filepath: improveLog},
+		{name: "main cannot write workflow manifest", wrapped: mainWrapped, filepath: workflowRoot + "/workflow.json", wantError: true},
+		{name: "main cannot write sibling builder file", wrapped: mainWrapped, filepath: workflowRoot + "/builder/review.html", wantError: true},
+		{name: "main exact file path is not prefix writable", wrapped: mainWrapped, filepath: improveLog + "/child.html", wantError: true},
+		{name: "delegate can write improve log", wrapped: delegatedWrapped, filepath: improveLog},
+		{name: "delegate cannot write workflow manifest", wrapped: delegatedWrapped, filepath: workflowRoot + "/workflow.json", wantError: true},
+		{name: "delegate cannot write sibling builder file", wrapped: delegatedWrapped, filepath: workflowRoot + "/builder/review.html", wantError: true},
+		{name: "delegate exact file path is not prefix writable", wrapped: delegatedWrapped, filepath: improveLog + "/child.html", wantError: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := tc.wrapped["diff_patch_workspace_file"](context.Background(), map[string]interface{}{"filepath": tc.filepath})
+			if tc.wantError && err == nil {
+				t.Fatalf("expected write to %q to be blocked", tc.filepath)
+			}
+			if !tc.wantError && err != nil {
+				t.Fatalf("expected write to %q to be allowed, got: %v", tc.filepath, err)
+			}
+		})
+	}
+}
+
 func TestWorkflowPhaseFolderGuardDoesNotAllowChatsByDefault(t *testing.T) {
 	const workflowRoot = "Workflow/rtslatency"
 

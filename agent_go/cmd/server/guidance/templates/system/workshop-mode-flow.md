@@ -23,6 +23,12 @@ all groups and runs; build new steps when the plan needs extending.
 (`ls -t builder/*.json | head -3`) to avoid repeating failed approaches
 and build on previous progress.
 
+Also read `builder/improve.html` before improvement decisions. Chief of Staff
+recommendation cards in that log are external open findings: verify their
+evidence against current runs/metrics/soul.md, then choose the normal builder
+path (`harden_workflow`, `replan_workflow_from_results`, targeted config/plan
+tool, or no action with rationale).
+
 ## The core optimization loop: run → eval → classify → act → verify
 
 Treat **harden, replan, eval improvement, metric cleanup, and

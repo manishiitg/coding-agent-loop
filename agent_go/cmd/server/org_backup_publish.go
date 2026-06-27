@@ -78,14 +78,12 @@ var orgBackupHashFiles = []string{
 	"pulse/org-pulse.html",
 	"pulse/backup.json",
 	"pulse/publish.json",
-	"employees.json",
 	"org.json",
 }
 
 var orgBackupHashFolders = []string{
 	"_users",
 	"memories",
-	"employees",
 }
 
 func computeOrgBackupSourceHash(ctx context.Context) (string, int) {

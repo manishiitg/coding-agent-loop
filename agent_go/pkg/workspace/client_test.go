@@ -107,3 +107,43 @@ func TestValidatePathAgainstGuard_BlockedPathsStillDeniesBoth(t *testing.T) {
 		})
 	}
 }
+
+func TestValidatePathAgainstGuard_ExactFileWritePathIsNotPrefix(t *testing.T) {
+	guard := &FolderGuardConfig{
+		Enabled:    true,
+		WritePaths: []string{"Workflow/rtslatency/builder/improve.html"},
+	}
+
+	cases := []struct {
+		name      string
+		path      string
+		wantError bool
+	}{
+		{
+			name: "exact improve log is writable",
+			path: "Workflow/rtslatency/builder/improve.html",
+		},
+		{
+			name:      "sibling builder file is not writable",
+			path:      "Workflow/rtslatency/builder/review.html",
+			wantError: true,
+		},
+		{
+			name:      "file path is not treated as writable directory prefix",
+			path:      "Workflow/rtslatency/builder/improve.html/child.html",
+			wantError: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validatePathAgainstGuard(guard, tc.path, true)
+			if tc.wantError && err == nil {
+				t.Fatalf("expected write to %q to be blocked", tc.path)
+			}
+			if !tc.wantError && err != nil {
+				t.Fatalf("expected write to %q to be allowed, got: %v", tc.path, err)
+			}
+		})
+	}
+}

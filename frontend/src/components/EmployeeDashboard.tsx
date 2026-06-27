@@ -683,7 +683,7 @@ export const EmployeeDashboard: React.FC = () => {
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null)
-  const [orgView, setOrgView] = useState<'workflow' | 'goals' | 'pulse'>('workflow')
+  const [orgView, setOrgView] = useState<'workflow' | 'goals' | 'pulse'>('goals')
   const [reviewTab, setReviewTab] = useState<ReviewTab>('report')
   const [reviewState, setReviewState] = useState<WorkflowReviewState>(EMPTY_REVIEW_STATE)
   const [soulDocState, setSoulDocState] = useState<ImproveDocState>(EMPTY_SOUL_DOC_STATE)
@@ -1492,11 +1492,11 @@ export const EmployeeDashboard: React.FC = () => {
           <div className="lg:sticky lg:top-6 self-start">
             {orgView === 'goals' ? (
               <div className="h-[calc(100vh-160px)] min-h-[480px] overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-                <OrgGoalsPanel />
+                <OrgGoalsPanel fixedDevice="desktop" />
               </div>
             ) : orgView === 'pulse' ? (
               <div className="h-[calc(100vh-160px)] min-h-[480px] overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-                <OrgPulsePanel />
+                <OrgPulsePanel fixedDevice="desktop" />
               </div>
             ) : (
             <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">

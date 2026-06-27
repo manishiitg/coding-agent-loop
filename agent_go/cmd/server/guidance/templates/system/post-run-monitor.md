@@ -65,7 +65,7 @@ Only when triage found a real problem this run — a clean run skips this step.
 If `workflow.json.publish` is enabled, keep the public URL current — but only when it's safe to do so unattended:
 
 - **Only an already-verified destination.** If `publish/status.json` shows a prior successful publish, re-publish the updated artifacts per `get_reference_doc(kind="publish-strategy")`. If publish is configured but never verified (`configured_not_verified`), **do nothing** — the first/verifying publish is the user's manual setup step, not yours.
-- **Only when changed.** Skip if the published artifacts haven't changed since the last publish (source hash). A steady run doesn't republish.
+- **Always re-publish.** Every run writes new `db/db.sqlite` data AND a fresh Pulse entry to `builder/improve.html` — both are in the source hash — so the published artifacts always change; there is no steady-state no-change run to skip. Re-publish on every fire to a verified destination.
 - Always write `publish/status.json` with the URL. Never publish secrets or raw sensitive rows; the publish-strategy doc owns the static-snapshot + scope rules.
 
 This is a re-publish of an already-set-up site, nothing more — never configure a new destination or expose new data here.

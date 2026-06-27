@@ -1103,6 +1103,18 @@ func terminalContentExtends(existing, next string) bool {
 	return strings.HasPrefix(next, existing)
 }
 
+// mergeTmuxScreenSnapshot accumulates a polled visible-pane capture onto the
+// stored snapshot content (reconstructing scrollback from snapshots).
+//
+// IMPORTANT — the live terminal *viewer* does NOT go through this path. The
+// viewer (handleGetTerminal) serves the pipe-pane recording while the pane is
+// ACTIVE and a static `capture-pane -S` full buffer once it is idle; it never
+// merges. This merge runs only for:
+//   - the query_step agent-context poller (via RefreshContent), and
+//   - the live streaming-event accumulation (HandleEvent),
+// and its output is used as the capture-failure fallback + the terminal-list
+// content — never as the viewer's rendered content. Do NOT "fix" viewer
+// formatting/duplication here; it is the wrong path (see terminal_routes.go).
 func mergeTmuxScreenSnapshot(snapshot Snapshot, next string) string {
 	if !shouldAccumulateTmuxScreenSnapshot(snapshot, next) {
 		return next

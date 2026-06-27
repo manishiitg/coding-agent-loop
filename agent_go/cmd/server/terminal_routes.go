@@ -198,6 +198,13 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 		)
 	}
 	if shouldCaptureTmux {
+		// This is the live terminal viewer's content path. Its sources, by state:
+		//   - active + content=screen  → captureTerminalVisiblePaneWithStats (visible pane)
+		//   - active + content=history → the pipe-pane recording (live byte stream)
+		//   - idle                     → captureTerminalPaneForDetail = capture-pane -S (full buffer)
+		// It uses ReplaceContentWithSource, NOT the mergeTmuxScreenSnapshot accumulation
+		// (that path serves only the query_step poller + streaming accumulation). If the
+		// viewer shows wrong/duplicate content, fix it HERE, not in the merge.
 		ctx, cancel := context.WithTimeout(r.Context(), terminalTmuxActionTimeout)
 		// Only accumulate/merge captured snapshots while the pane is ACTIVE (live).
 		// Once it's idle/ended, captureTerminalPaneForDetail grabs tmux's full

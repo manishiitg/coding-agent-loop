@@ -50,6 +50,8 @@ type ScheduledJobResponse struct {
 	MissedRunReason     string                 `json:"missed_run_reason,omitempty"`
 	CreatedAt           string                 `json:"created_at,omitempty"`
 	UpdatedAt           string                 `json:"updated_at,omitempty"`
+	BuiltIn             bool                   `json:"built_in,omitempty"`
+	ManagedBy           string                 `json:"managed_by,omitempty"`
 }
 
 // CreateScheduleRequest is the request body for creating a schedule.
@@ -127,6 +129,14 @@ func buildJobResponse(workspacePath string, manifest *WorkflowManifest, sched Wo
 }
 
 func buildMultiAgentJobResponse(userID string, sched WorkflowSchedule, state ScheduleRuntimeState) ScheduledJobResponse {
+	builtIn := IsDefaultBuiltinSchedule(sched.ID)
+	managedBy := ""
+	if builtIn {
+		managedBy = "built-in"
+	}
+	if IsSlashManagedBuiltinSchedule(sched.ID) {
+		managedBy = "slash-command"
+	}
 	return ScheduledJobResponse{
 		ID:                  sched.ID,
 		Name:                sched.Name,
@@ -150,6 +160,8 @@ func buildMultiAgentJobResponse(userID string, sched WorkflowSchedule, state Sch
 		LastDurationMs:      state.LastDurationMs,
 		RunCount:            state.RunCount,
 		ConsecutiveFailures: state.ConsecutiveFailures,
+		BuiltIn:             builtIn,
+		ManagedBy:           managedBy,
 	}
 }
 
@@ -278,6 +290,43 @@ func findScheduleByIDAnyOrCurrentUserBuiltin(ctx context.Context, scheduleID str
 		return result, nil
 	}
 	return findBuiltinMultiAgentScheduleForUser(ctx, GetUserIDFromContext(ctx), scheduleID)
+}
+
+func writeBuiltinMultiAgentScheduleOverride(ctx context.Context, userID, scheduleID string, mutate func(*WorkflowSchedule)) (*MultiAgentScheduleFile, int, error) {
+	if strings.TrimSpace(userID) == "" {
+		userID = GetDefaultUserID()
+	}
+	sched, ok := FindDefaultBuiltinSchedule(scheduleID)
+	if !ok {
+		return nil, -1, fmt.Errorf("built-in schedule %s not found", scheduleID)
+	}
+
+	f, _, err := ReadMultiAgentSchedules(ctx, userID)
+	if err != nil {
+		return nil, -1, err
+	}
+
+	idx := -1
+	for i := range f.Schedules {
+		if f.Schedules[i].ID == scheduleID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		f.Schedules = append(f.Schedules, sched)
+		idx = len(f.Schedules) - 1
+	}
+
+	if mutate != nil {
+		mutate(&f.Schedules[idx])
+	}
+	f.Schedules[idx].Mode = "multi-agent"
+
+	if err := WriteMultiAgentSchedules(ctx, userID, f); err != nil {
+		return nil, -1, err
+	}
+	return f, idx, nil
 }
 
 func listScheduledJobsHandler(svc *SchedulerService) http.HandlerFunc {
@@ -752,20 +801,44 @@ func deleteScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 
 		result, err := findScheduleByIDAny(r.Context(), id)
 		if err != nil {
+			if IsDefaultBuiltinSchedule(id) && !IsSlashManagedBuiltinSchedule(id) {
+				userID := GetUserIDFromContext(r.Context())
+				if _, _, writeErr := writeBuiltinMultiAgentScheduleOverride(r.Context(), userID, id, func(s *WorkflowSchedule) {
+					s.Enabled = false
+				}); writeErr != nil {
+					http.Error(w, "failed to write multi-agent schedules: "+writeErr.Error(), http.StatusInternalServerError)
+					return
+				}
+				_ = svc.RemoveJob(id)
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
 
-		// Remove from scheduler
-		_ = svc.RemoveJob(id)
-
 		if result.SourceType == "multi-agent" {
+			if IsSlashManagedBuiltinSchedule(id) {
+				http.Error(w, "Use /pulse-setup in Chief of Staff to disable or change Daily Org Pulse.", http.StatusConflict)
+				return
+			}
+			_ = svc.RemoveJob(id)
+			if IsDefaultBuiltinSchedule(id) {
+				result.ScheduleFile.Schedules[result.Index].Enabled = false
+				if err := WriteMultiAgentSchedules(r.Context(), result.UserID, result.ScheduleFile); err != nil {
+					http.Error(w, "failed to write multi-agent schedules: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
 			result.ScheduleFile.Schedules = append(result.ScheduleFile.Schedules[:result.Index], result.ScheduleFile.Schedules[result.Index+1:]...)
 			if err := WriteMultiAgentSchedules(r.Context(), result.UserID, result.ScheduleFile); err != nil {
 				http.Error(w, "failed to write multi-agent schedules: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
 		} else {
+			_ = svc.RemoveJob(id)
 			manifest := result.Manifest
 			manifest.Schedules = append(manifest.Schedules[:result.Index], manifest.Schedules[result.Index+1:]...)
 			if err := WriteWorkflowManifest(r.Context(), result.WorkspacePath, manifest); err != nil {
@@ -790,6 +863,23 @@ func enableScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 
 		result, err := findScheduleByIDAny(r.Context(), id)
 		if err != nil {
+			if IsDefaultBuiltinSchedule(id) && !IsSlashManagedBuiltinSchedule(id) {
+				userID := GetUserIDFromContext(r.Context())
+				f, idx, writeErr := writeBuiltinMultiAgentScheduleOverride(r.Context(), userID, id, func(s *WorkflowSchedule) {
+					s.Enabled = true
+				})
+				if writeErr != nil {
+					http.Error(w, "failed to write multi-agent schedules: "+writeErr.Error(), http.StatusInternalServerError)
+					return
+				}
+				if err := svc.ReloadMultiAgentSchedule(r.Context(), userID, id); err != nil {
+					scheduleLogf("[SCHEDULER] Failed to reload built-in multi-agent schedule %s after enable: %v", id, err)
+				}
+				state := svc.GetRuntimeState(id)
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(buildMultiAgentJobResponse(userID, f.Schedules[idx], state))
+				return
+			}
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
@@ -797,6 +887,10 @@ func enableScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 		var resp ScheduledJobResponse
 
 		if result.SourceType == "multi-agent" {
+			if IsSlashManagedBuiltinSchedule(id) {
+				http.Error(w, "Use /pulse-setup in Chief of Staff to change Daily Org Pulse.", http.StatusConflict)
+				return
+			}
 			result.ScheduleFile.Schedules[result.Index].Enabled = true
 			if err := WriteMultiAgentSchedules(r.Context(), result.UserID, result.ScheduleFile); err != nil {
 				http.Error(w, "failed to write multi-agent schedules: "+err.Error(), http.StatusInternalServerError)
@@ -839,16 +933,34 @@ func disableScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 
 		result, err := findScheduleByIDAny(r.Context(), id)
 		if err != nil {
+			if IsDefaultBuiltinSchedule(id) && !IsSlashManagedBuiltinSchedule(id) {
+				userID := GetUserIDFromContext(r.Context())
+				f, idx, writeErr := writeBuiltinMultiAgentScheduleOverride(r.Context(), userID, id, func(s *WorkflowSchedule) {
+					s.Enabled = false
+				})
+				if writeErr != nil {
+					http.Error(w, "failed to write multi-agent schedules: "+writeErr.Error(), http.StatusInternalServerError)
+					return
+				}
+				_ = svc.RemoveJob(id)
+				state := svc.GetRuntimeState(id)
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(buildMultiAgentJobResponse(userID, f.Schedules[idx], state))
+				return
+			}
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-
-		_ = svc.RemoveJob(id)
 
 		state := svc.GetRuntimeState(id)
 		var resp ScheduledJobResponse
 
 		if result.SourceType == "multi-agent" {
+			if IsSlashManagedBuiltinSchedule(id) {
+				http.Error(w, "Use /pulse-setup in Chief of Staff to change Daily Org Pulse.", http.StatusConflict)
+				return
+			}
+			_ = svc.RemoveJob(id)
 			result.ScheduleFile.Schedules[result.Index].Enabled = false
 			if err := WriteMultiAgentSchedules(r.Context(), result.UserID, result.ScheduleFile); err != nil {
 				http.Error(w, "failed to write multi-agent schedules: "+err.Error(), http.StatusInternalServerError)
@@ -856,6 +968,7 @@ func disableScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			}
 			resp = buildMultiAgentJobResponse(result.UserID, result.ScheduleFile.Schedules[result.Index], state)
 		} else {
+			_ = svc.RemoveJob(id)
 			result.Manifest.Schedules[result.Index].Enabled = false
 			if err := WriteWorkflowManifest(r.Context(), result.WorkspacePath, result.Manifest); err != nil {
 				http.Error(w, "failed to write manifest: "+err.Error(), http.StatusInternalServerError)
@@ -881,6 +994,11 @@ func triggerScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 
 		id := mux.Vars(r)["id"]
 
+		if IsSlashManagedBuiltinSchedule(id) {
+			http.Error(w, "Use /pulse-setup in Chief of Staff before running Daily Org Pulse.", http.StatusConflict)
+			return
+		}
+
 		// Check if it's a multi-agent schedule first
 		userID := svc.GetUserForSchedule(id)
 		if userID != "" {
@@ -900,10 +1018,31 @@ func triggerScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			// Try to find it — could be workflow or unloaded multi-agent
 			result, err := findScheduleByIDAny(r.Context(), id)
 			if err != nil {
+				if IsDefaultBuiltinSchedule(id) && !IsSlashManagedBuiltinSchedule(id) {
+					userID := GetUserIDFromContext(r.Context())
+					if _, _, writeErr := writeBuiltinMultiAgentScheduleOverride(r.Context(), userID, id, func(s *WorkflowSchedule) {
+						s.Enabled = true
+					}); writeErr != nil {
+						http.Error(w, "failed to write multi-agent schedules: "+writeErr.Error(), http.StatusInternalServerError)
+						return
+					}
+					trigResult, trigErr := svc.TriggerMultiAgentNow(userID, id)
+					if trigErr != nil {
+						http.Error(w, trigErr.Error(), http.StatusInternalServerError)
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(map[string]string{"session_id": trigResult})
+					return
+				}
 				http.Error(w, "not found", http.StatusNotFound)
 				return
 			}
 			if result.SourceType == "multi-agent" {
+				if IsSlashManagedBuiltinSchedule(id) {
+					http.Error(w, "Use /pulse-setup in Chief of Staff before running Daily Org Pulse.", http.StatusConflict)
+					return
+				}
 				trigResult, err := svc.TriggerMultiAgentNow(result.UserID, id)
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)

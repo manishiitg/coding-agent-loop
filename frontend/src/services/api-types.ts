@@ -2180,6 +2180,8 @@ export interface ScheduledJob {
   missed_run_reason?: string
   created_at?: string
   updated_at?: string
+  built_in?: boolean
+  managed_by?: 'built-in' | 'slash-command' | string
 }
 
 export interface CreateScheduledJobRequest {

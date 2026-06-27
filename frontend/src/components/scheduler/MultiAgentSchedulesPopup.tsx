@@ -82,7 +82,11 @@ function sortJobs(a: ScheduledJob, b: ScheduledJob): number {
 }
 
 function isOrgPulseJob(job: ScheduledJob): boolean {
-  return job.id === ORG_PULSE_JOB_ID
+  return job.id === ORG_PULSE_JOB_ID || job.managed_by === 'slash-command'
+}
+
+function isBuiltInJob(job: ScheduledJob): boolean {
+  return !!job.built_in || job.id.startsWith('builtin-')
 }
 
 interface MultiAgentSchedulesPopupProps {
@@ -395,6 +399,7 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
                   {filteredJobs.map((job) => {
                     const missedDelayMs = getMissedScheduleDelayMs(job)
                     const orgPulseJob = isOrgPulseJob(job)
+                    const builtInJob = isBuiltInJob(job)
                     const isRunning = job.last_status === 'running'
 
                     return (
@@ -424,6 +429,11 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
                                       /pulse-setup
                                     </span>
                                   )}
+                                  {builtInJob && !orgPulseJob && (
+                                    <span className="rounded-full border border-border bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                                      Built-in
+                                    </span>
+                                  )}
                                 </div>
 
                                 <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -444,6 +454,7 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
                                   <span>Last ran {formatLastRunLabel(job.last_run_at)}</span>
                                   <span>{job.run_count} run{job.run_count !== 1 ? 's' : ''}</span>
                                   {orgPulseJob && <span>Managed in chat</span>}
+                                  {builtInJob && !orgPulseJob && <span>System schedule</span>}
                                 </div>
 
                                 {job.query && (
@@ -502,14 +513,16 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
                                   <Play className="h-3.5 w-3.5" />
                                   {missedDelayMs != null && <span>Run now</span>}
                                 </button>
-                                <button
-                                  onClick={() => handleDelete(job)}
-                                  disabled={actionInProgress === job.id}
-                                  className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-red-600 disabled:opacity-50"
-                                  title="Delete schedule"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
+                                {!builtInJob && (
+                                  <button
+                                    onClick={() => handleDelete(job)}
+                                    disabled={actionInProgress === job.id}
+                                    className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-red-600 disabled:opacity-50"
+                                    title="Delete schedule"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
                               </>
                             )}
                           </div>

@@ -80,6 +80,15 @@ func FindDefaultBuiltinSchedule(scheduleID string) (WorkflowSchedule, bool) {
 	return WorkflowSchedule{}, false
 }
 
+func IsDefaultBuiltinSchedule(scheduleID string) bool {
+	_, ok := FindDefaultBuiltinSchedule(scheduleID)
+	return ok
+}
+
+func IsSlashManagedBuiltinSchedule(scheduleID string) bool {
+	return scheduleID == builtinOrgPulseID
+}
+
 // MergeBuiltinSchedules appends built-in schedules that the user has not
 // overridden. Matching is by ID — a user entry with the same ID always wins,
 // so the user can disable a built-in (enabled:false) or tweak cron/timezone

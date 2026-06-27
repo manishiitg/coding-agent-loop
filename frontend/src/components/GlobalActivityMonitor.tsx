@@ -125,7 +125,7 @@ function displaySessionTitle(
       genericTabName === 'bot' ||
       genericTabName === 'whatsapp' ||
       genericTabName === 'slack'
-    if (tab?.name && tab.name !== 'Workflow Builder' && !tab.metadata?.isViewOnly && !tabNameIsTypeLabel) {
+    if (tab?.name && tab.name !== 'Automation Builder' && !tab.metadata?.isViewOnly && !tabNameIsTypeLabel) {
       return tab.name
     }
     return sessionTitle(session, workflow, fallbackWorkflowName)
@@ -658,7 +658,7 @@ export const GlobalActivityMonitor: React.FC = () => {
       {activityItems.map((item, i) => {
         if (item.type === 'builder-tab') {
           const builderBusy = item.tab.isStreaming || item.tab.isSyntheticTurn
-          const builderWorkflowName = (item.tab.name && item.tab.name !== 'Workflow Builder')
+          const builderWorkflowName = (item.tab.name && item.tab.name !== 'Automation Builder')
             ? item.tab.name
             : currentWorkflowPresetName
 

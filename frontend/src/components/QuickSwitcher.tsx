@@ -603,10 +603,10 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       } else {
         // No tabs for this preset yet — create an empty builder tab. WorkflowLayout
         // watches this state and offers workspace builder-history restore when present.
-        const tabId = await updatedChatStore.createChatTab('Workflow Builder', {
+        const tabId = await updatedChatStore.createChatTab('Automation Builder', {
           mode: 'workflow',
           phaseId: 'workflow-builder',
-          phaseName: 'Workflow Builder',
+          phaseName: 'Automation Builder',
           presetQueryId: item.preset.id,
         })
         activateTab(tabId)

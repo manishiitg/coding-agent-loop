@@ -186,7 +186,7 @@ interface DailyStepCostEntry {
 
 const formatPhaseTitle = (phaseID: string) => {
   const phaseTitles: Record<string, string> = {
-    'workflow-builder': 'Workflow Builder',
+    'workflow-builder': 'Automation Builder',
     'report-execution': 'Report Execution',
     planning: 'Planning',
     'plan-improvement': 'Plan Improvement',
@@ -1193,7 +1193,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
           daily.date,
           'builder:total',
           'builder',
-          'Workflow Builder',
+          'Automation Builder',
           'Builder'
         )
         Object.entries(daily.tokenUsage.by_model).forEach(([modelID, usage]) => {
@@ -1447,14 +1447,14 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                 </div>
               )}
 
-              {/* Workflow Builder / Phase Costs */}
+              {/* Automation Builder / Phase Costs */}
               {phaseCostSummary && (
                 <div className="bg-card border border-border rounded-lg p-4 shadow-sm">
                   <div className="flex items-start justify-between gap-4 mb-4">
                     <div>
                       <h3 className="text-sm font-semibold text-foreground mb-1 flex items-center gap-2">
                         <DollarSign className="w-4 h-4 text-amber-500" />
-                        Workflow Builder Costs
+                        Automation Builder Costs
                       </h3>
                       <p className="text-xs text-muted-foreground">
                         Costs captured outside run folders, including workflow builder and other phase-only sessions.
@@ -1479,7 +1479,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                     </div>
 
                     <div className="bg-card border border-border rounded-lg p-3">
-                      <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Workflow Builder</div>
+                      <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Automation Builder</div>
                       <div className="text-2xl font-bold text-foreground">
                         {formatUSD(phaseCostSummary.phaseCosts.find(phase => phase.phaseID === 'workflow-builder')?.totalCost)}
                       </div>

@@ -315,10 +315,10 @@ const WorkflowPreviousChatsPanel: React.FC<{
       targetTab.metadata?.mode !== 'workflow' ||
       (activePresetId && targetPresetId && targetPresetId !== activePresetId)
     ) {
-      targetTabId = await chatStore.createChatTab('Workflow Builder', {
+      targetTabId = await chatStore.createChatTab('Automation Builder', {
         mode: 'workflow',
         phaseId: 'workflow-builder',
-        phaseName: 'Workflow Builder',
+        phaseName: 'Automation Builder',
         presetQueryId: activePresetId || undefined,
       })
       targetTab = useChatStore.getState().chatTabs[targetTabId]
@@ -332,7 +332,7 @@ const WorkflowPreviousChatsPanel: React.FC<{
     if (activePresetId && targetTab.metadata?.presetQueryId !== activePresetId) {
       chatStore.setTabMetadata(targetTabId, {
         phaseId: targetTab.metadata?.phaseId || 'workflow-builder',
-        phaseName: targetTab.metadata?.phaseName || 'Workflow Builder',
+        phaseName: targetTab.metadata?.phaseName || 'Automation Builder',
         presetQueryId: activePresetId,
       })
     }
@@ -926,10 +926,10 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       await chatStore.closeTab(tab.tabId, false)
     }
 
-    const tabId = await chatStore.createChatTab('Workflow Builder', {
+    const tabId = await chatStore.createChatTab('Automation Builder', {
       mode: 'workflow',
       phaseId: 'workflow-builder',
-      phaseName: 'Workflow Builder',
+      phaseName: 'Automation Builder',
       presetQueryId: presetId
     })
     chatStore.switchTab(tabId)
@@ -1519,7 +1519,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           }
           if (!phaseId && s.title) {
             // Fallback: try to extract from title
-            const match = s.title.match(/(?:workflow[- ]builder|planning|evaluation[- ]builder)/i)
+            const match = s.title.match(/(?:(?:workflow|automation)[- ]builder|planning|evaluation[- ]builder)/i)
             if (match) phaseId = match[0].toLowerCase().replace(/\s/g, '-')
           }
           sessionsToRestore.push({
@@ -1587,7 +1587,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           //   3. Fallback to "Schedule" / "Bot" when we know the trigger,
           //      so a scheduled run reconnected on app boot doesn't get
           //      labelled the literal "Workflow"
-          //   4. Last resort: phaseId / "Workflow Builder" (so the chat
+          //   4. Last resort: phaseId / "Automation Builder" (so the chat
           //      input gating in WorkflowChatTabs treats it as the
           //      builder tab and shows the proper "Chat" label)
           let phaseName: string
@@ -1598,7 +1598,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           } else if (session.botPlatform) {
             phaseName = session.botPlatform
           } else {
-            phaseName = phaseId || 'Workflow Builder'
+            phaseName = phaseId || 'Automation Builder'
           }
 
           // Create tab with scheduled-run / bot metadata so downstream
@@ -1656,10 +1656,10 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           if (interactiveExistingWorkflowTabs.length === 0) {
             const excludedSessionIds = new Set(activeSessionIds)
             const latestSavedChat = await findLatestRestorableWorkflowChatSession(workspacePath, excludedSessionIds)
-            const defaultTabId = await createChatTab('Workflow Builder', {
+            const defaultTabId = await createChatTab('Automation Builder', {
               mode: 'workflow',
               phaseId: 'workflow-builder',
-              phaseName: 'Workflow Builder',
+              phaseName: 'Automation Builder',
               presetQueryId: activePresetId
             }, latestSavedChat?.session_id)
             if (latestSavedChat) {
@@ -1981,7 +1981,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     setShowChatArea(true)
   }, [activePresetId, setCurrentWorkflowPhase, setShowChatArea, getPhaseById, setWorkflowWorkspaceView])
 
-  // Handle create plan - always opens Workflow Builder.
+  // Handle create plan - always opens Automation Builder.
   const handleCreatePlan = useCallback(() => {
     // Ensure we're in workflow mode before creating plan (only if we have an active preset)
     if (activePresetId) {

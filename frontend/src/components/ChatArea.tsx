@@ -388,7 +388,7 @@ const PHASE_CHAT_INFO: Record<string, {
   showStepTypes?: boolean
 }> = {
   'workflow-builder': {
-    title: 'Workflow Builder',
+    title: 'Automation Builder',
     description: 'Execute steps, update the plan, debug, generate learnings, tweak configs, manage schedules, and run evaluations — all in one conversation.',
     capabilities: [
       'Run any plan step in the background and poll for results',

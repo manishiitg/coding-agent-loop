@@ -407,7 +407,7 @@ const WorkflowTable: React.FC<{
     return (
       <div className="flex items-center justify-center p-16">
         <Loader2 className="w-5 h-5 animate-spin text-gray-400 dark:text-gray-500 mr-2" />
-        <span className="text-sm text-gray-500 dark:text-gray-400">Loading workflows...</span>
+        <span className="text-sm text-gray-500 dark:text-gray-400">Loading automations...</span>
       </div>
     )
   }
@@ -416,8 +416,8 @@ const WorkflowTable: React.FC<{
     return (
       <div className="flex flex-col items-center justify-center p-16 text-gray-500 dark:text-gray-400">
         <AlertCircle className="w-10 h-10 mb-3 text-gray-300 dark:text-gray-600" />
-        <span className="text-sm">No workflows found</span>
-        <span className="text-xs text-gray-400 dark:text-gray-500 mt-1">Create a workflow to get started</span>
+        <span className="text-sm">No automations found</span>
+        <span className="text-xs text-gray-400 dark:text-gray-500 mt-1">Create an automation to get started</span>
       </div>
     )
   }
@@ -426,7 +426,7 @@ const WorkflowTable: React.FC<{
     <table className="w-full text-sm">
       <thead className="sticky top-0 bg-gray-50 dark:bg-gray-700/50 z-10">
         <tr className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-          <th className="px-6 py-3">Workflow / Run</th>
+          <th className="px-6 py-3">Automation / Run</th>
           <th className="px-5 py-3">Status</th>
           <th className="px-5 py-3">Metrics</th>
           <th className="px-5 py-3">Cost</th>
@@ -535,7 +535,7 @@ const WorkflowTable: React.FC<{
                   <button
                     onClick={(e) => { e.stopPropagation(); onOpenWorkflow(row.preset) }}
                     className="flex items-center gap-1 px-2.5 py-1 text-xs rounded-md text-purple-600 dark:text-purple-400 hover:bg-purple-100 dark:hover:bg-purple-900/30 transition-colors ml-auto"
-                    title="Open workflow"
+                    title="Open automation"
                   >
                     Open
                   </button>
@@ -652,7 +652,7 @@ export const WorkflowsOverviewPopup: React.FC<{ isOpen: boolean; onClose: () => 
           onClick={e => e.stopPropagation()}
         >
           <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-            <h3 className="text-lg font-semibold">All Workflows</h3>
+            <h3 className="text-lg font-semibold">All Automations</h3>
             <button onClick={onClose} className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
               <X className="w-4 h-4" />
             </button>

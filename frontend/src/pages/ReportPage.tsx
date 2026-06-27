@@ -51,7 +51,7 @@ export function ReportPage({ encodedPath, onBack }: ReportPageProps) {
     )
   }
 
-  const workflowName = workspacePath.split('/').filter(Boolean).pop() || 'Workflow'
+  const workflowName = workspacePath.split('/').filter(Boolean).pop() || 'Automation'
 
   return (
     <div className="flex h-screen min-h-screen flex-col overflow-hidden bg-background text-foreground">

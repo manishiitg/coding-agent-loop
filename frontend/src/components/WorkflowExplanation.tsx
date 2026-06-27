@@ -23,12 +23,12 @@ export const WorkflowExplanation: React.FC<WorkflowExplanationProps> = ({ agentM
 
         {/* Title */}
         <h3 className="text-xl font-semibold text-foreground mb-4">
-          📋 Todo-List Workflow System
+          📋 Todo-List Automation System
         </h3>
 
         {/* Description */}
         <p className="text-sm text-muted-foreground mb-6">
-          The workflow system creates structured todo-lists with human verification and sequential task completion for complex multi-step objectives. <strong className="text-foreground">Manual verification required</strong> - stops at each step for human approval.
+          The automation system creates structured todo-lists with human verification and sequential task completion for complex multi-step objectives. <strong className="text-foreground">Manual verification required</strong> - stops at each step for human approval.
         </p>
 
         {/* Workflow Phases Cards */}

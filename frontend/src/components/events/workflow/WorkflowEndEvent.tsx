@@ -54,10 +54,10 @@ export const WorkflowEndEvent: React.FC<WorkflowEndEventProps> = ({ event }) => 
         </div>
         <div className="ml-3">
           <div className={`text-sm font-medium ${textColor}`}>
-            Workflow Completed: {event.status || 'Finished'}
+            Automation Completed: {event.status || 'Finished'}
           </div>
           <div className={`text-xs ${subTextColor} mt-1`}>
-            {event.message || 'Workflow execution completed'}
+            {event.message || 'Automation execution completed'}
           </div>
           {event.workflow_id && (
             <div className={`text-xs ${subTextColor} mt-1`}>

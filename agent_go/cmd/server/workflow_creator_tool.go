@@ -41,19 +41,19 @@ func (api *StreamingAPI) registerWorkflowCreatorTool(underlyingAgent *mcpagent.A
 			},
 			"workflow_json": map[string]interface{}{
 				"type":                 "object",
-				"description":          "The full workflow.json manifest object. Required fields: schema_version (int, 1), id (string, e.g. 'wf_<folder_name>'), label (string, free-form human-readable name — can contain spaces, capitalization, anything). Should include objective, success_criteria, and a capabilities object with selected_servers/skills/etc picked smartly from the current chat context. Set capabilities.selected_global_secret_names to [] unless specific global secrets are required.",
+				"description":          "The full workflow.json manifest object. Required fields: schema_version (int, 1), id (string, e.g. 'wf_<folder_name>'), label (string, free-form human-readable name — can contain spaces, capitalization, anything). Should include objective, success_criteria, and a capabilities object with selected_servers/skills/etc picked smartly from the current chat context. If this workflow supports an org goal, name that goal from pulse/goals.html in the objective/success_criteria and design the workflow to produce measurable evidence for it. Set capabilities.selected_global_secret_names to [] unless specific global secrets are required.",
 				"additionalProperties": true,
 			},
 			"plan_json": map[string]interface{}{
 				"type":                 "object",
-				"description":          "The full plan.json object. Required field: steps (array, at least 1 step). Each step needs type, id (kebab-case, unique), and title. Should also include objective and success_criteria at the root.",
+				"description":          "The full plan.json object. Required field: steps (array, at least 1 step). Each step needs type, id (kebab-case, unique), and title. Include steps/reporting/evaluation that capture the evidence needed by any linked org goal in pulse/goals.html.",
 				"additionalProperties": true,
 			},
 		},
 		"required": []string{"folder_name", "workflow_json", "plan_json"},
 	}
 
-	description := "Create a new workflow at Workflow/<folder_name>/ with the given workflow.json and planning/plan.json. This is the ONLY way to write under Workflow/ — the multi-agent chat folder guard blocks direct shell writes there. folder_name must be kebab-case (shell-safe); the human-readable display name goes in workflow_json.label and can be any string. The tool enforces required JSON fields and refuses to overwrite existing workflows. Returns the folder path on success."
+	description := "Create a new workflow at Workflow/<folder_name>/ with the given workflow.json and planning/plan.json. This is the ONLY way to write under Workflow/ — the multi-agent chat folder guard blocks direct shell writes there. folder_name must be kebab-case (shell-safe); the human-readable display name goes in workflow_json.label and can be any string. Before creating a workflow for an org goal, read pulse/goals.html and make the workflow's objective, success criteria, reports, and evaluation evidence align to that goal. The tool enforces required JSON fields and refuses to overwrite existing workflows. Returns the folder path on success."
 
 	return underlyingAgent.RegisterCustomTool(
 		"create_workflow",

@@ -280,7 +280,7 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
               <p className="text-xs text-muted-foreground mt-1.5 text-center">
                 {(!manifest || (manifest.variables ?? []).length === 0)
                   ? 'No variables extracted. You can still add groups as named execution runs.'
-                  : 'Add multiple groups to run workflow with different values'}
+                  : 'Add multiple groups to run automation with different values'}
               </p>
             )}
           </div>

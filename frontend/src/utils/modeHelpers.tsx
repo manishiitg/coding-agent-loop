@@ -30,7 +30,7 @@ export const getModeName = (category: ModeCategory) => {
     case 'multi-agent':
       return 'Chief of Staff'
     case 'workflow':
-      return 'Workflow Mode'
+      return 'Automation Mode'
     default:
       return 'Unknown Mode'
   }

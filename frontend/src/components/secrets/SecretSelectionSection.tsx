@@ -131,7 +131,7 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
       setWorkflowSecretName('');
       setWorkflowSecretValue('');
     } catch (err) {
-      setWorkflowSecretError(err instanceof Error ? err.message : 'Failed to save workflow secret');
+      setWorkflowSecretError(err instanceof Error ? err.message : 'Failed to save automation secret');
     } finally {
       setSavingWorkflowSecret(false);
     }
@@ -139,7 +139,7 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
 
   const handleDeleteWorkflowSecret = async (name: string) => {
     if (!normalizedWorkflowPath) return;
-    if (!confirm(`Delete workflow secret "${name}"?`)) return;
+    if (!confirm(`Delete automation secret "${name}"?`)) return;
     await removeWorkflowSecret(normalizedWorkflowPath, name);
     onSecretChange(selectedSecrets.filter(s => s !== name));
   };
@@ -159,7 +159,7 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
         <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/60 dark:bg-amber-950/20">
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0">
-              <div className="text-sm font-medium text-gray-900 dark:text-gray-100">Workflow Secrets</div>
+              <div className="text-sm font-medium text-gray-900 dark:text-gray-100">Automation Secrets</div>
               <div className="truncate text-xs text-gray-500 dark:text-gray-400">{normalizedWorkflowPath}</div>
             </div>
             <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/60 dark:text-amber-300">
@@ -205,13 +205,13 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
             />
             <label htmlFor={`workflow-secret-${secret.name}`} className="flex-1 flex min-w-0 items-center gap-2 text-sm cursor-pointer select-none text-gray-900 dark:text-gray-100">
               <span className="min-w-0 truncate font-mono">{secret.name}</span>
-              <span className="ml-auto shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">Workflow</span>
+              <span className="ml-auto shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">Automation</span>
             </label>
             <button
               type="button"
               onClick={() => handleDeleteWorkflowSecret(secret.name)}
               className="shrink-0 p-1 text-gray-400 transition-colors hover:text-red-600 dark:hover:text-red-400"
-              title="Delete workflow secret"
+              title="Delete automation secret"
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>

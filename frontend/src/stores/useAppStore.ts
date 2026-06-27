@@ -4,6 +4,8 @@ import type { AgentMode } from './types'
 import { useModeStore, type ModeCategory } from './useModeStore'
 import { getWorkspaceScopedStorageKey } from './useWorkspaceConnectionStore'
 
+export type MultiAgentRightPanelView = 'files' | 'memory' | 'org-goals' | 'org-pulse'
+
 interface AppState {
   // Agent configuration
   agentMode: AgentMode
@@ -16,6 +18,7 @@ interface AppState {
   sidebarMinimized: boolean
   workspaceMinimized: boolean
   workspaceMinimizedByMode: Record<'workflow' | 'multi-agent', boolean>
+  multiAgentRightPanelView: MultiAgentRightPanelView
   showWorkflowsOverview: boolean
   
   // Code execution mode (for multi-agent mode when no preset is active)
@@ -37,6 +40,7 @@ interface AppState {
   // UI actions
   setSidebarMinimized: (minimized: boolean) => void
   setWorkspaceMinimized: (minimized: boolean) => void
+  setMultiAgentRightPanelView: (view: MultiAgentRightPanelView) => void
   setShowWorkflowsOverview: (show: boolean) => void
   setUseCodeExecutionMode: (enabled: boolean) => void
   // Last-used tab settings — inherited by new tabs
@@ -64,6 +68,7 @@ export const useAppStore = create<AppState>()(
             workflow: false,
             'multi-agent': false,
           },
+          multiAgentRightPanelView: 'files',
           showWorkflowsOverview: false,
           useCodeExecutionMode: true, // Default to enabled
           // Actions
@@ -143,6 +148,10 @@ export const useAppStore = create<AppState>()(
           })
         },
 
+        setMultiAgentRightPanelView: (view) => {
+          set({ multiAgentRightPanelView: view })
+        },
+
         setShowWorkflowsOverview: (show) => {
           set({ showWorkflowsOverview: show })
         },
@@ -177,7 +186,7 @@ export const useAppStore = create<AppState>()(
         // File context is now mode-specific: multi-agent tabs have their own, workflow uses preset
         }),
         // Drop legacy `delegationMode` persisted from v2 and add per-mode workspace state.
-        version: 4,
+        version: 5,
         migrate: (persistedState: unknown, _version: number) => {
           const state = persistedState as Record<string, unknown>
           delete state.delegationMode
@@ -191,6 +200,14 @@ export const useAppStore = create<AppState>()(
               workflow: legacyWorkspaceMinimized,
               'multi-agent': legacyWorkspaceMinimized,
             }
+          }
+          if (_version < 5) {
+            const workspaceByMode = state.workspaceMinimizedByMode as Record<string, unknown>
+            state.workspaceMinimizedByMode = {
+              workflow: Boolean(workspaceByMode?.workflow),
+              'multi-agent': false,
+            }
+            state.workspaceMinimized = false
           }
           return state as unknown as AppState
         }

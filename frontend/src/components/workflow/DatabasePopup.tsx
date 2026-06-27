@@ -440,7 +440,7 @@ export default function DatabasePopup({ isOpen, onClose, workspacePath }: Databa
       const resp = await agentApi.getWorkflowDBTables(dbFile)
       if (!resp.success || !resp.data) {
         // Most commonly: the workflow hasn't been migrated to SQLite yet.
-        throw new Error(resp.error || 'No db/db.sqlite found for this workflow.')
+        throw new Error(resp.error || 'No db/db.sqlite found for this automation.')
       }
 
       const tables = resp.data.tables.slice().sort((a, b) => a.name.localeCompare(b.name))

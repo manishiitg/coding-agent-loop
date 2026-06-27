@@ -464,7 +464,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
         const slug = row.slug.trim().toLowerCase()
         if (!slug) continue
         if (!row.workflow_id) {
-          throw new Error(`Row "@${slug}" has no workflow selected`)
+          throw new Error(`Row "@${slug}" has no automation selected`)
         }
         // Look up the workflow's workspace_path from the discovered list so
         // the backend can read its manifest for workshop_mode fallback.
@@ -818,8 +818,8 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                             <Card className="p-4">
                               <div className="flex flex-col gap-3">
                                 <div>
-                                  <h3 className="text-sm font-medium text-foreground">Channel → Workflow Routing</h3>
-                                  <p className="text-xs text-muted-foreground mt-0.5">Messages from mapped channels run a workflow instead of multi-agent chat</p>
+                                  <h3 className="text-sm font-medium text-foreground">Channel → Automation Routing</h3>
+                                  <p className="text-xs text-muted-foreground mt-0.5">Messages from mapped channels run an automation instead of multi-agent chat</p>
                                 </div>
 
                                 {/* Existing mappings */}
@@ -845,12 +845,12 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                                               setSlackConfig({ ...slackConfig, channel_routing: updated })
                                             }}
                                             className="px-1.5 py-1 text-xs bg-secondary border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
-                                            title="Bot channels always run in Run mode. 'Default' uses the workflow manifest's setting (which is also Run for bot deployments)."
+                                            title="Bot channels always run in Run mode. 'Default' uses the automation manifest's setting (which is also Run for bot deployments)."
                                           >
                                             <option value="">Default</option>
                                             <option value="run">Run</option>
                                           </select>
-                                          <label className="flex items-center gap-1 text-xs text-muted-foreground flex-shrink-0" title="Send detailed workflow step/runtime messages to this channel">
+                                          <label className="flex items-center gap-1 text-xs text-muted-foreground flex-shrink-0" title="Send detailed automation step/runtime messages to this channel">
                                             <input
                                               type="checkbox"
                                               checked={!!r.send_full_details}
@@ -896,7 +896,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                                     onChange={e => setNewWorkflowID(e.target.value)}
                                     className="flex-1 px-2 py-1 text-xs bg-secondary border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
                                   >
-                                    <option value="">Select workflow…</option>
+                                    <option value="">Select automation…</option>
                                     {workflows.map(w => (
                                       <option key={w.manifest.id} value={w.manifest.id}>{w.manifest.label}</option>
                                     ))}
@@ -905,12 +905,12 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                                     value={newWorkshopMode}
                                     onChange={e => setNewWorkshopMode(e.target.value as '' | 'run')}
                                     className="px-1.5 py-1 text-xs bg-secondary border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
-                                    title="Bot channels always run in Run mode. 'Default' uses the workflow manifest's setting."
+                                    title="Bot channels always run in Run mode. 'Default' uses the automation manifest's setting."
                                   >
                                     <option value="">Default</option>
                                     <option value="run">Run</option>
                                   </select>
-                                  <label className="flex items-center gap-1 text-xs text-muted-foreground flex-shrink-0" title="Send detailed workflow step/runtime messages to this channel">
+                                  <label className="flex items-center gap-1 text-xs text-muted-foreground flex-shrink-0" title="Send detailed automation step/runtime messages to this channel">
                                     <input
                                       type="checkbox"
                                       checked={newSendFullDetails}
@@ -1201,10 +1201,10 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                   <Card className="p-4">
                     <div className="flex items-start justify-between mb-2">
                       <div>
-                        <h3 className="text-sm font-medium text-foreground">Workflow routing</h3>
+                        <h3 className="text-sm font-medium text-foreground">Automation routing</h3>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          Map an <code>@slug</code> to a workflow. A WhatsApp message that starts with
-                          <code> @rca …</code> routes straight into the matching workflow. No prefix = default chat.
+                          Map an <code>@slug</code> to an automation. A WhatsApp message that starts with
+                          <code> @rca …</code> routes straight into the matching automation. No prefix = default chat.
                         </p>
                       </div>
                       <button
@@ -1262,7 +1262,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                               }}
                               className="flex-1 px-2 py-1 text-xs bg-secondary border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
                             >
-                              <option value="">Select workflow…</option>
+                              <option value="">Select automation…</option>
                               {workflows.map(wf => (
                                 <option key={wf.manifest.id} value={wf.manifest.id}>
                                   {wf.manifest.label || wf.manifest.id}
@@ -1280,7 +1280,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                             >
                               <option value="run">Run</option>
                             </select>
-                            <label className="flex items-center gap-1 text-xs text-muted-foreground flex-shrink-0" title="Send detailed workflow step/runtime messages to WhatsApp">
+                            <label className="flex items-center gap-1 text-xs text-muted-foreground flex-shrink-0" title="Send detailed automation step/runtime messages to WhatsApp">
                               <input
                                 type="checkbox"
                                 checked={!!row.send_full_details}

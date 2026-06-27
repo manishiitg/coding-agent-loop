@@ -387,12 +387,12 @@ export function validateExecutionGroups(
   const variablesManifest = workflowStore.variablesManifest
 
   if (!variablesManifest?.groups || variablesManifest.groups.length === 0) {
-    return 'Please create and enable at least one group before using workflow builder or execution.'
+    return 'Please create and enable at least one group before using automation builder or execution.'
   }
 
   const enabledGroupNames = executionOptions.enabled_group_names
   if (!enabledGroupNames || enabledGroupNames.length === 0) {
-    return 'Please select at least one group before using workflow builder or execution.'
+    return 'Please select at least one group before using automation builder or execution.'
   }
 
   return null

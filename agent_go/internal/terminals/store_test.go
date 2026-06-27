@@ -1595,6 +1595,26 @@ func TestStoreAccumulatesShortTmuxScreenSnapshots(t *testing.T) {
 	}
 }
 
+func TestStoreReplacesMostlySameTmuxScreenRedraw(t *testing.T) {
+	store := NewStore()
+	metadata := map[string]interface{}{"execution_kind": "main_agent", "scope": "main", "tmux_session": "mlp-claude-main-test"}
+	oldScreen := "╭ Claude Code\n│ Editing files\n│ Running checks\n│ Press esc to interrupt\n╰ Ready"
+	newScreen := "╭ Claude Code\n│ Editing files\n│ Thinking...\n│ Press esc to interrupt\n╰ Ready"
+	store.HandleEvent("session-1", terminalEventWithMetadata("main:session-1", oldScreen, 10, metadata, time.Now()))
+	store.HandleEvent("session-1", terminalEventWithMetadata("main:session-1", newScreen, 11, metadata, time.Now().Add(time.Second)))
+
+	snapshot, ok := store.Get("session-1:main:session-1")
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if snapshot.Content != newScreen {
+		t.Fatalf("content = %q, want latest redraw %q", snapshot.Content, newScreen)
+	}
+	if strings.Contains(snapshot.Content, oldScreen+"\n"+newScreen) {
+		t.Fatalf("mostly identical redraws should not be appended:\n%s", snapshot.Content)
+	}
+}
+
 func TestStoreDoesNotAccumulateShortNonTmuxSnapshots(t *testing.T) {
 	store := NewStore()
 	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", "old screen", 10))

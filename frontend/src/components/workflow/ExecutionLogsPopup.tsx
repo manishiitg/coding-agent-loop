@@ -2104,7 +2104,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
               <p className="text-xs mt-2 opacity-70">
                 {runFolderOptions.length > 0 
                   ? `Choose from ${runFolderOptions.length} available ${runFolderOptions.length === 1 ? 'run' : 'runs'} above.`
-                  : 'No run folders available. Execute a workflow to generate logs.'}
+                  : 'No run folders available. Execute an automation to generate logs.'}
               </p>
             </div>
           ) : (

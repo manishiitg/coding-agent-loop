@@ -5,15 +5,21 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	llm "github.com/manishiitg/mcpagent/llm"
 )
 
 func TestMergeStoredProviderKeyValuesPreservesAndUpdatesProviderKeys(t *testing.T) {
 	existing := &StoredProviderKeys{
-		OpenAI:            "openai-existing",
-		ZAI:               "zai-existing",
-		Kimi:              "kimi-existing",
-		CodexCLI:          "codex-existing",
-		PiCLI:             "pi-existing",
+		OpenAI:   "openai-existing",
+		ZAI:      "zai-existing",
+		Kimi:     "kimi-existing",
+		CodexCLI: "codex-existing",
+		PiCLI:    "pi-existing",
+		PiProviderKeys: map[string]string{
+			"google":   "google-existing",
+			"deepseek": "deepseek-existing",
+		},
 		MiniMax:           "minimax-existing",
 		MiniMaxCodingPlan: "coding-existing",
 		OpenRouter:        "openrouter-existing",
@@ -22,6 +28,10 @@ func TestMergeStoredProviderKeyValuesPreservesAndUpdatesProviderKeys(t *testing.
 	incoming := &StoredProviderKeys{
 		ZAI:     "zai-new",
 		MiniMax: "__DELETE__",
+		PiProviderKeys: map[string]string{
+			"zai":      "zai-pi-new",
+			"deepseek": "__DELETE__",
+		},
 	}
 
 	merged := mergeStoredProviderKeyValues(existing, incoming)
@@ -40,6 +50,15 @@ func TestMergeStoredProviderKeyValuesPreservesAndUpdatesProviderKeys(t *testing.
 	}
 	if merged.PiCLI != "pi-existing" {
 		t.Fatalf("expected Pi CLI key to be preserved, got %q", merged.PiCLI)
+	}
+	if merged.PiProviderKeys["google"] != "google-existing" {
+		t.Fatalf("expected Pi google key to be preserved, got %q", merged.PiProviderKeys["google"])
+	}
+	if merged.PiProviderKeys["zai"] != "zai-pi-new" {
+		t.Fatalf("expected Pi zai key to be updated, got %q", merged.PiProviderKeys["zai"])
+	}
+	if _, ok := merged.PiProviderKeys["deepseek"]; ok {
+		t.Fatalf("expected Pi deepseek key to be deleted, got %q", merged.PiProviderKeys["deepseek"])
 	}
 	if merged.MiniMax != "" {
 		t.Fatalf("expected MiniMax key to be deleted, got %q", merged.MiniMax)
@@ -63,6 +82,7 @@ func TestHasStoredProviderKeysRequiresMeaningfulValues(t *testing.T) {
 		{name: "whitespace key", keys: &StoredProviderKeys{OpenAI: "   "}, want: false},
 		{name: "api key", keys: &StoredProviderKeys{OpenAI: "sk-test"}, want: true},
 		{name: "pi cli key", keys: &StoredProviderKeys{PiCLI: "pi-key"}, want: true},
+		{name: "pi provider key", keys: &StoredProviderKeys{PiProviderKeys: map[string]string{"zai": "zai-key"}}, want: true},
 		{name: "bedrock region", keys: &StoredProviderKeys{Bedrock: &StoredBedrockConfig{Region: "us-east-1"}}, want: true},
 		{
 			name: "azure requires endpoint and key",
@@ -80,6 +100,39 @@ func TestHasStoredProviderKeysRequiresMeaningfulValues(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := hasStoredProviderKeys(tt.keys); got != tt.want {
 				t.Fatalf("hasStoredProviderKeys() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSelectPiAPIKeyForModelUsesModelProviderPrefix(t *testing.T) {
+	piKey := "gemini-key"
+	zaiKey := "zai-key"
+	kimiKey := "kimi-key"
+	keys := &llm.ProviderAPIKeys{
+		PiCLI: &piKey,
+		ZAI:   &zaiKey,
+		Kimi:  &kimiKey,
+		PiProviderKeys: map[string]string{
+			"deepseek":      "deepseek-key",
+			"zai-coding-cn": "zai-cn-key",
+		},
+	}
+
+	tests := []struct {
+		modelID string
+		want    string
+	}{
+		{modelID: "google/gemini-3.5-flash", want: "gemini-key"},
+		{modelID: "zai/glm-5.2", want: "zai-key"},
+		{modelID: "zai-coding-cn/glm-5.2", want: "zai-cn-key"},
+		{modelID: "kimi-coding/k2p7", want: "kimi-key"},
+		{modelID: "deepseek/deepseek-v4-pro", want: "deepseek-key"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.modelID, func(t *testing.T) {
+			if got := selectPiAPIKeyForModel(keys, tt.modelID); got != tt.want {
+				t.Fatalf("selectPiAPIKeyForModel(%q) = %q, want %q", tt.modelID, got, tt.want)
 			}
 		})
 	}

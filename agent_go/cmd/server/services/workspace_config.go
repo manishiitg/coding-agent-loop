@@ -353,18 +353,19 @@ func LoadProviderKeys(ctx context.Context, workspaceURL string) (map[string]inte
 	}
 
 	var stored struct {
-		OpenAI     string `json:"openai,omitempty"`
-		Anthropic  string `json:"anthropic,omitempty"`
-		ZAI        string `json:"zai,omitempty"`
-		Kimi       string `json:"kimi,omitempty"`
-		Vertex     string `json:"vertex,omitempty"`
-		GeminiCLI  string `json:"gemini_cli,omitempty"`
-		CodexCLI   string `json:"codex_cli,omitempty"`
-		PiCLI      string `json:"pi_cli,omitempty"`
-		MiniMax    string `json:"minimax,omitempty"`
-		ElevenLabs string `json:"elevenlabs,omitempty"`
-		Deepgram   string `json:"deepgram,omitempty"`
-		Bedrock    *struct {
+		OpenAI         string            `json:"openai,omitempty"`
+		Anthropic      string            `json:"anthropic,omitempty"`
+		ZAI            string            `json:"zai,omitempty"`
+		Kimi           string            `json:"kimi,omitempty"`
+		Vertex         string            `json:"vertex,omitempty"`
+		GeminiCLI      string            `json:"gemini_cli,omitempty"`
+		CodexCLI       string            `json:"codex_cli,omitempty"`
+		PiCLI          string            `json:"pi_cli,omitempty"`
+		MiniMax        string            `json:"minimax,omitempty"`
+		ElevenLabs     string            `json:"elevenlabs,omitempty"`
+		Deepgram       string            `json:"deepgram,omitempty"`
+		PiProviderKeys map[string]string `json:"pi_provider_keys,omitempty"`
+		Bedrock        *struct {
 			Region string `json:"region"`
 		} `json:"bedrock,omitempty"`
 		Azure *struct {
@@ -411,6 +412,19 @@ func LoadProviderKeys(ctx context.Context, workspaceURL string) (map[string]inte
 	}
 	if stored.Deepgram != "" {
 		m["deepgram"] = stored.Deepgram
+	}
+	if len(stored.PiProviderKeys) > 0 {
+		clean := map[string]string{}
+		for provider, key := range stored.PiProviderKeys {
+			provider = strings.ToLower(strings.TrimSpace(provider))
+			key = strings.TrimSpace(key)
+			if provider != "" && key != "" {
+				clean[provider] = key
+			}
+		}
+		if len(clean) > 0 {
+			m["pi_provider_keys"] = clean
+		}
 	}
 	if stored.Bedrock != nil {
 		m["bedrock"] = map[string]interface{}{"region": stored.Bedrock.Region}

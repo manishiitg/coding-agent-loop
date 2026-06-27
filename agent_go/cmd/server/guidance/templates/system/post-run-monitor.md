@@ -60,6 +60,14 @@ Only when triage found a real problem this run — a clean run skips this step.
 
 `builder/improve.html` is the single source of truth. The Bug/Goal **verdict pills** and the one-sentence **`.status` headline** you wrote above ARE the verdict, stamped with the run number — do not write a separate JSON. Other consumers (the notify gate below, Org Pulse) read the verdict from those pills + headline. Keep the headline to one honest sentence.
 
+### 4a. Org Goal Handoff
+
+If the workflow objective, success criteria, or latest user/schedule instruction names an
+org goal, make the goal evidence easy for Org Pulse to consume: the goal card and latest run
+row in `builder/improve.html` should cite the exact run/report/db evidence that supports the
+Goal verdict. Do **not** edit workspace-level `pulse/goals.html` from this workflow-scoped
+Pulse pass. Chief of Staff / Org Pulse owns org scorecard updates after reading this log.
+
 ### 4b. Re-publish (only if publish is on)
 
 If `workflow.json.publish` is enabled, keep the public URL current — but only when it's safe to do so unattended:

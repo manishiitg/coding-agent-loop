@@ -274,7 +274,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-700 shrink-0">
           <div>
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Workflow LLM Configuration</h2>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Automation LLM Configuration</h2>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
               <span className="font-medium text-purple-500">{activePreset.label}</span> — model selection
             </p>
@@ -316,7 +316,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
                 <>
                   <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">How it works</h3>
                   <div className="text-sm text-gray-600 dark:text-gray-300 space-y-1.5">
-                    <p>Pick one coding agent or model for this workflow.</p>
+                    <p>Pick one coding agent or model for this automation.</p>
                     <p>Coding agents save high, medium, and low tiers automatically.</p>
                     <p>Workshop work uses the high tier.</p>
                   </div>
@@ -336,7 +336,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
             {!showAdvanced && (
               <div className="space-y-5">
                 <div>
-                  <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Choose one workflow model</h3>
+                  <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Choose one automation model</h3>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
                     Coding agents expand into high, medium, and low defaults. Workshop work uses high.
                   </p>
@@ -347,12 +347,12 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
                       onLLMSelect={handleSharedWorkflowLLMSelect}
                       inModal={true}
                       openDirection="down"
-                      title="Select model for workflow"
+                      title="Select model for automation"
                     />
                     <WorkflowLLMTierPreview selectedLLM={sharedSelectedLLM} providerManifest={providerManifest} />
                     {sharedWorkflowLLM && (
                       <p className="text-xs text-gray-500 dark:text-gray-400 mt-3">
-                        Saved as workflow tier defaults.
+                        Saved as automation tier defaults.
                       </p>
                     )}
                   </div>
@@ -364,7 +364,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
                   className="inline-flex items-center gap-2 text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
                 >
                   <SlidersHorizontal className="w-4 h-4" />
-                  Advanced workflow LLM setup
+                  Advanced automation LLM setup
                 </button>
               </div>
             )}

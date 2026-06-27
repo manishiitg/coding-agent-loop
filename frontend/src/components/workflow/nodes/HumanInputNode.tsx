@@ -3,6 +3,7 @@ import { Handle, Position } from '@xyflow/react'
 import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, User } from 'lucide-react'
 import type { HumanInputNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
+import { getExecutionModeVisuals } from './executionModeVisuals'
 
 interface HumanInputNodeProps {
   data: HumanInputNodeData
@@ -34,9 +35,17 @@ const statusIcons: Record<string, ReactElement | null> = {
 }
 
 export const HumanInputNode = memo(({ data, selected }: HumanInputNodeProps) => {
-  const { title, question, response_type, options, status, stepIndex, changeType, isOrphan } = data
+  const { title, question, response_type, options, status, stepIndex, changeType, isOrphan, step } = data
+  const executionMode = step?.agent_configs?.declared_execution_mode
+  const executionModeReason = step?.agent_configs?.declared_execution_mode_reason
+  const executionModeVisuals = getExecutionModeVisuals(executionMode, executionModeReason)
+  const ModeIcon = executionModeVisuals.Icon
 
   const borderColor = statusBorderColors[status] || statusBorderColors.pending
+  const nodeBorderColor = status === 'pending' && executionModeVisuals.borderClassName
+    ? executionModeVisuals.borderClassName
+    : borderColor
+  const modeHandleColor = executionModeVisuals.handleClassName || '!bg-blue-500'
   const statusIcon = statusIcons[status] || null
   const changeStyle = changeType ? changeHighlightStyles[changeType] : ''
   const changeBadge = changeType ? changeBadgeStyles[changeType] : null
@@ -55,7 +64,7 @@ export const HumanInputNode = memo(({ data, selected }: HumanInputNodeProps) => 
   return (
     <div
       className={`
-        relative bg-white dark:bg-gray-800 rounded-lg border-2 ${borderColor}
+        relative bg-white dark:bg-gray-800 rounded-lg border-2 ${nodeBorderColor}
         shadow-md hover:shadow-lg transition-all duration-200
         min-w-[320px] max-w-[320px]
         ${isOrphan ? 'border-dashed border-amber-400 dark:border-amber-500' : ''}
@@ -71,17 +80,25 @@ export const HumanInputNode = memo(({ data, selected }: HumanInputNodeProps) => 
       )}
 
       {/* Top handle */}
-      <Handle type="target" position={Position.Top} className="w-3 h-3 !bg-blue-500" />
+      <Handle type="target" position={Position.Top} className={`w-3 h-3 ${modeHandleColor}`} />
 
       {/* Header */}
       <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
         <div className="flex items-center gap-2 flex-1 min-w-0">
-          <User className="w-4 h-4 text-blue-500 flex-shrink-0" />
+          {ModeIcon ? (
+            <div
+              className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${executionModeVisuals.iconBoxClassName}`}
+              title={executionModeVisuals.title}
+            >
+              <ModeIcon className="h-3.5 w-3.5" />
+            </div>
+          ) : (
+            <User className="w-4 h-4 text-blue-500 flex-shrink-0" />
+          )}
           <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide truncate">
             Human Input
           </span>
         </div>
-        <div />
       </div>
 
       {/* Content */}
@@ -127,14 +144,14 @@ export const HumanInputNode = memo(({ data, selected }: HumanInputNodeProps) => 
         <Handle
           type="source"
           position={Position.Bottom}
-          className="w-3 h-3 !bg-blue-500"
+          className={`w-3 h-3 ${modeHandleColor}`}
         />
       )}
       {(!response_type || response_type === 'text') && (
         <Handle
           type="source"
           position={Position.Bottom}
-          className="w-3 h-3 !bg-gray-500"
+          className={`w-3 h-3 ${executionModeVisuals.handleClassName || '!bg-gray-500'}`}
         />
       )}
     </div>

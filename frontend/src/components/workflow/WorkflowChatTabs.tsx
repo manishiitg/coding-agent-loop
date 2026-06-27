@@ -195,9 +195,12 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat, e
   // restore look like it failed.
   const activeWorkflowTabs = useMemo(() => {
     const allTabs = Object.values(chatTabs)
+    const shouldShowViewOnlyTab = (tab: ChatTab) =>
+      !tab.metadata?.isViewOnly || tab.tabId === activeTabId || tab.isStreaming || tab.hasRunningBgAgents
     const matched = allTabs.filter(tab =>
       tab.metadata?.mode === 'workflow' &&
-      tab.metadata.presetQueryId === activePresetId
+      tab.metadata.presetQueryId === activePresetId &&
+      shouldShowViewOnlyTab(tab)
     )
     const activeTab = activeTabId ? chatTabs[activeTabId] : undefined
     const activeWorkflowTab = activeTab?.metadata?.mode === 'workflow' ? activeTab : undefined
@@ -273,6 +276,7 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat, e
       scheduledJobName: undefined,
       isBotRun: false,
       botPlatform: undefined,
+      readOnlyRestoredAt: undefined,
     })
     useChatStore.setState((state) => {
       const current = state.chatTabs[tabId]
@@ -349,7 +353,7 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat, e
               onNewChat()
             }}
             className="ml-0.5 inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
-            title="Start a new workflow chat"
+            title="Start a new automation chat"
           >
             <Plus className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">New Chat</span>
@@ -365,7 +369,7 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat, e
           aria-label="Event layout mode"
         >
           {([
-            { mode: 'tree' as const, Icon: ListTree, label: 'Tree', tip: 'Tree view — group events by workflow and agent' },
+            { mode: 'tree' as const, Icon: ListTree, label: 'Tree', tip: 'Tree view — group events by automation and agent' },
             { mode: 'terminal' as const, Icon: Terminal, label: 'Terminal', tip: 'Terminal view — show only the terminal panes, no events' },
           ]).map(({ mode, Icon, label, tip }) => (
             <Tooltip key={mode}>

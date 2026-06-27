@@ -41,6 +41,20 @@ When running a step or the full workflow:
      Workshop if changes are required.
 6. **ALWAYS follow up** after execution. Never fire-and-forget.
 
+## Org Goal Evidence Handoff
+
+If the workflow objective, success criteria, or user request names an org
+goal, the run follow-up must point to the concrete evidence that a Chief of
+Staff / Org Pulse pass can use to measure that goal: run outputs under
+`runs/iteration-0/<group>/execution/`, Pulse verdicts in
+`builder/improve.html`, reports under `reports/`, and durable rows/metrics in
+`db/db.sqlite`.
+
+Do not edit workspace-level `pulse/goals.html` from workflow run/workshop mode.
+That file belongs to Chief of Staff / Org Pulse. Your job during a workflow run
+is to produce and cite the evidence cleanly enough for the org-level scorecard
+to be updated after the run.
+
 ## Auto-notification system
 
 All background agents **automatically notify you** when they complete:

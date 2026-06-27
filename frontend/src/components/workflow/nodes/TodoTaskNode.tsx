@@ -3,6 +3,7 @@ import { Handle, Position } from '@xyflow/react'
 import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, ListTodo, Bot, Route, ListOrdered } from 'lucide-react'
 import type { TodoTaskNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
+import { getExecutionModeVisuals } from './executionModeVisuals'
 
 interface TodoTaskNodeProps {
   data: TodoTaskNodeData
@@ -59,6 +60,18 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
 
   const isNestedTodoSubAgent = useMemo(() => id.includes('-sub-agent-') && !!parentOrchestratorTitle, [id, parentOrchestratorTitle])
   const cardWidth = isNestedTodoSubAgent ? 264 : 300
+  const executionMode = step?.agent_configs?.declared_execution_mode
+  const executionModeReason = step?.agent_configs?.declared_execution_mode_reason
+  const executionModeVisuals = getExecutionModeVisuals(executionMode, executionModeReason)
+  const ModeIcon = executionModeVisuals.Icon
+  const TodoIcon = ModeIcon || ListTodo
+  const taskBadgeColor = executionModeVisuals.solidBadgeClassName ||
+    (isNestedTodoSubAgent ? 'bg-violet-600 dark:bg-violet-700 text-white' : 'bg-purple-600 dark:bg-purple-700 text-white')
+  const nodeBorderColor = status === 'pending' && executionModeVisuals.borderClassName
+    ? executionModeVisuals.borderClassName
+    : statusBorderColors[status]
+  const primaryHandleColor = executionModeVisuals.handleClassName ||
+    (isNestedTodoSubAgent ? '!bg-violet-500 dark:!bg-violet-600' : '!bg-purple-500 dark:!bg-purple-600')
 
   // Scripted message sequence (scripted turns / foreach loops / prevalidation
   // gates) fed into the orchestrator's own conversation after its first turn.
@@ -95,8 +108,11 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
       </div>
 
       {/* Todo Task Badge - Top */}
-      <div className={`absolute ${isNestedTodoSubAgent ? '-top-2' : '-top-2.5'} left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 ${isNestedTodoSubAgent ? 'px-2 py-0.5 text-[10px]' : 'px-2.5 py-1 text-[11px]'} rounded-full ${isNestedTodoSubAgent ? 'bg-violet-600 dark:bg-violet-700' : 'bg-purple-600 dark:bg-purple-700'} text-white font-semibold shadow-lg`}>
-        <ListTodo className="w-3.5 h-3.5" />
+      <div
+        className={`absolute ${isNestedTodoSubAgent ? '-top-2' : '-top-2.5'} left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 ${isNestedTodoSubAgent ? 'px-2 py-0.5 text-[10px]' : 'px-2.5 py-1 text-[11px]'} rounded-full ${taskBadgeColor} font-semibold shadow-lg`}
+        title={executionModeVisuals.title}
+      >
+        <TodoIcon className="w-3.5 h-3.5" />
         <span>{isNestedTodoSubAgent ? 'Nested Orchestrator' : 'Orchestrator'}</span>
       </div>
 
@@ -112,7 +128,7 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
       <div
         className={`
           relative rounded-xl border-2 ${isNestedTodoSubAgent ? 'bg-card shadow-md' : 'bg-white dark:bg-gray-900 shadow-lg'} overflow-visible
-          ${statusBorderColors[status]}
+          ${nodeBorderColor}
           ${selected ? 'ring-2 ring-purple-500/60' : ''}
           ${status === 'running' || status === 'executing' || status === 'evaluating' || status === 'orchestrating' ? 'animate-pulse' : ''}
         `}
@@ -126,7 +142,7 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
           type="target"
           position={Position.Top}
           id={isNestedTodoSubAgent ? 'top' : undefined}
-          className={`!w-3 !h-3 !border-2 !border-white dark:!border-gray-900 ${isNestedTodoSubAgent ? '!bg-violet-500 dark:!bg-violet-600' : '!bg-purple-500 dark:!bg-purple-600'}`}
+          className={`!w-3 !h-3 !border-2 !border-white dark:!border-gray-900 ${primaryHandleColor}`}
           style={{ top: '-6px', left: '50%' }}
         />
 
@@ -271,7 +287,7 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
                   type="source"
                   position={Position.Bottom}
                   id={route.route_id}
-                  className="!w-3 !h-3 !bg-purple-500 dark:!bg-purple-600 !border-2 !border-white dark:!border-gray-900 !shadow-md"
+                  className={`!w-3 !h-3 ${primaryHandleColor} !border-2 !border-white dark:!border-gray-900 !shadow-md`}
                   style={{ left: `${positionPercent}%`, bottom: '-6px' }}
                 />
               )
@@ -284,7 +300,7 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
               id="end"
               className="!w-3 !h-3 !bg-red-500 dark:!bg-red-600 !border-2 !border-white dark:!border-gray-900 !shadow-md"
               style={{ left: `${20 + (predefined_routes.length * (60 / (predefined_routes.length)))}%`, bottom: '-6px' }}
-              title="End workflow route"
+              title="End automation route"
             />
           </>
         ) : (
@@ -292,7 +308,7 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
             <Handle
               type="source"
               position={Position.Bottom}
-              className="!w-3 !h-3 !bg-purple-500 dark:!bg-purple-600 !border-2 !border-white dark:!border-gray-900 !shadow-md"
+              className={`!w-3 !h-3 ${primaryHandleColor} !border-2 !border-white dark:!border-gray-900 !shadow-md`}
               style={{ left: '40%', bottom: '-6px' }}
             />
             {/* "end" route handle */}
@@ -302,7 +318,7 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
               id="end"
               className="!w-3 !h-3 !bg-red-500 dark:!bg-red-600 !border-2 !border-white dark:!border-gray-900 !shadow-md"
               style={{ left: '60%', bottom: '-6px' }}
-              title="End workflow route"
+              title="End automation route"
             />
           </>
         )}

@@ -94,7 +94,7 @@ func (r *terminalPipeRecorder) ensureAsync(tmuxSession string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), terminalTmuxActionTimeout)
 		defer cancel()
-		err := r.start(ctx, rec)
+		err := r.start(ctx, rec, false)
 		r.markStarted(tmuxSession, err)
 	}()
 }
@@ -137,14 +137,20 @@ func (r *terminalPipeRecorder) markStarted(tmuxSession string, err error) {
 	}
 }
 
-func (r *terminalPipeRecorder) start(ctx context.Context, rec *terminalPipeRecording) error {
+func (r *terminalPipeRecorder) start(ctx context.Context, rec *terminalPipeRecording, seedHistory bool) error {
 	if rec == nil {
 		return fmt.Errorf("terminal recording is required")
 	}
 	if err := os.MkdirAll(filepath.Dir(rec.path), 0o700); err != nil {
 		return err
 	}
-	seed, err := captureTerminalPaneLines(ctx, rec.tmuxSession, terminalDefaultRefreshLines)
+	var seed string
+	var err error
+	if seedHistory {
+		seed, err = captureTerminalPaneLines(ctx, rec.tmuxSession, terminalDefaultRefreshLines)
+	} else {
+		seed, err = captureTerminalVisiblePane(ctx, rec.tmuxSession)
+	}
 	if err == nil && strings.TrimSpace(seed) != "" {
 		if writeErr := os.WriteFile(rec.path, []byte(strings.TrimRight(seed, "\n")+"\n"), 0o600); writeErr != nil {
 			return writeErr
@@ -163,7 +169,7 @@ func (r *terminalPipeRecorder) start(ctx context.Context, rec *terminalPipeRecor
 	return nil
 }
 
-func (r *terminalPipeRecorder) Content(ctx context.Context, snapshot terminals.Snapshot) (string, terminalPaneCaptureStats, bool, error) {
+func (r *terminalPipeRecorder) Content(ctx context.Context, snapshot terminals.Snapshot, seedHistory bool) (string, terminalPaneCaptureStats, bool, error) {
 	stats := terminalPaneCaptureStats{RequestedLines: terminalDefaultRefreshLines, ContentSource: "tmux_pipe"}
 	if r == nil {
 		return "", stats, false, nil
@@ -179,7 +185,7 @@ func (r *terminalPipeRecorder) Content(ctx context.Context, snapshot terminals.S
 		if !shouldStart {
 			return "", stats, false, nil
 		}
-		if err := r.start(ctx, rec); err != nil {
+		if err := r.start(ctx, rec, seedHistory || !snapshot.Active); err != nil {
 			r.markStarted(tmuxSession, err)
 			return "", stats, false, err
 		}

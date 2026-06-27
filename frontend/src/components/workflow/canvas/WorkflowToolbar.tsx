@@ -652,7 +652,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 <ShieldCheck className="w-3.5 h-3.5" />
               </button>
             </TooltipTrigger>
-            <TooltipContent side="bottom"><p>Workflow Access</p></TooltipContent>
+            <TooltipContent side="bottom"><p>Automation Access</p></TooltipContent>
           </Tooltip>
         )}
 

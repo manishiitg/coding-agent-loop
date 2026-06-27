@@ -605,7 +605,7 @@ function getBackgroundExecutionDisplayName(rawName: string): string {
   if (!stripped) return 'Task'
 
   if (stripped.toLowerCase().startsWith('full-workflow')) {
-    return stripped.replace(/^full-workflow/i, 'Full workflow')
+    return stripped.replace(/^full-workflow/i, 'Full automation')
   }
 
   const workflowPrefix = 'Workflow step ->'
@@ -613,7 +613,7 @@ function getBackgroundExecutionDisplayName(rawName: string): string {
 
   let stepName = stripped.slice(workflowPrefix.length).trim()
   if (/^workflow-full-[a-z0-9]+-step-\d+-[a-z0-9]+$/i.test(stepName) || /^workflow-step-\d+-[a-z0-9]+$/i.test(stepName)) {
-    return 'Workflow step'
+    return 'Automation step'
   }
   const executionMarker = stepName.lastIndexOf('execution-')
   if (executionMarker >= 0) {
@@ -623,7 +623,7 @@ function getBackgroundExecutionDisplayName(rawName: string): string {
   }
   stepName = stepName.replace(/-[a-z0-9]{10,}$/gi, '')
 
-  return titleCaseIdentifier(stepName) || 'Workflow step'
+  return titleCaseIdentifier(stepName) || 'Automation step'
 }
 
 function getBackgroundExecutionKindLabel(kind?: string): string | undefined {
@@ -631,7 +631,7 @@ function getBackgroundExecutionKindLabel(kind?: string): string | undefined {
   const normalized = kind.replace(/[-_\s]+/g, ' ').trim().toLowerCase()
   if (!normalized) return undefined
   if (normalized === 'workshop background') return 'Background task'
-  if (normalized === 'workflow step') return 'Workflow step'
+  if (normalized === 'workflow step') return 'Automation step'
   if (normalized === 'workflow sub agent') return 'Sub-agent'
   if (normalized === 'background agent') return 'Background task'
   return titleCaseIdentifier(normalized)
@@ -1519,7 +1519,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     const rootCauseError = 
       (typeof nestedData === 'object' && nestedData !== null && 'error' in nestedData && typeof nestedData.error === 'string' && nestedData.error) ||
       (typeof data?.error === 'string' && data.error) ||
-      'Unknown workflow error'
+      'Unknown automation error'
     
     const fullErrorChain = 
       (typeof nestedData === 'object' && nestedData !== null && 'error_chain' in nestedData && typeof nestedData.error_chain === 'string' && nestedData.error_chain) ||
@@ -1540,7 +1540,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
               <div className="flex items-center gap-2">
                 <span className="text-lg">❌</span>
                 <div className={`${compact ? 'text-xs' : 'text-sm'} font-medium text-red-700 dark:text-red-300`}>
-                  Workflow Error
+                  Automation Error
                 </div>
               </div>
               {event.timestamp && (

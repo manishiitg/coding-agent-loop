@@ -136,7 +136,7 @@ const isPatchArtifactPath = (filepath: string): boolean => {
 
 // Get step title from plan
 function getStepTitle(plan: PlanningResponse | null, stepId: string): string {
-  if (stepId === '_global') return 'Workflow Knowledge (Global)'
+  if (stepId === '_global') return 'Automation Knowledge (Global)'
   if (!plan?.steps) return stepId
 
   const findStep = (steps: PlanStep[], id: string): PlanStep | null => {
@@ -884,7 +884,7 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
         <div className="flex items-start justify-between gap-3 border-b border-border flex-shrink-0 p-3 sm:p-4">
           <div className="flex min-w-0 items-center gap-2">
             <BookOpen className="w-5 h-5 text-primary" />
-            <h2 className="truncate text-lg font-semibold">Workflow Learnings</h2>
+            <h2 className="truncate text-lg font-semibold">Automation Learnings</h2>
           </div>
           <button
             onClick={onClose}
@@ -922,7 +922,7 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                   <Globe className="w-4 h-4 text-muted-foreground shrink-0" />
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="font-medium text-sm">Global Workflow Skill</h3>
+                      <h3 className="font-medium text-sm">Global Automation Skill</h3>
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
                         learnings/_global/
                       </span>

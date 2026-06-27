@@ -91,7 +91,7 @@ const buildEmployeeWorkflowRows = (employees: EmployeeApiRecord[], summaries: Wo
         id: '__unassigned__',
         name: 'Unassigned',
         avatar_color: '#9ca3af',
-        description: 'Workflows not assigned to any employee',
+        description: 'Automations not assigned to any employee',
         created_at: '',
         updated_at: '',
       },
@@ -1126,7 +1126,7 @@ export const EmployeeDashboard: React.FC = () => {
         ...EMPTY_WORKFLOW_CONFIG_STATE,
         loading: false,
         path,
-        error: err instanceof Error ? err.message : 'Failed to load workflow config',
+        error: err instanceof Error ? err.message : 'Failed to load automation config',
       })
     }
   }, [])
@@ -1686,7 +1686,7 @@ export const EmployeeDashboard: React.FC = () => {
               <div className="rounded-2xl border border-dashed border-border bg-card px-6 py-16 text-center">
                 <UserCircle2 className="mx-auto mb-4 h-14 w-14 text-muted-foreground/60" />
                 <p className="text-base font-medium text-foreground">No employees found.</p>
-                <p className="mt-1 text-sm text-muted-foreground">Add the first employee to start organizing workflows.</p>
+                <p className="mt-1 text-sm text-muted-foreground">Add the first employee to start organizing automations.</p>
               </div>
             )}
 
@@ -1824,8 +1824,8 @@ export const EmployeeDashboard: React.FC = () => {
                                   <button
                                     onClick={(event) => toggleAssignMenu(event, wf.workspacePath)}
                                     className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                                    aria-label={employee.id === '__unassigned__' ? 'Assign workflow' : 'Reassign workflow'}
-                                    title={employee.id === '__unassigned__' ? 'Assign workflow' : 'Reassign workflow'}
+                                    aria-label={employee.id === '__unassigned__' ? 'Assign automation' : 'Reassign automation'}
+                                    title={employee.id === '__unassigned__' ? 'Assign automation' : 'Reassign automation'}
                                   >
                                     {employee.id === '__unassigned__' ? (
                                       <UserPlus className="h-3.5 w-3.5" />
@@ -1870,7 +1870,7 @@ export const EmployeeDashboard: React.FC = () => {
                   </div>
                 ) : (
                   <div className="border-t border-border px-5 py-3 text-xs text-muted-foreground">
-                    No workflows assigned yet
+                    No automations assigned yet
                   </div>
                 ))}
               </div>
@@ -1934,7 +1934,7 @@ export const EmployeeDashboard: React.FC = () => {
                   <div>
                     <h4 className="text-base font-semibold text-foreground">Latest report</h4>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Select a workflow to review its report, metrics, and cost.
+                      Select an automation to review its report, metrics, and cost.
                     </p>
                   </div>
                 )}
@@ -1957,16 +1957,16 @@ export const EmployeeDashboard: React.FC = () => {
               <div className="max-h-[calc(100vh-240px)] overflow-y-auto p-5">
                 {!selectedWorkflow ? (
                   <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-                    Select a workflow from the left to review what this employee produced.
+                    Select an automation from the left to review what this employee produced.
                   </div>
                 ) : reviewTab !== 'soul' && reviewTab !== 'skills' && reviewTab !== 'config' && reviewTab !== 'knowledgebase' && reviewTab !== 'logs' && reviewTab !== 'flow' && !selectedWorkflow.latestRunFolder ? (
                   <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-                    This workflow has not produced a run yet, so there is no report, metrics, or cost data to review.
+                    This automation has not produced a run yet, so there is no report, metrics, or cost data to review.
                   </div>
                 ) : reviewTab !== 'soul' && reviewTab !== 'skills' && reviewTab !== 'config' && reviewTab !== 'knowledgebase' && reviewTab !== 'logs' && reviewTab !== 'flow' && reviewState.loading ? (
                   <div className="flex items-center justify-center py-16 text-sm text-muted-foreground">
                     <Loader2 className="mr-2 h-5 w-5 animate-spin text-cyan-500" />
-                    Loading latest workflow review data...
+                    Loading latest automation review data...
                   </div>
                 ) : reviewTab === 'report' ? (
                   <div className="h-[calc(100vh-320px)] min-h-[400px]">
@@ -2173,7 +2173,7 @@ export const EmployeeDashboard: React.FC = () => {
                       </div>
                     ) : !docState.exists ? (
                       <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-                        No soul/soul.md exists for this workflow yet.
+                        No soul/soul.md exists for this automation yet.
                       </div>
                     ) : (
                       <div className="rounded-xl border border-border bg-card p-4">
@@ -2235,7 +2235,7 @@ export const EmployeeDashboard: React.FC = () => {
                       </div>
                     ) : !workflowSkillsState.exists ? (
                       <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-                        No global workflow skill exists yet. Learnings appear at learnings/_global/SKILL.md after learning-enabled steps contribute reusable know-how.
+                        No global automation skill exists yet. Learnings appear at learnings/_global/SKILL.md after learning-enabled steps contribute reusable know-how.
                       </div>
                     ) : (
                       <div className="space-y-4">
@@ -2303,7 +2303,7 @@ export const EmployeeDashboard: React.FC = () => {
                   <div className="space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <h4 className="text-base font-semibold text-foreground">Workflow config</h4>
+                        <h4 className="text-base font-semibold text-foreground">Automation config</h4>
                         <p className="mt-1 font-mono text-[11px] text-muted-foreground">{workflowConfigState.path}</p>
                       </div>
                       <button
@@ -2330,7 +2330,7 @@ export const EmployeeDashboard: React.FC = () => {
                       </div>
                     ) : !workflowConfigState.exists ? (
                       <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-                        No workflow.json exists for this workflow.
+                        No workflow.json exists for this automation.
                       </div>
                     ) : (
                       <pre className="max-h-[calc(100vh-360px)] overflow-auto rounded-xl border border-border bg-card p-4 font-mono text-xs leading-relaxed text-foreground">
@@ -2484,7 +2484,7 @@ export const EmployeeDashboard: React.FC = () => {
                     />
                   ) : (
                     <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-                      This workflow has not produced a run yet, so there are no execution logs to review.
+                      This automation has not produced a run yet, so there are no execution logs to review.
                     </div>
                   )
                 ) : (

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,59 @@ import (
 	storeevents "mcp-agent-builder-go/agent_go/internal/events"
 	"mcp-agent-builder-go/agent_go/internal/terminals"
 )
+
+func TestTerminalSizeHintResizesLiveTerminalsForSession(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-resize"
+	otherSessionID := "session-other-resize"
+
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "main:"+sessionID, "tmux-main-resize", "main pane", 1))
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", "tmux-step-resize", "step pane", 1))
+	store.HandleEvent(otherSessionID, terminalRouteChunkEvent(otherSessionID, "main:"+otherSessionID, "tmux-other-resize", "other pane", 1))
+
+	originalRunTerminalTmuxCommand := runTerminalTmuxCommand
+	defer func() { runTerminalTmuxCommand = originalRunTerminalTmuxCommand }()
+	var calls [][]string
+	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
+		calls = append(calls, append([]string(nil), args...))
+		return nil
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/terminals/size-hint", bytes.NewBufferString(`{"cols":132,"rows":41,"session_id":"`+sessionID+`"}`))
+	rec := httptest.NewRecorder()
+	api.handleTerminalSizeHint(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("size hint status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got := int(resp["resized"].(float64)); got != 2 {
+		t.Fatalf("resized = %d, want 2", got)
+	}
+
+	targets := map[string]bool{}
+	for _, call := range calls {
+		joined := strings.Join(call, " ")
+		if !strings.Contains(joined, "resize-window") || !strings.Contains(joined, "-x 132") || !strings.Contains(joined, "-y 41") {
+			t.Fatalf("resize call = %#v, want resize-window -x 132 -y 41", call)
+		}
+		for i, arg := range call {
+			if arg == "-t" && i+1 < len(call) {
+				targets[call[i+1]] = true
+			}
+		}
+	}
+	if !targets["tmux-main-resize"] || !targets["tmux-step-resize"] {
+		t.Fatalf("resize targets = %#v, want main and step tmux sessions", targets)
+	}
+	if targets["tmux-other-resize"] {
+		t.Fatalf("resize targets = %#v, must not resize other sessions", targets)
+	}
+}
 
 func TestTerminalRoutesCloseAndDismissMismatchedOwnerTerminal(t *testing.T) {
 	store := terminals.NewStore()
@@ -718,7 +772,7 @@ func TestTerminalRoutesGetTerminalHistoryPrefersLongerPipeRecording(t *testing.T
 	}
 }
 
-func TestTerminalRoutesGetTerminalCapturesRunningTmuxScrollableHistory(t *testing.T) {
+func TestTerminalRoutesGetTerminalCapturesRunningTmuxVisibleScreen(t *testing.T) {
 	store := terminals.NewStore()
 	api := &StreamingAPI{terminalStore: store}
 	sessionID := "session-terminal-visible"
@@ -741,15 +795,70 @@ func TestTerminalRoutesGetTerminalCapturesRunningTmuxScrollableHistory(t *testin
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get status = %d body=%s, want 200", rec.Code, rec.Body.String())
 	}
-	if got := strings.Join(gotArgs, " "); got != "capture-pane -p -e -J -t "+tmuxSession+" -S -10000" {
-		t.Fatalf("tmux args = %q, want scrollable-history capture", got)
+	if got := strings.Join(gotArgs, " "); got != "capture-pane -p -e -J -t "+tmuxSession {
+		t.Fatalf("tmux args = %q, want visible-screen capture", got)
 	}
 	var response terminals.Snapshot
 	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
 		t.Fatalf("decode visible response: %v", err)
 	}
-	if response.Content != "loading\nold frame\ncurrent visible pane" {
-		t.Fatalf("terminal content = %q, want accumulated visible content", response.Content)
+	if response.Content != "current visible pane" {
+		t.Fatalf("terminal content = %q, want current visible content", response.Content)
+	}
+}
+
+func TestTerminalRoutesGetTerminalScreenIgnoresPipeRecording(t *testing.T) {
+	store := terminals.NewStore()
+	sessionID := "session-terminal-screen-pipe"
+	terminalID := sessionID + ":workflow-step:review-plan"
+	tmuxSession := "mlp-claude-screen-pipe"
+	pipeDir := t.TempDir()
+	pipePath := filepath.Join(pipeDir, terminalPipeRecorderFileName(tmuxSession))
+	pipeContent := strings.Repeat("mcp-agent-20260627-080010\n", 8)
+	if err := os.WriteFile(pipePath, []byte(pipeContent), 0o600); err != nil {
+		t.Fatalf("write pipe recording: %v", err)
+	}
+	api := &StreamingAPI{
+		terminalStore: store,
+		terminalPipeRecorder: &terminalPipeRecorder{
+			root: pipeDir,
+			sessions: map[string]*terminalPipeRecording{
+				tmuxSession: {
+					tmuxSession: tmuxSession,
+					path:        pipePath,
+					started:     true,
+				},
+			},
+		},
+	}
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, "old pane", 2))
+
+	oldRunOutput := runTerminalTmuxOutputCommand
+	runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "capture-pane" {
+			return "current visible pane", nil
+		}
+		t.Fatalf("unexpected tmux args: %v", args)
+		return "", nil
+	}
+	defer func() { runTerminalTmuxOutputCommand = oldRunOutput }()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/terminals/"+terminalID+"?content=screen", nil)
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
+	rec := httptest.NewRecorder()
+	api.handleGetTerminal(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	var response terminals.Snapshot
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode screen response: %v", err)
+	}
+	if response.Content != "current visible pane" {
+		t.Fatalf("terminal content = %q, want visible pane content", response.Content)
+	}
+	if response.ContentSource != "tmux_capture" {
+		t.Fatalf("content source = %q, want tmux_capture", response.ContentSource)
 	}
 }
 
@@ -782,8 +891,8 @@ func TestTerminalRoutesGetTerminalDebugHeadersIncludeTmuxStats(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get status = %d body=%s, want 200", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get("X-Runloop-Terminal-Preserve-Scrollback"); got != "true" {
-		t.Fatalf("preserve scrollback header = %q, want true", got)
+	if got := rec.Header().Get("X-Runloop-Terminal-Preserve-Scrollback"); got != "false" {
+		t.Fatalf("preserve scrollback header = %q, want false", got)
 	}
 	if got := rec.Header().Get("X-Runloop-Terminal-Tmux-History-Size"); got != "4" {
 		t.Fatalf("tmux history size header = %q, want 4", got)

@@ -12,27 +12,27 @@ const STEPS: WalkthroughStep[] = [
   {
     selector: '[data-tour="top-mode-switcher"]',
     title: 'Top modes',
-    body: 'Use these to move between Workflow, Chat, and Org views. Keyboard shortcuts are Ctrl+1, Ctrl+2, and Ctrl+3.',
+    body: 'Use these to move between Automation, Chat, and Org views. Keyboard shortcuts are Ctrl+1, Ctrl+2, and Ctrl+3.',
   },
   {
     selector: '[data-tour="workflow-add-edit"]',
-    title: 'Add or edit workflows',
-    body: 'Click the workflow name to switch or add a workflow. Use the gear beside it to edit the selected workflow.',
+    title: 'Add or edit automations',
+    body: 'Click the automation name to switch or add an automation. Use the gear beside it to edit the selected automation.',
   },
   {
     selector: '[data-tour="workflow-schedules"]',
     title: 'Schedules',
-    body: 'Open scheduled workflow runs from here. It shows how many schedules exist and whether any are running now.',
+    body: 'Open scheduled automation runs from here. It shows how many schedules exist and whether any are running now.',
   },
   {
     selector: '[data-tour="bot-connector"]',
     title: 'Bot connector',
-    body: 'Use this to connect a workflow to bot channels like WhatsApp or Slack, and to test bot-driven runs.',
+    body: 'Use this to connect an automation to bot channels like WhatsApp or Slack, and to test bot-driven runs.',
   },
   {
     selector: '[data-tour="workspace-open"]',
     title: 'Workspace files',
-    body: 'Open the workspace to inspect files, reports, run outputs, and workflow artifacts. Ctrl+6 toggles it.',
+    body: 'Open the workspace to inspect files, reports, run outputs, and automation artifacts. Ctrl+6 toggles it.',
   },
   {
     selector: '[data-tour="chat-input-area"]',
@@ -42,7 +42,7 @@ const STEPS: WalkthroughStep[] = [
   {
     selector: '[data-tour="chat-input-box"]',
     title: 'Prompt box',
-    body: 'Use @ for files, / for commands, # for workflows, ! for skills, and $ for MCP servers.',
+    body: 'Use @ for files, / for commands, # for automations, ! for skills, and $ for MCP servers.',
   },
   {
     selector: '[data-tour="chat-input-tools"]',
@@ -61,18 +61,18 @@ const STEPS: WalkthroughStep[] = [
   },
   {
     selector: '[data-tour="workflow-view-switcher"]',
-    title: 'Workflow views',
-    body: 'Chat is the main place to build and change a workflow. Plan shows the step structure. Report shows the output view.',
+    title: 'Automation views',
+    body: 'Chat is the main place to build and change an automation. Plan shows the step structure. Report shows the output view.',
   },
   {
     selector: '[data-tour="workflow-chat-pane"]',
     title: 'Chat',
-    body: 'Use chat for builder and optimizer work. You can type normally, use slash commands, and continue a running workflow conversation.',
+    body: 'Use chat for builder and optimizer work. You can type normally, use slash commands, and continue a running automation conversation.',
   },
   {
     selector: '[data-tour="workflow-canvas-pane"]',
     title: 'Plan and report',
-    body: 'This area shows the plan graph or report preview, so you can inspect the workflow without leaving chat.',
+    body: 'This area shows the plan graph or report preview, so you can inspect the automation without leaving chat.',
   },
   {
     selector: '[data-tour="event-view-mode"]',
@@ -82,17 +82,17 @@ const STEPS: WalkthroughStep[] = [
   {
     selector: '[data-tour="workflow-status"]',
     title: 'Status',
-    body: 'This tells you whether the current workflow session is idle, busy, stopped, or waiting. Stop only affects this active session.',
+    body: 'This tells you whether the current automation session is idle, busy, stopped, or waiting. Stop only affects this active session.',
   },
   {
     selector: '[data-tour="active-work-switcher"]',
     title: 'Running work',
-    body: 'The top activity widget opens active sessions. Ctrl+K opens the full switcher for workflows, chats, active work, and retained events.',
+    body: 'The top activity widget opens active sessions. Ctrl+K opens the full switcher for automations, chats, active work, and retained events.',
   },
   {
     selector: '[data-tour="workflow-tools"]',
-    title: 'Workflow tools',
-    body: 'These icons open workflow details such as logs, costs, learnings, database sources, versions, access, and settings.',
+    title: 'Automation tools',
+    body: 'These icons open automation details such as logs, costs, learnings, database sources, versions, access, and settings.',
   },
   {
     selector: '[data-tour="left-sidebar"]',
@@ -107,17 +107,17 @@ const STEPS: WalkthroughStep[] = [
   {
     selector: '[data-tour="sidebar-mcp-servers"]',
     title: 'MCP servers',
-    body: 'Manage connected tool servers. These are the external tools agents can use when a chat or workflow enables them.',
+    body: 'Manage connected tool servers. These are the external tools agents can use when a chat or automation enables them.',
   },
   {
     selector: '[data-tour="sidebar-skills"]',
     title: 'Skills',
-    body: 'Skills are reusable instructions that guide agents for specific domains, workflows, or tools.',
+    body: 'Skills are reusable instructions that guide agents for specific domains, automations, or tools.',
   },
   {
     selector: '[data-tour="sidebar-secrets"]',
     title: 'Secrets',
-    body: 'Store credentials here, then select only the secrets a chat or workflow should be allowed to use.',
+    body: 'Store credentials here, then select only the secrets a chat or automation should be allowed to use.',
   },
 ]
 
@@ -279,7 +279,7 @@ export const WorkflowWalkthrough: React.FC<WorkflowWalkthroughProps> = ({ isOpen
           style={{ left: panelLeft, top: panelTop, width: panelWidth }}
           role="dialog"
           aria-modal="true"
-          aria-label="Workflow walkthrough"
+          aria-label="Automation walkthrough"
           data-testid="workflow-walkthrough-dialog"
         >
           <div className="flex items-start justify-between gap-3">

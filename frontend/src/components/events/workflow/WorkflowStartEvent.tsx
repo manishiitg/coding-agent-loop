@@ -20,10 +20,10 @@ export const WorkflowStartEvent: React.FC<WorkflowStartEventProps> = ({ event })
         </div>
         <div className="ml-3">
           <div className="text-sm font-medium text-green-800 dark:text-green-200">
-            Workflow Started
+            Automation Started
           </div>
           <div className="text-xs text-green-600 dark:text-green-400 mt-1">
-            {event.objective || 'Starting workflow execution'}
+            {event.objective || 'Starting automation execution'}
           </div>
           {event.workflow_id && (
             <div className="text-xs text-green-500 dark:text-green-300 mt-1">

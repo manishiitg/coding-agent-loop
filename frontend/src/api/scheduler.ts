@@ -79,6 +79,7 @@ export interface StoredProviderKeys {
   minimax_coding_plan?: string
   elevenlabs?: string
   deepgram?: string
+  pi_provider_keys?: Record<string, string>
   bedrock?: { region: string }
   azure?: { endpoint: string; api_key: string; api_version?: string; region?: string }
 }

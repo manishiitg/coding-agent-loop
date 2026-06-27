@@ -51,7 +51,7 @@ export const TreeViewAlphaDialog: React.FC<TreeViewAlphaDialogProps> = ({
                 Tree view is in alpha
               </h2>
               <p className="mt-1 text-sm leading-5 text-gray-600 dark:text-gray-300">
-                Terminal view is the recommended view for live workflow progress. Tree view is still experimental and can show incomplete or confusing status.
+                Terminal view is the recommended view for live automation progress. Tree view is still experimental and can show incomplete or confusing status.
               </p>
             </div>
           </div>

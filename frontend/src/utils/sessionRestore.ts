@@ -261,9 +261,9 @@ function conversationToRestoredEvents(conversation: ChatHistoryConversation): Po
   return events
 }
 
-async function hydrateTabEventsFromChatHistory(sessionId: string): Promise<RuntimeSessionState> {
+async function hydrateTabEventsFromChatHistory(sessionId: string, workspacePath?: string): Promise<RuntimeSessionState> {
   const chatStore = useChatStore.getState()
-  const conversation = await agentApi.getChatHistoryConversation(sessionId)
+  const conversation = await agentApi.getChatHistoryConversation(sessionId, workspacePath)
   const events = (conversation.ui_events && conversation.ui_events.length > 0)
     ? (conversation.ui_events as PollingEvent[])
     : conversationToRestoredEvents(conversation)
@@ -280,6 +280,20 @@ async function hydrateTabEventsFromChatHistory(sessionId: string): Promise<Runti
   }
 }
 
+async function tryHydrateTabEventsFromChatHistory(
+  sessionId: string,
+  workspacePath?: string,
+): Promise<RuntimeSessionState | null> {
+  try {
+    return await hydrateTabEventsFromChatHistory(sessionId, workspacePath)
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      return null
+    }
+    throw error
+  }
+}
+
 /**
  * Load events from the in-memory polling API and hydrate a tab's event state.
  * If the server restarted and no longer has the session in memory, restore
@@ -287,6 +301,10 @@ async function hydrateTabEventsFromChatHistory(sessionId: string): Promise<Runti
  */
 export async function hydrateTabEvents(
   sessionId: string,
+  options: {
+    workspacePath?: string
+    fallbackToChatHistory?: boolean
+  } = {},
 ): Promise<RuntimeSessionState> {
   const chatStore = useChatStore.getState()
   let response
@@ -295,7 +313,8 @@ export async function hydrateTabEvents(
   } catch (error) {
     if (isNotFoundError(error)) {
       console.log(`${TAG} Polling session ${sessionId} not found; restoring from workspace chat history`)
-      return hydrateTabEventsFromChatHistory(sessionId)
+      const restored = await tryHydrateTabEventsFromChatHistory(sessionId, options.workspacePath)
+      if (restored) return restored
     }
     throw error
   }
@@ -307,6 +326,9 @@ export async function hydrateTabEvents(
     if (response.has_more !== undefined) {
       chatStore.setTabHasMoreOlderEvents(sessionId, response.has_more)
     }
+  } else if (options.fallbackToChatHistory && !response.session_status) {
+    const restored = await tryHydrateTabEventsFromChatHistory(sessionId, options.workspacePath)
+    if (restored) return restored
   }
   return {
     status: response.session_status,

@@ -48,7 +48,7 @@ func TestTerminalPipeRecorderHTTPE2EPreservesAnsiAndAppends(t *testing.T) {
 	terminalID := sessionID + ":" + ownerID
 	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, ownerID, sessionName, "seed pane", 1))
 
-	first := getTerminalScreenDetail(t, api, terminalID)
+	first := getTerminalHistoryDetail(t, api, terminalID)
 	if first.ContentSource != "tmux_pipe" {
 		t.Fatalf("content_source = %q, want tmux_pipe", first.ContentSource)
 	}
@@ -86,7 +86,7 @@ func TestTerminalPipeRecorderHTTPE2EPreservesAnsiAndAppends(t *testing.T) {
 		t.Fatalf("kill tmux session: %v", err)
 	}
 
-	static := getTerminalScreenDetailNoHeaderCheck(t, api, terminalID)
+	static := getTerminalHistoryDetailNoHeaderCheck(t, api, terminalID)
 	if static.State != "stale" || static.TmuxSession != "" {
 		t.Fatalf("static terminal state/tmux = %q/%q, want stale with no tmux session", static.State, static.TmuxSession)
 	}
@@ -133,7 +133,7 @@ func waitForTerminalDetail(t *testing.T, api *StreamingAPI, terminalID, needle s
 	deadline := time.Now().Add(3 * time.Second)
 	var latest terminals.Snapshot
 	for time.Now().Before(deadline) {
-		latest = getTerminalScreenDetail(t, api, terminalID)
+		latest = getTerminalHistoryDetail(t, api, terminalID)
 		if strings.Contains(latest.Content, needle) {
 			return latest
 		}
@@ -143,24 +143,24 @@ func waitForTerminalDetail(t *testing.T, api *StreamingAPI, terminalID, needle s
 	return terminals.Snapshot{}
 }
 
-func getTerminalScreenDetail(t *testing.T, api *StreamingAPI, terminalID string) terminals.Snapshot {
+func getTerminalHistoryDetail(t *testing.T, api *StreamingAPI, terminalID string) terminals.Snapshot {
 	t.Helper()
-	snapshot, header := getTerminalScreenDetailWithHeader(t, api, terminalID)
+	snapshot, header := getTerminalHistoryDetailWithHeader(t, api, terminalID)
 	if header != "tmux_pipe" {
 		t.Fatalf("debug content source header = %q, want tmux_pipe", header)
 	}
 	return snapshot
 }
 
-func getTerminalScreenDetailNoHeaderCheck(t *testing.T, api *StreamingAPI, terminalID string) terminals.Snapshot {
+func getTerminalHistoryDetailNoHeaderCheck(t *testing.T, api *StreamingAPI, terminalID string) terminals.Snapshot {
 	t.Helper()
-	snapshot, _ := getTerminalScreenDetailWithHeader(t, api, terminalID)
+	snapshot, _ := getTerminalHistoryDetailWithHeader(t, api, terminalID)
 	return snapshot
 }
 
-func getTerminalScreenDetailWithHeader(t *testing.T, api *StreamingAPI, terminalID string) (terminals.Snapshot, string) {
+func getTerminalHistoryDetailWithHeader(t *testing.T, api *StreamingAPI, terminalID string) (terminals.Snapshot, string) {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/api/terminals/"+terminalID+"?content=screen&debug=1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/terminals/"+terminalID+"?content=history&debug=1", nil)
 	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
 	rec := httptest.NewRecorder()
 	api.handleGetTerminal(rec, req)

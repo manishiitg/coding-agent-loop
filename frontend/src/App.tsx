@@ -4,6 +4,7 @@ import { ThemeProvider } from "./contexts/ThemeContext.tsx";
 import WorkspaceSidebar from "./components/WorkspaceSidebar";
 import { UpdateProgressToast } from "./components/UpdateProgressToast";
 import Workspace from "./components/Workspace.tsx";
+import { MemoryPanel, OrgGoalsPanel, OrgPulsePanel, ORG_HTML_PREVIEW_PREFERENCE_CHANGED_EVENT, getOrgHtmlPreviewDevice, type OrgHtmlPreviewDevice } from "./components/OrgPulseControl";
 import ChatArea, { type ChatAreaRef } from "./components/ChatArea.tsx";
 import { MarkdownRenderer, MermaidDiagram } from "./components/ui/MarkdownRenderer";
 import { CsvRenderer } from "./components/ui/CsvRenderer";
@@ -24,7 +25,7 @@ import { isValidJSON } from "./utils/event-helpers";
 import { prepareDomForPdfExport } from "./utils/pdfExport";
 import { convertToSlackMarkdown } from "./utils/slackMarkdown";
 import { isDiffFilePath, looksLikeDiffContent } from "./utils/diff";
-import { Edit, Save, X, Loader2, Download, Link, Github } from "lucide-react";
+import { Edit, Save, X, Loader2, Download, Link, Github, PanelRightClose, PanelRightOpen } from "lucide-react";
 import { WorkflowLayout } from "./components/workflow";
 import { WorkflowsOverviewPage } from "./components/WorkflowsOverviewPage";
 import { ModePresetBar } from "./components/ModePresetBar";
@@ -35,7 +36,7 @@ import { useAppStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore, useW
 import { useModeStore } from "./stores/useModeStore";
 import { useLLMStore } from "./stores/useLLMStore";
 import { useAuthStore } from "./stores/useAuthStore";
-import { normalizeEventViewMode, waitForChatStoreHydration } from "./stores/useChatStore";
+import { normalizeEventViewMode, waitForChatStoreHydration, type ChatTab } from "./stores/useChatStore";
 import { useLLMDefaults } from "./hooks/useLLMDefaults";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
 import "./App.css";
@@ -59,6 +60,21 @@ const WORKSPACE_COLLAPSING_POPUP_SELECTOR = [
   '[class~="fixed"][class~="inset-0"]'
 ].join(',')
 const WORKSPACE_COLLAPSE_IGNORE_SELECTOR = '[data-workspace-collapse-ignore="true"]'
+const READ_ONLY_WORKFLOW_RESTORE_SELECTION_WINDOW_MS = 60 * 1000
+
+const workflowTabSortTimestamp = (tab: ChatTab) => tab.lastAccessedAt ?? tab.createdAt ?? 0
+
+const isInteractiveWorkflowTab = (tab: ChatTab | null | undefined): tab is ChatTab =>
+  !!tab && tab.metadata?.mode === 'workflow' && tab.metadata?.isViewOnly !== true
+
+const isRecentExplicitReadOnlyWorkflowTab = (tab: ChatTab | null | undefined): tab is ChatTab => {
+  const restoredAt = tab?.metadata?.readOnlyRestoredAt
+  return !!tab &&
+    tab.metadata?.mode === 'workflow' &&
+    tab.metadata?.isViewOnly === true &&
+    typeof restoredAt === 'number' &&
+    Date.now() - restoredAt <= READ_ONLY_WORKFLOW_RESTORE_SELECTION_WINDOW_MS
+}
 
 const hasOpenWorkspaceCollapsingPopup = () => {
   if (typeof document === 'undefined') return false
@@ -160,9 +176,15 @@ const isCodeFile = (filepath: string): boolean => {
   return getCodeFileLanguage(filepath) !== null
 }
 
+const multiAgentPanelTabClass = (active: boolean) =>
+  `rounded px-2.5 py-1 text-xs font-medium whitespace-nowrap transition-colors ${
+    active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+  }`
+
 function App() {
   // Ref for ChatArea component to access its methods
   const chatAreaRef = useRef<ChatAreaRef>(null)
+  const [orgHtmlPreviewDevice, setOrgHtmlPreviewDevice] = useState<OrgHtmlPreviewDevice>(() => getOrgHtmlPreviewDevice())
 
   // Store subscriptions
   const { setAgentMode, setSidebarMinimized } = useAppStore()
@@ -182,6 +204,8 @@ function App() {
     sidebarMinimized,
     workspaceMinimized,
     setWorkspaceMinimized,
+    multiAgentRightPanelView,
+    setMultiAgentRightPanelView,
     showWorkflowsOverview,
     setShowWorkflowsOverview
   } = useAppStore()
@@ -205,6 +229,24 @@ function App() {
     saveFile,
     binaryFileData
   } = useWorkspaceStore()
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const preference = (event as CustomEvent).detail?.preference
+      if (preference === 'mobile' || preference === 'tablet' || preference === 'desktop') {
+        setOrgHtmlPreviewDevice(preference)
+      }
+    }
+    window.addEventListener(ORG_HTML_PREVIEW_PREFERENCE_CHANGED_EVENT, handler)
+    return () => window.removeEventListener(ORG_HTML_PREVIEW_PREFERENCE_CHANGED_EVENT, handler)
+  }, [])
+
+  const submitMultiAgentPanelCommand = useCallback((query: string) => {
+    setWorkspaceMinimized(false)
+    chatAreaRef.current?.submitQuery(query).catch(error => {
+      console.error('[App] Failed to submit org panel command:', error)
+    })
+  }, [setWorkspaceMinimized])
 
   const [videoObjectUrl, setVideoObjectUrl] = useState<string | null>(null)
   const [audioObjectUrl, setAudioObjectUrl] = useState<string | null>(null)
@@ -1039,15 +1081,21 @@ function App() {
         const activeTab = activeTabId ? chatStore.getTab(activeTabId) : null
         const activePresetId = useGlobalPresetStore.getState().activePresetIds.workflow
 
-        // Tab must match workflow mode AND the active preset
-        const hasValidActiveTab = activeTab &&
+        const activeTabMatchesPreset = activeTab &&
           activeTab.metadata?.mode === 'workflow' &&
           activeTab.metadata?.presetQueryId === activePresetId
+        const explicitReadOnlyActiveTab = activeTabMatchesPreset && isRecentExplicitReadOnlyWorkflowTab(activeTab)
+          ? activeTab
+          : null
+        // Tab must match workflow mode and the active preset. Read-only Schedule/Bot
+        // tabs only stay active immediately after an explicit open action.
+        const hasValidActiveTab = activeTabMatchesPreset &&
+          (isInteractiveWorkflowTab(activeTab) || !!explicitReadOnlyActiveTab)
 
         // Prefer the workflow tab the user last had active for this preset.
         let workflowTabs = Object.values(chatStore.chatTabs)
-          .filter(tab => tab.metadata?.mode === 'workflow' && (tab.sessionId || tab.isStreaming))
-          .sort((a, b) => b.createdAt - a.createdAt)
+          .filter(tab => isInteractiveWorkflowTab(tab) && (tab.sessionId || tab.isStreaming))
+          .sort((a, b) => workflowTabSortTimestamp(b) - workflowTabSortTimestamp(a))
 
         if (activePresetId) {
           const presetTabs = workflowTabs.filter(tab => tab.metadata?.presetQueryId === activePresetId)
@@ -1058,7 +1106,7 @@ function App() {
           ? chatStore.getTab(workflowStore.activeWorkflowTabId)
           : null
         const rememberedWorkflowTabMatchesPreset = rememberedWorkflowTab &&
-          rememberedWorkflowTab.metadata?.mode === 'workflow' &&
+          isInteractiveWorkflowTab(rememberedWorkflowTab) &&
           rememberedWorkflowTab.metadata?.presetQueryId === activePresetId
         const builderTab = workflowTabs.find(tab => tab.metadata?.phaseId === 'workflow-builder')
         const streamingTab = workflowTabs.find(tab => chatStore.getTabStreamingStatus(tab.tabId) || tab.isStreaming)
@@ -1067,17 +1115,19 @@ function App() {
             ? activeTab.viewMode
             : chatStore.eventViewModePreference
         )
-        const targetWorkflowTab = activeWorkflowViewMode === 'terminal'
-          ? streamingTab ||
-            (hasValidActiveTab ? activeTab : null) ||
-            (rememberedWorkflowTabMatchesPreset ? rememberedWorkflowTab : null) ||
-            builderTab ||
-            workflowTabs[0]
-          : builderTab ||
-            (hasValidActiveTab ? activeTab : null) ||
-            (rememberedWorkflowTabMatchesPreset ? rememberedWorkflowTab : null) ||
-            streamingTab ||
-            workflowTabs[0]
+        const targetWorkflowTab = explicitReadOnlyActiveTab || (
+          activeWorkflowViewMode === 'terminal'
+            ? streamingTab ||
+              (hasValidActiveTab ? activeTab : null) ||
+              (rememberedWorkflowTabMatchesPreset ? rememberedWorkflowTab : null) ||
+              builderTab ||
+              workflowTabs[0]
+            : builderTab ||
+              (hasValidActiveTab ? activeTab : null) ||
+              (rememberedWorkflowTabMatchesPreset ? rememberedWorkflowTab : null) ||
+              streamingTab ||
+              workflowTabs[0]
+        )
 
         if (targetWorkflowTab) {
           if (!hasValidActiveTab || activeTabId !== targetWorkflowTab.tabId) {
@@ -1289,11 +1339,18 @@ function App() {
   const restoreMostRecentTabForMode = useCallback((mode: 'workflow' | 'multi-agent') => {
     const chatStore = useChatStore.getState()
     const currentTab = chatStore.activeTabId ? chatStore.chatTabs[chatStore.activeTabId] : null
-    if (currentTab && currentTab.metadata?.mode === mode) return
-    const candidates = Object.values(chatStore.chatTabs).filter(t => t.metadata?.mode === mode)
+    if (
+      currentTab &&
+      currentTab.metadata?.mode === mode &&
+      (mode !== 'workflow' || isInteractiveWorkflowTab(currentTab) || isRecentExplicitReadOnlyWorkflowTab(currentTab))
+    ) return
+    const candidates = Object.values(chatStore.chatTabs).filter(t =>
+      t.metadata?.mode === mode &&
+      (mode !== 'workflow' || isInteractiveWorkflowTab(t))
+    )
     if (candidates.length === 0) return
     const mostRecent = candidates.reduce((best, t) =>
-      (t.lastAccessedAt ?? t.createdAt ?? 0) > (best.lastAccessedAt ?? best.createdAt ?? 0) ? t : best
+      workflowTabSortTimestamp(t) > workflowTabSortTimestamp(best) ? t : best
     , candidates[0])
     chatStore.switchTab(mostRecent.tabId)
   }, [])
@@ -1366,7 +1423,7 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [requestNewMultiAgentChat, selectedModeCategory, showWorkflowsOverview, toggleSidebarMinimize, toggleWorkspaceMinimize, setAgentMode, setShowWorkflowsOverview, startNewChat])
+  }, [requestNewMultiAgentChat, restoreMostRecentTabForMode, selectedModeCategory, showWorkflowsOverview, toggleSidebarMinimize, toggleWorkspaceMinimize, setAgentMode, setShowWorkflowsOverview, startNewChat])
 
   useEffect(() => {
     if (showWorkflowsOverview) {
@@ -1394,6 +1451,19 @@ function App() {
 
     return () => observer.disconnect()
   }, [setWorkspaceMinimized])
+
+  const multiAgentHtmlPanelActive = multiAgentRightPanelView === 'org-goals' || multiAgentRightPanelView === 'org-pulse'
+  const multiAgentHtmlLaptop = multiAgentHtmlPanelActive && orgHtmlPreviewDevice === 'desktop'
+  const multiAgentPanelStyle = multiAgentHtmlPanelActive
+    ? orgHtmlPreviewDevice === 'desktop'
+      ? undefined
+      : { width: orgHtmlPreviewDevice === 'tablet' ? 'min(880px, 72vw)' : 'min(480px, 56vw)' }
+    : undefined
+  const multiAgentPanelClass = multiAgentHtmlPanelActive
+    ? orgHtmlPreviewDevice === 'desktop'
+      ? 'flex-1'
+      : 'flex-none'
+    : 'w-[384px] flex-shrink-0'
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -1454,11 +1524,91 @@ function App() {
                       onNewChat={startNewChat}
                     />
                   </div>
-                  <div className={selectedModeCategory !== 'workflow' ? 'h-full' : 'hidden'}>
-                    <ChatAreaWithObserverId
-                      ref={chatAreaRef}
-                      onNewChat={startNewChat}
-                    />
+                  <div className={selectedModeCategory !== 'workflow' ? 'h-full relative' : 'hidden'}>
+                    {workspaceMinimized && (
+                      <button
+                        type="button"
+                        onClick={() => setWorkspaceMinimized(false)}
+                        title="Show side panel"
+                        aria-label="Show side panel"
+                        className="absolute right-0 top-1/2 z-30 hidden -translate-y-1/2 flex-col items-center gap-1.5 rounded-l-lg border border-r-0 border-border bg-background/95 py-3 pl-1.5 pr-1 text-muted-foreground shadow-md backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground md:flex"
+                      >
+                        <PanelRightOpen className="h-4 w-4" />
+                        <span className="[writing-mode:vertical-rl] text-[10px] font-semibold uppercase tracking-wider">Panel</span>
+                      </button>
+                    )}
+                    <div className="flex h-full min-w-0">
+                      <div className={`min-w-0 flex-1 ${multiAgentHtmlLaptop ? 'hidden' : ''}`}>
+                        <ChatAreaWithObserverId
+                          ref={chatAreaRef}
+                          onNewChat={startNewChat}
+                        />
+                      </div>
+                      {!workspaceMinimized && (
+                        <div
+                          className={`flex flex-col overflow-hidden border-l border-gray-200 bg-background dark:border-gray-700 ${multiAgentPanelClass}`}
+                          style={multiAgentPanelStyle}
+                        >
+                          <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/40 px-2 py-2">
+                            <div className="inline-flex min-w-0 items-center gap-0.5 rounded-lg border border-border bg-muted/70 p-0.5 shadow-sm backdrop-blur-sm">
+                              <button
+                                type="button"
+                                onClick={() => setMultiAgentRightPanelView('files')}
+                                className={multiAgentPanelTabClass(multiAgentRightPanelView === 'files')}
+                              >
+                                Files
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setMultiAgentRightPanelView('org-goals')}
+                                className={multiAgentPanelTabClass(multiAgentRightPanelView === 'org-goals')}
+                              >
+                                Goals
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setMultiAgentRightPanelView('memory')}
+                                className={multiAgentPanelTabClass(multiAgentRightPanelView === 'memory')}
+                              >
+                                Memory
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setMultiAgentRightPanelView('org-pulse')}
+                                title="Org Pulse"
+                                aria-label="Org Pulse"
+                                className={multiAgentPanelTabClass(multiAgentRightPanelView === 'org-pulse')}
+                              >
+                                Pulse
+                              </button>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={toggleWorkspaceMinimize}
+                              title="Hide panel"
+                              aria-label="Hide panel"
+                              className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-lg border border-border bg-background/90 text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
+                            >
+                              <PanelRightClose className="h-4 w-4" />
+                            </button>
+                          </div>
+                          <div className="min-h-0 flex-1 overflow-hidden">
+                            {multiAgentRightPanelView === 'files' ? (
+                              <Workspace
+                                minimized={false}
+                                onToggleMinimize={toggleWorkspaceMinimize}
+                              />
+                            ) : multiAgentRightPanelView === 'org-goals' ? (
+                              <OrgGoalsPanel onSubmitCommand={submitMultiAgentPanelCommand} />
+                            ) : multiAgentRightPanelView === 'memory' ? (
+                              <MemoryPanel />
+                            ) : (
+                              <OrgPulsePanel onSubmitCommand={submitMultiAgentPanelCommand} />
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1927,18 +2077,6 @@ function App() {
             )}
           </div>
 
-          {/* Right Workspace Area - auto-minimize in workflow mode */}
-          <div className={`${
-            // Use workspaceMinimized state directly - user can toggle regardless of mode
-            workspaceMinimized ? 'w-0 border-l-0' : 'w-96 border-l border-gray-200 dark:border-gray-700'
-          } flex-shrink-0 overflow-hidden transition-all duration-300 ease-in-out relative z-20`}>
-            {!workspaceMinimized && (
-              <Workspace 
-                minimized={false}
-                onToggleMinimize={toggleWorkspaceMinimize}
-              />
-            )}
-          </div>
         </div>
 
         {/* Push to Gist Dialog */}

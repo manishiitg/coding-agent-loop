@@ -72,8 +72,9 @@ type sendTerminalKeyRequest struct {
 }
 
 type resizeTerminalRequest struct {
-	Cols int `json:"cols"`
-	Rows int `json:"rows"`
+	Cols      int    `json:"cols"`
+	Rows      int    `json:"rows"`
+	SessionID string `json:"session_id,omitempty"`
 }
 
 type terminalActionResponse struct {
@@ -163,12 +164,10 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 	}
 	// Capture live tmux content when: explicitly requested via content=screen/history,
 	// OR when the terminal is inactive (active=false) and has a tmux session.
-	// Running content=screen requests capture a bounded scrollback window instead
-	// of unbounded history: CLIs like Agy repaint loading/spinner text in place,
-	// and tmux history can flatten those old frames into repeated
-	// "loading/generating" fragments before xterm.js ever sees them. The window
-	// is still deep enough for users to scroll back through long Claude/Codex
-	// turns.
+	// Running content=screen captures the visible pane only. CLIs like Agy and
+	// Claude repaint loading/spinner text in place, and tmux history can flatten
+	// those old frames into repeated "loading/generating" fragments before
+	// xterm.js ever sees them. content=history is the explicit scrollback path.
 	// Completed/inactive terminals still use deeper history so users can review
 	// the final transcript. Legacy content=tmux maps to screen/history based on
 	// active state; legacy content=deep maps to history.
@@ -207,7 +206,7 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 		if shouldReadTerminalPipeRecorderForDetail(r) && api.terminalPipeRecorder != nil {
 			var ok bool
 			var pipeErr error
-			pipeContent, pipeStats, ok, pipeErr = api.terminalPipeRecorder.Content(ctx, snapshot)
+			pipeContent, pipeStats, ok, pipeErr = api.terminalPipeRecorder.Content(ctx, snapshot, wantsHistoryTerminalContent(r))
 			if pipeErr == nil && ok {
 				havePipeContent = true
 			} else if debugTerminal && pipeErr != nil {
@@ -331,14 +330,14 @@ func shouldCaptureTerminalPaneForDetail(snapshot terminals.Snapshot, r *http.Req
 }
 
 func shouldReadTerminalPipeRecorderForDetail(r *http.Request) bool {
-	return wantsScreenTerminalContent(r) || wantsHistoryTerminalContent(r)
+	return wantsHistoryTerminalContent(r)
 }
 
 func shouldUseTerminalPipeContentForDetail(r *http.Request, pipeStats, captureStats terminalPaneCaptureStats) bool {
 	if !wantsHistoryTerminalContent(r) {
-		return true
+		return false
 	}
-	return pipeStats.RawLines > captureStats.CollapsedLines || pipeStats.RawBytes > captureStats.CollapsedBytes
+	return true
 }
 
 func terminalCaptureSkipReason(snapshot terminals.Snapshot, r *http.Request, shouldCapture bool) string {
@@ -358,15 +357,31 @@ func terminalCaptureSkipReason(snapshot terminals.Snapshot, r *http.Request, sho
 }
 
 func shouldPreserveCapturedTerminalScrollback(r *http.Request) bool {
+	if wantsScreenTerminalContent(r) {
+		return false
+	}
 	return !wantsHistoryTerminalContent(r)
 }
 
 func captureTerminalPaneForDetail(ctx context.Context, snapshot terminals.Snapshot, r *http.Request) (string, terminalPaneCaptureStats, error) {
+	if shouldCaptureVisibleTerminalScreen(snapshot, r) {
+		return captureTerminalVisiblePaneWithStats(ctx, snapshot.TmuxSession)
+	}
 	lines := terminalCaptureLinesFromRequest(r, terminalDefaultDetailHistoryLines)
 	if shouldCaptureActiveTerminalHistoryForDetail(snapshot, r) {
 		lines = terminalCaptureLinesFromRequest(r, terminalActiveDetailHistoryLines)
 	}
 	return captureTerminalPaneLinesWithStats(ctx, snapshot.TmuxSession, lines)
+}
+
+func shouldCaptureVisibleTerminalScreen(snapshot terminals.Snapshot, r *http.Request) bool {
+	if !wantsScreenTerminalContent(r) || wantsHistoryTerminalContent(r) {
+		return false
+	}
+	if !snapshot.Active || terminalSnapshotHasPromptCompletionFallback(snapshot.Content) {
+		return false
+	}
+	return true
 }
 
 func shouldCaptureActiveTerminalHistoryForDetail(snapshot terminals.Snapshot, r *http.Request) bool {
@@ -627,7 +642,36 @@ func (api *StreamingAPI) handleTerminalSizeHint(w http.ResponseWriter, r *http.R
 		return
 	}
 	llmproviders.SetCodingAgentTmuxSize(req.Cols, req.Rows)
-	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	resized := api.resizeLiveTerminalWindowsForSession(r.Context(), r, req.SessionID, req.Cols, req.Rows)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "resized": resized})
+}
+
+func (api *StreamingAPI) resizeLiveTerminalWindowsForSession(ctx context.Context, r *http.Request, sessionID string, cols, rows int) int {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" || api.terminalStore == nil || cols <= 0 || rows <= 0 {
+		return 0
+	}
+	snapshots := api.terminalStore.List(sessionID)
+	if len(snapshots) == 0 {
+		return 0
+	}
+
+	resizeCtx, cancel := context.WithTimeout(ctx, terminalTmuxActionTimeout)
+	defer cancel()
+	resized := 0
+	for _, snapshot := range snapshots {
+		if !snapshot.Active || strings.TrimSpace(snapshot.TmuxSession) == "" || !api.canAccessTerminalSession(r, snapshot.SessionID) {
+			continue
+		}
+		if err := runTerminalTmuxCommand(resizeCtx, "", "resize-window", "-t", snapshot.TmuxSession, "-x", strconv.Itoa(cols), "-y", strconv.Itoa(rows)); err != nil {
+			if isMissingTmuxTargetError(err) {
+				api.terminalStore.MarkStale(snapshot.TerminalID)
+			}
+			continue
+		}
+		resized++
+	}
+	return resized
 }
 
 // handleResizeTerminal resizes the backing tmux window and records the size
@@ -722,9 +766,34 @@ func captureTerminalPane(ctx context.Context, tmuxSession string) (string, error
 	return captureTerminalPaneLines(ctx, tmuxSession, terminalDefaultRefreshLines)
 }
 
+func captureTerminalVisiblePane(ctx context.Context, tmuxSession string) (string, error) {
+	content, _, err := captureTerminalVisiblePaneWithStats(ctx, tmuxSession)
+	return content, err
+}
+
 func captureTerminalPaneLines(ctx context.Context, tmuxSession string, lines int) (string, error) {
 	content, _, err := captureTerminalPaneLinesWithStats(ctx, tmuxSession, lines)
 	return content, err
+}
+
+func captureTerminalVisiblePaneWithStats(ctx context.Context, tmuxSession string) (string, terminalPaneCaptureStats, error) {
+	stats := terminalPaneCaptureStats{ContentSource: "tmux_capture"}
+	tmuxSession = strings.TrimSpace(tmuxSession)
+	if tmuxSession == "" {
+		return "", stats, fmt.Errorf("tmux session is required")
+	}
+	start := time.Now()
+	content, err := runTerminalTmuxOutputCommand(ctx, "capture-pane", "-p", "-e", "-J", "-t", tmuxSession)
+	stats.Duration = time.Since(start)
+	if err != nil {
+		return "", stats, fmt.Errorf("failed to capture terminal pane: %w", err)
+	}
+	stats.RawLines = terminalLineCount(content)
+	stats.RawBytes = len(content)
+	collapsed := collapseBlankRuns(content)
+	stats.CollapsedLines = terminalLineCount(collapsed)
+	stats.CollapsedBytes = len(collapsed)
+	return collapsed, stats, nil
 }
 
 func captureTerminalPaneLinesWithStats(ctx context.Context, tmuxSession string, lines int) (string, terminalPaneCaptureStats, error) {

@@ -31,7 +31,7 @@ export default function FileContextDisplay({ files, onRemoveFile, onClearAll, ag
             ? 'text-orange-600 dark:text-orange-400'
             : 'text-gray-600 dark:text-gray-400'
         }`}>
-          {agentMode === 'workflow' && !isRequiredFolderSelected ? '📁 Context (Select Workflow folder):' : '📁 Context:'}
+          {agentMode === 'workflow' && !isRequiredFolderSelected ? '📁 Context (Select Automation folder):' : '📁 Context:'}
         </span>
         {files.map((file, index) => (
           <div key={file.path} className="flex items-center gap-0.5">

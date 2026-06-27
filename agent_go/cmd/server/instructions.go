@@ -28,6 +28,7 @@ type workspacePaths struct {
 	Subagents   string
 	Config      string
 	Memory      string
+	Pulse       string
 	ChatHistory string
 }
 
@@ -57,6 +58,7 @@ func newWorkspacePaths(docsRoot, chatsFolder, memoryFolder string) workspacePath
 		Subagents:   resolveWorkspacePath(docsRoot, "subagents"),
 		Config:      resolveWorkspacePath(docsRoot, "config"),
 		Memory:      resolveWorkspacePath(docsRoot, memoryFolder),
+		Pulse:       resolveWorkspacePath(docsRoot, "pulse"),
 		ChatHistory: resolveWorkspacePath(docsRoot, strings.TrimSuffix(chatsFolder, "/Chats")+"/chat_history"),
 	}
 }
@@ -73,6 +75,7 @@ func GetWorkspaceMap(docsRoot, chatsFolder, memoryFolder string) string {
 | Path | Access | Purpose |
 |------|--------|---------|
 | ` + "`" + p.Chats + "/`" + ` | read/write | Your workspace — save all output files here |
+| ` + "`" + p.Pulse + "/`" + ` | read/write | Org-level goals and Pulse artifacts (` + "`goals.html`" + `, ` + "`org-pulse.html`" + `) |
 | ` + "`" + p.Memory + "/`" + ` | read/write | Persistent memory (use save_memory / recall_memory tools) |
 | ` + "`" + p.Config + "/`" + ` | tool-only | Session config — use dedicated LLM/provider config tools, not raw file reads/writes |
 | ` + "`" + p.ChatHistory + "/`" + ` | read/write | Past conversation histories |
@@ -204,19 +207,19 @@ Image generation defaults are workspace-backed configuration. Provider authentic
 - Do not infer image-generation support from ` + "`list_provider_models`" + ` or the normal LLM model catalog. Those lists are for chat/text models, not image models.
 - Vertex image generation is supported via provider ` + "`vertex`" + ` with models such as ` + "`gemini-3.1-flash-image-preview`" + ` and ` + "`gemini-3-pro-image-preview`" + `.
 - Codex CLI image generation is supported via provider ` + "`codex-cli`" + ` with models such as ` + "`gpt-5.4-mini`" + `.
-- Antigravity CLI image generation is supported as alpha via provider ` + "`agy-cli`" + ` and model ` + "`agy-cli`" + `; it requires local ` + "`agy`" + ` sign-in.
+- Antigravity CLI image generation is deprecated for new setup. Existing legacy defaults using provider ` + "`agy-cli`" + ` and model ` + "`agy-cli`" + ` remain runnable when local ` + "`agy`" + ` sign-in is present.
 - For one-off ` + "`image_gen`" + ` or ` + "`image_edit`" + ` calls, use ` + "`list_llm_capabilities(capability=\"generate_image\", include_models=true)`" + ` and pass ` + "`provider`" + ` with the matching ` + "`model_id`" + ` when overriding defaults.
 
 ## Image Analysis Defaults
 Image understanding for the ` + "`read_image`" + ` tool can be routed via workspace-backed image analysis defaults.
 - Do not read or write saved defaults with shell/file tools. Use per-call ` + "`read_image`" + ` overrides, or the dedicated UI/API configuration path when changing saved defaults.
-- Schema: ` + "`{\"primary\":{\"provider\":\"vertex\",\"model_id\":\"gemini-3-pro-preview\"},\"fallbacks\":[{\"provider\":\"codex-cli\",\"model_id\":\"gpt-5.4-mini\"},{\"provider\":\"cursor-cli\",\"model_id\":\"cursor-cli\"},{\"provider\":\"agy-cli\",\"model_id\":\"agy-cli\"},{\"provider\":\"claude-code\",\"model_id\":\"claude-code\"}]}`" + `
+- Schema: ` + "`{\"primary\":{\"provider\":\"vertex\",\"model_id\":\"gemini-3-pro-preview\"},\"fallbacks\":[{\"provider\":\"codex-cli\",\"model_id\":\"gpt-5.4-mini\"},{\"provider\":\"cursor-cli\",\"model_id\":\"cursor-cli\"},{\"provider\":\"claude-code\",\"model_id\":\"claude-code\"}]}`" + `
 - If this file exists, ` + "`read_image`" + ` uses its ` + "`primary`" + ` and ordered ` + "`fallbacks`" + ` with workspace provider auth.
 - If this file does not exist, ` + "`read_image`" + ` falls back to the current chat model.
 - For one-off ` + "`read_image`" + ` calls, use ` + "`list_llm_capabilities(capability=\"read_image\", include_models=true)`" + ` and pass ` + "`provider`" + ` with the matching ` + "`model_id`" + ` when overriding defaults.
 - Codex CLI image understanding is supported via provider ` + "`codex-cli`" + ` by passing the local workspace image path to Codex CLI.
 - Cursor CLI image understanding is supported via provider ` + "`cursor-cli`" + ` by passing the local workspace image path to Cursor Agent CLI.
-- Antigravity CLI image understanding is supported as alpha via provider ` + "`agy-cli`" + ` by passing the local workspace image path to Antigravity CLI.
+- Antigravity CLI image understanding is deprecated for new setup. Existing legacy ` + "`agy-cli`" + ` defaults remain runnable by passing the local workspace image path to Antigravity CLI.
 - Claude Code image understanding is supported via provider ` + "`claude-code`" + ` by passing the local workspace image path to Claude Code CLI.
 - Keep provider auth updated with the ` + "`set_provider_auth`" + ` tool; do not hand-edit encrypted auth files.
 

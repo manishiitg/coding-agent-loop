@@ -12,6 +12,18 @@ interface DynamicModelSelectorProps {
   disabled?: boolean
 }
 
+function isPrimaryPiGroup(group: string): boolean {
+  const normalized = group.toLowerCase()
+  return normalized.includes('recommended') ||
+    normalized.includes('gemini') ||
+    normalized.includes('google') ||
+    normalized.includes('chinese') ||
+    normalized.includes('z.ai') ||
+    normalized.includes('kimi') ||
+    normalized.includes('minimax') ||
+    normalized.includes('deepseek')
+}
+
 export function DynamicModelSelector({
   provider,
   selectedModelId,
@@ -43,6 +55,21 @@ export function DynamicModelSelector({
     })
     return () => { cancelled = true }
   }, [provider, getProviderDynamicModels])
+
+  useEffect(() => {
+    if (!data?.models?.length) {
+      setCollapsedGroups(new Set())
+      return
+    }
+    if (provider !== 'pi-cli' || data.models.length <= 80) return
+
+    const next = new Set<string>()
+    for (const model of data.models) {
+      const group = model.group || 'Other'
+      if (!isPrimaryPiGroup(group)) next.add(group)
+    }
+    setCollapsedGroups(next)
+  }, [data, provider])
 
   const grouped = useMemo(() => {
     if (!data?.models) return new Map<string, DynamicModelEntry[]>()

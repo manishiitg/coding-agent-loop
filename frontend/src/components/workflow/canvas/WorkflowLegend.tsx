@@ -49,7 +49,7 @@ export const WorkflowLegend: React.FC = () => {
         <TooltipContent side="right" className="p-0 border-border bg-popover/95 backdrop-blur-sm shadow-xl">
           <div className="p-3 grid grid-cols-2 gap-x-4 gap-y-2 min-w-[320px]">
             <div className="col-span-2 pb-2 mb-2 border-b border-border/50 text-xs font-semibold text-foreground/90">
-              Workflow Status & Icons
+              Automation Status & Icons
             </div>
             {items.map((item, index) => (
               <div key={index} className="flex items-center gap-2 text-xs text-muted-foreground">

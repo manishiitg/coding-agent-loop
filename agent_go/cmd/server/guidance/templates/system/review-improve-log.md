@@ -16,6 +16,12 @@ The workflow keeps a **single durable log** — `builder/improve.html` — the w
 
 It is a **self-contained, human-readable HTML document — not Markdown, not a data dump.** This is the page the user opens to understand the workflow, so make it genuinely good to read. Call `get_reference_doc(kind="html-output")` for the style baseline, and copy the **Starter HTML skeleton** at the bottom of this doc for the exact structure and polish. Top to bottom the document reads: **two verdicts → status headline → the goal → signal tiles → recent runs → newest-first timeline → archive**.
 
+The Pulse log is opened in a narrow right panel by default. Design it **mobile-first**:
+the base CSS must work at 360-480px with stacked rows, no overlapping metadata, no
+desktop-only tables, and long workflow names/ids allowed to wrap. Add desktop/tablet
+enhancements with `@media (min-width: ...)`; do not make desktop the default and patch
+mobile as an afterthought.
+
 ### The status headline (the 1-second read)
 
 Directly under the verdicts, one `.status` banner carries a **single plain sentence** — the workflow's one-sentence verdict headline (there is no separate verdict file — this banner is the source of truth) — so a user knows "am I OK?" without parsing pills or scrolling. Its `ok|warn|bad` class tracks the **worse** of the two verdicts, and its `.when` shows the run + how long ago. Keep it honest both ways: on a clean, on-target run say so plainly ("Healthy and on-target."); on a regression lead with what's wrong ("Goal drifting — eval 0.78, under 0.90 target for 3 runs."). Never manufacture concern to fill it.
@@ -92,7 +98,7 @@ The log must not grow without bound. When `builder/improve.html` passes roughly 
 
 ### Upgrading an old-format log (one-time, REQUIRED before appending)
 
-An existing `builder/improve.html` is **old-format** — and must be upgraded, not appended to — if it has **any** of: a title like "Improvement Ledger"; `## Active Improvement Index` / `## Recent Entries` / `## Archive Index` headings; ```improve-decision``` fenced/`<script>` JSON blocks; `F-…` / `I-…` ids; or its own ad-hoc CSS (`.summary` / `.badge` / `.stats`, system-ui body) instead of the skeleton's. Legacy `builder/improve.md` / `builder/review.md` also count.
+An existing `builder/improve.html` is **old-format** — and must be upgraded, not appended to — if it has **any** of: a title like "Improvement Ledger"; `## Active Improvement Index` / `## Recent Entries` / `## Archive Index` headings; ```improve-decision``` fenced/`<script>` JSON blocks; `F-…` / `I-…` ids; its own ad-hoc CSS (`.summary` / `.badge` / `.stats`, system-ui body) instead of the skeleton's; **or an older skeleton that lacks `<meta name="viewport">`, mobile-first stacked `.status` / `.run` / `.entry` layouts, or `overflow-wrap:anywhere`**. Legacy `builder/improve.md` / `builder/review.md` also count.
 
 **Do NOT append your new entry into the old structure** — that produces good content in a stale, off-brand shell. Instead, **rewrite the entire document to the Starter HTML skeleton above** as a one-time upgrade:
 
@@ -112,6 +118,7 @@ After this one rewrite the file is in skeleton format; from then on you just pre
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title><!-- WORKFLOW NAME --> · pulse</title>
 <style>
   :root{
@@ -132,14 +139,16 @@ After this one rewrite the file is in skeleton format; from then on you just pre
     --shadow:0 1px 0 rgba(255,255,255,.04) inset,0 1px 2px rgba(0,0,0,.45),0 10px 30px -14px rgba(0,0,0,.75);}
   html{color-scheme:light} html[data-theme="dark"]{color-scheme:dark}
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.5;-webkit-font-smoothing:antialiased;font-feature-settings:"cv02","cv03","ss01";font-variant-numeric:tabular-nums}
+  html,body{width:100%;max-width:100%;overflow-x:hidden}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;font-feature-settings:"cv02","cv03","ss01";font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
   html[data-theme="dark"] body{background:radial-gradient(1100px 520px at 50% -8%, #17171e 0%, var(--bg) 58%) fixed}
-  .wrap{max-width:820px;margin:0 auto;padding:clamp(20px,4vw,40px) clamp(16px,3.5vw,32px) 88px}
-  .top{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;flex-wrap:wrap}
+  code{overflow-wrap:anywhere}
+  .wrap{width:100%;max-width:820px;margin:0 auto;padding:16px 12px 56px}
+  .top{display:block}
   .eyebrow{font:600 11px/1 var(--mono);letter-spacing:.14em;color:var(--ink-3);text-transform:uppercase}
-  h1{font-size:clamp(24px,4vw,31px);line-height:1.05;letter-spacing:-.025em;margin:9px 0 0;font-weight:660}
-  .verdicts{display:flex;gap:8px;flex-wrap:wrap}
-  .pill{display:inline-flex;align-items:center;gap:8px;font:650 13px/1 var(--sans);padding:9px 14px 9px 12px;border-radius:999px;border:1px solid transparent}
+  h1{font-size:24px;line-height:1.08;letter-spacing:-.01em;margin:8px 0 0;font-weight:660}
+  .verdicts{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+  .pill{display:inline-flex;align-items:center;gap:7px;font:650 12px/1 var(--sans);padding:8px 11px;border-radius:999px;border:1px solid transparent;max-width:100%}
   .pill .lbl{font:700 8.5px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;opacity:.65}
   .pill .as{font:540 10px/1 var(--mono);opacity:.55;margin-left:1px}
   .pill.ok{background:var(--ok-bg);color:var(--ok);border-color:color-mix(in srgb,var(--ok) 16%,transparent)}
@@ -147,41 +156,41 @@ After this one rewrite the file is in skeleton format; from then on you just pre
   .pill.bad{background:var(--bad-bg);color:var(--bad);border-color:color-mix(in srgb,var(--bad) 18%,transparent)}
   .dot{width:7px;height:7px;border-radius:50%;background:currentColor;box-shadow:0 0 0 3px color-mix(in srgb,currentColor 18%,transparent)}
   /* Status headline — the 1-second read; mirrors the monitor's one-sentence verdict. */
-  .status{display:flex;align-items:center;gap:12px;margin:22px 0 0;padding:15px 19px;border-radius:13px;border:1px solid var(--line-2);background:var(--surface);box-shadow:var(--shadow);font-size:15.5px;font-weight:560}
+  .status{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap;margin:18px 0 0;padding:13px 14px;border-radius:13px;border:1px solid var(--line-2);background:var(--surface);box-shadow:var(--shadow);font-size:14px;font-weight:560}
   .status .ic{flex:none;width:9px;height:9px;border-radius:50%;background:currentColor;box-shadow:0 0 0 4px color-mix(in srgb,currentColor 15%,transparent)}
   .status.ok{color:var(--ok)} .status.warn{color:var(--warn)} .status.bad{color:var(--bad)}
-  .status .txt{color:var(--ink);font-weight:580} .status .when{margin-left:auto;font:540 12px/1 var(--mono);color:var(--ink-3);white-space:nowrap}
+  .status .txt{color:var(--ink);font-weight:580;min-width:0;flex:1 1 220px}.status .when{margin-left:19px;flex-basis:100%;font:540 11px/1.35 var(--mono);color:var(--ink-3);white-space:normal}
   .chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:16px}
   .chip{font:520 12px/1 var(--sans);padding:6px 11px;border-radius:8px;background:var(--surface);border:1px solid var(--line-2);color:var(--ink-2)} .chip b{color:var(--ink);font-weight:600}
   .goalcard{margin-top:26px;border:1px solid var(--line-2);border-radius:var(--r);background:var(--surface);box-shadow:var(--shadow);overflow:hidden}
-  .goalcard .obj{padding:18px 22px 17px;font-size:16px;line-height:1.5} .goalcard .obj .l{display:block;font:700 9px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--goal);margin-bottom:9px} .goalcard .obj b{font-weight:670}
-  .crit{display:flex;gap:13px;align-items:baseline;padding:12px 22px;border-top:1px solid var(--line);font-size:14px}
-  .crit .cs{flex:none;width:78px;font:700 9.5px/1.3 var(--mono);letter-spacing:.03em;text-transform:uppercase;padding-top:2px}
+  .goalcard .obj{padding:15px 15px 14px;font-size:14px;line-height:1.5}.goalcard .obj .l{display:block;font:700 9px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--goal);margin-bottom:9px}.goalcard .obj b{font-weight:670}
+  .crit{display:block;padding:11px 15px;border-top:1px solid var(--line);font-size:13.5px}
+  .crit .cs{display:inline-flex;margin-bottom:6px;font:700 9.5px/1.3 var(--mono);letter-spacing:.03em;text-transform:uppercase;padding-top:2px}
   .crit .cs.met{color:var(--ok)} .crit .cs.short{color:var(--warn)} .crit .cs.risk{color:var(--bad)}
   .crit .ct{color:var(--ink)} .crit .ct .m{display:block;margin-top:3px;color:var(--ink-3);font:520 12px/1.45 var(--mono)}
   .grouplbl{display:flex;align-items:center;gap:8px;font:650 11px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);margin:30px 2px 12px} .grouplbl::after{content:"";flex:1;height:1px;background:var(--line)}
   .seclabel{font:650 11px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);margin:34px 2px 14px}
-  .tiles{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
-  .tile{background:var(--surface);border:1px solid var(--line-2);border-radius:12px;padding:15px 16px;box-shadow:var(--shadow)}
+  .tiles{display:grid;grid-template-columns:1fr;gap:10px}
+  .tile{min-width:0;background:var(--surface);border:1px solid var(--line-2);border-radius:12px;padding:13px 14px;box-shadow:var(--shadow)}
   .tile .k{font:600 10.5px/1 var(--mono);letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3)}
   .tile .v{font-size:25px;font-weight:680;letter-spacing:-.02em;margin-top:10px;line-height:1} .tile .d{font:540 12px/1.3 var(--sans);margin-top:7px;color:var(--ink-2)}
   .up{color:var(--ok)} .down{color:var(--bad)} .flat{color:var(--warn)}
   .runs{border:1px solid var(--line-2);border-radius:12px;overflow:hidden;background:var(--surface);box-shadow:var(--shadow)}
-  .run{display:flex;align-items:center;gap:13px;padding:12px 16px;border-top:1px solid var(--line);font:540 13px/1 var(--mono);color:var(--ink-2)}
+  .run{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:7px 10px;align-items:start;padding:12px 14px;border-top:1px solid var(--line);font:540 12px/1.35 var(--mono);color:var(--ink-2)}
   .run:first-child{border-top:none} .run.flag{background:color-mix(in srgb,var(--warn-bg) 60%,var(--surface))}
-  .run .id{color:var(--ink);font-weight:680;width:38px} .run .st{display:inline-flex;align-items:center;gap:6px;width:96px}
+  .run .id{color:var(--ink);font-weight:680}.run .st{display:inline-flex;align-items:center;gap:6px}
   .run .st.ok{color:var(--ok)} .run .st.warn{color:var(--warn)} .run .st .d{width:5px;height:5px;border-radius:50%;background:currentColor}
-  .run .col{width:78px} .run .col b{color:var(--ink);font-weight:620} .run .note{color:var(--warn);font:560 12px/1 var(--sans)} .run .ago{margin-left:auto;color:var(--ink-3)}
-  .entry{position:relative;background:var(--surface);border:1px solid var(--line-2);border-radius:13px;padding:17px 19px 17px 22px;margin-bottom:12px;box-shadow:var(--shadow)}
+  .run .col b{color:var(--ink);font-weight:620}.run .note{grid-column:1/-1;color:var(--warn);font:560 12px/1.35 var(--sans)}.run .ago{grid-column:1/-1;color:var(--ink-3)}
+  .entry{position:relative;background:var(--surface);border:1px solid var(--line-2);border-radius:13px;padding:15px 14px 15px 18px;margin-bottom:12px;box-shadow:var(--shadow);min-width:0}
   .entry::before{content:"";position:absolute;left:0;top:14px;bottom:14px;width:3px;border-radius:3px;background:var(--line-2)}
   .entry.monitor::before{background:var(--warn)} .entry.agent::before{background:var(--ok)} .entry.user::before{background:var(--user)} .entry.open::before{background:var(--bad)} .entry.note::before{background:var(--ink-3)}
-  .ehead{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+  .ehead{display:flex;align-items:center;gap:7px;margin-bottom:8px;flex-wrap:wrap}
   .tag{font:700 9.5px/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;padding:4px 8px;border-radius:6px}
   .tag.monitor{background:var(--warn-bg);color:var(--warn)} .tag.agent{background:var(--ok-bg);color:var(--ok)} .tag.user{background:var(--user-bg);color:var(--user)} .tag.open{background:var(--bad-bg);color:var(--bad)} .tag.note{background:var(--surface-2);color:var(--ink-2);border:1px solid var(--line-2)}
   .kind{font:700 8.5px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;padding:4px 7px;border-radius:6px;border:1px solid}
   .kind.bug{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 22%,transparent)} .kind.goal{color:var(--goal);border-color:color-mix(in srgb,var(--goal) 22%,transparent)}
-  .etitle{font-weight:630;font-size:15px;letter-spacing:-.01em} .when{margin-left:auto;font:540 12px/1 var(--mono);color:var(--ink-3)}
-  .entry p{margin:0;font-size:14.5px;color:var(--ink)} .entry p+p{margin-top:8px}
+  .etitle{font-weight:630;font-size:14px;line-height:1.25;letter-spacing:-.01em}.ehead>.when{margin-left:0;flex-basis:100%;font:540 11px/1.35 var(--mono);color:var(--ink-3)}
+  .entry p{margin:0;font-size:13.5px;color:var(--ink);overflow-wrap:anywhere}.entry p+p{margin-top:8px}
   .entry .meta{margin-top:11px;padding-top:11px;border-top:1px solid var(--line);font:540 12px/1.5 var(--mono);color:var(--ink-3)} .entry .meta code{background:var(--surface-2);border:1px solid var(--line);border-radius:5px;padding:1px 6px;color:var(--ink-2)}
   .resolved{margin-top:11px;display:inline-flex;align-items:center;gap:7px;font:620 12.5px/1.4 var(--sans);color:var(--ok)} .resolved::before{content:"✓";font-size:11px;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;background:var(--ok-bg)}
   /* Outcome stamp on a Decision card — did the change actually move the number, judged by a later run. */
@@ -191,8 +200,21 @@ After this one rewrite the file is in skeleton format; from then on you just pre
   .outcome.bad{color:var(--bad)} .outcome.bad::before{content:"✗";background:var(--bad-bg)}
   .outcome.flat{color:var(--warn)} .outcome.flat::before{content:"–";background:var(--warn-bg)}
   .archive{border:1px solid var(--line-2);border-radius:12px;background:var(--surface);overflow:hidden;box-shadow:var(--shadow)}
-  .arow{display:flex;gap:13px;align-items:center;padding:14px 18px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-2)} .arow:first-child{border-top:none} .arow b{color:var(--ink);font-weight:620} .arow .n{margin-left:auto;font:540 12px/1 var(--mono);color:var(--ink-3)}
+  .arow{display:block;padding:13px 14px;border-top:1px solid var(--line);font-size:13.5px;color:var(--ink-2)} .arow:first-child{border-top:none} .arow b{color:var(--ink);font-weight:620} .arow .n{display:block;margin-top:4px;font:540 11px/1.35 var(--mono);color:var(--ink-3)}
   footer{margin-top:42px;padding-top:18px;border-top:1px solid var(--line);font:540 11.5px/1.5 var(--mono);color:var(--ink-3)}
+  @media (min-width:640px){
+    body{font-size:15px}
+    .wrap{padding:28px 26px 88px}
+    .top{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;flex-wrap:wrap}
+    h1{font-size:31px;line-height:1.05;letter-spacing:-.025em}
+    .verdicts{margin-top:0}.pill{font-size:13px;padding:9px 14px 9px 12px}
+    .status{align-items:center;gap:12px;margin-top:22px;padding:15px 19px;font-size:15.5px}.status .txt{flex:1 1 auto}.status .when{margin-left:auto;flex-basis:auto;white-space:nowrap;font-size:12px}
+    .goalcard .obj{padding:18px 22px 17px;font-size:16px}.crit{display:flex;gap:13px;align-items:baseline;padding:12px 22px;font-size:14px}.crit .cs{flex:none;width:78px;margin-bottom:0}
+    .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.tile{padding:15px 16px}
+    .run{display:flex;align-items:center;gap:13px;padding:12px 16px;font-size:13px;line-height:1}.run .id{width:38px}.run .st{width:96px}.run .col{width:78px}.run .note{grid-column:auto}.run .ago{grid-column:auto;margin-left:auto}
+    .entry{padding:17px 19px 17px 22px}.etitle{font-size:15px}.ehead>.when{margin-left:auto;flex-basis:auto;white-space:nowrap;font-size:12px}.entry p{font-size:14.5px}
+    .arow{display:flex;gap:13px;align-items:center;padding:14px 18px;font-size:14px}.arow .n{display:block;margin-left:auto;margin-top:0;font-size:12px}
+  }
 </style>
 </head>
 <body><div class="wrap">

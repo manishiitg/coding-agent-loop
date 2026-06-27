@@ -70,7 +70,7 @@ export const ModeEmptyState: React.FC<ModeEmptyStateProps> = ({ modeCategory }) 
           <span>
             {modeCategory === 'multi-agent'
               ? 'Type your message below to get started'
-              : 'Get started with your workflow'
+              : 'Get started with your automation'
             }
           </span>
         </div>

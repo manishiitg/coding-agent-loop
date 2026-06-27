@@ -38,7 +38,7 @@ export const WorkflowPresetSelector: React.FC<WorkflowPresetSelectorProps> = ({
       {isCreatingWorkflow && (
         <div className="flex items-center gap-2 text-xs text-muted-foreground mt-2">
           <div className="w-3 h-3 border-2 border-muted-foreground border-t-primary rounded-full animate-spin"></div>
-          Generating workflow plan...
+          Generating automation plan...
         </div>
       )}
     </div>

@@ -121,20 +121,20 @@ var providerStaticInfoMap = map[string]providerStaticInfo{
 		requiresAPIKey:  false,
 	},
 	"agy-cli": {
-		displayName:     "Antigravity CLI (Alpha)",
-		description:     "Alpha local coding agent through agy and tmux. Requires local Antigravity sign-in; structured JSON transport is not supported.",
+		displayName:     "Antigravity CLI (Deprecated)",
+		description:     "Deprecated for new setup. Existing sessions remain runnable; use Pi CLI for new multi-provider coding-agent work.",
 		integrationKind: "coding_agent",
 		authDescription: "Local CLI (Agy sign-in)",
 		requiresAPIKey:  false,
 	},
 	"pi-cli": {
 		displayName:     "Pi CLI",
-		description:     "Uses Pi CLI through tmux marker transport. Default route uses Gemini via PI_API_KEY/GEMINI_API_KEY; custom Pi provider/model IDs are supported.",
+		description:     "Uses Pi CLI through tmux marker transport for Pi model IDs across Gemini, Z.AI, Kimi, MiniMax, DeepSeek, and custom Pi providers.",
 		integrationKind: "coding_agent",
-		authDescription: "Local CLI (PI/Gemini API key)",
+		authDescription: "Local CLI (Pi provider API key)",
 		requiresAPIKey:  false,
-		apiKeyEnv:       "PI_API_KEY or GEMINI_API_KEY",
-		apiKeyURL:       "https://aistudio.google.com/apikey",
+		apiKeyEnv:       "Provider-specific: GEMINI_API_KEY, ZAI_API_KEY, KIMI_API_KEY, MINIMAX_API_KEY, DEEPSEEK_API_KEY, etc.",
+		apiKeyURL:       "https://pi.dev/docs/latest/providers",
 	},
 	"claude-code": {
 		displayName:     "Claude Code",
@@ -145,7 +145,7 @@ var providerStaticInfoMap = map[string]providerStaticInfo{
 	},
 	"gemini-cli": {
 		displayName:     "Gemini CLI (Deprecated)",
-		description:     "Deprecated for new setup. Existing sessions remain runnable; use Antigravity CLI for new Google-backed coding-agent work.",
+		description:     "Deprecated for new setup. Existing sessions remain runnable; use Pi CLI for new Gemini coding-agent work.",
 		integrationKind: "coding_agent",
 		authDescription: "Local CLI (API key optional)",
 		requiresAPIKey:  false,
@@ -284,8 +284,8 @@ func (api *StreamingAPI) handleGetProviderManifest(w http.ResponseWriter, r *htt
 	capabilitiesByProvider := buildProviderCapabilities(ctx)
 
 	providerOrder := []string{
-		"codex-cli", "cursor-cli", "agy-cli", "pi-cli", "claude-code",
-		"gemini-cli",
+		"claude-code", "codex-cli", "cursor-cli", "pi-cli",
+		"gemini-cli", "agy-cli",
 		"openai", "anthropic", "vertex", "bedrock", "azure",
 		"elevenlabs", "deepgram", "minimax",
 	}
@@ -622,13 +622,9 @@ func cursorFallbackModels() []dynamicModelEntry {
 
 func fetchPiCLIModels() *dynamicModelsResponse {
 	models := piFallbackModels()
-	source := "curated_fallback"
+	source := "curated_latest"
 	if _, err := runtimeAvailableForProvider("pi-cli"); err == nil {
-		source = "curated_runtime_available"
-		if listed, listErr := listPiCLIModels(); listErr == nil && len(listed) > 0 {
-			models = listed
-			source = "pi_cli_list_models"
-		}
+		source = "curated_latest_runtime_available"
 	}
 
 	resp := &dynamicModelsResponse{
@@ -637,7 +633,7 @@ func fetchPiCLIModels() *dynamicModelsResponse {
 		Models:             models,
 		Groups:             dynamicModelGroups(models),
 		SupportsCustom:     true,
-		CustomModelHint:    "Enter any Pi model as provider/model, e.g. google/gemini-3.5-flash",
+		CustomModelHint:    "Enter any Pi model as provider/model, e.g. google/gemini-3.5-flash or zai/glm-5.2",
 		Source:             source,
 		CacheTTLSeconds:    300,
 		CachedAt:           time.Now().UTC().Format(time.RFC3339),
@@ -702,6 +698,22 @@ func parsePiCLIModelList(output string) []dynamicModelEntry {
 	return models
 }
 
+func mergePiModelEntries(primary, secondary []dynamicModelEntry) []dynamicModelEntry {
+	merged := make([]dynamicModelEntry, 0, len(primary)+len(secondary))
+	seen := map[string]bool{}
+	for _, group := range [][]dynamicModelEntry{primary, secondary} {
+		for _, model := range group {
+			modelID := strings.TrimSpace(model.ModelID)
+			if modelID == "" || seen[modelID] {
+				continue
+			}
+			seen[modelID] = true
+			merged = append(merged, model)
+		}
+	}
+	return merged
+}
+
 func parsePiCompactCount(value string) int {
 	value = strings.TrimSpace(strings.ToUpper(value))
 	if value == "" {
@@ -743,6 +755,14 @@ func piModelGroup(provider string) string {
 		return "Amazon Bedrock"
 	case "deepseek":
 		return "DeepSeek"
+	case "zai", "zai-coding-cn":
+		return "Z.AI"
+	case "minimax", "minimax-cn":
+		return "MiniMax"
+	case "kimi-coding", "moonshotai", "moonshotai-cn":
+		return "Kimi"
+	case "nvidia":
+		return "NVIDIA"
 	default:
 		if provider == "" {
 			return "Other"
@@ -773,21 +793,79 @@ func piFallbackModels() []dynamicModelEntry {
 		{
 			ModelID:       "google/gemini-3.5-flash",
 			ModelName:     "Gemini 3.5 Flash",
-			Group:         "Google",
+			Group:         "Recommended Gemini",
 			IsDefault:     true,
 			ContextWindow: 1048576,
+			CostInput:     1.5,
+			CostOutput:    9,
 		},
 		{
-			ModelID:       "google/gemini-2.5-flash",
-			ModelName:     "Gemini 2.5 Flash",
-			Group:         "Google",
+			ModelID:       "google/gemini-3.1-pro-preview",
+			ModelName:     "Gemini 3.1 Pro Preview",
+			Group:         "Recommended Gemini",
 			ContextWindow: 1048576,
+			CostInput:     2,
+			CostOutput:    12,
 		},
 		{
-			ModelID:       "google-vertex/gemini-3.5-flash",
-			ModelName:     "Gemini 3.5 Flash (Vertex)",
-			Group:         "Google Vertex",
+			ModelID:       "zai/glm-5.2",
+			ModelName:     "GLM-5.2",
+			Group:         "Z.AI",
+			ContextWindow: 1000000,
+			CostInput:     1.5,
+			CostOutput:    4.5,
+		},
+		{
+			ModelID:       "zai-coding-cn/glm-5.2",
+			ModelName:     "GLM-5.2 (CN)",
+			Group:         "Z.AI",
+			ContextWindow: 1000000,
+			CostInput:     1.4,
+			CostOutput:    4.4,
+		},
+		{
+			ModelID:       "minimax/MiniMax-M3",
+			ModelName:     "MiniMax M3",
+			Group:         "MiniMax",
+			ContextWindow: 512000,
+			CostInput:     0.6,
+			CostOutput:    2.4,
+		},
+		{
+			ModelID:       "minimax-cn/MiniMax-M3",
+			ModelName:     "MiniMax M3 (CN)",
+			Group:         "MiniMax",
+			ContextWindow: 512000,
+			CostInput:     0.6,
+			CostOutput:    2.4,
+		},
+		{
+			ModelID:       "kimi-coding/k2p7",
+			ModelName:     "Kimi K2.7 Code",
+			Group:         "Kimi",
+			ContextWindow: 262144,
+		},
+		{
+			ModelID:       "moonshotai/kimi-k2.7-code",
+			ModelName:     "Kimi K2.7 Code (Moonshot)",
+			Group:         "Kimi",
+			ContextWindow: 262144,
+		},
+		{
+			ModelID:       "deepseek/deepseek-v4-pro",
+			ModelName:     "DeepSeek V4 Pro",
+			Group:         "DeepSeek",
 			ContextWindow: 1048576,
+			CostInput:     0.435,
+			CostOutput:    0.87,
+		},
+		{
+			ModelID:       "deepseek/deepseek-v4-flash",
+			ModelName:     "DeepSeek V4 Flash",
+			Group:         "DeepSeek",
+			ContextWindow: 1048576,
+			CostInput:     0.14,
+			CostOutput:    0.28,
 		},
 	}
 }

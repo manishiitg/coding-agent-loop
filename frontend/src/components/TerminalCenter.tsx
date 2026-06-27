@@ -903,7 +903,7 @@ function formatExecutionKind(kind?: string): string {
     case 'workflow_step':
     case 'execution_only':
     case 'step':
-      return 'Workflow step'
+      return 'Automation step'
     case 'background_agent':
       return 'Background agent'
     case 'todo_task':
@@ -1220,7 +1220,7 @@ function terminalStateDescription(terminal: TerminalSnapshot): string {
     case 'completed':
       return 'Completed: the coding agent finished; this is the retained terminal snapshot.'
     case 'failed':
-      return 'Failed: the coding agent or workflow step ended with an error.'
+      return 'Failed: the coding agent or automation step ended with an error.'
     case 'stale':
       return 'Stale: no terminal updates were received for a long time; this pane may have lost its lifecycle event.'
     case 'closing':
@@ -1974,16 +1974,22 @@ const XtermTerminalPane: React.FC<{
   xtermTheme: ITheme
   xtermProfile: (typeof XTERM_PROFILE_OPTIONS)[TerminalColorScheme]
   onViewportStickChange?: (isNearBottom: boolean) => void
+  onResize?: (cols: number, rows: number) => void
   debugLabel?: string
-}> = ({ content, contentSource, className, contentRef, xtermTheme, xtermProfile, onViewportStickChange, debugLabel }) => {
+}> = ({ content, contentSource, className, contentRef, xtermTheme, xtermProfile, onViewportStickChange, onResize, debugLabel }) => {
   const mountRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<XTerm | null>(null)
   const lastContentRef = useRef<string>('')
   const onViewportStickChangeRef = useRef(onViewportStickChange)
+  const onResizeRef = useRef(onResize)
 
   useEffect(() => {
     onViewportStickChangeRef.current = onViewportStickChange
   }, [onViewportStickChange])
+
+  useEffect(() => {
+    onResizeRef.current = onResize
+  }, [onResize])
 
   const logXtermDebug = useCallback((phase: string, extra: Record<string, unknown> = {}) => {
     if (!terminalScrollDebugEnabled()) return
@@ -2030,10 +2036,15 @@ const XtermTerminalPane: React.FC<{
       onViewportStickChangeRef.current?.(distanceFromBottom <= 1)
       logXtermDebug('scroll', { viewportY, distanceFromBottom })
     })
+    const resizeDisposable = term.onResize(({ cols, rows }) => {
+      onResizeRef.current?.(cols, rows)
+      logXtermDebug('resize', { cols, rows })
+    })
 
     const fitTerminal = () => {
       try {
         fit.fit()
+        onResizeRef.current?.(term.cols, term.rows)
         logXtermDebug('fit')
       } catch {
         // Fit can fail during unmount or while the pane is display:none.
@@ -2045,6 +2056,7 @@ const XtermTerminalPane: React.FC<{
 
     return () => {
       scrollDisposable.dispose()
+      resizeDisposable.dispose()
       resizeObserver.disconnect()
       terminalRef.current = null
       term.dispose()
@@ -2775,7 +2787,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   // Manual width override for the agent rail: null = follow the auto narrow
   // behavior (slim in the report/plan rail), true/false = user-pinned narrow/wide.
   // A toggle in the rail controls lets the user resize it themselves.
-  const [railManualNarrow, setRailManualNarrow] = useState<boolean | null>(null)
+  const [railManualNarrow, setRailManualNarrow] = useState<boolean | null>(true)
   const railNarrow = railManualNarrow !== null ? railManualNarrow : slimAgentRail
   const [terminalRailFilter, setTerminalRailFilter] = useState<TerminalRailFilter>('running')
   // Sub-agent terminals are shown by default (the +/- toggle hides them on
@@ -2903,6 +2915,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   }, [sessionEvents, dismissedErrorIDs, terminals])
   const sessionErrorBanner = terminalErrorGroups.global
   const terminalErrorsByID = terminalErrorGroups.byTerminalID
+  const terminalCenterRef = useRef<HTMLDivElement | null>(null)
   const terminalOutputRef = useRef<HTMLElement | null>(null)
   const terminalAutoScrollRef = useRef(true)
   const terminalManualScrollLockRef = useRef(false)
@@ -2918,6 +2931,8 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const lastFetchScopeRef = useRef<string | null>(null)
   const fastPollUntilRef = useRef(0)
   const fastPollIntervalRef = useRef<number | null>(null)
+  const lastSizeHintSentRef = useRef<{ cols: number; rows: number } | null>(null)
+  const lastResizeSentRef = useRef<{ terminalId: string; cols: number; rows: number } | null>(null)
   const terminalTheme = TERMINAL_THEMES[terminalColorScheme]
 
   useEffect(() => {
@@ -3697,32 +3712,87 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     return () => window.cancelAnimationFrame(frame)
   }, [selectedTerminalKey, selectedTerminalDisplayContent])
 
-  // Startup size hint: report the terminal viewport size to the backend as soon
-  // as the TerminalCenter mounts — even before any session exists — so the very
-  // first coding-agent tmux session launches at the correct width instead of the
-  // 120×36 default. Best-effort (fires once, silently ignored if it fails).
-  const sizeHintSentRef = useRef(false)
-  useEffect(() => {
-    if (sizeHintSentRef.current) return
-    const el = terminalOutputRef.current as HTMLElement | null
-    if (!el) return
+  const measureTerminalElementSize = useCallback((el: HTMLElement | null) => {
+    if (!el || el.clientWidth <= 0 || el.clientHeight <= 0) return null
     const ruler = document.createElement('span')
     ruler.textContent = '0'.repeat(100)
     ruler.setAttribute('aria-hidden', 'true')
     ruler.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;top:0;left:0;pointer-events:none;'
+    ruler.style.fontFamily = XTERM_PROFILE_OPTIONS[terminalColorScheme].fontFamily
+    ruler.style.fontSize = `${XTERM_PROFILE_OPTIONS[terminalColorScheme].fontSize}px`
+    ruler.style.lineHeight = String(XTERM_PROFILE_OPTIONS[terminalColorScheme].lineHeight)
     el.appendChild(ruler)
     const charWidth = ruler.getBoundingClientRect().width / 100
     const lineHeight = ruler.getBoundingClientRect().height || 16
     ruler.remove()
-    if (!charWidth || !lineHeight) return
+    if (!charWidth || !lineHeight) return null
     const style = window.getComputedStyle(el)
     const padX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0)
     const padY = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0)
     const cols = Math.max(40, Math.floor((el.clientWidth - padX) / charWidth) - 1)
     const rows = Math.max(10, Math.floor((el.clientHeight - padY) / lineHeight))
-    sizeHintSentRef.current = true
-    void agentApi.reportTerminalSizeHint(cols, rows).catch(() => { /* best-effort */ })
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    return { cols, rows }
+  }, [terminalColorScheme])
+
+  const sendTerminalSizeHint = useCallback((cols: number, rows: number) => {
+    const nextCols = Math.max(40, Math.floor(cols))
+    const nextRows = Math.max(10, Math.floor(rows))
+    const last = lastSizeHintSentRef.current
+    if (last && last.cols === nextCols && last.rows === nextRows) return
+    lastSizeHintSentRef.current = { cols: nextCols, rows: nextRows }
+    void agentApi.reportTerminalSizeHint(nextCols, nextRows, currentSessionId).catch(() => {
+      lastSizeHintSentRef.current = null
+    })
+  }, [currentSessionId])
+
+  const sendTerminalResize = useCallback((terminalId: string | undefined, cols: number, rows: number) => {
+    if (!terminalId) return
+    const nextCols = Math.max(40, Math.floor(cols))
+    const nextRows = Math.max(10, Math.floor(rows))
+    const last = lastResizeSentRef.current
+    if (last && last.terminalId === terminalId && last.cols === nextCols && last.rows === nextRows) return
+    lastResizeSentRef.current = { terminalId, cols: nextCols, rows: nextRows }
+    void agentApi.resizeTerminal(terminalId, nextCols, nextRows).catch(() => {
+      // Resize is best-effort: tmux pane may have been killed, terminal may
+      // have transitioned. Don't surface as a user error.
+      lastResizeSentRef.current = null
+    })
+  }, [])
+
+  const handleSelectedXtermResize = useCallback((cols: number, rows: number) => {
+    if (!selectedTerminalView || !selectedTerminalView.tmux_session || isSyntheticTerminal(selectedTerminalView)) return
+    sendTerminalResize(selectedTerminalView.terminal_id, cols, rows)
+  }, [selectedTerminalView, sendTerminalResize])
+
+  // Startup/idle size hint: keep the backend's preferred tmux launch size in
+  // sync with the visible TerminalCenter container, even before any terminal
+  // exists. In multiagent chat the terminal DOM often appears after the first
+  // render, so a one-shot mount effect misses the real width.
+  useEffect(() => {
+    const el = terminalCenterRef.current
+    if (!el) return
+
+    let timer: number | undefined
+    const measureAndSend = () => {
+      const measured = measureTerminalElementSize(el)
+      if (measured) sendTerminalSizeHint(measured.cols, measured.rows)
+    }
+    const schedule = () => {
+      if (timer !== undefined) window.clearTimeout(timer)
+      timer = window.setTimeout(measureAndSend, 150)
+    }
+
+    schedule()
+    const observer = new ResizeObserver(schedule)
+    observer.observe(el)
+    window.addEventListener('resize', schedule)
+
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', schedule)
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [measureTerminalElementSize, sendTerminalSizeHint])
 
   // Dynamic tmux resize: measure the terminal viewport in monospace chars and
   // POST the dimensions to /api/terminals/{id}/resize. The backend runs
@@ -3730,41 +3800,16 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   // process-wide preferred size, so the next CLI-agent tmux session launches
   // at the operator's actual viewport instead of the 120×36 default. Only
   // fires for terminals backed by a tmux session.
-  const lastResizeSentRef = useRef<{ terminalId: string; cols: number; rows: number } | null>(null)
   useEffect(() => {
     const el = terminalOutputRef.current as HTMLElement | null
     const tmuxBacked = selectedTerminalView && Boolean(selectedTerminalView.tmux_session)
     if (!el || !selectedTerminalView || !tmuxBacked || isSyntheticTerminal(selectedTerminalView)) return
     const terminalId = selectedTerminalView.terminal_id
 
-    const ruler = document.createElement('span')
-    ruler.textContent = '0'.repeat(100)
-    ruler.setAttribute('aria-hidden', 'true')
-    ruler.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;top:0;left:0;pointer-events:none;'
-    el.appendChild(ruler)
-
     let timer: number | undefined
     const measureAndSend = () => {
-      const rulerRect = ruler.getBoundingClientRect()
-      const charWidth = rulerRect.width / 100
-      const lineHeight = rulerRect.height || parseFloat(window.getComputedStyle(ruler).lineHeight) || 16
-      if (!charWidth || !lineHeight) return
-      const style = window.getComputedStyle(el)
-      const padX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0)
-      const padY = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0)
-      const innerWidth = el.clientWidth - padX
-      const innerHeight = el.clientHeight - padY
-      // -1 col guard so cursor's right-edge box-drawing doesn't wrap mid-char.
-      const cols = Math.max(40, Math.floor(innerWidth / charWidth) - 1)
-      const rows = Math.max(10, Math.floor(innerHeight / lineHeight))
-      const last = lastResizeSentRef.current
-      if (last && last.terminalId === terminalId && last.cols === cols && last.rows === rows) return
-      lastResizeSentRef.current = { terminalId, cols, rows }
-      void agentApi.resizeTerminal(terminalId, cols, rows).catch(() => {
-        // Resize is best-effort: tmux pane may have been killed, terminal may
-        // have transitioned. Don't surface as a user error.
-        lastResizeSentRef.current = null
-      })
+      const measured = measureTerminalElementSize(el)
+      if (measured) sendTerminalResize(terminalId, measured.cols, measured.rows)
     }
 
     const schedule = () => {
@@ -3781,9 +3826,8 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       observer.disconnect()
       window.removeEventListener('resize', schedule)
       if (timer !== undefined) window.clearTimeout(timer)
-      ruler.remove()
     }
-  }, [selectedTerminalView])
+  }, [measureTerminalElementSize, selectedTerminalView, sendTerminalResize])
 
 
   // Rail item — one row in the left rail. Compact vertical layout:
@@ -4034,7 +4078,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   )
 
   return (
-    <div className={`flex min-h-0 min-w-0 flex-col bg-[#191a18] text-neutral-100 ${compact ? '' : 'flex-1 overflow-hidden'}`}>
+    <div ref={terminalCenterRef} className={`flex min-h-0 min-w-0 flex-col bg-[#191a18] text-neutral-100 ${compact ? '' : 'flex-1 overflow-hidden'}`}>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {(!hasConversationActivity && groupedTerminals.orderedTerminals.length === 0) ? (
           // Blank only when there's neither live conversation activity nor any
@@ -4096,7 +4140,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
             <Terminal className="h-10 w-10 text-neutral-700" strokeWidth={1.25} />
             <div className="text-sm font-medium text-neutral-300">No terminals yet</div>
             <div className="max-w-md text-xs leading-relaxed text-neutral-500">
-              Run a workflow step, send a message to the main agent, or kick off
+              Run an automation step, send a message to the main agent, or kick off
               a coding-agent task to see its activity stream here. Each call
               becomes its own pane — the rail on the left lists them all, the
               right pane shows live output, tool calls, and cost.
@@ -4109,7 +4153,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
         )}
 
         {groupedTerminals.orderedTerminals.length > 0 && (
-          <div className="flex min-h-0 min-w-0 flex-1 gap-0 overflow-hidden border border-neutral-700/70 bg-[#101211]">
+          <div className="relative flex min-h-0 min-w-0 flex-1 gap-0 overflow-hidden border border-neutral-700/70 bg-[#101211]">
             {/* Left rail — vertical list of all terminals. Scrolls
                 independently of the right pane so the user can navigate
                 a long list without losing the selected terminal's
@@ -4514,6 +4558,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                       xtermTheme={XTERM_THEMES[terminalColorScheme]}
                       xtermProfile={XTERM_PROFILE_OPTIONS[terminalColorScheme]}
                       onViewportStickChange={handleXtermViewportStickChange}
+                      onResize={handleSelectedXtermResize}
                       debugLabel={selectedTerminalView ? terminalPaneKey(selectedTerminalView) : undefined}
                       className={`min-w-0 flex-1 overflow-hidden overscroll-contain font-mono text-neutral-100 ${XTERM_PROFILE_OPTIONS[terminalColorScheme].panePaddingClass} ${terminalTheme.selection}`}
                     />

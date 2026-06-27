@@ -20,18 +20,41 @@ into memory. You read the org's output as *evidence*, decide what actually matte
 doesn't), and write knowledge **in your own words, merged with what you already know**.
 A 1:1 copy of any source file is a failure of this pass.
 
-### 1. Gather the evidence (one efficient sweep)
+### 1. Cheap freshness gate
 
-**First, a cheap freshness check.** If nothing has changed since your last Org Pulse — no
-new workflow runs, no new chats, no new outputs — then there is nothing to do: write
-nothing and stop. A daily run over an idle org is correctly a no-op. Only when something is
-new do you do the full sweep below.
+First, check whether anything has changed since your last Org Pulse — no new workflow runs,
+no new chats, and no new outputs means there is nothing to do. Write nothing and stop. A daily
+run over an idle org is correctly a no-op.
+
+Only when something is new do you continue.
+
+### 2. Back up org artifacts (always, before writing)
+
+Before you change `pulse/goals.html`, `pulse/org-pulse.html`, or memory, back up the
+org-level artifacts so the daily steward pass is reversible. This mirrors workflow Pulse.
+
+- Read `pulse/backup.json` and `pulse/backup/status.json` if they exist.
+- Follow `get_reference_doc(kind="backup-strategy")` using the **same config/status split as
+  workflow backup**: org backup config lives in `pulse/backup.json`, and operational status
+  lives in `pulse/backup/status.json`.
+- If backup is not configured, set up the zero-config local-git default for the org-level
+  artifacts and write `pulse/backup.json` plus `pulse/backup/status.json`. Do not ask the
+  user on the scheduled daily pass unless a remote destination or credential is required.
+- Back up at least: `pulse/goals.html`, `pulse/org-pulse.html`, memory files, employee/org
+  config files, and multi-agent schedule/config files. Do **not** back up secrets.
+- If `pulse/backup/status.json` says the current source hash is already backed up, record
+  that it was unchanged and skip the actual commit/push.
+- Always write `pulse/backup/status.json` before any HTML/memory write. If backup fails,
+  record the failure there and stop before making changes.
+
+### 3. Gather the evidence (one efficient sweep)
 
 You know the fixed set up front — read it in a few batched shell commands with clear
 `=== NAME ===` delimiters, not one file per call. Don't explore.
 
 First read:
 - `pulse/goals.html` if it exists — the org goal scorecard. Extract each goal's target,
+  each KPI target row (`data-target-id`, baseline/current/goal/unit/due date/owner/source),
   measurement method, contributing workflows, and current status. If it does not exist, say
   the org has no explicit goals yet and include a suggestion to create it; still do the
   workflow-health sweep below.
@@ -47,17 +70,19 @@ For **each** workflow under `Workflow/<name>/`:
 
 Then:
 - **Recent conversations** — the stored chat files for ad-hoc tasks you ran since the last
-  Org Pulse. This is how you see repeated asks (step 4).
+  Org Pulse. This is how you see repeated asks (step 6).
 - **Your own current memory** — your `entities/*.md` and topic notes, so you build on what
   you know and never duplicate it.
 
-### 2. Measure goals, then judge the org's endgame
+### 4. Measure goals, then judge the org's endgame
 
 If `pulse/goals.html` exists, evaluate each goal first:
-- Look only at its named/contributing workflows and the evidence the goal says matters.
+- Look only at its named/contributing workflows and the evidence each KPI target says matters.
+- For every target, compare current value against baseline and target value, respect the
+  direction (`increase`, `decrease`, `maintain`, `milestone`), due date, and status rule.
 - Assign `on-track`, `at-risk`, `off-track`, or `unknown` with a one-sentence reason.
-- Use `unknown` when the workflows do not yet produce evidence for the goal; do not invent a
-  proxy metric.
+- Use `unknown` when the workflows do not yet produce evidence for the target; do not invent
+  a proxy metric.
 - Surface workflow gaps as suggestions, not fixes.
 
 Then evaluate workflow alignment:
@@ -75,7 +100,7 @@ against what its report shows. Note anything that changed since yesterday (a wor
 broke, recovered, or started drifting) — that delta is what the user cares about, not the
 steady state.
 
-### 3. Harvest into memory (the core — curate, merge, in your words)
+### 5. Harvest into memory (the core — curate, merge, in your words)
 
 From the reports, learnings, and conversations, decide what is **worth remembering**. The
 test: would this change a future decision, or explain a future result? If not, skip it —
@@ -94,7 +119,7 @@ For each keeper:
 
 If a day produced nothing worth keeping, write nothing. That is a correct outcome.
 
-### 4. Spot promotions (recurring task → workflow)
+### 6. Spot promotions (recurring task → workflow)
 
 Review the recent conversations/tasks for **recurrence** — work the user keeps asking you to
 do ad-hoc. When you see the same *shape* repeated (judge it; there is no fixed count),
@@ -105,17 +130,27 @@ task IS a workflow. Name it, describe the generalized procedure (parameterize th
 Propose only — you don't create the workflow here. The user accepts in the suggestions
 surface, and the proposal becomes one `create_workflow` call.
 
-### 5. Surface it in the Org Pulse log
+### 7. Surface it in the Org Pulse log
 
-Your single user-facing output is **`pulse/org-pulse.html`** — one readable HTML document,
-newest-on-top, the page the user opens (on the right) to see how the org is doing. There is
-no separate JSON/data file; everything lives in this log. Format per
-`get_reference_doc(kind="html-output")`.
+Your single user-facing content output is **`pulse/org-pulse.html`** — one readable HTML
+document, newest-on-top, the page the user opens (on the right) to see how the org is going.
+Operational backup/publish config and status live separately in `pulse/backup*.json` and
+`pulse/publish*.json`, same as workflow. Format the HTML per
+`get_reference_doc(kind="org-html")` and `get_reference_doc(kind="html-output")`.
+
+Use the Org Pulse skeleton from `org-html`. The active page must read top to bottom:
+
+1. header and meta,
+2. one status banner with the latest org read,
+3. KPI strip for goal progress, workflow issues, unaligned workflows, and open suggestions,
+4. newest-first pulse entries inserted after `<!-- ORG PULSE ENTRIES: newest first -->`,
+5. archive section when the active file grows large.
 
 Prepend **one dated entry** for today (a steady day warrants a short one — or nothing):
 - **Goal scorecard** — one row/card per goal from `pulse/goals.html`: status, evidence,
-  contributing workflows, and confidence. If no goals file exists, show "No org goals set"
-  and suggest creating `pulse/goals.html`.
+  target progress (baseline -> current -> target), contributing workflows, owner, and
+  confidence. If no goals file exists, show "No org goals set" and suggest creating
+  `pulse/goals.html`.
 - **Workflow alignment** — aligned/supporting/unaligned workflow counts, with specific
   unaligned workflows called out as suggestions.
 - **Org health** — the one-liner: which workflows are on-target / drifting / broken, and the
@@ -135,28 +170,33 @@ high-value suggestion. Honor any notification preference in the user's memory if
 otherwise one `notify_user` call at most, and silence on a steady day. Mirror the
 per-workflow Pulse's transition discipline and its standard notify format (`<emoji> <workflow> — <headline> · <metric> · <url>`; prefer a formatted `email_html` body).
 
-### 6. Publish the org log (only if org publish is on)
+### 8. Publish the org pages (only if org publish is on)
 
-If the user has set up org publish (a `publish` block in your CoS config / `pulse/publish.json`),
-keep the public org page current — `pulse/org-pulse.html` is the artifact to publish:
+If the user has set up org publish in `pulse/publish.json`, keep the public org pages current.
+The org-level publish pair is:
+
+- `pulse/goals.html` -> `goals.html`
+- `pulse/org-pulse.html` -> `pulse.html`
+
+Deploy those plus an `index.html` wrapper with tabs/links for Goals and Pulse.
 
 - Publish per `get_reference_doc(kind="publish-strategy")`, **only** to an already-**verified**
-  destination (`pulse/publish-status.json` shows a prior successful publish) and **only when
-  the log changed** since the last publish. The first/verifying publish is the user's manual
+  destination (`pulse/publish/status.json` shows a prior successful publish) and **only when
+  the org HTML changed** since the last publish. The first/verifying publish is the user's manual
   setup, never something you do unattended.
-- Always write `pulse/publish-status.json` with the URL. Never publish secrets or anything
-  beyond the org log.
+- Always write `pulse/publish/status.json` with the URL and publish source hash. Never
+  publish secrets or anything beyond the org Goals/Pulse HTML pages.
 
 If org publish isn't configured, skip this — it's opt-in.
 
 ### Cost discipline
 
 You are a cheap daily steward, not an improvement run.
-- **One batched read per source group** (see step 1) — never one file per shell call, never
+- **One batched read per source group** (see step 3) — never one file per shell call, never
   exploratory `ls`/`echo`/`pwd`.
 - **Trust the per-workflow verdicts** instead of re-judging from raw runs; drill in only on a
   surprise.
-- Read → judge the endgame → curate the keepers into memory → propose promotions → surface
-  suggestions → notify only if decision-worthy → stop. You never run a workflow, dispatch a
-  full improvement pass, edit workflow internals, or create the skill/workflow yourself —
-  those are the user's to trigger from your suggestions.
+- Back up → read → judge the endgame → curate the keepers into memory → propose promotions →
+  surface suggestions → publish only if verified/configured → notify only if decision-worthy →
+  stop. You never run a workflow, dispatch a full improvement pass, edit workflow internals,
+  or create the skill/workflow yourself — those are the user's to trigger from your suggestions.

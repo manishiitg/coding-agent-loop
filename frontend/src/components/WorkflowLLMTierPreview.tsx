@@ -33,7 +33,7 @@ export default function WorkflowLLMTierPreview({ selectedLLM, providerManifest }
     <div className="mt-3 rounded-md border border-gray-200 bg-white p-2.5 text-xs dark:border-slate-700 dark:bg-slate-900/60">
       <div className="mb-1 font-medium text-gray-700 dark:text-gray-200">Automatically managed tiers</div>
       <div className="mb-2 text-[11px] leading-snug text-gray-500 dark:text-gray-400">
-        The workflow picks the tier for each job. These are the models that will be used right now.
+        The automation picks the tier for each job. These are the models that will be used right now.
       </div>
       <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
         {tierRows.map(row => {

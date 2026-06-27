@@ -1395,7 +1395,7 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 	var parts []string
 	var emittedIDs []string
 	var agentRefs []*BackgroundAgent
-	var batchBackupDirective string // set once if any completed part is a full workflow run
+	var batchWorkflowRunDirective string // set once if any completed part is a workflow run
 	for _, agentID := range agentIDs {
 		agent := api.bgAgentRegistry.Get(sessionID, agentID)
 		if agent == nil {
@@ -1444,8 +1444,8 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 		actionHint := buildWorkshopActionHint(workshopMode, isLockCode, isLockLearnings, lockCodeConsecutiveFailures, lockCodeNeedsReview, snap.Status == BGAgentFailed)
 		batchContext := autoNotificationBracketContext(snap.Metadata)
 		parts = append(parts, fmt.Sprintf("- **%s**%s: %s\n  Result: %s%s", strings.TrimSpace(snap.Name), batchContext, snap.Status, resultText, actionHint))
-		if batchBackupDirective == "" {
-			batchBackupDirective = workflowRunBackupDirective(snap)
+		if batchWorkflowRunDirective == "" {
+			batchWorkflowRunDirective = workflowRunCompletionDirective(snap)
 		}
 		emittedIDs = append(emittedIDs, agentID)
 		agentRefs = append(agentRefs, agent)
@@ -1455,7 +1455,7 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 		return
 	}
 
-	syntheticMsg := fmt.Sprintf("[AUTO-NOTIFICATION] Multiple step completions:\n%s%s", strings.Join(parts, "\n"), batchBackupDirective)
+	syntheticMsg := fmt.Sprintf("[AUTO-NOTIFICATION] Multiple step completions:\n%s%s", strings.Join(parts, "\n"), batchWorkflowRunDirective)
 	if strings.HasPrefix(sessionID, "bot-") {
 		syntheticMsg += botAutoNotificationProgressDirective(sessionID, api.isFinalBotAutoNotification(sessionID))
 	}
@@ -1603,13 +1603,13 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 	}
 }
 
-// workflowRunBackupDirective returns the directive that backs up the workflow after
-// a full run (run_full_workflow) completes, or "" when this completion isn't a
-// finished workflow run. This is the *interactive* arm of the post-run backup: for
-// scheduled runs the Pulse pass (scheduler.go runPostRunMonitor, step 1) owns backup.
-// Both arms share ONE backup contract — same default (zero-config local git), same
-// source-hash skip — so a run backed up by one is recognized as current by the other
-// (no double push). Keep this text in sync with Pulse's backup step.
+// workflowRunBackupDirective returns the directive that backs up an interactive
+// workflow run/step after it completes, or "" when this completion is not a
+// workflow run. This is the interactive arm of post-run backup: for scheduled
+// runs the Pulse pass (scheduler.go runPostRunMonitor, step 1) owns backup.
+// Both arms share ONE backup contract — same default (zero-config local git),
+// same source-hash skip — so a run backed up by one is recognized as current by
+// the other (no double push). Keep this text in sync with Pulse's backup step.
 func workflowRunBackupDirective(snap BackgroundAgentSnapshot) string {
 	if snap.Status != BGAgentCompleted || snap.Metadata == nil {
 		return ""
@@ -1618,6 +1618,43 @@ func workflowRunBackupDirective(snap BackgroundAgentSnapshot) string {
 		return ""
 	}
 	return "\n\nThe run is complete - now back up this workflow. Call get_reference_doc(kind=\"backup-strategy\"), read workflow.json.backup, and use it as the backup contract. If backup is enabled, perform the configured destinations (git/github, object store, HuggingFace, etc.). If backup is missing or disabled, do not silently skip: set it up with the zero-config local-git default (a local git repo needs no credentials) and back up. Skip the push only when backup/status.json shows the current source is already backed up (unchanged source hash) — i.e. a Pulse pass or an earlier turn already captured this state. Always write backup/status.json with state, last attempt/success timestamps, destination results, errors, and the current source hash; do not write operational backup status into workflow.json."
+}
+
+func workflowRunGoalAlignmentDirective(snap BackgroundAgentSnapshot) string {
+	if snap.Status != BGAgentCompleted || snap.Metadata == nil {
+		return ""
+	}
+	if snap.Kind != "workflow_run_tool" && snap.Metadata["type"] != "workflow_run" {
+		return ""
+	}
+
+	workflowPath := strings.TrimSpace(snap.Metadata["workflow_path"])
+	groupName := strings.TrimSpace(snap.Metadata["group_name"])
+	stepID := strings.TrimSpace(snap.Metadata["step_id"])
+	runEvidencePath := "the latest run folder"
+	if workflowPath != "" && groupName != "" {
+		runEvidencePath = fmt.Sprintf("`%s/runs/iteration-0/%s/`", workflowPath, groupName)
+		if stepID != "" {
+			runEvidencePath = fmt.Sprintf("`%s/runs/iteration-0/%s/execution/%s/`", workflowPath, groupName, stepID)
+		}
+	}
+	workflowRef := strings.TrimSpace(workflowPath)
+	if workflowRef == "" {
+		workflowRef = strings.TrimSpace(snap.Name)
+	}
+	if workflowRef == "" {
+		workflowRef = "this workflow run"
+	}
+	stepNote := ""
+	if stepID != "" {
+		stepNote = fmt.Sprintf(" This was a single-step run for `%s`, so distinguish step evidence from full-workflow evidence.", stepID)
+	}
+
+	return fmt.Sprintf("\n\nAfter backup, do org goal alignment for this run. If `pulse/goals.html` exists, call get_reference_doc(kind=\"org-goals\"), read `pulse/goals.html`, and compare `%s` against any goals whose contributing workflows name this workflow. Use concrete evidence from %s, `builder/improve.html`, `reports/`, and `db/db.sqlite`. In your reply include a short `Org goal alignment` section: goal, status (`on-track`, `at-risk`, `off-track`, or `unknown`), evidence path, gap, and next action.%s If no goal names this workflow, classify it as supporting/maintenance or unaligned. Update `pulse/goals.html` only when this run provides concrete new evidence that changes the scorecard; load get_reference_doc(kind=\"org-html\") first and preserve goal history. Do not invent proxy metrics.", workflowRef, runEvidencePath, stepNote)
+}
+
+func workflowRunCompletionDirective(snap BackgroundAgentSnapshot) string {
+	return workflowRunBackupDirective(snap) + workflowRunGoalAlignmentDirective(snap)
 }
 
 // buildAutoNotificationMessage formats the [AUTO-NOTIFICATION] user message for a
@@ -1661,7 +1698,7 @@ func (api *StreamingAPI) buildAutoNotificationMessage(sessionID string, snap Bac
 	contextInfo := autoNotificationInlineContext(snap.Metadata)
 	syntheticMsg := fmt.Sprintf(
 		"[AUTO-NOTIFICATION] Agent '%s' completed — status=%s%s.\nResult: %s%s%s",
-		strings.TrimSpace(snap.Name), snap.Status, contextInfo, resultText, actionHint, workflowRunBackupDirective(snap))
+		strings.TrimSpace(snap.Name), snap.Status, contextInfo, resultText, actionHint, workflowRunCompletionDirective(snap))
 
 	// Bot connector sessions (slack / whatsapp / discord / telegram / etc.): the
 	// builder's reply is forwarded verbatim to a chat thread, so a faithful echo

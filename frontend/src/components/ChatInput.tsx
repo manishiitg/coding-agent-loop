@@ -8,7 +8,6 @@ import FileContextDisplay from './FileContextDisplay'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import ServerSelectionDropdown from './ServerSelectionDropdown'
 import SkillSelectionDropdown from './skills/SkillSelectionDropdown'
-import SecretSelectionDropdown from './secrets/SecretSelectionDropdown'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
 import FileSelectionDialog from './FileSelectionDialog'
 import CommandSelectionDialog from './CommandSelectionDialog'
@@ -30,6 +29,7 @@ import { requestTerminalRefreshBurst } from '../utils/terminalRefresh'
 import { isMainAgentTerminal, terminalDisplayLabel, keyEventToTerminalAction } from '../utils/terminals'
 import { startRestoredTransportTerminal } from '../utils/restoredTerminal'
 import { chromeCdpLaunchCommand, chromeCdpVerifyCommand } from '../utils/cdpSetup'
+import { CHAT_TOOL_COMMAND_EVENT, chatToolCommandFromEvent } from '../utils/chatToolEvents'
 
 // Visible workshop modes in the UI. The merged "workshop" mode replaced
 // the pre-merge Builder / Optimize / Report buttons. Run remains separate
@@ -211,7 +211,7 @@ function WorkshopModeToggle() {
   // whether to bias toward design or hardening on a given turn.
   const builderModes = [
     { id: 'workshop' as const, label: 'Workshop', title: 'Workshop', description: 'Design, run, evaluate, harden, and replan — full toolset. The agent picks the right action for the current phase.' },
-    { id: 'run' as const, label: 'Run', title: 'Run', description: 'Use the workflow without write tools — execute steps and read state only.' },
+    { id: 'run' as const, label: 'Run', title: 'Run', description: 'Use the automation without write tools — execute steps and read state only.' },
   ].filter(mode => canWriteWorkflow || mode.id === 'run')
 
   return (
@@ -268,8 +268,8 @@ import { chatHistorySupportsNativeResume, chatHistoryUsesTerminalRestore } from 
 // MCP servers managed by dedicated toolbar buttons — excluded from the general server dropdown.
 const DEDICATED_MCP_SERVERS = new Set(['playwright'])
 const AUTO_NOTIFICATION_PREFIX = '[AUTO-NOTIFICATION]'
-const FALLBACK_CODING_AGENT_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'agy-cli', 'pi-cli'])
-const FALLBACK_LIVE_INPUT_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'agy-cli', 'pi-cli'])
+const FALLBACK_CODING_AGENT_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli'])
+const FALLBACK_LIVE_INPUT_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli'])
 
 const formatResumeChatTime = (value?: string): string => {
   if (!value) return 'Unknown time'
@@ -975,6 +975,27 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return () => clearTimeout(timer)
   }, [browserMode, cdpPort, checkCdpConnection])
 
+  useEffect(() => {
+    const handleChatToolCommand = (event: Event) => {
+      const command = chatToolCommandFromEvent(event)
+      if (command !== 'browser' || hideExtras) return
+
+      if (!activeTabId) {
+        addToast('No active chat tab yet.', 'info')
+        return
+      }
+
+      if (browserMode === 'none') {
+        setBrowserMode('headless')
+      }
+      setShowCdpPopup(true)
+      setWorkspaceMinimized(true)
+    }
+
+    window.addEventListener(CHAT_TOOL_COMMAND_EVENT, handleChatToolCommand)
+    return () => window.removeEventListener(CHAT_TOOL_COMMAND_EVENT, handleChatToolCommand)
+  }, [activeTabId, addToast, browserMode, hideExtras, setBrowserMode, setWorkspaceMinimized])
+
   // Get preset info for multi-agent mode
   const { getActivePreset, activePresetIds } = usePresetApplication()
 
@@ -1229,33 +1250,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [activeTabId, setTabConfig])
 
-  // Use tab-specific secrets - memoize to prevent re-renders
-  const selectedSecrets = useMemo(() => tabConfig?.selectedSecrets || [], [tabConfig?.selectedSecrets])
-
-
-  // Secret operations (update tab config)
-  const onSecretToggle = useCallback((secretId: string) => {
-    if (activeTabId) {
-      const newSecrets = selectedSecrets.includes(secretId)
-        ? selectedSecrets.filter(s => s !== secretId)
-        : [...selectedSecrets, secretId]
-      setTabConfig(activeTabId, { selectedSecrets: newSecrets })
-    }
-  }, [activeTabId, selectedSecrets, setTabConfig])
-
-  const onSelectAllSecrets = useCallback((allSecretIds: string[]) => {
-    if (activeTabId) {
-      setTabConfig(activeTabId, { selectedSecrets: allSecretIds })
-    }
-  }, [activeTabId, setTabConfig])
-
-  const onClearAllSecrets = useCallback(() => {
-    if (activeTabId) {
-      setTabConfig(activeTabId, { selectedSecrets: [] })
-    }
-  }, [activeTabId, setTabConfig])
-
-
   const {
     availableLLMs,
     getCurrentLLMOption,
@@ -1285,7 +1279,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
 
       // CLI providers always require code execution mode
-      if (llm.provider === 'claude-code' || llm.provider === 'codex-cli' || llm.provider === 'cursor-cli' || llm.provider === 'agy-cli' || llm.provider === 'pi-cli') {
+      if (llm.provider === 'claude-code' || llm.provider === 'codex-cli' || llm.provider === 'cursor-cli' || llm.provider === 'pi-cli') {
         setTabConfig(activeTabId, { llmConfig: newConfig, useCodeExecutionMode: true })
       } else {
         setTabConfig(activeTabId, { llmConfig: newConfig })
@@ -1336,7 +1330,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           provider: presetLLM.provider,
           model: presetLLM.model_id,
           label: `${presetLLM.provider} - ${presetLLM.model_id}`,
-          description: 'Workflow preset LLM'
+          description: 'Automation preset LLM'
         }
       }
     }
@@ -1379,7 +1373,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [primaryLLM?.model, primaryLLM?.provider])
 
   // The main agent runs in a tmux pane only for coding-agent CLI providers
-  // (claude-code, codex-cli, cursor-cli, agy-cli, pi-cli, ...). This drives whether
+  // (claude-code, codex-cli, cursor-cli, pi-cli, ...). This drives whether
   // the "keyboard → terminal" toggle is offered. Derived from primaryLLM
   // (which always resolves) rather than effectiveProviderForSteer (which is
   // null until a model is explicitly chosen on the tab).
@@ -1387,7 +1381,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const provider = primaryLLM?.provider || effectiveProviderForSteer || ''
     if (!provider) return false
     const entry = providerManifest.find(p => p.id === provider)
-    return entry?.integration_kind === 'coding_agent' || FALLBACK_CODING_AGENT_PROVIDERS.has(provider)
+    return (entry?.integration_kind === 'coding_agent' && !entry.deprecated) || FALLBACK_CODING_AGENT_PROVIDERS.has(provider)
   }, [primaryLLM?.provider, effectiveProviderForSteer, providerManifest])
 
   // Preset folder selection
@@ -1499,7 +1493,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   const openResumeDialog = useCallback(() => {
     if (selectedModeCategory !== 'workflow' && selectedModeCategory !== 'multi-agent') {
-      addToast('/resume is only available in chat or workflow', 'info')
+      addToast('/resume is only available in chat or automation', 'info')
       return
     }
 
@@ -2620,7 +2614,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       const modeScopedCommand = findCommandAnyMode(commandName)
       if (modeScopedCommand && selectedModeCategory) {
         const availableInWorkflow = modeScopedCommand.modes?.includes('workflow') ?? false
-        const targetLabel = availableInWorkflow ? 'workflow' : 'multi-agent'
+        const targetLabel = availableInWorkflow ? 'automation' : 'multi-agent'
         addToast(`/${commandName} is only available in ${targetLabel} chat`, 'info')
         return true
       }
@@ -2676,7 +2670,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
 
     // Handle Escape key when streaming. For tmux-transport CLI providers
-    // (claude-code, codex-cli, cursor-cli, agy-cli, pi-cli) ESC is forwarded into
+    // (claude-code, codex-cli, cursor-cli, pi-cli) ESC is forwarded into
     // the CLI's own tmux pane so the CLI interrupts its current turn but the
     // session stays alive — matching the native CLI UX. For non-tmux
     // non-tmux/API providers it falls back to cancelling the agent context
@@ -3342,9 +3336,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const placeholder = useMemo(() => {
     if (isViewOnly) return "View only — cannot continue this conversation"
     if (isWorkflowPhaseChat) {
-      return 'Chat with the workflow builder... (@ files, / commands, # workflows)'
+      return 'Chat with the automation builder... (@ files, / commands, # automations)'
     }
-    const baseHints = "@ files, / commands, # workflows, ! skills, $ servers"
+    const baseHints = "@ files, / commands, # automations, ! skills, $ servers"
     if (!tabSessionId && (canBootstrapMultiAgentTab || canBootstrapWorkflowPhaseTab)) return `Ask anything... chat will initialize on send (${baseHints})`
     if (isMultiAgentMode) return `Ask anything... (${baseHints})`
     return `Ask anything... (${baseHints})`
@@ -3501,7 +3495,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
                 <Layers className="w-3 h-3 inline-block mr-0.5 -mt-0.5" />
-                Workflows:
+                Automations:
               </span>
               {tabConfig!.workflowContext.map((w, index) => (
                 <div key={w.presetId} className="flex items-center gap-0.5">
@@ -3523,7 +3517,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       }
                     }}
                     className="p-0.5 hover:bg-red-100 dark:hover:bg-red-900/20 rounded text-red-500 hover:text-red-700 dark:hover:text-red-400"
-                    title="Remove workflow context"
+                    title="Remove automation context"
                   >
                     <X className="w-2 h-2" />
                   </button>
@@ -3655,17 +3649,15 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             )}
             <div className="flex justify-between items-center">
               <div className="flex items-center gap-2">
-                {/* Workflow phase chat: show active LLM label */}
-                {hideExtras && isWorkflowPhaseChat && (
+                {/* Workflow and Chief of Staff both show the active agent, not selectors. */}
+                {((hideExtras && isWorkflowPhaseChat) || isMultiAgentMode) && (
                   <div className="flex max-w-[18rem] items-center gap-1 rounded-md border border-gray-300 bg-gray-100 px-2 py-1.5 text-xs text-gray-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-400">
                     <span className="truncate">{activeLLMLabel}</span>
                   </div>
                 )}
 
-                {/* Keyboard → terminal toggle (workflow mode) — same gate as the
-                    multi-agent toolbar, just rendered next to the phase LLM label
-                    since the full tools row is collapsed here. */}
-                {hideExtras && isWorkflowPhaseChat && mainAgentIsTmuxCLI && (
+                {/* Keyboard → terminal toggle — shown next to the active agent label. */}
+                {((hideExtras && isWorkflowPhaseChat) || isMultiAgentMode) && mainAgentIsTmuxCLI && (
                   <TooltipProvider>
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -3678,7 +3670,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                               ? 'border-emerald-700/60 bg-emerald-600/10 text-emerald-700 dark:text-emerald-400'
                               : 'border-transparent text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800'
                           }`}
-                          data-testid="chat-keyboard-mode-button-workflow"
+                          data-testid={isWorkflowPhaseChat ? 'chat-keyboard-mode-button-workflow' : 'chat-keyboard-mode-button'}
                         >
                           <Keyboard className="h-4 w-4" />
                         </button>
@@ -3697,7 +3689,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                   <div data-tour="chat-input-tools" data-testid="tour-chat-input-tools" className="flex items-center gap-2">
 
                       <>
-                        {!hideExtras && (
+                        {!hideExtras && !isMultiAgentMode && (
                         <ServerSelectionDropdown
                           availableServers={availableServers}
                           selectedServers={manualSelectedServers}
@@ -3708,7 +3700,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           agentMode={agentMode}
                         />
                         )}
-                        {!hideExtras && (
+                        {!hideExtras && !isMultiAgentMode && (
                           <SkillSelectionDropdown
                             selectedSkills={selectedSkills}
                             onSkillToggle={onSkillToggle}
@@ -3742,9 +3734,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       </TooltipProvider>
                     )}
                     {/* Keyboard → terminal toggle — only for tmux-transport CLI
-                        agents (claude-code, codex-cli, cursor-cli, agy-cli, pi-cli),
+                        agents (claude-code, codex-cli, cursor-cli, pi-cli),
                         where typing into the pane actually drives the agent. */}
-                    {!hideExtras && mainAgentIsTmuxCLI && (
+                    {!hideExtras && !isMultiAgentMode && mainAgentIsTmuxCLI && (
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -3770,8 +3762,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         </Tooltip>
                       </TooltipProvider>
                     )}
-                    {/* Browser Access Toggle — hidden in workflow mode */}
-                    {!hideExtras && <button
+                    {/* Browser access lives in the Chief of Staff header for multi-agent mode. */}
+                    {!hideExtras && !isMultiAgentMode && <button
                       type="button"
                       data-tour="chat-browser-tools"
                       data-testid="tour-chat-browser-tools"
@@ -4156,17 +4148,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       </div>
                     </div>
                   </div>
-                )}
-
-                {/* Secrets dropdown - hidden for workflow mode */}
-                {!hideExtras && (
-                <SecretSelectionDropdown
-                  selectedSecrets={selectedSecrets}
-                  onSecretToggle={onSecretToggle}
-                  onSelectAll={onSelectAllSecrets}
-                  onClearAll={onClearAllSecrets}
-                  disabled={isStreaming || isSummarizing}
-                />
                 )}
 
                 {/* Status text - removed observer initialization message */}

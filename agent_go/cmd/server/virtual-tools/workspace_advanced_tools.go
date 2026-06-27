@@ -792,6 +792,32 @@ func loadWorkspaceProviderAPIKeys(ctx context.Context, workspaceURL string) *llm
 		v := value
 		keys.Deepgram = &v
 	}
+	if value, ok := rawKeys["pi_provider_keys"].(map[string]string); ok && len(value) > 0 {
+		keys.PiProviderKeys = map[string]string{}
+		for provider, key := range value {
+			provider = strings.ToLower(strings.TrimSpace(provider))
+			key = strings.TrimSpace(key)
+			if provider != "" && key != "" {
+				keys.PiProviderKeys[provider] = key
+			}
+		}
+	} else if value, ok := rawKeys["pi_provider_keys"].(map[string]interface{}); ok && len(value) > 0 {
+		keys.PiProviderKeys = map[string]string{}
+		for provider, rawKey := range value {
+			key, ok := rawKey.(string)
+			if !ok {
+				continue
+			}
+			provider = strings.ToLower(strings.TrimSpace(provider))
+			key = strings.TrimSpace(key)
+			if provider != "" && key != "" {
+				keys.PiProviderKeys[provider] = key
+			}
+		}
+		if len(keys.PiProviderKeys) == 0 {
+			keys.PiProviderKeys = nil
+		}
+	}
 	if value, ok := rawKeys["bedrock"].(map[string]interface{}); ok {
 		if region, ok := value["region"].(string); ok && strings.TrimSpace(region) != "" {
 			keys.Bedrock = &llm.BedrockConfig{Region: region}

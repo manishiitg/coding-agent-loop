@@ -315,6 +315,9 @@ function estimateNodeHeight(node: WorkflowNode): number {
     const learningAccess = learningConfig?.learnings_access
     const knowledgebaseAccess = learningConfig?.knowledgebase_access
     const dbAccess = learningConfig?.db_access
+    const executionMode = typeof learningConfig?.declared_execution_mode === 'string'
+      ? learningConfig.declared_execution_mode.trim()
+      : ''
     const contextInputs = Array.isArray(step.context_dependencies) ? step.context_dependencies : []
     const contextOutput = step.context_output
     const contextOutputs = Array.isArray(contextOutput)
@@ -357,6 +360,10 @@ function estimateNodeHeight(node: WorkflowNode): number {
     if (contextInputs.length > 0 || contextOutputs.length > 0) {
       const totalFiles = contextInputs.length + contextOutputs.length
       contentHeight += 20 + (totalFiles * 20) + 8 // Base + per file + spacing
+    }
+
+    if (executionMode.length > 0) {
+      contentHeight += 22
     }
   }
 

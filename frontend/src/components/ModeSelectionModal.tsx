@@ -103,7 +103,7 @@ const ModeCard: React.FC<ModeCardProps> = ({
               <div className="text-sm">
                 {category === 'workflow' && (
                   <div>
-                    <p className="font-semibold mb-2">Workflow Mode</p>
+                    <p className="font-semibold mb-2">Automation Mode</p>
                     <p className="mb-2">Todo-based execution with human verification. Features:</p>
                     <ul className="list-disc list-inside space-y-1">
                       <li>Sequential task completion</li>
@@ -268,7 +268,7 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
             <ModeCard
               category="multi-agent"
               title="Chief of Staff"
-              description="Your operations hub — runs workflows, keeps shared memory, and delegates ad-hoc work."
+              description="Your operations hub — runs automations, keeps shared memory, and delegates ad-hoc work."
               icon={<Users className="w-5 h-5 text-indigo-600" />}
               features={getModeInfoForModal('multi-agent').features}
               exampleQueries={getModeInfoForModal('multi-agent').examples}
@@ -278,7 +278,7 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
             {/* Workflow Mode */}
             <ModeCard
               category="workflow"
-              title="Workflow Mode"
+              title="Automation Mode"
               description="Todo-based execution with human verification. Perfect for structured tasks, project management, and step-by-step processes."
               icon={<Workflow className="w-5 h-5 text-blue-600" />}
               features={getModeInfoForModal('workflow').features}

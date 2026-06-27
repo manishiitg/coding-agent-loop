@@ -106,7 +106,7 @@ const activeSessionLabel = (session: ActiveSessionInfo): string => {
       session.preset_name ||
       session.workspace_path?.split('/').filter(Boolean).pop() ||
       session.title ||
-      'Workflow'
+      'Automation'
   }
   return session.title || session.query || 'Chat'
 }
@@ -154,6 +154,11 @@ const workflowSessionPriority = (session: ActiveSessionInfo): number => {
   if (status === 'running' || status === 'active' || status === 'in_progress') score -= 10
   return score
 }
+
+const isInteractiveWorkflowTab = (tab: ChatTab | null | undefined): tab is ChatTab =>
+  !!tab && tab.metadata?.mode === 'workflow' && tab.metadata?.isViewOnly !== true
+
+const tabSortTimestamp = (tab: ChatTab): number => tab.lastAccessedAt ?? tab.createdAt ?? 0
 
 const pickWorkflowActiveSession = (
   sessions: ActiveSessionInfo[],
@@ -254,9 +259,9 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
   const recentPresetAccessedAt = useGlobalPresetStore(state => (isOpen ? state.recentPresetAccessedAt : EMPTY_RECENT_PRESET_ACCESSED_AT))
   const totalEventStats = useMemo(() => {
     let eventCount = 0
-    let sizeBytes = 0
-    let largestEventBytes = 0
-    let largestEventType = ''
+    const sizeBytes = 0
+    const largestEventBytes = 0
+    const largestEventType = ''
 
     for (const events of Object.values(tabEvents)) {
       eventCount += events.length
@@ -346,7 +351,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
           type: 'workflow' as const,
           id: `workflow:${p.id}`,
           label: p.label,
-          subtitle: `Workflow · ${p.selectedFolder!.filepath}${builderStateSuffix(workflowTab)}${activeSessionSuffix(activeSession)}${eventStatsSuffix(eventStats)}`,
+          subtitle: `Automation · ${p.selectedFolder!.filepath}${builderStateSuffix(workflowTab)}${activeSessionSuffix(activeSession)}${eventStatsSuffix(eventStats)}`,
           isActive: isWorkflowMode && p.id === activePresetId,
           lastAccessedAt: recentPresetAccessedAt[p.id] || (() => {
             const recentIndex = recentPresetOrder.indexOf(p.id)
@@ -381,7 +386,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
           type: 'active' as const,
           id: `active:${session.session_id}`,
           label: activeSessionLabel(session),
-          subtitle: `${workflow ? 'Active workflow' : 'Active chat'} · ${status}${current} · ${sessionShortId(session.session_id)}${eventStatsSuffix(eventStats)}`,
+          subtitle: `${workflow ? 'Active automation' : 'Active chat'} · ${status}${current} · ${sessionShortId(session.session_id)}${eventStatsSuffix(eventStats)}`,
           isActive: !!tab && tab.tabId === activeTabId,
           lastAccessedAt: tab?.lastAccessedAt || tab?.createdAt || Date.parse(session.last_activity || session.created_at || '') || 0,
           session,
@@ -584,14 +589,14 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     const updatedChatStore = useChatStore.getState()
     const currentTab = updatedChatStore.activeTabId ? updatedChatStore.getTab(updatedChatStore.activeTabId) : null
     const hasValidTab = currentTab &&
-      currentTab.metadata?.mode === 'workflow' &&
+      isInteractiveWorkflowTab(currentTab) &&
       currentTab.metadata?.presetQueryId === item.preset.id
 
     if (!hasValidTab) {
       // Find the most recent workflow tab for the new preset
       const presetTabs = Object.values(updatedChatStore.chatTabs)
-        .filter(tab => tab.metadata?.mode === 'workflow' && tab.metadata?.presetQueryId === item.preset.id && (tab.sessionId || tab.isStreaming))
-        .sort((a, b) => b.createdAt - a.createdAt)
+        .filter(tab => isInteractiveWorkflowTab(tab) && tab.metadata?.presetQueryId === item.preset.id && (tab.sessionId || tab.isStreaming))
+        .sort((a, b) => tabSortTimestamp(b) - tabSortTimestamp(a))
 
       if (presetTabs.length > 0) {
         activateTab(presetTabs[0].tabId)
@@ -633,7 +638,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
 
   if (!isOpen) return null
 
-  const placeholder = 'Search workflows, chats, active work, or events...'
+  const placeholder = 'Search automations, chats, active work, or events...'
   const emptyText = query ? 'No matching items' : 'No switchable items available'
   return (
     <div

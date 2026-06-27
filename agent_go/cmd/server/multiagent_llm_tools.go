@@ -201,17 +201,20 @@ func setStoredProviderAPIKey(keys *StoredProviderKeys, provider, apiKey string) 
 }
 
 type llmCapabilityProvider struct {
-	Provider          string                 `json:"provider"`
-	Models            []string               `json:"models,omitempty"`
-	ModelCount        int                    `json:"model_count,omitempty"`
-	DefaultModel      string                 `json:"default_model,omitempty"`
-	AuthSource        string                 `json:"auth_source,omitempty"`
-	AuthConfigured    bool                   `json:"auth_configured"`
-	RuntimeDependency string                 `json:"runtime_dependency,omitempty"`
-	RuntimeAvailable  *bool                  `json:"runtime_available,omitempty"`
-	Usable            bool                   `json:"usable"`
-	Notes             []string               `json:"notes,omitempty"`
-	Extra             map[string]interface{} `json:"extra,omitempty"`
+	Provider            string                 `json:"provider"`
+	Models              []string               `json:"models,omitempty"`
+	ModelCount          int                    `json:"model_count,omitempty"`
+	DefaultModel        string                 `json:"default_model,omitempty"`
+	AuthSource          string                 `json:"auth_source,omitempty"`
+	AuthConfigured      bool                   `json:"auth_configured"`
+	RuntimeDependency   string                 `json:"runtime_dependency,omitempty"`
+	RuntimeAvailable    *bool                  `json:"runtime_available,omitempty"`
+	Usable              bool                   `json:"usable"`
+	Deprecated          bool                   `json:"deprecated,omitempty"`
+	DeprecationReason   string                 `json:"deprecation_reason,omitempty"`
+	ReplacementProvider string                 `json:"replacement_provider,omitempty"`
+	Notes               []string               `json:"notes,omitempty"`
+	Extra               map[string]interface{} `json:"extra,omitempty"`
 }
 
 type llmPricingRule struct {
@@ -420,7 +423,7 @@ func providerAuthConfigured(provider string, keys *llm.ProviderAPIKeys) (bool, s
 	case string(llm.ProviderAgyCLI):
 		return true, "Antigravity CLI local sign-in"
 	case string(llm.ProviderPiCLI):
-		return keys.PiCLI != nil && strings.TrimSpace(*keys.PiCLI) != "", "PI_API_KEY/GEMINI_API_KEY or workspace provider auth"
+		return piProviderAuthConfigured(keys), "Provider-specific Pi API key or workspace provider auth"
 	case string(llm.ProviderMiniMax):
 		return keys.MiniMax != nil && strings.TrimSpace(*keys.MiniMax) != "", "MINIMAX_API_KEY or workspace provider auth"
 	case string(llm.ProviderElevenLabs):
@@ -434,6 +437,21 @@ func providerAuthConfigured(provider string, keys *llm.ProviderAPIKeys) (bool, s
 	default:
 		return false, "unknown provider"
 	}
+}
+
+func piProviderAuthConfigured(keys *llm.ProviderAPIKeys) bool {
+	if keys == nil {
+		return false
+	}
+	if keys.PiCLI != nil && strings.TrimSpace(*keys.PiCLI) != "" {
+		return true
+	}
+	for _, value := range keys.PiProviderKeys {
+		if strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func providerUsable(provider string, authConfigured bool) (bool, string, *bool) {
@@ -496,6 +514,7 @@ func buildChatLLMCapabilities(keys *llm.ProviderAPIKeys, includeModels bool) []l
 			Usable:            usable,
 			Notes:             []string{"Use list_provider_models for full chat/text model metadata."},
 		}
+		applyCapabilityProviderDeprecation(&entry)
 		if includeModels {
 			entry.Models = modelsByProvider[provider]
 		}
@@ -524,7 +543,7 @@ func buildFixedCapabilityProviders(keys *llm.ProviderAPIKeys, providerModels map
 		}
 		authConfigured, authSource := providerAuthConfigured(provider, keys)
 		usable, runtime, runtimeOK := providerUsable(provider, authConfigured)
-		result = append(result, llmCapabilityProvider{
+		entry := llmCapabilityProvider{
 			Provider:          provider,
 			Models:            models,
 			ModelCount:        len(models),
@@ -535,9 +554,23 @@ func buildFixedCapabilityProviders(keys *llm.ProviderAPIKeys, providerModels map
 			RuntimeAvailable:  runtimeOK,
 			Usable:            usable,
 			Notes:             notes[provider],
-		})
+		}
+		applyCapabilityProviderDeprecation(&entry)
+		result = append(result, entry)
 	}
 	return result
+}
+
+func applyCapabilityProviderDeprecation(provider *llmCapabilityProvider) {
+	if provider == nil || !isDeprecatedLLMProvider(provider.Provider) {
+		return
+	}
+	provider.Deprecated = true
+	provider.DeprecationReason = providerDeprecationReason(provider.Provider)
+	provider.ReplacementProvider = providerReplacementProvider(provider.Provider)
+	if provider.DeprecationReason != "" {
+		provider.Notes = append([]string{provider.DeprecationReason}, provider.Notes...)
+	}
 }
 
 func pricingForProvider(capability, provider string) []llmPricingCatalogEntry {
@@ -638,7 +671,7 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 				map[string][]string{
 					string(llm.ProviderCodexCLI):   {"Uses the local workspace image path because Codex CLI does not consume base64 ImageContent through the adapter."},
 					string(llm.ProviderCursorCLI):  {"Uses the local workspace image path because Cursor CLI tmux transport does not consume base64 ImageContent through the adapter."},
-					string(llm.ProviderAgyCLI):     {"Uses the local workspace image path through Antigravity CLI; requires local Agy sign-in."},
+					string(llm.ProviderAgyCLI):     {"Deprecated for new setup; retained for existing legacy defaults. Uses the local workspace image path through Antigravity CLI and requires local Agy sign-in."},
 					string(llm.ProviderClaudeCode): {"Uses the local workspace image path through Claude Code CLI."},
 				},
 			),
@@ -668,7 +701,7 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 					string(llm.ProviderAgyCLI):   "agy-cli",
 				},
 				map[string][]string{
-					string(llm.ProviderAgyCLI): {"Alpha; uses Antigravity CLI native image generation and local Agy sign-in."},
+					string(llm.ProviderAgyCLI): {"Deprecated for new setup; retained for existing legacy defaults. Uses Antigravity CLI native image generation and local Agy sign-in."},
 				},
 			),
 		}

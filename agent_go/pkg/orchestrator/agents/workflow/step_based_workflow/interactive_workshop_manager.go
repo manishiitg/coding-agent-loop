@@ -1667,6 +1667,7 @@ func (iwm *InteractiveWorkshopManager) createInteractiveWorkshopAgent(ctx contex
 	// Agent config
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("workflow-builder-agent", 100, agents.OutputFormatStructured, llmConfigToUse)
 	forceWorkflowClaudeCodeInteractiveTransport(config)
+	enableWorkflowMainCodingAgentKeepAlive(config)
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
 
 	// MCP Servers — use preset if available, else NoServers
@@ -1707,6 +1708,13 @@ func (iwm *InteractiveWorkshopManager) createInteractiveWorkshopAgent(ctx contex
 	}
 
 	return agent, nil
+}
+
+func enableWorkflowMainCodingAgentKeepAlive(config *agents.OrchestratorAgentConfig) {
+	if config == nil || !common.IsCLIProvider(config.LLMConfig.Primary.Provider) {
+		return
+	}
+	config.CodingAgentKeepAlive = true
 }
 
 // ============================================================================

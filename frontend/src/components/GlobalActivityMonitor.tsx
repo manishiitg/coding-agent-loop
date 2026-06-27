@@ -83,7 +83,7 @@ function sessionTitle(session: ActiveSessionInfo, workflow?: RunningWorkflowInfo
         workflow?.title ||
         session.title ||
         session.query ||
-        'Workflow'
+        'Automation'
       )
     }
 
@@ -96,9 +96,9 @@ function sessionTitle(session: ActiveSessionInfo, workflow?: RunningWorkflowInfo
       session.title ||
       workflowFolder ||
       fallbackWorkflowName ||
-      (hasBackgroundWork ? 'Workflow background task' : '') ||
+      (hasBackgroundWork ? 'Automation background task' : '') ||
       session.query ||
-      'Workflow'
+      'Automation'
     )
   }
 
@@ -106,7 +106,7 @@ function sessionTitle(session: ActiveSessionInfo, workflow?: RunningWorkflowInfo
     session.current_execution_name ||
     session.title ||
     session.query ||
-    (isWorkflowSession(session) ? 'Workflow' : 'Agent chat')
+    (isWorkflowSession(session) ? 'Automation' : 'Agent chat')
   )
 }
 
@@ -244,7 +244,7 @@ function workflowFallbackName(workflow: RunningWorkflowInfo): string {
     workflow.title ||
     workflow.workspace_path?.split('/').filter(Boolean).pop() ||
     workflow.query ||
-    'Workflow'
+    'Automation'
   )
 }
 
@@ -264,7 +264,7 @@ function workflowDisplayName(
     session.workflow_label ||
     workflowNameFromPath(workflow?.workspace_path || session.workspace_path) ||
     fallbackWorkflowName ||
-    'Workflow'
+    'Automation'
   )
 }
 
@@ -619,7 +619,7 @@ export const GlobalActivityMonitor: React.FC = () => {
     )))
   const workflowHeaderLabel = workflowHeaderNames.length > 0
     ? `${workflowHeaderNames.join(' · ')}${workflowCount > workflowHeaderNames.length ? ` +${workflowCount - workflowHeaderNames.length}` : ''}`
-    : countLabel(workflowCount, 'workflow')
+    : countLabel(workflowCount, 'automation')
   const headerLabel = inputCount > 0
     ? `${workflowHeaderLabel}${chatCount > 0 ? ` · ${countLabel(chatCount, 'chat')}` : ''} · ${countLabel(inputCount, 'waiting for input', 'waiting for input')}`
     : workflowCount > 0
@@ -725,7 +725,7 @@ export const GlobalActivityMonitor: React.FC = () => {
             <div className="flex items-center justify-between gap-3">
               <div className="text-xs font-semibold text-gray-900 dark:text-gray-100">Active work</div>
               <div className="text-[11px] text-gray-500 dark:text-gray-400">
-                {countLabel(workflowCount, 'workflow')} · {countLabel(chatCount, 'chat')}
+                {countLabel(workflowCount, 'automation')} · {countLabel(chatCount, 'chat')}
               </div>
             </div>
             <div className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
@@ -789,7 +789,7 @@ export const GlobalActivityMonitor: React.FC = () => {
                           {shortText(primaryTitle, 58)}
                         </div>
                         <span className="shrink-0 text-[10px] text-gray-400 dark:text-gray-500">
-                          {workflow ? 'workflow' : 'chat'}
+                          {workflow ? 'automation' : 'chat'}
                         </span>
                         {isActiveTab && (
                           <span className="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-900/50 dark:text-blue-200">

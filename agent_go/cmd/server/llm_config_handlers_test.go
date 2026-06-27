@@ -42,8 +42,8 @@ func TestBuildLLMDiscoveryShowsMissingCodingCLI(t *testing.T) {
 	if !candidate.Deprecated {
 		t.Fatal("gemini-cli discovery candidate should be marked deprecated")
 	}
-	if candidate.ReplacementProvider != "agy-cli" {
-		t.Fatalf("replacement_provider = %q, want agy-cli", candidate.ReplacementProvider)
+	if candidate.ReplacementProvider != "pi-cli" {
+		t.Fatalf("replacement_provider = %q, want pi-cli", candidate.ReplacementProvider)
 	}
 }
 
@@ -79,7 +79,8 @@ func TestProviderManifestMarksDeprecatedCodingAgents(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"gemini-cli": "agy-cli",
+		"gemini-cli": "pi-cli",
+		"agy-cli":    "pi-cli",
 	}
 	seen := map[string]bool{}
 	for _, provider := range resp.Providers {
@@ -138,13 +139,13 @@ func TestBuildLLMDiscoveryHidesMissingAPIProvider(t *testing.T) {
 	}
 }
 
-func TestAgyCLIIsPublishedAsAlpha(t *testing.T) {
+func TestAgyCLIIsDeprecatedButRuntimeAllowed(t *testing.T) {
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
 	t.Setenv("SUPPORTED_LLM_PROVIDERS", "agy-cli")
 	t.Setenv("PATH", t.TempDir())
 
 	if !isPublishedLLMProviderAllowed("agy-cli") {
-		t.Fatal("agy-cli should be allowed in published provider lists as an alpha local CLI")
+		t.Fatal("agy-cli should remain allowed for restored/published legacy provider lists")
 	}
 	foundSupported := false
 	for _, provider := range getSupportedProviders() {
@@ -164,8 +165,14 @@ func TestAgyCLIIsPublishedAsAlpha(t *testing.T) {
 	if candidate.Provider != "agy-cli" {
 		t.Fatalf("provider = %q, want agy-cli", candidate.Provider)
 	}
-	if candidate.Label != "Antigravity CLI (Alpha)" {
-		t.Fatalf("label = %q, want alpha label", candidate.Label)
+	if candidate.Label != "Antigravity CLI (Deprecated)" {
+		t.Fatalf("label = %q, want deprecated label", candidate.Label)
+	}
+	if !candidate.Deprecated {
+		t.Fatal("agy-cli discovery candidate should be marked deprecated")
+	}
+	if candidate.ReplacementProvider != "pi-cli" {
+		t.Fatalf("replacement_provider = %q, want pi-cli", candidate.ReplacementProvider)
 	}
 	if candidate.RuntimeCommand != "agy" {
 		t.Fatalf("runtime_command = %q, want agy", candidate.RuntimeCommand)

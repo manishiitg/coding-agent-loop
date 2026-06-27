@@ -128,7 +128,7 @@ const WorkflowPublishPopup: React.FC<WorkflowPublishPopupProps> = ({ isOpen, onC
                 Publish
               </h2>
               <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                Share this workflow's Pulse log &amp; report dashboard at a public URL
+                Share this automation's Pulse log &amp; report dashboard at a public URL
               </p>
             </div>
             <button onClick={onClose} className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Close">

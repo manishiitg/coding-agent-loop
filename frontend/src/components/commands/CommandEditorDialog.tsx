@@ -19,7 +19,7 @@ const ICON_OPTIONS = [
 
 const MODE_OPTIONS = [
   { value: 'multi-agent', label: 'Multi-Agent' },
-  { value: 'workflow', label: 'Workflow' },
+  { value: 'workflow', label: 'Automation' },
 ]
 
 interface CommandEditorDialogProps {

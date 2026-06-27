@@ -3,6 +3,7 @@ import { Handle, Position } from '@xyflow/react'
 import { BookOpen, CheckCircle, Database, FileText, XCircle, Loader2, Plus, RefreshCw, Bot, Lock } from 'lucide-react'
 import type { StepNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
+import { getExecutionModeVisuals } from './executionModeVisuals'
 
 interface StepNodeProps {
   data: StepNodeData
@@ -56,6 +57,10 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
   // Check if this is a sub-agent (part of a routing step)
   const isSubAgent = useMemo(() => id.includes('-sub-agent-'), [id])
   const agentConfig = step?.agent_configs
+  const executionMode = agentConfig?.declared_execution_mode
+  const executionModeReason = agentConfig?.declared_execution_mode_reason
+  const executionModeVisuals = getExecutionModeVisuals(executionMode, executionModeReason)
+  const ModeIcon = executionModeVisuals.Icon
   const planReferenceText = useMemo(() => {
     if (!step) return ''
 
@@ -170,7 +175,12 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
             ? 'Reads and writes database state during this step.'
             : 'Database metadata is enabled for this step.'
   const statusIcon = statusIcons[status]
-  const showFooterMetadata = isSubAgent || Boolean(statusIcon)
+  const nodeBorderColor = status === 'pending' && executionModeVisuals.borderClassName
+    ? executionModeVisuals.borderClassName
+    : statusBorderColors[status]
+  const defaultTopHandleColor = isSubAgent ? '!bg-indigo-400 dark:!bg-indigo-600' : '!bg-gray-400 dark:!bg-gray-500'
+  const modeHandleColor = executionModeVisuals.handleClassName || defaultTopHandleColor
+  const showFooterMetadata = isSubAgent || Boolean(statusIcon) || Boolean(ModeIcon)
 
   useEffect(() => {
     if (!import.meta.env.DEV) return
@@ -210,7 +220,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     <div className={`
       relative w-[280px] rounded-xl border-2 bg-white dark:bg-gray-900 shadow-lg
       ${isSubAgent ? 'overflow-visible' : 'overflow-hidden'}
-      ${statusBorderColors[status]}
+      ${nodeBorderColor}
       ${isSubAgent ? 'border-dashed border-indigo-400 dark:border-indigo-500' : ''}
       ${isOrphan ? 'border-dashed border-amber-400 dark:border-amber-500' : ''}
       ${selected ? 'ring-2 ring-purple-500/60' : ''}
@@ -249,7 +259,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
         type="target"
         position={Position.Top}
         id={isSubAgent ? 'top' : undefined}
-        className={`!w-3 !h-3 !border-2 !border-white dark:!border-gray-900 ${isSubAgent ? '!bg-indigo-400 dark:!bg-indigo-600' : '!bg-gray-400 dark:!bg-gray-500'}`}
+        className={`!w-3 !h-3 !border-2 !border-white dark:!border-gray-900 ${modeHandleColor}`}
         style={{ top: '-6px', left: '50%' }}
       />
 
@@ -257,7 +267,14 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
       <div className="px-4 py-3 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700">
         {/* First row: Step number (or sub-agent indicator) and title */}
         <div className="flex items-start gap-3 mb-2">
-          {isSubAgent ? (
+          {ModeIcon ? (
+            <div
+              className={`flex items-center justify-center w-8 h-8 rounded-md flex-shrink-0 ${executionModeVisuals.iconBoxClassName}`}
+              title={executionModeVisuals.title}
+            >
+              <ModeIcon className="w-4 h-4" />
+            </div>
+          ) : isSubAgent ? (
             <div className="flex items-center justify-center w-8 h-8 rounded-md bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 flex-shrink-0" title="Sub-agent">
               <Bot className="w-4 h-4" />
             </div>
@@ -326,7 +343,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
         )}
         {showFooterMetadata && (
           <div className="flex items-center gap-1.5">
-            {isSubAgent && (
+            {(isSubAgent || ModeIcon) && (
               <span className="text-[10px] font-medium text-gray-500 dark:text-gray-400">
                 Step {stepIndex + 1}
               </span>
@@ -337,7 +354,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
         )}
       </div>
 
-      <Handle type="source" position={Position.Bottom} className="!w-3 !h-3 !bg-gray-400 dark:!bg-gray-500 !border-2 !border-white dark:!border-gray-900" />
+      <Handle type="source" position={Position.Bottom} className={`!w-3 !h-3 ${modeHandleColor} !border-2 !border-white dark:!border-gray-900`} />
       
       {/* Retry Handle - for validation loop-back (hidden by default) */}
       <Handle

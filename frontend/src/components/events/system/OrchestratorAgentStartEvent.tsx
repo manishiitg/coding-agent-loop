@@ -134,7 +134,7 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
 
   const getTreeRoleLabel = () => {
     if (agentType === 'todo_task_orchestrator') return 'Orchestrator'
-    if (isWorkflowStepExecution || isWorkshopStepExecution || isEvaluationAgent) return 'Workflow step'
+    if (isWorkflowStepExecution || isWorkshopStepExecution || isEvaluationAgent) return 'Automation step'
     if (agentType === 'todo_planner_execution' || agentType === 'generic_execution') return 'Sub-agent'
     return getLabel()
   }

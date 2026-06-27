@@ -14,6 +14,9 @@ interface SkillSelectionDropdownProps {
   onClearAll: () => void;
   disabled?: boolean;
   onImportClick?: () => void;
+  openDirection?: 'up' | 'down';
+  align?: 'left' | 'right';
+  iconOnly?: boolean;
 }
 
 export default function SkillSelectionDropdown({
@@ -22,7 +25,10 @@ export default function SkillSelectionDropdown({
   onSelectAll,
   onClearAll,
   disabled = false,
-  onImportClick
+  onImportClick,
+  openDirection = 'up',
+  align = 'left',
+  iconOnly = false
 }: SkillSelectionDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -79,6 +85,11 @@ export default function SkillSelectionDropdown({
 
   const isAllSelected = skills.length > 0 && selectedSkills.length === skills.length;
   const isNoneSelected = selectedSkills.length === 0;
+  const dropdownPositionClass = [
+    'absolute z-50 w-64',
+    openDirection === 'down' ? 'top-full mt-1' : 'bottom-full mb-1',
+    align === 'right' ? 'right-0' : 'left-0',
+  ].join(' ');
 
   return (
     <TooltipProvider>
@@ -93,12 +104,14 @@ export default function SkillSelectionDropdown({
                 selectedSkills.length > 0
                   ? 'bg-purple-100 dark:bg-purple-900/40 border-purple-400 dark:border-purple-600 text-purple-600 dark:text-purple-400'
                   : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500'
-              } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
+              } ${iconOnly ? 'h-7 w-7 justify-center' : ''} ${disabled ? 'opacity-50 cursor-not-allowed' : iconOnly ? 'cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700' : 'cursor-pointer hover:pr-2'}`}
             >
               <Wand2 className="w-4 h-4 flex-shrink-0" />
-              <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[80px] transition-all duration-200">
-                {getDisplayText()}
-              </span>
+              {!iconOnly && (
+                <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[80px] transition-all duration-200">
+                  {getDisplayText()}
+                </span>
+              )}
             </button>
           </TooltipTrigger>
           <TooltipContent>
@@ -115,7 +128,7 @@ export default function SkillSelectionDropdown({
             />
 
             {/* Dropdown */}
-            <div className="absolute bottom-full left-0 mb-1 z-50 w-64">
+            <div className={dropdownPositionClass}>
               <Card className="p-4 shadow-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
                 <div className="space-y-3">
                   {/* Header */}

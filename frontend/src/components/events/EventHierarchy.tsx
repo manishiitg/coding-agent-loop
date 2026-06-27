@@ -526,6 +526,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   // flattenedItems.length stays the same because delegation_start children aren't flattened.
   const prevFlattenedCountRef = useRef(0);
   const userScrolledUpRef = useRef(false);
+  const lastScrollTopRef = useRef(0);
 
   // Find the scrollable parent on mount
   useEffect(() => {
@@ -547,14 +548,20 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     const target = scrollParent || containerRef.current;
     if (!target) return;
 
+    lastScrollTopRef.current = target.scrollTop;
     const onWheel = (e: WheelEvent) => {
       if (e.deltaY < 0) userScrolledUpRef.current = true;
     };
     const onScroll = () => {
       const el = target;
-      if (el.scrollHeight - el.scrollTop - el.clientHeight < 50) {
+      const currentScrollTop = el.scrollTop;
+      const atBottom = el.scrollHeight - currentScrollTop - el.clientHeight < 50;
+      if (atBottom) {
         userScrolledUpRef.current = false;
+      } else if (currentScrollTop < lastScrollTopRef.current - 2) {
+        userScrolledUpRef.current = true;
       }
+      lastScrollTopRef.current = currentScrollTop;
     };
 
     target.addEventListener('wheel', onWheel, { passive: true });

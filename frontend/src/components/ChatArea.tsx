@@ -987,6 +987,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // Ref to track if we're currently performing programmatic scrolling
   const isProgrammaticScrollRef = useRef<boolean>(false)
   const programmaticScrollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const manualScrollVersionRef = useRef<number>(0)
   // Local ref for scroll position — avoids Zustand re-renders on every scroll event
   const lastScrollTopRef = useRef<number>(0)
 
@@ -1002,9 +1003,22 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // The wheel handler below covers the disable-on-scroll-up path.
   const handleScroll = useCallback(() => {
     if (!chatContentRef.current) return;
-    if (isProgrammaticScrollRef.current) return;
     const element = chatContentRef.current;
-    if (isAtBottom(element) && !autoScroll) setAutoScroll(true);
+    const currentScrollTop = element.scrollTop;
+    if (isProgrammaticScrollRef.current) {
+      lastScrollTopRef.current = currentScrollTop;
+      return;
+    }
+
+    const movedUp = currentScrollTop < lastScrollTopRef.current - 2;
+    const atBottom = isAtBottom(element);
+    if (movedUp && !atBottom) {
+      manualScrollVersionRef.current += 1;
+      if (autoScroll) setAutoScroll(false);
+    } else if (atBottom && !autoScroll) {
+      setAutoScroll(true);
+    }
+    lastScrollTopRef.current = currentScrollTop;
   }, [autoScroll, isAtBottom, setAutoScroll]);
 
   // Set up scroll + wheel event listeners
@@ -1019,7 +1033,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         // Only disable if user is scrolling up AND there's room to scroll up
         // (i.e., not already at the very top or at the bottom with no overflow)
         const atBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - 150;
-        if (!atBottom) setAutoScroll(false);
+        if (!atBottom) {
+          manualScrollVersionRef.current += 1;
+          setAutoScroll(false);
+        }
       }
     };
 
@@ -1043,12 +1060,17 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     
     // Only reset auto-scroll when starting a new conversation (0 -> > 0)
     // Don't reset if user has manually disabled it or if events are just updating
-    if (previousEventCount === 0 && currentEventCount > 0 && !isStreaming) {
+    const isRestoredMultiAgentHydration = selectedModeCategory === 'multi-agent' && (
+      isRestoringChatSessions ||
+      activeTabHasRestoredConversation ||
+      activeTab?.metadata?.isRestored === true
+    )
+    if (previousEventCount === 0 && currentEventCount > 0 && !isStreaming && !isRestoredMultiAgentHydration) {
       setAutoScroll(true);
     }
     
     previousEventCountRef.current = currentEventCount
-  }, [displayEvents.length, isStreaming, setAutoScroll]);
+  }, [activeTab?.metadata?.isRestored, activeTabHasRestoredConversation, displayEvents.length, isRestoringChatSessions, isStreaming, selectedModeCategory, setAutoScroll]);
 
   // Improved auto-scroll for new events
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
@@ -1111,10 +1133,16 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     if (!targetTabId) return
     // Re-enable auto-scroll so subsequent events keep the view pinned to the bottom
     setAutoScroll(true)
+    const scrollVersion = manualScrollVersionRef.current
+    const scrollIfUserHasNotMoved = (behavior: ScrollBehavior) => {
+      if (manualScrollVersionRef.current === scrollVersion) {
+        scrollToBottom(behavior)
+      }
+    }
     // Small delay to let the new tab's content render before scrolling.
     // Use two attempts: 50ms for fast renders, 300ms as fallback when events are still loading.
-    const timer1 = setTimeout(() => scrollToBottom('instant'), 50)
-    const timer2 = setTimeout(() => scrollToBottom('instant'), 300)
+    const timer1 = setTimeout(() => scrollIfUserHasNotMoved('instant'), 50)
+    const timer2 = setTimeout(() => scrollIfUserHasNotMoved('instant'), 300)
     return () => { clearTimeout(timer1); clearTimeout(timer2) }
   }, [targetTabId, scrollToBottom, setAutoScroll])
 

@@ -4247,6 +4247,45 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 							logfWithContext(queryLogCtx, "[WORKFLOW_SCHEDULE_TOOLS] Registered %s", toolName)
 						}
 					}
+
+					// Register multi-agent (Chief-of-Staff) schedule tools
+					// (list/create/update/delete/trigger/get-runs). These manage the
+					// current user's _users/<id>/multiagent-schedules.json via the store
+					// server-side; the agent must never edit that JSON directly.
+					maSchedTools := createMultiAgentScheduleTools()
+					maSchedExecutors := createMultiAgentScheduleExecutors(api, currentUserID)
+					for _, tool := range maSchedTools {
+						if tool.Function == nil {
+							continue
+						}
+						toolName := tool.Function.Name
+						exec, ok := maSchedExecutors[toolName]
+						if !ok {
+							continue
+						}
+						var params map[string]interface{}
+						if tool.Function.Parameters != nil {
+							paramsBytes, _ := json.Marshal(tool.Function.Parameters)
+							json.Unmarshal(paramsBytes, &params)
+						}
+						capturedExec := exec
+						wrappedExec := func(ctx context.Context, args map[string]interface{}) (string, error) {
+							ctx = context.WithValue(ctx, virtualtools.BGAgentSessionIDKey, sessionID)
+							return capturedExec(ctx, args)
+						}
+						if err := delegationAgent.RegisterCustomToolWithTimeout(
+							toolName,
+							tool.Function.Description,
+							params,
+							wrappedExec,
+							0,
+							delegationCategory,
+						); err != nil {
+							logfWithContext(queryLogCtx, "[MULTIAGENT_SCHEDULE_TOOLS] Failed to register %s: %v", toolName, err)
+						} else {
+							logfWithContext(queryLogCtx, "[MULTIAGENT_SCHEDULE_TOOLS] Registered %s", toolName)
+						}
+					}
 				}
 			}
 		}

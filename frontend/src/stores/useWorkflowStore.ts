@@ -705,7 +705,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
         return phases.length > 0 ? phases[0].id : 'planning'
       },
 
-      // Get phases that can work on individual steps (currently none — use Workflow Builder instead)
+      // Get phases that can work on individual steps (currently none — use Automation Builder instead)
       getStepSpecificPhases: () => {
         return []
       },

@@ -143,7 +143,7 @@ export async function restoreWorkflowSessionChat(
     if (
       existingTab?.metadata?.mode === 'workflow' &&
       existingTab.metadata?.phaseId === 'workflow-builder' &&
-      existingTab.name !== 'Workflow Builder'
+      existingTab.name !== 'Automation Builder'
     ) {
       await chatStore.closeTab(existingTab.tabId, false)
     }
@@ -167,10 +167,10 @@ export async function restoreWorkflowSessionChat(
         : undefined
     )
 
-    const tabId = builderTab?.tabId ?? await latestChatStore.createChatTab('Workflow Builder', {
+    const tabId = builderTab?.tabId ?? await latestChatStore.createChatTab('Automation Builder', {
       mode: 'workflow',
       phaseId: 'workflow-builder',
-      phaseName: 'Workflow Builder',
+      phaseName: 'Automation Builder',
       presetQueryId: presetId,
     }, session.session_id)
 

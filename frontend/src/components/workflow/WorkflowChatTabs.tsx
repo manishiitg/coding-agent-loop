@@ -41,7 +41,7 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
   onMakeInteractive,
   onStop,
 }) => {
-  const displayName = tab.metadata?.phaseId === 'workflow-builder' && tab.name === 'Workflow Builder'
+  const displayName = tab.metadata?.phaseId === 'workflow-builder' && tab.name === 'Automation Builder'
     ? 'Chat'
     : tab.name
 
@@ -94,7 +94,7 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
         </button>
       )}
 
-      {/* Convert a read-only scheduled/bot run into an interactive Workflow Builder chat */}
+      {/* Convert a read-only scheduled/bot run into an interactive Automation Builder chat */}
       {tab.metadata?.isViewOnly && (tab.metadata?.isScheduledRun || tab.metadata?.isBotRun) && (
         <button
           type="button"
@@ -103,8 +103,8 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
             onMakeInteractive(tab.tabId)
           }}
           className="ml-0.5 rounded p-0.5 text-blue-600 opacity-80 hover:bg-blue-100 hover:opacity-100 dark:text-blue-300 dark:hover:bg-blue-900/40"
-          title="Interact in Workflow Builder"
-          aria-label="Interact in Workflow Builder"
+          title="Interact in Automation Builder"
+          aria-label="Interact in Automation Builder"
         >
           <MessageSquare className="w-3 h-3" />
         </button>
@@ -269,7 +269,7 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat, e
     chatStore.setTabMetadata(tabId, {
       mode: 'workflow',
       phaseId: 'workflow-builder',
-      phaseName: 'Workflow Builder',
+      phaseName: 'Automation Builder',
       presetQueryId: tab.metadata?.presetQueryId,
       isViewOnly: false,
       isScheduledRun: false,
@@ -284,7 +284,7 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat, e
       return {
         chatTabs: {
           ...state.chatTabs,
-          [tabId]: { ...current, name: 'Workflow Builder' },
+          [tabId]: { ...current, name: 'Automation Builder' },
         },
       }
     })

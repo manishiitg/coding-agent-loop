@@ -1475,9 +1475,15 @@ func filterScheduleRunsNewestFirst(runs []ScheduleRunEntry, scheduleID string) [
 }
 
 func (s *SchedulerService) executeMultiAgentJob(ctx context.Context, sctx *ScheduleContext, runID string) (string, string, error) {
+	// A multi-agent schedule runs either a Messages SEQUENCE (one focused turn per
+	// message in one resumed session, the way workflow Pulse / runPostRunMonitor
+	// does — this is how Org Pulse runs) or a single Query (legacy/fallback).
+	// Messages wins when present; Query stays the single-turn fallback so anything
+	// that still sets only Query keeps working unchanged.
+	messages := sctx.Schedule.Messages
 	query := strings.TrimSpace(sctx.Schedule.Query)
-	if query == "" {
-		return "", "", fmt.Errorf("multi-agent schedule %s has no query", sctx.Schedule.ID)
+	if len(messages) == 0 && query == "" {
+		return "", "", fmt.Errorf("multi-agent schedule %s has no messages or query", sctx.Schedule.ID)
 	}
 
 	sessionID := s.newScheduleSessionID(sctx)
@@ -1489,10 +1495,16 @@ func (s *SchedulerService) executeMultiAgentJob(ctx context.Context, sctx *Sched
 		_ = UpdateMultiAgentScheduleRun(ctx, sctx.UserID, runID, "running", "", nil, sessionID)
 	}
 
+	// Build the base request once. The per-turn query is set per message below
+	// (sequence) or kept as-is (single Query). Everything else — capabilities,
+	// servers, skills, browser/code-exec, LLM config, and secrets — is shared by
+	// every turn of the sequence.
 	reqMap := map[string]interface{}{
-		"query":        query,
 		"agent_mode":   "simple",
 		"triggered_by": "cron",
+	}
+	if query != "" {
+		reqMap["query"] = query
 	}
 
 	// Apply capabilities if set
@@ -1512,10 +1524,6 @@ func (s *SchedulerService) executeMultiAgentJob(ctx context.Context, sctx *Sched
 	// Apply LLM config and secrets
 	s.applyLLMAndSecretsToReqMap(ctx, reqMap, sctx)
 
-	if resumed := s.maybeResumeLatestMultiAgentThread(ctx, sctx, reqMap, sessionID); resumed != "" {
-		s.sessionLogf(sctx, sessionID, "[SCHEDULER] Resuming previous multi-agent schedule thread %s for %s", resumed, sctx.Schedule.ID)
-	}
-
 	// Load user-level secrets if configured
 	if len(sctx.Capabilities.SelectedSecrets) > 0 && sctx.UserID != "" {
 		userSecrets := s.api.loadSelectedSecrets(context.Background(), sctx.UserID, sctx.WorkspacePath, sctx.Capabilities.SelectedSecrets)
@@ -1523,6 +1531,54 @@ func (s *SchedulerService) executeMultiAgentJob(ctx context.Context, sctx *Sched
 			reqMap["decrypted_secrets"] = userSecrets
 			s.sessionLogf(sctx, sessionID, "[SCHEDULER] Loaded %d user secrets for multi-agent schedule %s", len(userSecrets), sctx.Schedule.ID)
 		}
+	}
+
+	// Sequence path: run each message as its own focused turn in the same resumed
+	// session, mirroring executeWorkshopJob / runPostRunMonitor. The agent builds on
+	// the prior turns' context, and the user watches it progress step by step.
+	if len(messages) > 0 {
+		s.sessionLogf(sctx, sessionID, "[ORG_PULSE] executeMultiAgentJob for %s (%s): session=%s user=%s running %d-step sequence",
+			sctx.Schedule.ID, sctx.Schedule.Name, sessionID, sctx.UserID, len(messages))
+		for i, msg := range messages {
+			s.sessionLogf(sctx, sessionID, "[ORG_PULSE] step %d/%d: %q", i+1, len(messages), msg)
+
+			stepReq := make(map[string]interface{}, len(reqMap))
+			for k, v := range reqMap {
+				stepReq[k] = v
+			}
+			stepReq["query"] = msg
+
+			// Resume the latest prior scheduled thread on the first turn only — later
+			// turns already share this run's live session.
+			if i == 0 {
+				if resumed := s.maybeResumeLatestMultiAgentThread(ctx, sctx, stepReq, sessionID); resumed != "" {
+					s.sessionLogf(sctx, sessionID, "[ORG_PULSE] Resuming previous multi-agent schedule thread %s for %s", resumed, sctx.Schedule.ID)
+				}
+			}
+
+			if err := s.api.startSessionInternal(ctx, stepReq, sessionID, sctx.UserID, nil); err != nil {
+				return sessionID, "", fmt.Errorf("multi-agent step %d/%d failed: %w", i+1, len(messages), err)
+			}
+
+			// Stamp the schedule name on the first turn for frontend tab labeling;
+			// later calls are no-ops (the helper guards an existing Title).
+			if i == 0 {
+				s.stampScheduleNameOnSession(sessionID, sctx)
+			}
+
+			if err := s.waitForWorkshopIdle(ctx, sessionID); err != nil {
+				s.sessionLogf(sctx, sessionID, "[ORG_PULSE] step %d/%d idle wait failed: %v", i+1, len(messages), err)
+				return sessionID, "", fmt.Errorf("multi-agent step %d/%d idle wait failed: %w", i+1, len(messages), err)
+			}
+			s.sessionLogf(sctx, sessionID, "[ORG_PULSE] step %d/%d done for %s", i+1, len(messages), sctx.Schedule.ID)
+		}
+		s.sessionLogf(sctx, sessionID, "[ORG_PULSE] sequence completed for %s", sctx.Schedule.ID)
+		return sessionID, "", nil
+	}
+
+	// Single-query path (legacy/fallback) — unchanged behavior.
+	if resumed := s.maybeResumeLatestMultiAgentThread(ctx, sctx, reqMap, sessionID); resumed != "" {
+		s.sessionLogf(sctx, sessionID, "[SCHEDULER] Resuming previous multi-agent schedule thread %s for %s", resumed, sctx.Schedule.ID)
 	}
 
 	s.sessionLogf(sctx, sessionID, "[SCHEDULER] executeMultiAgentJob for %s (%s): session=%s user=%s query=%q",

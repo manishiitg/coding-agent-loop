@@ -194,8 +194,9 @@ Top to bottom:
 3. KPI strip: total goals, on-track, at-risk/off-track, unknown/missing evidence.
 4. Goal cards, one per goal.
 5. Workflow alignment matrix: aligned, supporting, unaligned.
-6. Measurement gaps.
-7. Change history, newest first.
+6. Recommendations: the Chief of Staff's open proposals, grouped by goal, newest first.
+7. Measurement gaps.
+8. Change history, newest first.
 
 Each goal card must include:
 
@@ -209,6 +210,21 @@ Each goal card must include:
 - latest evidence
 - confidence
 - next action
+
+The **Recommendations** section holds the Chief of Staff's open, proposal-only recommendations
+(the org-level ones from the Org Pulse "Generate recommendations" step; per-automation recs live
+in each workflow's `builder/improve.html`, not here). Render it as a list of recommendation cards
+grouped by goal, **newest first**, and clearly marked as proposals the user/builder decides on —
+nothing here is auto-applied. Each recommendation card carries:
+
+- stable `data-rec-id`
+- the goal it serves in `data-goal-id` (matching a goal card's `data-goal-id`)
+- `data-status` — `proposed` (default), `accepted`, or `dismissed`
+- `data-impact` and `data-effort` (e.g. `high`/`medium`/`low`)
+- a short title, the evidence it rests on, the proposed move, and the expected goal movement
+
+Update an existing recommendation in place (flip `data-status`) instead of duplicating it; keep
+accepted/dismissed ones for history rather than deleting them.
 
 Starter body:
 
@@ -292,6 +308,26 @@ Starter body:
         </tbody>
       </table>
     </div>
+  </section>
+
+  <div class="section-title">Recommendations</div>
+  <section class="suggestions" aria-label="Chief of Staff recommendations">
+    <!-- RECOMMENDATIONS: newest first · proposal-only · grouped by goal -->
+    <article class="card rec-card" data-rec-id="rec-slug" data-goal-id="goal-slug" data-status="proposed" data-impact="medium" data-effort="low">
+      <div class="card-h">
+        <div>
+          <h3><!-- Recommendation title --></h3>
+          <div class="meta">Goal: <!-- goal title --> · proposed YYYY-MM-DD</div>
+        </div>
+        <span class="pill unknown">Proposed</span>
+      </div>
+      <div class="card-b">
+        <div class="evidence"><b>Evidence:</b> <!-- runs/reports/tables/Pulse headlines that motivate it --></div>
+        <div class="evidence"><b>Proposed move:</b> <!-- new automation / different approach / cross-automation synergy / promotion --></div>
+        <div class="evidence"><b>Impact / effort:</b> <span class="pill mini">impact: medium</span> <span class="pill mini">effort: low</span></div>
+        <div class="next"><b>Expected movement:</b> <!-- which goal/KPI should move if accepted -->. Proposal only — the user/builder decides.</div>
+      </div>
+    </article>
   </section>
 
   <div class="section-title">Measurement gaps</div>

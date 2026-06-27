@@ -208,7 +208,7 @@ export const OrgGoalsPanel: React.FC<{ toolbarLeading?: React.ReactNode; onClose
   />
 )
 
-export const OrgPulsePanel: React.FC<{ toolbarLeading?: React.ReactNode; onClosePanel?: () => void }> = ({ toolbarLeading, onClosePanel }) => (
+export const OrgPulsePanel: React.FC<{ toolbarLeading?: React.ReactNode; onClosePanel?: () => void; fixedDevice?: OrgHtmlPreviewDevice }> = ({ toolbarLeading, onClosePanel, fixedDevice }) => (
   <OrgHtmlPanel
     title="Org Pulse"
     path={ORG_PULSE_LOG_PATH}
@@ -217,6 +217,7 @@ export const OrgPulsePanel: React.FC<{ toolbarLeading?: React.ReactNode; onClose
     Icon={Activity}
     toolbarLeading={toolbarLeading}
     onClosePanel={onClosePanel}
+    fixedDevice={fixedDevice}
   />
 )
 

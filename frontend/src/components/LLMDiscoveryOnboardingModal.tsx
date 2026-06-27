@@ -65,9 +65,10 @@ const CODING_CLI_INFO: Record<typeof FALLBACK_CODING_CLI_ORDER[number], {
   },
 }
 
-const PI_PROVIDER_FALLBACK_LABELS = ['Gemini', 'Z.AI / GLM', 'MiniMax', 'Kimi', 'DeepSeek']
+const PI_PROVIDER_FALLBACK_LABELS = ['Gemini', 'OpenRouter', 'Z.AI / GLM', 'MiniMax', 'Kimi', 'DeepSeek']
 const PI_MODEL_FALLBACK_PREVIEW: DynamicModelEntry[] = [
   { model_id: 'google/gemini-3.5-flash', model_name: 'Gemini 3.5 Flash', group: 'Gemini' },
+  { model_id: 'openrouter/minimax/minimax-m3-20260531', model_name: 'MiniMax M3', group: 'OpenRouter' },
   { model_id: 'zai/glm-5.2', model_name: 'GLM-5.2', group: 'Z.AI / GLM' },
   { model_id: 'minimax/MiniMax-M3', model_name: 'MiniMax M3', group: 'MiniMax' },
   { model_id: 'kimi-coding/k2p7', model_name: 'Kimi K2.7 Code', group: 'Kimi' },
@@ -234,6 +235,8 @@ function piProviderLabelForModel(modelID: string) {
     case 'google':
     case 'google-vertex':
       return 'Gemini'
+    case 'openrouter':
+      return 'OpenRouter'
     case 'zai':
     case 'zai-coding-cn':
       return 'Z.AI / GLM'
@@ -552,7 +555,7 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
               <div className="min-w-0">
                 <h4 className="text-sm font-semibold leading-snug text-foreground">Pi.dev multi-model coding</h4>
                 <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted-foreground">
-                  One tmux-backed Pi CLI integration for the latest Gemini, Chinese coding models, DeepSeek, and custom Pi provider IDs.
+                  One tmux-backed Pi CLI integration for Gemini, OpenRouter, Chinese coding models, DeepSeek, and custom Pi provider IDs.
                 </p>
               </div>
             </div>

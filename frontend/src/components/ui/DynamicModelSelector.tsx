@@ -21,7 +21,8 @@ function isPrimaryPiGroup(group: string): boolean {
     normalized.includes('z.ai') ||
     normalized.includes('kimi') ||
     normalized.includes('minimax') ||
-    normalized.includes('deepseek')
+    normalized.includes('deepseek') ||
+    normalized.includes('openrouter')
 }
 
 export function DynamicModelSelector({

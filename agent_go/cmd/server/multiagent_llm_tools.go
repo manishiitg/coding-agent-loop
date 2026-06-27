@@ -137,6 +137,8 @@ func getStoredProviderAPIKey(keys *StoredProviderKeys, provider string) string {
 	}
 
 	switch normalizeManagedProvider(provider) {
+	case "openrouter":
+		return strings.TrimSpace(keys.OpenRouter)
 	case "openai":
 		return strings.TrimSpace(keys.OpenAI)
 	case "anthropic":
@@ -171,6 +173,8 @@ func setStoredProviderAPIKey(keys *StoredProviderKeys, provider, apiKey string) 
 
 	value := strings.TrimSpace(apiKey)
 	switch normalizeManagedProvider(provider) {
+	case "openrouter":
+		keys.OpenRouter = value
 	case "openai":
 		keys.OpenAI = value
 	case "anthropic":
@@ -1386,7 +1390,12 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 
 			usedWorkspaceAuth := false
 			if !explicitAPIKeyProvided && keys != nil {
-				if value := getStoredProviderAPIKey(keys, provider); value != "" {
+				if provider == "pi-cli" {
+					if value := selectStoredPiAPIKeyForModel(keys, modelID); value != "" {
+						apiKey = value
+						usedWorkspaceAuth = true
+					}
+				} else if value := getStoredProviderAPIKey(keys, provider); value != "" {
 					apiKey = value
 					usedWorkspaceAuth = true
 				}
@@ -1561,6 +1570,14 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 					"type":        "string",
 					"description": "API key for providers that require one. Not used for bedrock.",
 				},
+				"model_id": map[string]interface{}{
+					"type":        "string",
+					"description": "For provider=pi-cli, infer the Pi sub-provider from this model id, for example openrouter/minimax/minimax-m3-20260531.",
+				},
+				"pi_provider": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional explicit Pi sub-provider for provider=pi-cli, such as google, openrouter, deepseek, zai, kimi-coding, moonshotai, or minimax.",
+				},
 				"region": map[string]interface{}{
 					"type":        "string",
 					"description": "Region for bedrock or azure when needed.",
@@ -1579,6 +1596,8 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			provider := normalizeManagedProvider(fmt.Sprintf("%v", args["provider"]))
 			apiKey, _ := args["api_key"].(string)
+			modelID, _ := args["model_id"].(string)
+			piProvider, _ := args["pi_provider"].(string)
 			region, _ := args["region"].(string)
 			endpoint, _ := args["endpoint"].(string)
 			apiVersion, _ := args["api_version"].(string)
@@ -1607,6 +1626,18 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 					APIVersion: strings.TrimSpace(apiVersion),
 					Region:     strings.TrimSpace(region),
 				}
+			case "pi-cli":
+				if strings.TrimSpace(apiKey) == "" {
+					return "api_key is required for pi-cli.", nil
+				}
+				storedProvider, ok := setStoredPiProviderAPIKey(keys, piProvider, modelID, apiKey)
+				if !ok {
+					return "api_key is required for pi-cli.", nil
+				}
+				if err := SaveProviderKeys(ctx, keys); err != nil {
+					return "", err
+				}
+				return fmt.Sprintf("Updated Pi provider auth for %s.", storedProvider), nil
 			default:
 				if strings.TrimSpace(apiKey) == "" {
 					return fmt.Sprintf("api_key is required for %s.", provider), nil

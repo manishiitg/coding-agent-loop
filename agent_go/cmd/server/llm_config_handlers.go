@@ -288,6 +288,7 @@ func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 	}
 
 	setProviderKeyFromEnv(llm.ProviderOpenAI, "OPENAI_API_KEY")
+	setProviderKeyFromEnv(llm.ProviderOpenRouter, "OPENROUTER_API_KEY", "OPEN_ROUTER_API_KEY")
 	setProviderKeyFromEnv(llm.ProviderAnthropic, "ANTHROPIC_API_KEY")
 	setProviderKeyFromEnv(llm.ProviderZAI, "ZAI_API_KEY")
 	setProviderKeyFromEnv(llm.ProviderKimi, "KIMI_API_KEY")
@@ -479,7 +480,7 @@ func discoveryModelOptions(provider string) []string {
 	case "agy-cli":
 		return []string{"agy-cli"}
 	case "pi-cli":
-		return []string{"google/gemini-3.5-flash"}
+		return piCuratedModelIDs()
 	case "claude-code":
 		return []string{"claude-code", "high", "medium", "low"}
 	case "gemini-cli":

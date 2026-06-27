@@ -160,6 +160,9 @@ func LoadProviderKeys(ctx context.Context) (*StoredProviderKeys, error) {
 // ProviderKeysToAPIKeysMap converts stored keys to the map format used in reqMap["llm_config"]["api_keys"].
 func ProviderKeysToAPIKeysMap(keys *StoredProviderKeys) map[string]interface{} {
 	m := map[string]interface{}{}
+	if keys.OpenRouter != "" {
+		m["openrouter"] = keys.OpenRouter
+	}
 	if keys.OpenAI != "" {
 		m["openai"] = keys.OpenAI
 	}
@@ -239,6 +242,9 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 		return &llm.ProviderAPIKeys{}
 	}
 	result := &llm.ProviderAPIKeys{}
+	if keys.OpenRouter != "" {
+		result.OpenRouter = &keys.OpenRouter
+	}
 	if keys.OpenAI != "" {
 		result.OpenAI = &keys.OpenAI
 	}
@@ -301,6 +307,9 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 	}
 	// Log which providers have keys loaded
 	var loaded []string
+	if result.OpenRouter != nil {
+		loaded = append(loaded, "openrouter")
+	}
 	if result.GeminiCLI != nil {
 		loaded = append(loaded, "gemini-cli")
 	}
@@ -382,6 +391,7 @@ func MergedProviderAPIKeys(ctx context.Context) *llm.ProviderAPIKeys {
 		return env
 	}
 	result := &llm.ProviderAPIKeys{
+		OpenRouter: pick(envKeys.OpenRouter, wsKeys.OpenRouter),
 		OpenAI:     pick(envKeys.OpenAI, wsKeys.OpenAI),
 		Anthropic:  pick(envKeys.Anthropic, wsKeys.Anthropic),
 		ZAI:        pick(envKeys.ZAI, wsKeys.ZAI),
@@ -526,6 +536,7 @@ func mergeStoredProviderKeyValues(existing, incoming *StoredProviderKeys) *Store
 	}
 
 	merged := &StoredProviderKeys{
+		OpenRouter: pick(existing.OpenRouter, incoming.OpenRouter),
 		OpenAI:     pick(existing.OpenAI, incoming.OpenAI),
 		Anthropic:  pick(existing.Anthropic, incoming.Anthropic),
 		ZAI:        pick(existing.ZAI, incoming.ZAI),
@@ -605,6 +616,91 @@ func mergePiProviderKeyMaps(envKeys, workspaceKeys map[string]string) map[string
 		return nil
 	}
 	return merged
+}
+
+func setStoredPiProviderAPIKey(keys *StoredProviderKeys, piProvider, modelID, apiKey string) (string, bool) {
+	if keys == nil {
+		return "", false
+	}
+	value := strings.TrimSpace(apiKey)
+	if value == "" {
+		return "", false
+	}
+
+	provider := normalizeStoredPiProviderKey(piProvider)
+	if provider == "" {
+		provider = normalizeStoredPiProviderKey(piProviderFromModelID(modelID))
+	}
+	if provider == "" {
+		provider = "google"
+	}
+
+	if keys.PiProviderKeys == nil {
+		keys.PiProviderKeys = map[string]string{}
+	}
+	keys.PiProviderKeys[provider] = value
+	setStoredPiProviderTopLevelAPIKey(keys, provider, value)
+	return provider, true
+}
+
+func normalizeStoredPiProviderKey(provider string) string {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	switch provider {
+	case "", "pi-cli", "auto":
+		return ""
+	case "google-vertex":
+		return "google"
+	default:
+		return provider
+	}
+}
+
+func setStoredPiProviderTopLevelAPIKey(keys *StoredProviderKeys, provider, apiKey string) {
+	if keys == nil {
+		return
+	}
+	value := strings.TrimSpace(apiKey)
+	switch normalizeStoredPiProviderKey(provider) {
+	case "google":
+		keys.PiCLI = value
+	case "openai":
+		keys.OpenAI = value
+	case "anthropic":
+		keys.Anthropic = value
+	case "openrouter":
+		keys.OpenRouter = value
+	case "zai":
+		keys.ZAI = value
+	case "kimi-coding", "moonshotai", "moonshotai-cn":
+		keys.Kimi = value
+	case "minimax":
+		keys.MiniMax = value
+	}
+}
+
+func selectStoredPiAPIKeyForModel(keys *StoredProviderKeys, modelID string) string {
+	if keys == nil {
+		return ""
+	}
+	return selectPiAPIKeyForModel(&llm.ProviderAPIKeys{
+		OpenRouter:     stringFieldPtr(keys.OpenRouter),
+		OpenAI:         stringFieldPtr(keys.OpenAI),
+		Anthropic:      stringFieldPtr(keys.Anthropic),
+		Vertex:         stringFieldPtr(keys.Vertex),
+		GeminiCLI:      stringFieldPtr(keys.GeminiCLI),
+		PiCLI:          stringFieldPtr(keys.PiCLI),
+		MiniMax:        stringFieldPtr(keys.MiniMax),
+		ZAI:            stringFieldPtr(keys.ZAI),
+		Kimi:           stringFieldPtr(keys.Kimi),
+		PiProviderKeys: keys.PiProviderKeys,
+	}, modelID)
+}
+
+func stringFieldPtr(value string) *string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return &value
 }
 
 func selectPiAPIKeyForModel(keys *llm.ProviderAPIKeys, modelID string) string {

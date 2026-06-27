@@ -633,7 +633,7 @@ func fetchPiCLIModels() *dynamicModelsResponse {
 		Models:             models,
 		Groups:             dynamicModelGroups(models),
 		SupportsCustom:     true,
-		CustomModelHint:    "Enter any Pi model as provider/model, e.g. google/gemini-3.5-flash or zai/glm-5.2",
+		CustomModelHint:    "Enter any Pi model as provider/model, e.g. google/gemini-3.5-flash, zai/glm-5.2, or openrouter/minimax/minimax-m3-20260531",
 		Source:             source,
 		CacheTTLSeconds:    300,
 		CachedAt:           time.Now().UTC().Format(time.RFC3339),
@@ -867,5 +867,66 @@ func piFallbackModels() []dynamicModelEntry {
 			CostInput:     0.14,
 			CostOutput:    0.28,
 		},
+		{
+			ModelID:   "openrouter/minimax/minimax-m3-20260531",
+			ModelName: "MiniMax M3",
+			Group:     "OpenRouter",
+		},
+		{
+			ModelID:   "openrouter/deepseek/deepseek-v4-flash-20260423",
+			ModelName: "DeepSeek V4 Flash",
+			Group:     "OpenRouter",
+		},
+		{
+			ModelID:   "openrouter/deepseek/deepseek-v4-pro-20260423",
+			ModelName: "DeepSeek V4 Pro",
+			Group:     "OpenRouter",
+		},
+		{
+			ModelID:   "openrouter/openrouter/owl-alpha",
+			ModelName: "Owl Alpha",
+			Group:     "OpenRouter",
+		},
+		{
+			ModelID:   "openrouter/z-ai/glm-5.2-20260616",
+			ModelName: "GLM-5.2",
+			Group:     "OpenRouter",
+		},
+		{
+			ModelID:   "openrouter/anthropic/claude-4.8-opus-20260528",
+			ModelName: "Claude 4.8 Opus",
+			Group:     "OpenRouter",
+		},
+		{
+			ModelID:   "openrouter/anthropic/claude-4.6-sonnet-20260217",
+			ModelName: "Claude 4.6 Sonnet",
+			Group:     "OpenRouter",
+		},
+		{
+			ModelID:   "openrouter/openai/gpt-5.5-20260423",
+			ModelName: "GPT-5.5",
+			Group:     "OpenRouter",
+		},
+		{
+			ModelID:   "openrouter/xiaomi/mimo-v2.5-pro-20260422",
+			ModelName: "MiMo V2.5 Pro",
+			Group:     "OpenRouter",
+		},
+		{
+			ModelID:   "openrouter/moonshotai/kimi-k2.7-code-20260612",
+			ModelName: "Kimi K2.7 Code",
+			Group:     "OpenRouter",
+		},
 	}
+}
+
+func piCuratedModelIDs() []string {
+	models := piFallbackModels()
+	ids := make([]string, 0, len(models))
+	for _, model := range models {
+		if strings.TrimSpace(model.ModelID) != "" {
+			ids = append(ids, model.ModelID)
+		}
+	}
+	return ids
 }

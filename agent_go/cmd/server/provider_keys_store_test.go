@@ -66,8 +66,8 @@ func TestMergeStoredProviderKeyValuesPreservesAndUpdatesProviderKeys(t *testing.
 	if merged.MiniMaxCodingPlan != "" {
 		t.Fatalf("expected MiniMax coding plan key to be removed, got %q", merged.MiniMaxCodingPlan)
 	}
-	if merged.OpenRouter != "" {
-		t.Fatalf("expected OpenRouter key to be removed, got %q", merged.OpenRouter)
+	if merged.OpenRouter != "openrouter-existing" {
+		t.Fatalf("expected OpenRouter key to be preserved, got %q", merged.OpenRouter)
 	}
 }
 
@@ -109,10 +109,12 @@ func TestSelectPiAPIKeyForModelUsesModelProviderPrefix(t *testing.T) {
 	piKey := "gemini-key"
 	zaiKey := "zai-key"
 	kimiKey := "kimi-key"
+	openRouterKey := "openrouter-key"
 	keys := &llm.ProviderAPIKeys{
-		PiCLI: &piKey,
-		ZAI:   &zaiKey,
-		Kimi:  &kimiKey,
+		PiCLI:      &piKey,
+		ZAI:        &zaiKey,
+		Kimi:       &kimiKey,
+		OpenRouter: &openRouterKey,
 		PiProviderKeys: map[string]string{
 			"deepseek":      "deepseek-key",
 			"zai-coding-cn": "zai-cn-key",
@@ -128,6 +130,7 @@ func TestSelectPiAPIKeyForModelUsesModelProviderPrefix(t *testing.T) {
 		{modelID: "zai-coding-cn/glm-5.2", want: "zai-cn-key"},
 		{modelID: "kimi-coding/k2p7", want: "kimi-key"},
 		{modelID: "deepseek/deepseek-v4-pro", want: "deepseek-key"},
+		{modelID: "openrouter/minimax/minimax-m3-20260531", want: "openrouter-key"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.modelID, func(t *testing.T) {
@@ -135,6 +138,55 @@ func TestSelectPiAPIKeyForModelUsesModelProviderPrefix(t *testing.T) {
 				t.Fatalf("selectPiAPIKeyForModel(%q) = %q, want %q", tt.modelID, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSetStoredPiProviderAPIKeyUsesModelPrefix(t *testing.T) {
+	keys := &StoredProviderKeys{}
+
+	provider, ok := setStoredPiProviderAPIKey(keys, "", "openrouter/minimax/minimax-m3-20260531", " openrouter-key ")
+	if !ok {
+		t.Fatal("setStoredPiProviderAPIKey() ok = false, want true")
+	}
+	if provider != "openrouter" {
+		t.Fatalf("provider = %q, want openrouter", provider)
+	}
+	if keys.PiProviderKeys["openrouter"] != "openrouter-key" {
+		t.Fatalf("PiProviderKeys[openrouter] = %q, want openrouter-key", keys.PiProviderKeys["openrouter"])
+	}
+	if keys.OpenRouter != "openrouter-key" {
+		t.Fatalf("OpenRouter = %q, want openrouter-key", keys.OpenRouter)
+	}
+}
+
+func TestSetStoredPiProviderAPIKeyAllowsExplicitProvider(t *testing.T) {
+	keys := &StoredProviderKeys{}
+
+	provider, ok := setStoredPiProviderAPIKey(keys, "deepseek", "", "deepseek-key")
+	if !ok {
+		t.Fatal("setStoredPiProviderAPIKey() ok = false, want true")
+	}
+	if provider != "deepseek" {
+		t.Fatalf("provider = %q, want deepseek", provider)
+	}
+	if keys.PiProviderKeys["deepseek"] != "deepseek-key" {
+		t.Fatalf("PiProviderKeys[deepseek] = %q, want deepseek-key", keys.PiProviderKeys["deepseek"])
+	}
+}
+
+func TestSelectStoredPiAPIKeyForModelUsesProviderSpecificKey(t *testing.T) {
+	keys := &StoredProviderKeys{
+		OpenRouter: "openrouter-key",
+		PiProviderKeys: map[string]string{
+			"deepseek": "deepseek-key",
+		},
+	}
+
+	if got := selectStoredPiAPIKeyForModel(keys, "openrouter/minimax/minimax-m3-20260531"); got != "openrouter-key" {
+		t.Fatalf("selectStoredPiAPIKeyForModel(openrouter model) = %q, want openrouter-key", got)
+	}
+	if got := selectStoredPiAPIKeyForModel(keys, "deepseek/deepseek-v4-pro-20260423"); got != "deepseek-key" {
+		t.Fatalf("selectStoredPiAPIKeyForModel(deepseek model) = %q, want deepseek-key", got)
 	}
 }
 

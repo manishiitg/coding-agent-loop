@@ -52,13 +52,27 @@ func TestPiFallbackModelsKeepProviderShortlistsSmall(t *testing.T) {
 		counts[group]++
 	}
 
-	for _, group := range []string{"Recommended Gemini", "Z.AI", "MiniMax", "Kimi", "DeepSeek"} {
+	for _, group := range []string{"Recommended Gemini", "Z.AI", "MiniMax", "Kimi", "DeepSeek", "OpenRouter"} {
 		if counts[group] == 0 {
 			t.Fatalf("Pi shortlist group %q is empty: %#v", group, counts)
 		}
-		if counts[group] > 2 {
-			t.Fatalf("Pi shortlist group %q has %d models, want at most 2", group, counts[group])
+		max := 2
+		if group == "OpenRouter" {
+			max = 10
 		}
+		if counts[group] > max {
+			t.Fatalf("Pi shortlist group %q has %d models, want at most %d", group, counts[group], max)
+		}
+	}
+	foundOpenRouterTopModel := false
+	for _, model := range piFallbackModels() {
+		if model.ModelID == "openrouter/minimax/minimax-m3-20260531" {
+			foundOpenRouterTopModel = true
+			break
+		}
+	}
+	if !foundOpenRouterTopModel {
+		t.Fatal("Pi shortlist missing OpenRouter MiniMax M3 top model")
 	}
 }
 

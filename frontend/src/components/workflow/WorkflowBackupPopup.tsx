@@ -34,7 +34,7 @@ const FALLBACK_SUPPORTED_STRATEGIES: WorkflowBackupStrategyInfo[] = [
   {
     id: 'git',
     label: 'Git / GitHub (default)',
-    description: 'Default. A local git repo gives zero-config rollback; add a GitHub remote for off-box durability. Best for workflow config, planning, knowledgebase, learnings, scripts, and small JSON.',
+    description: 'Default. A local git repo gives zero-config rollback; add a GitHub remote for off-box durability. Best for automation config, planning, knowledgebase, learnings, scripts, and small JSON.',
     best_for: ['workflow', 'planning', 'knowledgebase', 'learnings']
   },
   {
@@ -99,7 +99,7 @@ const getBackupSummary = (backupInfo: WorkflowBackupInfoResponse | null): string
     case 'running':
       return 'A builder backup task is running and will update backup/status.json.'
     case 'stale':
-      return 'The workflow changed since the last healthy backup.'
+      return 'The automation changed since the last healthy backup.'
     default:
       return 'Backup status is waiting for the builder to update backup/status.json.'
   }

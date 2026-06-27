@@ -4,6 +4,7 @@ import { XCircle, Loader2, Plus, RefreshCw, GitBranch, Code, Terminal, Lock, Che
 import { useActiveWorkflowPreset } from '../../../hooks/useActiveWorkflowPreset'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 import { agentApi } from '../../../services/api'
+import { getExecutionModeVisuals } from './executionModeVisuals'
 
 import type { ConditionalNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
@@ -66,7 +67,17 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
     use_code_execution_mode?: boolean
     learnings_access?: 'read' | 'read-write' | 'none'
     lock_learnings?: boolean
+    declared_execution_mode?: string
+    declared_execution_mode_reason?: string
   } }
+  const executionMode = stepConfig?.agent_configs?.declared_execution_mode
+  const executionModeReason = stepConfig?.agent_configs?.declared_execution_mode_reason
+  const executionModeVisuals = getExecutionModeVisuals(executionMode, executionModeReason)
+  const ModeIcon = executionModeVisuals.Icon
+  const nodeBorderColor = status === 'pending' && executionModeVisuals.borderClassName
+    ? executionModeVisuals.borderClassName
+    : statusBorderColors[status]
+  const modeHandleColor = executionModeVisuals.handleClassName || '!bg-purple-400 dark:!bg-purple-500'
 
   // Determine code execution mode: override > step config > preset default
   const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode ?? false
@@ -133,7 +144,14 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
       {/* Header metadata - above the diamond */}
       <div className="absolute -top-12 left-0 right-0 flex items-center justify-center gap-2 z-20">
         {/* Agent Mode Badge */}
-        {useCodeExecutionMode ? (
+        {ModeIcon ? (
+          <div
+            className={`flex items-center justify-center w-7 h-7 rounded-md ${executionModeVisuals.iconBoxClassName}`}
+            title={executionModeVisuals.title}
+          >
+            <ModeIcon className="w-3.5 h-3.5" />
+          </div>
+        ) : useCodeExecutionMode ? (
           <div className="flex items-center justify-center w-7 h-7 rounded-md bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800" title="Code Execution Mode">
             <Terminal className="w-3.5 h-3.5" />
           </div>
@@ -173,7 +191,7 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
       <div 
         className={`
           relative rounded-xl border-2 bg-white dark:bg-gray-900 shadow-lg overflow-visible
-          ${statusBorderColors[status]}
+          ${nodeBorderColor}
           ${selected ? 'ring-2 ring-purple-500/60' : ''}
           ${status === 'evaluating' ? 'animate-pulse' : ''}
         `}
@@ -186,7 +204,7 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
         <Handle
           type="target"
           position={Position.Top}
-          className="!w-3 !h-3 !bg-purple-400 dark:!bg-purple-500 !border-2 !border-white dark:!border-gray-900"
+          className={`!w-3 !h-3 ${modeHandleColor} !border-2 !border-white dark:!border-gray-900`}
           style={{ top: '-6px', left: '50%' }}
         />
 

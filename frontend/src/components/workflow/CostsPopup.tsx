@@ -1296,7 +1296,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <DollarSign className="w-12 h-12 mb-3 opacity-50" />
               <p>No cost data found.</p>
-              <p className="text-sm mt-2">Run the workflow to see cost data here.</p>
+              <p className="text-sm mt-2">Run the automation to see cost data here.</p>
             </div>
           ) : (
             <div className="space-y-6">
@@ -2151,7 +2151,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                 </div>
               ) : (
                 <div className="bg-card border border-border rounded-lg p-6 text-sm text-muted-foreground">
-                  No workflow run cost data found yet. Run one or more workflow runs to compare execution costs alongside the builder costs above.
+                  No automation run cost data found yet. Run one or more automation runs to compare execution costs alongside the builder costs above.
                 </div>
               )}
             </div>

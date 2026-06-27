@@ -545,7 +545,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         <div className="flex flex-shrink-0 flex-col gap-3 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4">
           <h2 className="min-w-0 text-lg font-semibold text-foreground sm:text-2xl">
             {effectiveAgentMode === 'workflow'
-              ? (editingPreset ? 'Edit Workflow' : 'Add Workflow')
+              ? (editingPreset ? 'Edit Automation' : 'Add Automation')
               : (editingPreset ? 'Edit Preset' : 'Add New Preset')}
           </h2>
           <div className="flex flex-wrap items-center gap-2 sm:justify-end">
@@ -558,7 +558,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                 className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
               >
                 <Trash2 className="mr-1 h-4 w-4" />
-                Delete Workflow
+                Delete Automation
               </Button>
             )}
             <Button
@@ -568,7 +568,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
               size="sm"
               disabled={!label.trim() || (effectiveAgentMode !== 'workflow' && !query.trim()) || (effectiveAgentMode === 'workflow' && !selectedFolder)}
             >
-              {editingPreset ? 'Update' : 'Save'} {effectiveAgentMode === 'workflow' ? 'Workflow' : 'Preset'}
+              {editingPreset ? 'Update' : 'Save'} {effectiveAgentMode === 'workflow' ? 'Automation' : 'Preset'}
             </Button>
             <Button
               type="button"
@@ -593,13 +593,13 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                 {/* Workflow Name */}
                 <div>
                   <label htmlFor="preset-label" className="block text-sm font-medium mb-2">
-                    Workflow Name
+                    Automation Name
                   </label>
                   <Input
                     id="preset-label"
                     value={label}
                     onChange={(e) => setLabel(e.target.value)}
-                    placeholder="Enter workflow name..."
+                    placeholder="Enter automation name..."
                     required
                   />
                 </div>
@@ -614,7 +614,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                     {!showWorkflowLLMAdvanced && (
                       <div>
                         <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
-                          Workflow model
+                          Automation model
                         </label>
                         <LLMSelectionDropdown
                           availableLLMs={workflowLLMOptions}
@@ -627,7 +627,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                         />
                         <WorkflowLLMTierPreview selectedLLM={selectedWorkflowLLMOption} providerManifest={providerManifest} />
                         <div className="text-xs text-gray-500 mt-2">
-                          Coding agents save high, medium, and low workflow tiers. Workshop work uses high.
+                          Coding agents save high, medium, and low automation tiers. Workshop work uses high.
                         </div>
                         <button
                           type="button"
@@ -635,7 +635,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           className="mt-3 inline-flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
                         >
                           <SlidersHorizontal className="w-3.5 h-3.5" />
-                          Advanced workflow LLM setup
+                          Advanced automation LLM setup
                         </button>
                       </div>
                     )}
@@ -817,7 +817,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           }}
                           className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
                         >
-                          Reset to workflow name
+                          Reset to automation name
                         </button>
                       </div>
                     )}
@@ -881,7 +881,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                         <input type="radio" name="presetBrowserMode" checked={browserMode === 'none'} onChange={() => setBrowserMode('none')} className="mt-0.5 w-4 h-4 accent-gray-500" />
                         <div>
                           <div className="text-sm font-medium text-gray-900 dark:text-gray-100">None</div>
-                          <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">No browser access for this workflow</div>
+                          <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">No browser access for this automation</div>
                         </div>
                       </label>
 
@@ -1052,7 +1052,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                   <div className="p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium text-gray-600 dark:text-gray-400">Mode:</span>
-                      <span className="text-sm font-medium text-gray-900 dark:text-white">Workflow</span>
+                      <span className="text-sm font-medium text-gray-900 dark:text-white">Automation</span>
                       <span className="text-xs text-gray-500 dark:text-gray-400">- Todo-list execution</span>
                     </div>
                   </div>
@@ -1194,7 +1194,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                     <div className="grid grid-cols-2 gap-2">
                       {[
                         { value: 'simple', label: 'Simple', description: 'Ask simple questions' },
-                        { value: 'workflow', label: 'Workflow', description: 'Todo-list execution' }
+                        { value: 'workflow', label: 'Automation', description: 'Todo-list execution' }
                       ].map((mode) => (
                         <div key={mode.value} className="flex items-center space-x-2">
                           <input
@@ -1251,13 +1251,13 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
           isOpen={showDeleteWorkflowConfirm}
           onClose={() => !deletingWorkflow && setShowDeleteWorkflowConfirm(false)}
           onConfirm={handleDeleteWorkflowConfirm}
-          title="Delete Workflow"
+          title="Delete Automation"
           message={
             editingPreset?.selectedFolder?.filepath
-              ? `Delete workflow "${editingPreset.label}" and permanently remove the folder \`${editingPreset.selectedFolder.filepath}\`? This cannot be undone.`
-              : `Delete workflow "${editingPreset?.label || ''}"? This cannot be undone.`
+              ? `Delete automation "${editingPreset.label}" and permanently remove the folder \`${editingPreset.selectedFolder.filepath}\`? This cannot be undone.`
+              : `Delete automation "${editingPreset?.label || ''}"? This cannot be undone.`
           }
-          confirmText="Delete Workflow"
+          confirmText="Delete Automation"
           type="danger"
           isLoading={deletingWorkflow}
         />

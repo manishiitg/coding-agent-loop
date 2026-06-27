@@ -15,7 +15,9 @@ import '@xyflow/react/dist/style.css'
 
 import { useModeStore } from '../../../stores/useModeStore'
 import { nodeTypes } from '../nodes'
+import { getExecutionModeVisuals } from '../nodes/executionModeVisuals'
 import { edgeTypes } from '../edges'
+import Workspace from '../../Workspace'
 import { WorkflowToolbar } from './WorkflowToolbar'
 import { VariablesSidebar } from './VariablesSidebar'
 import { BatchProgressHeader } from '../BatchProgressHeader'
@@ -35,6 +37,7 @@ import { useWorkspaceState } from '../hooks/useWorkspaceState'
 import { useWorkflowStore, type CanvasViewMode } from '../../../stores/useWorkflowStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useChatStore } from '../../../stores/useChatStore'
+import { useAppStore } from '../../../stores/useAppStore'
 import { agentApi } from '../../../services/api'
 import type { PlanStep, MessageSequenceItem } from '../../../utils/stepConfigMatching'
 import type { VariablesManifest } from '../../../services/api-types'
@@ -182,9 +185,11 @@ export function previewDeviceShellClass(device: PreviewDevice): string {
 
 function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: { hasPlan: boolean; onExportPlan?: () => void; onRefreshPlan?: () => void; scopeId?: string | null }) {
   const canvasViewMode = useWorkflowStore(state => state.canvasViewMode)
-  const isReport = canvasViewMode === 'report'
-  const isLog = canvasViewMode === 'log'
-  const isSoul = canvasViewMode === 'soul'
+  const workflowWorkspaceView = useWorkflowStore(state => state.workflowWorkspaceView)
+  const isFiles = workflowWorkspaceView === 'files'
+  const isReport = !isFiles && canvasViewMode === 'report'
+  const isLog = !isFiles && canvasViewMode === 'log'
+  const isSoul = !isFiles && canvasViewMode === 'soul'
 
   // "New Pulse" dot — show a dot on the Pulse tab when builder/improve.html
   // changed since the user last viewed it. Per-workspace seen-timestamp persists
@@ -224,26 +229,39 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: 
   const devicePref = usePreviewDevice(scopeId)
   const setDevice = (mode: PreviewDevice) => setPreviewDevice(mode, scopeId)
   const showReport = () => {
+    useAppStore.getState().setWorkspaceMinimized(true)
     const s = useWorkflowStore.getState()
     s.setWorkflowWorkspaceView('report')
     s.setCanvasViewMode('report')
   }
   const showPlan = () => {
+    useAppStore.getState().setWorkspaceMinimized(true)
     const s = useWorkflowStore.getState()
     s.setWorkflowWorkspaceView('flow')
     s.setCanvasViewMode('flow')
   }
   const showLog = () => {
+    useAppStore.getState().setWorkspaceMinimized(true)
     const s = useWorkflowStore.getState()
     s.setWorkflowWorkspaceView('log')
     s.setCanvasViewMode('log')
   }
   const showSoul = () => {
+    useAppStore.getState().setWorkspaceMinimized(true)
     const s = useWorkflowStore.getState()
     s.setWorkflowWorkspaceView('soul')
     s.setCanvasViewMode('soul')
   }
-  const hidePane = () => useWorkflowStore.getState().setShowWorkspacePane(false)
+  const showFiles = () => {
+    const s = useWorkflowStore.getState()
+    s.setShowWorkspacePane(true)
+    s.setWorkflowWorkspaceView('files')
+    useAppStore.getState().setWorkspaceMinimized(false)
+  }
+  const hidePane = () => {
+    useAppStore.getState().setWorkspaceMinimized(true)
+    useWorkflowStore.getState().setShowWorkspacePane(false)
+  }
   const download = () => {
     if (isReport) window.dispatchEvent(new CustomEvent(WORKFLOW_REPORT_EXPORT_EVENT))
     else onExportPlan?.()
@@ -254,8 +272,8 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: 
     else if (isSoul) window.dispatchEvent(new CustomEvent(WORKFLOW_SOUL_REFRESH_EVENT))
     else onRefreshPlan?.()
   }
-  const canDownload = isReport || Boolean(onExportPlan)
-  const canRefresh = isReport || isLog || isSoul || Boolean(onRefreshPlan)
+  const canDownload = !isFiles && (isReport || Boolean(onExportPlan))
+  const canRefresh = !isFiles && (isReport || isLog || isSoul || Boolean(onRefreshPlan))
   const tabCls = (active: boolean) =>
     `rounded px-2.5 py-1 text-xs font-medium transition-colors ${
       active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
@@ -278,7 +296,7 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: 
           aria-label="View controls"
           className="relative inline-flex items-center gap-1.5 rounded-lg border border-border bg-background/90 px-2 py-1 text-xs font-medium text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground"
         >
-          <span>{isReport ? 'Report' : isLog ? 'Pulse' : isSoul ? 'Soul' : 'Plan'}</span>
+          <span>{isFiles ? 'Files' : isReport ? 'Report' : isLog ? 'Pulse' : isSoul ? 'Soul' : 'Plan'}</span>
           <SlidersHorizontal className="h-3.5 w-3.5" />
           {hasUnseenPulse && !isLog && <span className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-primary ring-2 ring-background" aria-label="New Pulse update" />}
         </button>
@@ -301,7 +319,7 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: 
     >
       <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/70 p-0.5 shadow-sm backdrop-blur-sm">
         {hasPlan && (
-          <button type="button" onClick={showPlan} className={tabCls(canvasViewMode === 'flow')}>Plan</button>
+          <button type="button" onClick={showPlan} className={tabCls(!isFiles && canvasViewMode === 'flow')}>Plan</button>
         )}
         <button type="button" onClick={showReport} className={tabCls(isReport)}>Report</button>
         <button type="button" onClick={showLog} className={`relative ${tabCls(isLog)}`} title={hasUnseenPulse ? 'Pulse — new update' : 'Pulse'}>
@@ -309,8 +327,9 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: 
           {hasUnseenPulse && <span className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-primary ring-2 ring-background" aria-label="New Pulse update" />}
         </button>
         <button type="button" onClick={showSoul} className={tabCls(isSoul)}>Soul</button>
+        <button type="button" onClick={showFiles} className={tabCls(isFiles)}>Files</button>
       </div>
-      {(
+      {!isFiles && (
         <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/70 p-0.5 shadow-sm backdrop-blur-sm">
           {PREVIEW_DEVICE_OPTS.map(({ mode, Icon, label }) => (
             <button
@@ -455,6 +474,108 @@ const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasPr
 })
 
 WorkflowReportCanvasInner.displayName = 'WorkflowReportCanvasInner'
+
+const WorkflowFilesCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(({
+  workspacePath,
+  presetQueryId,
+  currentPhase,
+  onStartPhase,
+  onCreatePlan,
+  showChatArea = false,
+  onToggleChatArea,
+  toolbarOnly = false,
+  sharedToolbar = false,
+  chatTabsSlot,
+  paneClassName = '',
+  className = '',
+  hideToolbar = false,
+}, ref) => {
+  const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
+  const canvasViewMode = useWorkflowStore(state => state.canvasViewMode)
+  const planData = usePlanData(workspacePath)
+  const plan = planData.plan
+  const loadPlanRefresh = planData.refresh
+  const { status } = useWorkflowExecution()
+  const {
+    state: workspaceState,
+    loading: isLoadingWorkspaceState,
+    refresh: refreshWorkspaceState,
+  } = useWorkspaceState(workspacePath, selectedRunFolder)
+
+  const variablesManifest = workspaceState?.variables_manifest || null
+  const runFoldersForToolbar = React.useMemo(() => {
+    if (!workspaceState?.run_folders) return []
+    return workspaceState.run_folders.map(f => ({ name: f.name }))
+  }, [workspaceState?.run_folders])
+
+  const handleStartPhase = useCallback((phaseId: string, executionOptions?: ExecutionOptions) => {
+    onStartPhase?.(phaseId, executionOptions)
+  }, [onStartPhase])
+
+  const handleRefresh = useCallback(async () => {
+    await Promise.all([
+      loadPlanRefresh(),
+      refreshWorkspaceState(),
+    ])
+  }, [loadPlanRefresh, refreshWorkspaceState])
+
+  const handleCloseFiles = useCallback(() => {
+    useAppStore.getState().setWorkspaceMinimized(true)
+    useWorkflowStore.getState().setWorkflowWorkspaceView(canvasViewMode)
+  }, [canvasViewMode])
+
+  useImperativeHandle(ref, () => ({
+    refresh: async () => {
+      await handleRefresh()
+      return null
+    },
+    getStepCount: () => plan?.steps?.length ?? 0,
+    focusStep: () => {},
+  }), [handleRefresh, plan])
+
+  return (
+    <div className={`flex flex-col h-full ${className} ${sharedToolbar && showChatArea ? 'contents' : ''}`}>
+      {!hideToolbar && (
+        <div className={sharedToolbar && showChatArea ? 'col-start-1 row-start-1 md:col-span-2' : ''}>
+          <WorkflowToolbar
+            status={status}
+            hasPlan={Boolean(plan?.steps?.length)}
+            plan={plan || undefined}
+            currentPhase={currentPhase}
+            workspacePath={workspacePath}
+            presetQueryId={presetQueryId}
+            runFolders={runFoldersForToolbar}
+            variablesManifest={variablesManifest}
+            isLoadingWorkspaceState={isLoadingWorkspaceState}
+            onStartPhase={handleStartPhase}
+            onCreatePlan={onCreatePlan || (() => {})}
+            showChatArea={showChatArea}
+            onToggleChatArea={onToggleChatArea}
+            onRefresh={handleRefresh}
+            chatTabsSlot={chatTabsSlot}
+          />
+        </div>
+      )}
+
+      <div data-tour="workflow-canvas-pane" data-testid="tour-workflow-canvas-pane" className={`${sharedToolbar && showChatArea ? 'flex-1 col-start-1 row-start-2 md:col-start-2' : 'flex-1'} ${paneClassName} min-h-0`}>
+        {toolbarOnly ? null : (
+          <div className="relative flex h-full min-h-0 flex-col bg-background">
+            <PreviewPaneControls hasPlan={Boolean(plan?.steps?.length)} scopeId={workspacePath} />
+            <div className="h-10 shrink-0" />
+            <div className="min-h-0 flex-1">
+              <Workspace
+                minimized={false}
+                onToggleMinimize={handleCloseFiles}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+})
+
+WorkflowFilesCanvasInner.displayName = 'WorkflowFilesCanvasInner'
 
 function formatJson(value: unknown): string {
   return JSON.stringify(value, null, 2)
@@ -835,7 +956,7 @@ function renderFlowToSvg(nodes: WorkflowNode[], edges: WorkflowEdge[]): string {
   const nodeHeader = isDark ? '#111827' : '#f8fafc'
 
   const parts: string[] = [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="Workflow flow">`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="Automation flow">`,
     `<defs><pattern id="flow-grid" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="${dot}"/></pattern><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8"/></marker></defs>`,
     `<rect width="100%" height="100%" fill="${background}"/>`,
     `<rect width="100%" height="100%" fill="url(#flow-grid)"/>`,
@@ -1019,6 +1140,10 @@ function ReadOnlyStepDetailPanel({
   const sequenceItems = (step ? (step as { items?: MessageSequenceItem[] }).items : undefined) || undefined
   const validationSchema = step?.validation_schema || ('validation_schema' in data ? data.validation_schema : undefined)
   const agentConfigs = step?.agent_configs
+  const declaredExecutionMode = agentConfigs?.declared_execution_mode
+  const declaredExecutionModeReason = agentConfigs?.declared_execution_mode_reason
+  const declaredExecutionModeVisuals = getExecutionModeVisuals(declaredExecutionMode, declaredExecutionModeReason)
+  const DeclaredExecutionModeIcon = declaredExecutionModeVisuals.Icon
   const contextInputs = step?.context_dependencies || []
   const contextOutput = step?.context_output
   const contextOutputs = Array.isArray(contextOutput) ? contextOutput : (contextOutput ? [contextOutput] : [])
@@ -1042,6 +1167,27 @@ function ReadOnlyStepDetailPanel({
           <DetailSection icon={FileText} title="Description">
             <div className="prose prose-sm max-w-none dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1">
               <MarkdownRenderer content={step.description} className="max-w-none" />
+            </div>
+          </DetailSection>
+        )}
+
+        {declaredExecutionMode && (
+          <DetailSection icon={Settings} title="Execution Mode">
+            <div className="flex flex-wrap items-center gap-2 text-xs leading-relaxed">
+              {DeclaredExecutionModeIcon && (
+                <span
+                  className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${declaredExecutionModeVisuals.iconBoxClassName}`}
+                  title={declaredExecutionModeVisuals.title}
+                >
+                  <DeclaredExecutionModeIcon className="h-3.5 w-3.5" />
+                </span>
+              )}
+              <span className="font-medium text-foreground">
+                {declaredExecutionModeVisuals.label || declaredExecutionMode}
+              </span>
+              {declaredExecutionModeReason && (
+                <span className="text-muted-foreground">{declaredExecutionModeReason}</span>
+              )}
             </div>
           </DetailSection>
         )}
@@ -2925,7 +3071,12 @@ WorkflowCanvasInner.displayName = 'WorkflowCanvasInner'
 // data plus its own report files, so it should not repaint on every chat event.
 export const WorkflowCanvasWithProvider = React.memo(forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((props, ref) => {
   const canvasViewMode = useWorkflowStore(state => state.canvasViewMode)
+  const workflowWorkspaceView = useWorkflowStore(state => state.workflowWorkspaceView)
   const effectiveCanvasViewMode = props.viewMode || canvasViewMode
+
+  if (workflowWorkspaceView === 'files') {
+    return <WorkflowFilesCanvasInner {...props} ref={ref} />
+  }
 
   // Report, Pulse (log), and Soul are lightweight preview-pane views (no React Flow tree).
   if (effectiveCanvasViewMode === 'report' || effectiveCanvasViewMode === 'log' || effectiveCanvasViewMode === 'soul') {

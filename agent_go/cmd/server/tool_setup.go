@@ -353,8 +353,9 @@ func enhanceToolDescriptionForMultiAgentMode(toolName, originalDescription, chat
 	if writeTools[toolName] {
 		accessInfo.WriteString(fmt.Sprintf("\n\n⚠️ **IMPORTANT:** You can write to '%s/' (primary). All other folders are read-only unless explicitly allowed. Use dedicated configuration tools for config changes; do not read or write `config/` with file tools.", chatsFolder))
 		accessInfo.WriteString(fmt.Sprintf("\nSave plan outputs inside the plan folder (e.g. '%s/{plan_id}/output.txt').", chatsFolder))
+		accessInfo.WriteString("\nOrg-level goals and pulse artifacts belong in `pulse/` (for example `pulse/goals.html` and `pulse/org-pulse.html`).")
 	} else {
-		accessInfo.WriteString(fmt.Sprintf("\n\nYou have READ access to allowed workspace folders. WRITE access is restricted to '%s/' and any explicitly allowed subfolders. Configuration data is available through dedicated tools.", chatsFolder))
+		accessInfo.WriteString(fmt.Sprintf("\n\nYou have READ access to allowed workspace folders. WRITE access is restricted to `%s/`, `pulse/`, and any explicitly allowed subfolders. Configuration data is available through dedicated tools.", chatsFolder))
 	}
 
 	return originalDescription + accessInfo.String()

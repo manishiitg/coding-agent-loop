@@ -538,14 +538,14 @@ function getWorkflowScopeLabel(
   workflowScope: WorkflowScheduleRunsPanelProps['workflowScope'],
   presetMap: Map<string, { label: string; workspacePath: string | null }>
 ): string {
-  if (!workflowScope) return 'Workflow Schedules'
+  if (!workflowScope) return 'Automation Schedules'
   if (workflowScope.label) return workflowScope.label
   if (workflowScope.presetQueryId) {
     const presetLabel = presetMap.get(workflowScope.presetQueryId)?.label
     if (presetLabel) return presetLabel
   }
   const path = normalizeWorkspacePath(workflowScope.workspacePath)
-  return path.split('/').filter(Boolean).pop() || 'Workflow'
+  return path.split('/').filter(Boolean).pop() || 'Automation'
 }
 
 function jobMatchesWorkflowScope(
@@ -643,7 +643,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   }, [jobs, workflowScope, presetMap])
 
   const panelTitle = useMemo(() => {
-    if (!isWorkflowScoped) return 'Workflow Schedules'
+    if (!isWorkflowScoped) return 'Automation Schedules'
     return `Schedules for ${getWorkflowScopeLabel(workflowScope, presetMap)}`
   }, [isWorkflowScoped, workflowScope, presetMap])
 
@@ -699,7 +699,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
       setJobs(resp.jobs)
       setSchedulerConfig(config)
     } catch {
-      setError('Failed to load workflow schedules')
+      setError('Failed to load automation schedules')
     } finally {
       if (showLoading) setIsLoading(false)
     }
@@ -1648,7 +1648,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
               <div className="flex flex-wrap gap-1.5">
                 {!isWorkflowScoped && (
                   <span className="rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground">
-                    {workflowScheduleSummary.workflows} workflow{workflowScheduleSummary.workflows === 1 ? '' : 's'}
+                    {workflowScheduleSummary.workflows} automation{workflowScheduleSummary.workflows === 1 ? '' : 's'}
                   </span>
                 )}
                 <span className="rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground">
@@ -1747,7 +1747,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                             : 'border border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
                         }`}
                       >
-                        By Workflow
+                        By Automation
                       </button>
                     </>
                   )}
@@ -1779,7 +1779,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                     : activeView === 'calendar'
                       ? `${monthlyCalendar.total} scheduled item${monthlyCalendar.total === 1 ? '' : 's'} this month`
                       : activeView === 'by-workflow'
-                        ? `${workflowGroups.length} workflow${workflowGroups.length === 1 ? '' : 's'} · ${filteredJobs.length} schedule${filteredJobs.length === 1 ? '' : 's'} shown`
+                        ? `${workflowGroups.length} automation${workflowGroups.length === 1 ? '' : 's'} · ${filteredJobs.length} schedule${filteredJobs.length === 1 ? '' : 's'} shown`
                         : `${filteredJobs.length} schedule${filteredJobs.length !== 1 ? 's' : ''} shown`}
                 </div>
               </div>
@@ -1794,11 +1794,11 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
             <div className="flex flex-col items-center justify-center h-48 gap-3 px-6 text-center text-sm text-muted-foreground">
               <Clock className="w-8 h-8 opacity-30" />
               <div>
-                <p>{isWorkflowScoped ? 'No schedules for this workflow yet.' : 'No workflow schedules yet.'}</p>
+                <p>{isWorkflowScoped ? 'No schedules for this automation yet.' : 'No automation schedules yet.'}</p>
                 <p className="mt-1 text-xs">
                   {isWorkflowScoped
-                    ? 'Ask chat to schedule this workflow when you are ready.'
-                    : 'Ask chat to schedule a workflow when you are ready.'}
+                    ? 'Ask chat to schedule this automation when you are ready.'
+                    : 'Ask chat to schedule an automation when you are ready.'}
                 </p>
               </div>
             </div>
@@ -1809,7 +1809,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                 <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <div className="text-sm font-medium text-foreground">All scheduled workflow triggers are paused</div>
+                      <div className="text-sm font-medium text-foreground">All scheduled automation triggers are paused</div>
                       <div className="mt-1 text-xs text-muted-foreground">
                         Existing manual runs still work. Cron-triggered executions will not start until you resume schedules.
                       </div>
@@ -2131,7 +2131,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                           type="text"
                           value={searchQuery}
                           onChange={(e) => setSearchQuery(e.target.value)}
-                          placeholder={isWorkflowScoped ? 'Search schedules, cron, workspace...' : 'Search by workflow, preset, cron, workspace...'}
+                          placeholder={isWorkflowScoped ? 'Search schedules, cron, workspace...' : 'Search by automation, preset, cron, workspace...'}
                           className="w-full rounded-lg border border-border bg-background px-9 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-amber-400/50"
                         />
                       </div>
@@ -2141,7 +2141,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                           onChange={(event) => setSelectedWorkflowFilter(event.target.value)}
                           className="min-w-48 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-amber-400/50"
                         >
-                          <option value="all">All workflows</option>
+                          <option value="all">All automations</option>
                           {workflowOptions.map((option) => (
                             <option key={option.value} value={option.value}>{option.label}</option>
                           ))}
@@ -2171,7 +2171,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
           {panelJobs.length > 0 && activeView === 'by-workflow' && workflowGroups.length === 0 && (
             <div className="flex flex-col items-center justify-center h-40 gap-2 text-sm text-muted-foreground px-6 text-center">
               <Search className="w-8 h-8 opacity-30" />
-              <p>No workflows match the current filter.</p>
+              <p>No automations match the current filter.</p>
               <button
                 onClick={() => {
                   setSearchQuery('')
@@ -2242,8 +2242,8 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                             }}
                             disabled={bulkUpdatingGroupKey === group.key}
                             title={group.enabled > 0
-                              ? `Pause all ${group.enabled} active schedule${group.enabled === 1 ? '' : 's'} in this workflow`
-                              : `Resume all ${group.paused} paused schedule${group.paused === 1 ? '' : 's'} in this workflow`}
+                              ? `Pause all ${group.enabled} active schedule${group.enabled === 1 ? '' : 's'} in this automation`
+                              : `Resume all ${group.paused} paused schedule${group.paused === 1 ? '' : 's'} in this automation`}
                             className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium transition-colors disabled:opacity-60 ${
                               group.enabled > 0
                                 ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20'
@@ -2362,7 +2362,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                       <div className="px-5 py-3 bg-muted/30 border-b border-border">
                         <div className="flex items-center justify-between gap-3">
                           <div>
-                            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Workflow schedules</div>
+                            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Automation schedules</div>
                             <div className="text-sm font-medium text-foreground">Saved schedules that are idle, paused, or waiting for their next run</div>
                           </div>
                           <div className="text-xs text-muted-foreground whitespace-nowrap">
@@ -2400,7 +2400,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                       <div className="flex-1 min-w-0">
                         <div className="min-w-0">
                           <div className="text-[11px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
-                            Workflow
+                            Automation
                           </div>
                           <div className="mt-0.5 flex items-center gap-2 flex-wrap">
                             <span className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate" title={workflowDisplayLabel}>

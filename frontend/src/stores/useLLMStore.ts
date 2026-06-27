@@ -18,7 +18,7 @@ type PublishedLLMMetadataSnapshot = {
 
 const DEFAULT_CHAT_PROVIDER: LLMProvider = 'codex-cli'
 const DEFAULT_CHAT_MODEL = 'codex-cli'
-const FRONTEND_DEPRECATED_PROVIDER_IDS = new Set<string>(['gemini-cli'])
+const FRONTEND_DEPRECATED_PROVIDER_IDS = new Set<string>(['gemini-cli', 'agy-cli'])
 const SUPPORTED_PROVIDERS_FALLBACK: LLMProvider[] = [
   'bedrock',
   'openai',
@@ -33,8 +33,13 @@ const SUPPORTED_PROVIDERS_FALLBACK: LLMProvider[] = [
   'elevenlabs',
   'deepgram',
 ]
+
+function isFrontendDeprecatedProvider(provider?: string): boolean {
+  return !!provider && FRONTEND_DEPRECATED_PROVIDER_IDS.has(provider)
+}
+
 function hasUsableLLMIdentity(model?: { provider?: string; model_id?: string }): model is { provider: LLMProvider; model_id: string } {
-  return !!model?.provider?.trim() && !!model?.model_id?.trim()
+  return !!model?.provider?.trim() && !!model?.model_id?.trim() && !isFrontendDeprecatedProvider(model.provider)
 }
 
 function defaultLLMConfiguration(): LLMConfiguration {
@@ -53,7 +58,9 @@ function normalizePrimaryConfig(config?: LLMConfiguration): LLMConfiguration {
   return {
     ...config,
     fallback_models: config.fallback_models || [],
-    cross_provider_fallback: config.cross_provider_fallback && hasUsableLLMIdentity(config.cross_provider_fallback)
+    cross_provider_fallback: config.cross_provider_fallback &&
+      !isFrontendDeprecatedProvider(config.cross_provider_fallback.provider) &&
+      config.cross_provider_fallback.models?.length
       ? config.cross_provider_fallback
       : undefined,
   }
@@ -124,6 +131,7 @@ function hasStoredProviderKeys(keys?: StoredProviderKeys | null): boolean {
     keys?.minimax ||
     keys?.elevenlabs ||
     keys?.deepgram ||
+    (keys?.pi_provider_keys && Object.values(keys.pi_provider_keys).some(key => !!key?.trim())) ||
     keys?.bedrock?.region ||
     (keys?.azure?.endpoint && keys?.azure?.api_key)
   )

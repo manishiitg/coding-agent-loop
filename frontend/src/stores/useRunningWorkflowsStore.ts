@@ -532,7 +532,7 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
             // Show toast on max failures
             if (newFailureCount >= VALIDATION_CONFIG.MAX_POLL_RETRIES) {
               chatStore.addToast?.(
-                `Failed to update workflow "${bg.presetName}" - check connection`,
+                `Failed to update automation "${bg.presetName}" - check connection`,
                 'error'
               )
             }

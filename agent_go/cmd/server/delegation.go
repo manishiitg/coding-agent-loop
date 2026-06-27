@@ -364,10 +364,12 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			subPerUserChatsWrite := subPerUserChatsFolder + "/"
 			subPerUserMemWrite := perUserMemoryFolderFor(subAgentUserID) + "/"
 			subPerUserChatHistory := strings.TrimSuffix(subPerUserChatsFolder, "Chats") + "chat_history/"
+			orgPulseWrite := "pulse/"
 			extraFolders := append([]string{}, subResolvedGrants.WriteFolders...)
 			extraFolders = append(extraFolders, fileContextWriteFolders...)
 			extraFolders = append(extraFolders, subPerUserMemWrite)
 			extraFolders = append(extraFolders, subPerUserChatHistory)
+			extraFolders = append(extraFolders, orgPulseWrite)
 			// Delegation path has no #workflow-derived blocked-write prefix (the parent
 			// session's blocked paths aren't inherited here; this call path is for sub-agents
 			// spawned with their own folder scope). Pass nil.

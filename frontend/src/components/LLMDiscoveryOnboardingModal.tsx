@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AlertCircle, CheckCircle, Copy, Loader2, RefreshCw, Settings, Terminal, X, KeyRound, ChevronDown, ChevronRight } from 'lucide-react'
 import { Button } from './ui/Button'
-import { llmConfigService, type ModelMetadata, type ProviderManifestEntry } from '../services/llm-config-api'
+import { llmConfigService, type DynamicModelEntry, type ModelMetadata, type ProviderManifestEntry } from '../services/llm-config-api'
 import type { LLMDiscoveryCandidate, LLMModel, LLMProvider, SavedLLM, TierModel } from '../services/api-types'
 import { useLLMStore } from '../stores'
 import ModalPortal from './ui/ModalPortal'
@@ -21,8 +21,8 @@ type ReadinessLevel = 'ready' | 'needs_setup' | 'not_detected'
 type TierKey = 'main' | 'high' | 'medium' | 'low'
 type VisibleTierKey = Exclude<TierKey, 'main'>
 
-const PRIMARY_CODING_CLI_ORDER = ['claude-code', 'codex-cli'] as const
-const SECONDARY_CODING_CLI_ORDER = ['agy-cli', 'pi-cli', 'cursor-cli'] as const
+const PRIMARY_CODING_CLI_ORDER = ['claude-code', 'codex-cli', 'cursor-cli'] as const
+const SECONDARY_CODING_CLI_ORDER = ['pi-cli'] as const
 const FALLBACK_CODING_CLI_ORDER = [...PRIMARY_CODING_CLI_ORDER, ...SECONDARY_CODING_CLI_ORDER] as const
 const CODING_CLI_DISPLAY_ORDER = new Map<string, number>(
   FALLBACK_CODING_CLI_ORDER.map((provider, index) => [provider, index])
@@ -57,19 +57,22 @@ const CODING_CLI_INFO: Record<typeof FALLBACK_CODING_CLI_ORDER[number], {
     setupCommand: 'cursor-agent login',
     installHint: 'Install Cursor CLI so the cursor-agent command is available on the backend PATH.',
   },
-  'agy-cli': {
-    label: 'Antigravity CLI (Alpha)',
-    binary: 'agy',
-    setupCommand: 'agy',
-    installHint: 'Install Antigravity CLI so the agy command is available on the backend PATH.',
-  },
   'pi-cli': {
-    label: 'Pi CLI',
+    label: 'Pi.dev',
     binary: 'pi',
     setupCommand: 'npm install -g @earendil-works/pi-coding-agent',
     installHint: 'Install Pi CLI so the pi command is available on the backend PATH, or ensure npx is available.',
   },
 }
+
+const PI_PROVIDER_FALLBACK_LABELS = ['Gemini', 'Z.AI / GLM', 'MiniMax', 'Kimi', 'DeepSeek']
+const PI_MODEL_FALLBACK_PREVIEW: DynamicModelEntry[] = [
+  { model_id: 'google/gemini-3.5-flash', model_name: 'Gemini 3.5 Flash', group: 'Gemini' },
+  { model_id: 'zai/glm-5.2', model_name: 'GLM-5.2', group: 'Z.AI / GLM' },
+  { model_id: 'minimax/MiniMax-M3', model_name: 'MiniMax M3', group: 'MiniMax' },
+  { model_id: 'kimi-coding/k2p7', model_name: 'Kimi K2.7 Code', group: 'Kimi' },
+  { model_id: 'deepseek/deepseek-v4-pro', model_name: 'DeepSeek V4 Pro', group: 'DeepSeek' },
+]
 
 const isFallbackCodingCLIProvider = (provider: string): provider is typeof FALLBACK_CODING_CLI_ORDER[number] =>
   (FALLBACK_CODING_CLI_ORDER as readonly string[]).includes(provider)
@@ -144,7 +147,7 @@ function modelForCandidate(
   selectedModelId: string | undefined,
   providerManifest: ProviderManifestEntry[],
 ): LLMModel {
-  const manifestDefaults = providerManifest.find(provider => provider.id === candidate.provider)?.default_tier_models
+  const manifestDefaults = providerManifest.find(provider => provider.id === candidate.provider && !provider.deprecated)?.default_tier_models
   const main = manifestDefaults?.main
 
   return {
@@ -158,7 +161,7 @@ function tierModelsForCandidate(
   candidate: LLMDiscoveryCandidate,
   providerManifest: ProviderManifestEntry[] = [],
 ): Record<TierKey, { provider: string; modelID: string }> {
-  const manifestDefaults = providerManifest.find(provider => provider.id === candidate.provider)?.default_tier_models
+  const manifestDefaults = providerManifest.find(provider => provider.id === candidate.provider && !provider.deprecated)?.default_tier_models
   if (manifestDefaults) {
     return {
       main: { provider: manifestDefaults.main.provider, modelID: manifestDefaults.main.model_id },
@@ -225,10 +228,42 @@ function visibleTierEntries(candidate: LLMDiscoveryCandidate, metadata: ModelMet
   })
 }
 
+function piProviderLabelForModel(modelID: string) {
+  const prefix = modelID.split('/')[0]?.trim().toLowerCase()
+  switch (prefix) {
+    case 'google':
+    case 'google-vertex':
+      return 'Gemini'
+    case 'zai':
+    case 'zai-coding-cn':
+      return 'Z.AI / GLM'
+    case 'minimax':
+    case 'minimax-cn':
+      return 'MiniMax'
+    case 'kimi-coding':
+    case 'moonshotai':
+    case 'moonshotai-cn':
+      return 'Kimi'
+    case 'deepseek':
+      return 'DeepSeek'
+    default:
+      return prefix ? prefix : 'Custom'
+  }
+}
+
+function uniquePiProviderLabels(models: DynamicModelEntry[]) {
+  if (models.length === 0) return PI_PROVIDER_FALLBACK_LABELS
+  const labels = new Set<string>()
+  for (const model of models) {
+    labels.add(piProviderLabelForModel(model.model_id))
+  }
+  return Array.from(labels)
+}
+
 function publishedName(candidate: LLMDiscoveryCandidate, selectedModelId?: string): string {
   if (candidate.provider === 'codex-cli') return 'Codex CLI'
   if (candidate.provider === 'cursor-cli') return 'Cursor CLI'
-  if (candidate.provider === 'pi-cli') return `Pi CLI (${selectedModelId || candidate.model_id})`
+  if (candidate.provider === 'pi-cli') return `Pi.dev (${selectedModelId || candidate.model_id})`
   if (candidate.provider === 'claude-code') return 'Claude Code'
   return candidate.label
 }
@@ -257,12 +292,14 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
   const [enablingId, setEnablingId] = useState<string | null>(null)
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null)
   const [metadata, setMetadata] = useState<ModelMetadata[]>([])
+  const [piDynamicModels, setPiDynamicModels] = useState<DynamicModelEntry[]>([])
   const [showAPIProviders, setShowAPIProviders] = useState(false)
 
   const codingCliCandidates = useMemo(() => {
     const byProvider = new Map<string, LLMDiscoveryCandidate>()
     const byRuntime = new Map<string, LLMDiscoveryCandidate>()
     for (const candidate of candidates) {
+      if (candidate.deprecated) continue
       if (candidate.kind === 'local_cli' && !byProvider.has(candidate.provider)) {
         byProvider.set(candidate.provider, candidate)
         const runtimeKey = candidate.runtime_command || candidate.provider
@@ -308,11 +345,20 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
     () => codingCliCandidates.filter(candidate => !isPrimaryCodingCLIProvider(candidate.provider)),
     [codingCliCandidates]
   )
+  const piCodingCliCandidate = useMemo(
+    () => codingCliCandidates.find(candidate => candidate.provider === 'pi-cli'),
+    [codingCliCandidates]
+  )
+  const otherCodingCliCandidates = useMemo(
+    () => secondaryCodingCliCandidates.filter(candidate => candidate.provider !== 'pi-cli'),
+    [secondaryCodingCliCandidates]
+  )
 
   const grouped = useMemo(() => {
     const readyAPI: LLMDiscoveryCandidate[] = []
     const apiNeedsSetup: LLMDiscoveryCandidate[] = []
     for (const c of candidates) {
+      if (c.deprecated) continue
       if (c.kind === 'local_cli') continue
       const level = candidateReadiness(c)
       if (level === 'ready') {
@@ -332,14 +378,16 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
     setSuccess(null)
     try {
       if (!defaultsLoaded) await loadDefaultsFromBackend()
-      const [response, metaResponse] = await Promise.all([
+      const [response, metaResponse, , , piModelsResponse] = await Promise.all([
         llmConfigService.discoverLLMSetup(),
         llmConfigService.getModelMetadata().catch(() => ({ models: [] })),
         providerManifestLoaded ? Promise.resolve() : loadProviderManifest(),
         loadDelegationTierDefaults(),
+        llmConfigService.getProviderModels('pi-cli').catch(() => ({ models: [] as DynamicModelEntry[] })),
       ])
       setCandidates(response.candidates || [])
       setMetadata(metaResponse.models || [])
+      setPiDynamicModels(piModelsResponse.models || [])
       setTestStates({})
       setCopiedCommand(null)
     } catch (err) {
@@ -469,6 +517,139 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
     )
   }
 
+  const renderPiDevCard = (candidate: LLMDiscoveryCandidate) => {
+    const readiness = candidateReadiness(candidate)
+    const testState = testStates[candidate.id] || { status: 'idle' as const }
+    const isEnabling = enablingId === candidate.id
+    const providerInfo = isFallbackCodingCLIProvider(candidate.provider)
+      ? CODING_CLI_INFO[candidate.provider]
+      : undefined
+    const setupCommand = providerInfo?.setupCommand || (readiness === 'needs_setup' ? candidate.runtime_command || candidate.provider : undefined)
+    const statusClasses = readiness === 'ready'
+      ? 'bg-success/10 text-success'
+      : readiness === 'needs_setup'
+        ? 'bg-warning/20 text-warning'
+        : 'bg-muted text-muted-foreground'
+    const statusLabel = readiness === 'ready'
+      ? 'Detected'
+      : readiness === 'needs_setup'
+        ? 'Key/login needed'
+        : 'Install'
+    const previewModels = (piDynamicModels.length > 0 ? piDynamicModels : PI_MODEL_FALLBACK_PREVIEW).slice(0, 10)
+    const providerLabels = uniquePiProviderLabels(piDynamicModels).slice(0, 8)
+    const selectedPreview = previewModels.find(model => model.model_id === candidate.model_id)
+    const defaultModelLabel = selectedPreview?.model_name || candidate.model_name || candidate.model_id
+
+    return (
+      <div
+        key={candidate.id}
+        className="rounded-lg border border-lime-500/40 bg-lime-500/5 p-4 shadow-sm ring-1 ring-lime-500/10"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-start gap-2">
+              <Terminal className="h-4 w-4 shrink-0 text-lime-700 dark:text-lime-300" />
+              <div className="min-w-0">
+                <h4 className="text-sm font-semibold leading-snug text-foreground">Pi.dev multi-model coding</h4>
+                <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted-foreground">
+                  One tmux-backed Pi CLI integration for the latest Gemini, Chinese coding models, DeepSeek, and custom Pi provider IDs.
+                </p>
+              </div>
+            </div>
+          </div>
+          <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${statusClasses}`}>
+            {statusLabel}
+          </span>
+        </div>
+
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {providerLabels.map(label => (
+            <span
+              key={label}
+              className="rounded bg-background/80 px-2 py-1 text-[11px] font-medium text-foreground ring-1 ring-border"
+            >
+              {label}
+            </span>
+          ))}
+        </div>
+
+        <div className="mt-3 space-y-2">
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="font-medium text-muted-foreground">Curated models</span>
+            {previewModels.map(model => (
+              <span
+                key={model.model_id}
+                className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                title={model.model_id}
+              >
+                {model.model_name || model.model_id}
+              </span>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Default: <code className="rounded bg-muted px-1 py-0.5 text-foreground">{defaultModelLabel}</code>.
+            Provider keys are saved encrypted in Advanced setup and exported to Pi per selected model.
+          </p>
+          {readiness === 'not_detected' ? (
+            <p className="text-xs text-muted-foreground">{candidate.setup_hint || candidate.reason}</p>
+          ) : null}
+        </div>
+
+        <div className={`mt-4 flex flex-wrap items-center gap-2 ${readiness === 'ready' && testState.status !== 'invalid' ? 'justify-end' : 'justify-between'}`}>
+          {readiness === 'ready' ? (
+            <>
+              {testState.status === 'invalid' ? (
+                <span className="min-w-0 flex-1 truncate text-xs text-red-500" title={testState.message}>{testState.message || 'Validation failed'}</span>
+              ) : null}
+              {onAdvancedSetup ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2.5 text-xs"
+                  onClick={onAdvancedSetup}
+                >
+                  <Settings className="mr-1.5 h-3.5 w-3.5" />
+                  Models & keys
+                </Button>
+              ) : null}
+              <Button
+                size="sm"
+                onClick={() => enableCandidate(candidate)}
+                disabled={isEnabling || enablingId !== null}
+                className="h-7 px-2.5 text-xs"
+              >
+                {isEnabling ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : testState.status === 'valid' ? (
+                  <CheckCircle className="h-3.5 w-3.5" />
+                ) : (
+                  'Use default'
+                )}
+              </Button>
+            </>
+          ) : readiness === 'needs_setup' && setupCommand ? (
+            <>
+              <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 text-xs text-foreground">{setupCommand}</code>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 shrink-0"
+                onClick={() => { void copyCommand(setupCommand) }}
+              >
+                <Copy className="mr-1.5 h-3.5 w-3.5" />
+                {copiedCommand === setupCommand ? 'Copied' : 'Copy'}
+              </Button>
+            </>
+          ) : (
+            <span className="text-xs text-muted-foreground">Install Pi, then use Rescan.</span>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   const enableCandidate = async (candidate: LLMDiscoveryCandidate) => {
     setEnablingId(candidate.id)
     setError(null)
@@ -575,11 +756,11 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
                     <div>
                       <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                         <Terminal className="h-3.5 w-3.5" />
-                        Best Choices
+                        Dedicated CLIs
                       </h3>
                       <p className="mt-1 text-sm text-muted-foreground">
                         {hasReadyCodingCLI
-                          ? 'Start with one of these. Secondary CLIs stay available below.'
+                          ? 'Claude Code, Codex CLI, and Cursor CLI use their own local runtime and account setup.'
                           : 'Install and sign in to one of these, then rescan.'}
                       </p>
                     </div>
@@ -594,17 +775,26 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
                       Rescan
                     </Button>
                   </div>
-                  <div className="grid gap-3 lg:grid-cols-2">
+                  <div className="grid gap-3 md:grid-cols-3">
                     {primaryCodingCliCandidates.map(renderCodingCliCard)}
                   </div>
-                  {secondaryCodingCliCandidates.length > 0 && (
+                  {piCodingCliCandidate && (
+                    <div className="mt-5">
+                      <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        <Terminal className="h-3.5 w-3.5" />
+                        Multi-Provider Coding
+                      </h3>
+                      {renderPiDevCard(piCodingCliCandidate)}
+                    </div>
+                  )}
+                  {otherCodingCliCandidates.length > 0 && (
                     <div className="mt-5">
                       <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                         <Terminal className="h-3.5 w-3.5" />
                         Other CLIs
                       </h3>
                       <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
-                        {secondaryCodingCliCandidates.map(renderCodingCliCard)}
+                        {otherCodingCliCandidates.map(renderCodingCliCard)}
                       </div>
                     </div>
                   )}

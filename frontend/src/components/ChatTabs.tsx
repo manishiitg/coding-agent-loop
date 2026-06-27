@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { Plus, ArrowDown, ListTree, Terminal, History, X } from 'lucide-react'
+import { Plus, ArrowDown, ListTree, Terminal, History, X, Globe } from 'lucide-react'
 import { normalizeEventViewMode, useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useAppStore } from '../stores/useAppStore'
 import { OrgPulseControl } from './OrgPulseControl'
@@ -9,6 +9,10 @@ import { TreeViewAlphaDialog, shouldShowTreeViewAlphaWarning } from './TreeViewA
 import { PreviousChatHistoryPanel } from './PreviousChatHistoryPanel'
 import { useResumePreviousChat } from '../hooks/useResumePreviousChat'
 import type { ChatHistorySession } from '../services/api-types'
+import ServerSelectionDropdown from './ServerSelectionDropdown'
+import SkillSelectionDropdown from './skills/SkillSelectionDropdown'
+import { useMCPStore } from '../stores/useMCPStore'
+import { dispatchChatToolCommand } from '../utils/chatToolEvents'
 
 interface ChatTabsProps {
   // For multi-agent mode: callback when starting a new chat (reset-in-place)
@@ -17,6 +21,8 @@ interface ChatTabsProps {
   autoScroll?: boolean
   onToggleAutoScroll?: () => void
 }
+
+const DEDICATED_MCP_SERVERS = new Set(['playwright'])
 
 // Multi-agent chat is single-tab: this bar is a slim header for the one chat
 // tab (title + view controls + New Chat). It is not a tab switcher anymore.
@@ -37,19 +43,90 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
     switchTab,
     autoScroll: storeAutoScroll,
     setAutoScroll,
+    setTabConfig,
     setTabViewMode,
   } = useChatStore()
+  const { toolList: mcpToolList, setChatSelectedServers } = useMCPStore()
 
   const activeViewMode = useMemo(
     () => normalizeEventViewMode(activeTabId ? chatTabs[activeTabId]?.viewMode : undefined),
     [activeTabId, chatTabs]
   )
+  const activeTab = activeTabId ? chatTabs[activeTabId] : undefined
 
   const isHiddenOrganizationTab = useCallback((tab: ChatTab) => {
     // Only hide tabs explicitly marked as org assistant via metadata.
     // Never match by tab name — that can hide normal chat tabs.
     return tab.metadata?.isOrganizationAssistant === true
   }, [])
+
+  const availableServers = useMemo(
+    () => [...new Set(
+      mcpToolList
+        .filter(tool => tool.status === 'ok')
+        .map(tool => tool.server)
+        .filter((server): server is string => typeof server === 'string' && !DEDICATED_MCP_SERVERS.has(server))
+    )],
+    [mcpToolList]
+  )
+  const manualSelectedServers = useMemo(
+    () => activeTab?.config?.selectedServers || [],
+    [activeTab?.config?.selectedServers]
+  )
+  const selectedSkills = useMemo(
+    () => activeTab?.config?.selectedSkills || [],
+    [activeTab?.config?.selectedSkills]
+  )
+  const browserMode = activeTab?.config?.browserMode || 'none'
+  const toolsDisabled = !activeTabId || !!activeTab?.isStreaming || !!activeTab?.metadata?.isViewOnly
+
+  const onManualServerToggle = useCallback((server: string) => {
+    if (!activeTabId) return
+    const serversWithoutNoServers = manualSelectedServers.filter(item => item !== 'NO_SERVERS')
+    const newServers = serversWithoutNoServers.includes(server)
+      ? serversWithoutNoServers.filter(item => item !== server)
+      : [...serversWithoutNoServers, server]
+    setTabConfig(activeTabId, { selectedServers: newServers })
+    setChatSelectedServers(newServers)
+  }, [activeTabId, manualSelectedServers, setChatSelectedServers, setTabConfig])
+
+  const onSelectAllServers = useCallback(() => {
+    if (!activeTabId) return
+    setTabConfig(activeTabId, { selectedServers: availableServers })
+    setChatSelectedServers(availableServers)
+  }, [activeTabId, availableServers, setChatSelectedServers, setTabConfig])
+
+  const onClearAllServers = useCallback(() => {
+    if (!activeTabId) return
+    setTabConfig(activeTabId, { selectedServers: ['NO_SERVERS'] })
+    setChatSelectedServers(['NO_SERVERS'])
+  }, [activeTabId, setChatSelectedServers, setTabConfig])
+
+  const onSkillToggle = useCallback((skillFolderName: string) => {
+    if (!activeTabId) return
+    const newSkills = selectedSkills.includes(skillFolderName)
+      ? selectedSkills.filter(item => item !== skillFolderName)
+      : [...selectedSkills, skillFolderName]
+    setTabConfig(activeTabId, { selectedSkills: newSkills })
+  }, [activeTabId, selectedSkills, setTabConfig])
+
+  const onSelectAllSkills = useCallback((allSkillNames: string[]) => {
+    if (!activeTabId) return
+    setTabConfig(activeTabId, { selectedSkills: allSkillNames })
+  }, [activeTabId, setTabConfig])
+
+  const onClearAllSkills = useCallback(() => {
+    if (!activeTabId) return
+    setTabConfig(activeTabId, { selectedSkills: [] })
+  }, [activeTabId, setTabConfig])
+
+  const browserTooltip = browserMode === 'none'
+    ? 'Browser access'
+    : browserMode === 'cdp'
+      ? 'Browser access: CDP'
+      : browserMode === 'playwright'
+        ? 'Browser access: Playwright'
+        : 'Browser access: Headless'
 
   // Use prop if provided, otherwise use store value
   const effectiveAutoScroll = autoScroll !== undefined ? autoScroll : storeAutoScroll
@@ -101,7 +178,6 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
     return null
   }
 
-  const activeTab = activeTabId ? chatTabs[activeTabId] : undefined
   const showHeaderContent =
     !!activeTab && activeTab.metadata?.mode === 'multi-agent' && !isHiddenOrganizationTab(activeTab)
   // The multi-agent chat is the user's "chief of staff" (single-tab — this is a
@@ -118,8 +194,55 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
       </span>
 
       <div className="ml-auto flex items-center gap-1">
-        {/* Org Pulse — enable/disable the daily CoS pass + open its log on the
-            right. Self-contained control, mirrors the workflow Pulse toggle. */}
+        {showHeaderContent && (
+          <div className="mr-1 flex items-center gap-1 border-r border-gray-200 pr-2 dark:border-gray-700">
+            <ServerSelectionDropdown
+              availableServers={availableServers}
+              selectedServers={manualSelectedServers}
+              onServerToggle={onManualServerToggle}
+              onSelectAll={onSelectAllServers}
+              onClearAll={onClearAllServers}
+              disabled={toolsDisabled}
+              openDirection="down"
+              align="right"
+              iconOnly
+            />
+            <SkillSelectionDropdown
+              selectedSkills={selectedSkills}
+              onSkillToggle={onSkillToggle}
+              onSelectAll={onSelectAllSkills}
+              onClearAll={onClearAllSkills}
+              disabled={toolsDisabled}
+              openDirection="down"
+              align="right"
+              iconOnly
+            />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => dispatchChatToolCommand('browser')}
+                  disabled={toolsDisabled}
+                  className={`relative flex h-7 w-7 items-center justify-center rounded-md border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                    browserMode !== 'none'
+                      ? 'border-blue-400 bg-blue-100 text-blue-600 hover:bg-blue-200 dark:border-blue-700 dark:bg-blue-900/40 dark:text-blue-300 dark:hover:bg-blue-900/60'
+                      : 'border-gray-300 bg-gray-100 text-gray-400 hover:bg-gray-200 hover:text-gray-700 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-500 dark:hover:bg-gray-700 dark:hover:text-gray-200'
+                  }`}
+                  aria-label={browserTooltip}
+                >
+                  <Globe className="h-4 w-4" />
+                  {browserMode !== 'none' && (
+                    <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full border border-gray-50 bg-blue-500 dark:border-gray-800" />
+                  )}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{browserTooltip}</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
+        )}
+
         <OrgPulseControl />
 
         {/* History — open the previous-chats list to resume an earlier chat

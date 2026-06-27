@@ -307,10 +307,10 @@ export default function Workspace({
       // Just adjust filepaths to show workflow folder as root
       result = adjustFilePathsRecursive(result, effectiveWorkflowFolderPath)
     } else if (selectedModeCategory === 'multi-agent') {
-      // Multi Agent Chat mode: show Chats/, Downloads/, skills/, subagents/ and memories/ folders
+      // Multi Agent Chat mode: show Chats/, Downloads/, pulse/, skills/, subagents/ and memories/ folders
       result = filesToProcess.filter(f => {
         const topFolder = f.filepath.split('/')[0]
-        return topFolder === 'Chats' || topFolder === 'Downloads' || topFolder === 'skills' || topFolder === 'subagents' || topFolder === 'memories' || topFolder === 'chat_history' || topFolder === '_users'
+        return topFolder === 'Chats' || topFolder === 'Downloads' || topFolder === 'pulse' || topFolder === 'skills' || topFolder === 'subagents' || topFolder === 'memories' || topFolder === 'chat_history' || topFolder === '_users'
       })
       // Scope _users/ to current user only — hide other users' folders
       result = result.map(f => {
@@ -589,10 +589,10 @@ export default function Workspace({
         result = result.map(node => pruneRunsToIteration(node, effectiveDisplayedIteration))
       }
     } else if (selectedModeCategory === 'multi-agent') {
-      // Multi Agent Chat mode: show Chats/, Downloads/, skills/, subagents/ and memories/ folders
+      // Multi Agent Chat mode: show Chats/, Downloads/, pulse/, skills/, subagents/ and memories/ folders
       result = files.filter(f => {
         const topFolder = f.filepath.split('/')[0]
-        return topFolder === 'Chats' || topFolder === 'Downloads' || topFolder === 'skills' || topFolder === 'subagents' || topFolder === 'memories' || topFolder === 'chat_history' || topFolder === '_users'
+        return topFolder === 'Chats' || topFolder === 'Downloads' || topFolder === 'pulse' || topFolder === 'skills' || topFolder === 'subagents' || topFolder === 'memories' || topFolder === 'chat_history' || topFolder === '_users'
       })
       // Scope _users/ to current user only — hide other users' folders
       result = result.map(f => {
@@ -2055,7 +2055,7 @@ export default function Workspace({
               <div className="flex items-center gap-1.5 flex-1 min-w-0">
                 <Filter className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 flex-shrink-0" />
                 <span className="text-xs text-blue-900 dark:text-blue-100 truncate">
-                  Filters workspace as per workflow
+                  Filters workspace as per automation
                 </span>
                 {activeWorkflowPreset?.label && (
                   <span className="text-xs text-blue-700 dark:text-blue-300 flex-shrink-0">
@@ -2129,7 +2129,7 @@ export default function Workspace({
           {/* Iteration filter badge — shown in workflow mode when iterations exist */}
           {selectedModeCategory === 'workflow' && availableIterations.length > 0 && (
             <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-500/5 border-b border-blue-500/20 text-xs">
-              <span className="text-blue-600 dark:text-blue-400 font-medium shrink-0">Filters workspace as per workflow</span>
+              <span className="text-blue-600 dark:text-blue-400 font-medium shrink-0">Filters workspace as per automation</span>
               <div className="relative ml-auto iteration-filter-dropdown">
                 <button
                   onClick={() => {

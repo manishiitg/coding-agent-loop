@@ -87,6 +87,7 @@ export interface LLMConfiguration {
     minimax_coding_plan?: string
     elevenlabs?: string
     deepgram?: string
+    pi_provider_keys?: Record<string, string>
     azure?: {
       endpoint: string
       api_key: string
@@ -254,6 +255,9 @@ export interface LLMDiscoveryCandidate {
   recommended: boolean
   reason: string
   setup_hint?: string
+  deprecated?: boolean
+  deprecation_reason?: string
+  replacement_provider?: string
   options?: string[]
 }
 

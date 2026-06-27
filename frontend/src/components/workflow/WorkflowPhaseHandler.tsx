@@ -205,7 +205,7 @@ const WorkflowStatesOverview: React.FC<{
           <span className="text-xs font-medium text-foreground">Workflow States</span>
         </div>
         <div className="text-xs text-muted-foreground">
-          Loading workflow states...
+          Loading automation states...
         </div>
       </div>
     )

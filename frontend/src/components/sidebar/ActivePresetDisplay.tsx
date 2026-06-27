@@ -23,7 +23,7 @@ export default function ActivePresetDisplay({
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
             <span className="text-sm font-medium text-blue-900 dark:text-blue-100">
-              {activePreset.label || 'Workflow Selected'}
+              {activePreset.label || 'Automation Selected'}
             </span>
           </div>
           <button
@@ -36,7 +36,7 @@ export default function ActivePresetDisplay({
       ) : (
         <div className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg">
           <span className="text-sm text-gray-600 dark:text-gray-400">
-            No workflow selected
+            No automation selected
           </span>
           <button
             onClick={onToggle}

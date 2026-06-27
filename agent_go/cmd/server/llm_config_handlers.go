@@ -42,14 +42,16 @@ const claudeCodeDisableAutoMemoryEnv = "CLAUDE_CODE_DISABLE_AUTO_MEMORY"
 
 func isDeprecatedLLMProvider(provider string) bool {
 	provider = strings.ToLower(strings.TrimSpace(provider))
-	return provider == "gemini-cli"
+	return provider == "gemini-cli" || provider == "agy-cli"
 }
 
 func providerDeprecationReason(provider string) string {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	switch {
 	case provider == "gemini-cli":
-		return "Gemini CLI is retained for existing sessions only. Use Antigravity CLI for new Google-backed coding-agent setup."
+		return "Gemini CLI is retained for existing sessions only. Use Pi CLI for new Gemini coding-agent setup."
+	case provider == "agy-cli":
+		return "Antigravity CLI is retained for existing sessions only. Use Pi CLI for new multi-provider coding-agent setup."
 	default:
 		return ""
 	}
@@ -58,8 +60,8 @@ func providerDeprecationReason(provider string) string {
 func providerReplacementProvider(provider string) string {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	switch {
-	case provider == "gemini-cli":
-		return "agy-cli"
+	case provider == "gemini-cli", provider == "agy-cli":
+		return "pi-cli"
 	default:
 		return ""
 	}
@@ -79,7 +81,6 @@ func fallbackPublishedLLMProviderAndModel() (string, string) {
 	for _, provider := range []string{
 		"codex-cli",
 		"cursor-cli",
-		"agy-cli",
 		"pi-cli",
 		"claude-code",
 		"bedrock",
@@ -326,6 +327,7 @@ func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 	if s := os.Getenv("MINIMAX_API_KEY"); s != "" {
 		keys.MiniMax = &s
 	}
+	keys.PiProviderKeys = buildPiProviderKeysFromEnv()
 	if s := os.Getenv("ELEVENLABS_API_KEY"); s != "" {
 		keys.ElevenLabs = &s
 	}
@@ -344,6 +346,47 @@ func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 		}
 	}
 	return keys
+}
+
+func buildPiProviderKeysFromEnv() map[string]string {
+	envByProvider := map[string][]string{
+		"google":            {"PI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"},
+		"google-vertex":     {"PI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"},
+		"openai":            {"OPENAI_API_KEY"},
+		"anthropic":         {"ANTHROPIC_API_KEY"},
+		"openrouter":        {"OPENROUTER_API_KEY"},
+		"deepseek":          {"DEEPSEEK_API_KEY"},
+		"nvidia":            {"NVIDIA_API_KEY"},
+		"mistral":           {"MISTRAL_API_KEY"},
+		"groq":              {"GROQ_API_KEY"},
+		"cerebras":          {"CEREBRAS_API_KEY"},
+		"xai":               {"XAI_API_KEY"},
+		"zai":               {"ZAI_API_KEY"},
+		"zai-coding-cn":     {"ZAI_CODING_CN_API_KEY"},
+		"opencode":          {"OPENCODE_API_KEY"},
+		"opencode-go":       {"OPENCODE_API_KEY"},
+		"fireworks":         {"FIREWORKS_API_KEY"},
+		"together":          {"TOGETHER_API_KEY"},
+		"kimi-coding":       {"KIMI_API_KEY"},
+		"moonshotai":        {"KIMI_API_KEY"},
+		"moonshotai-cn":     {"KIMI_API_KEY"},
+		"minimax":           {"MINIMAX_API_KEY"},
+		"minimax-cn":        {"MINIMAX_CN_API_KEY"},
+		"vercel-ai-gateway": {"AI_GATEWAY_API_KEY"},
+	}
+	result := map[string]string{}
+	for provider, envNames := range envByProvider {
+		for _, envName := range envNames {
+			if value := strings.TrimSpace(os.Getenv(envName)); value != "" {
+				result[provider] = value
+				break
+			}
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 type llmDiscoveryCandidate struct {
@@ -380,7 +423,7 @@ func providerDisplayLabel(provider string) string {
 	case "cursor-cli":
 		return "Cursor CLI"
 	case "agy-cli":
-		return "Antigravity CLI (Alpha)"
+		return "Antigravity CLI (Deprecated)"
 	case "pi-cli":
 		return "Pi CLI"
 	case "claude-code":
@@ -493,12 +536,12 @@ func buildLLMDiscovery(ctx context.Context) llmDiscoveryResponse {
 	}
 
 	providerOrder := []string{
+		"claude-code",
 		"codex-cli",
 		"cursor-cli",
-		"agy-cli",
 		"pi-cli",
-		"claude-code",
 		"gemini-cli",
+		"agy-cli",
 		"openai",
 		"anthropic",
 		"vertex",
@@ -523,6 +566,7 @@ func buildLLMDiscovery(ctx context.Context) llmDiscoveryResponse {
 		if modelID == "" {
 			continue
 		}
+		deprecated := isDeprecatedLLMProvider(provider)
 
 		kind := discoveryCandidateKind(provider)
 		discovered := authConfigured || usable
@@ -563,10 +607,10 @@ func buildLLMDiscovery(ctx context.Context) llmDiscoveryResponse {
 			RuntimeCommand:      runtimeCommand,
 			RuntimeAvailable:    runtimeOK,
 			Usable:              usable,
-			Recommended:         usable,
+			Recommended:         usable && !deprecated,
 			Reason:              reason,
 			SetupHint:           setupHint,
-			Deprecated:          isDeprecatedLLMProvider(provider),
+			Deprecated:          deprecated,
 			DeprecationReason:   providerDeprecationReason(provider),
 			ReplacementProvider: providerReplacementProvider(provider),
 			Options:             discoveryModelOptions(provider),
@@ -646,7 +690,7 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 	// 3) Auto-generate defaults from AvailableModels for locked providers
 	var entries []map[string]interface{}
 	defaults := llm.GetLLMDefaults()
-	providers := []string{"codex-cli", "cursor-cli", "agy-cli", "pi-cli", "claude-code", "azure", "bedrock", "openai", "anthropic", "vertex"}
+	providers := []string{"codex-cli", "cursor-cli", "pi-cli", "claude-code", "azure", "bedrock", "openai", "anthropic", "vertex"}
 
 	for _, p := range providers {
 		// If provider is locked (or global lock is on), include its available models
@@ -919,7 +963,9 @@ func (api *StreamingAPI) populateValidationCredentialsFromMergedKeys(ctx context
 	case "agy-cli":
 		setAPIKey(keys.AgyCLI)
 	case "pi-cli":
-		setAPIKey(keys.PiCLI)
+		if req.APIKey == "" {
+			req.APIKey = selectPiAPIKeyForModel(keys, req.ModelID)
+		}
 	case "minimax":
 		setAPIKey(keys.MiniMax)
 	case "elevenlabs":
@@ -1513,15 +1559,14 @@ func validatePiCLI(apiKey, modelID string, options map[string]interface{}) llm.A
 
 	keys := &llm.ProviderAPIKeys{}
 	if strings.TrimSpace(apiKey) == "" {
-		for _, envName := range []string{"PI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"} {
-			if value := strings.TrimSpace(os.Getenv(envName)); value != "" {
-				apiKey = value
-				break
-			}
-		}
+		apiKey = selectPiAPIKeyForModel(buildProviderAPIKeysFromEnv(), modelID)
 	}
 	if strings.TrimSpace(apiKey) != "" {
-		keys.PiCLI = &apiKey
+		piProvider := piProviderFromModelID(modelID)
+		keys.PiProviderKeys = map[string]string{piProvider: strings.TrimSpace(apiKey)}
+		if piProvider == "google" || piProvider == "google-vertex" {
+			keys.PiCLI = &apiKey
+		}
 	}
 
 	model, err := llm.InitializeLLM(llm.Config{

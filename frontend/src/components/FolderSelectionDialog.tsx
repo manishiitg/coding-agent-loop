@@ -685,7 +685,7 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Search className="w-4 h-4" />
             <span>
-              {agentMode === 'workflow' ? 'Select Workflow Folder' : 'Select folder'}
+              {agentMode === 'workflow' ? 'Select Automation Folder' : 'Select folder'}
             </span>
           </div>
           {/* Create New Folder Button in Header */}

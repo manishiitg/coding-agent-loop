@@ -146,7 +146,7 @@ export const WorkflowSelectionDialog: React.FC<WorkflowSelectionDialogProps> = (
       <div className="px-3 py-2 border-b border-border bg-secondary">
         <div className="flex items-center gap-2">
           <Layers className="w-4 h-4 text-muted-foreground" />
-          <span className="text-sm font-medium">Workflows</span>
+          <span className="text-sm font-medium">Automations</span>
         </div>
       </div>
 
@@ -157,7 +157,7 @@ export const WorkflowSelectionDialog: React.FC<WorkflowSelectionDialogProps> = (
           <input
             ref={searchInputRef}
             type="text"
-            placeholder="Search workflows..."
+            placeholder="Search automations..."
             value={localQuery}
             onChange={e => setLocalQuery(e.target.value)}
             onKeyDown={e => {
@@ -175,7 +175,7 @@ export const WorkflowSelectionDialog: React.FC<WorkflowSelectionDialogProps> = (
       <div ref={listRef} className="overflow-y-auto max-h-64">
         {filteredWorkflows.length === 0 ? (
           <div className="px-3 py-4 text-center text-muted-foreground text-sm">
-            {localQuery ? 'No workflows found' : 'No workflow presets available'}
+            {localQuery ? 'No automations found' : 'No automation presets available'}
           </div>
         ) : (
           filteredWorkflows.map((workflow, index) => (

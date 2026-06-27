@@ -61,7 +61,7 @@ const eventConfig: Record<string, { icon: React.ReactNode; color: string; label:
   workflow_end: { 
     icon: <CheckCircle className="w-3.5 h-3.5" />, 
     color: 'text-green-500 bg-green-50 dark:bg-green-900/20', 
-    label: 'Workflow Complete' 
+    label: 'Automation Complete'
   },
   orchestrator_step_start: { 
     icon: <Loader2 className="w-3.5 h-3.5 animate-spin" />, 
@@ -284,7 +284,7 @@ export const EventViewer: React.FC<EventViewerProps> = ({
               {events.length === 0 ? 'No events yet' : 'All events filtered'}
             </span>
             <span className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-              {events.length === 0 ? 'Events will appear here when the workflow runs' : 'Adjust filters to see events'}
+              {events.length === 0 ? 'Events will appear here when the automation runs' : 'Adjust filters to see events'}
             </span>
           </div>
         ) : (

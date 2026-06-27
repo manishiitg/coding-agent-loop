@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Workflow, Users, Settings, Copy, DollarSign, Keyboard, SlidersHorizontal, Bot, Building2, PanelRightOpen, HelpCircle } from 'lucide-react'
+import { Workflow, Users, Settings, Copy, DollarSign, Keyboard, SlidersHorizontal, Bot, Building2, HelpCircle } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { useGlobalPresetStore, usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
@@ -44,25 +44,25 @@ const getModeIcon = (category: string) => {
 const getModeName = (category: string) => {
   switch (category) {
     case 'workflow':
-      return 'Workflow Mode'
+      return 'Automation Mode'
     case 'multi-agent':
-      return 'Chat'
+      return 'Chief of Staff'
     default:
-      return 'Chat'
+      return 'Chief of Staff'
   }
 }
 
 const MODE_PILLS = [
   {
     key: 'workflow' as const,
-    label: 'Workflow',
+    label: 'Automation',
     icon: Workflow,
     activeClasses: 'bg-purple-50 text-purple-700 shadow-sm ring-1 ring-purple-200 dark:bg-purple-500/20 dark:text-purple-100 dark:ring-purple-500/40',
     inactiveClasses: 'text-gray-500 dark:text-gray-400',
   },
   {
     key: 'multi-agent' as const,
-    label: 'Chat',
+    label: 'Chief of Staff',
     icon: Users,
     activeClasses: 'bg-indigo-50 text-indigo-700 shadow-sm ring-1 ring-indigo-200 dark:bg-indigo-500/20 dark:text-indigo-100 dark:ring-indigo-500/40',
     inactiveClasses: 'text-gray-500 dark:text-gray-400',
@@ -377,14 +377,14 @@ export const ModePresetBar: React.FC = () => {
     return lines
   }, [delegationTierConfig])
 
-  const workflowCountLabel = `${workflowScheduleSummary.scheduledWorkflows} workflow${workflowScheduleSummary.scheduledWorkflows !== 1 ? 's' : ''}`
+  const workflowCountLabel = `${workflowScheduleSummary.scheduledWorkflows} automation${workflowScheduleSummary.scheduledWorkflows !== 1 ? 's' : ''}`
   const scheduleCountLabel = `${workflowScheduleSummary.totalSchedules} schedule${workflowScheduleSummary.totalSchedules !== 1 ? 's' : ''}`
   const workflowScheduleHeaderLabel = workflowScheduleSummary.runningWorkflows > 0
-    ? `${workflowScheduleSummary.runningWorkflows}/${workflowScheduleSummary.scheduledWorkflows} workflows · ${workflowScheduleSummary.runningSchedules}/${workflowScheduleSummary.totalSchedules} schedules`
+    ? `${workflowScheduleSummary.runningWorkflows}/${workflowScheduleSummary.scheduledWorkflows} automations · ${workflowScheduleSummary.runningSchedules}/${workflowScheduleSummary.totalSchedules} schedules`
     : `${workflowCountLabel} · ${scheduleCountLabel}`
 
   const workflowScheduleTooltip = workflowScheduleSummary.runningWorkflows > 0
-    ? `${workflowScheduleSummary.runningWorkflows} of ${workflowScheduleSummary.scheduledWorkflows} scheduled workflows running now; ${workflowScheduleSummary.runningSchedules} of ${workflowScheduleSummary.totalSchedules} schedules running`
+    ? `${workflowScheduleSummary.runningWorkflows} of ${workflowScheduleSummary.scheduledWorkflows} scheduled automations running now; ${workflowScheduleSummary.runningSchedules} of ${workflowScheduleSummary.totalSchedules} schedules running`
     : `${workflowCountLabel} scheduled; ${scheduleCountLabel} total`
 
   const openTierModal = useCallback(() => {
@@ -569,7 +569,7 @@ export const ModePresetBar: React.FC = () => {
   const handleDeleteWorkflow = useCallback(async (preset: CustomPreset) => {
     const workspacePath = preset.selectedFolder?.filepath
     if (!workspacePath) {
-      throw new Error('Workflow folder is missing')
+      throw new Error('Automation folder is missing')
     }
 
     try {
@@ -591,7 +591,7 @@ export const ModePresetBar: React.FC = () => {
       setShowPresetDropdown(false)
     } catch (error) {
       console.error('[ModePresetBar] Failed to delete workflow:', error)
-      alert('Failed to delete workflow. Please try again.')
+      alert('Failed to delete automation. Please try again.')
       throw error
     }
   }, [activePreset?.id, clearActivePreset, refreshPresets, setSelectedFile, setShowFileContent])
@@ -606,7 +606,7 @@ export const ModePresetBar: React.FC = () => {
       }
     } catch (error) {
       console.error('Failed to duplicate preset:', error)
-      alert('Failed to duplicate workflow. Please try again.')
+      alert('Failed to duplicate automation. Please try again.')
     }
   }, [duplicatePreset, handlePresetClick])
 
@@ -744,7 +744,7 @@ export const ModePresetBar: React.FC = () => {
                             <>
                               <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
                               <span className="text-sm font-medium text-gray-500 dark:text-gray-400">
-                                Select Workflow
+                                Select Automation
                               </span>
                             </>
                           )}
@@ -759,7 +759,7 @@ export const ModePresetBar: React.FC = () => {
                               setWorkspaceMinimized(true)
                             }}
                             className="px-2 py-1 border-l border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors"
-                            title="Edit workflow"
+                            title="Edit automation"
                           >
                             <Settings className="w-3 h-3 text-gray-400" />
                           </button>
@@ -789,21 +789,21 @@ export const ModePresetBar: React.FC = () => {
                             >
                               <div className="flex items-center gap-2">
                                 <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                                <span className="font-medium">+ Add Workflow</span>
+                                <span className="font-medium">+ Add Automation</span>
                               </div>
                             </button>
 
                             {/* Loading state */}
                             {presetsLoading && (
                               <div className="p-2 text-sm text-gray-500 dark:text-gray-400 text-center">
-                                Loading workflows...
+                                Loading automations...
                               </div>
                             )}
 
                             {/* No workflows message */}
                             {!presetsLoading && presetsForMode.length === 0 && (
                               <div className="p-2 text-sm text-gray-500 dark:text-gray-400 text-center">
-                                No workflows available. Create one to get started.
+                                No automations available. Create one to get started.
                               </div>
                             )}
 
@@ -842,7 +842,7 @@ export const ModePresetBar: React.FC = () => {
                                             setWorkspaceMinimized(true)
                                           }}
                                           className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
-                                          title="Edit workflow"
+                                          title="Edit automation"
                                         >
                                           <Settings className="w-3 h-3" />
                                         </button>
@@ -850,7 +850,7 @@ export const ModePresetBar: React.FC = () => {
                                       <button
                                         onClick={(e) => handleDuplicatePreset(preset.id, e)}
                                         className="p-1 rounded hover:bg-blue-100 dark:hover:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
-                                        title="Duplicate workflow"
+                                        title="Duplicate automation"
                                       >
                                         <Copy className="w-3 h-3" />
                                       </button>
@@ -1010,25 +1010,6 @@ export const ModePresetBar: React.FC = () => {
                 </Tooltip>
               )}
 
-              {workspaceMinimized && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={() => setWorkspaceMinimized(false)}
-                      data-tour="workspace-open"
-                      data-testid="open-workspace-button"
-                      className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-                      aria-label="Open workspace"
-                      title="Open workspace"
-                    >
-                      <PanelRightOpen className="w-4 h-4" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">Open workspace (Ctrl+6)</TooltipContent>
-                </Tooltip>
-              )}
-
             </div>
           </TooltipProvider>
         </div>
@@ -1063,7 +1044,7 @@ export const ModePresetBar: React.FC = () => {
                     <kbd className="px-2 py-1 bg-blue-100 dark:bg-blue-800 text-blue-700 dark:text-blue-200 text-xs rounded font-mono font-semibold">Ctrl+K</kbd>
                   </div>
                   <p className="text-xs text-blue-600 dark:text-blue-400 leading-relaxed">
-                    Search workflows, chats, active work, and retained events. Use @active or @events to narrow the list.
+                    Search automations, chats, active work, and retained events. Use @active or @events to narrow the list.
                   </p>
                 </div>
 
@@ -1072,8 +1053,8 @@ export const ModePresetBar: React.FC = () => {
                   <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2.5">Modes</p>
                   <div className="space-y-1.5">
                     {[
-                      ['Workflow', 'Ctrl+1'],
-                      ['Chat', 'Ctrl+2'],
+                      ['Automation', 'Ctrl+1'],
+                      ['Chief of Staff', 'Ctrl+2'],
                       ['Organization', 'Ctrl+3'],
                     ].map(([label, key]) => (
                       <div key={key} className="flex items-center justify-between py-1">
@@ -1092,7 +1073,7 @@ export const ModePresetBar: React.FC = () => {
                       ['Minimize Sidebar', 'Ctrl+5'],
                       ['Minimize Workspace', 'Ctrl+6'],
                       ['Toggle Auto-scroll', 'Ctrl+7'],
-                      ['New Chat (Chat mode)', 'Ctrl+N'],
+                      ['New Chat (Chief of Staff)', 'Ctrl+N'],
                     ].map(([label, key]) => (
                       <div key={key} className="flex items-center justify-between py-1">
                         <span className="text-sm text-gray-600 dark:text-gray-300">{label}</span>
@@ -1106,12 +1087,12 @@ export const ModePresetBar: React.FC = () => {
                 <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-3.5">
                   <div className="flex items-center gap-2 mb-2.5">
                     <svg className="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
-                    <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">Parallel Workflows</span>
+                    <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">Parallel Automations</span>
                   </div>
                   <div className="space-y-2 text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
                     <div className="flex gap-2">
                       <span className="text-purple-400 mt-0.5">&#9679;</span>
-                      <span>Run multiple workflows simultaneously &mdash; each has isolated tabs, execution state, and canvas</span>
+                      <span>Run multiple automations simultaneously &mdash; each has isolated tabs, execution state, and canvas</span>
                     </div>
                     <div className="flex gap-2">
                       <span className="text-purple-400 mt-0.5">&#9679;</span>
@@ -1119,11 +1100,11 @@ export const ModePresetBar: React.FC = () => {
                     </div>
                     <div className="flex gap-2">
                       <span className="text-purple-400 mt-0.5">&#9679;</span>
-                      <span>Start execution on one workflow, switch to another to build/edit, and switch back to check progress</span>
+                      <span>Start execution on one automation, switch to another to build/edit, and switch back to check progress</span>
                     </div>
                     <div className="flex gap-2">
                       <span className="text-purple-400 mt-0.5">&#9679;</span>
-                      <span>Each workflow&apos;s stop button only affects its own execution &mdash; other workflows keep running</span>
+                      <span>Each automation&apos;s stop button only affects its own execution &mdash; other automations keep running</span>
                     </div>
                   </div>
                 </div>

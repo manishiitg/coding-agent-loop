@@ -4,6 +4,7 @@ import { BookOpen, CheckCircle, Database, FileText, XCircle, Loader2, Plus, Refr
 import type { MessageSequenceNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
 import type { MessageSequenceItem } from '../../../utils/stepConfigMatching'
+import { getExecutionModeVisuals } from './executionModeVisuals'
 
 interface MessageSequenceNodeProps {
   data: MessageSequenceNodeData
@@ -105,6 +106,14 @@ export const MessageSequenceNode = memo(({ data, selected }: MessageSequenceNode
 
   const seqItems = items || []
   const displayTitle = title || `Message Sequence ${stepIndex + 1}`
+  const executionMode = step?.agent_configs?.declared_execution_mode
+  const executionModeReason = step?.agent_configs?.declared_execution_mode_reason
+  const executionModeVisuals = getExecutionModeVisuals(executionMode, executionModeReason)
+  const ModeIcon = executionModeVisuals.Icon
+  const nodeBorderColor = status === 'pending' && executionModeVisuals.borderClassName
+    ? executionModeVisuals.borderClassName
+    : borderColor
+  const modeHandleColor = executionModeVisuals.handleClassName || '!bg-violet-500'
   // Keep the node compact: show the first handful of items, then a "+N more"
   // summary line so a long queue doesn't blow up the canvas node height.
   const MAX_VISIBLE = 6
@@ -176,7 +185,7 @@ export const MessageSequenceNode = memo(({ data, selected }: MessageSequenceNode
   return (
     <div
       className={`
-        relative bg-white dark:bg-gray-800 rounded-lg border-2 ${borderColor}
+        relative bg-white dark:bg-gray-800 rounded-lg border-2 ${nodeBorderColor}
         shadow-md hover:shadow-lg transition-all duration-200
         min-w-[320px] max-w-[320px]
         ${isOrphan ? 'border-dashed border-amber-400 dark:border-amber-500' : ''}
@@ -199,19 +208,30 @@ export const MessageSequenceNode = memo(({ data, selected }: MessageSequenceNode
       )}
 
       {/* Top handle */}
-      <Handle type="target" position={Position.Top} className="w-3 h-3 !bg-violet-500" />
+      <Handle type="target" position={Position.Top} className={`w-3 h-3 ${modeHandleColor}`} />
 
       {/* Header */}
       <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
         <div className="flex items-center gap-2 flex-1 min-w-0">
-          <ListOrdered className="w-4 h-4 text-violet-500 flex-shrink-0" />
+          {ModeIcon ? (
+            <div
+              className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${executionModeVisuals.iconBoxClassName}`}
+              title={executionModeVisuals.title}
+            >
+              <ModeIcon className="h-3.5 w-3.5" />
+            </div>
+          ) : (
+            <ListOrdered className="w-4 h-4 text-violet-500 flex-shrink-0" />
+          )}
           <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide truncate">
             Message Sequence
           </span>
         </div>
-        <span className="text-[10px] font-medium text-violet-600 dark:text-violet-300 bg-violet-100 dark:bg-violet-900/30 rounded px-1.5 py-0.5 flex-shrink-0">
-          {seqItems.length} {seqItems.length === 1 ? 'item' : 'items'}
-        </span>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <span className="text-[10px] font-medium text-violet-600 dark:text-violet-300 bg-violet-100 dark:bg-violet-900/30 rounded px-1.5 py-0.5 flex-shrink-0">
+            {seqItems.length} {seqItems.length === 1 ? 'item' : 'items'}
+          </span>
+        </div>
       </div>
 
       {/* Title + description */}
@@ -312,7 +332,7 @@ export const MessageSequenceNode = memo(({ data, selected }: MessageSequenceNode
       </div>
 
       {/* Bottom handle — sequence is linear, single exit */}
-      <Handle type="source" position={Position.Bottom} className="w-3 h-3 !bg-violet-500" />
+      <Handle type="source" position={Position.Bottom} className={`w-3 h-3 ${modeHandleColor}`} />
     </div>
   )
 })

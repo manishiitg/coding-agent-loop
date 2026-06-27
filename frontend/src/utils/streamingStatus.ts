@@ -5,7 +5,7 @@ export function humanizeStreamingToolName(toolName: string): string {
   if (normalized === 'api_bridge') return 'Using api-bridge'
   if (normalized === 'execute_shell_command') return 'Running shell command'
   if (normalized === 'query_step') return 'Checking step progress'
-  if (normalized === 'execute_step') return 'Running workflow step'
+  if (normalized === 'execute_step') return 'Running automation step'
   if (normalized.includes('browser') || normalized.includes('agent_browser')) return 'Using browser'
   if (normalized.includes('search')) return 'Searching web'
   if (normalized.includes('read_image') || normalized.includes('vision')) return 'Reading image'

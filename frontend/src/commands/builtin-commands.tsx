@@ -1,5 +1,5 @@
 import React from 'react'
-import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, GitBranch, CheckCircle, Search, BookOpen, Activity, Cloud, Globe } from 'lucide-react'
+import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, GitBranch, CheckCircle, Search, BookOpen, Activity, Cloud, Globe, Target } from 'lucide-react'
 import type { CommandContext, CommandDefinition } from './types'
 
 function submitGuidedWorkflowCommand(
@@ -54,7 +54,7 @@ export const builtinCommands: CommandDefinition[] = [
   },
   {
     command: 'review-plan',
-    description: 'Critically analyze the workflow plan and dependent artifacts',
+    description: 'Critically analyze the automation plan and dependent artifacts',
     icon: <Search className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
@@ -66,7 +66,7 @@ export const builtinCommands: CommandDefinition[] = [
   },
   {
     command: 'review-speed',
-    description: 'Review workflow latency and how to make it faster',
+    description: 'Review automation latency and how to make it faster',
     icon: <Minimize2 className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
@@ -79,7 +79,7 @@ export const builtinCommands: CommandDefinition[] = [
   },
   {
     command: 'review-cost',
-    description: 'Review workflow cost and how to reduce it safely',
+    description: 'Review automation cost and how to reduce it safely',
     icon: <Cpu className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
@@ -177,7 +177,7 @@ export const builtinCommands: CommandDefinition[] = [
   },
   {
     command: 'auto-improve',
-    description: 'Set up recurring workflow runs and lightweight optimizer checks',
+    description: 'Set up recurring automation runs and lightweight optimizer checks',
     icon: <Bot className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
@@ -213,7 +213,7 @@ export const builtinCommands: CommandDefinition[] = [
   },
   {
     command: 'monitor',
-    description: 'Post-run monitor: record Bug + Goal verdicts for the latest run into the workflow log',
+    description: 'Post-run monitor: record Bug + Goal verdicts for the latest run into the automation log',
     icon: <Activity className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
@@ -225,7 +225,7 @@ export const builtinCommands: CommandDefinition[] = [
   },
   {
     command: 'backup',
-    description: 'Set up, run, or restore this workflow’s backup',
+    description: 'Set up, run, or restore this automation’s backup',
     icon: <Cloud className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
@@ -242,7 +242,7 @@ Always write backup/status.json; never write operational status into workflow.js
   },
   {
     command: 'publish',
-    description: 'Set up or publish this workflow’s Pulse log & report to a public URL',
+    description: 'Set up or publish this automation’s Pulse log & report to a public URL',
     icon: <Globe className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
@@ -278,6 +278,141 @@ Always write publish/status.json.`
         ? `${ctx.beforeSlash}\n\n${skillContext}`
         : `I want to build a skill based on our conversation. ${skillContext}`
       ctx.onSubmit(message)
+    }
+  },
+  {
+    command: 'org-setup',
+    description: 'Set org goals, align automations, and configure Daily Org Pulse',
+    icon: <Target className="w-4 h-4" />,
+    modes: ['multi-agent'],
+    source: 'builtin',
+    execute: (ctx) => {
+      const appStore = ctx.getAppStore()
+      appStore.setWorkspaceMinimized(false)
+      appStore.setMultiAgentRightPanelView?.('org-goals')
+
+      const focus = ctx.beforeSlash.trim()
+      const instruction = `Set up org goals and Daily Org Pulse.
+
+Call get_reference_doc(kind="org-goals") and follow it. Before writing or changing goals HTML, also call get_reference_doc(kind="backup-strategy") and back up org-level artifacts using pulse/backup.json and pulse/backup/status.json, then call get_reference_doc(kind="org-html") and use its Goals skeleton.
+Read pulse/goals.html if it exists.
+Review existing workflows and employees, then classify workflows as aligned, supporting/maintenance, or unaligned.
+
+If goals are missing or vague, ask me only the missing questions needed to make them measurable:
+- outcome
+- horizon
+- KPI targets with quantity: metric name, baseline/current value, target value, unit, direction, and target date
+- source of truth for each target: workflow report, db table, external system, or manual update
+- accountable owner/person
+- contributing workflows or employees
+- review cadence
+
+Do not create vague goals. Each goal should look like a company operating target. Prefer numeric targets; if a goal is qualitative, convert it into dated milestone/checklist acceptance criteria. Do not invent quantities I did not give you — ask for them or mark the goal as needing a target.
+
+If I gave enough detail${focus ? ' in the request above' : ''}, create or update pulse/goals.html now as a self-contained HTML scorecard. Keep prior goal history unless I explicitly ask to remove it.
+
+After goals are saved, ask whether I want to turn on Daily Org Pulse. If I confirm, enable the built-in Org Pulse schedule (builtin-org-pulse). Do not silently enable it without confirmation.
+
+Also ask whether I want to set up org-level backup and publish:
+- backup records config + status in pulse/backup.json and pulse/backup/status.json
+- publish shares pulse/goals.html + pulse/org-pulse.html and records config + status in pulse/publish.json and pulse/publish/status.json`
+
+      ctx.onSubmit(focus ? `${focus}\n\n${instruction}` : instruction)
+    }
+  },
+  {
+    command: 'pulse-setup',
+    description: 'Set up or tune Daily Org Pulse',
+    icon: <Activity className="w-4 h-4" />,
+    modes: ['multi-agent'],
+    source: 'builtin',
+    execute: (ctx) => {
+      const appStore = ctx.getAppStore()
+      appStore.setWorkspaceMinimized(false)
+      appStore.setMultiAgentRightPanelView?.('org-pulse')
+
+      const focus = ctx.beforeSlash.trim()
+      const instruction = `Set up Daily Org Pulse.
+
+Call get_reference_doc(kind="org-pulse") and follow it for what Daily Org Pulse should do. Before writing or changing pulse/org-pulse.html, also call get_reference_doc(kind="backup-strategy") and confirm org backup status in pulse/backup.json and pulse/backup/status.json, then call get_reference_doc(kind="org-html") and use its Org Pulse skeleton.
+Read pulse/goals.html if it exists, and read pulse/org-pulse.html if it exists.
+Read pulse/backup.json, pulse/backup/status.json, pulse/publish.json, and pulse/publish/status.json if they exist.
+Check the built-in Org Pulse schedule (builtin-org-pulse): whether it is enabled, its cron, timezone, and last/next run state.
+Before editing any multi-agent schedule file directly, call get_reference_doc(kind="schedule-management"). Prefer enabling/updating builtin-org-pulse; do not create a duplicate Org Pulse schedule.
+
+If pulse/goals.html is missing or has no measurable goals, explain that Daily Org Pulse can only measure org progress after goals exist. Ask whether I want to run /org-setup first or enable a workflow-health-only pulse temporarily. Do not create goals from this command unless I explicitly ask.
+
+If goals exist, help me choose or confirm:
+- enabled or disabled
+- cadence and timezone
+- whether it should notify only on decision-worthy changes
+- whether the current pulse/org-pulse.html needs to be bootstrapped with the org-html skeleton
+- whether org backup should be enabled before Daily Org Pulse writes goals/pulse/memory
+- whether org publish should share pulse/goals.html + pulse/org-pulse.html after verified runs
+
+Only enable or change the built-in Org Pulse schedule after I confirm the cadence/timezone. Do not manually run Org Pulse from this command unless I explicitly ask for a one-time run.`
+
+      ctx.onSubmit(focus ? `${focus}\n\n${instruction}` : instruction)
+    }
+  },
+  {
+    command: 'org-backup',
+    description: 'Set up or run backup for org goals, pulse, and memory',
+    icon: <Cloud className="w-4 h-4" />,
+    modes: ['multi-agent'],
+    source: 'builtin',
+    execute: (ctx) => {
+      const appStore = ctx.getAppStore()
+      appStore.setWorkspaceMinimized(false)
+      appStore.setMultiAgentRightPanelView?.('org-pulse')
+      const focus = ctx.beforeSlash.trim()
+      const instruction = `Help me set up or run org-level backup.
+
+Call get_reference_doc(kind="backup-strategy") and follow its org-level workflow-style contract. Read pulse/backup.json and pulse/backup/status.json if they exist.
+
+Scope:
+- pulse/goals.html
+- pulse/org-pulse.html
+- Chief of Staff memory files
+- employee/org config files
+- multi-agent schedules/config
+
+If org backup is NOT configured yet: set up the zero-config local-git default, write pulse/backup.json, write pulse/backup/status.json with state "configured_not_verified" or "healthy" if you can complete the local backup now, and ask me before adding any remote destination or credentials.
+
+If org backup IS configured: run a backup now, skip only if pulse/backup/status.json proves the current source hash is unchanged, and report the result.
+
+Always write pulse/backup/status.json. Never write org backup state into any workflow.json or content HTML file, and never back up secrets.`
+
+      ctx.onSubmit(focus ? `${focus}\n\n${instruction}` : instruction)
+    }
+  },
+  {
+    command: 'org-publish',
+    description: 'Set up or publish org goals and Org Pulse pages',
+    icon: <Globe className="w-4 h-4" />,
+    modes: ['multi-agent'],
+    source: 'builtin',
+    execute: (ctx) => {
+      const appStore = ctx.getAppStore()
+      appStore.setWorkspaceMinimized(false)
+      appStore.setMultiAgentRightPanelView?.('org-pulse')
+      const focus = ctx.beforeSlash.trim()
+      const instruction = `Help me set up or run org-level publish.
+
+Call get_reference_doc(kind="publish-strategy") and follow its org-level workflow-style contract. Read pulse/publish.json and pulse/publish/status.json if they exist.
+
+Publish scope:
+- pulse/goals.html as goals.html
+- pulse/org-pulse.html as pulse.html
+- an index.html wrapper with Goals | Pulse navigation
+
+If org publish is NOT configured: ask me which static host to use, default to private visibility with a PUBLISH_PASSWORD secret, write pulse/publish.json, and write pulse/publish/status.json with state "configured_not_verified". Do not do the first/verifying publish until I confirm the destination and visibility.
+
+If org publish IS configured and verified: publish now only if the org HTML changed since the last publish. Stage files outside the workspace, force dark mode, deploy, then come back and update pulse/publish/status.json with state "published", the url, and last_source_hash.
+
+Always write pulse/publish/status.json. Never publish secrets or raw memory files. Never write org publish state into any workflow.json or content HTML file.`
+
+      ctx.onSubmit(focus ? `${focus}\n\n${instruction}` : instruction)
     }
   },
   {
@@ -325,7 +460,7 @@ Always write publish/status.json.`
   },
   {
     command: 'workflow-builder',
-    description: 'Turn this conversation into a reusable workflow (Workflow/<name>/)',
+    description: 'Turn this conversation into a reusable automation (Workflow/<name>/)',
     icon: <Layers className="w-4 h-4" />,
     modes: ['multi-agent'],
     source: 'builtin',

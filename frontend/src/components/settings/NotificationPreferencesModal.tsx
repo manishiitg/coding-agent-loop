@@ -85,7 +85,7 @@ export default function NotificationPreferencesModal({ isOpen, onClose }: Notifi
           ) : (
             <>
               <p className="text-sm text-muted-foreground">
-                When a workflow asks you a question and you don't reply in the app within 2 minutes,
+                When an automation asks you a question and you don't reply in the app within 2 minutes,
                 we'll send a notification using these preferences. Leave a field blank to use the
                 workspace-wide default.
               </p>
@@ -161,7 +161,7 @@ export default function NotificationPreferencesModal({ isOpen, onClose }: Notifi
 
               <Card className="p-3 bg-blue-50 dark:bg-blue-900/20 border-blue-300 dark:border-blue-700">
                 <p className="text-xs text-blue-800 dark:text-blue-200">
-                  <strong>Note:</strong> when a workflow runs from a Slack or WhatsApp bot conversation,
+                  <strong>Note:</strong> when an automation runs from a Slack or WhatsApp bot conversation,
                   replies always go back to that thread — these preferences only apply to questions
                   that originate from the web/desktop app.
                 </p>

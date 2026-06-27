@@ -27,7 +27,7 @@ export const OrchestratorEndEventDisplay: React.FC<OrchestratorEndEventDisplayPr
   const getLabel = () => {
     const t = event.orchestrator_type
     if (t === 'planner') return 'Planner Orchestrator'
-    if (t === 'workflow') return 'Workflow Orchestrator'
+    if (t === 'workflow') return 'Automation Orchestrator'
     return 'Orchestrator'
   }
 

@@ -18,6 +18,9 @@ interface ServerSelectionDropdownProps {
   onClearAll: () => void;
   disabled?: boolean;
   agentMode?: AgentMode;
+  openDirection?: 'up' | 'down';
+  align?: 'left' | 'right';
+  iconOnly?: boolean;
 }
 
 export default function ServerSelectionDropdown({
@@ -27,6 +30,9 @@ export default function ServerSelectionDropdown({
   onSelectAll,
   onClearAll,
   disabled = false,
+  openDirection = 'up',
+  align = 'left',
+  iconOnly = false,
 }: ServerSelectionDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -71,6 +77,11 @@ export default function ServerSelectionDropdown({
 
   const isAllSelected = actualSelectedServers.length === serversToDisplay.length && !hasNoServers;
   const isNoneSelected = hasNoServers || actualSelectedServers.length === 0;
+  const dropdownPositionClass = [
+    'absolute z-50 min-w-[280px]',
+    openDirection === 'down' ? 'top-full mt-1' : 'bottom-full mb-1',
+    align === 'right' ? 'right-0' : 'left-0',
+  ].join(' ');
 
   return (
     <TooltipProvider>
@@ -85,12 +96,14 @@ export default function ServerSelectionDropdown({
                 !hasNoServers && actualSelectedServers.length > 0
                   ? 'bg-indigo-100 dark:bg-indigo-900/40 border-indigo-400 dark:border-indigo-600 text-indigo-600 dark:text-indigo-400'
                   : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500'
-              } ${disabled || availableServers.length === 0 ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
+              } ${iconOnly ? 'h-7 w-7 justify-center' : ''} ${disabled || availableServers.length === 0 ? 'opacity-50 cursor-not-allowed' : iconOnly ? 'cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700' : 'cursor-pointer hover:pr-2'}`}
             >
               <Server className="w-4 h-4 flex-shrink-0" />
-              <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[100px] transition-all duration-200">
-                {displayText}
-              </span>
+              {!iconOnly && (
+                <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[100px] transition-all duration-200">
+                  {displayText}
+                </span>
+              )}
             </button>
           </TooltipTrigger>
           <TooltipContent>
@@ -116,7 +129,7 @@ export default function ServerSelectionDropdown({
             />
             
             {/* Dropdown */}
-            <div className="absolute bottom-full left-0 mb-1 z-50 min-w-[280px]">
+            <div className={dropdownPositionClass}>
               <Card className="p-4 shadow-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
                 <div className="space-y-3">
                   {/* Header */}

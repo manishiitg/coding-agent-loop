@@ -768,8 +768,8 @@ export const agentApi = {
     await api.post(`/api/terminals/${encodeURIComponent(terminalId)}/resize`, { cols, rows })
   },
 
-  reportTerminalSizeHint: async (cols: number, rows: number): Promise<void> => {
-    await api.post('/api/terminals/size-hint', { cols, rows })
+  reportTerminalSizeHint: async (cols: number, rows: number, sessionId?: string): Promise<void> => {
+    await api.post('/api/terminals/size-hint', { cols, rows, session_id: sessionId })
   },
 
   // Observer APIs removed - no longer needed
@@ -1929,6 +1929,16 @@ export const agentApi = {
 
   getWorkflowPublish: async (workspacePath: string): Promise<import('./api-types').WorkflowPublishInfoResponse> => {
     const response = await api.get('/api/workflow/publish', { params: { workspace_path: workspacePath } })
+    return response.data
+  },
+
+  getOrgBackup: async (): Promise<WorkflowBackupInfoResponse> => {
+    const response = await api.get('/api/org/backup')
+    return response.data
+  },
+
+  getOrgPublish: async (): Promise<import('./api-types').WorkflowPublishInfoResponse> => {
+    const response = await api.get('/api/org/publish')
     return response.data
   },
 

@@ -48,7 +48,7 @@ function sameModelDefaults(option: LLMOption): WorkflowTierDefaults {
 }
 
 function findManifestDefaults(provider: string, providerManifest: ProviderManifestEntry[] = []) {
-  return providerManifest.find(entry => entry.id === provider)?.default_tier_models
+  return providerManifest.find(entry => entry.id === provider && !entry.deprecated)?.default_tier_models
 }
 
 export function hasWorkflowLLMTierDefaults(provider: string, providerManifest: ProviderManifestEntry[] = []) {
@@ -95,6 +95,7 @@ export function getWorkflowLLMOptions(
   const seenCodingAgents = new Set<string>()
 
   providerManifest.forEach(entry => {
+    if (entry.deprecated) return
     if (entry.integration_kind !== 'coding_agent') return
     if (!entry.default_tier_models) return
 
@@ -131,7 +132,7 @@ export function getWorkflowLLMOptions(
       .filter(option => option.section === 'published_model')
       .map(option => ({ provider: option.provider, model: option.model, label: option.label })),
     manifestCodingAgentProviders: providerManifest
-      .filter(entry => entry.integration_kind === 'coding_agent')
+      .filter(entry => entry.integration_kind === 'coding_agent' && !entry.deprecated)
       .map(entry => ({
         id: entry.id,
         displayName: entry.display_name,

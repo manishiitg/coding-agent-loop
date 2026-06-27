@@ -1710,6 +1710,8 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	apiRouter.HandleFunc("/workflow/backup", api.handleGetWorkflowBackup).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/publish", api.handleGetWorkflowPublish).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/org/backup", api.handleGetOrgBackup).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/org/publish", api.handleGetOrgPublish).Methods("GET", "OPTIONS")
 
 	// Manifest-backed workflow API routes (file-backed workflow definitions)
 	apiRouter.HandleFunc("/workflows/summary", api.handleGetWorkflowsSummary).Methods("GET", "OPTIONS")
@@ -3906,10 +3908,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				perUserMemWrite := perUserMemoryFolder + "/"
 				perUserChatsWrite := perUserChatsFolder + "/"
 				perUserChatHistory := strings.TrimSuffix(perUserChatsFolder, "Chats") + "chat_history/"
+				orgPulseWrite := "pulse/"
 				additionalFolders := append([]string{}, resolvedGrants.WriteFolders...)
 				additionalFolders = append(additionalFolders, fileContextWriteFolders...)
 				additionalFolders = append(additionalFolders, perUserMemWrite)
 				additionalFolders = append(additionalFolders, perUserChatHistory)
+				additionalFolders = append(additionalFolders, orgPulseWrite)
 				workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, perUserChatsFolder, workflowReadOnlyFolders, additionalFolders...)
 				workspace.SetSessionWorkingDir(sessionID, chatWorkingFolder)
 				readPaths := append([]string{perUserChatsWrite, perUserChatHistory, "skills/", "subagents/", "Downloads/", "Workflow/", perUserMemWrite}, additionalFolders...)
@@ -6385,6 +6389,10 @@ func (api *StreamingAPI) cleanupInactiveSessions() {
 		for _, sessionID := range sessionsToMarkInactive {
 			log.Printf("[ACTIVE_SESSION] Marking session %s as inactive (no activity for 10+ minutes)", sessionID)
 			api.updateSessionStatus(sessionID, "inactive")
+		}
+
+		if closed := api.cleanupStaleCodingAgentTmuxSessions(now); closed > 0 {
+			log.Printf("[ACTIVE_SESSION] Cleanup: Closed %d stale coding-agent tmux session(s)", closed)
 		}
 	}
 }

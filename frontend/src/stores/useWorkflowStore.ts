@@ -51,7 +51,7 @@ import { resolveGroupFolderPath } from '../utils/workflowUtils'
 import { normalizeRunFolder } from '../utils/workflowStateNormalization'
 import { getRawActiveWorkspaceId, getWorkspaceScopedStorageKey } from './useWorkspaceConnectionStore'
 
-export type WorkflowWorkspaceView = 'builder' | 'report' | 'flow' | 'log' | 'soul' | null
+export type WorkflowWorkspaceView = 'builder' | 'report' | 'flow' | 'log' | 'soul' | 'files' | null
 
 // Layout direction for workflow canvas
 export type LayoutDirection = 'LR' | 'TB'
@@ -108,6 +108,7 @@ function normalizeWorkflowWorkspaceView(view: unknown): WorkflowWorkspaceView {
     case 'flow':
     case 'log':
     case 'soul':
+    case 'files':
     case null:
       return view
     case 'plan':

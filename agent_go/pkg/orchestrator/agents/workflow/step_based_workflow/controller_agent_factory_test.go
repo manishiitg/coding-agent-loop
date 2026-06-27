@@ -85,6 +85,28 @@ func TestApplyStepConfigToAgentConfigSupportsCodingAgentTmuxKeepAlive(t *testing
 	}
 }
 
+func TestEnableWorkflowMainCodingAgentKeepAliveEnablesCLIProvider(t *testing.T) {
+	config := agents.NewOrchestratorAgentConfig("workflow-builder-agent")
+	config.LLMConfig.Primary.Provider = string(mcpllm.ProviderCodexCLI)
+
+	enableWorkflowMainCodingAgentKeepAlive(config)
+
+	if !config.CodingAgentKeepAlive {
+		t.Fatal("expected workflow main CLI coding-agent tmux session to stay alive")
+	}
+}
+
+func TestEnableWorkflowMainCodingAgentKeepAliveIgnoresAPIProvider(t *testing.T) {
+	config := agents.NewOrchestratorAgentConfig("workflow-builder-agent")
+	config.LLMConfig.Primary.Provider = "bedrock"
+
+	enableWorkflowMainCodingAgentKeepAlive(config)
+
+	if config.CodingAgentKeepAlive {
+		t.Fatal("expected non-CLI workflow main agent to leave coding-agent tmux keep-alive disabled")
+	}
+}
+
 // TestApplyStepConfigToAgentConfigEnablesWorkspaceIsolation locks in
 // the Phase C contract: applying step config to a workflow-step agent
 // flips IsolateCodingAgentWorkspace=true. This is what makes the

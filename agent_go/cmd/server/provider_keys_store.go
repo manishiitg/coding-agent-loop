@@ -39,6 +39,7 @@ type StoredProviderKeys struct {
 	MiniMaxCodingPlan string               `json:"minimax_coding_plan,omitempty"`
 	ElevenLabs        string               `json:"elevenlabs,omitempty"`
 	Deepgram          string               `json:"deepgram,omitempty"`
+	PiProviderKeys    map[string]string    `json:"pi_provider_keys,omitempty"`
 	Bedrock           *StoredBedrockConfig `json:"bedrock,omitempty"`
 	Azure             *StoredAzureConfig   `json:"azure,omitempty"`
 }
@@ -109,6 +110,11 @@ func hasStoredProviderKeys(keys *StoredProviderKeys) bool {
 		keys.Deepgram,
 	}
 	for _, value := range stringValues {
+		if strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	for _, value := range keys.PiProviderKeys {
 		if strings.TrimSpace(value) != "" {
 			return true
 		}
@@ -193,6 +199,19 @@ func ProviderKeysToAPIKeysMap(keys *StoredProviderKeys) map[string]interface{} {
 	if keys.Deepgram != "" {
 		m["deepgram"] = keys.Deepgram
 	}
+	if len(keys.PiProviderKeys) > 0 {
+		clean := map[string]string{}
+		for provider, key := range keys.PiProviderKeys {
+			provider = strings.ToLower(strings.TrimSpace(provider))
+			if provider == "" || strings.TrimSpace(key) == "" {
+				continue
+			}
+			clean[provider] = strings.TrimSpace(key)
+		}
+		if len(clean) > 0 {
+			m["pi_provider_keys"] = clean
+		}
+	}
 	if keys.Bedrock != nil {
 		m["bedrock"] = map[string]interface{}{"region": keys.Bedrock.Region}
 	}
@@ -259,6 +278,16 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 	if keys.Deepgram != "" {
 		result.Deepgram = &keys.Deepgram
 	}
+	if len(keys.PiProviderKeys) > 0 {
+		result.PiProviderKeys = map[string]string{}
+		for provider, key := range keys.PiProviderKeys {
+			provider = strings.ToLower(strings.TrimSpace(provider))
+			if provider == "" || strings.TrimSpace(key) == "" {
+				continue
+			}
+			result.PiProviderKeys[provider] = strings.TrimSpace(key)
+		}
+	}
 	if keys.Bedrock != nil {
 		result.Bedrock = &llm.BedrockConfig{Region: keys.Bedrock.Region}
 	}
@@ -311,6 +340,11 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 	if result.Deepgram != nil {
 		loaded = append(loaded, "deepgram")
 	}
+	if len(result.PiProviderKeys) > 0 {
+		for provider := range result.PiProviderKeys {
+			loaded = append(loaded, "pi:"+provider)
+		}
+	}
 	if result.Bedrock != nil {
 		loaded = append(loaded, "bedrock")
 	}
@@ -362,6 +396,7 @@ func MergedProviderAPIKeys(ctx context.Context) *llm.ProviderAPIKeys {
 		ElevenLabs: pick(envKeys.ElevenLabs, wsKeys.ElevenLabs),
 		Deepgram:   pick(envKeys.Deepgram, wsKeys.Deepgram),
 	}
+	result.PiProviderKeys = mergePiProviderKeyMaps(envKeys.PiProviderKeys, wsKeys.PiProviderKeys)
 	// Bedrock / Azure: workspace wins if present, else env
 	if wsKeys.Bedrock != nil {
 		result.Bedrock = wsKeys.Bedrock
@@ -505,6 +540,7 @@ func mergeStoredProviderKeyValues(existing, incoming *StoredProviderKeys) *Store
 		ElevenLabs: pick(existing.ElevenLabs, incoming.ElevenLabs),
 		Deepgram:   pick(existing.Deepgram, incoming.Deepgram),
 	}
+	merged.PiProviderKeys = mergeStoredPiProviderKeys(existing.PiProviderKeys, incoming.PiProviderKeys)
 	// Bedrock / Azure: incoming wins if present, else keep existing
 	if incoming.Bedrock != nil {
 		merged.Bedrock = incoming.Bedrock
@@ -518,6 +554,130 @@ func mergeStoredProviderKeyValues(existing, incoming *StoredProviderKeys) *Store
 	}
 
 	return merged
+}
+
+func mergeStoredPiProviderKeys(existing, incoming map[string]string) map[string]string {
+	merged := map[string]string{}
+	for provider, key := range existing {
+		provider = strings.ToLower(strings.TrimSpace(provider))
+		key = strings.TrimSpace(key)
+		if provider != "" && key != "" {
+			merged[provider] = key
+		}
+	}
+	for provider, key := range incoming {
+		provider = strings.ToLower(strings.TrimSpace(provider))
+		key = strings.TrimSpace(key)
+		if provider == "" {
+			continue
+		}
+		if key == "__DELETE__" {
+			delete(merged, provider)
+			continue
+		}
+		if key != "" {
+			merged[provider] = key
+		}
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
+}
+
+func mergePiProviderKeyMaps(envKeys, workspaceKeys map[string]string) map[string]string {
+	merged := map[string]string{}
+	for provider, key := range envKeys {
+		provider = strings.ToLower(strings.TrimSpace(provider))
+		key = strings.TrimSpace(key)
+		if provider != "" && key != "" {
+			merged[provider] = key
+		}
+	}
+	for provider, key := range workspaceKeys {
+		provider = strings.ToLower(strings.TrimSpace(provider))
+		key = strings.TrimSpace(key)
+		if provider != "" && key != "" {
+			merged[provider] = key
+		}
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
+}
+
+func selectPiAPIKeyForModel(keys *llm.ProviderAPIKeys, modelID string) string {
+	if keys == nil {
+		return ""
+	}
+	provider := piProviderFromModelID(modelID)
+	if key := piProviderKeyFromMap(keys.PiProviderKeys, provider); key != "" {
+		return key
+	}
+	switch provider {
+	case "google", "google-vertex":
+		for _, value := range []*string{keys.PiCLI, keys.Vertex, keys.GeminiCLI} {
+			if key := strings.TrimSpace(stringPtrValue(value)); key != "" {
+				return key
+			}
+		}
+	case "openai":
+		return stringPtrValue(keys.OpenAI)
+	case "anthropic":
+		return stringPtrValue(keys.Anthropic)
+	case "openrouter":
+		return stringPtrValue(keys.OpenRouter)
+	case "zai":
+		return stringPtrValue(keys.ZAI)
+	case "kimi-coding", "moonshotai", "moonshotai-cn":
+		return stringPtrValue(keys.Kimi)
+	case "minimax":
+		return stringPtrValue(keys.MiniMax)
+	}
+	return ""
+}
+
+func piProviderFromModelID(modelID string) string {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" || strings.EqualFold(modelID, "pi-cli") || strings.EqualFold(modelID, "auto") {
+		return "google"
+	}
+	if slash := strings.Index(modelID, "/"); slash > 0 {
+		return strings.ToLower(strings.TrimSpace(modelID[:slash]))
+	}
+	return "google"
+}
+
+func piProviderKeyFromMap(keys map[string]string, provider string) string {
+	if keys == nil {
+		return ""
+	}
+	for _, candidate := range piProviderKeyAliases(provider) {
+		if key := strings.TrimSpace(keys[candidate]); key != "" {
+			return key
+		}
+	}
+	return ""
+}
+
+func piProviderKeyAliases(provider string) []string {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	switch provider {
+	case "google-vertex":
+		return []string{"google-vertex", "google"}
+	case "moonshotai", "moonshotai-cn":
+		return []string{provider, "kimi-coding"}
+	default:
+		return []string{provider}
+	}
+}
+
+func stringPtrValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
 }
 
 // handleLoadProviderKeys loads and returns decrypted provider API keys.

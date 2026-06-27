@@ -413,10 +413,14 @@ matrix test fails loudly with which provider broke.
 Each contract area should be verified for all supported providers.
 
 **Coding agents (tmux transport):**
-- claude-code, codex-cli, cursor-cli, agy-cli
-- agy-cli is published as an alpha local provider. It is tmux-only and requires
-  local Antigravity sign-in; structured JSON transport is not part of the alpha
-  contract.
+- claude-code, codex-cli, cursor-cli, pi-cli
+- pi-cli is the preferred Google/Gemini-backed coding-agent provider. It uses
+  tmux marker transport, supports dynamic provider/model ids, and is the
+  replacement path for new Gemini-family and open-model coding-agent setup.
+- agy-cli is deprecated for new setup but remains in the runtime contract for
+  existing/restored sessions and regression coverage. It is tmux-only and
+  requires local Antigravity sign-in; structured JSON transport is not part of
+  the retained legacy contract.
 
 **Coding agents (structured JSON transport):**
 - gemini-cli

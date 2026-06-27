@@ -1671,7 +1671,7 @@ function WidgetCard({
         <WidgetError
           widget={widget}
           message={`No rows in ${sourceInput.label}${widget.filter ? ` matching filter "${widget.filter}"` : ''}.`}
-          hint="The source is valid but empty for this widget; this usually clears after the workflow runs."
+          hint="The source is valid but empty for this widget; this usually clears after the automation runs."
           severity="info"
         />
       )

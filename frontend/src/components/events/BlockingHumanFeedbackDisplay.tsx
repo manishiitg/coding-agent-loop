@@ -51,7 +51,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
           <div className="text-sm text-amber-900 dark:text-amber-100 whitespace-pre-wrap">{event.data.question}</div>
         )}
         <div className="mt-2 text-[11px] text-amber-600 dark:text-amber-400">
-          Answer this in the builder chat to continue the workflow.
+          Answer this in the builder chat to continue the automation.
         </div>
       </div>
     )

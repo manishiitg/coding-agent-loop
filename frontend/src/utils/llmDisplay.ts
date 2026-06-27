@@ -60,7 +60,7 @@ export const LLM_INTEGRATION_DISPLAY_INFO: Record<LLMIntegrationKind, LLMIntegra
   },
 }
 
-export const CODING_AGENT_PROVIDERS = new Set(['claude-code', 'gemini-cli', 'codex-cli', 'cursor-cli', 'agy-cli', 'pi-cli'])
+export const CODING_AGENT_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli'])
 const AUDIO_PROVIDER_PROVIDERS = new Set(['elevenlabs', 'deepgram'])
 
 const PROVIDER_DISPLAY_INFO: Record<ProviderType, ProviderDisplayInfo> = {
@@ -131,7 +131,7 @@ const PROVIDER_DISPLAY_INFO: Record<ProviderType, ProviderDisplayInfo> = {
   },
   'pi-cli': {
     name: 'Pi CLI',
-    authDescription: 'Local CLI (PI/Gemini key)',
+    authDescription: 'Local CLI (Pi provider key)',
     colorClass: 'text-lime-700 dark:text-lime-300',
   },
   minimax: {

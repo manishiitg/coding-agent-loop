@@ -19,10 +19,10 @@ export const WorkflowProgressEvent: React.FC<WorkflowProgressEventProps> = ({ ev
         </div>
         <div className="ml-3">
           <div className="text-sm font-medium text-blue-800 dark:text-blue-200">
-            Workflow Progress: {event.phase || 'Processing'}
+            Automation Progress: {event.phase || 'Processing'}
           </div>
           <div className="text-xs text-blue-600 dark:text-blue-400 mt-1">
-            {event.message || 'Workflow is in progress'}
+            {event.message || 'Automation is in progress'}
           </div>
         </div>
       </div>

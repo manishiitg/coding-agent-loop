@@ -300,6 +300,7 @@ async function restoreReadOnlyWorkflowRunChat(
     ...(presetId ? { presetQueryId: presetId } : {}),
     isViewOnly: true,
     ...options.metadata,
+    readOnlyRestoredAt: Date.now(),
   }
   const desiredName = options.tabName
 

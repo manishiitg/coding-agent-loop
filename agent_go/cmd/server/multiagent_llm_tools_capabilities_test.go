@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"testing"
+
+	llm "github.com/manishiitg/multi-llm-provider-go"
 )
 
 func TestLLMCapabilitiesIncludeAgyImageProviders(t *testing.T) {
@@ -13,6 +15,18 @@ func TestLLMCapabilitiesIncludeAgyImageProviders(t *testing.T) {
 	}
 	if !capabilityHasProvider(caps, "generate_image", "agy-cli") {
 		t.Fatalf("generate_image capabilities should include agy-cli")
+	}
+}
+
+func TestProviderAuthConfiguredTreatsPiProviderKeysAsPiAuth(t *testing.T) {
+	configured, source := providerAuthConfigured("pi-cli", &llm.ProviderAPIKeys{
+		PiProviderKeys: map[string]string{"zai": "zai-key"},
+	})
+	if !configured {
+		t.Fatalf("pi-cli auth configured = false, want true")
+	}
+	if source != "Provider-specific Pi API key or workspace provider auth" {
+		t.Fatalf("pi-cli auth source = %q", source)
 	}
 }
 

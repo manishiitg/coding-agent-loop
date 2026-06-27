@@ -1,4 +1,4 @@
-## Backup Strategy — Per-Workflow Git + Large-File Storage
+## Backup Strategy — Workflow And Org Git + Large-File Storage
 
 Each workflow has (or should have) its own remote git repository for
 text/code/config plus a separate object store for large binary artifacts.
@@ -12,8 +12,10 @@ decision (account/org, visibility, naming).
 
 ## App contract: config vs status
 
-The app reads backup configuration from `workflow.json.backup` and backup
-health from `backup/status.json`. Keep these separate:
+The app reads backup configuration and backup health separately. Keep these separate, same
+for workflows and org-level Chief of Staff artifacts.
+
+For a **workflow**:
 
 - `workflow.json.backup` is the declarative contract: whether backup is
   enabled, which trigger should run it, which destinations exist, and what
@@ -27,7 +29,20 @@ health from `backup/status.json`. Keep these separate:
   (`python3 -c "import json; json.load(open('workflow.json'))"`) — a malformed workflow.json
   drops the workflow's config and can hide the workflow from the UI.
 
-Recommended `workflow.json.backup` shape:
+For **org-level Chief of Staff / Org Pulse artifacts**, use the same workflow-style config
+vs status contract, rooted under `pulse/`:
+
+- `pulse/backup.json` is the declarative contract: enabled, mode, triggers, destinations,
+  coverage, notes.
+- `pulse/backup/status.json` is the operational result of the latest org backup attempt.
+- Back up `pulse/goals.html`, `pulse/org-pulse.html`, memory files, employee/org config, and
+  multi-agent schedule/config files. Do not back up secrets.
+- Do not write org backup status into any workflow's `workflow.json` or into the HTML files.
+- The zero-config default is a local git repo/commit covering these org-level text artifacts;
+  add a remote only after the user chooses one.
+
+Recommended backup config shape (`workflow.json.backup` for workflows, `pulse/backup.json`
+for org):
 
 ```json
 {
@@ -61,7 +76,8 @@ Recommended `workflow.json.backup` shape:
 }
 ```
 
-Required `backup/status.json` shape:
+Required backup status shape (`backup/status.json` for workflows, `pulse/backup/status.json`
+for org):
 
 ```json
 {
@@ -104,7 +120,10 @@ Use git when content is small, mostly text, benefits from per-line diffs,
 and needs to be cheap to clone:
 
 - `workflow.json`, `planning/plan.json`, `planning/step_config.json`
+- Org Goals/Pulse config and content: `pulse/goals.html`, `pulse/org-pulse.html`,
+  `pulse/backup.json`, `pulse/publish.json`
 - `knowledgebase/`, `learnings/`, `subagents/`, `skills/`
+- Chief of Staff memory and employee/org config files
 - Small JSON metadata in `db/` (post records, run summaries)
 - Documentation and notes
 - Source code, scripts, configs
@@ -345,6 +364,9 @@ config file directly from a secret.
 |-------------------------------------------------|--------------------------|
 | `workflow.json`, `planning/`, `knowledgebase/`  | git (per-workflow repo)  |
 | `learnings/`, `skills/`, `subagents/`           | git                      |
+| `pulse/goals.html`, `pulse/org-pulse.html`      | git                      |
+| `pulse/backup.json`, `pulse/publish.json`       | git                      |
+| Chief of Staff memory / employee config         | git                      |
 | Small JSON metadata in `db/`                    | git                      |
 | Generated images, audio, video                  | HF dataset (or S3/R2/B2) |
 | Conversation dumps, per-iteration run logs      | HF dataset, or skip      |

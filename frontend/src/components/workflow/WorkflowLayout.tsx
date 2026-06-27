@@ -110,12 +110,14 @@ import {
 } from '../../services/api-types'
 import { getRawEventData } from '../../generated/event-types'
 import { findOrCreateWorkflowTab, isChatCompatiblePhase } from '../../utils/chatSubmitHelpers'
-// hydrateTabEvents removed - no longer hydrating inactive tabs on reload to prevent page hang
+import { hydrateTabEvents } from '../../utils/sessionRestore'
+// Inactive workflow tabs hydrate lazily and fall back to workflow-scoped chat history.
 
 // Stable empty array for Zustand selector (must be module-level to avoid referential instability)
 const EMPTY_WORKFLOW_EVENTS: PollingEvent[] = []
 const WORKFLOW_RESTORE_TIMEOUT_MS = 8000
 const WORKFLOW_CHAT_CONTENT_EVENT_TYPES = new Set(['user_message', 'conversation_end', 'unified_completion'])
+const AUTO_RESUME_WORKFLOW_CHAT_MAX_AGE_MS = 24 * 60 * 60 * 1000
 
 function normalizeWorkflowPath(path?: string | null): string {
   return (path || '').replace(/\/+$/, '')
@@ -123,6 +125,104 @@ function normalizeWorkflowPath(path?: string | null): string {
 
 function hasWorkflowChatContent(events?: PollingEvent[]): boolean {
   return (events || []).some(event => WORKFLOW_CHAT_CONTENT_EVENT_TYPES.has(event.type || ''))
+}
+
+function workflowTabSortTimestamp(tab: ChatTab): number {
+  return tab.lastAccessedAt ?? tab.createdAt ?? 0
+}
+
+function isInteractiveWorkflowTab(tab: ChatTab): boolean {
+  return tab.metadata?.mode === 'workflow' && tab.metadata?.isViewOnly !== true
+}
+
+function isRestorableWorkflowChatSession(session: ChatHistorySession): boolean {
+  const sessionId = (session.session_id || '').toLowerCase()
+  if (!sessionId) return false
+  if (sessionId.startsWith('schedule-') || sessionId.startsWith('sched_') || sessionId.startsWith('bot-')) {
+    return false
+  }
+
+  const mode = (session.agent_mode || '').toLowerCase()
+  if (mode && mode !== 'workflow' && mode !== 'workflow_phase') {
+    return false
+  }
+
+  return (session.message_count ?? 0) > 0 || (session.preview_messages?.length ?? 0) > 0 || !!session.query?.trim()
+}
+
+function isRecentChatHistorySession(session: ChatHistorySession, maxAgeMs: number): boolean {
+  const timestamp = Date.parse(session.updated_at || session.created_at || '')
+  if (Number.isNaN(timestamp)) return false
+  return Date.now() - timestamp <= maxAgeMs
+}
+
+async function findLatestRestorableWorkflowChatSession(
+  workspacePath?: string | null,
+  excludedSessionIds: Set<string> = new Set(),
+): Promise<ChatHistorySession | null> {
+  if (!workspacePath) return null
+  try {
+    const response = await agentApi.listChatHistorySessions(20, 0, workspacePath)
+    return (response.sessions || []).find(session =>
+      !excludedSessionIds.has(session.session_id) &&
+      isRestorableWorkflowChatSession(session) &&
+      isRecentChatHistorySession(session, AUTO_RESUME_WORKFLOW_CHAT_MAX_AGE_MS)
+    ) || null
+  } catch (error) {
+    logger.warn('WorkflowLayout', 'Failed to load workflow chat history for auto-resume:', error)
+    return null
+  }
+}
+
+function applyRestoredWorkflowConversationConfig(tabId: string, session: ChatHistorySession): void {
+  const chatStore = useChatStore.getState()
+  const path = chatHistoryConversationPath(session)
+  const useTerminalRestore = chatHistoryUsesTerminalRestore(session)
+  const useNativeResume = chatHistorySupportsNativeResume(session)
+  const existingContext = chatStore.getTabConfig(tabId)?.fileContext || []
+  const shouldAttachFileFallback = !useTerminalRestore && !useNativeResume
+  const nextFileContext = shouldAttachFileFallback
+    ? existingContext.some(item => item.path === path)
+      ? existingContext
+      : [
+          ...existingContext,
+          {
+            name: chatHistorySessionTitle(session),
+            path,
+            type: 'file' as const,
+          },
+        ]
+    : existingContext.filter(item => item.path !== path)
+
+  chatStore.setTabConfig(tabId, {
+    fileContext: nextFileContext,
+    restoredConversationPath: path,
+    restoredConversationSummary: undefined,
+    restoredConversationTitle: chatHistorySessionTitle(session),
+    restoredConversationWorkshopModeLabel: chatHistoryWorkshopModeLabel(session),
+    restoredConversationRuntimeLabel: chatHistoryRuntimeLabel(session),
+    restoredConversationNativeResume: useTerminalRestore || useNativeResume,
+  })
+}
+
+async function hydrateRestoredWorkflowChatTab(
+  tabId: string,
+  session: ChatHistorySession,
+  workspacePath?: string | null,
+): Promise<void> {
+  applyRestoredWorkflowConversationConfig(tabId, session)
+  const runtime = await hydrateTabEvents(session.session_id, {
+    workspacePath: workspacePath || undefined,
+    fallbackToChatHistory: true,
+  })
+  const chatStore = useChatStore.getState()
+  const isDone = runtime.status === 'completed' || runtime.status === 'stopped' || !runtime.status
+  const isError = runtime.status === 'error'
+  chatStore.setTabCompleted(tabId, isDone)
+  chatStore.setTabStreaming(tabId, isDone || isError ? false : runtime.status === 'running')
+  chatStore.setTabHasRunningBgAgents(tabId, !!runtime.hasRunningBackgroundAgents)
+  chatStore.setTabSyntheticTurn(tabId, !!runtime.isSyntheticTurn)
+  chatStore.setTabCanSteer(tabId, !!runtime.canSteer)
 }
 
 function isRunningWorkflowEntry(entry: RunningWorkflowInfo): boolean {
@@ -151,6 +251,21 @@ function isExternalReadOnlyWorkflowEntry(entry: RunningWorkflowInfo): boolean {
     trigger.includes('slack') ||
     sessionId.startsWith('schedule-') ||
     sessionId.includes('-schedule-')
+}
+
+function isExternalReadOnlyActiveWorkflowSession(session: ActiveSessionInfo): boolean {
+  const trigger = (session.triggered_by || '').toLowerCase()
+  const sessionId = (session.session_id || '').toLowerCase()
+  const botPlatform = (session.bot_platform || '').toLowerCase()
+  return trigger.includes('schedule') ||
+    trigger === 'cron' ||
+    trigger.includes('bot') ||
+    trigger.includes('whatsapp') ||
+    trigger.includes('slack') ||
+    botPlatform !== '' ||
+    sessionId.startsWith('schedule-') ||
+    sessionId.includes('-schedule-') ||
+    sessionId.startsWith('bot-')
 }
 
 function runningWorkflowBelongsToPreset(
@@ -186,7 +301,7 @@ const WorkflowPreviousChatsPanel: React.FC<{
 
   const handleResumePreviousChat = useCallback(async (session: ChatHistorySession) => {
     if (!activeTabId) {
-      addToast('No active workflow chat to resume in', 'error')
+      addToast('No active automation chat to resume in', 'error')
       return
     }
 
@@ -271,9 +386,9 @@ const WorkflowPreviousChatsPanel: React.FC<{
     <PreviousChatHistoryPanel
       workspacePath={workspacePath}
       activeSessionId={activeSessionId ?? undefined}
-      title="Previous workflow chats"
+      title="Previous automation chats"
       actionLabel="Resume"
-      emptyText="No previous workflow chats yet."
+      emptyText="No previous automation chats yet."
       onHasChatsChange={onHasChatsChange}
       onSelectSession={handleResumePreviousChat}
       compact
@@ -388,7 +503,11 @@ function withWorkflowRestoreTimeout<T>(promise: Promise<T>, label: string, timeo
  * - Batch progress (for BatchProgressHeader)
  * This ensures the UI shows the correct state immediately after page refresh
  */
-async function restoreWorkflowStateFromEvents(sessionId: string): Promise<void> {
+async function restoreWorkflowStateFromEvents(
+  sessionId: string,
+  workspacePath?: string | null,
+  allowChatHistoryFallback = false,
+): Promise<void> {
   try {
     const { addTabEvents, setTabEvents, setTabLastEventIndex, getTabLastEventIndex, getTabEvents } = useChatStore.getState()
     const workflowStore = useWorkflowStore.getState()
@@ -399,12 +518,24 @@ async function restoreWorkflowStateFromEvents(sessionId: string): Promise<void> 
       return
     }
 
-    // Load events for this session from the in-memory EventStore. If the
-    // server restarted, there's nothing to replay — the workflow run folder
-    // is the durable source of truth for the run's state.
-    const response = await agentApi.getRecentSessionEvents(sessionId)
-    const events = response.events as PollingEvent[]
-    const lastIndex = response.last_processed_index ?? events.length - 1
+    let events: PollingEvent[] = []
+    let lastIndex = -1
+
+    // Load events for this session from the in-memory EventStore. If that
+    // buffer has expired, workflow builder chats can still restore their
+    // visible transcript from the workflow-scoped conversation file.
+    if (allowChatHistoryFallback) {
+      await hydrateTabEvents(sessionId, {
+        workspacePath: workspacePath || undefined,
+        fallbackToChatHistory: true,
+      })
+      events = getTabEvents(sessionId)
+      lastIndex = getTabLastEventIndex(sessionId)
+    } else {
+      const response = await agentApi.getRecentSessionEvents(sessionId)
+      events = response.events as PollingEvent[]
+      lastIndex = response.last_processed_index ?? events.length - 1
+    }
 
     if (events.length === 0) {
       return
@@ -412,10 +543,12 @@ async function restoreWorkflowStateFromEvents(sessionId: string): Promise<void> 
 
     // Use setTabEvents (replace) when tab is empty (restoration), addTabEvents (append) when live
     const existingEvents = getTabEvents(sessionId)
-    if (existingEvents.length === 0) {
-      setTabEvents(sessionId, events)
-    } else {
-      addTabEvents(sessionId, events)
+    if (!allowChatHistoryFallback) {
+      if (existingEvents.length === 0) {
+        setTabEvents(sessionId, events)
+      } else {
+        addTabEvents(sessionId, events)
+      }
     }
     // CRITICAL: Use last_processed_index from backend (not events.length - 1)
     // Backend tracks the actual event index which may be higher due to filtering/cleanup
@@ -645,7 +778,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const reportAutoMinimizedWorkspaceRef = useRef(false)
   const prevWorkflowWorkspaceViewRef = useRef<string | null>(null)
 
-  const rehydrateWorkflowTabs = useCallback(async (tabs: ChatTab[]) => {
+  const rehydrateWorkflowTabs = useCallback(async (tabs: ChatTab[], currentWorkspacePath?: string | null) => {
     const tabsToHydrate = tabs.filter(tab =>
       tab.sessionId && useChatStore.getState().getTabEvents(tab.sessionId).length === 0
     )
@@ -667,17 +800,40 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         .filter(session => session.agent_mode === 'workflow' || session.agent_mode === 'workflow_phase')
         .map(session => session.session_id)
     )
+    let workflowHistoryBySession: Map<string, ChatHistorySession> | null = null
+    const getWorkflowHistoryBySession = async () => {
+      if (workflowHistoryBySession) return workflowHistoryBySession
+      workflowHistoryBySession = new Map<string, ChatHistorySession>()
+      if (!currentWorkspacePath) return workflowHistoryBySession
+      try {
+        const response = await agentApi.listChatHistorySessions(100, 0, currentWorkspacePath)
+        for (const session of response.sessions || []) {
+          if (isRestorableWorkflowChatSession(session)) {
+            workflowHistoryBySession.set(session.session_id, session)
+          }
+        }
+      } catch (error) {
+        logger.warn('WorkflowLayout', 'Failed to load workflow chat history during tab rehydrate:', error)
+      }
+      return workflowHistoryBySession
+    }
     const { setTabStreaming } = useChatStore.getState()
 
     for (const tab of tabsToHydrate) {
       if (!tab.sessionId) continue
       try {
         await withWorkflowRestoreTimeout(
-          restoreWorkflowStateFromEvents(tab.sessionId),
+          restoreWorkflowStateFromEvents(tab.sessionId, currentWorkspacePath, true),
           `Restoring workflow events for ${tab.sessionId}`
         )
         if (activeWorkflowSessionIds.has(tab.sessionId)) {
           setTabStreaming(tab.tabId, true)
+        } else {
+          const history = await getWorkflowHistoryBySession()
+          const session = history.get(tab.sessionId)
+          if (session && useChatStore.getState().getTabEvents(tab.sessionId).length > 0) {
+            applyRestoredWorkflowConversationConfig(tab.tabId, session)
+          }
         }
       } catch (err) {
         console.warn('[WorkflowReconnect] Failed to rehydrate events for persisted tab', tab.sessionId, err)
@@ -803,6 +959,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   }, [workspacePath])
 
   const workspacePaneVisible = !showChatArea || showWorkspacePane
+  const isFilesWorkspace = workflowWorkspaceView === 'files'
   // Each preview tier controls the OUTER report pane width when both chat and
   // canvas are visible — not just the inner shell. Otherwise switching to
   // laptop mode would only change the inner max-width while the surrounding
@@ -813,6 +970,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   //   laptop  → chat collapses to ~360px, report fills the remaining width
   //   default → 50/50 split (no preview pref, or running in non-report views)
   const isPreviewableWorkspaceCanvas =
+    !isFilesWorkspace &&
     showChatArea &&
     workspacePaneVisible &&
     (canvasViewMode === 'report' || canvasViewMode === 'flow')
@@ -854,9 +1012,10 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // Laptop ('desktop' device) hides the chat pane entirely for both report and
   // plan — the workspace canvas takes the full width. (Use the raw device choice,
   // not effectiveTier, so it holds regardless of the focus-cap.)
-  const laptopHidesChat = previewDevice === 'desktop' && showChatArea && workspacePaneVisible
-  const splitGridCols =
-    effectiveTier === 'mobile' ? 'md:grid-cols-[minmax(0,1fr)_480px]'
+  const laptopHidesChat = !isFilesWorkspace && previewDevice === 'desktop' && showChatArea && workspacePaneVisible
+  const splitGridCols = isFilesWorkspace
+    ? 'md:grid-cols-[minmax(0,1fr)_384px]'
+    : effectiveTier === 'mobile' ? 'md:grid-cols-[minmax(0,1fr)_480px]'
     : effectiveTier === 'tablet' ? 'md:grid-cols-[minmax(0,1fr)_880px]'
     : 'md:grid-cols-[360px_minmax(0,1fr)]'
   // Animate the GRID TRACK widths on the container so the chat↔report resize
@@ -870,7 +1029,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     ? 'flex-1 min-h-0 min-w-0'
     : !workspacePaneVisible
       ? 'hidden'
-      : 'min-h-0 min-w-0 w-full md:w-auto md:col-start-2 md:row-start-2'
+      : `min-h-0 min-w-0 w-full md:w-auto md:col-start-2 md:row-start-2 ${isFilesWorkspace ? 'border-l border-border' : ''}`
 
   // Load execution_defaults from workflow.json when workspace changes
   useEffect(() => {
@@ -1048,6 +1207,20 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
   }, [activeSessionId])
 
+  // The global workspace toggle now maps to the workflow's right-side Files
+  // pane instead of the old app-level far-right file column.
+  useEffect(() => {
+    if (selectedModeCategory !== 'workflow') return
+    if (!workspaceMinimized && (workflowWorkspaceView !== 'files' || !showWorkspacePane)) {
+      setShowWorkspacePane(true)
+      setWorkflowWorkspaceView('files')
+      return
+    }
+    if (workspaceMinimized && workflowWorkspaceView === 'files') {
+      setWorkflowWorkspaceView(canvasViewMode)
+    }
+  }, [selectedModeCategory, workspaceMinimized, workflowWorkspaceView, showWorkspacePane, canvasViewMode, setShowWorkspacePane, setWorkflowWorkspaceView])
+
   // Auto-minimize the file workspace sidebar when entering Report so the report
   // has room. Do not reopen it on exit: workflow switches can unmount/remount
   // this layout, and auto-reopening makes the workspace look default-open.
@@ -1204,7 +1377,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               t.metadata?.mode === 'workflow' &&
               t.metadata?.presetQueryId === activePresetId
             )
-            .sort((a, b) => b.createdAt - a.createdAt)
+            .sort((a, b) => workflowTabSortTimestamp(b) - workflowTabSortTimestamp(a))
 
         // 1. Get active (running) sessions from in-memory cache
         //    Include both 'workflow' (execution) and 'workflow_phase' (workflow builder, plan-improvement)
@@ -1260,9 +1433,16 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         // current preset (so reload doesn't drop a tab the user has been using).
         const chatTabsById = useChatStore.getState().chatTabs
         for (const s of activeWorkflowSessions) {
+          const registryRunning = runningWorkflowsBySession.get(s.session_id)
+          if (
+            isExternalReadOnlyActiveWorkflowSession(s) ||
+            (registryRunning && isExternalReadOnlyWorkflowEntry(registryRunning))
+          ) {
+            continue
+          }
           let belongsToPreset = isLiveWorkflowSessionForPreset(s, activePresetId, workspacePath)
           try {
-            const running = runningWorkflowsBySession.get(s.session_id) || await agentApi.getRunningWorkflow(s.session_id)
+            const running = registryRunning || await agentApi.getRunningWorkflow(s.session_id)
             if (running.preset_query_id) {
               belongsToPreset = running.preset_query_id === activePresetId
             } else if (workspacePath && running.workspace_path) {
@@ -1287,11 +1467,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             title: s.title,
             status: s.status,
             isActive: true,
-            // Carry through scheduler/bot identity so the tab labelling
-            // chain below uses "<Schedule Name>" instead of falling to
-            // the literal "Workflow" string. Backend stamps Title +
-            // TriggeredBy='cron' on scheduled sessions via
-            // stampScheduleNameOnSession.
             triggeredBy: s.triggered_by,
             botPlatform: s.bot_platform,
             isScheduledRun: s.triggered_by === 'cron',
@@ -1300,6 +1475,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
         for (const running of runningWorkflowsBySession.values()) {
           if (!running.session_id || queuedSessionIds.has(running.session_id)) continue
+          if (isExternalReadOnlyWorkflowEntry(running)) continue
           const belongsToPreset = runningWorkflowBelongsToPreset(running, activePresetId, workspacePath)
           if (!belongsToPreset) continue
           queuedSessionIds.add(running.session_id)
@@ -1371,11 +1547,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         })
         const newSessions = sessionsToRestore.filter(s => !existingTabsBySession.has(s.sessionId))
         const existingWorkflowTabs = getExistingWorkflowTabsForPreset()
+        const interactiveExistingWorkflowTabs = existingWorkflowTabs.filter(tab => !tab.metadata?.isViewOnly)
 
         // Only restore sessions that don't have tabs yet
         const sessionsToActuallyRestore = newSessions
 
-        const needsTabHydration = existingWorkflowTabs.some(tab =>
+        const needsTabHydration = interactiveExistingWorkflowTabs.some(tab =>
           tab.sessionId && getTabEvents(tab.sessionId).length === 0
         )
 
@@ -1385,7 +1562,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
         // 3a. Rehydrate events for persisted tabs whose event buffer was lost on refresh.
         if (needsTabHydration) {
-          await rehydrateWorkflowTabs(existingWorkflowTabs)
+          await rehydrateWorkflowTabs(interactiveExistingWorkflowTabs, workspacePath)
         }
 
         // 4. Create tabs and load events for new sessions only
@@ -1471,34 +1648,44 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           setShowChatArea(true)
         }
 
-        // 6. If no tabs were created/restored, show an empty Workflow Builder tab.
-        // Previous conversations are attached explicitly with /resume instead of
-        // auto-querying builder history during every workflow switch.
+        // 6. If no tabs were created/restored, prefer the latest saved
+        // workflow-builder chat for this workflow; otherwise show a blank
+        // builder tab.
         if (!lastTabId) {
           const store = useChatStore.getState()
-          if (existingWorkflowTabs.length === 0) {
+          if (interactiveExistingWorkflowTabs.length === 0) {
+            const excludedSessionIds = new Set(activeSessionIds)
+            const latestSavedChat = await findLatestRestorableWorkflowChatSession(workspacePath, excludedSessionIds)
             const defaultTabId = await createChatTab('Workflow Builder', {
               mode: 'workflow',
               phaseId: 'workflow-builder',
               phaseName: 'Workflow Builder',
               presetQueryId: activePresetId
-            })
+            }, latestSavedChat?.session_id)
+            if (latestSavedChat) {
+              try {
+                await hydrateRestoredWorkflowChatTab(defaultTabId, latestSavedChat, workspacePath)
+              } catch (error) {
+                logger.warn('WorkflowLayout', 'Failed to hydrate latest workflow chat during auto-resume:', error)
+                applyRestoredWorkflowConversationConfig(defaultTabId, latestSavedChat)
+              }
+            }
             switchTab(defaultTabId)
             setShowChatArea(true)
           } else {
-            const streamingTab = existingWorkflowTabs.find(t => t.isStreaming || store.getTabStreamingStatus(t.tabId))
+            const streamingTab = interactiveExistingWorkflowTabs.find(t => t.isStreaming || store.getTabStreamingStatus(t.tabId))
             if (streamingTab) {
               switchTab(streamingTab.tabId)
               setShowChatArea(true)
               return
             } else {
-              const builderTab = existingWorkflowTabs.find(t => t.metadata?.phaseId === 'workflow-builder')
+              const builderTab = interactiveExistingWorkflowTabs.find(t => t.metadata?.phaseId === 'workflow-builder')
               if (builderTab) {
                 switchTab(builderTab.tabId)
                 setShowChatArea(true)
                 return
               }
-              switchTab(existingWorkflowTabs[0].tabId)
+              switchTab(interactiveExistingWorkflowTabs[0].tabId)
               setShowChatArea(true)
               return
             }
@@ -1570,7 +1757,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
           let tabId = existingTab?.tabId
           if (!tabId) {
-            const phaseName = running.phase_name || running.title || running.preset_name || 'Running workflow'
+            const phaseName = running.phase_name || running.title || running.preset_name || 'Running automation'
             tabId = await chatStore.createChatTab(phaseName, {
               mode: 'workflow',
               phaseId: running.phase_id || undefined,
@@ -1673,7 +1860,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           t.metadata?.mode === 'workflow' &&
           t.metadata?.presetQueryId === activePresetId
         )
-        .sort((a, b) => b.createdAt - a.createdAt)
+        .sort((a, b) => workflowTabSortTimestamp(b) - workflowTabSortTimestamp(a))
 
       if (newPresetTabs.length > 0) {
         const pendingReadOnlyRestore = pendingReadOnlyRestoreRef.current
@@ -1696,12 +1883,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         chatStore.switchTab(targetTab.tabId)
         setShowChatArea(true)
 
-        const needsHydration = newPresetTabs.some(tab =>
+        const needsHydration = interactiveTabs.some(tab =>
           tab.sessionId && chatStore.getTabEvents(tab.sessionId).length === 0
         )
         if (needsHydration) {
           setIsRestoringWorkflowSessions(true)
-          void rehydrateWorkflowTabs(newPresetTabs).finally(() => {
+          void rehydrateWorkflowTabs(interactiveTabs, workspacePath).finally(() => {
             setIsRestoringWorkflowSessions(false)
           })
         }
@@ -1720,7 +1907,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       // Update the ref for non-preset-change re-fires (dep changes only)
       previousPresetIdRef.current = activePresetId
     }
-  }, [activePresetId, minimizeWorkflow, selectedRunFolder, setShowChatArea, setIsRestoringWorkflowSessions, rehydrateWorkflowTabs, createFreshWorkflowBuilderTab])
+  }, [activePresetId, minimizeWorkflow, selectedRunFolder, setShowChatArea, setIsRestoringWorkflowSessions, rehydrateWorkflowTabs, createFreshWorkflowBuilderTab, workspacePath])
 
   // Note: Query submission is now handled via chatAreaCallbackRef when ChatArea mounts
   // No need for useEffect with setTimeout - callback ref is the proper React pattern
@@ -1819,17 +2006,26 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       // (activeTabId might point to a chat/multi-agent tab from a different mode)
       const chatStore = useChatStore.getState()
       const activeTab = chatStore.getActiveTab()
-      if (!activeTab || activeTab.metadata?.mode !== 'workflow') {
+      if (
+        !activeTab ||
+        activeTab.metadata?.mode !== 'workflow' ||
+        activeTab.metadata?.presetQueryId !== activePresetId ||
+        activeTab.metadata?.isViewOnly
+      ) {
         const workflowTabs = Object.values(chatStore.chatTabs)
-          .filter(t => t.metadata?.mode === 'workflow')
-          .sort((a, b) => b.createdAt - a.createdAt)
+          .filter(t =>
+            isInteractiveWorkflowTab(t) &&
+            t.metadata?.presetQueryId === activePresetId
+          )
+          .sort((a, b) => workflowTabSortTimestamp(b) - workflowTabSortTimestamp(a))
         if (workflowTabs.length > 0) {
-          chatStore.switchTab(workflowTabs[0].tabId)
+          const builderTab = workflowTabs.find(t => t.metadata?.phaseId === 'workflow-builder')
+          chatStore.switchTab((builderTab || workflowTabs[0]).tabId)
         }
       }
     }
     setShowChatArea(newShow)
-  }, [showChatArea, setShowChatArea])
+  }, [activePresetId, showChatArea, setShowChatArea])
 
   // Minimize chat area when drawer opens to reduce renders and stop event processing
   // Open chat area when drawer closes (but not on initial mount)
@@ -1870,7 +2066,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         )
         if (runningSession) {
           blockingSessionIds.push(runningSession.session_id)
-          blockingSessionLabel = 'workflow chat session'
+          blockingSessionLabel = 'automation chat session'
         }
       } else {
         logger.warn('WorkflowLayout', 'Failed to check active sessions before starting new workflow chat:', sessionsResult.reason)
@@ -1895,7 +2091,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         setKillAndStartState({
           isOpen: true,
           sessionIdsToStop: blockingSessionIds,
-          description: `Another ${blockingSessionLabel} is currently running for this workflow. Starting a new chat will stop it.`,
+          description: `Another ${blockingSessionLabel} is currently running for this automation. Starting a new chat will stop it.`,
           isStopping: false,
         })
         return
@@ -1948,11 +2144,11 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           </div>
           <div>
             <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
-              Select a Workflow
+              Select an Automation
             </h2>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
-              Choose a workflow preset from the sidebar to get started.
-              The workflow canvas will visualize your plan and let you run it step by step.
+              Choose an automation preset from the sidebar to get started.
+              The automation canvas will visualize your plan and let you run it step by step.
             </p>
             </div>
           </div>

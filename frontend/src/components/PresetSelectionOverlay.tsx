@@ -148,7 +148,7 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
   const getModeTitle = () => {
     switch (modeCategory) {
       case 'workflow':
-        return 'Workflow Mode'
+        return 'Automation Mode'
       default:
         return 'Select Mode'
     }
@@ -157,7 +157,7 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
   const getModeDescription = () => {
     switch (modeCategory) {
       case 'workflow':
-        return 'Select a workflow preset to organize your task execution'
+        return 'Select an automation preset to organize your task execution'
       default:
         return 'Please select a preset to continue'
     }

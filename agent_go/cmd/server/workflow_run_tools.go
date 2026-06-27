@@ -20,7 +20,7 @@ func createWorkflowRunTools() []llmtypes.Tool {
 			Type: "function",
 			Function: &llmtypes.FunctionDefinition{
 				Name:        "run_workflow",
-				Description: "Run a full workflow execution in the background. Returns an execution ID immediately — you'll be notified when it completes. The workflow runs all steps for the specified group.",
+				Description: "Run a full workflow execution in the background. Returns an execution ID immediately — you'll be notified when it completes. The workflow runs all steps for the specified group. After completion, inspect the run/report/Pulse evidence and measure the result against any org goals in pulse/goals.html that name this workflow.",
 				Parameters: &llmtypes.Parameters{
 					Type: "object",
 					Properties: map[string]interface{}{
@@ -50,7 +50,7 @@ func createWorkflowRunTools() []llmtypes.Tool {
 			Type: "function",
 			Function: &llmtypes.FunctionDefinition{
 				Name:        "run_step",
-				Description: "Run a single workflow step in the background. Returns an execution ID immediately — you'll be notified when it completes.",
+				Description: "Run a single workflow step in the background. Returns an execution ID immediately — you'll be notified when it completes. After completion, inspect the step/run/report/Pulse evidence and measure the result against any org goals in pulse/goals.html that name this workflow.",
 				Parameters: &llmtypes.Parameters{
 					Type: "object",
 					Properties: map[string]interface{}{
@@ -339,11 +339,15 @@ func runWorkflowInternal(ctx context.Context, api *StreamingAPI, workflowPath, g
 		workflowLabel = manifest.Label
 	}
 
-	// Build the query — use instructions if provided, otherwise default
+	// Build the query — use instructions if provided, otherwise default.
+	// The workflow run itself should not edit workspace-level org files, but it
+	// should leave enough concrete evidence for Chief of Staff / Org Pulse to
+	// measure the run against pulse/goals.html after completion.
 	query := fmt.Sprintf("Execute workflow: %s", workflowLabel)
 	if instructions != "" {
 		query = fmt.Sprintf("Execute workflow: %s\n\nInstructions: %s", workflowLabel, instructions)
 	}
+	query += workflowRunOrgGoalEvidenceHandoff(workflowPath, groupName, stepID)
 
 	// Build the request map (same format as scheduler uses).
 	// Deprecated: agent_mode "workflow" runs the workflow headlessly without the
@@ -534,4 +538,12 @@ func runWorkflowInternal(ctx context.Context, api *StreamingAPI, workflowPath, g
 
 	resultJSON, _ := json.MarshalIndent(result, "", "  ")
 	return string(resultJSON), nil
+}
+
+func workflowRunOrgGoalEvidenceHandoff(workflowPath, groupName, stepID string) string {
+	runScope := fmt.Sprintf("%s/runs/iteration-0/%s/", workflowPath, groupName)
+	if stepID != "" {
+		runScope = fmt.Sprintf("%s/runs/iteration-0/%s/execution/%s/", workflowPath, groupName, stepID)
+	}
+	return fmt.Sprintf("\n\nOrg goal evidence handoff: if this workflow is linked to org goals in pulse/goals.html, make this run's outputs, reports, evals, and db updates cite the concrete evidence needed to judge those goals. The run evidence should be inspectable under `%s`, plus `builder/improve.html`, `reports/`, and `db/db.sqlite` when relevant. Do not edit `pulse/goals.html` from inside the workflow run; Chief of Staff or Org Pulse will update org-level scorecards after reading the run artifacts.", runScope)
 }

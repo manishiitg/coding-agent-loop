@@ -157,7 +157,7 @@ export const EvaluationReportsPanel: React.FC<EvaluationReportsPanelProps> = ({
                 <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                   <FileText className="w-12 h-12 mb-3 opacity-50" />
                   <p>No evaluation reports found.</p>
-                  <p className="text-sm mt-2">Run evaluation on workflow iterations to see results here.</p>
+                  <p className="text-sm mt-2">Run evaluation on automation iterations to see results here.</p>
                 </div>
               ) : (
             <div className="space-y-6">

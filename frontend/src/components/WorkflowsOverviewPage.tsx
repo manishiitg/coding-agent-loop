@@ -632,59 +632,50 @@ export const WorkflowsOverviewPage: React.FC = () => {
   return (
     <>
       <div className="h-full flex flex-col bg-white dark:bg-gray-900">
-        <div className="flex-1 min-h-0 overflow-auto">
-          <div className="mx-auto w-full max-w-[1400px] p-6 space-y-8">
-            {/* Header */}
-            <header className="flex items-center gap-3">
-              <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-300">
-                <Building2 className="h-5 w-5" />
-              </div>
-              <div className="min-w-0">
-                <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Organization</h1>
-                <p className="text-sm text-gray-500 dark:text-gray-400">
-                  Goals, automations, and the Chief of Staff that runs them.
-                </p>
-              </div>
-            </header>
-
-            {/* Goals section */}
-            <section className="space-y-3">
-              <div className="flex items-center gap-2">
-                <Target className="h-4 w-4 text-primary" />
-                <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                  Org Goals
-                </h2>
-              </div>
-              <div className="h-[420px] overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">
-                <OrgGoalsPanel />
-              </div>
-            </section>
-
-            {/* Automations section */}
-            <section className="space-y-3">
-              <div className="flex items-center gap-2">
-                <Workflow className="h-4 w-4 text-primary" />
-                <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                  Automations
-                </h2>
-                {automationCount > 0 && (
-                  <span className="text-xs text-gray-400 dark:text-gray-500">
-                    {automationCount} total
-                  </span>
-                )}
-              </div>
-              <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">
-                <WorkflowTable
-                  rows={rows}
-                  loading={loading}
-                  onOpenWorkflow={handleOpenWorkflow}
-                  onOpenLogs={popups.handleOpenLogs}
-                  onOpenEval={popups.handleOpenEval}
-                  onOpenCost={popups.handleOpenCost}
-                />
-              </div>
-            </section>
+        {/* Header */}
+        <header className="flex flex-none items-center gap-3 border-b border-gray-200 dark:border-gray-700 px-6 py-4">
+          <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-300">
+            <Building2 className="h-5 w-5" />
           </div>
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Organization</h1>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Goals, automations, and the Chief of Staff that runs them.
+            </p>
+          </div>
+        </header>
+
+        {/* Two columns: Org Goals (left, mobile width) · Automations (right) */}
+        <div className="flex flex-1 min-h-0 flex-col lg:flex-row">
+          {/* Left: Org Goals — rendered in mobile width since the column is narrow */}
+          <aside className="h-[45vh] min-h-0 flex-none border-b border-gray-200 dark:border-gray-700 lg:h-auto lg:w-[420px] lg:border-b-0 lg:border-r">
+            <OrgGoalsPanel fixedDevice="mobile" />
+          </aside>
+
+          {/* Right: all Automations */}
+          <main className="min-h-0 flex-1 space-y-3 overflow-auto p-6">
+            <div className="flex items-center gap-2">
+              <Workflow className="h-4 w-4 text-primary" />
+              <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                Automations
+              </h2>
+              {automationCount > 0 && (
+                <span className="text-xs text-gray-400 dark:text-gray-500">
+                  {automationCount} total
+                </span>
+              )}
+            </div>
+            <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">
+              <WorkflowTable
+                rows={rows}
+                loading={loading}
+                onOpenWorkflow={handleOpenWorkflow}
+                onOpenLogs={popups.handleOpenLogs}
+                onOpenEval={popups.handleOpenEval}
+                onOpenCost={popups.handleOpenCost}
+              />
+            </div>
+          </main>
         </div>
       </div>
       <PopupGroup p={popups} />

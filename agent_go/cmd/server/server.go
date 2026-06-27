@@ -2508,6 +2508,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// This must happen AFTER session reactivation and BEFORE workshop creation,
 	// so the workshop code path sees a clean slate.
 	api.clearSessionStopped(sessionID)
+	// Also lift the registry-level zombie-prevention flag. A scheduled/workflow run
+	// stopped via the stop icon marks its MCP session IDs "stopped" (CloseHTTPSession);
+	// without clearing them here, an intentional resume reuses the same coding-agent
+	// bridge session, the registry refuses its connections, and its api-bridge tools
+	// read as "No such tool available" until a full reload.
+	mcpagent.ClearHTTPSessionStopped(sessionID)
 
 	// Track active session for page refresh recovery (no observer needed)
 	api.trackActiveSession(sessionID, req.AgentMode, req.Query, currentUserID, req.BotPlatform, req.TriggeredBy)

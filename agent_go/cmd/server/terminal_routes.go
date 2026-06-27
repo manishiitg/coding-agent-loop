@@ -202,18 +202,10 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 		//   - active + content=screen  → captureTerminalVisiblePaneWithStats (visible pane)
 		//   - active + content=history → the pipe-pane recording (live byte stream)
 		//   - idle                     → captureTerminalPaneForDetail = capture-pane -S (full buffer)
-		// It uses ReplaceContentWithSource, NOT the mergeTmuxScreenSnapshot accumulation
-		// (that path serves only the query_step poller + streaming accumulation). If the
-		// viewer shows wrong/duplicate content, fix it HERE, not in the merge.
+		// It always stores the latest capture via ReplaceContentWithSource — the
+		// store keeps the latest content only, with no snapshot accumulation. If the
+		// viewer shows wrong/duplicate content, fix it HERE.
 		ctx, cancel := context.WithTimeout(r.Context(), terminalTmuxActionTimeout)
-		// Only accumulate/merge captured snapshots while the pane is ACTIVE (live).
-		// Once it's idle/ended, captureTerminalPaneForDetail grabs tmux's full
-		// scrollback buffer directly — that IS the complete, correctly-formatted
-		// content, so merging it into the previously-accumulated snapshots only
-		// re-introduces duplicate lines and formatting drift. Use the real buffer
-		// as-is. (The merge heuristic only exists to fake scrollback from
-		// visible-pane snapshots during a live run.)
-		preserveScrollback := snapshot.Active && shouldPreserveCapturedTerminalScrollback(r)
 		var pipeContent string
 		var pipeStats terminalPaneCaptureStats
 		var havePipeContent bool
@@ -246,18 +238,12 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 			haveDisplayContent = havePipeContent && shouldUseTerminalPipeContentForDetail(r, pipeStats, stats)
 			if debugTerminal {
 				runtimeStats, haveRuntimeStats = inspectTerminalPaneRuntimeStats(ctx, snapshot.TmuxSession)
-				writeTerminalDebugHeaders(w, stats, preserveScrollback, runtimeStats, haveRuntimeStats)
+				writeTerminalDebugHeaders(w, stats, runtimeStats, haveRuntimeStats)
 				if haveDisplayContent {
 					terminalPipeRecorderDebugHeaders(w, displayStats)
 				}
 			}
-			var refreshed terminals.Snapshot
-			var ok bool
-			if preserveScrollback {
-				refreshed, ok = api.terminalStore.RefreshContentWithSource(snapshot.TerminalID, content, stats.ContentSource)
-			} else {
-				refreshed, ok = api.terminalStore.ReplaceContentWithSource(snapshot.TerminalID, content, stats.ContentSource)
-			}
+			refreshed, ok := api.terminalStore.ReplaceContentWithSource(snapshot.TerminalID, content, stats.ContentSource)
 			if ok {
 				snapshot = refreshed
 			}
@@ -275,7 +261,7 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 				snapshot.ContentSource = stats.ContentSource
 			}
 			if debugTerminal {
-				log.Printf("[TERMINAL_DEBUG] capture ok source=%q terminal_id=%q tmux_session=%q requested_lines=%d capture_lines=%d raw_lines=%d raw_bytes=%d collapsed_lines=%d collapsed_bytes=%d duration_ms=%d preserve_scrollback=%t content_source=%q display_bytes=%d refreshed_chunk=%d history_limit=%q history_size=%q alternate_on=%q pane_height=%q pane_width=%q pane_in_mode=%q scroll_position=%q",
+				log.Printf("[TERMINAL_DEBUG] capture ok source=%q terminal_id=%q tmux_session=%q requested_lines=%d capture_lines=%d raw_lines=%d raw_bytes=%d collapsed_lines=%d collapsed_bytes=%d duration_ms=%d content_source=%q display_bytes=%d refreshed_chunk=%d history_limit=%q history_size=%q alternate_on=%q pane_height=%q pane_width=%q pane_in_mode=%q scroll_position=%q",
 					debugSource,
 					snapshot.TerminalID,
 					snapshot.TmuxSession,
@@ -286,7 +272,6 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 					stats.CollapsedLines,
 					stats.CollapsedBytes,
 					stats.Duration.Milliseconds(),
-					preserveScrollback,
 					snapshot.ContentSource,
 					displayStats.RawBytes,
 					snapshot.ChunkIndex,
@@ -374,13 +359,6 @@ func terminalCaptureSkipReason(snapshot terminals.Snapshot, r *http.Request, sho
 		return "active_without_screen_or_history_request"
 	}
 	return "capture_not_requested"
-}
-
-func shouldPreserveCapturedTerminalScrollback(r *http.Request) bool {
-	if wantsScreenTerminalContent(r) {
-		return false
-	}
-	return !wantsHistoryTerminalContent(r)
 }
 
 func captureTerminalPaneForDetail(ctx context.Context, snapshot terminals.Snapshot, r *http.Request) (string, terminalPaneCaptureStats, error) {
@@ -887,7 +865,7 @@ func inspectTerminalPaneRuntimeStats(ctx context.Context, tmuxSession string) (t
 	}, true
 }
 
-func writeTerminalDebugHeaders(w http.ResponseWriter, stats terminalPaneCaptureStats, preserveScrollback bool, runtimeStats terminalPaneRuntimeStats, haveRuntimeStats bool) {
+func writeTerminalDebugHeaders(w http.ResponseWriter, stats terminalPaneCaptureStats, runtimeStats terminalPaneRuntimeStats, haveRuntimeStats bool) {
 	w.Header().Set("X-Runloop-Terminal-Content-Source", stats.ContentSource)
 	w.Header().Set("X-Runloop-Terminal-Requested-Lines", strconv.Itoa(stats.RequestedLines))
 	w.Header().Set("X-Runloop-Terminal-Capture-Lines", strconv.Itoa(stats.CaptureLines))
@@ -895,7 +873,9 @@ func writeTerminalDebugHeaders(w http.ResponseWriter, stats terminalPaneCaptureS
 	w.Header().Set("X-Runloop-Terminal-Raw-Bytes", strconv.Itoa(stats.RawBytes))
 	w.Header().Set("X-Runloop-Terminal-Collapsed-Lines", strconv.Itoa(stats.CollapsedLines))
 	w.Header().Set("X-Runloop-Terminal-Collapsed-Bytes", strconv.Itoa(stats.CollapsedBytes))
-	w.Header().Set("X-Runloop-Terminal-Preserve-Scrollback", strconv.FormatBool(preserveScrollback))
+	// Scrollback accumulation was removed; the store now always keeps the latest
+	// capture only. The header is retained (always false) for compatibility.
+	w.Header().Set("X-Runloop-Terminal-Preserve-Scrollback", strconv.FormatBool(false))
 	if !haveRuntimeStats {
 		return
 	}

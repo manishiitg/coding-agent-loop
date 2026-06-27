@@ -1579,7 +1579,7 @@ func TestStoreRefreshContentDoesNotRefreshUpdatedAtWhenPaneUnchanged(t *testing.
 	}
 }
 
-func TestStoreAccumulatesShortTmuxScreenSnapshots(t *testing.T) {
+func TestStoreStoresLatestShortTmuxScreenSnapshot(t *testing.T) {
 	store := NewStore()
 	metadata := map[string]interface{}{"execution_kind": "main_agent", "scope": "main", "tmux_session": "mlp-claude-main-test"}
 	store.HandleEvent("session-1", terminalEventWithMetadata("main:session-1", "old answer\nshared prompt", 10, metadata, time.Now()))
@@ -1589,9 +1589,10 @@ func TestStoreAccumulatesShortTmuxScreenSnapshots(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected terminal snapshot")
 	}
-	want := "old answer\nshared prompt\nnew answer"
+	// Snapshot accumulation was removed: the store keeps the latest capture only.
+	want := "shared prompt\nnew answer"
 	if snapshot.Content != want {
-		t.Fatalf("content = %q, want accumulated scrollback %q", snapshot.Content, want)
+		t.Fatalf("content = %q, want latest snapshot %q", snapshot.Content, want)
 	}
 }
 
@@ -1629,7 +1630,7 @@ func TestStoreDoesNotAccumulateShortNonTmuxSnapshots(t *testing.T) {
 	}
 }
 
-func TestStoreRefreshContentPreservesShortTmuxScrollback(t *testing.T) {
+func TestStoreRefreshContentReplacesTmuxScrollback(t *testing.T) {
 	store := NewStore()
 	metadata := map[string]interface{}{"execution_kind": "workflow_step", "scope": "workflow_step", "tmux_session": "mlp-codex-cli-int-test"}
 	store.HandleEvent("session-1", terminalEventWithMetadata("exec-1", "old output\ncurrent prompt", 10, metadata, time.Now()))
@@ -1638,9 +1639,10 @@ func TestStoreRefreshContentPreservesShortTmuxScrollback(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected terminal snapshot")
 	}
-	want := "old output\ncurrent prompt\nfresh output"
+	// Snapshot accumulation was removed: RefreshContent stores the latest capture.
+	want := "current prompt\nfresh output"
 	if refreshed.Content != want {
-		t.Fatalf("content = %q, want accumulated scrollback %q", refreshed.Content, want)
+		t.Fatalf("content = %q, want replacement %q", refreshed.Content, want)
 	}
 }
 
@@ -2684,131 +2686,5 @@ func TestStoreHandlesStatusLineUpdate(t *testing.T) {
 	}
 	if other.Status.ProviderLabel == "agy-cli · claude-3-5-sonnet" {
 		t.Errorf("unrelated pane received provider label %q", other.Status.ProviderLabel)
-	}
-}
-
-// makeIdlePaneSnapshot builds a visible tmux pane whose bottom line is a status
-// line whose timer changes between captures (the only difference between polls).
-func makeIdlePaneStatus(timer string) string {
-	lines := []string{
-		"$ run coding agent",
-		"Reading project files...",
-		"  - main.go",
-		"  - store.go",
-		"Thinking about the task",
-		"Editing store.go",
-		"Applied 3 changes",
-		"Running tests",
-		"All tests passed",
-		"",
-		"",
-		"▸ working · " + timer + " · mcp-agent-XYZ",
-	}
-	return strings.Join(lines, "\n")
-}
-
-// TestMergeTmuxScreenSnapshotDedupesIdleRecapture verifies that repeatedly
-// re-capturing the same visible pane while a CLI sits idle at the prompt — with
-// only the bottom status-line timer changing each poll — does NOT pile up
-// duplicate copies of the pane. Regression test for the idle-recapture
-// duplication bug in mergeTmuxScreenSnapshot.
-func TestMergeTmuxScreenSnapshotDedupesIdleRecapture(t *testing.T) {
-	content := makeIdlePaneStatus("0:03")
-	paneLines := strings.Count(content, "\n") + 1
-
-	for _, timer := range []string{"0:04", "0:05", "0:06", "0:07", "0:08"} {
-		snap := Snapshot{TmuxSession: "mlp-agy-idle", Content: content}
-		content = mergeTmuxScreenSnapshot(snap, makeIdlePaneStatus(timer))
-	}
-
-	gotLines := strings.Count(content, "\n") + 1
-	if gotLines > paneLines {
-		t.Fatalf("idle re-capture grew the buffer: started with %d pane lines, ended with %d lines (duplicate panes accumulated)\n---\n%s", paneLines, gotLines, content)
-	}
-
-	// The pane body must appear exactly once (no duplicated lines), and the
-	// latest status-line timer must be reflected.
-	if n := strings.Count(content, "Applied 3 changes"); n != 1 {
-		t.Fatalf("expected pane body line exactly once, found %d times:\n%s", n, content)
-	}
-	if !strings.Contains(content, "0:08") {
-		t.Fatalf("expected latest status-line timer 0:08 in merged content:\n%s", content)
-	}
-	if strings.Contains(content, "0:03") {
-		t.Fatalf("stale status-line timer 0:03 should have been replaced:\n%s", content)
-	}
-}
-
-// TestMergeTmuxScreenSnapshotPreservesScrollbackOnIdleRecapture verifies that
-// when real scrollback sits ABOVE the visible pane, an idle re-capture (changed
-// status line) replaces only the visible pane tail and preserves the scrollback
-// rather than collapsing the whole buffer down to just the latest pane.
-func TestMergeTmuxScreenSnapshotPreservesScrollbackOnIdleRecapture(t *testing.T) {
-	scrollback := make([]string, 0, 20)
-	for i := 0; i < 20; i++ {
-		scrollback = append(scrollback, "earlier log line "+strings.Repeat("x", i%3)+" #"+string(rune('A'+i)))
-	}
-	content := strings.Join(scrollback, "\n") + "\n" + makeIdlePaneStatus("0:03")
-	startLines := strings.Count(content, "\n") + 1
-
-	for _, timer := range []string{"0:04", "0:05", "0:06"} {
-		snap := Snapshot{TmuxSession: "mlp-agy-scroll", Content: content}
-		content = mergeTmuxScreenSnapshot(snap, makeIdlePaneStatus(timer))
-	}
-
-	endLines := strings.Count(content, "\n") + 1
-	if endLines != startLines {
-		t.Fatalf("scrollback+idle-recapture changed line count: start=%d end=%d (expected stable)\n%s", startLines, endLines, content)
-	}
-	// Scrollback above the pane must be preserved.
-	if !strings.Contains(content, "earlier log line ") || !strings.HasPrefix(content, scrollback[0]) {
-		t.Fatalf("scrollback was lost on idle re-capture; first line=%q\n%s", strings.SplitN(content, "\n", 2)[0], content)
-	}
-	if !strings.Contains(content, "0:06") {
-		t.Fatalf("expected latest status-line timer 0:06:\n%s", content)
-	}
-}
-
-// TestMergeTmuxScreenSnapshotAppendsRealNewOutput verifies that genuine new
-// output (a scrolled pane with brand-new lines, mostly different from the prior
-// tail) is appended via the overlap-based path — old content is retained and
-// the new lines are added.
-func TestMergeTmuxScreenSnapshotAppendsRealNewOutput(t *testing.T) {
-	existing := strings.Join([]string{
-		"line A",
-		"line B",
-		"line C",
-		"line D",
-		"line E",
-	}, "\n")
-
-	// Pane scrolled by 2: top two lines (A,B) scrolled off, two genuinely new
-	// lines (F,G) appeared at the bottom. The overlapping window is C,D,E.
-	next := strings.Join([]string{
-		"line C",
-		"line D",
-		"line E",
-		"line F",
-		"line G",
-	}, "\n")
-
-	snap := Snapshot{TmuxSession: "mlp-agy-scroll2", Content: existing}
-	merged := mergeTmuxScreenSnapshot(snap, next)
-
-	// Old content retained.
-	if !strings.Contains(merged, "line A") || !strings.Contains(merged, "line B") {
-		t.Fatalf("old content was dropped on real scroll:\n%s", merged)
-	}
-	// New lines appended.
-	if !strings.Contains(merged, "line F") || !strings.Contains(merged, "line G") {
-		t.Fatalf("new output was not appended on real scroll:\n%s", merged)
-	}
-	// Content grew (new lines added, not a no-op replace).
-	if got := strings.Count(merged, "\n") + 1; got <= strings.Count(existing, "\n")+1 {
-		t.Fatalf("expected merged content to grow with new output, got %d lines:\n%s", got, merged)
-	}
-	// The overlap window must not be duplicated.
-	if n := strings.Count(merged, "line C"); n != 1 {
-		t.Fatalf("overlap window duplicated: 'line C' appears %d times:\n%s", n, merged)
 	}
 }

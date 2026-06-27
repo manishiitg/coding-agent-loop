@@ -109,8 +109,6 @@ type Store struct {
 const terminalInactiveAfter = 2 * time.Minute
 const terminalPromptCompletionInactiveAfter = time.Minute
 const terminalToolTextMaxRunes = 2400
-const terminalShortPaneSnapshotMaxLines = 160
-const terminalAccumulatedScrollbackMaxLines = 10000
 
 var (
 	regexpMCPToken    = regexp.MustCompile(`(?i)(MCP_API_TOKEN=)[^\s"'\\]+`)
@@ -411,9 +409,10 @@ func (s *Store) markTerminalState(terminalID, state string) (Snapshot, bool) {
 	return snapshot, true
 }
 
-// RefreshContent replaces the terminal pane content from an operator-requested
-// tmux capture. It keeps manual inactive overrides inactive, but otherwise lets
-// the same lifecycle heuristics classify the refreshed pane.
+// RefreshContent stores the latest terminal pane content from an
+// operator-requested tmux capture. It keeps manual inactive overrides inactive,
+// but otherwise lets the same lifecycle heuristics classify the refreshed pane.
+// It simply replaces the stored content (no snapshot accumulation).
 func (s *Store) RefreshContent(terminalID, content string) (Snapshot, bool) {
 	return s.RefreshContentWithSource(terminalID, content, "")
 }
@@ -421,11 +420,11 @@ func (s *Store) RefreshContent(terminalID, content string) (Snapshot, bool) {
 // RefreshContentWithSource is RefreshContent plus a display-source marker used
 // by the UI to keep retained tmux snapshots on the xterm rendering path.
 func (s *Store) RefreshContentWithSource(terminalID, content, contentSource string) (Snapshot, bool) {
-	return s.refreshContent(terminalID, content, contentSource, true)
+	return s.refreshContent(terminalID, content, contentSource)
 }
 
-// ReplaceContent refreshes a terminal pane with an authoritative capture. Unlike
-// RefreshContent, it does not preserve previously accumulated screen snapshots.
+// ReplaceContent refreshes a terminal pane with an authoritative capture,
+// storing the latest content. It is identical to RefreshContent.
 func (s *Store) ReplaceContent(terminalID, content string) (Snapshot, bool) {
 	return s.ReplaceContentWithSource(terminalID, content, "")
 }
@@ -433,7 +432,7 @@ func (s *Store) ReplaceContent(terminalID, content string) (Snapshot, bool) {
 // ReplaceContentWithSource is ReplaceContent plus a display-source marker used
 // by the UI to keep retained tmux snapshots on the xterm rendering path.
 func (s *Store) ReplaceContentWithSource(terminalID, content, contentSource string) (Snapshot, bool) {
-	return s.refreshContent(terminalID, content, contentSource, false)
+	return s.refreshContent(terminalID, content, contentSource)
 }
 
 func (s *Store) SetDisplayContent(terminalID, content, contentSource string) (Snapshot, bool) {
@@ -467,7 +466,7 @@ func (s *Store) SetDisplayContent(terminalID, content, contentSource string) (Sn
 	return snapshot, true
 }
 
-func (s *Store) refreshContent(terminalID, content, contentSource string, preserveTmuxScrollback bool) (Snapshot, bool) {
+func (s *Store) refreshContent(terminalID, content, contentSource string) (Snapshot, bool) {
 	terminalID = strings.TrimSpace(terminalID)
 	if s == nil || terminalID == "" {
 		return Snapshot{}, false
@@ -481,15 +480,8 @@ func (s *Store) refreshContent(terminalID, content, contentSource string, preser
 	}
 	now := time.Now()
 	lifecycleContent := content
-	nextContent := content
-	if preserveTmuxScrollback {
-		nextContent = mergeTmuxScreenSnapshot(snapshot, content)
-	}
-	if strings.TrimSpace(lifecycleContent) == "" {
-		lifecycleContent = nextContent
-	}
-	contentChanged := snapshot.Content != nextContent
-	snapshot.Content = nextContent
+	contentChanged := snapshot.Content != content
+	snapshot.Content = content
 	if contentChanged {
 		snapshot.ChunkIndex++
 	}
@@ -651,7 +643,6 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	current.StepTransport = firstNonEmpty(stringValue(metadata, "step_transport"), current.StepTransport)
 	current.StepTriggeredBy = firstNonEmpty(stringValue(metadata, "step_triggered_by"), current.StepTriggeredBy)
 	current.AgentName = firstNonEmpty(stringValue(metadata, "agent_name"), stringValue(metadata, "orchestrator_agent_name"), current.AgentName)
-	previousTmuxSession := current.TmuxSession
 	current.TmuxSession = firstNonEmpty(
 		stringValue(metadata, "tmux_session"),
 		stringValue(metadata, "tmux_session_name"),
@@ -663,9 +654,6 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	)
 	content = s.contentWithToolLinesLocked(terminalID, content)
 	lifecycleContent := content
-	if exists && !freshTurn && strings.TrimSpace(previousTmuxSession) != "" && strings.TrimSpace(previousTmuxSession) == strings.TrimSpace(current.TmuxSession) {
-		content = mergeTmuxScreenSnapshot(current, content)
-	}
 	contentChanged := !exists || current.Content != content
 	current.Content = content
 	if rows := terminalRowsFromMetadata(metadata); len(rows) > 0 {
@@ -1101,207 +1089,6 @@ func terminalContentExtends(existing, next string) bool {
 		return false
 	}
 	return strings.HasPrefix(next, existing)
-}
-
-// mergeTmuxScreenSnapshot accumulates a polled visible-pane capture onto the
-// stored snapshot content (reconstructing scrollback from snapshots).
-//
-// IMPORTANT — the live terminal *viewer* does NOT go through this path. The
-// viewer (handleGetTerminal) serves the pipe-pane recording while the pane is
-// ACTIVE and a static `capture-pane -S` full buffer once it is idle; it never
-// merges. This merge runs only for:
-//   - the query_step agent-context poller (via RefreshContent), and
-//   - the live streaming-event accumulation (HandleEvent),
-// and its output is used as the capture-failure fallback + the terminal-list
-// content — never as the viewer's rendered content. Do NOT "fix" viewer
-// formatting/duplication here; it is the wrong path (see terminal_routes.go).
-func mergeTmuxScreenSnapshot(snapshot Snapshot, next string) string {
-	if !shouldAccumulateTmuxScreenSnapshot(snapshot, next) {
-		return next
-	}
-	existing := strings.TrimRight(snapshot.Content, "\n")
-	next = strings.TrimRight(next, "\n")
-	if existing == "" || next == "" {
-		return next
-	}
-	if existing == next || terminalContentExtends(next, existing) || terminalContentContainsScreen(existing, next) {
-		return existing
-	}
-	if terminalContentExtends(existing, next) {
-		return next
-	}
-
-	existingLines := strings.Split(existing, "\n")
-	nextLines := strings.Split(next, "\n")
-	overlap := terminalLineOverlap(existingLines, nextLines)
-	if overlap >= len(nextLines) {
-		return existing
-	}
-	// Idle re-capture dedup: when the visible pane is polled repeatedly while a
-	// CLI sits at the prompt, only the bottom status line (timer/spinner/token
-	// count) changes between polls. That defeats the overlap and exact-contains
-	// checks above, so without this guard the whole pane would be appended again
-	// every poll. If the TAIL of the accumulated content is mostly the same as
-	// the incoming pane, this is a re-capture of the same visible pane: replace
-	// that tail in place with the fresh capture instead of appending a duplicate.
-	// This preserves any real scrollback that sits ABOVE the visible pane. When
-	// there is genuine new output (next mostly different from the tail), the
-	// tail is NOT mostly-same and we fall through to the overlap-based append.
-	if len(existingLines) >= len(nextLines) {
-		tailStart := len(existingLines) - len(nextLines)
-		if terminalScreensMostlySame(existingLines[tailStart:], nextLines) {
-			merged := make([]string, 0, tailStart+len(nextLines))
-			merged = append(merged, existingLines[:tailStart]...)
-			merged = append(merged, nextLines...)
-			if len(merged) > terminalAccumulatedScrollbackMaxLines {
-				merged = merged[len(merged)-terminalAccumulatedScrollbackMaxLines:]
-			}
-			return strings.Join(merged, "\n")
-		}
-	}
-	if terminalScreensMostlySame(existingLines, nextLines) && overlap < terminalSmallScreenOverlapThreshold(nextLines) {
-		return next
-	}
-	merged := append(existingLines, nextLines[overlap:]...)
-	if len(merged) > terminalAccumulatedScrollbackMaxLines {
-		merged = merged[len(merged)-terminalAccumulatedScrollbackMaxLines:]
-	}
-	return strings.Join(merged, "\n")
-}
-
-func shouldAccumulateTmuxScreenSnapshot(snapshot Snapshot, next string) bool {
-	if strings.TrimSpace(snapshot.TmuxSession) == "" {
-		return false
-	}
-	if strings.TrimSpace(snapshot.Content) == "" || strings.TrimSpace(next) == "" {
-		return false
-	}
-	if terminalContentLineCount(next) > terminalShortPaneSnapshotMaxLines {
-		return false
-	}
-	return true
-}
-
-func terminalContentContainsScreen(existing, screen string) bool {
-	existingLines := terminalCanonicalLines(existing)
-	screenLines := terminalCanonicalLines(screen)
-	if len(existingLines) == 0 || len(screenLines) == 0 || len(screenLines) > len(existingLines) {
-		return false
-	}
-	for start := 0; start <= len(existingLines)-len(screenLines); start++ {
-		matched := true
-		for i := range screenLines {
-			if existingLines[start+i] != screenLines[i] {
-				matched = false
-				break
-			}
-		}
-		if matched {
-			return true
-		}
-	}
-	return false
-}
-
-func terminalLineOverlap(existingLines, nextLines []string) int {
-	maxOverlap := len(nextLines)
-	if len(existingLines) < maxOverlap {
-		maxOverlap = len(existingLines)
-	}
-	for overlap := maxOverlap; overlap > 0; overlap-- {
-		matched := true
-		for i := 0; i < overlap; i++ {
-			if terminalCanonicalLine(existingLines[len(existingLines)-overlap+i]) != terminalCanonicalLine(nextLines[i]) {
-				matched = false
-				break
-			}
-		}
-		if matched {
-			return overlap
-		}
-	}
-	return 0
-}
-
-func terminalSmallScreenOverlapThreshold(nextLines []string) int {
-	threshold := len(nextLines) / 2
-	if threshold < 2 {
-		return 1
-	}
-	if threshold > 3 {
-		return 3
-	}
-	return threshold
-}
-
-func terminalScreensMostlySame(existingLines, nextLines []string) bool {
-	existing := terminalMeaningfulCanonicalLines(existingLines)
-	next := terminalMeaningfulCanonicalLines(nextLines)
-	minLen := len(existing)
-	if len(next) < minLen {
-		minLen = len(next)
-	}
-	if minLen < 4 {
-		return false
-	}
-	common := terminalLineLCS(existing, next)
-	return common*3 >= minLen*2
-}
-
-func terminalMeaningfulCanonicalLines(lines []string) []string {
-	out := make([]string, 0, len(lines))
-	for _, line := range lines {
-		canonical := strings.TrimSpace(terminalCanonicalLine(line))
-		if canonical != "" {
-			out = append(out, canonical)
-		}
-	}
-	return out
-}
-
-func terminalLineLCS(a, b []string) int {
-	if len(a) == 0 || len(b) == 0 {
-		return 0
-	}
-	prev := make([]int, len(b)+1)
-	curr := make([]int, len(b)+1)
-	for i := 1; i <= len(a); i++ {
-		for j := 1; j <= len(b); j++ {
-			if a[i-1] == b[j-1] {
-				curr[j] = prev[j-1] + 1
-			} else if prev[j] >= curr[j-1] {
-				curr[j] = prev[j]
-			} else {
-				curr[j] = curr[j-1]
-			}
-		}
-		prev, curr = curr, prev
-		for j := range curr {
-			curr[j] = 0
-		}
-	}
-	return prev[len(b)]
-}
-
-func terminalCanonicalLines(content string) []string {
-	raw := strings.Split(strings.TrimRight(content, "\n"), "\n")
-	lines := make([]string, 0, len(raw))
-	for _, line := range raw {
-		lines = append(lines, terminalCanonicalLine(line))
-	}
-	return lines
-}
-
-func terminalCanonicalLine(line string) string {
-	line = ansiEscapePattern.ReplaceAllString(line, "")
-	return strings.TrimRight(line, " \t\r")
-}
-
-func terminalContentLineCount(content string) int {
-	if content == "" {
-		return 0
-	}
-	return strings.Count(content, "\n") + 1
 }
 
 func dedupeCurrentMainAgentSnapshots(snapshots []Snapshot) []Snapshot {

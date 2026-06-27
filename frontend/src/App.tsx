@@ -204,7 +204,9 @@ function App() {
     setSelectedPresetId,
     sidebarMinimized,
     workspaceMinimized,
+    workspaceMinimizedByMode,
     setWorkspaceMinimized,
+    setWorkspaceMinimizedForLayout,
     multiAgentRightPanelView,
     setMultiAgentRightPanelView,
     showWorkflowsOverview,
@@ -1428,15 +1430,21 @@ function App() {
 
   useEffect(() => {
     if (showWorkflowsOverview) {
-      setWorkspaceMinimized(true)
+      setWorkspaceMinimizedForLayout(true)
+      return
     }
-  }, [showWorkflowsOverview, setWorkspaceMinimized])
+
+    if (selectedModeCategory === 'workflow' || selectedModeCategory === 'multi-agent') {
+      const { workspaceMinimizedByMode } = useAppStore.getState()
+      setWorkspaceMinimizedForLayout(Boolean(workspaceMinimizedByMode?.[selectedModeCategory]))
+    }
+  }, [selectedModeCategory, showWorkflowsOverview, setWorkspaceMinimizedForLayout])
 
   useEffect(() => {
     const collapseWorkspaceForPopup = () => {
       const { workspaceMinimized: currentWorkspaceMinimized } = useAppStore.getState()
       if (!currentWorkspaceMinimized && hasOpenWorkspaceCollapsingPopup()) {
-        setWorkspaceMinimized(true)
+        setWorkspaceMinimizedForLayout(true)
       }
     }
 
@@ -1451,9 +1459,18 @@ function App() {
     })
 
     return () => observer.disconnect()
-  }, [setWorkspaceMinimized])
+  }, [setWorkspaceMinimizedForLayout])
 
   const multiAgentPanelDesktop = orgHtmlPreviewDevice === 'desktop'
+  const layoutWorkspaceMinimized =
+    showWorkflowsOverview
+      ? true
+      : selectedModeCategory === 'workflow' || selectedModeCategory === 'multi-agent'
+        ? Boolean(workspaceMinimizedByMode?.[selectedModeCategory])
+        : workspaceMinimized
+  const toggleMultiAgentPanelMinimize = useCallback(() => {
+    setWorkspaceMinimized(!layoutWorkspaceMinimized)
+  }, [layoutWorkspaceMinimized, setWorkspaceMinimized])
   const multiAgentPanelStyle = multiAgentPanelDesktop
     ? undefined
     : { width: orgHtmlPreviewDevice === 'tablet' ? 'min(880px, 72vw)' : 'min(480px, 56vw)' }
@@ -1495,7 +1512,7 @@ function App() {
   const multiAgentPanelCloseButton = (
     <button
       type="button"
-      onClick={toggleWorkspaceMinimize}
+      onClick={toggleMultiAgentPanelMinimize}
       title="Hide panel"
       aria-label="Hide panel"
       className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-lg border border-border bg-background/90 text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
@@ -1565,7 +1582,7 @@ function App() {
                     />
                   </div>
                   <div className={selectedModeCategory !== 'workflow' ? 'h-full relative' : 'hidden'}>
-                    {workspaceMinimized && (
+                    {layoutWorkspaceMinimized && (
                       <button
                         type="button"
                         onClick={() => setWorkspaceMinimized(false)}
@@ -1584,7 +1601,7 @@ function App() {
                           onNewChat={startNewChat}
                         />
                       </div>
-                      {!workspaceMinimized && (
+                      {!layoutWorkspaceMinimized && (
                         <div
                           className={`flex flex-col overflow-hidden border-l border-gray-200 bg-background dark:border-gray-700 ${multiAgentPanelClass}`}
                           style={multiAgentPanelStyle}
@@ -1599,22 +1616,22 @@ function App() {
                             {multiAgentRightPanelView === 'files' ? (
                               <Workspace
                                 minimized={false}
-                                onToggleMinimize={toggleWorkspaceMinimize}
+                                onToggleMinimize={toggleMultiAgentPanelMinimize}
                               />
                             ) : multiAgentRightPanelView === 'org-goals' ? (
                               <OrgGoalsPanel
                                 toolbarLeading={multiAgentPanelTabs}
-                                onClosePanel={toggleWorkspaceMinimize}
+                                onClosePanel={toggleMultiAgentPanelMinimize}
                               />
                             ) : multiAgentRightPanelView === 'memory' ? (
                               <MemoryPanel
                                 toolbarLeading={multiAgentPanelTabs}
-                                onClosePanel={toggleWorkspaceMinimize}
+                                onClosePanel={toggleMultiAgentPanelMinimize}
                               />
                             ) : (
                               <OrgPulsePanel
                                 toolbarLeading={multiAgentPanelTabs}
-                                onClosePanel={toggleWorkspaceMinimize}
+                                onClosePanel={toggleMultiAgentPanelMinimize}
                               />
                             )}
                           </div>

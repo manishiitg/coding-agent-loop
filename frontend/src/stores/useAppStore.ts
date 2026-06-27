@@ -40,6 +40,7 @@ interface AppState {
   // UI actions
   setSidebarMinimized: (minimized: boolean) => void
   setWorkspaceMinimized: (minimized: boolean) => void
+  setWorkspaceMinimizedForLayout: (minimized: boolean) => void
   setMultiAgentRightPanelView: (view: MultiAgentRightPanelView) => void
   setShowWorkflowsOverview: (show: boolean) => void
   setUseCodeExecutionMode: (enabled: boolean) => void
@@ -148,6 +149,10 @@ export const useAppStore = create<AppState>()(
           })
         },
 
+        setWorkspaceMinimizedForLayout: (minimized) => {
+          set({ workspaceMinimized: minimized })
+        },
+
         setMultiAgentRightPanelView: (view) => {
           set({ multiAgentRightPanelView: view })
         },
@@ -187,7 +192,7 @@ export const useAppStore = create<AppState>()(
         // File context is now mode-specific: multi-agent tabs have their own, workflow uses preset
       }),
       // Drop legacy `delegationMode` persisted from v2 and add per-mode workspace state.
-      version: 6,
+      version: 7,
       migrate: (persistedState: unknown, _version: number) => {
         const state = persistedState as Record<string, unknown>
         delete state.delegationMode
@@ -203,6 +208,14 @@ export const useAppStore = create<AppState>()(
           }
         }
         if (_version < 5) {
+          const workspaceByMode = state.workspaceMinimizedByMode as Record<string, unknown>
+          state.workspaceMinimizedByMode = {
+            workflow: Boolean(workspaceByMode?.workflow),
+            'multi-agent': false,
+          }
+          state.workspaceMinimized = false
+        }
+        if (_version < 7) {
           const workspaceByMode = state.workspaceMinimizedByMode as Record<string, unknown>
           state.workspaceMinimizedByMode = {
             workflow: Boolean(workspaceByMode?.workflow),

@@ -2137,10 +2137,17 @@ const XtermTerminalPane: React.FC<{
         return
       }
       const nextBaseY = term.buffer.active.baseY
-      // When the user is reading older output, keep the absolute viewport line
-      // stable across live refreshes. Preserving distance-from-bottom would drag
-      // the viewport downward every time new accumulated screen lines append.
-      term.scrollToLine(Math.max(0, Math.min(previousViewportY, nextBaseY)))
+      // Append case: new lines land at the bottom and existing lines keep their
+      // absolute index, so preserve the absolute viewport line.
+      // Rebuild case (term.reset() on a non-append refresh): the capture is a
+      // bottom-anchored sliding window — old lines drop off the TOP, so absolute
+      // indices shift down each refresh. Pinning to the old absolute line drifts the
+      // view downward and, when the buffer gets shorter, clamps it to the bottom
+      // ("scroll works, then snaps"). Distance-from-bottom is the stable coordinate.
+      const targetLine = appendOnly
+        ? Math.min(previousViewportY, nextBaseY)
+        : nextBaseY - distanceFromBottom
+      term.scrollToLine(Math.max(0, targetLine))
     }
     const afterWrite = () => {
       restoreScroll()

@@ -853,16 +853,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     !isRestoringChatSessions
 
   useEffect(() => {
-    if (
-      showNormalPreviousChatsPanel &&
-      activeEventViewMode === 'terminal' &&
-      activeTab?.tabId
-    ) {
-      useChatStore.getState().setTabViewMode(activeTab.tabId, 'tree')
-    }
-  }, [activeEventViewMode, activeTab?.tabId, showNormalPreviousChatsPanel])
-
-  useEffect(() => {
     if (!showNormalPreviousChatsPanel) {
       setHasPreviousNormalChats(false)
     }

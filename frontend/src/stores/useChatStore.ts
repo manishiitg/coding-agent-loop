@@ -1811,6 +1811,7 @@ export const useChatStore = create<ChatState>()(
                 sessionId: newSessionId,
                 isStreaming: false,
                 lastStreamingStartedAt: undefined,
+                viewMode: tab.metadata?.mode === 'multi-agent' ? 'terminal' : tab.viewMode,
                 config: stripRestoreOnlyTabConfig(tab.config),
               },
             },
@@ -1982,7 +1983,7 @@ export const useChatStore = create<ChatState>()(
           isSyntheticTurn: false,
           canSteer: false,
           hideToolCalls: true,
-          viewMode: normalizeEventViewMode(get().eventViewModePreference),
+          viewMode: mode === 'multi-agent' ? 'terminal' : normalizeEventViewMode(get().eventViewModePreference),
           config: defaultConfig, // Initialize with default config from global state
           createdAt: timestamp,
           lastAccessedAt: timestamp,

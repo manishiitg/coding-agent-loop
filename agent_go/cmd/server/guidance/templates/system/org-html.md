@@ -49,7 +49,7 @@ the org-specific structure and visual system.
   `overflow-wrap:anywhere`, `min-width:0`, stacked `.row` layouts on mobile, and reserve
   desktop-only side-by-side metadata for `@media (min-width: 640px)`.
 - **Valid CSS, no escaped braces.** Write raw CSS exactly as browsers expect it:
-  `@media (min-width:640px){ ... }`, never `{{ ... }}`. Repeated visual elements must use
+  `@media (min-width:640px){ ... }`, never `{{"{{"}} ... {{"}}"}}`. Repeated visual elements must use
   classes from the baseline (`.kpi`, `.pill`, `.entry`, `.suggestions`), not repeated inline
   layout styles.
 

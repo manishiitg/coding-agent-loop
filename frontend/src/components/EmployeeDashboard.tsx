@@ -1,8 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import {
-  X, UserCircle2,
-  PlayCircle, Clock, DollarSign, Loader2, Calendar, FileText, BarChart3, ChevronDown, ChevronRight,
-  UserCog, UserPlus, Plus, Minus, Pencil, Check, Database, RefreshCw, AlertCircle
+  Clock, DollarSign, Loader2, Calendar, FileText, BarChart3, ChevronDown, ChevronRight,
+  Plus, Minus, Database, RefreshCw, AlertCircle
 } from 'lucide-react'
 import {
   Bar,
@@ -15,7 +14,7 @@ import {
 } from 'recharts'
 import { agentApi, type MetricSnapshotRow, type WorkflowMetricRunSummary } from '../services/api'
 import { schedulerApi } from '../api/scheduler'
-import type { Employee, EvaluationReportEntry, ModelTokenUsage, PhaseTokenUsageFile, PlannerFile, TokenUsageFile, ToolCostUsage, WorkflowPhaseDailyCostsEntry, WorkflowReviewDataResponse, WorkflowRunCostsEntry, WorkflowRunDailyCostsEntry } from '../services/api-types'
+import type { EvaluationReportEntry, ModelTokenUsage, PhaseTokenUsageFile, PlannerFile, TokenUsageFile, ToolCostUsage, WorkflowPhaseDailyCostsEntry, WorkflowReviewDataResponse, WorkflowRunCostsEntry, WorkflowRunDailyCostsEntry } from '../services/api-types'
 import ExecutionLogsPopup from './workflow/ExecutionLogsPopup'
 import { ReportView } from './workflow/ReportViewer'
 import { WorkflowCanvas } from './workflow/canvas'
@@ -38,96 +37,20 @@ interface WorkflowSummary {
   nextScheduleAt: string | null
 }
 
-interface EmployeeWithWorkflows {
-  employee: Employee
-  workflows: WorkflowSummary[]
-  totalCost: number
-  completedToday: number
-  runningNow: number
-}
-
-interface EmployeeApiRecord extends Employee {
-  status?: string
-  workflow_count?: number
-  workflows?: string[]
-}
-
-const buildEmployeeWorkflowRows = (employees: EmployeeApiRecord[], summaries: WorkflowSummary[]): EmployeeWithWorkflows[] => {
-  const workflowAssignments = new Map<string, string>()
-  for (const emp of employees) {
-    for (const workflowPath of emp.workflows || []) {
-      workflowAssignments.set(workflowPath, emp.id)
-    }
-  }
-
-  const empMap: Map<string, EmployeeWithWorkflows> = new Map()
-  for (const emp of employees) {
-    empMap.set(emp.id, { employee: emp, workflows: [], totalCost: 0, completedToday: 0, runningNow: 0 })
-  }
-
-  const unassigned: WorkflowSummary[] = []
-  for (const summary of summaries) {
-    const empId = workflowAssignments.get(summary.workspacePath)
-    if (empId && empMap.has(empId)) {
-      const empData = empMap.get(empId)!
-      empData.workflows.push(summary)
-      if (summary.latestStatus === 'running') empData.runningNow++
-      if (summary.latestStatus === 'completed') empData.completedToday++
-    } else {
-      unassigned.push(summary)
-    }
-  }
-
-  const rows = Array.from(empMap.values())
-  if (unassigned.length > 0) {
-    let unassignedRunning = 0
-    let unassignedCompleted = 0
-    for (const wf of unassigned) {
-      if (wf.latestStatus === 'running') unassignedRunning++
-      if (wf.latestStatus === 'completed') unassignedCompleted++
-    }
-    rows.push({
-      employee: {
-        id: '__unassigned__',
-        name: 'Unassigned',
-        avatar_color: '#9ca3af',
-        description: 'Automations not assigned to any employee',
-        created_at: '',
-        updated_at: '',
-      },
-      workflows: unassigned,
-      totalCost: 0,
-      completedToday: unassignedCompleted,
-      runningNow: unassignedRunning,
-    })
-  }
-
-  return rows
-}
-
-const employeeAssignmentSignature = (employees: EmployeeApiRecord[]): string => {
+const workflowsSignature = (workflows: WorkflowSummary[]): string => {
   return JSON.stringify(
-    employees
-      .filter(emp => emp.id !== '__unassigned__')
-      .map(emp => ({
-        id: emp.id,
-        name: emp.name || '',
-        status: emp.status || '',
-        avatar_color: emp.avatar_color || '',
-        workflows: [...(emp.workflows || [])].sort(),
+    workflows
+      .map(wf => ({
+        path: wf.workspacePath,
+        label: wf.label,
+        status: wf.latestStatus,
+        runs: wf.totalRuns,
+        lastActive: wf.lastActive || '',
+        latestRunFolder: wf.latestRunFolder || '',
+        scheduleCount: wf.scheduleCount,
+        nextScheduleAt: wf.nextScheduleAt || '',
       }))
-      .sort((a, b) => a.id.localeCompare(b.id))
-  )
-}
-
-const employeeWorkflowRowsSignature = (rows: EmployeeWithWorkflows[]): string => {
-  return employeeAssignmentSignature(
-    rows
-      .filter(row => row.employee.id !== '__unassigned__')
-      .map(row => ({
-        ...row.employee,
-        workflows: row.workflows.map(workflow => workflow.workspacePath),
-      }))
+      .sort((a, b) => a.path.localeCompare(b.path))
   )
 }
 
@@ -182,11 +105,6 @@ interface WorkflowSkillsState {
   expandedFiles: Set<string>
 }
 
-interface SelectedWorkflowEntry {
-  employee: Employee
-  workflow: WorkflowSummary
-}
-
 interface WorkflowReviewState {
   loading: boolean
   reviewData: WorkflowReviewDataResponse | null
@@ -217,22 +135,6 @@ interface MetricDefinition {
   target?: number
   floor?: number
   ceiling?: number
-}
-
-// Avatar component
-const EmployeeAvatar: React.FC<{ name: string; color: string; size?: 'sm' | 'md' | 'lg' }> = ({ name, color, size = 'md' }) => {
-  const initials = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
-  const sizeClasses = { sm: 'w-8 h-8 text-[11px]', md: 'w-11 h-11 text-sm', lg: 'w-14 h-14 text-lg' }
-  return (
-    <div
-      className={`${sizeClasses[size]} flex items-center justify-center rounded-xl font-bold text-white shadow-sm ring-1 ring-black/5 dark:ring-white/10`}
-      style={{
-        background: `linear-gradient(145deg, ${color}, rgba(71, 85, 105, 0.95))`,
-      }}
-    >
-      {initials}
-    </div>
-  )
 }
 
 // Mini status indicator
@@ -561,12 +463,6 @@ interface DailyCostDetail {
   cost: number
 }
 
-const EMPLOYEE_AVATAR_COLORS = ['#2563eb', '#059669', '#7c3aed', '#dc2626', '#d97706', '#0891b2', '#be185d', '#4f46e5']
-
-interface EmployeeDraft {
-  name: string
-}
-
 const modelUsageToDailyDetail = (
   key: string,
   source: string,
@@ -783,13 +679,9 @@ export const EmployeeDashboard: React.FC = () => {
   const workflowPresetsLoaded = useGlobalPresetStore(state => state.workflowPresetsLoaded)
   const presetsLoading = useGlobalPresetStore(state => state.loading)
   const refreshPresets = useGlobalPresetStore(state => state.refreshPresets)
-  const [employees, setEmployees] = useState<Employee[]>([])
-  const [employeeWorkflows, setEmployeeWorkflows] = useState<EmployeeWithWorkflows[]>([])
+  const [workflows, setWorkflows] = useState<WorkflowSummary[]>([])
   const [loading, setLoading] = useState(true)
-  const [assigningWorkflow, setAssigningWorkflow] = useState<string | null>(null) // workspace path being assigned
-  const [assignMenuPlacement, setAssignMenuPlacement] = useState<'top' | 'bottom'>('bottom')
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null)
-  const [collapsedEmployeeIds, setCollapsedEmployeeIds] = useState<Set<string>>(new Set())
   const [reviewTab, setReviewTab] = useState<ReviewTab>('report')
   const [reviewState, setReviewState] = useState<WorkflowReviewState>(EMPTY_REVIEW_STATE)
   const [soulDocState, setSoulDocState] = useState<ImproveDocState>(EMPTY_SOUL_DOC_STATE)
@@ -798,18 +690,10 @@ export const EmployeeDashboard: React.FC = () => {
   const [workflowSkillsState, setWorkflowSkillsState] = useState<WorkflowSkillsState>(EMPTY_WORKFLOW_SKILLS_STATE)
   const [expandedEvalSteps, setExpandedEvalSteps] = useState<Set<string>>(new Set())
   const [expandedDailyCostDates, setExpandedDailyCostDates] = useState<Set<string>>(new Set())
-  const [creatingEmployee, setCreatingEmployee] = useState(false)
-  const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(null)
-  const [employeeDraft, setEmployeeDraft] = useState<EmployeeDraft>({ name: '' })
-  const [employeeFormError, setEmployeeFormError] = useState<string | null>(null)
-  const [savingEmployee, setSavingEmployee] = useState(false)
 
-  const loadData = useCallback(async () => {
-    setLoading(true)
+  const loadData = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true)
     try {
-      const [empResp] = await Promise.all([
-        agentApi.listEmployees(),
-      ])
       const schedulesResp = await schedulerApi.listJobs({ entity_type: 'workflow' }).catch(() => ({ jobs: [], total: 0, limit: 0, offset: 0 }))
 
       const discoveredWorkflows = workflowPresets
@@ -824,9 +708,6 @@ export const EmployeeDashboard: React.FC = () => {
         }
         scheduleByWorkspace.set(workspacePath, { count: prev.count + 1, nextRunAt })
       }
-
-      const emps = (empResp.employees || []) as EmployeeApiRecord[]
-      setEmployees(emps)
 
       // Build workflow summaries using the batch summary endpoint (single API call)
       const summaries: Map<string, WorkflowSummary> = new Map()
@@ -877,29 +758,21 @@ export const EmployeeDashboard: React.FC = () => {
         })
       }
 
-      setEmployeeWorkflows(buildEmployeeWorkflowRows(emps, Array.from(summaries.values())))
+      const nextWorkflows = Array.from(summaries.values()).sort((a, b) => a.label.localeCompare(b.label))
+      setWorkflows(prev => workflowsSignature(prev) === workflowsSignature(nextWorkflows) ? prev : nextWorkflows)
     } catch (err) {
-      console.error('Failed to load employee dashboard:', err)
+      console.error('Failed to load automations dashboard:', err)
     }
-    setLoading(false)
+    if (!opts?.silent) setLoading(false)
   }, [workflowPresets])
 
-  const refreshEmployeeAssignments = useCallback(async () => {
-    if (creatingEmployee || editingEmployeeId || savingEmployee) return
+  const refreshWorkflows = useCallback(async () => {
     try {
-      const empResp = await agentApi.listEmployees()
-      const emps = (empResp.employees || []) as EmployeeApiRecord[]
-      const nextSignature = employeeAssignmentSignature(emps)
-      setEmployees(prev => employeeAssignmentSignature(prev as EmployeeApiRecord[]) === nextSignature ? prev : emps)
-      setEmployeeWorkflows(prev => {
-        if (employeeWorkflowRowsSignature(prev) === nextSignature) return prev
-        const summaries = prev.flatMap(entry => entry.workflows)
-        return buildEmployeeWorkflowRows(emps, summaries)
-      })
+      await loadData({ silent: true })
     } catch (error) {
-      console.error('[EmployeeDashboard] Failed to refresh employees:', error)
+      console.error('[AutomationsDashboard] Failed to refresh automations:', error)
     }
-  }, [creatingEmployee, editingEmployeeId, savingEmployee])
+  }, [loadData])
 
   useEffect(() => {
     if (!workflowPresetsLoaded && workflowPresets.length === 0) {
@@ -919,7 +792,7 @@ export const EmployeeDashboard: React.FC = () => {
 
     const refreshIfVisible = () => {
       if (document.visibilityState === 'visible') {
-        refreshEmployeeAssignments()
+        refreshWorkflows()
       }
     }
 
@@ -930,39 +803,32 @@ export const EmployeeDashboard: React.FC = () => {
       window.removeEventListener('focus', refreshIfVisible)
       document.removeEventListener('visibilitychange', refreshIfVisible)
     }
-  }, [showWorkflowsOverview, refreshEmployeeAssignments])
+  }, [showWorkflowsOverview, refreshWorkflows])
 
-  const workflowEntries = useMemo<SelectedWorkflowEntry[]>(() => {
-    return employeeWorkflows.flatMap(({ employee, workflows }) =>
-      workflows.map(workflow => ({ employee, workflow }))
-    )
-  }, [employeeWorkflows])
-
-  const selectedWorkflowEntry = useMemo<SelectedWorkflowEntry | null>(() => {
-    if (workflowEntries.length === 0) return null
-    if (!selectedWorkflowId) return null
-    return workflowEntries.find(entry => entry.workflow.workspacePath === selectedWorkflowId) || null
-  }, [workflowEntries, selectedWorkflowId])
+  const selectedWorkflow = useMemo<WorkflowSummary | null>(() => {
+    if (workflows.length === 0 || !selectedWorkflowId) return null
+    return workflows.find(wf => wf.workspacePath === selectedWorkflowId) || null
+  }, [workflows, selectedWorkflowId])
 
   useEffect(() => {
-    if (workflowEntries.length === 0 || !selectedWorkflowId) {
+    if (workflows.length === 0 || !selectedWorkflowId) {
       if (selectedWorkflowId !== null) setSelectedWorkflowId(null)
       return
     }
 
-    if (!workflowEntries.some(entry => entry.workflow.workspacePath === selectedWorkflowId)) {
+    if (!workflows.some(wf => wf.workspacePath === selectedWorkflowId)) {
       setSelectedWorkflowId(null)
     }
-  }, [selectedWorkflowId, workflowEntries])
+  }, [selectedWorkflowId, workflows])
 
-  const loadWorkflowReview = useCallback(async (entry: SelectedWorkflowEntry | null) => {
-    if (!entry || !entry.workflow.workspacePath || !entry.workflow.latestRunFolder) {
+  const loadWorkflowReview = useCallback(async (workflow: WorkflowSummary | null) => {
+    if (!workflow || !workflow.workspacePath || !workflow.latestRunFolder) {
       setReviewState(EMPTY_REVIEW_STATE)
       return
     }
 
-    const workspacePath = entry.workflow.workspacePath
-    const runFolder = entry.workflow.latestRunFolder
+    const workspacePath = workflow.workspacePath
+    const runFolder = workflow.latestRunFolder
 
     setReviewState({
       ...EMPTY_REVIEW_STATE,
@@ -1049,8 +915,8 @@ export const EmployeeDashboard: React.FC = () => {
   }, [])
 
   useEffect(() => {
-    loadWorkflowReview(selectedWorkflowEntry)
-  }, [loadWorkflowReview, selectedWorkflowEntry?.workflow.workspacePath, selectedWorkflowEntry?.workflow.latestRunFolder])
+    loadWorkflowReview(selectedWorkflow)
+  }, [loadWorkflowReview, selectedWorkflow?.workspacePath, selectedWorkflow?.latestRunFolder])
 
   useEffect(() => {
     setExpandedDailyCostDates(new Set())
@@ -1086,9 +952,9 @@ export const EmployeeDashboard: React.FC = () => {
 
   useEffect(() => {
     if (reviewTab === 'soul') {
-      loadSoulDoc(selectedWorkflowEntry?.workflow.workspacePath)
+      loadSoulDoc(selectedWorkflow?.workspacePath)
     }
-  }, [loadSoulDoc, reviewTab, selectedWorkflowEntry?.workflow.workspacePath])
+  }, [loadSoulDoc, reviewTab, selectedWorkflow?.workspacePath])
 
   const loadWorkflowConfig = useCallback(async (workspacePath: string | null | undefined) => {
     if (!workspacePath) {
@@ -1133,9 +999,9 @@ export const EmployeeDashboard: React.FC = () => {
 
   useEffect(() => {
     if (reviewTab === 'config') {
-      loadWorkflowConfig(selectedWorkflowEntry?.workflow.workspacePath)
+      loadWorkflowConfig(selectedWorkflow?.workspacePath)
     }
-  }, [loadWorkflowConfig, reviewTab, selectedWorkflowEntry?.workflow.workspacePath])
+  }, [loadWorkflowConfig, reviewTab, selectedWorkflow?.workspacePath])
 
   const loadKnowledgebase = useCallback(async (workspacePath: string | null | undefined) => {
     if (!workspacePath) {
@@ -1173,9 +1039,9 @@ export const EmployeeDashboard: React.FC = () => {
 
   useEffect(() => {
     if (reviewTab === 'knowledgebase') {
-      loadKnowledgebase(selectedWorkflowEntry?.workflow.workspacePath)
+      loadKnowledgebase(selectedWorkflow?.workspacePath)
     }
-  }, [loadKnowledgebase, reviewTab, selectedWorkflowEntry?.workflow.workspacePath])
+  }, [loadKnowledgebase, reviewTab, selectedWorkflow?.workspacePath])
 
   const loadWorkflowSkills = useCallback(async (workspacePath: string | null | undefined) => {
     if (!workspacePath) {
@@ -1232,112 +1098,15 @@ export const EmployeeDashboard: React.FC = () => {
 
   useEffect(() => {
     if (reviewTab === 'skills') {
-      loadWorkflowSkills(selectedWorkflowEntry?.workflow.workspacePath)
+      loadWorkflowSkills(selectedWorkflow?.workspacePath)
     }
-  }, [loadWorkflowSkills, reviewTab, selectedWorkflowEntry?.workflow.workspacePath])
-
-  const handleAssign = useCallback(async (workspacePath: string | null, employeeId: string | null) => {
-    if (!workspacePath) return
-    await agentApi.assignWorkflowEmployee(workspacePath, employeeId)
-    setAssigningWorkflow(null)
-    loadData()
-  }, [loadData])
+  }, [loadWorkflowSkills, reviewTab, selectedWorkflow?.workspacePath])
 
   const handleSelectWorkflow = useCallback((workflowPath: string, nextTab?: ReviewTab) => {
     setSelectedWorkflowId(workflowPath)
     if (nextTab) setReviewTab(nextTab)
   }, [])
 
-  const applyEmployeeLocally = useCallback((employee: Employee, mode: 'create' | 'update') => {
-    setEmployees(prev => {
-      if (mode === 'create') return [...prev, employee]
-      return prev.map(item => item.id === employee.id ? employee : item)
-    })
-    setEmployeeWorkflows(prev => {
-      if (mode === 'create') {
-        const nextEntry: EmployeeWithWorkflows = { employee, workflows: [], totalCost: 0, completedToday: 0, runningNow: 0 }
-        const unassignedIndex = prev.findIndex(item => item.employee.id === '__unassigned__')
-        if (unassignedIndex === -1) return [...prev, nextEntry]
-        return [...prev.slice(0, unassignedIndex), nextEntry, ...prev.slice(unassignedIndex)]
-      }
-      return prev.map(item => item.employee.id === employee.id ? { ...item, employee } : item)
-    })
-  }, [])
-
-  const startCreateEmployee = useCallback(() => {
-    setCreatingEmployee(true)
-    setEditingEmployeeId(null)
-    setEmployeeDraft({ name: '' })
-    setEmployeeFormError(null)
-  }, [])
-
-  const startEditEmployee = useCallback((employee: Employee) => {
-    setCreatingEmployee(false)
-    setEditingEmployeeId(employee.id)
-    setEmployeeDraft({ name: employee.name })
-    setEmployeeFormError(null)
-  }, [])
-
-  const cancelEmployeeForm = useCallback(() => {
-    setCreatingEmployee(false)
-    setEditingEmployeeId(null)
-    setEmployeeDraft({ name: '' })
-    setEmployeeFormError(null)
-  }, [])
-
-  const saveEmployeeForm = useCallback(async (event?: React.FormEvent) => {
-    event?.preventDefault()
-    const name = employeeDraft.name.trim()
-    if (!name) {
-      setEmployeeFormError('Name is required')
-      return
-    }
-
-    setSavingEmployee(true)
-    setEmployeeFormError(null)
-    try {
-      if (creatingEmployee) {
-        const color = EMPLOYEE_AVATAR_COLORS[employees.length % EMPLOYEE_AVATAR_COLORS.length]
-        const created = await agentApi.createEmployee({ name, avatar_color: color })
-        applyEmployeeLocally(created, 'create')
-      } else if (editingEmployeeId) {
-        const updated = await agentApi.updateEmployee(editingEmployeeId, { name })
-        applyEmployeeLocally(updated, 'update')
-      }
-      cancelEmployeeForm()
-    } catch (err) {
-      setEmployeeFormError(err instanceof Error ? err.message : 'Failed to save employee')
-    } finally {
-      setSavingEmployee(false)
-    }
-  }, [applyEmployeeLocally, cancelEmployeeForm, creatingEmployee, editingEmployeeId, employeeDraft.name, employees.length])
-
-  const toggleAssignMenu = useCallback((event: React.MouseEvent<HTMLButtonElement>, workflowPath: string) => {
-    event.stopPropagation()
-    if (assigningWorkflow === workflowPath) {
-      setAssigningWorkflow(null)
-      return
-    }
-
-    const rect = event.currentTarget.getBoundingClientRect()
-    const estimatedMenuHeight = Math.min(260, Math.max(96, employees.length * 44 + 24))
-    const spaceBelow = window.innerHeight - rect.bottom
-    const spaceAbove = rect.top
-    setAssignMenuPlacement(spaceBelow < estimatedMenuHeight && spaceAbove > spaceBelow ? 'top' : 'bottom')
-    setAssigningWorkflow(workflowPath)
-  }, [assigningWorkflow, employees.length])
-
-  const toggleEmployeeCollapsed = useCallback((employeeId: string) => {
-    setCollapsedEmployeeIds(prev => {
-      const next = new Set(prev)
-      if (next.has(employeeId)) next.delete(employeeId)
-      else next.add(employeeId)
-      return next
-    })
-  }, [])
-
-  const selectedWorkflow = selectedWorkflowEntry?.workflow || null
-  const selectedEmployee = selectedWorkflowEntry?.employee || null
   const executionCost = getTokenUsageTotal(reviewState.tokenUsage)
   const evaluationCost = getTokenUsageTotal(reviewState.evaluationTokenUsage)
   const totalKnownCost = (executionCost || 0) + (evaluationCost || 0)
@@ -1624,270 +1393,77 @@ export const EmployeeDashboard: React.FC = () => {
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h3 className="text-sm font-semibold text-foreground">Employees</h3>
-                <p className="text-xs text-muted-foreground">{employees.length} team member{employees.length !== 1 ? 's' : ''}</p>
+                <h3 className="text-sm font-semibold text-foreground">Automations</h3>
+                <p className="text-xs text-muted-foreground">{workflows.length} automation{workflows.length !== 1 ? 's' : ''}</p>
               </div>
-              <button
-                type="button"
-                onClick={startCreateEmployee}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                <span>Add</span>
-              </button>
             </div>
 
-            {creatingEmployee && (
-              <form onSubmit={saveEmployeeForm} className="rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div className="text-sm font-medium text-foreground">Add employee</div>
-                  <button
-                    type="button"
-                    onClick={cancelEmployeeForm}
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                    aria-label="Cancel add employee"
-                    title="Cancel"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-                <div className="space-y-2">
-                  <input
-                    value={employeeDraft.name}
-                    onChange={event => setEmployeeDraft(prev => ({ ...prev, name: event.target.value }))}
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
-                    placeholder="Name"
-                    disabled={savingEmployee}
-                  />
-                  {employeeFormError && <div className="text-xs text-destructive">{employeeFormError}</div>}
-                  <div className="flex justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={cancelEmployeeForm}
-                      className="rounded-lg px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                      disabled={savingEmployee}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-opacity disabled:opacity-60"
-                      disabled={savingEmployee}
-                    >
-                      {savingEmployee ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                      <span>Create</span>
-                    </button>
-                  </div>
-                </div>
-              </form>
-            )}
-
-            {employeeWorkflows.length === 0 && (
+            {workflows.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-border bg-card px-6 py-16 text-center">
-                <UserCircle2 className="mx-auto mb-4 h-14 w-14 text-muted-foreground/60" />
-                <p className="text-base font-medium text-foreground">No employees found.</p>
-                <p className="mt-1 text-sm text-muted-foreground">Add the first employee to start organizing automations.</p>
+                <FileText className="mx-auto mb-4 h-14 w-14 text-muted-foreground/60" />
+                <p className="text-base font-medium text-foreground">No automations found.</p>
+                <p className="mt-1 text-sm text-muted-foreground">Create a workflow to see it listed here.</p>
               </div>
-            )}
-
-            {employeeWorkflows.map(({ employee, workflows, runningNow }) => {
-              const isCollapsed = collapsedEmployeeIds.has(employee.id)
-
-              return (
-                <div
-                  key={employee.id}
-                  className={`overflow-hidden rounded-2xl border ${employee.id === '__unassigned__' ? 'border-dashed border-border' : 'border-border'} bg-card shadow-sm`}
-                >
-                <div className="bg-muted/30 px-5 py-4">
-                  {editingEmployeeId === employee.id ? (
-                    <form onSubmit={saveEmployeeForm} className="space-y-2">
-                      <input
-                        value={employeeDraft.name}
-                        onChange={event => setEmployeeDraft(prev => ({ ...prev, name: event.target.value }))}
-                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
-                        placeholder="Name"
-                        disabled={savingEmployee}
-                      />
-                      {employeeFormError && <div className="text-xs text-destructive">{employeeFormError}</div>}
-                      <div className="flex justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={cancelEmployeeForm}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                          disabled={savingEmployee}
-                          aria-label="Cancel employee edit"
-                          title="Cancel"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="submit"
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-opacity disabled:opacity-60"
-                          disabled={savingEmployee}
-                          aria-label="Save employee"
-                          title="Save"
-                        >
-                          {savingEmployee ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                        </button>
-                      </div>
-                    </form>
-                  ) : (
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="flex min-w-0 items-center gap-3">
-                        <div className="min-w-0">
-                          <h4 className="font-semibold text-foreground">{employee.name}</h4>
+            ) : (
+              <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm divide-y divide-border">
+                {workflows.map(wf => {
+                  const isSelected = selectedWorkflow?.workspacePath === wf.workspacePath
+                  return (
+                    <div
+                      key={wf.workspacePath}
+                      className={`px-5 py-3 cursor-pointer transition-colors ${
+                        isSelected
+                          ? 'border-l-2 border-l-primary bg-primary/10'
+                          : 'border-l-2 border-l-transparent hover:bg-muted/40'
+                      }`}
+                      onClick={() => handleSelectWorkflow(wf.workspacePath)}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <StatusDot status={wf.latestStatus} />
+                          <span className="truncate text-sm font-medium text-foreground">{wf.label}</span>
+                          {isSelected && (
+                            <span className="rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                              Selected
+                            </span>
+                          )}
                         </div>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2 text-xs">
-                      {runningNow > 0 && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-info/10 px-2.5 py-1 font-medium text-info">
-                          <PlayCircle className="h-3.5 w-3.5" />
-                          {runningNow} running
-                        </span>
-                      )}
-                      {employee.id !== '__unassigned__' && (
-                        <button
-                          type="button"
-                          onClick={() => startEditEmployee(employee)}
-                          className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                          aria-label={`Edit ${employee.name}`}
-                          title="Edit employee"
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => toggleEmployeeCollapsed(employee.id)}
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                        aria-expanded={!isCollapsed}
-                        aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${employee.name}`}
-                        title={isCollapsed ? 'Expand' : 'Collapse'}
-                      >
-                        {isCollapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-                      </button>
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                          {wf.latestRunFolder ? (
+                            <span className="inline-flex items-center gap-1">
+                              <FileText className="w-3 h-3" />
+                              {wf.latestRunFolder}
+                            </span>
+                          ) : (
+                            <span>No run yet</span>
+                          )}
+                          {wf.totalRuns > 0 && <span>{wf.totalRuns} runs</span>}
+                          {wf.nextScheduleAt ? (
+                            <span className="inline-flex items-center gap-1 text-warning">
+                              <Calendar className="w-3 h-3" />
+                              {formatScheduleTime(wf.nextScheduleAt)}
+                            </span>
+                          ) : wf.scheduleCount > 0 ? (
+                            <span>{wf.scheduleCount} schedules</span>
+                          ) : null}
+                          {wf.lastActive && <span>{formatTimestamp(wf.lastActive)}</span>}
+                        </div>
                       </div>
                     </div>
-                  )}
-                </div>
-
-                {!isCollapsed && (workflows.length > 0 ? (
-                  <div className={`border-t ${employee.id === '__unassigned__' ? 'border-dashed' : ''} border-border divide-y divide-border`}>
-                    {workflows.map(wf => {
-                      const isSelected = selectedWorkflow?.workspacePath === wf.workspacePath
-                      return (
-                        <div
-                          key={wf.workspacePath}
-                          className={`px-5 py-3 cursor-pointer transition-colors ${
-                            isSelected
-                              ? 'border-l-2 border-l-primary bg-primary/10'
-                              : 'border-l-2 border-l-transparent hover:bg-muted/40'
-                          }`}
-                          onClick={() => handleSelectWorkflow(wf.workspacePath)}
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2 min-w-0">
-                                <StatusDot status={wf.latestStatus} />
-                                <span className="truncate text-sm font-medium text-foreground">{wf.label}</span>
-                                {isSelected && (
-                                  <span className="rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                                    Selected
-                                  </span>
-                                )}
-                              </div>
-                              <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                                {wf.latestRunFolder ? (
-                                  <span className="inline-flex items-center gap-1">
-                                    <FileText className="w-3 h-3" />
-                                    {wf.latestRunFolder}
-                                  </span>
-                                ) : (
-                                  <span>No run yet</span>
-                                )}
-                                {wf.totalRuns > 0 && <span>{wf.totalRuns} runs</span>}
-                                {wf.nextScheduleAt ? (
-                                  <span className="inline-flex items-center gap-1 text-warning">
-                                    <Calendar className="w-3 h-3" />
-                                    {formatScheduleTime(wf.nextScheduleAt)}
-                                  </span>
-                                ) : wf.scheduleCount > 0 ? (
-                                  <span>{wf.scheduleCount} schedules</span>
-                                ) : null}
-                                {wf.lastActive && <span>{formatTimestamp(wf.lastActive)}</span>}
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-2 flex-wrap justify-end" onClick={e => e.stopPropagation()}>
-                              {employees.length > 0 && (
-                                <div className="relative">
-                                  <button
-                                    onClick={(event) => toggleAssignMenu(event, wf.workspacePath)}
-                                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                                    aria-label={employee.id === '__unassigned__' ? 'Assign automation' : 'Reassign automation'}
-                                    title={employee.id === '__unassigned__' ? 'Assign automation' : 'Reassign automation'}
-                                  >
-                                    {employee.id === '__unassigned__' ? (
-                                      <UserPlus className="h-3.5 w-3.5" />
-                                    ) : (
-                                      <UserCog className="h-3.5 w-3.5" />
-                                    )}
-                                  </button>
-                                  {assigningWorkflow === wf.workspacePath && (
-                                    <div
-                                      className={`absolute right-0 z-10 max-h-64 w-48 overflow-y-auto rounded-xl border border-border bg-popover py-1 shadow-lg ${
-                                        assignMenuPlacement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'
-                                      }`}
-                                    >
-                                      {employee.id !== '__unassigned__' && (
-                                        <button
-                                          onClick={() => handleAssign(wf.workspacePath, null)}
-                                          className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm text-popover-foreground transition-colors hover:bg-muted"
-                                        >
-                                          <X className="w-3.5 h-3.5" />
-                                          <span>Unassign</span>
-                                        </button>
-                                      )}
-                                      {employees.filter(e => e.id !== '__unassigned__' && e.id !== employee.id).map(emp => (
-                                        <button
-                                          key={emp.id}
-                                          onClick={() => handleAssign(wf.workspacePath, emp.id)}
-                                          className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-muted"
-                                        >
-                                          <EmployeeAvatar name={emp.name} color={emp.avatar_color} size="sm" />
-                                          <span className="text-popover-foreground">{emp.name}</span>
-                                        </button>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                ) : (
-                  <div className="border-t border-border px-5 py-3 text-xs text-muted-foreground">
-                    No automations assigned yet
-                  </div>
-                ))}
+                  )
+                })}
               </div>
-              )
-            })}
+            )}
           </div>
 
           <div className="lg:sticky lg:top-6 self-start">
             <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
               <div className="border-b border-border bg-muted/30 px-5 py-4">
-                {selectedWorkflow && selectedEmployee ? (
+                {selectedWorkflow ? (
                   <div className="flex flex-wrap items-center gap-2 text-[11px]">
                     <h4 className="min-w-0 max-w-[240px] truncate text-base font-semibold text-foreground">
                       {selectedWorkflow.label}
                     </h4>
-                    <span className="text-muted-foreground">·</span>
-                    <span className="font-medium text-muted-foreground">{selectedEmployee.name}</span>
                     <span className="text-muted-foreground">·</span>
                       {selectedWorkflow.latestRunFolder ? (
                         <span className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-1 text-muted-foreground">
@@ -1957,7 +1533,7 @@ export const EmployeeDashboard: React.FC = () => {
               <div className="max-h-[calc(100vh-240px)] overflow-y-auto p-5">
                 {!selectedWorkflow ? (
                   <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-                    Select an automation from the left to review what this employee produced.
+                    Select an automation from the left to review its report, metrics, and cost.
                   </div>
                 ) : reviewTab !== 'soul' && reviewTab !== 'skills' && reviewTab !== 'config' && reviewTab !== 'knowledgebase' && reviewTab !== 'logs' && reviewTab !== 'flow' && !selectedWorkflow.latestRunFolder ? (
                   <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">

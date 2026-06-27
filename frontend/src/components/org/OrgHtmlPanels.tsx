@@ -70,15 +70,18 @@ interface OrgHtmlPanelProps {
   Icon: React.ComponentType<{ className?: string }>
   toolbarLeading?: React.ReactNode
   onClosePanel?: () => void
+  // When set, the panel renders at this device width and hides the device toggle
+  // (used when embedded in a narrow column, e.g. the org page goals column).
+  fixedDevice?: OrgHtmlPreviewDevice
 }
 
 const toolbarIconBtnClass = 'inline-flex h-7 w-7 flex-none items-center justify-center rounded-lg border border-border bg-background/90 text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50'
 
-const OrgHtmlPanel: React.FC<OrgHtmlPanelProps> = ({ title, path, loadingText, emptyText, Icon, toolbarLeading, onClosePanel }) => {
+const OrgHtmlPanel: React.FC<OrgHtmlPanelProps> = ({ title, path, loadingText, emptyText, Icon, toolbarLeading, onClosePanel, fixedDevice }) => {
   const [content, setContent] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [device, setDevice] = useState<OrgHtmlPreviewDevice>(() => getOrgHtmlPreviewDevice())
+  const [device, setDevice] = useState<OrgHtmlPreviewDevice>(() => fixedDevice ?? getOrgHtmlPreviewDevice())
   const { theme } = useTheme()
   const isDark = useMemo(() => {
     if (typeof document === 'undefined') return false
@@ -109,6 +112,7 @@ const OrgHtmlPanel: React.FC<OrgHtmlPanelProps> = ({ title, path, loadingText, e
 
   useEffect(() => { void load() }, [load])
   useEffect(() => {
+    if (fixedDevice) return // locked to fixedDevice — ignore the global preview preference
     const handler = (event: Event) => {
       const preference = (event as CustomEvent).detail?.preference
       if (preference === 'mobile' || preference === 'tablet' || preference === 'desktop') {
@@ -117,7 +121,7 @@ const OrgHtmlPanel: React.FC<OrgHtmlPanelProps> = ({ title, path, loadingText, e
     }
     window.addEventListener(ORG_HTML_PREVIEW_PREFERENCE_CHANGED_EVENT, handler)
     return () => window.removeEventListener(ORG_HTML_PREVIEW_PREFERENCE_CHANGED_EVENT, handler)
-  }, [])
+  }, [fixedDevice])
 
   const refresh = useCallback(() => {
     void load()
@@ -143,6 +147,7 @@ const OrgHtmlPanel: React.FC<OrgHtmlPanelProps> = ({ title, path, loadingText, e
           )}
         </div>
         <div className="flex flex-none items-center gap-1">
+          {!fixedDevice && (
           <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/70 p-0.5 shadow-sm">
             {ORG_HTML_PREVIEW_DEVICE_OPTS.map(({ mode, Icon: DeviceIcon, label }) => (
               <button
@@ -159,6 +164,7 @@ const OrgHtmlPanel: React.FC<OrgHtmlPanelProps> = ({ title, path, loadingText, e
               </button>
             ))}
           </div>
+          )}
           <button type="button" onClick={refresh} disabled={loading} title="Refresh" aria-label="Refresh" className={toolbarIconBtnClass}>
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
@@ -189,7 +195,7 @@ const OrgHtmlPanel: React.FC<OrgHtmlPanelProps> = ({ title, path, loadingText, e
   )
 }
 
-export const OrgGoalsPanel: React.FC<{ toolbarLeading?: React.ReactNode; onClosePanel?: () => void }> = ({ toolbarLeading, onClosePanel }) => (
+export const OrgGoalsPanel: React.FC<{ toolbarLeading?: React.ReactNode; onClosePanel?: () => void; fixedDevice?: OrgHtmlPreviewDevice }> = ({ toolbarLeading, onClosePanel, fixedDevice }) => (
   <OrgHtmlPanel
     title="Org Goals"
     path={ORG_GOALS_PATH}
@@ -198,6 +204,7 @@ export const OrgGoalsPanel: React.FC<{ toolbarLeading?: React.ReactNode; onClose
     Icon={Target}
     toolbarLeading={toolbarLeading}
     onClosePanel={onClosePanel}
+    fixedDevice={fixedDevice}
   />
 )
 

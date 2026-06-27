@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import {
   Clock, DollarSign, Loader2, Calendar, FileText, BarChart3, ChevronDown, ChevronRight,
-  Plus, Minus, Database, RefreshCw, AlertCircle
+  Plus, Minus, Database, RefreshCw, AlertCircle, Target, Activity
 } from 'lucide-react'
 import {
   Bar,
@@ -22,6 +22,7 @@ import { useAppStore } from '../stores/useAppStore'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { formatStepOutputContent, hasStepOutputContent, isFinalScoringPlaceholderText, parseEvaluationPlanDetails } from '../utils/evaluationReport'
 import { MarkdownRenderer } from './ui/MarkdownRenderer'
+import { OrgGoalsPanel, OrgPulsePanel } from './org/OrgHtmlPanels'
 
 interface WorkflowSummary {
   id: string
@@ -682,6 +683,7 @@ export const EmployeeDashboard: React.FC = () => {
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null)
+  const [orgView, setOrgView] = useState<'workflow' | 'goals' | 'pulse'>('workflow')
   const [reviewTab, setReviewTab] = useState<ReviewTab>('report')
   const [reviewState, setReviewState] = useState<WorkflowReviewState>(EMPTY_REVIEW_STATE)
   const [soulDocState, setSoulDocState] = useState<ImproveDocState>(EMPTY_SOUL_DOC_STATE)
@@ -1104,6 +1106,7 @@ export const EmployeeDashboard: React.FC = () => {
 
   const handleSelectWorkflow = useCallback((workflowPath: string, nextTab?: ReviewTab) => {
     setSelectedWorkflowId(workflowPath)
+    setOrgView('workflow')
     if (nextTab) setReviewTab(nextTab)
   }, [])
 
@@ -1391,6 +1394,36 @@ export const EmployeeDashboard: React.FC = () => {
     <div className="space-y-3">
       <div className="grid gap-5 lg:grid-cols-[minmax(260px,320px)_minmax(0,1fr)] xl:grid-cols-[minmax(260px,320px)_minmax(768px,1fr)]">
           <div className="space-y-4">
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold text-foreground">Organization</h3>
+              <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm divide-y divide-border">
+                <button
+                  type="button"
+                  onClick={() => setOrgView('goals')}
+                  className={`flex w-full items-center gap-2 px-5 py-3 text-left transition-colors ${
+                    orgView === 'goals'
+                      ? 'border-l-2 border-l-primary bg-primary/10'
+                      : 'border-l-2 border-l-transparent hover:bg-muted/40'
+                  }`}
+                >
+                  <Target className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span className="truncate text-sm font-medium text-foreground">Org Goals</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOrgView('pulse')}
+                  className={`flex w-full items-center gap-2 px-5 py-3 text-left transition-colors ${
+                    orgView === 'pulse'
+                      ? 'border-l-2 border-l-primary bg-primary/10'
+                      : 'border-l-2 border-l-transparent hover:bg-muted/40'
+                  }`}
+                >
+                  <Activity className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span className="truncate text-sm font-medium text-foreground">Org Pulse</span>
+                </button>
+              </div>
+            </div>
+
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-sm font-semibold text-foreground">Automations</h3>
@@ -1457,6 +1490,15 @@ export const EmployeeDashboard: React.FC = () => {
           </div>
 
           <div className="lg:sticky lg:top-6 self-start">
+            {orgView === 'goals' ? (
+              <div className="h-[calc(100vh-160px)] min-h-[480px] overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+                <OrgGoalsPanel />
+              </div>
+            ) : orgView === 'pulse' ? (
+              <div className="h-[calc(100vh-160px)] min-h-[480px] overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+                <OrgPulsePanel />
+              </div>
+            ) : (
             <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
               <div className="border-b border-border bg-muted/30 px-5 py-4">
                 {selectedWorkflow ? (
@@ -2216,6 +2258,7 @@ export const EmployeeDashboard: React.FC = () => {
                 )}
               </div>
             </div>
+            )}
           </div>
       </div>
     </div>

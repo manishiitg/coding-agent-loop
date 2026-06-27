@@ -8,7 +8,7 @@ import EvaluationPopup from './workflow/EvaluationPopup'
 import CostsPopup from './workflow/CostsPopup'
 import { OrgGoalsPanel } from './org/OrgHtmlPanels'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
-import type { RunFolderInfo, EvaluationReportsResponse, RunMetadataModels } from '../services/api-types'
+import type { RunFolderInfo, EvaluationReportsResponse, EvaluationReport, RunMetadataModels } from '../services/api-types'
 
 interface RunFolderDetail {
   folder: RunFolderInfo
@@ -65,6 +65,71 @@ const formatDateTime = (ts: string): string => {
 const formatCost = (cost: number): string => {
   if (cost < 0.01) return '<$0.01'
   return `$${cost.toFixed(2)}`
+}
+
+// Compact eval pass/fail summary from the most-recent report that has step scores.
+// A step "passes" when it scored full marks (score >= max_score); skipped /
+// unscorable (max_score <= 0) steps are excluded from the denominator.
+interface EvalSummary { passing: number; failing: number; total: number }
+const summarizeEval = (evalData: EvaluationReportsResponse | null): EvalSummary | null => {
+  if (!evalData || !evalData.reports || evalData.reports.length === 0) return null
+  let chosen: EvaluationReport | null = null
+  for (const entry of evalData.reports) {
+    const report = entry.report
+    if (!report || !report.step_scores || report.step_scores.length === 0) continue
+    if (!chosen || (report.generated_at || '').localeCompare(chosen.generated_at || '') > 0) {
+      chosen = report
+    }
+  }
+  if (!chosen || !chosen.step_scores) return null
+  let passing = 0
+  let failing = 0
+  for (const s of chosen.step_scores) {
+    if (s.skipped) continue
+    const max = s.max_score ?? 0
+    if (max <= 0) continue
+    if ((s.score ?? 0) >= max) passing++
+    else failing++
+  }
+  const total = passing + failing
+  if (total === 0) return null
+  return { passing, failing, total }
+}
+
+// Inline SVG sparkline of cost values (oldest -> newest). Renders a single dot
+// for a one-point series. Vertical padding keeps the stroke from clipping.
+const CostSparkline: React.FC<{ values: number[]; width?: number; height?: number }> = ({ values, width = 110, height = 26 }) => {
+  if (values.length === 0) return null
+  const pad = 3
+  const innerH = height - pad * 2
+  const max = Math.max(...values)
+  const min = Math.min(...values)
+  const range = max - min || 1
+  const yFor = (v: number) => pad + innerH - ((v - min) / range) * innerH
+  if (values.length === 1) {
+    return (
+      <svg width={width} height={height} className="overflow-visible">
+        <circle cx={width / 2} cy={height / 2} r={2.5} className="fill-emerald-500 dark:fill-emerald-400" />
+      </svg>
+    )
+  }
+  const stepX = width / (values.length - 1)
+  const points = values.map((v, i) => `${(i * stepX).toFixed(1)},${yFor(v).toFixed(1)}`).join(' ')
+  const lastX = (values.length - 1) * stepX
+  const lastY = yFor(values[values.length - 1])
+  return (
+    <svg width={width} height={height} className="overflow-visible" aria-label="Cost trend">
+      <polyline
+        points={points}
+        fill="none"
+        className="stroke-emerald-500 dark:stroke-emerald-400"
+        strokeWidth={1.5}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+      <circle cx={lastX.toFixed(1)} cy={lastY.toFixed(1)} r={2} className="fill-emerald-500 dark:fill-emerald-400" />
+    </svg>
+  )
 }
 
 const getProgressColor = (completed: number, total: number): string => {
@@ -448,6 +513,16 @@ const WorkflowTable: React.FC<{
 
           const latestRun = hasRuns ? row.runFolders[0] : null
 
+          // Cost trend: oldest -> newest (runFolders is newest-first), nulls skipped
+          const costSeries = row.runFolders
+            .slice()
+            .reverse()
+            .map(rf => rf.costUsd)
+            .filter((c): c is number => c !== null)
+
+          const evalSummary = summarizeEval(row.evalData)
+          const description = (row.preset as { description?: string }).description || row.preset.query || ''
+
           return (
             <React.Fragment key={row.preset.id}>
               <tr
@@ -541,6 +616,73 @@ const WorkflowTable: React.FC<{
                   </button>
                 </td>
               </tr>
+
+              {isExpanded && (description || costSeries.length > 0 || evalSummary || latestRun) && (
+                <tr className="border-t border-gray-100 dark:border-gray-700/50 bg-gray-50/60 dark:bg-gray-800/30">
+                  <td colSpan={6} className="px-6 pt-3 pb-4">
+                    <div className="flex flex-col gap-3">
+                      {description && (
+                        <p className="max-w-2xl text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+                          {description}
+                        </p>
+                      )}
+                      <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
+                        {/* Cost trend sparkline */}
+                        {costSeries.length > 0 && (
+                          <div className="flex items-center gap-2.5">
+                            <div>
+                              <div className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-gray-500">Cost trend</div>
+                              <div className="mt-0.5 flex items-center gap-1.5">
+                                <DollarSign className="h-3 w-3 text-emerald-500 dark:text-emerald-400" />
+                                <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                                  {aggCost !== null ? formatCost(aggCost) : '-'}
+                                </span>
+                                <span className="text-[10px] text-gray-400 dark:text-gray-500">
+                                  total · {costSeries.length} run{costSeries.length !== 1 ? 's' : ''}
+                                </span>
+                              </div>
+                            </div>
+                            <CostSparkline values={costSeries} />
+                          </div>
+                        )}
+
+                        {/* Eval pass/fail */}
+                        {evalSummary && (
+                          <div>
+                            <div className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-gray-500">Evaluation</div>
+                            <div className="mt-0.5 flex items-center gap-1.5">
+                              <CheckCircle2 className={`h-3 w-3 ${evalSummary.failing > 0 ? 'text-amber-500 dark:text-amber-400' : 'text-green-500 dark:text-green-400'}`} />
+                              <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                                {evalSummary.passing}/{evalSummary.total} passing
+                              </span>
+                              {evalSummary.failing > 0 && (
+                                <span className="text-xs font-medium text-red-600 dark:text-red-400">
+                                  {evalSummary.failing} failing
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Latest report / logs link */}
+                        {latestRun && row.workspacePath && (
+                          <div>
+                            <div className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-gray-500">Latest run</div>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); onOpenLogs(row.workspacePath!, latestRun.folder.name, allFolderNames) }}
+                              className="mt-0.5 flex items-center gap-1 rounded-md px-2 py-1 text-xs text-gray-600 transition-colors hover:bg-gray-200/70 dark:text-gray-400 dark:hover:bg-gray-600/40"
+                              title="Open latest run logs"
+                            >
+                              <FileText className="h-3 w-3" />
+                              <span className="font-mono">{latestRun.folder.name}</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              )}
 
               {isExpanded && row.runFolders.map((detail) => (
                 <RunFolderRow

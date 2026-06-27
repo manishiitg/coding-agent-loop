@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react'
-import { Loader2, ChevronRight, ChevronDown, FileText, BarChart3, DollarSign, Clock, AlertCircle, X, CheckCircle2, PlayCircle, Circle, Timer, Zap, Building2, Target, Workflow } from 'lucide-react'
+import { Loader2, ChevronRight, ChevronDown, FileText, BarChart3, DollarSign, Clock, AlertCircle, X, CheckCircle2, PlayCircle, Circle, Timer, Zap, Target, Workflow } from 'lucide-react'
 import { agentApi, type WorkflowMetricRunSummary } from '../services/api'
-import { usePresetApplication } from '../stores/useGlobalPresetStore'
+import { usePresetApplication, useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
 import ExecutionLogsPopup from './workflow/ExecutionLogsPopup'
 import EvaluationPopup from './workflow/EvaluationPopup'
@@ -761,8 +761,18 @@ export const WorkflowsOverviewPage: React.FC = () => {
   const { applyPreset } = usePresetApplication()
   const { setModeCategory, selectedModeCategory } = useModeStore()
   const popups = usePopupState()
+  // Automations come from the workflow presets, which load asynchronously (and on
+  // app init). Reload the overview whenever they change so the org page isn't stuck
+  // on an empty "No automations found" when it mounts before the presets arrive.
+  const workflowPresets = useGlobalPresetStore(s => s.workflowPresets)
+  const refreshPresets = useGlobalPresetStore(s => s.refreshPresets)
 
-  useEffect(() => { loadData() }, [loadData])
+  // Fallback: if presets haven't loaded at all, trigger a refresh once.
+  useEffect(() => {
+    if (useGlobalPresetStore.getState().workflowPresets.length === 0) void refreshPresets()
+  }, [refreshPresets])
+
+  useEffect(() => { loadData() }, [loadData, workflowPresets])
 
   const handleOpenWorkflow = useCallback((preset: CustomPreset | PredefinedPreset) => {
     if (selectedModeCategory !== 'workflow') setModeCategory('workflow')
@@ -774,19 +784,6 @@ export const WorkflowsOverviewPage: React.FC = () => {
   return (
     <>
       <div className="h-full flex flex-col bg-white dark:bg-gray-900">
-        {/* Header */}
-        <header className="flex flex-none items-center gap-3 border-b border-gray-200 dark:border-gray-700 px-6 py-4">
-          <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-300">
-            <Building2 className="h-5 w-5" />
-          </div>
-          <div className="min-w-0">
-            <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Organization</h1>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              Goals, automations, and the Chief of Staff that runs them.
-            </p>
-          </div>
-        </header>
-
         {/* Two columns: Org Goals (left, mobile width) · Automations (right) */}
         <div className="flex flex-1 min-h-0 flex-col lg:flex-row">
           {/* Left: Org Goals — rendered in mobile width since the column is narrow */}

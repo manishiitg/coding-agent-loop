@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import cronstrue from 'cronstrue'
-import { X, CalendarDays, Play, Trash2, Square, ToggleLeft, ToggleRight, RefreshCw, AlertCircle, CheckCircle2, ClockAlert } from 'lucide-react'
+import { X, CalendarDays, Play, Trash2, Square, ToggleLeft, ToggleRight, RefreshCw, AlertCircle, CheckCircle2, Clock, ClockAlert } from 'lucide-react'
 import { schedulerApi } from '../../api/scheduler'
 import type { ScheduledJob } from '../../services/api-types'
 import ModalPortal from '../ui/ModalPortal'
 
 const MISSED_SCHEDULE_GRACE_MS = 60_000
+const ORG_PULSE_JOB_ID = 'builtin-org-pulse'
+type JobFilter = 'running' | 'enabled' | 'paused' | 'missed' | 'issues' | 'all'
 
 function describeCron(expr: string): string {
   try {
@@ -33,6 +35,11 @@ function formatRelativeTime(dateStr: string): string {
   }
   const days = Math.round(absDiff / 86400_000)
   return isPast ? `${days}d ago` : `in ${days}d`
+}
+
+function formatLastRunLabel(dateStr?: string): string {
+  if (!dateStr) return 'never'
+  return formatRelativeTime(dateStr)
 }
 
 function getMissedScheduleDelayMs(job: ScheduledJob): number | null {
@@ -74,6 +81,10 @@ function sortJobs(a: ScheduledJob, b: ScheduledJob): number {
   return a.name.localeCompare(b.name)
 }
 
+function isOrgPulseJob(job: ScheduledJob): boolean {
+  return job.id === ORG_PULSE_JOB_ID
+}
+
 interface MultiAgentSchedulesPopupProps {
   onClose: () => void
 }
@@ -83,15 +94,15 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [actionInProgress, setActionInProgress] = useState<string | null>(null) // jobID being acted on
+  const [activeFilter, setActiveFilter] = useState<JobFilter>('all')
 
   const loadJobs = useCallback(async () => {
     try {
       setError(null)
       const resp = await schedulerApi.listJobs({ mode: 'multi-agent' })
       setJobs(resp.jobs || [])
-    } catch (err) {
+    } catch {
       setError('Failed to load schedules')
-      console.error(err)
     } finally {
       setIsLoading(false)
     }
@@ -104,24 +115,73 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
     return () => clearInterval(interval)
   }, [loadJobs])
 
-  const missedCount = useMemo(
-    () => jobs.filter(job => getMissedScheduleDelayMs(job) != null).length,
-    [jobs]
-  )
+  const summary = useMemo(() => {
+    let running = 0
+    let enabled = 0
+    let paused = 0
+    let missed = 0
+    let issues = 0
+    let lastRunAt = ''
+
+    for (const job of jobs) {
+      if (job.last_status === 'running') running += 1
+      if (job.enabled) enabled += 1
+      else paused += 1
+      if (getMissedScheduleDelayMs(job) != null) missed += 1
+      if (job.last_status === 'error') issues += 1
+      if (job.last_run_at && (!lastRunAt || job.last_run_at > lastRunAt)) {
+        lastRunAt = job.last_run_at
+      }
+    }
+
+    return {
+      total: jobs.length,
+      running,
+      enabled,
+      paused,
+      missed,
+      issues,
+      lastRunAt
+    }
+  }, [jobs])
 
   const sortedJobs = useMemo(
     () => [...jobs].sort(sortJobs),
     [jobs]
   )
 
+  const filteredJobs = useMemo(() => {
+    return sortedJobs.filter(job => {
+      switch (activeFilter) {
+        case 'running':
+          return job.last_status === 'running'
+        case 'enabled':
+          return job.enabled
+        case 'paused':
+          return !job.enabled
+        case 'missed':
+          return getMissedScheduleDelayMs(job) != null
+        case 'issues':
+          return job.last_status === 'error'
+        case 'all':
+        default:
+          return true
+      }
+    })
+  }, [activeFilter, sortedJobs])
+
   const handleToggle = async (job: ScheduledJob) => {
+    if (isOrgPulseJob(job)) {
+      setError('Use /pulse-setup in Chief of Staff to change Daily Org Pulse.')
+      return
+    }
     setActionInProgress(job.id)
     try {
       const updated = job.enabled
         ? await schedulerApi.disableJob(job.id)
         : await schedulerApi.enableJob(job.id)
       setJobs(prev => prev.map(j => j.id === job.id ? updated : j))
-    } catch (err) {
+    } catch {
       setError(`Failed to ${job.enabled ? 'disable' : 'enable'} schedule`)
     } finally {
       setActionInProgress(null)
@@ -129,12 +189,16 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
   }
 
   const handleTrigger = async (job: ScheduledJob) => {
+    if (isOrgPulseJob(job)) {
+      setError('Use /pulse-setup in Chief of Staff before running Daily Org Pulse.')
+      return
+    }
     setActionInProgress(job.id)
     try {
       await schedulerApi.triggerJob(job.id)
       // Refresh to show running status
       setTimeout(loadJobs, 1000)
-    } catch (err) {
+    } catch {
       setError('Failed to trigger schedule')
     } finally {
       setActionInProgress(null)
@@ -146,7 +210,7 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
     try {
       const updated = await schedulerApi.stopJob(job.id)
       setJobs(prev => prev.map(j => j.id === job.id ? updated : j))
-    } catch (err) {
+    } catch {
       setError('Failed to stop schedule')
     } finally {
       setActionInProgress(null)
@@ -154,12 +218,16 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
   }
 
   const handleDelete = async (job: ScheduledJob) => {
+    if (isOrgPulseJob(job)) {
+      setError('Use /pulse-setup in Chief of Staff to disable or change Daily Org Pulse.')
+      return
+    }
     if (!window.confirm(`Delete schedule "${job.name}"?`)) return
     setActionInProgress(job.id)
     try {
       await schedulerApi.deleteJob(job.id)
       setJobs(prev => prev.filter(j => j.id !== job.id))
-    } catch (err) {
+    } catch {
       setError('Failed to delete schedule')
     } finally {
       setActionInProgress(null)
@@ -169,199 +237,290 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
   const statusBadge = (job: ScheduledJob) => {
     const missedDelayMs = getMissedScheduleDelayMs(job)
     if (job.last_status === 'running') {
-      return <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-blue-900/40 text-blue-400 border border-blue-700/50">
-        <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" /> Running
+      return <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+        <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" /> Running
       </span>
     }
     if (missedDelayMs != null) {
-      return <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-900/30 text-amber-300 border border-amber-700/50">
-        <ClockAlert className="w-3 h-3" /> Missed
+      return <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+        <ClockAlert className="h-3 w-3" /> Missed
       </span>
     }
     if (job.last_status === 'error') {
-      return <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-red-900/30 text-red-400 border border-red-700/50">
-        <AlertCircle className="w-3 h-3" /> Error
+      return <span className="inline-flex items-center gap-1 rounded-full border border-red-500/30 bg-red-500/10 px-1.5 py-0.5 text-[11px] font-medium text-red-600 dark:text-red-300">
+        <AlertCircle className="h-3 w-3" /> Issue
       </span>
     }
     if (job.last_status === 'success') {
-      return <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-green-900/30 text-green-400 border border-green-700/50">
-        <CheckCircle2 className="w-3 h-3" /> Success
+      return <span className="inline-flex items-center gap-1 rounded-full border border-green-500/30 bg-green-500/10 px-1.5 py-0.5 text-[11px] font-medium text-green-700 dark:text-green-300">
+        <CheckCircle2 className="h-3 w-3" /> Success
       </span>
     }
     return null
   }
 
+  const filterPills: Array<{ key: JobFilter; label: string; count: number }> = [
+    { key: 'running', label: 'Running', count: summary.running },
+    { key: 'enabled', label: 'Enabled', count: summary.enabled },
+    { key: 'paused', label: 'Paused', count: summary.paused },
+    { key: 'missed', label: 'Missed', count: summary.missed },
+    { key: 'issues', label: 'Issues', count: summary.issues },
+    { key: 'all', label: 'All', count: summary.total },
+  ]
+
   return (
     <ModalPortal>
     <div
-      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-2 sm:p-4"
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-2 sm:p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div className="w-full max-w-[520px] max-h-[calc(100dvh-1rem)] sm:max-h-[80vh] bg-gray-900 rounded-xl shadow-2xl border border-gray-700 flex flex-col">
+      <div className="flex max-h-[calc(100dvh-1rem)] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-2xl sm:max-h-[85vh]">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700 flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <CalendarDays className="w-5 h-5 text-amber-400" />
-            <h3 className="text-base font-semibold text-white">Scheduled Tasks</h3>
-            <span className="text-xs text-gray-500">
-              {jobs.length} schedule{jobs.length !== 1 ? 's' : ''}
-            </span>
-            {missedCount > 0 && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-amber-700/50 bg-amber-900/30 px-2 py-0.5 text-[10px] font-medium text-amber-300">
-                <ClockAlert className="h-3 w-3" />
-                {missedCount} missed
-              </span>
+        <div className="flex flex-shrink-0 items-start justify-between gap-4 border-b border-border px-5 py-4">
+          <div className="min-w-0 space-y-2">
+            <div className="flex items-center gap-2">
+              <CalendarDays className="h-5 w-5 text-amber-500" />
+              <h3 className="truncate text-base font-semibold text-foreground">Scheduled Chief of Staff Tasks</h3>
+            </div>
+            {!isLoading && (
+              <div className="flex flex-wrap gap-1.5">
+                <span className="rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground">
+                  {summary.total} schedule{summary.total === 1 ? '' : 's'}
+                </span>
+                <span className="rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground">
+                  {summary.enabled} active
+                </span>
+                {summary.total > 0 && (
+                  <span className="rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground">
+                    Last ran {formatLastRunLabel(summary.lastRunAt)}
+                  </span>
+                )}
+                {summary.running > 0 && (
+                  <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+                    {summary.running} running
+                  </span>
+                )}
+                {summary.missed > 0 && (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+                    <ClockAlert className="h-3 w-3" />
+                    {summary.missed} missed
+                  </span>
+                )}
+                {summary.issues > 0 && (
+                  <span className="rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-600 dark:text-red-300">
+                    {summary.issues} issue{summary.issues === 1 ? '' : 's'}
+                  </span>
+                )}
+              </div>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <button
               onClick={loadJobs}
-              className="p-1.5 rounded-md text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors"
+              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               title="Refresh"
+              aria-label="Refresh schedules"
             >
-              <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
             </button>
             <button
               onClick={onClose}
-              className="text-gray-400 hover:text-gray-200 transition-colors"
+              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              aria-label="Close schedules"
             >
-              <X className="w-5 h-5" />
+              <X className="h-4 w-4" />
             </button>
           </div>
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-5 py-3">
-          {error && (
-            <div className="mb-3 px-3 py-2 rounded-lg bg-red-900/20 border border-red-800/40 text-xs text-red-400">
-              {error}
+        <div className="flex-1 overflow-y-auto">
+          {!isLoading && jobs.length > 0 && (
+            <div className="sticky top-0 z-10 border-b border-border bg-card/95 px-5 py-3 backdrop-blur">
+              <div className="-mx-1 flex items-center gap-2 overflow-x-auto px-1 pb-1">
+                {filterPills.map(pill => (
+                  <button
+                    key={pill.key}
+                    onClick={() => setActiveFilter(pill.key)}
+                    className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                      activeFilter === pill.key
+                        ? 'bg-foreground text-background'
+                        : 'border border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
+                    }`}
+                  >
+                    {pill.label}
+                    <span className="ml-1 opacity-70">{pill.count}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="pt-1 text-xs text-muted-foreground">
+                {filteredJobs.length} schedule{filteredJobs.length === 1 ? '' : 's'} shown
+              </div>
             </div>
           )}
 
-          {isLoading && jobs.length === 0 ? (
-            <div className="py-8 text-center text-sm text-gray-500">Loading schedules...</div>
-          ) : jobs.length === 0 ? (
-            <div className="py-8 text-center">
-              <CalendarDays className="w-8 h-8 text-gray-600 mx-auto mb-2" />
-              <p className="text-sm text-gray-400">No scheduled tasks yet</p>
-              <p className="text-xs text-gray-500 mt-1">
-                Ask the agent to schedule a task, e.g. "Run this report every morning at 9am"
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {sortedJobs.map((job) => {
-                const missedDelayMs = getMissedScheduleDelayMs(job)
+          <div className="px-5 py-4">
+            {error && (
+              <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-300">
+                {error}
+              </div>
+            )}
 
-                return (
-                <div
-                  key={job.id}
-                  className={`rounded-lg border p-3 transition-colors ${
-                    missedDelayMs != null
-                      ? 'border-amber-700/50 bg-amber-950/20'
-                      : job.enabled
-                      ? 'border-gray-700 bg-gray-800/50'
-                      : 'border-gray-800 bg-gray-900/50 opacity-60'
-                  }`}
-                >
-                  {/* Top row: name + status */}
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-sm font-medium text-gray-200 truncate max-w-[280px]">
-                      {job.name}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      {statusBadge(job)}
-                      <button
-                        onClick={() => handleToggle(job)}
-                        disabled={actionInProgress === job.id}
-                        className="text-gray-400 hover:text-gray-200 transition-colors disabled:opacity-50"
-                        title={job.enabled ? 'Disable' : 'Enable'}
-                      >
-                        {job.enabled
-                          ? <ToggleRight className="w-5 h-5 text-green-400" />
-                          : <ToggleLeft className="w-5 h-5" />
-                        }
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Cron description */}
-                  <p className="text-xs text-gray-400 mb-1">
-                    {describeCron(job.cron_expression)}
-                    {job.timezone && <span className="text-gray-600"> ({job.timezone})</span>}
-                  </p>
-
-                  {/* Query preview */}
-                  {job.query && (
-                    <p className="text-xs text-gray-500 truncate mb-1.5" title={job.query}>
-                      {job.query}
-                    </p>
-                  )}
-
-                  {/* Meta row: next run, last run, actions */}
-                  <div className="flex items-center justify-between mt-2">
-                    <div className="flex items-center gap-3 text-[10px] text-gray-500">
-                      {job.next_run_at && job.enabled && (
-                        <span>
-                          {missedDelayMs != null
-                            ? `Missed by ${formatDurationShort(missedDelayMs)}`
-                            : `Next: ${formatRelativeTime(job.next_run_at)}`}
-                        </span>
-                      )}
-                      {job.last_run_at && (
-                        <span>Last: {formatRelativeTime(job.last_run_at)}</span>
-                      )}
-                      {job.run_count > 0 && (
-                        <span>{job.run_count} run{job.run_count !== 1 ? 's' : ''}</span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1">
-                      {job.last_status === 'running' ? (
-                        <button
-                          onClick={() => handleStop(job)}
-                          disabled={actionInProgress === job.id}
-                          className="p-1 rounded text-gray-400 hover:text-red-400 hover:bg-gray-700 transition-colors disabled:opacity-50"
-                          title="Stop"
-                        >
-                          <Square className="w-3.5 h-3.5" />
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => handleTrigger(job)}
-                          disabled={actionInProgress === job.id}
-                          className={`rounded transition-colors disabled:opacity-50 ${
-                            missedDelayMs != null
-                              ? 'flex items-center gap-1.5 px-2 py-1 text-[11px] font-medium text-amber-200 bg-amber-900/40 hover:bg-amber-900/60'
-                              : 'p-1 text-gray-400 hover:text-green-400 hover:bg-gray-700'
-                          }`}
-                          title={missedDelayMs != null ? 'Run missed schedule now' : 'Run now'}
-                        >
-                          <Play className="w-3.5 h-3.5" />
-                          {missedDelayMs != null && <span>Run now</span>}
-                        </button>
-                      )}
-                      <button
-                        onClick={() => handleDelete(job)}
-                        disabled={actionInProgress === job.id}
-                        className="p-1 rounded text-gray-400 hover:text-red-400 hover:bg-gray-700 transition-colors disabled:opacity-50"
-                        title="Delete"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Error message */}
-                  {job.last_error && job.last_status === 'error' && (
-                    <p className="text-[10px] text-red-400/80 mt-1 truncate" title={job.last_error}>
-                      {job.last_error}
-                    </p>
-                  )}
+            {isLoading && jobs.length === 0 ? (
+              <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">Loading schedules...</div>
+            ) : jobs.length === 0 ? (
+              <div className="flex h-48 flex-col items-center justify-center gap-3 px-6 text-center text-sm text-muted-foreground">
+                <CalendarDays className="h-8 w-8 opacity-30" />
+                <div>
+                  <p>No scheduled Chief of Staff tasks yet.</p>
+                  <p className="mt-1 text-xs">Ask Chief of Staff to schedule a recurring task when you are ready.</p>
                 </div>
-                )
-              })}
-            </div>
-          )}
+              </div>
+            ) : filteredJobs.length === 0 ? (
+              <div className="flex h-40 flex-col items-center justify-center gap-3 px-6 text-center text-sm text-muted-foreground">
+                <Clock className="h-8 w-8 opacity-30" />
+                <div>
+                  <p>No schedules match this filter.</p>
+                  <button
+                    onClick={() => setActiveFilter('all')}
+                    className="mt-2 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted"
+                  >
+                    Show all schedules
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-xl border border-border bg-background/50">
+                <div className="divide-y divide-border">
+                  {filteredJobs.map((job) => {
+                    const missedDelayMs = getMissedScheduleDelayMs(job)
+                    const orgPulseJob = isOrgPulseJob(job)
+                    const isRunning = job.last_status === 'running'
+
+                    return (
+                      <div key={job.id} className={`px-4 py-3 ${!job.enabled ? 'bg-muted/20' : ''}`}>
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-start gap-3">
+                              <div className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
+                                isRunning ? 'bg-amber-500 animate-pulse' :
+                                missedDelayMs != null ? 'bg-amber-500' :
+                                job.last_status === 'error' ? 'bg-red-500' :
+                                job.enabled ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'
+                              }`} />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                                  <span className="truncate text-sm font-medium text-foreground" title={job.name}>
+                                    {job.name}
+                                  </span>
+                                  {statusBadge(job)}
+                                  {!job.enabled && (
+                                    <span className="rounded-full border border-border bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                                      Paused
+                                    </span>
+                                  )}
+                                  {orgPulseJob && (
+                                    <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                                      /pulse-setup
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                                  <span className="flex items-center gap-1">
+                                    <Clock className="h-3 w-3" />
+                                    {describeCron(job.cron_expression)}
+                                    {job.timezone && <span>({job.timezone})</span>}
+                                  </span>
+                                  <span>
+                                    {job.enabled
+                                      ? missedDelayMs != null
+                                        ? `Missed by ${formatDurationShort(missedDelayMs)}`
+                                        : job.next_run_at
+                                          ? `Next ${formatRelativeTime(job.next_run_at)}`
+                                          : 'No next run scheduled'
+                                      : 'Paused'}
+                                  </span>
+                                  <span>Last ran {formatLastRunLabel(job.last_run_at)}</span>
+                                  <span>{job.run_count} run{job.run_count !== 1 ? 's' : ''}</span>
+                                  {orgPulseJob && <span>Managed in chat</span>}
+                                </div>
+
+                                {job.query && (
+                                  <p className="mt-1 truncate text-xs text-muted-foreground" title={job.query}>
+                                    {job.query}
+                                  </p>
+                                )}
+
+                                {job.last_error && job.last_status === 'error' && (
+                                  <p className="mt-1 truncate text-xs text-red-500" title={job.last_error}>
+                                    {job.last_error}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex shrink-0 flex-wrap items-center gap-1 sm:justify-end">
+                            {isRunning ? (
+                              <button
+                                onClick={() => handleStop(job)}
+                                disabled={actionInProgress === job.id}
+                                className="inline-flex items-center gap-1 rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs font-medium text-red-600 transition-colors hover:bg-red-500/20 disabled:opacity-50 dark:text-red-300"
+                                title="Stop"
+                              >
+                                <Square className="h-3 w-3" />
+                                Stop
+                              </button>
+                            ) : orgPulseJob ? (
+                              <span className="rounded-md border border-border bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
+                                Managed in chat
+                              </span>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() => handleToggle(job)}
+                                  disabled={actionInProgress === job.id}
+                                  className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                                  title={job.enabled ? 'Disable schedule' : 'Enable schedule'}
+                                >
+                                  {job.enabled
+                                    ? <ToggleRight className="h-4 w-4 text-green-600 dark:text-green-300" />
+                                    : <ToggleLeft className="h-4 w-4" />
+                                  }
+                                </button>
+                                <button
+                                  onClick={() => handleTrigger(job)}
+                                  disabled={actionInProgress === job.id}
+                                  className={`rounded-md transition-colors disabled:opacity-50 ${
+                                    missedDelayMs != null
+                                      ? 'inline-flex items-center gap-1 border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-500/20 dark:text-amber-300'
+                                      : 'p-1.5 text-muted-foreground hover:bg-muted hover:text-green-600'
+                                  }`}
+                                  title={missedDelayMs != null ? 'Run missed schedule now' : 'Run now'}
+                                >
+                                  <Play className="h-3.5 w-3.5" />
+                                  {missedDelayMs != null && <span>Run now</span>}
+                                </button>
+                                <button
+                                  onClick={() => handleDelete(job)}
+                                  disabled={actionInProgress === job.id}
+                                  className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-red-600 disabled:opacity-50"
+                                  title="Delete schedule"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

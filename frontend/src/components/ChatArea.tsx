@@ -839,11 +839,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // State for session restoration loading
   const [isRestoringChatSessions, setIsRestoringChatSessions] = useState(false)
   const [hasPreviousNormalChats, setHasPreviousNormalChats] = useState(false)
-  // Once the user has resumed a chat or hit New Chat, stop auto-showing the
-  // landing "Previous chats" list — they get a clean conversation surface and
-  // can reopen history from the header History button. The list only auto-shows
-  // on the genuine first-entry empty state.
-  const [landingHistoryDismissed, setLandingHistoryDismissed] = useState(false)
   // Workflow-mode restore flag is owned by WorkflowLayout via useChatStore so we can show
   // an in-panel spinner here while reconnectWorkflowTabs() is replaying events.
   const isRestoringWorkflowSessions = useChatStore(state => state.isRestoringWorkflowSessions)
@@ -854,9 +849,18 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   const showNormalPreviousChatsPanel = selectedModeCategory === 'multi-agent' &&
     !hasConversationContent &&
     !activeTabHasRestoredConversation &&
-    !landingHistoryDismissed &&
     !isStreaming &&
     !isRestoringChatSessions
+
+  useEffect(() => {
+    if (
+      showNormalPreviousChatsPanel &&
+      activeEventViewMode === 'terminal' &&
+      activeTab?.tabId
+    ) {
+      useChatStore.getState().setTabViewMode(activeTab.tabId, 'tree')
+    }
+  }, [activeEventViewMode, activeTab?.tabId, showNormalPreviousChatsPanel])
 
   useEffect(() => {
     if (!showNormalPreviousChatsPanel) {
@@ -864,8 +868,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     }
   }, [showNormalPreviousChatsPanel])
 
-  // Resume a previous chat from the landing "Previous chats" panel. Shared with
-  // the in-chat History slide-out (ChatTabs) via this hook so both stay identical.
+  // Resume a previous chat from the landing "Previous chats" panel. The same
+  // resume path is used anywhere else that needs to restore a multi-agent chat.
   const handleResumePreviousChat = useResumePreviousChat()
 
   // State for mode switch dialog
@@ -2849,8 +2853,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // multi-agent tabs can coexist, so starting a fresh conversation in one tab
   // must not clear every tab/event/SSE connection in the app.
   const handleNewChat = useCallback(async () => {
-    // New Chat means a clean conversation surface, not the previous-chats list.
-    setLandingHistoryDismissed(true)
     const chatStore = useChatStore.getState()
     // Clear conversation history from backend first (if sessionId is available)
     const currentSessionId = getSessionId()
@@ -2919,6 +2921,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     currentWorkflowPhase
   }), [handleNewChat, resetChatState, refreshWorkflowPresets, submitQueryWithQuery, displayEvents, isStreaming, currentWorkflowPhase])
 
+  const shouldRenderTerminalPane = activeEventViewMode === 'terminal' && !showNormalPreviousChatsPanel
+  const shouldRenderEventDisplay = activeEventViewMode !== 'terminal' && !showNormalPreviousChatsPanel
+  const shouldUseFullHeightContent = shouldRenderTerminalPane || showNormalPreviousChatsPanel
+
   return (
     <div className="flex flex-col h-full min-w-0" data-testid="chat-area-container">
       {/* Preset Selection Overlay */}
@@ -2950,9 +2956,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           (the rail + log scroll independently), so this wrapper
           must NOT scroll — otherwise the whole page scrolls
           around the fixed-height terminal box. */}
-      <div ref={chatContentRef} className={`flex-1 ${activeEventViewMode === 'terminal' ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden min-w-0 relative overscroll-y-none ${compact ? 'text-sm' : ''}`} style={{ scrollBehavior: 'auto' }}>
+      <div ref={chatContentRef} className={`flex-1 ${shouldUseFullHeightContent ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden min-w-0 relative overscroll-y-none ${compact ? 'text-sm' : ''}`} style={{ scrollBehavior: 'auto' }}>
         
-        <div className={`min-w-0 ${activeEventViewMode === 'terminal' ? 'flex h-full flex-col' : 'min-h-full'} ${activeEventViewMode === 'terminal' ? '' : (compact ? 'px-2 pb-2' : 'px-4 pb-4')}`}>
+        <div className={`min-w-0 ${shouldUseFullHeightContent ? 'flex h-full flex-col' : 'min-h-full'} ${shouldRenderTerminalPane ? '' : (compact ? 'px-2 pb-2' : 'px-4 pb-4')}`}>
           {/* Loading indicator for historical events */}
           {isLoadingHistory && (
             <div className={`flex items-center justify-center ${compact ? 'py-4' : 'py-8'}`}>
@@ -3053,18 +3059,19 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
                 emptyText="No previous chats yet."
                 onHasChatsChange={setHasPreviousNormalChats}
                 onSelectSession={handleResumePreviousChat}
+                fill
               />
             )}
             {/* Empty State - Show when no events and not in historical session.
                 Skipped in Terminal mode (same reason as workflow branch). */}
-            {!hasConversationContent && !isStreaming && !isRestoringChatSessions && !hasPreviousNormalChats && activeEventViewMode !== 'terminal' && (
+            {!showNormalPreviousChatsPanel && !hasConversationContent && !isStreaming && !isRestoringChatSessions && !hasPreviousNormalChats && activeEventViewMode !== 'terminal' && (
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
 
-            {activeTab?.sessionId && activeEventViewMode === 'terminal' && (
+            {activeTab?.sessionId && shouldRenderTerminalPane && (
               <TerminalCenter currentSessionId={activeTab.sessionId} compact={false} hasConversationActivity={!suppressTerminalPane && (hasConversationContent || isStreaming || !!activeTab?.isStreaming)} />
             )}
-            {activeTab?.sessionId && activeEventViewMode !== 'terminal' && (
+            {activeTab?.sessionId && shouldRenderEventDisplay && (
               <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
             )}
           </>

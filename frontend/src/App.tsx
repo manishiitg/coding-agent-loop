@@ -4,7 +4,8 @@ import { ThemeProvider } from "./contexts/ThemeContext.tsx";
 import WorkspaceSidebar from "./components/WorkspaceSidebar";
 import { UpdateProgressToast } from "./components/UpdateProgressToast";
 import Workspace from "./components/Workspace.tsx";
-import { MemoryPanel, OrgGoalsPanel, OrgPulsePanel, ORG_HTML_PREVIEW_PREFERENCE_CHANGED_EVENT, getOrgHtmlPreviewDevice, type OrgHtmlPreviewDevice } from "./components/OrgPulseControl";
+import { MemoryPanel, OrgGoalsPanel, OrgPulsePanel } from "./components/org/OrgHtmlPanels";
+import { ORG_HTML_PREVIEW_PREFERENCE_CHANGED_EVENT, getOrgHtmlPreviewDevice, type OrgHtmlPreviewDevice } from "./components/org/orgHtmlPreview";
 import ChatArea, { type ChatAreaRef } from "./components/ChatArea.tsx";
 import { MarkdownRenderer, MermaidDiagram } from "./components/ui/MarkdownRenderer";
 import { CsvRenderer } from "./components/ui/CsvRenderer";
@@ -1452,18 +1453,56 @@ function App() {
     return () => observer.disconnect()
   }, [setWorkspaceMinimized])
 
-  const multiAgentHtmlPanelActive = multiAgentRightPanelView === 'org-goals' || multiAgentRightPanelView === 'org-pulse'
-  const multiAgentHtmlLaptop = multiAgentHtmlPanelActive && orgHtmlPreviewDevice === 'desktop'
-  const multiAgentPanelStyle = multiAgentHtmlPanelActive
-    ? orgHtmlPreviewDevice === 'desktop'
-      ? undefined
-      : { width: orgHtmlPreviewDevice === 'tablet' ? 'min(880px, 72vw)' : 'min(480px, 56vw)' }
-    : undefined
-  const multiAgentPanelClass = multiAgentHtmlPanelActive
-    ? orgHtmlPreviewDevice === 'desktop'
-      ? 'flex-1'
-      : 'flex-none'
-    : 'w-[384px] flex-shrink-0'
+  const multiAgentPanelDesktop = orgHtmlPreviewDevice === 'desktop'
+  const multiAgentPanelStyle = multiAgentPanelDesktop
+    ? undefined
+    : { width: orgHtmlPreviewDevice === 'tablet' ? 'min(880px, 72vw)' : 'min(480px, 56vw)' }
+  const multiAgentPanelClass = multiAgentPanelDesktop ? 'flex-1' : 'flex-none'
+  const multiAgentPanelTabs = (
+    <div className="inline-flex min-w-0 flex-none items-center gap-0.5 rounded-lg border border-border bg-muted/70 p-0.5 shadow-sm backdrop-blur-sm">
+      <button
+        type="button"
+        onClick={() => setMultiAgentRightPanelView('org-pulse')}
+        title="Org Pulse"
+        aria-label="Org Pulse"
+        className={multiAgentPanelTabClass(multiAgentRightPanelView === 'org-pulse')}
+      >
+        Pulse
+      </button>
+      <button
+        type="button"
+        onClick={() => setMultiAgentRightPanelView('org-goals')}
+        className={multiAgentPanelTabClass(multiAgentRightPanelView === 'org-goals')}
+      >
+        Goals
+      </button>
+      <button
+        type="button"
+        onClick={() => setMultiAgentRightPanelView('memory')}
+        className={multiAgentPanelTabClass(multiAgentRightPanelView === 'memory')}
+      >
+        Memory
+      </button>
+      <button
+        type="button"
+        onClick={() => setMultiAgentRightPanelView('files')}
+        className={multiAgentPanelTabClass(multiAgentRightPanelView === 'files')}
+      >
+        Files
+      </button>
+    </div>
+  )
+  const multiAgentPanelCloseButton = (
+    <button
+      type="button"
+      onClick={toggleWorkspaceMinimize}
+      title="Hide panel"
+      aria-label="Hide panel"
+      className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-lg border border-border bg-background/90 text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
+    >
+      <PanelRightClose className="h-4 w-4" />
+    </button>
+  )
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -1496,6 +1535,7 @@ function App() {
             <ChatTabs
               onNewChat={requestNewMultiAgentChat}
               autoScroll={useChatStore(state => state.autoScroll)}
+              onSubmitOrgCommand={submitMultiAgentPanelCommand}
               onToggleAutoScroll={() => {
                 const chatStore = useChatStore.getState()
                 chatStore.setAutoScroll(!chatStore.autoScroll)
@@ -1538,7 +1578,7 @@ function App() {
                       </button>
                     )}
                     <div className="flex h-full min-w-0">
-                      <div className={`min-w-0 flex-1 ${multiAgentHtmlLaptop ? 'hidden' : ''}`}>
+                      <div className={`min-w-0 flex-1 ${multiAgentPanelDesktop ? 'hidden' : ''}`}>
                         <ChatAreaWithObserverId
                           ref={chatAreaRef}
                           onNewChat={startNewChat}
@@ -1549,49 +1589,12 @@ function App() {
                           className={`flex flex-col overflow-hidden border-l border-gray-200 bg-background dark:border-gray-700 ${multiAgentPanelClass}`}
                           style={multiAgentPanelStyle}
                         >
-                          <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/40 px-2 py-2">
-                            <div className="inline-flex min-w-0 items-center gap-0.5 rounded-lg border border-border bg-muted/70 p-0.5 shadow-sm backdrop-blur-sm">
-                              <button
-                                type="button"
-                                onClick={() => setMultiAgentRightPanelView('files')}
-                                className={multiAgentPanelTabClass(multiAgentRightPanelView === 'files')}
-                              >
-                                Files
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setMultiAgentRightPanelView('org-goals')}
-                                className={multiAgentPanelTabClass(multiAgentRightPanelView === 'org-goals')}
-                              >
-                                Goals
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setMultiAgentRightPanelView('memory')}
-                                className={multiAgentPanelTabClass(multiAgentRightPanelView === 'memory')}
-                              >
-                                Memory
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setMultiAgentRightPanelView('org-pulse')}
-                                title="Org Pulse"
-                                aria-label="Org Pulse"
-                                className={multiAgentPanelTabClass(multiAgentRightPanelView === 'org-pulse')}
-                              >
-                                Pulse
-                              </button>
+                          {multiAgentRightPanelView === 'files' && (
+                            <div className="flex flex-wrap items-center justify-between gap-1 border-b border-border bg-muted/40 px-2 py-2">
+                              {multiAgentPanelTabs}
+                              {multiAgentPanelCloseButton}
                             </div>
-                            <button
-                              type="button"
-                              onClick={toggleWorkspaceMinimize}
-                              title="Hide panel"
-                              aria-label="Hide panel"
-                              className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-lg border border-border bg-background/90 text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
-                            >
-                              <PanelRightClose className="h-4 w-4" />
-                            </button>
-                          </div>
+                          )}
                           <div className="min-h-0 flex-1 overflow-hidden">
                             {multiAgentRightPanelView === 'files' ? (
                               <Workspace
@@ -1599,11 +1602,20 @@ function App() {
                                 onToggleMinimize={toggleWorkspaceMinimize}
                               />
                             ) : multiAgentRightPanelView === 'org-goals' ? (
-                              <OrgGoalsPanel onSubmitCommand={submitMultiAgentPanelCommand} />
+                              <OrgGoalsPanel
+                                toolbarLeading={multiAgentPanelTabs}
+                                onClosePanel={toggleWorkspaceMinimize}
+                              />
                             ) : multiAgentRightPanelView === 'memory' ? (
-                              <MemoryPanel />
+                              <MemoryPanel
+                                toolbarLeading={multiAgentPanelTabs}
+                                onClosePanel={toggleWorkspaceMinimize}
+                              />
                             ) : (
-                              <OrgPulsePanel onSubmitCommand={submitMultiAgentPanelCommand} />
+                              <OrgPulsePanel
+                                toolbarLeading={multiAgentPanelTabs}
+                                onClosePanel={toggleWorkspaceMinimize}
+                              />
                             )}
                           </div>
                         </div>

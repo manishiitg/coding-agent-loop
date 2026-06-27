@@ -1,18 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { Plus, ArrowDown, ListTree, Terminal, History, X, Globe } from 'lucide-react'
+import { Plus, ArrowDown, ListTree, Terminal, Globe, DollarSign, CalendarClock } from 'lucide-react'
 import { normalizeEventViewMode, useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useAppStore } from '../stores/useAppStore'
 import { OrgPulseControl } from './OrgPulseControl'
+import { OrgBackupPublishControls } from './org/OrgBackupPublishControls'
 import { useModeStore } from '../stores/useModeStore'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 import { TreeViewAlphaDialog, shouldShowTreeViewAlphaWarning } from './TreeViewAlphaDialog'
-import { PreviousChatHistoryPanel } from './PreviousChatHistoryPanel'
-import { useResumePreviousChat } from '../hooks/useResumePreviousChat'
-import type { ChatHistorySession } from '../services/api-types'
 import ServerSelectionDropdown from './ServerSelectionDropdown'
 import SkillSelectionDropdown from './skills/SkillSelectionDropdown'
 import { useMCPStore } from '../stores/useMCPStore'
 import { dispatchChatToolCommand } from '../utils/chatToolEvents'
+import CostDashboard from './CostDashboard'
+import MultiAgentSchedulesPopup from './scheduler/MultiAgentSchedulesPopup'
+import { schedulerApi } from '../api/scheduler'
 
 interface ChatTabsProps {
   // For multi-agent mode: callback when starting a new chat (reset-in-place)
@@ -20,6 +21,7 @@ interface ChatTabsProps {
   // Auto-scroll state and toggle
   autoScroll?: boolean
   onToggleAutoScroll?: () => void
+  onSubmitOrgCommand?: (query: string) => void
 }
 
 const DEDICATED_MCP_SERVERS = new Set(['playwright'])
@@ -27,14 +29,12 @@ const DEDICATED_MCP_SERVERS = new Set(['playwright'])
 // Multi-agent chat is single-tab: this bar is a slim header for the one chat
 // tab (title + view controls + New Chat). It is not a tab switcher anymore.
 // Workflow mode renders its own tabs (WorkflowChatTabs) inside the chat panel.
-export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onToggleAutoScroll }) => {
+export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onToggleAutoScroll, onSubmitOrgCommand }) => {
   const [pendingTreeViewTabId, setPendingTreeViewTabId] = useState<string | null>(null)
-  const [showHistory, setShowHistory] = useState(false)
-  const resumePreviousChat = useResumePreviousChat()
-  const handleSelectHistory = useCallback(async (session: ChatHistorySession) => {
-    await resumePreviousChat(session)
-    setShowHistory(false)
-  }, [resumePreviousChat])
+  const [showCostDashboard, setShowCostDashboard] = useState(false)
+  const [showMultiAgentSchedules, setShowMultiAgentSchedules] = useState(false)
+  const [multiAgentScheduleCount, setMultiAgentScheduleCount] = useState(0)
+  const [multiAgentRunningScheduleCount, setMultiAgentRunningScheduleCount] = useState(0)
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
   const showWorkflowsOverview = useAppStore(state => state.showWorkflowsOverview)
   const {
@@ -53,6 +53,7 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
     [activeTabId, chatTabs]
   )
   const activeTab = activeTabId ? chatTabs[activeTabId] : undefined
+  const showAutoScrollControl = activeViewMode === 'tree'
 
   const isHiddenOrganizationTab = useCallback((tab: ChatTab) => {
     // Only hide tabs explicitly marked as org assistant via metadata.
@@ -148,6 +149,39 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
     setPendingTreeViewTabId(null)
   }, [pendingTreeViewTabId, setTabViewMode])
 
+  useEffect(() => {
+    if (selectedModeCategory !== 'multi-agent' || showWorkflowsOverview) {
+      setMultiAgentScheduleCount(0)
+      setMultiAgentRunningScheduleCount(0)
+      return
+    }
+
+    let cancelled = false
+
+    const loadSchedules = async () => {
+      try {
+        const resp = await schedulerApi.listJobs({ mode: 'multi-agent' })
+        if (cancelled) return
+
+        const jobs = resp.jobs ?? []
+        setMultiAgentScheduleCount(jobs.length)
+        setMultiAgentRunningScheduleCount(jobs.filter(job => job.last_status === 'running').length)
+      } catch {
+        if (cancelled) return
+        setMultiAgentScheduleCount(0)
+        setMultiAgentRunningScheduleCount(0)
+      }
+    }
+
+    void loadSchedules()
+    const interval = window.setInterval(loadSchedules, 15000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [selectedModeCategory, showWorkflowsOverview, showMultiAgentSchedules])
+
   // Auto-select the single multi-agent tab if none is active (e.g. after refresh)
   useEffect(() => {
     if (selectedModeCategory !== 'multi-agent' || showWorkflowsOverview) return
@@ -189,9 +223,81 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
     <>
     <div className="relative flex-shrink-0 flex items-center gap-2 bg-gray-50 dark:bg-gray-800 px-3 py-1.5 border-b border-gray-200 dark:border-gray-700">
       {/* Single-chat title */}
-      <span className="text-sm font-medium text-gray-900 dark:text-gray-100 whitespace-nowrap truncate">
+      <span className="min-w-0 max-w-[min(360px,34vw)] truncate whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
         {chatTitle}
       </span>
+
+      {/* New Chat — resets the current chat in place (confirmation handled upstream) */}
+      {onNewChat && (
+        <button
+          onClick={onNewChat}
+          data-testid="new-chat-button"
+          className="flex flex-none items-center gap-1 rounded px-2 py-1 text-xs text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+          title="New chat — clears the current conversation and starts a fresh session"
+        >
+          <Plus className="w-4 h-4" />
+          <span>New Chat</span>
+        </button>
+      )}
+
+      {/* View controls live next to the Chief of Staff title, matching workflow. */}
+      <div className="flex flex-none items-center gap-1 border-l border-gray-200 pl-2 dark:border-gray-700">
+        <div
+          data-tour="event-view-mode"
+          data-testid="tour-event-view-mode"
+          className="inline-flex items-center rounded-full border border-gray-200 bg-gray-100 p-0.5 dark:border-gray-700 dark:bg-gray-800"
+          role="group"
+          aria-label="Event layout mode"
+        >
+          {([
+            { mode: 'tree' as const, Icon: ListTree, label: 'Tree', tip: 'Tree view — group events by agent' },
+            { mode: 'terminal' as const, Icon: Terminal, label: 'Terminal', tip: 'Terminal view — show only the terminal panes, no events' },
+          ]).map(({ mode, Icon, label, tip }) => (
+            <Tooltip key={mode}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (activeTabId) {
+                      requestViewMode(activeTabId, mode)
+                    }
+                  }}
+                  className={`flex h-6 w-6 items-center justify-center rounded-full transition-colors ${
+                    activeViewMode === mode
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-gray-500 hover:bg-gray-200 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100'
+                  }`}
+                  aria-label={label}
+                  aria-pressed={activeViewMode === mode}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{tip}</p>
+              </TooltipContent>
+            </Tooltip>
+          ))}
+        </div>
+        {handleToggleAutoScroll && showAutoScrollControl && (
+          <button
+            onClick={handleToggleAutoScroll}
+            className={`
+              flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors
+              ${effectiveAutoScroll
+                ? 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+                : 'text-gray-500 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'
+              }
+            `}
+          >
+            <ArrowDown className={`w-3.5 h-3.5 ${effectiveAutoScroll ? 'opacity-70' : 'opacity-40'}`} />
+            <span className="hidden sm:inline">
+              {effectiveAutoScroll ? 'Auto-scroll' : 'Manual'}
+            </span>
+          </button>
+        )}
+      </div>
 
       <div className="ml-auto flex items-center gap-1">
         {showHeaderContent && (
@@ -243,131 +349,62 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
           </div>
         )}
 
-        <OrgPulseControl />
-
-        {/* History — open the previous-chats list to resume an earlier chat
-            without first clearing the current one. */}
-        <button
-          onClick={() => setShowHistory(v => !v)}
-          data-testid="chat-history-button"
-          aria-expanded={showHistory}
-          className={`flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors ${
-            showHistory
-              ? 'text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700'
-              : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'
-          }`}
-          title="Previous chats — resume an earlier conversation"
-        >
-          <History className="w-4 h-4" />
-          <span className="hidden sm:inline">History</span>
-        </button>
-
-        {/* New Chat — resets the current chat in place (confirmation handled upstream) */}
-        {onNewChat && (
-          <button
-            onClick={() => { setShowHistory(false); onNewChat() }}
-            data-testid="new-chat-button"
-            className="flex items-center gap-1 px-2 py-1 mr-1 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
-            title="New chat — clears the current conversation and starts a fresh session"
-          >
-            <Plus className="w-4 h-4" />
-            <span>New Chat</span>
-          </button>
-        )}
-
-        {/* Right-side view controls */}
-        <div className="flex items-center gap-1 border-l border-gray-200 dark:border-gray-700 pl-2">
-          <div
-            data-tour="event-view-mode"
-            data-testid="tour-event-view-mode"
-            className="inline-flex items-center rounded-full border border-gray-200 bg-gray-100 p-0.5 dark:border-gray-700 dark:bg-gray-800"
-            role="group"
-            aria-label="Event layout mode"
-          >
-            {([
-              { mode: 'tree' as const, Icon: ListTree, label: 'Tree', tip: 'Tree view — group events by agent' },
-              { mode: 'terminal' as const, Icon: Terminal, label: 'Terminal', tip: 'Terminal view — show only the terminal panes, no events' },
-            ]).map(({ mode, Icon, label, tip }) => (
-              <Tooltip key={mode}>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-	                    onClick={(e) => {
-	                      e.stopPropagation()
-	                      if (activeTabId) {
-	                        requestViewMode(activeTabId, mode)
-	                      }
-	                    }}
-                    className={`flex h-6 w-6 items-center justify-center rounded-full transition-colors ${
-                      activeViewMode === mode
-                        ? 'bg-blue-600 text-white shadow-sm'
-                        : 'text-gray-500 hover:bg-gray-200 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100'
-                    }`}
-                    aria-label={label}
-                    aria-pressed={activeViewMode === mode}
-                  >
-                    <Icon className="h-3.5 w-3.5" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>{tip}</p>
-                </TooltipContent>
-              </Tooltip>
-            ))}
-          </div>
-          {handleToggleAutoScroll && activeViewMode !== 'terminal' && (
+        <Tooltip>
+          <TooltipTrigger asChild>
             <button
-              onClick={handleToggleAutoScroll}
-              className={`
-                flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors
-                ${effectiveAutoScroll
-                  ? 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
-                  : 'text-gray-500 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'
-                }
-              `}
+              type="button"
+              onClick={() => setShowCostDashboard(true)}
+              className="rounded-md bg-muted p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+              aria-label="LLM costs"
             >
-              <ArrowDown className={`w-3.5 h-3.5 ${effectiveAutoScroll ? 'opacity-70' : 'opacity-40'}`} />
-              <span className="hidden sm:inline">
-                {effectiveAutoScroll ? 'Auto-scroll' : 'Manual'}
-              </span>
+              <DollarSign className="h-3.5 w-3.5" />
             </button>
-          )}
-        </div>
-        </div>
-
-        {showHistory && (
-          <>
-            {/* Click-away backdrop */}
-            <div className="fixed inset-0 z-40" onClick={() => setShowHistory(false)} aria-hidden />
-            <div
-              className="absolute right-2 top-[calc(100%+4px)] z-50 flex max-h-[70vh] w-[360px] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900"
-              role="dialog"
-              aria-label="Previous chats"
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>LLM costs</p>
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={() => setShowMultiAgentSchedules(true)}
+              className={`relative rounded-md bg-muted p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground ${
+                multiAgentRunningScheduleCount > 0 ? 'text-green-600 dark:text-green-300' : ''
+              }`}
+              aria-label="Scheduled Chief of Staff tasks"
             >
-              <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-3 py-2 dark:border-gray-800">
-                <span className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Previous chats</span>
-                <button
-                  onClick={() => setShowHistory(false)}
-                  className="text-gray-400 transition-colors hover:text-gray-600 dark:hover:text-gray-200"
-                  aria-label="Close previous chats"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-              <div className="min-h-0 flex-1 overflow-auto">
-                <PreviousChatHistoryPanel
-                  activeSessionId={activeTab?.sessionId ?? undefined}
-                  title="Previous chats"
-                  actionLabel="Resume"
-                  emptyText="No previous chats yet."
-                  onSelectSession={handleSelectHistory}
-                  compact
-                />
-              </div>
-            </div>
-          </>
-        )}
+              <CalendarClock className="h-3.5 w-3.5" />
+              {multiAgentScheduleCount > 0 && (
+                <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full border border-background bg-primary px-1 text-[9px] font-semibold leading-none text-primary-foreground">
+                  {multiAgentScheduleCount > 9 ? '9+' : multiAgentScheduleCount}
+                </span>
+              )}
+              {multiAgentRunningScheduleCount > 0 && (
+                <span className="absolute -left-0.5 -top-0.5 h-2 w-2 rounded-full border border-background bg-green-500" />
+              )}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>
+              {multiAgentScheduleCount > 0
+                ? `${multiAgentScheduleCount} scheduled Chief of Staff task${multiAgentScheduleCount !== 1 ? 's' : ''}`
+                : 'Scheduled Chief of Staff tasks'}
+            </p>
+          </TooltipContent>
+        </Tooltip>
+        <OrgPulseControl />
+        <OrgBackupPublishControls onSubmitCommand={onSubmitOrgCommand} />
       </div>
+
+      </div>
+      <CostDashboard
+        isOpen={showCostDashboard}
+        onClose={() => setShowCostDashboard(false)}
+      />
+      {showMultiAgentSchedules && (
+        <MultiAgentSchedulesPopup onClose={() => setShowMultiAgentSchedules(false)} />
+      )}
       <TreeViewAlphaDialog
         isOpen={pendingTreeViewTabId !== null}
         onContinue={confirmTreeView}

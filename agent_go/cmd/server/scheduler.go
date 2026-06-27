@@ -1740,6 +1740,30 @@ func findScheduleByIDAny(ctx context.Context, scheduleID string) (*ScheduleSearc
 	return nil, fmt.Errorf("schedule %s not found", scheduleID)
 }
 
+func findBuiltinMultiAgentScheduleForUser(ctx context.Context, userID, scheduleID string) (*ScheduleSearchResult, error) {
+	if strings.TrimSpace(userID) == "" {
+		userID = GetDefaultUserID()
+	}
+
+	sched, ok := FindDefaultBuiltinSchedule(scheduleID)
+	if !ok {
+		return nil, fmt.Errorf("built-in schedule %s not found", scheduleID)
+	}
+
+	f, _, err := ReadMultiAgentSchedules(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read multi-agent schedules for user %s: %w", userID, err)
+	}
+
+	f.Schedules = append(f.Schedules, sched)
+	return &ScheduleSearchResult{
+		SourceType:   "multi-agent",
+		UserID:       userID,
+		ScheduleFile: f,
+		Index:        len(f.Schedules) - 1,
+	}, nil
+}
+
 // findScheduleByID scans all workspace manifests to find a schedule by ID.
 // Returns (workspacePath, manifest, scheduleIndex, error).
 func findScheduleByID(ctx context.Context, scheduleID string) (string, *WorkflowManifest, int, error) {

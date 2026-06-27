@@ -118,6 +118,20 @@ func TestCodingAgentWorkspaceWorkingDirUsesWorkspaceDocsRoot(t *testing.T) {
 	}
 }
 
+func TestDelegatedCodingAgentRuntimeFolderIsPerAgent(t *testing.T) {
+	got := delegatedCodingAgentRuntimeFolder("alice", "Save Memory/agent #1")
+	want := "_users/alice/Chats/.agents/Save-Memory-agent-1"
+	if got != want {
+		t.Fatalf("delegated runtime folder = %q, want %q", got, want)
+	}
+
+	got = delegatedCodingAgentRuntimeFolder("../bad-user", "worker")
+	want = "_users/default/Chats/.agents/worker"
+	if got != want {
+		t.Fatalf("delegated runtime folder with unsafe user = %q, want %q", got, want)
+	}
+}
+
 func TestTopLevelTierModelDoesNotOverrideExplicitChatLLM(t *testing.T) {
 	req := QueryRequest{
 		Provider: "gemini-cli",
@@ -306,7 +320,7 @@ func TestCanSteerSessionRequiresActiveForegroundTurn(t *testing.T) {
 	}
 }
 
-func TestIdleCompletionDoesNotClearStaleBusyTurn(t *testing.T) {
+func TestIdleCompletionDoesNotCompleteStaleBusyTurn(t *testing.T) {
 	sessionID := "stale-busy-session"
 	api := &StreamingAPI{
 		sessionBusy:      map[string]bool{sessionID: true},
@@ -318,8 +332,8 @@ func TestIdleCompletionDoesNotClearStaleBusyTurn(t *testing.T) {
 		runningAgentsMux: sync.RWMutex{},
 	}
 
-	if !api.shouldCompleteIdleForegroundSession(sessionID, "running", false) {
-		t.Fatal("stale busy turn without steerable foreground work should still look idle")
+	if api.shouldCompleteIdleForegroundSession(sessionID, "running", false) {
+		t.Fatal("stale busy turn should not be completed by passive idle polling")
 	}
 	if !api.isSessionBusy(sessionID) {
 		t.Fatal("idle-completion check must not clear the busy flag")

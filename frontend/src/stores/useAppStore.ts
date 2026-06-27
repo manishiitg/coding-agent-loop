@@ -51,59 +51,59 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>()(
-    persist(
-      (set, get) => {
-        // Sync flag to prevent circular updates
-        let isSyncing = false
-        
-        return {
-          // Initial state
-          agentMode: 'multi-agent',
-          requiresNewChat: false,
-          currentQuery: '',
-          selectedPresetId: null,
-          sidebarMinimized: false,
-          workspaceMinimized: false,
-          workspaceMinimizedByMode: {
-            workflow: false,
-            'multi-agent': false,
-          },
-          multiAgentRightPanelView: 'files',
-          showWorkflowsOverview: false,
-          useCodeExecutionMode: true, // Default to enabled
-          // Actions
-          setAgentMode: (mode) => {
-            const currentMode = get().agentMode
-            
-            // Only update if mode actually changed
-            if (currentMode === mode) {
-              return
-            }
-            
-            set({ 
-              agentMode: mode,
-              requiresNewChat: currentMode !== mode
-            })
-            
-            // Sync ModeStore category when agentMode changes
-            // Only sync if not already syncing to prevent circular updates
-            if (!isSyncing) {
-              isSyncing = true
-              const { getModeCategoryFromAgentMode, getAgentModeFromCategory, setModeCategory } = useModeStore.getState()
-              const currentCategory = useModeStore.getState().selectedModeCategory
+  persist(
+    (set, get) => {
+      // Sync flag to prevent circular updates
+      let isSyncing = false
 
-              // Don't override if the current category already maps to the same agent mode.
-              // This prevents 'multi-agent' (which maps to 'simple') from being overwritten incorrectly.
-              const currentCategoryAgentMode = currentCategory ? getAgentModeFromCategory(currentCategory) : null
-              if (currentCategoryAgentMode !== mode) {
-                const category = getModeCategoryFromAgentMode(mode)
-                if (category && category !== currentCategory) {
-                  setModeCategory(category)
-                }
+      return {
+        // Initial state
+        agentMode: 'multi-agent',
+        requiresNewChat: false,
+        currentQuery: '',
+        selectedPresetId: null,
+        sidebarMinimized: false,
+        workspaceMinimized: false,
+        workspaceMinimizedByMode: {
+          workflow: false,
+          'multi-agent': false,
+        },
+        multiAgentRightPanelView: 'files',
+        showWorkflowsOverview: false,
+        useCodeExecutionMode: true, // Default to enabled
+        // Actions
+        setAgentMode: (mode) => {
+          const currentMode = get().agentMode
+
+          // Only update if mode actually changed
+          if (currentMode === mode) {
+            return
+          }
+
+          set({
+            agentMode: mode,
+            requiresNewChat: currentMode !== mode
+          })
+
+          // Sync ModeStore category when agentMode changes
+          // Only sync if not already syncing to prevent circular updates
+          if (!isSyncing) {
+            isSyncing = true
+            const { getModeCategoryFromAgentMode, getAgentModeFromCategory, setModeCategory } = useModeStore.getState()
+            const currentCategory = useModeStore.getState().selectedModeCategory
+
+            // Don't override if the current category already maps to the same agent mode.
+            // This prevents 'multi-agent' (which maps to 'simple') from being overwritten incorrectly.
+            const currentCategoryAgentMode = currentCategory ? getAgentModeFromCategory(currentCategory) : null
+            if (currentCategoryAgentMode !== mode) {
+              const category = getModeCategoryFromAgentMode(mode)
+              if (category && category !== currentCategory) {
+                setModeCategory(category)
               }
-              isSyncing = false
             }
-          },
+            isSyncing = false
+          }
+        },
 
         // Mode category helpers
         getModeCategory: () => {
@@ -166,16 +166,17 @@ export const useAppStore = create<AppState>()(
         syncLastTabSettings: (update) => {
           set(update)
         },
-        }
-      },
-      {
-        name: getWorkspaceScopedStorageKey('app-store'),
-        partialize: (state) => ({
+      }
+    },
+    {
+      name: getWorkspaceScopedStorageKey('app-store'),
+      partialize: (state) => ({
         // Only persist user preferences and important state
         agentMode: state.agentMode,
         sidebarMinimized: state.sidebarMinimized,
         workspaceMinimized: state.workspaceMinimized,
         workspaceMinimizedByMode: state.workspaceMinimizedByMode,
+        multiAgentRightPanelView: state.multiAgentRightPanelView,
         showWorkflowsOverview: state.showWorkflowsOverview,
         selectedPresetId: state.selectedPresetId,
         useCodeExecutionMode: state.useCodeExecutionMode,
@@ -184,33 +185,41 @@ export const useAppStore = create<AppState>()(
         lastEnableImageGeneration: state.lastEnableImageGeneration
         // Note: requiresNewChat is not persisted as it's temporary state
         // File context is now mode-specific: multi-agent tabs have their own, workflow uses preset
-        }),
-        // Drop legacy `delegationMode` persisted from v2 and add per-mode workspace state.
-        version: 5,
-        migrate: (persistedState: unknown, _version: number) => {
-          const state = persistedState as Record<string, unknown>
-          delete state.delegationMode
-          delete state.lastSelectedSubAgents
-          if (state.showWorkflowsOverview === undefined) {
-            state.showWorkflowsOverview = false
-          }
-          if (!state.workspaceMinimizedByMode || typeof state.workspaceMinimizedByMode !== 'object') {
-            const legacyWorkspaceMinimized = Boolean(state.workspaceMinimized)
-            state.workspaceMinimizedByMode = {
-              workflow: legacyWorkspaceMinimized,
-              'multi-agent': legacyWorkspaceMinimized,
-            }
-          }
-          if (_version < 5) {
-            const workspaceByMode = state.workspaceMinimizedByMode as Record<string, unknown>
-            state.workspaceMinimizedByMode = {
-              workflow: Boolean(workspaceByMode?.workflow),
-              'multi-agent': false,
-            }
-            state.workspaceMinimized = false
-          }
-          return state as unknown as AppState
+      }),
+      // Drop legacy `delegationMode` persisted from v2 and add per-mode workspace state.
+      version: 6,
+      migrate: (persistedState: unknown, _version: number) => {
+        const state = persistedState as Record<string, unknown>
+        delete state.delegationMode
+        delete state.lastSelectedSubAgents
+        if (state.showWorkflowsOverview === undefined) {
+          state.showWorkflowsOverview = false
         }
+        if (!state.workspaceMinimizedByMode || typeof state.workspaceMinimizedByMode !== 'object') {
+          const legacyWorkspaceMinimized = Boolean(state.workspaceMinimized)
+          state.workspaceMinimizedByMode = {
+            workflow: legacyWorkspaceMinimized,
+            'multi-agent': legacyWorkspaceMinimized,
+          }
+        }
+        if (_version < 5) {
+          const workspaceByMode = state.workspaceMinimizedByMode as Record<string, unknown>
+          state.workspaceMinimizedByMode = {
+            workflow: Boolean(workspaceByMode?.workflow),
+            'multi-agent': false,
+          }
+          state.workspaceMinimized = false
+        }
+        if (
+          state.multiAgentRightPanelView !== 'files' &&
+          state.multiAgentRightPanelView !== 'memory' &&
+          state.multiAgentRightPanelView !== 'org-goals' &&
+          state.multiAgentRightPanelView !== 'org-pulse'
+        ) {
+          state.multiAgentRightPanelView = 'files'
+        }
+        return state as unknown as AppState
       }
-    )
+    }
+  )
 )

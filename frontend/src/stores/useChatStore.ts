@@ -40,7 +40,7 @@ export type ExecutionStreamingActivity = {
 }
 
 export function normalizeEventViewMode(viewMode?: string | null): EventViewMode {
-  return viewMode === 'terminal' ? 'terminal' : 'tree'
+  return viewMode === 'tree' ? 'tree' : 'terminal'
 }
 
 type ScriptedExecutionData = {
@@ -719,7 +719,7 @@ export const useChatStore = create<ChatState>()(
       sessionId: null,
       hasActiveChat: false,
       autoScroll: true,
-      eventViewModePreference: 'tree',
+      eventViewModePreference: 'terminal',
       terminalCenterOpen: false,
       finalResponse: '',
       isCompleted: false,

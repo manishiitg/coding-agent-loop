@@ -673,6 +673,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const canSteer = activeTab?.canSteer ?? false
   const tabSessionId = activeTab?.sessionId ?? null
   const isViewOnly = activeTab?.metadata?.isViewOnly ?? false
+  const activeSessionRuntime = useChatStore(state => {
+    if (!tabSessionId) return undefined
+    return state.activeSessionsCache.find(session => session.session_id === tabSessionId)?.runtime
+  })
+  const delegationTierConfig = useLLMStore(state => state.delegationTierConfig)
   
   // Note: activeTab may be undefined during initial render before tabs are created
   // This is expected and will resolve once the tab store initializes
@@ -713,6 +718,31 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   // Use ?? instead of || to preserve false values (user's selection)
   // Only default to false if the value is undefined/null (not explicitly set)
+  const multiAgentEffectiveLLMConfig = useMemo(() => {
+    if (!isMultiAgentMode) return null
+
+    const runtimeProvider = activeSessionRuntime?.provider?.trim()
+    const runtimeModel = activeSessionRuntime?.model_id?.trim()
+    if (runtimeProvider && runtimeModel) {
+      return { provider: runtimeProvider as LLMProvider, model_id: runtimeModel }
+    }
+
+    if (delegationTierConfig?.main?.provider && delegationTierConfig.main.model_id) {
+      return {
+        provider: delegationTierConfig.main.provider as LLMProvider,
+        model_id: delegationTierConfig.main.model_id,
+      }
+    }
+
+    return null
+  }, [
+    activeSessionRuntime?.model_id,
+    activeSessionRuntime?.provider,
+    delegationTierConfig?.main?.model_id,
+    delegationTierConfig?.main?.provider,
+    isMultiAgentMode,
+  ])
+
   const effectiveProviderForSteer = useMemo(() => {
     if (isWorkflowPhaseChat) {
       return manifestPhaseLLM?.provider
@@ -721,10 +751,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         || tabConfig?.llmConfig?.provider
         || null
     }
+    if (multiAgentEffectiveLLMConfig?.provider) return multiAgentEffectiveLLMConfig.provider
     return tabConfig?.llmConfig?.provider ?? null
   }, [
     isWorkflowPhaseChat,
     manifestPhaseLLM?.provider,
+    multiAgentEffectiveLLMConfig?.provider,
     tabConfig?.llmConfig?.provider,
     workflowPhasePreset?.llmConfig?.phase_llm?.provider,
     workflowPhasePreset?.llmConfig?.provider,
@@ -1335,6 +1367,27 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
     }
 
+    const resolveOption = (provider: string, model: string, description: string): LLMOption => {
+      const found = availableLLMs.find(llm =>
+        llm.provider === provider && llm.model === model
+      )
+      if (found) return found
+      return {
+        provider: provider as LLMProvider,
+        model,
+        label: `${provider} - ${model}`,
+        description
+      }
+    }
+
+    if (isMultiAgentMode && multiAgentEffectiveLLMConfig?.provider && multiAgentEffectiveLLMConfig.model_id) {
+      return resolveOption(
+        multiAgentEffectiveLLMConfig.provider,
+        multiAgentEffectiveLLMConfig.model_id,
+        activeSessionRuntime?.provider ? 'Running multi-agent model' : 'Multi-agent main model'
+      )
+    }
+
     if (tabConfig?.llmConfig) {
       const config = tabConfig.llmConfig
       const foundLLM = availableLLMs.find(llm =>
@@ -1357,6 +1410,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     availableLLMs,
     getCurrentLLMOption,
     isWorkflowPhaseChat,
+    isMultiAgentMode,
+    multiAgentEffectiveLLMConfig?.model_id,
+    multiAgentEffectiveLLMConfig?.provider,
+    activeSessionRuntime?.provider,
     workflowPrimaryConfig,
     manifestPhaseLLM?.provider,
     manifestPhaseLLM?.model_id,

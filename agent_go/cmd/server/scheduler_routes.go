@@ -272,6 +272,14 @@ func SchedulerRoutes(router *mux.Router, svc *SchedulerService) {
 	apiRouter.HandleFunc("/jobs/{id}/runs", getScheduledJobRunsHandler(svc)).Methods("GET", "OPTIONS")
 }
 
+func findScheduleByIDAnyOrCurrentUserBuiltin(ctx context.Context, scheduleID string) (*ScheduleSearchResult, error) {
+	result, err := findScheduleByIDAny(ctx, scheduleID)
+	if err == nil {
+		return result, nil
+	}
+	return findBuiltinMultiAgentScheduleForUser(ctx, GetUserIDFromContext(ctx), scheduleID)
+}
+
 func listScheduledJobsHandler(svc *SchedulerService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "OPTIONS" {
@@ -340,9 +348,9 @@ func listScheduledJobsHandler(svc *SchedulerService) http.HandlerFunc {
 
 			// If a specific user is requested, read just their file; otherwise scan all
 			if userIDFilter != "" {
-				f, exists, fErr := ReadMultiAgentSchedules(r.Context(), userIDFilter)
-				if fErr == nil && exists {
-					for _, sched := range f.Schedules {
+				f, _, fErr := ReadMultiAgentSchedules(r.Context(), userIDFilter)
+				if fErr == nil {
+					for _, sched := range MergeBuiltinSchedules(f.Schedules) {
 						if enabledFilter != "" {
 							wantEnabled := enabledFilter == "true" || enabledFilter == "1"
 							if sched.Enabled != wantEnabled {
@@ -357,7 +365,7 @@ func listScheduledJobsHandler(svc *SchedulerService) http.HandlerFunc {
 				maScheds, maErr := DiscoverMultiAgentSchedules(r.Context())
 				if maErr == nil {
 					for _, ma := range maScheds {
-						for _, sched := range ma.ScheduleFile.Schedules {
+						for _, sched := range MergeBuiltinSchedules(ma.ScheduleFile.Schedules) {
 							if enabledFilter != "" {
 								wantEnabled := enabledFilter == "true" || enabledFilter == "1"
 								if sched.Enabled != wantEnabled {
@@ -547,7 +555,7 @@ func getScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 		}
 
 		id := mux.Vars(r)["id"]
-		result, err := findScheduleByIDAny(r.Context(), id)
+		result, err := findScheduleByIDAnyOrCurrentUserBuiltin(r.Context(), id)
 		if err != nil {
 			http.Error(w, "not found", http.StatusNotFound)
 			return

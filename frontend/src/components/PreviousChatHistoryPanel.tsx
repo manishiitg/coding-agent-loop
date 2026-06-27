@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, Loader2, MessageSquare, Paperclip, Trash2, type LucideIcon } from 'lucide-react'
+import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, History, Loader2, MessageSquare, Paperclip, Trash2, type LucideIcon } from 'lucide-react'
 import { agentApi } from '../services/api'
 import {
   type ChatHistoryConversation,
@@ -18,7 +18,8 @@ const PAGE_SIZE = 5
 const FETCH_LIMIT = 100
 const EXPANDED_MESSAGE_LIMIT = 6
 
-type PreviousChatFilter = 'chat' | 'schedule' | 'bot'
+type PreviousChatKind = 'chat' | 'schedule' | 'bot'
+type PreviousChatFilter = 'all' | PreviousChatKind
 type EmptyStateIcon = LucideIcon
 
 const emptyStateContent: Record<PreviousChatFilter, {
@@ -26,6 +27,11 @@ const emptyStateContent: Record<PreviousChatFilter, {
   title: string
   body: string
 }> = {
+  all: {
+    icon: History,
+    title: 'No previous activity yet',
+    body: 'Start a chat, schedule recurring work, or connect a bot. Saved runs will appear here so you can resume or review them later.',
+  },
   chat: {
     icon: MessageSquare,
     title: 'No chats yet',
@@ -152,7 +158,7 @@ const isSessionOlderThanDays = (session: ChatHistorySession, days: number): bool
   return timestamp < Date.now() - days * 24 * 60 * 60 * 1000
 }
 
-const getChatKind = (session: ChatHistorySession): PreviousChatFilter => {
+const getChatKind = (session: ChatHistorySession): PreviousChatKind => {
   if (session.session_id.startsWith('schedule-') || session.session_id.startsWith('sched_')) return 'schedule'
   if (session.session_id.startsWith('bot-')) return 'bot'
   return 'chat'
@@ -280,6 +286,8 @@ interface PreviousChatHistoryPanelProps {
   /** Dense layout for the narrow ~360px chat rail: icon-only filters + actions,
    *  single tight meta line, no runtime/workshop chips or message preview. */
   compact?: boolean
+  /** Fill the available chat surface for landing dashboards. */
+  fill?: boolean
 }
 
 export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> = ({
@@ -291,12 +299,13 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   onHasChatsChange,
   onSelectSession,
   compact = false,
+  fill = false,
 }) => {
   const [sessions, setSessions] = useState<ChatHistorySession[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isCleanupLoading, setIsCleanupLoading] = useState(false)
   const [deletingSessionIds, setDeletingSessionIds] = useState<Set<string>>(() => new Set())
-  const [activeFilter, setActiveFilter] = useState<PreviousChatFilter>('chat')
+  const [activeFilter, setActiveFilter] = useState<PreviousChatFilter>('all')
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
   const [expandedSessionIds, setExpandedSessionIds] = useState<Set<string>>(() => new Set())
   const [expandedMessagesBySession, setExpandedMessagesBySession] = useState<Record<string, ChatHistoryPreviewMessage[]>>({})
@@ -316,7 +325,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   useEffect(() => {
     let cancelled = false
     setSessions([])
-    setActiveFilter('chat')
+    setActiveFilter('all')
     setVisibleCount(PAGE_SIZE)
     setExpandedSessionIds(new Set())
     setExpandedMessagesBySession({})
@@ -347,6 +356,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
 
   const filterCounts = useMemo(() => {
     const counts: Record<PreviousChatFilter, number> = {
+      all: visibleSessions.length,
       chat: 0,
       schedule: 0,
       bot: 0,
@@ -358,7 +368,9 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   }, [visibleSessions])
 
   const filteredSessions = useMemo(
-    () => visibleSessions.filter(session => getChatKind(session) === activeFilter),
+    () => activeFilter === 'all'
+      ? visibleSessions
+      : visibleSessions.filter(session => getChatKind(session) === activeFilter),
     [activeFilter, visibleSessions]
   )
 
@@ -517,14 +529,15 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
 
   const ActionIcon = actionLabel.toLowerCase() === 'attach' ? Paperclip : ArrowUpRight
   const filterItems = [
+    { filter: 'all' as const, label: 'All', icon: History },
     { filter: 'chat' as const, label: 'Chat', icon: MessageSquare },
     { filter: 'schedule' as const, label: 'Schedules', icon: CalendarClock },
     { filter: 'bot' as const, label: 'Bots', icon: Bot },
   ]
 
   return (
-    <div className="shrink-0 border-b border-border bg-background">
-      <div className="w-full">
+    <div className={`${fill ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'shrink-0'} border-b border-border bg-background`}>
+      <div className={`${fill ? 'flex min-h-0 flex-1 flex-col' : ''} w-full`}>
         <div className={`flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 ${compact ? 'justify-end' : 'justify-between'}`}>
           {/* The "Previous … chats" heading is redundant in the compact rail —
               the filter pills + list make the purpose obvious — so hide it there. */}
@@ -589,10 +602,12 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
           <PreviousChatEmptyState
             filter={activeFilter}
             hasAnySessions
-            fallbackText={`No previous ${activeFilter === 'schedule' ? 'schedule' : activeFilter} chats yet.`}
+            fallbackText={activeFilter === 'all'
+              ? 'No previous activity yet.'
+              : `No previous ${activeFilter === 'schedule' ? 'schedule' : activeFilter} chats yet.`}
           />
         ) : (
-          <div className="divide-y divide-border">
+          <div className={`${fill ? 'min-h-0 flex-1 overflow-y-auto' : ''} divide-y divide-border`}>
             {displayedSessions.map(session => {
               const messages = expandedMessagesBySession[session.session_id] || previewMessages(session)
               const isExpanded = expandedSessionIds.has(session.session_id)

@@ -173,6 +173,7 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat, e
     const tab = activeTabId ? state.chatTabs[activeTabId] : null
     return normalizeEventViewMode(tab?.viewMode)
   })
+  const rawActiveViewMode = useChatStore(state => activeTabId ? state.chatTabs[activeTabId]?.viewMode : undefined)
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const requestViewMode = useCallback((tabId: string, mode: 'tree' | 'terminal') => {
     if (mode === 'tree' && activeViewMode !== 'tree' && shouldShowTreeViewAlphaWarning()) {
@@ -406,7 +407,7 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat, e
         {/* Auto-scroll and layout controls - only show when there are workflow tabs */}
         {activeWorkflowTabs.length > 0 && (
           <div className="flex shrink-0 items-center gap-1">
-            {activeViewMode !== 'terminal' && (
+            {rawActiveViewMode === 'tree' && (
             <button
               onClick={(e) => {
                 e.stopPropagation()

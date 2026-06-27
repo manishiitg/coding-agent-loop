@@ -23,8 +23,10 @@ the org-specific structure and visual system.
   fallback, not the primary theme path.
 - **Mobile/right-panel first, publish-ready second.** It must read well in the 360-480px
   right panel by default and still look polished when published full width. The base CSS
-  must be the mobile layout: stacked headers, one-column KPI/cards, wrapped meta rows, and
-  no overlapping timestamps. Add tablet/desktop enhancements with `@media (min-width: ...)`.
+  must be the mobile layout: stacked headers, compact two-column KPI tiles, one-column
+  content cards, wrapped meta rows, and no overlapping timestamps. Use a one-column KPI
+  fallback only for very narrow widths around 360px. Add tablet/desktop enhancements with
+  `@media (min-width: ...)`.
   Do not design desktop first and then patch mobile with max-width overrides. No
   `height: 100vh`, no fixed page width, no inner body scroll container.
 - **Operational density.** This is not a landing page. Use compact cards, tables, chips, and
@@ -46,6 +48,10 @@ the org-specific structure and visual system.
   evidence strings must wrap or horizontally scroll inside their container. Use
   `overflow-wrap:anywhere`, `min-width:0`, stacked `.row` layouts on mobile, and reserve
   desktop-only side-by-side metadata for `@media (min-width: 640px)`.
+- **Valid CSS, no escaped braces.** Write raw CSS exactly as browsers expect it:
+  `@media (min-width:640px){ ... }`, never `{{ ... }}`. Repeated visual elements must use
+  classes from the baseline (`.kpi`, `.pill`, `.entry`, `.suggestions`), not repeated inline
+  layout styles.
 
 ### Shared visual language
 
@@ -97,7 +103,7 @@ so `goals.html` and `org-pulse.html` feel like one product.
     --shadow:0 1px 2px rgba(20,20,18,.04),0 8px 24px -16px rgba(20,20,18,.18);
     --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
     --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
-    --r:12px;
+    --r:8px;
   }
   html[data-theme="dark"],html.dark{
     color-scheme:dark;
@@ -115,61 +121,64 @@ so `goals.html` and `org-pulse.html` feel like one product.
   html,body{margin:0;min-height:100%;width:100%;max-width:100%;overflow-x:hidden;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.5;font-variant-numeric:tabular-nums}
   body{padding:0}
   body,.card,.entry,.kpi,.status,td,th{overflow-wrap:anywhere}
-  .wrap{width:100%;max-width:980px;margin:0 auto;padding:16px 12px 56px}
+  .wrap{width:100%;max-width:980px;margin:0 auto;padding:12px 10px 48px}
   .top{display:block}
   .eyebrow{font:700 10px/1 var(--mono);letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3)}
-  h1{margin:7px 0 0;font-size:24px;line-height:1.08;letter-spacing:-.01em}
+  h1{margin:6px 0 0;font-size:22px;line-height:1.08;letter-spacing:-.01em}
   .meta{margin-top:8px;color:var(--ink-3);font:520 11px/1.45 var(--mono)}
-  .status{display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;margin:18px 0 14px;padding:13px 14px;border:1px solid var(--line-2);border-radius:var(--r);background:var(--surface);box-shadow:var(--shadow)}
+  .status{display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;margin:14px 0 12px;padding:11px 12px;border:1px solid var(--line-2);border-radius:var(--r);background:var(--surface);box-shadow:var(--shadow)}
   .status .dot{flex:none;width:9px;height:9px;border-radius:50%;margin-top:7px;background:currentColor;box-shadow:0 0 0 4px color-mix(in srgb,currentColor 16%,transparent)}
   .status.ok{color:var(--ok)}.status.warn{color:var(--warn)}.status.bad{color:var(--bad)}.status.unknown{color:var(--unknown)}
-  .status .text{color:var(--ink);font-weight:620;min-width:0;flex:1 1 220px}.status .sub{margin-top:3px;color:var(--ink-2);font-size:12.5px}
-  .kpis{display:grid;grid-template-columns:1fr;gap:10px;margin:14px 0 22px}
-  .kpi{min-width:0;border:1px solid var(--line-2);border-radius:var(--r);background:var(--surface);padding:13px 14px;box-shadow:var(--shadow)}
-  .kpi .label{font:700 10px/1 var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3)}
-  .kpi .value{margin-top:9px;font-size:24px;font-weight:720;letter-spacing:-.02em}
-  .kpi .note{margin-top:4px;color:var(--ink-2);font-size:12px}
-  .section-title{display:flex;align-items:center;gap:10px;margin:28px 0 12px;font:750 11px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)}
+  .status .text{color:var(--ink);font-weight:620;min-width:0;flex:1 1 220px}.status .sub{margin-top:3px;color:var(--ink-2);font-size:12px}
+  .kpis{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:12px 0 18px}
+  .kpi{min-width:0;border:1px solid var(--line-2);border-radius:var(--r);background:var(--surface);padding:10px 11px;box-shadow:var(--shadow)}
+  .kpi .label{font:700 9.5px/1.2 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
+  .kpi .value{margin-top:6px;font-size:22px;font-weight:720;letter-spacing:-.02em}
+  .kpi .note{margin-top:3px;color:var(--ink-2);font-size:11.5px}
+  .section-title{display:flex;align-items:center;gap:10px;margin:22px 0 10px;font:750 11px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)}
   .section-title::after{content:"";height:1px;background:var(--line);flex:1}
   .card{border:1px solid var(--line-2);border-radius:var(--r);background:var(--surface);box-shadow:var(--shadow)}
-  .card + .card{margin-top:10px}
-  .card-h{display:block;padding:14px 15px;border-bottom:1px solid var(--line)}
-  .card-h h2,.card-h h3{margin:0;font-size:15.5px;line-height:1.25}
-  .card-b{padding:13px 15px}
-  .pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:5px 9px;font:700 10px/1 var(--mono);letter-spacing:.05em;text-transform:uppercase;border:1px solid transparent;white-space:nowrap}
+  .card + .card{margin-top:8px}
+  .card-h{display:block;padding:12px;border-bottom:1px solid var(--line)}
+  .card-h h2,.card-h h3{margin:0;font-size:14.5px;line-height:1.25}
+  .card-b{padding:12px}
+  .pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 7px;font:700 9.5px/1 var(--mono);letter-spacing:.05em;text-transform:uppercase;border:1px solid transparent;white-space:nowrap}
+  .pill.mini{padding:2px 6px;font-size:9.5px}
   .pill.ok{color:var(--ok);background:var(--ok-bg);border-color:color-mix(in srgb,var(--ok) 18%,transparent)}
   .pill.warn{color:var(--warn);background:var(--warn-bg);border-color:color-mix(in srgb,var(--warn) 18%,transparent)}
   .pill.bad{color:var(--bad);background:var(--bad-bg);border-color:color-mix(in srgb,var(--bad) 18%,transparent)}
   .pill.unknown{color:var(--unknown);background:var(--unknown-bg);border-color:color-mix(in srgb,var(--unknown) 18%,transparent)}
   .pill.supporting{color:var(--accent);background:var(--accent-bg);border-color:color-mix(in srgb,var(--accent) 18%,transparent)}
-  .grid-2{display:grid;grid-template-columns:1fr;gap:12px}
-  .evidence{margin-top:10px;color:var(--ink-2);font-size:13px}
+  .grid-2{display:grid;grid-template-columns:1fr;gap:10px}
+  .evidence{margin-top:9px;color:var(--ink-2);font-size:12.5px}
   .evidence b{color:var(--ink)}
-  .next{margin-top:12px;padding:10px 12px;border-radius:9px;background:var(--surface-2);border:1px solid var(--line);font-size:13px;color:var(--ink-2)}
-  table{width:100%;border-collapse:collapse;font-size:12.5px;display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .next{margin-top:10px;padding:9px 10px;border-radius:8px;background:var(--surface-2);border:1px solid var(--line);font-size:12.5px;color:var(--ink-2)}
+  ul{margin:8px 0 0;padding-left:18px}li+li{margin-top:6px}
+  table{width:100%;border-collapse:collapse;font-size:12px;display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
   th{color:var(--ink-3);font:700 10px/1 var(--mono);letter-spacing:.07em;text-transform:uppercase;text-align:left}
-  th,td{padding:9px 7px;border-bottom:1px solid var(--line);vertical-align:top;min-width:86px}
+  th,td{padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:top;min-width:80px}
   td.num{text-align:right;font-variant-numeric:tabular-nums}
   .history,.timeline{display:grid;gap:10px}
-  .entry{border:1px solid var(--line-2);border-radius:var(--r);background:var(--surface);padding:14px 15px;box-shadow:var(--shadow)}
+  .entry{border:1px solid var(--line-2);border-radius:var(--r);background:var(--surface);padding:12px;box-shadow:var(--shadow)}
   .entry .row{display:block}
-  .entry h3{margin:0;font-size:14.5px;line-height:1.25}.entry time{display:block;margin-top:5px;font:520 11px/1.35 var(--mono);color:var(--ink-3);white-space:normal}
-  .entry p{margin:8px 0 0;color:var(--ink-2);font-size:13px}
+  .entry h3{margin:0;font-size:14px;line-height:1.25}.entry time{display:block;margin-top:5px;font:520 11px/1.35 var(--mono);color:var(--ink-3);white-space:normal}
+  .entry p{margin:8px 0 0;color:var(--ink-2);font-size:12.5px}
+  .suggestions{margin-top:12px;display:grid;gap:8px;grid-template-columns:1fr}
   @media (min-width:640px){
     html,body{font-size:15px}
     .wrap{padding:clamp(20px,3vw,32px) clamp(20px,3vw,28px) 64px}
     .top{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
-    h1{font-size:34px;line-height:1.05;letter-spacing:-.02em}
+    h1{font-size:30px;line-height:1.05;letter-spacing:-.02em}
     .meta{font-size:12px}
     .status{gap:12px;margin:22px 0 16px;padding:15px 17px}.status .sub{font-size:13px}
-    .kpis{grid-template-columns:repeat(2,minmax(0,1fr));margin:16px 0 24px}
+    .kpis{margin:16px 0 24px}
     .grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}
     .card-h{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:15px 16px}.card-h h2,.card-h h3{font-size:16px}.card-b{padding:14px 16px}
     table{display:table;font-size:13px}th,td{padding:10px 8px;min-width:0}
     .entry .row{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.entry h3{font-size:15px}.entry time{margin-top:0;font-size:12px;white-space:nowrap}.entry p{font-size:13.5px}
   }
-  @media (min-width:900px){.kpis{grid-template-columns:repeat(4,minmax(0,1fr))}}
-  @media (max-width:520px){.hide-sm{display:none}.pill{margin-top:8px}}
+  @media (min-width:760px){.kpis{grid-template-columns:repeat(4,minmax(0,1fr))}.suggestions{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  @media (max-width:360px){.kpis{grid-template-columns:1fr}.hide-sm{display:none}.pill{margin-top:8px}}
 </style>
 ```
 

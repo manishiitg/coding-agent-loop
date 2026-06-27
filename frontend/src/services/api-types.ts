@@ -575,6 +575,7 @@ export interface ActiveSessionInfo {
   waiting_event_type?: string
   waiting_message?: string
   waiting_since?: string
+  runtime?: ChatHistoryAgentRuntime
 }
 
 export interface GetActiveSessionsResponse {

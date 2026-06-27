@@ -20,6 +20,7 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/skills"
 	"mcp-agent-builder-go/agent_go/pkg/subagents"
 	"mcp-agent-builder-go/agent_go/pkg/workspace"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -28,6 +29,42 @@ import (
 	unifiedevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/llm"
 )
+
+func safeDelegationRuntimeID(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Sprintf("delegation-%d", time.Now().UnixNano())
+	}
+	var b strings.Builder
+	b.Grow(len(id))
+	lastDash := false
+	for _, r := range id {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	clean := strings.Trim(b.String(), "-")
+	if clean == "" {
+		return fmt.Sprintf("delegation-%d", time.Now().UnixNano())
+	}
+	if len(clean) > 96 {
+		clean = strings.Trim(clean[:96], "-")
+		if clean == "" {
+			return fmt.Sprintf("delegation-%d", time.Now().UnixNano())
+		}
+	}
+	return clean
+}
+
+func delegatedCodingAgentRuntimeFolder(userID, runtimeID string) string {
+	return strings.TrimSuffix(perUserChatsFolderFor(userID), "/") + "/.agents/" + safeDelegationRuntimeID(runtimeID)
+}
 
 // executeDelegatedTask executes a delegated task via a sub-agent.
 // onCreated is an optional callback invoked after the sub-agent wrapper is created
@@ -155,6 +192,17 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		subAgentSessionID = fmt.Sprintf("%s-isolated-%d", sessionID, time.Now().UnixNano())
 		log.Printf("[DELEGATION] Browser isolation: sub-agent gets new session ID %s (parent: %s)", subAgentSessionID, sessionID)
 	}
+	runtimeID := delegationID
+	if backgroundAgentID != "" {
+		runtimeID = backgroundAgentID
+	}
+	subAgentRuntimeFolder := delegatedCodingAgentRuntimeFolder(subAgentUserID, runtimeID)
+	subAgentRuntimeDir := codingAgentWorkspaceWorkingDir(subAgentRuntimeFolder)
+	if err := os.MkdirAll(subAgentRuntimeDir, 0o755); err != nil {
+		api.emitDelegationEndEvent(sessionID, delegationID, currentDepth, "", err.Error(), nil)
+		return "", fmt.Errorf("failed to create sub-agent runtime directory: %w", err)
+	}
+	log.Printf("[DELEGATION] Sub-agent coding-agent runtime cwd: %s", subAgentRuntimeDir)
 
 	// Create sub-agent config based on parent request
 	subAgentConfig := agent.LLMAgentConfig{
@@ -184,7 +232,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		Fallbacks:             tierFallbacks,
 		SessionID:             subAgentSessionID, // Reuse parent session's MCP connections via registry, unless browser isolation requested
 		UserID:                subAgentUserID,    // Per-user OAuth token isolation
-		CodingAgentWorkingDir: codingAgentWorkspaceWorkingDir(perUserChatsFolderFor(subAgentUserID)),
+		CodingAgentWorkingDir: subAgentRuntimeDir,
 	}
 	// Tool timeout, context summarization/editing, large-output offloading, and
 	// parallel tool execution inherit from the parent request the same way the

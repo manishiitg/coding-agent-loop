@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { Plus, ArrowDown, ListTree, Terminal, Globe, DollarSign, CalendarClock } from 'lucide-react'
+import LlmTriggerButton from './topbar/LlmTriggerButton'
 import { normalizeEventViewMode, useChatStore, type ChatTab } from '../stores/useChatStore'
 import type { PollingEvent } from '../services/api-types'
 import { useAppStore } from '../stores/useAppStore'
@@ -327,6 +328,10 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
           <span>New Chat</span>
         </button>
       )}
+
+      {/* Models / LLM config — lives in the mode heading since the model is
+          per-context (opens the globally-mounted LLM modal via the store). */}
+      <LlmTriggerButton className="flex flex-none items-center rounded px-2 py-1 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200" />
 
       {/* View controls live next to the Chief of Staff title, matching workflow. */}
       <div className="flex flex-none items-center gap-1 border-l border-gray-200 pl-2 dark:border-gray-700">

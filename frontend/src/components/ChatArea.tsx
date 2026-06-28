@@ -3077,7 +3077,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
                 emptyText="No previous chats yet."
                 onHasChatsChange={setHasPreviousNormalChats}
                 onSelectSession={handleResumePreviousChat}
-                fill
+                compact
               />
             )}
             {/* Empty State - Show when no events and not in historical session.

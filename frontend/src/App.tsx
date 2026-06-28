@@ -1471,10 +1471,6 @@ function App() {
   const toggleMultiAgentPanelMinimize = useCallback(() => {
     setWorkspaceMinimized(!layoutWorkspaceMinimized)
   }, [layoutWorkspaceMinimized, setWorkspaceMinimized])
-  const multiAgentPanelStyle = multiAgentPanelDesktop
-    ? undefined
-    : { width: orgHtmlPreviewDevice === 'tablet' ? 'min(880px, 72vw)' : 'min(480px, 56vw)' }
-  const multiAgentPanelClass = multiAgentPanelDesktop ? 'flex-1' : 'flex-none'
   const multiAgentPanelTabs = (
     <div className="inline-flex min-w-0 flex-none items-center gap-0.5 rounded-lg border border-border bg-muted/70 p-0.5 shadow-sm backdrop-blur-sm">
       <button
@@ -1595,7 +1591,19 @@ function App() {
                       </button>
                     )}
                     <div className="flex h-full min-w-0">
-                      <div className={`min-w-0 flex-1 ${multiAgentPanelDesktop ? 'hidden' : ''}`}>
+                      {/* Chat is a narrow ~360px rail on the LEFT, mirroring the
+                          workflow layout (chat = grid col 1). When the org panel is
+                          minimized the rail flexes to fill; on the 'desktop' device
+                          the rail is hidden so the org content spans full width. */}
+                      <div
+                        className={`flex min-w-0 flex-col overflow-hidden bg-background ${
+                          multiAgentPanelDesktop
+                            ? 'hidden'
+                            : layoutWorkspaceMinimized
+                              ? 'flex-1'
+                              : 'w-full border-r border-gray-200 dark:border-gray-700 md:w-[360px] md:shrink-0'
+                        }`}
+                      >
                         <ChatAreaWithObserverId
                           ref={chatAreaRef}
                           onNewChat={startNewChat}
@@ -1603,8 +1611,7 @@ function App() {
                       </div>
                       {!layoutWorkspaceMinimized && (
                         <div
-                          className={`flex flex-col overflow-hidden border-l border-gray-200 bg-background dark:border-gray-700 ${multiAgentPanelClass}`}
-                          style={multiAgentPanelStyle}
+                          className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background"
                         >
                           {multiAgentRightPanelView === 'files' && (
                             <div className="flex flex-wrap items-center justify-between gap-1 border-b border-border bg-muted/40 px-2 py-2">

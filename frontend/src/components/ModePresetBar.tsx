@@ -20,6 +20,9 @@ import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { GlobalActivityMonitor } from './GlobalActivityMonitor'
 import WorkflowWalkthrough from './workflow/WorkflowWalkthrough'
+import { RunloopLockup } from './branding/RunloopLogo'
+import WorkspaceTopBarControls from './WorkspaceTopBarControls'
+import { useAppVersion } from './topbar/useAppVersion'
 import {
   LLM_DISCOVERY_ONBOARDING_CLEARED_EVENT,
   LLM_DISCOVERY_ONBOARDING_OPENED_EVENT,
@@ -166,6 +169,7 @@ export const ModePresetBar: React.FC = () => {
   const { setWorkspaceMinimized, workspaceMinimized, agentMode } = useAppStore()
   // Use toolList to get all available servers, not just enabled ones
   const toolList = useMCPStore(state => state.toolList)
+  const appVersion = useAppVersion()
   const availableServers = React.useMemo(() =>
     [...new Set(toolList.map(t => t.server).filter(Boolean) as string[])],
     [toolList]
@@ -634,8 +638,11 @@ export const ModePresetBar: React.FC = () => {
     <>
       <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
         <div className="flex items-center justify-between">
-          {/* Left: Mode Indicator */}
+          {/* Left: App logo + Mode Indicator */}
           <div className="flex items-center gap-3">
+            {/* App logo (relocated from the former left sidebar header) */}
+            <RunloopLockup className="mr-1 shrink-0" version={appVersion} />
+
             {/* Segmented control — single bordered container, active segment elevated */}
             <div
               data-tour="top-mode-switcher"
@@ -945,6 +952,11 @@ export const ModePresetBar: React.FC = () => {
                 </>
               )}
 
+              <span className="mx-0.5 h-5 w-px bg-gray-200 dark:bg-gray-700" />
+
+              {/* Config/account controls relocated from the former left sidebar */}
+              <WorkspaceTopBarControls />
+
             </div>
           </TooltipProvider>
         </div>
@@ -1005,7 +1017,6 @@ export const ModePresetBar: React.FC = () => {
                   <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2.5">Layout</p>
                   <div className="space-y-1.5">
                     {[
-                      ['Minimize Sidebar', 'Ctrl+5'],
                       ['Minimize Workspace', 'Ctrl+6'],
                       ['Toggle Auto-scroll', 'Ctrl+7'],
                       ['New Chat (Chief of Staff)', 'Ctrl+N'],

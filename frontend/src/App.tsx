@@ -1,7 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useCallback, useRef, useState, forwardRef } from "react";
 import { ThemeProvider } from "./contexts/ThemeContext.tsx";
-import WorkspaceSidebar from "./components/WorkspaceSidebar";
 import { UpdateProgressToast } from "./components/UpdateProgressToast";
 import Workspace from "./components/Workspace.tsx";
 import { MemoryPanel, OrgGoalsPanel, OrgPulsePanel } from "./components/org/OrgHtmlPanels";
@@ -189,7 +188,7 @@ function App() {
   const [orgHtmlPreviewDevice, setOrgHtmlPreviewDevice] = useState<OrgHtmlPreviewDevice>(() => getOrgHtmlPreviewDevice())
 
   // Store subscriptions
-  const { setAgentMode, setSidebarMinimized } = useAppStore()
+  const { setAgentMode } = useAppStore()
   const { hasCompletedInitialSetup, selectedModeCategory, setModeCategory, completeInitialSetup } = useModeStore()
   const defaultsLoaded = useLLMStore(state => state.defaultsLoaded)
   const savedLLMs = useLLMStore(state => state.savedLLMs)
@@ -203,7 +202,6 @@ function App() {
   // App Store subscriptions for workspace and chat
   const {
     setSelectedPresetId,
-    sidebarMinimized,
     workspaceMinimized,
     workspaceMinimizedByMode,
     setWorkspaceMinimized,
@@ -1247,17 +1245,6 @@ function App() {
   }, [hasCompletedInitialSetup, selectedModeCategory, workflowPresetsForRestore, getActivePreset, applyPreset])
 
 
-  // Auto-minimize sidebar when mode is selected or preset is selected
-  useEffect(() => {
-    if (selectedModeCategory && !sidebarMinimized) {
-      setSidebarMinimized(true)
-    }
-    // NOTE: Only include selectedModeCategory and setSidebarMinimized in dependencies
-    // Do NOT include sidebarMinimized as it would cause the effect to re-run every time
-    // the sidebar state changes, preventing manual toggle functionality after auto-minimize
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedModeCategory, setSidebarMinimized])
-
   // Start new chat function
   const startNewChat = useCallback(() => {
     
@@ -1312,10 +1299,6 @@ function App() {
   }, [setSelectedPresetId, clearActivePreset, selectedModeCategory, applyPreset]);
 
   // Minimize toggle functions
-  const toggleSidebarMinimize = useCallback(() => {
-    setSidebarMinimized(!sidebarMinimized)
-  }, [sidebarMinimized, setSidebarMinimized])
-
   const toggleWorkspaceMinimize = useCallback(() => {
     setWorkspaceMinimized(!workspaceMinimized)
   }, [workspaceMinimized, setWorkspaceMinimized])
@@ -1385,12 +1368,6 @@ function App() {
         setShowWorkflowsOverview(true)
         return
       }
-      // Ctrl/Cmd + 5 for sidebar minimize
-      if ((event.ctrlKey || event.metaKey) && event.key === '5') {
-        event.preventDefault()
-        toggleSidebarMinimize()
-        return
-      }
       // Ctrl/Cmd + 6 for workspace minimize
       if ((event.ctrlKey || event.metaKey) && event.key === '6') {
         event.preventDefault()
@@ -1427,7 +1404,7 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [requestNewMultiAgentChat, restoreMostRecentTabForMode, selectedModeCategory, showWorkflowsOverview, toggleSidebarMinimize, toggleWorkspaceMinimize, setAgentMode, setShowWorkflowsOverview, startNewChat])
+  }, [requestNewMultiAgentChat, restoreMostRecentTabForMode, selectedModeCategory, showWorkflowsOverview, toggleWorkspaceMinimize, setAgentMode, setShowWorkflowsOverview, startNewChat])
 
   useEffect(() => {
     if (showWorkflowsOverview) {
@@ -1535,15 +1512,9 @@ function App() {
         <TooltipProvider>
         <UpdateProgressToast />
         <div className="h-screen bg-background flex">
-          {/* Left Sidebar */}
-          <div className={`${sidebarMinimized ? 'w-16' : 'w-72'} transition-all duration-300 ease-in-out relative z-30`}>
-            <WorkspaceSidebar
-              minimized={sidebarMinimized}
-              onToggleMinimize={toggleSidebarMinimize}
-            />
-          </div>
-
-          {/* Middle Content Area - WorkflowLayout (workflow mode) or ChatArea (other modes) */}
+          {/* Main Content Area - WorkflowLayout (workflow mode) or ChatArea (other modes).
+              The former left sidebar was removed; its controls now live in the top bar
+              (ModePresetBar → WorkspaceTopBarControls). */}
           <div className="flex-1 flex flex-col min-w-0 min-h-0 relative z-10 overflow-hidden">
             {/* Quick Switcher (Ctrl+K) - constrained to the main content area */}
             <QuickSwitcher

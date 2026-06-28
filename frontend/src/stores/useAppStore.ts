@@ -15,7 +15,6 @@ interface AppState {
   selectedPresetId: string | null
   
   // UI state
-  sidebarMinimized: boolean
   workspaceMinimized: boolean
   workspaceMinimizedByMode: Record<'workflow' | 'multi-agent', boolean>
   multiAgentRightPanelView: MultiAgentRightPanelView
@@ -38,7 +37,6 @@ interface AppState {
   setSelectedPresetId: (id: string | null) => void
   
   // UI actions
-  setSidebarMinimized: (minimized: boolean) => void
   setWorkspaceMinimized: (minimized: boolean) => void
   setWorkspaceMinimizedForLayout: (minimized: boolean) => void
   setMultiAgentRightPanelView: (view: MultiAgentRightPanelView) => void
@@ -63,7 +61,6 @@ export const useAppStore = create<AppState>()(
         requiresNewChat: false,
         currentQuery: '',
         selectedPresetId: null,
-        sidebarMinimized: false,
         workspaceMinimized: false,
         workspaceMinimizedByMode: {
           workflow: false,
@@ -131,10 +128,6 @@ export const useAppStore = create<AppState>()(
         },
 
         // UI actions
-        setSidebarMinimized: (minimized) => {
-          set({ sidebarMinimized: minimized })
-        },
-
         setWorkspaceMinimized: (minimized) => {
           const currentCategory = useModeStore.getState().selectedModeCategory
           set((state) => {
@@ -178,7 +171,6 @@ export const useAppStore = create<AppState>()(
       partialize: (state) => ({
         // Only persist user preferences and important state
         agentMode: state.agentMode,
-        sidebarMinimized: state.sidebarMinimized,
         workspaceMinimized: state.workspaceMinimized,
         workspaceMinimizedByMode: state.workspaceMinimizedByMode,
         multiAgentRightPanelView: state.multiAgentRightPanelView,

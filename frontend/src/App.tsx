@@ -1461,7 +1461,17 @@ function App() {
     return () => observer.disconnect()
   }, [setWorkspaceMinimizedForLayout])
 
-  const multiAgentPanelDesktop = orgHtmlPreviewDevice === 'desktop'
+  // Responsive split mirroring WorkflowLayout's splitGridCols, keyed off the
+  // device tier (OrgHtmlPreviewDevice = 'mobile' | 'tablet' | 'desktop'; the UI
+  // labels 'desktop' as "Laptop"). Chat is grid col 1, org content is grid col 2.
+  //   'desktop' (UI "Laptop", default) → chat = 360px rail, org content fills
+  //   'tablet' → chat fills, org content = 880px (tablet preview)
+  //   'mobile' → chat fills, org content = 480px (phone preview)
+  // The chat rail stays visible in all three tiers.
+  const multiAgentSplitGridCols =
+    orgHtmlPreviewDevice === 'mobile' ? 'md:grid-cols-[minmax(0,1fr)_480px]'
+      : orgHtmlPreviewDevice === 'tablet' ? 'md:grid-cols-[minmax(0,1fr)_880px]'
+        : 'md:grid-cols-[360px_minmax(0,1fr)]'
   const layoutWorkspaceMinimized =
     showWorkflowsOverview
       ? true
@@ -1590,18 +1600,25 @@ function App() {
                         <span className="[writing-mode:vertical-rl] text-[10px] font-semibold uppercase tracking-wider">Panel</span>
                       </button>
                     )}
-                    <div className="flex h-full min-w-0">
-                      {/* Chat is a narrow ~360px rail on the LEFT, mirroring the
-                          workflow layout (chat = grid col 1). When the org panel is
-                          minimized the rail flexes to fill; on the 'desktop' device
-                          the rail is hidden so the org content spans full width. */}
+                    {/* Mirrors WorkflowLayout: chat (col 1) + org content (col 2)
+                        laid out as a responsive grid so the org content resizes with
+                        the device selector (Laptop/Tablet/Mobile). The chat rail is
+                        always visible; only the user-initiated minimize toggle hides
+                        the org panel, at which point the chat flexes to fill. */}
+                    <div
+                      className={`h-full min-h-0 min-w-0 ${
+                        layoutWorkspaceMinimized
+                          ? 'flex'
+                          : `flex flex-col md:grid ${multiAgentSplitGridCols} md:grid-rows-[minmax(0,1fr)]`
+                      }`}
+                    >
+                      {/* Chat rail = grid col 1, mirroring the workflow. Minimized →
+                          flexes to fill the width; otherwise it's the col-1 rail. */}
                       <div
                         className={`flex min-w-0 flex-col overflow-hidden bg-background ${
-                          multiAgentPanelDesktop
-                            ? 'hidden'
-                            : layoutWorkspaceMinimized
-                              ? 'flex-1'
-                              : 'w-full border-r border-gray-200 dark:border-gray-700 md:w-[360px] md:shrink-0'
+                          layoutWorkspaceMinimized
+                            ? 'flex-1'
+                            : 'w-full border-b border-gray-200 dark:border-gray-700 md:col-start-1 md:border-b-0 md:border-r'
                         }`}
                       >
                         <ChatAreaWithObserverId
@@ -1611,7 +1628,7 @@ function App() {
                       </div>
                       {!layoutWorkspaceMinimized && (
                         <div
-                          className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background"
+                          className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background md:col-start-2"
                         >
                           {multiAgentRightPanelView === 'files' && (
                             <div className="flex flex-wrap items-center justify-between gap-1 border-b border-border bg-muted/40 px-2 py-2">

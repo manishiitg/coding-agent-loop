@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -32,9 +34,6 @@ func TestTerminalPipeRecorderHTTPE2EPreservesAnsiAndAppends(t *testing.T) {
 		_ = runTerminalTmuxCommand(cleanupCtx, "", "kill-session", "-t", sessionName)
 	})
 
-	sendTmuxLiteralCommand(t, ctx, sessionName, "printf '\\033[31mred-start\\033[0m\\n'; printf '\\033[33mspinner-frame-1\\033[0m\\n'; printf 'MCP_API_TOKEN=super-secret\\nMCP_AUTH=Authorization: Bearer bearer-secret\\nSECRET_FOO=hidden-secret\\n'")
-	waitForTmuxCapture(t, ctx, sessionName, "red-start")
-
 	store := terminals.NewStore()
 	api := &StreamingAPI{
 		terminalStore: store,
@@ -48,7 +47,23 @@ func TestTerminalPipeRecorderHTTPE2EPreservesAnsiAndAppends(t *testing.T) {
 	terminalID := sessionID + ":" + ownerID
 	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, ownerID, sessionName, "seed pane", 1))
 
-	first := getTerminalHistoryDetail(t, api, terminalID)
+	// Boot the recorder FIRST so pipe-pane is attached before we emit output. The
+	// seed is now a clean control prologue (no flattened text snapshot), so only
+	// bytes the CLI writes AFTER pipe-pane attaches appear in the stream. /bin/sh
+	// is a normal-buffer command, so the prologue is RIS (no alternate screen).
+	boot := getTerminalHistoryDetail(t, api, terminalID)
+	if boot.ContentSource != "tmux_pipe" {
+		t.Fatalf("boot content_source = %q, want tmux_pipe", boot.ContentSource)
+	}
+	if !strings.Contains(boot.Content, terminalPipeNormalScreenPrologue) {
+		t.Fatalf("boot content should begin with the normal-screen prologue (RIS), got:\n%q", boot.Content)
+	}
+	if strings.Contains(boot.Content, terminalPipeAltScreenPrologue) {
+		t.Fatalf("normal-buffer /bin/sh must NOT be seeded with the alternate-screen prologue, got:\n%q", boot.Content)
+	}
+
+	sendTmuxLiteralCommand(t, ctx, sessionName, "printf '\\033[31mred-start\\033[0m\\n'; printf '\\033[33mspinner-frame-1\\033[0m\\n'; printf 'MCP_API_TOKEN=super-secret\\nMCP_AUTH=Authorization: Bearer bearer-secret\\nSECRET_FOO=hidden-secret\\n'")
+	first := waitForTerminalDetail(t, api, terminalID, "red-start")
 	if first.ContentSource != "tmux_pipe" {
 		t.Fatalf("content_source = %q, want tmux_pipe", first.ContentSource)
 	}
@@ -115,19 +130,6 @@ func sendTmuxLiteralCommand(t *testing.T, ctx context.Context, sessionName, comm
 	}
 }
 
-func waitForTmuxCapture(t *testing.T, ctx context.Context, sessionName, needle string) {
-	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		content, err := runTerminalTmuxOutputCommand(ctx, "capture-pane", "-p", "-e", "-t", sessionName)
-		if err == nil && strings.Contains(content, needle) {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for tmux capture to contain %q", needle)
-}
-
 func waitForTerminalDetail(t *testing.T, api *StreamingAPI, terminalID, needle string) terminals.Snapshot {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
@@ -172,4 +174,112 @@ func getTerminalHistoryDetailWithHeader(t *testing.T, api *StreamingAPI, termina
 		t.Fatalf("decode terminal detail: %v", err)
 	}
 	return snapshot, rec.Header().Get("X-Runloop-Terminal-Content-Source")
+}
+
+// TestTerminalPipeRecorderPrologueMatchesScreenMode verifies the seed prologue is
+// chosen from the pane's real alternate-screen state, and that an unknown state
+// falls back to the safe normal-screen reset (never forcing the alternate screen).
+func TestTerminalPipeRecorderPrologueMatchesScreenMode(t *testing.T) {
+	cases := []struct {
+		name        string
+		alternateOn string
+		queryErr    bool
+		want        string
+	}{
+		{name: "alt-screen TUI", alternateOn: "1", want: terminalPipeAltScreenPrologue},
+		{name: "normal buffer", alternateOn: "0", want: terminalPipeNormalScreenPrologue},
+		{name: "unknown value falls back to RIS", alternateOn: "garbage", want: terminalPipeNormalScreenPrologue},
+		{name: "query error falls back to RIS", queryErr: true, want: terminalPipeNormalScreenPrologue},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			oldRunOutput := runTerminalTmuxOutputCommand
+			runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
+				if tc.queryErr {
+					return "", context.DeadlineExceeded
+				}
+				return tc.alternateOn, nil
+			}
+			defer func() { runTerminalTmuxOutputCommand = oldRunOutput }()
+
+			got := terminalPipeRecorderPrologue(context.Background(), "mlp-some-session")
+			if got != tc.want {
+				t.Fatalf("prologue = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestTerminalPipeRecorderResetForResizeTruncatesAndReseeds verifies a geometry
+// change truncates the old-width frames out of the pipe log and re-seeds a fresh
+// mode-aware prologue so the frontend never replays mismatched-width frames.
+func TestTerminalPipeRecorderResetForResizeTruncatesAndReseeds(t *testing.T) {
+	tmuxSession := "mlp-claude-resize-reset"
+	dir := t.TempDir()
+	path := filepath.Join(dir, terminalPipeRecorderFileName(tmuxSession))
+	oldFrames := "\x1b[?1049h\x1b[2J\x1b[Hold-width frame one\x1b[2;1Hold-width frame two"
+	if err := os.WriteFile(path, []byte(oldFrames), 0o600); err != nil {
+		t.Fatalf("seed old pipe log: %v", err)
+	}
+
+	recorder := &terminalPipeRecorder{
+		root: dir,
+		sessions: map[string]*terminalPipeRecording{
+			tmuxSession: {tmuxSession: tmuxSession, path: path, started: true},
+		},
+	}
+
+	oldRunOutput := runTerminalTmuxOutputCommand
+	runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "#{alternate_on}"):
+			return "1", nil
+		case strings.Contains(joined, "#{window_width}"):
+			return "120\t40", nil
+		default:
+			return "", nil
+		}
+	}
+	oldRun := runTerminalTmuxCommand
+	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error { return nil }
+	defer func() {
+		runTerminalTmuxOutputCommand = oldRunOutput
+		runTerminalTmuxCommand = oldRun
+	}()
+
+	recorder.ResetForResize(context.Background(), tmuxSession)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read pipe log after reset: %v", err)
+	}
+	got := string(data)
+	if strings.Contains(got, "old-width frame") {
+		t.Fatalf("reset must truncate old-width frames, got:\n%q", got)
+	}
+	if got != terminalPipeAltScreenPrologue {
+		t.Fatalf("reset must re-seed the alternate-screen prologue, got:\n%q", got)
+	}
+}
+
+// TestTerminalPipeRecorderResetForResizeIgnoresUnknownSession verifies the reset
+// is a safe no-op when no live recording exists for the session.
+func TestTerminalPipeRecorderResetForResizeIgnoresUnknownSession(t *testing.T) {
+	recorder := &terminalPipeRecorder{
+		root:     t.TempDir(),
+		sessions: make(map[string]*terminalPipeRecording),
+	}
+	called := false
+	oldRunOutput := runTerminalTmuxOutputCommand
+	runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
+		called = true
+		return "0", nil
+	}
+	defer func() { runTerminalTmuxOutputCommand = oldRunOutput }()
+
+	recorder.ResetForResize(context.Background(), "mlp-missing-session")
+	if called {
+		t.Fatalf("ResetForResize must not query tmux for an unknown session")
+	}
 }

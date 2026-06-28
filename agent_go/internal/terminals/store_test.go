@@ -529,6 +529,79 @@ func TestStoreDoesNotArchiveMainAgentTmuxTurnOnContinuation(t *testing.T) {
 	}
 }
 
+// TestUpsertStaticSnapshotDoesNotClobberLiveTmuxTerminal guards the resume race:
+// the frontend's restore-terminal POST (which publishes the static buffer) can
+// land AFTER /api/query has materialized the live tmux pane under the same
+// canonical main-agent terminalID. The static publish must not reset the live
+// terminal back to Active:false / TmuxSession:"" — that strips the tmux_session
+// the frontend needs to fire /resize.
+func TestUpsertStaticSnapshotDoesNotClobberLiveTmuxTerminal(t *testing.T) {
+	store := NewStore()
+	now := time.Now()
+
+	// Materialize the live tmux terminal (what /api/query's re-launch does).
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"main:session-1",
+		"live pane content\n❯",
+		0,
+		map[string]interface{}{
+			"tmux_session":   "mlp-pi-cli-resumed-123",
+			"execution_kind": "main_agent",
+		},
+		now,
+	))
+
+	live := store.List("session-1")
+	if len(live) != 1 || !live[0].Active || live[0].TmuxSession != "mlp-pi-cli-resumed-123" {
+		t.Fatalf("expected one live tmux terminal, got %#v", live)
+	}
+	canonicalID := live[0].TerminalID
+
+	// A late static re-publish for the SAME canonical terminal must be ignored.
+	stored, ok := store.UpsertStaticSnapshot("session-1", Snapshot{
+		Content:       "stale persisted buffer",
+		ExecutionKind: "main_agent",
+	})
+	if !ok {
+		t.Fatalf("UpsertStaticSnapshot returned ok=false")
+	}
+	if stored.TerminalID != canonicalID {
+		t.Fatalf("static upsert targeted %q, want canonical %q", stored.TerminalID, canonicalID)
+	}
+	if !stored.Active || stored.TmuxSession != "mlp-pi-cli-resumed-123" {
+		t.Fatalf("live terminal was clobbered by static publish: active=%v tmux=%q content=%q",
+			stored.Active, stored.TmuxSession, stored.Content)
+	}
+	if stored.Content != "live pane content\n❯" {
+		t.Fatalf("live content overwritten by static buffer: %q", stored.Content)
+	}
+
+	after := store.List("session-1")
+	if len(after) != 1 || !after[0].Active || after[0].TmuxSession != "mlp-pi-cli-resumed-123" {
+		t.Fatalf("expected the live tmux terminal preserved, got %#v", after)
+	}
+}
+
+// TestUpsertStaticSnapshotPublishesWhenNoLiveTerminal confirms the guard is
+// scoped: with no live tmux terminal present (the normal first-restore case),
+// the static snapshot still publishes.
+func TestUpsertStaticSnapshotPublishesWhenNoLiveTerminal(t *testing.T) {
+	store := NewStore()
+	stored, ok := store.UpsertStaticSnapshot("session-1", Snapshot{
+		Content:       "restored buffer\n❯",
+		ExecutionKind: "main_agent",
+	})
+	if !ok {
+		t.Fatalf("UpsertStaticSnapshot returned ok=false")
+	}
+	if stored.Active || strings.TrimSpace(stored.TmuxSession) != "" {
+		t.Fatalf("static snapshot should be inactive with no tmux, got active=%v tmux=%q", stored.Active, stored.TmuxSession)
+	}
+	if stored.Content != "restored buffer\n❯" {
+		t.Fatalf("static content = %q", stored.Content)
+	}
+}
+
 func TestStoreKeepsArchivedTurnWhenRestartReusesTmuxSession(t *testing.T) {
 	store := NewStore()
 	now := time.Now()

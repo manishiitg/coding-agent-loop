@@ -3085,6 +3085,10 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
   const fastPollIntervalRef = useRef<number | null>(null)
   const lastSizeHintSentRef = useRef<{ cols: number; rows: number } | null>(null)
   const lastResizeSentRef = useRef<{ terminalId: string; cols: number; rows: number } | null>(null)
+  // Latest real xterm grid (cols/rows from term.onResize), remembered even when we
+  // can't POST /resize yet (e.g. a resumed terminal whose tmux_session hasn't been
+  // materialized). Lets us push the grid the moment tmux_session appears.
+  const lastXtermGridRef = useRef<{ cols: number; rows: number } | null>(null)
   const terminalTheme = TERMINAL_THEMES[terminalColorScheme]
 
   useEffect(() => {
@@ -3912,9 +3916,29 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
   }, [])
 
   const handleSelectedXtermResize = useCallback((cols: number, rows: number) => {
+    // Always remember the real xterm grid, even when we can't POST yet (no
+    // tmux_session). A resumed terminal starts as the static snapshot (tmux_session
+    // === '') so this early-returns; once the live tmux is materialized the effect
+    // below replays this remembered grid (term.onResize won't re-fire on its own
+    // because the grid didn't change).
+    lastXtermGridRef.current = { cols, rows }
     if (!selectedTerminalView || !selectedTerminalView.tmux_session || isSyntheticTerminal(selectedTerminalView)) return
     sendTerminalResize(selectedTerminalView.terminal_id, cols, rows)
   }, [selectedTerminalView, sendTerminalResize])
+
+  // Resume gap closer: when a terminal's tmux_session first becomes available
+  // (static restored snapshot → live materialized tmux, same canonical
+  // terminal_id), xterm has already fitted, so term.onResize won't fire again and
+  // /resize would never be sent — tmux would keep its launch geometry and pi-cli's
+  // full-screen redraws would append instead of overwrite (duplicated frames).
+  // Proactively push the current xterm grid so the pane matches the xterm 1:1,
+  // exactly like a new chat. Idempotent: sendTerminalResize dedupes by id+cols+rows.
+  useEffect(() => {
+    if (!selectedTerminalView || !selectedTerminalView.tmux_session || isSyntheticTerminal(selectedTerminalView)) return
+    const grid = lastXtermGridRef.current
+    if (!grid) return
+    sendTerminalResize(selectedTerminalView.terminal_id, grid.cols, grid.rows)
+  }, [selectedTerminalView?.terminal_id, selectedTerminalView?.tmux_session, sendTerminalResize])
 
   // Startup/idle size hint: keep the backend's preferred tmux launch size in
   // sync with the visible TerminalCenter container, even before any terminal

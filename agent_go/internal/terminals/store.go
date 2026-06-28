@@ -337,6 +337,18 @@ func (s *Store) UpsertStaticSnapshot(sessionID string, snapshot Snapshot) (Snaps
 		ownerID = "main:" + sessionID
 	}
 	terminalID := terminalIDFor(sessionID, ownerID)
+	// Never clobber a LIVE tmux terminal with the static buffer. Once a resumed
+	// session's transport has been materialized under this canonical terminalID
+	// (Active + a real TmuxSession), a late static re-publish — the frontend's
+	// restore-terminal POST races the /api/query re-launch that materializes the
+	// live pane — must NOT reset it back to Active:false / TmuxSession:"". Doing so
+	// strips the tmux_session the frontend needs to fire /resize, so tmux geometry
+	// never matches the xterm and pi-cli's full-screen redraws append instead of
+	// overwrite (duplicated status bar / stacked "Working..."). The live snapshot
+	// already shows current content, so the static buffer adds nothing — keep live.
+	if existing, ok := s.byID[terminalID]; ok && existing.Active && strings.TrimSpace(existing.TmuxSession) != "" {
+		return existing, true
+	}
 	snapshot.TerminalID = terminalID
 	snapshot.SessionID = sessionID
 	snapshot.OwnerID = ownerID

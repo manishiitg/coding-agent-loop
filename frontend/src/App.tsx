@@ -98,7 +98,7 @@ const hasOpenWorkspaceCollapsingPopup = () => {
 // Helper component to get observerId and render ChatArea
 // Always renders ChatArea (even without observerId) so header with mode/preset selectors is visible
 // Uses Zustand hooks to reactively update when tabs change
-const ChatAreaWithObserverId = forwardRef<ChatAreaRef, { onNewChat: () => void }>(({ onNewChat }, ref) => {
+const ChatAreaWithObserverId = forwardRef<ChatAreaRef, { onNewChat: () => void; previousChatsCompact?: boolean }>(({ onNewChat, previousChatsCompact }, ref) => {
   // Pass null (not undefined) when the active tab is a workflow tab so this hidden
   // instance doesn't steal SSE connections, polling, or queue processing from
   // WorkflowLayout's ChatArea which is the primary instance for workflow tabs.
@@ -113,6 +113,7 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, { onNewChat: () => void }
       ref={ref}
       onNewChat={onNewChat}
       tabId={activeTabId}
+      previousChatsCompact={previousChatsCompact}
     />
   )
 })
@@ -1624,6 +1625,7 @@ function App() {
                         <ChatAreaWithObserverId
                           ref={chatAreaRef}
                           onNewChat={startNewChat}
+                          previousChatsCompact={!layoutWorkspaceMinimized}
                         />
                       </div>
                       {!layoutWorkspaceMinimized && (

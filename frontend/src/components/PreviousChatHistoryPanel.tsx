@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, History, Loader2, MessageSquare, Paperclip, Trash2, type LucideIcon } from 'lucide-react'
+import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, Loader2, MessageSquare, Paperclip, Trash2, type LucideIcon } from 'lucide-react'
 import { agentApi } from '../services/api'
 import {
   type ChatHistoryConversation,
@@ -19,7 +19,7 @@ const FETCH_LIMIT = 100
 const EXPANDED_MESSAGE_LIMIT = 6
 
 type PreviousChatKind = 'chat' | 'schedule' | 'bot'
-type PreviousChatFilter = 'all' | PreviousChatKind
+type PreviousChatFilter = PreviousChatKind
 type EmptyStateIcon = LucideIcon
 
 const emptyStateContent: Record<PreviousChatFilter, {
@@ -27,11 +27,6 @@ const emptyStateContent: Record<PreviousChatFilter, {
   title: string
   body: string
 }> = {
-  all: {
-    icon: History,
-    title: 'No previous activity yet',
-    body: 'Start a chat, schedule recurring work, or connect a bot. Saved runs will appear here so you can resume or review them later.',
-  },
   chat: {
     icon: MessageSquare,
     title: 'No chats yet',
@@ -305,7 +300,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   const [isLoading, setIsLoading] = useState(true)
   const [isCleanupLoading, setIsCleanupLoading] = useState(false)
   const [deletingSessionIds, setDeletingSessionIds] = useState<Set<string>>(() => new Set())
-  const [activeFilter, setActiveFilter] = useState<PreviousChatFilter>('all')
+  const [activeFilter, setActiveFilter] = useState<PreviousChatFilter>('chat')
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
   const [expandedSessionIds, setExpandedSessionIds] = useState<Set<string>>(() => new Set())
   const [expandedMessagesBySession, setExpandedMessagesBySession] = useState<Record<string, ChatHistoryPreviewMessage[]>>({})
@@ -325,7 +320,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   useEffect(() => {
     let cancelled = false
     setSessions([])
-    setActiveFilter('all')
+    setActiveFilter('chat')
     setVisibleCount(PAGE_SIZE)
     setExpandedSessionIds(new Set())
     setExpandedMessagesBySession({})
@@ -356,7 +351,6 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
 
   const filterCounts = useMemo(() => {
     const counts: Record<PreviousChatFilter, number> = {
-      all: visibleSessions.length,
       chat: 0,
       schedule: 0,
       bot: 0,
@@ -368,9 +362,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   }, [visibleSessions])
 
   const filteredSessions = useMemo(
-    () => activeFilter === 'all'
-      ? visibleSessions
-      : visibleSessions.filter(session => getChatKind(session) === activeFilter),
+    () => visibleSessions.filter(session => getChatKind(session) === activeFilter),
     [activeFilter, visibleSessions]
   )
 
@@ -529,7 +521,6 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
 
   const ActionIcon = actionLabel.toLowerCase() === 'attach' ? Paperclip : ArrowUpRight
   const filterItems = [
-    { filter: 'all' as const, label: 'All', icon: History },
     { filter: 'chat' as const, label: 'Chat', icon: MessageSquare },
     { filter: 'schedule' as const, label: 'Schedules', icon: CalendarClock },
     { filter: 'bot' as const, label: 'Bots', icon: Bot },
@@ -602,9 +593,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
           <PreviousChatEmptyState
             filter={activeFilter}
             hasAnySessions
-            fallbackText={activeFilter === 'all'
-              ? 'No previous activity yet.'
-              : `No previous ${activeFilter === 'schedule' ? 'schedule' : activeFilter} chats yet.`}
+            fallbackText={`No previous ${activeFilter === 'schedule' ? 'schedule' : activeFilter} chats yet.`}
           />
         ) : (
           <div className={`${fill ? 'min-h-0 flex-1 overflow-y-auto' : ''} divide-y divide-border`}>

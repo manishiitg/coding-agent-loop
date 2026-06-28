@@ -1980,6 +1980,11 @@ const XtermTerminalPane: React.FC<{
   const mountRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<XTerm | null>(null)
   const lastContentRef = useRef<string>('')
+  // Pager model (Fix B): while the user has scrolled up we freeze the view and
+  // stash the latest desired content here instead of writing it. onScroll applies
+  // it (via applyContentRef) once the user returns to the bottom.
+  const pendingContentRef = useRef<string | null>(null)
+  const applyContentRef = useRef<((next: string) => void) | null>(null)
   const onViewportStickChangeRef = useRef(onViewportStickChange)
   const onResizeRef = useRef(onResize)
 
@@ -2034,6 +2039,16 @@ const XtermTerminalPane: React.FC<{
     const scrollDisposable = term.onScroll(viewportY => {
       const distanceFromBottom = Math.max(0, term.buffer.active.baseY - viewportY)
       onViewportStickChangeRef.current?.(distanceFromBottom <= 1)
+      // Pager catch-up (Fix B): when the user scrolls back to the bottom and we
+      // deferred content while they were scrolled up, apply the latest deferred
+      // screen now so the view jumps straight to current.
+      if (
+        distanceFromBottom <= 1 &&
+        pendingContentRef.current !== null &&
+        pendingContentRef.current !== lastContentRef.current
+      ) {
+        applyContentRef.current?.(pendingContentRef.current)
+      }
       logXtermDebug('scroll', { viewportY, distanceFromBottom })
     })
     const resizeDisposable = term.onResize(({ cols, rows }) => {
@@ -2119,56 +2134,83 @@ const XtermTerminalPane: React.FC<{
   }, [contentRef, handleWheel, logXtermDebug])
 
   useEffect(() => {
-    const term = terminalRef.current
-    if (!term) return
-    const previousContent = lastContentRef.current
-    if (content === previousContent) return
-    const buffer = term.buffer.active
-    const distanceFromBottom = Math.max(0, buffer.baseY - buffer.viewportY)
-    const shouldStickToBottom = distanceFromBottom <= 1
-    const previousBaseY = buffer.baseY
-    const previousViewportY = buffer.viewportY
-    const appendOnly = previousContent !== '' && content.startsWith(previousContent)
-    const writeContent = appendOnly ? content.slice(previousContent.length) : content
-    lastContentRef.current = content
-    const restoreScroll = () => {
-      if (shouldStickToBottom) {
-        term.scrollToBottom()
+    // applyContent writes `nextContent` into the terminal. It is stored in a ref
+    // so onScroll can re-invoke it for deferred content when the user returns to
+    // the bottom (pager catch-up, Fix B). Redefined each render so it captures the
+    // current contentSource/logXtermDebug.
+    const applyContent = (nextContent: string) => {
+      const term = terminalRef.current
+      if (!term) return
+      const previousContent = lastContentRef.current
+      if (nextContent === previousContent) return
+      const buffer = term.buffer.active
+      const distanceFromBottom = Math.max(0, buffer.baseY - buffer.viewportY)
+      const shouldStickToBottom = distanceFromBottom <= 1
+      // Fix B (pager freeze): while the user has scrolled up, do NOT write/reset/
+      // scroll — that would rebuild the buffer and snap the view back to the
+      // bottom. Stash the latest content and bail without touching lastContentRef,
+      // so the buffer and the user's scroll position stay put. onScroll applies it
+      // once they scroll back to the bottom. previousContent==='' (first load)
+      // never freezes, so the initial screen always renders.
+      const userScrolledUp = previousContent !== '' && distanceFromBottom > 2
+      if (userScrolledUp) {
+        pendingContentRef.current = nextContent
         return
       }
-      const nextBaseY = term.buffer.active.baseY
-      // Append case: new lines land at the bottom and existing lines keep their
-      // absolute index, so preserve the absolute viewport line.
-      // Rebuild case (term.reset() on a non-append refresh): the capture is a
-      // bottom-anchored sliding window — old lines drop off the TOP, so absolute
-      // indices shift down each refresh. Pinning to the old absolute line drifts the
-      // view downward and, when the buffer gets shorter, clamps it to the bottom
-      // ("scroll works, then snaps"). Distance-from-bottom is the stable coordinate.
-      const targetLine = appendOnly
-        ? Math.min(previousViewportY, nextBaseY)
-        : nextBaseY - distanceFromBottom
-      term.scrollToLine(Math.max(0, targetLine))
+      pendingContentRef.current = null
+      const previousBaseY = buffer.baseY
+      const previousViewportY = buffer.viewportY
+      const appendOnly = previousContent !== '' && nextContent.startsWith(previousContent)
+      const writeContent = appendOnly ? nextContent.slice(previousContent.length) : nextContent
+      lastContentRef.current = nextContent
+      const restoreScroll = () => {
+        if (shouldStickToBottom) {
+          term.scrollToBottom()
+          return
+        }
+        const nextBaseY = term.buffer.active.baseY
+        // Append case: new lines land at the bottom and existing lines keep their
+        // absolute index, so preserve the absolute viewport line.
+        // Rebuild case (inline RIS on a non-append refresh): the capture is a
+        // bottom-anchored sliding window — old lines drop off the TOP, so absolute
+        // indices shift down each refresh. Pinning to the old absolute line drifts the
+        // view downward and, when the buffer gets shorter, clamps it to the bottom
+        // ("scroll works, then snaps"). Distance-from-bottom is the stable coordinate.
+        const targetLine = appendOnly
+          ? Math.min(previousViewportY, nextBaseY)
+          : nextBaseY - distanceFromBottom
+        term.scrollToLine(Math.max(0, targetLine))
+      }
+      const afterWrite = () => {
+        restoreScroll()
+        logXtermDebug('write', {
+          previousBaseY,
+          previousViewportY,
+          previousDistanceFromBottom: distanceFromBottom,
+          restoredViewportY: term.buffer.active.viewportY,
+          restoredDistanceFromBottom: Math.max(0, term.buffer.active.baseY - term.buffer.active.viewportY),
+          appendOnly,
+          shouldStickToBottom,
+        })
+      }
+      // Fix A (duplicate stacking): term.write() is async and batched, but
+      // term.reset() is synchronous and out-of-band. Under rapid streaming
+      // refreshes, calling reset() then write() lets multiple full-screen captures
+      // parse with no intervening clear → screens stack (banner/message repeated).
+      // Emit a single write whose payload begins with an inline full reset ("\x1bc"
+      // RIS) for the rebuild case, so the clear is parsed in-order immediately
+      // before the new content. The append case writes only the delta as before.
+      const payload = normalizeXtermWriteContent(writeContent, contentSource)
+      if (!appendOnly) {
+        term.write('\x1bc' + payload, afterWrite)
+      } else if (!payload) {
+        afterWrite()
+      } else {
+        term.write(payload, afterWrite)
+      }
     }
-    const afterWrite = () => {
-      restoreScroll()
-      logXtermDebug('write', {
-        previousBaseY,
-        previousViewportY,
-        previousDistanceFromBottom: distanceFromBottom,
-        restoredViewportY: term.buffer.active.viewportY,
-        restoredDistanceFromBottom: Math.max(0, term.buffer.active.baseY - term.buffer.active.viewportY),
-        appendOnly,
-        shouldStickToBottom,
-      })
-    }
-    if (!appendOnly) {
-      term.reset()
-    }
-    if (!writeContent) {
-      afterWrite()
-      return
-    }
-    term.write(normalizeXtermWriteContent(writeContent, contentSource), afterWrite)
+    applyContentRef.current = applyContent
+    applyContent(content)
   }, [content, contentSource, logXtermDebug])
 
   return (

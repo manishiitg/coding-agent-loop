@@ -14,8 +14,66 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/workspace"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
+	agentevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
+
+// TestCaptureChatHistoryTerminalSnapshotsPersistsNonTmuxMultiAgentPane covers the
+// multi-agent / Chief-of-Staff case: the coding agent streams its terminal over
+// a non-tmux transport, so the store snapshot has no tmux_session. Persistence
+// must still capture it so the pane can be restored after a server restart.
+func TestCaptureChatHistoryTerminalSnapshotsPersistsNonTmuxMultiAgentPane(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "chat-non-tmux-multiagent"
+
+	now := time.Now()
+	store.HandleEvent(sessionID, internalevents.Event{
+		Type:          "streaming_chunk",
+		Timestamp:     now,
+		SessionID:     sessionID,
+		ExecutionKind: "main_agent",
+		Data: &agentevents.AgentEvent{
+			Type:      agentevents.StreamingChunk,
+			Timestamp: now,
+			SessionID: sessionID,
+			Data: &agentevents.StreamingChunkEvent{
+				BaseEventData: agentevents.BaseEventData{
+					Timestamp: now,
+					SessionID: sessionID,
+					Metadata: map[string]interface{}{
+						"kind":           "terminal",
+						"provider":       "claude-code",
+						"execution_kind": "main_agent",
+						"scope":          "main_agent",
+						// Intentionally no tmux_session / step_transport — the
+						// non-tmux transport the bug was reported against.
+					},
+				},
+				Content:    "\x1b[32mchief of staff output\x1b[0m\n",
+				ChunkIndex: 0,
+			},
+		},
+	})
+
+	// Sanity: the live store snapshot is non-tmux (the condition the old
+	// persist filter dropped).
+	stored := store.List(sessionID)
+	if len(stored) != 1 {
+		t.Fatalf("store snapshot count = %d, want 1", len(stored))
+	}
+	if chatHistoryTerminalSnapshotIsTmux(stored[0]) {
+		t.Fatalf("expected non-tmux store snapshot, got transport=%q source=%q tmux=%q", stored[0].StepTransport, stored[0].ContentSource, stored[0].TmuxSession)
+	}
+
+	snapshots := api.captureChatHistoryTerminalSnapshots(sessionID, nil)
+	if len(snapshots) != 1 {
+		t.Fatalf("persisted snapshot count = %d, want 1 (non-tmux multi-agent pane must persist)", len(snapshots))
+	}
+	if !strings.Contains(snapshots[0].Content, "chief of staff output") {
+		t.Fatalf("persisted snapshot content = %q, want chief of staff output", snapshots[0].Content)
+	}
+}
 
 func TestCleanChatHistoryForPersistenceRemovesRestoredConversationContext(t *testing.T) {
 	originalText := "check what we did here\n\nPrevious workflow-builder conversation file: Workflow/instagram/builder/conversation/2026-05-14/session-old-conversation.json\nThis hidden context should not persist."

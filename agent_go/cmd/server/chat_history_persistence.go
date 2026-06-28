@@ -191,14 +191,17 @@ func (api *StreamingAPI) captureChatHistoryTerminalSnapshots(sessionID string, r
 		candidates = append(candidates, snapshot)
 	}
 	if len(candidates) == 0 && api.terminalStore != nil {
-		for _, snapshot := range api.terminalStore.List(sessionID) {
-			if strings.TrimSpace(snapshot.Content) == "" || !chatHistoryTerminalSnapshotIsTmux(snapshot) {
-				continue
-			}
-			prepared, ok := prepareChatHistoryTerminalSnapshot(snapshot)
-			if ok {
-				candidates = append(candidates, prepared)
-			}
+		stored := api.terminalStore.List(sessionID)
+		// Prefer tmux-backed panes (workflow coding-agent steps run over a tmux
+		// transport, so their snapshots are recapturable on restore). When no
+		// tmux pane exists — e.g. a multi-agent / Chief-of-Staff chat whose
+		// coding agent streams over a non-tmux transport (stream-json), so the
+		// terminal events carry no tmux_session — fall back to any terminal
+		// pane. Without this fallback the last capture is dropped at save time
+		// and the restored terminal pane comes up empty after a server restart.
+		candidates = collectChatHistoryTerminalSnapshots(stored, true)
+		if len(candidates) == 0 {
+			candidates = collectChatHistoryTerminalSnapshots(stored, false)
 		}
 	}
 	if len(candidates) == 0 {
@@ -214,6 +217,26 @@ func (api *StreamingAPI) captureChatHistoryTerminalSnapshots(sessionID string, r
 	})
 	if len(candidates) > maxChatHistoryTerminalSnapshots {
 		candidates = candidates[:maxChatHistoryTerminalSnapshots]
+	}
+	return candidates
+}
+
+// collectChatHistoryTerminalSnapshots prepares persistable terminal snapshots
+// from the in-memory store list. When tmuxOnly is set it keeps only
+// tmux-backed panes (the workflow coding-agent path); otherwise it keeps any
+// non-empty terminal pane (the multi-agent non-tmux fallback).
+func collectChatHistoryTerminalSnapshots(stored []terminals.Snapshot, tmuxOnly bool) []terminals.Snapshot {
+	candidates := make([]terminals.Snapshot, 0, len(stored))
+	for _, snapshot := range stored {
+		if strings.TrimSpace(snapshot.Content) == "" {
+			continue
+		}
+		if tmuxOnly && !chatHistoryTerminalSnapshotIsTmux(snapshot) {
+			continue
+		}
+		if prepared, ok := prepareChatHistoryTerminalSnapshot(snapshot); ok {
+			candidates = append(candidates, prepared)
+		}
 	}
 	return candidates
 }
@@ -1617,9 +1640,11 @@ func chatHistoryTerminalSnapshotFromUIEvent(sessionID string, runtime *ChatHisto
 		"claude_code_interactive_session",
 		"gemini_interactive_session",
 	)
-	if tmuxSession == "" {
-		return terminals.Snapshot{}, false
-	}
+	// A tmux_session is no longer required: multi-agent / Chief-of-Staff chats
+	// stream their coding-agent terminal over a non-tmux transport, so those
+	// terminal events carry no tmux_session. Reconstruct them anyway (keyed by
+	// session) so the last capture is restorable from ui_events on sessions
+	// saved before terminal_snapshots persisted non-tmux panes.
 
 	content := event.Data.Content
 	chunkIndex := 0
@@ -1666,15 +1691,20 @@ func chatHistoryTerminalSnapshotFromUIEvent(sessionID string, runtime *ChatHisto
 		Scope:         "main_agent",
 		WorkflowPath:  workflowPath,
 		StepID:        "main_agent:" + sessionID,
-		StepTransport: "tmux",
 		TmuxSession:   tmuxSession,
 		Content:       content,
-		ContentSource: "tmux_capture",
 		ChunkIndex:    chunkIndex,
 		Active:        false,
 		State:         "stale",
 		CreatedAt:     updatedAt,
 		UpdatedAt:     updatedAt,
+	}
+	// Only stamp tmux transport/source when the event actually came from a tmux
+	// pane. Non-tmux multi-agent terminals leave these empty so a restored
+	// static snapshot isn't treated as live-tmux-recapturable.
+	if tmuxSession != "" {
+		snapshot.StepTransport = "tmux"
+		snapshot.ContentSource = "tmux_capture"
 	}
 	if snapshot.ExecutionID == "" {
 		snapshot.ExecutionID = "main:" + sessionID

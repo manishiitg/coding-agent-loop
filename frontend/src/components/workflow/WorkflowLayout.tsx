@@ -37,7 +37,8 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
   compact?: boolean
   hidePhaseChatEmptyState?: boolean
   suppressTerminalPane?: boolean
-}>(({ onNewChat, hideHeader, hideInput, compact, hidePhaseChatEmptyState, suppressTerminalPane }, ref) => {
+  workflowPreviousChatsPanel?: React.ReactNode
+}>(({ onNewChat, hideHeader, hideInput, compact, hidePhaseChatEmptyState, suppressTerminalPane, workflowPreviousChatsPanel }, ref) => {
   // Prefer the active workflow tab when one is selected. The tab strip keeps
   // active workflow tabs visible even while preset metadata is catching up
   // after reload; ChatArea must use the same rule or the input area disappears.
@@ -91,6 +92,7 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
       compact={compact}
       hidePhaseChatEmptyState={hidePhaseChatEmptyState}
       suppressTerminalPane={suppressTerminalPane}
+      workflowPreviousChatsPanel={workflowPreviousChatsPanel}
       // Pass null (not undefined) when no tab matches the active workflow preset.
       // Otherwise ChatArea falls back to the global activeTabId and can briefly
       // render the previous workflow's blocking human-feedback/auth prompt.
@@ -286,7 +288,10 @@ function runningWorkflowBelongsToPreset(
 const WorkflowPreviousChatsPanel: React.FC<{
   workspacePath: string
   onHasChatsChange?: (hasChats: boolean) => void
-}> = ({ workspacePath, onHasChatsChange }) => {
+  // When true the panel fills the chat pane as the primary landing surface
+  // (mirrors the multi-agent landing panel) instead of the compact top strip.
+  primary?: boolean
+}> = ({ workspacePath, onHasChatsChange, primary = false }) => {
   const activeTabId = useChatStore(state => state.activeTabId)
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
@@ -391,7 +396,8 @@ const WorkflowPreviousChatsPanel: React.FC<{
       emptyText="No previous automation chats yet."
       onHasChatsChange={onHasChatsChange}
       onSelectSession={handleResumePreviousChat}
-      compact
+      compact={!primary}
+      fill={primary}
     />
   )
 }
@@ -702,7 +708,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const showWorkspacePane = useWorkflowStore(state => state.showWorkspacePane)
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
   const setShowWorkspacePane = useWorkflowStore(state => state.setShowWorkspacePane)
-  const focusedPane = useWorkflowStore(state => state.focusedPane)
   const setFocusedPane = useWorkflowStore(state => state.setFocusedPane)
   const workflowWorkspaceView = useWorkflowStore(state => state.workflowWorkspaceView)
   const setWorkflowWorkspaceView = useWorkflowStore(state => state.setWorkflowWorkspaceView)
@@ -904,10 +909,18 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     setHasLoadedPreviousWorkflowChats(isLoaded)
   }, [])
 
-  const [reportPreviewPreference, setReportPreviewPreference] = useState<'auto' | 'desktop' | 'tablet' | 'mobile'>(() => {
+  // Show the previous-automation-chats list as the primary landing surface on a
+  // fresh builder chat (mirrors the multi-agent landing panel). We keep it up
+  // while the list is still loading, then keep it only if there are chats to
+  // resume — otherwise we fall through to the normal empty/start state so the
+  // user can just start typing.
+  const showWorkflowPreviousChatsAsPrimary =
+    showResumeHint && !!workspacePath && (!hasLoadedPreviousWorkflowChats || hasPreviousWorkflowChats)
+
+  const [reportPreviewPreference, setReportPreviewPreference] = useState<'auto' | 'desktop' | 'mobile'>(() => {
     try {
       const saved = localStorage.getItem(reportPreviewPreferenceKey(workspacePath))
-      return saved === 'desktop' || saved === 'tablet' || saved === 'mobile' ? saved : 'mobile'
+      return saved === 'desktop' || saved === 'mobile' ? saved : 'mobile'
     } catch {
       return 'mobile'
     }
@@ -942,7 +955,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     const syncReportPreviewPreference = () => {
       try {
         const saved = localStorage.getItem(reportPreviewPreferenceKey(workspacePath))
-        setReportPreviewPreference(saved === 'desktop' || saved === 'tablet' || saved === 'mobile' ? saved : 'mobile')
+        setReportPreviewPreference(saved === 'desktop' || saved === 'mobile' ? saved : 'mobile')
       } catch {
         setReportPreviewPreference('mobile')
       }
@@ -966,22 +979,19 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // pane stayed pinned at 50% of the screen.
   //
   //   mobile  → report 480px column, chat takes the rest (review-style)
-  //   tablet  → 50/50 split between builder/chat and the workflow view
-  //   laptop  → chat collapses to ~360px, report fills the remaining width
+  //   laptop  → chat is hidden, report fills the full width
   //   default → 50/50 split (no preview pref, or running in non-report views)
   const isPreviewableWorkspaceCanvas =
     !isFilesWorkspace &&
     showChatArea &&
     workspacePaneVisible &&
     (canvasViewMode === 'report' || canvasViewMode === 'flow')
-  const previewPaneTier: 'mobile' | 'tablet' | 'laptop' | null = isPreviewableWorkspaceCanvas
+  const previewPaneTier: 'mobile' | 'laptop' | null = isPreviewableWorkspaceCanvas
     ? reportPreviewPreference === 'mobile'
       ? 'mobile'
-      : reportPreviewPreference === 'tablet'
-        ? 'tablet'
-        : reportPreviewPreference === 'desktop'
-          ? 'laptop'
-          : null
+      : reportPreviewPreference === 'desktop'
+        ? 'laptop'
+        : null
     : null
   // Backward-compat alias kept for downstream readers — mobile pane behaviour
   // is unchanged.
@@ -993,31 +1003,19 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     workspacePaneVisible && isWorkspaceViewActive
       ? 'hidden md:flex'
       : 'flex'
-  // The device selection (mobile/tablet/laptop) drives BOTH the outer pane width
-  // and the inner content width, together:
-  //   laptop → report fills, chat ~360px rail (the report column flexes)
-  //   tablet → report pane 880px, chat fills the rest
-  //   mobile → report pane 480px, chat fills the rest
-  // Clicking into chat caps the report at tablet so chat gets room without
-  // shrinking the report all the way to mobile: laptop→tablet, tablet stays
-  // tablet, mobile stays mobile. Report is always grid col 2, chat is col 1.
+  // The device selection (mobile/laptop) drives the outer pane width:
+  //   mobile → report pane 480px, chat fills the rest (chat is col 1, report col 2)
+  //   laptop → chat is hidden; the report fills the full width (see laptopHidesChat)
   const previewDevice = usePreviewDevice(workspacePath)
-  // Focusing chat shrinks the report column, so cap the report at tablet while
-  // typing: laptop→tablet (not all the way to mobile), tablet stays tablet, and a
-  // saved mobile width stays mobile. Unfocused, the report uses its own device tier.
-  const effectiveTier: 'mobile' | 'tablet' | 'laptop' =
-    focusedPane === 'chat'
-      ? (previewDevice === 'mobile' ? 'mobile' : 'tablet')
-      : previewDevice === 'mobile' ? 'mobile' : previewDevice === 'tablet' ? 'tablet' : 'laptop'
+  const effectiveTier: 'mobile' | 'laptop' =
+    previewDevice === 'mobile' ? 'mobile' : 'laptop'
   // Laptop ('desktop' device) hides the chat pane entirely for both report and
-  // plan — the workspace canvas takes the full width. (Use the raw device choice,
-  // not effectiveTier, so it holds regardless of the focus-cap.)
+  // plan — the workspace canvas takes the full width.
   const laptopHidesChat = !isFilesWorkspace && previewDevice === 'desktop' && showChatArea && workspacePaneVisible
   const splitGridCols = isFilesWorkspace
     ? 'md:grid-cols-[minmax(0,1fr)_384px]'
     : effectiveTier === 'mobile' ? 'md:grid-cols-[minmax(0,1fr)_480px]'
-    : effectiveTier === 'tablet' ? 'md:grid-cols-[minmax(0,1fr)_880px]'
-    : 'md:grid-cols-[360px_minmax(0,1fr)]'
+    : 'md:grid-cols-[minmax(0,1fr)]'
   // Animate the GRID TRACK widths on the container so the chat↔report resize
   // glides — the panes just follow their grid column instead of fighting it with
   // per-tier explicit widths. (grid-template-columns animation is supported by
@@ -2223,14 +2221,10 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               </div>
             )}
 
-            {showResumeHint && workspacePath && (
-              <div className="shrink-0">
-                <WorkflowPreviousChatsPanel
-                  workspacePath={workspacePath}
-                  onHasChatsChange={handleHasPreviousWorkflowChatsChange}
-                />
-              </div>
-            )}
+            {/* The previous-automation-chats list now renders inside ChatArea's
+                content area (workflowPreviousChatsPanel below) so it fills the
+                pane above the chat input, mirroring the multi-agent landing
+                panel — instead of a compact strip stacked on top of the chat. */}
 
             <div className="min-h-0 flex-1 overflow-hidden">
               <ChatAreaWithObserverId
@@ -2239,8 +2233,15 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
                 hideHeader
                 hideInput
                 compact
-                hidePhaseChatEmptyState={showResumeHint && (!hasLoadedPreviousWorkflowChats || hasPreviousWorkflowChats)}
-                suppressTerminalPane={showResumeHint && (!hasLoadedPreviousWorkflowChats || hasPreviousWorkflowChats)}
+                hidePhaseChatEmptyState={showWorkflowPreviousChatsAsPrimary}
+                suppressTerminalPane={showWorkflowPreviousChatsAsPrimary}
+                workflowPreviousChatsPanel={showWorkflowPreviousChatsAsPrimary && workspacePath ? (
+                  <WorkflowPreviousChatsPanel
+                    primary
+                    workspacePath={workspacePath}
+                    onHasChatsChange={handleHasPreviousWorkflowChatsChange}
+                  />
+                ) : undefined}
               />
             </div>
           </div>

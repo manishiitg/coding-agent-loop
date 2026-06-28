@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, ArrowDownToLine, ArrowRightToLine, Braces, Bug, Check, ChevronDown, ChevronsLeft, ChevronsRight, ChevronUp, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Minus, Palette, Plus, Power, RefreshCw, Square, Terminal, Trash2, X } from 'lucide-react'
 import { AnsiUp } from 'ansi_up'
 import { Terminal as XTerm, type ITheme } from '@xterm/xterm'
@@ -1966,7 +1966,7 @@ const ColoredText: React.FC<{ rawText: string; className?: string }> = ({ rawTex
   return <span className={className} dangerouslySetInnerHTML={{ __html: html }} />
 }
 
-const XtermTerminalPane: React.FC<{
+const XtermTerminalPaneInner: React.FC<{
   content: string
   contentSource?: string
   className?: string
@@ -1987,6 +1987,10 @@ const XtermTerminalPane: React.FC<{
   const applyContentRef = useRef<((next: string) => void) | null>(null)
   const onViewportStickChangeRef = useRef(onViewportStickChange)
   const onResizeRef = useRef(onResize)
+  // contentSource is a prop; the mount effect's onResize handler closes over the
+  // INITIAL render's value (empty deps), so mirror it in a ref to normalize the
+  // carry-over repaint correctly on later resizes.
+  const contentSourceRef = useRef(contentSource)
 
   useEffect(() => {
     onViewportStickChangeRef.current = onViewportStickChange
@@ -1995,6 +1999,10 @@ const XtermTerminalPane: React.FC<{
   useEffect(() => {
     onResizeRef.current = onResize
   }, [onResize])
+
+  useEffect(() => {
+    contentSourceRef.current = contentSource
+  }, [contentSource])
 
   const logXtermDebug = useCallback((phase: string, extra: Record<string, unknown> = {}) => {
     if (!terminalScrollDebugEnabled()) return
@@ -2057,13 +2065,29 @@ const XtermTerminalPane: React.FC<{
     // we POST the new size and re-seed exactly once per real geometry change.
     const resizeDisposable = term.onResize(({ cols, rows }) => {
       // Re-seed on geometry change: the pipe recording still holds frames captured
-      // at the OLD pane size; replaying/appending them into the resized grid is the
-      // litter. Reset and drop our content trackers so the next content fetch
-      // rebuilds cleanly at the new geometry (resize first, rebuild on next fetch —
-      // don't render old-geometry pipe bytes after a resize).
+      // at the OLD pane size, and the pipe file is append-only — so the NEXT capture
+      // starts with the old bytes. Appending that delta (which carries tmux's own
+      // resize-redraw escapes) into the resized grid is the litter. We therefore
+      // STILL force a clean full rebuild on the next fetch by clearing lastContentRef
+      // (previousContent==='' → applyContent rebuilds with an inline RIS, never an
+      // append).
+      //
+      // The bug this avoids: clearing alone also blanked the pane until that next
+      // fetch (up to a full poll interval). When the chat input auto-grows (a few
+      // wrapped lines of typing in the narrow layout) it momentarily shrinks this
+      // flex-sibling pane mid-stream → grid change → onResize → blank. So we repaint
+      // the content we ALREADY have IMMEDIATELY (inline RIS + full write) to bridge
+      // that gap. This repaint does NOT touch lastContentRef, so the next fetch still
+      // does its clean litter-free rebuild and overwrites this bridge frame.
+      const carryOver = lastContentRef.current
       term.reset()
       lastContentRef.current = ''
       pendingContentRef.current = null
+      if (carryOver) {
+        const payload = normalizeXtermWriteContent(carryOver, contentSourceRef.current)
+        term.write('\x1bc' + payload)
+        term.scrollToBottom()
+      }
       // Drive the tmux resize from xterm's real grid so the pane matches 1:1.
       onResizeRef.current?.(cols, rows)
       logXtermDebug('resize', { cols, rows })
@@ -2286,6 +2310,11 @@ const XtermTerminalPane: React.FC<{
   )
 }
 
+// Memoized so a parent (TerminalCenter) re-render that leaves this pane's props
+// unchanged does NOT tear down / rewrite the live xterm. Its callback props are
+// all useCallback-stable, so re-render now tracks content/theme changes only.
+const XtermTerminalPane = memo(XtermTerminalPaneInner)
+
 function normalizeXtermWriteContent(content: string, contentSource?: string): string {
   if (contentSource === 'tmux_pipe') {
     return content
@@ -2380,7 +2409,7 @@ function formatStatusFooterCost(usd?: number): string {
   return `$${formatCost(usd)}`
 }
 
-const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content, rows: structuredRows, scrollRef, onScroll, onWheel, terminal, theme }) => {
+const StructuredTerminalViewInner: React.FC<StructuredTerminalViewProps> = ({ content, rows: structuredRows, scrollRef, onScroll, onWheel, terminal, theme }) => {
   const rows = useMemo(() => {
     const normalizedRows = normalizeTerminalRows(structuredRows)
     return normalizedRows.length > 0 ? normalizedRows : parseTerminalContent(content)
@@ -2587,6 +2616,10 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
     </div>
   )
 }
+
+// Memoized for the same reason as XtermTerminalPane: a parent re-render with
+// unchanged props (callbacks are useCallback-stable) must not re-render the view.
+const StructuredTerminalView = memo(StructuredTerminalViewInner)
 
 function isSyntheticTerminal(terminal: TerminalSnapshot): boolean {
   const transport = (terminal.step_transport || '').toLowerCase()
@@ -2873,7 +2906,7 @@ function writeDismissedTerminalErrorIDs(sessionId: string | undefined, ids: Set<
   }
 }
 
-export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId, compact, hasConversationActivity = false }) => {
+const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, compact, hasConversationActivity = false }) => {
   // terminalCenterOpen was the legacy toggle gate (separate sidekick
   // panel); kept here for any callers that still pass the flag but no
   // longer affects rendering — Debug-mode mount is the only gate.
@@ -3052,6 +3085,10 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const fastPollIntervalRef = useRef<number | null>(null)
   const lastSizeHintSentRef = useRef<{ cols: number; rows: number } | null>(null)
   const lastResizeSentRef = useRef<{ terminalId: string; cols: number; rows: number } | null>(null)
+  // Latest real xterm grid (cols/rows from term.onResize), remembered even when we
+  // can't POST /resize yet (e.g. a resumed terminal whose tmux_session hasn't been
+  // materialized). Lets us push the grid the moment tmux_session appears.
+  const lastXtermGridRef = useRef<{ cols: number; rows: number } | null>(null)
   const terminalTheme = TERMINAL_THEMES[terminalColorScheme]
 
   useEffect(() => {
@@ -3879,9 +3916,29 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   }, [])
 
   const handleSelectedXtermResize = useCallback((cols: number, rows: number) => {
+    // Always remember the real xterm grid, even when we can't POST yet (no
+    // tmux_session). A resumed terminal starts as the static snapshot (tmux_session
+    // === '') so this early-returns; once the live tmux is materialized the effect
+    // below replays this remembered grid (term.onResize won't re-fire on its own
+    // because the grid didn't change).
+    lastXtermGridRef.current = { cols, rows }
     if (!selectedTerminalView || !selectedTerminalView.tmux_session || isSyntheticTerminal(selectedTerminalView)) return
     sendTerminalResize(selectedTerminalView.terminal_id, cols, rows)
   }, [selectedTerminalView, sendTerminalResize])
+
+  // Resume gap closer: when a terminal's tmux_session first becomes available
+  // (static restored snapshot → live materialized tmux, same canonical
+  // terminal_id), xterm has already fitted, so term.onResize won't fire again and
+  // /resize would never be sent — tmux would keep its launch geometry and pi-cli's
+  // full-screen redraws would append instead of overwrite (duplicated frames).
+  // Proactively push the current xterm grid so the pane matches the xterm 1:1,
+  // exactly like a new chat. Idempotent: sendTerminalResize dedupes by id+cols+rows.
+  useEffect(() => {
+    if (!selectedTerminalView || !selectedTerminalView.tmux_session || isSyntheticTerminal(selectedTerminalView)) return
+    const grid = lastXtermGridRef.current
+    if (!grid) return
+    sendTerminalResize(selectedTerminalView.terminal_id, grid.cols, grid.rows)
+  }, [selectedTerminalView?.terminal_id, selectedTerminalView?.tmux_session, sendTerminalResize])
 
   // Startup/idle size hint: keep the backend's preferred tmux launch size in
   // sync with the visible TerminalCenter container, even before any terminal
@@ -4713,3 +4770,10 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     </div>
   )
 }
+
+// FIX A: Memoized so typing in the chat input — which re-renders ChatArea (the
+// parent) — does NOT re-render the terminal subtree and disturb the live xterm
+// panes. Props (currentSessionId, compact, hasConversationActivity) are all
+// primitives and stable while typing, so the shallow-prop comparison short-
+// circuits the re-render.
+export const TerminalCenter = memo(TerminalCenterInner)

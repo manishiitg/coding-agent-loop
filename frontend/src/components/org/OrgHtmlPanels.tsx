@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { Activity, Brain, Laptop, PanelRightClose, RefreshCw, Smartphone, TabletSmartphone, Target } from 'lucide-react'
+import { Activity, Brain, PanelRightClose, RefreshCw, Target } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import { useAuthStore } from '../../stores/useAuthStore'
 import { useTheme } from '../../hooks/useTheme'
@@ -9,18 +9,11 @@ import {
   ORG_HTML_PREVIEW_PREFERENCE_CHANGED_EVENT,
   getOrgHtmlPreviewDevice,
   orgHtmlPreviewShellClass,
-  setOrgHtmlPreviewDevice,
   type OrgHtmlPreviewDevice,
 } from './orgHtmlPreview'
 
 const ORG_PULSE_LOG_PATH = 'pulse/org-pulse.html'
 const ORG_GOALS_PATH = 'pulse/goals.html'
-
-const ORG_HTML_PREVIEW_DEVICE_OPTS = [
-  { mode: 'mobile' as const, Icon: Smartphone, label: 'Mobile preview' },
-  { mode: 'tablet' as const, Icon: TabletSmartphone, label: 'Tablet preview' },
-  { mode: 'desktop' as const, Icon: Laptop, label: 'Laptop preview' },
-]
 
 function applyThemeToOrgHtml(content: string, isDark: boolean): string {
   const themeAttr = isDark ? 'dark' : 'light'
@@ -115,7 +108,7 @@ const OrgHtmlPanel: React.FC<OrgHtmlPanelProps> = ({ title, path, loadingText, e
     if (fixedDevice) return // locked to fixedDevice — ignore the global preview preference
     const handler = (event: Event) => {
       const preference = (event as CustomEvent).detail?.preference
-      if (preference === 'mobile' || preference === 'tablet' || preference === 'desktop') {
+      if (preference === 'mobile' || preference === 'desktop') {
         setDevice(preference)
       }
     }
@@ -126,11 +119,6 @@ const OrgHtmlPanel: React.FC<OrgHtmlPanelProps> = ({ title, path, loadingText, e
   const refresh = useCallback(() => {
     void load()
   }, [load])
-
-  const selectDevice = useCallback((next: OrgHtmlPreviewDevice) => {
-    setDevice(next)
-    setOrgHtmlPreviewDevice(next)
-  }, [])
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
@@ -147,24 +135,6 @@ const OrgHtmlPanel: React.FC<OrgHtmlPanelProps> = ({ title, path, loadingText, e
           )}
         </div>
         <div className="flex flex-none items-center gap-1">
-          {!fixedDevice && (
-          <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/70 p-0.5 shadow-sm">
-            {ORG_HTML_PREVIEW_DEVICE_OPTS.map(({ mode, Icon: DeviceIcon, label }) => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => selectDevice(mode)}
-                title={label}
-                aria-label={label}
-                className={`inline-flex h-6 w-6 items-center justify-center rounded transition-colors ${
-                  device === mode ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                <DeviceIcon className="h-3.5 w-3.5" />
-              </button>
-            ))}
-          </div>
-          )}
           <button type="button" onClick={refresh} disabled={loading} title="Refresh" aria-label="Refresh" className={toolbarIconBtnClass}>
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           </button>

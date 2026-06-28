@@ -19,7 +19,7 @@ import {
   isHtmlDocumentWidget,
 } from './reportWidgets/shared'
 import { useCompactWidgetLayout, useContainerSizeTier } from './reportWidgets/tableHelpers'
-import { BarChart3, Check, ChevronDown, Download, Laptop, Loader2, RefreshCw, Smartphone, TabletSmartphone } from 'lucide-react'
+import { BarChart3, Check, ChevronDown, Download, Loader2, RefreshCw } from 'lucide-react'
 import { agentApi, workspaceApi } from '../../services/api'
 import { useReportFilePreviewStore } from '../../stores/useReportFilePreviewStore'
 import { useChatStore } from '../../stores/useChatStore'
@@ -457,10 +457,9 @@ interface ReportViewProps {
   reviewData?: unknown
   /** Optional close/back handler; when omitted, no close button is rendered (used for canvas-mode). */
   onClose?: () => void
-  // When the report pane is chat-focused it shrinks, so the parent caps the report
-  // at a smaller tier than the user's saved device width: laptop→tablet, and the
-  // narrowest case (saved mobile) → mobile. undefined = no chat-focus override.
-  focusTier?: 'mobile' | 'tablet'
+  // When the report pane is chat-focused in Mobile it shrinks, so the parent caps
+  // the report to mobile so it fits the narrow column. undefined = no override.
+  focusTier?: 'mobile'
 }
 
 // Source content cached per workspace-relative path. `undefined` = not yet fetched;
@@ -652,14 +651,14 @@ export function ReportViewer({ workspacePath, isOpen, onClose }: ReportViewerPro
 // Inline content — renders the report plan directly without modal chrome. Used by the
 // workflow canvas when canvasViewMode === 'report'.
 function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onClose, focusTier }: ReportViewProps) {
-  // Three explicit preview widths plus 'auto'. The internal name 'desktop' is
+  // Two explicit preview widths plus 'auto'. The internal name 'desktop' is
   // surfaced as "Laptop" in the UI to match the user's mental model — laptop
   // viewports are what fill the full max-width shell. 'auto' falls back to the
   // mobilePreview prop, used when nothing has been selected yet.
-  const [previewPreference, setPreviewPreference] = useState<'auto' | 'desktop' | 'tablet' | 'mobile'>(() => {
+  const [previewPreference, setPreviewPreference] = useState<'auto' | 'desktop' | 'mobile'>(() => {
     try {
       const saved = localStorage.getItem(reportPreviewPreferenceKey(workspacePath))
-      return saved === 'desktop' || saved === 'tablet' || saved === 'mobile' ? saved : 'mobile'
+      return saved === 'desktop' || saved === 'mobile' ? saved : 'mobile'
     } catch {
       return 'mobile'
     }
@@ -669,7 +668,7 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
   useEffect(() => {
     try {
       const saved = localStorage.getItem(reportPreviewPreferenceKey(workspacePath))
-      setPreviewPreference(saved === 'desktop' || saved === 'tablet' || saved === 'mobile' ? saved : 'mobile')
+      setPreviewPreference(saved === 'desktop' || saved === 'mobile' ? saved : 'mobile')
     } catch {
       setPreviewPreference('mobile')
     }
@@ -816,7 +815,7 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
       // Only react to changes for THIS workflow (scoped per workspacePath).
       if ((detail?.scopeId ?? null) !== (workspacePath ?? null)) return
       const p = detail?.preference
-      if (p === 'mobile' || p === 'tablet' || p === 'desktop' || p === 'auto') setPreviewPreference(p)
+      if (p === 'mobile' || p === 'desktop' || p === 'auto') setPreviewPreference(p)
     }
     const onDataStale = (e: Event) => {
       const stalePath = (e as CustomEvent).detail?.workspacePath
@@ -877,24 +876,22 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
     }
     return false
   }, [planExists, plan, sources, hiddenWidgetKeys])
-  // Report renders at the selected device width. When the pane is chat-focused the
-  // parent passes a capped focusTier (laptop→tablet, mobile→mobile) so the report
-  // fits the narrower pane; otherwise it follows the user's saved preference.
-  // Device selection lives in the shared on-pane bar (PreviewPaneControls).
-  const previewMode: 'desktop' | 'tablet' | 'mobile' = focusTier
+  // Report renders at the selected device width. When the pane is chat-focused in
+  // Mobile the parent passes focusTier='mobile' so the report fits the narrow pane;
+  // otherwise it follows the user's saved preference. Device selection lives in the
+  // shared on-pane bar (PreviewPaneControls).
+  const previewMode: 'desktop' | 'mobile' = focusTier
     ? focusTier
-    : (previewPreference === 'mobile' || previewPreference === 'tablet' || previewPreference === 'desktop'
+    : (previewPreference === 'mobile' || previewPreference === 'desktop'
         ? previewPreference
         : 'desktop')
-  // Per-mode shell width. Mobile mimics a phone (~480px), tablet mimics an
-  // iPad-class device (~880px), laptop fills available space. Content width
-  // mirrors the shell so widget reflow tests against the right container size.
+  // Per-mode shell width. Mobile mimics a phone (~480px); laptop fills available
+  // space. Content width mirrors the shell so widget reflow tests against the
+  // right container size.
   const previewShellClassName =
     previewMode === 'mobile'
       ? 'mx-auto w-full max-w-[480px] p-1.5 transition-all duration-200'
-      : previewMode === 'tablet'
-        ? 'mx-auto w-full max-w-[880px] p-1.5 transition-all duration-200'
-        : 'mx-auto w-full max-w-full transition-all duration-200'
+      : 'mx-auto w-full max-w-full transition-all duration-200'
   // A report made only of self-contained documents (md/html) renders edge-to-edge:
   // each document owns its own width / padding / background, so we add no
   // content-width cap, no scroll padding, and no card chrome around it (avoids
@@ -918,7 +915,7 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
   const htmlOnlyReport = documentWidgets != null && documentWidgets.every(isHtmlDocumentWidget)
 
   const previewContentClassName =
-    previewMode === 'mobile' || previewMode === 'tablet'
+    previewMode === 'mobile'
       ? 'w-full max-w-full'
       : htmlOnlyReport
         ? 'w-full max-w-full'

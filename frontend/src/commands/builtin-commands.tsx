@@ -337,8 +337,9 @@ Also ask whether I want to set up org-level backup and publish:
 Call get_reference_doc(kind="org-pulse") and follow it for what Daily Org Pulse should do. Before writing or changing pulse/org-pulse.html, also call get_reference_doc(kind="backup-strategy") and confirm org backup status in pulse/backup.json and pulse/backup/status.json, then call get_reference_doc(kind="org-html") and use its Org Pulse skeleton.
 Read pulse/goals.html if it exists, and read pulse/org-pulse.html if it exists.
 Read pulse/backup.json, pulse/backup/status.json, pulse/publish.json, and pulse/publish/status.json if they exist.
-Check the built-in Org Pulse schedule (builtin-org-pulse): whether it is enabled, its cron, timezone, and last/next run state.
-Before editing any multi-agent schedule file directly, call get_reference_doc(kind="schedule-management"). Prefer enabling/updating builtin-org-pulse; do not create a duplicate Org Pulse schedule.
+First call list_multiagent_schedules and find the existing Org Pulse schedule — the built-in builtin-org-pulse AND any other schedule that is really an Org Pulse (its name/description/query mentions "Org Pulse"). Report whether it is enabled, its cron, timezone, and last/next run state.
+To enable or configure Daily Org Pulse, ALWAYS call update_multiagent_schedule on builtin-org-pulse (this owns/materializes the built-in). NEVER call create_multiagent_schedule for Org Pulse — a freshly-minted UUID schedule becomes a duplicate that the Org Pulse pill and the scheduler can disagree about. If a duplicate non-builtin Org Pulse schedule already exists, consolidate: enable builtin-org-pulse and disable (or delete) the duplicate so exactly one Org Pulse schedule remains.
+Before editing any multi-agent schedule file directly, call get_reference_doc(kind="schedule-management").
 
 If pulse/goals.html is missing or has no measurable goals, explain that Daily Org Pulse can only measure org progress after goals exist. Ask whether I want to run /org-setup first or enable a workflow-health-only pulse temporarily. Do not create goals from this command unless I explicitly ask.
 

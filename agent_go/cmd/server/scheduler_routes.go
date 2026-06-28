@@ -165,6 +165,53 @@ func buildMultiAgentJobResponse(userID string, sched WorkflowSchedule, state Sch
 	}
 }
 
+// buildMultiAgentJobResponsesWithOrgPulse builds job responses for a user's
+// merged multi-agent schedules, applying the effective Org Pulse enabled state.
+//
+// The Org Pulse pill (and the scheduler's own intent) treats Org Pulse as a
+// single logical thing keyed by builtin-org-pulse. But /pulse-setup can leave
+// Org Pulse enabled under a different id (a user-created duplicate) instead of a
+// same-id builtin override. When that happens the canonical builtin-org-pulse
+// entry stays at its disabled default, so the pill — which reads that id — shows
+// OFF even though the scheduler is actually running Org Pulse. Here we detect any
+// enabled Org Pulse schedule and surface its effective ON state (plus run info)
+// on the canonical builtin-org-pulse job so the pill matches reality.
+func buildMultiAgentJobResponsesWithOrgPulse(svc *SchedulerService, userID string, merged []WorkflowSchedule, enabledFilter string) []ScheduledJobResponse {
+	orgPulseOn := false
+	var orgPulseRun ScheduleRuntimeState
+	for _, sched := range merged {
+		if sched.Enabled && sched.ID != builtinOrgPulseID && IsOrgPulseSchedule(sched) {
+			orgPulseOn = true
+			orgPulseRun = svc.GetRuntimeState(sched.ID)
+		}
+	}
+
+	var out []ScheduledJobResponse
+	for _, sched := range merged {
+		state := svc.GetRuntimeState(sched.ID)
+		resp := buildMultiAgentJobResponse(userID, sched, state)
+		if resp.ID == builtinOrgPulseID && !resp.Enabled && orgPulseOn {
+			resp.Enabled = true
+			if resp.LastRunAt == nil {
+				resp.LastRunAt = orgPulseRun.LastRunAt
+			}
+			if resp.NextRunAt == nil {
+				resp.NextRunAt = orgPulseRun.NextRunAt
+			}
+		}
+		// Filter on the EFFECTIVE enabled state so the canonical Org Pulse job is
+		// not dropped from an enabled-only listing when it is on via a duplicate.
+		if enabledFilter != "" {
+			wantEnabled := enabledFilter == "true" || enabledFilter == "1"
+			if resp.Enabled != wantEnabled {
+				continue
+			}
+		}
+		out = append(out, resp)
+	}
+	return out
+}
+
 func validateScheduleRequest(scheduleType string, cronExpr string, calendarItems []CalendarScheduleItem) error {
 	switch scheduleType {
 	case "cron":
@@ -399,31 +446,13 @@ func listScheduledJobsHandler(svc *SchedulerService) http.HandlerFunc {
 			if userIDFilter != "" {
 				f, _, fErr := ReadMultiAgentSchedules(r.Context(), userIDFilter)
 				if fErr == nil {
-					for _, sched := range MergeBuiltinSchedules(f.Schedules) {
-						if enabledFilter != "" {
-							wantEnabled := enabledFilter == "true" || enabledFilter == "1"
-							if sched.Enabled != wantEnabled {
-								continue
-							}
-						}
-						state := svc.GetRuntimeState(sched.ID)
-						allJobs = append(allJobs, buildMultiAgentJobResponse(userIDFilter, sched, state))
-					}
+					allJobs = append(allJobs, buildMultiAgentJobResponsesWithOrgPulse(svc, userIDFilter, MergeBuiltinSchedules(f.Schedules), enabledFilter)...)
 				}
 			} else {
 				maScheds, maErr := DiscoverMultiAgentSchedules(r.Context())
 				if maErr == nil {
 					for _, ma := range maScheds {
-						for _, sched := range MergeBuiltinSchedules(ma.ScheduleFile.Schedules) {
-							if enabledFilter != "" {
-								wantEnabled := enabledFilter == "true" || enabledFilter == "1"
-								if sched.Enabled != wantEnabled {
-									continue
-								}
-							}
-							state := svc.GetRuntimeState(sched.ID)
-							allJobs = append(allJobs, buildMultiAgentJobResponse(ma.UserID, sched, state))
-						}
+						allJobs = append(allJobs, buildMultiAgentJobResponsesWithOrgPulse(svc, ma.UserID, MergeBuiltinSchedules(ma.ScheduleFile.Schedules), enabledFilter)...)
 					}
 				}
 			}

@@ -10,7 +10,7 @@ import {
   type NodeChange,
   type OnNodeDrag
 } from '@xyflow/react'
-import { Braces, Download, FileText, GitBranch, Laptop, ListOrdered, Loader2, PanelRightClose, RefreshCw, Route, Settings, SlidersHorizontal, Smartphone, TabletSmartphone, X } from 'lucide-react'
+import { Braces, Download, FileText, GitBranch, Laptop, ListOrdered, Loader2, PanelRightClose, RefreshCw, Route, Settings, SlidersHorizontal, Smartphone, X } from 'lucide-react'
 import '@xyflow/react/dist/style.css'
 
 import { useModeStore } from '../../../stores/useModeStore'
@@ -101,7 +101,6 @@ function enforceWorkflowHeaderClearance(nodes: WorkflowNode[]): WorkflowNode[] {
 
 import type { ExecutionOptions } from '../../../services/api-types'
 
-type WorkflowPreviewMode = 'desktop' | 'tablet' | 'mobile'
 type WorkflowImageExportFormat = 'svg' | 'png' | 'jpeg'
 
 function isHorizontalWorkflowLayout(direction: 'LR' | 'TB'): boolean {
@@ -138,10 +137,9 @@ export const WORKFLOW_REPORT_REFRESH_EVENT = 'workflow-report-refresh-requested'
 
 const PREVIEW_DEVICE_OPTS = [
   { mode: 'mobile' as const, Icon: Smartphone, label: 'Mobile preview' },
-  { mode: 'tablet' as const, Icon: TabletSmartphone, label: 'Tablet preview' },
   { mode: 'desktop' as const, Icon: Laptop, label: 'Laptop preview' },
 ]
-type PreviewDevice = 'mobile' | 'tablet' | 'desktop'
+type PreviewDevice = 'mobile' | 'desktop'
 
 // Shared device-width preference, synced across the on-pane bar, the report
 // shell, and the plan/flow shell via REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT.
@@ -151,7 +149,7 @@ export function usePreviewDevice(scopeId?: string | null): PreviewDevice {
   const read = (): PreviewDevice => {
     try {
       const v = localStorage.getItem(reportPreviewPreferenceKey(scopeId))
-      return v === 'mobile' || v === 'tablet' || v === 'desktop' ? v : 'mobile'
+      return v === 'mobile' || v === 'desktop' ? v : 'mobile'
     } catch { return 'mobile' }
   }
   const [pref, setPref] = React.useState<PreviewDevice>(read)
@@ -162,7 +160,7 @@ export function usePreviewDevice(scopeId?: string | null): PreviewDevice {
       const detail = (e as CustomEvent).detail
       if ((detail?.scopeId ?? null) !== (scopeId ?? null)) return
       const p = detail?.preference
-      if (p === 'mobile' || p === 'tablet' || p === 'desktop') setPref(p)
+      if (p === 'mobile' || p === 'desktop') setPref(p)
     }
     window.addEventListener(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, handler)
     return () => window.removeEventListener(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, handler)
@@ -178,9 +176,7 @@ function setPreviewDevice(mode: PreviewDevice, scopeId?: string | null) {
 export function previewDeviceShellClass(device: PreviewDevice): string {
   return device === 'mobile'
     ? 'mx-auto w-full max-w-[480px]'
-    : device === 'tablet'
-      ? 'mx-auto w-full max-w-[880px]'
-      : 'w-full'
+    : 'w-full'
 }
 
 function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: { hasPlan: boolean; onExportPlan?: () => void; onRefreshPlan?: () => void; scopeId?: string | null }) {
@@ -383,15 +379,13 @@ const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasPr
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
   const canvasViewMode = useWorkflowStore(state => state.canvasViewMode)
   const paneMode = viewMode || canvasViewMode
-  // Report renders mobile-framed when chat is focused AND the report pane actually
-  // collapses to the narrow 480px column (desktop/mobile). An explicit Tablet choice
-  // keeps its 880px frame even while chat is focused.
+  // In Mobile the report sits in a narrow 480px column; when chat is focused we
+  // keep the report mobile-framed so it fits. In Laptop the chat is hidden, so
+  // there's no chat-focus case to cap for.
   const reportPreviewDevice = usePreviewDevice(workspacePath)
-  // When chat is focused the report pane shrinks, so cap the report at tablet
-  // (laptop→tablet); a saved mobile width stays mobile; tablet stays tablet.
-  const reportFocusTier: 'mobile' | 'tablet' | undefined =
-    useWorkflowStore(state => state.focusedPane === 'chat')
-      ? (reportPreviewDevice === 'mobile' ? 'mobile' : 'tablet')
+  const reportFocusTier: 'mobile' | undefined =
+    useWorkflowStore(state => state.focusedPane === 'chat' && reportPreviewDevice === 'mobile')
+      ? 'mobile'
       : undefined
   const planData = usePlanData(workspacePath)
   const plan = planData.plan
@@ -1529,11 +1523,11 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
   // Device-width preview also constrains the plan/flow pane (centered shell).
   const previewDevice = usePreviewDevice(workspacePath)
-  // When chat is focused the report pane shrinks, so cap the report at tablet
-  // (laptop→tablet); a saved mobile width stays mobile; tablet stays tablet.
-  const reportFocusTier: 'mobile' | 'tablet' | undefined =
-    useWorkflowStore(state => state.focusedPane === 'chat')
-      ? (previewDevice === 'mobile' ? 'mobile' : 'tablet')
+  // In Mobile, a chat-focused report stays mobile-framed to fit its narrow column;
+  // in Laptop the chat is hidden so there's no chat-focus case to cap for.
+  const reportFocusTier: 'mobile' | undefined =
+    useWorkflowStore(state => state.focusedPane === 'chat' && previewDevice === 'mobile')
+      ? 'mobile'
       : undefined
   // Changing the device width resizes the flow pane; re-fit the diagram after the
   // CSS width transition (~300ms) so it recenters into the new width.

@@ -1,7 +1,7 @@
 import { TooltipProvider } from './ui/tooltip'
 import ThemeToggle from './topbar/ThemeToggle'
 import { WorkspaceConnectionSwitcher } from './WorkspaceConnectionSwitcher'
-import LlmControl from './topbar/LlmControl'
+import LlmModalHost from './topbar/LlmModalHost'
 import McpControl from './topbar/McpControl'
 import SkillsControl from './topbar/SkillsControl'
 import SecretsControl from './topbar/SecretsControl'
@@ -17,8 +17,10 @@ import AccountControl from './topbar/AccountControl'
 export default function WorkspaceTopBarControls() {
   return (
     <TooltipProvider delayDuration={400}>
+      {/* LlmModalHost renders the LLM modals once (no visible UI); the trigger
+          icon lives in the per-mode headers as <LlmTriggerButton>. */}
+      <LlmModalHost />
       <div className="flex items-center gap-1.5">
-        <LlmControl />
         <McpControl />
         <SkillsControl />
         <SecretsControl />

@@ -192,8 +192,12 @@ func createMultiAgentScheduleExecutors(api *StreamingAPI, currentUserID string) 
 			if err != nil {
 				return "", err
 			}
+			// Merge in product built-ins (Org Pulse, memory enrich, …) so the agent
+			// sees their effective state — a same-ID entry in the user file wins, so
+			// the user's enable/disable/cron override of a built-in is reflected here
+			// exactly as the scheduler and the Scheduled Tasks UI compute it.
 			var scheds []WorkflowSchedule
-			for _, s := range f.Schedules {
+			for _, s := range MergeBuiltinSchedules(f.Schedules) {
 				if enabledOnly && !s.Enabled {
 					continue
 				}
@@ -304,12 +308,9 @@ func createMultiAgentScheduleExecutors(api *StreamingAPI, currentUserID string) 
 				}
 			}
 
-			f, exists, err := ReadMultiAgentSchedules(ctx, userID)
+			f, _, err := ReadMultiAgentSchedules(ctx, userID)
 			if err != nil {
 				return "", err
-			}
-			if !exists {
-				return fmt.Sprintf("multi-agent schedule %s not found.", scheduleID), nil
 			}
 			idx := -1
 			for i := range f.Schedules {
@@ -319,7 +320,19 @@ func createMultiAgentScheduleExecutors(api *StreamingAPI, currentUserID string) 
 				}
 			}
 			if idx < 0 {
-				return fmt.Sprintf("multi-agent schedule %s not found.", scheduleID), nil
+				// Built-in schedules (e.g. Org Pulse / builtin-org-pulse) are not
+				// stored in the user file until the user first overrides one. Enabling
+				// or tuning a built-in through this tool must materialize a same-ID
+				// override so the merge in the scheduler AND the Scheduled Tasks UI
+				// (MergeBuiltinSchedules) reports the effective state. Without this the
+				// update silently fails ("not found") and the toggle stays off even
+				// though the user opted in via /pulse-setup.
+				if builtin, ok := FindDefaultBuiltinSchedule(scheduleID); ok {
+					f.Schedules = append(f.Schedules, builtin)
+					idx = len(f.Schedules) - 1
+				} else {
+					return fmt.Sprintf("multi-agent schedule %s not found.", scheduleID), nil
+				}
 			}
 			sched := &f.Schedules[idx]
 			if name, ok := args["name"].(string); ok && name != "" {

@@ -4,7 +4,7 @@ import { ThemeProvider } from "./contexts/ThemeContext.tsx";
 import { UpdateProgressToast } from "./components/UpdateProgressToast";
 import Workspace from "./components/Workspace.tsx";
 import { MemoryPanel, OrgGoalsPanel, OrgPulsePanel } from "./components/org/OrgHtmlPanels";
-import { ORG_HTML_PREVIEW_PREFERENCE_CHANGED_EVENT, getOrgHtmlPreviewDevice, type OrgHtmlPreviewDevice } from "./components/org/orgHtmlPreview";
+import { ORG_HTML_PREVIEW_PREFERENCE_CHANGED_EVENT, getOrgHtmlPreviewDevice, setOrgHtmlPreviewDevice as persistOrgHtmlPreviewDevice, type OrgHtmlPreviewDevice } from "./components/org/orgHtmlPreview";
 import ChatArea, { type ChatAreaRef } from "./components/ChatArea.tsx";
 import { MarkdownRenderer, MermaidDiagram } from "./components/ui/MarkdownRenderer";
 import { CsvRenderer } from "./components/ui/CsvRenderer";
@@ -25,7 +25,7 @@ import { isValidJSON } from "./utils/event-helpers";
 import { prepareDomForPdfExport } from "./utils/pdfExport";
 import { convertToSlackMarkdown } from "./utils/slackMarkdown";
 import { isDiffFilePath, looksLikeDiffContent } from "./utils/diff";
-import { Edit, Save, X, Loader2, Download, Link, Github, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { Edit, Save, X, Loader2, Download, Link, Github, PanelRightClose, PanelRightOpen, Smartphone, Laptop } from "lucide-react";
 import { WorkflowLayout } from "./components/workflow";
 import { WorkflowsOverviewPage } from "./components/WorkflowsOverviewPage";
 import { ModePresetBar } from "./components/ModePresetBar";
@@ -235,7 +235,7 @@ function App() {
   useEffect(() => {
     const handler = (event: Event) => {
       const preference = (event as CustomEvent).detail?.preference
-      if (preference === 'mobile' || preference === 'tablet' || preference === 'desktop') {
+      if (preference === 'mobile' || preference === 'desktop') {
         setOrgHtmlPreviewDevice(preference)
       }
     }
@@ -1440,16 +1440,15 @@ function App() {
   }, [setWorkspaceMinimizedForLayout])
 
   // Responsive split mirroring WorkflowLayout's splitGridCols, keyed off the
-  // device tier (OrgHtmlPreviewDevice = 'mobile' | 'tablet' | 'desktop'; the UI
-  // labels 'desktop' as "Laptop"). Chat is grid col 1, org content is grid col 2.
-  //   'desktop' (UI "Laptop", default) → chat = 360px rail, org content fills
-  //   'tablet' → chat fills, org content = 880px (tablet preview)
-  //   'mobile' → chat fills, org content = 480px (phone preview)
-  // The chat rail stays visible in all three tiers.
+  // device tier (OrgHtmlPreviewDevice = 'mobile' | 'desktop'; the UI labels
+  // 'desktop' as "Laptop"). Chat is grid col 1, org content is grid col 2.
+  //   'mobile' (default) → chat fills (1fr), org content = 480px panel on the right
+  //   'desktop' (UI "Laptop") → chat/terminal column is hidden; org content fills
+  //     the full width as a single grid column.
+  const isMultiAgentLaptopFull = orgHtmlPreviewDevice === 'desktop'
   const multiAgentSplitGridCols =
-    orgHtmlPreviewDevice === 'mobile' ? 'md:grid-cols-[minmax(0,1fr)_480px]'
-      : orgHtmlPreviewDevice === 'tablet' ? 'md:grid-cols-[minmax(0,1fr)_880px]'
-        : 'md:grid-cols-[360px_minmax(0,1fr)]'
+    isMultiAgentLaptopFull ? 'md:grid-cols-[minmax(0,1fr)]'
+      : 'md:grid-cols-[minmax(0,1fr)_480px]'
   const layoutWorkspaceMinimized =
     showWorkflowsOverview
       ? true
@@ -1459,38 +1458,67 @@ function App() {
   const toggleMultiAgentPanelMinimize = useCallback(() => {
     setWorkspaceMinimized(!layoutWorkspaceMinimized)
   }, [layoutWorkspaceMinimized, setWorkspaceMinimized])
+  // Device-preview toggle (Mobile / Laptop). Lives alongside the panel tabs so it
+  // renders in EVERY right-panel view header (Pulse/Goals/Memory/Files) — critical
+  // because Laptop hides the chat/terminal column, so this toggle is the only way
+  // back to Mobile to interact with the agent. Persists + broadcasts the choice;
+  // App's own listener mirrors it into local state.
+  const multiAgentDeviceToggle = (
+    <div className="inline-flex flex-none items-center gap-0.5 rounded-lg border border-border bg-muted/70 p-0.5 shadow-sm backdrop-blur-sm">
+      {([
+        { mode: 'mobile' as const, Icon: Smartphone, label: 'Mobile' },
+        { mode: 'desktop' as const, Icon: Laptop, label: 'Laptop' },
+      ]).map(({ mode, Icon: DeviceIcon, label }) => (
+        <button
+          key={mode}
+          type="button"
+          onClick={() => persistOrgHtmlPreviewDevice(mode)}
+          title={`${label} layout`}
+          aria-label={`${label} layout`}
+          className={`inline-flex h-6 w-6 items-center justify-center rounded transition-colors ${
+            orgHtmlPreviewDevice === mode ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <DeviceIcon className="h-3.5 w-3.5" />
+        </button>
+      ))}
+    </div>
+  )
   const multiAgentPanelTabs = (
-    <div className="inline-flex min-w-0 flex-none items-center gap-0.5 rounded-lg border border-border bg-muted/70 p-0.5 shadow-sm backdrop-blur-sm">
-      <button
-        type="button"
-        onClick={() => setMultiAgentRightPanelView('org-pulse')}
-        title="Org Pulse"
-        aria-label="Org Pulse"
-        className={multiAgentPanelTabClass(multiAgentRightPanelView === 'org-pulse')}
-      >
-        Pulse
-      </button>
-      <button
-        type="button"
-        onClick={() => setMultiAgentRightPanelView('org-goals')}
-        className={multiAgentPanelTabClass(multiAgentRightPanelView === 'org-goals')}
-      >
-        Goals
-      </button>
-      <button
-        type="button"
-        onClick={() => setMultiAgentRightPanelView('memory')}
-        className={multiAgentPanelTabClass(multiAgentRightPanelView === 'memory')}
-      >
-        Memory
-      </button>
-      <button
-        type="button"
-        onClick={() => setMultiAgentRightPanelView('files')}
-        className={multiAgentPanelTabClass(multiAgentRightPanelView === 'files')}
-      >
-        Files
-      </button>
+    <div className="inline-flex min-w-0 flex-none items-center gap-1">
+      <div className="inline-flex min-w-0 flex-none items-center gap-0.5 rounded-lg border border-border bg-muted/70 p-0.5 shadow-sm backdrop-blur-sm">
+        <button
+          type="button"
+          onClick={() => setMultiAgentRightPanelView('org-pulse')}
+          title="Org Pulse"
+          aria-label="Org Pulse"
+          className={multiAgentPanelTabClass(multiAgentRightPanelView === 'org-pulse')}
+        >
+          Pulse
+        </button>
+        <button
+          type="button"
+          onClick={() => setMultiAgentRightPanelView('org-goals')}
+          className={multiAgentPanelTabClass(multiAgentRightPanelView === 'org-goals')}
+        >
+          Goals
+        </button>
+        <button
+          type="button"
+          onClick={() => setMultiAgentRightPanelView('memory')}
+          className={multiAgentPanelTabClass(multiAgentRightPanelView === 'memory')}
+        >
+          Memory
+        </button>
+        <button
+          type="button"
+          onClick={() => setMultiAgentRightPanelView('files')}
+          className={multiAgentPanelTabClass(multiAgentRightPanelView === 'files')}
+        >
+          Files
+        </button>
+      </div>
+      {multiAgentDeviceToggle}
     </div>
   )
   const multiAgentPanelCloseButton = (
@@ -1585,12 +1613,16 @@ function App() {
                       }`}
                     >
                       {/* Chat rail = grid col 1, mirroring the workflow. Minimized →
-                          flexes to fill the width; otherwise it's the col-1 rail. */}
+                          flexes to fill the width; Laptop → hidden entirely so the
+                          org content takes the full width; otherwise it's the col-1
+                          rail. */}
                       <div
                         className={`flex min-w-0 flex-col overflow-hidden bg-background ${
                           layoutWorkspaceMinimized
                             ? 'flex-1'
-                            : 'w-full border-b border-gray-200 dark:border-gray-700 md:col-start-1 md:border-b-0 md:border-r'
+                            : isMultiAgentLaptopFull
+                              ? 'hidden'
+                              : 'w-full border-b border-gray-200 dark:border-gray-700 md:col-start-1 md:border-b-0 md:border-r'
                         }`}
                       >
                         <ChatAreaWithObserverId
@@ -1601,7 +1633,7 @@ function App() {
                       </div>
                       {!layoutWorkspaceMinimized && (
                         <div
-                          className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background md:col-start-2"
+                          className={`flex min-w-0 flex-1 flex-col overflow-hidden bg-background ${isMultiAgentLaptopFull ? 'md:col-start-1' : 'md:col-start-2'}`}
                         >
                           {multiAgentRightPanelView === 'files' && (
                             <div className="flex flex-wrap items-center justify-between gap-1 border-b border-border bg-muted/40 px-2 py-2">

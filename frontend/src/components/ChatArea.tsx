@@ -503,6 +503,12 @@ interface ChatAreaProps {
   // chat sits in the narrow rail; labeled tabs when it fills the pane (org panel
   // minimized). The panel always renders in fill mode so it scrolls in both.
   previousChatsCompact?: boolean
+  // Workflow landing previous-chats panel. WorkflowLayout owns the panel + its
+  // resume handler (so the workflow-scoped history logic isn't duplicated here)
+  // and passes the rendered node only when a fresh automation chat should show
+  // the list. When present, ChatArea renders it as the primary surface (mirroring
+  // the multi-agent landing panel) and suppresses its own workflow empty states.
+  workflowPreviousChatsPanel?: React.ReactNode
 }
 
 // Ref interface for ChatArea component
@@ -522,7 +528,7 @@ let globalHasRestored = false
 
 // Inner component for chat area
 const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAreaRef>) => {
-  const { onNewChat, hideHeader = false, hideInput = false, compact = false, hidePhaseChatEmptyState = false, suppressTerminalPane = false, tabId, previousChatsCompact = false } = props
+  const { onNewChat, hideHeader = false, hideInput = false, compact = false, hidePhaseChatEmptyState = false, suppressTerminalPane = false, tabId, previousChatsCompact = false, workflowPreviousChatsPanel } = props
   // null means "inactive — don't subscribe to any tab or run any effects"
   const isInactive = tabId === null
 
@@ -2978,7 +2984,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
   const shouldRenderTerminalPane = activeEventViewMode === 'terminal' && !showNormalPreviousChatsPanel
   const shouldRenderEventDisplay = activeEventViewMode !== 'terminal' && !showNormalPreviousChatsPanel
-  const shouldUseFullHeightContent = shouldRenderTerminalPane || showNormalPreviousChatsPanel
+  // Workflow landing panel: WorkflowLayout passes the rendered node only when a
+  // fresh automation chat should show the previous-chats list. When present we
+  // make it the primary surface (mirrors the multi-agent landing panel) and
+  // suppress the workflow empty states / terminal / event display below it.
+  const showWorkflowPreviousChatsPanel = selectedModeCategory === 'workflow' && !!workflowPreviousChatsPanel
+  const shouldUseFullHeightContent = shouldRenderTerminalPane || showNormalPreviousChatsPanel || showWorkflowPreviousChatsPanel
 
   return (
     <div className="flex flex-col h-full min-w-0" data-testid="chat-area-container">
@@ -3079,21 +3090,26 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
                 <p className="text-sm text-gray-500 dark:text-gray-400">Restoring previous session...</p>
               </div>
             )}
+            {/* Previous automation chats — primary landing surface on a fresh chat
+                (mirrors the multi-agent landing panel). WorkflowLayout supplies the
+                node + resume handler so the workflow-scoped history logic lives in
+                one place. */}
+            {showWorkflowPreviousChatsPanel && workflowPreviousChatsPanel}
             {/* Empty State - Show when no events and not in historical session.
                 Skipped in Terminal view mode so the workflow ModeEmptyState
                 does not cover the TerminalCenter pane. */}
-            {displayEvents.length === 0 && !isStreaming && !isRestoringWorkflowSessions && !isChatCompatiblePhase(activeTab?.metadata?.phaseId) && activeEventViewMode !== 'terminal' && (
+            {!showWorkflowPreviousChatsPanel && displayEvents.length === 0 && !isStreaming && !isRestoringWorkflowSessions && !isChatCompatiblePhase(activeTab?.metadata?.phaseId) && activeEventViewMode !== 'terminal' && (
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
             {/* Phase Chat Help - Show only before the workflow-builder conversation starts */}
-            {!hidePhaseChatEmptyState && displayEvents.length === 0 && activeEventViewMode !== 'terminal' && !isRestoringWorkflowSessions && !showWorkflowsOverview && !activeTab?.metadata?.isOrganizationAssistant && !activeTab?.isStreaming && isChatCompatiblePhase(activeTab?.metadata?.phaseId) && (
+            {!showWorkflowPreviousChatsPanel && !hidePhaseChatEmptyState && displayEvents.length === 0 && activeEventViewMode !== 'terminal' && !isRestoringWorkflowSessions && !showWorkflowsOverview && !activeTab?.metadata?.isOrganizationAssistant && !activeTab?.isStreaming && isChatCompatiblePhase(activeTab?.metadata?.phaseId) && (
               <PhaseChatEmptyState phaseId={activeTab!.metadata!.phaseId!} compact={compact} />
             )}
 
-            {activeTab?.sessionId && activeEventViewMode === 'terminal' && (
+            {!showWorkflowPreviousChatsPanel && activeTab?.sessionId && activeEventViewMode === 'terminal' && (
               <TerminalCenter currentSessionId={activeTab.sessionId} compact={false} hasConversationActivity={!suppressTerminalPane && (hasConversationContent || isStreaming || !!activeTab?.isStreaming)} />
             )}
-            {activeTab?.sessionId && activeEventViewMode !== 'terminal' && (
+            {!showWorkflowPreviousChatsPanel && activeTab?.sessionId && activeEventViewMode !== 'terminal' && (
               <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
             )}
           </WorkflowModeHandler>

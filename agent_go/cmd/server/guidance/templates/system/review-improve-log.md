@@ -99,7 +99,7 @@ The log must not grow without bound. When `builder/improve.html` passes roughly 
 
 ### Upgrading an old-format log (one-time, REQUIRED before appending)
 
-An existing `builder/improve.html` is **old-format** — and must be upgraded, not appended to — if it has **any** of: a title like "Improvement Ledger"; `## Active Improvement Index` / `## Recent Entries` / `## Archive Index` headings; ```improve-decision``` fenced/`<script>` JSON blocks; `F-…` / `I-…` ids; its own ad-hoc CSS (`.summary` / `.badge` / `.stats`, system-ui body) instead of the skeleton's; **or an older skeleton that lacks `<meta name="viewport">`, mobile-first stacked `.status` / `.run` / `.entry` layouts, or `overflow-wrap:anywhere`**. Legacy `builder/improve.md` / `builder/review.md` also count.
+An existing `builder/improve.html` is **old-format** — and must be upgraded, not appended to — if it has **any** of: a title like "Improvement Ledger"; `## Active Improvement Index` / `## Recent Entries` / `## Archive Index` headings; ```improve-decision``` fenced/`<script>` JSON blocks; `F-…` / `I-…` ids; its own ad-hoc CSS (`.summary` / `.badge` / `.stats`, system-ui body) instead of the skeleton's; **or an older skeleton that lacks `<meta name="viewport">`, mobile-first stacked `.status` / `.run` / `.entry` layouts, or `overflow-wrap:anywhere`; **or an `.etitle` rule missing `flex:1 1 auto` (the older skeleton whose entry titles collapse to one word per line beside the `.when` meta, leaving the card half-empty)**. Legacy `builder/improve.md` / `builder/review.md` also count.
 
 **Do NOT append your new entry into the old structure** — that produces good content in a stale, off-brand shell. Instead, **rewrite the entire document to the Starter HTML skeleton above** as a one-time upgrade:
 
@@ -190,7 +190,7 @@ After this one rewrite the file is in skeleton format; from then on you just pre
   .tag.monitor{background:var(--warn-bg);color:var(--warn)} .tag.agent{background:var(--ok-bg);color:var(--ok)} .tag.user{background:var(--user-bg);color:var(--user)} .tag.open{background:var(--bad-bg);color:var(--bad)} .tag.note{background:var(--surface-2);color:var(--ink-2);border:1px solid var(--line-2)}
   .kind{font:700 8.5px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;padding:4px 7px;border-radius:6px;border:1px solid}
   .kind.bug{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 22%,transparent)} .kind.goal{color:var(--goal);border-color:color-mix(in srgb,var(--goal) 22%,transparent)}
-  .etitle{font-weight:630;font-size:14px;line-height:1.25;letter-spacing:-.01em}.ehead>.when{margin-left:0;flex-basis:100%;font:540 11px/1.35 var(--mono);color:var(--ink-3)}
+  .etitle{font-weight:630;font-size:14px;line-height:1.25;letter-spacing:-.01em;flex:1 1 auto;min-width:0}.ehead>.when{margin-left:0;flex-basis:100%;font:540 11px/1.35 var(--mono);color:var(--ink-3)}
   .entry p{margin:0;font-size:13.5px;color:var(--ink);overflow-wrap:anywhere}.entry p+p{margin-top:8px}
   .entry .meta{margin-top:11px;padding-top:11px;border-top:1px solid var(--line);font:540 12px/1.5 var(--mono);color:var(--ink-3)} .entry .meta code{background:var(--surface-2);border:1px solid var(--line);border-radius:5px;padding:1px 6px;color:var(--ink-2)}
   .resolved{margin-top:11px;display:inline-flex;align-items:center;gap:7px;font:620 12.5px/1.4 var(--sans);color:var(--ok)} .resolved::before{content:"✓";font-size:11px;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;background:var(--ok-bg)}

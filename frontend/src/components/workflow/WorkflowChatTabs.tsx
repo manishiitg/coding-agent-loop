@@ -9,7 +9,6 @@ import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { TreeViewAlphaDialog, shouldShowTreeViewAlphaWarning } from '../TreeViewAlphaDialog'
-import LlmTriggerButton from '../topbar/LlmTriggerButton'
 
 // ---------------------------------------------------------------------------
 // WorkflowTabItem — per-tab component with narrow store subscriptions
@@ -361,10 +360,6 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat, e
             <span className="hidden sm:inline">New Chat</span>
           </button>
         )}
-
-        {/* Models / LLM config — lives in the mode heading since the model is
-            per-context (opens the globally-mounted LLM modal via the store). */}
-        <LlmTriggerButton className="ml-0.5 inline-flex h-7 shrink-0 items-center rounded-md px-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100" />
 
         {/* Layout Mode — tree vs terminal, sits right after New Chat */}
         <div

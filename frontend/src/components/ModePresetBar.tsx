@@ -1,19 +1,18 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Workflow, Users, Settings, Copy, Keyboard, SlidersHorizontal, Bot, Building2, HelpCircle } from 'lucide-react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { Workflow, Users, Settings, Copy, Keyboard, Bot, Building2, HelpCircle } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { useGlobalPresetStore, usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import type { PlannerFile, PresetLLMConfig, ScheduledJob, WorkflowManifest } from '../services/api-types'
 import PresetModal from './PresetModal'
 import WorkflowScheduleRunsPanel from './scheduler/WorkflowScheduleRunsPanel'
-import DelegationTierConfigModal from './DelegationTierConfigModal'
 import BotConnectorModal from './settings/BotConnectorModal'
 import { WorkflowsOverviewPopup } from './WorkflowsOverviewPage'
 import { schedulerApi } from '../api/scheduler'
 import { agentApi, workflowManifestApi } from '../services/api'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from './ui/tooltip'
 import ModalPortal from './ui/ModalPortal'
-import { useLLMStore, useChatStore } from '../stores'
+import { useChatStore } from '../stores'
 import { useMCPStore } from '../stores/useMCPStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
@@ -69,11 +68,6 @@ const MODE_PILLS = [
     inactiveClasses: 'text-gray-500 dark:text-gray-400',
   },
 ] as const
-
-const shortModelName = (modelId: string): string => {
-  const name = modelId.split('/').pop() || modelId
-  return name.length > 18 ? `${name.slice(0, 18)}…` : name
-}
 
 type WorkflowScheduleSummary = {
   scheduledWorkflows: number
@@ -211,9 +205,7 @@ export const ModePresetBar: React.FC = () => {
   const [showRunsPanel, setShowRunsPanel] = useState(false)
   const [workflowScheduleSummary, setWorkflowScheduleSummary] = useState<WorkflowScheduleSummary>(EMPTY_WORKFLOW_SCHEDULE_SUMMARY)
   const [showPlansManager, setShowPlansManager] = useState(false)
-  const [showTierModal, setShowTierModal] = useState(false)
   const [showBotConnector, setShowBotConnector] = useState(false)
-  const [restoreWorkspaceAfterTierModal, setRestoreWorkspaceAfterTierModal] = useState(false)
   const [restoreWorkspaceAfterBotConnector, setRestoreWorkspaceAfterBotConnector] = useState(false)
   const [showWorkflowsPopup, setShowWorkflowsPopup] = useState(false)
   const [showWorkflowWalkthrough, setShowWorkflowWalkthrough] = useState(false)
@@ -224,7 +216,6 @@ export const ModePresetBar: React.FC = () => {
   const setShowWorkflowsOverview = useAppStore(s => s.setShowWorkflowsOverview)
   const setSelectedFile = useWorkspaceStore(state => state.setSelectedFile)
   const setShowFileContent = useWorkspaceStore(state => state.setShowFileContent)
-  const delegationTierConfig = useLLMStore(state => state.delegationTierConfig)
   const isOrganizationView = showWorkflowsOverview
   const shouldShowScheduleHeader = selectedModeCategory === 'workflow' || isOrganizationView
   const isMultiAgentMode = selectedModeCategory === 'multi-agent'
@@ -338,16 +329,7 @@ export const ModePresetBar: React.FC = () => {
     }
   }, [showShortcuts])
 
-  const tierLines = useMemo(() => {
-    const lines: string[] = []
-    if (delegationTierConfig?.main) lines.push(`Main: ${shortModelName(delegationTierConfig.main.model_id)} (${delegationTierConfig.main.provider})`)
-    if (delegationTierConfig?.high) lines.push(`High: ${shortModelName(delegationTierConfig.high.model_id)} (${delegationTierConfig.high.provider})`)
-    if (delegationTierConfig?.medium) lines.push(`Medium: ${shortModelName(delegationTierConfig.medium.model_id)} (${delegationTierConfig.medium.provider})`)
-    if (delegationTierConfig?.low) lines.push(`Low: ${shortModelName(delegationTierConfig.low.model_id)} (${delegationTierConfig.low.provider})`)
-    return lines
-  }, [delegationTierConfig])
-
-  const workflowCountLabel = `${workflowScheduleSummary.scheduledWorkflows} automation${workflowScheduleSummary.scheduledWorkflows !== 1 ? 's' : ''}`
+  const workflowCountLabel =`${workflowScheduleSummary.scheduledWorkflows} automation${workflowScheduleSummary.scheduledWorkflows !== 1 ? 's' : ''}`
   const scheduleCountLabel = `${workflowScheduleSummary.totalSchedules} schedule${workflowScheduleSummary.totalSchedules !== 1 ? 's' : ''}`
   const workflowScheduleHeaderLabel = workflowScheduleSummary.runningWorkflows > 0
     ? `${workflowScheduleSummary.runningWorkflows}/${workflowScheduleSummary.scheduledWorkflows} automations · ${workflowScheduleSummary.runningSchedules}/${workflowScheduleSummary.totalSchedules} schedules`
@@ -356,19 +338,6 @@ export const ModePresetBar: React.FC = () => {
   const workflowScheduleTooltip = workflowScheduleSummary.runningWorkflows > 0
     ? `${workflowScheduleSummary.runningWorkflows} of ${workflowScheduleSummary.scheduledWorkflows} scheduled automations running now; ${workflowScheduleSummary.runningSchedules} of ${workflowScheduleSummary.totalSchedules} schedules running`
     : `${workflowCountLabel} scheduled; ${scheduleCountLabel} total`
-
-  const openTierModal = useCallback(() => {
-    const shouldRestoreAfterClose = !workspaceMinimized
-    setRestoreWorkspaceAfterTierModal(shouldRestoreAfterClose)
-    if (shouldRestoreAfterClose) setWorkspaceMinimized(true)
-    setShowTierModal(true)
-  }, [workspaceMinimized, setWorkspaceMinimized])
-
-  const closeTierModal = useCallback(() => {
-    setShowTierModal(false)
-    if (restoreWorkspaceAfterTierModal) setWorkspaceMinimized(false)
-    setRestoreWorkspaceAfterTierModal(false)
-  }, [restoreWorkspaceAfterTierModal, setWorkspaceMinimized])
 
   const openBotConnector = useCallback(() => {
     const shouldRestore = !workspaceMinimized
@@ -875,34 +844,6 @@ export const ModePresetBar: React.FC = () => {
                 <TooltipContent side="bottom">Keyboard shortcuts</TooltipContent>
               </Tooltip>
 
-              {selectedModeCategory === 'multi-agent' && !isOrganizationView && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={openTierModal}
-                        className={`relative p-1 rounded-md transition-colors ${
-                          tierLines.length > 0
-                            ? 'text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600'
-                            : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200'
-                        }`}
-                      >
-                        <SlidersHorizontal className="w-4 h-4" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      {tierLines.length > 0 ? (
-                        <div className="space-y-1 text-xs">
-                          {tierLines.map((line) => (
-                            <p key={line}>{line}</p>
-                          ))}
-                        </div>
-                      ) : (
-                        <p>Configure delegation tiers (H/M/L)</p>
-                      )}
-                    </TooltipContent>
-                  </Tooltip>
-              )}
-
               {shouldShowBotConnector && (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -1075,11 +1016,6 @@ export const ModePresetBar: React.FC = () => {
         fixedAgentMode={editingPreset?.agentMode || (selectedModeCategory ? (getAgentModeFromCategory(selectedModeCategory) as 'multi-agent' | 'workflow') : undefined)}
         agentMode={agentMode}
         onDeleteWorkflow={handleDeleteWorkflow}
-      />
-
-      <DelegationTierConfigModal
-        isOpen={showTierModal}
-        onClose={closeTierModal}
       />
 
       <BotConnectorModal

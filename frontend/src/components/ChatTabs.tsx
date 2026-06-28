@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { Plus, ArrowDown, ListTree, Terminal, Globe, DollarSign, CalendarClock } from 'lucide-react'
-import LlmTriggerButton from './topbar/LlmTriggerButton'
+import { Plus, ArrowDown, ListTree, Terminal, Globe, DollarSign, CalendarClock, SlidersHorizontal } from 'lucide-react'
 import { normalizeEventViewMode, useChatStore, type ChatTab } from '../stores/useChatStore'
 import type { PollingEvent } from '../services/api-types'
 import { useAppStore } from '../stores/useAppStore'
@@ -12,6 +11,7 @@ import { TreeViewAlphaDialog, shouldShowTreeViewAlphaWarning } from './TreeViewA
 import ServerSelectionDropdown from './ServerSelectionDropdown'
 import SkillSelectionDropdown from './skills/SkillSelectionDropdown'
 import { useMCPStore } from '../stores/useMCPStore'
+import { useLLMStore } from '../stores'
 import { dispatchChatToolCommand } from '../utils/chatToolEvents'
 import CostDashboard from './CostDashboard'
 import MultiAgentSchedulesPopup from './scheduler/MultiAgentSchedulesPopup'
@@ -46,6 +46,12 @@ function getDisplaySafeUserMessageContent(content: string): string {
   return (markerIndex >= 0 ? content.slice(0, markerIndex) : content).trim()
 }
 
+// Compact model id for the delegation-tier summary tooltip (mirrors ModePresetBar).
+function shortModelName(modelId: string): string {
+  const name = modelId.split('/').pop() || modelId
+  return name.length > 18 ? `${name.slice(0, 18)}…` : name
+}
+
 // Short, single-line title from a user message — matches chatHistorySessionTitle's
 // whitespace-collapse + length-cap style (default 80 chars).
 function deriveConversationTitle(text: string, maxLength = 80): string {
@@ -77,6 +83,18 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
     setTabViewMode,
   } = useChatStore()
   const { toolList: mcpToolList, setChatSelectedServers } = useMCPStore()
+  const delegationTierConfig = useLLMStore(state => state.delegationTierConfig)
+  const setShowTierModal = useLLMStore(state => state.setShowTierModal)
+
+  // Delegation-tier summary for the heading's config icon tooltip (CoS-specific).
+  const tierLines = useMemo(() => {
+    const lines: string[] = []
+    if (delegationTierConfig?.main) lines.push(`Main: ${shortModelName(delegationTierConfig.main.model_id)} (${delegationTierConfig.main.provider})`)
+    if (delegationTierConfig?.high) lines.push(`High: ${shortModelName(delegationTierConfig.high.model_id)} (${delegationTierConfig.high.provider})`)
+    if (delegationTierConfig?.medium) lines.push(`Medium: ${shortModelName(delegationTierConfig.medium.model_id)} (${delegationTierConfig.medium.provider})`)
+    if (delegationTierConfig?.low) lines.push(`Low: ${shortModelName(delegationTierConfig.low.model_id)} (${delegationTierConfig.low.provider})`)
+    return lines
+  }, [delegationTierConfig])
 
   const activeViewMode = useMemo(
     () => normalizeEventViewMode(activeTabId ? chatTabs[activeTabId]?.viewMode : undefined),
@@ -329,10 +347,6 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
         </button>
       )}
 
-      {/* Models / LLM config — lives in the mode heading since the model is
-          per-context (opens the globally-mounted LLM modal via the store). */}
-      <LlmTriggerButton className="flex flex-none items-center rounded px-2 py-1 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200" />
-
       {/* View controls live next to the Chief of Staff title, matching workflow. */}
       <div className="flex flex-none items-center gap-1 border-l border-gray-200 pl-2 dark:border-gray-700">
         <div
@@ -479,6 +493,35 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
           </TooltipTrigger>
           <TooltipContent>
             <p>{multiAgentScheduleTooltip}</p>
+          </TooltipContent>
+        </Tooltip>
+        {/* Delegation tiers (H/M/L) — CoS-specific config, lives in this heading
+            (the modal itself is rendered once by LlmModalHost via the store). */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={() => setShowTierModal(true)}
+              className={`relative rounded-md p-1.5 transition-colors hover:bg-accent ${
+                tierLines.length > 0
+                  ? 'bg-gray-100 text-gray-600 hover:text-accent-foreground dark:bg-gray-700 dark:text-gray-300'
+                  : 'bg-muted text-muted-foreground hover:text-accent-foreground'
+              }`}
+              aria-label="Configure delegation tiers"
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {tierLines.length > 0 ? (
+              <div className="space-y-1 text-xs">
+                {tierLines.map((line) => (
+                  <p key={line}>{line}</p>
+                ))}
+              </div>
+            ) : (
+              <p>Configure delegation tiers (H/M/L)</p>
+            )}
           </TooltipContent>
         </Tooltip>
         <OrgPulseControl />

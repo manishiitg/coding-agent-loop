@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, ArrowDownToLine, ArrowRightToLine, Braces, Bug, Check, ChevronDown, ChevronsLeft, ChevronsRight, ChevronUp, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Minus, Palette, Plus, Power, RefreshCw, Square, Terminal, Trash2, X } from 'lucide-react'
 import { AnsiUp } from 'ansi_up'
 import { Terminal as XTerm, type ITheme } from '@xterm/xterm'
@@ -1966,7 +1966,7 @@ const ColoredText: React.FC<{ rawText: string; className?: string }> = ({ rawTex
   return <span className={className} dangerouslySetInnerHTML={{ __html: html }} />
 }
 
-const XtermTerminalPane: React.FC<{
+const XtermTerminalPaneInner: React.FC<{
   content: string
   contentSource?: string
   className?: string
@@ -2286,6 +2286,11 @@ const XtermTerminalPane: React.FC<{
   )
 }
 
+// Memoized so a parent (TerminalCenter) re-render that leaves this pane's props
+// unchanged does NOT tear down / rewrite the live xterm. Its callback props are
+// all useCallback-stable, so re-render now tracks content/theme changes only.
+const XtermTerminalPane = memo(XtermTerminalPaneInner)
+
 function normalizeXtermWriteContent(content: string, contentSource?: string): string {
   if (contentSource === 'tmux_pipe') {
     return content
@@ -2380,7 +2385,7 @@ function formatStatusFooterCost(usd?: number): string {
   return `$${formatCost(usd)}`
 }
 
-const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content, rows: structuredRows, scrollRef, onScroll, onWheel, terminal, theme }) => {
+const StructuredTerminalViewInner: React.FC<StructuredTerminalViewProps> = ({ content, rows: structuredRows, scrollRef, onScroll, onWheel, terminal, theme }) => {
   const rows = useMemo(() => {
     const normalizedRows = normalizeTerminalRows(structuredRows)
     return normalizedRows.length > 0 ? normalizedRows : parseTerminalContent(content)
@@ -2587,6 +2592,10 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
     </div>
   )
 }
+
+// Memoized for the same reason as XtermTerminalPane: a parent re-render with
+// unchanged props (callbacks are useCallback-stable) must not re-render the view.
+const StructuredTerminalView = memo(StructuredTerminalViewInner)
 
 function isSyntheticTerminal(terminal: TerminalSnapshot): boolean {
   const transport = (terminal.step_transport || '').toLowerCase()
@@ -2873,7 +2882,7 @@ function writeDismissedTerminalErrorIDs(sessionId: string | undefined, ids: Set<
   }
 }
 
-export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId, compact, hasConversationActivity = false }) => {
+const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, compact, hasConversationActivity = false }) => {
   // terminalCenterOpen was the legacy toggle gate (separate sidekick
   // panel); kept here for any callers that still pass the flag but no
   // longer affects rendering — Debug-mode mount is the only gate.
@@ -4713,3 +4722,10 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     </div>
   )
 }
+
+// FIX A: Memoized so typing in the chat input — which re-renders ChatArea (the
+// parent) — does NOT re-render the terminal subtree and disturb the live xterm
+// panes. Props (currentSessionId, compact, hasConversationActivity) are all
+// primitives and stable while typing, so the shallow-prop comparison short-
+// circuits the re-render.
+export const TerminalCenter = memo(TerminalCenterInner)

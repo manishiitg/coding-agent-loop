@@ -131,4 +131,49 @@ describe('resolveChatSurface', () => {
   it('genuinely streaming active tab (per-tab true) → active', () => {
     expect(resolveChatSurface({ ...base, isStreaming: true })).toBe('active')
   })
+
+  // --- Synchronous resumePending (first-render-after-resume must be restoring) ---
+  // ChatArea now feeds `resumeSettling` from a SYNCHRONOUS `resumePending` derived
+  // in render (restoredConversationPath set, no content/stream, give-up timer not
+  // elapsed). On the very first render after a Resume click this is true while the
+  // terminal-presence probe is still pending, so the surface MUST be 'restoring',
+  // never the transient 'landing' that previously canceled the resume.
+  it('resume just set (probe pending, gaveUp not elapsed) → restoring NOT landing', () => {
+    expect(
+      resolveChatSurface({
+        ...base,
+        resumeSettling: true, // synchronous resumePending on the first resume render
+        hasContent: false,
+        isStreaming: false,
+        hasRestoredLiveContent: false,
+      }),
+    ).toBe('restoring')
+  })
+
+  // Once the presence probe returns the restored terminal (the 2341-byte snapshot
+  // case), hasRestoredLiveContent flips and the surface becomes 'active'.
+  it('resume → active the moment the terminal-presence probe returns', () => {
+    expect(
+      resolveChatSurface({
+        ...base,
+        resumeSettling: true,
+        hasRestoredLiveContent: true,
+      }),
+    ).toBe('active')
+  })
+
+  // Only after the give-up timer elapses (resumePending false) with no terminal and
+  // no content does a dead resume fall to 'landing' — when the clear-on-landing
+  // guard is allowed to fire.
+  it('resume that gave up (resumePending false, still empty) → landing', () => {
+    expect(
+      resolveChatSurface({
+        ...base,
+        resumeSettling: false, // resumePending false after give-up timer
+        hasContent: false,
+        isStreaming: false,
+        hasRestoredLiveContent: false,
+      }),
+    ).toBe('landing')
+  })
 })

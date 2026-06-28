@@ -21,6 +21,8 @@ export function useLlmOnboarding() {
   const {
     showLLMModal,
     setShowLLMModal,
+    showTierModal,
+    setShowTierModal,
     delegationTierConfig,
     savedLLMs,
     defaultsLoaded,
@@ -35,7 +37,6 @@ export function useLlmOnboarding() {
   const showDelegationTiersDialog = useCommandDialogStore(state => state.showDelegationTiers)
   const closeDialog = useCommandDialogStore(state => state.closeDialog)
 
-  const [showTierModal, setShowTierModal] = useState(false)
   const [showLLMDiscoveryModal, setShowLLMDiscoveryModal] = useState(false)
   const [releaseWalkthroughAfterLLMModalClose, setReleaseWalkthroughAfterLLMModalClose] = useState(false)
 
@@ -74,7 +75,7 @@ export function useLlmOnboarding() {
     }
   }, [releaseWalkthroughAfterLLMModalClose, setShowLLMModal])
 
-  const closeTierModal = useCallback(() => setShowTierModal(false), [])
+  const closeTierModal = useCallback(() => setShowTierModal(false), [setShowTierModal])
 
   // Auto-open delegation tier modal when triggered from multi-agent mode entry
   useEffect(() => {
@@ -82,7 +83,7 @@ export function useLlmOnboarding() {
       setShowTierModal(true)
       closeDialog('delegationTiers')
     }
-  }, [showDelegationTiersDialog, selectedModeCategory, closeDialog])
+  }, [showDelegationTiersDialog, selectedModeCategory, closeDialog, setShowTierModal])
 
   // First-run LLM setup: if no model is configured yet, prefer discovery over
   // the advanced tier configuration modal.
@@ -123,7 +124,7 @@ export function useLlmOnboarding() {
     if (!hasTiers) {
       setShowTierModal(true)
     }
-  }, [selectedModeCategory, delegationTierConfig, hasConfiguredLLM, openLLMDiscoveryModal])
+  }, [selectedModeCategory, delegationTierConfig, hasConfiguredLLM, openLLMDiscoveryModal, setShowTierModal])
 
   return {
     llmCount,

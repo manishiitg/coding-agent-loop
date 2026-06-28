@@ -9,9 +9,8 @@ type LlmTriggerButtonProps = {
 /**
  * LlmTriggerButton opens the LLM configuration modal (rendered once by
  * LlmModalHost) via the shared LLM store. It's stateless, so it can be mounted
- * in multiple per-mode headers (Chief of Staff / workflow) without duplicating
- * the modal. Models config is per-context, so it lives in the mode heading
- * rather than the global top bar.
+ * anywhere without duplicating the modal. The global "Models" config is a
+ * workspace-wide control, so it lives in the global top bar.
  */
 export default function LlmTriggerButton({ className }: LlmTriggerButtonProps) {
   const setShowLLMModal = useLLMStore(s => s.setShowLLMModal)

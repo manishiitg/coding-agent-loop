@@ -137,6 +137,20 @@ func (r *terminalPipeRecorder) markStarted(tmuxSession string, err error) {
 	}
 }
 
+// disableTerminalPaneStatusLine turns off the tmux status bar for a mirrored
+// session so the PANE height equals the WINDOW height (== the xterm grid).
+// resize-window -y sets the WINDOW height; with the default status bar on, the
+// pane (the CLI's PTY) is one row shorter, so an inline TUI's bottom-anchored
+// live-region repaint drifts a row per tick and its spinner/progress frames pile
+// up. No tmux client is attached to these piped sessions, so the bar never shows
+// in the mirror anyway — turning it off is a pure win that hands the CLI the row.
+func disableTerminalPaneStatusLine(ctx context.Context, tmuxSession string) {
+	if strings.TrimSpace(tmuxSession) == "" {
+		return
+	}
+	_ = runTerminalTmuxCommand(ctx, "", "set-option", "-t", tmuxSession, "status", "off")
+}
+
 // start attaches the tmux pipe-pane recorder for a session. seedHistory is kept
 // for call-site compatibility but no longer selects a text seed: the log is now
 // seeded with a screen-mode-aware control prologue (see below) regardless.
@@ -169,6 +183,10 @@ func (r *terminalPipeRecorder) start(ctx context.Context, rec *terminalPipeRecor
 	// frame arrives as the CLI's OWN bytes on the clean prologue slate — rather
 	// than waiting for the next incidental redraw, which could otherwise leave an
 	// alt-screen pane blank until the next activity.
+	// Drop the status bar first (pane height == window height == xterm rows) so the
+	// repaint below re-renders the CLI at the corrected height; otherwise an inline
+	// TUI's spinner stacks (see disableTerminalPaneStatusLine).
+	disableTerminalPaneStatusLine(ctx, rec.tmuxSession)
 	forceTerminalPaneRepaint(ctx, rec.tmuxSession)
 	return nil
 }
@@ -196,6 +214,7 @@ func (r *terminalPipeRecorder) ResetForResize(ctx context.Context, tmuxSession s
 		log.Printf("Terminal pipe recorder resize reset failed for %s: %v", tmuxSession, err)
 		return
 	}
+	disableTerminalPaneStatusLine(ctx, tmuxSession)
 	forceTerminalPaneRepaint(ctx, tmuxSession)
 }
 

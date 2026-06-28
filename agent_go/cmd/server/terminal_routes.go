@@ -729,6 +729,12 @@ func (api *StreamingAPI) handleResizeTerminal(w http.ResponseWriter, r *http.Req
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
+	// [SPINNER_DEBUG] requested-vs-actual geometry — diagnoses live-region (spinner)
+	// stacking from an xterm/tmux size mismatch. Remove after the spinner fix.
+	if out, qerr := runTerminalTmuxOutputCommand(ctx, "display-message", "-p", "-t", snapshot.TmuxSession,
+		"win=#{window_width}x#{window_height} pane=#{pane_width}x#{pane_height} alt=#{alternate_on}"); qerr == nil {
+		log.Printf("[SPINNER_DEBUG] resize session=%s requested=%dx%d %s", snapshot.TmuxSession, req.Cols, req.Rows, strings.TrimSpace(out))
+	}
 	// The pane was resized: the pipe recording still holds frames captured at the
 	// OLD geometry. Truncate it and re-seed a screen-mode-aware prologue, then
 	// force a fresh full repaint, so the frontend never replays old-width frames

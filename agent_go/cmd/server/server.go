@@ -5338,8 +5338,27 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 			if restoredNativeCodingResume {
 				if restoredRuntimeUsesLaunchableTerminalTransport(restoredRuntime) {
-					if _, err := underlyingAgent.StartCodingAgentTransportSession(agentCtx); err != nil {
+					if handle, err := underlyingAgent.StartCodingAgentTransportSession(agentCtx); err != nil {
 						logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to prelaunch restored coding-agent transport session: %v", err)
+					} else if handle != nil && strings.TrimSpace(handle.TmuxSession) != "" {
+						// FIX B: After a server restart the original tmux is dead, so the
+						// restore path published a STATIC snapshot (Active:false, empty
+						// TmuxSession). The prelaunch above just started a NEW live tmux
+						// session via --resume, so the new tmux session id is only now
+						// known. Register it on the terminal store under the canonical
+						// main-agent terminalID — the same registration a fresh chat and
+						// the attach-existing restore tier use — so the snapshot the
+						// frontend reads (GET /api/terminals) flips to Active:true with
+						// the live tmux_session. Without this the frontend skips /resize
+						// (no tmux_session → tmux stays 120, text overflow + spinner
+						// geometry) and the append-only pipe recorder never engages
+						// (it needs snapshot.Active), so content=history churns the xterm.
+						newTmuxSession := strings.TrimSpace(handle.TmuxSession)
+						if _, started, reason := api.materializeRestoredTmuxTerminal(agentCtx, sessionID, restoredRuntime, newTmuxSession); started {
+							logfWithContext(queryLogCtx, "[CHAT_HISTORY] Registered relaunched restored coding-agent tmux as live session=%s tmux=%s", sessionID, newTmuxSession)
+						} else if reason != "" {
+							logfWithContext(queryLogCtx, "[CHAT_HISTORY] Could not register relaunched restored tmux session=%s tmux=%s reason=%s", sessionID, newTmuxSession, reason)
+						}
 					}
 				}
 				cleanedChatQuery := cleanChatHistoryQuery(chatQuery)

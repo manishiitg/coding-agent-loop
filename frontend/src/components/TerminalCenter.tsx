@@ -2051,28 +2051,51 @@ const XtermTerminalPane: React.FC<{
       }
       logXtermDebug('scroll', { viewportY, distanceFromBottom })
     })
+    // The xterm's own character grid (term.cols/term.rows after fit.fit()) is the
+    // SINGLE SOURCE OF TRUTH for the tmux pane size. term.onResize fires only when
+    // the grid actually changes (xterm dedupes), so it doubles as the loop-guard:
+    // we POST the new size and re-seed exactly once per real geometry change.
     const resizeDisposable = term.onResize(({ cols, rows }) => {
+      // Re-seed on geometry change: the pipe recording still holds frames captured
+      // at the OLD pane size; replaying/appending them into the resized grid is the
+      // litter. Reset and drop our content trackers so the next content fetch
+      // rebuilds cleanly at the new geometry (resize first, rebuild on next fetch —
+      // don't render old-geometry pipe bytes after a resize).
+      term.reset()
+      lastContentRef.current = ''
+      pendingContentRef.current = null
+      // Drive the tmux resize from xterm's real grid so the pane matches 1:1.
       onResizeRef.current?.(cols, rows)
       logXtermDebug('resize', { cols, rows })
     })
 
     const fitTerminal = () => {
       try {
+        // fit.fit() resizes the xterm to the container; if the grid changes,
+        // term.onResize fires and handles the POST + re-seed. We intentionally do
+        // NOT POST a separately-measured size here — the xterm grid is authoritative.
         fit.fit()
-        onResizeRef.current?.(term.cols, term.rows)
         logXtermDebug('fit')
       } catch {
         // Fit can fail during unmount or while the pane is display:none.
       }
     }
+    // Debounce container-driven fits (~120ms) so a drag settles into ONE grid
+    // change → one resize POST + one re-seed, instead of many per-pixel resizes.
+    let fitTimer: number | undefined
+    const scheduleFit = () => {
+      if (fitTimer !== undefined) window.clearTimeout(fitTimer)
+      fitTimer = window.setTimeout(fitTerminal, 120)
+    }
     fitTerminal()
-    const resizeObserver = new ResizeObserver(fitTerminal)
+    const resizeObserver = new ResizeObserver(scheduleFit)
     resizeObserver.observe(mount)
 
     return () => {
       scrollDisposable.dispose()
       resizeDisposable.dispose()
       resizeObserver.disconnect()
+      if (fitTimer !== undefined) window.clearTimeout(fitTimer)
       terminalRef.current = null
       term.dispose()
     }
@@ -3890,40 +3913,14 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     }
   }, [measureTerminalElementSize, sendTerminalSizeHint])
 
-  // Dynamic tmux resize: measure the terminal viewport in monospace chars and
-  // POST the dimensions to /api/terminals/{id}/resize. The backend runs
-  // `tmux resize-window` on the live pane AND records the size as the
-  // process-wide preferred size, so the next CLI-agent tmux session launches
-  // at the operator's actual viewport instead of the 120×36 default. Only
-  // fires for terminals backed by a tmux session.
-  useEffect(() => {
-    const el = terminalOutputRef.current as HTMLElement | null
-    const tmuxBacked = selectedTerminalView && Boolean(selectedTerminalView.tmux_session)
-    if (!el || !selectedTerminalView || !tmuxBacked || isSyntheticTerminal(selectedTerminalView)) return
-    const terminalId = selectedTerminalView.terminal_id
-
-    let timer: number | undefined
-    const measureAndSend = () => {
-      const measured = measureTerminalElementSize(el)
-      if (measured) sendTerminalResize(terminalId, measured.cols, measured.rows)
-    }
-
-    const schedule = () => {
-      if (timer !== undefined) window.clearTimeout(timer)
-      timer = window.setTimeout(measureAndSend, 200)
-    }
-
-    schedule()
-    const observer = new ResizeObserver(schedule)
-    observer.observe(el)
-    window.addEventListener('resize', schedule)
-
-    return () => {
-      observer.disconnect()
-      window.removeEventListener('resize', schedule)
-      if (timer !== undefined) window.clearTimeout(timer)
-    }
-  }, [measureTerminalElementSize, selectedTerminalView, sendTerminalResize])
+  // Dynamic tmux resize: the live /api/terminals/{id}/resize POST is driven from
+  // the xterm's actual character grid via XtermTerminalPane's term.onResize →
+  // handleSelectedXtermResize → sendTerminalResize. We intentionally do NOT POST a
+  // separately element-measured size here: two independent measurements (FitAddon
+  // vs a CSS ruler) can disagree by a column/row, so the tmux pane would be resized
+  // to a size the xterm isn't actually using → the pipe stream's absolute-cursor
+  // redraws land on the wrong rows and litter. The backend's `tmux resize-window`
+  // now makes the pane exactly the xterm grid, so the stream renders 1:1.
 
 
   // Rail item — one row in the left rail. Compact vertical layout:

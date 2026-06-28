@@ -88,11 +88,13 @@ export function RunloopMark({
 type RunloopLockupProps = {
   className?: string
   subtitle?: string
+  version?: string
 }
 
 export function RunloopLockup({
   className,
   subtitle,
+  version,
 }: RunloopLockupProps) {
   return (
     <div className={cn('flex items-center gap-3 min-w-0', className)}>
@@ -103,6 +105,11 @@ export function RunloopLockup({
         <div className="truncate text-sm font-semibold tracking-tight text-slate-900 dark:text-slate-100">
           Runloop
         </div>
+        {version ? (
+          <div className="truncate text-[10px] leading-tight text-slate-400 dark:text-slate-500">
+            v{version}
+          </div>
+        ) : null}
         {subtitle ? (
           <div className="truncate text-[11px] uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">
             {subtitle}

@@ -499,6 +499,10 @@ interface ChatAreaProps {
   // Pass null explicitly to disable all active behavior (SSE, polling, queue) — used when
   // this ChatArea instance is hidden behind another instance for the same tab.
   tabId?: string | null
+  // Multi-agent landing previous-chats panel: icon-only (compact) tabs when the
+  // chat sits in the narrow rail; labeled tabs when it fills the pane (org panel
+  // minimized). The panel always renders in fill mode so it scrolls in both.
+  previousChatsCompact?: boolean
 }
 
 // Ref interface for ChatArea component
@@ -518,7 +522,7 @@ let globalHasRestored = false
 
 // Inner component for chat area
 const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAreaRef>) => {
-  const { onNewChat, hideHeader = false, hideInput = false, compact = false, hidePhaseChatEmptyState = false, suppressTerminalPane = false, tabId } = props
+  const { onNewChat, hideHeader = false, hideInput = false, compact = false, hidePhaseChatEmptyState = false, suppressTerminalPane = false, tabId, previousChatsCompact = false } = props
   // null means "inactive — don't subscribe to any tab or run any effects"
   const isInactive = tabId === null
 
@@ -3110,7 +3114,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
                 emptyText="No previous chats yet."
                 onHasChatsChange={setHasPreviousNormalChats}
                 onSelectSession={handleResumePreviousChat}
-                compact
+                fill
+                compact={previousChatsCompact}
               />
             )}
             {/* Empty State - Show when no events and not in historical session.

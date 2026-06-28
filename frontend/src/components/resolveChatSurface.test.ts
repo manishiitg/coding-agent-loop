@@ -92,4 +92,43 @@ describe('resolveChatSurface', () => {
   it('a normal fresh chat still → landing (read-only off)', () => {
     expect(resolveChatSurface({ ...base, isReadOnlyRunView: false })).toBe('landing')
   })
+
+  // --- Resume coherence (Resume-first-click + New-Chat-from-running-conv) ---
+  // A resume in flight (restoredConversationPath set) before its terminal/content
+  // is detected must stay 'restoring', NOT flash 'landing'. The wiring keeps
+  // resumeSettling true long enough (RESUME_SETTLE_MS) to outlast the terminal
+  // presence probe so the resumed terminal shows on the FIRST Resume click.
+  it('resume pending (terminal not yet detected, settle active) → restoring not landing', () => {
+    expect(
+      resolveChatSurface({
+        ...base,
+        resumeSettling: true,
+        hasContent: false,
+        isStreaming: false,
+        hasRestoredLiveContent: false,
+      }),
+    ).toBe('restoring')
+  })
+
+  // New Chat from a RUNNING conversation: the fresh tab has rotated its sessionId
+  // and cleared its per-tab streaming flag, so the resolver receives isStreaming
+  // false even though the PRIOR session was streaming (the global state.isStreaming
+  // must NOT be fed here). With no content/restore signals it resolves to landing.
+  it('new chat after a prior session streamed (per-tab not streaming) → landing', () => {
+    expect(
+      resolveChatSurface({
+        ...base,
+        isStreaming: false, // per-tab flag for the fresh tab, not the lingering global
+        hasContent: false,
+        hasRestoredLiveContent: false,
+        resumeSettling: false,
+      }),
+    ).toBe('landing')
+  })
+
+  // A genuinely streaming tab (its OWN per-tab flag true) stays active — the
+  // per-tab scoping fix must not regress real streaming chats.
+  it('genuinely streaming active tab (per-tab true) → active', () => {
+    expect(resolveChatSurface({ ...base, isStreaming: true })).toBe('active')
+  })
 })

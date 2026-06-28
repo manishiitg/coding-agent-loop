@@ -50,8 +50,17 @@ const STALE_STREAMING_RECOVERY_GRACE_MS = 10000
 // before isRestoringChatSessions flips true; a freshly-resumed chat streams its
 // first turn shortly after). The previous-chats list stays hidden during this
 // window so a NON-empty resumed chat doesn't flash the list before its first
-// event arrives; once it elapses still-empty, the list is revealed.
-const RESUME_SETTLE_MS = 2500
+// event/terminal arrives; once it elapses still-empty, the list is revealed.
+//
+// CRITICAL: this MUST outlast the useSessionTerminals presence probe so the list
+// never flashes mid-resume. That probe (src/hooks/useSessionTerminals.ts) polls
+// every 3000ms and the restored static snapshot only lands after the async
+// restore-terminal POST, so the terminal is typically detected on the 2nd–3rd
+// poll (~3–6s). A 2500ms settle expired BEFORE the probe's second poll → the
+// resolver fell to 'landing' and the user had to click Resume 2–3 times. 10000ms
+// gives the probe ~4 polls to confirm the terminal (→ 'active') before the settle
+// can ever fall through to 'landing' (only a genuinely dead/empty resume does).
+const RESUME_SETTLE_MS = 10000
 const STREAMING_EVENT_TYPES = new Set(['streaming_start', 'streaming_chunk', 'streaming_end'])
 
 type RuntimeEventScope = {
@@ -895,15 +904,19 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // isRestoringChatSessions flips true) so a NON-empty resumed chat doesn't flash
   // the list before its first event settles.
   const [resumeSettling, setResumeSettling] = useState(false)
+  // Use the ACTIVE TAB's streaming flag, not the global state.isStreaming, which
+  // lingers true after New Chat from a running conversation (a cross-tab signal,
+  // not session-scoped) and would wrongly clear the settle / force 'active'.
+  const activeTabStreaming = !!activeTab?.isStreaming
   useEffect(() => {
-    if (!activeTabHasRestoredConversation || hasConversationContent || isStreaming) {
+    if (!activeTabHasRestoredConversation || hasConversationContent || activeTabStreaming) {
       setResumeSettling(false)
       return
     }
     setResumeSettling(true)
     const timer = window.setTimeout(() => setResumeSettling(false), RESUME_SETTLE_MS)
     return () => window.clearTimeout(timer)
-  }, [activeTabHasRestoredConversation, hasConversationContent, isStreaming, activeSessionId])
+  }, [activeTabHasRestoredConversation, hasConversationContent, activeTabStreaming, activeSessionId])
   // A tab observing a specific scheduled/bot run is a read-only view of THAT
   // run, never a fresh chat. The chat-surface resolver keeps such tabs in
   // restoring (while events load) or active (once present) and never lets them
@@ -2996,20 +3009,32 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // multi-agent and workflow render branches (see ./resolveChatSurface). The two
   // branches derive `hasContent` differently (mirroring today's behavior):
   // multi-agent keys off conversation events, workflow off any display event.
+  // isStreaming below is the ACTIVE TAB's flag (activeTabStreaming), NOT the
+  // global state.isStreaming. The global flag is a cross-tab signal that lingers
+  // true after New Chat from a running conversation (resetTabChat rotates the
+  // sessionId + clears the per-tab flag but does not reset the global one), which
+  // wrongly kept a fresh New-Chat tab on 'active' (empty terminal) instead of
+  // 'landing'. Reading the per-tab flag scopes "is streaming" to THIS session.
   const multiAgentSurface = resolveChatSurface({
     isRestoring: isRestoringChatSessions,
     resumeSettling,
     hasContent: hasConversationContent,
-    isStreaming,
+    isStreaming: activeTabStreaming,
     hasRestoredLiveContent,
     isReadOnlyRunView,
   })
+  // Workflow shares the resume-pending signals (resumeSettling + the terminal/
+  // execution-tree probe) so a coding-agent/terminal resume in the workflow pane
+  // stays 'restoring' until its terminal is confirmed — then 'active' — instead of
+  // flashing the previous-chats list on the first Resume click. Both inputs are
+  // false/gated whenever there's no restoredConversationPath, so a FRESH workflow
+  // chat is unaffected (still resolves to 'landing').
   const workflowSurface = resolveChatSurface({
     isRestoring: isRestoringWorkflowSessions,
-    resumeSettling: false,
+    resumeSettling,
     hasContent: displayEvents.length > 0,
-    isStreaming: isStreaming || !!activeTab?.isStreaming,
-    hasRestoredLiveContent: false,
+    isStreaming: activeTabStreaming,
+    hasRestoredLiveContent,
     isReadOnlyRunView,
   })
 

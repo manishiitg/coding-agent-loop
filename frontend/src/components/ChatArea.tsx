@@ -44,6 +44,12 @@ const EMPTY_EVENTS: PollingEvent[] = []
 const AUTO_NOTIFICATION_PREFIX = '[AUTO-NOTIFICATION]'
 const RESTORED_CONVERSATION_CONTEXT_MARKER = '\n\nPrevious workflow-builder conversation file:'
 const STALE_STREAMING_RECOVERY_GRACE_MS = 10000
+// Grace window after a resume marker appears (page-load auto-restore sleeps ~500ms
+// before isRestoringChatSessions flips true; a freshly-resumed chat streams its
+// first turn shortly after). The previous-chats list stays hidden during this
+// window so a NON-empty resumed chat doesn't flash the list before its first
+// event arrives; once it elapses still-empty, the list is revealed.
+const RESUME_SETTLE_MS = 2500
 const STREAMING_EVENT_TYPES = new Set(['streaming_start', 'streaming_chunk', 'streaming_end'])
 
 type RuntimeEventScope = {
@@ -843,14 +849,41 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // an in-panel spinner here while reconnectWorkflowTabs() is replaying events.
   const isRestoringWorkflowSessions = useChatStore(state => state.isRestoringWorkflowSessions)
   // A resumed chat sets restoredConversationPath on the tab (cleared by New Chat's
-  // resetTabChat); treat that as "a chat is active" so the list hides immediately,
-  // even before the first event arrives.
+  // resetTabChat). We no longer hard-hide the list on this marker alone — an empty
+  // or stale resume (terminal restore that yielded nothing) would otherwise leave a
+  // dead pane with no way back to the chats list. Instead we hide the list only
+  // while the resume is genuinely loading (see the two guards below), so an empty
+  // resumed tab falls through to the previous-chats list.
   const activeTabHasRestoredConversation = !!activeTab?.config?.restoredConversationPath
+  // Terminal / coding-agent resumes have no conversation events — their surface is
+  // the terminal pane. Keep the list hidden while the restored session still shows
+  // execution-tree activity so it never replaces a populated terminal/coding pane.
+  const restoredSessionHasExecutionContent =
+    activeTabHasRestoredConversation &&
+    !!sessionExecutionTree &&
+    (sessionExecutionTree.summary.running_count +
+      sessionExecutionTree.summary.completed_count +
+      sessionExecutionTree.summary.failed_count +
+      sessionExecutionTree.summary.canceled_count) > 0
+  // Bridge the brief load gap for event-based resumes (and page-load restore before
+  // isRestoringChatSessions flips true) so a NON-empty resumed chat doesn't flash
+  // the list before its first event settles.
+  const [resumeSettling, setResumeSettling] = useState(false)
+  useEffect(() => {
+    if (!activeTabHasRestoredConversation || hasConversationContent || isStreaming) {
+      setResumeSettling(false)
+      return
+    }
+    setResumeSettling(true)
+    const timer = window.setTimeout(() => setResumeSettling(false), RESUME_SETTLE_MS)
+    return () => window.clearTimeout(timer)
+  }, [activeTabHasRestoredConversation, hasConversationContent, isStreaming, activeSessionId])
   const showNormalPreviousChatsPanel = selectedModeCategory === 'multi-agent' &&
     !hasConversationContent &&
-    !activeTabHasRestoredConversation &&
     !isStreaming &&
-    !isRestoringChatSessions
+    !isRestoringChatSessions &&
+    !resumeSettling &&
+    !restoredSessionHasExecutionContent
 
   useEffect(() => {
     if (!showNormalPreviousChatsPanel) {

@@ -255,7 +255,6 @@ import LLMConfigurationModal from './LLMConfigurationModal'
 import type { PlannerFile, LLMProvider, ChatHistorySession, TerminalSnapshot } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import { useAppStore, useMCPStore, useLLMStore, useChatStore } from '../stores'
-import { normalizeEventViewMode } from '../stores/useChatStore'
 import { useCapabilitiesStore } from '../stores/useCapabilitiesStore'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
@@ -656,18 +655,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   )
   const isOrganizationAssistant = !!activeTab?.metadata?.isOrganizationAssistant
   const isOrganizationContext = isOrganizationAssistant || showWorkflowsOverview
-  // When the live-terminal pane is the active surface (multi-agent + workflow
-  // phase chats, terminal view), reserve a stable height for the textarea so its
-  // per-keystroke height thrash (the height='auto'→scrollHeight measure, plus the
-  // 40→100px auto-grow) is absorbed INSIDE a fixed-height container and never
-  // changes the ChatInput's outer height. ChatInput is the flex sibling of the
-  // flex-1 terminal, so an invariant ChatInput height keeps the terminal
-  // container's height invariant too — no ResizeObserver→fit→onResize→/resize
-  // churn (and no backend tmux resize-window / ResetForResize) from typing.
-  const terminalPaneActive =
-    (isMultiAgentMode || isWorkflowPhaseChat) &&
-    normalizeEventViewMode(activeTab?.viewMode) === 'terminal'
-  
   // Memoize tabConfig to prevent unnecessary re-renders
   const tabConfig = useMemo(() => activeTab?.config, [activeTab?.config])
 
@@ -3707,13 +3694,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 </button>
               </div>
             )}
-            {/* Show text input. In terminal-pane mode the textarea lives inside a
-                fixed 100px box (its max height) and is bottom-anchored, so it
-                grows UPWARD within that reserved space; the box height never
-                changes, so the textarea's height thrash cannot reach the terminal
-                container (see terminalPaneActive). The small headroom above the
-                textarea when the message is short shrinks as it grows. */}
-            <div className={terminalPaneActive ? 'flex h-[100px] flex-col justify-end' : undefined}>
+            {/* Show text input — compact and auto-growing (no reserved dead
+                space). adjustTextareaHeight's early-return guard prevents the
+                per-keystroke height='auto' reflow that would otherwise resize the
+                terminal on single-line typing; only a real wrap grows it. */}
+            <div>
             <Textarea
               data-tour="chat-input-box"
               ref={textareaRef}

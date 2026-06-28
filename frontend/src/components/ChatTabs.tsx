@@ -362,6 +362,7 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
       </div>
 
       <div className="ml-auto flex items-center gap-1">
+        <OrgPulseControl />
         {showHeaderContent && (
           <div className="mr-1 flex items-center gap-1 border-r border-gray-200 pr-2 dark:border-gray-700">
             <ServerSelectionDropdown
@@ -479,7 +480,6 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
             )}
           </TooltipContent>
         </Tooltip>
-        <OrgPulseControl />
         <OrgBackupPublishControls onSubmitCommand={onSubmitOrgCommand} />
       </div>
 

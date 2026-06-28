@@ -3,6 +3,7 @@ package server
 import (
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Built-in schedules are defined in Go and run for every user unless the user
@@ -105,6 +106,21 @@ func IsDefaultBuiltinSchedule(scheduleID string) bool {
 
 func IsSlashManagedBuiltinSchedule(scheduleID string) bool {
 	return scheduleID == builtinOrgPulseID
+}
+
+// IsOrgPulseSchedule reports whether a multi-agent schedule IS the Org Pulse —
+// either the canonical built-in (builtin-org-pulse) or a user-created duplicate.
+// /pulse-setup is supposed to enable/override builtin-org-pulse, but an agent can
+// instead materialize Org Pulse under a fresh id via create_multiagent_schedule
+// (the on-disk shape we actually observe). Such a duplicate is still what the
+// scheduler runs, so the effective "Org Pulse is on" state must account for it.
+// We recognize duplicates by their highly specific Org Pulse signature.
+func IsOrgPulseSchedule(sched WorkflowSchedule) bool {
+	if sched.ID == builtinOrgPulseID {
+		return true
+	}
+	hay := strings.ToLower(sched.Name + "\n" + sched.Description + "\n" + sched.Query)
+	return strings.Contains(hay, "org pulse") || strings.Contains(hay, "org-pulse")
 }
 
 // MergeBuiltinSchedules appends built-in schedules that the user has not

@@ -1154,7 +1154,7 @@ func sendTerminalKey(ctx context.Context, tmuxSession, key string) error {
 func tmuxKeyName(key string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(key)) {
 	case "enter", "return":
-		return "C-m", true
+		return "Enter", true
 	case "esc", "escape":
 		return "Escape", true
 	case "tab":

@@ -226,7 +226,7 @@ func TestRecordLiveCodingAgentUserMessageCapturesVisibleEvent(t *testing.T) {
 	}
 }
 
-func TestHandleSteerMessageRoutesThroughAgentDelivery(t *testing.T) {
+func TestHandleLiveInputMessageRoutesThroughAgentDelivery(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	defer store.Stop()
 
@@ -242,16 +242,16 @@ func TestHandleSteerMessageRoutesThroughAgentDelivery(t *testing.T) {
 	}
 
 	body := bytes.NewBufferString(`{"message":"send this through delivery"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/steer", body)
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/live-input", body)
 	req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
 	rr := httptest.NewRecorder()
 
-	api.handleSteerMessage(rr, req)
+	api.handleLiveInputMessage(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
 	}
 
-	var response SteerMessageResponse
+	var response LiveInputResponse
 	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}

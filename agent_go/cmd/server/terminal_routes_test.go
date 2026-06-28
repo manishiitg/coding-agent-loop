@@ -1113,7 +1113,7 @@ func TestTerminalRoutesSendInputUsesTmuxPasteAndOptionalEnter(t *testing.T) {
 	if calls[1].args[0] != "paste-buffer" || !containsString(calls[1].args, tmuxSession) {
 		t.Fatalf("second tmux call = %#v, want paste-buffer into session", calls[1])
 	}
-	if got := strings.Join(calls[2].args, " "); got != "send-keys -t "+tmuxSession+" C-m" {
+	if got := strings.Join(calls[2].args, " "); got != "send-keys -t "+tmuxSession+" Enter" {
 		t.Fatalf("third tmux call = %q, want enter", got)
 	}
 }

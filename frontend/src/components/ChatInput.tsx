@@ -128,7 +128,7 @@ const isLikelyBackendUnavailableError = (err: unknown) => {
     || message.includes('failed to fetch')
 }
 
-type LiveMessageDeliveryStatus = 'sending' | 'sent_to_cli' | 'queued_for_injection' | 'queued_locally' | 'failed'
+type LiveMessageDeliveryStatus = 'sending' | 'sent_to_cli' | 'queued_for_injection' | 'next_turn_started' | 'queued_locally' | 'failed'
 
 interface LiveMessageDelivery {
   status: LiveMessageDeliveryStatus
@@ -137,7 +137,7 @@ interface LiveMessageDelivery {
   detail?: string
 }
 
-const formatSteerProviderLabel = (provider?: string | null) => {
+const formatLiveInputProviderLabel = (provider?: string | null) => {
   const normalized = (provider || '').trim().toLowerCase()
   switch (normalized) {
     case 'gemini-cli':
@@ -1784,9 +1784,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const canSubmit = canSubmitImmediately || canQueueWhileStreaming
 
   // tmux-transport coding CLIs keep a live, persistent session, so input should
-  // always go through /steer rather than the local queue. The backend
+  // always go through the live-input endpoint rather than the local queue. The backend
   // disambiguates: it injects as live input when the pane is busy and starts the
-  // next turn when idle (handleSteerMessage/startNextTurnFromSteer). The local
+  // next turn when idle. The local
   // queue is only for non-live providers that genuinely can't accept input mid-
   // turn. We intentionally do NOT gate on canSteer here — a stale canSteer=false
   // would otherwise force queueing even though the CLI can take the input.
@@ -1830,7 +1830,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     })
     requestTerminalRefreshBurst()
     try {
-      const response = await agentApi.steerMessage(tabSessionId, msg)
+      const response = await agentApi.sendLiveInput(tabSessionId, msg)
       requestTerminalRefreshBurst()
       setLiveMessageDelivery({
         status: response.delivery_status || 'sent_to_cli',
@@ -3401,7 +3401,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return `Ask anything... (${baseHints})`
   }, [isViewOnly, isMultiAgentMode, isWorkflowPhaseChat, workflowPhaseId, tabSessionId, canBootstrapMultiAgentTab, canBootstrapWorkflowPhaseTab])
 
-  const liveDeliveryProviderLabel = formatSteerProviderLabel(liveMessageDelivery?.provider || effectiveProviderForSteer)
+  const liveDeliveryProviderLabel = formatLiveInputProviderLabel(liveMessageDelivery?.provider || effectiveProviderForSteer)
   const liveDeliveryText = liveMessageDelivery
     ? liveMessageDelivery.status === 'sending'
       ? `Sending to ${liveDeliveryProviderLabel}...`
@@ -3409,9 +3409,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         ? `Sent to ${liveDeliveryProviderLabel}`
         : liveMessageDelivery.status === 'queued_for_injection'
           ? 'Queued for next model turn'
-          : liveMessageDelivery.status === 'queued_locally'
-            ? 'Saved to queue'
-            : 'Could not submit live input'
+          : liveMessageDelivery.status === 'next_turn_started'
+            ? `Started next ${liveDeliveryProviderLabel} turn`
+            : liveMessageDelivery.status === 'queued_locally'
+              ? 'Saved to queue'
+              : 'Could not submit live input'
     : ''
   const liveDeliveryClass = liveMessageDelivery?.status === 'failed'
     ? 'text-amber-600 dark:text-amber-300'

@@ -819,12 +819,14 @@ type LLMGuidanceResponse struct {
 	Guidance  string `json:"guidance,omitempty"`
 }
 
-// SteerMessageRequest represents a request to inject a user message mid-execution
-type SteerMessageRequest struct {
+// LiveInputRequest represents a user message delivered to an active coding
+// agent. For CLI transports this is live input to the retained tmux-backed
+// agent; for idle retained sessions the backend may start the next turn.
+type LiveInputRequest struct {
 	Message string `json:"message"`
 }
 
-type SteerMessageResponse struct {
+type LiveInputResponse struct {
 	Success        bool   `json:"success"`
 	Message        string `json:"message,omitempty"`
 	DeliveryStatus string `json:"delivery_status,omitempty"`
@@ -833,13 +835,17 @@ type SteerMessageResponse struct {
 	QueryID        string `json:"query_id,omitempty"`
 }
 
+// Backward-compatible names for the legacy /steer endpoint and tests.
+type SteerMessageRequest = LiveInputRequest
+type SteerMessageResponse = LiveInputResponse
+
 // ControlKeyRequest carries a tmux control key (e.g. "Escape") to inject into
 // a running coding-agent session.
 type ControlKeyRequest struct {
 	Key string `json:"key"`
 }
 
-// ControlKeyResponse mirrors the steer response shape for ergonomic frontend
+// ControlKeyResponse mirrors the live-input response shape for ergonomic frontend
 // consumption — same delivery/provider fields the live-input UX already
 // renders.
 type ControlKeyResponse struct {
@@ -849,7 +855,7 @@ type ControlKeyResponse struct {
 	Key      string `json:"key,omitempty"`
 }
 
-const liveCodingAgentSteerTimeout = 15 * time.Second
+const liveCodingAgentInputTimeout = 15 * time.Second
 
 // HumanFeedbackRequest represents a request to submit human feedback
 type HumanFeedbackRequest struct {
@@ -1457,7 +1463,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	// LLM Guidance API routes
 	apiRouter.HandleFunc("/sessions/{session_id}/llm-guidance", api.handleSetLLMGuidance).Methods("POST", "OPTIONS")
 
-	// Steer message API route - inject user message mid-execution
+	// Live input API route. /steer is retained as a legacy alias for older
+	// clients/tests; new clients should use /live-input.
+	apiRouter.HandleFunc("/sessions/{session_id}/live-input", api.handleLiveInputMessage).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/sessions/{session_id}/steer", api.handleSteerMessage).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/sessions/{session_id}/control", api.handleControlKey).Methods("POST", "OPTIONS")
 
@@ -3469,7 +3477,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// The deduplication logic in the frontend will handle any duplicates
 
 	// Store the last full query request so server-side follow-up routing can
-	// start the next turn from a lightweight /steer message when a retained
+	// start the next turn from a lightweight live-input message when a retained
 	// coding CLI session is idle. Synthetic turns also reuse this context.
 	req.userID = currentUserID
 	api.lastQueryMu.Lock()
@@ -6567,9 +6575,16 @@ func (api *StreamingAPI) handleSetLLMGuidance(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(response)
 }
 
-// handleSteerMessage injects a user message into a running agent's conversation loop.
-// The message is picked up after the current tool call completes, before the next LLM call.
+// handleSteerMessage is the legacy route name kept for compatibility.
 func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Request) {
+	api.handleLiveInputMessage(w, r)
+}
+
+// handleLiveInputMessage delivers a user message to an active coding-agent
+// session. For live CLI turns it is picked up after the current tool call (or
+// sent directly to the CLI adapter); for idle retained sessions it can start
+// the next turn from the same chat context.
+func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
 		return
@@ -6582,7 +6597,7 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var req SteerMessageRequest
+	var req LiveInputRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
 		return
@@ -6608,7 +6623,7 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 		// start the next turn from this message (the CLI resumes its session and
 		// processes it natively). Only if there's no prior query to template a
 		// turn from do we fall through to the 404.
-		if api.startNextTurnFromSteer(w, r, sessionID, req.Message, nil) {
+		if api.startNextTurnFromLiveInput(w, r, sessionID, req.Message, nil) {
 			return
 		}
 		http.Error(w, "No running agent for this session", http.StatusNotFound)
@@ -6622,35 +6637,35 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 		// completed and start the next turn from the message.
 		tmuxBusy := api.terminalStore != nil && api.terminalStore.SessionHasBusyCodingTmux(sessionID)
 		if !tmuxBusy {
-			log.Printf("[STEER] Rejecting stale live input for session %s: stored agent exists but no foreground turn is active", sessionID)
+			log.Printf("[LIVE INPUT] Rejecting stale live input for session %s: stored agent exists but no foreground turn is active", sessionID)
 			api.setSessionBusy(sessionID, false)
 			hasRunningBackgroundAgents := api.bgAgentRegistry != nil && api.bgAgentRegistry.HasRunningAgents(sessionID)
 			if !hasRunningBackgroundAgents && !api.isSyntheticTurn(sessionID) {
 				api.updateSessionStatus(sessionID, "completed")
 			}
-			if api.startNextTurnFromSteer(w, r, sessionID, req.Message, runningAgent) {
+			if api.startNextTurnFromLiveInput(w, r, sessionID, req.Message, runningAgent) {
 				return
 			}
 			http.Error(w, "No active foreground turn for this session", http.StatusConflict)
 			return
 		}
-		log.Printf("[STEER] No foreground turn for session %s but tmux pane is busy — delivering as live input to the running CLI", sessionID)
+		log.Printf("[LIVE INPUT] No foreground turn for session %s but tmux pane is busy — delivering as live input to the running CLI", sessionID)
 	}
 
 	if err := r.Context().Err(); err != nil {
-		log.Printf("[STEER] Request canceled before delivery for session %s: %v", sessionID, err)
+		log.Printf("[LIVE INPUT] Request canceled before delivery for session %s: %v", sessionID, err)
 		return
 	}
 
-	steerCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentSteerTimeout)
+	inputCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentInputTimeout)
 	defer cancel()
-	delivery, err := runningAgent.DeliverUserMessage(steerCtx, mcpagent.UserMessageDeliveryRequest{
+	delivery, err := runningAgent.DeliverUserMessage(inputCtx, mcpagent.UserMessageDeliveryRequest{
 		SessionID: sessionID,
 		Message:   req.Message,
 		Intent:    mcpagent.UserMessageDeliveryIntentLiveInput,
 	})
 	if err != nil {
-		log.Printf("[STEER] Live input unavailable for provider %s session %s: %v", runningAgent.GetProvider(), sessionID, err)
+		log.Printf("[LIVE INPUT] Live input unavailable for provider %s session %s: %v", runningAgent.GetProvider(), sessionID, err)
 		http.Error(w, fmt.Sprintf("Live input unavailable: %v", err), http.StatusConflict)
 		return
 	}
@@ -6665,10 +6680,10 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 		deliveryStatus = "queued_for_injection"
 	}
 	api.recordLiveCodingAgentUserMessage(sessionID, req.Message, provider, messageID, deliveryStatus)
-	log.Printf("[STEER] Delivered user message to provider %s session %s status=%s: %.80s", provider, sessionID, deliveryStatus, req.Message)
+	log.Printf("[LIVE INPUT] Delivered user message to provider %s session %s status=%s: %.80s", provider, sessionID, deliveryStatus, req.Message)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(SteerMessageResponse{
+	json.NewEncoder(w).Encode(LiveInputResponse{
 		Success:        true,
 		Message:        "User message delivered",
 		DeliveryStatus: deliveryStatus,
@@ -6707,7 +6722,7 @@ func (c *internalResponseCapture) Write(p []byte) (int, error) {
 	return c.body.Write(p)
 }
 
-func (api *StreamingAPI) startNextTurnFromSteer(w http.ResponseWriter, r *http.Request, sessionID, message string, runningAgent *mcpagent.Agent) bool {
+func (api *StreamingAPI) startNextTurnFromLiveInput(w http.ResponseWriter, r *http.Request, sessionID, message string, runningAgent *mcpagent.Agent) bool {
 	api.lastQueryMu.RLock()
 	baseReq, ok := api.lastQueryRequests[sessionID]
 	api.lastQueryMu.RUnlock()
@@ -6761,7 +6776,7 @@ func (api *StreamingAPI) startNextTurnFromSteer(w http.ResponseWriter, r *http.R
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(SteerMessageResponse{
+	_ = json.NewEncoder(w).Encode(LiveInputResponse{
 		Success:        true,
 		Message:        "Started next turn",
 		DeliveryStatus: "next_turn_started",
@@ -6817,7 +6832,7 @@ func (api *StreamingAPI) handleControlKey(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ctlCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentSteerTimeout)
+	ctlCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentInputTimeout)
 	defer cancel()
 	result, err := runningAgent.DeliverControlKey(ctlCtx, mcpagent.ControlKeyDeliveryRequest{
 		SessionID: sessionID,

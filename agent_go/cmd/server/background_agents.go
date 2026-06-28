@@ -1753,7 +1753,7 @@ func autoNotificationBracketContext(meta map[string]string) string {
 // steerBackgroundAgentCompletion delivers a finished background agent's
 // [AUTO-NOTIFICATION] to a busy-but-steerable CLI coding agent by injecting it
 // into the turn that is already running (the same path live user chat takes via
-// handleSteerMessage), instead of starting a fresh synthetic turn.
+// handleLiveInputMessage), instead of starting a fresh synthetic turn.
 //
 // This exists because the synthetic-turn path (processBackgroundAgentCompletion ->
 // executeSyntheticTurn) can only fire when the session is idle. For a CLI coding
@@ -1801,9 +1801,9 @@ func (api *StreamingAPI) steerBackgroundAgentCompletion(sessionID, agentID strin
 
 	msg := api.buildAutoNotificationMessage(sessionID, snap)
 
-	steerCtx, cancel := context.WithTimeout(context.Background(), liveCodingAgentSteerTimeout)
+	inputCtx, cancel := context.WithTimeout(context.Background(), liveCodingAgentInputTimeout)
 	defer cancel()
-	delivery, err := runningAgent.DeliverUserMessage(steerCtx, mcpagent.UserMessageDeliveryRequest{
+	delivery, err := runningAgent.DeliverUserMessage(inputCtx, mcpagent.UserMessageDeliveryRequest{
 		SessionID: sessionID,
 		Message:   msg,
 		Intent:    mcpagent.UserMessageDeliveryIntentLiveInput,

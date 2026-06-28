@@ -1987,6 +1987,10 @@ const XtermTerminalPaneInner: React.FC<{
   const applyContentRef = useRef<((next: string) => void) | null>(null)
   const onViewportStickChangeRef = useRef(onViewportStickChange)
   const onResizeRef = useRef(onResize)
+  // contentSource is a prop; the mount effect's onResize handler closes over the
+  // INITIAL render's value (empty deps), so mirror it in a ref to normalize the
+  // carry-over repaint correctly on later resizes.
+  const contentSourceRef = useRef(contentSource)
 
   useEffect(() => {
     onViewportStickChangeRef.current = onViewportStickChange
@@ -1995,6 +1999,10 @@ const XtermTerminalPaneInner: React.FC<{
   useEffect(() => {
     onResizeRef.current = onResize
   }, [onResize])
+
+  useEffect(() => {
+    contentSourceRef.current = contentSource
+  }, [contentSource])
 
   const logXtermDebug = useCallback((phase: string, extra: Record<string, unknown> = {}) => {
     if (!terminalScrollDebugEnabled()) return
@@ -2057,13 +2065,29 @@ const XtermTerminalPaneInner: React.FC<{
     // we POST the new size and re-seed exactly once per real geometry change.
     const resizeDisposable = term.onResize(({ cols, rows }) => {
       // Re-seed on geometry change: the pipe recording still holds frames captured
-      // at the OLD pane size; replaying/appending them into the resized grid is the
-      // litter. Reset and drop our content trackers so the next content fetch
-      // rebuilds cleanly at the new geometry (resize first, rebuild on next fetch —
-      // don't render old-geometry pipe bytes after a resize).
+      // at the OLD pane size, and the pipe file is append-only — so the NEXT capture
+      // starts with the old bytes. Appending that delta (which carries tmux's own
+      // resize-redraw escapes) into the resized grid is the litter. We therefore
+      // STILL force a clean full rebuild on the next fetch by clearing lastContentRef
+      // (previousContent==='' → applyContent rebuilds with an inline RIS, never an
+      // append).
+      //
+      // The bug this avoids: clearing alone also blanked the pane until that next
+      // fetch (up to a full poll interval). When the chat input auto-grows (a few
+      // wrapped lines of typing in the narrow layout) it momentarily shrinks this
+      // flex-sibling pane mid-stream → grid change → onResize → blank. So we repaint
+      // the content we ALREADY have IMMEDIATELY (inline RIS + full write) to bridge
+      // that gap. This repaint does NOT touch lastContentRef, so the next fetch still
+      // does its clean litter-free rebuild and overwrites this bridge frame.
+      const carryOver = lastContentRef.current
       term.reset()
       lastContentRef.current = ''
       pendingContentRef.current = null
+      if (carryOver) {
+        const payload = normalizeXtermWriteContent(carryOver, contentSourceRef.current)
+        term.write('\x1bc' + payload)
+        term.scrollToBottom()
+      }
       // Drive the tmux resize from xterm's real grid so the pane matches 1:1.
       onResizeRef.current?.(cols, rows)
       logXtermDebug('resize', { cols, rows })

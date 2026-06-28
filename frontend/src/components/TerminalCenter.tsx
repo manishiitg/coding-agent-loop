@@ -2146,6 +2146,45 @@ const XtermTerminalPane: React.FC<{
       const buffer = term.buffer.active
       const distanceFromBottom = Math.max(0, buffer.baseY - buffer.viewportY)
       const shouldStickToBottom = distanceFromBottom <= 1
+      const isPipeStream = contentSource === 'tmux_pipe'
+      const appendOnlyPrefix = previousContent !== '' && nextContent.startsWith(previousContent)
+
+      // Pipe-stream path (active/streaming): the backend serves the raw, monotonic
+      // pipe recording (content_source `tmux_pipe`), so each refresh is the previous
+      // bytes plus newly appended bytes. Write ONLY the delta and let xterm emulate
+      // the terminal — redraws render in place via ANSI (no duplicate litter) and
+      // appended lines accumulate in xterm's native scrollback. Critically we never
+      // reset and never re-pin the viewport here: appending to scrollback leaves the
+      // user's scroll position untouched natively, so scrolling up works mid-stream.
+      // We only auto-follow when the user is already pinned to the bottom. If the
+      // recorder trimmed its file the stream is no longer a prefix superset
+      // (appendOnlyPrefix === false) → fall through to a single inline-reset rebuild.
+      if (isPipeStream && appendOnlyPrefix) {
+        const delta = nextContent.slice(previousContent.length)
+        lastContentRef.current = nextContent
+        pendingContentRef.current = null
+        const payload = normalizeXtermWriteContent(delta, contentSource)
+        const afterPipeWrite = () => {
+          if (shouldStickToBottom) term.scrollToBottom()
+          logXtermDebug('write', {
+            previousBaseY: buffer.baseY,
+            previousViewportY: buffer.viewportY,
+            previousDistanceFromBottom: distanceFromBottom,
+            restoredViewportY: term.buffer.active.viewportY,
+            restoredDistanceFromBottom: Math.max(0, term.buffer.active.baseY - term.buffer.active.viewportY),
+            appendOnly: true,
+            shouldStickToBottom,
+            pipe: true,
+          })
+        }
+        if (!payload) {
+          afterPipeWrite()
+          return
+        }
+        term.write(payload, afterPipeWrite)
+        return
+      }
+
       // Fix B (pager freeze): while the user has scrolled up, do NOT write/reset/
       // scroll — that would rebuild the buffer and snap the view back to the
       // bottom. Stash the latest content and bail without touching lastContentRef,
@@ -2160,7 +2199,7 @@ const XtermTerminalPane: React.FC<{
       pendingContentRef.current = null
       const previousBaseY = buffer.baseY
       const previousViewportY = buffer.viewportY
-      const appendOnly = previousContent !== '' && nextContent.startsWith(previousContent)
+      const appendOnly = appendOnlyPrefix
       const writeContent = appendOnly ? nextContent.slice(previousContent.length) : nextContent
       lastContentRef.current = nextContent
       const restoreScroll = () => {
@@ -2550,11 +2589,19 @@ function terminalTmuxDetailOptions(terminal: TerminalSnapshot, displayDetail = f
       : isMainAgentTerminal(terminal)
         ? TERMINAL_ACTIVE_RAIL_MAIN_HISTORY_LINES
         : TERMINAL_ACTIVE_RAIL_STEP_HISTORY_LINES
+    // Active/streaming: request `history`, which the backend serves for an ACTIVE
+    // pane as the incremental pipe recording (content_source `tmux_pipe`), not a
+    // `capture-pane` snapshot. The previous `screen` mode returned only the visible
+    // pane (`capture-pane -p`, no `-S`) so xterm had no scrollback (baseY≈0) and the
+    // user couldn't scroll up during streaming. The raw pipe byte stream lets xterm
+    // emulate the terminal: in-place redraws render via ANSI (no duplicate litter)
+    // and real scrollback accumulates in xterm's native buffer (scroll works).
     return {
-      content: 'screen',
+      content: 'history',
       lines,
     }
   }
+  // Idle: `history` → backend serves a static full-buffer `capture-pane -S` snapshot.
   return { content: 'history' }
 }
 

@@ -3013,7 +3013,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           around the fixed-height terminal box. */}
       <div ref={chatContentRef} className={`flex-1 ${shouldUseFullHeightContent ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden min-w-0 relative overscroll-y-none ${compact ? 'text-sm' : ''}`} style={{ scrollBehavior: 'auto' }}>
         
-        <div className={`min-w-0 ${shouldUseFullHeightContent ? 'flex h-full flex-col' : 'min-h-full'} ${shouldRenderTerminalPane ? '' : (compact ? 'px-2 pb-2' : 'px-4 pb-4')}`}>
+        <div className={`min-w-0 ${shouldUseFullHeightContent ? 'flex h-full flex-col' : 'min-h-full'} ${shouldRenderTerminalPane ? '' : (compact ? 'px-2 pb-2' : 'px-3 pb-4')}`}>
           {/* Loading indicator for historical events */}
           {isLoadingHistory && (
             <div className={`flex items-center justify-center ${compact ? 'py-4' : 'py-8'}`}>

@@ -3421,6 +3421,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       ? 'text-blue-600 dark:text-blue-300'
       : 'text-emerald-600 dark:text-emerald-300'
 
+  // The multi-agent (Chief of Staff) chat pane aligns its left inset with the
+  // "Chief of Staff" heading (ChatTabs header, px-3); workflow mode keeps the
+  // wider px-4 so its toolbar layout is unchanged.
+  const inputPadX = isMultiAgentMode ? 'px-3' : 'px-4'
+
   // For view-only (restored) tabs, show a minimal indicator instead of the full input form
   if (isViewOnly) {
     const isScheduledRun = activeTab?.metadata?.isScheduledRun
@@ -3428,7 +3433,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const jobName = activeTab?.metadata?.scheduledJobName
     const botPlatform = activeTab?.metadata?.botPlatform
     return (
-      <div data-tour="chat-input-area" data-testid="tour-chat-input-area" className="px-4 py-2">
+      <div data-tour="chat-input-area" data-testid="tour-chat-input-area" className={`${inputPadX} py-2`}>
         <div className="flex items-center justify-center gap-2 py-1 text-xs text-muted-foreground">
           <History className="w-3.5 h-3.5" />
           <span>
@@ -3448,7 +3453,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       <div className="space-y-2">
       {/* Pasted-text Attachments */}
       {chatPastedAttachments.length > 0 && (
-        <div className="px-4">
+        <div className={inputPadX}>
           <div className="border rounded px-1.5 py-0.5 mb-1 bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700">
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
@@ -3494,7 +3499,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
       {/* Pending resume indicator */}
       {restoredConversationPath && (
-        <div className="px-4 border-t border-border">
+        <div className={`${inputPadX} border-t border-border`}>
           <div className="mb-1 rounded-md border border-border bg-card px-2 py-1 shadow-sm">
             <div className="flex min-w-0 items-center justify-between gap-2">
               <div className="flex min-w-0 items-center gap-1.5 text-xs text-foreground">
@@ -3535,7 +3540,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
       {/* File Context Display */}
       {chatFileContext.length > 0 && (
-        <div className="px-4 border-t border-gray-200 dark:border-gray-700">
+        <div className={`${inputPadX} border-t border-gray-200 dark:border-gray-700`}>
           <FileContextDisplay
             files={chatFileContext}
             onRemoveFile={removeFileFromContext}
@@ -3549,7 +3554,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
       {/* Workflow Context Display — same style as FileContextDisplay */}
       {(tabConfig?.workflowContext?.length ?? 0) > 0 && (
-        <div className="px-4">
+        <div className={inputPadX}>
           <div className="border rounded px-1.5 py-0.5 mb-1 bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700">
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
@@ -3609,7 +3614,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
 
       {/* Input Form */}
-      <div data-tour="chat-input-area" data-testid="tour-chat-input-area" className="px-4 py-2">
+      <div data-tour="chat-input-area" data-testid="tour-chat-input-area" className={`${inputPadX} py-2`}>
         <form onSubmit={handleSubmit} className="space-y-2">
           <div className="space-y-1">
             {liveMessageDelivery && (

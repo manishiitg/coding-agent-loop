@@ -1461,7 +1461,17 @@ function App() {
     return () => observer.disconnect()
   }, [setWorkspaceMinimizedForLayout])
 
-  const multiAgentPanelDesktop = orgHtmlPreviewDevice === 'desktop'
+  // Responsive split mirroring WorkflowLayout's splitGridCols, keyed off the
+  // device tier (OrgHtmlPreviewDevice = 'mobile' | 'tablet' | 'desktop'; the UI
+  // labels 'desktop' as "Laptop"). Chat is grid col 1, org content is grid col 2.
+  //   'desktop' (UI "Laptop", default) → chat = 360px rail, org content fills
+  //   'tablet' → chat fills, org content = 880px (tablet preview)
+  //   'mobile' → chat fills, org content = 480px (phone preview)
+  // The chat rail stays visible in all three tiers.
+  const multiAgentSplitGridCols =
+    orgHtmlPreviewDevice === 'mobile' ? 'md:grid-cols-[minmax(0,1fr)_480px]'
+      : orgHtmlPreviewDevice === 'tablet' ? 'md:grid-cols-[minmax(0,1fr)_880px]'
+        : 'md:grid-cols-[360px_minmax(0,1fr)]'
   const layoutWorkspaceMinimized =
     showWorkflowsOverview
       ? true
@@ -1471,10 +1481,6 @@ function App() {
   const toggleMultiAgentPanelMinimize = useCallback(() => {
     setWorkspaceMinimized(!layoutWorkspaceMinimized)
   }, [layoutWorkspaceMinimized, setWorkspaceMinimized])
-  const multiAgentPanelStyle = multiAgentPanelDesktop
-    ? undefined
-    : { width: orgHtmlPreviewDevice === 'tablet' ? 'min(880px, 72vw)' : 'min(480px, 56vw)' }
-  const multiAgentPanelClass = multiAgentPanelDesktop ? 'flex-1' : 'flex-none'
   const multiAgentPanelTabs = (
     <div className="inline-flex min-w-0 flex-none items-center gap-0.5 rounded-lg border border-border bg-muted/70 p-0.5 shadow-sm backdrop-blur-sm">
       <button
@@ -1594,8 +1600,27 @@ function App() {
                         <span className="[writing-mode:vertical-rl] text-[10px] font-semibold uppercase tracking-wider">Panel</span>
                       </button>
                     )}
-                    <div className="flex h-full min-w-0">
-                      <div className={`min-w-0 flex-1 ${multiAgentPanelDesktop ? 'hidden' : ''}`}>
+                    {/* Mirrors WorkflowLayout: chat (col 1) + org content (col 2)
+                        laid out as a responsive grid so the org content resizes with
+                        the device selector (Laptop/Tablet/Mobile). The chat rail is
+                        always visible; only the user-initiated minimize toggle hides
+                        the org panel, at which point the chat flexes to fill. */}
+                    <div
+                      className={`h-full min-h-0 min-w-0 ${
+                        layoutWorkspaceMinimized
+                          ? 'flex'
+                          : `flex flex-col md:grid ${multiAgentSplitGridCols} md:grid-rows-[minmax(0,1fr)]`
+                      }`}
+                    >
+                      {/* Chat rail = grid col 1, mirroring the workflow. Minimized →
+                          flexes to fill the width; otherwise it's the col-1 rail. */}
+                      <div
+                        className={`flex min-w-0 flex-col overflow-hidden bg-background ${
+                          layoutWorkspaceMinimized
+                            ? 'flex-1'
+                            : 'w-full border-b border-gray-200 dark:border-gray-700 md:col-start-1 md:border-b-0 md:border-r'
+                        }`}
+                      >
                         <ChatAreaWithObserverId
                           ref={chatAreaRef}
                           onNewChat={startNewChat}
@@ -1603,8 +1628,7 @@ function App() {
                       </div>
                       {!layoutWorkspaceMinimized && (
                         <div
-                          className={`flex flex-col overflow-hidden border-l border-gray-200 bg-background dark:border-gray-700 ${multiAgentPanelClass}`}
-                          style={multiAgentPanelStyle}
+                          className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background md:col-start-2"
                         >
                           {multiAgentRightPanelView === 'files' && (
                             <div className="flex flex-wrap items-center justify-between gap-1 border-b border-border bg-muted/40 px-2 py-2">

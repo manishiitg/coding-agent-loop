@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { Plus, ArrowDown, ListTree, Terminal, Globe, DollarSign, CalendarClock } from 'lucide-react'
 import { normalizeEventViewMode, useChatStore, type ChatTab } from '../stores/useChatStore'
+import type { PollingEvent } from '../services/api-types'
 import { useAppStore } from '../stores/useAppStore'
 import { OrgPulseControl } from './OrgPulseControl'
 import { OrgBackupPublishControls } from './org/OrgBackupPublishControls'
@@ -25,6 +26,32 @@ interface ChatTabsProps {
 }
 
 const DEDICATED_MCP_SERVERS = new Set(['playwright'])
+
+// Mirror of ChatArea's user-message helpers so the header can derive the active
+// conversation's title from its first real user message (kept local to avoid a
+// cross-component import cycle).
+const AUTO_NOTIFICATION_PREFIX = '[AUTO-NOTIFICATION]'
+const RESTORED_CONVERSATION_CONTEXT_MARKER = '\n\nPrevious workflow-builder conversation file:'
+
+function getUserMessageContent(event: PollingEvent): string {
+  const agentEvent = event.data as Record<string, unknown> | undefined
+  const innerData = agentEvent?.data as Record<string, unknown> | undefined
+  const content = innerData?.content ?? agentEvent?.content
+  return typeof content === 'string' ? content : ''
+}
+
+function getDisplaySafeUserMessageContent(content: string): string {
+  const markerIndex = content.indexOf(RESTORED_CONVERSATION_CONTEXT_MARKER)
+  return (markerIndex >= 0 ? content.slice(0, markerIndex) : content).trim()
+}
+
+// Short, single-line title from a user message — matches chatHistorySessionTitle's
+// whitespace-collapse + length-cap style (default 80 chars).
+function deriveConversationTitle(text: string, maxLength = 80): string {
+  const normalized = text.replace(/\s+/g, ' ').trim()
+  if (!normalized) return ''
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized
+}
 
 // Multi-agent chat is single-tab: this bar is a slim header for the one chat
 // tab (title + view controls + New Chat). It is not a tab switcher anymore.
@@ -56,6 +83,23 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
   )
   const activeTab = activeTabId ? chatTabs[activeTabId] : undefined
   const showAutoScrollControl = activeViewMode === 'tree'
+
+  // Reactively follow the active conversation's events so the header title can be
+  // derived from the first real user message as the conversation starts.
+  const activeSessionId = activeTab?.sessionId
+  const activeSessionEvents = useChatStore(state =>
+    activeSessionId ? state.tabEvents[activeSessionId] : undefined
+  )
+  const activeConversationTitle = useMemo(() => {
+    if (!activeSessionEvents) return ''
+    for (const event of activeSessionEvents) {
+      if (event.type !== 'user_message') continue
+      const content = getDisplaySafeUserMessageContent(getUserMessageContent(event))
+      if (!content || content.startsWith(AUTO_NOTIFICATION_PREFIX)) continue
+      return deriveConversationTitle(content)
+    }
+    return ''
+  }, [activeSessionEvents])
 
   const isHiddenOrganizationTab = useCallback((tab: ChatTab) => {
     // Only hide tabs explicitly marked as org assistant via metadata.
@@ -257,9 +301,11 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
   const showHeaderContent =
     !!activeTab && activeTab.metadata?.mode === 'multi-agent' && !isHiddenOrganizationTab(activeTab)
   // The multi-agent chat is the user's "chief of staff" (single-tab — this is a
-  // header label, not a tab switcher). Show the resumed conversation's title when
-  // a previous chat is open, otherwise the chief-of-staff label.
-  const chatTitle = (showHeaderContent ? activeTab?.config?.restoredConversationTitle?.trim() : '') || 'Chief of Staff'
+  // header label, not a tab switcher). Priority: resumed conversation's title →
+  // the active conversation's first-user-message title → the chief-of-staff label.
+  const chatTitle = (showHeaderContent
+    ? (activeTab?.config?.restoredConversationTitle?.trim() || activeConversationTitle)
+    : '') || 'Chief of Staff'
 
   return (
     <>

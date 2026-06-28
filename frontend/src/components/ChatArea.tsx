@@ -3013,6 +3013,32 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     isReadOnlyRunView,
   })
 
+  // Keep the bottom "Resuming coding session" indicator in sync with the surface
+  // (both modes). A native/terminal resume that settles onto the previous-chats
+  // list (landing) yielded nothing live, so its restore markers are stale: clear
+  // them so the indicator disappears and typing starts a fresh chat instead of
+  // silently resuming a chat you're no longer viewing. (File-fallback resumes —
+  // NativeResume false — stay: their attached file context still drives the next
+  // turn. Read-only run views never reach landing, so they're untouched.)
+  const activeChatSurface = selectedModeCategory === 'workflow' ? workflowSurface : multiAgentSurface
+  useEffect(() => {
+    if (activeChatSurface !== 'landing') return
+    const tabId = activeTab?.tabId
+    const cfg = activeTab?.config
+    if (!tabId || cfg?.restoredConversationNativeResume !== true) return
+    const restoredPath = cfg.restoredConversationPath?.trim()
+    if (!restoredPath) return
+    useChatStore.getState().setTabConfig(tabId, {
+      restoredConversationPath: undefined,
+      restoredConversationSummary: undefined,
+      restoredConversationTitle: undefined,
+      restoredConversationWorkshopModeLabel: undefined,
+      restoredConversationRuntimeLabel: undefined,
+      restoredConversationNativeResume: undefined,
+      fileContext: (cfg.fileContext || []).filter(item => item.path !== restoredPath),
+    })
+  }, [activeChatSurface, activeTab?.tabId, activeTab?.config])
+
   // Multi-agent landing surface = the previous-chats panel (mirrors the old
   // showNormalPreviousChatsPanel).
   const showNormalPreviousChatsPanel = selectedModeCategory === 'multi-agent' && multiAgentSurface === 'landing'

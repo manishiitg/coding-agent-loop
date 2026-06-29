@@ -274,6 +274,12 @@ type StreamingAPI struct {
 	// Raw tmux pipe-pane recorder used for append/replay terminal display.
 	terminalPipeRecorder *terminalPipeRecorder
 
+	// Live-attach terminal transport (control mode). Non-nil only when
+	// RUNLOOP_TERMINAL_LIVE_ATTACH is set and tmux is new enough; otherwise the
+	// /api/terminals/{id}/stream endpoint stays inert (404). Additive — the
+	// snapshot/replay transport above remains the default.
+	liveAttach *liveAttachManager
+
 	// Workflow orchestrator configuration
 	provider      string
 	model         string
@@ -1136,6 +1142,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		eventStore:                         eventStore,
 		terminalStore:                      terminalStore,
 		terminalPipeRecorder:               terminalPipeRecorder,
+		liveAttach:                         newLiveAttachManagerIfEnabled(),
 		provider:                           config.Provider,
 		model:                              config.ModelID,
 		mcpConfigPath:                      configPath,
@@ -1472,6 +1479,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/terminals/{terminal_id}/key", api.handleSendTerminalKey).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/terminals/{terminal_id}/resize", api.handleResizeTerminal).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/terminals/size-hint", api.handleTerminalSizeHint).Methods("POST", "OPTIONS")
+	// Live-attach (control-mode) WebSocket transport — Phase 1, additive.
+	// Inert (404) unless RUNLOOP_TERMINAL_LIVE_ATTACH is set; see terminal_live_attach.go.
+	apiRouter.HandleFunc("/terminals/{terminal_id}/stream", api.handleTerminalStream).Methods("GET")
 
 	// LLM Guidance API routes
 	apiRouter.HandleFunc("/sessions/{session_id}/llm-guidance", api.handleSetLLMGuidance).Methods("POST", "OPTIONS")

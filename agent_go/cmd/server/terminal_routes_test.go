@@ -37,6 +37,13 @@ func TestTerminalSizeHintResizesLiveTerminalsForSession(t *testing.T) {
 		calls = append(calls, append([]string(nil), args...))
 		return nil
 	}
+	// The geometry guard reads the current tmux window size; return a size that
+	// DIFFERS from the requested 132x41 so the guard proceeds with the resize.
+	originalRunTerminalTmuxOutputCommand := runTerminalTmuxOutputCommand
+	defer func() { runTerminalTmuxOutputCommand = originalRunTerminalTmuxOutputCommand }()
+	runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
+		return "80\t24", nil
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/terminals/size-hint", bytes.NewBufferString(`{"cols":132,"rows":41,"session_id":"`+sessionID+`"}`))
 	rec := httptest.NewRecorder()
@@ -53,23 +60,38 @@ func TestTerminalSizeHintResizesLiveTerminalsForSession(t *testing.T) {
 		t.Fatalf("resized = %d, want 2", got)
 	}
 
-	targets := map[string]bool{}
+	// Each resized session must be pinned to window-size manual (so resize-window is
+	// authoritative) and then resized to the requested geometry.
+	resizeTargets := map[string]bool{}
+	manualTargets := map[string]bool{}
 	for _, call := range calls {
 		joined := strings.Join(call, " ")
-		if !strings.Contains(joined, "resize-window") || !strings.Contains(joined, "-x 132") || !strings.Contains(joined, "-y 41") {
-			t.Fatalf("resize call = %#v, want resize-window -x 132 -y 41", call)
-		}
+		target := ""
 		for i, arg := range call {
 			if arg == "-t" && i+1 < len(call) {
-				targets[call[i+1]] = true
+				target = call[i+1]
 			}
 		}
+		switch {
+		case strings.Contains(joined, "resize-window"):
+			if !strings.Contains(joined, "-x 132") || !strings.Contains(joined, "-y 41") {
+				t.Fatalf("resize call = %#v, want resize-window -x 132 -y 41", call)
+			}
+			resizeTargets[target] = true
+		case strings.Contains(joined, "window-size") && strings.Contains(joined, "manual"):
+			manualTargets[target] = true
+		default:
+			t.Fatalf("unexpected tmux call = %#v", call)
+		}
 	}
-	if !targets["tmux-main-resize"] || !targets["tmux-step-resize"] {
-		t.Fatalf("resize targets = %#v, want main and step tmux sessions", targets)
+	if !resizeTargets["tmux-main-resize"] || !resizeTargets["tmux-step-resize"] {
+		t.Fatalf("resize targets = %#v, want main and step tmux sessions", resizeTargets)
 	}
-	if targets["tmux-other-resize"] {
-		t.Fatalf("resize targets = %#v, must not resize other sessions", targets)
+	if resizeTargets["tmux-other-resize"] {
+		t.Fatalf("resize targets = %#v, must not resize other sessions", resizeTargets)
+	}
+	if !manualTargets["tmux-main-resize"] || !manualTargets["tmux-step-resize"] {
+		t.Fatalf("window-size manual not set for resized sessions: %#v", manualTargets)
 	}
 }
 

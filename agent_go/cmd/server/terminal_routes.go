@@ -661,6 +661,14 @@ func (api *StreamingAPI) resizeLiveTerminalWindowsForSession(ctx context.Context
 		if !snapshot.Active || strings.TrimSpace(snapshot.TmuxSession) == "" || !api.canAccessTerminalSession(r, snapshot.SessionID) {
 			continue
 		}
+		// Skip when already at the requested geometry: a no-op resize would still
+		// truncate+reseed the live recording and stack an inline TUI's redraws.
+		if curW, curH, ok := terminalWindowSize(resizeCtx, snapshot.TmuxSession); ok && curW == cols && curH == rows {
+			continue
+		}
+		// Re-assert window-size manual so resize-window is authoritative (the window
+		// follows the xterm, not the launch/preferred size or any client).
+		_ = runTerminalTmuxCommand(resizeCtx, "", "set-window-option", "-t", snapshot.TmuxSession, "window-size", "manual")
 		if err := runTerminalTmuxCommand(resizeCtx, "", "resize-window", "-t", snapshot.TmuxSession, "-x", strconv.Itoa(cols), "-y", strconv.Itoa(rows)); err != nil {
 			if isMissingTmuxTargetError(err) {
 				api.terminalStore.MarkStale(snapshot.TerminalID)
@@ -668,7 +676,8 @@ func (api *StreamingAPI) resizeLiveTerminalWindowsForSession(ctx context.Context
 			continue
 		}
 		// Geometry changed: drop the pipe recording's old-width frames and re-seed
-		// a clean prologue so the live stream never replays mismatched-width frames.
+		// an authoritative current-screen snapshot so the live stream never replays
+		// mismatched-width frames.
 		if api.terminalPipeRecorder != nil {
 			api.terminalPipeRecorder.ResetForResize(resizeCtx, snapshot.TmuxSession)
 		}
@@ -728,6 +737,15 @@ func (api *StreamingAPI) handleResizeTerminal(w http.ResponseWriter, r *http.Req
 		_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot)})
 		return
 	}
+	// Make resize-window AUTHORITATIVE for this detached session. The session is
+	// created at the operator's preferred size (new-session -x -y from
+	// tmuxsize.Args()); when the operator's viewport later narrows (a wide earlier
+	// layout left the preferred at e.g. 130x37, the current xterm is 119x27), the
+	// window must follow the xterm — otherwise pi-cli renders past the xterm's
+	// columns and wide content (markdown tables) wraps. Re-assert window-size manual
+	// right before resizing so tmux uses our explicit dimensions rather than the
+	// launch/preferred size or any client; idempotent if the adapter already set it.
+	_ = runTerminalTmuxCommand(ctx, "", "set-window-option", "-t", snapshot.TmuxSession, "window-size", "manual")
 	if err := runTerminalTmuxCommand(ctx, "", "resize-window", "-t", snapshot.TmuxSession, "-x", strconv.Itoa(req.Cols), "-y", strconv.Itoa(req.Rows)); err != nil {
 		// If the backing tmux session is gone, mark the terminal stale (which
 		// also clears TmuxSession) and report success — the preferred-size
@@ -745,10 +763,19 @@ func (api *StreamingAPI) handleResizeTerminal(w http.ResponseWriter, r *http.Req
 		return
 	}
 	// [SPINNER_DEBUG] requested-vs-actual geometry — diagnoses live-region (spinner)
-	// stacking from an xterm/tmux size mismatch. Remove after the spinner fix.
-	if out, qerr := runTerminalTmuxOutputCommand(ctx, "display-message", "-p", "-t", snapshot.TmuxSession,
-		"win=#{window_width}x#{window_height} pane=#{pane_width}x#{pane_height} alt=#{alternate_on}"); qerr == nil {
-		log.Printf("[SPINNER_DEBUG] resize session=%s requested=%dx%d %s", snapshot.TmuxSession, req.Cols, req.Rows, strings.TrimSpace(out))
+	// stacking and wide-content wrapping from an xterm/tmux size mismatch. After the
+	// window-size-manual fix this must read win==pane==requested. Remove later.
+	if curW, curH, ok := terminalWindowSize(ctx, snapshot.TmuxSession); ok {
+		match := "MATCH"
+		if curW != req.Cols || curH != req.Rows {
+			match = "MISMATCH"
+		}
+		if out, qerr := runTerminalTmuxOutputCommand(ctx, "display-message", "-p", "-t", snapshot.TmuxSession,
+			"win=#{window_width}x#{window_height} pane=#{pane_width}x#{pane_height} alt=#{alternate_on}"); qerr == nil {
+			log.Printf("[SPINNER_DEBUG] resize session=%s requested=%dx%d %s (%s)", snapshot.TmuxSession, req.Cols, req.Rows, strings.TrimSpace(out), match)
+		} else {
+			log.Printf("[SPINNER_DEBUG] resize session=%s requested=%dx%d win=%dx%d (%s)", snapshot.TmuxSession, req.Cols, req.Rows, curW, curH, match)
+		}
 	}
 	// The pane was resized: the pipe recording still holds frames captured at the
 	// OLD geometry. Truncate it and re-seed a screen-mode-aware prologue, then

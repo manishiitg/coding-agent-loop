@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"mcp-agent-builder-go/agent_go/pkg/common"
 	browserinstructions "mcp-agent-builder-go/agent_go/pkg/instructions"
 	"mcp-agent-builder-go/agent_go/pkg/skills"
 
@@ -90,10 +91,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) appendSupplementaryPrompts(
 	// Generic browser instructions mention logical Downloads/ for normal chat uploads, but
 	// workflow runs must stay inside their run-scoped execution/Downloads folder.
 	if browserDownloadsPath := hcpo.GetBrowserDownloadsPath(); browserDownloadsPath != "" {
-		mcpAgent.AppendSystemPrompt(fmt.Sprintf(
-			"## Workflow Browser Downloads\nFor this workflow run, only use the run-scoped downloads folder %q for browser downloads and file cleanup. Do not read from, write to, or delete files under the root workspace Downloads/ folder.",
+		downloadsPrompt := fmt.Sprintf(
+			"## Workflow Browser Downloads\nFor this workflow run, use the run-scoped downloads folder %q for browser downloads and file cleanup. Do not read from, write to, or delete files under the root workspace Downloads/ folder.",
 			browserDownloadsPath,
-		))
+		)
+		if hostDownloads := common.CDPHostDownloadsReadPath(browserCfg.Mode); hostDownloads != "" {
+			downloadsPrompt += fmt.Sprintf(" In CDP mode, Chrome-native downloads can land in the host Downloads folder %q. That host folder is read-only: copy needed files into %q first, then process the workspace copy. Never write, move, or delete files under the host Downloads folder.", hostDownloads, browserDownloadsPath)
+		}
+		mcpAgent.AppendSystemPrompt(downloadsPrompt)
 		hcpo.GetLogger().Info(fmt.Sprintf("🌐 Added workflow browser downloads guidance to agent: %s", browserDownloadsPath))
 	}
 

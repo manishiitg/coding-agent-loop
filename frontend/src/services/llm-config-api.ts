@@ -177,8 +177,9 @@ export const llmConfigService = {
   },
 
   // Get dynamic model list for a provider (cursor-cli, pi-cli, etc.)
-  getProviderModels: async (provider: string): Promise<DynamicModelsResponse> => {
-    const response = await llmConfigApi.get(`/api/llm-config/providers/${provider}/models`)
+  getProviderModels: async (provider: string, full?: boolean): Promise<DynamicModelsResponse> => {
+    const url = `/api/llm-config/providers/${provider}/models` + (full ? '?full=true' : '')
+    const response = await llmConfigApi.get(url)
     return response.data
   },
 

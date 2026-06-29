@@ -1608,6 +1608,7 @@ func (iwm *InteractiveWorkshopManager) setupWorkshopToolAgentSession(agentKind s
 	workspacePath := strings.TrimSpace(iwm.controller.GetWorkspacePath())
 
 	common.SetSessionFolderGuard(sessionID, readPaths, writePaths)
+	iwm.controller.grantSessionCDPHostDownloadsReadOnly(sessionID)
 	if workspacePath != "" {
 		common.SetSessionWorkingDir(sessionID, workspacePath)
 	}

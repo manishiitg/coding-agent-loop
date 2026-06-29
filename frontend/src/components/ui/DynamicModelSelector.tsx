@@ -40,12 +40,16 @@ export function DynamicModelSelector({
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const [customModel, setCustomModel] = useState('')
   const [showCustomInput, setShowCustomInput] = useState(false)
+  const [showFullCatalog, setShowFullCatalog] = useState(false)
+  const [loadingFull, setLoadingFull] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError(null)
-    getProviderDynamicModels(provider).then(result => {
+    setShowFullCatalog(false)
+    const isPi = provider === 'pi-cli'
+    getProviderDynamicModels(provider, isPi ? false : undefined).then(result => {
       if (cancelled) return
       if (result) {
         setData(result)
@@ -110,6 +114,24 @@ export function DynamicModelSelector({
     }
   }
 
+  const handleLoadFullCatalog = async () => {
+    setLoadingFull(true)
+    setError(null)
+    try {
+      const result = await getProviderDynamicModels(provider, true)
+      if (result) {
+        setData(result)
+        setShowFullCatalog(true)
+      } else {
+        setError('Failed to load full model catalog')
+      }
+    } catch (err) {
+      setError('Failed to load full model catalog')
+    } finally {
+      setLoadingFull(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className={cn('flex items-center justify-center py-8 text-muted-foreground', className)}>
@@ -129,6 +151,23 @@ export function DynamicModelSelector({
 
   return (
     <div className={cn('space-y-2', className)}>
+      {provider === 'pi-cli' && !showFullCatalog && (
+        <div className="flex items-center justify-between px-3 py-2 bg-primary/5 rounded-md border border-primary/20">
+          <span className="text-xs text-muted-foreground">
+            Only showing curated models first.
+          </span>
+          <button
+            type="button"
+            disabled={disabled || loadingFull}
+            onClick={handleLoadFullCatalog}
+            className="text-xs font-semibold text-primary hover:underline flex items-center gap-1.5 disabled:opacity-50"
+          >
+            {loadingFull && <Loader2 className="h-3 w-3 animate-spin" />}
+            Search full Pi model catalog
+          </button>
+        </div>
+      )}
+
       <div className="relative">
         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
         <input

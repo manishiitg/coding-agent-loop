@@ -129,6 +129,8 @@ func buildJobResponse(workspacePath string, manifest *WorkflowManifest, sched Wo
 }
 
 func buildMultiAgentJobResponse(userID string, sched WorkflowSchedule, state ScheduleRuntimeState) ScheduledJobResponse {
+	sched = NormalizeOrgPulseSchedule(sched)
+
 	builtIn := IsDefaultBuiltinSchedule(sched.ID)
 	managedBy := ""
 	if builtIn {
@@ -368,6 +370,7 @@ func writeBuiltinMultiAgentScheduleOverride(ctx context.Context, userID, schedul
 	if mutate != nil {
 		mutate(&f.Schedules[idx])
 	}
+	f.Schedules[idx] = NormalizeOrgPulseSchedule(f.Schedules[idx])
 	f.Schedules[idx].Mode = "multi-agent"
 
 	if err := WriteMultiAgentSchedules(ctx, userID, f); err != nil {

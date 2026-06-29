@@ -550,7 +550,7 @@ func (s *SchedulerService) ReloadMultiAgentSchedule(ctx context.Context, userID 
 		return s.RemoveJob(scheduleID)
 	}
 
-	for _, sched := range f.Schedules {
+	for _, sched := range MergeBuiltinSchedules(f.Schedules) {
 		if sched.ID == scheduleID {
 			return s.LoadSchedule(buildMultiAgentScheduleContext(userID, sched, f.Capabilities))
 		}
@@ -817,9 +817,10 @@ func (s *SchedulerService) TriggerMultiAgentNow(userID string, scheduleID string
 	}
 
 	var sched *WorkflowSchedule
-	for i := range f.Schedules {
-		if f.Schedules[i].ID == scheduleID {
-			sched = &f.Schedules[i]
+	schedules := MergeBuiltinSchedules(f.Schedules)
+	for i := range schedules {
+		if schedules[i].ID == scheduleID {
+			sched = &schedules[i]
 			break
 		}
 	}
@@ -974,9 +975,10 @@ func (s *SchedulerService) triggerSchedule(sctx *ScheduleContext) {
 			return
 		}
 		var currentSched *WorkflowSchedule
-		for i := range f.Schedules {
-			if f.Schedules[i].ID == schedID {
-				currentSched = &f.Schedules[i]
+		schedules := MergeBuiltinSchedules(f.Schedules)
+		for i := range schedules {
+			if schedules[i].ID == schedID {
+				currentSched = &schedules[i]
 				break
 			}
 		}
@@ -1138,10 +1140,10 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 			s.sessionLogf(sctx, sessionID, "[SCHEDULER] Failed to update run entry for %s: %v", schedID, err)
 		}
 
-		// Pulse: the post-run steward. When enabled it backs up the workflow,
-		// triages the run (Bug + Goal verdicts into the Pulse log), applies the full
-		// plan-step harden for Bug findings, and notifies on a transition — see
-		// runPostRunMonitor.
+		// Pulse: the post-run steward. When enabled it triages the run (Bug + Goal
+		// verdicts into the Pulse log), applies the full plan-step harden for Bug
+		// findings, records the report-only LLM/cost/time readout, backs up the final
+		// state, publishes, and notifies on a transition — see runPostRunMonitor.
 		// Opt-in per workflow (post_run_monitor in workflow.json) — runs only when
 		// the user / builder enabled Pulse. Only after an actual workflow RUN, not an
 		// optimizer/improvement pass (there's no fresh run output to triage there).
@@ -1158,14 +1160,15 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 }
 
 // runPostRunMonitor fires the Pulse pass after a scheduled workflow run. Pulse
-// backs the workflow up, then reads the run evidence, plan changelog, and
-// eval/metric files to form a Bug verdict and a Goal verdict (recorded into
-// builder/improve.html — the Pulse log, the single source of truth),
-// then applies the full plan-step harden for Bug findings (recording the Goal
-// finding + evidence for the scheduled improve loop, which applies the replan)
-// and notifies on a transition. It never changes the run's recorded status
-// — failures here are logged and swallowed. Pulse's behavior is defined by the
-// post-run-monitor reference doc; this just hands it the run context.
+// reads the run evidence, plan changelog, and eval/metric files to form a Bug
+// verdict and a Goal verdict (recorded into builder/improve.html — the Pulse
+// log, the single source of truth), applies the full plan-step harden for Bug
+// findings (recording the Goal finding + evidence for the scheduled improve
+// loop, which applies the replan), records the report-only LLM/cost/time readout,
+// backs up the final state before publish, and notifies on a transition. It
+// never changes the run's recorded status — failures here are logged and
+// swallowed. Pulse's behavior is defined by the post-run-monitor reference doc;
+// this just hands it the run context.
 func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *ScheduleContext, runStatus, runFolder, runSessionID string) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -1184,7 +1187,7 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 	reqMap := s.buildWorkshopRequest(ctx, sctx)
 
 	// Run Pulse as a SEQUENCE of smaller turns — one step per message — rather than
-	// one giant prompt that asks the agent to juggle backup→triage→fix→publish→notify
+	// one giant prompt that asks the agent to juggle triage→fix→report→backup→publish→notify
 	// in a single reply. Each turn does one focused job and builds on the prior turns'
 	// context in the same resumed session, the way a message_sequence works, and the
 	// user watches it progress step by step.
@@ -1193,13 +1196,7 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 			"Call get_reference_doc(kind=\"post-run-monitor\") and follow it. We'll go one step at a time — do ONLY the step in each message, finish it, then stop and wait for the next.",
 		runStatus, runFolder)
 
-	steps := []struct{ label, query string }{
-		{"backup", "STEP 1 — BACK UP (always). Read workflow.json.backup and back up per get_reference_doc(kind=\"backup-strategy\"). If backup is disabled, set it up with the zero-config local-git default and back up. Skip the actual push only when backup/status.json shows the current source is already backed up (unchanged). Always write backup/status.json. Report the backup result, then stop."},
-		{"triage", "STEP 2 — TRIAGE. Read the run evidence, the plan changelog, and the eval/metric files; form a Bug verdict and a Goal verdict. ALSO sanity-check the two layers that silently break and poison the verdict: the EVAL (did it run; are metrics resolving — no resolve_error?) and the REPORT dashboard (does it render; do its window.report.query SQLs work; is it non-empty?). A broken eval or report is a Bug. Update builder/improve.html (verdict pills, goal card, signal tiles, one run row, a Pulse entry only if something is wrong). Report the two verdicts (note any broken eval/report), then stop."},
-		{"fix", "STEP 3 — FIX (only if triage found a problem; apply the FULL plan-step harden — low AND larger reliability/contract fixes — and record each in the log). (a) Plan-step Bug -> harden per get_reference_doc(kind=\"optimize-playbook\"): a guard, retry, selector/prompt tightening, missing-field default, validation, artifact-shape fix, KB/db/report/eval contract repair, learning hygiene, or stale-description cleanup. You backed up in step 1, so it is reversible. (b) Broken EVAL (crashed eval step, metric not resolving) -> repair it per get_reference_doc(kind=\"improve-evaluation\") — fix the operational breakage only, do NOT redesign the rubric. (c) Broken REPORT (failing query, empty/erroring render) -> repair per get_reference_doc(kind=\"report-plan\") + get_reference_doc(kind=\"html-output\") — fix the breakage only, do NOT redesign the layout. (d) Goal finding -> record a replan PROPOSAL (do NOT rewrite the plan wholesale). The ceiling is: every fix must be reversible and scoped to the plan step — never a structural rewrite. Structural replan/redesign is the scheduled improve loop's job. A clean run gets no fix. Report what you applied, then stop."},
-		{"publish", "STEP 4 — PUBLISH (only if publish is on). If workflow.json.publish is enabled, re-publish the updated HTML per get_reference_doc(kind=\"publish-strategy\") — but ONLY when the destination is already VERIFIED (publish/status.json shows a prior successful publish). Every run changes the published artifacts — new db data plus a fresh Pulse entry in builder/improve.html — so there is no \"unchanged\" run to skip; always re-publish to a verified destination. Never do the first/verifying publish here unattended — that is the user's manual set-up step. Always write publish/status.json. Report the result, then stop."},
-		{"notify", "STEP 5 — NOTIFY once on a state transition per the post-run-monitor doc's step 5 — honor a user `## Notifications` preference in soul/soul.md, otherwise a single notify_user call only on broke/recovered/new-finding, and silence on a steady run. When you DO notify and publish is on, include the public dashboard URL from publish/status.json (the `url`, only when its state is `published`) in the message so the user can open the live report in one tap. Use the doc's standard one-line format (emoji · workflow · headline · metric · dashboard URL), and prefer a formatted HTML email body (email_html) when Gmail is on. Stay scoped: never rewrite the plan wholesale or dispatch a full improvement run here."},
-	}
+	steps := postRunMonitorSteps()
 
 	s.sessionLogf(sctx, sessionID, "[PULSE] starting pulse for %s (run_folder=%s status=%s) across %d steps", sctx.Schedule.ID, runFolder, runStatus, len(steps))
 	for i, st := range steps {
@@ -1226,6 +1223,95 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 	// builder/improve.html (pills + headline) — the single source of truth, no separate file.
 }
 
+type postRunMonitorStep struct{ label, query string }
+
+func postRunMonitorSteps() []postRunMonitorStep {
+	return []postRunMonitorStep{
+		{"triage", "STEP 1 — TRIAGE. Read the run evidence, the plan changelog, and the eval/metric files; form a Bug verdict and a Goal verdict. Triage is diagnosis/verdict only — hardening happens in the next step. ALSO sanity-check the two layers that silently break and poison the verdict: the EVAL (did it run; are metrics resolving — no resolve_error?) and the REPORT dashboard (does it render; do its window.report.query SQLs work; is it non-empty?). A broken eval or report is a Bug. Update builder/improve.html (verdict pills, goal card, Bug/Goal signal tiles, and one latest run row with status; leave backup and LLM/cost/time fields for later steps). Report the two verdicts (note any broken eval/report), then stop."},
+		{"fix", "STEP 2 — FIX / HARDEN. This turn does not improvise manual workflow edits. If triage found a real Bug, first call get_reference_doc(kind=\"optimize-playbook\"), then call harden_workflow(focus=\"<concise Bug finding + evidence paths from triage>\") as the canonical repair path; include group_name only when the completed run was scoped to a single group. harden_workflow owns the full plan-step harden: guards, retries, selector/prompt tightening, missing-field defaults, validation, artifact-shape fixes, KB/db/report/eval contract repair, learning hygiene, stale-description cleanup, and small evidence-backed structural fixes. If triage found only a Goal finding, do NOT call harden_workflow; record the Goal finding / replan proposal for the scheduled improve loop. If the run was clean, do nothing. Never harden because a report-only LLM/cost/time observation exists. Report the harden_workflow execution_id/result or the no-fix reason, then stop."},
+		{"report", "STEP 3 — LLM/COST/TIME REPORT (report-only, after fix/harden). This is separate from triage and must not drive Bug hardening by itself. Read workflow.json capabilities.llm_config / step execution tiers, get_cost_summary(run_folder) when available, costs/execution + costs/evaluation + costs/phase/token_usage.json, and timing summaries under runs/<run_folder>/logs/<step-id>/execution. Create a compact run telemetry report: total cost, total tokens, wall/LLM/tool time, configured tier/model vs observed provider/model, broken down by plan step and by agent/sub-agent when evidence supports it; call missing telemetry \"missing evidence\" instead of estimating. This is reporting only: do NOT change model tiers, LLM config, prompts, schedules, or agent allocation. Update builder/improve.html cost/time tiles, the latest run row, and a compact report-only Note/Pulse detail when material. Report the LLM/cost/time summary and evidence paths, then stop."},
+		{"backup", "STEP 4 — BACK UP FINAL STATE (always, before publish). Read workflow.json.backup and back up per get_reference_doc(kind=\"backup-strategy\"). The triage, fix/harden, and LLM/cost/time report changes are already written; snapshot the updated workflow artifacts now so publish has a backed-up source. If backup is disabled, set it up with the zero-config local-git default and back up. Skip the actual push only when backup/status.json shows the current source is already backed up (unchanged). Always write backup/status.json and update the latest run row with the backup result. Report the backup result, then stop."},
+		{"publish", "STEP 5 — PUBLISH (only if publish is on). If workflow.json.publish is enabled, re-publish the updated HTML per get_reference_doc(kind=\"publish-strategy\") — but ONLY when the destination is already VERIFIED (publish/status.json shows a prior successful publish). Every run changes the published artifacts — new db data plus a fresh Pulse entry in builder/improve.html — so there is no \"unchanged\" run to skip; always re-publish to a verified destination. Never do the first/verifying publish here unattended — that is the user's manual set-up step. Always write publish/status.json. Report the result, then stop."},
+		{"notify", "STEP 6 — NOTIFY once on a state transition per the post-run-monitor doc's notification step — honor a user `## Notifications` preference in soul/soul.md, otherwise a single notify_user call only on broke/recovered/new-finding, and silence on a steady run. When you DO notify and publish is on, include the public dashboard URL from publish/status.json (the `url`, only when its state is `published`) in the message so the user can open the live report in one tap. Use the doc's standard one-line format (emoji · workflow · headline · metric · dashboard URL), and prefer a formatted HTML email body (email_html) when Gmail is on. Stay scoped: never rewrite the plan wholesale or dispatch a full improvement run here."},
+	}
+}
+
+func optimizerScheduleMessages(_ []string, groupNames []string) []string {
+	mainMessage := defaultOptimizerImproveMessage(groupNames)
+	return []string{
+		optimizerPreBackupMessage(),
+		wrapOptimizerImproveMessage(mainMessage, groupNames),
+		optimizerFinalBackupMessage(),
+		optimizerPublishMessage(),
+		optimizerNotifyMessage(),
+	}
+}
+
+func compactScheduleMessages(messages []string) []string {
+	out := make([]string, 0, len(messages))
+	for _, msg := range messages {
+		if strings.TrimSpace(msg) == "" {
+			continue
+		}
+		out = append(out, msg)
+	}
+	return out
+}
+
+func defaultOptimizerImproveMessage(groupNames []string) string {
+	groupScope := optimizerGroupScope(groupNames)
+	return fmt.Sprintf(
+		"Do not ask for confirmation. This is a scheduled IMPROVE fire for group_names=%s. "+
+			"Read builder/improve.html, soul/soul.md, planning/metrics.json, recent db/metrics_history.jsonl, "+
+			"latest run/eval evidence for the configured group_names, and planning/changelog/. Then call "+
+			"get_workflow_command_guidance(kind=\"improve-workflow\", focus=\"scheduled improve fire; group_names=%s; "+
+			"apply structural replan only on strong cross-run Goal/strategy evidence; apply evidence-chain freshness cleanup "+
+			"for stale reports/learnings/KB/db; do NOT call harden_workflow; do NOT call notify_user because backup/publish/notify "+
+			"are split into later scheduler turns; record notification-worthy decisions in builder/improve.html\"). "+
+			"Follow the returned guidance exactly. Stop after the improve decision and any cadence update are logged.",
+		groupScope, groupScope)
+}
+
+func wrapOptimizerImproveMessage(message string, groupNames []string) string {
+	return fmt.Sprintf(
+		"STEP 2/5 - IMPROVE. Do not ask for confirmation. SCHEDULER NOTE: This is the main scheduled IMPROVE turn for group_names=%s. "+
+			"The scheduler already ran STEP 1/5 pre-backup and will run STEP 3/5 final backup, STEP 4/5 publish, and STEP 5/5 notify after this turn. "+
+			"Treat the completed STEP 1/5 pre-backup as the required pre-change checkpoint; if it did not clearly complete, stop and record the blocker instead of mutating files. "+
+			"Do not call notify_user, publish, or perform final backup in this turn. Do not call harden_workflow for immediate per-run Bugs; Pulse owns those. "+
+			"Record any notification-worthy decision in builder/improve.html for STEP 5/5. If you call get_workflow_command_guidance(kind=\"improve-workflow\"), "+
+			"include that backup/publish/notify are split into later turns.\n\nCANONICAL AUTO IMPROVE MESSAGE:\n%s",
+		optimizerGroupScope(groupNames), strings.TrimSpace(message))
+}
+
+func optimizerGroupScope(groupNames []string) string {
+	cleaned := make([]string, 0, len(groupNames))
+	for _, group := range groupNames {
+		if strings.TrimSpace(group) != "" {
+			cleaned = append(cleaned, strings.TrimSpace(group))
+		}
+	}
+	if len(cleaned) == 0 {
+		return "configured group_names"
+	}
+	return strings.Join(cleaned, ", ")
+}
+
+func optimizerPreBackupMessage() string {
+	return "STEP 1/5 - PRE-BACKUP. Do not ask for confirmation. Read workflow.json.backup and call get_reference_doc(kind=\"backup-strategy\"). Ensure there is a pre-improvement checkpoint before applying scheduled improve changes. If backup is disabled, set up the zero-config local-git default and write workflow.json.backup plus backup/status.json. If backup/status.json says the current source hash is already backed up, record that and skip the actual push. Report the backup result, then stop."
+}
+
+func optimizerFinalBackupMessage() string {
+	return "STEP 3/5 - BACKUP FINAL STATE. Do not ask for confirmation. Read workflow.json.backup and get_reference_doc(kind=\"backup-strategy\"). Back up the final state produced by the improve turn, including builder/improve.html, planning/eval/report/KB/learnings/db changes, schedule changes, and status files. If nothing changed since STEP 1, update backup/status.json with a skipped/already-backed-up result. Report the final backup result, then stop."
+}
+
+func optimizerPublishMessage() string {
+	return "STEP 4/5 - PUBLISH. Do not ask for confirmation. If workflow.json.publish is enabled and publish/status.json shows a prior verified successful publish, call get_reference_doc(kind=\"publish-strategy\") and re-publish the workflow dashboard plus builder/improve.html/Pulse log from the final backed-up state. Update publish/status.json with the URL, state, and source hash. If publish is not configured or is configured_not_verified, skip; never do first/verifying publish unattended and never expose new data scope. Report the publish result, then stop."
+}
+
+func optimizerNotifyMessage() string {
+	return "STEP 5/5 - NOTIFY. Do not ask for confirmation. Read soul/soul.md ## Notifications if present, builder/improve.html entries from this improve fire, backup/status.json, and publish/status.json. Notify once with notify_user only for a decision-worthy improve change/proposal/blocker, or when the Notifications preference explicitly asks: applied replan, user-facing report/eval/metric update, material KB/learnings/db cleanup, material cadence/scope change, high-impact proposal held for oversight/evidence, or blocked improvement needing human action. Stay silent on no-action/steady fires. Include the published dashboard URL only when publish/status.json.state is published. Prefer email_html plus plain email_body when email fields are available. Report whether notification was sent/skipped and why, then stop."
+}
+
 // executeJob builds a session request from the manifest and runs it.
 // Returns (sessionID, runFolder, error).
 func (s *SchedulerService) executeJob(ctx context.Context, sctx *ScheduleContext, runID string) (string, string, error) {
@@ -1243,9 +1329,12 @@ func (s *SchedulerService) executeJob(ctx context.Context, sctx *ScheduleContext
 
 // executeWorkshopJob runs a workflow via the workshop builder path (workflow_phase mode).
 func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *ScheduleContext, runID string) (string, string, error) {
-	messages := sctx.Schedule.Messages
+	messages := compactScheduleMessages(sctx.Schedule.Messages)
 	if len(messages) == 0 {
 		messages = []string{"Run the full workflow using run_full_workflow tool."}
+	}
+	if strings.EqualFold(strings.TrimSpace(sctx.Schedule.WorkshopMode), "optimizer") {
+		messages = optimizerScheduleMessages(sctx.Schedule.Messages, sctx.Schedule.GroupNames)
 	}
 	runFolder := "iteration-0"
 
@@ -1298,7 +1387,7 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 
 	// Note: backup-on-completion is not appended here as a message turn. Backup is
 	// owned by two arms that share one source-hash-gated contract: the Pulse pass
-	// (runPostRunMonitor, step 1) for scheduled runs when Pulse is enabled, and the
+	// (runPostRunMonitor, step 4) for scheduled runs when Pulse is enabled, and the
 	// run_workflow completion directive (workflowRunCompletionDirective) for
 	// interactive runs (and as the fallback when Pulse is off). The shared source-hash
 	// gate means whichever arm runs second sees the state already backed up and skips

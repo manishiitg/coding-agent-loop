@@ -31,4 +31,4 @@
 
 73. should auto notification also send if faced any issues in execution it tasks to the main buider so main builder can fix it ?
 
-74. Pi.dev integration follow-up: add curated model picker/provider routing so users see recommended choices first (for example `google/gemini-3.5-flash`) and can search the full Pi model catalog only when needed.
+74. Pi.dev integration follow-up: add curated model picker/provider routing so users see recommended choices first (for example `google/gemini-3.5-flash`) and can search the full Pi model catalog only when needed. - done

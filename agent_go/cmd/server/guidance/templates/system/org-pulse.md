@@ -65,12 +65,20 @@ First read:
 
 For **each** workflow under `Workflow/<name>/`:
 - `builder/improve.html` — the Bug/Goal verdict pills + status headline its **own** Pulse already formed
-  (`{bug, goal, headline}`). This is your endgame signal; trust it.
+  (`{bug, goal, headline}`), plus the latest workflow Pulse LLM/model/cost/time readout when present.
+  This is your endgame and operational telemetry signal; trust it before drilling into raw cost files.
+- `workflow.json` — workflow label/objective, `capabilities.llm_config`, execution defaults, schedules,
+  and any explicit provider/model/tier configuration. This is evidence for the LLM/cost audit; read it,
+  but do not edit it.
 - the latest `reports/` (query the report's tables + read the newest finished-run
   `reports/<group>/<timestamp>.md`) — what the workflow actually produced.
 - `knowledgebase/notes/_index.json` then only the topic files that look new/relevant —
   what the workflow discovered.
 - `learnings/_global/SKILL.md` — the durable, generalized learnings.
+- recent cost/time artifacts under `costs/`, run folders, and report/Pulse metadata that name
+  `cost_usd`, tokens, provider, model, tier, duration, wall time, LLM time, or tool time. Prefer the
+  workflow Pulse summary, summarized cost files, timing summaries, and recent run metadata over raw
+  logs; if evidence is missing, report it as missing rather than estimating.
 
 If this sweep uncovers a workflow-specific improvement opportunity, write it back to that same
 workflow's `builder/improve.html` as a **Chief of Staff recommendation** card under the
@@ -92,7 +100,7 @@ This is a recommendation for the workflow builder to verify later, not an applie
 
 Then:
 - **Recent conversations** — the stored chat files for ad-hoc tasks you ran since the last
-  Org Pulse. This is how you see repeated asks (step 7).
+  Org Pulse. This is how you see repeated asks (step 8).
 - **Your own current memory** — your `entities/*.md` and topic notes, so you build on what
   you know and never duplicate it.
 
@@ -125,7 +133,33 @@ against what its report shows. Note anything that changed since yesterday (a wor
 broke, recovered, or started drifting) — that delta is what the user cares about, not the
 steady state.
 
-### 5. Generate recommendations (be proactive, not just diagnostic)
+### 5. Report LLM/model tiers and cost posture (report-only)
+
+Create a concise LLM/cost scorecard across workflows. This is an operational audit, not an
+optimization pass.
+
+For each workflow, identify:
+
+- the configured provider/model/tier from `workflow.json` (`capabilities.llm_config`, execution
+  defaults, schedule overrides, or any explicit high/medium/low tier reference);
+- the recent observed provider/model from cost/status evidence when available;
+- recent cost/tokens from `costs/`, run folders, report metadata, or Pulse/run evidence;
+- whether cost evidence is present, stale, or missing.
+
+Then summarize at the org level:
+
+- workflows using high / medium / low tiers, and any explicit models;
+- cost concentration: the top spenders and whether spend is tied to goal-critical work;
+- missing cost/model evidence that prevents confident reporting;
+- notable mismatches worth a CEO seeing, for example a high tier on low-value maintenance or a
+  low tier on a goal-critical workflow with quality drift.
+
+**Do not fix anything in this step.** Do not edit `workflow.json`, prompts, plans, schedules,
+model settings, reports, DB, KB, learnings, secrets, or provider config. Do not run an optimizer.
+If a model/cost mismatch looks important, report it in the Org Pulse log as an observation or
+proposal-only suggestion for the user/builder to decide later.
+
+### 6. Generate recommendations (be proactive, not just diagnostic)
 
 Measuring a goal tells the user *where* they stand. This step tells them *what to do about
 it*. For **each** goal — especially the at-risk, off-track, and capped ones — propose grounded,
@@ -172,10 +206,10 @@ Write recommendations to the **right surface**, never both:
   each marked as a proposal with goal, impact/effort, and status. Update an existing open
   recommendation instead of duplicating it; mark accepted/dismissed ones rather than deleting.
 
-Also summarize the recommendations in today's Org Pulse log entry (step 8) so the user sees them
+Also summarize the recommendations in today's Org Pulse log entry (step 9) so the user sees them
 in the narrative, but the durable home is the two surfaces above.
 
-### 6. Harvest into memory (the core — curate, merge, in your words)
+### 7. Harvest into memory (the core — curate, merge, in your words)
 
 From the reports, learnings, and conversations, decide what is **worth remembering**. The
 test: would this change a future decision, or explain a future result? If not, skip it —
@@ -194,7 +228,7 @@ For each keeper:
 
 If a day produced nothing worth keeping, write nothing. That is a correct outcome.
 
-### 7. Spot promotions (recurring task → workflow)
+### 8. Spot promotions (recurring task → workflow)
 
 Review the recent conversations/tasks for **recurrence** — work the user keeps asking you to
 do ad-hoc. When you see the same *shape* repeated (judge it; there is no fixed count),
@@ -205,7 +239,7 @@ task IS a workflow. Name it, describe the generalized procedure (parameterize th
 Propose only — you don't create the workflow here. The user accepts in the suggestions
 surface, and the proposal becomes one `create_workflow` call.
 
-### 8. Surface it in the Org Pulse log
+### 9. Surface it in the Org Pulse log
 
 Your single user-facing content output is **`pulse/org-pulse.html`** — one readable HTML
 document, newest-on-top, the page the user opens (on the right) to see how the org is going.
@@ -231,8 +265,12 @@ Prepend **one dated entry** for today (a steady day warrants a short one — or 
 - **Org health** — the one-liner: which workflows are on-target / drifting / broken, and the
   delta since yesterday (what broke, recovered, or started drifting), framed against the
   org goals when they exist.
+- **LLM/cost audit** — a compact table or bullet group listing workflow, configured tier/model,
+  recent observed model, recent cost/tokens, evidence path, and note. Call out top spenders,
+  missing cost evidence, and material tier/value mismatches. This is report-only: no config or
+  model changes were made.
 - **Recommendations** — a brief summary of the proposal-only recommendations you generated in
-  step 5 and where they live (per-automation cards in each `builder/improve.html`; org-level
+  step 6 and where they live (per-automation cards in each `builder/improve.html`; org-level
   recs in the Recommendations section of `pulse/goals.html`). Lead with the highest-impact one.
 - **Harvested** — a brief note of what you folded into memory (not a dump — a sentence).
 - **Suggestions** — each as a small card the user can act on: a short title, the reason, the
@@ -258,14 +296,14 @@ per-workflow Pulse's transition discipline, adapted for the org:
   HTML body instead of raw plain text. Keep it inline-styled for email clients,
   dark text on a light background, and no external CSS. Required sections:
   status header, one-sentence headline, goal scorecard summary, workflow
-  alignment delta, top recommendation or decision needed, and buttons/links for
-  Goals and Pulse when published.
+  alignment delta, LLM/cost highlight when material, top recommendation or decision
+  needed, and buttons/links for Goals and Pulse when published.
 - `email_body`: plain-text fallback with the same facts; never put HTML here.
 
 Do not include secrets, raw memory, staging paths, tokens, long logs, or full HTML dumps in
 the notification.
 
-### 9. Publish the org pages (only if org publish is on)
+### 10. Publish the org pages (only if org publish is on)
 
 If the user has set up org publish in `pulse/publish.json`, keep the public org pages current.
 The org-level publish pair is:
@@ -291,8 +329,8 @@ You are a cheap daily steward, not an improvement run.
   exploratory `ls`/`echo`/`pwd`.
 - **Trust the per-workflow verdicts** instead of re-judging from raw runs; drill in only on a
   surprise.
-- Back up → read → judge the endgame → generate proposal-only recommendations → curate the
-  keepers into memory → propose promotions → surface suggestions → publish only if
+- Back up → read → judge the endgame → report LLM/cost posture → generate proposal-only
+  recommendations → curate the keepers into memory → propose promotions → surface suggestions → publish only if
   verified/configured → notify only if decision-worthy → stop. You never run a workflow,
   dispatch a full improvement pass, edit workflow internals, apply a recommendation, or create
   the skill/workflow yourself — those are the user's to trigger from your suggestions.

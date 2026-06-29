@@ -864,6 +864,9 @@ func blockAbsoluteHostPaths(command string, guard *FolderGuardConfig) error {
 		if _, ok := normalizeAbsoluteWorkspacePath(candidate); ok {
 			continue
 		}
+		if isAllowedAbsoluteHostPath(candidate, guard) {
+			continue
+		}
 
 		candidateLower := strings.ToLower(candidate)
 		for _, dir := range blockedDirs {
@@ -881,6 +884,35 @@ func blockAbsoluteHostPaths(command string, guard *FolderGuardConfig) error {
 		}
 	}
 	return nil
+}
+
+func isAllowedAbsoluteHostPath(candidate string, guard *FolderGuardConfig) bool {
+	if guard == nil {
+		return false
+	}
+	cleanCandidate := filepath.Clean(candidate)
+	for _, allowed := range guard.WritePaths {
+		if !filepath.IsAbs(allowed) {
+			continue
+		}
+		if isPathUnder(cleanCandidate, filepath.Clean(allowed)) {
+			return true
+		}
+	}
+	for _, allowed := range guard.ReadPaths {
+		if !filepath.IsAbs(allowed) {
+			continue
+		}
+		if !isPathUnder(cleanCandidate, filepath.Clean(allowed)) {
+			continue
+		}
+		for _, blockedWrite := range guard.BlockedWritePaths {
+			if filepath.IsAbs(blockedWrite) && isPathUnder(cleanCandidate, filepath.Clean(blockedWrite)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // closestWorkspaceRootHint returns a "Did you mean" hint when the rejected

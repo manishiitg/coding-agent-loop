@@ -364,6 +364,7 @@ Each daily entry should include:
 - goal scorecard summary
 - workflow alignment delta
 - org health one-liner
+- LLM/model tier and cost audit (report-only)
 - memory harvested, if any
 - suggestion cards, if any
 
@@ -410,6 +411,7 @@ Starter body:
       <div class="row"><h3>No goals set</h3><time>YYYY-MM-DD</time></div>
       <p><b>Goal scorecard:</b> No `pulse/goals.html` evidence is available yet.</p>
       <p><b>Org health:</b> Workflow health can be reviewed, but goal progress cannot be measured until goals exist.</p>
+      <p><b>LLM/cost audit:</b> No workflow model/cost evidence recorded yet.</p>
       <p><b>Harvested:</b> Nothing written to memory.</p>
       <div class="next"><b>Suggestion:</b> Run `/org-setup` in Chief of Staff to define measurable goals.</div>
     </article>
@@ -431,3 +433,7 @@ Starter body:
 - Close or update repeated suggestions instead of duplicating them daily.
 - If the source evidence is stale, say so in the evidence line. A stale green status is worse
   than an honest unknown.
+- The LLM/cost audit is a reporting section, not a configuration surface. Render it inside the
+  daily pulse entry as a compact table or bullets with workflow, configured tier/model, observed
+  model, recent cost/tokens, evidence path, and note. Never imply model settings were changed by
+  Org Pulse.

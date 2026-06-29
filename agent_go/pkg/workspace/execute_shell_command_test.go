@@ -259,6 +259,43 @@ func TestBlockAbsoluteHostPaths_DeniesAbsoluteHostPathOutsideWorkspaceDocs(t *te
 	}
 }
 
+func TestBlockAbsoluteHostPaths_AllowsExplicitReadOnlyHostDownloadsGrant(t *testing.T) {
+	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs")
+
+	guard := &FolderGuardConfig{
+		Enabled:           true,
+		ReadPaths:         []string{"/Users/mipl/Downloads"},
+		WritePaths:        []string{"Workflow/testing/runs/iteration-0/test-group/execution/Downloads"},
+		BlockedWritePaths: []string{"/Users/mipl/Downloads"},
+	}
+
+	err := blockAbsoluteHostPaths(
+		`cp '/Users/mipl/Downloads/statement.pdf' Workflow/testing/runs/iteration-0/test-group/execution/Downloads/statement.pdf`,
+		guard,
+	)
+	if err != nil {
+		t.Fatalf("expected explicit read-only host Downloads grant to pass, got: %v", err)
+	}
+}
+
+func TestBlockAbsoluteHostPaths_DeniesHostReadPathWithoutWriteBlock(t *testing.T) {
+	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs")
+
+	guard := &FolderGuardConfig{
+		Enabled:    true,
+		ReadPaths:  []string{"/Users/mipl/Downloads"},
+		WritePaths: []string{"Workflow/testing/runs/iteration-0/test-group/execution/Downloads"},
+	}
+
+	err := blockAbsoluteHostPaths(
+		`cp '/Users/mipl/Downloads/statement.pdf' Workflow/testing/runs/iteration-0/test-group/execution/Downloads/statement.pdf`,
+		guard,
+	)
+	if err == nil {
+		t.Fatal("expected host read path without blocked-write protection to be rejected")
+	}
+}
+
 func TestBlockAbsoluteHostPaths_AllowsAbsoluteWorkspacePathInsideGuardAndIgnoresHeredocData(t *testing.T) {
 	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs")
 
@@ -330,6 +367,61 @@ func TestExecuteShellCommand_InjectsSessionEnv(t *testing.T) {
 	}
 }
 
+func TestExecuteShellCommand_PassesCDPHostDownloadsReadOnlyGuard(t *testing.T) {
+	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs")
+	t.Setenv("PI_HOST_DOWNLOADS_PATH", "/Users/mipl/Downloads")
+
+	sessionID := "test-cdp-downloads"
+	common.SetSessionFolderGuard(
+		sessionID,
+		[]string{"Workflow/testing/runs/iteration-0/test-group/execution"},
+		[]string{"Workflow/testing/runs/iteration-0/test-group/execution/Downloads"},
+	)
+	common.GrantSessionCDPHostDownloadsReadOnly(sessionID, "cdp")
+	defer ClearSessionShellConfig(sessionID)
+
+	var got ExecuteShellCommandParams
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"data":    map[string]interface{}{"stdout": "ok", "exit_code": 0},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	ctx := context.WithValue(context.Background(), common.ChatSessionIDKey, sessionID)
+	if _, err := client.ExecuteShellCommand(ctx, ExecuteShellCommandParams{
+		Command: `cp '/Users/mipl/Downloads/statement.pdf' Workflow/testing/runs/iteration-0/test-group/execution/Downloads/statement.pdf`,
+	}); err != nil {
+		t.Fatalf("ExecuteShellCommand error: %v", err)
+	}
+
+	if got.FolderGuard == nil {
+		t.Fatal("expected folder guard in execute request")
+	}
+	if !containsString(got.FolderGuard.ReadPaths, "/Users/mipl/Downloads") {
+		t.Fatalf("expected host Downloads in read paths, got %v", got.FolderGuard.ReadPaths)
+	}
+	if containsString(got.FolderGuard.WritePaths, "/Users/mipl/Downloads") {
+		t.Fatalf("host Downloads must not be writable, got write paths %v", got.FolderGuard.WritePaths)
+	}
+	if !containsString(got.FolderGuard.BlockedWritePaths, "/Users/mipl/Downloads") {
+		t.Fatalf("expected host Downloads in blocked-write paths, got %v", got.FolderGuard.BlockedWritePaths)
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestIsGitPushCommand(t *testing.T) {
 	cases := []struct {
 		cmd  string
@@ -341,9 +433,9 @@ func TestIsGitPushCommand(t *testing.T) {
 		{`git -C /x push`, true},
 		{"git status", false},
 		{"git pull", false},
-		{`echo "git push" >> notes.txt`, false},        // quoted data, not executable
-		{"python3 -c 'print(\"git push\")'", false},     // inside quotes
-		{"git commit -m 'do git push later'", false},     // mentioned in message
+		{`echo "git push" >> notes.txt`, false},      // quoted data, not executable
+		{"python3 -c 'print(\"git push\")'", false},  // inside quotes
+		{"git commit -m 'do git push later'", false}, // mentioned in message
 	}
 	for _, c := range cases {
 		if got := isGitPushCommand(c.cmd); got != c.want {
@@ -370,7 +462,10 @@ func TestIsWorkflowSecretPath(t *testing.T) {
 }
 
 func TestParseGitHubOwnerRepo(t *testing.T) {
-	cases := []struct{ url, owner, repo string; ok bool }{
+	cases := []struct {
+		url, owner, repo string
+		ok               bool
+	}{
 		{"https://github.com/manishiitg/mcp-agent-builder-go.git", "manishiitg", "mcp-agent-builder-go", true},
 		{"git@github.com:owner/repo.git", "owner", "repo", true},
 		{"ssh://git@github.com/owner/repo", "owner", "repo", true},

@@ -119,7 +119,7 @@ Workflow schedules always use the workshop builder execution path. Do not create
 
 **Default mode rule:** create workflow schedules with `mode="workshop"`. New schedules should never use `mode="workflow"`.
 
-**`/auto-improve` rule**: When setting up continuous improvement, BOTH schedules must be workshop schedules. The recurring execution schedule uses `mode="workshop", workshop_mode="run"` and a message that calls `run_full_workflow(group_name="...")` for each configured group. The recurring improvement schedule uses `mode="workshop", workshop_mode="optimizer"`. Do not use direct `mode="workflow"` for this command.
+**`/auto-improve` rule**: When setting up continuous improvement, BOTH schedules must be workshop schedules. The recurring execution schedule uses `mode="workshop", workshop_mode="run"` and a message that calls `run_full_workflow(group_name="...")` for each configured group. The recurring improvement schedule uses `mode="workshop", workshop_mode="optimizer"` and normally omits `messages`; the scheduler supplies the canonical improve prompt and automatically injects pre-backup, final-backup, publish, and notify turns at runtime. Do not use direct `mode="workflow"` for this command.
 
 ### Back up scheduled workflows
 
@@ -138,7 +138,7 @@ Confirm with the user before skipping backup on a recurring schedule.
 
 - Write each message as a plain instruction, like you would type in chat: `"Run the full workflow"`, `"Generate the final report"`.
 - **Run mode** (`workshop_mode="run"`): typically one message with exact groups, e.g. `"Do not ask for confirmation. Run the full workflow for group-1 using run_full_workflow(group_name=\"group-1\")."`
-- **Optimize mode**: one message with stop conditions (see optimizer best practices below).
+- **Optimize mode**: usually one message with stop conditions (see optimizer best practices below). For `/auto-improve`, omit `messages`; the scheduler ignores persisted optimizer messages and runs the canonical improve prompt plus backup, publish, and notify as separate runtime turns.
 - Use multiple messages to break work into sequential phases, e.g. `["Run the workflow", "Generate the final report"]`.
 - Read `variables/variables.json` for available group names and include them explicitly in the message if needed.
 
@@ -153,13 +153,14 @@ Confirm with the user before skipping backup on a recurring schedule.
 
 ### Workshop optimizer-style schedules
 
-When creating a schedule with `workshop_mode="optimizer"`, craft the message around the exact recurring job. For `/auto-improve`, the message should:
+When creating a schedule with `workshop_mode="optimizer"`, craft the message around the exact recurring job for general optimizer schedules. For `/auto-improve`, do not store custom `messages`; scheduler-owned turns supply the canonical improve prompt and wrap it at runtime with pre-backup, final backup, publish, and notify. Older persisted Auto Improve messages are ignored at runtime.
 
+For non-Auto-Improve optimizer messages:
 - Name the configured `group_names`.
 - Use only `runs/iteration-0` evidence for those groups.
 - Inspect run outputs plus execution/tool logs for failures, retries, wrong tool arguments, timeouts, validation errors, and stuck steps.
 - Read `planning/metrics.json` / `db/metrics_history.jsonl` / `builder/improve.html` (the single durable log; fold in any legacy `builder/review.html`) / recent `planning/changelog/` entries.
-- Handle report-layout work with report-plan tools only when the recurring job explicitly includes report quality or an unresolved review/improve item queues it.
+- Handle report accuracy/live-data/layout work with report-plan tools only when the recurring job explicitly includes report quality or an unresolved review/improve item queues it.
 
 For active workflows, prefer a workshop optimizer-style check after every workflow run, or at worst after every two runs; if cron cannot trigger on run completion, approximate with a frequent lightweight schedule that no-ops when there is no new evidence. Weekly continuous improvement is appropriate for weekly or explicitly low-touch workflows. After material plan/config changes, tighten the improve cadence for 24–48 hours or until the next one or two post-change `iteration-0` runs have been reviewed.
 

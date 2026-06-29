@@ -1,0 +1,77 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>ccdemo — live-attach (control mode)</title>
+<link rel="stylesheet" href="https://unpkg.com/@xterm/xterm@6.0.0/css/xterm.css" />
+<style>
+  html,body{margin:0;height:100%;background:#0b0e14;color:#cbd5e1;font-family:ui-monospace,Menlo,monospace}
+  #bar{padding:6px 10px;font-size:12px;background:#11151f;border-bottom:1px solid #1f2630;display:flex;gap:14px;align-items:center}
+  #bar b{color:#7dd3fc}
+  #dot{width:9px;height:9px;border-radius:50%;background:#f87171;display:inline-block}
+  #dot.on{background:#34d399}
+  #term{position:absolute;top:34px;left:0;right:0;bottom:0;padding:6px}
+</style>
+</head>
+<body>
+<div id="bar">
+  <span><span id="dot"></span> <b>control-mode</b> live attach</span>
+  <span id="size">–</span>
+  <span id="status">connecting…</span>
+  <span style="margin-left:auto;opacity:.6">type a prompt to the real CLI · scroll up for history · resize the window</span>
+</div>
+<div id="term"></div>
+
+<script src="https://unpkg.com/@xterm/xterm@6.0.0/lib/xterm.js"></script>
+<script src="https://unpkg.com/@xterm/addon-fit@0.11.0/lib/addon-fit.js"></script>
+<script>
+const term = new Terminal({
+  fontFamily: 'ui-monospace, Menlo, monospace',
+  fontSize: 13,
+  scrollback: 20000,
+  cursorBlink: true,
+  theme: { background: '#0b0e14' },
+});
+const fit = new FitAddon.FitAddon();
+term.loadAddon(fit);
+term.open(document.getElementById('term'));
+fit.fit();
+
+const dot = document.getElementById('dot');
+const statusEl = document.getElementById('status');
+const sizeEl = document.getElementById('size');
+
+const wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
+const ws = new WebSocket(wsUrl);
+ws.binaryType = 'arraybuffer';
+
+ws.onopen = () => {
+  dot.classList.add('on');
+  statusEl.textContent = 'live';
+  sendResize();
+};
+// Manual write (matches the app exactly; avoids addon-attach version coupling).
+ws.onmessage = (ev) => {
+  const d = ev.data;
+  term.write(d instanceof ArrayBuffer ? new Uint8Array(d) : d);
+};
+ws.onclose = () => { dot.classList.remove('on'); statusEl.textContent = 'closed'; };
+ws.onerror = () => { statusEl.textContent = 'error'; };
+
+// INPUT: terminal keystrokes -> ws as a BINARY frame (server: send-keys -H).
+const enc = new TextEncoder();
+term.onData(d => { if (ws.readyState === 1) ws.send(enc.encode(d)); });
+
+// RESIZE: FitAddon measure -> ws as a TEXT/JSON frame (server: resize-window).
+function sendResize() {
+  fit.fit();
+  const { cols, rows } = term;
+  sizeEl.textContent = cols + '×' + rows;
+  if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+}
+term.onResize(() => sendResize());
+let t; window.addEventListener('resize', () => { clearTimeout(t); t = setTimeout(sendResize, 120); });
+term.focus();
+</script>
+</body>
+</html>

@@ -2,10 +2,11 @@ package browser
 
 // FolderGuardConfig represents folder access restrictions
 type FolderGuardConfig struct {
-	Enabled      bool     `json:"enabled"`
-	ReadPaths    []string `json:"read_paths"`
-	WritePaths   []string `json:"write_paths"`
-	BlockedPaths []string `json:"blocked_paths"`
+	Enabled           bool     `json:"enabled"`
+	ReadPaths         []string `json:"read_paths"`
+	WritePaths        []string `json:"write_paths"`
+	BlockedPaths      []string `json:"blocked_paths"`
+	BlockedWritePaths []string `json:"blocked_write_paths,omitempty"`
 }
 
 // ShellExecuteRequest represents the request body for workspace-api /api/execute

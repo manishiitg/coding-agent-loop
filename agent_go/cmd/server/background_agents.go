@@ -1606,7 +1606,7 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 // workflowRunBackupDirective returns the directive that backs up an interactive
 // workflow run/step after it completes, or "" when this completion is not a
 // workflow run. This is the interactive arm of post-run backup: for scheduled
-// runs the Pulse pass (scheduler.go runPostRunMonitor, step 1) owns backup.
+// runs the Pulse pass (scheduler.go runPostRunMonitor, step 4) owns backup.
 // Both arms share ONE backup contract — same default (zero-config local git),
 // same source-hash skip — so a run backed up by one is recognized as current by
 // the other (no double push). Keep this text in sync with Pulse's backup step.

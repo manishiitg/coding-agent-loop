@@ -4,6 +4,12 @@ import './index.css'
 import App from './App.tsx'
 import ServerConnectionStatus from './components/ServerConnectionStatus'
 import ErrorBoundary from './components/ErrorBoundary'
+import { useCapabilitiesStore } from './stores/useCapabilitiesStore'
+
+// Kick off the capabilities load at app entry (this always runs on a full load),
+// independent of any component mount. The store retries until the backend answers,
+// so capabilities can't be left empty by frontend-faster-than-backend startup timing.
+void useCapabilitiesStore.getState().fetchCapabilities()
 
 // Capture uncaught renderer errors so a blank screen always leaves a trace in
 // the Electron main log (<userData>/logs/main.log) — DevTools is often

@@ -3,6 +3,7 @@ package common
 import (
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -52,6 +53,65 @@ const (
 
 // WorkspaceFolders are the standard workspace folders.
 var WorkspaceFolders = []string{"Chats", "Downloads"}
+
+// HostDownloadsPath returns the host Downloads directory used by native Chrome
+// in CDP mode. PI_HOST_DOWNLOADS_PATH/HOST_DOWNLOADS_PATH can override this for
+// packaged or Docker deployments where the backend HOME is not the user's HOME.
+func HostDownloadsPath() string {
+	for _, key := range []string{"PI_HOST_DOWNLOADS_PATH", "HOST_DOWNLOADS_PATH"} {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return filepath.Clean(expandHomePath(value))
+		}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return ""
+	}
+	return filepath.Join(home, "Downloads")
+}
+
+func expandHomePath(path string) string {
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
+			if path == "~" {
+				return home
+			}
+			return filepath.Join(home, strings.TrimPrefix(path, "~/"))
+		}
+	}
+	return path
+}
+
+// CDPHostDownloadsReadPath returns the host Downloads read path only for CDP
+// mode. Headless and Playwright downloads should stay inside workspace folders.
+func CDPHostDownloadsReadPath(browserMode string) string {
+	if strings.EqualFold(strings.TrimSpace(browserMode), "cdp") {
+		return HostDownloadsPath()
+	}
+	return ""
+}
+
+// GrantSessionCDPHostDownloadsReadOnly adds a read-only host Downloads grant to
+// a CDP session. The path is also added to BlockedWritePaths because macOS
+// sandboxing allows most of the home directory by default and relies on this
+// explicit deny to keep the grant read-only.
+func GrantSessionCDPHostDownloadsReadOnly(sessionID, browserMode string) string {
+	hostDownloads := CDPHostDownloadsReadPath(browserMode)
+	if strings.TrimSpace(sessionID) == "" || hostDownloads == "" {
+		return ""
+	}
+	sessionShellConfigsMu.Lock()
+	defer sessionShellConfigsMu.Unlock()
+	cfg := sessionShellConfigs[sessionID]
+	if cfg == nil {
+		cfg = &SessionShellConfig{}
+		sessionShellConfigs[sessionID] = cfg
+	}
+	cfg.ReadPaths = DeduplicateStrings(append(cfg.ReadPaths, hostDownloads))
+	cfg.BlockedWritePaths = DeduplicateStrings(append(cfg.BlockedWritePaths, hostDownloads))
+	log.Printf("[SHELL] Granted read-only host Downloads for CDP session %s: %s", sessionID, hostDownloads)
+	return hostDownloads
+}
 
 // PopulateMCPBridgeShortEnv derives short shell-friendly MCP bridge variables
 // from MCP_API_URL and MCP_API_TOKEN. It mutates env in-place.

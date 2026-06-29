@@ -122,6 +122,8 @@ Use a descriptive session name for parallel work and close headless sessions whe
 
 In workflow steps, use the run-scoped ` + "`Downloads/`" + ` folder given in the prompt. Do not read from or write to the root workspace ` + "`Downloads/`" + ` folder unless the prompt explicitly grants it.
 
+CDP caveat: native Chrome downloads can land in the host ` + "`~/Downloads`" + ` folder. If the step prompt grants a read-only host Downloads path, copy the needed file into the run-scoped ` + "`Downloads/`" + ` folder before reading or parsing it. Never write, move, or delete files in host Downloads.
+
 Use workspace-relative paths for downloads/uploads whenever possible.
 
 ## Selector Discipline
@@ -171,6 +173,8 @@ Avoid brittle generated classes and rotating ids such as Radix ids, React ` + "`
 ## Downloads Folder
 
 Builder configures Playwright's download/output directory to the workflow run-scoped ` + "`Downloads/`" + ` folder. Use that folder for all browser downloads, screenshots, generated upload files, and cleanup.
+
+In CDP mode, a browser-native download may still go to the host ` + "`~/Downloads`" + ` folder. When the prompt grants a read-only host Downloads path, import the file by copying it into the run-scoped ` + "`Downloads/`" + ` folder, then work from the copied file.
 
 Use workspace-relative paths when calling tools:
 

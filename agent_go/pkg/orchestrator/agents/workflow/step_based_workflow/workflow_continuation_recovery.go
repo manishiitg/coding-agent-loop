@@ -354,6 +354,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) queueRecoveredDirectLearning(state *W
 					readPaths := append(append([]string{}, prevCfg.ReadPaths...), globalLearningsPath)
 					writePaths := append(append([]string{}, prevCfg.WritePaths...), globalLearningsPath)
 					common.SetSessionFolderGuard(cfg.MCPSessionID, readPaths, writePaths)
+					hcpo.grantSessionCDPHostDownloadsReadOnly(cfg.MCPSessionID)
 				}
 			}
 		}

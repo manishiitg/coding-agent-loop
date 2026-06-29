@@ -9,7 +9,6 @@ import type { PollingEvent, TerminalSnapshot } from '../services/api-types'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useChatStore } from '../stores/useChatStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
-import { useCapabilitiesStore } from '../stores/useCapabilitiesStore'
 import { TERMINAL_REFRESH_REQUEST_EVENT } from '../utils/terminalRefresh'
 import { computeXtermWrite } from './terminalReplay'
 import { MarkdownRenderer } from './ui/MarkdownRenderer'
@@ -2384,11 +2383,12 @@ const LiveAttachXtermPaneInner: React.FC<{
       allowProposedApi: false,
       convertEol: false,
       cursorBlink: false,
-      cursorStyle: xtermProfile.cursorStyle,
       disableStdin: true,
-      fontFamily: xtermProfile.fontFamily,
-      fontSize: xtermProfile.fontSize,
-      lineHeight: xtermProfile.lineHeight,
+      // Pure passthrough: no density-profile CSS layer. lineHeight stays at xterm's
+      // default (1.0) so the grid math matches the pane exactly and the bytes render
+      // like raw tmux output (matching the PoC, which used plain defaults).
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+      fontSize: 13,
       scrollback: 20000,
       theme: xtermTheme,
     })
@@ -2408,10 +2408,11 @@ const LiveAttachXtermPaneInner: React.FC<{
         ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
       }
     }
-    // The xterm grid is the single source of truth for pane geometry; the resize
-    // frame drives pty.Setsize on the backend control client (window-size latest).
     const resizeDisposable = term.onResize(() => sendResize())
-
+    // The app's pane is a React/flex container that sizes after mount and on later
+    // layout changes, so a ResizeObserver (fires post-layout with the real size) is
+    // required to fit the xterm correctly — unlike the static-page PoC whose
+    // container is sized immediately by CSS. Debounced so only the settled size fits.
     const fitTerminal = () => {
       try {
         fit.fit()
@@ -2497,14 +2498,9 @@ const LiveAttachXtermPaneInner: React.FC<{
     term.options.theme = xtermTheme
   }, [xtermTheme])
 
-  useEffect(() => {
-    const term = terminalRef.current
-    if (!term) return
-    term.options.fontFamily = xtermProfile.fontFamily
-    term.options.fontSize = xtermProfile.fontSize
-    term.options.lineHeight = xtermProfile.lineHeight
-    term.options.cursorStyle = xtermProfile.cursorStyle
-  }, [xtermProfile])
+  // Intentionally NOT applying the density profile (Standard/Compact/Classic) to
+  // the live-attach pane — it renders pure tmux output at fixed defaults, so the
+  // profile dropdown does not reapply a CSS/lineHeight layer here.
 
   const handleWheel = useCallback((event: WheelEvent) => {
     const term = terminalRef.current
@@ -3307,10 +3303,8 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
   const fetchInFlightRef = useRef(false)
   const fetchInFlightScopeRef = useRef<string | null>(null)
   const fetchRequestSeqRef = useRef(0)
-  const detailRequestSeqRef = useRef(0)
   const terminalsRef = useRef<TerminalSnapshot[]>([])
   const terminalDetailCacheRef = useRef<Record<string, TerminalSnapshot>>({})
-  const probeInFlightRef = useRef(false)
   const emptyResponseCountRef = useRef(0)
   const lastFetchScopeRef = useRef<string | null>(null)
   const fastPollUntilRef = useRef(0)
@@ -3867,20 +3861,38 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     [selectedTerminalView, priorArchivedTurns, archivedTurnContents],
   )
   const selectedTerminalIsSynthetic = selectedTerminalView ? isSyntheticTerminal(selectedTerminalView) : false
-  // Phase 2 live-attach: render the selected live tmux terminal over the
-  // /api/terminals/{id}/stream WebSocket when the backend exposes the flag
-  // (RUNLOOP_TERMINAL_LIVE_ATTACH + supported tmux → capabilities.terminal_live_attach).
-  // The field isn't in the typed CapabilitiesResponse, so read it via a narrow
-  // cast; this is purely additive and falls back to the polling path when absent.
-  const liveAttachTransportEnabled = useCapabilitiesStore(
-    s => Boolean((s.capabilities as { terminal_live_attach?: boolean } | null)?.terminal_live_attach),
-  )
+  // Live-attach is the ONLY transport for the selected live tmux terminal: it
+  // renders over the /api/terminals/{id}/stream WebSocket whenever the selected
+  // terminal is a non-synthetic tmux session (no feature flag, no fallback).
   const useLiveAttachForSelected = !!(
-    liveAttachTransportEnabled &&
     selectedTerminalView &&
     !selectedTerminalIsSynthetic &&
     selectedTerminalView.tmux_session
   )
+  // Keep the live-attach pane mounted across transient selection nulls. The old
+  // polling path momentarily drops the selected terminal from groupedTerminals on
+  // each list refresh (and a session-id blip briefly clears the selection), which
+  // would otherwise unmount LiveAttachXtermPane, close the WS, and cancel the
+  // control-mode attach before it can stream — producing stacked capture-pane
+  // snapshots instead of smooth %output. Debounce the unmount so the attach
+  // establishes once and streams; a concrete non-live selection drops immediately.
+  const liveAttachTerminalId =
+    useLiveAttachForSelected && selectedTerminalView ? selectedTerminalView.terminal_id : null
+  const [stableLiveAttachId, setStableLiveAttachId] = useState<string | null>(null)
+  useEffect(() => {
+    if (liveAttachTerminalId) {
+      setStableLiveAttachId(liveAttachTerminalId)
+      return
+    }
+    if (selectedTerminalView) {
+      // A concrete non-live / synthetic selection — switch away immediately.
+      setStableLiveAttachId(null)
+      return
+    }
+    // selectedTerminalView is transiently null (list/session flicker) — debounce.
+    const timer = window.setTimeout(() => setStableLiveAttachId(null), 800)
+    return () => window.clearTimeout(timer)
+  }, [liveAttachTerminalId, selectedTerminalView])
   const selectedRouteDecision = selectedTerminalView?.step_id
     ? routingDecisionByNextStepID.get(selectedTerminalView.step_id)
     : undefined
@@ -3903,40 +3915,6 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     [groupedTerminals.orderedTerminals, selectedTerminalView?.terminal_id],
   )
 
-  useEffect(() => {
-    if (!selectedTerminal) {
-      return
-    }
-    // Read the cache through a ref so this effect doesn't re-run on every
-    // cache write (the rail poll churns the cache ~27x/sec); it should only
-    // re-fire when the selected terminal's identity or chunk_index changes.
-    const detailCacheKey = terminalDetailCacheKey(selectedTerminal)
-    if (terminalDetailCacheRef.current[detailCacheKey]) return
-    const requestSeq = detailRequestSeqRef.current + 1
-    detailRequestSeqRef.current = requestSeq
-    let cancelled = false
-    probeInFlightRef.current = true
-    const detailOptions = terminalRequestOptions(selectedTerminal, true, 'selected-detail')
-    agentApi.getTerminal(selectedTerminal.terminal_id, detailOptions)
-      .then(detail => {
-        logTerminalScrollDebug('selected-detail', selectedTerminal, detailOptions, detail)
-        if (!cancelled && detailRequestSeqRef.current === requestSeq && terminalPaneKey(detail) === selectedTerminalKey) {
-          cacheTerminalDetail(detail)
-        }
-      })
-      .catch(err => {
-        if (!cancelled) {
-          console.warn('Failed to load terminal detail', err)
-        }
-      })
-      .finally(() => {
-        probeInFlightRef.current = false
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [selectedTerminal?.terminal_id, selectedTerminal?.chunk_index, selectedTerminal?.updated_at, selectedTerminalKey, cacheTerminalDetail])
-
   // The rail/list poll is metadata-only. Without a screen probe, a workflow-step
   // tmux pane that finished without a fresh streaming_end can keep showing the
   // spinner until the user clicks it. Probe visible active step panes in the
@@ -3950,6 +3928,10 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
       if (cancelled || inFlight) return
       inFlight = true
       void Promise.all(activeRailTmuxProbeTargets.map(async terminal => {
+        // Skip the terminal rendering over live-attach: its control-mode client
+        // owns that session, and a parallel capture-pane probe interferes with the
+        // %output stream (makes pi's in-place redraws stack).
+        if (terminal.terminal_id === stableLiveAttachId) return null
         const detailOptions = terminalRequestOptions(terminal, false, 'rail-probe')
         if (!detailOptions) return null
         try {
@@ -3987,77 +3969,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
       cancelled = true
       window.clearInterval(interval)
     }
-  }, [activeRailTmuxProbeTargets, applyTerminalSnapshotUpdate, cacheTerminalDetail, fetchTerminals])
-
-  // Tmux panes can change without a new streaming event: prompt text is typed
-  // directly into tmux, and some CLIs redraw their screen in-place. Probe the
-  // selected live pane every 3s so the detail view follows the actual tmux
-  // screen instead of only the last stored stream chunk.
-  useEffect(() => {
-    const terminalId = selectedTerminalView?.terminal_id
-    const tmuxSession = selectedTerminalView?.tmux_session
-    const state = selectedTerminalView ? terminalState(selectedTerminalView) : ''
-    // Stale/failed terminals have no live tmux pane to recapture; probing them
-    // just loops over a dead session (the backend now marks such GETs stale).
-    const shouldProbeTmux = !!tmuxSession && state !== 'stale' && state !== 'failed'
-    if (!terminalId || !shouldProbeTmux) return
-
-    let stopped = false
-    let interval = 0
-    const stop = () => {
-      if (stopped) return
-      stopped = true
-      window.clearInterval(interval)
-    }
-
-    const probe = () => {
-      // Skip if a capture (probe or detail fetch) is still in flight — two
-      // concurrent capture-pane calls on the same tmux session race.
-      if (probeInFlightRef.current) return
-      probeInFlightRef.current = true
-      const detailOptions = terminalRequestOptions(selectedTerminalView, true, 'selected-probe')
-      void agentApi.getTerminal(terminalId, detailOptions).then(detail => {
-        logTerminalScrollDebug('selected-probe', selectedTerminalView, detailOptions, detail)
-        cacheTerminalDetail(detail)
-        // The detail carries the freshest active/state — react to it directly
-        // instead of waiting a full list-poll cycle for selectedTerminalView to
-        // catch up. Dead sessions should stop; active sessions keep probing
-        // because their pane can update without server-side stream events.
-        const detailState = terminalState(detail)
-        if (detailState === 'stale' || detailState === 'failed') {
-          stop()
-        }
-        void fetchTerminals()
-      }).catch(() => { /* stale or closed session — ignore */ })
-        .finally(() => { probeInFlightRef.current = false })
-    }
-
-    interval = window.setInterval(probe, 3000)
-    probe()
-    return () => stop()
-  }, [selectedTerminalView?.terminal_id, selectedTerminalView?.tmux_session, selectedTerminalView?.active, cacheTerminalDetail, fetchTerminals])
-
-  useEffect(() => {
-    const refreshTmuxDetails = () => {
-      const candidates = [selectedTerminalView, currentMainTerminal]
-      const seen = new Set<string>()
-      for (const terminal of candidates) {
-        if (!terminal?.terminal_id || !terminal.tmux_session || seen.has(terminal.terminal_id)) continue
-        seen.add(terminal.terminal_id)
-        const detailOptions = terminalRequestOptions(terminal, true, 'manual-refresh')
-        void agentApi.getTerminal(terminal.terminal_id, detailOptions)
-          .then(detail => {
-            logTerminalScrollDebug('manual-refresh', terminal, detailOptions, detail)
-            cacheTerminalDetail(detail)
-            void fetchTerminals()
-          })
-          .catch(() => { /* best-effort refresh burst */ })
-      }
-    }
-
-    window.addEventListener(TERMINAL_REFRESH_REQUEST_EVENT, refreshTmuxDetails)
-    return () => window.removeEventListener(TERMINAL_REFRESH_REQUEST_EVENT, refreshTmuxDetails)
-  }, [selectedTerminalView, currentMainTerminal, cacheTerminalDetail, fetchTerminals])
+  }, [activeRailTmuxProbeTargets, stableLiveAttachId, applyTerminalSnapshotUpdate, cacheTerminalDetail, fetchTerminals])
 
   const handleTerminalScroll = useCallback(() => {
     const el = terminalOutputRef.current
@@ -4950,16 +4862,16 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
                       terminal={selectedTerminalView}
                       theme={terminalTheme}
                     />
-                  ) : useLiveAttachForSelected && selectedTerminalView ? (
+                  ) : stableLiveAttachId ? (
                     <LiveAttachXtermPane
-                      // Same key discipline as XtermTerminalPane: a full REMOUNT on
-                      // terminal switch gives a fresh xterm buffer AND a fresh WS, so
-                      // cross-terminal overlap is impossible. (Switching between this
-                      // and XtermTerminalPane is a component-type change, which React
-                      // also remounts.) Phase 2 — WS path, flag-gated, parallel to the
-                      // unchanged polling path below.
-                      key={selectedTerminalView.terminal_id}
-                      terminalId={selectedTerminalView.terminal_id}
+                      // Keyed on a DEBOUNCED terminal id (stableLiveAttachId) so a
+                      // transient selection flicker from the old polling path does NOT
+                      // remount the pane / cancel the control-mode attach mid-stream. A
+                      // real terminal switch changes the id and still remounts (fresh
+                      // xterm + fresh WS, no cross-terminal overlap). Phase 2 — WS path,
+                      // flag-gated, parallel to the unchanged polling path below.
+                      key={stableLiveAttachId}
+                      terminalId={stableLiveAttachId}
                       contentRef={terminalOutputRef as React.RefObject<HTMLDivElement | null>}
                       xtermTheme={XTERM_THEMES[terminalColorScheme]}
                       xtermProfile={XTERM_PROFILE_OPTIONS[terminalColorScheme]}
@@ -4967,25 +4879,13 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
                       className={`min-w-0 flex-1 overflow-hidden overscroll-contain font-mono text-neutral-100 ${XTERM_PROFILE_OPTIONS[terminalColorScheme].panePaddingClass} ${terminalTheme.selection}`}
                     />
                   ) : (
-                    <XtermTerminalPane
-                      // key on the stable per-terminal id forces a full REMOUNT
-                      // (dispose + recreate the xterm) on every terminal switch, so
-                      // a fresh instance with an empty buffer / no stale parse queue
-                      // renders the new terminal's backfill once — cross-terminal
-                      // overlap, accumulation, and the async-write race are
-                      // impossible by construction. The key is STABLE while
-                      // terminal_id is stable, so live streaming re-renders do NOT
-                      // remount (deltas keep appending; no mid-stream reset/flicker).
-                      key={selectedTerminalView?.terminal_id ?? 'no-terminal'}
-                      contentRef={terminalOutputRef as React.RefObject<HTMLDivElement | null>}
-                      content={selectedTerminalDisplayContent}
-                      contentSource={selectedTerminalView?.content_source}
-                      xtermTheme={XTERM_THEMES[terminalColorScheme]}
-                      xtermProfile={XTERM_PROFILE_OPTIONS[terminalColorScheme]}
-                      onViewportStickChange={handleXtermViewportStickChange}
-                      onResize={handleSelectedXtermResize}
-                      debugLabel={selectedTerminalView ? terminalPaneKey(selectedTerminalView) : undefined}
+                    // Live-attach is the only transport for the selected tmux
+                    // terminal. The debounced stableLiveAttachId makes a brief
+                    // no-live-terminal window rare; show an empty placeholder
+                    // rather than the removed capture-pane pane.
+                    <div
                       className={`min-w-0 flex-1 overflow-hidden overscroll-contain font-mono text-neutral-100 ${XTERM_PROFILE_OPTIONS[terminalColorScheme].panePaddingClass} ${terminalTheme.selection}`}
+                      style={{ backgroundColor: XTERM_THEMES[terminalColorScheme].background }}
                     />
                   )}
                   {selectedTerminalView && (() => {

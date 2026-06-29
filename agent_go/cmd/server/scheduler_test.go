@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -99,6 +100,163 @@ func TestWorkflowScheduleShouldResumePreviousIsOptIn(t *testing.T) {
 				t.Fatalf("ShouldResumePrevious() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
+	steps := postRunMonitorSteps()
+	if got := len(steps); got != 6 {
+		t.Fatalf("postRunMonitorSteps() length = %d, want 6", got)
+	}
+	for i, want := range []string{"triage", "fix", "report", "backup", "publish", "notify"} {
+		if got := steps[i].label; got != want {
+			t.Fatalf("postRunMonitorSteps()[%d].label = %q, want %q", i, got, want)
+		}
+	}
+
+	var triage string
+	var fix string
+	var report string
+	var backup string
+	for _, step := range steps {
+		if step.label == "triage" {
+			triage = step.query
+		}
+		if step.label == "fix" {
+			fix = step.query
+		}
+		if step.label == "report" {
+			report = step.query
+		}
+		if step.label == "backup" {
+			backup = step.query
+		}
+	}
+	if triage == "" {
+		t.Fatal("triage step not found")
+	}
+	if fix == "" {
+		t.Fatal("fix step not found")
+	}
+	if report == "" {
+		t.Fatal("report step not found")
+	}
+	if backup == "" {
+		t.Fatal("backup step not found")
+	}
+	if strings.Contains(triage, "LLM/COST/TIME REPORT") || strings.Contains(triage, "costs/execution") {
+		t.Fatalf("triage step should not include report-only LLM/cost/time audit:\n%s", triage)
+	}
+	if !strings.Contains(triage, "Triage is diagnosis/verdict only") {
+		t.Fatalf("triage step should clarify that hardening is separate:\n%s", triage)
+	}
+	if !strings.Contains(fix, "FIX / HARDEN") {
+		t.Fatalf("fix step should be the harden step:\n%s", fix)
+	}
+	for _, want := range []string{
+		`get_reference_doc(kind="optimize-playbook")`,
+		"harden_workflow",
+		"This turn does not improvise manual workflow edits",
+	} {
+		if !strings.Contains(fix, want) {
+			t.Fatalf("fix step missing %q:\n%s", want, fix)
+		}
+	}
+
+	for _, want := range []string{
+		"LLM/COST/TIME REPORT",
+		"after fix/harden",
+		"costs/execution",
+		"costs/evaluation",
+		"costs/phase/token_usage.json",
+		"timing summaries",
+		"by plan step and by agent/sub-agent",
+		"do NOT change model tiers",
+	} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("report step missing %q:\n%s", want, report)
+		}
+	}
+	if !strings.Contains(backup, "BACK UP FINAL STATE") || !strings.Contains(backup, "before publish") {
+		t.Fatalf("backup step should snapshot final state before publish:\n%s", backup)
+	}
+}
+
+func TestOptimizerScheduleMessagesIgnoresStoredMessagesAndInjectsCanonicalTurns(t *testing.T) {
+	stored := []string{`Do not ask for confirmation. Call get_workflow_command_guidance(kind="improve-workflow", focus="scheduled improve fire").`}
+
+	got := optimizerScheduleMessages(stored, []string{"prod"})
+	if len(got) != 5 {
+		t.Fatalf("optimizerScheduleMessages() length = %d, want 5", len(got))
+	}
+
+	checks := []struct {
+		idx  int
+		want string
+	}{
+		{0, "STEP 1/5 - PRE-BACKUP"},
+		{1, "STEP 2/5 - IMPROVE"},
+		{1, "CANONICAL AUTO IMPROVE MESSAGE"},
+		{1, "group_names=prod"},
+		{1, `get_workflow_command_guidance(kind="improve-workflow"`},
+		{1, "Do not call notify_user"},
+		{2, "STEP 3/5 - BACKUP FINAL STATE"},
+		{3, "STEP 4/5 - PUBLISH"},
+		{4, "STEP 5/5 - NOTIFY"},
+	}
+	for _, check := range checks {
+		if !strings.Contains(got[check.idx], check.want) {
+			t.Fatalf("optimizerScheduleMessages()[%d] missing %q:\n%s", check.idx, check.want, got[check.idx])
+		}
+	}
+	if strings.Contains(got[1], stored[0]) {
+		t.Fatalf("optimizerScheduleMessages() should ignore stored optimizer messages, got:\n%s", got[1])
+	}
+}
+
+func TestOptimizerScheduleMessagesDefaultsToImproveWhenNoStoredMessage(t *testing.T) {
+	got := optimizerScheduleMessages(nil, []string{"group-a"})
+	if len(got) != 5 {
+		t.Fatalf("optimizerScheduleMessages(nil) length = %d, want 5", len(got))
+	}
+	for _, want := range []string{
+		`get_workflow_command_guidance(kind="improve-workflow"`,
+		"group_names=group-a",
+		"do NOT call harden_workflow",
+		"do NOT call notify_user",
+	} {
+		if !strings.Contains(got[1], want) {
+			t.Fatalf("default improve message missing %q:\n%s", want, got[1])
+		}
+	}
+}
+
+func TestOptimizerScheduleMessagesReplacesLegacyExplicitQueue(t *testing.T) {
+	legacy := []string{
+		"STEP 1/5 — PRE-BACKUP",
+		"STEP 2/5 — IMPROVE",
+		"STEP 3/5 — BACKUP FINAL STATE",
+		"STEP 4/5 — PUBLISH",
+		"STEP 5/5 — NOTIFY",
+	}
+
+	got := optimizerScheduleMessages(legacy, nil)
+	if len(got) != 5 {
+		t.Fatalf("optimizerScheduleMessages() length = %d, want 5", len(got))
+	}
+	if strings.Contains(strings.Join(got, "\n"), strings.Join(legacy, "\n")) {
+		t.Fatalf("optimizerScheduleMessages() should replace legacy stored queues, got:\n%s", strings.Join(got, "\n"))
+	}
+	for _, want := range []string{
+		"STEP 1/5 - PRE-BACKUP",
+		"STEP 2/5 - IMPROVE",
+		"STEP 3/5 - BACKUP FINAL STATE",
+		"STEP 4/5 - PUBLISH",
+		"STEP 5/5 - NOTIFY",
+	} {
+		if !strings.Contains(strings.Join(got, "\n"), want) {
+			t.Fatalf("optimizerScheduleMessages() missing %q:\n%s", want, strings.Join(got, "\n"))
+		}
 	}
 }
 

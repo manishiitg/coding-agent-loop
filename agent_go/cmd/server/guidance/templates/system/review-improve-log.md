@@ -14,7 +14,7 @@ The workflow keeps a **single durable log** — `builder/improve.html` — the w
 
 `builder/review.html` is **legacy**. If you encounter one with unresolved findings, fold them into `builder/improve.html` as open-finding entries, then stop writing to it. Do not create new `review.html` files.
 
-It is a **self-contained, human-readable HTML document — not Markdown, not a data dump.** This is the page the user opens to understand the workflow, so make it genuinely good to read. Call `get_reference_doc(kind="html-output")` for the style baseline, and copy the **Starter HTML skeleton** at the bottom of this doc for the exact structure and polish. Top to bottom the document reads: **two verdicts → status headline → the goal → signal tiles → recent runs → newest-first timeline → archive**.
+It is a **self-contained, human-readable HTML document — not Markdown, not a data dump.** This is the page the user opens to understand the workflow, so make it genuinely good to read. Call `get_reference_doc(kind="html-output")` for the style baseline, and copy the **Starter HTML skeleton** at the bottom of this doc for the exact structure and polish. Top to bottom the document reads: **two verdicts → status headline → the goal → signal tiles → cost/time readout → recent runs → newest-first timeline → archive**.
 
 The Pulse log is opened in a narrow right panel by default. Design it **mobile-first**:
 the base CSS must work at 360-480px with stacked rows, no overlapping metadata, no
@@ -49,7 +49,22 @@ The goal card **reads from `soul.md`** — it does not replace it. `soul.md` sta
 
 ### Signal tiles — grouped by verdict
 
-Render metrics as readable tiles (value + movement in words: `eval 0.78 ▶ target 0.90`, `cost ¢19 ▲ from ¢12`), grouped into **Bug tiles** (did it run: tests executed, last-run status) and **Goal tiles** (is it achieving: eval scores vs target, outcome metrics vs success criteria). Read every number from `planning/metrics.json`, `db/metrics_history.jsonl`, and `scores/evaluation/` — the deterministic source of truth. Never fabricate a value or a trend, and never use charts.
+Render metrics as readable tiles (value + movement in words: `eval 0.78 ▶ target 0.90`, `cost ¢19 ▲ from ¢12`, `wall 4m12s · LLM 2m08s`), grouped into **Bug tiles** (did it run: tests executed, last-run status, runtime), **Goal tiles** (is it achieving: eval scores vs target, outcome metrics vs success criteria), and **Cost/time tiles** (what the run spent: total cost/tokens, wall/LLM/tool time, top-cost step/agent, slowest step/agent). Read every number from `planning/metrics.json`, `db/metrics_history.jsonl`, `scores/evaluation/`, cost ledgers under `costs/`, and timing summaries under `runs/<run_folder>/logs/<step-id>/execution/` — the deterministic source of truth. Never fabricate a value or a trend, and never use charts.
+
+### Cost/time readout — one compact operational report per run
+
+Every run row needs the top-level total, and the latest timeline entry or a compact Note should carry the breakdown when there is enough evidence. The goal is a useful CEO/operator read, not a ledger dump.
+
+Use this shape:
+
+- **Total:** cost, tokens, wall time, LLM time, tool time, and evidence path.
+- **By plan step:** step id/title, configured tier/model, observed provider/model, cost/tokens,
+  wall/LLM/tool time, LLM calls, tool calls.
+- **By agent/sub-agent when available:** parent step, agent/sub-agent id/name, model, cost/tokens,
+  elapsed time. For `todo_task`, group child agents under the parent plan step.
+- **By paid tool when relevant:** provider/model/tool, quantity, estimated/actual cost.
+
+If evidence is missing, say `missing cost evidence`, `missing timing evidence`, or `unpriced provider`; do not estimate. This section is report-only. Do not imply Pulse changed model tiers, prompts, schedules, or agent allocation.
 
 ### Newest on top — always
 
@@ -59,7 +74,7 @@ New entries go at the **top** of the timeline, not appended at the bottom. The f
 
 Each entry is a small card: a date, a kind tag, a one-line title, and a short prose body (2–4 sentences, plain language — explain *what* and *why*, link the evidence file or changelog entry when relevant). Use these kinds:
 
-- **Run** — a one-line row in the recent-runs strip: run id, status, key numbers (tests, eval, cost), the **backup result** (`backed up ✓ <commit/ref>`, `unchanged — already backed up`, or `backup ✗ <reason>`), and a short note only when something stands out. Routine runs stay terse; flag a run only when it regressed or the backup failed.
+- **Run** — a one-line row in the recent-runs strip: run id, status, key numbers (tests, eval, cost/tokens, wall time), the **backup result** (`backed up ✓ <commit/ref>`, `unchanged — already backed up`, or `backup ✗ <reason>`), and a short note only when something stands out. Routine runs stay terse; flag a run only when it regressed, the backup failed, cost/time evidence is missing, or one step/agent dominates spend/time.
 - **Monitor** — a post-run observation: what changed in the output and the most likely cause, correlated against the plan changelog ("output regressed at run N; you tightened step X two runs earlier — likely cause").
 - **Decision** — a change applied or proposed, with the one-line rationale and the file(s) touched. If it fixes an open finding, close that finding out (below).
 - **Chief of Staff recommendation** — an org-level recommendation written by Chief of Staff / Org Pulse after reading workflow evidence against org goals. It should name the org goal/KPI target or `supporting/no explicit goal`, give an alignment verdict (`aligned`, `supporting`, `unaligned`, or `unknown-measurement`), cite evidence, state the gap, suggest a builder action, and describe the expected KPI/success-criteria impact. Treat it like an external **Open finding**: verify the cited evidence, then choose the normal builder path (Bug → `harden_workflow`, Goal/strategy → `replan_workflow_from_results` or a targeted builder edit, measurement gap → metric/eval/report fix, cost/ops → review/apply if safe). Do not assume it is correct or already applied; close it only after the builder decision is made.
@@ -257,7 +272,7 @@ After this one rewrite the file is in skeleton format; from then on you just pre
   </div>
 
   <!-- SIGNAL TILES grouped by verdict. Read every number from planning/metrics.json,
-       db/metrics_history.jsonl, scores/evaluation/. Never invent. -->
+       db/metrics_history.jsonl, scores/evaluation/, costs/, and timing summaries. Never invent. -->
   <div class="grouplbl">Bug · operational health</div>
   <div class="tiles">
     <div class="tile"><div class="k">—</div><div class="v">—</div><div class="d">no runs yet</div></div>
@@ -266,9 +281,19 @@ After this one rewrite the file is in skeleton format; from then on you just pre
   <div class="tiles">
     <div class="tile"><div class="k">—</div><div class="v">—</div><div class="d">no runs yet</div></div>
   </div>
+  <div class="grouplbl">Cost + time · latest run</div>
+  <div class="tiles">
+    <div class="tile"><div class="k">Cost</div><div class="v">—</div><div class="d">missing cost evidence</div></div>
+    <div class="tile"><div class="k">Time</div><div class="v">—</div><div class="d">missing timing evidence</div></div>
+    <!-- Keep this section compact. Good tile examples:
+         Cost: "$0.27" / "1.2M tokens · top: score-companies $0.18"
+         Time: "4m12s" / "LLM 2m08s · tools 51s · slowest: browser-agent 1m22s"
+         Model mix: "high: opus · medium: sonnet" / "observed: claude-sonnet-4-6"
+         Evidence: "costs/execution/group/date.json · runs/<run>/logs/<step>/execution/timing.json" -->
+  </div>
 
   <div class="seclabel">Recent runs</div>
-  <div class="runs"><!-- one .run row per recent run; add .flag + a .note when something stands out --></div>
+  <div class="runs"><!-- one .run row per recent run; include status, eval, cost/tokens, wall time, backup; add .flag + a .note when something stands out --></div>
 
   <div class="seclabel">Latest — newest first</div>
   <!-- LOG ENTRIES: newest first -->

@@ -87,7 +87,7 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 						"messages": map[string]interface{}{
 							"type":        "array",
 							"items":       map[string]interface{}{"type": "string"},
-							"description": "Optional predefined message queue sent one-by-one to the workshop LLM. Omit for the default full-workflow run message. Example: ['Run the full workflow using run_full_workflow(group_name=\"group-1\")'].",
+							"description": "Optional predefined messages sent one-by-one to the workshop LLM. Omit for the default full-workflow run message. For workshop_mode='optimizer' auto-improve schedules, omit messages; persisted optimizer messages are ignored and the scheduler supplies the canonical improve prompt plus backup/publish/notify runtime turns. Example: ['Run the full workflow using run_full_workflow(group_name=\"group-1\")'].",
 						},
 						"workshop_mode": map[string]interface{}{
 							"type":        "string",
@@ -144,7 +144,7 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 						"messages": map[string]interface{}{
 							"type":        "array",
 							"items":       map[string]interface{}{"type": "string"},
-							"description": "Replace the workshop-mode message queue.",
+							"description": "Replace the workshop-mode messages. For workshop_mode='optimizer' auto-improve schedules, clear/omit messages; persisted optimizer messages are ignored and the scheduler supplies the canonical improve prompt plus backup/publish/notify runtime turns.",
 						},
 						"workshop_mode": map[string]interface{}{
 							"type":        "string",
@@ -188,7 +188,7 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 									"date":        map[string]interface{}{"type": "string", "description": "Date as YYYY-MM-DD in the schedule timezone."},
 									"time":        map[string]interface{}{"type": "string", "description": "Time as HH:MM in the schedule timezone."},
 									"description": map[string]interface{}{"type": "string", "description": "Optional note for this calendar item."},
-									"messages":    map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Optional per-item workshop messages."},
+									"messages":    map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Optional per-item workshop messages. For optimizer auto-improve items, omit messages; persisted optimizer messages are ignored and the scheduler supplies the canonical improve prompt plus backup/publish/notify runtime turns."},
 								},
 								"required": []string{"date", "time"},
 							},
@@ -207,7 +207,7 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 						"messages": map[string]interface{}{
 							"type":        "array",
 							"items":       map[string]interface{}{"type": "string"},
-							"description": "Optional default workshop messages for all items. Omit for the default full-workflow run message.",
+							"description": "Optional default workshop messages for all items. Omit for the default full-workflow run message. For optimizer auto-improve schedules, omit messages; persisted optimizer messages are ignored and the scheduler supplies the canonical improve prompt plus backup/publish/notify runtime turns.",
 						},
 						"workshop_mode": map[string]interface{}{
 							"type":        "string",

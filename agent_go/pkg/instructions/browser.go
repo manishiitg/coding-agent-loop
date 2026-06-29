@@ -220,6 +220,7 @@ Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, s
 - **Do NOT call close** unless the user asks — it will close their browser tab
 - Sessions **persist across tool calls** — you don't need to re-open pages between interactions
 - If a site requires login and the user is already logged in, navigate directly to the target page
+- Native Chrome downloads may land in the host Downloads folder. If the prompt grants a read-only host Downloads path, copy the needed file into the workspace/run Downloads folder before reading or parsing it. Never write, move, or delete files in host Downloads.
 - Python/browser code must call this HTTP `+"`agent_browser`"+` tool. Do not connect directly to CDP or use Playwright `+"`connect_over_cdp`"+` for actions unless the task explicitly requires raw CDP and you target a specific tab.
 
 ### Advanced: Direct CDP WebSocket Access

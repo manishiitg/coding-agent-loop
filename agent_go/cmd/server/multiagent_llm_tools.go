@@ -29,7 +29,7 @@ func listProviderModelsJSON(provider string) string {
 	}
 
 	if providerModelSelectionMode(provider) == "dynamic" {
-		resp := getDynamicModels(provider)
+		resp := getDynamicModels(provider, true)
 		return prettyJSON(resp)
 	}
 

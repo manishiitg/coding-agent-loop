@@ -330,9 +330,10 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			readPaths = common.DeduplicateStrings(append(sessionCfg.ReadPaths, sessionCfg.WritePaths...))
 		}
 		folderGuard = &FolderGuardConfig{
-			Enabled:    true,
-			WritePaths: sessionCfg.WritePaths,
-			ReadPaths:  readPaths,
+			Enabled:           true,
+			WritePaths:        sessionCfg.WritePaths,
+			ReadPaths:         readPaths,
+			BlockedWritePaths: sessionCfg.BlockedWritePaths,
 		}
 	} else if allowedWrites, ok := ctx.Value(common.FolderGuardAllowedWriteFolderKey).([]string); ok && len(allowedWrites) > 0 {
 		// Context System 1: chat/plan/prototype mode

@@ -56,27 +56,21 @@ const (
 )
 
 // liveAttachEnabled reports whether the live-attach transport is turned on.
-// Default is OFF: only an explicit truthy value enables it.
+// Live-attach is now the only transport for the selected terminal, so this is
+// always on (the RUNLOOP_TERMINAL_LIVE_ATTACH feature flag was removed).
 func liveAttachEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("RUNLOOP_TERMINAL_LIVE_ATTACH"))) {
-	case "1", "true", "on", "yes", "enabled":
-		return true
-	default:
-		return false
-	}
+	return true
 }
 
-// newLiveAttachManagerIfEnabled returns a manager only when the flag is set AND
-// the local tmux is new enough; otherwise nil (endpoint stays inert / 404).
+// newLiveAttachManagerIfEnabled always creates the manager (live-attach is the
+// only transport now). The tmux-version guard is kept: if the local tmux is too
+// old for control-mode attach, return nil so the endpoint stays inert / 404.
 func newLiveAttachManagerIfEnabled() *liveAttachManager {
-	if !liveAttachEnabled() {
-		return nil
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), terminalTmuxActionTimeout)
 	defer cancel()
 	ok, version := liveAttachTmuxSupported(ctx)
 	if !ok {
-		log.Printf("[live-attach] RUNLOOP_TERMINAL_LIVE_ATTACH set but tmux is unsupported (need >= %d.%d, have %q); endpoint disabled",
+		log.Printf("[live-attach] tmux is unsupported (need >= %d.%d, have %q); endpoint disabled",
 			liveAttachMinTmuxMajor, liveAttachMinTmuxMinor, version)
 		return nil
 	}
@@ -180,18 +174,18 @@ func (m *liveAttachManager) subscribe(tmuxSession string, cols, rows int) (*live
 	m.mu.Lock()
 	st := m.sessions[tmuxSession]
 	if st == nil {
-		st = &liveAttachStream{
-			mgr:         m,
-			tmuxSession: tmuxSession,
-			subs:        make(map[chan []byte]struct{}),
-			done:        make(chan struct{}),
-			cols:        cols,
-			rows:        rows,
+			st = &liveAttachStream{
+				mgr:         m,
+				tmuxSession: tmuxSession,
+				subs:        make(map[chan []byte]struct{}),
+				done:        make(chan struct{}),
+				cols:        cols,
+				rows:        rows,
+			}
+			m.sessions[tmuxSession] = st
+			st.start()
 		}
-		m.sessions[tmuxSession] = st
-		st.start()
-	}
-	m.mu.Unlock()
+		m.mu.Unlock()
 
 	ch := make(chan []byte, liveAttachSubBuffer)
 	st.mu.Lock()
@@ -285,13 +279,17 @@ func (st *liveAttachStream) setSize(cols, rows int) {
 	}
 	st.mu.Lock()
 	st.cols, st.rows = cols, rows
-	ptmx := st.ptmx
 	st.mu.Unlock()
-	if ptmx == nil {
-		return
-	}
-	if err := pty.Setsize(ptmx, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)}); err != nil {
-		log.Printf("[live-attach] setsize session=%s %dx%d: %v", st.tmuxSession, cols, rows, err)
+	// Match the PoC exactly: resize the tmux window via resize-window ONLY. We do
+	// not also pty.Setsize the control client — in control mode the %output
+	// reflects the window geometry set by resize-window, and resizing the client
+	// PTY as well can race/clip against the window size and misalign the stream on
+	// resize (the "resize breaks stuff" symptom). resize-window also flips the
+	// session to window-size manual, which is what we want.
+	cctx, cancel := context.WithTimeout(context.Background(), terminalTmuxActionTimeout)
+	defer cancel()
+	if err := runTerminalTmuxCommand(cctx, "", "resize-window", "-t", st.tmuxSession, "-x", strconv.Itoa(cols), "-y", strconv.Itoa(rows)); err != nil {
+		log.Printf("[live-attach] resize-window session=%s %dx%d: %v", st.tmuxSession, cols, rows, err)
 	}
 }
 

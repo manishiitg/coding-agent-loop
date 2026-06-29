@@ -38,7 +38,7 @@ const builtinOrgPulseQuery = `You are running the daily Org Pulse — the Chief 
 
 First, check whether anything has changed since your last Org Pulse (any workflow runs, new chats, or new outputs). If nothing has changed, write nothing and stop.
 
-Otherwise, call get_reference_doc(kind="org-pulse") and follow it exactly. Start by backing up org-level artifacts per get_reference_doc(kind="backup-strategy") using pulse/backup.json and pulse/backup/status.json, same as workflow backup. Before writing or changing pulse/org-pulse.html, also call get_reference_doc(kind="org-html") and use its Org Pulse skeleton. Then read pulse/goals.html when it exists, review the org (each workflow's builder/improve.html verdict pills + headline, reports, knowledgebase, global learnings, plus recent conversations), measure workflows against the org goals, judge the org's endgame, generate grounded proposal-only recommendations for each goal (per-automation recs to that automation's builder/improve.html; org-level recs to the Recommendations section of pulse/goals.html), harvest what's worth keeping into your memory (curate and merge in your own words — never copy/import files), propose any promotions (a repeated ad-hoc task -> turn it into a workflow), and record everything — goal scorecard, org health, recommendations, what you harvested, and suggestion cards — in the single pulse/org-pulse.html log. If org publish is configured in pulse/publish.json and already verified in pulse/publish/status.json, re-publish pulse/goals.html + pulse/org-pulse.html per get_reference_doc(kind="publish-strategy") and update pulse/publish/status.json. Notify the user only on a decision-worthy change using the org-pulse notification format; when Gmail/email is available, set email_html plus a plain email_body fallback. Stay silent on a steady day.`
+Otherwise, call get_reference_doc(kind="org-pulse") and follow it exactly. Start by backing up org-level artifacts per get_reference_doc(kind="backup-strategy") using pulse/backup.json and pulse/backup/status.json, same as workflow backup. Before writing or changing pulse/org-pulse.html, also call get_reference_doc(kind="org-html") and use its Org Pulse skeleton. Then read pulse/goals.html when it exists, review the org (each workflow's builder/improve.html verdict pills + headline, reports, knowledgebase, global learnings, plus recent conversations), measure workflows against the org goals, judge the org's endgame, audit the LLM/model tiers and cost posture used across workflows (report only — do not change any model/config), generate grounded proposal-only recommendations for each goal (per-automation recs to that automation's builder/improve.html; org-level recs to the Recommendations section of pulse/goals.html), harvest what's worth keeping into your memory (curate and merge in your own words — never copy/import files), propose any promotions (a repeated ad-hoc task -> turn it into a workflow), and record everything — goal scorecard, org health, LLM/cost audit, recommendations, what you harvested, and suggestion cards — in the single pulse/org-pulse.html log. If org publish is configured in pulse/publish.json and already verified in pulse/publish/status.json, re-publish pulse/goals.html + pulse/org-pulse.html per get_reference_doc(kind="publish-strategy") and update pulse/publish/status.json. Notify the user only on a decision-worthy change using the org-pulse notification format; when Gmail/email is available, set email_html plus a plain email_body fallback. Stay silent on a steady day.`
 
 // builtinOrgPulseMessages runs the daily Org Pulse as a message SEQUENCE — one
 // focused turn per step in a single resumed session, the way workflow Pulse
@@ -47,11 +47,12 @@ Otherwise, call get_reference_doc(kind="org-pulse") and follow it exactly. Start
 // builtinOrgPulseQuery above is kept as the single-turn Query fallback so nothing
 // that references it breaks.
 var builtinOrgPulseMessages = []string{
-	`STEP 1/5 — FRESHNESS + BACKUP. You are running the daily Org Pulse, the Chief of Staff's heartbeat over the whole org. Call get_reference_doc(kind="org-pulse") and follow it; we go one step at a time — do ONLY this step, then stop. First check whether anything changed since your last Org Pulse: any workflow runs, new chats, new outputs, or edits to pulse/goals.html. If NOTHING changed, say "Org idle since last pulse — nothing to do" and STOP the whole pass; do not run the later steps. Otherwise back up org-level artifacts per get_reference_doc(kind="backup-strategy") using pulse/backup.json and pulse/backup/status.json (same config/status split as workflow backup; set up the zero-config local-git default if backup is unconfigured; skip the push when the source hash is already backed up). Report what changed and the backup result, then stop.`,
-	`STEP 2/5 — EVIDENCE + GOALS. In one efficient batched sweep, read pulse/goals.html (the goal scorecard) plus each workflow's builder/improve.html verdict pills + headline, latest reports, knowledgebase, global learnings, recent conversations, and your own memory — follow get_reference_doc(kind="org-pulse") step 3 (curate, don't import; trust the per-workflow verdicts; drill into raw runs only on a surprise). Then measure goals: for each goal compare current vs baseline/target, assign on-track / at-risk / off-track / unknown with a one-sentence reason, and diagnose the gap blocking each goal. Evaluate workflow alignment only when goals exist. Report the goal scorecard with each goal's gap, then stop.`,
-	`STEP 3/5 — GENERATE RECOMMENDATIONS. This is the proactive step: for each goal, propose grounded, prioritized recommendations to MOVE it — not just diagnose it. Follow get_reference_doc(kind="org-pulse") "Generate recommendations". Every rec is tied to a goal + evidence and ranked by impact/effort, and is PROPOSAL-ONLY — you recommend, the user/builder decides; never auto-apply a plan change. Think beyond the obvious: a new automation for an unserved goal, a different approach for a capped goal, cross-automation synergies, and promotions. Write per-automation improvement recs into that automation's builder/improve.html (a newest-first Chief of Staff recommendation card). Write org-level recs to the Recommendations section of pulse/goals.html per get_reference_doc(kind="org-html"). Report the recommendations you wrote and where, then stop.`,
-	`STEP 4/5 — HARVEST + PROMOTIONS. Harvest what's worth keeping into your shared memory — curate and merge in your own words into the right entity/topic note, never copy or import files; synthesize cross-workflow insights; if a day produced nothing worth keeping, write nothing. Then spot promotions: review recent conversations for a repeated ad-hoc task shape and PROPOSE turning it into a workflow (name it, generalize the procedure, cite instances) — propose only, do not create it. Follow get_reference_doc(kind="org-pulse") steps 5-6. Report a one-sentence note of what you harvested and any promotion proposal, then stop.`,
-	`STEP 5/5 — LOG + PUBLISH. Before writing, call get_reference_doc(kind="org-html") and use its Org Pulse skeleton. Prepend one dated entry to pulse/org-pulse.html (newest-first) covering the goal scorecard, workflow alignment delta, org-health one-liner, recommendations summary, what you harvested, and suggestion cards. If org publish is configured in pulse/publish.json and already verified in pulse/publish/status.json, re-publish pulse/goals.html + pulse/org-pulse.html per get_reference_doc(kind="publish-strategy") and update pulse/publish/status.json (never do the first/verifying publish unattended). Notify the user only on a decision-worthy change using the org-pulse notification format; when Gmail/email is available, set email_html plus a plain email_body fallback. Stay silent on a steady day. Report the log entry and publish result, then stop.`,
+	`STEP 1/6 — FRESHNESS + BACKUP. You are running the daily Org Pulse, the Chief of Staff's heartbeat over the whole org. Call get_reference_doc(kind="org-pulse") and follow it; we go one step at a time — do ONLY this step, then stop. First check whether anything changed since your last Org Pulse: any workflow runs, new chats, new outputs, or edits to pulse/goals.html. If NOTHING changed, say "Org idle since last pulse — nothing to do" and STOP the whole pass; do not run the later steps. Otherwise back up org-level artifacts per get_reference_doc(kind="backup-strategy") using pulse/backup.json and pulse/backup/status.json (same config/status split as workflow backup; set up the zero-config local-git default if backup is unconfigured; skip the push when the source hash is already backed up). Report what changed and the backup result, then stop.`,
+	`STEP 2/6 — EVIDENCE + GOALS. In one efficient batched sweep, read pulse/goals.html (the goal scorecard) plus each workflow's builder/improve.html verdict pills + headline, latest reports, knowledgebase, global learnings, recent conversations, and your own memory — follow get_reference_doc(kind="org-pulse") step 3 (curate, don't import; trust the per-workflow verdicts; drill into raw runs only on a surprise). Then measure goals: for each goal compare current vs baseline/target, assign on-track / at-risk / off-track / unknown with a one-sentence reason, and diagnose the gap blocking each goal. Evaluate workflow alignment only when goals exist. Report the goal scorecard with each goal's gap, then stop.`,
+	`STEP 3/6 — LLM + COST AUDIT (report-only). Review the LLM/model posture across all workflows. In one batched sweep, inspect each workflow's workflow.json capabilities.llm_config / execution defaults / schedules, recent cost artifacts under costs/ and run folders, and any available report or Pulse evidence that names provider/model/tier. Summarize which workflows use high/medium/low tiers or explicit models, where costs are concentrated, where cost evidence is missing, and any unusual mismatch between task importance and model tier. This is reporting only: do NOT change workflow.json, prompts, plans, model settings, schedules, or secrets; do NOT run optimizers or fixes. Report the LLM/cost scorecard and the evidence paths you used, then stop.`,
+	`STEP 4/6 — GENERATE RECOMMENDATIONS. This is the proactive step: for each goal, propose grounded, prioritized recommendations to MOVE it — not just diagnose it. Follow get_reference_doc(kind="org-pulse") "Generate recommendations". Every rec is tied to a goal + evidence and ranked by impact/effort, and is PROPOSAL-ONLY — you recommend, the user/builder decides; never auto-apply a plan change. Think beyond the obvious: a new automation for an unserved goal, a different approach for a capped goal, cross-automation synergies, and promotions. Write per-automation improvement recs into that automation's builder/improve.html (a newest-first Chief of Staff recommendation card). Write org-level recs to the Recommendations section of pulse/goals.html per get_reference_doc(kind="org-html"). Report the recommendations you wrote and where, then stop.`,
+	`STEP 5/6 — HARVEST + PROMOTIONS. Harvest what's worth keeping into your shared memory — curate and merge in your own words into the right entity/topic note, never copy or import files; synthesize cross-workflow insights; if a day produced nothing worth keeping, write nothing. Then spot promotions: review recent conversations for a repeated ad-hoc task shape and PROPOSE turning it into a workflow (name it, generalize the procedure, cite instances) — propose only, do not create it. Follow get_reference_doc(kind="org-pulse") steps 7-8. Report a one-sentence note of what you harvested and any promotion proposal, then stop.`,
+	`STEP 6/6 — LOG + PUBLISH. Before writing, call get_reference_doc(kind="org-html") and use its Org Pulse skeleton. Prepend one dated entry to pulse/org-pulse.html (newest-first) covering the goal scorecard, workflow alignment delta, org-health one-liner, LLM/model tier + cost audit, recommendations summary, what you harvested, and suggestion cards. If org publish is configured in pulse/publish.json and already verified in pulse/publish/status.json, re-publish pulse/goals.html + pulse/org-pulse.html per get_reference_doc(kind="publish-strategy") and update pulse/publish/status.json (never do the first/verifying publish unattended). Notify the user only on a decision-worthy change using the org-pulse notification format; when Gmail/email is available, set email_html plus a plain email_body fallback. Stay silent on a steady day. Report the log entry, LLM/cost summary, and publish result, then stop.`,
 }
 
 // DefaultBuiltinSchedules returns the list of product-provided schedules that
@@ -123,17 +124,68 @@ func IsOrgPulseSchedule(sched WorkflowSchedule) bool {
 	return strings.Contains(hay, "org pulse") || strings.Contains(hay, "org-pulse")
 }
 
+// NormalizeOrgPulseSchedule keeps Org Pulse runtime behavior on the current
+// product-managed prompt sequence while preserving the user's scheduling knobs.
+// Older same-ID overrides and duplicate user-created Org Pulse schedules can
+// otherwise keep stale Queries/Messages forever and miss new required audit
+// steps.
+func NormalizeOrgPulseSchedule(sched WorkflowSchedule) WorkflowSchedule {
+	if !IsOrgPulseSchedule(sched) {
+		return sched
+	}
+
+	builtin, ok := FindDefaultBuiltinSchedule(builtinOrgPulseID)
+	if !ok {
+		return sched
+	}
+
+	normalized := builtin
+	normalized.ID = sched.ID
+	normalized.Enabled = sched.Enabled
+	normalized.Mode = "multi-agent"
+	normalized.TriggerPayload = sched.TriggerPayload
+	normalized.GroupNames = sched.GroupNames
+	normalized.ResumePrevious = sched.ResumePrevious
+
+	if strings.TrimSpace(sched.Name) != "" {
+		normalized.Name = sched.Name
+	}
+	if strings.TrimSpace(sched.Description) != "" {
+		normalized.Description = sched.Description
+	}
+	if strings.TrimSpace(sched.ScheduleType) != "" {
+		normalized.ScheduleType = sched.ScheduleType
+	}
+	if strings.TrimSpace(sched.CronExpression) != "" {
+		normalized.CronExpression = sched.CronExpression
+	}
+	if strings.TrimSpace(sched.Timezone) != "" {
+		normalized.Timezone = sched.Timezone
+	}
+	if len(sched.CalendarItems) > 0 {
+		normalized.CalendarItems = make([]CalendarScheduleItem, 0, len(sched.CalendarItems))
+		for _, item := range sched.CalendarItems {
+			item.Messages = nil
+			normalized.CalendarItems = append(normalized.CalendarItems, item)
+		}
+	}
+
+	return normalized
+}
+
 // MergeBuiltinSchedules appends built-in schedules that the user has not
-// overridden. Matching is by ID — a user entry with the same ID always wins,
-// so the user can disable a built-in (enabled:false) or tweak cron/timezone
-// by adding a matching entry to their multiagent-schedules.json.
+// overridden. Matching is by ID — a user entry with the same ID supplies the
+// scheduling knobs (enabled, cron/timezone, calendar items). Recognized Org
+// Pulse overrides/duplicates are normalized to the current product-managed
+// content so stale persisted messages do not shadow new built-in steps.
 func MergeBuiltinSchedules(userSchedules []WorkflowSchedule) []WorkflowSchedule {
 	existing := make(map[string]struct{}, len(userSchedules))
-	for _, s := range userSchedules {
-		existing[s.ID] = struct{}{}
-	}
 	out := make([]WorkflowSchedule, 0, len(userSchedules)+len(DefaultBuiltinSchedules()))
-	out = append(out, userSchedules...)
+	for _, s := range userSchedules {
+		normalized := NormalizeOrgPulseSchedule(s)
+		existing[normalized.ID] = struct{}{}
+		out = append(out, normalized)
+	}
 	for _, b := range DefaultBuiltinSchedules() {
 		if _, overridden := existing[b.ID]; !overridden {
 			out = append(out, b)

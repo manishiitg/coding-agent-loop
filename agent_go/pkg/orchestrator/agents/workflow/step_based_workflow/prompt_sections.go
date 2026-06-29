@@ -537,7 +537,7 @@ func GetPromptDocsRoot() string {
 func toAbsPaths(docsRoot string, paths []string) []string {
 	result := make([]string, len(paths))
 	for i, p := range paths {
-		if p == "" || docsRoot == "" {
+		if p == "" || docsRoot == "" || filepath.IsAbs(p) {
 			result[i] = p
 		} else {
 			result[i] = filepath.Join(docsRoot, p)

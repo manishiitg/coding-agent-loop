@@ -375,10 +375,10 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
 
   Improvements:
     - define-success           → one-time framework bootstrap
-    - improve-workflow         → unified plan + KB + learnings + db improvement
+    - improve-workflow         → unified plan + report + KB + learnings + db improvement
     - improve-evaluation       → evaluation_plan changes
     - auto-improve             → set up cron schedules
-    - improve-report           → report layout/color improvements
+    - improve-report           → report accuracy/live-data/layout improvements
 
 **Optional parameters:**
   - ` + "`focus`" + `       : strongly recommended; the conversation-derived instruction/context for this command. Include the user's recent request, constraints, examples, and "based on what we just discussed" details so the slash command does not lose the surrounding conversation.
@@ -391,7 +391,7 @@ The returned text is your instructions for this turn — do not paraphrase or sk
 
 ### How ` + "`/improve-*`" + ` commands evolve
 
-The existing ` + "`/improve-evaluation`" + `, ` + "`/improve-workflow`" + `, ` + "`/auto-improve`" + ` continue to work. ` + "`/improve-workflow`" + ` subsumes the per-domain commands when the user wants a unified pass — its discovery covers plan, knowledgebase, learnings, db, reports, eval, run logs, and metrics as one surface. Metrics are evidence. The optimizer chooses ` + "`harden_workflow`" + ` for local reliability/artifact fixes, ` + "`replan_workflow_from_results`" + ` for success-criteria/metric alignment redesign, ` + "`propose_metric`" + ` / ` + "`retire_metric`" + ` for metric-definition cleanup, and ` + "`improve_kb`" + ` / ` + "`improve_learnings`" + ` / ` + "`improve_db`" + ` for persistent-store hygiene (KB notes, global learnings, db/data contracts — db stays compatible with the plan and reports).
+The existing ` + "`/improve-evaluation`" + `, ` + "`/improve-workflow`" + `, ` + "`/auto-improve`" + ` continue to work. ` + "`/improve-workflow`" + ` subsumes the per-domain commands when the user wants a unified pass — its discovery covers plan, reports, knowledgebase, learnings, db, eval, run logs, and metrics as one surface. Metrics are evidence. The optimizer chooses ` + "`harden_workflow`" + ` for local reliability/artifact fixes, ` + "`replan_workflow_from_results`" + ` for success-criteria/metric alignment redesign, ` + "`propose_metric`" + ` / ` + "`retire_metric`" + ` for metric-definition cleanup, report-plan/HTML edits for report accuracy and live-data wiring, and ` + "`improve_kb`" + ` / ` + "`improve_learnings`" + ` / ` + "`improve_db`" + ` for persistent-store hygiene (KB notes, global learnings, db/data contracts — db stays compatible with the plan and reports).
 
 ### Resolution discipline
 

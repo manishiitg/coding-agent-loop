@@ -3340,6 +3340,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					[]string{workflowWorkspacePath},
 					[]string{workflowWorkspacePath},
 				)
+				if hostDownloads := common.GrantSessionCDPHostDownloadsReadOnly(sessionID, workflowBrowserMode); hostDownloads != "" {
+					log.Printf("[WORKFLOW EXECUTION] Added read-only CDP host Downloads: %s", hostDownloads)
+				}
 			}
 
 			// Update run_metadata.json with LLM config before execution starts
@@ -3979,6 +3982,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					readPaths,
 					append([]string{perUserChatsWrite, "Downloads/", perUserMemWrite, perUserChatHistory}, additionalFolders...),
 				)
+				if hostDownloads := common.GrantSessionCDPHostDownloadsReadOnly(sessionID, req.BrowserMode); hostDownloads != "" {
+					log.Printf("[MULTI-AGENT FOLDER GUARD] Added read-only CDP host Downloads: %s", hostDownloads)
+				}
 				log.Printf("[MULTI-AGENT FOLDER GUARD] Applied per-user folder restriction (chats: %s, mem: %s, write: %v, read-only: %v, grants: %v)", perUserChatsWrite, perUserMemWrite, additionalFolders, workflowReadOnlyFolders, resolvedGrants.AppliedNames)
 			} else {
 				perUserMemWrite := perUserMemoryFolder + "/"
@@ -4005,6 +4011,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// still inspect plan.json and friends.
 				if len(fileContextBlockedWriteFolders) > 0 {
 					workspace.SetSessionFolderGuardBlockedWritePaths(sessionID, fileContextBlockedWriteFolders)
+				}
+				if hostDownloads := common.GrantSessionCDPHostDownloadsReadOnly(sessionID, req.BrowserMode); hostDownloads != "" {
+					log.Printf("[WORKFLOW PHASE FOLDER GUARD] Added read-only CDP host Downloads: %s", hostDownloads)
 				}
 				log.Printf("[WORKFLOW PHASE FOLDER GUARD] Applied workflow folder restriction (workflow writes: %v, chats read-only: %s, mem: %s, read-only: %v, blocked-write: %v)", writePaths, perUserChatsWrite, perUserMemWrite, workflowReadOnlyFolders, fileContextBlockedWriteFolders)
 			}
@@ -4833,6 +4842,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						phaseReadPaths,
 						[]string{phaseWorkspacePath, "Downloads"},
 					)
+					if hostDownloads := common.GrantSessionCDPHostDownloadsReadOnly(sessionID, req.BrowserMode); hostDownloads != "" {
+						log.Printf("[WORKFLOW_PHASE] Added read-only CDP host Downloads: %s", hostDownloads)
+					}
 					if len(workflowReadOnlyFolders) > 0 {
 						log.Printf("[WORKFLOW_PHASE] Added read-only access for #workflow references: %v", workflowReadOnlyFolders)
 					}
@@ -5060,12 +5072,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 								// one-line pointer. The full guide (API + per-mode behaviors,
 								// upload rules, session limits) lives in the workflow-reference
 								// mega-skill as `browser-usage` and is fetched on demand.
-								underlyingAgent.AppendSystemPrompt(
-									"\n## Browser\n\nThis phase has a browser tool available (mode=" + effectiveBrowserMode +
-										"). For the full agent_browser HTTP API + per-mode behaviors (CDP / headless / Playwright), " +
-										"tab discipline, file uploads, and session limits, call " +
-										"`get_reference_doc(kind=\"browser-usage\")` before driving the browser.\n",
-								)
+								browserPrompt := "\n## Browser\n\nThis phase has a browser tool available (mode=" + effectiveBrowserMode +
+									"). For the full agent_browser HTTP API + per-mode behaviors (CDP / headless / Playwright), " +
+									"tab discipline, file uploads, and session limits, call " +
+									"`get_reference_doc(kind=\"browser-usage\")` before driving the browser.\n"
+								if hostDownloads := common.CDPHostDownloadsReadPath(effectiveBrowserMode); hostDownloads != "" {
+									browserPrompt += "In CDP mode, Chrome-native downloads can land in the host Downloads folder " + fmt.Sprintf("%q", hostDownloads) + ". That host folder is read-only: copy needed files into the workflow/workspace Downloads folder before processing them, and never write, move, or delete files under host Downloads.\n"
+								}
+								underlyingAgent.AppendSystemPrompt(browserPrompt)
 								log.Printf("[WORKFLOW_PHASE] Appended browser-skill pointer to %s (mode=%s, playwright=%v, agent-browser=%v)",
 									workflowPhaseID, effectiveBrowserMode, phaseBrowserCfg.HasPlaywright, phaseBrowserCfg.HasAgentBrowser)
 							}

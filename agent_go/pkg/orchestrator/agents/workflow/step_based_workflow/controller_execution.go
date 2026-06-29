@@ -1287,9 +1287,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			prevWrite = prevCfg.WritePaths
 		}
 		common.SetSessionFolderGuard(sessionID, narrowRead, narrowWrite)
+		hcpo.grantSessionCDPHostDownloadsReadOnly(sessionID)
 		hcpo.GetLogger().Info(fmt.Sprintf("🔒 [FOLDER_GUARD_STEP] Narrowed session %s for step %s: read=%v write=%v", sessionID, step.GetID(), narrowRead, narrowWrite))
 		defer func() {
 			common.SetSessionFolderGuard(sessionID, prevRead, prevWrite)
+			hcpo.grantSessionCDPHostDownloadsReadOnly(sessionID)
 			hcpo.GetLogger().Info(fmt.Sprintf("🔓 [FOLDER_GUARD_STEP] Restored session %s after step %s", sessionID, step.GetID()))
 		}()
 	}
@@ -2477,6 +2479,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 										widenedRead = append(widenedRead, addedPaths...)
 										widenedWrite = append(widenedWrite, addedPaths...)
 										common.SetSessionFolderGuard(subSessionID, widenedRead, widenedWrite)
+										hcpo.grantSessionCDPHostDownloadsReadOnly(subSessionID)
 										hcpo.GetLogger().Info(fmt.Sprintf("🔓 [LEARN_DIRECT] Widened sub-agent session %s for learnings turn on step %s: +%v", subSessionID, step.GetID(), addedPaths))
 									} else {
 										hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [LEARN_DIRECT] No existing shell config for sub-agent session %s — learnings writes may fail", subSessionID))

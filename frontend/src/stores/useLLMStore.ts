@@ -282,7 +282,7 @@ interface LLMState extends StoreActions {
   providerManifestLoading: boolean
   loadProviderManifest: () => Promise<void>
   getProviderInfo: (id: string) => ProviderManifestEntry | undefined
-  getProviderDynamicModels: (provider: string) => Promise<DynamicModelsResponse | null>
+  getProviderDynamicModels: (provider: string, full?: boolean) => Promise<DynamicModelsResponse | null>
 
   // Delegation tier configuration
   delegationTierConfig: DelegationTierConfig | null
@@ -529,9 +529,9 @@ export const useLLMStore = create<LLMState>()(
           return get().providerManifest.find(p => p.id === id)
         },
 
-        getProviderDynamicModels: async (provider: string) => {
+        getProviderDynamicModels: async (provider: string, full?: boolean) => {
           try {
-            return await llmConfigService.getProviderModels(provider)
+            return await llmConfigService.getProviderModels(provider, full)
           } catch (error) {
             console.warn(`Failed to load dynamic models for ${provider}:`, error)
             return null

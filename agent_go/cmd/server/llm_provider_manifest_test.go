@@ -77,7 +77,7 @@ func TestPiFallbackModelsKeepProviderShortlistsSmall(t *testing.T) {
 }
 
 func TestFetchPiCLIModelsReturnsCuratedShortlist(t *testing.T) {
-	resp := fetchPiCLIModels()
+	resp := fetchPiCLIModels(false)
 	if resp == nil {
 		t.Fatal("fetchPiCLIModels returned nil")
 	}

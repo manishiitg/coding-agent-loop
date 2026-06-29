@@ -22,15 +22,23 @@ export const useCapabilitiesStore = create<CapabilitiesState>()(
 
       fetchCapabilities: async () => {
         set({ loading: true, error: null })
-        try {
-          const capabilities = await agentApi.getCapabilities()
-          set({ capabilities, loading: false })
-        } catch (err) {
-          console.error('Failed to fetch capabilities:', err)
-          set({ 
-            error: err instanceof Error ? err.message : 'Failed to fetch capabilities', 
-            loading: false 
-          })
+        // Retry with backoff: the frontend starts faster than the Go backend
+        // compiles/listens, so an early single fetch hits a dead backend and would
+        // otherwise leave capabilities permanently empty (no retry) until a manual
+        // reload. Retry until the backend answers; once it does, the store updates
+        // and dependent gates (e.g. terminal_live_attach) flip on their own.
+        for (let attempt = 1; attempt <= 15; attempt++) {
+          try {
+            const capabilities = await agentApi.getCapabilities()
+            set({ capabilities, loading: false, error: null })
+            return
+          } catch (err) {
+            if (attempt === 15) {
+              set({ error: err instanceof Error ? err.message : 'Failed to fetch capabilities', loading: false })
+              return
+            }
+            await new Promise((r) => setTimeout(r, Math.min(400 * attempt, 3000)))
+          }
         }
       },
 

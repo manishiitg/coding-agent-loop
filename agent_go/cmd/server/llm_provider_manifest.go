@@ -406,7 +406,8 @@ func (api *StreamingAPI) handleGetProviderModels(w http.ResponseWriter, r *http.
 	mode := providerModelSelectionMode(provider)
 
 	if mode == "dynamic" {
-		resp := getDynamicModels(provider)
+		full := r.URL.Query().Get("full") == "true"
+		resp := getDynamicModels(provider, full)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 		return
@@ -441,9 +442,14 @@ func (api *StreamingAPI) handleGetProviderModels(w http.ResponseWriter, r *http.
 	json.NewEncoder(w).Encode(resp)
 }
 
-func getDynamicModels(provider string) *dynamicModelsResponse {
+func getDynamicModels(provider string, full bool) *dynamicModelsResponse {
+	cacheKey := provider
+	if full {
+		cacheKey = provider + ":full"
+	}
+
 	dynamicModelCacheMu.RLock()
-	cached, ok := dynamicModelCache[provider]
+	cached, ok := dynamicModelCache[cacheKey]
 	dynamicModelCacheMu.RUnlock()
 
 	if ok && time.Since(cached.fetchedAt) < dynamicModelCacheTTL {
@@ -455,7 +461,7 @@ func getDynamicModels(provider string) *dynamicModelsResponse {
 	case "cursor-cli":
 		resp = fetchCursorCLIModels()
 	case "pi-cli":
-		resp = fetchPiCLIModels()
+		resp = fetchPiCLIModels(full)
 	default:
 		resp = &dynamicModelsResponse{
 			Provider:           provider,
@@ -466,7 +472,7 @@ func getDynamicModels(provider string) *dynamicModelsResponse {
 	}
 
 	dynamicModelCacheMu.Lock()
-	dynamicModelCache[provider] = &cachedDynamicModels{
+	dynamicModelCache[cacheKey] = &cachedDynamicModels{
 		response:  resp,
 		fetchedAt: time.Now(),
 	}
@@ -620,10 +626,25 @@ func cursorFallbackModels() []dynamicModelEntry {
 	return models
 }
 
-func fetchPiCLIModels() *dynamicModelsResponse {
-	models := piFallbackModels()
-	source := "curated_latest"
-	if _, err := runtimeAvailableForProvider("pi-cli"); err == nil {
+func fetchPiCLIModels(full bool) *dynamicModelsResponse {
+	var models []dynamicModelEntry
+	var source string
+
+	if full {
+		cliModels, err := listPiCLIModels()
+		if err == nil && len(cliModels) > 0 {
+			models = mergePiModelEntries(piFallbackModels(), cliModels)
+			source = "cli_full_catalog"
+		} else {
+			models = piFallbackModels()
+			source = "curated_latest_fallback"
+		}
+	} else {
+		models = piFallbackModels()
+		source = "curated_latest"
+	}
+
+	if _, err := runtimeAvailableForProvider("pi-cli"); err == nil && !full {
 		source = "curated_latest_runtime_available"
 	}
 

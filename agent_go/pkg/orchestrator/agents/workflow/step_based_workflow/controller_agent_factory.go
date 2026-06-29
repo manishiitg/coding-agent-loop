@@ -627,6 +627,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 		}
 	}
 
+	readPaths = hcpo.appendCDPHostDownloadsReadPath(readPaths)
 	return readPaths, writePaths
 }
 
@@ -1034,6 +1035,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupSubAgentSessionGuard(agentKind s
 
 func (hcpo *StepBasedWorkflowOrchestrator) configureSubAgentSessionGuard(sessionID string, agentKind string, stepID string, readPaths []string, writePaths []string) {
 	common.SetSessionFolderGuard(sessionID, readPaths, writePaths)
+	hcpo.grantSessionCDPHostDownloadsReadOnly(sessionID)
 
 	// Carry the parent group session's working directory onto the dedicated
 	// session so `ls learnings/_global/` style relative commands still resolve

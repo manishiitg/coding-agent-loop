@@ -2185,11 +2185,16 @@ export interface ScheduledJob {
 export interface CreateScheduledJobRequest {
   name: string
   description?: string
-  entity_type: 'workflow' | 'chat'
-  preset_query_id: string
+  entity_type: 'workflow' | 'chat' | 'multi-agent'
+  preset_query_id?: string
   workspace_path?: string
   trigger_payload?: Record<string, unknown>
   group_names?: string[]  // undefined/empty = all groups
+  mode?: 'workshop' | 'multi-agent'
+  messages?: string[]
+  workshop_mode?: 'run' | 'optimizer'
+  query?: string
+  resume_previous?: boolean
   schedule_type?: 'cron' | 'calendar'
   calendar_items?: CalendarScheduleItem[]
   cron_expression?: string
@@ -2203,6 +2208,11 @@ export interface UpdateScheduledJobRequest {
   trigger_payload?: Record<string, unknown>
   group_names?: string[]       // undefined = don't change; [] = run all groups; [...] = specific groups
   set_group_names?: boolean    // must be true to actually update group_names
+  mode?: 'workshop' | 'multi-agent'
+  messages?: string[]
+  workshop_mode?: 'run' | 'optimizer'
+  query?: string
+  resume_previous?: boolean
   schedule_type?: 'cron' | 'calendar'
   calendar_items?: CalendarScheduleItem[]
   cron_expression?: string
@@ -2300,11 +2310,18 @@ export interface WorkflowScheduleEntry {
   id: string
   name: string
   description?: string
+  schedule_type?: 'cron' | 'calendar'
   cron_expression: string
   timezone: string
   enabled: boolean
   trigger_payload?: Record<string, unknown>
+  calendar_items?: CalendarScheduleItem[]
   group_names?: string[]
+  mode?: 'workshop' | 'multi-agent' | string
+  messages?: string[]
+  workshop_mode?: 'run' | 'optimizer' | string
+  query?: string
+  resume_previous?: boolean
 }
 
 export interface DiscoveredWorkflow {

@@ -435,6 +435,9 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				readPaths,
 				append([]string{subPerUserChatsWrite, "Downloads/", subPerUserMemWrite, subPerUserChatHistory}, extraFolders...),
 			)
+			if hostDownloads := common.GrantSessionCDPHostDownloadsReadOnly(sessionID, browserReq.BrowserMode); hostDownloads != "" {
+				log.Printf("[DELEGATION FOLDER GUARD] Added read-only CDP host Downloads for sub-agent: %s", hostDownloads)
+			}
 		}
 
 		// Register workspace tools

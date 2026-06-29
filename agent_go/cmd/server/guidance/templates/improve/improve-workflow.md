@@ -1,4 +1,4 @@
-Improve this workflow using actual retained run evidence. Metrics are evidence, not a separate action path. Your job is to decide whether the next action is `harden_workflow`, `replan_workflow_from_results`, eval-plan improvement, metric-definition cleanup (`propose_metric` / `retire_metric`), skill scoping cleanup, KB cleanup (`improve_kb`), learning cleanup (`improve_learnings`), or no action. Use builder/improve.html as the shared improvement ledger entry point: read it first if it exists, create it if it does not, read referenced archive files only when they matter, and update the ledger before finishing.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+Improve this workflow using actual retained run evidence. Metrics are evidence, not a separate action path. Your job is to decide whether the next action is `harden_workflow`, `replan_workflow_from_results`, eval-plan improvement, metric-definition cleanup (`propose_metric` / `retire_metric`), skill scoping cleanup, report accuracy/live-data cleanup, KB cleanup (`improve_kb`), learning cleanup (`improve_learnings`), DB cleanup (`improve_db`), or no action. Use builder/improve.html as the shared improvement ledger entry point: read it first if it exists, create it if it does not, read referenced archive files only when they matter, and update the ledger before finishing.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 MENTAL MODEL
 Think like a sharp business analyst auditing the workflow's actual outputs against soul.md success criteria and metric trajectory. These are business-process workflows, not software systems. The important question is: "What change would make the workflow better satisfy its goal on the next runs?"
@@ -38,15 +38,15 @@ PHASE 1 — OUTPUT + METRIC REVIEW
 3. Read evaluation reports for the same groups and iterations. Pay attention to rationale text, not just scores.
 4. Read db/metrics_history.jsonl. For each active metric, check recent values, target/floor/ceiling status, and `has_value=false` / `resolve_error` rows. Start with `role=primary`, then use `role=secondary` metrics to explain root cause or guardrail risk.
 5. Compare the outputs and metrics against soul.md. Where is the workflow missing the success criteria or primary outcome metrics? Which secondary metrics explain the miss?
-6. Inspect skills/KB/learnings/report/db only when the evidence points there:
+6. Inspect skills/reports/KB/learnings/db only when the evidence points there:
    - workflow-selected skills from get_workflow_config and per-step `enabled_skills` from planning/step_config.json; use list_skills and read `skills/{folder}/SKILL.md` for every selected/enabled skill relevant to the failure
    - missing installed skill on a step that is using ad-hoc instructions for a reusable capability; the fix is step-level `enabled_skills`, not more description bloat
    - selected/enabled skills that no step uses, skills whose folder/SKILL.md is missing, or external skills containing workflow-specific selectors, account names, run paths, current-plan instructions, or learned quirks that belong in `learnings/_global/`
    - knowledgebase/context/context.md for user-supplied runtime context that steps may be ignoring; when a step needs it, the fix must update both `knowledgebase_access` and the step description so it names the relevant context section/path
    - knowledgebase/notes/_index.json + topic files for stale, duplicate, missing, or contradictory workflow-discovered context
    - learnings/_global/SKILL.md and learnings/<step-id>/script_metadata.json for stale rules, missing learning objectives, or agentic steps with leftover main.py
+   - reports/report_plan.json and report HTML under `db/reports/` for dashboard/report wiring that hides, misstates, hardcodes, or fails to surface important run/db/metric/eval evidence; when report accuracy is in scope, use `validate_report_plan`, `preview_report_render`, and sample the report's `window.report.query` SQL against `db/db.sqlite`
    - db/db.sqlite tables for broken data contracts or write/read drift
-   - reports/report_plan.json for dashboard/report wiring that hides important metric/eval evidence
 7. List the top 1-3 candidate actions. Each candidate must name the evidence and the expected metric/success-criteria impact. Include eval-plan improvement as a candidate when the workflow output cannot be trusted because evaluation coverage, scoring, structured output, or metric-to-eval wiring is weak.
 
 PHASE 2 — CLASSIFY
@@ -81,13 +81,17 @@ Harden and replan have the **same plan tools**; the difference is intent, not ca
    Examples: a browser/API/document/spreadsheet skill is installed and matches a failing step but `enabled_skills` is empty; a description says "use skill X" but the step does not enable X; a workflow-selected skill is assumed to affect runtime but no step has it in `enabled_skills`; an external skill contains this workflow's selectors/run paths/account names; a step has three broad skills but only one is relevant.
    Action: use `update_step_config(step_id, enabled_skills=[...])` for step runtime skills and `update_workflow_config(add_skills/remove_skills=[...])` only for builder/workshop selected skills. If the cleanup is workflow-specific HOW, call `improve_learnings(...)` instead of editing an external skill. Do not manually edit `workflow.json`.
 
-8. **Data / DB contract hygiene** when `db/db.sqlite` tables have drifted from the plan's writer/consumer steps or from report widgets. `db/`, the plan, and reports are one data-contract triangle — fix the corner that is actually wrong; do not bend db to cover for a broken step or report.
+8. **Report improvement** when the report dashboard misrepresents otherwise-correct evidence, is stale/static, has incorrect SQL, hides key goal/cost/time/eval evidence, or is visually/responsively weak enough that it changes what the user understands. Reports are part of the evidence chain; a good workflow with a misleading report is still not operationally trustworthy.
+   Examples: hardcoded numbers that should be live `window.report.query` values, SQL against the wrong table/column, summary tiles that contradict eval/metric evidence, missing target/baseline context, report widgets that still describe removed plan steps, a chart/table that aggregates incorrectly, mobile layout that truncates the verdict, or important cost/time/goal evidence absent from the report.
+   Action: load `get_reference_doc(kind="report-plan")`, then use the report-plan toolchain and file edits: `get_report_plan`, edit the HTML under `db/reports/` or the `reports/report_plan.json` wiring, `validate_report_plan`, and `preview_report_render`. If the data source is wrong at the producing step, choose Harden (#1). If the db contract itself is wrong, choose DB hygiene (#9). If the report-only fix is cosmetic or user-requested design polish, the dedicated `/improve-report` flow is also valid.
+
+9. **Data / DB contract hygiene** when `db/db.sqlite` tables have drifted from the plan's writer/consumer steps or from report widgets. `db/`, the plan, and reports are one data-contract triangle — fix the corner that is actually wrong; do not bend db to cover for a broken step or report.
    Examples: malformed tables, broken or undocumented data contracts, write/read drift, missing or stale `db/README.md`, report-incompatible column shapes, redundant tables that a widget `sql` (JOIN/GROUP BY) should replace, blobs that should live under `db/assets/` with reference rows, or columns whose writer steps no longer exist.
    - If the **db shape/schema/contract** itself is wrong while the plan and reports are right, action: call `improve_db(mode="auto", instruction="<specific db contract/schema/report-compatibility fix>", focus="<brief>")`. `improve_db` reads `planning/plan.json` and `reports/report_plan.json` but edits only `db/` to stay compatible with them, and never deletes or rewrites row data unless explicitly asked.
    - If a **writer step produces the wrong data at the source**, that is a Harden (#1) or Replan (#2) signal — fix the contract where it originates, not in db.
-   - If the **report layout/wiring** misrepresents otherwise-correct data, that belongs to the manual `/improve-report` flow, not this pass.
+   - If the **report layout/wiring** misrepresents otherwise-correct data, choose Report improvement (#8), not DB cleanup. The dedicated `/improve-report` flow is still valid for user-requested report-only design/accuracy work.
 
-9. **No action** when there is no new evidence since the last improvement pass, an unresolved dependency blocks action, or the current issue needs human input. Log that explicitly in builder/improve.html.
+10. **No action** when there is no new evidence since the last improvement pass, an unresolved dependency blocks action, or the current issue needs human input. Log that explicitly in builder/improve.html.
 
 If unclear, call `review_plan({{if .Focus}}focus="{{.Focus}}"{{end}})` first, wait/query until it completes, then classify. Review is diagnosis only; it does not apply changes.
 
@@ -104,6 +108,7 @@ For each enabled group with meaningful evidence in the selected run window:
    - eval-plan edits plus `validate_evaluation_plan` when the primary issue is measurement quality, or
    - metric tool calls if the only issue is metric definition, or
    - skill scoping/config changes if the only issue is missing/noisy installed skills, or
+   - report-plan/HTML edits plus `validate_report_plan` and `preview_report_render` when the only issue is report accuracy, live-data wiring, or report presentation, or
    - `improve_kb(...)` / `improve_learnings(...)` / `improve_db(...)` when the only issue is persistent-store hygiene (KB notes, global learnings, or db/data contracts) rather than workflow behavior.
 4. Do not loop. At most one replan per command run. Harden can be scoped per group, but stop once the meaningful evidence-backed fixes are applied.
 
@@ -121,12 +126,12 @@ After each applied change:
    Resolved YYYY-MM-DD — <one-line how it was fixed>.
    ```
    Say "partially resolved" or "invalid" when appropriate. Never delete or rewrite the original finding; reference it by its anchor id (or date + title).
-2. Ensure the action is recorded as a readable Decision entry in builder/improve.html (what changed, why, files touched, evidence, and the action_type — `harden`, `replan`, `eval_update`, `metric_update`, `skill_update`, `kb_update`, `learning_update`, `db_update`, or `no_action`). If the underlying tool does not write one, add it via diff_patch_workspace_file at the top of the timeline. Mention any open findings it resolved so the audit trail stays connected.
+2. Ensure the action is recorded as a readable Decision entry in builder/improve.html (what changed, why, files touched, evidence, and the action_type — `harden`, `replan`, `eval_update`, `metric_update`, `skill_update`, `report_update`, `kb_update`, `learning_update`, `db_update`, or `no_action`). If the underlying tool does not write one, add it via diff_patch_workspace_file at the top of the timeline. Mention any open findings it resolved so the audit trail stays connected.
 3. Update builder/improve.html with:
    - timestamp
    - evidence reviewed
    - metrics/eval/run findings
-   - action chosen: harden / replan / eval_update / metric_update / skill_update / kb_update / learning_update / db_update / no_action
+   - action chosen: harden / replan / eval_update / metric_update / skill_update / report_update / kb_update / learning_update / db_update / no_action
    - tool call made and why
    - expected metric or success-criteria impact
    - remaining gaps and next hypotheses
@@ -156,7 +161,7 @@ A **Decision** records what was applied or proposed, in prose:
   <h3>YYYY-MM-DD HH:MM UTC — /improve-workflow (or /auto-improve) — <action_type></h3>
   <p><strong>Evidence:</strong> `<path>` — <what it showed>.</p>
   <p><strong>What changed &amp; why:</strong> <one-line summary>; action chosen
-     <harden|replan|eval_update|metric_update|skill_update|kb_update|learning_update|db_update|no_action>,
+     <harden|replan|eval_update|metric_update|skill_update|report_update|kb_update|learning_update|db_update|no_action>,
      files touched <...>, tool call `<tool>(...)` → <execution_id/status>.</p>
   <p><strong>Expected impact:</strong> <metric/success-criteria impact>.</p>
   <p><strong>Resolves:</strong> <anchor id of any open finding this closes, or "none">.</p>
@@ -167,6 +172,40 @@ A **Decision** records what was applied or proposed, in prose:
 When a Decision resolves an open finding, also edit that finding's card in place to add the `Resolved YYYY-MM-DD — <how>` line (CLOSE-OUT above), rather than opening a duplicate.
 
 If compaction is needed, keep the Workflow Profile, all open findings, and the latest ~10–20 timeline entries in `builder/improve.html`; move older resolved/superseded entries into `builder/improve-archive/YYYY-MM.html` and leave an archive row in the document's Archive section (date range, entry count, any still-unresolved findings, one-line summary). Format per `get_reference_doc(kind="review-improve-log")`.
+
+NOTIFICATION
+
+If this command was run by a scheduled IMPROVE fire or another unattended/background context, you own one final notification decision. Do not notify for normal inline chat use unless the user explicitly asked to be notified.
+
+Exception: if the current scheduled message explicitly says backup/publish/notify are split into later turns, **do not call `notify_user` from this improve turn**. Instead, write enough notification evidence into `builder/improve.html` for the later notify turn to decide: action type, headline, evidence paths, expected impact, remaining risk, and whether the default policy would notify. This prevents double notifications while still letting older single-message improve schedules notify directly.
+
+First, check the optional `## Notifications` section of `soul/soul.md`. If it exists, honor it exactly for this improve pass too:
+- "don't notify me" / "only Pulse alerts" → never call `notify_user`;
+- "notify me on every improvement" → notify even on no-action with a compact summary;
+- "only notify on replans" → notify only when a replan was applied or held as a proposal;
+- "email me details" / "include dashboard link" → use `email_html` plus `email_body` when available, and include the published dashboard URL when `publish/status.json` says it is published.
+
+Default policy when there is no explicit preference: notify only on a decision-worthy change:
+- an applied structural replan;
+- an applied report/eval/metric update that changes what the user sees or how success is measured;
+- an applied KB/learnings/db cleanup that materially changes future workflow behavior or evidence quality;
+- a high-impact replan/fix proposal was held because oversight is cautious or evidence is not yet strong enough;
+- schedule cadence or group scope changed materially;
+- an intended improvement failed and needs human action.
+
+Stay silent on steady scheduled fires: no fresh evidence, no action, minor log/archive maintenance, or cleanup with no user-facing effect.
+
+When notifying, call `notify_user` at most once. Use this compact `message_for_user` shape:
+`<emoji> <workflow> — Auto-improve <applied|proposed|changed|blocked>: <plain headline> · <metric/goal if useful> · <dashboard url if published>`
+
+Use emoji by decision type: `🔁` replan applied/proposed, `📊` report/eval/metric update, `🧹` KB/learnings/db cleanup, `🗓️` schedule changed, `⚠️` blocked/needs human. Include the workflow name because the user may receive notifications from many workflows.
+
+If the tool exposes email fields, prefer a small formatted `email_html` with:
+- title: workflow + decision type;
+- one-sentence headline;
+- bullets for evidence, action, expected impact, remaining risk;
+- Dashboard/Pulse link when published or known.
+Also set a plain `email_body` fallback with the same facts. Never put HTML in `email_body`.
 
 FINAL REPORT
 Summarize:

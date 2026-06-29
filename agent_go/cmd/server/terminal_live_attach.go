@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
@@ -21,17 +22,15 @@ import (
 
 // Live-attach terminal transport (Phase 1, control mode).
 //
-// This is the NEW output/render transport described in
-// docs/refactor/terminal_live_attach_transport.md. It is strictly ADDITIVE and
-// gated behind RUNLOOP_TERMINAL_LIVE_ATTACH (OFF by default): when the flag is
-// unset the endpoint returns 404 and the manager is never created, so the
-// existing snapshot/replay transport (terminal_pipe_recorder + capture-poll)
-// remains the only path with ZERO behavior change.
+// This is the output/render transport described in
+// docs/refactor/terminal_live_attach_transport.md. It is the selected-terminal
+// tmux transport: the legacy snapshot/replay path no longer renders selected
+// live tmux panes.
 //
-// When the flag is set, GET /api/terminals/{id}/stream upgrades to a WebSocket
-// that attaches one `tmux -CC attach` control-mode client per tmux session,
-// parses %output into the live pane byte stream, and forwards browser input /
-// resize back to the session. Frontend wiring is Phase 2.
+// GET /api/terminals/{id}/stream upgrades to a WebSocket that attaches one
+// `tmux -CC attach` control-mode client per tmux session, parses %output into
+// the live pane byte stream, and forwards browser input / resize back to the
+// session.
 
 const (
 	// liveAttachSubBuffer bounds a single viewer's pending-bytes channel. A
@@ -39,6 +38,13 @@ const (
 	// stream blocked); the frontend re-seeds via the capture-pane backfill on
 	// reconnect.
 	liveAttachSubBuffer = 256
+	// liveAttachInitialDrainDelay gives a newly-created control-mode attach client
+	// a short no-subscriber window to emit tmux's initial screen repaint. The PoC
+	// had the attach loop running before the browser connected, so this first
+	// repaint was naturally dropped; without the same warm-up here the browser gets
+	// capture-pane backfill followed by the attach repaint of the same screen.
+	liveAttachInitialDrainDelay = 180 * time.Millisecond
+	liveAttachInitialDrainWait  = 750 * time.Millisecond
 	// liveAttachScannerInitial is the initial control-line scan buffer; it grows
 	// up to liveattach.MaxControlLineBytes for large %output bursts.
 	liveAttachScannerInitial = 1 << 16
@@ -148,13 +154,17 @@ type liveAttachStream struct {
 	mgr         *liveAttachManager
 	tmuxSession string
 
-	mu     sync.Mutex
-	subs   map[chan []byte]struct{}
-	ptmx   *os.File
-	cancel context.CancelFunc
-	done   chan struct{}
-	cols   int
-	rows   int
+	mu          sync.Mutex
+	subs        map[chan []byte]struct{}
+	ptmx        *os.File
+	cancel      context.CancelFunc
+	done        chan struct{}
+	drainedOnce sync.Once
+	drained     chan struct{}
+	cols        int
+	rows        int
+	appliedCols int
+	appliedRows int
 }
 
 // liveAttachAttachFn runs the real control-mode attach loop for a stream. It is
@@ -174,18 +184,26 @@ func (m *liveAttachManager) subscribe(tmuxSession string, cols, rows int) (*live
 	m.mu.Lock()
 	st := m.sessions[tmuxSession]
 	if st == nil {
-			st = &liveAttachStream{
-				mgr:         m,
-				tmuxSession: tmuxSession,
-				subs:        make(map[chan []byte]struct{}),
-				done:        make(chan struct{}),
-				cols:        cols,
-				rows:        rows,
-			}
-			m.sessions[tmuxSession] = st
-			st.start()
+		st = &liveAttachStream{
+			mgr:         m,
+			tmuxSession: tmuxSession,
+			subs:        make(map[chan []byte]struct{}),
+			done:        make(chan struct{}),
+			drained:     make(chan struct{}),
+			cols:        cols,
+			rows:        rows,
 		}
-		m.mu.Unlock()
+		m.sessions[tmuxSession] = st
+		st.start()
+	}
+	m.mu.Unlock()
+
+	// Apply the desired grid before adding this viewer. On the first subscribe,
+	// there are no subscribers yet, so tmux's resize repaint and control-mode
+	// attach's initial full-screen repaint are drained instead of being appended
+	// after the capture-pane backfill.
+	st.setSize(cols, rows)
+	st.waitInitialDrain()
 
 	ch := make(chan []byte, liveAttachSubBuffer)
 	st.mu.Lock()
@@ -218,10 +236,27 @@ func (st *liveAttachStream) start() {
 	st.cancel = cancel
 	go func() {
 		defer cancel()
+		defer st.markInitialDrainComplete()
 		defer st.mgr.dropStream(st)
 		defer close(st.done)
 		liveAttachAttachFn(st, ctx)
 	}()
+}
+
+func (st *liveAttachStream) markInitialDrainComplete() {
+	st.drainedOnce.Do(func() {
+		close(st.drained)
+	})
+}
+
+func (st *liveAttachStream) waitInitialDrain() {
+	if st == nil || st.drained == nil {
+		return
+	}
+	select {
+	case <-st.drained:
+	case <-time.After(liveAttachInitialDrainWait):
+	}
 }
 
 // stop cancels the attach client; the goroutine then unwinds via dropStream.
@@ -278,7 +313,13 @@ func (st *liveAttachStream) setSize(cols, rows int) {
 		return
 	}
 	st.mu.Lock()
+	if st.appliedCols == cols && st.appliedRows == rows {
+		st.cols, st.rows = cols, rows
+		st.mu.Unlock()
+		return
+	}
 	st.cols, st.rows = cols, rows
+	st.appliedCols, st.appliedRows = cols, rows
 	st.mu.Unlock()
 	// Match the PoC exactly: resize the tmux window via resize-window ONLY. We do
 	// not also pty.Setsize the control client — in control mode the %output
@@ -290,6 +331,11 @@ func (st *liveAttachStream) setSize(cols, rows int) {
 	defer cancel()
 	if err := runTerminalTmuxCommand(cctx, "", "resize-window", "-t", st.tmuxSession, "-x", strconv.Itoa(cols), "-y", strconv.Itoa(rows)); err != nil {
 		log.Printf("[live-attach] resize-window session=%s %dx%d: %v", st.tmuxSession, cols, rows, err)
+		st.mu.Lock()
+		if st.appliedCols == cols && st.appliedRows == rows {
+			st.appliedCols, st.appliedRows = 0, 0
+		}
+		st.mu.Unlock()
 	}
 }
 
@@ -319,6 +365,8 @@ func (st *liveAttachStream) runControlMode(ctx context.Context) {
 		log.Printf("[live-attach] attach failed session=%s: %v", st.tmuxSession, err)
 		return
 	}
+	drainTimer := time.AfterFunc(liveAttachInitialDrainDelay, st.markInitialDrainComplete)
+	defer drainTimer.Stop()
 	st.mu.Lock()
 	st.ptmx = ptmx
 	st.mu.Unlock()
@@ -379,8 +427,7 @@ var liveAttachUpgrader = websocket.Upgrader{
 }
 
 // handleTerminalStream is GET /api/terminals/{terminal_id}/stream — the
-// live-attach WebSocket endpoint. It is registered unconditionally but returns
-// 404 unless the flag is on, so flag-OFF is a true no-op.
+// live-attach WebSocket endpoint.
 func (api *StreamingAPI) handleTerminalStream(w http.ResponseWriter, r *http.Request) {
 	if !liveAttachEnabled() || api.liveAttach == nil {
 		http.Error(w, "live-attach terminal transport disabled", http.StatusNotFound)
@@ -411,19 +458,22 @@ func (api *StreamingAPI) handleTerminalStream(w http.ResponseWriter, r *http.Req
 	connCtx, connCancel := context.WithCancel(context.Background())
 	defer connCancel()
 
-	// 1) One capture-pane backfill snapshot so the fresh viewer sees current
-	//    screen state before the live %output stream resumes.
-	if bf := liveAttachBackfill(connCtx, snapshot.TmuxSession); len(bf) > 0 {
-		_ = conn.WriteMessage(websocket.BinaryMessage, bf)
-	}
-
-	// 2) Subscribe to the shared control-mode attach for this tmux session.
+	// 1) Subscribe to the shared control-mode attach for this tmux session. On a
+	//    first viewer, subscribe warms the attach with no subscriber so tmux's
+	//    initial repaint is drained before the browser sees live bytes.
 	st, ch := api.liveAttach.subscribe(snapshot.TmuxSession, cols, rows)
 	if st == nil || ch == nil {
 		return
 	}
 	defer st.unsubscribe(ch)
-	st.setSize(cols, rows)
+
+	// 2) One capture-pane backfill snapshot so the fresh viewer sees current
+	//    screen state before queued live %output resumes. The writer goroutine is
+	//    started after this, so any live bytes produced during capture are
+	//    delivered after the backfill instead of interleaving with it.
+	if bf := liveAttachBackfill(connCtx, snapshot.TmuxSession); len(bf) > 0 {
+		_ = conn.WriteMessage(websocket.BinaryMessage, bf)
+	}
 
 	// Writer: decoded pane bytes -> WebSocket (binary). Ends when the channel
 	// is closed (unsubscribe / stream death) or the connection write fails.

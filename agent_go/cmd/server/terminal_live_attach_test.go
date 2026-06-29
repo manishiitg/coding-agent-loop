@@ -9,28 +9,10 @@ import (
 )
 
 func TestLiveAttachEnabled(t *testing.T) {
-	cases := []struct {
-		val  string
-		want bool
-	}{
-		{"", false},
-		{"0", false},
-		{"false", false},
-		{"off", false},
-		{"no", false},
-		{"random", false},
-		{"1", true},
-		{"true", true},
-		{"TRUE", true},
-		{"on", true},
-		{"yes", true},
-		{"enabled", true},
-		{"  on  ", true},
-	}
-	for _, tc := range cases {
-		t.Setenv("RUNLOOP_TERMINAL_LIVE_ATTACH", tc.val)
-		if got := liveAttachEnabled(); got != tc.want {
-			t.Errorf("liveAttachEnabled() with %q = %v, want %v", tc.val, got, tc.want)
+	for _, val := range []string{"", "0", "false", "off", "random", "1", "true"} {
+		t.Setenv("RUNLOOP_TERMINAL_LIVE_ATTACH", val)
+		if got := liveAttachEnabled(); !got {
+			t.Errorf("liveAttachEnabled() with %q = false, want true", val)
 		}
 	}
 }
@@ -64,15 +46,7 @@ func TestTmuxVersionAtLeast(t *testing.T) {
 	}
 }
 
-func TestNewLiveAttachManagerIfEnabledDisabled(t *testing.T) {
-	t.Setenv("RUNLOOP_TERMINAL_LIVE_ATTACH", "")
-	if m := newLiveAttachManagerIfEnabled(); m != nil {
-		t.Fatalf("expected nil manager when flag is off, got %v", m)
-	}
-}
-
-func TestHandleTerminalStreamDisabledReturns404(t *testing.T) {
-	t.Setenv("RUNLOOP_TERMINAL_LIVE_ATTACH", "")
+func TestHandleTerminalStreamMissingManagerReturns404(t *testing.T) {
 	api := &StreamingAPI{} // liveAttach is nil
 	req := httptest.NewRequest(http.MethodGet, "/api/terminals/main:sess/stream", nil)
 	rec := httptest.NewRecorder()
@@ -89,9 +63,17 @@ func withFakeAttach(t *testing.T) {
 	t.Helper()
 	orig := liveAttachAttachFn
 	liveAttachAttachFn = func(st *liveAttachStream, ctx context.Context) {
+		st.markInitialDrainComplete()
 		<-ctx.Done()
 	}
-	t.Cleanup(func() { liveAttachAttachFn = orig })
+	origRun := runTerminalTmuxCommand
+	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
+		return nil
+	}
+	t.Cleanup(func() {
+		liveAttachAttachFn = orig
+		runTerminalTmuxCommand = origRun
+	})
 }
 
 func TestLiveAttachManagerSubscribeBroadcastUnsubscribe(t *testing.T) {
@@ -209,5 +191,68 @@ func TestLiveAttachBroadcastDropsSlowViewer(t *testing.T) {
 	case <-st.done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("stream did not stop")
+	}
+}
+
+func TestLiveAttachManagerDrainsInitialAttachBeforeSubscriber(t *testing.T) {
+	orig := liveAttachAttachFn
+	liveAttachAttachFn = func(st *liveAttachStream, ctx context.Context) {
+		st.broadcast([]byte("initial-repaint"))
+		st.markInitialDrainComplete()
+		<-ctx.Done()
+	}
+	origRun := runTerminalTmuxCommand
+	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
+		return nil
+	}
+	t.Cleanup(func() {
+		liveAttachAttachFn = orig
+		runTerminalTmuxCommand = origRun
+	})
+
+	m := newLiveAttachManager()
+	st, ch := m.subscribe("sessD", 100, 40)
+	if st == nil || ch == nil {
+		t.Fatal("subscribe returned nil")
+	}
+	select {
+	case b := <-ch:
+		t.Fatalf("subscriber received initial attach repaint %q; want drained", string(b))
+	default:
+	}
+
+	st.broadcast([]byte("live"))
+	select {
+	case b := <-ch:
+		if string(b) != "live" {
+			t.Fatalf("got %q, want live", string(b))
+		}
+	case <-time.After(time.Second):
+		t.Fatal("subscriber did not receive post-subscribe live bytes")
+	}
+
+	st.unsubscribe(ch)
+	select {
+	case <-st.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stream did not stop")
+	}
+}
+
+func TestLiveAttachSetSizeSkipsDuplicateResize(t *testing.T) {
+	calls := 0
+	origRun := runTerminalTmuxCommand
+	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
+		calls++
+		return nil
+	}
+	t.Cleanup(func() { runTerminalTmuxCommand = origRun })
+
+	st := &liveAttachStream{tmuxSession: "sessE"}
+	st.setSize(120, 36)
+	st.setSize(120, 36)
+	st.setSize(121, 36)
+	if calls != 2 {
+		t.Fatalf("resize calls = %d, want 2", calls)
 	}
 }

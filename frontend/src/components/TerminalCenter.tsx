@@ -2334,19 +2334,17 @@ const XtermTerminalPaneInner: React.FC<{
 // all useCallback-stable, so re-render now tracks content/theme changes only.
 const XtermTerminalPane = memo(XtermTerminalPaneInner)
 
-// LiveAttachXtermPane is the Phase 2 live-attach transport (see
+// LiveAttachXtermPane is the live-attach transport (see
 // docs/refactor/terminal_live_attach_transport.md). It renders the SELECTED live
 // tmux terminal directly from the /api/terminals/{id}/stream WebSocket instead of
 // the snapshot/replay polling path: the backend's first frames are a capture-pane
 // backfill, then the live control-mode %output byte stream. We write those bytes
 // straight into xterm — NO applyContent / computeXtermWrite / content-prop replay.
 //
-// It is rendered ONLY when capabilities.terminal_live_attach is true AND the
-// terminal has a tmux session; every other case stays on XtermTerminalPane (the
-// unchanged default path), so flag-OFF is a true no-op and the rail/other
-// terminals are untouched. Like XtermTerminalPane it is mounted with
-// key={terminal_id} so a terminal switch fully remounts (fresh buffer + a fresh
-// WS), making cross-terminal overlap impossible by construction.
+// It is rendered for every selected non-synthetic terminal with a tmux session;
+// the rail/other terminals are untouched. It is mounted with key={terminal_id}
+// so a terminal switch fully remounts (fresh buffer + a fresh WS), making
+// cross-terminal overlap impossible by construction.
 //
 // The xterm stays display-only (disableStdin, no onData -> WS): input keeps
 // flowing through the EXISTING chat live-input / send-keys path into the tmux
@@ -4868,8 +4866,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
                       // transient selection flicker from the old polling path does NOT
                       // remount the pane / cancel the control-mode attach mid-stream. A
                       // real terminal switch changes the id and still remounts (fresh
-                      // xterm + fresh WS, no cross-terminal overlap). Phase 2 — WS path,
-                      // flag-gated, parallel to the unchanged polling path below.
+                      // xterm + fresh WS, no cross-terminal overlap).
                       key={stableLiveAttachId}
                       terminalId={stableLiveAttachId}
                       contentRef={terminalOutputRef as React.RefObject<HTMLDivElement | null>}

@@ -1980,6 +1980,13 @@ const XtermTerminalPaneInner: React.FC<{
   const mountRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<XTerm | null>(null)
   const lastContentRef = useRef<string>('')
+  // The terminal_id (debugLabel) currently rendered into this xterm instance. The
+  // pane is NOT remounted on a terminal switch (no React key), so the same xterm
+  // is reused across switches; when debugLabel changes we must hard-reset the
+  // buffer + scrollback before replaying the new terminal's backfill. Without this
+  // each switch re-applies a full backfill on top of the existing buffer and the
+  // content accumulates (and, across a width change, stacks narrow + wide copies).
+  const lastDebugLabelRef = useRef<string | undefined>(undefined)
   // Pager model (Fix B): while the user has scrolled up we freeze the view and
   // stash the latest desired content here instead of writing it. onScroll applies
   // it (via applyContentRef) once the user returns to the bottom.
@@ -2296,8 +2303,32 @@ const XtermTerminalPaneInner: React.FC<{
       }
     }
     applyContentRef.current = applyContent
+
+    // Terminal SWITCH detection: the rail/monitor reuses this same xterm instance
+    // for a different terminal (debugLabel = terminal_id changes, no remount). Hard
+    // reset the buffer + scrollback synchronously BEFORE replaying the new
+    // terminal's backfill, otherwise the backfill is written on top of the previous
+    // terminal's buffer and accumulates on every switch (and stacks narrow + wide
+    // copies across a width change). Keyed on the terminal_id change only — NOT on
+    // ordinary streaming re-renders of the SAME terminal (those keep appending the
+    // live delta without a wipe). The subsequent applyContent sees an empty
+    // previousContent and does a clean full (inline-RIS) write of the new backfill.
+    if (debugLabel !== lastDebugLabelRef.current) {
+      const term = terminalRef.current
+      if (term) {
+        // term.reset() (xterm API) clears the buffer AND scrollback synchronously
+        // — a stronger guarantee than the inline RIS used for same-terminal
+        // rebuilds — so the previous terminal's content can't linger and stack.
+        term.reset()
+        lastContentRef.current = ''
+        pendingContentRef.current = null
+        lastDebugLabelRef.current = debugLabel
+        logXtermDebug('switch-reset')
+      }
+    }
+
     applyContent(content)
-  }, [content, contentSource, logXtermDebug])
+  }, [content, contentSource, logXtermDebug, debugLabel])
 
   return (
     <div

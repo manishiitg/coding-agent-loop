@@ -713,6 +713,21 @@ func (api *StreamingAPI) handleResizeTerminal(w http.ResponseWriter, r *http.Req
 
 	ctx, cancel := context.WithTimeout(r.Context(), terminalTmuxActionTimeout)
 	defer cancel()
+	// Geometry-change guard: skip BOTH the resize-window and the recording reseed
+	// when the pane is already at the requested geometry. The resize-on-tmux-appear
+	// effect POSTs the xterm grid the moment a (re)launched/resumed session goes
+	// live; when tmux already matches (the common case — sessions launch at the
+	// operator's preferred size), resize-window is a no-op but ResetForResize would
+	// still truncate the live pipe recording mid-stream, and a normal-buffer inline
+	// TUI (pi-cli) then replays its incremental redraws out of context → stacked
+	// spinners / duplicated status. A true no-op leaves the recording (and its
+	// continuous redraw context) intact; the backfill still renders via the content
+	// prop, so the resumed first-click terminal is unaffected.
+	if curW, curH, ok := terminalWindowSize(ctx, snapshot.TmuxSession); ok && curW == req.Cols && curH == req.Rows {
+		log.Printf("[SPINNER_DEBUG] resize session=%s requested=%dx%d win=%dx%d (no-op: geometry unchanged, recording preserved)", snapshot.TmuxSession, req.Cols, req.Rows, curW, curH)
+		_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot)})
+		return
+	}
 	if err := runTerminalTmuxCommand(ctx, "", "resize-window", "-t", snapshot.TmuxSession, "-x", strconv.Itoa(req.Cols), "-y", strconv.Itoa(req.Rows)); err != nil {
 		// If the backing tmux session is gone, mark the terminal stale (which
 		// also clears TmuxSession) and report success — the preferred-size

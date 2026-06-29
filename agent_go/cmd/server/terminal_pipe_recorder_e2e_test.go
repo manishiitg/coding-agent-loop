@@ -263,6 +263,78 @@ func TestTerminalPipeRecorderResetForResizeTruncatesAndReseeds(t *testing.T) {
 	}
 }
 
+// TestTerminalPipeRecorderResetForResizeNormalBufferSeedsCaptureSnapshot verifies
+// that for a NORMAL-buffer inline TUI (alternate_on == 0, e.g. pi-cli) the reseed
+// is RIS + an authoritative capture-pane snapshot of the current screen — NOT a
+// bare prologue that relies on the CLI's incremental SIGWINCH redraw (which would
+// replay out of context and stack spinners / duplicate the status bar).
+func TestTerminalPipeRecorderResetForResizeNormalBufferSeedsCaptureSnapshot(t *testing.T) {
+	tmuxSession := "mlp-pi-resize-reset"
+	dir := t.TempDir()
+	path := filepath.Join(dir, terminalPipeRecorderFileName(tmuxSession))
+	oldFrames := "old-width frame one\nold-width frame two\n"
+	if err := os.WriteFile(path, []byte(oldFrames), 0o600); err != nil {
+		t.Fatalf("seed old pipe log: %v", err)
+	}
+
+	recorder := &terminalPipeRecorder{
+		root: dir,
+		sessions: map[string]*terminalPipeRecording{
+			tmuxSession: {tmuxSession: tmuxSession, path: path, started: true},
+		},
+	}
+
+	const captured = "Working... done\n> ready at new width"
+	var sawCapture, sawRepaint bool
+	oldRunOutput := runTerminalTmuxOutputCommand
+	runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "#{alternate_on}"):
+			return "0", nil // normal buffer
+		case strings.Contains(joined, "capture-pane"):
+			sawCapture = true
+			return captured, nil
+		default:
+			return "", nil
+		}
+	}
+	oldRun := runTerminalTmuxCommand
+	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
+		if strings.Contains(strings.Join(args, " "), "resize-window") {
+			sawRepaint = true // forceTerminalPaneRepaint must NOT run on the normal path
+		}
+		return nil
+	}
+	defer func() {
+		runTerminalTmuxOutputCommand = oldRunOutput
+		runTerminalTmuxCommand = oldRun
+	}()
+
+	recorder.ResetForResize(context.Background(), tmuxSession)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read pipe log after reset: %v", err)
+	}
+	got := string(data)
+	if strings.Contains(got, "old-width frame") {
+		t.Fatalf("reset must truncate old-width frames, got:\n%q", got)
+	}
+	if !strings.HasPrefix(got, terminalPipeNormalScreenPrologue) {
+		t.Fatalf("reseed must start with the normal-screen RIS prologue, got:\n%q", got)
+	}
+	if !strings.Contains(got, captured) {
+		t.Fatalf("reseed must contain the capture-pane snapshot, got:\n%q", got)
+	}
+	if !sawCapture {
+		t.Fatalf("reseed must capture the current pane for a normal-buffer TUI")
+	}
+	if sawRepaint {
+		t.Fatalf("normal-buffer reseed must NOT force a SIGWINCH repaint (the snapshot is authoritative)")
+	}
+}
+
 // TestTerminalPipeRecorderResetForResizeIgnoresUnknownSession verifies the reset
 // is a safe no-op when no live recording exists for the session.
 func TestTerminalPipeRecorderResetForResizeIgnoresUnknownSession(t *testing.T) {

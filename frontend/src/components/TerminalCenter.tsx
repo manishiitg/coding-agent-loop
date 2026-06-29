@@ -2072,26 +2072,27 @@ const XtermTerminalPaneInner: React.FC<{
     // the grid actually changes (xterm dedupes), so it doubles as the loop-guard:
     // we POST the new size and re-seed exactly once per real geometry change.
     const resizeDisposable = term.onResize(({ cols, rows }) => {
-      // Re-seed on geometry change: the pipe recording still holds frames captured
-      // at the OLD pane size, and the pipe file is append-only — so the NEXT capture
-      // starts with the old bytes. Appending that delta (which carries tmux's own
-      // resize-redraw escapes) into the resized grid is the litter. We therefore
-      // STILL force a clean full rebuild on the next fetch by clearing lastContentRef
-      // (previousContent==='' → applyContent rebuilds with an inline RIS, never an
-      // append).
+      // Re-seed on geometry change. The pipe recording holds frames captured at the
+      // OLD pane size; replaying them at the new grid is litter. Clear lastContentRef
+      // so the next fetch does a clean full rebuild.
       //
-      // The bug this avoids: clearing alone also blanked the pane until that next
-      // fetch (up to a full poll interval). When the chat input auto-grows (a few
-      // wrapped lines of typing in the narrow layout) it momentarily shrinks this
-      // flex-sibling pane mid-stream → grid change → onResize → blank. So we repaint
-      // the content we ALREADY have IMMEDIATELY (inline RIS + full write) to bridge
-      // that gap. This repaint does NOT touch lastContentRef, so the next fetch still
-      // does its clean litter-free rebuild and overwrites this bridge frame.
+      // For a LIVE PIPE stream (inline TUI), do NOT replay the accumulated bytes: an
+      // inline TUI's redraws are cursor-relative to the OLD geometry, so re-writing
+      // the whole accumulated stream at the new grid stacks spinners / duplicates the
+      // status bar. The backend's resize handler reseeds the recording with an
+      // authoritative capture-pane snapshot at the new geometry (ResetForResize), so
+      // the next content fetch renders one clean current screen — accept a brief blank
+      // until it lands rather than replay out-of-context bytes.
+      //
+      // For a NON-PIPE static capture (content_source !== 'tmux_pipe'), the carried-
+      // over content is a single coherent snapshot, so repaint it immediately (inline
+      // RIS + full write) to bridge the gap with no blank. This repaint does NOT touch
+      // lastContentRef, so the next fetch still does its clean rebuild.
       const carryOver = lastContentRef.current
       term.reset()
       lastContentRef.current = ''
       pendingContentRef.current = null
-      if (carryOver) {
+      if (carryOver && contentSourceRef.current !== 'tmux_pipe') {
         const payload = normalizeXtermWriteContent(carryOver, contentSourceRef.current)
         term.write('\x1bc' + payload)
         term.scrollToBottom()

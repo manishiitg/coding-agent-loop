@@ -191,12 +191,24 @@ func (r *terminalPipeRecorder) start(ctx context.Context, rec *terminalPipeRecor
 	return nil
 }
 
-// ResetForResize truncates the pipe log on a geometry change and re-seeds it with
-// a fresh, screen-mode-aware prologue, then forces a repaint. Without this the
-// log would still hold frames captured at the OLD width; replayed concatenated
-// with the new width's frames they land at the wrong rows and pile up as litter.
-// Call it AFTER tmux has resized the window so the forced repaint is captured at
-// the new geometry. No-op when the session has no live recording.
+// ResetForResize truncates the pipe log on a geometry change and re-seeds it so
+// the frontend never replays old-width frames concatenated with new-width frames
+// (the resize-time litter). Call it AFTER tmux has resized the window so the seed
+// is captured at the new geometry. No-op when the session has no live recording.
+//
+// The reseed strategy is screen-mode-aware:
+//   - ALT-SCREEN TUI (e.g. codex): seed the alt-screen prologue (enter alt + clear
+//     + home) and force a SIGWINCH repaint — an alt-screen app responds with a true
+//     full-frame redraw, so the recording restarts on a clean, complete screen.
+//   - NORMAL-BUFFER inline TUI (e.g. pi-cli) or UNKNOWN mode: a SIGWINCH only makes
+//     such a CLI emit INCREMENTAL cursor-relative redraws of its bottom live region,
+//     which assume the prior screen is still present. Seeding a bare RIS prologue +
+//     SIGWINCH therefore leaves the log full of out-of-context fragments that stack
+//     (5x "Working…", duplicated status bar) when replayed. So instead seed RIS +
+//     an AUTHORITATIVE capture-pane snapshot of the current rendered screen at the
+//     NEW geometry: the frontend renders one complete screen and the CLI's ongoing
+//     incremental redraws append onto a buffer that matches what it believes is on
+//     screen.
 func (r *terminalPipeRecorder) ResetForResize(ctx context.Context, tmuxSession string) {
 	if r == nil {
 		return
@@ -209,13 +221,35 @@ func (r *terminalPipeRecorder) ResetForResize(ctx context.Context, tmuxSession s
 	if !ok || rec == nil {
 		return
 	}
-	prologue := terminalPipeRecorderPrologue(ctx, tmuxSession)
-	if err := os.WriteFile(rec.path, []byte(prologue), 0o600); err != nil {
-		log.Printf("Terminal pipe recorder resize reset failed for %s: %v", tmuxSession, err)
+
+	// Turn the status bar off first so the captured/repainted geometry is stable
+	// (window == pane). Best-effort.
+	disableTerminalPaneStatusLine(ctx, tmuxSession)
+
+	if altOn, known := terminalPaneAlternateScreenOn(ctx, tmuxSession); known && altOn {
+		// Alt-screen path (unchanged): prologue + SIGWINCH full repaint.
+		if err := os.WriteFile(rec.path, []byte(terminalPipeAltScreenPrologue), 0o600); err != nil {
+			log.Printf("Terminal pipe recorder resize reset failed for %s: %v", tmuxSession, err)
+			return
+		}
+		forceTerminalPaneRepaint(ctx, tmuxSession)
 		return
 	}
-	disableTerminalPaneStatusLine(ctx, tmuxSession)
-	forceTerminalPaneRepaint(ctx, tmuxSession)
+
+	// Normal-buffer / unknown: seed RIS + a capture-pane snapshot of the CURRENT
+	// rendered screen (with ANSI via -e, wrapped lines rejoined via -J) at the new
+	// geometry. xterm's convertEol turns the snapshot's bare \n into \r\n, so no
+	// line-ending fixup is needed. No SIGWINCH repaint here — the snapshot, not the
+	// CLI's incremental redraw, is the authoritative restart frame.
+	seed := terminalPipeNormalScreenPrologue
+	if snapshot, _, err := captureTerminalVisiblePaneWithStats(ctx, tmuxSession); err == nil {
+		seed += snapshot
+	} else {
+		log.Printf("Terminal pipe recorder resize reseed capture failed for %s: %v", tmuxSession, err)
+	}
+	if err := os.WriteFile(rec.path, []byte(seed), 0o600); err != nil {
+		log.Printf("Terminal pipe recorder resize reset failed for %s: %v", tmuxSession, err)
+	}
 }
 
 const (

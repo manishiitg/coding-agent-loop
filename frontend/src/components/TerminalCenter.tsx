@@ -10,6 +10,7 @@ import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useChatStore } from '../stores/useChatStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { TERMINAL_REFRESH_REQUEST_EVENT } from '../utils/terminalRefresh'
+import { computeXtermWrite, writeWithGeneration } from './terminalReplay'
 import { MarkdownRenderer } from './ui/MarkdownRenderer'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 
@@ -1987,6 +1988,13 @@ const XtermTerminalPaneInner: React.FC<{
   // each switch re-applies a full backfill on top of the existing buffer and the
   // content accumulates (and, across a width change, stacks narrow + wide copies).
   const lastDebugLabelRef = useRef<string | undefined>(undefined)
+  // Generation token, bumped on every terminal SWITCH (in the same block that
+  // calls term.reset()). Each write into the xterm captures the generation when it
+  // is scheduled and is dropped at execution if a switch has bumped it since — so a
+  // deferred/queued write from the PREVIOUS terminal can't corrupt the new one
+  // (xterm.write is async/internally-queued). Current-terminal writes are
+  // unaffected (their captured generation is still current). See terminalReplay.ts.
+  const writeGenerationRef = useRef(0)
   // Pager model (Fix B): while the user has scrolled up we freeze the view and
   // stash the latest desired content here instead of writing it. onScroll applies
   // it (via applyContentRef) once the user returns to the bottom.
@@ -2091,9 +2099,14 @@ const XtermTerminalPaneInner: React.FC<{
       lastContentRef.current = ''
       pendingContentRef.current = null
       if (carryOver) {
+        // Same-terminal grid resize (not a switch) → do NOT bump the generation;
+        // just gen-gate the repaint for audit-completeness (it's synchronous, so it
+        // always passes unless a switch raced in between).
+        const gen = writeGenerationRef.current
         const payload = normalizeXtermWriteContent(carryOver, contentSourceRef.current)
-        term.write('\x1bc' + payload)
-        term.scrollToBottom()
+        if (writeWithGeneration(term, '\x1bc' + payload, gen, writeGenerationRef.current)) {
+          term.scrollToBottom()
+        }
       }
       // Drive the tmux resize from xterm's real grid so the pane matches 1:1.
       onResizeRef.current?.(cols, rows)
@@ -2197,11 +2210,19 @@ const XtermTerminalPaneInner: React.FC<{
       if (!term) return
       const previousContent = lastContentRef.current
       if (nextContent === previousContent) return
+      // Capture the write generation for this application; every term write below
+      // is gated on it (writeWithGeneration) so a terminal switch mid-flight
+      // discards these now-stale writes instead of corrupting the new terminal.
+      const generation = writeGenerationRef.current
       const buffer = term.buffer.active
       const distanceFromBottom = Math.max(0, buffer.baseY - buffer.viewportY)
       const shouldStickToBottom = distanceFromBottom <= 1
       const isPipeStream = contentSource === 'tmux_pipe'
-      const appendOnlyPrefix = previousContent !== '' && nextContent.startsWith(previousContent)
+      // Replay decision (continuity → delta, else → reset+full). Same pure function
+      // unit-tested in terminalReplay.test.ts; appendOnlyPrefix is its inverse-of-
+      // reset so all the existing branch logic below is preserved unchanged.
+      const writeDecision = computeXtermWrite(previousContent, nextContent)
+      const appendOnlyPrefix = !writeDecision.reset
 
       // Pipe-stream path (active/streaming): the backend serves the raw, monotonic
       // pipe recording (content_source `tmux_pipe`), so each refresh is the previous
@@ -2235,7 +2256,7 @@ const XtermTerminalPaneInner: React.FC<{
           afterPipeWrite()
           return
         }
-        term.write(payload, afterPipeWrite)
+        writeWithGeneration(term, payload, generation, writeGenerationRef.current, afterPipeWrite)
         return
       }
 
@@ -2295,11 +2316,11 @@ const XtermTerminalPaneInner: React.FC<{
       // before the new content. The append case writes only the delta as before.
       const payload = normalizeXtermWriteContent(writeContent, contentSource)
       if (!appendOnly) {
-        term.write('\x1bc' + payload, afterWrite)
+        writeWithGeneration(term, '\x1bc' + payload, generation, writeGenerationRef.current, afterWrite)
       } else if (!payload) {
         afterWrite()
       } else {
-        term.write(payload, afterWrite)
+        writeWithGeneration(term, payload, generation, writeGenerationRef.current, afterWrite)
       }
     }
     applyContentRef.current = applyContent
@@ -2320,6 +2341,10 @@ const XtermTerminalPaneInner: React.FC<{
         // — a stronger guarantee than the inline RIS used for same-terminal
         // rebuilds — so the previous terminal's content can't linger and stack.
         term.reset()
+        // Bump the write generation so any write scheduled for the PREVIOUS
+        // terminal (still pending in xterm's async write queue) is dropped instead
+        // of landing on this freshly-reset buffer. See writeWithGeneration.
+        writeGenerationRef.current += 1
         lastContentRef.current = ''
         pendingContentRef.current = null
         lastDebugLabelRef.current = debugLabel

@@ -5354,6 +5354,32 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
+			// Materialize guard: a tmux-transport coding-agent turn must ALWAYS have a
+			// live, registered terminal — regardless of whether this turn entered via
+			// /api/query or via live-input → startNextTurnFromLiveInput.
+			// seedCodingAgentRuntimeFromCurrentConversation bails (seeded=false,
+			// runtime=nil) when the in-memory agent already carries a native-resume
+			// handle, so the seed block above never adopts a restoredRuntime and the
+			// FIX B re-launch+materialize below is skipped. That's wrong once the live
+			// tmux is gone: the CLI pane exited after completing its previous turn (or
+			// was idle-reaped) and the frontend, seeing STALE liveness, routed this
+			// follow-up to live-input. The replayed turn would then run "headless" —
+			// setup + tools register, but no terminal is materialized — leaving a blank
+			// screen and an invisible agent response. Adopt the on-disk runtime and
+			// route through the SAME FIX B re-launch + materialize as an explicit
+			// Resume. Gated on a native-resume handle (it IS a coding agent mid-session)
+			// AND "no live tmux" so a genuinely live session is never disrupted by a
+			// spurious relaunch.
+			if !restoredNativeCodingResume && !modeChangedThisTurn && restoredRuntime == nil &&
+				codingAgentHasNativeResume(finalProvider, underlyingAgent) && !api.sessionHasLiveCodingTmux(sessionID) {
+				if runtime, ok, err := ReadChatHistoryRuntimeForSession(currentUserID, sessionID, workflowPhaseFolder); err != nil {
+					logfWithContext(queryLogCtx, "[CHAT_HISTORY] Materialize guard: failed to read runtime for session %s: %v", sessionID, err)
+				} else if ok && runtime != nil && restoredRuntimeUsesLaunchableTerminalTransport(runtime) {
+					restoredRuntime = runtime
+					restoredNativeCodingResume = true
+					logfWithContext(queryLogCtx, "[CHAT_HISTORY] Materialize guard: session %s tmux is gone but agent has a native-resume handle; re-launching + materializing terminal so the next turn is visible", sessionID)
+				}
+			}
 			if restoredNativeCodingResume {
 				if restoredRuntimeUsesLaunchableTerminalTransport(restoredRuntime) {
 					if handle, err := underlyingAgent.StartCodingAgentTransportSession(agentCtx); err != nil {

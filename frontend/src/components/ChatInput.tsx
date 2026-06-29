@@ -260,7 +260,6 @@ import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 import { usePresetApplication, useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
-import { useSessionTerminals } from '../hooks/useSessionTerminals'
 import { agentApi, getApiBaseUrl } from '../services/api'
 import { skillsApi } from '../api/skills'
 import type { Skill } from '../types/skills'
@@ -1808,25 +1807,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     [supportsLiveCodingAgentInput, tabSessionId]
   )
 
-  // TMUX-TRANSPORT LIVENESS (RCA single-fork model, docs/refactor/
-  // cli_live_input_unification.md). For a CLI coding-agent session, routing is
-  // decided by whether the tmux pane is LIVE — NOT by isStreaming (which is UI-only
-  // for these). We poll the session's terminal presence continuously (keepPolling)
-  // so a pane that goes idle or exits is reflected. A pane is live when some
-  // terminal for this session is Active with a non-empty tmux_session. Only enabled
-  // for tmux-transport sessions; API/LLM sessions never poll this.
-  const { data: sessionTerminalsForRouting } = useSessionTerminals(
-    tabSessionId,
-    routeLiveInputToCLI,
-    true,
-  )
-  const tmuxPaneLive = useMemo(
-    () => (sessionTerminalsForRouting?.terminals || []).some(
-      (t) => t.active && !!(t.tmux_session && t.tmux_session.trim()),
-    ),
-    [sessionTerminalsForRouting],
-  )
-
   // Ref for debounced file removal check
   const fileRemovalTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -1849,70 +1829,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       setTabConfig(activeTabId, { inputText: '', pastedAttachments: [] })
     }
   }, [activeTabId, setTabConfig])
-
-  const sendLiveCodingAgentMessage = useCallback(async (msg: string): Promise<boolean> => {
-    const trimmed = msg.trim()
-    // NOTE: deliberately NOT gated on isStreaming — for a tmux-transport CLI the
-    // live pane accepts input between turns too (pi-cli idle → send-keys, CLI takes
-    // it natively). Callers only invoke this when the tmux pane is live (tmuxPaneLive).
-    if (!trimmed || !supportsLiveCodingAgentInput || !tabSessionId) return false
-
-    clearInputState()
-    setLiveMessageDelivery({
-      status: 'sending',
-      message: trimmed,
-      provider: effectiveProviderForSteer || undefined,
-    })
-    requestTerminalRefreshBurst()
-    try {
-      const response = await agentApi.sendLiveInput(tabSessionId, msg)
-      requestTerminalRefreshBurst()
-      setLiveMessageDelivery({
-        status: response.delivery_status || 'sent_to_cli',
-        message: trimmed,
-        provider: response.provider || effectiveProviderForSteer || undefined,
-      })
-      scheduleLiveMessageDeliveryClear()
-    } catch (err) {
-      const status = getHttpErrorStatus(err)
-      if (isLiveCodingSessionGoneStatus(status)) {
-        // RCA unification (docs/refactor/cli_live_input_unification.md §3/§4): for a
-        // CLI coding agent the tmux session being "gone" is NOT a failure and NOT a
-        // "queue locally + toast" case — there is simply no live turn to inject into,
-        // so this message should START THE NEXT TURN. The backend's live-input
-        // endpoint already does this server-side (startNextTurnFromLiveInput); this is
-        // the client mirror for the rare 404/409 race where it couldn't template one.
-        // Route straight to onSubmit (a fresh /api/query turn) with the SAME message —
-        // no local steer queue, no "the live coding-agent turn has ended" toast.
-        if (activeTabId) {
-          useChatStore.getState().setTabCanSteer(activeTabId, false)
-        }
-        setLiveMessageDelivery(null)
-        onSubmit(trimmed)
-      } else if (isLikelyBackendUnavailableError(err)) {
-        queueStreamingMessage(trimmed)
-        setLiveMessageDelivery({
-          status: 'failed',
-          message: trimmed,
-          provider: effectiveProviderForSteer || undefined,
-          detail: 'Backend unavailable',
-        })
-        scheduleLiveMessageDeliveryClear()
-        addToast('Backend is unavailable. Your message is still saved.', 'error')
-      } else {
-        queueStreamingMessage(trimmed)
-        setLiveMessageDelivery({
-          status: 'failed',
-          message: trimmed,
-          provider: effectiveProviderForSteer || undefined,
-          detail: err instanceof Error ? err.message : 'Unknown error',
-        })
-        scheduleLiveMessageDeliveryClear()
-        addToast('Failed to send to coding agent — message queued.', 'warning')
-      }
-    }
-    return true
-  }, [activeTabId, addToast, clearInputState, effectiveProviderForSteer, onSubmit, queueStreamingMessage, scheduleLiveMessageDeliveryClear, supportsLiveCodingAgentInput, tabSessionId])
 
   // Route ESC to the tmux pane when a live coding-agent CLI is running.
   // Returns true if the key was delivered to the CLI; false (or thrown) means
@@ -2641,12 +2557,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const queueAwareOnSubmit = (query: string) => {
       const trimmed = query?.trim()
       if (!trimmed) return
-      // tmux-transport (CLI): route on tmux liveness, never isStreaming.
+      // tmux-transport (CLI): SINGLE-ENTRY routing — always /api/query. The backend
+      // disambiguates busy (steer into the running turn) vs idle/gone (new turn +
+      // materialize). The frontend no longer inspects terminal liveness.
       if (routeLiveInputToCLI) {
-        if (tmuxPaneLive) {
-          void sendLiveCodingAgentMessage(trimmed)
-          return
-        }
         onSubmit(trimmed)
         return
       }
@@ -2684,7 +2598,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       workshopMode: effectiveModes.workshopMode,
       workflowPhaseId
     }
-  }, [activeTabId, tabSessionId, tabConfig, isSummarizing, isStreaming, routeLiveInputToCLI, tmuxPaneLive, sendLiveCodingAgentMessage, onSubmit, openDialog, openResumeDialog, setTabConfig, addToast, handleSummarize, handleCompact, getEffectiveWorkflowModes, workflowPhaseId])
+  }, [activeTabId, tabSessionId, tabConfig, isSummarizing, isStreaming, routeLiveInputToCLI, onSubmit, openDialog, openResumeDialog, setTabConfig, addToast, handleSummarize, handleCompact, getEffectiveWorkflowModes, workflowPhaseId])
 
   const getCommandValidationError = useCallback((cmd: CommandDefinition, beforeSlash: string) => {
     if (!cmd.validate) return null
@@ -2747,14 +2661,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // routeSubmit is the single send-routing decision shared by Enter (handleKeyDown)
   // and the Send button (handleSubmit).
   //
-  // TMUX-TRANSPORT (CLI coding agent) — RCA single-fork model: route purely on
-  // tmux-session LIVENESS, never isStreaming.
-  //   - live pane  → live-input (the backend delivers/steers when busy and starts
-  //                  the next turn when idle; the CLI owns live-vs-queue natively).
-  //   - not live   → /api/query (onSubmit) for FULL setup: a never-launched, gone,
-  //                  exited, or resumed session must launch / re-launch with --resume
-  //                  + tools + system prompt + secrets, which startNextTurnFromLiveInput
-  //                  does NOT replicate (it needs a prior recorded query).
+  // TMUX-TRANSPORT (CLI coding agent) — SINGLE-ENTRY routing: the frontend no longer
+  // inspects terminal liveness (which was flaky/stale and mis-routed resumes). It
+  // ALWAYS submits to /api/query (onSubmit) and the BACKEND is the single source of
+  // truth: it steers into the running turn when the session is busy, and starts a
+  // new turn (with --resume + tools + system prompt + secrets + terminal
+  // materialize) when idle / exited / gone / resumed / never-launched. isStreaming is
+  // UI-only (spinner/Stop) for these providers.
   //
   // NON-tmux (API/LLM): isStreaming-based steer-vs-queue, unchanged.
   const routeSubmit = useCallback((query: string) => {
@@ -2762,10 +2675,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     if (!trimmed) return
 
     if (routeLiveInputToCLI) {
-      if (tmuxPaneLive) {
-        void sendLiveCodingAgentMessage(query)
-        return
-      }
       if (hasSubmitTarget) {
         if (justSubmittedRef.current) return
         justSubmittedRef.current = true
@@ -2792,7 +2701,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       const reason = getSubmitBlockReason()
       if (reason) addToast(reason, 'info')
     }
-  }, [routeLiveInputToCLI, tmuxPaneLive, hasSubmitTarget, sendLiveCodingAgentMessage, clearInputState, onSubmit, getSubmitBlockReason, addToast, canSubmitImmediately, canSubmit, isStreaming, queueStreamingMessage])
+  }, [routeLiveInputToCLI, hasSubmitTarget, clearInputState, onSubmit, getSubmitBlockReason, addToast, canSubmitImmediately, canSubmit, isStreaming, queueStreamingMessage])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Keyboard passthrough: every keystroke goes to the main agent terminal.

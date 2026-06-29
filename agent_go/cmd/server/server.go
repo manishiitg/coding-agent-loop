@@ -802,7 +802,20 @@ type QueryResponse struct {
 	SessionID string `json:"session_id"` // The actual session ID used for conversation history
 	Status    string `json:"status"`
 	Message   string `json:"message,omitempty"`
+	// DeliveryStatus/Provider are populated only when handleQuery short-circuits a
+	// message into an already-running coding-agent turn as live input (Status ==
+	// "live_input_delivered"). They mirror the live-input endpoint's response so the
+	// chat UI can render the same "sent to CLI" feedback without a second endpoint.
+	DeliveryStatus string `json:"delivery_status,omitempty"`
+	Provider       string `json:"provider,omitempty"`
 }
+
+// queryStatusLiveInputDelivered is the QueryResponse.Status returned when a
+// /api/query message was steered into an already-running coding-agent turn (the
+// session was busy) instead of starting a new streaming turn. This is the single
+// backend source of truth for tmux-transport CLI input: the frontend always POSTs
+// /api/query and the backend disambiguates deliver-vs-new-turn.
+const queryStatusLiveInputDelivered = "live_input_delivered"
 
 // LLMGuidanceRequest represents a request to set LLM guidance for a session
 type LLMGuidanceRequest struct {
@@ -2465,6 +2478,20 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			return req.ExecutionOptions.WorkshopMode
 		}())
 		writeWorkflowPermissionDenied(w, "write")
+		return
+	}
+
+	// SINGLE-ENTRY ROUTING (tmux-transport coding-agent input): the frontend no
+	// longer decides live-input-vs-new-turn from (flaky, often-stale) terminal
+	// liveness — it always POSTs /api/query and the backend is the single source of
+	// truth. If the session already has a running, BUSY coding-agent turn (active
+	// foreground turn OR a busy tmux pane), steer this message into it as live input
+	// and return WITHOUT starting a second streaming turn. Otherwise (idle / exited /
+	// gone / resumed / never-launched) fall through to the normal setup + new-turn +
+	// terminal-materialize path below. Auto-notifications keep their synthetic-turn
+	// semantics and are never short-circuited. Scoped to live-input-capable coding
+	// agents so API/LLM chat is unchanged (those keep frontend steer-vs-queue).
+	if !req.IsAutoNotification && api.tryDeliverQueryAsLiveInput(w, r, sessionID, req.Query, queryID) {
 		return
 	}
 
@@ -5354,6 +5381,32 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
+			// Materialize guard: a tmux-transport coding-agent turn must ALWAYS have a
+			// live, registered terminal — regardless of whether this turn entered via
+			// /api/query or via live-input → startNextTurnFromLiveInput.
+			// seedCodingAgentRuntimeFromCurrentConversation bails (seeded=false,
+			// runtime=nil) when the in-memory agent already carries a native-resume
+			// handle, so the seed block above never adopts a restoredRuntime and the
+			// FIX B re-launch+materialize below is skipped. That's wrong once the live
+			// tmux is gone: the CLI pane exited after completing its previous turn (or
+			// was idle-reaped) and the frontend, seeing STALE liveness, routed this
+			// follow-up to live-input. The replayed turn would then run "headless" —
+			// setup + tools register, but no terminal is materialized — leaving a blank
+			// screen and an invisible agent response. Adopt the on-disk runtime and
+			// route through the SAME FIX B re-launch + materialize as an explicit
+			// Resume. Gated on a native-resume handle (it IS a coding agent mid-session)
+			// AND "no live tmux" so a genuinely live session is never disrupted by a
+			// spurious relaunch.
+			if !restoredNativeCodingResume && !modeChangedThisTurn && restoredRuntime == nil &&
+				codingAgentHasNativeResume(finalProvider, underlyingAgent) && !api.sessionHasLiveCodingTmux(sessionID) {
+				if runtime, ok, err := ReadChatHistoryRuntimeForSession(currentUserID, sessionID, workflowPhaseFolder); err != nil {
+					logfWithContext(queryLogCtx, "[CHAT_HISTORY] Materialize guard: failed to read runtime for session %s: %v", sessionID, err)
+				} else if ok && runtime != nil && restoredRuntimeUsesLaunchableTerminalTransport(runtime) {
+					restoredRuntime = runtime
+					restoredNativeCodingResume = true
+					logfWithContext(queryLogCtx, "[CHAT_HISTORY] Materialize guard: session %s tmux is gone but agent has a native-resume handle; re-launching + materializing terminal so the next turn is visible", sessionID)
+				}
+			}
 			if restoredNativeCodingResume {
 				if restoredRuntimeUsesLaunchableTerminalTransport(restoredRuntime) {
 					if handle, err := underlyingAgent.StartCodingAgentTransportSession(agentCtx); err != nil {
@@ -6639,6 +6692,89 @@ func (api *StreamingAPI) handleSetLLMGuidance(w http.ResponseWriter, r *http.Req
 // handleSteerMessage is the legacy route name kept for compatibility.
 func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Request) {
 	api.handleLiveInputMessage(w, r)
+}
+
+// agentSupportsLiveInputDelivery reports whether the running agent is a coding
+// agent whose provider contract supports live input (tmux-transport CLIs). Only
+// these short-circuit a /api/query into the running turn; API/LLM agents fall
+// through to the normal new-turn path so their behavior is unchanged.
+func agentSupportsLiveInputDelivery(agent *mcpagent.Agent) bool {
+	if agent == nil {
+		return false
+	}
+	contract, isCodingAgent := llm.GetCodingAgentProviderContract(agent.GetProvider(), agent.ModelID)
+	return isCodingAgent && contract.SupportsLiveInput
+}
+
+// tryDeliverQueryAsLiveInput is the single-entry busy short-circuit for
+// tmux-transport coding-agent input (see handleQuery). When the session already
+// has a running, busy coding-agent turn, it steers the incoming /api/query message
+// into that turn as live input instead of starting a second streaming turn, and
+// writes a QueryResponse with Status == queryStatusLiveInputDelivered. Returns
+// true if it handled (and responded to) the request; false to let handleQuery
+// start a normal new turn (idle / exited / gone / resumed / never-launched).
+func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *http.Request, sessionID, message, queryID string) bool {
+	if api == nil || strings.TrimSpace(message) == "" {
+		return false
+	}
+	// Busy == a running agent with an active foreground turn OR a busy coding tmux
+	// pane. canSteerSession encapsulates exactly that predicate (and requires a
+	// retained running agent).
+	if !api.canSteerSession(sessionID) {
+		return false
+	}
+	api.runningAgentsMux.RLock()
+	runningAgent := api.runningAgents[sessionID]
+	api.runningAgentsMux.RUnlock()
+	if !agentSupportsLiveInputDelivery(runningAgent) {
+		return false
+	}
+
+	if err := r.Context().Err(); err != nil {
+		log.Printf("[QUERY→LIVE] Request canceled before delivery for session %s: %v", sessionID, err)
+		return false
+	}
+
+	inputCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentInputTimeout)
+	defer cancel()
+	delivery, err := runningAgent.DeliverUserMessage(inputCtx, mcpagent.UserMessageDeliveryRequest{
+		SessionID: sessionID,
+		Message:   message,
+		Intent:    mcpagent.UserMessageDeliveryIntentLiveInput,
+	})
+	if err != nil {
+		// Delivery genuinely failed (e.g. the pane vanished between the busy check
+		// and the send). Don't error the request — fall back to the normal new-turn
+		// path so the message still lands (re-launch + materialize).
+		log.Printf("[QUERY→LIVE] Live delivery failed for session %s, falling back to new turn: %v", sessionID, err)
+		return false
+	}
+
+	messageID := newSteerMessageID()
+	provider := string(delivery.Provider)
+	if provider == "" {
+		provider = string(runningAgent.GetProvider())
+	}
+	deliveryStatus := string(delivery.DeliveryStatus)
+	if deliveryStatus == "" {
+		deliveryStatus = "queued_for_injection"
+	}
+	// Record the steered user message so it persists in the conversation timeline.
+	// The chat UI dedups this against its optimistic bubble by exact content, so
+	// there is no double message.
+	api.recordLiveCodingAgentUserMessage(sessionID, message, provider, messageID, deliveryStatus)
+	log.Printf("[QUERY→LIVE] Steered /api/query message into running turn for session %s status=%s: %.80s", sessionID, deliveryStatus, message)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(QueryResponse{
+		QueryID:        queryID,
+		SessionID:      sessionID,
+		Status:         queryStatusLiveInputDelivered,
+		Message:        "Delivered to running coding-agent turn",
+		DeliveryStatus: deliveryStatus,
+		Provider:       provider,
+	})
+	return true
 }
 
 // handleLiveInputMessage delivers a user message to an active coding-agent

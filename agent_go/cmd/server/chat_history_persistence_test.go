@@ -1456,8 +1456,12 @@ func TestSeedCodingAgentRuntimeFromCurrentConversationRestoresClaude(t *testing.
 	api := &StreamingAPI{}
 	agent := &mcpagent.Agent{}
 
-	if !api.seedCodingAgentRuntimeFromCurrentConversation("existing-chat", "default", "claude-code", "builder", "Workflow/rtslatency", agent) {
+	seeded, recoveredRuntime := api.seedCodingAgentRuntimeFromCurrentConversation("existing-chat", "default", "claude-code", "builder", "Workflow/rtslatency", agent)
+	if !seeded {
 		t.Fatal("expected current conversation runtime to seed native resume state")
+	}
+	if recoveredRuntime == nil {
+		t.Fatal("expected the recovered runtime to be returned for the auto-resume re-launch path")
 	}
 	if agent.ClaudeCodeSessionID != "claude-native-existing" {
 		t.Fatalf("agent ClaudeCodeSessionID = %q", agent.ClaudeCodeSessionID)

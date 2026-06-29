@@ -246,7 +246,24 @@ notable warrants a one-line "all healthy" entry, not invented concern.
 **Notify only when it's decision-worthy** — a workflow broke or recovered, or a new
 high-value suggestion. Honor any notification preference in the user's memory if present;
 otherwise one `notify_user` call at most, and silence on a steady day. Mirror the
-per-workflow Pulse's transition discipline and its standard notify format (`<emoji> <workflow> — <headline> · <metric> · <url>`; prefer a formatted `email_html` body).
+per-workflow Pulse's transition discipline, adapted for the org:
+
+- `message_for_user`: one terse line for chat channels, formatted as
+  `<emoji> Org Pulse — <headline> · <goal/workflow metric> · <url>`.
+  Use `⚠️` for broke/drifting, `✅` for recovered/on-track, and `🔎` for a new
+  high-value suggestion. Append the public org URL only when
+  `pulse/publish/status.json.state` is `published`; never guess a URL.
+- `email_subject`: `Org Pulse — <broke|recovered|new suggestion|goal update>`.
+- `email_html`: when Gmail/email is available, always send a compact formatted
+  HTML body instead of raw plain text. Keep it inline-styled for email clients,
+  dark text on a light background, and no external CSS. Required sections:
+  status header, one-sentence headline, goal scorecard summary, workflow
+  alignment delta, top recommendation or decision needed, and buttons/links for
+  Goals and Pulse when published.
+- `email_body`: plain-text fallback with the same facts; never put HTML here.
+
+Do not include secrets, raw memory, staging paths, tokens, long logs, or full HTML dumps in
+the notification.
 
 ### 9. Publish the org pages (only if org publish is on)
 

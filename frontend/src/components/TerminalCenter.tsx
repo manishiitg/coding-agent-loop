@@ -10,6 +10,7 @@ import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useChatStore } from '../stores/useChatStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { TERMINAL_REFRESH_REQUEST_EVENT } from '../utils/terminalRefresh'
+import { computeXtermWrite } from './terminalReplay'
 import { MarkdownRenderer } from './ui/MarkdownRenderer'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 
@@ -1980,6 +1981,13 @@ const XtermTerminalPaneInner: React.FC<{
   const mountRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<XTerm | null>(null)
   const lastContentRef = useRef<string>('')
+  // Terminal-switch isolation is structural: the parent renders this pane with
+  // key={terminal_id}, so React fully REMOUNTS (disposes + recreates) the xterm
+  // whenever the selected terminal changes. A fresh instance has an empty buffer
+  // and no stale parse queue from the prior terminal, so cross-terminal overlap /
+  // accumulation / the async-write race are impossible by construction. Within a
+  // single instance the terminal_id is constant; only its content streams, handled
+  // by the delta/continuity logic in applyContent (computeXtermWrite).
   // Pager model (Fix B): while the user has scrolled up we freeze the view and
   // stash the latest desired content here instead of writing it. onScroll applies
   // it (via applyContentRef) once the user returns to the bottom.
@@ -2064,26 +2072,27 @@ const XtermTerminalPaneInner: React.FC<{
     // the grid actually changes (xterm dedupes), so it doubles as the loop-guard:
     // we POST the new size and re-seed exactly once per real geometry change.
     const resizeDisposable = term.onResize(({ cols, rows }) => {
-      // Re-seed on geometry change: the pipe recording still holds frames captured
-      // at the OLD pane size, and the pipe file is append-only — so the NEXT capture
-      // starts with the old bytes. Appending that delta (which carries tmux's own
-      // resize-redraw escapes) into the resized grid is the litter. We therefore
-      // STILL force a clean full rebuild on the next fetch by clearing lastContentRef
-      // (previousContent==='' → applyContent rebuilds with an inline RIS, never an
-      // append).
+      // Re-seed on geometry change. The pipe recording holds frames captured at the
+      // OLD pane size; replaying them at the new grid is litter. Clear lastContentRef
+      // so the next fetch does a clean full rebuild.
       //
-      // The bug this avoids: clearing alone also blanked the pane until that next
-      // fetch (up to a full poll interval). When the chat input auto-grows (a few
-      // wrapped lines of typing in the narrow layout) it momentarily shrinks this
-      // flex-sibling pane mid-stream → grid change → onResize → blank. So we repaint
-      // the content we ALREADY have IMMEDIATELY (inline RIS + full write) to bridge
-      // that gap. This repaint does NOT touch lastContentRef, so the next fetch still
-      // does its clean litter-free rebuild and overwrites this bridge frame.
+      // For a LIVE PIPE stream (inline TUI), do NOT replay the accumulated bytes: an
+      // inline TUI's redraws are cursor-relative to the OLD geometry, so re-writing
+      // the whole accumulated stream at the new grid stacks spinners / duplicates the
+      // status bar. The backend's resize handler reseeds the recording with an
+      // authoritative capture-pane snapshot at the new geometry (ResetForResize), so
+      // the next content fetch renders one clean current screen — accept a brief blank
+      // until it lands rather than replay out-of-context bytes.
+      //
+      // For a NON-PIPE static capture (content_source !== 'tmux_pipe'), the carried-
+      // over content is a single coherent snapshot, so repaint it immediately (inline
+      // RIS + full write) to bridge the gap with no blank. This repaint does NOT touch
+      // lastContentRef, so the next fetch still does its clean rebuild.
       const carryOver = lastContentRef.current
       term.reset()
       lastContentRef.current = ''
       pendingContentRef.current = null
-      if (carryOver) {
+      if (carryOver && contentSourceRef.current !== 'tmux_pipe') {
         const payload = normalizeXtermWriteContent(carryOver, contentSourceRef.current)
         term.write('\x1bc' + payload)
         term.scrollToBottom()
@@ -2194,7 +2203,13 @@ const XtermTerminalPaneInner: React.FC<{
       const distanceFromBottom = Math.max(0, buffer.baseY - buffer.viewportY)
       const shouldStickToBottom = distanceFromBottom <= 1
       const isPipeStream = contentSource === 'tmux_pipe'
-      const appendOnlyPrefix = previousContent !== '' && nextContent.startsWith(previousContent)
+      // Replay decision for SAME-terminal streaming (continuity → delta, else →
+      // reset+full). Cross-terminal isolation is handled by the remount (key=
+      // terminal_id), so this only ever compares content within one terminal.
+      // Pure + unit-tested in terminalReplay.test.ts; appendOnlyPrefix is its
+      // inverse-of-reset so all the existing branch logic below is unchanged.
+      const writeDecision = computeXtermWrite(previousContent, nextContent)
+      const appendOnlyPrefix = !writeDecision.reset
 
       // Pipe-stream path (active/streaming): the backend serves the raw, monotonic
       // pipe recording (content_source `tmux_pipe`), so each refresh is the previous
@@ -2296,6 +2311,10 @@ const XtermTerminalPaneInner: React.FC<{
       }
     }
     applyContentRef.current = applyContent
+    // No terminal-switch hard reset here: the pane is remounted (key=terminal_id)
+    // on a switch, so this instance only ever sees ONE terminal's content stream.
+    // The empty initial buffer + applyContent's reset+full first write render the
+    // new terminal's backfill exactly once.
     applyContent(content)
   }, [content, contentSource, logXtermDebug])
 
@@ -4702,6 +4721,15 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
                     />
                   ) : (
                     <XtermTerminalPane
+                      // key on the stable per-terminal id forces a full REMOUNT
+                      // (dispose + recreate the xterm) on every terminal switch, so
+                      // a fresh instance with an empty buffer / no stale parse queue
+                      // renders the new terminal's backfill once — cross-terminal
+                      // overlap, accumulation, and the async-write race are
+                      // impossible by construction. The key is STABLE while
+                      // terminal_id is stable, so live streaming re-renders do NOT
+                      // remount (deltas keep appending; no mid-stream reset/flicker).
+                      key={selectedTerminalView?.terminal_id ?? 'no-terminal'}
                       contentRef={terminalOutputRef as React.RefObject<HTMLDivElement | null>}
                       content={selectedTerminalDisplayContent}
                       contentSource={selectedTerminalView?.content_source}

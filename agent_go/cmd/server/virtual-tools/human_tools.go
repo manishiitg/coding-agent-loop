@@ -162,7 +162,7 @@ func buildNotifyDescription() string {
 	}
 	desc := base + " Currently enabled delivery channels: " + strings.Join(labels, ", ") + ". The message is delivered to all enabled channels — you do not choose which."
 	if gmailOn {
-		desc += " Gmail is enabled, so you may optionally set email_subject, email_body, and email_attachments for the email rendering (other channels ignore these)."
+		desc += " Gmail is enabled, so you may optionally set email_subject, email_body, email_html, email_html_file, and email_attachments for the email rendering (other channels ignore these). Prefer email_html for formatted email; keep email_body plain text as the fallback."
 	}
 	return desc
 }

@@ -5334,7 +5334,25 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if !restoredNativeCodingResume && !modeChangedThisTurn && restoredConversationPath == "" && restoredConversationSessionID == "" {
-				restoredNativeCodingResume = api.seedCodingAgentRuntimeFromCurrentConversation(sessionID, currentUserID, finalProvider, newWorkshopMode, workflowPhaseFolder, underlyingAgent)
+				if seeded, currentRuntime := api.seedCodingAgentRuntimeFromCurrentConversation(sessionID, currentUserID, finalProvider, newWorkshopMode, workflowPhaseFolder, underlyingAgent); seeded {
+					restoredNativeCodingResume = true
+					// Active-tab auto-resume after idle/reap: this same session (the
+					// current tab — NOT an explicit Resume, so RestoredConversationPath is
+					// empty) has a recoverable native-resume handle, but its live tmux is
+					// gone (the 3h idle reaper closed it and MarkStale'd the snapshot).
+					// Adopt the recovered runtime as restoredRuntime so the FIX B block
+					// below re-launches the coding agent with --resume AND re-materializes
+					// the live tmux terminal — exactly like an explicit Resume — so the
+					// next turn continues the session (context preserved) and the stale
+					// terminal flips live, instead of running against a dead pane. Gated on
+					// "no live tmux" so a genuinely live session is never disrupted by a
+					// spurious relaunch (its existing pane keeps streaming via the seeded
+					// PiSessionID/--resume without a re-launch).
+					if currentRuntime != nil && !api.sessionHasLiveCodingTmux(sessionID) {
+						restoredRuntime = currentRuntime
+						logfWithContext(queryLogCtx, "[CHAT_HISTORY] Active-tab auto-resume: session %s tmux is gone; routing through --resume re-launch + materialize", sessionID)
+					}
+				}
 			}
 			if restoredNativeCodingResume {
 				if restoredRuntimeUsesLaunchableTerminalTransport(restoredRuntime) {
@@ -5905,23 +5923,47 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 	return runtime
 }
 
-func (api *StreamingAPI) seedCodingAgentRuntimeFromCurrentConversation(sessionID, userID, currentProvider, currentWorkshopMode, workspacePath string, underlyingAgent *mcpagent.Agent) bool {
+// seedCodingAgentRuntimeFromCurrentConversation recovers this session's own
+// persisted native-resume handle (when the in-memory agent is gone — e.g. after a
+// long idle) and seeds it onto the fresh /api/query agent. It returns the
+// recovered runtime alongside the success flag so the caller can route an
+// idled-out active tab through the FIX B re-launch (relaunch with --resume +
+// re-materialize the live tmux) instead of starting a fresh agent.
+func (api *StreamingAPI) seedCodingAgentRuntimeFromCurrentConversation(sessionID, userID, currentProvider, currentWorkshopMode, workspacePath string, underlyingAgent *mcpagent.Agent) (bool, *ChatHistoryAgentRuntime) {
 	if api == nil || underlyingAgent == nil || codingAgentHasNativeResume(currentProvider, underlyingAgent) {
-		return false
+		return false, nil
 	}
 	runtime, ok, err := ReadChatHistoryRuntimeForSession(userID, sessionID, workspacePath)
 	if err != nil {
 		log.Printf("[CHAT_HISTORY] Failed to read current conversation runtime for session %s: %v", sessionID, err)
-		return false
+		return false, nil
 	}
 	if !ok || runtime == nil {
-		return false
+		return false, nil
 	}
 	seeded := api.seedCodingAgentRuntimeFromRestoredConversation(sessionID, currentProvider, currentWorkshopMode, runtime, underlyingAgent)
 	if seeded {
 		log.Printf("[CHAT_HISTORY] Restored native coding-agent runtime from current conversation for session %s", sessionID)
+		return true, runtime
 	}
-	return seeded
+	return false, nil
+}
+
+// sessionHasLiveCodingTmux reports whether the session currently has a live
+// coding-agent terminal — an Active snapshot backed by a real tmux_session. The
+// idle reaper MarkStale's a closed pane (Active=false, TmuxSession=""), so this
+// returns false once the tmux is gone, which is how the auto-resume path tells a
+// genuinely live session (leave it alone) apart from an idled-out one (re-launch).
+func (api *StreamingAPI) sessionHasLiveCodingTmux(sessionID string) bool {
+	if api == nil || api.terminalStore == nil {
+		return false
+	}
+	for _, snapshot := range api.terminalStore.List(sessionID) {
+		if snapshot.Active && strings.TrimSpace(snapshot.TmuxSession) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func codingAgentHasNativeResume(provider string, underlyingAgent *mcpagent.Agent) bool {

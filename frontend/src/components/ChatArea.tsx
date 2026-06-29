@@ -900,23 +900,38 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // Any recognized "this resumed tab is live" signal: execution-tree activity OR
   // a live terminal pane. Feeds the resolver's active-over-landing decision.
   const hasRestoredLiveContent = restoredSessionHasExecutionContent || restoredSessionHasTerminal
-  // Bridge the brief load gap for event-based resumes (and page-load restore before
-  // isRestoringChatSessions flips true) so a NON-empty resumed chat doesn't flash
-  // the list before its first event settles.
-  const [resumeSettling, setResumeSettling] = useState(false)
   // Use the ACTIVE TAB's streaming flag, not the global state.isStreaming, which
   // lingers true after New Chat from a running conversation (a cross-tab signal,
-  // not session-scoped) and would wrongly clear the settle / force 'active'.
+  // not session-scoped) and would wrongly force 'active'.
   const activeTabStreaming = !!activeTab?.isStreaming
+  // Resume give-up TIMER only. A resume that never produces a terminal/content may
+  // eventually fall to 'landing'; resumeGaveUp flips true after RESUME_SETTLE_MS so
+  // a genuinely-dead resume isn't stuck on a spinner forever. This is purely a
+  // timeout — the "resume is pending" decision is derived SYNCHRONOUSLY below, not
+  // from this state, so the first render after a resume can never be 'landing'.
+  const [resumeGaveUp, setResumeGaveUp] = useState(false)
   useEffect(() => {
     if (!activeTabHasRestoredConversation || hasConversationContent || activeTabStreaming) {
-      setResumeSettling(false)
+      setResumeGaveUp(false)
       return
     }
-    setResumeSettling(true)
-    const timer = window.setTimeout(() => setResumeSettling(false), RESUME_SETTLE_MS)
+    setResumeGaveUp(false)
+    const timer = window.setTimeout(() => setResumeGaveUp(true), RESUME_SETTLE_MS)
     return () => window.clearTimeout(timer)
   }, [activeTabHasRestoredConversation, hasConversationContent, activeTabStreaming, activeSessionId])
+  // resumePending — SYNCHRONOUS (derived in render, NOT an effect-set state). This
+  // is the regression fix: on a Resume click restoredConversationPath is set
+  // synchronously (setTabConfig), so this is already true on the FIRST render →
+  // resolveChatSurface returns 'restoring' on that render, never the transient
+  // 'landing' that the old effect-lagged resumeSettling produced for one render.
+  // That transient 'landing' was what let the clear-on-landing effect fire and
+  // cancel the resume (the 2-3-click flakiness). resumePending stays true until
+  // content/stream arrives (→ 'active') or the give-up timer elapses (→ 'landing').
+  const resumePending =
+    activeTabHasRestoredConversation &&
+    !hasConversationContent &&
+    !activeTabStreaming &&
+    !resumeGaveUp
   // A tab observing a specific scheduled/bot run is a read-only view of THAT
   // run, never a fresh chat. The chat-surface resolver keeps such tabs in
   // restoring (while events load) or active (once present) and never lets them
@@ -2938,7 +2953,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // must not clear every tab/event/SSE connection in the app.
   const handleNewChat = useCallback(async () => {
     const chatStore = useChatStore.getState()
-    // Clear conversation history from backend first (if sessionId is available)
+    // Stop the previous backend session first (if it exists). This closes any
+    // tmux-backed CLI owner before the tab rotates to a fresh Chief of Staff
+    // session, preventing two pi-cli sessions from sharing the Chats cwd.
     const currentSessionId = getSessionId()
     const sessionIdToClear = activeTab?.sessionId || currentSessionId
     if (sessionIdToClear) {
@@ -2946,11 +2963,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         const activeSessions = await getActiveSessions(true)
         const backendKnowsSession = activeSessions.some(session => session.session_id === sessionIdToClear)
         if (backendKnowsSession) {
-          await agentApi.clearSession(sessionIdToClear)
+          await agentApi.stopSession(sessionIdToClear, true)
         }
       } catch (error) {
-        logger.error('ChatArea', 'Failed to clear session:', error)
-        // Continue with frontend reset even if backend clear fails
+        logger.error('ChatArea', 'Failed to stop previous session:', error)
+        // Continue with frontend reset even if backend stop fails.
       }
     }
     
@@ -3017,7 +3034,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // 'landing'. Reading the per-tab flag scopes "is streaming" to THIS session.
   const multiAgentSurface = resolveChatSurface({
     isRestoring: isRestoringChatSessions,
-    resumeSettling,
+    // The resolver's resume-pending → 'restoring' input is now the SYNCHRONOUS
+    // resumePending (computed in render), not the old effect-lagged state.
+    resumeSettling: resumePending,
     hasContent: hasConversationContent,
     isStreaming: activeTabStreaming,
     hasRestoredLiveContent,
@@ -3031,7 +3050,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // chat is unaffected (still resolves to 'landing').
   const workflowSurface = resolveChatSurface({
     isRestoring: isRestoringWorkflowSessions,
-    resumeSettling,
+    resumeSettling: resumePending,
     hasContent: displayEvents.length > 0,
     isStreaming: activeTabStreaming,
     hasRestoredLiveContent,
@@ -3051,6 +3070,13 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const tabId = activeTab?.tabId
     const cfg = activeTab?.config
     if (!tabId || cfg?.restoredConversationNativeResume !== true) return
+    // HARD GUARD: never clear the restore markers while a resume could still be
+    // pending — that is exactly what canceled resumes mid-flight (the 2-3-click
+    // bug). A native resume only legitimately reaches 'landing' once the give-up
+    // timer has elapsed with no terminal and no content (resumeGaveUp). Until then
+    // restoredConversationPath stays in place so the synchronous resumePending keeps
+    // the surface on 'restoring'. When in doubt, do NOT clear.
+    if (!resumeGaveUp) return
     const restoredPath = cfg.restoredConversationPath?.trim()
     if (!restoredPath) return
     useChatStore.getState().setTabConfig(tabId, {
@@ -3062,7 +3088,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       restoredConversationNativeResume: undefined,
       fileContext: (cfg.fileContext || []).filter(item => item.path !== restoredPath),
     })
-  }, [activeChatSurface, activeTab?.tabId, activeTab?.config])
+  }, [activeChatSurface, activeTab?.tabId, activeTab?.config, resumeGaveUp])
 
   // Multi-agent landing surface = the previous-chats panel (mirrors the old
   // showNormalPreviousChatsPanel).

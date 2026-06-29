@@ -1853,19 +1853,19 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     } catch (err) {
       const status = getHttpErrorStatus(err)
       if (isLiveCodingSessionGoneStatus(status)) {
-        queueStreamingMessage(trimmed)
-        setLiveMessageDelivery({
-          status: 'queued_locally',
-          message: trimmed,
-          provider: effectiveProviderForSteer || undefined,
-        })
-        scheduleLiveMessageDeliveryClear()
+        // RCA unification (docs/refactor/cli_live_input_unification.md §3/§4): for a
+        // CLI coding agent the tmux session being "gone" is NOT a failure and NOT a
+        // "queue locally + toast" case — there is simply no live turn to inject into,
+        // so this message should START THE NEXT TURN. The backend's live-input
+        // endpoint already does this server-side (startNextTurnFromLiveInput); this is
+        // the client mirror for the rare 404/409 race where it couldn't template one.
+        // Route straight to onSubmit (a fresh /api/query turn) with the SAME message —
+        // no local steer queue, no "the live coding-agent turn has ended" toast.
         if (activeTabId) {
-          const chatStore = useChatStore.getState()
-          chatStore.setTabCanSteer(activeTabId, false)
-          chatStore.setTabStreaming(activeTabId, false)
+          useChatStore.getState().setTabCanSteer(activeTabId, false)
         }
-        addToast('The live coding-agent turn has ended. Sending this as the next turn.', 'info')
+        setLiveMessageDelivery(null)
+        onSubmit(trimmed)
       } else if (isLikelyBackendUnavailableError(err)) {
         queueStreamingMessage(trimmed)
         setLiveMessageDelivery({
@@ -1889,7 +1889,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
     }
     return true
-  }, [activeTabId, addToast, clearInputState, effectiveProviderForSteer, isStreaming, queueStreamingMessage, scheduleLiveMessageDeliveryClear, supportsLiveCodingAgentInput, tabSessionId])
+  }, [activeTabId, addToast, clearInputState, effectiveProviderForSteer, isStreaming, onSubmit, queueStreamingMessage, scheduleLiveMessageDeliveryClear, supportsLiveCodingAgentInput, tabSessionId])
 
   // Route ESC to the tmux pane when a live coding-agent CLI is running.
   // Returns true if the key was delivered to the CLI; false (or thrown) means

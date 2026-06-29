@@ -320,6 +320,97 @@ func TestCanSteerSessionRequiresActiveForegroundTurn(t *testing.T) {
 	}
 }
 
+// Single-entry routing: a /api/query message for a BUSY coding-agent session must
+// be steered into the running turn (Status live_input_delivered) instead of
+// starting a second streaming turn, and recorded so it persists in the timeline.
+func TestTryDeliverQueryAsLiveInputBusyCodingAgent(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	defer store.Stop()
+
+	sessionID := "busy-coding-session"
+	runningAgent := &mcpagent.Agent{ModelID: "claude-sonnet-4-6"}
+	runningAgent.SetProvider(llm.ProviderClaudeCode)
+	api := &StreamingAPI{
+		eventStore:       store,
+		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
+		runningAgentsMux: sync.RWMutex{},
+		agentCancelFuncs: map[string]context.CancelFunc{sessionID: func() {}}, // active foreground turn → busy
+		agentCancelMux:   sync.RWMutex{},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/query", nil)
+	req.Header.Set("X-Session-ID", sessionID)
+	rr := httptest.NewRecorder()
+
+	if !api.tryDeliverQueryAsLiveInput(rr, req, sessionID, "steer me into the running turn", "query_test_busy") {
+		t.Fatalf("tryDeliverQueryAsLiveInput = false for a busy coding-agent session; want true (steer, not new turn). body=%s", rr.Body.String())
+	}
+	var resp QueryResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Status != queryStatusLiveInputDelivered {
+		t.Fatalf("status = %q, want %q", resp.Status, queryStatusLiveInputDelivered)
+	}
+	if resp.DeliveryStatus == "" {
+		t.Fatal("delivery_status empty; want a live-input delivery status")
+	}
+	if got := len(store.GetAllEventsRaw(sessionID)); got != 1 {
+		t.Fatalf("recorded %d events, want 1 (the steered user message)", got)
+	}
+}
+
+// Single-entry routing: an IDLE coding-agent session must fall through (return
+// false) so handleQuery starts a new turn + materializes the terminal.
+func TestTryDeliverQueryAsLiveInputIdleFallsThrough(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	defer store.Stop()
+
+	sessionID := "idle-coding-session"
+	runningAgent := &mcpagent.Agent{ModelID: "claude-sonnet-4-6"}
+	runningAgent.SetProvider(llm.ProviderClaudeCode)
+	api := &StreamingAPI{
+		eventStore:       store,
+		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
+		runningAgentsMux: sync.RWMutex{},
+		agentCancelFuncs: map[string]context.CancelFunc{}, // no active turn, no busy pane → idle
+		agentCancelMux:   sync.RWMutex{},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/query", nil)
+	rr := httptest.NewRecorder()
+	if api.tryDeliverQueryAsLiveInput(rr, req, sessionID, "first message", "query_test_idle") {
+		t.Fatal("tryDeliverQueryAsLiveInput = true for an idle session; want false so handleQuery starts a new turn + materializes")
+	}
+	if got := len(store.GetAllEventsRaw(sessionID)); got != 0 {
+		t.Fatalf("idle fall-through recorded %d events, want 0", got)
+	}
+}
+
+// API/LLM unchanged: even when busy, a non-coding (API) agent must NOT be
+// short-circuited — those keep their frontend steer-vs-queue path.
+func TestTryDeliverQueryAsLiveInputSkipsNonCodingAgent(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	defer store.Stop()
+
+	sessionID := "busy-llm-session"
+	runningAgent := &mcpagent.Agent{ModelID: "gpt-5"}
+	runningAgent.SetProvider(llm.ProviderOpenAI)
+	api := &StreamingAPI{
+		eventStore:       store,
+		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
+		runningAgentsMux: sync.RWMutex{},
+		agentCancelFuncs: map[string]context.CancelFunc{sessionID: func() {}}, // busy
+		agentCancelMux:   sync.RWMutex{},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/query", nil)
+	rr := httptest.NewRecorder()
+	if api.tryDeliverQueryAsLiveInput(rr, req, sessionID, "llm message", "query_test_llm") {
+		t.Fatal("tryDeliverQueryAsLiveInput = true for an API/LLM agent; want false (API/LLM routing unchanged)")
+	}
+}
+
 func TestIdleCompletionDoesNotCompleteStaleBusyTurn(t *testing.T) {
 	sessionID := "stale-busy-session"
 	api := &StreamingAPI{

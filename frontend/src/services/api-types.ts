@@ -190,10 +190,17 @@ export interface CustomTierModel {
 
 export interface AgentQueryResponse {
   query_id: string
+  // 'started' | 'workflow_started' | 'live_input_delivered' | error states.
+  // 'live_input_delivered' means the backend steered this message into an
+  // already-running coding-agent turn instead of starting a new one (single-entry
+  // routing for tmux-transport CLIs).
   status: string
   message?: string
   sse_endpoint?: string
   session_id?: string
+  // Populated only when status === 'live_input_delivered'.
+  delivery_status?: 'sent_to_cli' | 'queued_for_injection' | 'next_turn_started'
+  provider?: string
 }
 
 // LLM Defaults Configuration Response

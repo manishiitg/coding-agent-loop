@@ -2798,6 +2798,26 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             logger.error('ChatArea', 'Failed to refresh active sessions cache:', error)
             connectAfterRefresh()
           })
+      } else if (response.status === 'live_input_delivered') {
+        // Single-entry routing (tmux-transport CLI): the backend steered this
+        // message into the already-running coding-agent turn instead of starting a
+        // new one. Keep the turn streaming — the optimistic user bubble already shows
+        // the message (the backend-recorded echo is deduped by exact content), and
+        // the running turn's SSE carries the agent output until its completion event
+        // clears the spinner. Do NOT resetStreamingState here (that would stop the
+        // spinner mid-turn).
+        const sid = response.session_id || tabSessionId
+        chatStore.setTabStreaming(currentTab.tabId, true)
+        chatStore.setTabCompleted(currentTab.tabId, false)
+        requestTerminalRefreshBurst()
+        if (sid && !useChatStore.getState().sseConnections[sid]) {
+          connectSSE(
+            sid,
+            (msg: SSEEventMessage) => handleSSEMessage(msg, sid),
+            (msg: SSEStatusMessage) => handleSSEStatus(msg, sid),
+            () => handleSSEFallback(sid)
+          )
+        }
       } else {
         console.log('[WF_DEBUG] ERROR: Backend non-started response', { status: response.status, message: response.message, response })
         logger.error('ChatArea', 'Backend error:', response)

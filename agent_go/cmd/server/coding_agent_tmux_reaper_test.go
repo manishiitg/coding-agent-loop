@@ -142,6 +142,39 @@ func TestCleanupStaleCodingAgentTmuxSessionsClosesStoppedSessionImmediately(t *t
 	}
 }
 
+// TestSessionHasLiveCodingTmuxTracksReap covers the gate that decides whether an
+// active-tab /api/query auto-resumes (re-launch with --resume + materialize) after
+// the session's tmux is gone. A live pane → true; once the reaper closes it
+// (MarkStale → Active=false, TmuxSession="") → false, which is the signal that the
+// next turn must re-launch the native session instead of running against a dead pane.
+func TestSessionHasLiveCodingTmuxTracksReap(t *testing.T) {
+	store := terminals.NewStore()
+	sessionID := "idle-active-session"
+	tmuxSession := "mlp-pi-cli-active"
+	store.HandleEvent(sessionID, codingAgentTmuxReaperChunkEvent(time.Now(), sessionID, "main:"+sessionID, tmuxSession))
+	api := &StreamingAPI{terminalStore: store}
+
+	if !api.sessionHasLiveCodingTmux(sessionID) {
+		t.Fatal("expected a live coding tmux while the pane is Active with a tmux_session")
+	}
+
+	// Reap the pane (the 3h idle path): MarkStale clears Active + TmuxSession.
+	if _, ok := store.MarkStale(sessionID + ":main:" + sessionID); !ok {
+		t.Fatal("expected to mark the terminal stale")
+	}
+	if api.sessionHasLiveCodingTmux(sessionID) {
+		t.Fatal("expected no live coding tmux after the pane was reaped/stale")
+	}
+
+	// A nil store / unknown session must be safe (no panic, false).
+	if (&StreamingAPI{}).sessionHasLiveCodingTmux(sessionID) {
+		t.Fatal("expected false with no terminal store")
+	}
+	if api.sessionHasLiveCodingTmux("never-seen") {
+		t.Fatal("expected false for an unknown session")
+	}
+}
+
 func stubTerminalTmuxCommand(t *testing.T) *[]string {
 	t.Helper()
 	t.Setenv(envCodingAgentTmuxOrphanIdleSeconds, "")

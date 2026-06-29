@@ -2953,7 +2953,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // must not clear every tab/event/SSE connection in the app.
   const handleNewChat = useCallback(async () => {
     const chatStore = useChatStore.getState()
-    // Clear conversation history from backend first (if sessionId is available)
+    // Stop the previous backend session first (if it exists). This closes any
+    // tmux-backed CLI owner before the tab rotates to a fresh Chief of Staff
+    // session, preventing two pi-cli sessions from sharing the Chats cwd.
     const currentSessionId = getSessionId()
     const sessionIdToClear = activeTab?.sessionId || currentSessionId
     if (sessionIdToClear) {
@@ -2961,11 +2963,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         const activeSessions = await getActiveSessions(true)
         const backendKnowsSession = activeSessions.some(session => session.session_id === sessionIdToClear)
         if (backendKnowsSession) {
-          await agentApi.clearSession(sessionIdToClear)
+          await agentApi.stopSession(sessionIdToClear, true)
         }
       } catch (error) {
-        logger.error('ChatArea', 'Failed to clear session:', error)
-        // Continue with frontend reset even if backend clear fails
+        logger.error('ChatArea', 'Failed to stop previous session:', error)
+        // Continue with frontend reset even if backend stop fails.
       }
     }
     

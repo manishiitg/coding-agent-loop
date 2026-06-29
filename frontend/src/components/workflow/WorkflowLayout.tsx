@@ -120,6 +120,22 @@ const EMPTY_WORKFLOW_EVENTS: PollingEvent[] = []
 const WORKFLOW_RESTORE_TIMEOUT_MS = 8000
 const WORKFLOW_CHAT_CONTENT_EVENT_TYPES = new Set(['user_message', 'conversation_end', 'unified_completion'])
 const AUTO_RESUME_WORKFLOW_CHAT_MAX_AGE_MS = 24 * 60 * 60 * 1000
+// Window during which a freshly-opened read-only Schedule/Bot run tab is
+// protected from auto tab-switching (reconnect/reconcile). Mirrors App.tsx's
+// READ_ONLY_WORKFLOW_RESTORE_SELECTION_WINDOW_MS so all auto-selectors agree:
+// clicking a running schedule from the monitor/Ctrl+K must STAY on that run and
+// not bounce to a builder/empty chat. A stale persisted read-only tab (old
+// timestamp) is NOT protected, so a page reload still reconnects normally.
+const READ_ONLY_RUN_SELECTION_WINDOW_MS = 60 * 1000
+const isRecentlyOpenedReadOnlyRunTab = (tab: ChatTab | null | undefined): boolean => {
+  const restoredAt = tab?.metadata?.readOnlyRestoredAt
+  return !!tab &&
+    tab.metadata?.mode === 'workflow' &&
+    tab.metadata?.isViewOnly === true &&
+    (tab.metadata?.isScheduledRun === true || tab.metadata?.isBotRun === true) &&
+    typeof restoredAt === 'number' &&
+    Date.now() - restoredAt <= READ_ONLY_RUN_SELECTION_WINDOW_MS
+}
 
 function normalizeWorkflowPath(path?: string | null): string {
   return (path || '').replace(/\/+$/, '')
@@ -1640,6 +1656,24 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           lastTabId = tabId
         }
 
+        // The user may have just opened a read-only scheduled/bot run from the
+        // Global Activity Monitor / Ctrl+K. That activates the run tab AND applies
+        // its preset, which is exactly what triggered THIS reconnect. Switching the
+        // active tab away (the builder/empty-chat fallbacks below) is the "running
+        // schedule bounces to an empty chat" bug. If the active tab is a freshly-
+        // opened read-only run, leave it selected — just show the chat area. (Tabs
+        // for other sessions were still created above; we only refuse to steal the
+        // active selection from the run the user clicked. The recency window means a
+        // stale persisted read-only tab on reload still reconnects normally.)
+        {
+          const store = useChatStore.getState()
+          const activeReadOnlyTab = store.activeTabId ? store.chatTabs[store.activeTabId] : undefined
+          if (isRecentlyOpenedReadOnlyRunTab(activeReadOnlyTab)) {
+            setShowChatArea(true)
+            return
+          }
+        }
+
         // 5. Show the chat area with the last tab
         if (lastTabId) {
           switchTab(lastTabId)
@@ -1737,12 +1771,20 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           activeTab.metadata?.presetQueryId === activePresetId &&
           !activeTabIsStreaming
         const latestRunning = runningWorkflows[0]
+        // Never auto-switch away from a read-only scheduled/bot run the user just
+        // opened — that's the schedule→empty-chat bounce. They can still pick
+        // another tab manually; this reconcile just must not stomp the run they
+        // clicked. Recency-gated (matches App.tsx) so it doesn't pin the user on a
+        // stale read-only tab forever.
+        const activeIsReadOnlyRunView = isRecentlyOpenedReadOnlyRunTab(activeTab)
         const shouldSwitch =
-          !activeTab ||
-          activeTab.metadata?.mode !== 'workflow' ||
-          (
-            activeTab.sessionId !== latestRunning.session_id &&
-            (activeViewMode === 'terminal' || activeIsBuilderForPreset || activeIsCompletedWorkflowForPreset)
+          !activeIsReadOnlyRunView && (
+            !activeTab ||
+            activeTab.metadata?.mode !== 'workflow' ||
+            (
+              activeTab.sessionId !== latestRunning.session_id &&
+              (activeViewMode === 'terminal' || activeIsBuilderForPreset || activeIsCompletedWorkflowForPreset)
+            )
           )
 
         let selectedRunningTabId: string | null = null

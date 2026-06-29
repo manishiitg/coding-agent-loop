@@ -9,6 +9,7 @@ import type { PollingEvent, TerminalSnapshot } from '../services/api-types'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useChatStore } from '../stores/useChatStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
+import { useCapabilitiesStore } from '../stores/useCapabilitiesStore'
 import { TERMINAL_REFRESH_REQUEST_EVENT } from '../utils/terminalRefresh'
 import { computeXtermWrite } from './terminalReplay'
 import { MarkdownRenderer } from './ui/MarkdownRenderer'
@@ -2334,6 +2335,218 @@ const XtermTerminalPaneInner: React.FC<{
 // all useCallback-stable, so re-render now tracks content/theme changes only.
 const XtermTerminalPane = memo(XtermTerminalPaneInner)
 
+// LiveAttachXtermPane is the Phase 2 live-attach transport (see
+// docs/refactor/terminal_live_attach_transport.md). It renders the SELECTED live
+// tmux terminal directly from the /api/terminals/{id}/stream WebSocket instead of
+// the snapshot/replay polling path: the backend's first frames are a capture-pane
+// backfill, then the live control-mode %output byte stream. We write those bytes
+// straight into xterm — NO applyContent / computeXtermWrite / content-prop replay.
+//
+// It is rendered ONLY when capabilities.terminal_live_attach is true AND the
+// terminal has a tmux session; every other case stays on XtermTerminalPane (the
+// unchanged default path), so flag-OFF is a true no-op and the rail/other
+// terminals are untouched. Like XtermTerminalPane it is mounted with
+// key={terminal_id} so a terminal switch fully remounts (fresh buffer + a fresh
+// WS), making cross-terminal overlap impossible by construction.
+//
+// The xterm stays display-only (disableStdin, no onData -> WS): input keeps
+// flowing through the EXISTING chat live-input / send-keys path into the tmux
+// session and returns as %output over this same WS. Resize is FitAddon -> a JSON
+// {type:'resize'} frame (backend pty.Setsize on the control client, window-size
+// latest) — we deliberately do NOT POST /resize here (that re-asserts window-size
+// manual and would fight the control client). On socket close we reconnect; the
+// backend re-runs the capture-pane backfill, so recovery needs no client replay.
+const LiveAttachXtermPaneInner: React.FC<{
+  terminalId: string
+  className?: string
+  contentRef: React.RefObject<HTMLDivElement | null>
+  xtermTheme: ITheme
+  xtermProfile: (typeof XTERM_PROFILE_OPTIONS)[TerminalColorScheme]
+  onViewportStickChange?: (isNearBottom: boolean) => void
+}> = ({ terminalId, className, contentRef, xtermTheme, xtermProfile, onViewportStickChange }) => {
+  const mountRef = useRef<HTMLDivElement | null>(null)
+  const terminalRef = useRef<XTerm | null>(null)
+  const wsRef = useRef<WebSocket | null>(null)
+  const onViewportStickChangeRef = useRef(onViewportStickChange)
+
+  useEffect(() => {
+    onViewportStickChangeRef.current = onViewportStickChange
+  }, [onViewportStickChange])
+
+  useEffect(() => {
+    const mount = mountRef.current
+    if (!mount) return
+
+    // convertEol stays FALSE: the WS carries the raw terminal byte stream (live
+    // %output + the CR-normalized capture-pane backfill), so xterm must honor the
+    // bytes verbatim — unlike the snapshot path which post-processes content.
+    const term = new XTerm({
+      allowProposedApi: false,
+      convertEol: false,
+      cursorBlink: false,
+      cursorStyle: xtermProfile.cursorStyle,
+      disableStdin: true,
+      fontFamily: xtermProfile.fontFamily,
+      fontSize: xtermProfile.fontSize,
+      lineHeight: xtermProfile.lineHeight,
+      scrollback: 20000,
+      theme: xtermTheme,
+    })
+    const fit = new FitAddon()
+    term.loadAddon(fit)
+    term.open(mount)
+    terminalRef.current = term
+
+    const scrollDisposable = term.onScroll(viewportY => {
+      const distanceFromBottom = Math.max(0, term.buffer.active.baseY - viewportY)
+      onViewportStickChangeRef.current?.(distanceFromBottom <= 1)
+    })
+
+    const sendResize = () => {
+      const ws = wsRef.current
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
+      }
+    }
+    // The xterm grid is the single source of truth for pane geometry; the resize
+    // frame drives pty.Setsize on the backend control client (window-size latest).
+    const resizeDisposable = term.onResize(() => sendResize())
+
+    const fitTerminal = () => {
+      try {
+        fit.fit()
+      } catch {
+        // Fit can fail during unmount or while the pane is display:none.
+      }
+    }
+    let fitTimer: number | undefined
+    const scheduleFit = () => {
+      if (fitTimer !== undefined) window.clearTimeout(fitTimer)
+      fitTimer = window.setTimeout(fitTerminal, 120)
+    }
+    fitTerminal()
+    const resizeObserver = new ResizeObserver(scheduleFit)
+    resizeObserver.observe(mount)
+
+    // WebSocket lifecycle with reconnect. The backend re-runs the capture-pane
+    // backfill on every (re)connect, so a dropped socket recovers the current
+    // screen without any client-side replay/seed state.
+    let closed = false
+    let reconnectTimer: number | undefined
+    const connect = () => {
+      if (closed) return
+      const url = agentApi.getTerminalStreamUrl(terminalId, term.cols, term.rows)
+      const ws = new WebSocket(url)
+      ws.binaryType = 'arraybuffer'
+      wsRef.current = ws
+      ws.onopen = () => {
+        // Correct the backend's seed geometry to the real fitted grid immediately.
+        sendResize()
+      }
+      ws.onmessage = ev => {
+        const data = ev.data
+        if (data instanceof ArrayBuffer) {
+          term.write(new Uint8Array(data))
+        } else if (typeof data === 'string') {
+          term.write(data)
+        }
+      }
+      ws.onclose = () => {
+        if (wsRef.current === ws) wsRef.current = null
+        if (closed) return
+        reconnectTimer = window.setTimeout(connect, 1000)
+      }
+      ws.onerror = () => {
+        try {
+          ws.close()
+        } catch {
+          // ignore; onclose will schedule the reconnect
+        }
+      }
+    }
+    connect()
+
+    return () => {
+      closed = true
+      scrollDisposable.dispose()
+      resizeDisposable.dispose()
+      resizeObserver.disconnect()
+      if (fitTimer !== undefined) window.clearTimeout(fitTimer)
+      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer)
+      const ws = wsRef.current
+      wsRef.current = null
+      if (ws) {
+        try {
+          ws.onclose = null
+          ws.close()
+        } catch {
+          // ignore
+        }
+      }
+      terminalRef.current = null
+      term.dispose()
+    }
+    // terminalId is stable for a mounted instance (key={terminal_id}); theme and
+    // profile changes are applied by the effects below, mirroring XtermTerminalPane.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [terminalId])
+
+  useEffect(() => {
+    const term = terminalRef.current
+    if (!term) return
+    term.options.theme = xtermTheme
+  }, [xtermTheme])
+
+  useEffect(() => {
+    const term = terminalRef.current
+    if (!term) return
+    term.options.fontFamily = xtermProfile.fontFamily
+    term.options.fontSize = xtermProfile.fontSize
+    term.options.lineHeight = xtermProfile.lineHeight
+    term.options.cursorStyle = xtermProfile.cursorStyle
+  }, [xtermProfile])
+
+  const handleWheel = useCallback((event: WheelEvent) => {
+    const term = terminalRef.current
+    if (!term) return
+    const lineHeightPx = xtermProfile.fontSize * xtermProfile.lineHeight
+    const rawLines = event.deltaMode === 1
+      ? event.deltaY
+      : event.deltaMode === 2
+        ? event.deltaY * term.rows
+        : event.deltaY / Math.max(1, lineHeightPx)
+    const direction = rawLines < 0 ? -1 : 1
+    const lines = Math.max(1, Math.min(12, Math.ceil(Math.abs(rawLines)))) * direction
+    event.preventDefault()
+    event.stopPropagation()
+    term.scrollLines(lines)
+    const distanceFromBottom = Math.max(0, term.buffer.active.baseY - term.buffer.active.viewportY)
+    onViewportStickChangeRef.current?.(distanceFromBottom <= 1)
+  }, [xtermProfile.fontSize, xtermProfile.lineHeight])
+
+  useEffect(() => {
+    const node = contentRef.current
+    if (!node) return
+    const listenerOptions: AddEventListenerOptions = { passive: false, capture: true }
+    node.addEventListener('wheel', handleWheel, listenerOptions)
+    return () => {
+      node.removeEventListener('wheel', handleWheel, listenerOptions)
+    }
+  }, [contentRef, handleWheel])
+
+  return (
+    <div
+      ref={contentRef}
+      className={className}
+      style={{ backgroundColor: xtermTheme.background }}
+    >
+      <div ref={mountRef} className="h-full w-full [&_.xterm]:h-full" />
+    </div>
+  )
+}
+
+const LiveAttachXtermPane = memo(LiveAttachXtermPaneInner)
+
 function normalizeXtermWriteContent(content: string, contentSource?: string): string {
   if (contentSource === 'tmux_pipe') {
     return content
@@ -3654,6 +3867,20 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     [selectedTerminalView, priorArchivedTurns, archivedTurnContents],
   )
   const selectedTerminalIsSynthetic = selectedTerminalView ? isSyntheticTerminal(selectedTerminalView) : false
+  // Phase 2 live-attach: render the selected live tmux terminal over the
+  // /api/terminals/{id}/stream WebSocket when the backend exposes the flag
+  // (RUNLOOP_TERMINAL_LIVE_ATTACH + supported tmux → capabilities.terminal_live_attach).
+  // The field isn't in the typed CapabilitiesResponse, so read it via a narrow
+  // cast; this is purely additive and falls back to the polling path when absent.
+  const liveAttachTransportEnabled = useCapabilitiesStore(
+    s => Boolean((s.capabilities as { terminal_live_attach?: boolean } | null)?.terminal_live_attach),
+  )
+  const useLiveAttachForSelected = !!(
+    liveAttachTransportEnabled &&
+    selectedTerminalView &&
+    !selectedTerminalIsSynthetic &&
+    selectedTerminalView.tmux_session
+  )
   const selectedRouteDecision = selectedTerminalView?.step_id
     ? routingDecisionByNextStepID.get(selectedTerminalView.step_id)
     : undefined
@@ -3954,10 +4181,14 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
   // exactly like a new chat. Idempotent: sendTerminalResize dedupes by id+cols+rows.
   useEffect(() => {
     if (!selectedTerminalView || !selectedTerminalView.tmux_session || isSyntheticTerminal(selectedTerminalView)) return
+    // In live-attach mode the WS resize frame (pty.Setsize, window-size latest) is
+    // authoritative; POST /resize re-asserts window-size manual and would fight the
+    // control client, so skip it for the WS-rendered terminal.
+    if (useLiveAttachForSelected) return
     const grid = lastXtermGridRef.current
     if (!grid) return
     sendTerminalResize(selectedTerminalView.terminal_id, grid.cols, grid.rows)
-  }, [selectedTerminalView?.terminal_id, selectedTerminalView?.tmux_session, sendTerminalResize])
+  }, [selectedTerminalView?.terminal_id, selectedTerminalView?.tmux_session, sendTerminalResize, useLiveAttachForSelected])
 
   // Startup/idle size hint: keep the backend's preferred tmux launch size in
   // sync with the visible TerminalCenter container, even before any terminal
@@ -4718,6 +4949,22 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
                       onWheel={handleTerminalWheel as (e: React.WheelEvent<HTMLDivElement>) => void}
                       terminal={selectedTerminalView}
                       theme={terminalTheme}
+                    />
+                  ) : useLiveAttachForSelected && selectedTerminalView ? (
+                    <LiveAttachXtermPane
+                      // Same key discipline as XtermTerminalPane: a full REMOUNT on
+                      // terminal switch gives a fresh xterm buffer AND a fresh WS, so
+                      // cross-terminal overlap is impossible. (Switching between this
+                      // and XtermTerminalPane is a component-type change, which React
+                      // also remounts.) Phase 2 — WS path, flag-gated, parallel to the
+                      // unchanged polling path below.
+                      key={selectedTerminalView.terminal_id}
+                      terminalId={selectedTerminalView.terminal_id}
+                      contentRef={terminalOutputRef as React.RefObject<HTMLDivElement | null>}
+                      xtermTheme={XTERM_THEMES[terminalColorScheme]}
+                      xtermProfile={XTERM_PROFILE_OPTIONS[terminalColorScheme]}
+                      onViewportStickChange={handleXtermViewportStickChange}
+                      className={`min-w-0 flex-1 overflow-hidden overscroll-contain font-mono text-neutral-100 ${XTERM_PROFILE_OPTIONS[terminalColorScheme].panePaddingClass} ${terminalTheme.selection}`}
                     />
                   ) : (
                     <XtermTerminalPane

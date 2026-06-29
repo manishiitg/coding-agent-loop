@@ -898,6 +898,25 @@ export const agentApi = {
     return response.data
   },
 
+  // Build the ws(s):// URL for the live-attach terminal stream (Phase 2 of the
+  // live-attach transport). The endpoint upgrades to a WebSocket that delivers a
+  // capture-pane backfill then the live %output byte stream for the selected tmux
+  // terminal. Auth is via the `token` query param (the WS handshake can't carry
+  // the Authorization header the axios client normally injects). cols/rows seed
+  // the initial geometry; the client also sends resize frames after FitAddon.
+  // Only meaningful when capabilities.terminal_live_attach is true.
+  getTerminalStreamUrl: (terminalId: string, cols?: number, rows?: number): string => {
+    const httpBase = getApiBaseUrl() || (typeof window !== 'undefined' ? window.location.origin : '')
+    // http -> ws, https -> wss.
+    const wsBase = httpBase.replace(/^http/i, 'ws')
+    const url = new URL(`/api/terminals/${encodeURIComponent(terminalId)}/stream`, wsBase)
+    if (cols && cols > 0) url.searchParams.set('cols', String(Math.floor(cols)))
+    if (rows && rows > 0) url.searchParams.set('rows', String(Math.floor(rows)))
+    const token = getAuthToken()
+    if (token) url.searchParams.set('token', token)
+    return url.toString()
+  },
+
   getMultiAgentChatCapabilities: async (): Promise<{ capabilities: WorkflowCapabilities; updated_at?: string }> => {
     const response = await api.get('/api/multiagent/chat-capabilities')
     return response.data

@@ -10,7 +10,7 @@ import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useChatStore } from '../stores/useChatStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { TERMINAL_REFRESH_REQUEST_EVENT } from '../utils/terminalRefresh'
-import { computeXtermWrite, writeWithGeneration } from './terminalReplay'
+import { computeXtermWrite } from './terminalReplay'
 import { MarkdownRenderer } from './ui/MarkdownRenderer'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 
@@ -1981,20 +1981,13 @@ const XtermTerminalPaneInner: React.FC<{
   const mountRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<XTerm | null>(null)
   const lastContentRef = useRef<string>('')
-  // The terminal_id (debugLabel) currently rendered into this xterm instance. The
-  // pane is NOT remounted on a terminal switch (no React key), so the same xterm
-  // is reused across switches; when debugLabel changes we must hard-reset the
-  // buffer + scrollback before replaying the new terminal's backfill. Without this
-  // each switch re-applies a full backfill on top of the existing buffer and the
-  // content accumulates (and, across a width change, stacks narrow + wide copies).
-  const lastDebugLabelRef = useRef<string | undefined>(undefined)
-  // Generation token, bumped on every terminal SWITCH (in the same block that
-  // calls term.reset()). Each write into the xterm captures the generation when it
-  // is scheduled and is dropped at execution if a switch has bumped it since — so a
-  // deferred/queued write from the PREVIOUS terminal can't corrupt the new one
-  // (xterm.write is async/internally-queued). Current-terminal writes are
-  // unaffected (their captured generation is still current). See terminalReplay.ts.
-  const writeGenerationRef = useRef(0)
+  // Terminal-switch isolation is structural: the parent renders this pane with
+  // key={terminal_id}, so React fully REMOUNTS (disposes + recreates) the xterm
+  // whenever the selected terminal changes. A fresh instance has an empty buffer
+  // and no stale parse queue from the prior terminal, so cross-terminal overlap /
+  // accumulation / the async-write race are impossible by construction. Within a
+  // single instance the terminal_id is constant; only its content streams, handled
+  // by the delta/continuity logic in applyContent (computeXtermWrite).
   // Pager model (Fix B): while the user has scrolled up we freeze the view and
   // stash the latest desired content here instead of writing it. onScroll applies
   // it (via applyContentRef) once the user returns to the bottom.
@@ -2099,14 +2092,9 @@ const XtermTerminalPaneInner: React.FC<{
       lastContentRef.current = ''
       pendingContentRef.current = null
       if (carryOver) {
-        // Same-terminal grid resize (not a switch) → do NOT bump the generation;
-        // just gen-gate the repaint for audit-completeness (it's synchronous, so it
-        // always passes unless a switch raced in between).
-        const gen = writeGenerationRef.current
         const payload = normalizeXtermWriteContent(carryOver, contentSourceRef.current)
-        if (writeWithGeneration(term, '\x1bc' + payload, gen, writeGenerationRef.current)) {
-          term.scrollToBottom()
-        }
+        term.write('\x1bc' + payload)
+        term.scrollToBottom()
       }
       // Drive the tmux resize from xterm's real grid so the pane matches 1:1.
       onResizeRef.current?.(cols, rows)
@@ -2210,17 +2198,15 @@ const XtermTerminalPaneInner: React.FC<{
       if (!term) return
       const previousContent = lastContentRef.current
       if (nextContent === previousContent) return
-      // Capture the write generation for this application; every term write below
-      // is gated on it (writeWithGeneration) so a terminal switch mid-flight
-      // discards these now-stale writes instead of corrupting the new terminal.
-      const generation = writeGenerationRef.current
       const buffer = term.buffer.active
       const distanceFromBottom = Math.max(0, buffer.baseY - buffer.viewportY)
       const shouldStickToBottom = distanceFromBottom <= 1
       const isPipeStream = contentSource === 'tmux_pipe'
-      // Replay decision (continuity → delta, else → reset+full). Same pure function
-      // unit-tested in terminalReplay.test.ts; appendOnlyPrefix is its inverse-of-
-      // reset so all the existing branch logic below is preserved unchanged.
+      // Replay decision for SAME-terminal streaming (continuity → delta, else →
+      // reset+full). Cross-terminal isolation is handled by the remount (key=
+      // terminal_id), so this only ever compares content within one terminal.
+      // Pure + unit-tested in terminalReplay.test.ts; appendOnlyPrefix is its
+      // inverse-of-reset so all the existing branch logic below is unchanged.
       const writeDecision = computeXtermWrite(previousContent, nextContent)
       const appendOnlyPrefix = !writeDecision.reset
 
@@ -2256,7 +2242,7 @@ const XtermTerminalPaneInner: React.FC<{
           afterPipeWrite()
           return
         }
-        writeWithGeneration(term, payload, generation, writeGenerationRef.current, afterPipeWrite)
+        term.write(payload, afterPipeWrite)
         return
       }
 
@@ -2316,44 +2302,20 @@ const XtermTerminalPaneInner: React.FC<{
       // before the new content. The append case writes only the delta as before.
       const payload = normalizeXtermWriteContent(writeContent, contentSource)
       if (!appendOnly) {
-        writeWithGeneration(term, '\x1bc' + payload, generation, writeGenerationRef.current, afterWrite)
+        term.write('\x1bc' + payload, afterWrite)
       } else if (!payload) {
         afterWrite()
       } else {
-        writeWithGeneration(term, payload, generation, writeGenerationRef.current, afterWrite)
+        term.write(payload, afterWrite)
       }
     }
     applyContentRef.current = applyContent
-
-    // Terminal SWITCH detection: the rail/monitor reuses this same xterm instance
-    // for a different terminal (debugLabel = terminal_id changes, no remount). Hard
-    // reset the buffer + scrollback synchronously BEFORE replaying the new
-    // terminal's backfill, otherwise the backfill is written on top of the previous
-    // terminal's buffer and accumulates on every switch (and stacks narrow + wide
-    // copies across a width change). Keyed on the terminal_id change only — NOT on
-    // ordinary streaming re-renders of the SAME terminal (those keep appending the
-    // live delta without a wipe). The subsequent applyContent sees an empty
-    // previousContent and does a clean full (inline-RIS) write of the new backfill.
-    if (debugLabel !== lastDebugLabelRef.current) {
-      const term = terminalRef.current
-      if (term) {
-        // term.reset() (xterm API) clears the buffer AND scrollback synchronously
-        // — a stronger guarantee than the inline RIS used for same-terminal
-        // rebuilds — so the previous terminal's content can't linger and stack.
-        term.reset()
-        // Bump the write generation so any write scheduled for the PREVIOUS
-        // terminal (still pending in xterm's async write queue) is dropped instead
-        // of landing on this freshly-reset buffer. See writeWithGeneration.
-        writeGenerationRef.current += 1
-        lastContentRef.current = ''
-        pendingContentRef.current = null
-        lastDebugLabelRef.current = debugLabel
-        logXtermDebug('switch-reset')
-      }
-    }
-
+    // No terminal-switch hard reset here: the pane is remounted (key=terminal_id)
+    // on a switch, so this instance only ever sees ONE terminal's content stream.
+    // The empty initial buffer + applyContent's reset+full first write render the
+    // new terminal's backfill exactly once.
     applyContent(content)
-  }, [content, contentSource, logXtermDebug, debugLabel])
+  }, [content, contentSource, logXtermDebug])
 
   return (
     <div
@@ -4758,6 +4720,15 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
                     />
                   ) : (
                     <XtermTerminalPane
+                      // key on the stable per-terminal id forces a full REMOUNT
+                      // (dispose + recreate the xterm) on every terminal switch, so
+                      // a fresh instance with an empty buffer / no stale parse queue
+                      // renders the new terminal's backfill once — cross-terminal
+                      // overlap, accumulation, and the async-write race are
+                      // impossible by construction. The key is STABLE while
+                      // terminal_id is stable, so live streaming re-renders do NOT
+                      // remount (deltas keep appending; no mid-stream reset/flicker).
+                      key={selectedTerminalView?.terminal_id ?? 'no-terminal'}
                       contentRef={terminalOutputRef as React.RefObject<HTMLDivElement | null>}
                       content={selectedTerminalDisplayContent}
                       contentSource={selectedTerminalView?.content_source}

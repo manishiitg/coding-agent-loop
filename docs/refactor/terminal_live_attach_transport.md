@@ -1,6 +1,6 @@
 # Design: Live-attach terminal transport (replace snapshot/replay mirror)
 
-**Status:** Design — not started. Supersedes the snapshot/replay mirror.
+**Status:** Design — Phase 0 PoC complete (**control-mode chosen**, reversed from the initial PTY-attach pick; see §3). Phase 1 not started. Supersedes the snapshot/replay mirror.
 **Author/driver:** terminal-stability refactor.
 **Related:** `cli_live_input_unification.md` (input routing — stays valid; this doc is the *output/render* transport).
 
@@ -55,14 +55,18 @@ Input keeps the **existing** `send-keys`/`paste-buffer` path (the CLI-live-input
 | Code we write | Minimal (ttyd is a near-blueprint; creack/pty does the PTY) | **A control-mode protocol parser** (no mature Go lib; iTerm2 is GPL → design-only) |
 | OSS leverage | High (ttyd, GoTTY, creack/pty — all MIT) | Low (write our own parser) |
 
-**Decision: PTY-attach is primary.** With our **single-viewer / single-pane** constraint and read-only attach, the usual reasons to prefer control mode (chrome, prefix, multi-pane, multi-client size negotiation) don't apply, and PTY-attach has far more MIT OSS to lean on. **Control-mode stays the documented fallback** if read-only PTY-attach taming proves leaky on some tmux version.
+**Decision (revised after the Phase 0 PoC): CONTROL MODE is primary.** The PoC (tmux 3.6a, macOS) found read-only PTY-attach fails the two cases that matter most for this app:
+1. **Dead-pane banner leak** — with `remain-on-exit` on (workflow-step / completed terminals), tmux injects `Pane is dead (status N, <timestamp>)` into the pane bytes. We want the final frame, not tmux chrome.
+2. **Alt-screen wrap kills scrollback** — a read-only attach wraps the whole stream in tmux's OWN alternate buffer, so our inline/normal-buffer CLI output lands in xterm's *alternate* buffer → **no xterm scrollback** (≈ the snapshot behavior this refactor escapes).
+
+Control mode delivers the app's **exact bytes with zero chrome**, reports exit/resize as clean structured events (`%window-renamed … dead`, `%layout-change`), and preserves the normal/alt-screen distinction → native scrollback — all for a **~40-line `%output` parser** (octal `\ooo` decode + line dispatch). Its one tradeoff (no free repaint on resize) is a non-issue: apps repaint on SIGWINCH and we use capture-pane/SerializeAddon for (re)connect backfill (§4.3). **PTY-attach stays the documented fallback** (ttyd-blueprint, free `Setsize` repaint) for any future case where chrome doesn't matter.
 
 ---
 
 ## 4. Constraints / assumptions (locked with product owner)
 
 1. **Single viewer per terminal** → 1 attach client ↔ 1 WebSocket ↔ 1 xterm. No fanout, no multi-client size negotiation.
-2. **xterm grid is the authoritative size.** The attach client / `pty.Setsize` simply match it.
+2. **xterm grid is the authoritative size.** Flip the session to **`window-size latest`** (client-driven) — the PoC confirmed the current `window-size manual` *ignores* the client size, so resize only takes effect after this flip. (Note: control mode still needs a **PTY for the client's own stdio** — plain pipes fail `tcgetattr` — so creack/pty / go-pty is used regardless of transport.)
 3. **Live stream renders; `capture-pane` (or xterm `SerializeAddon`) is used only for (re)connect backfill** — never for live rendering.
 4. **Platforms:** macOS + Linux first-class. **Windows via WSL2** (= the Linux path; tmux already required, so no new dependency). **Native Windows out of scope** — blocker is tmux (no native equivalent), not the PTY. Use a **portable PTY lib** (e.g. `aymanbagabas/go-pty`: creack/pty on Unix, ConPTY on Windows) so the PTY layer keeps ConPTY optionality cheaply.
 5. **Attach only the SELECTED terminal.** A chat/session can have several terminals (`main:<session>`, `workflow-step:<…>`), each its own tmux session. Only the focused one gets a live attach+WS; the rail/others stay low-freq `capture-pane` thumbnails/metadata. Switch → detach old, attach new.
@@ -86,7 +90,7 @@ Input keeps the **existing** `send-keys`/`paste-buffer` path (the CLI-live-input
 
 The current snapshot/replay transport stays the **default** until the new one is proven. Flag: `RUNLOOP_TERMINAL_LIVE_ATTACH` (off by default).
 
-- **Phase 0 — Spike (throwaway):** stand up ttyd-style PoC: `pty.Start("tmux attach -t <existing session>")` → WS → a bare xterm. Confirm clean render of a live pi-cli and codex pane, resize via `Setsize`, on macOS + Linux. Validates the core assumption before touching product code.
+- **Phase 0 — Spike (throwaway): ✅ DONE.** Compared read-only PTY-attach vs control-mode on tmux 3.6a/macOS (scratchpad `ptypoc/`). Result: control mode chosen (§3) — PTY-attach leaked the dead-pane banner and wrapped output in its own alt-screen (no scrollback). Re-verify the same on Linux during Phase 1.
 - **Phase 1 — Backend attach streamer + WS endpoint (behind flag):** per-selected-terminal attach streamer (portable-pty), read-only; `GET/WS /api/terminals/{id}/stream`; lifecycle (open on select, close on deselect/disconnect); `pty.Setsize` on resize; reconnect backfill via `capture-pane` seed then live. Reuse `tmuxsize`, session registry, `tmuxexec`.
 - **Phase 2 — Frontend xterm over WS (behind flag):** xterm + AttachAddon bound to the WS; FitAddon → `Setsize`; reconnect → SerializeAddon/capture seed. Keep `disableStdin`. Behind the flag, side-by-side with the existing polling path.
 - **Phase 3 — Input + selection + rail:** confirm existing `send-keys`/`paste-buffer` input works unchanged with an attached session; switch = detach/attach; rail thumbnails via low-freq capture.
@@ -119,7 +123,7 @@ Each phase ships independently; the flag means a regression can't reach users mi
 
 ## 8. Risks / open questions
 
-1. **Read-only PTY-attach leakage:** does a never-written-to `tmux attach` render 100% cleanly with `status off` + single pane on all target tmux versions? (Phase 0 answers this; control-mode is the fallback.)
+1. ~~Read-only PTY-attach leakage~~ **RESOLVED (Phase 0):** it leaks — dead-pane banner + alt-screen-wrap (no scrollback). → control mode is primary (§3). Remaining: re-verify dead-pane wording / alt-screen behavior / DA-OSC probe set on Linux + pin a minimum tmux version.
 2. **Reconnect backfill fidelity:** capture-pane vs xterm SerializeAddon for restoring the exact pre-disconnect screen, then seamless resume of the live stream without a doubled frame.
 3. **tmux version variance** across brew (macOS) / distro (Linux) / WSL — pin a minimum + startup check.
 4. **WS lifecycle** under the existing auth/session model (the app's API auth, session ownership).
@@ -130,4 +134,4 @@ Each phase ships independently; the flag means a regression can't reach users mi
 
 ## 9. Recommended stack (summary)
 
-`go-pty` (portable PTY) + read-only `tmux attach` per selected terminal + `coder/websocket` + xterm `AttachAddon`/`FitAddon`/`SerializeAddon`; ttyd as the blueprint; control-mode `-CC` as the documented fallback. Phased behind `RUNLOOP_TERMINAL_LIVE_ATTACH`, current transport stays default until Phase 5.
+**Control mode** (`tmux -CC attach` per selected terminal) + a ~40-line `%output` parser (octal `\ooo` decode + line dispatch; route `%layout-change`/`%window-renamed`/`%exit` to events) + `go-pty`/creack-pty for the client's own stdio + `coder/websocket` + xterm `AttachAddon`/`FitAddon`/`SerializeAddon`; session flipped to `window-size latest`. **PTY-attach (ttyd-blueprint) is the documented fallback.** Phased behind `RUNLOOP_TERMINAL_LIVE_ATTACH`, current transport stays default until Phase 5.

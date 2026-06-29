@@ -220,6 +220,18 @@ func (s *Store) SessionHasBusyCodingTmux(sessionID string) bool {
 		if strings.TrimSpace(snapshot.TmuxSession) == "" {
 			continue
 		}
+		// Only a LIVE terminal can be busy. A completed/exited/stale pane (Active=false,
+		// set by MarkCompleted/markTerminalState/MarkStale) keeps its last-captured
+		// content, which for a coding-agent (codex) that exited mid-spinner still shows
+		// a "Working…"/"esc to interrupt" line — but it is no longer processing. Counting
+		// that stale snapshot as busy keeps the session "steerable"/running forever:
+		// session_status never flips to completed, the chat's per-tab isStreaming stays
+		// stuck true, and the user's next message routes to live-input on the dead pane
+		// (silently lost / stranded) instead of starting a new /api/query turn. Skipping
+		// non-Active terminals lets the session complete so follow-up turns submit.
+		if !snapshot.Active {
+			continue
+		}
 		if terminalContentLooksBusy(snapshot.Content) {
 			return true
 		}

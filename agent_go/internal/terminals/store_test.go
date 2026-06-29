@@ -2322,6 +2322,46 @@ func TestCursorBusyPaneIsDetectedAsBusy(t *testing.T) {
 	}
 }
 
+// TestSessionHasBusyCodingTmuxIgnoresCompletedTerminal guards the follow-up-submit
+// fix: a coding-agent (codex) pane that EXITED mid-spinner is marked completed
+// (Active=false) but its snapshot still holds the busy-looking content. It must
+// NOT keep the session "busy" — otherwise session_status never completes, the
+// chat's isStreaming stays stuck, and the next message routes to live-input on the
+// dead pane instead of a new /api/query turn.
+func TestSessionHasBusyCodingTmuxIgnoresCompletedTerminal(t *testing.T) {
+	store := NewStore()
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"main:session-1",
+		cursorBusyPaneFixture,
+		0,
+		map[string]interface{}{
+			"tmux_session":   "mlp-codex-cli-busy",
+			"execution_kind": "main_agent",
+		},
+		time.Now(),
+	))
+
+	// Live pane with busy content → busy (steering / no-complete is correct).
+	if !store.SessionHasBusyCodingTmux("session-1") {
+		t.Fatal("a LIVE coding tmux with busy content should be reported busy")
+	}
+
+	// The codex pane exits mid-spinner → terminal marked completed (Active=false),
+	// snapshot content unchanged (still busy-looking), TmuxSession still set.
+	terminalID := "session-1:main:session-1"
+	completed, ok := store.MarkCompleted(terminalID)
+	if !ok {
+		t.Fatalf("expected to mark terminal %q completed", terminalID)
+	}
+	if completed.Active || strings.TrimSpace(completed.TmuxSession) == "" {
+		t.Fatalf("precondition: completed terminal must be inactive with tmux_session retained (active=%v tmux=%q)", completed.Active, completed.TmuxSession)
+	}
+
+	if store.SessionHasBusyCodingTmux("session-1") {
+		t.Fatal("a COMPLETED coding tmux (stale busy content) must NOT be reported busy")
+	}
+}
+
 func TestDeriveStatusLabelsCursor(t *testing.T) {
 	status := DeriveStatus(cursorBusyPaneFixture, map[string]interface{}{"provider": "cursor-cli"})
 	if status.ProviderLabel != "Cursor CLI" {

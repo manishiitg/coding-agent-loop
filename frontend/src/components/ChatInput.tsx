@@ -260,6 +260,7 @@ import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 import { usePresetApplication, useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
+import { useSessionTerminals } from '../hooks/useSessionTerminals'
 import { agentApi, getApiBaseUrl } from '../services/api'
 import { skillsApi } from '../api/skills'
 import type { Skill } from '../types/skills'
@@ -1807,6 +1808,25 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     [supportsLiveCodingAgentInput, tabSessionId]
   )
 
+  // TMUX-TRANSPORT LIVENESS (RCA single-fork model, docs/refactor/
+  // cli_live_input_unification.md). For a CLI coding-agent session, routing is
+  // decided by whether the tmux pane is LIVE — NOT by isStreaming (which is UI-only
+  // for these). We poll the session's terminal presence continuously (keepPolling)
+  // so a pane that goes idle or exits is reflected. A pane is live when some
+  // terminal for this session is Active with a non-empty tmux_session. Only enabled
+  // for tmux-transport sessions; API/LLM sessions never poll this.
+  const { data: sessionTerminalsForRouting } = useSessionTerminals(
+    tabSessionId,
+    routeLiveInputToCLI,
+    true,
+  )
+  const tmuxPaneLive = useMemo(
+    () => (sessionTerminalsForRouting?.terminals || []).some(
+      (t) => t.active && !!(t.tmux_session && t.tmux_session.trim()),
+    ),
+    [sessionTerminalsForRouting],
+  )
+
   // Ref for debounced file removal check
   const fileRemovalTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -1832,7 +1852,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   const sendLiveCodingAgentMessage = useCallback(async (msg: string): Promise<boolean> => {
     const trimmed = msg.trim()
-    if (!trimmed || !isStreaming || !supportsLiveCodingAgentInput || !tabSessionId) return false
+    // NOTE: deliberately NOT gated on isStreaming — for a tmux-transport CLI the
+    // live pane accepts input between turns too (pi-cli idle → send-keys, CLI takes
+    // it natively). Callers only invoke this when the tmux pane is live (tmuxPaneLive).
+    if (!trimmed || !supportsLiveCodingAgentInput || !tabSessionId) return false
 
     clearInputState()
     setLiveMessageDelivery({
@@ -1853,19 +1876,19 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     } catch (err) {
       const status = getHttpErrorStatus(err)
       if (isLiveCodingSessionGoneStatus(status)) {
-        queueStreamingMessage(trimmed)
-        setLiveMessageDelivery({
-          status: 'queued_locally',
-          message: trimmed,
-          provider: effectiveProviderForSteer || undefined,
-        })
-        scheduleLiveMessageDeliveryClear()
+        // RCA unification (docs/refactor/cli_live_input_unification.md §3/§4): for a
+        // CLI coding agent the tmux session being "gone" is NOT a failure and NOT a
+        // "queue locally + toast" case — there is simply no live turn to inject into,
+        // so this message should START THE NEXT TURN. The backend's live-input
+        // endpoint already does this server-side (startNextTurnFromLiveInput); this is
+        // the client mirror for the rare 404/409 race where it couldn't template one.
+        // Route straight to onSubmit (a fresh /api/query turn) with the SAME message —
+        // no local steer queue, no "the live coding-agent turn has ended" toast.
         if (activeTabId) {
-          const chatStore = useChatStore.getState()
-          chatStore.setTabCanSteer(activeTabId, false)
-          chatStore.setTabStreaming(activeTabId, false)
+          useChatStore.getState().setTabCanSteer(activeTabId, false)
         }
-        addToast('The live coding-agent turn has ended. Sending this as the next turn.', 'info')
+        setLiveMessageDelivery(null)
+        onSubmit(trimmed)
       } else if (isLikelyBackendUnavailableError(err)) {
         queueStreamingMessage(trimmed)
         setLiveMessageDelivery({
@@ -1889,7 +1912,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
     }
     return true
-  }, [activeTabId, addToast, clearInputState, effectiveProviderForSteer, isStreaming, queueStreamingMessage, scheduleLiveMessageDeliveryClear, supportsLiveCodingAgentInput, tabSessionId])
+  }, [activeTabId, addToast, clearInputState, effectiveProviderForSteer, onSubmit, queueStreamingMessage, scheduleLiveMessageDeliveryClear, supportsLiveCodingAgentInput, tabSessionId])
 
   // Route ESC to the tmux pane when a live coding-agent CLI is running.
   // Returns true if the key was delivered to the CLI; false (or thrown) means
@@ -2618,11 +2641,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const queueAwareOnSubmit = (query: string) => {
       const trimmed = query?.trim()
       if (!trimmed) return
-      if (isStreaming) {
-        if (routeLiveInputToCLI) {
+      // tmux-transport (CLI): route on tmux liveness, never isStreaming.
+      if (routeLiveInputToCLI) {
+        if (tmuxPaneLive) {
           void sendLiveCodingAgentMessage(trimmed)
           return
         }
+        onSubmit(trimmed)
+        return
+      }
+      if (isStreaming) {
         const currentQueued = tabConfig?.queuedMessages || []
         setTabConfig(activeTabId, {
           inputText: '',
@@ -2656,7 +2684,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       workshopMode: effectiveModes.workshopMode,
       workflowPhaseId
     }
-  }, [activeTabId, tabSessionId, tabConfig, isSummarizing, isStreaming, routeLiveInputToCLI, sendLiveCodingAgentMessage, onSubmit, openDialog, openResumeDialog, setTabConfig, addToast, handleSummarize, handleCompact, getEffectiveWorkflowModes, workflowPhaseId])
+  }, [activeTabId, tabSessionId, tabConfig, isSummarizing, isStreaming, routeLiveInputToCLI, tmuxPaneLive, sendLiveCodingAgentMessage, onSubmit, openDialog, openResumeDialog, setTabConfig, addToast, handleSummarize, handleCompact, getEffectiveWorkflowModes, workflowPhaseId])
 
   const getCommandValidationError = useCallback((cmd: CommandDefinition, beforeSlash: string) => {
     if (!cmd.validate) return null
@@ -2716,6 +2744,56 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return null
   }, [queryToSubmit, isViewOnly, isCdpDisconnected, isPlaywrightMissing, isStreaming, tabSessionId, hasSubmitTarget])
 
+  // routeSubmit is the single send-routing decision shared by Enter (handleKeyDown)
+  // and the Send button (handleSubmit).
+  //
+  // TMUX-TRANSPORT (CLI coding agent) — RCA single-fork model: route purely on
+  // tmux-session LIVENESS, never isStreaming.
+  //   - live pane  → live-input (the backend delivers/steers when busy and starts
+  //                  the next turn when idle; the CLI owns live-vs-queue natively).
+  //   - not live   → /api/query (onSubmit) for FULL setup: a never-launched, gone,
+  //                  exited, or resumed session must launch / re-launch with --resume
+  //                  + tools + system prompt + secrets, which startNextTurnFromLiveInput
+  //                  does NOT replicate (it needs a prior recorded query).
+  //
+  // NON-tmux (API/LLM): isStreaming-based steer-vs-queue, unchanged.
+  const routeSubmit = useCallback((query: string) => {
+    const trimmed = query?.trim() || ''
+    if (!trimmed) return
+
+    if (routeLiveInputToCLI) {
+      if (tmuxPaneLive) {
+        void sendLiveCodingAgentMessage(query)
+        return
+      }
+      if (hasSubmitTarget) {
+        if (justSubmittedRef.current) return
+        justSubmittedRef.current = true
+        setTimeout(() => { justSubmittedRef.current = false }, 300)
+        clearInputState()
+        onSubmit(query)
+        return
+      }
+      const reason = getSubmitBlockReason()
+      if (reason) addToast(reason, 'info')
+      return
+    }
+
+    if (canSubmitImmediately) {
+      if (justSubmittedRef.current) return
+      justSubmittedRef.current = true
+      setTimeout(() => { justSubmittedRef.current = false }, 300)
+      clearInputState()
+      onSubmit(query)
+    } else if (canSubmit && isStreaming) {
+      clearInputState()
+      queueStreamingMessage(query)
+    } else {
+      const reason = getSubmitBlockReason()
+      if (reason) addToast(reason, 'info')
+    }
+  }, [routeLiveInputToCLI, tmuxPaneLive, hasSubmitTarget, sendLiveCodingAgentMessage, clearInputState, onSubmit, getSubmitBlockReason, addToast, canSubmitImmediately, canSubmit, isStreaming, queueStreamingMessage])
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Keyboard passthrough: every keystroke goes to the main agent terminal.
     // Shift+Esc is the one reserved combo that exits the mode.
@@ -2767,27 +2845,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         return
       }
 
-      if (canSubmitImmediately) {
-        // Guard: prevent double submission from rapid key repeat or double press
-        if (justSubmittedRef.current) return
-        justSubmittedRef.current = true
-        setTimeout(() => { justSubmittedRef.current = false }, 300)
-
-        clearInputState()
-        onSubmit(queryToSubmit)
-      } else if (canSubmit && isStreaming) {
-        if (routeLiveInputToCLI) {
-          void sendLiveCodingAgentMessage(queryToSubmit)
-        } else {
-          clearInputState()
-          queueStreamingMessage(queryToSubmit)
-        }
-      } else if (trimmedQuery) {
-        const submitBlockReason = getSubmitBlockReason()
-        if (submitBlockReason) {
-          addToast(submitBlockReason, 'info')
-        }
-      }
+      routeSubmit(queryToSubmit)
     }
     // Handle CTRL+Enter (Windows/Linux) or CMD+Enter (Mac) to add new line
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
@@ -2804,7 +2862,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [inputText, showFileDialog, showCommandDialog, showWorkflowDialog, showResumeDialog, showSkillPopup, showServerPopup, isStreaming, onStopStreaming, queryToSubmit, executeSlashCommandFromQuery, tabSessionId, isSummarizing, handleSummarize, clearInputState, handleCompact, canSubmitImmediately, onSubmit, canSubmit, routeLiveInputToCLI, supportsLiveCodingAgentInput, canSteer, sendLiveCodingAgentMessage, sendLiveCodingAgentControlKey, queueStreamingMessage, getSubmitBlockReason, addToast, keyboardMode, exitKeyboardMode, forwardKeyboardEvent])
+  }, [showFileDialog, showCommandDialog, showWorkflowDialog, showResumeDialog, showSkillPopup, showServerPopup, isStreaming, onStopStreaming, queryToSubmit, executeSlashCommandFromQuery, tabSessionId, routeSubmit, supportsLiveCodingAgentInput, canSteer, sendLiveCodingAgentControlKey, keyboardMode, exitKeyboardMode, forwardKeyboardEvent, inputText, setLocalInputText])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
@@ -2820,28 +2878,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       return
     }
 
-    if (canSubmitImmediately) {
-      // Guard: prevent double submission from rapid clicks
-      if (justSubmittedRef.current) return
-      justSubmittedRef.current = true
-      setTimeout(() => { justSubmittedRef.current = false }, 300)
-
-      clearInputState()
-      onSubmit(queryToSubmit)
-    } else if (canSubmit && isStreaming) {
-      if (routeLiveInputToCLI) {
-        void sendLiveCodingAgentMessage(queryToSubmit)
-      } else {
-        clearInputState()
-        queueStreamingMessage(queryToSubmit)
-      }
-    } else if (trimmedQuery) {
-      const submitBlockReason = getSubmitBlockReason()
-      if (submitBlockReason) {
-        addToast(submitBlockReason, 'info')
-      }
-    }
-  }, [queryToSubmit, executeSlashCommandFromQuery, isSummarizing, isStreaming, handleSummarize, handleCompact, clearInputState, canSubmitImmediately, onSubmit, canSubmit, routeLiveInputToCLI, sendLiveCodingAgentMessage, queueStreamingMessage, getSubmitBlockReason, addToast])
+    routeSubmit(queryToSubmit)
+  }, [queryToSubmit, executeSlashCommandFromQuery, routeSubmit])
 
   // Command selection handler - executes commands directly
   const handleCommandSelect = useCallback((command: string) => {

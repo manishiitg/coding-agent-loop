@@ -19,6 +19,28 @@ Runloop is built for teams that want to scale from a few manually checked automa
 
 The high-level loop is documented in [Workflow self-improvement & reporting](docs/workflow/self_improvement_and_reporting.md).
 
+## Product Screenshots
+
+These are real Runloop app screens, sanitized for public sharing.
+
+![Runloop product walkthrough](docs/assets/github/runloop-product-demo.gif)
+
+**Workflow automation workspace**
+
+![Runloop automation workspace](docs/assets/github/01-automation-workspace.png)
+
+**Chief of Staff and Org Pulse**
+
+![Runloop Chief of Staff](docs/assets/github/02-chief-of-staff.png)
+
+**Goal-driven operations**
+
+![Runloop org goals](docs/assets/github/03-org-goals.png)
+
+**Daily operating pulse**
+
+![Runloop org pulse](docs/assets/github/04-org-pulse.png)
+
 ## 💻 Desktop App (macOS)
 
 A standalone macOS app is available — no Docker, no manual server setup. Each release is published at [Releases](https://github.com/manishiitg/mcp-agent-builder-go/releases/latest).

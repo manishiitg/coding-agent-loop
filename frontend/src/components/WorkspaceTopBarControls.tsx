@@ -1,5 +1,4 @@
 import { TooltipProvider } from './ui/tooltip'
-import ThemeToggle from './topbar/ThemeToggle'
 import { WorkspaceConnectionSwitcher } from './WorkspaceConnectionSwitcher'
 import LlmModalHost from './topbar/LlmModalHost'
 import LlmTriggerButton from './topbar/LlmTriggerButton'
@@ -29,7 +28,6 @@ export default function WorkspaceTopBarControls() {
 
         <span className="mx-0.5 h-5 w-px bg-gray-200 dark:bg-gray-700" />
 
-        <ThemeToggle />
         <WorkspaceConnectionSwitcher placement="sidebar-minimized" />
         <DesktopAppControl />
         <NotificationsControl />

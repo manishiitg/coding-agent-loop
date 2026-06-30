@@ -1,35 +1,26 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect } from 'react'
 import { ThemeContext, type Theme } from './ThemeContext'
 
+const FORCED_THEME: Theme = 'dark'
+
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>(() => {
-    // Check localStorage first, then system preference
-    const savedTheme = localStorage.getItem('theme') as Theme
-    if (savedTheme === 'light' || savedTheme === 'dark') {
-      return savedTheme
-    }
-    
-    return 'dark'
-  })
+  const theme = FORCED_THEME
 
   useEffect(() => {
     // Apply theme to document
     document.documentElement.classList.remove('light', 'dark')
     document.documentElement.classList.add(theme)
+    document.documentElement.dataset.theme = theme
+    document.documentElement.style.colorScheme = theme
     
     // Save to localStorage
     localStorage.setItem('theme', theme)
   }, [theme])
 
-  const toggleTheme = () => {
-    setThemeState(prev => {
-      if (prev === 'light') return 'dark'
-      return 'light'
-    })
-  }
+  const toggleTheme = () => undefined
 
-  const setTheme = (newTheme: Theme) => {
-    setThemeState(newTheme)
+  const setTheme = (_newTheme: Theme) => {
+    void _newTheme
   }
 
   return (

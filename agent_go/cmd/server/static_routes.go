@@ -249,11 +249,11 @@ func (api *StreamingAPI) handleCapabilities(w http.ResponseWriter, r *http.Reque
 		"workspace":  map[string]interface{}{},
 		"servers":    []string{},
 		"local_mode": IsLocalMode(),
-		// Live-attach (control-mode) terminal WebSocket transport. True only when
-		// RUNLOOP_TERMINAL_LIVE_ATTACH is set AND tmux is new enough (the manager
-		// is constructed). Lets the frontend render the selected live tmux terminal
-		// over /api/terminals/{id}/stream instead of the snapshot/replay polling.
-		// See docs/refactor/terminal_live_attach_transport.md (Phase 2).
+		// Live-attach (control-mode) terminal WebSocket transport. True when tmux
+		// is new enough for control mode (the manager is constructed). Lets the
+		// frontend render the selected live tmux terminal over
+		// /api/terminals/{id}/stream instead of the snapshot/replay polling.
+		// See docs/refactor/terminal_live_attach_transport.md.
 		"terminal_live_attach": api.liveAttach != nil,
 	})
 }

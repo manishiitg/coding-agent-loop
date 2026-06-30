@@ -661,6 +661,9 @@ func (api *StreamingAPI) resizeLiveTerminalWindowsForSession(ctx context.Context
 		if !snapshot.Active || strings.TrimSpace(snapshot.TmuxSession) == "" || !api.canAccessTerminalSession(r, snapshot.SessionID) {
 			continue
 		}
+		if api.isTerminalLiveAttached(snapshot.TmuxSession) {
+			continue
+		}
 		// Skip when already at the requested geometry: a no-op resize would still
 		// truncate+reseed the live recording and stack an inline TUI's redraws.
 		if curW, curH, ok := terminalWindowSize(resizeCtx, snapshot.TmuxSession); ok && curW == cols && curH == rows {
@@ -716,6 +719,14 @@ func (api *StreamingAPI) handleResizeTerminal(w http.ResponseWriter, r *http.Req
 
 	if strings.TrimSpace(snapshot.TmuxSession) == "" {
 		// No live pane to resize, but the preferred size was still recorded.
+		_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot)})
+		return
+	}
+	if api.isTerminalLiveAttached(snapshot.TmuxSession) {
+		// The live WebSocket owns this tmux session's geometry via control-mode
+		// pty.Setsize. Keep /resize as a preferred-size update only; otherwise the
+		// legacy capture/pipe resize path flips the session to manual sizing and
+		// injects resize repaint fragments into the live stream.
 		_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot)})
 		return
 	}
@@ -785,6 +796,10 @@ func (api *StreamingAPI) handleResizeTerminal(w http.ResponseWriter, r *http.Req
 		api.terminalPipeRecorder.ResetForResize(ctx, snapshot.TmuxSession)
 	}
 	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot)})
+}
+
+func (api *StreamingAPI) isTerminalLiveAttached(tmuxSession string) bool {
+	return api != nil && api.liveAttach != nil && api.liveAttach.hasSession(tmuxSession)
 }
 
 func (api *StreamingAPI) requireAccessibleTerminal(w http.ResponseWriter, r *http.Request) (terminals.Snapshot, bool) {

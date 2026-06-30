@@ -1,9 +1,30 @@
 # Live-Attach Terminal: App vs PoC Demo — Debug Handoff
 
-**Status:** UNRESOLVED. The standalone PoC demo renders tmux CLIs perfectly; the real
-app, using the *same approach*, shows **duplicated lines and stacked frames — even
-without resizing**. Difference is "night vs day". This doc captures everything tried
-so another agent can review with fresh eyes.
+**Status:** ✅ **RESOLVED** — commit `d1ec56d6` "Fix live attach initial repaint
+duplication". Root cause + fix below; the rest of this doc is the original investigation
+(kept for context). The PoC at `docs/refactor/ccdemo-poc/` remains the reference oracle.
+
+## RESOLUTION (commit `d1ec56d6`)
+**Root cause:** the app's control-mode attach starts **lazily** (on the first browser
+subscribe), so tmux's initial full-screen repaint — emitted whenever a control client
+attaches — reached the browser *right after* the capture-pane backfill → the same screen
+drawn twice → duplicate lines even without resize. The PoC never hit this because its
+attach runs at server startup, before any browser, so that repaint broadcasts to zero
+subscribers and is dropped.
+**Fix:** on first subscribe, warm the attach with no subscriber and **drain tmux's initial
+repaint** (`liveAttachInitialDrainDelay` 180 ms / 750 ms cap; `drained` chan +
+`waitInitialDrain`/`markInitialDrainComplete`) BEFORE adding the viewer's channel —
+replicating the PoC's warm-up. Reordered `handleTerminalStream` to subscribe→backfill→
+writer. Added `setSize` dedup (only `resize-window` when the grid actually changed). New
+test `TestLiveAttachManagerDrainsInitialAttachBeforeSubscriber`. Builds + live-attach
+tests pass. (This is exactly the "backfill + attach initial %output = double" lead flagged
+in §6 below.)
+
+---
+
+(Original investigation, pre-fix:) The standalone PoC demo rendered tmux CLIs perfectly;
+the real app, using the same approach, showed duplicated lines/stacked frames even without
+resizing. This doc captured everything tried.
 
 Branch: `terminal-live-attach-phase1`
 

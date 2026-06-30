@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ArrowDownToLine, ArrowRightToLine, Braces, Bug, Check, ChevronDown, ChevronsLeft, ChevronsRight, ChevronUp, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Minus, Palette, Plus, Power, RefreshCw, Square, Terminal, Trash2, X } from 'lucide-react'
+import { AlertTriangle, ArrowDownToLine, ArrowRightToLine, Braces, Bug, Check, ChevronDown, ChevronsLeft, ChevronsRight, ChevronUp, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Minus, Plus, Power, RefreshCw, Square, Terminal, Trash2, X } from 'lucide-react'
 import { AnsiUp } from 'ansi_up'
 import { Terminal as XTerm, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -10,7 +10,8 @@ import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useChatStore } from '../stores/useChatStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { TERMINAL_REFRESH_REQUEST_EVENT } from '../utils/terminalRefresh'
-import { computeXtermWrite } from './terminalReplay'
+import { useTheme } from '../hooks/useTheme'
+import type { Theme } from '../contexts/ThemeContext'
 import { MarkdownRenderer } from './ui/MarkdownRenderer'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 
@@ -19,10 +20,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 //
 // use_classes = true makes ansi_up emit CSS classes (ansi-red-fg,
 // ansi-bright-blue-fg, ansi-bold, etc.) instead of inline colors. The
-// classes are styled in index.css with a single palette that reads well
-// across every TERMINAL_THEMES dark variant. Switching to per-theme color
-// palettes (one ANSI scheme per dropdown selection) would mean scoped CSS
-// variables on the pane wrapper — deferred until anyone asks for it.
+// classes are styled in index.css with one ANSI class mapping for the
+// structured terminal view. Raw tmux panes bypass this path and render directly
+// through xterm.js.
 const ansiUp = new AnsiUp()
 ansiUp.use_classes = true
 
@@ -94,7 +94,6 @@ type TerminalRailFilter = 'all' | 'running' | 'non-running'
 type TerminalDetailOptions = { content?: 'stored' | 'screen' | 'history' | 'tmux' | 'deep'; lines?: number; debug?: boolean; debugSource?: string }
 
 const DEFAULT_TERMINAL_COLOR_SCHEME: TerminalColorScheme = 'homebrew'
-const TERMINAL_COLOR_SCHEME_STORAGE_KEY = 'terminal-color-scheme'
 const TERMINAL_SCROLL_DEBUG_STORAGE_KEY = 'runloop_terminal_debug'
 
 const TERMINAL_THEMES = {
@@ -454,316 +453,29 @@ const TERMINAL_THEMES = {
 
 type TerminalTheme = (typeof TERMINAL_THEMES)[TerminalColorScheme]
 
-const TERMINAL_COLOR_SCHEME_OPTIONS: Array<{ value: TerminalColorScheme; label: string }> = [
-  { value: 'homebrew', label: 'Standard' },
-  { value: 'mono', label: 'Compact' },
-  { value: 'gruvbox', label: 'Classic' },
-]
-
-const XTERM_PROFILE_OPTIONS: Record<TerminalColorScheme, {
-  fontFamily: string
-  fontSize: number
-  lineHeight: number
-  cursorStyle: 'block' | 'underline' | 'bar'
-  panePaddingClass: string
-}> = {
-  neon: {
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
-    fontSize: 12.5,
-    lineHeight: 1.45,
-    cursorStyle: 'block',
-    panePaddingClass: 'p-2',
-  },
-  mono: {
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
-    fontSize: 11,
-    lineHeight: 1.22,
-    cursorStyle: 'bar',
-    panePaddingClass: 'p-1.5',
-  },
-  homebrew: {
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
-    fontSize: 12.5,
-    lineHeight: 1.45,
-    cursorStyle: 'block',
-    panePaddingClass: 'p-2',
-  },
-  catppuccin: {
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
-    fontSize: 12.5,
-    lineHeight: 1.45,
-    cursorStyle: 'block',
-    panePaddingClass: 'p-2',
-  },
-  nord: {
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
-    fontSize: 12,
-    lineHeight: 1.4,
-    cursorStyle: 'block',
-    panePaddingClass: 'p-2',
-  },
-  gruvbox: {
-    fontFamily: 'Menlo, Monaco, Consolas, "Liberation Mono", ui-monospace, monospace',
-    fontSize: 13,
-    lineHeight: 1.5,
-    cursorStyle: 'underline',
-    panePaddingClass: 'p-2.5',
-  },
-  solarized: {
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
-    fontSize: 12,
-    lineHeight: 1.4,
-    cursorStyle: 'block',
-    panePaddingClass: 'p-2',
-  },
-  tokyo: {
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
-    fontSize: 12,
-    lineHeight: 1.4,
-    cursorStyle: 'block',
-    panePaddingClass: 'p-2',
-  },
-}
-
-const XTERM_BASE_THEMES: Record<TerminalColorScheme, ITheme> = {
-  neon: {
-    background: '#020403',
-    foreground: '#8cff9a',
-    cursor: '#39ff14',
-    selectionBackground: '#14532d',
-    black: '#020403',
-    red: '#ff5f5f',
-    green: '#39ff14',
-    yellow: '#d6ff5f',
-    blue: '#00d7ff',
-    magenta: '#ff5fff',
-    cyan: '#5fffff',
-    white: '#d7ffd7',
-    brightBlack: '#166534',
-    brightRed: '#ff8787',
-    brightGreen: '#8cff9a',
-    brightYellow: '#efff8a',
-    brightBlue: '#5fd7ff',
-    brightMagenta: '#ff87ff',
-    brightCyan: '#87ffff',
-    brightWhite: '#f0fff4',
-  },
-  mono: {
-    background: '#101010',
-    foreground: '#e5e5e5',
-    cursor: '#f5f5f5',
-    selectionBackground: '#404040',
-    black: '#171717',
-    red: '#d4d4d4',
-    green: '#d4d4d4',
-    yellow: '#e5e5e5',
-    blue: '#d4d4d4',
-    magenta: '#d4d4d4',
-    cyan: '#d4d4d4',
-    white: '#e5e5e5',
-    brightBlack: '#737373',
-    brightRed: '#f5f5f5',
-    brightGreen: '#f5f5f5',
-    brightYellow: '#fafafa',
-    brightBlue: '#f5f5f5',
-    brightMagenta: '#f5f5f5',
-    brightCyan: '#f5f5f5',
-    brightWhite: '#ffffff',
-  },
-  homebrew: {
+const RAW_XTERM_FONT_FAMILY = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
+const RAW_XTERM_FONT_SIZE = 13
+const RAW_XTERM_LINE_HEIGHT = 1
+const RAW_XTERM_THEMES: Record<Theme, ITheme> = {
+  dark: {
     background: '#0b0d0c',
     foreground: '#e5e7eb',
-    cursor: '#a3e635',
+    cursor: '#e5e7eb',
     selectionBackground: '#334155',
-    black: '#1f2937',
-    red: '#ef4444',
-    green: '#22c55e',
-    yellow: '#eab308',
-    blue: '#3b82f6',
-    magenta: '#d946ef',
-    cyan: '#06b6d4',
-    white: '#e5e7eb',
-    brightBlack: '#9ca3af',
-    brightRed: '#f87171',
-    brightGreen: '#4ade80',
-    brightYellow: '#facc15',
-    brightBlue: '#60a5fa',
-    brightMagenta: '#e879f9',
-    brightCyan: '#22d3ee',
-    brightWhite: '#f9fafb',
   },
-  catppuccin: {
-    background: '#11111b',
-    foreground: '#cdd6f4',
-    cursor: '#f5c2e7',
-    selectionBackground: '#45475a',
-    black: '#45475a',
-    red: '#f38ba8',
-    green: '#a6e3a1',
-    yellow: '#f9e2af',
-    blue: '#89b4fa',
-    magenta: '#cba6f7',
-    cyan: '#94e2d5',
-    white: '#bac2de',
-    brightBlack: '#585b70',
-    brightRed: '#f38ba8',
-    brightGreen: '#a6e3a1',
-    brightYellow: '#f9e2af',
-    brightBlue: '#89b4fa',
-    brightMagenta: '#f5c2e7',
-    brightCyan: '#94e2d5',
-    brightWhite: '#f5e0dc',
-  },
-  nord: {
-    background: '#2e3440',
-    foreground: '#d8dee9',
-    cursor: '#88c0d0',
-    selectionBackground: '#4c566a',
-    black: '#3b4252',
-    red: '#bf616a',
-    green: '#a3be8c',
-    yellow: '#ebcb8b',
-    blue: '#81a1c1',
-    magenta: '#b48ead',
-    cyan: '#88c0d0',
-    white: '#e5e9f0',
-    brightBlack: '#4c566a',
-    brightRed: '#bf616a',
-    brightGreen: '#a3be8c',
-    brightYellow: '#ebcb8b',
-    brightBlue: '#81a1c1',
-    brightMagenta: '#b48ead',
-    brightCyan: '#8fbcbb',
-    brightWhite: '#eceff4',
-  },
-  gruvbox: {
-    background: '#1d2021',
-    foreground: '#ebdbb2',
-    cursor: '#fabd2f',
-    selectionBackground: '#504945',
-    black: '#282828',
-    red: '#cc241d',
-    green: '#98971a',
-    yellow: '#d79921',
-    blue: '#458588',
-    magenta: '#b16286',
-    cyan: '#689d6a',
-    white: '#a89984',
-    brightBlack: '#928374',
-    brightRed: '#fb4934',
-    brightGreen: '#b8bb26',
-    brightYellow: '#fabd2f',
-    brightBlue: '#83a598',
-    brightMagenta: '#d3869b',
-    brightCyan: '#8ec07c',
-    brightWhite: '#fbf1c7',
-  },
-  solarized: {
-    background: '#002b36',
-    foreground: '#93a1a1',
-    cursor: '#2aa198',
-    selectionBackground: '#073642',
-    black: '#073642',
-    red: '#dc322f',
-    green: '#859900',
-    yellow: '#b58900',
-    blue: '#268bd2',
-    magenta: '#d33682',
-    cyan: '#2aa198',
-    white: '#eee8d5',
-    brightBlack: '#586e75',
-    brightRed: '#cb4b16',
-    brightGreen: '#859900',
-    brightYellow: '#b58900',
-    brightBlue: '#268bd2',
-    brightMagenta: '#6c71c4',
-    brightCyan: '#2aa198',
-    brightWhite: '#fdf6e3',
-  },
-  tokyo: {
-    background: '#1a1b26',
-    foreground: '#c0caf5',
-    cursor: '#7dcfff',
-    selectionBackground: '#33467c',
-    black: '#15161e',
-    red: '#f7768e',
-    green: '#9ece6a',
-    yellow: '#e0af68',
-    blue: '#7aa2f7',
-    magenta: '#bb9af7',
-    cyan: '#7dcfff',
-    white: '#a9b1d6',
-    brightBlack: '#414868',
-    brightRed: '#f7768e',
-    brightGreen: '#9ece6a',
-    brightYellow: '#e0af68',
-    brightBlue: '#7aa2f7',
-    brightMagenta: '#bb9af7',
-    brightCyan: '#7dcfff',
-    brightWhite: '#c0caf5',
+  light: {
+    background: '#ffffff',
+    foreground: '#111827',
+    cursor: '#111827',
+    selectionBackground: '#bfdbfe',
   },
 }
 
-// Claude Code (and other CLIs) paint a "queued message" — one submitted while the
-// agent is mid-turn — with a background of xterm 256-color index 237. xterm.js's
-// built-in value for 237 (#3a3a3a) renders noticeably brighter against our dark
-// terminal backgrounds than the same index does in a native terminal, so queued
-// messages look like a harsh grey bar here. ITheme can only style the 16 base
-// ANSI colors, so we override index 237 through `extendedAnsi` (which covers the
-// full 16-255 range). To keep every other color pixel-identical to xterm.js's
-// defaults we regenerate the standard 256-color palette and only tweak 237.
-const QUEUED_MESSAGE_BG_237 = '#1e1e1e'
-
-function buildExtendedAnsiPalette(): string[] {
-  const toHex = (v: number) => v.toString(16).padStart(2, '0')
-  // extendedAnsi covers indices 16-255 (240 entries; extendedAnsi[i] === color i+16).
-  const palette: string[] = []
-  for (let i = 16; i <= 255; i++) {
-    if (i < 232) {
-      // 6x6x6 color cube.
-      const n = i - 16
-      const cube = [Math.floor(n / 36), Math.floor((n % 36) / 6), n % 6].map(c =>
-        c === 0 ? 0 : 55 + 40 * c,
-      )
-      palette.push(`#${toHex(cube[0])}${toHex(cube[1])}${toHex(cube[2])}`)
-    } else {
-      // 24-step grayscale ramp.
-      const v = 8 + 10 * (i - 232)
-      palette.push(`#${toHex(v)}${toHex(v)}${toHex(v)}`)
-    }
-  }
-  palette[237 - 16] = QUEUED_MESSAGE_BG_237
-  return palette
-}
-
-const EXTENDED_ANSI_PALETTE = buildExtendedAnsiPalette()
-
-const XTERM_THEMES: Record<TerminalColorScheme, ITheme> = Object.fromEntries(
-  Object.entries(XTERM_BASE_THEMES).map(([scheme, theme]) => [
-    scheme,
-    { ...theme, extendedAnsi: EXTENDED_ANSI_PALETTE },
-  ]),
-) as Record<TerminalColorScheme, ITheme>
-
-function isTerminalColorScheme(value: string | null): value is TerminalColorScheme {
-  return TERMINAL_COLOR_SCHEME_OPTIONS.some(option => option.value === value)
-}
-
-function readStoredTerminalColorScheme(): TerminalColorScheme {
-  if (typeof window === 'undefined') return DEFAULT_TERMINAL_COLOR_SCHEME
-  try {
-    const stored = window.localStorage.getItem(TERMINAL_COLOR_SCHEME_STORAGE_KEY)
-    return isTerminalColorScheme(stored) ? stored : DEFAULT_TERMINAL_COLOR_SCHEME
-  } catch {
-    return DEFAULT_TERMINAL_COLOR_SCHEME
-  }
-}
-
-function writeStoredTerminalColorScheme(scheme: TerminalColorScheme) {
-  try {
-    window.localStorage.setItem(TERMINAL_COLOR_SCHEME_STORAGE_KEY, scheme)
-  } catch {
-    // Best-effort visual preference only.
+function applyRawXtermTheme(term: XTerm, theme: ITheme) {
+  term.options.theme = theme
+  const viewport = term.element?.querySelector('.xterm-viewport') as HTMLElement | null
+  if (viewport && theme.background) {
+    viewport.style.backgroundColor = theme.background
   }
 }
 
@@ -1967,404 +1679,44 @@ const ColoredText: React.FC<{ rawText: string; className?: string }> = ({ rawTex
   return <span className={className} dangerouslySetInnerHTML={{ __html: html }} />
 }
 
-const XtermTerminalPaneInner: React.FC<{
-  content: string
-  contentSource?: string
-  className?: string
-  contentRef: React.RefObject<HTMLDivElement | null>
-  xtermTheme: ITheme
-  xtermProfile: (typeof XTERM_PROFILE_OPTIONS)[TerminalColorScheme]
-  onViewportStickChange?: (isNearBottom: boolean) => void
-  onResize?: (cols: number, rows: number) => void
-  debugLabel?: string
-}> = ({ content, contentSource, className, contentRef, xtermTheme, xtermProfile, onViewportStickChange, onResize, debugLabel }) => {
-  const mountRef = useRef<HTMLDivElement | null>(null)
-  const terminalRef = useRef<XTerm | null>(null)
-  const lastContentRef = useRef<string>('')
-  // Terminal-switch isolation is structural: the parent renders this pane with
-  // key={terminal_id}, so React fully REMOUNTS (disposes + recreates) the xterm
-  // whenever the selected terminal changes. A fresh instance has an empty buffer
-  // and no stale parse queue from the prior terminal, so cross-terminal overlap /
-  // accumulation / the async-write race are impossible by construction. Within a
-  // single instance the terminal_id is constant; only its content streams, handled
-  // by the delta/continuity logic in applyContent (computeXtermWrite).
-  // Pager model (Fix B): while the user has scrolled up we freeze the view and
-  // stash the latest desired content here instead of writing it. onScroll applies
-  // it (via applyContentRef) once the user returns to the bottom.
-  const pendingContentRef = useRef<string | null>(null)
-  const applyContentRef = useRef<((next: string) => void) | null>(null)
-  const onViewportStickChangeRef = useRef(onViewportStickChange)
-  const onResizeRef = useRef(onResize)
-  // contentSource is a prop; the mount effect's onResize handler closes over the
-  // INITIAL render's value (empty deps), so mirror it in a ref to normalize the
-  // carry-over repaint correctly on later resizes.
-  const contentSourceRef = useRef(contentSource)
-
-  useEffect(() => {
-    onViewportStickChangeRef.current = onViewportStickChange
-  }, [onViewportStickChange])
-
-  useEffect(() => {
-    onResizeRef.current = onResize
-  }, [onResize])
-
-  useEffect(() => {
-    contentSourceRef.current = contentSource
-  }, [contentSource])
-
-  const logXtermDebug = useCallback((phase: string, extra: Record<string, unknown> = {}) => {
-    if (!terminalScrollDebugEnabled()) return
-    const term = terminalRef.current
-    const buffer = term?.buffer.active
-    console.info('[TERMINAL_DEBUG] xterm', {
-      phase,
-      label: debugLabel,
-      rows: term?.rows,
-      cols: term?.cols,
-      baseY: buffer?.baseY,
-      viewportY: buffer?.viewportY,
-      cursorY: buffer?.cursorY,
-      scrollable: typeof buffer?.baseY === 'number' ? buffer.baseY > 0 : undefined,
-      content_lines: terminalTextLineCount(content),
-      content_bytes: content.length,
-      content_source: contentSource,
-      ...extra,
-    })
-  }, [content, contentSource, debugLabel])
-
-  useEffect(() => {
-    const mount = mountRef.current
-    if (!mount) return
-
-    const term = new XTerm({
-      allowProposedApi: false,
-      convertEol: true,
-      cursorBlink: false,
-      cursorStyle: xtermProfile.cursorStyle,
-      disableStdin: true,
-      fontFamily: xtermProfile.fontFamily,
-      fontSize: xtermProfile.fontSize,
-      lineHeight: xtermProfile.lineHeight,
-      scrollback: 20000,
-      theme: xtermTheme,
-    })
-    const fit = new FitAddon()
-    term.loadAddon(fit)
-    term.open(mount)
-    terminalRef.current = term
-    const scrollDisposable = term.onScroll(viewportY => {
-      const distanceFromBottom = Math.max(0, term.buffer.active.baseY - viewportY)
-      onViewportStickChangeRef.current?.(distanceFromBottom <= 1)
-      // Pager catch-up (Fix B): when the user scrolls back to the bottom and we
-      // deferred content while they were scrolled up, apply the latest deferred
-      // screen now so the view jumps straight to current.
-      if (
-        distanceFromBottom <= 1 &&
-        pendingContentRef.current !== null &&
-        pendingContentRef.current !== lastContentRef.current
-      ) {
-        applyContentRef.current?.(pendingContentRef.current)
-      }
-      logXtermDebug('scroll', { viewportY, distanceFromBottom })
-    })
-    // The xterm's own character grid (term.cols/term.rows after fit.fit()) is the
-    // SINGLE SOURCE OF TRUTH for the tmux pane size. term.onResize fires only when
-    // the grid actually changes (xterm dedupes), so it doubles as the loop-guard:
-    // we POST the new size and re-seed exactly once per real geometry change.
-    const resizeDisposable = term.onResize(({ cols, rows }) => {
-      // Re-seed on geometry change. The pipe recording holds frames captured at the
-      // OLD pane size; replaying them at the new grid is litter. Clear lastContentRef
-      // so the next fetch does a clean full rebuild.
-      //
-      // For a LIVE PIPE stream (inline TUI), do NOT replay the accumulated bytes: an
-      // inline TUI's redraws are cursor-relative to the OLD geometry, so re-writing
-      // the whole accumulated stream at the new grid stacks spinners / duplicates the
-      // status bar. The backend's resize handler reseeds the recording with an
-      // authoritative capture-pane snapshot at the new geometry (ResetForResize), so
-      // the next content fetch renders one clean current screen — accept a brief blank
-      // until it lands rather than replay out-of-context bytes.
-      //
-      // For a NON-PIPE static capture (content_source !== 'tmux_pipe'), the carried-
-      // over content is a single coherent snapshot, so repaint it immediately (inline
-      // RIS + full write) to bridge the gap with no blank. This repaint does NOT touch
-      // lastContentRef, so the next fetch still does its clean rebuild.
-      const carryOver = lastContentRef.current
-      term.reset()
-      lastContentRef.current = ''
-      pendingContentRef.current = null
-      if (carryOver && contentSourceRef.current !== 'tmux_pipe') {
-        const payload = normalizeXtermWriteContent(carryOver, contentSourceRef.current)
-        term.write('\x1bc' + payload)
-        term.scrollToBottom()
-      }
-      // Drive the tmux resize from xterm's real grid so the pane matches 1:1.
-      onResizeRef.current?.(cols, rows)
-      logXtermDebug('resize', { cols, rows })
-    })
-
-    const fitTerminal = () => {
-      try {
-        // fit.fit() resizes the xterm to the container; if the grid changes,
-        // term.onResize fires and handles the POST + re-seed. We intentionally do
-        // NOT POST a separately-measured size here — the xterm grid is authoritative.
-        fit.fit()
-        logXtermDebug('fit')
-      } catch {
-        // Fit can fail during unmount or while the pane is display:none.
-      }
-    }
-    // Debounce container-driven fits (~120ms) so a drag settles into ONE grid
-    // change → one resize POST + one re-seed, instead of many per-pixel resizes.
-    let fitTimer: number | undefined
-    const scheduleFit = () => {
-      if (fitTimer !== undefined) window.clearTimeout(fitTimer)
-      fitTimer = window.setTimeout(fitTerminal, 120)
-    }
-    fitTerminal()
-    const resizeObserver = new ResizeObserver(scheduleFit)
-    resizeObserver.observe(mount)
-
-    return () => {
-      scrollDisposable.dispose()
-      resizeDisposable.dispose()
-      resizeObserver.disconnect()
-      if (fitTimer !== undefined) window.clearTimeout(fitTimer)
-      terminalRef.current = null
-      term.dispose()
-    }
-  }, [])
-
-  useEffect(() => {
-    const term = terminalRef.current
-    if (!term) return
-    term.options.theme = xtermTheme
-  }, [xtermTheme])
-
-  useEffect(() => {
-    const term = terminalRef.current
-    if (!term) return
-    term.options.fontFamily = xtermProfile.fontFamily
-    term.options.fontSize = xtermProfile.fontSize
-    term.options.lineHeight = xtermProfile.lineHeight
-    term.options.cursorStyle = xtermProfile.cursorStyle
-  }, [xtermProfile])
-
-  const handleWheel = useCallback((event: WheelEvent) => {
-    const term = terminalRef.current
-    if (!term) return
-
-    const lineHeightPx = xtermProfile.fontSize * xtermProfile.lineHeight
-    const rawLines = event.deltaMode === 1
-      ? event.deltaY
-      : event.deltaMode === 2
-        ? event.deltaY * term.rows
-        : event.deltaY / Math.max(1, lineHeightPx)
-    const direction = rawLines < 0 ? -1 : 1
-    const lines = Math.max(1, Math.min(12, Math.ceil(Math.abs(rawLines)))) * direction
-
-    event.preventDefault()
-    event.stopPropagation()
-    term.scrollLines(lines)
-    const distanceFromBottom = Math.max(0, term.buffer.active.baseY - term.buffer.active.viewportY)
-    onViewportStickChangeRef.current?.(distanceFromBottom <= 1)
-    logXtermDebug('wheel', {
-      deltaY: event.deltaY,
-      deltaMode: event.deltaMode,
-      computed_lines: lines,
-      distanceFromBottom,
-    })
-  }, [logXtermDebug, xtermProfile.fontSize, xtermProfile.lineHeight])
-
-  useEffect(() => {
-    const node = contentRef.current
-    if (!node) return
-
-    // React's delegated wheel listener can be passive in Chromium, which makes
-    // preventDefault a no-op and lets the page/container steal terminal scroll.
-    const listenerOptions: AddEventListenerOptions = { passive: false, capture: true }
-    node.addEventListener('wheel', handleWheel, listenerOptions)
-    logXtermDebug('wheel-listener', { passive: false, capture: true })
-    return () => {
-      node.removeEventListener('wheel', handleWheel, listenerOptions)
-    }
-  }, [contentRef, handleWheel, logXtermDebug])
-
-  useEffect(() => {
-    // applyContent writes `nextContent` into the terminal. It is stored in a ref
-    // so onScroll can re-invoke it for deferred content when the user returns to
-    // the bottom (pager catch-up, Fix B). Redefined each render so it captures the
-    // current contentSource/logXtermDebug.
-    const applyContent = (nextContent: string) => {
-      const term = terminalRef.current
-      if (!term) return
-      const previousContent = lastContentRef.current
-      if (nextContent === previousContent) return
-      const buffer = term.buffer.active
-      const distanceFromBottom = Math.max(0, buffer.baseY - buffer.viewportY)
-      const shouldStickToBottom = distanceFromBottom <= 1
-      const isPipeStream = contentSource === 'tmux_pipe'
-      // Replay decision for SAME-terminal streaming (continuity → delta, else →
-      // reset+full). Cross-terminal isolation is handled by the remount (key=
-      // terminal_id), so this only ever compares content within one terminal.
-      // Pure + unit-tested in terminalReplay.test.ts; appendOnlyPrefix is its
-      // inverse-of-reset so all the existing branch logic below is unchanged.
-      const writeDecision = computeXtermWrite(previousContent, nextContent)
-      const appendOnlyPrefix = !writeDecision.reset
-
-      // Pipe-stream path (active/streaming): the backend serves the raw, monotonic
-      // pipe recording (content_source `tmux_pipe`), so each refresh is the previous
-      // bytes plus newly appended bytes. Write ONLY the delta and let xterm emulate
-      // the terminal — redraws render in place via ANSI (no duplicate litter) and
-      // appended lines accumulate in xterm's native scrollback. Critically we never
-      // reset and never re-pin the viewport here: appending to scrollback leaves the
-      // user's scroll position untouched natively, so scrolling up works mid-stream.
-      // We only auto-follow when the user is already pinned to the bottom. If the
-      // recorder trimmed its file the stream is no longer a prefix superset
-      // (appendOnlyPrefix === false) → fall through to a single inline-reset rebuild.
-      if (isPipeStream && appendOnlyPrefix) {
-        const delta = nextContent.slice(previousContent.length)
-        lastContentRef.current = nextContent
-        pendingContentRef.current = null
-        const payload = normalizeXtermWriteContent(delta, contentSource)
-        const afterPipeWrite = () => {
-          if (shouldStickToBottom) term.scrollToBottom()
-          logXtermDebug('write', {
-            previousBaseY: buffer.baseY,
-            previousViewportY: buffer.viewportY,
-            previousDistanceFromBottom: distanceFromBottom,
-            restoredViewportY: term.buffer.active.viewportY,
-            restoredDistanceFromBottom: Math.max(0, term.buffer.active.baseY - term.buffer.active.viewportY),
-            appendOnly: true,
-            shouldStickToBottom,
-            pipe: true,
-          })
-        }
-        if (!payload) {
-          afterPipeWrite()
-          return
-        }
-        term.write(payload, afterPipeWrite)
-        return
-      }
-
-      // Fix B (pager freeze): while the user has scrolled up, do NOT write/reset/
-      // scroll — that would rebuild the buffer and snap the view back to the
-      // bottom. Stash the latest content and bail without touching lastContentRef,
-      // so the buffer and the user's scroll position stay put. onScroll applies it
-      // once they scroll back to the bottom. previousContent==='' (first load)
-      // never freezes, so the initial screen always renders.
-      const userScrolledUp = previousContent !== '' && distanceFromBottom > 2
-      if (userScrolledUp) {
-        pendingContentRef.current = nextContent
-        return
-      }
-      pendingContentRef.current = null
-      const previousBaseY = buffer.baseY
-      const previousViewportY = buffer.viewportY
-      const appendOnly = appendOnlyPrefix
-      const writeContent = appendOnly ? nextContent.slice(previousContent.length) : nextContent
-      lastContentRef.current = nextContent
-      const restoreScroll = () => {
-        if (shouldStickToBottom) {
-          term.scrollToBottom()
-          return
-        }
-        const nextBaseY = term.buffer.active.baseY
-        // Append case: new lines land at the bottom and existing lines keep their
-        // absolute index, so preserve the absolute viewport line.
-        // Rebuild case (inline RIS on a non-append refresh): the capture is a
-        // bottom-anchored sliding window — old lines drop off the TOP, so absolute
-        // indices shift down each refresh. Pinning to the old absolute line drifts the
-        // view downward and, when the buffer gets shorter, clamps it to the bottom
-        // ("scroll works, then snaps"). Distance-from-bottom is the stable coordinate.
-        const targetLine = appendOnly
-          ? Math.min(previousViewportY, nextBaseY)
-          : nextBaseY - distanceFromBottom
-        term.scrollToLine(Math.max(0, targetLine))
-      }
-      const afterWrite = () => {
-        restoreScroll()
-        logXtermDebug('write', {
-          previousBaseY,
-          previousViewportY,
-          previousDistanceFromBottom: distanceFromBottom,
-          restoredViewportY: term.buffer.active.viewportY,
-          restoredDistanceFromBottom: Math.max(0, term.buffer.active.baseY - term.buffer.active.viewportY),
-          appendOnly,
-          shouldStickToBottom,
-        })
-      }
-      // Fix A (duplicate stacking): term.write() is async and batched, but
-      // term.reset() is synchronous and out-of-band. Under rapid streaming
-      // refreshes, calling reset() then write() lets multiple full-screen captures
-      // parse with no intervening clear → screens stack (banner/message repeated).
-      // Emit a single write whose payload begins with an inline full reset ("\x1bc"
-      // RIS) for the rebuild case, so the clear is parsed in-order immediately
-      // before the new content. The append case writes only the delta as before.
-      const payload = normalizeXtermWriteContent(writeContent, contentSource)
-      if (!appendOnly) {
-        term.write('\x1bc' + payload, afterWrite)
-      } else if (!payload) {
-        afterWrite()
-      } else {
-        term.write(payload, afterWrite)
-      }
-    }
-    applyContentRef.current = applyContent
-    // No terminal-switch hard reset here: the pane is remounted (key=terminal_id)
-    // on a switch, so this instance only ever sees ONE terminal's content stream.
-    // The empty initial buffer + applyContent's reset+full first write render the
-    // new terminal's backfill exactly once.
-    applyContent(content)
-  }, [content, contentSource, logXtermDebug])
-
-  return (
-    <div
-      ref={contentRef}
-      className={className}
-      style={{ backgroundColor: xtermTheme.background }}
-    >
-      <div ref={mountRef} className="h-full w-full [&_.xterm]:h-full" />
-    </div>
-  )
-}
-
-// Memoized so a parent (TerminalCenter) re-render that leaves this pane's props
-// unchanged does NOT tear down / rewrite the live xterm. Its callback props are
-// all useCallback-stable, so re-render now tracks content/theme changes only.
-const XtermTerminalPane = memo(XtermTerminalPaneInner)
-
 // LiveAttachXtermPane is the live-attach transport (see
 // docs/refactor/terminal_live_attach_transport.md). It renders the SELECTED live
 // tmux terminal directly from the /api/terminals/{id}/stream WebSocket instead of
 // the snapshot/replay polling path: the backend's first frames are a capture-pane
 // backfill, then the live control-mode %output byte stream. We write those bytes
-// straight into xterm — NO applyContent / computeXtermWrite / content-prop replay.
+// straight into xterm — no content-prop replay.
 //
 // It is rendered for every selected non-synthetic terminal with a tmux session;
-// the rail/other terminals are untouched. It is mounted with key={terminal_id}
-// so a terminal switch fully remounts (fresh buffer + a fresh WS), making
-// cross-terminal overlap impossible by construction.
+// the rail/other terminals are untouched. It is mounted with a key that includes
+// the logical terminal id and tmux session, so a relaunched session fully
+// remounts (fresh buffer + a fresh WS), making cross-session overlap impossible
+// by construction.
 //
 // The xterm stays display-only (disableStdin, no onData -> WS): input keeps
 // flowing through the EXISTING chat live-input / send-keys path into the tmux
 // session and returns as %output over this same WS. Resize is FitAddon -> a JSON
 // {type:'resize'} frame (backend pty.Setsize on the control client, window-size
-// latest) — we deliberately do NOT POST /resize here (that re-asserts window-size
-// manual and would fight the control client). On socket close we reconnect; the
-// backend re-runs the capture-pane backfill, so recovery needs no client replay.
+  // latest) — we deliberately do NOT POST /resize here (that re-asserts window-size
+  // manual and would fight the control client). Running sessions reconnect on
+  // socket close; the backend re-runs the capture-pane backfill, so recovery
+  // needs no client replay.
 const LiveAttachXtermPaneInner: React.FC<{
   terminalId: string
   className?: string
   contentRef: React.RefObject<HTMLDivElement | null>
   xtermTheme: ITheme
-  xtermProfile: (typeof XTERM_PROFILE_OPTIONS)[TerminalColorScheme]
+  reconnectOnClose: boolean
   onViewportStickChange?: (isNearBottom: boolean) => void
-}> = ({ terminalId, className, contentRef, xtermTheme, xtermProfile, onViewportStickChange }) => {
+}> = ({ terminalId, className, contentRef, xtermTheme, reconnectOnClose, onViewportStickChange }) => {
   const mountRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<XTerm | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
+  const reconnectOnCloseRef = useRef(reconnectOnClose)
   const onViewportStickChangeRef = useRef(onViewportStickChange)
+
+  useEffect(() => {
+    reconnectOnCloseRef.current = reconnectOnClose
+  }, [reconnectOnClose])
 
   useEffect(() => {
     onViewportStickChangeRef.current = onViewportStickChange
@@ -2382,17 +1734,18 @@ const LiveAttachXtermPaneInner: React.FC<{
       convertEol: false,
       cursorBlink: false,
       disableStdin: true,
-      // Pure passthrough: no density-profile CSS layer. lineHeight stays at xterm's
-      // default (1.0) so the grid math matches the pane exactly and the bytes render
-      // like raw tmux output (matching the PoC, which used plain defaults).
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-      fontSize: 13,
+      // Pure passthrough: no density-profile CSS layer. Only fixed xterm metrics
+      // and app light/dark colors are configured; bytes still render as raw tmux.
+      fontFamily: RAW_XTERM_FONT_FAMILY,
+      fontSize: RAW_XTERM_FONT_SIZE,
+      lineHeight: RAW_XTERM_LINE_HEIGHT,
       scrollback: 20000,
       theme: xtermTheme,
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.open(mount)
+    applyRawXtermTheme(term, xtermTheme)
     terminalRef.current = term
 
     const scrollDisposable = term.onScroll(viewportY => {
@@ -2411,29 +1764,19 @@ const LiveAttachXtermPaneInner: React.FC<{
     // layout changes, so a ResizeObserver (fires post-layout with the real size) is
     // required to fit the xterm correctly — unlike the static-page PoC whose
     // container is sized immediately by CSS. Debounced so only the settled size fits.
-    const fitTerminal = () => {
-      try {
-        fit.fit()
-      } catch {
-        // Fit can fail during unmount or while the pane is display:none.
-      }
-    }
-    let fitTimer: number | undefined
-    const scheduleFit = () => {
-      if (fitTimer !== undefined) window.clearTimeout(fitTimer)
-      fitTimer = window.setTimeout(fitTerminal, 120)
-    }
-    fitTerminal()
-    const resizeObserver = new ResizeObserver(scheduleFit)
-    resizeObserver.observe(mount)
-
-    // WebSocket lifecycle with reconnect. The backend re-runs the capture-pane
-    // backfill on every (re)connect, so a dropped socket recovers the current
-    // screen without any client-side replay/seed state.
+    // WebSocket lifecycle with reconnect for live sessions. The backend re-runs
+    // the capture-pane backfill on every (re)connect, so a dropped socket recovers
+    // the current screen without any client-side replay/seed state.
     let closed = false
     let reconnectTimer: number | undefined
+    let hasConnected = false
     const connect = () => {
       if (closed) return
+      hasConnected = true
+      // Each connection starts with a capture-pane backfill. Reset inline before
+      // that first frame so reconnects cannot leave previous scrollback/screen
+      // bytes in xterm and then paint the same captured history again.
+      term.write('\x1bc')
       const url = agentApi.getTerminalStreamUrl(terminalId, term.cols, term.rows)
       const ws = new WebSocket(url)
       ws.binaryType = 'arraybuffer'
@@ -2453,6 +1796,7 @@ const LiveAttachXtermPaneInner: React.FC<{
       ws.onclose = () => {
         if (wsRef.current === ws) wsRef.current = null
         if (closed) return
+        if (!reconnectOnCloseRef.current) return
         reconnectTimer = window.setTimeout(connect, 1000)
       }
       ws.onerror = () => {
@@ -2463,7 +1807,27 @@ const LiveAttachXtermPaneInner: React.FC<{
         }
       }
     }
-    connect()
+
+    const fitTerminal = () => {
+      try {
+        fit.fit()
+        if (!hasConnected) connect()
+      } catch {
+        // Fit can fail during unmount or while the pane is display:none.
+      }
+    }
+    let fitTimer: number | undefined
+    const scheduleFit = () => {
+      if (fitTimer !== undefined) window.clearTimeout(fitTimer)
+      fitTimer = window.setTimeout(fitTerminal, 120)
+    }
+    // Wait for one settled layout pass before opening the stream. In the app the
+    // terminal pane is flex-sized after mount; connecting immediately can seed
+    // tmux/backfill at a stale grid and then receive live cursor-relative updates
+    // at the final grid, which shows up as duplicated wrapping/spinner stacking.
+    scheduleFit()
+    const resizeObserver = new ResizeObserver(scheduleFit)
+    resizeObserver.observe(mount)
 
     return () => {
       closed = true
@@ -2485,25 +1849,21 @@ const LiveAttachXtermPaneInner: React.FC<{
       terminalRef.current = null
       term.dispose()
     }
-    // terminalId is stable for a mounted instance (key={terminal_id}); theme and
-    // profile changes are applied by the effects below, mirroring XtermTerminalPane.
+    // terminalId is stable for a mounted instance (key includes tmux_session).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terminalId])
 
   useEffect(() => {
     const term = terminalRef.current
     if (!term) return
-    term.options.theme = xtermTheme
+    applyRawXtermTheme(term, xtermTheme)
   }, [xtermTheme])
-
-  // Intentionally NOT applying the density profile (Standard/Compact/Classic) to
-  // the live-attach pane — it renders pure tmux output at fixed defaults, so the
-  // profile dropdown does not reapply a CSS/lineHeight layer here.
 
   const handleWheel = useCallback((event: WheelEvent) => {
     const term = terminalRef.current
     if (!term) return
-    const lineHeightPx = xtermProfile.fontSize * xtermProfile.lineHeight
+    const row = term.element?.querySelector('.xterm-rows > div') as HTMLElement | null
+    const lineHeightPx = row?.getBoundingClientRect().height || RAW_XTERM_FONT_SIZE
     const rawLines = event.deltaMode === 1
       ? event.deltaY
       : event.deltaMode === 2
@@ -2516,7 +1876,7 @@ const LiveAttachXtermPaneInner: React.FC<{
     term.scrollLines(lines)
     const distanceFromBottom = Math.max(0, term.buffer.active.baseY - term.buffer.active.viewportY)
     onViewportStickChangeRef.current?.(distanceFromBottom <= 1)
-  }, [xtermProfile.fontSize, xtermProfile.lineHeight])
+  }, [])
 
   useEffect(() => {
     const node = contentRef.current
@@ -2540,13 +1900,6 @@ const LiveAttachXtermPaneInner: React.FC<{
 }
 
 const LiveAttachXtermPane = memo(LiveAttachXtermPaneInner)
-
-function normalizeXtermWriteContent(content: string, contentSource?: string): string {
-  if (contentSource === 'tmux_pipe') {
-    return content
-  }
-  return content.replace(/\r?\n/g, '\r\n')
-}
 
 function normalizeTerminalRows(rows: TerminalSnapshot['rows'] | undefined): TerminalRow[] {
   if (!Array.isArray(rows)) return []
@@ -2843,8 +2196,8 @@ const StructuredTerminalViewInner: React.FC<StructuredTerminalViewProps> = ({ co
   )
 }
 
-// Memoized for the same reason as XtermTerminalPane: a parent re-render with
-// unchanged props (callbacks are useCallback-stable) must not re-render the view.
+// Memoized so a parent re-render with unchanged props (callbacks are
+// useCallback-stable) does not re-render the view.
 const StructuredTerminalView = memo(StructuredTerminalViewInner)
 
 function isSyntheticTerminal(terminal: TerminalSnapshot): boolean {
@@ -3133,6 +2486,7 @@ function writeDismissedTerminalErrorIDs(sessionId: string | undefined, ids: Set<
 }
 
 const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, compact, hasConversationActivity = false }) => {
+  const { theme: appTheme } = useTheme()
   // terminalCenterOpen was the legacy toggle gate (separate sidekick
   // panel); kept here for any callers that still pass the flag but no
   // longer affects rendering — Debug-mode mount is the only gate.
@@ -3155,7 +2509,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
   const [dismissedRouteIDs, setDismissedRouteIDs] = useState<Set<string>>(() => new Set())
   const [dismissedErrorIDs, setDismissedErrorIDs] = useState<Set<string>>(() => readDismissedTerminalErrorIDs(currentSessionId))
   const [expandedErrorIDs, setExpandedErrorIDs] = useState<Set<string>>(() => new Set())
-  const [terminalColorScheme, setTerminalColorScheme] = useState<TerminalColorScheme>(() => readStoredTerminalColorScheme())
+  const terminalColorScheme = DEFAULT_TERMINAL_COLOR_SCHEME
   // Slim each agent rail card to one line whenever the report/plan pane is up
   // (chat sits in the side-by-side split). When the workspace pane is hidden and
   // chat is full-width, the cards render with their full meta row. NOTE: this is
@@ -3207,11 +2561,6 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
       return next
     })
   }, [currentSessionId])
-
-  const updateTerminalColorScheme = useCallback((scheme: TerminalColorScheme) => {
-    setTerminalColorScheme(scheme)
-    writeStoredTerminalColorScheme(scheme)
-  }, [])
 
   const toggleTerminalError = useCallback((errorID: string) => {
     setExpandedErrorIDs(prev => {
@@ -3308,12 +2657,8 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
   const fastPollUntilRef = useRef(0)
   const fastPollIntervalRef = useRef<number | null>(null)
   const lastSizeHintSentRef = useRef<{ cols: number; rows: number } | null>(null)
-  const lastResizeSentRef = useRef<{ terminalId: string; cols: number; rows: number } | null>(null)
-  // Latest real xterm grid (cols/rows from term.onResize), remembered even when we
-  // can't POST /resize yet (e.g. a resumed terminal whose tmux_session hasn't been
-  // materialized). Lets us push the grid the moment tmux_session appears.
-  const lastXtermGridRef = useRef<{ cols: number; rows: number } | null>(null)
   const terminalTheme = TERMINAL_THEMES[terminalColorScheme]
+  const rawXtermTheme = RAW_XTERM_THEMES[appTheme]
 
   useEffect(() => {
     setTerminals([])
@@ -3686,8 +3031,12 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     // visual nesting under the parent. One tree keeps lineage intact;
     // the colored dot on each rail row already conveys per-row state.
     const allTerminals = sortTerminalsForRail(filteredRailTerminals)
-    const activeTerminals = filteredRailTerminals.filter(terminal => terminalState(terminal) === 'running')
-    const finishedTerminals = filteredRailTerminals.filter(terminal => terminalState(terminal) !== 'running')
+    // Derive active/finished from the same stable order used by the rail. The
+    // selected terminal fallback uses activeTerminals[0]; if this follows the raw
+    // polling order, duplicate logical steps with different tmux sessions can
+    // trade places between polls and force live-attach remount/reconnect loops.
+    const activeTerminals = allTerminals.filter(terminal => terminalState(terminal) === 'running')
+    const finishedTerminals = allTerminals.filter(terminal => terminalState(terminal) !== 'running')
     const currentTerminals = sortTerminalsNewestFirst(filteredRailTerminals.filter(terminal => !isArchivedTurnTerminal(terminal)))
     const allRunningCount = railTerminals.filter(terminal => !isMainAgentTerminal(terminal) && terminalState(terminal) === 'running').length
     const allNonRunningCount = railTerminals.filter(terminal => !isMainAgentTerminal(terminal) && terminalState(terminal) !== 'running').length
@@ -3876,21 +3225,31 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
   // establishes once and streams; a concrete non-live selection drops immediately.
   const liveAttachTerminalId =
     useLiveAttachForSelected && selectedTerminalView ? selectedTerminalView.terminal_id : null
-  const [stableLiveAttachId, setStableLiveAttachId] = useState<string | null>(null)
+  const liveAttachStreamKey =
+    useLiveAttachForSelected && selectedTerminalView
+      ? `${selectedTerminalView.terminal_id}:${selectedTerminalView.tmux_session || ''}`
+      : null
+  const [stableLiveAttach, setStableLiveAttach] = useState<{ terminalId: string; streamKey: string } | null>(null)
   useEffect(() => {
-    if (liveAttachTerminalId) {
-      setStableLiveAttachId(liveAttachTerminalId)
+    if (liveAttachTerminalId && liveAttachStreamKey) {
+      setStableLiveAttach(prev => (
+        prev?.terminalId === liveAttachTerminalId && prev?.streamKey === liveAttachStreamKey
+          ? prev
+          : { terminalId: liveAttachTerminalId, streamKey: liveAttachStreamKey }
+      ))
       return
     }
     if (selectedTerminalView) {
       // A concrete non-live / synthetic selection — switch away immediately.
-      setStableLiveAttachId(null)
+      setStableLiveAttach(null)
       return
     }
     // selectedTerminalView is transiently null (list/session flicker) — debounce.
-    const timer = window.setTimeout(() => setStableLiveAttachId(null), 800)
+    const timer = window.setTimeout(() => setStableLiveAttach(null), 800)
     return () => window.clearTimeout(timer)
-  }, [liveAttachTerminalId, selectedTerminalView])
+  }, [liveAttachTerminalId, liveAttachStreamKey, selectedTerminalView])
+  const stableLiveAttachId = stableLiveAttach?.terminalId ?? null
+  const stableLiveAttachKey = stableLiveAttach?.streamKey ?? null
   const selectedRouteDecision = selectedTerminalView?.step_id
     ? routingDecisionByNextStepID.get(selectedTerminalView.step_id)
     : undefined
@@ -4030,9 +3389,9 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     ruler.textContent = '0'.repeat(100)
     ruler.setAttribute('aria-hidden', 'true')
     ruler.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;top:0;left:0;pointer-events:none;'
-    ruler.style.fontFamily = XTERM_PROFILE_OPTIONS[terminalColorScheme].fontFamily
-    ruler.style.fontSize = `${XTERM_PROFILE_OPTIONS[terminalColorScheme].fontSize}px`
-    ruler.style.lineHeight = String(XTERM_PROFILE_OPTIONS[terminalColorScheme].lineHeight)
+    ruler.style.fontFamily = RAW_XTERM_FONT_FAMILY
+    ruler.style.fontSize = `${RAW_XTERM_FONT_SIZE}px`
+    ruler.style.lineHeight = String(RAW_XTERM_LINE_HEIGHT)
     el.appendChild(ruler)
     const charWidth = ruler.getBoundingClientRect().width / 100
     const lineHeight = ruler.getBoundingClientRect().height || 16
@@ -4044,7 +3403,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     const cols = Math.max(40, Math.floor((el.clientWidth - padX) / charWidth) - 1)
     const rows = Math.max(10, Math.floor((el.clientHeight - padY) / lineHeight))
     return { cols, rows }
-  }, [terminalColorScheme])
+  }, [])
 
   const sendTerminalSizeHint = useCallback((cols: number, rows: number) => {
     const nextCols = Math.max(40, Math.floor(cols))
@@ -4056,49 +3415,6 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
       lastSizeHintSentRef.current = null
     })
   }, [currentSessionId])
-
-  const sendTerminalResize = useCallback((terminalId: string | undefined, cols: number, rows: number) => {
-    if (!terminalId) return
-    const nextCols = Math.max(40, Math.floor(cols))
-    const nextRows = Math.max(10, Math.floor(rows))
-    const last = lastResizeSentRef.current
-    if (last && last.terminalId === terminalId && last.cols === nextCols && last.rows === nextRows) return
-    lastResizeSentRef.current = { terminalId, cols: nextCols, rows: nextRows }
-    void agentApi.resizeTerminal(terminalId, nextCols, nextRows).catch(() => {
-      // Resize is best-effort: tmux pane may have been killed, terminal may
-      // have transitioned. Don't surface as a user error.
-      lastResizeSentRef.current = null
-    })
-  }, [])
-
-  const handleSelectedXtermResize = useCallback((cols: number, rows: number) => {
-    // Always remember the real xterm grid, even when we can't POST yet (no
-    // tmux_session). A resumed terminal starts as the static snapshot (tmux_session
-    // === '') so this early-returns; once the live tmux is materialized the effect
-    // below replays this remembered grid (term.onResize won't re-fire on its own
-    // because the grid didn't change).
-    lastXtermGridRef.current = { cols, rows }
-    if (!selectedTerminalView || !selectedTerminalView.tmux_session || isSyntheticTerminal(selectedTerminalView)) return
-    sendTerminalResize(selectedTerminalView.terminal_id, cols, rows)
-  }, [selectedTerminalView, sendTerminalResize])
-
-  // Resume gap closer: when a terminal's tmux_session first becomes available
-  // (static restored snapshot → live materialized tmux, same canonical
-  // terminal_id), xterm has already fitted, so term.onResize won't fire again and
-  // /resize would never be sent — tmux would keep its launch geometry and pi-cli's
-  // full-screen redraws would append instead of overwrite (duplicated frames).
-  // Proactively push the current xterm grid so the pane matches the xterm 1:1,
-  // exactly like a new chat. Idempotent: sendTerminalResize dedupes by id+cols+rows.
-  useEffect(() => {
-    if (!selectedTerminalView || !selectedTerminalView.tmux_session || isSyntheticTerminal(selectedTerminalView)) return
-    // In live-attach mode the WS resize frame (pty.Setsize, window-size latest) is
-    // authoritative; POST /resize re-asserts window-size manual and would fight the
-    // control client, so skip it for the WS-rendered terminal.
-    if (useLiveAttachForSelected) return
-    const grid = lastXtermGridRef.current
-    if (!grid) return
-    sendTerminalResize(selectedTerminalView.terminal_id, grid.cols, grid.rows)
-  }, [selectedTerminalView?.terminal_id, selectedTerminalView?.tmux_session, sendTerminalResize, useLiveAttachForSelected])
 
   // Startup/idle size hint: keep the backend's preferred tmux launch size in
   // sync with the visible TerminalCenter container, even before any terminal
@@ -4129,16 +3445,6 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
       if (timer !== undefined) window.clearTimeout(timer)
     }
   }, [measureTerminalElementSize, sendTerminalSizeHint])
-
-  // Dynamic tmux resize: the live /api/terminals/{id}/resize POST is driven from
-  // the xterm's actual character grid via XtermTerminalPane's term.onResize →
-  // handleSelectedXtermResize → sendTerminalResize. We intentionally do NOT POST a
-  // separately element-measured size here: two independent measurements (FitAddon
-  // vs a CSS ruler) can disagree by a column/row, so the tmux pane would be resized
-  // to a size the xterm isn't actually using → the pipe stream's absolute-cursor
-  // redraws land on the wrong rows and litter. The backend's `tmux resize-window`
-  // now makes the pane exactly the xterm grid, so the stream renders 1:1.
-
 
   // Rail item — one row in the left rail. Compact vertical layout:
   // dot + step title (top line), transport chip + closing countdown
@@ -4769,27 +4075,6 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
                           )}
                         </div>
                       )}
-                      <label
-                        className={`relative inline-flex h-6 w-7 items-center justify-center rounded border border-neutral-700/90 bg-[#101211] text-neutral-500 hover:bg-neutral-800/80 hover:text-neutral-100 focus-within:text-neutral-100 ${terminalTheme.inputFocus}`}
-                        title={`Terminal profile: ${TERMINAL_COLOR_SCHEME_OPTIONS.find(option => option.value === terminalColorScheme)?.label || terminalColorScheme}`}
-                        aria-label="Terminal profile"
-                      >
-                        <Palette className="pointer-events-none h-3.5 w-3.5" />
-                        <select
-                          value={terminalColorScheme}
-                          onChange={event => {
-                            const next = event.target.value
-                            if (isTerminalColorScheme(next)) updateTerminalColorScheme(next)
-                          }}
-                          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                        >
-                          {TERMINAL_COLOR_SCHEME_OPTIONS.map(option => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
                       {canDismissTerminal(selectedTerminalView) && (
                         <button
                           type="button"
@@ -4860,20 +4145,18 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
                       terminal={selectedTerminalView}
                       theme={terminalTheme}
                     />
-                  ) : stableLiveAttachId ? (
+                  ) : stableLiveAttachId && stableLiveAttachKey ? (
                     <LiveAttachXtermPane
-                      // Keyed on a DEBOUNCED terminal id (stableLiveAttachId) so a
-                      // transient selection flicker from the old polling path does NOT
-                      // remount the pane / cancel the control-mode attach mid-stream. A
-                      // real terminal switch changes the id and still remounts (fresh
-                      // xterm + fresh WS, no cross-terminal overlap).
-                      key={stableLiveAttachId}
+                      // Keyed on the debounced terminal+tmux identity so transient
+                      // selection flicker does not remount, but a relaunched session
+                      // with the same logical terminal id reconnects to the new stream.
+                      key={stableLiveAttachKey}
                       terminalId={stableLiveAttachId}
                       contentRef={terminalOutputRef as React.RefObject<HTMLDivElement | null>}
-                      xtermTheme={XTERM_THEMES[terminalColorScheme]}
-                      xtermProfile={XTERM_PROFILE_OPTIONS[terminalColorScheme]}
+                      xtermTheme={rawXtermTheme}
+                      reconnectOnClose={isSelectedTerminalStreaming}
                       onViewportStickChange={handleXtermViewportStickChange}
-                      className={`min-w-0 flex-1 overflow-hidden overscroll-contain font-mono text-neutral-100 ${XTERM_PROFILE_OPTIONS[terminalColorScheme].panePaddingClass} ${terminalTheme.selection}`}
+                      className="min-w-0 flex-1 overflow-hidden overscroll-contain pl-2"
                     />
                   ) : (
                     // Live-attach is the only transport for the selected tmux
@@ -4881,8 +4164,8 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
                     // no-live-terminal window rare; show an empty placeholder
                     // rather than the removed capture-pane pane.
                     <div
-                      className={`min-w-0 flex-1 overflow-hidden overscroll-contain font-mono text-neutral-100 ${XTERM_PROFILE_OPTIONS[terminalColorScheme].panePaddingClass} ${terminalTheme.selection}`}
-                      style={{ backgroundColor: XTERM_THEMES[terminalColorScheme].background }}
+                      className="min-w-0 flex-1 overflow-hidden overscroll-contain pl-2"
+                      style={{ backgroundColor: rawXtermTheme.background }}
                     />
                   )}
                   {selectedTerminalView && (() => {

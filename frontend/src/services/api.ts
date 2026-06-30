@@ -764,10 +764,6 @@ export const agentApi = {
     await api.post(`/api/terminals/${encodeURIComponent(terminalId)}/key`, { key })
   },
 
-  resizeTerminal: async (terminalId: string, cols: number, rows: number): Promise<void> => {
-    await api.post(`/api/terminals/${encodeURIComponent(terminalId)}/resize`, { cols, rows })
-  },
-
   reportTerminalSizeHint: async (cols: number, rows: number, sessionId?: string): Promise<void> => {
     await api.post('/api/terminals/size-hint', { cols, rows, session_id: sessionId })
   },

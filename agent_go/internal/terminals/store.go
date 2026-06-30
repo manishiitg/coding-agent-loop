@@ -2089,6 +2089,16 @@ func (s *Store) handleStatusLine(sessionID string, event storeevents.Event) {
 	if !found {
 		return
 	}
+	tmuxSession = firstNonEmpty(
+		tmuxSession,
+		stringValue(statusMeta, "tmux_session"),
+		stringValue(statusMeta, "tmux_session_name"),
+		stringValue(statusMeta, "pi_interactive_session"),
+		stringValue(statusMeta, "claude_code_interactive_session"),
+		stringValue(statusMeta, "codex_interactive_session"),
+		stringValue(statusMeta, "gemini_interactive_session"),
+		stringValue(statusMeta, "cursor_interactive_session"),
+	)
 
 	// Use the provider name verbatim — the adapter owns its display name
 	// (e.g. "agy-cli", "claudecode"); the store must not re-map provider ids.
@@ -2106,6 +2116,7 @@ func (s *Store) handleStatusLine(sessionID string, event storeevents.Event) {
 
 	now := time.Now()
 	tmuxSession = strings.TrimSpace(tmuxSession)
+	updated := false
 	for terminalID := range s.bySession[sessionID] {
 		snapshot, exists := s.byID[terminalID]
 		if !exists {
@@ -2131,5 +2142,76 @@ func (s *Store) handleStatusLine(sessionID string, event storeevents.Event) {
 		}
 		snapshot.UpdatedAt = now
 		s.byID[terminalID] = snapshot
+		updated = true
+	}
+	if updated || tmuxSession == "" {
+		return
+	}
+	statusMetadata := mergeMetadata(metadataForEvent(event), statusMeta)
+	statusMetadata["kind"] = firstNonEmpty(stringValue(statusMetadata, "kind"), "terminal")
+	statusMetadata["tmux_session"] = tmuxSession
+	statusMetadata["step_transport"] = firstNonEmpty(stringValue(statusMetadata, "step_transport"), "tmux")
+	ownerID := terminalOwnerID(sessionID, event, statusMetadata)
+	if ownerID == "" {
+		ownerID = "main:" + sessionID
+	}
+	executionKind := firstNonEmpty(event.ExecutionKind, stringValue(statusMetadata, "execution_kind"))
+	if executionKind == "" && strings.HasPrefix(ownerID, "main:") {
+		executionKind = "main_agent"
+	}
+	scope := terminalScope(event, statusMetadata)
+	if scope == "session" && strings.HasPrefix(ownerID, "main:") {
+		scope = "main_agent"
+	}
+	label := terminalLabel(event, statusMetadata, ownerID)
+	if label == "Terminal" && providerLabel != "" {
+		label = providerLabel
+	}
+	snapshot := Snapshot{
+		TerminalID:    terminalIDFor(sessionID, ownerID),
+		SessionID:     sessionID,
+		OwnerID:       ownerID,
+		ExecutionID:   firstNonEmpty(event.ExecutionID, stringValue(statusMeta, "execution_id")),
+		ExecutionKind: executionKind,
+		Label:         label,
+		Scope:         scope,
+		StepID:        firstNonEmpty(workflowStepIDFromOwner(ownerID), stringValue(statusMetadata, "current_step_id"), stringValue(statusMetadata, "workflow_step_id"), stringValue(statusMetadata, "step_id")),
+		StepTransport: "tmux",
+		TmuxSession:   tmuxSession,
+		ContentSource: "tmux_live",
+		ChunkIndex:    0,
+		Active:        true,
+		State:         "running",
+		Status: Status{
+			InputTokens:              inputTokens,
+			OutputTokens:             outputTokens,
+			CacheCreationInputTokens: cacheCreationTokens,
+			CacheReadInputTokens:     cacheReadTokens,
+			TotalInputTokens:         totalInputTokens,
+			TotalOutputTokens:        totalOutputTokens,
+			CostUSD:                  costUSD,
+			ProviderLabel:            providerLabel,
+			StatusMeta:               statusMeta,
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if snapshot.ExecutionID == "" {
+		snapshot.ExecutionID = snapshot.OwnerID
+	}
+	if snapshot.StepID == "" && currentTerminalIsMainAgent(snapshot) {
+		snapshot.StepID = "main_agent:" + sessionID
+	}
+	fillDisplayContext(&snapshot)
+	if _, ok := s.dismissed[snapshot.TerminalID]; ok {
+		delete(s.dismissed, snapshot.TerminalID)
+	}
+	s.byID[snapshot.TerminalID] = snapshot
+	if s.bySession[sessionID] == nil {
+		s.bySession[sessionID] = make(map[string]struct{})
+	}
+	s.bySession[sessionID][snapshot.TerminalID] = struct{}{}
+	if currentTerminalIsMainAgent(snapshot) {
+		s.removeCurrentMainAgentAliasesLocked(sessionID, snapshot.TerminalID)
 	}
 }

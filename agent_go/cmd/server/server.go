@@ -274,10 +274,10 @@ type StreamingAPI struct {
 	// Raw tmux pipe-pane recorder used for append/replay terminal display.
 	terminalPipeRecorder *terminalPipeRecorder
 
-	// Live-attach terminal transport (control mode). Non-nil only when
-	// RUNLOOP_TERMINAL_LIVE_ATTACH is set and tmux is new enough; otherwise the
-	// /api/terminals/{id}/stream endpoint stays inert (404). Additive — the
-	// snapshot/replay transport above remains the default.
+	// Live-attach terminal transport (control mode). Non-nil when tmux is new
+	// enough for control mode; otherwise the /api/terminals/{id}/stream endpoint
+	// stays inert (404). It is the transport for the SELECTED live tmux terminal;
+	// the snapshot/replay path above still serves the rail / non-selected panes.
 	liveAttach *liveAttachManager
 
 	// Workflow orchestrator configuration
@@ -1479,8 +1479,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/terminals/{terminal_id}/key", api.handleSendTerminalKey).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/terminals/{terminal_id}/resize", api.handleResizeTerminal).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/terminals/size-hint", api.handleTerminalSizeHint).Methods("POST", "OPTIONS")
-	// Live-attach (control-mode) WebSocket transport — Phase 1, additive.
-	// Inert (404) unless RUNLOOP_TERMINAL_LIVE_ATTACH is set; see terminal_live_attach.go.
+	// Live-attach (control-mode) WebSocket transport for the selected live tmux
+	// terminal. Inert (404) only if tmux is too old; see terminal_live_attach.go.
 	apiRouter.HandleFunc("/terminals/{terminal_id}/stream", api.handleTerminalStream).Methods("GET")
 
 	// LLM Guidance API routes
@@ -3721,6 +3721,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 		workspace.SetSessionWorkingDir(sessionID, chatWorkingFolder)
 		chatWorkingDir := codingAgentWorkspaceWorkingDir(chatWorkingFolder)
+		if piPersistentInteractive {
+			closed := api.cleanupConflictingPiCLIInteractiveSessions(sessionID, chatWorkingDir, "starting chat agent")
+			if closed > 0 {
+				log.Printf("[PI_CLI_CONFLICT] Cleared %d conflicting Pi CLI session(s) before starting chat session %s in %s", closed, sessionID, chatWorkingDir)
+			}
+		}
 		agentConfig := agent.LLMAgentConfig{
 			Name:               "chat-agent",
 			ServerName:         serverList, // Use full server list, not just first one

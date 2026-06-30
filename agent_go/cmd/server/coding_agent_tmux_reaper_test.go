@@ -142,6 +142,157 @@ func TestCleanupStaleCodingAgentTmuxSessionsClosesStoppedSessionImmediately(t *t
 	}
 }
 
+func TestCleanupConflictingPiCLIInteractiveSessionsClosesManualSameWorkingDir(t *testing.T) {
+	now := time.Now()
+	store := terminals.NewStore()
+	oldSessionID := "old-chat-session"
+	newSessionID := "new-chat-session"
+	tmuxSession := "mlp-pi-cli-int-conflict"
+	workingDir := "/tmp/workspace-docs/_users/default/Chats"
+	store.HandleEvent(oldSessionID, codingAgentTmuxReaperChunkEvent(now, oldSessionID, "main:"+oldSessionID, tmuxSession))
+	store.HandleEvent(oldSessionID, codingAgentTmuxStatusLineEvent(now, oldSessionID, tmuxSession, workingDir))
+	terminalID := oldSessionID + ":main:" + oldSessionID
+	store.MarkCompleted(terminalID)
+	api := &StreamingAPI{
+		terminalStore: store,
+		activeSessions: map[string]*ActiveSessionInfo{
+			oldSessionID: {SessionID: oldSessionID, Status: "completed"},
+			newSessionID: {SessionID: newSessionID, Status: "running"},
+		},
+	}
+
+	gotArgs := stubTerminalTmuxCommand(t)
+
+	closed := api.cleanupConflictingPiCLIInteractiveSessions(newSessionID, workingDir, "test")
+
+	if closed != 1 {
+		t.Fatalf("closed = %d, want 1", closed)
+	}
+	if got := strings.Join(*gotArgs, " "); got != "kill-session -t "+tmuxSession {
+		t.Fatalf("tmux args = %q, want kill-session", got)
+	}
+	snapshot, ok := store.Get(terminalID)
+	if !ok {
+		t.Fatal("expected terminal snapshot to remain visible")
+	}
+	if snapshot.Active || snapshot.State != "stale" || snapshot.TmuxSession != "" {
+		t.Fatalf("snapshot active/state/tmux = %v/%q/%q, want false/stale/empty", snapshot.Active, snapshot.State, snapshot.TmuxSession)
+	}
+	if got := api.activeSessions[oldSessionID].Status; got != "completed" {
+		t.Fatalf("old session status = %q, want completed", got)
+	}
+}
+
+func TestCleanupConflictingPiCLIInteractiveSessionsStopsRunningManualSameWorkingDir(t *testing.T) {
+	now := time.Now()
+	store := terminals.NewStore()
+	oldSessionID := "running-old-chat-session"
+	newSessionID := "new-chat-session"
+	tmuxSession := "mlp-pi-cli-int-running-conflict"
+	workingDir := "/tmp/workspace-docs/_users/default/Chats"
+	store.HandleEvent(oldSessionID, codingAgentTmuxReaperChunkEvent(now, oldSessionID, "main:"+oldSessionID, tmuxSession))
+	store.HandleEvent(oldSessionID, codingAgentTmuxStatusLineEvent(now, oldSessionID, tmuxSession, workingDir))
+	cancelCalled := false
+	api := &StreamingAPI{
+		terminalStore: store,
+		activeSessions: map[string]*ActiveSessionInfo{
+			oldSessionID: {SessionID: oldSessionID, Status: "running"},
+			newSessionID: {SessionID: newSessionID, Status: "running"},
+		},
+		agentCancelFuncs: map[string]context.CancelFunc{
+			oldSessionID: func() { cancelCalled = true },
+		},
+		sessionBusy: map[string]bool{oldSessionID: true},
+	}
+
+	gotArgs := stubTerminalTmuxCommand(t)
+
+	closed := api.cleanupConflictingPiCLIInteractiveSessions(newSessionID, workingDir, "test")
+
+	if closed != 1 {
+		t.Fatalf("closed = %d, want 1", closed)
+	}
+	if got := strings.Join(*gotArgs, " "); got != "kill-session -t "+tmuxSession {
+		t.Fatalf("tmux args = %q, want kill-session", got)
+	}
+	if !cancelCalled {
+		t.Fatal("expected old session cancel func to run")
+	}
+	if got := api.activeSessions[oldSessionID].Status; got != "stopped" {
+		t.Fatalf("old session status = %q, want stopped", got)
+	}
+	if api.isSessionBusy(oldSessionID) {
+		t.Fatal("expected old session busy flag to be cleared")
+	}
+}
+
+func TestCleanupConflictingPiCLIInteractiveSessionsKeepsCronSameWorkingDir(t *testing.T) {
+	now := time.Now()
+	store := terminals.NewStore()
+	cronSessionID := "cron-chat-session"
+	newSessionID := "new-chat-session"
+	tmuxSession := "mlp-pi-cli-int-cron"
+	workingDir := "/tmp/workspace-docs/_users/default/Chats"
+	store.HandleEvent(cronSessionID, codingAgentTmuxReaperChunkEvent(now, cronSessionID, "main:"+cronSessionID, tmuxSession))
+	store.HandleEvent(cronSessionID, codingAgentTmuxStatusLineEvent(now, cronSessionID, tmuxSession, workingDir))
+	api := &StreamingAPI{
+		terminalStore: store,
+		activeSessions: map[string]*ActiveSessionInfo{
+			cronSessionID: {SessionID: cronSessionID, Status: "running", TriggeredBy: "cron"},
+			newSessionID:  {SessionID: newSessionID, Status: "running"},
+		},
+	}
+
+	gotArgs := stubTerminalTmuxCommand(t)
+
+	closed := api.cleanupConflictingPiCLIInteractiveSessions(newSessionID, workingDir, "test")
+
+	if closed != 0 {
+		t.Fatalf("closed = %d, want 0", closed)
+	}
+	if len(*gotArgs) != 0 {
+		t.Fatalf("tmux command should not run for cron session, got %v", *gotArgs)
+	}
+	snapshot, ok := store.Get(cronSessionID + ":main:" + cronSessionID)
+	if !ok || snapshot.TmuxSession != tmuxSession {
+		t.Fatalf("cron snapshot tmux = %q ok=%v, want %q", snapshot.TmuxSession, ok, tmuxSession)
+	}
+}
+
+func TestCleanupConflictingPiCLIInteractiveSessionsClosesLiveTmuxFallback(t *testing.T) {
+	workingDir := "/tmp/workspace-docs/_users/default/Chats"
+	tmuxSession := "mlp-pi-cli-int-live-orphan"
+	api := &StreamingAPI{terminalStore: terminals.NewStore()}
+
+	var gotKill []string
+	oldRun := runTerminalTmuxCommand
+	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
+		gotKill = append([]string(nil), args...)
+		return nil
+	}
+	oldOutput := runTerminalTmuxOutputCommand
+	runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
+		return strings.Join([]string{
+			tmuxSession + "\t" + workingDir,
+			"mlp-pi-cli-int-other\t/tmp/other",
+			"mlp-codex-cli-int-other\t" + workingDir,
+		}, "\n"), nil
+	}
+	t.Cleanup(func() {
+		runTerminalTmuxCommand = oldRun
+		runTerminalTmuxOutputCommand = oldOutput
+	})
+
+	closed := api.cleanupConflictingPiCLIInteractiveSessions("new-chat-session", workingDir, "test")
+
+	if closed != 1 {
+		t.Fatalf("closed = %d, want 1", closed)
+	}
+	if got := strings.Join(gotKill, " "); got != "kill-session -t "+tmuxSession {
+		t.Fatalf("tmux args = %q, want kill-session", got)
+	}
+}
+
 // TestSessionHasLiveCodingTmuxTracksReap covers the gate that decides whether an
 // active-tab /api/query auto-resumes (re-launch with --resume + materialize) after
 // the session's tmux is gone. A live pane → true; once the reaper closes it
@@ -184,7 +335,14 @@ func stubTerminalTmuxCommand(t *testing.T) *[]string {
 		gotArgs = append([]string(nil), args...)
 		return nil
 	}
-	t.Cleanup(func() { runTerminalTmuxCommand = oldRun })
+	oldOutput := runTerminalTmuxOutputCommand
+	runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
+		return "", nil
+	}
+	t.Cleanup(func() {
+		runTerminalTmuxCommand = oldRun
+		runTerminalTmuxOutputCommand = oldOutput
+	})
 	return &gotArgs
 }
 
@@ -214,6 +372,29 @@ func codingAgentTmuxReaperChunkEvent(timestamp time.Time, sessionID, executionID
 				},
 				Content:    "pane",
 				ChunkIndex: 1,
+			},
+		},
+	}
+}
+
+func codingAgentTmuxStatusLineEvent(timestamp time.Time, sessionID, tmuxSession, workingDir string) storeevents.Event {
+	return storeevents.Event{
+		Type:      "status_line",
+		Timestamp: timestamp,
+		SessionID: sessionID,
+		Data: &agentevents.AgentEvent{
+			Type:      "status_line",
+			Timestamp: timestamp,
+			SessionID: sessionID,
+			Data: &agentevents.GenericEventData{
+				Data: map[string]interface{}{
+					"provider":     "pi-cli",
+					"model":        "google/gemini-3.5-flash",
+					"tmux_session": tmuxSession,
+					"metadata": map[string]interface{}{
+						"working_dir": workingDir,
+					},
+				},
 			},
 		},
 	}

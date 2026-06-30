@@ -95,6 +95,100 @@ func TestTerminalSizeHintResizesLiveTerminalsForSession(t *testing.T) {
 	}
 }
 
+func TestTerminalSizeHintSkipsLiveAttachSessions(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store, liveAttach: newLiveAttachManager()}
+	sessionID := "session-live-attach-resize"
+
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "main:"+sessionID, "tmux-live-resize", "main pane", 1))
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", "tmux-step-resize", "step pane", 1))
+
+	api.liveAttach.mu.Lock()
+	api.liveAttach.sessions["tmux-live-resize"] = &liveAttachStream{tmuxSession: "tmux-live-resize"}
+	api.liveAttach.mu.Unlock()
+
+	originalRunTerminalTmuxCommand := runTerminalTmuxCommand
+	defer func() { runTerminalTmuxCommand = originalRunTerminalTmuxCommand }()
+	var calls [][]string
+	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
+		calls = append(calls, append([]string(nil), args...))
+		return nil
+	}
+	originalRunTerminalTmuxOutputCommand := runTerminalTmuxOutputCommand
+	defer func() { runTerminalTmuxOutputCommand = originalRunTerminalTmuxOutputCommand }()
+	runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
+		return "80\t24", nil
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/terminals/size-hint", bytes.NewBufferString(`{"cols":132,"rows":41,"session_id":"`+sessionID+`"}`))
+	rec := httptest.NewRecorder()
+	api.handleTerminalSizeHint(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("size hint status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got := int(resp["resized"].(float64)); got != 1 {
+		t.Fatalf("resized = %d, want 1", got)
+	}
+
+	for _, call := range calls {
+		joined := strings.Join(call, " ")
+		if strings.Contains(joined, "tmux-live-resize") {
+			t.Fatalf("live-attached session must not be resized by size-hint, call=%#v", call)
+		}
+	}
+}
+
+func TestListTerminalsExposesStatusLineCreatedLiveTerminal(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-statusline-live-terminal"
+	tmuxSession := "mlp-pi-cli-int-statusline"
+
+	store.HandleEvent(sessionID, storeevents.Event{
+		Type:      "status_line",
+		SessionID: sessionID,
+		Timestamp: time.Now(),
+		Data: &agentevents.AgentEvent{
+			Type: agentevents.StreamingStatusLine,
+			Data: &agentevents.StreamingStatusLineEvent{
+				Provider:    "pi-cli",
+				Model:       "google/gemini-3.5-flash",
+				TmuxSession: tmuxSession,
+				InputTokens: 321,
+			},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/terminals?session_id="+sessionID+"&content=none", nil)
+	rec := httptest.NewRecorder()
+	api.handleListTerminals(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	var response listTerminalsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if len(response.Terminals) != 1 {
+		t.Fatalf("terminals len = %d, want 1: %+v", len(response.Terminals), response.Terminals)
+	}
+	terminal := response.Terminals[0]
+	if terminal.TerminalID != sessionID+":main:"+sessionID {
+		t.Fatalf("terminal_id = %q", terminal.TerminalID)
+	}
+	if terminal.TmuxSession != tmuxSession || !terminal.Active || terminal.State != "running" {
+		t.Fatalf("terminal not exposed as live: tmux=%q active=%v state=%q", terminal.TmuxSession, terminal.Active, terminal.State)
+	}
+	if terminal.Status.ProviderLabel != "pi-cli · google/gemini-3.5-flash" || terminal.Status.InputTokens != 321 {
+		t.Fatalf("status not exposed: %+v", terminal.Status)
+	}
+}
+
 func TestTerminalRoutesCloseAndDismissMismatchedOwnerTerminal(t *testing.T) {
 	store := terminals.NewStore()
 	api := &StreamingAPI{terminalStore: store}

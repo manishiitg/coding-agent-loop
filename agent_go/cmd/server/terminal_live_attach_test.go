@@ -4,16 +4,18 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/creack/pty"
 )
 
 func TestLiveAttachEnabled(t *testing.T) {
-	for _, val := range []string{"", "0", "false", "off", "random", "1", "true"} {
-		t.Setenv("RUNLOOP_TERMINAL_LIVE_ATTACH", val)
-		if got := liveAttachEnabled(); !got {
-			t.Errorf("liveAttachEnabled() with %q = false, want true", val)
-		}
+	// The RUNLOOP_TERMINAL_LIVE_ATTACH flag was removed; live-attach is always on.
+	if !liveAttachEnabled() {
+		t.Error("liveAttachEnabled() = false, want true (flag removed, always on)")
 	}
 }
 
@@ -240,19 +242,56 @@ func TestLiveAttachManagerDrainsInitialAttachBeforeSubscriber(t *testing.T) {
 }
 
 func TestLiveAttachSetSizeSkipsDuplicateResize(t *testing.T) {
-	calls := 0
+	commandCalls := 0
 	origRun := runTerminalTmuxCommand
 	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
-		calls++
+		commandCalls++
 		return nil
 	}
-	t.Cleanup(func() { runTerminalTmuxCommand = origRun })
+	setSizeCalls := 0
+	origSetPtySize := liveAttachSetPtySizeFn
+	liveAttachSetPtySizeFn = func(f *os.File, size *pty.Winsize) error {
+		setSizeCalls++
+		return nil
+	}
+	t.Cleanup(func() {
+		runTerminalTmuxCommand = origRun
+		liveAttachSetPtySizeFn = origSetPtySize
+	})
 
-	st := &liveAttachStream{tmuxSession: "sessE"}
+	ptmx, err := os.CreateTemp(t.TempDir(), "live-attach-pty-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ptmx.Close()
+
+	st := &liveAttachStream{tmuxSession: "sessE", ptmx: ptmx}
 	st.setSize(120, 36)
 	st.setSize(120, 36)
 	st.setSize(121, 36)
-	if calls != 2 {
-		t.Fatalf("resize calls = %d, want 2", calls)
+	if setSizeCalls != 2 {
+		t.Fatalf("pty resize calls = %d, want 2", setSizeCalls)
+	}
+	if commandCalls != 2 {
+		t.Fatalf("window-size latest calls = %d, want 2", commandCalls)
+	}
+}
+
+func TestLiveAttachBackfillResetsBeforeSnapshot(t *testing.T) {
+	origRun := runTerminalTmuxOutputCommand
+	runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
+		return "one\ntwo\n", nil
+	}
+	t.Cleanup(func() { runTerminalTmuxOutputCommand = origRun })
+
+	got := string(liveAttachBackfill(context.Background(), "sessF"))
+	if !strings.HasPrefix(got, "\x1bc") {
+		t.Fatalf("backfill prefix = %q, want RIS reset", got[:min(len(got), 8)])
+	}
+	if strings.HasPrefix(got, "\x1b[H\x1b[2J") {
+		t.Fatalf("backfill used visible-screen clear instead of full reset")
+	}
+	if !strings.Contains(got, "one\r\ntwo\r\n") {
+		t.Fatalf("backfill did not CRLF-normalize capture-pane output: %q", got)
 	}
 }

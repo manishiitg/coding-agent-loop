@@ -497,6 +497,11 @@ func (api *StreamingAPI) startRestoredTerminalFromNewAgent(ctx context.Context, 
 	}
 
 	claudeCodePersistent, codexPersistent, geminiPersistent, cursorPersistent, agyPersistent, piPersistent := codingAgentPersistentInteractiveFlags(provider)
+	if piPersistent {
+		if closed := api.cleanupConflictingPiCLIInteractiveSessions(sessionID, workingDir, "restoring chat terminal"); closed > 0 {
+			api.logRestoredTerminalInfof("restore session=%s closed %d conflicting Pi CLI session(s) in %s", sessionID, closed, workingDir)
+		}
+	}
 	cfg := agent.LLMAgentConfig{
 		Name:                                   "restored-terminal-agent",
 		ServerName:                             restoredServerName,

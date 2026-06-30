@@ -1648,12 +1648,10 @@
   background-color: hsl(200 40% 22%) !important;
 }
 
-/* ANSI color palette for terminal pane snapshots — emitted by ansi_up with
-   use_classes = true (see TerminalCenter.tsx). One palette covers every
-   TERMINAL_THEMES variant since they're all dark; if per-theme palettes
-   are needed later, scope these classes under [data-terminal-theme="..."]
-   on the pane wrapper and add overrides per scope. Colors target the
-   Tailwind palette so they sit comfortably alongside the rest of the UI:
+/* ANSI classes for structured terminal pane snapshots — emitted by ansi_up with
+   use_classes = true (see TerminalCenter.tsx). Raw tmux panes bypass these
+   classes and render directly through xterm.js. Colors target the Tailwind
+   scale so structured snapshots sit comfortably alongside the rest of the UI:
    - normal variants use the 500/600 range (saturated but not blinding)
    - bright variants jump to 300/400 (the brighter "ansi bright" tradition)
    - black/white anchor the palette to the dark theme backgrounds. */

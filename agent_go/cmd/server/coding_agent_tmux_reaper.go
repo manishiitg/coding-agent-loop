@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -22,7 +23,8 @@ type codingAgentTmuxCleanupCandidate struct {
 }
 
 type codingAgentTmuxSessionState struct {
-	status string
+	status      string
+	triggeredBy string
 }
 
 func codingAgentTmuxOrphanIdleTimeout() time.Duration {
@@ -125,7 +127,10 @@ func (api *StreamingAPI) codingAgentTmuxActiveSessionStates() map[string]codingA
 		if session == nil {
 			continue
 		}
-		states[sessionID] = codingAgentTmuxSessionState{status: strings.TrimSpace(session.Status)}
+		states[sessionID] = codingAgentTmuxSessionState{
+			status:      strings.TrimSpace(session.Status),
+			triggeredBy: strings.TrimSpace(session.TriggeredBy),
+		}
 	}
 	return states
 }
@@ -180,4 +185,190 @@ func closeCodingAgentTmuxSessionByName(tmuxSession, reason string) {
 	if err := runTerminalTmuxCommand(ctx, "", "kill-session", "-t", tmuxSession); err != nil && !isMissingTmuxTargetError(err) {
 		log.Printf("[TMUX_REAPER] kill-session %q failed: %v", tmuxSession, err)
 	}
+}
+
+// cleanupConflictingPiCLIInteractiveSessions closes older manual Pi CLI main
+// sessions in the same working directory before launching a new one. Pi CLI
+// rejects concurrent sessions in one directory when their MCP bridge configs
+// differ; Chief-of-Staff chats intentionally share _users/<user>/Chats, so a
+// completed app session whose tmux process is still alive can block new chats.
+func (api *StreamingAPI) cleanupConflictingPiCLIInteractiveSessions(currentSessionID, workingDir, reason string) int {
+	if api == nil || api.terminalStore == nil {
+		return 0
+	}
+	currentSessionID = strings.TrimSpace(currentSessionID)
+	targetWorkingDir := cleanCodingAgentWorkingDir(workingDir)
+	if currentSessionID == "" || targetWorkingDir == "" {
+		return 0
+	}
+
+	sessionStates := api.codingAgentTmuxActiveSessionStates()
+	closedTmuxSessions := map[string]struct{}{}
+	closed := 0
+	for _, snapshot := range api.terminalStore.List("") {
+		if snapshot.SessionID == currentSessionID {
+			continue
+		}
+		tmuxSession := strings.TrimSpace(snapshot.TmuxSession)
+		if !strings.HasPrefix(tmuxSession, "mlp-pi-cli") {
+			continue
+		}
+		if !codingAgentSnapshotIsMainAgent(snapshot) {
+			continue
+		}
+		if !sameCodingAgentWorkingDir(codingAgentSnapshotWorkingDir(snapshot), targetWorkingDir) {
+			continue
+		}
+
+		state := sessionStates[snapshot.SessionID]
+		if strings.EqualFold(strings.TrimSpace(state.triggeredBy), "cron") {
+			log.Printf("[PI_CLI_CONFLICT] Keeping cron Pi CLI session %s tmux=%s working_dir=%s while starting %s",
+				snapshot.SessionID, tmuxSession, targetWorkingDir, currentSessionID)
+			continue
+		}
+
+		closeReason := "pi-cli same-working-dir conflict"
+		if reason != "" {
+			closeReason += ": " + reason
+		}
+		closeCodingAgentTmuxSessionByName(tmuxSession, closeReason)
+		api.detachConflictingPiCLISession(snapshot.SessionID, state.status)
+		closedTmuxSessions[tmuxSession] = struct{}{}
+		if _, ok := api.terminalStore.MarkStale(snapshot.TerminalID); ok {
+			closed++
+			log.Printf("[PI_CLI_CONFLICT] Closed conflicting Pi CLI tmux session %q terminal=%q old_session=%q new_session=%q status=%q working_dir=%s",
+				tmuxSession, snapshot.TerminalID, snapshot.SessionID, currentSessionID, state.status, targetWorkingDir)
+		}
+	}
+	closed += cleanupLivePiCLITmuxSessionsByWorkingDir(targetWorkingDir, closedTmuxSessions, reason)
+	return closed
+}
+
+func (api *StreamingAPI) detachConflictingPiCLISession(sessionID, status string) {
+	sessionID = strings.TrimSpace(sessionID)
+	if api == nil || sessionID == "" {
+		return
+	}
+
+	api.agentCancelMux.Lock()
+	cancelFunc := api.agentCancelFuncs[sessionID]
+	delete(api.agentCancelFuncs, sessionID)
+	api.agentCancelMux.Unlock()
+	if cancelFunc != nil {
+		cancelFunc()
+	}
+
+	api.runningAgentsMux.Lock()
+	delete(api.runningAgents, sessionID)
+	api.runningAgentsMux.Unlock()
+
+	api.sessionAgentsMux.Lock()
+	delete(api.sessionAgents, sessionID)
+	api.sessionAgentsMux.Unlock()
+
+	api.setSessionBusy(sessionID, false)
+	api.setSyntheticTurn(sessionID, false)
+	if piCLIConflictStatusShouldStop(status) {
+		api.updateSessionStatus(sessionID, "stopped")
+	}
+}
+
+func piCLIConflictStatusShouldStop(status string) bool {
+	switch strings.TrimSpace(status) {
+	case "running", "inactive", "paused":
+		return true
+	default:
+		return false
+	}
+}
+
+func codingAgentSnapshotIsMainAgent(snapshot terminals.Snapshot) bool {
+	if kind := strings.TrimSpace(snapshot.ExecutionKind); kind != "" && kind != "main_agent" {
+		return false
+	}
+	owner := strings.TrimSpace(snapshot.OwnerID)
+	return owner == "" || owner == snapshot.SessionID || strings.HasPrefix(owner, "main:")
+}
+
+func codingAgentSnapshotWorkingDir(snapshot terminals.Snapshot) string {
+	if snapshot.Status.StatusMeta != nil {
+		for _, key := range []string{"working_dir", "pi_working_dir"} {
+			if value := strings.TrimSpace(stringValue(snapshot.Status.StatusMeta[key])); value != "" {
+				return value
+			}
+		}
+	}
+	if value := strings.TrimSpace(snapshot.WorkflowPath); value != "" {
+		if filepath.IsAbs(value) {
+			return value
+		}
+		return codingAgentWorkspaceWorkingDir(value)
+	}
+	return ""
+}
+
+func sameCodingAgentWorkingDir(left, right string) bool {
+	left = cleanCodingAgentWorkingDir(left)
+	right = cleanCodingAgentWorkingDir(right)
+	return left != "" && right != "" && left == right
+}
+
+func cleanCodingAgentWorkingDir(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	return filepath.Clean(path)
+}
+
+func cleanupLivePiCLITmuxSessionsByWorkingDir(workingDir string, alreadyClosed map[string]struct{}, reason string) int {
+	targetWorkingDir := cleanCodingAgentWorkingDir(workingDir)
+	if targetWorkingDir == "" {
+		return 0
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), terminalTmuxActionTimeout)
+	defer cancel()
+	output, err := runTerminalTmuxOutputCommand(ctx, "list-panes", "-a", "-F", "#{session_name}\t#{pane_current_path}")
+	if err != nil {
+		if !isMissingTmuxTargetError(err) {
+			log.Printf("[PI_CLI_CONFLICT] Failed to list tmux panes for Pi CLI conflict cleanup: %v", err)
+		}
+		return 0
+	}
+
+	closed := 0
+	seen := map[string]struct{}{}
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		tmuxSession := strings.TrimSpace(parts[0])
+		paneWorkingDir := strings.TrimSpace(parts[1])
+		if !strings.HasPrefix(tmuxSession, "mlp-pi-cli") {
+			continue
+		}
+		if !sameCodingAgentWorkingDir(paneWorkingDir, targetWorkingDir) {
+			continue
+		}
+		if _, ok := alreadyClosed[tmuxSession]; ok {
+			continue
+		}
+		if _, ok := seen[tmuxSession]; ok {
+			continue
+		}
+		seen[tmuxSession] = struct{}{}
+		closeReason := "pi-cli live same-working-dir conflict"
+		if reason != "" {
+			closeReason += ": " + reason
+		}
+		closeCodingAgentTmuxSessionByName(tmuxSession, closeReason)
+		closed++
+		log.Printf("[PI_CLI_CONFLICT] Closed live Pi CLI tmux session %q in working_dir=%s", tmuxSession, targetWorkingDir)
+	}
+	return closed
 }

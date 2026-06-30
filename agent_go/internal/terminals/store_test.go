@@ -2801,3 +2801,79 @@ func TestStoreHandlesStatusLineUpdate(t *testing.T) {
 		t.Errorf("unrelated pane received provider label %q", other.Status.ProviderLabel)
 	}
 }
+
+func TestStoreStatusLineCreatesLiveTerminalWhenNoSnapshotExists(t *testing.T) {
+	store := NewStore()
+	now := time.Now()
+
+	store.HandleEvent("session-2", storeevents.Event{
+		Type:      "status_line",
+		SessionID: "session-2",
+		Timestamp: now,
+		Data: &agentevents.AgentEvent{
+			Type: agentevents.StreamingStatusLine,
+			Data: &agentevents.StreamingStatusLineEvent{
+				Provider:    "pi-cli",
+				Model:       "google/gemini-3.5-flash",
+				TmuxSession: "mlp-pi-cli-int-new",
+				InputTokens: 120,
+				CostUSD:     0.0012,
+			},
+		},
+	})
+
+	snapshot, ok := store.Get("session-2:main:session-2")
+	if !ok {
+		t.Fatalf("status_line with tmux_session should create the canonical main terminal")
+	}
+	if !snapshot.Active || snapshot.State != "running" {
+		t.Fatalf("created terminal should be live/running; active=%v state=%q", snapshot.Active, snapshot.State)
+	}
+	if snapshot.TmuxSession != "mlp-pi-cli-int-new" {
+		t.Fatalf("tmux session = %q, want mlp-pi-cli-int-new", snapshot.TmuxSession)
+	}
+	if snapshot.StepTransport != "tmux" || snapshot.ExecutionKind != "main_agent" || snapshot.Scope != "main_agent" {
+		t.Fatalf("unexpected terminal identity: transport=%q kind=%q scope=%q", snapshot.StepTransport, snapshot.ExecutionKind, snapshot.Scope)
+	}
+	if snapshot.Status.ProviderLabel != "pi-cli · google/gemini-3.5-flash" {
+		t.Fatalf("provider label = %q", snapshot.Status.ProviderLabel)
+	}
+	if snapshot.Status.InputTokens != 120 || snapshot.Status.CostUSD != 0.0012 {
+		t.Fatalf("telemetry missing: in=%d cost=%f", snapshot.Status.InputTokens, snapshot.Status.CostUSD)
+	}
+}
+
+func TestStoreStatusLineCreatesLiveTerminalFromStatusMetadataTmux(t *testing.T) {
+	store := NewStore()
+	now := time.Now()
+
+	store.HandleEvent("session-3", storeevents.Event{
+		Type:      "status_line",
+		SessionID: "session-3",
+		Timestamp: now,
+		Data: &agentevents.AgentEvent{
+			Type: agentevents.StreamingStatusLine,
+			Data: &agentevents.GenericEventData{
+				Data: map[string]interface{}{
+					"provider": "pi-cli",
+					"model":    "google/gemini-3.5-flash",
+					"metadata": map[string]interface{}{
+						"pi_interactive_session": "mlp-pi-cli-int-meta",
+						"working_dir":            "/tmp/chats",
+					},
+				},
+			},
+		},
+	})
+
+	snapshot, ok := store.Get("session-3:main:session-3")
+	if !ok {
+		t.Fatalf("status_line metadata with pi_interactive_session should create the canonical main terminal")
+	}
+	if snapshot.TmuxSession != "mlp-pi-cli-int-meta" {
+		t.Fatalf("tmux session = %q, want mlp-pi-cli-int-meta", snapshot.TmuxSession)
+	}
+	if snapshot.Status.StatusMeta == nil || snapshot.Status.StatusMeta["working_dir"] != "/tmp/chats" {
+		t.Fatalf("status metadata not preserved: %+v", snapshot.Status.StatusMeta)
+	}
+}

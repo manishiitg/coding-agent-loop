@@ -1,0 +1,3 @@
+# Build artifacts — rebuild with `go build -o ccdemo .`
+ccdemo
+*.log

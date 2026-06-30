@@ -173,6 +173,21 @@ var liveAttachAttachFn = func(st *liveAttachStream, ctx context.Context) {
 	st.runControlMode(ctx)
 }
 
+// liveAttachSetPtySizeFn is a package var so tests can verify resize behavior
+// without requiring a real terminal file descriptor.
+var liveAttachSetPtySizeFn = pty.Setsize
+
+func (m *liveAttachManager) hasSession(tmuxSession string) bool {
+	tmuxSession = strings.TrimSpace(tmuxSession)
+	if tmuxSession == "" {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.sessions[tmuxSession]
+	return ok
+}
+
 // subscribe registers a viewer for a tmux session, starting the attach client
 // on the first subscriber. It returns the shared stream and the viewer's byte
 // channel; both are nil if the session name is empty.
@@ -303,11 +318,10 @@ func (st *liveAttachStream) broadcast(b []byte) {
 	st.mu.Unlock()
 }
 
-// setSize records the requested geometry and applies it to the control client's
-// PTY via pty.Setsize. With the session flipped to `window-size latest` (see
-// runControlMode) tmux follows the control client's tty size, so this is what
-// drives a clean client-side resize — NOT resize-window, which would flip the
-// window back to manual sizing.
+// setSize records the requested geometry and applies it to the control-mode
+// client's PTY. With `window-size latest`, tmux follows that attached client.
+// Do not call `resize-window` here: that flips the session back to manual sizing
+// and produces full repaint fragments in the live %output stream.
 func (st *liveAttachStream) setSize(cols, rows int) {
 	if cols <= 0 || rows <= 0 {
 		return
@@ -320,17 +334,15 @@ func (st *liveAttachStream) setSize(cols, rows int) {
 	}
 	st.cols, st.rows = cols, rows
 	st.appliedCols, st.appliedRows = cols, rows
+	ptmx := st.ptmx
 	st.mu.Unlock()
-	// Match the PoC exactly: resize the tmux window via resize-window ONLY. We do
-	// not also pty.Setsize the control client — in control mode the %output
-	// reflects the window geometry set by resize-window, and resizing the client
-	// PTY as well can race/clip against the window size and misalign the stream on
-	// resize (the "resize breaks stuff" symptom). resize-window also flips the
-	// session to window-size manual, which is what we want.
-	cctx, cancel := context.WithTimeout(context.Background(), terminalTmuxActionTimeout)
-	defer cancel()
-	if err := runTerminalTmuxCommand(cctx, "", "resize-window", "-t", st.tmuxSession, "-x", strconv.Itoa(cols), "-y", strconv.Itoa(rows)); err != nil {
-		log.Printf("[live-attach] resize-window session=%s %dx%d: %v", st.tmuxSession, cols, rows, err)
+
+	if ptmx == nil {
+		return
+	}
+	st.enableClientDrivenSize(context.Background())
+	if err := liveAttachSetPtySizeFn(ptmx, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)}); err != nil {
+		log.Printf("[live-attach] pty resize session=%s %dx%d: %v", st.tmuxSession, cols, rows, err)
 		st.mu.Lock()
 		if st.appliedCols == cols && st.appliedRows == rows {
 			st.appliedCols, st.appliedRows = 0, 0
@@ -344,7 +356,9 @@ func (st *liveAttachStream) setSize(cols, rows int) {
 // pipes fail tcgetattr), parses the control protocol, and broadcasts decoded
 // pane bytes. It returns on ctx cancel, %exit, or the session going away.
 func (st *liveAttachStream) runControlMode(ctx context.Context) {
+	st.mu.Lock()
 	cols, rows := st.cols, st.rows
+	st.mu.Unlock()
 	if cols <= 0 {
 		cols = liveAttachDefaultCols
 	}
@@ -524,9 +538,11 @@ func liveAttachInitialSize(r *http.Request) (int, int) {
 	return cols, rows
 }
 
-// liveAttachBackfill returns a clear-screen + capture-pane snapshot (with color
-// escapes and recent scrollback) so a connecting viewer sees current state
-// before the live stream resumes. Live rendering never uses capture-pane.
+// liveAttachBackfill returns a full terminal reset + capture-pane snapshot (with
+// color escapes and recent scrollback) so a connecting viewer sees current state
+// before the live stream resumes. The reset is deliberately stronger than a
+// visible-screen clear: reconnects must not leave the prior xterm scrollback in
+// place and then append the same captured history again.
 func liveAttachBackfill(ctx context.Context, tmuxSession string) []byte {
 	cctx, cancel := context.WithTimeout(ctx, terminalTmuxActionTimeout)
 	defer cancel()
@@ -536,7 +552,7 @@ func liveAttachBackfill(ctx context.Context, tmuxSession string) []byte {
 		return nil
 	}
 	body := strings.ReplaceAll(out, "\n", "\r\n")
-	return append([]byte("\x1b[H\x1b[2J"), []byte(body)...)
+	return append([]byte("\x1bc"), []byte(body)...)
 }
 
 // liveAttachRawInput forwards raw terminal input bytes faithfully via
@@ -558,10 +574,10 @@ func (api *StreamingAPI) liveAttachRawInput(ctx context.Context, tmuxSession str
 	}
 }
 
-// liveAttachControlFrame handles a JSON text frame: resize (pty.Setsize on the
-// control client), input (load-buffer+paste-buffer, the existing path), or key
-// (send-keys named key, the existing path). Unrecognized JSON falls back to raw
-// input for robustness.
+// liveAttachControlFrame handles a JSON text frame: resize (control PTY size),
+// input (load-buffer+paste-buffer, the existing path), or key (send-keys named
+// key, the existing path). Unrecognized JSON falls back to raw input for
+// robustness.
 func (api *StreamingAPI) liveAttachControlFrame(ctx context.Context, st *liveAttachStream, tmuxSession string, data []byte) {
 	var ctrl struct {
 		Type   string `json:"type"`

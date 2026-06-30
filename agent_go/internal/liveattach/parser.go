@@ -9,8 +9,7 @@
 // `%window-renamed`, `%exit`, `%begin`/`%end`, …) to handlers — guaranteeing a
 // control notification can never leak into the rendered pane byte stream.
 //
-// It is feature-flagged behind RUNLOOP_TERMINAL_LIVE_ATTACH at the call site;
-// this package itself has no side effects.
+// This package is pure and has no side effects.
 package liveattach
 
 import "strings"

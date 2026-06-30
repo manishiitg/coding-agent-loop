@@ -9,6 +9,7 @@ import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { isScheduledWorkflowSession, openActiveSession, workflowSessionBotPlatform } from '../utils/workflowSessionRestore'
 import { useAppStore } from '../stores/useAppStore'
 import { isLocalActivityFallbackTab } from '../utils/activityFallback'
+import { hasLiveBackgroundAgents, normalizedActivityStatus } from '../utils/activitySessions'
 
 const ACTIVITY_DETAILS_POLL_MS = 30000
 
@@ -24,7 +25,7 @@ type ActivityMonitorItem =
   | { type: 'builder-tab'; id: string; tab: ChatTab }
 
 function normalizedStatus(status?: string): string {
-  return (status || '').toLowerCase().trim()
+  return normalizedActivityStatus(status)
 }
 
 function isWorkflowSession(session: ActiveSessionInfo): boolean {
@@ -42,15 +43,13 @@ function isActiveSession(session: ActiveSessionInfo): boolean {
       status === 'paused' ||
       status === 'waiting' ||
       status === 'waiting_feedback' ||
-      session.has_running_background_agents === true ||
-      (session.running_background_agent_count ?? 0) > 0
+      hasLiveBackgroundAgents(session)
     )
   }
 
   if (
     session.needs_user_input === true ||
-    session.has_running_background_agents === true ||
-    (session.running_background_agent_count ?? 0) > 0 ||
+    hasLiveBackgroundAgents(session) ||
     status === 'running' ||
     status === 'paused' ||
     status === 'waiting' ||
@@ -147,7 +146,7 @@ function relativeTime(value?: string): string {
 
 function headerStatusLabel(session: ActiveSessionInfo, workflow?: RunningWorkflowInfo): string {
   if (session.needs_user_input) return 'waiting for input'
-  const hasBackgroundAgents = session.has_running_background_agents === true || (session.running_background_agent_count ?? 0) > 0
+  const hasBackgroundAgents = hasLiveBackgroundAgents(session)
   const status = normalizedStatus(workflow?.status || session.status)
   if (status === 'paused') return 'paused'
   if (status === 'idle') return 'idle'

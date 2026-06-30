@@ -1,11 +1,23 @@
 # 🚀 Runloop
 
-**Runloop** is a multi-model agent platform for building, orchestrating, and scheduling AI workflows across coding tools, chat channels, browser automation, and human approvals.
+**Runloop** is an AI operations platform for running many autonomous workflows like an organization. Define goals, build workflow agents, run them on schedules, and let Pulse, Auto-improve, Chief of Staff, and the dashboard help you manage by exception instead of watching logs.
 
 [![Latest Release](https://img.shields.io/github/v/release/manishiitg/mcp-agent-builder-go?label=release)](https://github.com/manishiitg/mcp-agent-builder-go/releases/latest)
 ![macOS Apple Silicon](https://img.shields.io/badge/macOS-Apple%20Silicon-000000?logo=apple)
 ![Installer](https://img.shields.io/badge/install-curl%20%7C%20bash-2ea44f)
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](#license--architecture-foundations)
+
+## The Goal
+
+Runloop is built for teams that want to scale from a few manually checked automations to **100+ goal-driven workflow agents**. The product is an operating system for an AI-run organization:
+
+- **Workflows do the work**: reusable agents execute research, coding, reporting, browser tasks, back-office operations, and channel conversations.
+- **Pulse keeps each workflow reliable**: after runs, it checks whether the workflow actually worked, records Bug/Goal verdicts, hardens operational issues, reports cost/time, backs up, publishes, and notifies only on meaningful transitions.
+- **Auto-improve moves workflows toward goals**: on a schedule, it reads cross-run evidence, refreshes stale reports/learnings/KB/db contracts, adjusts cadence, and applies bigger changes only when evidence is strong and backed up.
+- **Chief of Staff / Org Pulse manages the whole org**: it reads workflow evidence against `pulse/goals.html`, audits model/cost posture, harvests durable memory, and writes proposal-only recommendations for the user or builder.
+- **The dashboard is the operating view**: it rolls workflow health, goal progress, costs, recommendations, and exceptions into one place so a human manages decisions, not every run.
+
+The high-level loop is documented in [Workflow self-improvement & reporting](docs/workflow/self_improvement_and_reporting.md).
 
 ## 💻 Desktop App (macOS)
 
@@ -60,19 +72,23 @@ Code signing + Apple notarization requires an Apple Developer ID ($99/yr) and is
 
 ---
 
-Run **Claude Code, Codex, Gemini CLI, and open models** in one system. Build visual workflows, launch complex orchestrators, schedule recurring jobs, and route agent conversations through **Slack, WhatsApp, and the web**.
+Run **Claude Code, Codex, Gemini CLI, and open models** in one system. Build visual workflows, launch complex orchestrators, schedule recurring jobs, route agent conversations through **Slack, WhatsApp, and the web**, and roll their progress up against org goals.
 
 Runloop is built for teams that want more than a chat box:
 - Build visual agent workflows and long-running orchestrators
 - Mix and match the best coding and reasoning models for each step
 - Schedule automations, recurring jobs, and background runs
+- Track workflow progress against real goals, not just task completion
+- Manage failures, cost, and improvement opportunities by exception
 - Keep humans in the loop with approvals, feedback, and escalation paths
 - Connect agents to Slack, WhatsApp, browsers, and MCP tools
 
 ## Why Runloop
 
+- **Goal-driven operations**: Tie workflows to measurable goals, then let Pulse, Auto-improve, and Org Pulse keep the evidence and recommendations current.
 - **Multi-model by default**: Use Claude Code, Codex, Gemini CLI, OpenAI, Anthropic, Bedrock, Azure, MiniMax, OpenRouter, and open models in the same platform.
 - **Visual workflows plus real execution**: Design workflows on a canvas, then run them with tools, browser automation, memory, and evaluation built in.
+- **Manage by exception**: The dashboard surfaces broken, off-goal, expensive, or decision-worthy work so operators do not need to inspect every run.
 - **Built for operations, not demos**: Add scheduling, observability, validation, approvals, and secure workspace isolation from day one.
 - **Protocol-agnostic in practice**: MCP is supported, but Runloop is broader than any single protocol, provider, or model vendor.
 
@@ -92,7 +108,7 @@ Runloop is built for teams that want more than a chat box:
 
 See [examples](examples/README.md) for workflow blueprints, output artifacts, and a README demo GIF storyboard.
 
-See the [public roadmap](ROADMAP.md) for upcoming work on onboarding, memory-aware multi-agent chat, workflow notifications, Agent SDK support, Pi CLI, and goal tracking.
+See the [public roadmap](ROADMAP.md) for upcoming work on onboarding, memory-aware multi-agent chat, workflow notifications, Agent SDK support, Pi CLI, and goal/dashboard refinements.
 
 ## Works With
 
@@ -115,13 +131,13 @@ See the [public roadmap](ROADMAP.md) for upcoming work on onboarding, memory-awa
 - Replace brittle prompt chains with durable workflows
 - Use the right model for the right step instead of standardizing on one vendor
 - Bring coding agents, operational automations, and human approvals into one system
-- Ship agent workflows that can be monitored, evaluated, and improved over time
+- Ship agent workflows that can be monitored, evaluated, improved, and rolled up against org goals over time
 
 ## ⚡ Platform Overview
 
-At the core of Runloop is the **[workflow system](docs/workflow/README.md)**, a directed step-based workflow runtime managed through the visual workflow builder.
+At the core of Runloop is the **[workflow system](docs/workflow/README.md)**, a directed step-based workflow runtime managed through the visual workflow builder and supervised by the self-improvement/reporting layer.
 
-Design complex workflows visually, refine them through the interactive builder, then run them with step-level configuration, tiered LLM selection, deterministic pre-validation, evaluation runs, scheduling, cost tracking, and persistent run data.
+Design complex workflows visually, refine them through the interactive builder, run them with step-level configuration, tiered LLM selection, deterministic pre-validation, evaluation runs, scheduling, cost tracking, and persistent run data, then let Pulse, Auto-improve, Org Pulse, and the dashboard keep the system aligned with goals.
 
 ### 🧠 Learning, Validation, and Observability
 Move beyond static prompts with built-in optimization, validation, and run visibility.
@@ -129,8 +145,9 @@ Move beyond static prompts with built-in optimization, validation, and run visib
 - **[Learning Architecture](docs/workflow/learning_architecture.md):** Workflow learning now centers on a shared global skill plus step-level metadata and saved scripts for scripted steps.
 - **[Deterministic Pre-Validation](docs/workflow/pre_validation_guide.md):** A high-speed, code-based validation layer that uses JSON schemas and consistency rules to verify artifacts with zero token cost and absolute precision.
 - **[Evaluation & Benchmarking](docs/workflow/evaluation_system.md):** A dedicated testing suite that executes workflows in isolated environments to generate performance, cost, and accuracy metrics—essential for production readiness.
-- **[Pulse Log & Observability](docs/workflow/workflow_monitoring.md):** Every workflow keeps one agent-curated HTML log — the **Pulse** — with two live verdicts (**Bug**: did it run correctly; **Goal**: is it hitting its success criteria), a one-line status headline, signal tiles, and a newest-first timeline of findings and decisions, alongside execution logs, costs, evaluation reports, and run history.
-- **[Self-Improving Workflows](docs/workflow/auto_improvement_framework.md):** A per-run monitor catches silent breakage and goal drift the moment it happens (and can notify you on Slack/WhatsApp), feeding scheduled **auto-improve** passes that harden reliability for Bug findings and propose replans for Goal gaps — with each change later confirmed against the run that proves it actually worked.
+- **[Pulse Log & Observability](docs/workflow/workflow_monitoring.md):** Every workflow keeps one agent-curated HTML log — the **Pulse** — with two live verdicts (**Bug**: did it run correctly; **Goal**: is it hitting its success criteria), a one-line status headline, signal tiles, and a newest-first timeline of findings, decisions, cost/time reports, backups, publishes, and notifications.
+- **[Self-Improving Workflows](docs/workflow/auto_improvement_framework.md):** Auto-improve reads the same Pulse evidence across runs, keeps reports/learnings/KB/db contracts fresh, tunes its own cadence, and applies structural replans only when cross-run evidence is strong and backed up, or records proposals when oversight is more cautious.
+- **[Chief of Staff, Org Pulse, and Dashboard](docs/workflow/self_improvement_and_reporting.md):** Org Pulse reads workflow evidence against org goals, audits model/cost posture, writes proposal-only recommendations, and feeds a dashboard that lets operators manage by exception across many workflows.
 - **[Cost and Log Measurement](docs/workflow/cost_and_log_measurement.md):** Token usage, model cost, and execution logs are tracked across workflow phases, runs, steps, and models.
 - **[Persistent Stores](docs/workflow/persistent_stores_design.md):** Workflows can persist structured run data for reports, knowledgebase updates, and follow-up analysis.
 - **[Swarm Delegation](docs/multiagent/sub_agent_delegation.md):** Empower your primary agent to dynamically spawn independent sub-agents, parallelizing complex research, coding, or data extraction tasks across a distributed swarm.

@@ -325,12 +325,15 @@ func (api *StreamingAPI) buildActiveSessionInfoSummary(session *ActiveSessionInf
 
 	if api.bgAgentRegistry != nil {
 		var newestRunning time.Time
+		now := time.Now()
 		for _, agent := range api.bgAgentRegistry.GetAll(session.SessionID) {
 			snap := agent.GetSnapshot()
-			if snap.Status != BGAgentRunning {
+			if !backgroundAgentCountsAsLiveActivity(snap, now) {
 				continue
 			}
-			enriched.RunningBackgroundAgentCount++
+			if snap.Status == BGAgentRunning {
+				enriched.RunningBackgroundAgentCount++
+			}
 			enriched.HasRunningBackgroundAgents = true
 			if enriched.WorkspacePath == "" && snap.Metadata != nil {
 				if workflowPath := strings.TrimSpace(snap.Metadata["workflow_path"]); workflowPath != "" {

@@ -137,6 +137,63 @@ func TestBuildSessionExecutionTreeFinalizesEventDerivedNodesForCompletedSession(
 	}
 }
 
+func TestBuildSessionExecutionTreeMarksStaleRunningBackgroundAgent(t *testing.T) {
+	now := time.Now()
+	sessionID := "session-stale-bg"
+	registry := NewBackgroundAgentRegistry()
+	registry.Register(sessionID, &BackgroundAgent{
+		ID:        "work-0001",
+		Name:      "Workflow: stale",
+		SessionID: sessionID,
+		Kind:      "workflow_run_tool",
+		Status:    BGAgentRunning,
+		CreatedAt: now.Add(-hasRunningAgentsMaxAge - time.Minute),
+	})
+
+	api := &StreamingAPI{
+		bgAgentRegistry: registry,
+	}
+	tree := api.buildSessionExecutionTree(&ActiveSessionInfo{
+		SessionID:    sessionID,
+		AgentMode:    "multi-agent",
+		Status:       "completed",
+		CreatedAt:    now.Add(-time.Hour),
+		LastActivity: now.Add(-time.Hour),
+		Query:        "run workflow",
+	})
+	if tree == nil {
+		t.Fatal("expected execution tree")
+	}
+	if tree.Summary.RunningCount != 0 {
+		t.Fatalf("expected stale background agent not to count as running, got %d", tree.Summary.RunningCount)
+	}
+	if tree.Summary.HasRunningBackgroundAgents {
+		t.Fatal("stale background agent should not mark tree summary as background-running")
+	}
+
+	var stale *SessionExecutionTreeNode
+	var walk func(*SessionExecutionTreeNode)
+	walk = func(node *SessionExecutionTreeNode) {
+		if node == nil || stale != nil {
+			return
+		}
+		if node.ExecutionID == "work-0001" {
+			stale = node
+			return
+		}
+		for _, child := range node.Children {
+			walk(child)
+		}
+	}
+	walk(tree.Root)
+	if stale == nil {
+		t.Fatal("expected stale background node to remain inspectable")
+	}
+	if stale.Status != "stale" {
+		t.Fatalf("expected stale node status, got %q", stale.Status)
+	}
+}
+
 func TestBuildSessionExecutionTreeIgnoresStreamingLifecycleEvents(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	defer store.Stop()

@@ -56,6 +56,37 @@ func TestBuildActiveSessionInfoSummaryKeepsCompletedStatusForBackgroundAgents(t 
 	}
 }
 
+func TestBuildActiveSessionInfoSummaryIgnoresStaleRunningBackgroundAgent(t *testing.T) {
+	const sessionID = "session-bg-stale"
+
+	api := &StreamingAPI{
+		bgAgentRegistry: NewBackgroundAgentRegistry(),
+	}
+	api.bgAgentRegistry.Register(sessionID, &BackgroundAgent{
+		ID:        "bg-stale",
+		Name:      "Stale background follow-up",
+		SessionID: sessionID,
+		Status:    BGAgentRunning,
+		CreatedAt: time.Now().Add(-hasRunningAgentsMaxAge - time.Minute),
+	})
+
+	summary := api.buildActiveSessionInfoSummary(&ActiveSessionInfo{
+		SessionID: sessionID,
+		Status:    "completed",
+		CreatedAt: time.Now().Add(-time.Hour),
+	})
+
+	if summary.HasRunningBackgroundAgents {
+		t.Fatal("stale running background agent should not mark the session active")
+	}
+	if summary.RunningBackgroundAgentCount != 0 {
+		t.Fatalf("expected no running background agents, got %d", summary.RunningBackgroundAgentCount)
+	}
+	if summary.CurrentExecutionName != "" {
+		t.Fatalf("expected no current execution name for stale agent, got %q", summary.CurrentExecutionName)
+	}
+}
+
 func TestBuildActiveSessionInfoSummaryReportsRetainedTmuxWithoutBusyStatus(t *testing.T) {
 	const sessionID = "session-retained-tmux"
 	store := terminals.NewStore()

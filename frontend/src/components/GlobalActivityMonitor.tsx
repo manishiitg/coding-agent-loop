@@ -62,7 +62,7 @@ function isActiveSession(session: ActiveSessionInfo): boolean {
 function sessionTitle(session: ActiveSessionInfo, workflow?: RunningWorkflowInfo, fallbackWorkflowName?: string | null): string {
   if (isWorkflowSession(session)) {
     const workflowFolder = (workflow?.workspace_path || session.workspace_path)?.split('/').filter(Boolean).pop()
-    const hasBackgroundWork = session.has_running_background_agents || (session.running_background_agent_count ?? 0) > 0
+    const hasBackgroundWork = hasLiveBackgroundAgents(session)
     const scheduled = isScheduledWorkflowSession(session, workflow)
 
     if (scheduled) {
@@ -516,7 +516,7 @@ export const GlobalActivityMonitor: React.FC = () => {
       const rank = (s: ActiveSessionInfo) => {
         const st = normalizedStatus(s.status)
         if (st === 'running') return 3
-        if (s.has_running_background_agents || (s.running_background_agent_count ?? 0) > 0) return 2
+        if (hasLiveBackgroundAgents(s)) return 2
         return 1
       }
       if (rank(session) > rank(existing)) byWorkflow.set(key, session)
@@ -735,8 +735,8 @@ export const GlobalActivityMonitor: React.FC = () => {
                 : null
               const isActiveTab = !!tab && tab.tabId === activeTabId
               const workflow = isWorkflowSession(session)
-              const bgCount = session.running_background_agent_count ?? 0
-              const hasBgAgents = session.has_running_background_agents === true || bgCount > 0
+              const hasBgAgents = hasLiveBackgroundAgents(session)
+              const bgCount = hasBgAgents ? (session.running_background_agent_count ?? 0) : 0
               const bgAgentLabel = hasBgAgents
                 ? bgCount > 0
                   ? `${bgCount} bg agent${bgCount === 1 ? '' : 's'}`

@@ -488,21 +488,29 @@ func (r *BackgroundAgentRegistry) HasRunningAgents(sessionID string) bool {
 	}
 	now := time.Now()
 	for _, agent := range sessionAgents {
-		status := agent.GetStatus()
-		if status == BGAgentRunning {
-			if now.Sub(agent.CreatedAt) < hasRunningAgentsMaxAge {
-				return true
-			}
-			// Still running but older than 30 min — treat as stale, don't count.
-			continue
-		}
-		if (status == BGAgentCompleted || status == BGAgentFailed) && agent.CompletedAt != nil {
-			if now.Sub(*agent.CompletedAt) < hasRunningAgentsGracePeriod {
-				return true
-			}
+		if backgroundAgentCountsAsLiveActivity(agent.GetSnapshot(), now) {
+			return true
 		}
 	}
 	return false
+}
+
+func backgroundAgentCountsAsLiveActivity(snap BackgroundAgentSnapshot, now time.Time) bool {
+	switch snap.Status {
+	case BGAgentRunning:
+		return !snap.CreatedAt.IsZero() && now.Sub(snap.CreatedAt) < hasRunningAgentsMaxAge
+	case BGAgentCompleted, BGAgentFailed:
+		return snap.CompletedAt != nil && now.Sub(*snap.CompletedAt) < hasRunningAgentsGracePeriod
+	default:
+		return false
+	}
+}
+
+func backgroundAgentExecutionStatusForActivity(snap BackgroundAgentSnapshot, now time.Time) string {
+	if snap.Status == BGAgentRunning && !backgroundAgentCountsAsLiveActivity(snap, now) {
+		return "stale"
+	}
+	return string(snap.Status)
 }
 
 // ---------------------------------------------------------------------------

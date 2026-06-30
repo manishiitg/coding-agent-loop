@@ -1437,13 +1437,6 @@ export const EmployeeDashboard: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-semibold text-foreground">Automations</h3>
-                <p className="text-xs text-muted-foreground">{workflows.length} automation{workflows.length !== 1 ? 's' : ''}</p>
-              </div>
-            </div>
-
             {workflows.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-border bg-card px-6 py-16 text-center">
                 <FileText className="mx-auto mb-4 h-14 w-14 text-muted-foreground/60" />

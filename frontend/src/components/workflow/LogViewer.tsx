@@ -18,7 +18,53 @@ function applyThemeToLog(content: string, isDark: boolean): string {
   const trimmed = content.trimStart()
   if (/^<(!doctype|html)/i.test(trimmed)) {
     if (/<html[\s>]/i.test(content)) {
-      return content.replace(/<html\b([^>]*)>/i, (_m, attrs) => `<html data-theme="${themeAttr}"${attrs}>`)
+      const withThemeAttrs = content.replace(/<html\b([^>]*)>/i, (_m, attrs: string) => {
+        let next = attrs
+        if (/\sdata-theme=(["']).*?\1/i.test(next)) {
+          next = next.replace(/\sdata-theme=(["']).*?\1/i, ` data-theme="${themeAttr}"`)
+        } else {
+          next = ` data-theme="${themeAttr}"${next}`
+        }
+
+        const classMatch = next.match(/\sclass=(["'])(.*?)\1/i)
+        if (classMatch) {
+          const classes = classMatch[2]
+            .split(/\s+/)
+            .filter(cls => cls && cls !== 'dark' && cls !== 'dark-plus')
+          if (isDark) classes.push('dark')
+          const classAttr = classes.length > 0 ? ` class="${classes.join(' ')}"` : ''
+          next = next.replace(/\sclass=(["']).*?\1/i, classAttr)
+        } else if (isDark) {
+          next = ` class="dark"${next}`
+        }
+
+        return `<html${next}>`
+      })
+
+      if (!isDark || /__runloop_workflow_log_theme/i.test(withThemeAttrs)) return withThemeAttrs
+
+      const darkFallback = `<style id="__runloop_workflow_log_theme">
+html[data-theme="dark"],html.dark{
+  color-scheme:dark;
+  --bg:#0f0f12;--surface:#17171c;--surface-2:#121217;
+  --ink:#f1f0f4;--ink-2:#aaa8b1;--ink-3:#74727d;
+  --line:#292832;--line-2:#373541;--tag-bg:#24232b;
+  --ok:#62d58b;--ok-bg:#10281a;
+  --warn:#e8b85a;--warn-bg:#2a210d;
+  --bad:#f08078;--bad-bg:#311815;
+  --unknown:#aaa8b1;--unknown-bg:#24232b;
+  --accent:#d8a184;--accent-bg:#261c18;
+  --shadow:0 1px 0 rgba(255,255,255,.04) inset,0 10px 30px -18px rgba(0,0,0,.8);
+}
+html[data-theme="dark"],html[data-theme="dark"] body,html.dark,html.dark body{
+  background:var(--bg)!important;color:var(--ink)!important;
+}
+</style>`
+
+      if (/<\/head>/i.test(withThemeAttrs)) {
+        return withThemeAttrs.replace(/<\/head>/i, `${darkFallback}</head>`)
+      }
+      return withThemeAttrs.replace(/<body\b/i, `<head>${darkFallback}</head><body`)
     }
     return content
   }

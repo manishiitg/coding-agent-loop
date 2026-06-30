@@ -74,11 +74,11 @@ func CreateHumanTools() []llmtypes.Tool {
 		}
 		notifyProps["email_html"] = map[string]interface{}{
 			"type":        "string",
-			"description": "Optional. Rich HTML body for a designed/formatted email (Gmail only). message_for_user / email_body remain the plain-text fallback for clients that don't render HTML. Other channels ignore this.",
+			"description": "Optional. Rich HTML body for a designed/formatted email (Gmail only). MUST be EMAIL-SAFE: use INLINE styles only (a style attribute on each element). Gmail strips <style> blocks, <head>, <script>, and class-based CSS, so a full browser HTML document or a generated *.html report (e.g. pulse/org-pulse.html) arrives UNSTYLED — build a compact inline-styled summary and link to the full report instead of pasting it. message_for_user / email_body remain the plain-text fallback for clients that don't render HTML. Other channels ignore this.",
 		}
 		notifyProps["email_html_file"] = map[string]interface{}{
 			"type":        "string",
-			"description": "Optional. Absolute path to an .html file on the server host to use as the HTML email body (alternative to email_html — e.g. a report you generated). If the file can't be read, the tool returns an error so you can fix the path.",
+			"description": "Optional. Absolute path to an .html file on the server host to use as the HTML email body (alternative to email_html). The file MUST be email-safe — INLINE styles only; Gmail strips <style>/<head>/class CSS, so a browser-oriented report file (e.g. pulse/org-pulse.html) renders UNSTYLED. Point this at an email-specific inline-styled file, not the full browser report. If the file can't be read, the tool returns an error so you can fix the path.",
 		}
 	}
 	notifyUserTool := llmtypes.Tool{

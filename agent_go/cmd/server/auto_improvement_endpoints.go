@@ -164,8 +164,12 @@ func (api *StreamingAPI) handleGetBuilderDoc(w http.ResponseWriter, r *http.Requ
 		rel = "builder/review.html"
 	case "soul":
 		rel = "soul/soul.md"
+	case "card-health":
+		rel = "builder/card.health.html"
+	case "card-progress":
+		rel = "builder/card.progress.html"
 	default:
-		http.Error(w, "doc must be one of: improve, review, soul", http.StatusBadRequest)
+		http.Error(w, "doc must be one of: improve, review, soul, card-health, card-progress", http.StatusBadRequest)
 		return
 	}
 	if requestedPath != "" {

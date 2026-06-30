@@ -117,3 +117,30 @@ The triage bar and filters key off these.
 - Whether Auto-improve's *own* health ("improvement loop stalled") is surfaced as a signal.
 - Goal status is the CoS's daily judgment (a goal spans workflows); cards are live per-run.
   Accepted freshness split: live activity vs considered goal judgment.
+
+## Implementation notes — corrected architecture (2026-06-30)
+
+The "Writers & ownership" section above assumed ONE shared `pulse/cards/` dir. That is
+**wrong**: workflows are **separate workspaces** (each has its own `workspacePath`;
+`builder/improve.html` is per-workflow — see `auto_improvement_endpoints.go`). A
+per-workflow loop cannot write into the org/CoS workspace's `pulse/`. Corrected, simpler
+model (as wired):
+
+- **Cards live in each workflow's OWN workspace, next to improve.html:**
+  `builder/card.health.html` (Pulse loop) + `builder/card.progress.html` (Auto-improve
+  loop). Perfect ownership, no shared dir, no cross-workspace writes.
+- **No new tool.** The loops already have `update_workspace_file` (they write
+  `improve.html` with it). The card contract is inlined in the loop step prompts in
+  `cmd/server/scheduler.go`: Pulse `postRunMonitorSteps()` STEP 1 (triage) writes
+  `card.health.html`; Auto-improve `wrapOptimizerImproveMessage()` STEP 2 writes
+  `card.progress.html`. Both OVERWRITE every run so the dashboard stays live.
+- **Dashboard assembly (frontend, to build):** enumerate workflows via the existing
+  `getWorkflowsOverview(workspacePaths[])` path, then per workflow read
+  `getBuilderDoc(workspacePath, doc, filePath='builder/card.health.html')` +
+  `'builder/card.progress.html'`, parse the `data-*` attributes, render the triage bar +
+  goal-grouped cards. `pulse/goals.html` stays org-level (read as today).
+- **Card contract** (single-quoted attrs — survives the Go string literal AND email):
+  `<article class='pulse-card' data-axis='health|progress' data-workflow='…'
+  data-status='healthy|bug|critical (health) | on-track|at-risk|off-goal (progress)'
+  data-goal='…' data-updated='ISO8601'><h4>name</h4><p data-field='headline'>…</p></article>`
+- **v1 scope:** current-status cards. Rolling trend deferred to v2.

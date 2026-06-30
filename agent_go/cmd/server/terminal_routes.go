@@ -25,6 +25,8 @@ const terminalDefaultRefreshLines = 2000
 const terminalActiveDetailHistoryLines = 10000
 const terminalDefaultDetailHistoryLines = 10000
 const terminalMaxCaptureLines = 20000
+const terminalMinResizeCols = 40
+const terminalMinResizeRows = 10
 
 var runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
 	cmd := exec.CommandContext(ctx, "tmux", args...)
@@ -639,6 +641,10 @@ func (api *StreamingAPI) handleTerminalSizeHint(w http.ResponseWriter, r *http.R
 		http.Error(w, "cols and rows must be positive integers", http.StatusBadRequest)
 		return
 	}
+	if req.Cols < terminalMinResizeCols || req.Rows < terminalMinResizeRows {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "resized": 0, "ignored": true})
+		return
+	}
 	llmproviders.SetCodingAgentTmuxSize(req.Cols, req.Rows)
 	resized := api.resizeLiveTerminalWindowsForSession(r.Context(), r, req.SessionID, req.Cols, req.Rows)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "resized": resized})
@@ -646,7 +652,7 @@ func (api *StreamingAPI) handleTerminalSizeHint(w http.ResponseWriter, r *http.R
 
 func (api *StreamingAPI) resizeLiveTerminalWindowsForSession(ctx context.Context, r *http.Request, sessionID string, cols, rows int) int {
 	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" || api.terminalStore == nil || cols <= 0 || rows <= 0 {
+	if sessionID == "" || api.terminalStore == nil || cols < terminalMinResizeCols || rows < terminalMinResizeRows {
 		return 0
 	}
 	snapshots := api.terminalStore.List(sessionID)
@@ -711,6 +717,10 @@ func (api *StreamingAPI) handleResizeTerminal(w http.ResponseWriter, r *http.Req
 	}
 	if req.Cols <= 0 || req.Rows <= 0 {
 		http.Error(w, "cols and rows must be positive", http.StatusBadRequest)
+		return
+	}
+	if req.Cols < terminalMinResizeCols || req.Rows < terminalMinResizeRows {
+		http.Error(w, "cols and rows below minimum terminal size", http.StatusBadRequest)
 		return
 	}
 	// Always update the preferred size so newly-launched sessions adopt the

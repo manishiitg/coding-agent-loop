@@ -95,6 +95,38 @@ func TestTerminalSizeHintResizesLiveTerminalsForSession(t *testing.T) {
 	}
 }
 
+func TestTerminalSizeHintIgnoresTinyGeometry(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-tiny-resize"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "main:"+sessionID, "tmux-main-tiny", "main pane", 1))
+
+	originalRunTerminalTmuxCommand := runTerminalTmuxCommand
+	defer func() { runTerminalTmuxCommand = originalRunTerminalTmuxCommand }()
+	var calls [][]string
+	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
+		calls = append(calls, append([]string(nil), args...))
+		return nil
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/terminals/size-hint", bytes.NewBufferString(`{"cols":20,"rows":8,"session_id":"`+sessionID+`"}`))
+	rec := httptest.NewRecorder()
+	api.handleTerminalSizeHint(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("size hint status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if ignored, _ := resp["ignored"].(bool); !ignored {
+		t.Fatalf("ignored = %v, want true", resp["ignored"])
+	}
+	if len(calls) != 0 {
+		t.Fatalf("tiny size hint must not call tmux, calls=%#v", calls)
+	}
+}
+
 func TestTerminalSizeHintSkipsLiveAttachSessions(t *testing.T) {
 	store := terminals.NewStore()
 	api := &StreamingAPI{terminalStore: store, liveAttach: newLiveAttachManager()}

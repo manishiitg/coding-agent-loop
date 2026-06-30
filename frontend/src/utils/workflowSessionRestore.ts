@@ -56,7 +56,10 @@ function findReadOnlyRunTabForSession(
 export function isScheduledWorkflowSession(session: ActiveSessionInfo, runningWorkflow?: RunningWorkflowInfo): boolean {
   const triggeredBy = (session.triggered_by || runningWorkflow?.triggered_by || '').toLowerCase()
   const sessionId = (session.session_id || '').toLowerCase()
-  return triggeredBy.includes('schedule') || sessionId.startsWith('schedule-') || sessionId.includes('-schedule-')
+  return triggeredBy.includes('schedule') ||
+    triggeredBy === 'cron' ||
+    sessionId.startsWith('schedule-') ||
+    sessionId.includes('-schedule-')
 }
 
 export function workflowSessionBotPlatform(

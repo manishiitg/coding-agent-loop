@@ -341,7 +341,7 @@ func (st *liveAttachStream) broadcast(b []byte) {
 // This mirrors the static resize path and the PoC demo: pin window-size manual,
 // then resize-window to the fitted xterm grid.
 func (st *liveAttachStream) setSize(cols, rows int) {
-	if cols <= 0 || rows <= 0 {
+	if cols < terminalMinResizeCols || rows < terminalMinResizeRows {
 		return
 	}
 	st.mu.Lock()
@@ -563,6 +563,9 @@ func unwrapResponseWriter(w http.ResponseWriter) http.ResponseWriter {
 func liveAttachInitialSize(r *http.Request) (int, int) {
 	cols, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("cols")))
 	rows, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("rows")))
+	if cols < terminalMinResizeCols || rows < terminalMinResizeRows {
+		return liveAttachDefaultCols, liveAttachDefaultRows
+	}
 	return cols, rows
 }
 

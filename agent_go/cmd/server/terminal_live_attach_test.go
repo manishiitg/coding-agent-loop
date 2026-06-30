@@ -60,6 +60,14 @@ func TestHandleTerminalStreamMissingManagerReturns404(t *testing.T) {
 	}
 }
 
+func TestLiveAttachInitialSizeRejectsTinyGeometry(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/stream?cols=20&rows=8", nil)
+	cols, rows := liveAttachInitialSize(req)
+	if cols != liveAttachDefaultCols || rows != liveAttachDefaultRows {
+		t.Fatalf("initial size = %dx%d, want defaults %dx%d", cols, rows, liveAttachDefaultCols, liveAttachDefaultRows)
+	}
+}
+
 // withFakeAttach swaps the real control-mode loop for one that simply blocks
 // until the stream's context is canceled, so manager lifecycle can be tested
 // without a real tmux session. It restores the original on cleanup.

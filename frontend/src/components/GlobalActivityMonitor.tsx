@@ -8,6 +8,7 @@ import { activateTab } from '../utils/activateTab'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { isScheduledWorkflowSession, openActiveSession, workflowSessionBotPlatform } from '../utils/workflowSessionRestore'
 import { useAppStore } from '../stores/useAppStore'
+import { isLocalActivityFallbackTab } from '../utils/activityFallback'
 
 const ACTIVITY_DETAILS_POLL_MS = 30000
 
@@ -52,17 +53,10 @@ function isActiveSession(session: ActiveSessionInfo): boolean {
     (session.running_background_agent_count ?? 0) > 0 ||
     status === 'running' ||
     status === 'paused' ||
-    status === 'idle' ||
     status === 'waiting' ||
     status === 'waiting_feedback'
   ) return true
 
-  // A completed workflow session the user initiated via the builder is still "waiting for
-  // the user's next command". Show it for up to 30 min after last activity.
-  if (status === 'completed' && isWorkflowSession(session) && session.last_activity) {
-    const lastMs = new Date(session.last_activity).getTime()
-    if (!Number.isNaN(lastMs) && Date.now() - lastMs < 30 * 60 * 1000) return true
-  }
   return false
 }
 
@@ -405,7 +399,7 @@ export const GlobalActivityMonitor: React.FC = () => {
 
   useEffect(() => {
     const refresh = async () => {
-      const active = await getActiveSessions(false).catch(() => [])
+      const active = await getActiveSessions(true).catch(() => [])
       try {
         const response = await agentApi.listRunningWorkflows()
         const running = response.running || []
@@ -546,7 +540,7 @@ export const GlobalActivityMonitor: React.FC = () => {
   const fallbackBuilderTabs = useMemo(
     () => Object.values(chatTabs).filter(tab =>
       tab.tabId !== activeTabId &&
-      tab.hasRunningBgAgents &&
+      isLocalActivityFallbackTab(tab) &&
       !activityKeysForTab(tab).some(key => visibleActivityKeys.has(key))
     ),
     [chatTabs, activeTabId, visibleActivityKeys],

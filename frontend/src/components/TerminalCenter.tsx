@@ -7,7 +7,7 @@ import '@xterm/xterm/css/xterm.css'
 import { agentApi } from '../services/api'
 import type { PollingEvent, TerminalSnapshot } from '../services/api-types'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
-import { useChatStore, type TerminalOptimisticEcho } from '../stores/useChatStore'
+import { useChatStore } from '../stores/useChatStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { TERMINAL_REFRESH_REQUEST_EVENT } from '../utils/terminalRefresh'
 import { useTheme } from '../hooks/useTheme'
@@ -78,7 +78,10 @@ const TERMINAL_REFRESH_HISTORY_LINES = 10000
 const TERMINAL_ACTIVE_DISPLAY_HISTORY_LINES = 10000
 const TERMINAL_ACTIVE_RAIL_MAIN_HISTORY_LINES = 600
 const TERMINAL_ACTIVE_RAIL_STEP_HISTORY_LINES = 1200
-const EMPTY_TERMINAL_OPTIMISTIC_ECHOES: TerminalOptimisticEcho[] = []
+const RAW_XTERM_MIN_FIT_COLS = 40
+const RAW_XTERM_MIN_FIT_ROWS = 10
+const RAW_XTERM_MIN_FIT_WIDTH_PX = 240
+const RAW_XTERM_MIN_FIT_HEIGHT_PX = 120
 const TERMINAL_DETAIL_CACHE_LIMIT = 40
 const MAX_PRIOR_ARCHIVED_TURNS_TO_INLINE = 3
 const PROMPT_COMPLETION_FALLBACK_SECONDS = 60
@@ -523,22 +526,6 @@ function stripAnsiBackgrounds(input: string): string {
   })
 }
 
-function normalizeTerminalEchoMatchText(input: string): string {
-  return stripAnsi(input)
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase()
-}
-
-function terminalContentIncludesOptimisticEcho(content: string, echoText: string): boolean {
-  const normalizedEcho = normalizeTerminalEchoMatchText(echoText)
-  if (!normalizedEcho) return true
-  const normalizedContent = normalizeTerminalEchoMatchText(content)
-  if (!normalizedContent) return false
-  const probe = normalizedEcho.length > 120 ? normalizedEcho.slice(0, 120) : normalizedEcho
-  return normalizedContent.includes(probe)
-}
-
 function scrollXtermFromWheel(
   term: XTerm,
   event: WheelEvent,
@@ -558,6 +545,14 @@ function scrollXtermFromWheel(
   term.scrollLines(lines)
   const distanceFromBottom = Math.max(0, term.buffer.active.baseY - term.buffer.active.viewportY)
   onViewportStickChange?.(distanceFromBottom <= 1)
+}
+
+function hasUsableTerminalFitBox(el: HTMLElement): boolean {
+  if (!el.isConnected || el.getClientRects().length === 0) return false
+  const style = window.getComputedStyle(el)
+  if (style.display === 'none' || style.visibility === 'hidden') return false
+  const rect = el.getBoundingClientRect()
+  return rect.width >= RAW_XTERM_MIN_FIT_WIDTH_PX && rect.height >= RAW_XTERM_MIN_FIT_HEIGHT_PX
 }
 
 interface RoutingRouteSummary {
@@ -1845,7 +1840,13 @@ const LiveAttachXtermPaneInner: React.FC<{
       onViewportStickChangeRef.current?.(distanceFromBottom <= 1)
     })
 
+    const hasUsableGrid = () => (
+      term.cols >= RAW_XTERM_MIN_FIT_COLS &&
+      term.rows >= RAW_XTERM_MIN_FIT_ROWS
+    )
+
     const sendResize = () => {
+      if (!hasUsableGrid()) return
       const ws = wsRef.current
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
@@ -1865,6 +1866,7 @@ const LiveAttachXtermPaneInner: React.FC<{
     const decoder = new TextDecoder()
     const connect = () => {
       if (closed) return
+      if (!hasUsableGrid()) return
       hasConnected = true
       const url = agentApi.getTerminalStreamUrl(terminalId, term.cols, term.rows)
       const ws = new WebSocket(url)
@@ -1903,8 +1905,11 @@ const LiveAttachXtermPaneInner: React.FC<{
 
     const fitTerminal = () => {
       try {
+        if (!hasUsableTerminalFitBox(mount)) return
         fit.fit()
+        if (!hasUsableGrid()) return
         if (!hasConnected) connect()
+        else sendResize()
       } catch {
         // Fit can fail during unmount or while the pane is display:none.
       }
@@ -3464,33 +3469,6 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     },
     [selectedTerminalView, priorArchivedTurns, archivedTurnContents],
   )
-  const selectedEchoSessionId = selectedTerminalView?.session_id || currentSessionId || ''
-  const terminalOptimisticEchoes = useChatStore(state =>
-    selectedEchoSessionId
-      ? state.terminalOptimisticEchoes[selectedEchoSessionId] || EMPTY_TERMINAL_OPTIMISTIC_ECHOES
-      : EMPTY_TERMINAL_OPTIMISTIC_ECHOES
-  )
-  const clearTerminalOptimisticEcho = useChatStore(state => state.clearTerminalOptimisticEcho)
-  const liveAttachRecentOutputRef = useRef('')
-  const clearMatchedTerminalOptimisticEchoes = useCallback((content: string) => {
-    if (!selectedEchoSessionId || !content || terminalOptimisticEchoes.length === 0) return
-    for (const echo of terminalOptimisticEchoes) {
-      if (terminalContentIncludesOptimisticEcho(content, echo.text)) {
-        clearTerminalOptimisticEcho(selectedEchoSessionId, echo.id)
-      }
-    }
-  }, [clearTerminalOptimisticEcho, selectedEchoSessionId, terminalOptimisticEchoes])
-  const handleLiveAttachOutputText = useCallback((text: string) => {
-    if (!text) return
-    liveAttachRecentOutputRef.current = `${liveAttachRecentOutputRef.current}${text}`.slice(-12000)
-    clearMatchedTerminalOptimisticEchoes(liveAttachRecentOutputRef.current)
-  }, [clearMatchedTerminalOptimisticEchoes])
-  useEffect(() => {
-    liveAttachRecentOutputRef.current = selectedTerminalDisplayContent.slice(-12000)
-  }, [selectedTerminalKey, selectedTerminalDisplayContent])
-  useEffect(() => {
-    clearMatchedTerminalOptimisticEchoes(selectedTerminalDisplayContent)
-  }, [clearMatchedTerminalOptimisticEchoes, selectedTerminalDisplayContent])
   const selectedTerminalIsSynthetic = selectedTerminalView ? isSyntheticTerminal(selectedTerminalView) : false
   // Live-attach is the ONLY transport for the selected live tmux terminal: it
   // renders over the /api/terminals/{id}/stream WebSocket whenever the selected
@@ -3709,7 +3687,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
   }, [selectedTerminalKey, selectedTerminalDisplayContent])
 
   const measureTerminalElementSize = useCallback((el: HTMLElement | null) => {
-    if (!el || el.clientWidth <= 0 || el.clientHeight <= 0) return null
+    if (!el || !hasUsableTerminalFitBox(el)) return null
     const ruler = document.createElement('span')
     ruler.textContent = '0'.repeat(100)
     ruler.setAttribute('aria-hidden', 'true')
@@ -3725,14 +3703,16 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     const style = window.getComputedStyle(el)
     const padX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0)
     const padY = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0)
-    const cols = Math.max(40, Math.floor((el.clientWidth - padX) / charWidth) - 1)
-    const rows = Math.max(10, Math.floor((el.clientHeight - padY) / lineHeight))
+    const cols = Math.floor((el.clientWidth - padX) / charWidth) - 1
+    const rows = Math.floor((el.clientHeight - padY) / lineHeight)
+    if (cols < RAW_XTERM_MIN_FIT_COLS || rows < RAW_XTERM_MIN_FIT_ROWS) return null
     return { cols, rows }
   }, [])
 
   const sendTerminalSizeHint = useCallback((cols: number, rows: number) => {
-    const nextCols = Math.max(40, Math.floor(cols))
-    const nextRows = Math.max(10, Math.floor(rows))
+    const nextCols = Math.floor(cols)
+    const nextRows = Math.floor(rows)
+    if (nextCols < RAW_XTERM_MIN_FIT_COLS || nextRows < RAW_XTERM_MIN_FIT_ROWS) return
     const last = lastSizeHintSentRef.current
     if (last && last.cols === nextCols && last.rows === nextRows) return
     lastSizeHintSentRef.current = { cols: nextCols, rows: nextRows }
@@ -4080,19 +4060,6 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
         {!error && terminals.length === 0 && routingDecisions.length === 0 && (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-12 text-center">
             <Terminal className="h-10 w-10 text-neutral-700" strokeWidth={1.25} />
-            {terminalOptimisticEchoes.length > 0 && (
-              <div className="w-full max-w-2xl rounded border border-neutral-800/80 bg-[#101211] px-3 py-2 text-left font-mono text-[12px] leading-5 text-neutral-200">
-                <div className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-neutral-500">Sent</div>
-                {terminalOptimisticEchoes.slice(-2).map(echo => (
-                  <div key={echo.id} className="flex min-w-0 gap-2">
-                    <span className="shrink-0 text-neutral-500">›</span>
-                    <span className="min-w-0 truncate" title={echo.text}>
-                      {compactTerminalPreview(echo.text, 260)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
             <div className="text-sm font-medium text-neutral-300">No terminals yet</div>
             <div className="max-w-md text-xs leading-relaxed text-neutral-500">
               Run an automation step, send a message to the main agent, or kick off
@@ -4474,19 +4441,6 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
                       })}
                     </div>
                   )}
-                  {terminalOptimisticEchoes.length > 0 && (
-                    <div className="border-b border-neutral-800/80 bg-[#101211] px-3 py-2 font-mono text-[12px] leading-5 text-neutral-200">
-                      <div className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-neutral-500">Sent</div>
-                      {terminalOptimisticEchoes.slice(-2).map(echo => (
-                        <div key={echo.id} className="flex min-w-0 gap-2">
-                          <span className="shrink-0 text-neutral-500">›</span>
-                          <span className="min-w-0 truncate" title={echo.text}>
-                            {compactTerminalPreview(echo.text, 260)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
                   {selectedTerminalIsSynthetic ? (
                     <StructuredTerminalView
                       content={selectedTerminalDisplayContent}
@@ -4509,7 +4463,6 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
                       reconnectOnClose={isSelectedTerminalStreaming}
                       onViewportStickChange={handleXtermViewportStickChange}
                       onScrollToBottomReady={registerXtermScrollToBottom}
-                      onOutputText={handleLiveAttachOutputText}
                       className="min-w-0 flex-1 overflow-hidden overscroll-contain pl-2"
                     />
                   ) : useLiveAttachForSelected ? (

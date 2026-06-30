@@ -239,6 +239,26 @@ func (s *Store) SessionHasBusyCodingTmux(sessionID string) bool {
 	return false
 }
 
+// SessionHasRetainedCodingTmux reports whether this session still has a live
+// tmux-backed coding-agent pane. This intentionally does not inspect "busy"
+// text: an idle retained CLI can still hold agent context, accept the next user
+// message, and be terminated by New Chat.
+func (s *Store) SessionHasRetainedCodingTmux(sessionID string) bool {
+	sessionID = strings.TrimSpace(sessionID)
+	if s == nil || sessionID == "" {
+		return false
+	}
+	for _, snapshot := range s.List(sessionID) {
+		if !snapshot.Active {
+			continue
+		}
+		if strings.TrimSpace(snapshot.TmuxSession) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Store) Get(terminalID string) (Snapshot, bool) {
 	terminalID = strings.TrimSpace(terminalID)
 	s.mu.Lock()

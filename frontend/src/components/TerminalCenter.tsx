@@ -7,7 +7,7 @@ import '@xterm/xterm/css/xterm.css'
 import { agentApi } from '../services/api'
 import type { PollingEvent, TerminalSnapshot } from '../services/api-types'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
-import { useChatStore } from '../stores/useChatStore'
+import { useChatStore, type TerminalOptimisticEcho } from '../stores/useChatStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { TERMINAL_REFRESH_REQUEST_EVENT } from '../utils/terminalRefresh'
 import { useTheme } from '../hooks/useTheme'
@@ -78,6 +78,7 @@ const TERMINAL_REFRESH_HISTORY_LINES = 10000
 const TERMINAL_ACTIVE_DISPLAY_HISTORY_LINES = 10000
 const TERMINAL_ACTIVE_RAIL_MAIN_HISTORY_LINES = 600
 const TERMINAL_ACTIVE_RAIL_STEP_HISTORY_LINES = 1200
+const EMPTY_TERMINAL_OPTIMISTIC_ECHOES: TerminalOptimisticEcho[] = []
 const TERMINAL_DETAIL_CACHE_LIMIT = 40
 const MAX_PRIOR_ARCHIVED_TURNS_TO_INLINE = 3
 const PROMPT_COMPLETION_FALLBACK_SECONDS = 60
@@ -477,6 +478,86 @@ function applyRawXtermTheme(term: XTerm, theme: ITheme) {
   if (viewport && theme.background) {
     viewport.style.backgroundColor = theme.background
   }
+}
+
+function stripAnsiBackgrounds(input: string): string {
+  // Pi/tmux captures can carry muted truecolor background fills across long
+  // wrapped lines. In the web terminal those cells read as large grey blocks,
+  // especially after static replay. Keep foreground/style SGRs, but drop
+  // background/inverse SGRs so text stays readable on the app terminal surface.
+  return input.replace(/\x1b\[([0-9;]*)m/g, (match, rawParams: string) => {
+    if (rawParams === '') return match
+    const params = rawParams.split(';')
+    const kept: string[] = []
+    for (let i = 0; i < params.length; i++) {
+      const raw = params[i]
+      const code = Number(raw)
+      if (!Number.isFinite(code)) {
+        kept.push(raw)
+        continue
+      }
+      if (
+        code === 7 ||
+        code === 27 ||
+        code === 49 ||
+        (code >= 40 && code <= 47) ||
+        (code >= 100 && code <= 107)
+      ) {
+        continue
+      }
+      if (code === 48) {
+        const mode = Number(params[i + 1])
+        if (mode === 2) {
+          i += 4
+          continue
+        }
+        if (mode === 5) {
+          i += 2
+          continue
+        }
+        continue
+      }
+      kept.push(raw)
+    }
+    return kept.length > 0 ? `\x1b[${kept.join(';')}m` : ''
+  })
+}
+
+function normalizeTerminalEchoMatchText(input: string): string {
+  return stripAnsi(input)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+}
+
+function terminalContentIncludesOptimisticEcho(content: string, echoText: string): boolean {
+  const normalizedEcho = normalizeTerminalEchoMatchText(echoText)
+  if (!normalizedEcho) return true
+  const normalizedContent = normalizeTerminalEchoMatchText(content)
+  if (!normalizedContent) return false
+  const probe = normalizedEcho.length > 120 ? normalizedEcho.slice(0, 120) : normalizedEcho
+  return normalizedContent.includes(probe)
+}
+
+function scrollXtermFromWheel(
+  term: XTerm,
+  event: WheelEvent,
+  onViewportStickChange?: (isNearBottom: boolean) => void,
+) {
+  const row = term.element?.querySelector('.xterm-rows > div') as HTMLElement | null
+  const lineHeightPx = row?.getBoundingClientRect().height || RAW_XTERM_FONT_SIZE
+  const rawLines = event.deltaMode === 1
+    ? event.deltaY
+    : event.deltaMode === 2
+      ? event.deltaY * term.rows
+      : event.deltaY / Math.max(1, lineHeightPx)
+  const direction = rawLines < 0 ? -1 : 1
+  const lines = Math.max(1, Math.min(12, Math.ceil(Math.abs(rawLines)))) * direction
+  event.preventDefault()
+  event.stopPropagation()
+  term.scrollLines(lines)
+  const distanceFromBottom = Math.max(0, term.buffer.active.baseY - term.buffer.active.viewportY)
+  onViewportStickChange?.(distanceFromBottom <= 1)
 }
 
 interface RoutingRouteSummary {
@@ -1682,9 +1763,9 @@ const ColoredText: React.FC<{ rawText: string; className?: string }> = ({ rawTex
 // LiveAttachXtermPane is the live-attach transport (see
 // docs/refactor/terminal_live_attach_transport.md). It renders the SELECTED live
 // tmux terminal directly from the /api/terminals/{id}/stream WebSocket instead of
-// the snapshot/replay polling path: the backend's first frames are a capture-pane
-// backfill, then the live control-mode %output byte stream. We write those bytes
-// straight into xterm — no content-prop replay.
+// the snapshot/replay polling path: the backend's first frame is a current-screen
+// backfill/reset, then the live control-mode %output byte stream. We write those
+// bytes straight into xterm — no content-prop replay.
 //
 // It is rendered for every selected non-synthetic terminal with a tmux session;
 // the rail/other terminals are untouched. It is mounted with a key that includes
@@ -1695,11 +1776,10 @@ const ColoredText: React.FC<{ rawText: string; className?: string }> = ({ rawTex
 // The xterm stays display-only (disableStdin, no onData -> WS): input keeps
 // flowing through the EXISTING chat live-input / send-keys path into the tmux
 // session and returns as %output over this same WS. Resize is FitAddon -> a JSON
-// {type:'resize'} frame (backend pty.Setsize on the control client, window-size
-  // latest) — we deliberately do NOT POST /resize here (that re-asserts window-size
-  // manual and would fight the control client). Running sessions reconnect on
-  // socket close; the backend re-runs the capture-pane backfill, so recovery
-  // needs no client replay.
+// {type:'resize'} frame; the backend pins tmux to window-size manual and calls
+// resize-window so tmux and xterm share one grid. Running sessions reconnect on
+// socket close; the backend re-runs the current-screen backfill, so recovery
+// needs no client replay.
 const LiveAttachXtermPaneInner: React.FC<{
   terminalId: string
   className?: string
@@ -1707,12 +1787,15 @@ const LiveAttachXtermPaneInner: React.FC<{
   xtermTheme: ITheme
   reconnectOnClose: boolean
   onViewportStickChange?: (isNearBottom: boolean) => void
-}> = ({ terminalId, className, contentRef, xtermTheme, reconnectOnClose, onViewportStickChange }) => {
+  onScrollToBottomReady?: (handler: (() => void) | null) => void
+  onOutputText?: (text: string) => void
+}> = ({ terminalId, className, contentRef, xtermTheme, reconnectOnClose, onViewportStickChange, onScrollToBottomReady, onOutputText }) => {
   const mountRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<XTerm | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectOnCloseRef = useRef(reconnectOnClose)
   const onViewportStickChangeRef = useRef(onViewportStickChange)
+  const onOutputTextRef = useRef(onOutputText)
 
   useEffect(() => {
     reconnectOnCloseRef.current = reconnectOnClose
@@ -1723,11 +1806,15 @@ const LiveAttachXtermPaneInner: React.FC<{
   }, [onViewportStickChange])
 
   useEffect(() => {
+    onOutputTextRef.current = onOutputText
+  }, [onOutputText])
+
+  useEffect(() => {
     const mount = mountRef.current
     if (!mount) return
 
     // convertEol stays FALSE: the WS carries the raw terminal byte stream (live
-    // %output + the CR-normalized capture-pane backfill), so xterm must honor the
+    // %output + the CR-normalized current-screen backfill), so xterm must honor the
     // bytes verbatim — unlike the snapshot path which post-processes content.
     const term = new XTerm({
       allowProposedApi: false,
@@ -1739,6 +1826,7 @@ const LiveAttachXtermPaneInner: React.FC<{
       fontFamily: RAW_XTERM_FONT_FAMILY,
       fontSize: RAW_XTERM_FONT_SIZE,
       lineHeight: RAW_XTERM_LINE_HEIGHT,
+      minimumContrastRatio: 4.5,
       scrollback: 20000,
       theme: xtermTheme,
     })
@@ -1747,6 +1835,10 @@ const LiveAttachXtermPaneInner: React.FC<{
     term.open(mount)
     applyRawXtermTheme(term, xtermTheme)
     terminalRef.current = term
+    onScrollToBottomReady?.(() => {
+      term.scrollToBottom()
+      onViewportStickChangeRef.current?.(true)
+    })
 
     const scrollDisposable = term.onScroll(viewportY => {
       const distanceFromBottom = Math.max(0, term.buffer.active.baseY - viewportY)
@@ -1764,19 +1856,16 @@ const LiveAttachXtermPaneInner: React.FC<{
     // layout changes, so a ResizeObserver (fires post-layout with the real size) is
     // required to fit the xterm correctly — unlike the static-page PoC whose
     // container is sized immediately by CSS. Debounced so only the settled size fits.
-    // WebSocket lifecycle with reconnect for live sessions. The backend re-runs
-    // the capture-pane backfill on every (re)connect, so a dropped socket recovers
-    // the current screen without any client-side replay/seed state.
+    // WebSocket lifecycle with reconnect for live sessions. The backend sends a
+    // reset + current-screen backfill on every (re)connect, so a dropped socket
+    // recovers without any client-side replay/seed state.
     let closed = false
     let reconnectTimer: number | undefined
     let hasConnected = false
+    const decoder = new TextDecoder()
     const connect = () => {
       if (closed) return
       hasConnected = true
-      // Each connection starts with a capture-pane backfill. Reset inline before
-      // that first frame so reconnects cannot leave previous scrollback/screen
-      // bytes in xterm and then paint the same captured history again.
-      term.write('\x1bc')
       const url = agentApi.getTerminalStreamUrl(terminalId, term.cols, term.rows)
       const ws = new WebSocket(url)
       ws.binaryType = 'arraybuffer'
@@ -1788,9 +1877,13 @@ const LiveAttachXtermPaneInner: React.FC<{
       ws.onmessage = ev => {
         const data = ev.data
         if (data instanceof ArrayBuffer) {
-          term.write(new Uint8Array(data))
+          const text = stripAnsiBackgrounds(decoder.decode(new Uint8Array(data), { stream: true }))
+          term.write(text)
+          onOutputTextRef.current?.(text)
         } else if (typeof data === 'string') {
-          term.write(data)
+          const text = stripAnsiBackgrounds(data)
+          term.write(text)
+          onOutputTextRef.current?.(text)
         }
       }
       ws.onclose = () => {
@@ -1846,6 +1939,7 @@ const LiveAttachXtermPaneInner: React.FC<{
           // ignore
         }
       }
+      onScrollToBottomReady?.(null)
       terminalRef.current = null
       term.dispose()
     }
@@ -1862,20 +1956,7 @@ const LiveAttachXtermPaneInner: React.FC<{
   const handleWheel = useCallback((event: WheelEvent) => {
     const term = terminalRef.current
     if (!term) return
-    const row = term.element?.querySelector('.xterm-rows > div') as HTMLElement | null
-    const lineHeightPx = row?.getBoundingClientRect().height || RAW_XTERM_FONT_SIZE
-    const rawLines = event.deltaMode === 1
-      ? event.deltaY
-      : event.deltaMode === 2
-        ? event.deltaY * term.rows
-        : event.deltaY / Math.max(1, lineHeightPx)
-    const direction = rawLines < 0 ? -1 : 1
-    const lines = Math.max(1, Math.min(12, Math.ceil(Math.abs(rawLines)))) * direction
-    event.preventDefault()
-    event.stopPropagation()
-    term.scrollLines(lines)
-    const distanceFromBottom = Math.max(0, term.buffer.active.baseY - term.buffer.active.viewportY)
-    onViewportStickChangeRef.current?.(distanceFromBottom <= 1)
+    scrollXtermFromWheel(term, event, onViewportStickChangeRef.current)
   }, [])
 
   useEffect(() => {
@@ -1900,6 +1981,180 @@ const LiveAttachXtermPaneInner: React.FC<{
 }
 
 const LiveAttachXtermPane = memo(LiveAttachXtermPaneInner)
+
+const TerminalWaitingPane: React.FC<{
+  className?: string
+  contentRef?: React.RefObject<HTMLDivElement | null>
+  xtermTheme: ITheme
+  title?: string
+  message?: string
+}> = ({
+  className,
+  contentRef,
+  xtermTheme,
+  title = 'Waiting for terminal',
+  message = 'The terminal is idle or restoring after inactivity. Output will appear here when the agent produces activity.',
+}) => (
+  <div
+    ref={contentRef}
+    className={`${className || ''} flex items-center justify-center px-6 py-10`}
+    style={{ backgroundColor: xtermTheme.background }}
+  >
+    <div className="flex max-w-sm flex-col items-center gap-3 text-center font-mono">
+      <div className="relative">
+        <Terminal
+          className="h-9 w-9"
+          strokeWidth={1.35}
+          style={{ color: xtermTheme.foreground, opacity: 0.35 }}
+          aria-hidden
+        />
+        <span
+          className="absolute -right-1 top-0 h-2 w-2 animate-pulse rounded-full"
+          style={{ backgroundColor: xtermTheme.cursor || xtermTheme.foreground }}
+        />
+      </div>
+      <div className="text-sm font-semibold" style={{ color: xtermTheme.foreground }}>
+        {title}
+      </div>
+      <div className="text-xs leading-5" style={{ color: xtermTheme.foreground, opacity: 0.58 }}>
+        {message}
+      </div>
+    </div>
+  </div>
+)
+
+const StaticXtermPaneInner: React.FC<{
+  content: string
+  className?: string
+  contentRef: React.RefObject<HTMLDivElement | null>
+  xtermTheme: ITheme
+  onViewportStickChange?: (isNearBottom: boolean) => void
+  onScrollToBottomReady?: (handler: (() => void) | null) => void
+}> = ({ content, className, contentRef, xtermTheme, onViewportStickChange, onScrollToBottomReady }) => {
+  const mountRef = useRef<HTMLDivElement | null>(null)
+  const terminalRef = useRef<XTerm | null>(null)
+  const fitRef = useRef<FitAddon | null>(null)
+  const onViewportStickChangeRef = useRef(onViewportStickChange)
+
+  useEffect(() => {
+    onViewportStickChangeRef.current = onViewportStickChange
+  }, [onViewportStickChange])
+
+  useEffect(() => {
+    const mount = mountRef.current
+    if (!mount) return
+
+    const term = new XTerm({
+      allowProposedApi: false,
+      convertEol: true,
+      cursorBlink: false,
+      disableStdin: true,
+      fontFamily: RAW_XTERM_FONT_FAMILY,
+      fontSize: RAW_XTERM_FONT_SIZE,
+      lineHeight: RAW_XTERM_LINE_HEIGHT,
+      minimumContrastRatio: 4.5,
+      scrollback: 20000,
+      theme: xtermTheme,
+    })
+    const fit = new FitAddon()
+    term.loadAddon(fit)
+    term.open(mount)
+    applyRawXtermTheme(term, xtermTheme)
+    terminalRef.current = term
+    fitRef.current = fit
+    onScrollToBottomReady?.(() => {
+      term.scrollToBottom()
+      onViewportStickChangeRef.current?.(true)
+    })
+
+    const scrollDisposable = term.onScroll(viewportY => {
+      const distanceFromBottom = Math.max(0, term.buffer.active.baseY - viewportY)
+      onViewportStickChangeRef.current?.(distanceFromBottom <= 1)
+    })
+
+    const fitTerminal = () => {
+      try {
+        fit.fit()
+      } catch {
+        // Fit can fail during unmount or while the pane is display:none.
+      }
+    }
+    let fitTimer: number | undefined
+    const scheduleFit = () => {
+      if (fitTimer !== undefined) window.clearTimeout(fitTimer)
+      fitTimer = window.setTimeout(fitTerminal, 120)
+    }
+    scheduleFit()
+    const resizeObserver = new ResizeObserver(scheduleFit)
+    resizeObserver.observe(mount)
+
+    return () => {
+      scrollDisposable.dispose()
+      resizeObserver.disconnect()
+      if (fitTimer !== undefined) window.clearTimeout(fitTimer)
+      onScrollToBottomReady?.(null)
+      terminalRef.current = null
+      fitRef.current = null
+      term.dispose()
+    }
+    // Static pane identity is controlled by the React key; content/theme update in
+    // separate effects below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    const term = terminalRef.current
+    if (!term) return
+    applyRawXtermTheme(term, xtermTheme)
+  }, [xtermTheme])
+
+  useEffect(() => {
+    const term = terminalRef.current
+    if (!term) return
+    term.reset()
+    if (!content) {
+      onViewportStickChangeRef.current?.(true)
+      return
+    }
+    term.write(stripAnsiBackgrounds(content), () => {
+      try {
+        fitRef.current?.fit()
+      } catch {
+        // ignore
+      }
+      term.scrollToBottom()
+      onViewportStickChangeRef.current?.(true)
+    })
+  }, [content])
+
+  const handleWheel = useCallback((event: WheelEvent) => {
+    const term = terminalRef.current
+    if (!term) return
+    scrollXtermFromWheel(term, event, onViewportStickChangeRef.current)
+  }, [])
+
+  useEffect(() => {
+    const node = contentRef.current
+    if (!node) return
+    const listenerOptions: AddEventListenerOptions = { passive: false, capture: true }
+    node.addEventListener('wheel', handleWheel, listenerOptions)
+    return () => {
+      node.removeEventListener('wheel', handleWheel, listenerOptions)
+    }
+  }, [contentRef, handleWheel])
+
+  return (
+    <div
+      ref={contentRef}
+      className={className}
+      style={{ backgroundColor: xtermTheme.background }}
+    >
+      <div ref={mountRef} className="h-full w-full [&_.xterm]:h-full" />
+    </div>
+  )
+}
+
+const StaticXtermPane = memo(StaticXtermPaneInner)
 
 function normalizeTerminalRows(rows: TerminalSnapshot['rows'] | undefined): TerminalRow[] {
   if (!Array.isArray(rows)) return []
@@ -2643,7 +2898,8 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
   const sessionErrorBanner = terminalErrorGroups.global
   const terminalErrorsByID = terminalErrorGroups.byTerminalID
   const terminalCenterRef = useRef<HTMLDivElement | null>(null)
-  const terminalOutputRef = useRef<HTMLElement | null>(null)
+  const terminalOutputRef = useRef<HTMLDivElement | null>(null)
+  const xtermScrollToBottomRef = useRef<(() => void) | null>(null)
   const terminalAutoScrollRef = useRef(true)
   const terminalManualScrollLockRef = useRef(false)
   const selectedTerminalIDRef = useRef<string | null>(null)
@@ -2652,6 +2908,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
   const fetchRequestSeqRef = useRef(0)
   const terminalsRef = useRef<TerminalSnapshot[]>([])
   const terminalDetailCacheRef = useRef<Record<string, TerminalSnapshot>>({})
+  const selectedDetailFetchKeysRef = useRef<Set<string>>(new Set())
   const emptyResponseCountRef = useRef(0)
   const lastFetchScopeRef = useRef<string | null>(null)
   const fastPollUntilRef = useRef(0)
@@ -3207,6 +3464,33 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     },
     [selectedTerminalView, priorArchivedTurns, archivedTurnContents],
   )
+  const selectedEchoSessionId = selectedTerminalView?.session_id || currentSessionId || ''
+  const terminalOptimisticEchoes = useChatStore(state =>
+    selectedEchoSessionId
+      ? state.terminalOptimisticEchoes[selectedEchoSessionId] || EMPTY_TERMINAL_OPTIMISTIC_ECHOES
+      : EMPTY_TERMINAL_OPTIMISTIC_ECHOES
+  )
+  const clearTerminalOptimisticEcho = useChatStore(state => state.clearTerminalOptimisticEcho)
+  const liveAttachRecentOutputRef = useRef('')
+  const clearMatchedTerminalOptimisticEchoes = useCallback((content: string) => {
+    if (!selectedEchoSessionId || !content || terminalOptimisticEchoes.length === 0) return
+    for (const echo of terminalOptimisticEchoes) {
+      if (terminalContentIncludesOptimisticEcho(content, echo.text)) {
+        clearTerminalOptimisticEcho(selectedEchoSessionId, echo.id)
+      }
+    }
+  }, [clearTerminalOptimisticEcho, selectedEchoSessionId, terminalOptimisticEchoes])
+  const handleLiveAttachOutputText = useCallback((text: string) => {
+    if (!text) return
+    liveAttachRecentOutputRef.current = `${liveAttachRecentOutputRef.current}${text}`.slice(-12000)
+    clearMatchedTerminalOptimisticEchoes(liveAttachRecentOutputRef.current)
+  }, [clearMatchedTerminalOptimisticEchoes])
+  useEffect(() => {
+    liveAttachRecentOutputRef.current = selectedTerminalDisplayContent.slice(-12000)
+  }, [selectedTerminalKey, selectedTerminalDisplayContent])
+  useEffect(() => {
+    clearMatchedTerminalOptimisticEchoes(selectedTerminalDisplayContent)
+  }, [clearMatchedTerminalOptimisticEchoes, selectedTerminalDisplayContent])
   const selectedTerminalIsSynthetic = selectedTerminalView ? isSyntheticTerminal(selectedTerminalView) : false
   // Live-attach is the ONLY transport for the selected live tmux terminal: it
   // renders over the /api/terminals/{id}/stream WebSocket whenever the selected
@@ -3216,6 +3500,12 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     !selectedTerminalIsSynthetic &&
     selectedTerminalView.tmux_session
   )
+  const isSelectedTerminalStreaming = !!selectedTerminalView?.active && (selectedTerminalView.state === 'running' || selectedTerminalView.state === 'idle' || selectedTerminalView.state === undefined)
+  const selectedLiveAttachPhase = selectedTerminalView
+    ? isSelectedTerminalStreaming
+      ? 'live'
+      : `settled:${selectedTerminalView.state || 'unknown'}:${selectedTerminalView.chunk_index ?? 'x'}`
+    : 'none'
   // Keep the live-attach pane mounted across transient selection nulls. The old
   // polling path momentarily drops the selected terminal from groupedTerminals on
   // each list refresh (and a session-id blip briefly clears the selection), which
@@ -3227,7 +3517,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     useLiveAttachForSelected && selectedTerminalView ? selectedTerminalView.terminal_id : null
   const liveAttachStreamKey =
     useLiveAttachForSelected && selectedTerminalView
-      ? `${selectedTerminalView.terminal_id}:${selectedTerminalView.tmux_session || ''}`
+      ? `${selectedTerminalView.terminal_id}:${selectedTerminalView.tmux_session || ''}:${selectedLiveAttachPhase}`
       : null
   const [stableLiveAttach, setStableLiveAttach] = useState<{ terminalId: string; streamKey: string } | null>(null)
   useEffect(() => {
@@ -3250,6 +3540,37 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
   }, [liveAttachTerminalId, liveAttachStreamKey, selectedTerminalView])
   const stableLiveAttachId = stableLiveAttach?.terminalId ?? null
   const stableLiveAttachKey = stableLiveAttach?.streamKey ?? null
+
+  useEffect(() => {
+    if (!selectedTerminalView || useLiveAttachForSelected) return
+    const detailKey = terminalDetailCacheKey(selectedTerminalView)
+    const cached = terminalDetailCacheRef.current[detailKey]
+    if ((cached?.content || selectedTerminalView.content || '').trim()) return
+    if (selectedDetailFetchKeysRef.current.has(detailKey)) return
+    selectedDetailFetchKeysRef.current.add(detailKey)
+
+    let cancelled = false
+    const detailOptions = terminalRequestOptions(selectedTerminalView, true, 'selected-detail')
+    void agentApi.getTerminal(selectedTerminalView.terminal_id, detailOptions)
+      .then(detail => {
+        if (cancelled) return
+        logTerminalScrollDebug('selected-detail', selectedTerminalView, detailOptions, detail)
+        cacheTerminalDetail(detail)
+        applyTerminalSnapshotUpdate(detail)
+      })
+      .catch(err => {
+        console.warn('Failed to load selected terminal detail', selectedTerminalView.terminal_id, err)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [
+    selectedTerminalView,
+    useLiveAttachForSelected,
+    cacheTerminalDetail,
+    applyTerminalSnapshotUpdate,
+  ])
+
   const selectedRouteDecision = selectedTerminalView?.step_id
     ? routingDecisionByNextStepID.get(selectedTerminalView.step_id)
     : undefined
@@ -3257,7 +3578,6 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     ? terminalErrorsByID.get(terminalPaneKey(selectedTerminalView)) || []
     : []
   const railSpinner = useSpinnerFrame(groupedTerminals.activeTerminals.length > 0)
-  const isSelectedTerminalStreaming = !!selectedTerminalView?.active && (selectedTerminalView.state === 'running' || selectedTerminalView.state === 'idle' || selectedTerminalView.state === undefined)
   const selectedTerminalSpinner = useSpinnerFrame(isSelectedTerminalStreaming)
 
   const activeRailTmuxProbeTargets = useMemo(
@@ -3348,9 +3668,14 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     terminalManualScrollLockRef.current = !isNearBottom
   }, [])
 
+  const registerXtermScrollToBottom = useCallback((handler: (() => void) | null) => {
+    xtermScrollToBottomRef.current = handler
+  }, [])
+
   const scrollSelectedTerminalToBottom = useCallback(() => {
     terminalAutoScrollRef.current = true
     terminalManualScrollLockRef.current = false
+    xtermScrollToBottomRef.current?.()
     const scroll = () => {
       const el = terminalOutputRef.current
       if (!el) return
@@ -3697,10 +4022,11 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     <div ref={terminalCenterRef} className={`flex min-h-0 min-w-0 flex-col bg-[#191a18] text-neutral-100 ${compact ? '' : 'flex-1 overflow-hidden'}`}>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {(!hasConversationActivity && groupedTerminals.orderedTerminals.length === 0) ? (
-          // Blank only when there's neither live conversation activity nor any
-          // terminal to show. A resumed/completed session has no "activity" but
-          // does have a terminal snapshot — keep showing it instead of a blank pane.
-          <div className="flex flex-1" />
+          <TerminalWaitingPane
+            className="min-h-0 flex-1"
+            xtermTheme={rawXtermTheme}
+            message="No terminal is currently attached. Send a message, resume a chat, or wait for scheduled activity to produce output here."
+          />
         ) : (
           <>
         {error && (
@@ -3754,6 +4080,19 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
         {!error && terminals.length === 0 && routingDecisions.length === 0 && (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-12 text-center">
             <Terminal className="h-10 w-10 text-neutral-700" strokeWidth={1.25} />
+            {terminalOptimisticEchoes.length > 0 && (
+              <div className="w-full max-w-2xl rounded border border-neutral-800/80 bg-[#101211] px-3 py-2 text-left font-mono text-[12px] leading-5 text-neutral-200">
+                <div className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-neutral-500">Sent</div>
+                {terminalOptimisticEchoes.slice(-2).map(echo => (
+                  <div key={echo.id} className="flex min-w-0 gap-2">
+                    <span className="shrink-0 text-neutral-500">›</span>
+                    <span className="min-w-0 truncate" title={echo.text}>
+                      {compactTerminalPreview(echo.text, 260)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="text-sm font-medium text-neutral-300">No terminals yet</div>
             <div className="max-w-md text-xs leading-relaxed text-neutral-500">
               Run an automation step, send a message to the main agent, or kick off
@@ -4135,6 +4474,19 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
                       })}
                     </div>
                   )}
+                  {terminalOptimisticEchoes.length > 0 && (
+                    <div className="border-b border-neutral-800/80 bg-[#101211] px-3 py-2 font-mono text-[12px] leading-5 text-neutral-200">
+                      <div className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-neutral-500">Sent</div>
+                      {terminalOptimisticEchoes.slice(-2).map(echo => (
+                        <div key={echo.id} className="flex min-w-0 gap-2">
+                          <span className="shrink-0 text-neutral-500">›</span>
+                          <span className="min-w-0 truncate" title={echo.text}>
+                            {compactTerminalPreview(echo.text, 260)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {selectedTerminalIsSynthetic ? (
                     <StructuredTerminalView
                       content={selectedTerminalDisplayContent}
@@ -4156,16 +4508,38 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
                       xtermTheme={rawXtermTheme}
                       reconnectOnClose={isSelectedTerminalStreaming}
                       onViewportStickChange={handleXtermViewportStickChange}
+                      onScrollToBottomReady={registerXtermScrollToBottom}
+                      onOutputText={handleLiveAttachOutputText}
+                      className="min-w-0 flex-1 overflow-hidden overscroll-contain pl-2"
+                    />
+                  ) : useLiveAttachForSelected ? (
+                    <TerminalWaitingPane
+                      className="min-w-0 flex-1 overflow-hidden overscroll-contain pl-2"
+                      contentRef={terminalOutputRef as React.RefObject<HTMLDivElement | null>}
+                      xtermTheme={rawXtermTheme}
+                      message="Attaching to the live tmux session. If the agent is idle after inactivity, output will appear here when it resumes."
+                    />
+                  ) : selectedTerminalView && selectedTerminalDisplayContent ? (
+                    <StaticXtermPane
+                      // Inactive/restored tmux snapshots often no longer have a
+                      // live tmux_session. They still carry captured ANSI content,
+                      // so render them through xterm instead of the blank live
+                      // placeholder. Live sessions with tmux_session stay on the
+                      // WebSocket transport above.
+                      key={`${selectedTerminalKey || selectedTerminalView.terminal_id}:static`}
+                      content={selectedTerminalDisplayContent}
+                      contentRef={terminalOutputRef as React.RefObject<HTMLDivElement | null>}
+                      xtermTheme={rawXtermTheme}
+                      onViewportStickChange={handleXtermViewportStickChange}
+                      onScrollToBottomReady={registerXtermScrollToBottom}
                       className="min-w-0 flex-1 overflow-hidden overscroll-contain pl-2"
                     />
                   ) : (
-                    // Live-attach is the only transport for the selected tmux
-                    // terminal. The debounced stableLiveAttachId makes a brief
-                    // no-live-terminal window rare; show an empty placeholder
-                    // rather than the removed capture-pane pane.
-                    <div
+                    <TerminalWaitingPane
                       className="min-w-0 flex-1 overflow-hidden overscroll-contain pl-2"
-                      style={{ backgroundColor: rawXtermTheme.background }}
+                      contentRef={terminalOutputRef as React.RefObject<HTMLDivElement | null>}
+                      xtermTheme={rawXtermTheme}
+                      message="Terminal output is being restored. If this session was released after inactivity, new output will attach here automatically."
                     />
                   )}
                   {selectedTerminalView && (() => {

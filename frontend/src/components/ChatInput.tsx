@@ -786,7 +786,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // adding another frontend provider list.
   const supportsLiveCodingAgentInput = useMemo(
     () => selectedProviderManifestEntry?.coding_agent?.supports_live_input === true
-      || (!selectedProviderManifestEntry && FALLBACK_LIVE_INPUT_PROVIDERS.has(effectiveProviderForSteer || '')),
+      || FALLBACK_LIVE_INPUT_PROVIDERS.has(effectiveProviderForSteer || ''),
     [effectiveProviderForSteer, selectedProviderManifestEntry]
   )
   const canShowSteer = useMemo(() => canSteer && !isCLIProvider, [canSteer, isCLIProvider])
@@ -1795,13 +1795,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   const canSubmit = canSubmitImmediately || canQueueWhileStreaming
 
-  // tmux-transport coding CLIs keep a live, persistent session, so input should
-  // always go through the live-input endpoint rather than the local queue. The backend
-  // disambiguates: it injects as live input when the pane is busy and starts the
-  // next turn when idle. The local
-  // queue is only for non-live providers that genuinely can't accept input mid-
-  // turn. We intentionally do NOT gate on canSteer here — a stale canSteer=false
-  // would otherwise force queueing even though the CLI can take the input.
+  // tmux-transport coding CLIs keep a persistent session, so input should go to
+  // the backend immediately rather than the local queue. The backend either
+  // delivers to the retained CLI or starts/resumes a normal turn. The local queue
+  // is only for non-live providers that genuinely can't accept input mid-turn. We
+  // intentionally do NOT gate on canSteer here — a stale canSteer=false would
+  // otherwise block input even though the CLI can take it.
   const routeLiveInputToCLI = useMemo(
     () => supportsLiveCodingAgentInput && Boolean(tabSessionId),
     [supportsLiveCodingAgentInput, tabSessionId]
@@ -2664,10 +2663,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // TMUX-TRANSPORT (CLI coding agent) — SINGLE-ENTRY routing: the frontend no longer
   // inspects terminal liveness (which was flaky/stale and mis-routed resumes). It
   // ALWAYS submits to /api/query (onSubmit) and the BACKEND is the single source of
-  // truth: it steers into the running turn when the session is busy, and starts a
-  // new turn (with --resume + tools + system prompt + secrets + terminal
-  // materialize) when idle / exited / gone / resumed / never-launched. isStreaming is
-  // UI-only (spinner/Stop) for these providers.
+  // truth: it delivers to a retained CLI when possible, and starts a new turn
+  // (with --resume + tools + system prompt + secrets + terminal materialize) when
+  // needed. isStreaming is UI-only (spinner/Stop) for these providers.
   //
   // NON-tmux (API/LLM): isStreaming-based steer-vs-queue, unchanged.
   const routeSubmit = useCallback((query: string) => {

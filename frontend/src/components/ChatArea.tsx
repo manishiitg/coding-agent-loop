@@ -2575,6 +2575,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       new Date(optimisticTimestampMs).toISOString()
     )
     chatStore.addTabEvents(tabSessionId, [optimisticUserMessage])
+    chatStore.addTerminalOptimisticEcho(tabSessionId, displayQueryWithContext)
 
     // File context is one-shot: it belongs to the message being submitted, not
     // the whole conversation. The request payload below already captured it.

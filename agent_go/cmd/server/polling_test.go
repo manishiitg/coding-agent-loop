@@ -56,6 +56,34 @@ func TestBuildActiveSessionInfoSummaryKeepsCompletedStatusForBackgroundAgents(t 
 	}
 }
 
+func TestBuildActiveSessionInfoSummaryReportsRetainedTmuxWithoutBusyStatus(t *testing.T) {
+	const sessionID = "session-retained-tmux"
+	store := terminals.NewStore()
+	store.HandleEvent(sessionID, codingAgentTmuxReaperChunkEvent(time.Now(), sessionID, "main:"+sessionID, "mlp-codex-cli-retained"))
+	api := &StreamingAPI{terminalStore: store}
+
+	summary := api.buildActiveSessionInfoSummary(&ActiveSessionInfo{
+		SessionID: sessionID,
+		Status:    "completed",
+		CreatedAt: time.Now(),
+	})
+	if !summary.HasRetainedTmuxSession {
+		t.Fatal("expected active tmux pane to be reported even when session status is completed")
+	}
+
+	if _, ok := store.MarkCompleted(sessionID + ":main:" + sessionID); !ok {
+		t.Fatal("expected terminal to be marked completed")
+	}
+	summary = api.buildActiveSessionInfoSummary(&ActiveSessionInfo{
+		SessionID: sessionID,
+		Status:    "completed",
+		CreatedAt: time.Now(),
+	})
+	if summary.HasRetainedTmuxSession {
+		t.Fatal("completed terminal snapshot should not be reported as retained tmux")
+	}
+}
+
 func TestShouldCompleteIdleForegroundSessionDoesNotCompleteBusySession(t *testing.T) {
 	const sessionID = "session-busy-foreground"
 	api := &StreamingAPI{

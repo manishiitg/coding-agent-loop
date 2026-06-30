@@ -723,10 +723,10 @@ func (api *StreamingAPI) handleResizeTerminal(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if api.isTerminalLiveAttached(snapshot.TmuxSession) {
-		// The live WebSocket owns this tmux session's geometry via control-mode
-		// pty.Setsize. Keep /resize as a preferred-size update only; otherwise the
-		// legacy capture/pipe resize path flips the session to manual sizing and
-		// injects resize repaint fragments into the live stream.
+		// The live WebSocket owns this tmux session's geometry. Keep /resize as a
+		// preferred-size update only; otherwise the legacy capture/pipe resize path
+		// would also reseed the removed pipe recorder while live-attach is already
+		// resizing the same tmux window.
 		_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot)})
 		return
 	}

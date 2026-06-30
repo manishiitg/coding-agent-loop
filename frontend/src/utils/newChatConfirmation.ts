@@ -6,15 +6,15 @@ export type NewChatConfirmationTabState = {
   isStreaming?: boolean
   hasRunningBgAgents?: boolean
   isSyntheticTurn?: boolean
-  canSteer?: boolean
   metadata?: {
     mode?: 'workflow' | 'multi-agent'
     isOrganizationAssistant?: boolean
   }
 }
 
-const INTERRUPTIBLE_SESSION_STATUSES = new Set([
+const RESET_RISK_SESSION_STATUSES = new Set([
   'active',
+  'busy',
   'in_progress',
   'paused',
   'running',
@@ -25,15 +25,38 @@ const INTERRUPTIBLE_SESSION_STATUSES = new Set([
 const normalizeStatus = (status: unknown): string =>
   typeof status === 'string' ? status.trim().toLowerCase() : ''
 
-export function isInterruptibleActiveSession(session?: ActiveSessionInfo | null): boolean {
+export function shouldConfirmForActiveSession(session?: ActiveSessionInfo | null): boolean {
   if (!session) return false
-  if (session.has_running_background_agents || session.needs_user_input) return true
-  return INTERRUPTIBLE_SESSION_STATUSES.has(normalizeStatus(session.status))
+  if (session.has_retained_tmux_session || session.has_running_background_agents || session.needs_user_input) {
+    return true
+  }
+  return RESET_RISK_SESSION_STATUSES.has(normalizeStatus(session.status))
 }
 
-export function isInterruptibleSessionStatus(status?: SessionStatusResponse | null): boolean {
+export function shouldConfirmForSessionStatus(status?: SessionStatusResponse | null): boolean {
   if (!status) return false
-  return status.can_steer === true || INTERRUPTIBLE_SESSION_STATUSES.has(normalizeStatus(status.status))
+  if (status.has_retained_tmux_session) return true
+  return RESET_RISK_SESSION_STATUSES.has(normalizeStatus(status.status))
+}
+
+export function findBlockingMultiAgentSession(
+  sessions?: ActiveSessionInfo[] | null,
+  preferredSessionId?: string | null,
+): ActiveSessionInfo | null {
+  const blockingSessions = (sessions || []).filter(session =>
+    normalizeStatus(session.agent_mode) === 'multi-agent' &&
+    shouldConfirmForActiveSession(session)
+  )
+
+  if (blockingSessions.length === 0) {
+    return null
+  }
+
+  if (preferredSessionId) {
+    return blockingSessions.find(session => session.session_id === preferredSessionId) || blockingSessions[0]
+  }
+
+  return blockingSessions[0]
 }
 
 export function shouldConfirmNewMultiAgentChat(
@@ -42,9 +65,8 @@ export function shouldConfirmNewMultiAgentChat(
 ): boolean {
   if (!tab) return false
   if (tab.metadata?.mode !== 'multi-agent') return false
-  if (tab.metadata?.isOrganizationAssistant === true) return false
 
-  if (tab.isStreaming || tab.hasRunningBgAgents || tab.isSyntheticTurn || tab.canSteer) {
+  if (tab.isStreaming || tab.hasRunningBgAgents || tab.isSyntheticTurn) {
     return true
   }
 
@@ -52,5 +74,5 @@ export function shouldConfirmNewMultiAgentChat(
     return false
   }
 
-  return isInterruptibleActiveSession(activeSession)
+  return shouldConfirmForActiveSession(activeSession)
 }

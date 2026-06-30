@@ -4,12 +4,14 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/creack/pty"
+	"github.com/gorilla/mux"
+	"github.com/gorilla/websocket"
+
+	"mcp-agent-builder-go/agent_go/internal/terminals"
 )
 
 func TestLiveAttachEnabled(t *testing.T) {
@@ -241,57 +243,136 @@ func TestLiveAttachManagerDrainsInitialAttachBeforeSubscriber(t *testing.T) {
 	}
 }
 
-func TestLiveAttachSetSizeSkipsDuplicateResize(t *testing.T) {
-	commandCalls := 0
+func TestHandleTerminalStreamClosesWhenAttachDiesDuringWarmup(t *testing.T) {
+	origAttach := liveAttachAttachFn
+	liveAttachAttachFn = func(st *liveAttachStream, ctx context.Context) {
+		st.markInitialDrainComplete()
+		// Simulate a missing/dead tmux target: the control-mode client exits
+		// before subscribe has added a WebSocket subscriber.
+	}
 	origRun := runTerminalTmuxCommand
 	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
-		commandCalls++
 		return nil
 	}
-	setSizeCalls := 0
-	origSetPtySize := liveAttachSetPtySizeFn
-	liveAttachSetPtySizeFn = func(f *os.File, size *pty.Winsize) error {
-		setSizeCalls++
+	t.Cleanup(func() {
+		liveAttachAttachFn = origAttach
+		runTerminalTmuxCommand = origRun
+	})
+
+	store := terminals.NewStore()
+	sessionID := "session-live-attach-dead-warmup"
+	terminalID := sessionID + ":main:" + sessionID
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "main:"+sessionID, "tmux-dead-warmup", "old pane", 1))
+	api := &StreamingAPI{terminalStore: store, liveAttach: newLiveAttachManager()}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r = mux.SetURLVars(r, map[string]string{"terminal_id": terminalID})
+		api.handleTerminalStream(w, r)
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/stream?cols=80&rows=24"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial stream: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, _, err := conn.ReadMessage(); err == nil {
+		t.Fatal("ReadMessage succeeded; want stream websocket to close when attach dies during warmup")
+	} else if strings.Contains(err.Error(), "i/o timeout") {
+		t.Fatalf("stream stayed open after attach died during warmup: %v", err)
+	}
+}
+
+func TestLiveAttachSetSizeSkipsDuplicateResize(t *testing.T) {
+	var commands []string
+	origRun := runTerminalTmuxCommand
+	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
+		commands = append(commands, strings.Join(args, " "))
+		return nil
+	}
+	outputCalls := 0
+	origRunOutput := runTerminalTmuxOutputCommand
+	runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
+		outputCalls++
+		return "120\t36", nil
+	}
+	t.Cleanup(func() {
+		runTerminalTmuxCommand = origRun
+		runTerminalTmuxOutputCommand = origRunOutput
+	})
+
+	st := &liveAttachStream{tmuxSession: "sessE"}
+	st.setSize(120, 36)
+	st.setSize(120, 36)
+	st.setSize(121, 36)
+	if outputCalls != 1 {
+		t.Fatalf("terminalWindowSize calls = %d, want 1 duplicate-size guard check", outputCalls)
+	}
+	if got, want := len(commands), 4; got != want {
+		t.Fatalf("tmux command calls = %d, want %d: %#v", got, want, commands)
+	}
+	if commands[0] != "set-window-option -t sessE window-size manual" || commands[1] != "resize-window -t sessE -x 120 -y 36" {
+		t.Fatalf("first resize commands = %#v", commands[:2])
+	}
+	if commands[2] != "set-window-option -t sessE window-size manual" || commands[3] != "resize-window -t sessE -x 121 -y 36" {
+		t.Fatalf("second resize commands = %#v", commands[2:])
+	}
+}
+
+func TestLiveAttachSetSizeAppliesBeforePtyExists(t *testing.T) {
+	var commands []string
+	origRun := runTerminalTmuxCommand
+	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
+		commands = append(commands, strings.Join(args, " "))
 		return nil
 	}
 	t.Cleanup(func() {
 		runTerminalTmuxCommand = origRun
-		liveAttachSetPtySizeFn = origSetPtySize
 	})
 
-	ptmx, err := os.CreateTemp(t.TempDir(), "live-attach-pty-*")
-	if err != nil {
-		t.Fatal(err)
+	st := &liveAttachStream{tmuxSession: "sess-no-pty-yet"}
+	st.setSize(118, 36)
+	if got, want := len(commands), 2; got != want {
+		t.Fatalf("tmux command calls before PTY exists = %d, want %d: %#v", got, want, commands)
 	}
-	defer ptmx.Close()
-
-	st := &liveAttachStream{tmuxSession: "sessE", ptmx: ptmx}
-	st.setSize(120, 36)
-	st.setSize(120, 36)
-	st.setSize(121, 36)
-	if setSizeCalls != 2 {
-		t.Fatalf("pty resize calls = %d, want 2", setSizeCalls)
-	}
-	if commandCalls != 2 {
-		t.Fatalf("window-size latest calls = %d, want 2", commandCalls)
+	if commands[0] != "set-window-option -t sess-no-pty-yet window-size manual" ||
+		commands[1] != "resize-window -t sess-no-pty-yet -x 118 -y 36" {
+		t.Fatalf("resize commands before PTY exists = %#v", commands)
 	}
 }
 
-func TestLiveAttachBackfillResetsBeforeSnapshot(t *testing.T) {
+func TestLiveAttachBackfillSeedsScrollbackThenVisibleSnapshot(t *testing.T) {
 	origRun := runTerminalTmuxOutputCommand
+	var commands []string
 	runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
-		return "one\ntwo\n", nil
+		joined := strings.Join(args, " ")
+		commands = append(commands, joined)
+		if strings.Contains(joined, " -S ") {
+			if !strings.Contains(joined, " -E -1") {
+				t.Fatalf("history backfill must exclude the visible screen, got args: %s", joined)
+			}
+			return "old-one\nold-two\n", nil
+		}
+		return "cur-one\ncur-two\n", nil
 	}
 	t.Cleanup(func() { runTerminalTmuxOutputCommand = origRun })
 
 	got := string(liveAttachBackfill(context.Background(), "sessF"))
+	if len(commands) != 2 {
+		t.Fatalf("tmux capture calls = %#v, want history then visible", commands)
+	}
 	if !strings.HasPrefix(got, "\x1bc") {
 		t.Fatalf("backfill prefix = %q, want RIS reset", got[:min(len(got), 8)])
 	}
-	if strings.HasPrefix(got, "\x1b[H\x1b[2J") {
-		t.Fatalf("backfill used visible-screen clear instead of full reset")
+	if strings.Count(got, "\x1bc") != 1 {
+		t.Fatalf("backfill should hard-reset only before scrollback seed: %q", got)
 	}
-	if !strings.Contains(got, "one\r\ntwo\r\n") {
-		t.Fatalf("backfill did not CRLF-normalize capture-pane output: %q", got)
+	historyAt := strings.Index(got, "old-one\r\nold-two\r\n")
+	clearAt := strings.Index(got, "\x1b[H\x1b[2J")
+	visibleAt := strings.Index(got, "cur-one\r\ncur-two\r\n")
+	if historyAt < 0 || clearAt < 0 || visibleAt < 0 || !(historyAt < clearAt && clearAt < visibleAt) {
+		t.Fatalf("backfill should seed history, clear viewport, then paint current screen: %q", got)
 	}
 }

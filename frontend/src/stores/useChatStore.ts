@@ -24,7 +24,9 @@ const STALE_STREAMING_GRACE_MS = 10000
 // When no new chunk arrives for 3s, streaming text is auto-cleared
 const _streamingInactivityTimers: Record<string, ReturnType<typeof setTimeout>> = {}
 const _executionStreamingInactivityTimers: Record<string, ReturnType<typeof setTimeout>> = {}
+const _terminalOptimisticEchoTimers: Record<string, ReturnType<typeof setTimeout>> = {}
 const STREAMING_INACTIVITY_MS = 60000
+const TERMINAL_OPTIMISTIC_ECHO_TTL_MS = 30000
 
 // Per-mode event counts type — kept for backwards compat with persisted state
 export type PerModeEventCounts = { micro: number }
@@ -37,6 +39,12 @@ export type ExecutionStreamingActivity = {
   status?: string
   lastChunkIndex: number
   updatedAt: number
+}
+
+export type TerminalOptimisticEcho = {
+  id: string
+  text: string
+  createdAt: number
 }
 
 export function normalizeEventViewMode(viewMode?: string | null): EventViewMode {
@@ -505,6 +513,7 @@ interface ChatState extends StoreActions {
   streamingStatus: Record<string, string>  // sessionId → latest status/heartbeat message (⏳/⚠️ messages)
   streamingTerminalText: Record<string, string>  // sessionId → latest live terminal/screen snapshot
   streamingTerminalActive: Record<string, boolean>  // sessionId → true while live terminal snapshots are arriving
+  terminalOptimisticEchoes: Record<string, TerminalOptimisticEcho[]>  // sessionId → user prompts accepted by UI before tmux echoes them
   ownedStreamingTerminalText: Record<string, string>  // ownerKey → latest live terminal/screen snapshot for sub-agents/steps
   ownedStreamingTerminalActive: Record<string, boolean>  // ownerKey → true while owner terminal snapshots are arriving
   terminalOutputOpen: Record<string, boolean>  // sessionId → user-controlled terminal panel open state
@@ -621,6 +630,9 @@ interface ChatState extends StoreActions {
   appendStreamingChunk: (sessionId: string, chunkIndex: number, chunk: string) => void
   setStreamingTerminalSnapshot: (sessionId: string, chunkIndex: number, chunk: string) => void
   setStreamingTerminalActive: (sessionId: string, active: boolean) => void
+  addTerminalOptimisticEcho: (sessionId: string, text: string) => string | null
+  clearTerminalOptimisticEcho: (sessionId: string, echoId: string) => void
+  clearTerminalOptimisticEchoes: (sessionId: string) => void
   setOwnedStreamingTerminalSnapshot: (ownerKey: string, chunkIndex: number, chunk: string) => void
   setOwnedStreamingTerminalActive: (ownerKey: string, active: boolean) => void
   clearOwnedStreamingTerminal: (ownerKey: string) => void
@@ -745,6 +757,7 @@ export const useChatStore = create<ChatState>()(
       streamingStatus: {},
       streamingTerminalText: {},
       streamingTerminalActive: {},
+      terminalOptimisticEchoes: {},
       ownedStreamingTerminalText: {},
       ownedStreamingTerminalActive: {},
       terminalOutputOpen: {},
@@ -1435,6 +1448,65 @@ export const useChatStore = create<ChatState>()(
         })
       },
 
+      addTerminalOptimisticEcho: (sessionId: string, text: string) => {
+        const trimmedText = text.trim()
+        if (!sessionId || !trimmedText) return null
+        const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        set((state) => {
+          const existing = state.terminalOptimisticEchoes[sessionId] || []
+          return {
+            terminalOptimisticEchoes: {
+              ...state.terminalOptimisticEchoes,
+              [sessionId]: [
+                ...existing.slice(-2),
+                { id, text: trimmedText, createdAt: Date.now() },
+              ],
+            },
+          }
+        })
+        _terminalOptimisticEchoTimers[id] = setTimeout(() => {
+          get().clearTerminalOptimisticEcho(sessionId, id)
+        }, TERMINAL_OPTIMISTIC_ECHO_TTL_MS)
+        return id
+      },
+
+      clearTerminalOptimisticEcho: (sessionId: string, echoId: string) => {
+        if (!sessionId || !echoId) return
+        if (_terminalOptimisticEchoTimers[echoId]) {
+          clearTimeout(_terminalOptimisticEchoTimers[echoId])
+          delete _terminalOptimisticEchoTimers[echoId]
+        }
+        set((state) => {
+          const existing = state.terminalOptimisticEchoes[sessionId]
+          if (!existing?.some(echo => echo.id === echoId)) return state
+          const nextForSession = existing.filter(echo => echo.id !== echoId)
+          const next = { ...state.terminalOptimisticEchoes }
+          if (nextForSession.length > 0) {
+            next[sessionId] = nextForSession
+          } else {
+            delete next[sessionId]
+          }
+          return { terminalOptimisticEchoes: next }
+        })
+      },
+
+      clearTerminalOptimisticEchoes: (sessionId: string) => {
+        if (!sessionId) return
+        set((state) => {
+          const existing = state.terminalOptimisticEchoes[sessionId]
+          if (!existing?.length) return state
+          for (const echo of existing) {
+            if (_terminalOptimisticEchoTimers[echo.id]) {
+              clearTimeout(_terminalOptimisticEchoTimers[echo.id])
+              delete _terminalOptimisticEchoTimers[echo.id]
+            }
+          }
+          const next = { ...state.terminalOptimisticEchoes }
+          delete next[sessionId]
+          return { terminalOptimisticEchoes: next }
+        })
+      },
+
       setOwnedStreamingTerminalSnapshot: (ownerKey: string, chunkIndex: number, chunk: string) => {
         if (typeof chunk !== 'string' || !chunk) return
 
@@ -1761,6 +1833,7 @@ export const useChatStore = create<ChatState>()(
           const newStreamingStatus = { ...s.streamingStatus }
           const newStreamingTerminalText = { ...s.streamingTerminalText }
           const newStreamingTerminalActive = { ...s.streamingTerminalActive }
+          const newTerminalOptimisticEchoes = { ...s.terminalOptimisticEchoes }
           const newOwnedStreamingTerminalText = { ...s.ownedStreamingTerminalText }
           const newOwnedStreamingTerminalActive = { ...s.ownedStreamingTerminalActive }
           const newTerminalOutputOpen = { ...s.terminalOutputOpen }
@@ -1779,6 +1852,13 @@ export const useChatStore = create<ChatState>()(
             delete newStreamingStatus[oldSessionId]
             delete newStreamingTerminalText[oldSessionId]
             delete newStreamingTerminalActive[oldSessionId]
+            for (const echo of newTerminalOptimisticEchoes[oldSessionId] || []) {
+              if (_terminalOptimisticEchoTimers[echo.id]) {
+                clearTimeout(_terminalOptimisticEchoTimers[echo.id])
+                delete _terminalOptimisticEchoTimers[echo.id]
+              }
+            }
+            delete newTerminalOptimisticEchoes[oldSessionId]
             delete newTerminalOutputOpen[oldSessionId]
             delete newLastStreamingChunkIndex[oldSessionId]
             delete newLastStreamingTerminalChunkIndex[oldSessionId]
@@ -1822,6 +1902,7 @@ export const useChatStore = create<ChatState>()(
             streamingStatus: newStreamingStatus,
             streamingTerminalText: newStreamingTerminalText,
             streamingTerminalActive: newStreamingTerminalActive,
+            terminalOptimisticEchoes: newTerminalOptimisticEchoes,
             ownedStreamingTerminalText: newOwnedStreamingTerminalText,
             ownedStreamingTerminalActive: newOwnedStreamingTerminalActive,
             terminalOutputOpen: newTerminalOutputOpen,
@@ -1844,6 +1925,10 @@ export const useChatStore = create<ChatState>()(
         Object.values(_executionStreamingInactivityTimers).forEach((timer) => clearTimeout(timer))
         Object.keys(_executionStreamingInactivityTimers).forEach((key) => {
           delete _executionStreamingInactivityTimers[key]
+        })
+        Object.values(_terminalOptimisticEchoTimers).forEach((timer) => clearTimeout(timer))
+        Object.keys(_terminalOptimisticEchoTimers).forEach((key) => {
+          delete _terminalOptimisticEchoTimers[key]
         })
 
         // Close all tabs and stop sessions
@@ -1883,6 +1968,7 @@ export const useChatStore = create<ChatState>()(
           streamingStatus: {},
           streamingTerminalText: {},
           streamingTerminalActive: {},
+          terminalOptimisticEchoes: {},
           ownedStreamingTerminalText: {},
           ownedStreamingTerminalActive: {},
           terminalOutputOpen: {},
@@ -2190,6 +2276,16 @@ export const useChatStore = create<ChatState>()(
           delete newStreamingTerminalActive[tab.sessionId]
           updates.streamingTerminalActive = newStreamingTerminalActive
 
+          const newTerminalOptimisticEchoes = { ...state.terminalOptimisticEchoes }
+          for (const echo of newTerminalOptimisticEchoes[tab.sessionId] || []) {
+            if (_terminalOptimisticEchoTimers[echo.id]) {
+              clearTimeout(_terminalOptimisticEchoTimers[echo.id])
+              delete _terminalOptimisticEchoTimers[echo.id]
+            }
+          }
+          delete newTerminalOptimisticEchoes[tab.sessionId]
+          updates.terminalOptimisticEchoes = newTerminalOptimisticEchoes
+
           const ownedPrefix = `${tab.sessionId}:`
           const newOwnedStreamingTerminalText = { ...state.ownedStreamingTerminalText }
           const newOwnedStreamingTerminalActive = { ...state.ownedStreamingTerminalActive }
@@ -2415,6 +2511,28 @@ export const useChatStore = create<ChatState>()(
             const newTabHasMore = { ...(updates.tabHasMoreOlderEvents || state.tabHasMoreOlderEvents) }
             delete newTabHasMore[oldSessionId]
             updates.tabHasMoreOlderEvents = newTabHasMore
+          }
+
+          if (oldSessionId && state.terminalOptimisticEchoes[oldSessionId]) {
+            const newTerminalOptimisticEchoes = { ...state.terminalOptimisticEchoes }
+            const oldEchoes = newTerminalOptimisticEchoes[oldSessionId] || []
+            if (oldEchoes.length > 0) {
+              newTerminalOptimisticEchoes[newSessionId] = [
+                ...(newTerminalOptimisticEchoes[newSessionId] || []),
+                ...oldEchoes,
+              ]
+              for (const echo of oldEchoes) {
+                if (_terminalOptimisticEchoTimers[echo.id]) {
+                  clearTimeout(_terminalOptimisticEchoTimers[echo.id])
+                }
+                const remainingMs = Math.max(1000, TERMINAL_OPTIMISTIC_ECHO_TTL_MS - (Date.now() - echo.createdAt))
+                _terminalOptimisticEchoTimers[echo.id] = setTimeout(() => {
+                  get().clearTerminalOptimisticEcho(newSessionId, echo.id)
+                }, remainingMs)
+              }
+            }
+            delete newTerminalOptimisticEchoes[oldSessionId]
+            updates.terminalOptimisticEchoes = newTerminalOptimisticEchoes
           }
 
           return updates

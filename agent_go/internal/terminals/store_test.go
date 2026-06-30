@@ -2362,6 +2362,35 @@ func TestSessionHasBusyCodingTmuxIgnoresCompletedTerminal(t *testing.T) {
 	}
 }
 
+func TestSessionHasRetainedCodingTmuxDoesNotRequireBusyContent(t *testing.T) {
+	store := NewStore()
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"main:session-1",
+		"π • codex-cli • ready\n> ",
+		0,
+		map[string]interface{}{
+			"tmux_session":   "mlp-codex-cli-idle",
+			"execution_kind": "main_agent",
+		},
+		time.Now(),
+	))
+
+	if store.SessionHasBusyCodingTmux("session-1") {
+		t.Fatal("idle retained tmux should not be reported busy")
+	}
+	if !store.SessionHasRetainedCodingTmux("session-1") {
+		t.Fatal("idle live tmux should still be reported retained")
+	}
+
+	terminalID := "session-1:main:session-1"
+	if _, ok := store.MarkCompleted(terminalID); !ok {
+		t.Fatalf("expected to mark terminal %q completed", terminalID)
+	}
+	if store.SessionHasRetainedCodingTmux("session-1") {
+		t.Fatal("completed terminal should not be reported as retained/live")
+	}
+}
+
 func TestDeriveStatusLabelsCursor(t *testing.T) {
 	status := DeriveStatus(cursorBusyPaneFixture, map[string]interface{}{"provider": "cursor-cli"})
 	if status.ProviderLabel != "Cursor CLI" {

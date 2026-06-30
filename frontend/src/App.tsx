@@ -25,7 +25,7 @@ import { isValidJSON } from "./utils/event-helpers";
 import { prepareDomForPdfExport } from "./utils/pdfExport";
 import { convertToSlackMarkdown } from "./utils/slackMarkdown";
 import { isDiffFilePath, looksLikeDiffContent } from "./utils/diff";
-import { isInterruptibleSessionStatus, shouldConfirmNewMultiAgentChat } from "./utils/newChatConfirmation";
+import { findBlockingMultiAgentSession, shouldConfirmForSessionStatus, shouldConfirmNewMultiAgentChat } from "./utils/newChatConfirmation";
 import { Edit, Save, X, Loader2, Download, Link, Github, PanelRightClose, PanelRightOpen, Smartphone, Laptop } from "lucide-react";
 import { WorkflowLayout } from "./components/workflow";
 import { WorkflowsOverviewPage } from "./components/WorkflowsOverviewPage";
@@ -1328,33 +1328,46 @@ function App() {
           return
         }
 
+        let activeSessionsChecked = false
+        let activeSessionFound = false
+        try {
+          const response = await agentApi.getActiveSessions()
+          const activeSession = activeTab?.sessionId
+            ? response.active_sessions?.find(session => session.session_id === activeTab.sessionId)
+            : undefined
+          activeSessionsChecked = true
+          activeSessionFound = !!activeSession
+          if (shouldConfirmNewMultiAgentChat(activeTab, activeSession)) {
+            setShowNewChatConfirm(true)
+            return
+          }
+          const blockingMultiAgentSession = findBlockingMultiAgentSession(response.active_sessions, activeTab?.sessionId)
+          if (blockingMultiAgentSession) {
+            setShowNewChatConfirm(true)
+            return
+          }
+        } catch (activeSessionsError) {
+          console.warn('[NewChat] Failed to check active sessions before resetting chat:', activeSessionsError)
+        }
+
         if (!activeTab?.sessionId) {
           startFreshChat()
           return
         }
 
         try {
-          const response = await agentApi.getActiveSessions()
-          const activeSession = response.active_sessions?.find(session => session.session_id === activeTab.sessionId)
-          if (shouldConfirmNewMultiAgentChat(activeTab, activeSession)) {
-            setShowNewChatConfirm(true)
-            return
-          }
-          startFreshChat()
-          return
-        } catch (activeSessionsError) {
-          console.warn('[NewChat] Failed to check active sessions before resetting chat:', activeSessionsError)
-        }
-
-        try {
           const status = await agentApi.getSessionStatus(activeTab.sessionId)
-          if (isInterruptibleSessionStatus(status)) {
+          if (shouldConfirmForSessionStatus(status)) {
             setShowNewChatConfirm(true)
             return
           }
           startFreshChat()
         } catch (statusError) {
           console.warn('[NewChat] Failed to check session status before resetting chat:', statusError)
+          if (activeSessionsChecked && !activeSessionFound) {
+            startFreshChat()
+            return
+          }
           setShowNewChatConfirm(true)
         }
       } finally {

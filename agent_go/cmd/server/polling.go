@@ -36,19 +36,19 @@ func (api *StreamingAPI) canSteerSession(sessionID string) bool {
 		return false
 	}
 
-	// A retained agent object is not enough to accept live input. Main-agent
-	// coding CLI sessions can keep an idle tmux pane alive long after the
-	// foreground Go turn has finished; treating that as steerable causes fresh
-	// chat input to be delivered as stale live input instead of starting the next
-	// turn. The active cancel handle is the server-owned foreground-turn proof.
+	// A retained agent object is not enough for foreground steer/control semantics.
+	// Main-agent coding CLI sessions can keep an idle tmux pane alive long after
+	// the foreground Go turn has finished; treating that as steerable keeps status
+	// and stop/escape behavior tied to a turn that no longer exists. The active
+	// cancel handle is the server-owned foreground-turn proof.
 	if api.hasActiveTurnCancel(sessionID) {
 		return true
 	}
 	// A resumed/launch-only coding agent has no server-managed foreground turn,
 	// but its tmux pane can still be actively working. Allow steering when the
 	// pane currently looks busy — the busy-content heuristic stands in for the
-	// missing turn-cancel proof, so live input goes to a working agent rather
-	// than queuing behind a turn that will never complete.
+	// missing turn-cancel proof, so foreground control goes to a working agent
+	// rather than treating the turn as complete.
 	return api.terminalStore != nil && api.terminalStore.SessionHasBusyCodingTmux(sessionID)
 }
 
@@ -321,6 +321,7 @@ func (api *StreamingAPI) buildActiveSessionInfoSummary(session *ActiveSessionInf
 	}
 
 	enriched := *session
+	enriched.HasRetainedTmuxSession = api.sessionHasRetainedCodingTmux(session.SessionID)
 
 	if api.bgAgentRegistry != nil {
 		var newestRunning time.Time
@@ -527,6 +528,7 @@ func (api *StreamingAPI) handleGetSessionStatus(w http.ResponseWriter, r *http.R
 	status := activeSession.Status
 	hasRunningBackgroundAgents := api.bgAgentRegistry != nil && api.bgAgentRegistry.HasRunningAgents(sessionID)
 	canSteer := api.canSteerSession(sessionID)
+	hasRetainedTmuxSession := api.sessionHasRetainedCodingTmux(sessionID)
 	if api.shouldCompleteIdleForegroundSession(sessionID, status, hasRunningBackgroundAgents) {
 		api.setSessionBusy(sessionID, false)
 		api.updateSessionStatus(sessionID, "completed")
@@ -534,13 +536,14 @@ func (api *StreamingAPI) handleGetSessionStatus(w http.ResponseWriter, r *http.R
 		canSteer = false
 	}
 	response := map[string]interface{}{
-		"session_id":    activeSession.SessionID,
-		"status":        status,
-		"agent_mode":    activeSession.AgentMode,
-		"created_at":    activeSession.CreatedAt,
-		"last_activity": activeSession.LastActivity,
-		"query":         activeSession.Query,
-		"can_steer":     canSteer,
+		"session_id":                activeSession.SessionID,
+		"status":                    status,
+		"agent_mode":                activeSession.AgentMode,
+		"created_at":                activeSession.CreatedAt,
+		"last_activity":             activeSession.LastActivity,
+		"query":                     activeSession.Query,
+		"can_steer":                 canSteer,
+		"has_retained_tmux_session": hasRetainedTmuxSession,
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {

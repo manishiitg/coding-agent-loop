@@ -577,6 +577,7 @@ export interface ActiveSessionInfo {
   triggered_by?: string
   has_running_background_agents?: boolean
   running_background_agent_count?: number
+  has_retained_tmux_session?: boolean
   current_execution_name?: string
   needs_user_input?: boolean
   waiting_event_type?: string
@@ -607,6 +608,7 @@ export interface SessionStatusResponse {
   completed_at?: string
   query?: string
   can_steer?: boolean
+  has_retained_tmux_session?: boolean
 }
 
 export interface SessionExecutionTreeNode {

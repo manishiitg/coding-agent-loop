@@ -264,7 +264,7 @@ func TestHandleLiveInputMessageRoutesThroughAgentDelivery(t *testing.T) {
 	}
 }
 
-func TestHandleSteerMessageRejectsStaleStoredAgentWithoutActiveTurn(t *testing.T) {
+func TestHandleSteerMessageDeliversToRetainedCodingAgentWithoutActiveTurn(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	defer store.Stop()
 
@@ -286,14 +286,14 @@ func TestHandleSteerMessageRejectsStaleStoredAgentWithoutActiveTurn(t *testing.T
 	rr := httptest.NewRecorder()
 
 	api.handleSteerMessage(rr, req)
-	if rr.Code != http.StatusConflict {
-		t.Fatalf("status = %d body=%s, want 409 stale-turn conflict", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200 retained CLI delivery", rr.Code, rr.Body.String())
 	}
 	if api.isSessionBusy(sessionID) {
-		t.Fatal("stale steer rejection should clear session busy so frontend can start the next turn")
+		t.Fatal("retained CLI delivery without a foreground turn should clear stale server busy state")
 	}
-	if got := len(store.GetAllEventsRaw(sessionID)); got != 0 {
-		t.Fatalf("stale steer rejection recorded %d events, want none", got)
+	if got := len(store.GetAllEventsRaw(sessionID)); got != 1 {
+		t.Fatalf("retained CLI delivery recorded %d events, want 1", got)
 	}
 }
 
@@ -360,30 +360,52 @@ func TestTryDeliverQueryAsLiveInputBusyCodingAgent(t *testing.T) {
 	}
 }
 
-// Single-entry routing: an IDLE coding-agent session must fall through (return
-// false) so handleQuery starts a new turn + materializes the terminal.
-func TestTryDeliverQueryAsLiveInputIdleFallsThrough(t *testing.T) {
+// Single-entry routing: a retained coding-agent CLI should accept the next
+// message even when the server has no foreground-turn/busy proof. The CLI owns
+// how to handle the input in its tmux session.
+func TestTryDeliverQueryAsLiveInputRetainedCodingAgentDoesNotRequireBusyTurn(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	defer store.Stop()
 
-	sessionID := "idle-coding-session"
+	sessionID := "retained-coding-session"
 	runningAgent := &mcpagent.Agent{ModelID: "claude-sonnet-4-6"}
 	runningAgent.SetProvider(llm.ProviderClaudeCode)
 	api := &StreamingAPI{
 		eventStore:       store,
 		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
 		runningAgentsMux: sync.RWMutex{},
-		agentCancelFuncs: map[string]context.CancelFunc{}, // no active turn, no busy pane → idle
+		agentCancelFuncs: map[string]context.CancelFunc{}, // no active turn
 		agentCancelMux:   sync.RWMutex{},
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/query", nil)
 	rr := httptest.NewRecorder()
-	if api.tryDeliverQueryAsLiveInput(rr, req, sessionID, "first message", "query_test_idle") {
-		t.Fatal("tryDeliverQueryAsLiveInput = true for an idle session; want false so handleQuery starts a new turn + materializes")
+	if !api.tryDeliverQueryAsLiveInput(rr, req, sessionID, "next message", "query_test_retained") {
+		t.Fatalf("tryDeliverQueryAsLiveInput = false for a retained coding-agent CLI; want live delivery. body=%s", rr.Body.String())
+	}
+	if got := len(store.GetAllEventsRaw(sessionID)); got != 1 {
+		t.Fatalf("retained CLI delivery recorded %d events, want 1", got)
+	}
+}
+
+func TestTryDeliverQueryAsLiveInputNoRetainedAgentFallsThrough(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	defer store.Stop()
+
+	sessionID := "missing-coding-session"
+	api := &StreamingAPI{
+		eventStore:       store,
+		runningAgents:    map[string]*mcpagent.Agent{},
+		runningAgentsMux: sync.RWMutex{},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/query", nil)
+	rr := httptest.NewRecorder()
+	if api.tryDeliverQueryAsLiveInput(rr, req, sessionID, "first message", "query_test_missing") {
+		t.Fatal("tryDeliverQueryAsLiveInput = true without a retained agent; want normal /api/query path")
 	}
 	if got := len(store.GetAllEventsRaw(sessionID)); got != 0 {
-		t.Fatalf("idle fall-through recorded %d events, want 0", got)
+		t.Fatalf("missing-agent fall-through recorded %d events, want 0", got)
 	}
 }
 

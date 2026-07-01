@@ -21,9 +21,17 @@ The high-level loop is documented in [Workflow self-improvement & reporting](doc
 
 ## Product Screenshots
 
-These are real Runloop app screens, sanitized for public sharing.
+**Workflow automation: plan, run, report, and supervise**
 
-![Runloop product walkthrough](docs/assets/github/runloop-product-demo.gif)
+![Runloop workflow automation walkthrough](docs/assets/github/workflow-automation-demo.gif)
+
+**Operating loop: Pulse, Auto Improve, Chief of Staff, and org goals**
+
+![Runloop operating loop walkthrough](docs/assets/github/operating-loop-demo.gif)
+
+**Multi-CLI coding agents: Claude Code, Codex CLI, Cursor CLI, and Pi.dev**
+
+![Runloop multi-CLI coding agent management](docs/assets/github/multi-cli-management-demo.gif)
 
 **Workflow automation workspace**
 

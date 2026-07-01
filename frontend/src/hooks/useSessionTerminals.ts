@@ -1,6 +1,8 @@
-import { useQuery } from '@tanstack/react-query'
+import { useEffect, useMemo } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { agentApi } from '../services/api'
 import type { ListTerminalsResponse } from '../services/api-types'
+import { TERMINAL_REFRESH_REQUEST_EVENT } from '../utils/terminalRefresh'
 
 /**
  * Terminal-presence probe for a session. Used by ChatArea's chat-surface
@@ -10,8 +12,25 @@ import type { ListTerminalsResponse } from '../services/api-types'
  * 'none' — we only need presence, not scrollback.
  */
 export function useSessionTerminals(sessionId?: string | null, enabled: boolean = true) {
+  const queryClient = useQueryClient()
+  const queryKey = useMemo(() => ['session-terminals-presence', sessionId] as const, [sessionId])
+
+  useEffect(() => {
+    if (!enabled || !sessionId || typeof window === 'undefined') return
+    const handleRefreshRequest = () => {
+      void queryClient.invalidateQueries({
+        queryKey,
+        refetchType: 'active',
+      })
+    }
+    window.addEventListener(TERMINAL_REFRESH_REQUEST_EVENT, handleRefreshRequest)
+    return () => {
+      window.removeEventListener(TERMINAL_REFRESH_REQUEST_EVENT, handleRefreshRequest)
+    }
+  }, [enabled, queryClient, queryKey, sessionId])
+
   return useQuery<ListTerminalsResponse>({
-    queryKey: ['session-terminals-presence', sessionId],
+    queryKey,
     queryFn: () => agentApi.listTerminals(sessionId!, 'none'),
     enabled: enabled && !!sessionId,
     refetchInterval: (query) => {

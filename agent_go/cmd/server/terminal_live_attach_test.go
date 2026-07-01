@@ -293,6 +293,80 @@ func TestHandleTerminalStreamClosesWhenAttachDiesDuringWarmup(t *testing.T) {
 	}
 }
 
+func TestHandleTerminalStreamPersistsAnsiTranscript(t *testing.T) {
+	withFakeAttach(t)
+	origBackfill := liveAttachBackfillFn
+	liveAttachBackfillFn = func(ctx context.Context, tmuxSession string) []byte {
+		return []byte("\x1bc\x1b[34mseed\x1b[0m")
+	}
+	t.Cleanup(func() { liveAttachBackfillFn = origBackfill })
+
+	store := terminals.NewStore()
+	sessionID := "session-live-attach-ansi"
+	terminalID := sessionID + ":main:" + sessionID
+	tmuxSession := "tmux-live-attach-ansi"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "main:"+sessionID, tmuxSession, "plain event pane", 1))
+	api := &StreamingAPI{terminalStore: store, liveAttach: newLiveAttachManager()}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r = mux.SetURLVars(r, map[string]string{"terminal_id": terminalID})
+		api.handleTerminalStream(w, r)
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/stream?cols=80&rows=24"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial stream: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+
+	_, backfill, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read backfill: %v", err)
+	}
+	if !strings.Contains(string(backfill), "\x1b[34mseed") {
+		t.Fatalf("backfill lost ANSI seed: %q", string(backfill))
+	}
+	stored, ok := store.Get(terminalID)
+	if !ok {
+		t.Fatalf("terminal %q not found", terminalID)
+	}
+	if stored.ContentSource != "tmux_capture" || !strings.Contains(stored.Content, "\x1b[34mseed") {
+		t.Fatalf("stored initial transcript = source %q content %q", stored.ContentSource, stored.Content)
+	}
+
+	api.liveAttach.mu.Lock()
+	stream := api.liveAttach.sessions[tmuxSession]
+	api.liveAttach.mu.Unlock()
+	if stream == nil {
+		t.Fatal("live attach stream was not registered")
+	}
+	stream.broadcast([]byte("\x1b[31mlive\x1b[0m"))
+
+	_, live, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read live bytes: %v", err)
+	}
+	if !strings.Contains(string(live), "\x1b[31mlive") {
+		t.Fatalf("live message lost ANSI bytes: %q", string(live))
+	}
+
+	_ = conn.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		stored, ok = store.Get(terminalID)
+		if ok && stored.ContentSource == "tmux_capture" && strings.Contains(stored.Content, "\x1b[31mlive") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("stored final transcript missing ANSI live bytes: ok=%t source=%q content=%q", ok, stored.ContentSource, stored.Content)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestLiveAttachSetSizeSkipsDuplicateResize(t *testing.T) {
 	var commands []string
 	origRun := runTerminalTmuxCommand

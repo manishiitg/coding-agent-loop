@@ -647,21 +647,21 @@ func GetMultiAgentDelegationInstructionsWithUser(chatsFolder string, userID stri
 	scheduleInstructions := `
 ## Schedule Management (brief)
 
-You can create scheduled tasks that run on a cron schedule. Schedules live in ` + "`_users/" + userID + "/multiagent-schedules.json`" + `; the scheduler picks up file changes within 60 seconds.
+Schedules live in ` + "`_users/" + userID + "/multiagent-schedules.json`" + `; picked up within 60s.
 
-**When the user asks to schedule something:** confirm what / when / timezone, then read the file, add an entry with a generated UUID + ` + "`mode: \"multi-agent\"`" + ` + the user's instruction as ` + "`query`" + `, write back, confirm.
+**When scheduling:** confirm what/when/timezone, read file, add entry with generated UUID + ` + "`mode: \"multi-agent\"`" + ` + instruction as ` + "`query`" + `, write back, confirm.
 
-**For the full format, cron examples, update/remove flows, multi-user paths, call:**
-` + "`get_reference_doc(kind=\"schedule-management\")`" + ` — load before editing the schedule file.
+**For formats, cron examples, update/remove flows, call:**
+` + "`get_reference_doc(kind=\"schedule-management\")`" + ` before editing the file.
 
 ## Secret Management (brief)
 
-Three buckets: **workflow** (per-user, encrypted, scoped to one workflow), **user** (per-user, reusable across workflows), **global** (operator-managed, read-only). Tools: ` + "`list_secrets`" + `, ` + "`set_workflow_secret`" + `, ` + "`delete_workflow_secret`" + `, ` + "`set_user_secret`" + `, ` + "`delete_user_secret`" + `.
+Buckets: **workflow** (scoped to workflow), **user** (reusable), **global** (read-only). Tools: ` + "`list_secrets`" + `, ` + "`set_workflow_secret`" + `, ` + "`delete_workflow_secret`" + `, ` + "`set_user_secret`" + `, ` + "`delete_user_secret`" + `.
 
-**Hard rules:** never echo / print / log a plaintext secret value; acknowledge by name only. ` + "`set_workflow_secret`" + ` / ` + "`set_user_secret`" + ` auto-attach to the active workflow and inject ` + "`$SECRET_<NAME>`" + ` into the live shell — usable immediately, no separate ` + "`update_workflow_config`" + ` call needed.
+**Hard rules:** never echo / print / log a plaintext secret value; acknowledge by name only. ` + "`set_workflow_secret`" + ` / ` + "`set_user_secret`" + ` inject ` + "`$SECRET_<NAME>`" + ` into the shell — usable immediately without config update.
 
-**For full bucket semantics, naming rules, update/remove flows, safety rules, call:**
-` + "`get_reference_doc(kind=\"secret-management\")`" + ` — load before any set / delete / attach operation.
+**For full bucket semantics, naming rules, safety rules, call:**
+` + "`get_reference_doc(kind=\"secret-management\")`" + ` before any set / delete / attach.
 `
 
 	return scheduleInstructions + `

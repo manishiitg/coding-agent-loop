@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { X, Brain, Zap, Gauge, Server, Shield, FolderOpen, Sparkles, Tag, Plus, Trash2, Crown, RefreshCw, SlidersHorizontal } from 'lucide-react'
 import { Button } from './ui/Button'
 import { useLLMStore } from '../stores'
@@ -6,6 +6,7 @@ import type { DelegationTierConfig, TierModel, CustomTierModel } from '../servic
 import type { LLMOption } from '../types/llm'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
 import ModalPortal from './ui/ModalPortal'
+import { getWorkflowLLMOptions, getWorkflowLLMTierDefaults } from '../utils/workflowLLMTierDefaults'
 
 // Generate a slug from the first 4 words of a description, guarding against reserved names
 const descToSlug = (desc: string): string => {
@@ -66,21 +67,36 @@ const hasAdvancedTierConfig = (config: DelegationTierConfig | null): boolean => 
 }
 
 export default function DelegationTierConfigModal({ isOpen, onClose }: DelegationTierConfigModalProps) {
-  const { availableLLMs, delegationTierConfig, setDelegationTierConfig, loadDelegationTierDefaults } = useLLMStore()
+  const {
+    availableLLMs,
+    delegationTierConfig,
+    setDelegationTierConfig,
+    loadDelegationTierDefaults,
+    providerManifest,
+    providerManifestLoaded,
+    loadProviderManifest,
+  } = useLLMStore()
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const initializedAdvancedForOpen = useRef(false)
+  const delegationLLMOptions = useMemo(
+    () => getWorkflowLLMOptions(availableLLMs, providerManifest),
+    [availableLLMs, providerManifest]
+  )
 
   useEffect(() => {
     if (!isOpen) {
       initializedAdvancedForOpen.current = false
       return
     }
+    if (!providerManifestLoaded) {
+      loadProviderManifest()
+    }
     if (!initializedAdvancedForOpen.current) {
       initializedAdvancedForOpen.current = true
       setShowAdvanced(hasAdvancedTierConfig(delegationTierConfig))
     }
-  }, [isOpen, delegationTierConfig])
+  }, [isOpen, delegationTierConfig, loadProviderManifest, providerManifestLoaded])
 
   if (!isOpen) return null
 
@@ -92,22 +108,44 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
   }
 
   const sharedTierModel = delegationTierConfig?.main || delegationTierConfig?.high || delegationTierConfig?.medium || delegationTierConfig?.low
-  const sharedSelectedLLM: LLMOption | null = sharedTierModel
-    ? {
-        provider: sharedTierModel.provider,
-        model: sharedTierModel.model_id,
-        label: `${sharedTierModel.provider} - ${sharedTierModel.model_id}`,
-        description: 'model for all agents',
-      }
-    : null
+  const findOptionForTier = (tier?: TierModel, fallbackDescription = 'delegation tier model'): LLMOption | null => {
+    if (!tier?.provider || !tier?.model_id) return null
+    const matched = delegationLLMOptions.find(
+      llm => llm.provider === tier.provider && llm.model === tier.model_id
+    )
+    if (matched) return matched
+    return {
+      provider: tier.provider,
+      model: tier.model_id,
+      label: `${tier.provider} - ${tier.model_id}`,
+      description: fallbackDescription,
+    }
+  }
+
+  const toTierModel = (config: { provider: string; model_id: string }, fallbacks?: TierModel['fallbacks']): TierModel => ({
+    provider: config.provider,
+    model_id: config.model_id,
+    ...(fallbacks && fallbacks.length > 0 ? { fallbacks } : {}),
+  })
+
+  const tierModelForOption = (llm: LLMOption, key: BuiltInTierKey, fallbacks?: TierModel['fallbacks']): TierModel => {
+    const defaults = getWorkflowLLMTierDefaults(llm, providerManifest)
+    const config =
+      key === 'main' ? defaults.base :
+        key === 'high' ? defaults.tier1 :
+          key === 'medium' ? defaults.tier2 :
+            defaults.tier3
+    return toTierModel(config, fallbacks)
+  }
+
+  const sharedSelectedLLM = findOptionForTier(sharedTierModel, 'model for all agents')
 
   const handleSharedLLMSelect = (llm: LLMOption) => {
-    const tier: TierModel = { provider: llm.provider, model_id: llm.model }
     updateConfig({
-      main: tier,
-      high: tier,
-      medium: tier,
-      low: tier,
+      main: tierModelForOption(llm, 'main'),
+      high: tierModelForOption(llm, 'high'),
+      medium: tierModelForOption(llm, 'medium'),
+      low: tierModelForOption(llm, 'low'),
     })
   }
 
@@ -136,7 +174,7 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
   const getAvailableFallbackOptions = (tierModel?: TierModel): LLMOption[] => {
     if (!tierModel) return []
     const existing = new Set((tierModel.fallbacks || []).map(f => `${f.provider}/${f.model_id}`))
-    return availableLLMs.filter(llm => {
+    return delegationLLMOptions.filter(llm => {
       if (llm.provider === tierModel.provider && llm.model === tierModel.model_id) return false
       return !existing.has(`${llm.provider}/${llm.model}`)
     })
@@ -207,7 +245,8 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
   const handleCustomTierLLMSelect = (slug: string, llm: LLMOption) => {
     const tier = customTiers[slug]
     if (!tier) return
-    const updatedTier: CustomTierModel = { ...tier, provider: llm.provider, model_id: llm.model }
+    const selected = tierModelForOption(llm, 'main')
+    const updatedTier: CustomTierModel = { ...tier, provider: selected.provider, model_id: selected.model_id }
     const newConfig: DelegationTierConfig = {
       ...delegationTierConfig,
       custom: { ...customTiers, [slug]: updatedTier },
@@ -251,12 +290,13 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
           {/* Left: How it works + features */}
           <div className="w-full md:w-2/5 p-5 space-y-4 shrink-0">
             <div className="bg-slate-50 dark:bg-slate-700/50 rounded-lg p-4">
-              <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">How it works</h3>
+              <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">How model routing works</h3>
               <div className="text-sm text-gray-600 dark:text-gray-300 space-y-1">
-                <p><span className="font-medium">1. Describe a task</span> — clarifying questions if needed</p>
-                <p><span className="font-medium">2. Plan is created</span> — broken into phased steps</p>
-                <p><span className="font-medium">3. You approve</span> — review and approve or give feedback</p>
-                <p><span className="font-medium">4. Parallel execution</span> — background agents work simultaneously</p>
+                <p><span className="font-medium">Main</span> — runs the Chief of Staff chat and coordinates work</p>
+                <p><span className="font-medium">High</span> — handles hard reasoning, architecture, and reviews</p>
+                <p><span className="font-medium">Medium</span> — handles normal workflow, reporting, and implementation work</p>
+                <p><span className="font-medium">Low</span> — handles cheap checks, formatting, and simple validation</p>
+                <p><span className="font-medium">Fallbacks</span> — used when a selected model fails; empty tiers inherit the parent/default model</p>
               </div>
             </div>
 
@@ -287,7 +327,7 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
                   </p>
                   <div className="border border-gray-200 dark:border-slate-600 rounded-lg p-4">
                     <LLMSelectionDropdown
-                      availableLLMs={availableLLMs}
+                      availableLLMs={delegationLLMOptions}
                       selectedLLM={sharedSelectedLLM}
                       onLLMSelect={handleSharedLLMSelect}
                       inModal={true}
@@ -296,7 +336,7 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
                     />
                     {sharedTierModel && (
                       <p className="text-xs text-gray-500 dark:text-gray-400 mt-3">
-                        Internally this applies the same model everywhere.
+                        Coding-agent selections fill Main, High, Medium, and Low from that provider's defaults. Published models use the same model everywhere.
                       </p>
                     )}
                   </div>
@@ -354,17 +394,10 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
                 )}
               </div>
               <LLMSelectionDropdown
-                availableLLMs={availableLLMs}
-                selectedLLM={delegationTierConfig?.main
-                  ? {
-                      provider: delegationTierConfig.main.provider,
-                      model: delegationTierConfig.main.model_id,
-                      label: `${delegationTierConfig.main.provider} - ${delegationTierConfig.main.model_id}`,
-                      description: 'main agent model'
-                    }
-                  : null}
+                availableLLMs={delegationLLMOptions}
+                selectedLLM={findOptionForTier(delegationTierConfig?.main, 'main agent model')}
                 onLLMSelect={(llm: LLMOption) => {
-                  const newTier: TierModel = { provider: llm.provider, model_id: llm.model }
+                  const newTier = tierModelForOption(llm, 'main')
                   const newConfig: DelegationTierConfig = { ...delegationTierConfig, main: newTier }
                   updateConfig(newConfig)
                 }}
@@ -400,7 +433,8 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
                     selectedLLM={null}
                     onLLMSelect={(llm: LLMOption) => updateBuiltInTier('main', (current) => {
                       if (!current) return current
-                      const nextFallbacks = [...(current.fallbacks || []), { provider: llm.provider, model_id: llm.model }]
+                      const fallback = tierModelForOption(llm, 'main')
+                      const nextFallbacks = [...(current.fallbacks || []), { provider: fallback.provider, model_id: fallback.model_id }]
                       return { ...current, fallbacks: nextFallbacks }
                     })}
                     inModal={true}
@@ -422,14 +456,7 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
             <div className="space-y-3">
               {TIERS.map(({ key, label, desc, icon: Icon, color }) => {
                 const tierModel = delegationTierConfig?.[key]
-                const selectedLLM: LLMOption | null = tierModel
-                  ? {
-                      provider: tierModel.provider,
-                      model: tierModel.model_id,
-                      label: `${tierModel.provider} - ${tierModel.model_id}`,
-                      description: `${key} reasoning tier`
-                    }
-                  : null
+                const selectedLLM = findOptionForTier(tierModel, `${key} reasoning tier`)
 
                 return (
                   <div key={key} className="border border-gray-200 dark:border-slate-600 rounded-lg p-3">
@@ -453,10 +480,10 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
                       )}
                     </div>
                     <LLMSelectionDropdown
-                      availableLLMs={availableLLMs}
+                      availableLLMs={delegationLLMOptions}
                       selectedLLM={selectedLLM}
                       onLLMSelect={(llm: LLMOption) => {
-                        const newTier: TierModel = { provider: llm.provider, model_id: llm.model, fallbacks: tierModel?.fallbacks }
+                        const newTier = tierModelForOption(llm, key, tierModel?.fallbacks)
                         updateBuiltInTier(key, () => newTier)
                       }}
                       inModal={true}
@@ -491,7 +518,8 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
                           selectedLLM={null}
                           onLLMSelect={(llm: LLMOption) => updateBuiltInTier(key, (current) => {
                             if (!current) return current
-                            const nextFallbacks = [...(current.fallbacks || []), { provider: llm.provider, model_id: llm.model }]
+                            const fallback = tierModelForOption(llm, key)
+                            const nextFallbacks = [...(current.fallbacks || []), { provider: fallback.provider, model_id: fallback.model_id }]
                             return { ...current, fallbacks: nextFallbacks }
                           })}
                           inModal={true}
@@ -531,14 +559,9 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
 
               <div className="space-y-3">
                 {customEntries.map(([slug, tier]) => {
-                  const selectedLLM: LLMOption | null = tier.provider && tier.model_id
-                    ? {
-                        provider: tier.provider,
-                        model: tier.model_id,
-                        label: `${tier.provider} - ${tier.model_id}`,
-                        description: slug,
-                      }
-                    : null
+                  const selectedLLM = findOptionForTier(tier.provider && tier.model_id
+                    ? { provider: tier.provider, model_id: tier.model_id }
+                    : undefined, slug)
 
                   return (
                     <div key={slug} className="border border-dashed border-gray-300 dark:border-slate-500 rounded-lg p-3">
@@ -566,7 +589,7 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
                       />
 
                       <LLMSelectionDropdown
-                        availableLLMs={availableLLMs}
+                        availableLLMs={delegationLLMOptions}
                         selectedLLM={selectedLLM}
                         onLLMSelect={(llm: LLMOption) => handleCustomTierLLMSelect(slug, llm)}
                         inModal={true}

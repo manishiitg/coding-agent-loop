@@ -2395,8 +2395,16 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     hasUserSentMessageRef.current = true
 
     const trimmedQuery = query?.trim() || ''
+    const activeTabModeCategory =
+      activeTab?.metadata?.mode === 'workflow' || activeTab?.metadata?.mode === 'multi-agent'
+        ? activeTab.metadata.mode
+        : null
+    const submitModeCategory = activeTabModeCategory ?? selectedModeCategory
+    const submitAgentMode = submitModeCategory
+      ? getAgentModeFromCategory(submitModeCategory) as AgentMode
+      : correctAgentMode
     const activeTabKey = activeTab?.tabId || 'no-tab'
-    const submitGuardKey = `${selectedModeCategory || 'unknown'}:${activeTabKey}:${trimmedQuery}`
+    const submitGuardKey = `${submitModeCategory || 'unknown'}:${activeTabKey}:${trimmedQuery}`
     const now = Date.now()
     const activeGuard = submitGuardRef.current
     if (activeGuard && activeGuard.key === submitGuardKey && activeGuard.expiresAt > now) {
@@ -2422,13 +2430,13 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       return
     }
 
-    if (selectedModeCategory === 'workflow' && !isRequiredFolderSelected) {
+    if (submitModeCategory === 'workflow' && !isRequiredFolderSelected) {
       logger.error('ChatArea', 'Workflow folder required for workflow mode')
       return
     }
 
     // Resolve or create tab
-    const resolved = await resolveOrCreateTab({ freshActiveTab, selectedModeCategory })
+    const resolved = await resolveOrCreateTab({ freshActiveTab, selectedModeCategory: submitModeCategory })
     if (!resolved) return
     let { tab: currentTab, sessionId: tabSessionId } = resolved
 
@@ -2453,14 +2461,14 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     }
 
     const effectiveExecutionOptions = executionOptions ?? (
-      selectedModeCategory === 'workflow' && currentTab?.metadata?.phaseId
+      submitModeCategory === 'workflow' && currentTab?.metadata?.phaseId
         ? buildExecutionOptions()
         : undefined
     )
     executionOptionsRef.current = effectiveExecutionOptions
 
     if (
-      selectedModeCategory === 'workflow' &&
+      submitModeCategory === 'workflow' &&
       !options?.isAutoNotification &&
       currentTab?.metadata?.phaseId &&
       isChatCompatiblePhase(currentTab.metadata.phaseId)
@@ -2476,7 +2484,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
     // Build file context — read preset fresh from store to avoid stale closure
     // when switching between workflows (the closure's activeWorkflowPreset may lag behind)
-    const freshWorkflowPreset = (selectedModeCategory === 'workflow')
+    const freshWorkflowPreset = (submitModeCategory === 'workflow')
       ? useGlobalPresetStore.getState().getActivePreset('workflow')
       : null
     // Only include visible/removable file context from tab config. Workflow execution
@@ -2484,14 +2492,14 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // use restoredConversationPath so coding agents can native-resume without a visible
     // file chip.
     let effectiveFileContext: Array<{ name: string; path: string; type: 'file' | 'folder' }> = []
-    if ((selectedModeCategory === 'multi-agent' || selectedModeCategory === 'workflow') && currentTab?.config) {
+    if ((submitModeCategory === 'multi-agent' || submitModeCategory === 'workflow') && currentTab?.config) {
       effectiveFileContext = currentTab.config.fileContext
     }
 
     const shouldResumeRestoredConversation =
-      selectedModeCategory === 'multi-agent' ||
+      submitModeCategory === 'multi-agent' ||
       (
-        selectedModeCategory === 'workflow' &&
+        submitModeCategory === 'workflow' &&
         !!currentTab?.metadata?.phaseId &&
         isChatCompatiblePhase(currentTab.metadata.phaseId)
       )
@@ -2527,7 +2535,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // Merge secrets from tab config (multi-agent) and workflow preset
     let decryptedSecrets: Array<{ name: string; value: string }> | undefined
     const tabSecretIds = currentTab?.config?.selectedSecrets || []
-    const presetSecretIds = (selectedModeCategory === 'workflow' && freshWorkflowPreset)
+    const presetSecretIds = (submitModeCategory === 'workflow' && freshWorkflowPreset)
       ? ((freshWorkflowPreset as CustomPreset).selectedSecrets || [])
       : []
     const selectedSecretIds = [...new Set([...tabSecretIds, ...presetSecretIds])]
@@ -2551,7 +2559,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       }
     }
 
-    if (selectedModeCategory === 'workflow') {
+    if (submitModeCategory === 'workflow') {
       useAppStore.getState().setCurrentQuery(displayQueryWithContext)
     }
 
@@ -2637,10 +2645,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     try {
       // Get active presets for the current mode
       const presetStore = useGlobalPresetStore.getState()
-      const chatPreset = correctAgentMode === 'multi-agent' ? presetStore.getActivePreset('multi-agent') : null
+      const chatPreset = submitAgentMode === 'multi-agent' ? presetStore.getActivePreset('multi-agent') : null
       // Read workflow preset fresh from store (not from stale closure)
       // For workflow mode, always try to get the active preset regardless of selectedWorkflowPreset closure value
-      const workflowPreset = (correctAgentMode === 'workflow' || selectedModeCategory === 'workflow')
+      const workflowPreset = (submitAgentMode === 'workflow' || submitModeCategory === 'workflow')
         ? presetStore.getActivePreset('workflow')
         : null
       const activePreset = workflowPreset || chatPreset
@@ -2653,16 +2661,16 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
       // Determine mode flags using helper
       const useCodeExecutionMode = determineModeFlag({
-        correctAgentMode,
-        selectedModeCategory: selectedModeCategory || '',
+        correctAgentMode: submitAgentMode,
+        selectedModeCategory: submitModeCategory || '',
         presetValue: activePreset?.useCodeExecutionMode,
         tabConfigValue: currentTab?.config?.useCodeExecutionMode,
       })
       // Build LLM config
-      const isMultiAgentMode = selectedModeCategory === 'multi-agent'
+      const isMultiAgentMode = submitModeCategory === 'multi-agent'
       const llmStore = useLLMStore.getState()
       // For multi-agent and workflow phase chat: use tab's LLM if set (user may override)
-      const isWorkflowPhaseChat = selectedModeCategory === 'workflow'
+      const isWorkflowPhaseChat = submitModeCategory === 'workflow'
         && currentTab?.metadata?.phaseId
         && isChatCompatiblePhase(currentTab.metadata.phaseId)
       // For phase chat: prefer preset LLM if user hasn't explicitly overridden
@@ -2688,7 +2696,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // DEBUG: browser config from current tab before payload build
       console.log('[DEBUG browser tab config]', {
         tabId: currentTab?.tabId,
-        modeCategory: selectedModeCategory,
+        modeCategory: submitModeCategory,
         browserMode: currentTab?.config?.browserMode,
         enableBrowserAccess: currentTab?.config?.enableBrowserAccess,
         useCdp: currentTab?.config?.useCdp,
@@ -2699,8 +2707,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // Build request payload
       const requestPayload = buildQueryRequestPayload({
         queryWithContext,
-        correctAgentMode,
-        selectedModeCategory,
+        correctAgentMode: submitAgentMode,
+        selectedModeCategory: submitModeCategory,
         enabledTools,
         effectiveServers,
         currentTab,
@@ -2721,7 +2729,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       const executionPhaseId = currentTab?.metadata?.phaseId
       const requiresGroupValidation = executionPhaseId !== 'evaluation-execution' && executionPhaseId !== 'report-execution'
 
-      if (correctAgentMode === 'workflow' && requestPayload.execution_options && !isWorkflowPhaseChat && requiresGroupValidation) {
+      if (submitAgentMode === 'workflow' && requestPayload.execution_options && !isWorkflowPhaseChat && requiresGroupValidation) {
         const validationError = validateExecutionGroups(requestPayload.execution_options)
         if (validationError) {
           chatStore.addToast(validationError, 'warning')
@@ -2829,7 +2837,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       resetStreamingState(currentTab.tabId)
     }
 
-  }, [correctAgentMode, selectedModeCategory, isRequiredFolderSelected, isStreaming, stopStreaming, finalResponse, startPolling, effectiveServers, enabledTools, selectedWorkflowPreset, activeWorkflowPreset, pollEvents, processedCompletionEventsRef, activeTab, scrollToBottom, getActiveSessions, resetStreamingState, connectSSE, handleSSEMessage, handleSSEStatus])
+  }, [correctAgentMode, selectedModeCategory, getAgentModeFromCategory, isRequiredFolderSelected, isStreaming, stopStreaming, finalResponse, startPolling, effectiveServers, enabledTools, selectedWorkflowPreset, activeWorkflowPreset, pollEvents, processedCompletionEventsRef, activeTab, scrollToBottom, getActiveSessions, resetStreamingState, connectSSE, handleSSEMessage, handleSSEStatus])
 
   // If the active tab is stuck in streaming state, ChatInput queues the user's text
   // instead of calling /api/query. Force-refresh active sessions so the store can
@@ -3304,6 +3312,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         <ChatInput
           onSubmit={submitQueryWithQuery}
           onStopStreaming={stopStreaming}
+          tabId={targetTabId}
+          restoredConversationPending={resumePending && !hasRestoredLiveContent}
         />
       )}
       

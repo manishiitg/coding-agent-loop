@@ -14,6 +14,7 @@ import (
 )
 
 func TestValidateFilePath(t *testing.T) {
+	t.Setenv("WORKSPACE_DOCS_PATH", "/app/workspace-docs")
 	stepExecutionPath := "Workflow/linkedin/runs/iteration-0/default/execution/step-global-research"
 
 	testCases := []struct {

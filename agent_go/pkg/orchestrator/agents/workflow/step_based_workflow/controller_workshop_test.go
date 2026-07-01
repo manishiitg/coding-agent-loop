@@ -6,6 +6,7 @@ import (
 	"time"
 
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"mcp-agent-builder-go/agent_go/pkg/browser"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 )
 
@@ -94,6 +95,10 @@ func TestSwitchWorkshopGroupSessionCachesPerGroup(t *testing.T) {
 
 func TestSwitchWorkshopGroupSessionRejectsThirdActiveGroup(t *testing.T) {
 	t.Setenv("MCP_API_URL", "http://example.test")
+
+	origLimit := browser.MaxBrowserSessionsPerWorkflow
+	browser.MaxBrowserSessionsPerWorkflow = 2
+	defer func() { browser.MaxBrowserSessionsPerWorkflow = origLimit }()
 
 	base, err := orchestrator.NewBaseOrchestrator(
 		loggerv2.NewDefault(),

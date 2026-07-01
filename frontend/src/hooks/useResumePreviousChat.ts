@@ -46,9 +46,10 @@ export function useResumePreviousChat() {
     // cheap no-op (just rotates the session id).
     const events = targetTab.sessionId ? useChatStore.getState().tabEvents[targetTab.sessionId] : undefined
     const hasContent = Array.isArray(events) && events.length > 0
-    if (targetTab.sessionId === session.session_id || hasContent) {
+    if (targetTab.sessionId !== session.session_id && hasContent) {
       chatStore.resetTabChat(targetTabId)
     }
+    chatStore.updateTabSessionId(targetTabId, session.session_id)
 
     const path = chatHistoryConversationPath(session)
     const title = chatHistorySessionTitle(session)
@@ -77,7 +78,7 @@ export function useResumePreviousChat() {
     // terminal on the backend, so open the terminal view and kick the restore.
     if (useTerminalRestore || useNativeResume) {
       latestStore.setTabViewMode(targetTabId, 'terminal')
-      startRestoredTransportTerminal(latestStore.chatTabs[targetTabId]?.sessionId, path)
+      startRestoredTransportTerminal(session.session_id, path, session.session_id)
     }
     latestStore.switchTab(targetTabId)
   }, [])

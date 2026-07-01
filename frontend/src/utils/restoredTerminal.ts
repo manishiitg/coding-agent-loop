@@ -14,23 +14,30 @@ function requestRestoredTerminalRefreshes() {
 // piggybacks on the first instead of launching a duplicate tmux reattach.
 const restoreInFlight = new Set<string>()
 
-export function startRestoredTransportTerminal(sessionId: string | null | undefined, restoredConversationPath: string | null | undefined) {
+export function startRestoredTransportTerminal(
+  sessionId: string | null | undefined,
+  restoredConversationPath: string | null | undefined,
+  restoredConversationSessionId?: string | null,
+) {
   const targetSessionId = sessionId?.trim()
   const path = restoredConversationPath?.trim()
   if (!targetSessionId || !path) return
+  const sourceSessionId = restoredConversationSessionId?.trim()
 
-  const key = `${targetSessionId}:${path}`
+  const key = `${targetSessionId}:${path}:${sourceSessionId || ''}`
   if (restoreInFlight.has(key)) return
   restoreInFlight.add(key)
 
   console.info('[RestoredTerminal] POST /chat-history/restored-terminal', {
     sessionId: targetSessionId,
     path,
+    restoredConversationSessionId: sourceSessionId,
   })
   requestRestoredTerminalRefreshes()
   void agentApi.startRestoredTerminal({
     session_id: targetSessionId,
     restored_conversation_path: path,
+    restored_conversation_session_id: sourceSessionId || undefined,
   }).then((response) => {
     requestRestoredTerminalRefreshes()
     if (response.started) {

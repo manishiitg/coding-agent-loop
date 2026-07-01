@@ -63,6 +63,8 @@ const (
 	liveAttachMinTmuxMinor = 9
 )
 
+var liveAttachBackfillFn = liveAttachBackfill
+
 // liveAttachEnabled reports whether the live-attach transport is turned on.
 // Live-attach is now the only transport for the selected terminal, so this is
 // always on (the RUNLOOP_TERMINAL_LIVE_ATTACH feature flag was removed).
@@ -497,14 +499,21 @@ func (api *StreamingAPI) handleTerminalStream(w http.ResponseWriter, r *http.Req
 		return
 	}
 	defer st.unsubscribe(ch)
+	transcript := &liveAttachTranscript{}
+	persistTranscript := func() {
+		api.persistLiveAttachTranscript(snapshot.TerminalID, transcript.content())
+	}
 
 	// 2) One current-screen backfill snapshot so the fresh viewer sees current
 	//    screen state before queued live %output resumes. The writer goroutine is
 	//    started after this, so any live bytes produced during capture are
 	//    delivered after the backfill instead of interleaving with it.
-	if bf := liveAttachBackfill(connCtx, snapshot.TmuxSession); len(bf) > 0 {
+	if bf := liveAttachBackfillFn(connCtx, snapshot.TmuxSession); len(bf) > 0 {
+		transcript.append(bf)
+		persistTranscript()
 		_ = conn.WriteMessage(websocket.BinaryMessage, bf)
 	}
+	defer persistTranscript()
 
 	// Writer: decoded pane bytes -> WebSocket (binary). Ends when the channel
 	// is closed (unsubscribe / stream death) or the connection write fails.
@@ -513,7 +522,9 @@ func (api *StreamingAPI) handleTerminalStream(w http.ResponseWriter, r *http.Req
 	// instead of sitting on a blank/stale "connected" stream.
 	var writeMu sync.Mutex
 	go func() {
+		defer persistTranscript()
 		for b := range ch {
+			transcript.append(b)
 			writeMu.Lock()
 			err := conn.WriteMessage(websocket.BinaryMessage, b)
 			writeMu.Unlock()
@@ -546,6 +557,63 @@ func (api *StreamingAPI) handleTerminalStream(w http.ResponseWriter, r *http.Req
 			api.liveAttachControlFrame(connCtx, st, snapshot.TmuxSession, data)
 		}
 	}
+}
+
+type liveAttachTranscript struct {
+	mu   sync.Mutex
+	data []byte
+}
+
+func (t *liveAttachTranscript) append(b []byte) {
+	if t == nil || len(b) == 0 {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.data = append(t.data, b...)
+	t.data = trimLiveAttachTranscript(t.data)
+}
+
+func (t *liveAttachTranscript) content() string {
+	if t == nil {
+		return ""
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return string(append([]byte(nil), t.data...))
+}
+
+func trimLiveAttachTranscript(data []byte) []byte {
+	if len(data) <= terminalPipeRecorderMaxBytes {
+		return data
+	}
+	tail := append([]byte(nil), data[len(data)-terminalPipeRecorderTrimBytes:]...)
+	tail = trimToTerminalSequenceBoundary(tail)
+	if len(tail) == 0 {
+		return tail
+	}
+	trimmed := make([]byte, 0, len(terminalPipeNormalScreenPrologue)+len(tail))
+	trimmed = append(trimmed, terminalPipeNormalScreenPrologue...)
+	trimmed = append(trimmed, tail...)
+	return trimmed
+}
+
+func (api *StreamingAPI) persistLiveAttachTranscript(terminalID, content string) {
+	if api == nil || api.terminalStore == nil {
+		return
+	}
+	terminalID = strings.TrimSpace(terminalID)
+	if terminalID == "" || !liveAttachTranscriptHasDisplayContent(content) {
+		return
+	}
+	api.terminalStore.SetDisplayContent(terminalID, content, "tmux_capture")
+}
+
+func liveAttachTranscriptHasDisplayContent(content string) bool {
+	content = strings.ReplaceAll(content, terminalPipeNormalScreenPrologue, "")
+	content = strings.ReplaceAll(content, terminalPipeAltScreenPrologue, "")
+	content = strings.ReplaceAll(content, "\x1b[H\x1b[2J", "")
+	return strings.TrimSpace(content) != ""
 }
 
 // unwrapResponseWriter peels off any ResponseWriter wrappers (e.g. the request

@@ -85,7 +85,7 @@ func TestTerminalPipeRecorderHTTPE2EPreservesAnsiAndAppends(t *testing.T) {
 	}
 
 	sendTmuxLiteralCommand(t, ctx, sessionName, "printf '\\033[34mblue-append\\033[0m\\n'")
-	second := waitForTerminalDetail(t, api, terminalID, "blue-append")
+	second := waitForTerminalDetail(t, api, terminalID, "\x1b[34mblue-append")
 	if second.ContentSource != "tmux_pipe" {
 		t.Fatalf("second content_source = %q, want tmux_pipe", second.ContentSource)
 	}

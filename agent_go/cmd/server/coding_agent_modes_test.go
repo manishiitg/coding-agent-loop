@@ -133,6 +133,7 @@ func TestDelegatedCodingAgentRuntimeFolderIsPerAgent(t *testing.T) {
 }
 
 func TestTopLevelTierModelDoesNotOverrideExplicitChatLLM(t *testing.T) {
+	t.Setenv("WORKSPACE_API_URL", "http://127.0.0.1:9999")
 	req := QueryRequest{
 		Provider: "gemini-cli",
 		ModelID:  "gemini-3.1-flash-lite",
@@ -160,6 +161,7 @@ func TestTopLevelTierModelDoesNotOverrideExplicitChatLLM(t *testing.T) {
 }
 
 func TestTopLevelTierModelAppliesWhenChatLLMIsMissing(t *testing.T) {
+	t.Setenv("WORKSPACE_API_URL", "http://127.0.0.1:9999")
 	req := QueryRequest{
 		DelegationTierConfig: &virtualtools.DelegationTierConfig{
 			High: &virtualtools.TierModel{

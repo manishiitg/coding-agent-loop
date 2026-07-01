@@ -1,5 +1,5 @@
 import React from 'react'
-import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, GitBranch, CheckCircle, Search, BookOpen, Activity, Cloud, Globe, Target } from 'lucide-react'
+import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, GitBranch, CheckCircle, Search, BookOpen, Activity, Cloud, Globe, Target, Brain } from 'lucide-react'
 import type { CommandContext, CommandDefinition } from './types'
 
 function submitGuidedWorkflowCommand(
@@ -511,6 +511,35 @@ After the tool returns, tell me:
         : instruction
 
       ctx.onSubmit(message)
+    }
+  },
+  {
+    command: 'memory-setup',
+    description: 'Set up or tune automatic Chief of Staff memory enrichment',
+    icon: <Brain className="w-4 h-4" />,
+    modes: ['multi-agent'],
+    source: 'builtin',
+    execute: (ctx) => {
+      const appStore = ctx.getAppStore()
+      appStore.setWorkspaceMinimized(false)
+      appStore.setMultiAgentRightPanelView?.('memory')
+
+      const focus = ctx.beforeSlash.trim()
+      const instruction = `Set up automatic Chief of Staff memory enrichment.
+
+Call get_reference_doc(kind="memory-usage") and follow it for what should and should not be saved. Before editing schedules, call get_reference_doc(kind="schedule-management").
+First call list_multiagent_schedules and find the built-in memory schedule builtin-auto-enrich-memory. Report whether it is enabled, its cron, timezone, and last/next run state.
+To enable, disable, or configure automatic memory enrichment, ALWAYS call update_multiagent_schedule on builtin-auto-enrich-memory. NEVER call create_multiagent_schedule for memory enrichment.
+
+Help me choose or confirm:
+- enabled or disabled
+- cadence and timezone
+- whether old chat sessions should be pruned after enrichment; default is 7 days
+- whether I want to run /enrich-memory once now after setup
+
+Only enable or change the built-in memory schedule after I confirm the cadence/timezone. Do not manually run memory enrichment from this command unless I explicitly ask for a one-time run.`
+
+      ctx.onSubmit(focus ? `${focus}\n\n${instruction}` : instruction)
     }
   },
   // ===== Auto-improvement framework =====

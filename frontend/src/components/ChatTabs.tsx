@@ -3,6 +3,7 @@ import { Plus, ArrowDown, ListTree, Terminal, Globe, DollarSign, CalendarClock, 
 import { normalizeEventViewMode, useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useAppStore } from '../stores/useAppStore'
 import { OrgPulseControl } from './OrgPulseControl'
+import { MemoryControl } from './MemoryControl'
 import { OrgBackupPublishControls } from './org/OrgBackupPublishControls'
 import { useModeStore } from '../stores/useModeStore'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
@@ -363,6 +364,36 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
 
       <div className="ml-auto flex items-center gap-1">
         <OrgPulseControl />
+        <MemoryControl />
+        {/* Delegation tiers (H/M/L) — CoS-specific config, lives next to Org Pulse
+            so the org-level controls stay grouped together. */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={() => setShowTierModal(true)}
+              className={`relative flex h-7 w-7 items-center justify-center rounded-md border transition-colors ${
+                tierLines.length > 0
+                  ? 'border-gray-300 bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-700 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-gray-200'
+                  : 'border-gray-300 bg-gray-100 text-gray-400 hover:bg-gray-200 hover:text-gray-700 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-500 dark:hover:bg-gray-700 dark:hover:text-gray-200'
+              }`}
+              aria-label="Configure delegation tiers"
+            >
+              <SlidersHorizontal className="h-4 w-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {tierLines.length > 0 ? (
+              <div className="space-y-1 text-xs">
+                {tierLines.map((line) => (
+                  <p key={line}>{line}</p>
+                ))}
+              </div>
+            ) : (
+              <p>Configure delegation tiers (H/M/L)</p>
+            )}
+          </TooltipContent>
+        </Tooltip>
         {showHeaderContent && (
           <div className="mr-1 flex items-center gap-1 border-r border-gray-200 pr-2 dark:border-gray-700">
             <ServerSelectionDropdown
@@ -449,35 +480,6 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
           </TooltipTrigger>
           <TooltipContent>
             <p>{multiAgentScheduleTooltip}</p>
-          </TooltipContent>
-        </Tooltip>
-        {/* Delegation tiers (H/M/L) — CoS-specific config, lives in this heading
-            (the modal itself is rendered once by LlmModalHost via the store). */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              onClick={() => setShowTierModal(true)}
-              className={`relative rounded-md p-1.5 transition-colors hover:bg-accent ${
-                tierLines.length > 0
-                  ? 'bg-gray-100 text-gray-600 hover:text-accent-foreground dark:bg-gray-700 dark:text-gray-300'
-                  : 'bg-muted text-muted-foreground hover:text-accent-foreground'
-              }`}
-              aria-label="Configure delegation tiers"
-            >
-              <SlidersHorizontal className="h-3.5 w-3.5" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>
-            {tierLines.length > 0 ? (
-              <div className="space-y-1 text-xs">
-                {tierLines.map((line) => (
-                  <p key={line}>{line}</p>
-                ))}
-              </div>
-            ) : (
-              <p>Configure delegation tiers (H/M/L)</p>
-            )}
           </TooltipContent>
         </Tooltip>
         <OrgBackupPublishControls onSubmitCommand={onSubmitOrgCommand} />

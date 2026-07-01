@@ -119,7 +119,6 @@ import { hydrateTabEvents } from '../../utils/sessionRestore'
 const EMPTY_WORKFLOW_EVENTS: PollingEvent[] = []
 const WORKFLOW_RESTORE_TIMEOUT_MS = 8000
 const WORKFLOW_CHAT_CONTENT_EVENT_TYPES = new Set(['user_message', 'conversation_end', 'unified_completion'])
-const AUTO_RESUME_WORKFLOW_CHAT_MAX_AGE_MS = 24 * 60 * 60 * 1000
 // Window during which a freshly-opened read-only Schedule/Bot run tab is
 // protected from auto tab-switching (reconnect/reconcile). Mirrors App.tsx's
 // READ_ONLY_WORKFLOW_RESTORE_SELECTION_WINDOW_MS so all auto-selectors agree:
@@ -168,30 +167,6 @@ function isRestorableWorkflowChatSession(session: ChatHistorySession): boolean {
   return (session.message_count ?? 0) > 0 || (session.preview_messages?.length ?? 0) > 0 || !!session.query?.trim()
 }
 
-function isRecentChatHistorySession(session: ChatHistorySession, maxAgeMs: number): boolean {
-  const timestamp = Date.parse(session.updated_at || session.created_at || '')
-  if (Number.isNaN(timestamp)) return false
-  return Date.now() - timestamp <= maxAgeMs
-}
-
-async function findLatestRestorableWorkflowChatSession(
-  workspacePath?: string | null,
-  excludedSessionIds: Set<string> = new Set(),
-): Promise<ChatHistorySession | null> {
-  if (!workspacePath) return null
-  try {
-    const response = await agentApi.listChatHistorySessions(20, 0, workspacePath)
-    return (response.sessions || []).find(session =>
-      !excludedSessionIds.has(session.session_id) &&
-      isRestorableWorkflowChatSession(session) &&
-      isRecentChatHistorySession(session, AUTO_RESUME_WORKFLOW_CHAT_MAX_AGE_MS)
-    ) || null
-  } catch (error) {
-    logger.warn('WorkflowLayout', 'Failed to load workflow chat history for auto-resume:', error)
-    return null
-  }
-}
-
 function applyRestoredWorkflowConversationConfig(tabId: string, session: ChatHistorySession): void {
   const chatStore = useChatStore.getState()
   const path = chatHistoryConversationPath(session)
@@ -221,26 +196,6 @@ function applyRestoredWorkflowConversationConfig(tabId: string, session: ChatHis
     restoredConversationRuntimeLabel: chatHistoryRuntimeLabel(session),
     restoredConversationNativeResume: useTerminalRestore || useNativeResume,
   })
-}
-
-async function hydrateRestoredWorkflowChatTab(
-  tabId: string,
-  session: ChatHistorySession,
-  workspacePath?: string | null,
-): Promise<void> {
-  applyRestoredWorkflowConversationConfig(tabId, session)
-  const runtime = await hydrateTabEvents(session.session_id, {
-    workspacePath: workspacePath || undefined,
-    fallbackToChatHistory: true,
-  })
-  const chatStore = useChatStore.getState()
-  const isDone = runtime.status === 'completed' || runtime.status === 'stopped' || !runtime.status
-  const isError = runtime.status === 'error'
-  chatStore.setTabCompleted(tabId, isDone)
-  chatStore.setTabStreaming(tabId, isDone || isError ? false : runtime.status === 'running')
-  chatStore.setTabHasRunningBgAgents(tabId, !!runtime.hasRunningBackgroundAgents)
-  chatStore.setTabSyntheticTurn(tabId, !!runtime.isSyntheticTurn)
-  chatStore.setTabCanSteer(tabId, !!runtime.canSteer)
 }
 
 function isRunningWorkflowEntry(entry: RunningWorkflowInfo): boolean {
@@ -358,9 +313,10 @@ const WorkflowPreviousChatsPanel: React.FC<{
       })
     }
 
-    if (targetTab?.sessionId === session.session_id) {
+    if (targetTab?.sessionId !== session.session_id && targetTab?.sessionId) {
       chatStore.resetTabChat(targetTabId)
     }
+    chatStore.updateTabSessionId(targetTabId, session.session_id)
 
     const path = chatHistoryConversationPath(session)
     const useTerminalRestore = chatHistoryUsesTerminalRestore(session)
@@ -398,8 +354,7 @@ const WorkflowPreviousChatsPanel: React.FC<{
       chatStore.setTabViewMode(targetTabId, 'terminal')
       chatStore.switchTab(targetTabId)
       setShowChatArea(true)
-      const restoredTab = useChatStore.getState().chatTabs[targetTabId]
-      startRestoredTransportTerminal(restoredTab?.sessionId, path)
+      startRestoredTransportTerminal(session.session_id, path, session.session_id)
     }
   }, [activePresetId, activeTabId, addToast, setShowChatArea, setTabConfig])
 
@@ -1680,28 +1635,19 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           setShowChatArea(true)
         }
 
-        // 6. If no tabs were created/restored, prefer the latest saved
-        // workflow-builder chat for this workflow; otherwise show a blank
-        // builder tab.
+        // 6. If no tabs were created/restored, show a blank builder tab. The
+        // previous-automation-chats panel will offer explicit Resume actions;
+        // simply opening/selecting a workflow should not silently resume the
+        // latest saved coding-agent chat.
         if (!lastTabId) {
           const store = useChatStore.getState()
           if (interactiveExistingWorkflowTabs.length === 0) {
-            const excludedSessionIds = new Set(activeSessionIds)
-            const latestSavedChat = await findLatestRestorableWorkflowChatSession(workspacePath, excludedSessionIds)
             const defaultTabId = await createChatTab('Automation Builder', {
               mode: 'workflow',
               phaseId: 'workflow-builder',
               phaseName: 'Automation Builder',
               presetQueryId: activePresetId
-            }, latestSavedChat?.session_id)
-            if (latestSavedChat) {
-              try {
-                await hydrateRestoredWorkflowChatTab(defaultTabId, latestSavedChat, workspacePath)
-              } catch (error) {
-                logger.warn('WorkflowLayout', 'Failed to hydrate latest workflow chat during auto-resume:', error)
-                applyRestoredWorkflowConversationConfig(defaultTabId, latestSavedChat)
-              }
-            }
+            })
             switchTab(defaultTabId)
             setShowChatArea(true)
           } else {
@@ -2273,7 +2219,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
                 ref={chatAreaCallbackRef}
                 onNewChat={onNewChat}
                 hideHeader
-                hideInput
                 compact
                 hidePhaseChatEmptyState={showWorkflowPreviousChatsAsPrimary}
                 suppressTerminalPane={showWorkflowPreviousChatsAsPrimary}

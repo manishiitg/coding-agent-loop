@@ -386,6 +386,13 @@ interface ChatInputProps {
   // Handlers (callbacks only)
   onSubmit: (query: string) => void
   onStopStreaming: () => void
+  // Optional tab scope for embedded chat panes, such as WorkflowLayout. When
+  // omitted, ChatInput uses the globally active chat tab.
+  tabId?: string | null
+  // True while a native restored terminal is still being located. Once the
+  // terminal exists, ChatArea passes false so the input does not keep showing a
+  // stale "Resuming coding session" banner.
+  restoredConversationPending?: boolean
 }
 
 function isAutoNotificationMessage(msg: string): boolean {
@@ -613,7 +620,9 @@ const QueuedAutoNotificationGroup: React.FC<{
 // Completely isolated input component that doesn't re-render when events change
 const ChatInputComponent: React.FC<ChatInputProps> = ({
   onSubmit,
-  onStopStreaming
+  onStopStreaming,
+  tabId: scopedTabId,
+  restoredConversationPending = true,
 }) => {
   // Store subscriptions
   const {
@@ -622,16 +631,24 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     showWorkflowsOverview
   } = useAppStore()
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
-  const isMultiAgentMode = selectedModeCategory === 'multi-agent'
+  const storeActiveTabId = useChatStore(state => state.activeTabId)
+  const activeTabId = scopedTabId === null ? null : (scopedTabId ?? storeActiveTabId)
+  // Use the scoped tab as the mode source when ChatInput is embedded. The global
+  // mode category can lag behind WorkflowLayout, which would otherwise make a
+  // workflow builder input behave like generic multi-agent chat.
+  const activeTab = useChatStore(state =>
+    activeTabId ? state.chatTabs[activeTabId] : undefined
+  )
+  const tabModeCategory = activeTab?.metadata?.mode
+  const isWorkflowMode = tabModeCategory === 'workflow' || selectedModeCategory === 'workflow'
+  const isMultiAgentMode = !isWorkflowMode && (tabModeCategory === 'multi-agent' || selectedModeCategory === 'multi-agent')
   // Detect workflow phase chat — hide extras like browser, skills, etc.
   const workflowPhaseId = useChatStore(state => {
-    const tabId = state.activeTabId
-    const tab = tabId ? state.chatTabs[tabId] : null
+    const tab = activeTabId ? state.chatTabs[activeTabId] : null
     if (tab?.metadata?.mode !== 'workflow' || !tab?.metadata?.phaseId) return undefined
     return isChatCompatiblePhase(tab.metadata.phaseId) ? tab.metadata.phaseId : undefined
   })
   const isWorkflowPhaseChat = !!workflowPhaseId
-  const isWorkflowMode = selectedModeCategory === 'workflow'
   const workflowPhasePreset = useGlobalPresetStore(state => state.getActivePreset('workflow'))
   // Read phase LLM from workflow manifest (source of truth), not the global preset.
   // Subscribe to the manifest store so the provider/model badge updates without reopening the chat.
@@ -645,14 +662,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const hideExtras = isWorkflowMode
 
   // Use selectors to subscribe only to specific values, reducing re-renders
-  const activeTabId = useChatStore(state => state.activeTabId)
   const setTabConfig = useChatStore(state => state.setTabConfig)
   const addToast = useChatStore(state => state.addToast)
-  // Get active tab and its config (ChatInput is only rendered in multi-agent mode)
-  // Use selector to get only the tab we need, preventing re-renders when other tabs change
-  const activeTab = useChatStore(state => 
-    activeTabId ? state.chatTabs[activeTabId] : undefined
-  )
+  // Get active tab and its config. Embedded workflow panes pass tabId so this
+  // remains scoped to the visible pane instead of the global active chat.
   const isOrganizationAssistant = !!activeTab?.metadata?.isOrganizationAssistant
   const isOrganizationContext = isOrganizationAssistant || showWorkflowsOverview
   // Memoize tabConfig to prevent unnecessary re-renders
@@ -660,11 +673,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   const defaultReasoningLevel = tabConfig?.defaultReasoningLevel ?? null
   const setDefaultReasoningLevel = useCallback((level: 'high' | 'medium' | 'low' | null) => {
-    const tabId = useChatStore.getState().activeTabId
-    if (tabId) {
-      useChatStore.getState().setTabConfig(tabId, { defaultReasoningLevel: level })
+    if (activeTabId) {
+      useChatStore.getState().setTabConfig(activeTabId, { defaultReasoningLevel: level })
     }
-  }, [])
+  }, [activeTabId])
 
   // CRITICAL: Always use tab's status - never fall back to global to prevent mixing
   // If no active tab, this is an error condition (tabs should always exist)
@@ -1503,6 +1515,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       ? chatHistoryUsesTerminalRestore(restoredResumeSession) || chatHistorySupportsNativeResume(restoredResumeSession)
       : false
   }, [restoredResumeSession, tabConfig?.restoredConversationNativeResume])
+  const showRestoredConversationIndicator =
+    !!restoredConversationPath && (!restoredResumeUsesNative || restoredConversationPending)
 
   const clearRestoredConversation = useCallback(() => {
     if (!activeTabId) return
@@ -1796,14 +1810,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const canSubmit = canSubmitImmediately || canQueueWhileStreaming
 
   // tmux-transport coding CLIs keep a persistent session, so input should go to
-  // the backend immediately rather than the local queue. The backend either
-  // delivers to the retained CLI or starts/resumes a normal turn. The local queue
-  // is only for non-live providers that genuinely can't accept input mid-turn. We
-  // intentionally do NOT gate on canSteer here — a stale canSteer=false would
-  // otherwise block input even though the CLI can take it.
+  // the backend immediately rather than the local queue. Workflow chat tabs also
+  // go straight to the backend when they already have a session: the backend owns
+  // whether to inject into an attached CLI, resume native history, or start a new
+  // turn. The local queue is only useful for non-workflow API chat providers.
   const routeLiveInputToCLI = useMemo(
-    () => supportsLiveCodingAgentInput && Boolean(tabSessionId),
-    [supportsLiveCodingAgentInput, tabSessionId]
+    () => Boolean(tabSessionId) && (mainAgentIsTmuxCLI || isWorkflowMode),
+    [isWorkflowMode, mainAgentIsTmuxCLI, tabSessionId]
   )
 
   // Ref for debounced file removal check
@@ -2788,6 +2801,15 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     routeSubmit(queryToSubmit)
   }, [queryToSubmit, executeSlashCommandFromQuery, routeSubmit])
 
+  const handleSendButtonClick = useCallback(() => {
+    const trimmedQuery = queryToSubmit?.trim() || ''
+    if (executeSlashCommandFromQuery(trimmedQuery)) {
+      return
+    }
+
+    routeSubmit(queryToSubmit)
+  }, [queryToSubmit, executeSlashCommandFromQuery, routeSubmit])
+
   // Command selection handler - executes commands directly
   const handleCommandSelect = useCallback((command: string) => {
     if (!activeTabId) return
@@ -2955,6 +2977,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const session = resumeSessions.find(item => item.session_id === sessionId)
     if (!session) return
 
+    useChatStore.getState().updateTabSessionId(activeTabId, session.session_id)
     const path = resumeChatConversationPath(session)
     const useTerminalRestore = chatHistoryUsesTerminalRestore(session)
     const useNativeResume = chatHistorySupportsNativeResume(session)
@@ -2985,8 +3008,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     if (useTerminalRestore || useNativeResume) {
       const latestStore = useChatStore.getState()
       latestStore.setTabViewMode(activeTabId, 'terminal')
-      const restoredTab = latestStore.chatTabs[activeTabId]
-      startRestoredTransportTerminal(restoredTab?.sessionId, path)
+      startRestoredTransportTerminal(session.session_id, path, session.session_id)
     }
     setShowResumeDialog(false)
     setTimeout(() => textareaRef.current?.focus(), 0)
@@ -3455,7 +3477,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       )}
 
       {/* Pending resume indicator */}
-      {restoredConversationPath && (
+      {showRestoredConversationIndicator && (
         <div className={`${inputPadX} border-t border-border`}>
           <div className="mb-1 rounded-md border border-border bg-card px-2 py-1 shadow-sm">
             <div className="flex min-w-0 items-center justify-between gap-2">
@@ -4223,7 +4245,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           <p>{isUploadingFiles ? 'Uploading files...' : `Upload file(s) to ${uploadTargetFolder}`}</p>
                         </TooltipContent>
                       </Tooltip>
-                      {isStreaming ? (
+                      {isStreaming && (
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button
@@ -4245,11 +4267,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             <p>Stop streaming</p>
                           </TooltipContent>
                         </Tooltip>
-                      ) : (
+                      )}
+                      {(!isStreaming || routeLiveInputToCLI) && (
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button
-                              type="submit"
+                              type="button"
+                              onClick={handleSendButtonClick}
                               disabled={submitButtonDisabled}
                               size="sm"
                               className="px-3"

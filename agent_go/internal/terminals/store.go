@@ -206,6 +206,40 @@ func (s *Store) List(sessionID string) []Snapshot {
 	return out
 }
 
+// ListMetadata returns current snapshots without content-dependent reconciliation.
+// It is used by high-frequency UI rail polls that only need identity, state,
+// timestamps, and compact status fields. Avoiding content scans here keeps large
+// streaming tmux panes from blocking the terminal list endpoint.
+func (s *Store) ListMetadata(sessionID string) []Snapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	s.pruneExpiredLocked(now)
+
+	var out []Snapshot
+	if strings.TrimSpace(sessionID) != "" {
+		for terminalID := range s.bySession[sessionID] {
+			if snapshot, ok := s.byID[terminalID]; ok {
+				out = append(out, snapshot)
+			}
+		}
+	} else {
+		out = make([]Snapshot, 0, len(s.byID))
+		for _, snapshot := range s.byID {
+			out = append(out, snapshot)
+		}
+	}
+	out = dedupeCurrentMainAgentSnapshots(out)
+
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Active != out[j].Active {
+			return out[i].Active
+		}
+		return out[i].UpdatedAt.After(out[j].UpdatedAt)
+	})
+	return out
+}
+
 // SessionHasBusyCodingTmux reports whether the session has a coding-agent tmux
 // terminal whose pane currently looks busy (actively processing). This lets a
 // resumed/launch-only coding agent — which has no server-managed foreground

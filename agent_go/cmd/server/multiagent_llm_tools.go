@@ -488,24 +488,34 @@ func cursorCLILocalAuthConfigured() bool {
 		return cursorCLIAuthProbeCache.ok
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	out, err := cursorCLIStatusJSON(ctx)
-	ok := false
-	if err == nil {
-		var status struct {
-			IsAuthenticated bool   `json:"isAuthenticated"`
-			Status          string `json:"status"`
-		}
-		if json.Unmarshal(out, &status) == nil {
-			ok = status.IsAuthenticated || strings.EqualFold(status.Status, "authenticated")
-		}
-	}
+	ok := err == nil && cursorCLIAuthStatusOK(out)
 
 	cursorCLIAuthProbeCache.checkedAt = time.Now()
 	cursorCLIAuthProbeCache.ok = ok
 	return ok
+}
+
+func cursorCLIAuthStatusOK(out []byte) bool {
+	text := strings.TrimSpace(string(out))
+	if text == "" {
+		return false
+	}
+
+	var status struct {
+		IsAuthenticated bool   `json:"isAuthenticated"`
+		Status          string `json:"status"`
+	}
+	if json.Unmarshal(out, &status) == nil {
+		return status.IsAuthenticated || strings.EqualFold(status.Status, "authenticated")
+	}
+
+	lower := strings.ToLower(text)
+	return strings.Contains(lower, "logged in as") ||
+		strings.Contains(lower, "status: authenticated")
 }
 
 func providerUsable(provider string, authConfigured bool) (bool, string, *bool) {

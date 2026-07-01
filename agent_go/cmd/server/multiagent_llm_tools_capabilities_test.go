@@ -88,6 +88,31 @@ func TestProviderAuthConfiguredAcceptsCursorWorkspaceKey(t *testing.T) {
 	}
 }
 
+func TestProviderAuthConfiguredAcceptsCursorAuthenticatedJSON(t *testing.T) {
+	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
+	withFakeExecutable(t, "cursor-agent")
+	withCursorStatusJSON(t, `{"status":"authenticated","isAuthenticated":true}`, nil)
+
+	configured, source := providerAuthConfigured("cursor-cli", &llm.ProviderAPIKeys{})
+	if !configured {
+		t.Fatal("cursor-cli auth configured = false, want true for authenticated local Cursor CLI")
+	}
+	if source != "Cursor CLI login or CURSOR_API_KEY/workspace provider auth" {
+		t.Fatalf("cursor-cli auth source = %q", source)
+	}
+}
+
+func TestProviderAuthConfiguredAcceptsCursorPlainLoggedInStatus(t *testing.T) {
+	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
+	withFakeExecutable(t, "cursor-agent")
+	withCursorStatusJSON(t, `Logged in as manish@example.com`, nil)
+
+	configured, _ := providerAuthConfigured("cursor-cli", &llm.ProviderAPIKeys{})
+	if !configured {
+		t.Fatal("cursor-cli auth configured = false, want true for plain logged-in Cursor CLI status")
+	}
+}
+
 func TestValidateCursorCLIReportsLoginRequiredBeforeTmuxRun(t *testing.T) {
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
 	t.Setenv("CURSOR_API_KEY", "")

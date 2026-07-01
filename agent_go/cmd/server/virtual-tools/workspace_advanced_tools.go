@@ -1559,7 +1559,7 @@ func wrapReadImageWithLLM(
 			log.Printf("[READ_IMAGE_DEBUG] Response truncated to %d chars", maxResponseSize)
 		}
 
-		// Return final JSON result (same pattern as read_pdf)
+		// Return final JSON result
 		response := map[string]any{
 			"filepath": imageData.Filepath,
 			"query":    imageData.Query,

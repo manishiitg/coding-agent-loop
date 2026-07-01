@@ -41,7 +41,6 @@ var knownWorkspaceToolNames = map[string]bool{
 	"diff_patch_workspace_file": true,
 	"read_image":                true,
 	"read_video":                true,
-	"read_pdf":                  true,
 	"generate_text_llm":         true,
 	"search_web_llm":            true,
 	"human_feedback":            true,
@@ -1052,7 +1051,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"delete_workspace_file", "move_workspace_file",
 		// Workspace advanced tools
 		"execute_shell_command", "diff_patch_workspace_file",
-		"read_image", "read_video", "read_pdf", "generate_text_llm", "search_web_llm",
+		"read_image", "read_video", "generate_text_llm", "search_web_llm",
 		"image_gen", "image_edit", "generate_video", "text_to_speech", "speech_to_text", "generate_music",
 		// Secret management tools. Global secrets are read-only; workflow/user
 		// encrypted stores are writable when the corresponding tools are registered.
@@ -1278,7 +1277,7 @@ func optimizerToolAgentAllowedToolNames() []string {
 		// Workspace/file tools. Keep direct filesystem mutation narrow: use shell
 		// and diff_patch under FolderGuard, plus media/PDF readers for evidence.
 		"execute_shell_command", "diff_patch_workspace_file",
-		"read_image", "read_video", "read_pdf", "generate_text_llm", "search_web_llm",
+		"read_image", "read_video", "generate_text_llm", "search_web_llm",
 
 		// Read-only workflow state.
 		"get_step_prompts", "get_workflow_config", "get_llm_config", "get_cost_summary",
@@ -3561,7 +3560,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"enabled_custom_tools": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Workspace/custom tools to enable (format: 'category:tool' or 'category:*'). Categories: workspace_advanced (execute_shell_command, diff_patch_workspace_file, read_image, read_video, read_pdf, generate_text_llm, search_web_llm), human_tools (human_feedback, notify_user), workspace_browser (agent_browser). Example: ['workspace_advanced:execute_shell_command', 'workspace_advanced:diff_patch_workspace_file']",
+					"description": "Workspace/custom tools to enable (format: 'category:tool' or 'category:*'). Categories: workspace_advanced (execute_shell_command, diff_patch_workspace_file, read_image, read_video, generate_text_llm, search_web_llm), human_tools (human_feedback, notify_user), workspace_browser (agent_browser). Example: ['workspace_advanced:execute_shell_command', 'workspace_advanced:diff_patch_workspace_file']",
 				},
 				"enabled_skills": map[string]interface{}{
 					"type":        "array",
@@ -4752,7 +4751,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						needsHumanTools := usedWorkspaceTools["human_feedback"]
 						needsReadImage := usedWorkspaceTools["read_image"]
 						needsReadVideo := usedWorkspaceTools["read_video"]
-						needsReadPDF := usedWorkspaceTools["read_pdf"]
 						needsDiffPatch := usedWorkspaceTools["diff_patch_workspace_file"]
 
 						suggestedCustom = append(suggestedCustom, "workspace_advanced:execute_shell_command")
@@ -4765,14 +4763,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						if needsReadVideo {
 							suggestedCustom = append(suggestedCustom, "workspace_advanced:read_video")
 						}
-						if needsReadPDF {
-							suggestedCustom = append(suggestedCustom, "workspace_advanced:read_pdf")
-						}
 						if needsHumanTools {
 							suggestedCustom = append(suggestedCustom, "human_tools:*")
 						}
 
-						if !needsHumanTools || !needsReadImage || !needsReadVideo || !needsReadPDF {
+						if !needsHumanTools || !needsReadImage || !needsReadVideo {
 							suggestions++
 							result.WriteString("⚠️ Default config includes all workspace_advanced + human_tools. Based on usage:\n")
 							if !needsHumanTools {
@@ -4783,9 +4778,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							}
 							if !needsReadVideo {
 								result.WriteString("   → `read_video` not used — can exclude\n")
-							}
-							if !needsReadPDF {
-								result.WriteString("   → `read_pdf` not used — can exclude\n")
 							}
 							if !needsDiffPatch {
 								result.WriteString("   → `diff_patch_workspace_file` not used — can exclude\n")
@@ -4817,9 +4809,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					if len(configuredCustomTools) == 0 {
 						suggestions++
 						result.WriteString("⚠️ No `enabled_custom_tools` set — default includes **all** workspace_advanced + human_tools:\n")
-						result.WriteString("   - `workspace_advanced:*` → execute_shell_command, diff_patch_workspace_file, read_image, read_video, read_pdf, generate_text_llm, search_web_llm, generate_video, text_to_speech, speech_to_text, generate_music\n")
+						result.WriteString("   - `workspace_advanced:*` → execute_shell_command, diff_patch_workspace_file, read_image, read_video, generate_text_llm, search_web_llm, generate_video, text_to_speech, speech_to_text, generate_music\n")
 						result.WriteString("   - `human_tools:*` → human_feedback, notify_user\n")
-						result.WriteString("   Consider: does this step need `read_image`? `read_video`? `read_pdf`? `generate_text_llm`? `search_web_llm`? `human_feedback`?\n")
+						result.WriteString("   Consider: does this step need `read_image`? `read_video`? `generate_text_llm`? `search_web_llm`? `human_feedback`?\n")
 						result.WriteString("   If not, set `enabled_custom_tools` to only what's needed, e.g.:\n")
 						result.WriteString("   `[\"workspace_advanced:execute_shell_command\", \"workspace_advanced:diff_patch_workspace_file\"]`\n")
 					} else {

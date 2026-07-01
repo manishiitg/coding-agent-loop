@@ -82,19 +82,6 @@ func TestReadVideoRejectsRelativePathBeforeWorkspaceAPI(t *testing.T) {
 	}
 }
 
-func TestReadPDFRejectsRelativePathBeforeWorkspaceAPI(t *testing.T) {
-	client := NewClient("http://127.0.0.1:1")
-	_, err := client.ReadPDF(context.Background(), ReadPDFParams{
-		Filepath: "Downloads/sample.pdf",
-	})
-	if err == nil {
-		t.Fatal("expected relative read_pdf path to be rejected before API call")
-	}
-	if !strings.Contains(err.Error(), "absolute") {
-		t.Fatalf("error = %q, want mention of absolute path", err.Error())
-	}
-}
-
 func TestLLMBackedToolDefinitionsReferenceCapabilityDiscovery(t *testing.T) {
 	tests := []struct {
 		name       string

@@ -57,7 +57,7 @@ ambiguous routing leads to wrong-provider calls.
 
 - **`read_image(filepath, query, provider?, model_id?)`** — Analyze an image file using a provider/model pair from `list_llm_capabilities(capability="read_image", include_models=true)` or workspace-backed image analysis defaults. `filepath` must be a full absolute path under the workspace docs root; do not pass workspace-relative paths. If no image-analysis defaults exist, it falls back to the current chat model. `codex-cli`, `cursor-cli`, and `claude-code` are supported by passing the local workspace image path to the CLI; `agy-cli` is deprecated and only retained for existing legacy defaults.
 - **`read_video(filepath, query, provider?, model_id?)`** — Analyze a workspace video file using a provider/model pair from `list_llm_capabilities(capability="read_video", include_models=true)`. `filepath` must be a full absolute workspace-docs path. Direct video providers are not advertised by default; prefer a published coding-agent model until a dedicated provider is configured.
-- **`read_pdf(filepath, page_range?, max_pages?, password?)`** — Extract text from a workspace PDF. `filepath` must be a full absolute workspace-docs path.
+- **PDFs have no dedicated tool.** Extract text with `execute_shell_command` and Python's `pypdf` (already installed) instead — no provider round-trip needed for plain text extraction.
 
 ## Provider setup rules
 

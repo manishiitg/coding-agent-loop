@@ -150,7 +150,8 @@ RUN if [ "$INSTALL_PI_CLI" = "true" ]; then \
         echo "Skipping @earendil-works/pi-coding-agent install (INSTALL_PI_CLI=$INSTALL_PI_CLI)"; \
     fi
 
-# Install uv (uvx for Python MCP servers) and pypdf (for read_pdf tool)
+# Install uv (uvx for Python MCP servers) and pypdf (agents extract PDF text
+# themselves via execute_shell_command + python; there is no dedicated PDF tool)
 RUN pip3 install --break-system-packages uv pypdf
 
 # Verify npx and docker are available

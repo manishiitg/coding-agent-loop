@@ -23,7 +23,6 @@ func TestCreateWorkspaceToolRegistryIncludesProviderMediaTools(t *testing.T) {
 		"diff_patch_workspace_file",
 		"read_image",
 		"read_video",
-		"read_pdf",
 		"generate_text_llm",
 		"search_web_llm",
 		"image_gen",

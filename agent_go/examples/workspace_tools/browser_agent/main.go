@@ -56,7 +56,6 @@ func main() {
 	var allTools []llmtypes.Tool
 	allTools = append(allTools, workspace.GetShellToolDefinitions()...)
 	allTools = append(allTools, workspace.GetImageToolDefinitions()...)
-	allTools = append(allTools, workspace.GetPDFToolDefinitions()...)
 	allTools = append(allTools, browser.GetToolDefinition())
 	// Omit workspace.GetWebToolDefinitions() and Git tools unless needed.
 

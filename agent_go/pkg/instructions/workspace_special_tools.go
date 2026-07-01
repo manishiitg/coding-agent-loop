@@ -17,9 +17,9 @@ Available tools:
 - **Discovery + cost**: ` + "`list_llm_capabilities`" + `, ` + "`estimate_llm_cost`" + `, ` + "`set_provider_auth`" + ` (always use this for API keys — never paste into shell, scripts, or config files).
 - **Text**: ` + "`generate_text_llm(user_message, tier)`" + ` · ` + "`search_web_llm(query, provider, model_id?)`" + `.
 - **Image**: ` + "`image_gen(prompt, output_path, ...)`" + ` · ` + "`image_edit(image_path, output_path, prompt, ...)`" + `.
-- **Video**: ` + "`generate_video(prompt, output_path, model_id, ...)`" + ` (Vertex AI models support native audio; Gemini API preview models do not).
+- **Video**: ` + "`generate_video(prompt, output_path, model_id, ...)`" + ` — Veo models (native audio) or Gemini Omni Flash (` + "`gemini-omni-flash-preview`" + `, native audio, fastest/720p-only).
 - **Audio + music**: ` + "`text_to_speech`" + `, ` + "`speech_to_text`" + ` (default Deepgram nova-3), ` + "`generate_music`" + ` (default ElevenLabs music_v1).
-- **Media reading**: ` + "`read_image`" + `, ` + "`read_video`" + `, ` + "`read_pdf`" + `.
+- **Media reading**: ` + "`read_image`" + `, ` + "`read_video`" + `. No dedicated PDF tool — extract text with ` + "`execute_shell_command`" + ` + Python's ` + "`pypdf`" + `.
 
 Provider-setup essentials (do not hand-edit provider-auth storage — it's encrypted and managed via ` + "`set_provider_auth`" + `; audio/video/image/music providers are workspace **tool** capabilities, not published-LLM entries — call ` + "`list_llm_capabilities(capability=\"...\")`" + ` for the authoritative availability answer).
 

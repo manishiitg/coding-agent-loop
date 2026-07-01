@@ -35,7 +35,7 @@ export OPENAI_API_KEY="your-key"   # or your provider’s key variable
 go run main.go
 ```
 
-The agent connects to the workspace API, loads shell/image/PDF/browser tools, and runs the demo (e.g. `ls -la`, visit example.com, screenshot, describe with `read_image`). Tool list is built from `workspace.GetShellToolDefinitions()`, `GetImageToolDefinitions()`, `GetPDFToolDefinitions()`, and `browser.GetToolDefinition()` — add or remove as needed.
+The agent connects to the workspace API, loads shell/image/browser tools, and runs the demo (e.g. `ls -la`, visit example.com, screenshot, describe with `read_image`). Tool list is built from `workspace.GetShellToolDefinitions()`, `GetImageToolDefinitions()`, and `browser.GetToolDefinition()` — add or remove as needed.
 
 ## Cleanup
 

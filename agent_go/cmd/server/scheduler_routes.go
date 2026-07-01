@@ -129,7 +129,7 @@ func buildJobResponse(workspacePath string, manifest *WorkflowManifest, sched Wo
 }
 
 func buildMultiAgentJobResponse(userID string, sched WorkflowSchedule, state ScheduleRuntimeState) ScheduledJobResponse {
-	sched = NormalizeOrgPulseSchedule(sched)
+	sched = NormalizeBuiltinSchedule(sched)
 
 	builtIn := IsDefaultBuiltinSchedule(sched.ID)
 	managedBy := ""
@@ -370,7 +370,7 @@ func writeBuiltinMultiAgentScheduleOverride(ctx context.Context, userID, schedul
 	if mutate != nil {
 		mutate(&f.Schedules[idx])
 	}
-	f.Schedules[idx] = NormalizeOrgPulseSchedule(f.Schedules[idx])
+	f.Schedules[idx] = NormalizeBuiltinSchedule(f.Schedules[idx])
 	f.Schedules[idx].Mode = "multi-agent"
 
 	if err := WriteMultiAgentSchedules(ctx, userID, f); err != nil {
@@ -851,7 +851,7 @@ func deleteScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 
 		if result.SourceType == "multi-agent" {
 			if IsSlashManagedBuiltinSchedule(id) {
-				http.Error(w, "Use /pulse-setup in Chief of Staff to disable or change Daily Org Pulse.", http.StatusConflict)
+				http.Error(w, SlashManagedBuiltinError(id, "disable or change"), http.StatusConflict)
 				return
 			}
 			_ = svc.RemoveJob(id)
@@ -920,7 +920,7 @@ func enableScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 
 		if result.SourceType == "multi-agent" {
 			if IsSlashManagedBuiltinSchedule(id) {
-				http.Error(w, "Use /pulse-setup in Chief of Staff to change Daily Org Pulse.", http.StatusConflict)
+				http.Error(w, SlashManagedBuiltinError(id, "change"), http.StatusConflict)
 				return
 			}
 			result.ScheduleFile.Schedules[result.Index].Enabled = true
@@ -989,7 +989,7 @@ func disableScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 
 		if result.SourceType == "multi-agent" {
 			if IsSlashManagedBuiltinSchedule(id) {
-				http.Error(w, "Use /pulse-setup in Chief of Staff to change Daily Org Pulse.", http.StatusConflict)
+				http.Error(w, SlashManagedBuiltinError(id, "change"), http.StatusConflict)
 				return
 			}
 			_ = svc.RemoveJob(id)
@@ -1027,7 +1027,7 @@ func triggerScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 		id := mux.Vars(r)["id"]
 
 		if IsSlashManagedBuiltinSchedule(id) {
-			http.Error(w, "Use /pulse-setup in Chief of Staff before running Daily Org Pulse.", http.StatusConflict)
+			http.Error(w, SlashManagedBuiltinError(id, "run"), http.StatusConflict)
 			return
 		}
 
@@ -1072,7 +1072,7 @@ func triggerScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			}
 			if result.SourceType == "multi-agent" {
 				if IsSlashManagedBuiltinSchedule(id) {
-					http.Error(w, "Use /pulse-setup in Chief of Staff before running Daily Org Pulse.", http.StatusConflict)
+					http.Error(w, SlashManagedBuiltinError(id, "run"), http.StatusConflict)
 					return
 				}
 				trigResult, err := svc.TriggerMultiAgentNow(result.UserID, id)

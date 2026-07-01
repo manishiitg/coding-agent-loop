@@ -4,7 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
 )
@@ -35,11 +39,14 @@ func TestListScheduledJobsIncludesDefaultBuiltinsWithoutScheduleFile(t *testing.
 	for _, job := range resp.Jobs {
 		if job.ID == builtinAutoEnrichMemoryID {
 			foundAutoEnrich = true
-			if !job.Enabled {
-				t.Fatal("builtin auto-enrich memory should be listed as enabled by default")
+			if job.Enabled {
+				t.Fatal("builtin auto-enrich memory should be listed as disabled by default")
 			}
-			if !job.BuiltIn || job.ManagedBy != "built-in" {
+			if !job.BuiltIn || job.ManagedBy != "slash-command" {
 				t.Fatalf("unexpected auto-enrich metadata: %+v", job)
+			}
+			if strings.Contains(job.Query, "_users/default") {
+				t.Fatalf("auto-enrich query should not hardcode default user paths: %s", job.Query)
 			}
 		}
 		if job.ID == builtinOrgPulseID {
@@ -143,7 +150,7 @@ func TestEnableBuiltinOrgPulseRequiresPersistedOverride(t *testing.T) {
 	}
 }
 
-func TestDeleteBuiltinAutoEnrichWritesDisabledOverride(t *testing.T) {
+func TestDeleteBuiltinAutoEnrichRequiresMemorySetup(t *testing.T) {
 	api := &mockWorkspaceAPI{files: map[string]string{}}
 	server := httptest.NewServer(api)
 	defer server.Close()
@@ -155,28 +162,61 @@ func TestDeleteBuiltinAutoEnrichWritesDisabledOverride(t *testing.T) {
 
 	deleteScheduledJobHandler(NewSchedulerService(nil)).ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, body = %s; want 204", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, body = %s; want 404 for slash-managed built-in", rec.Code, rec.Body.String())
 	}
 
 	api.mu.Lock()
 	written := api.files[multiAgentSchedulesPath(GetDefaultUserID())]
 	api.mu.Unlock()
-	if written == "" {
-		t.Fatal("delete should write a disabled override for the built-in auto-enrich schedule")
+	if written != "" {
+		t.Fatalf("generic delete should not materialize slash-managed memory schedule; wrote:\n%s", written)
+	}
+}
+
+func TestHasChatsNeedingEnrichmentSkipsScheduleDateBucketSessions(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+
+	chatDir := filepath.Join(root, "_users", GetDefaultUserID(), "chat_history", "2026-07-01")
+	if err := os.MkdirAll(chatDir, 0o755); err != nil {
+		t.Fatalf("mkdir chat dir: %v", err)
 	}
 
-	var f MultiAgentScheduleFile
-	if err := json.Unmarshal([]byte(written), &f); err != nil {
-		t.Fatalf("failed to decode written schedule file: %v\n%s", err, written)
+	writeConversation := func(name string, modTime time.Time) string {
+		t.Helper()
+		path := filepath.Join(chatDir, name)
+		data := []byte(`{"session_id":"x","conversation_history":[{"Role":"human","Parts":[{"Text":"remember preference"}]}]}`)
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+		if err := os.Chtimes(path, modTime, modTime); err != nil {
+			t.Fatalf("chtimes %s: %v", name, err)
+		}
+		return path
 	}
-	if len(f.Schedules) != 1 {
-		t.Fatalf("expected one override schedule, got %d: %+v", len(f.Schedules), f.Schedules)
+
+	now := time.Now()
+	writeConversation("session-schedule-cron--abc123_100-conversation.json", now)
+	writeConversation("session-sched_legacy123_100-conversation.json", now)
+	if hasChatsNeedingEnrichment(GetDefaultUserID()) {
+		t.Fatal("scheduled conversations should not wake memory enrichment")
 	}
-	if f.Schedules[0].ID != builtinAutoEnrichMemoryID {
-		t.Fatalf("override id = %q, want %q", f.Schedules[0].ID, builtinAutoEnrichMemoryID)
+
+	normalConv := writeConversation("session-chat-1-conversation.json", now)
+	if !hasChatsNeedingEnrichment(GetDefaultUserID()) {
+		t.Fatal("normal date-bucket conversation should wake memory enrichment")
 	}
-	if f.Schedules[0].Enabled {
-		t.Fatal("delete should disable the built-in auto-enrich schedule")
+
+	marker := normalConv + ".enriched"
+	if err := os.WriteFile(marker, []byte{}, 0o600); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+	later := now.Add(time.Minute)
+	if err := os.Chtimes(marker, later, later); err != nil {
+		t.Fatalf("chtimes marker: %v", err)
+	}
+	if hasChatsNeedingEnrichment(GetDefaultUserID()) {
+		t.Fatal("fresh enrichment marker should suppress memory enrichment")
 	}
 }

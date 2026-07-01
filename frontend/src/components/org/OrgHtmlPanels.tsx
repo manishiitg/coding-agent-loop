@@ -223,11 +223,11 @@ export const MemoryPanel: React.FC<{ toolbarLeading?: React.ReactNode; onClosePa
 
       setContent('')
       setPath(primaryPath)
-      setError(primary.message || legacy.message || 'No memory index yet.')
+      setError(primary.message || legacy.message || 'No memory index yet. Use /memory-setup to configure automatic enrichment, or /enrich-memory for a one-time run.')
     } catch {
       setContent('')
       setPath(primaryPath)
-      setError('No memory index yet.')
+      setError('No memory index yet. Use /memory-setup to configure automatic enrichment, or /enrich-memory for a one-time run.')
     } finally {
       setLoading(false)
     }
@@ -273,7 +273,7 @@ export const MemoryPanel: React.FC<{ toolbarLeading?: React.ReactNode; onClosePa
         ) : (
           <div className="flex h-full items-center justify-center p-4 text-center">
             <div className="rounded-md bg-muted/60 px-3 py-2.5 text-xs text-muted-foreground">
-              {error || 'No memory index yet. Ask the Chief of Staff to remember something or run memory enrichment.'}
+              {error || 'No memory index yet. Use /memory-setup to configure automatic enrichment, or /enrich-memory for a one-time run.'}
             </div>
           </div>
         )}

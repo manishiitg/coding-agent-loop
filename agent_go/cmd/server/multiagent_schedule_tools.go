@@ -358,7 +358,8 @@ func createMultiAgentScheduleExecutors(api *StreamingAPI, currentUserID string) 
 					sched.Enabled = b
 				}
 			}
-			// Keep mode pinned to multi-agent.
+			// Keep built-in content product-managed while preserving user scheduling knobs.
+			*sched = NormalizeBuiltinSchedule(*sched)
 			sched.Mode = "multi-agent"
 
 			if err := WriteMultiAgentSchedules(ctx, userID, f); err != nil {

@@ -7,6 +7,7 @@ import ModalPortal from '../ui/ModalPortal'
 
 const MISSED_SCHEDULE_GRACE_MS = 60_000
 const ORG_PULSE_JOB_ID = 'builtin-org-pulse'
+const MEMORY_ENRICH_JOB_ID = 'builtin-auto-enrich-memory'
 type JobFilter = 'running' | 'enabled' | 'paused' | 'missed' | 'issues' | 'all'
 
 function describeCron(expr: string): string {
@@ -82,7 +83,31 @@ function sortJobs(a: ScheduledJob, b: ScheduledJob): number {
 }
 
 function isOrgPulseJob(job: ScheduledJob): boolean {
-  return job.id === ORG_PULSE_JOB_ID || job.managed_by === 'slash-command'
+  if (job.id === ORG_PULSE_JOB_ID) return true
+  const haystack = `${job.name}\n${job.description || ''}\n${job.query || ''}`.toLowerCase()
+  return haystack.includes('org pulse') || haystack.includes('org-pulse')
+}
+
+function getSlashManagedCommand(job: ScheduledJob): string {
+  if (isOrgPulseJob(job)) return '/pulse-setup'
+  if (job.id === MEMORY_ENRICH_JOB_ID) return '/memory-setup'
+  if (job.managed_by === 'slash-command') return 'setup command'
+  return ''
+}
+
+function isSlashManagedJob(job: ScheduledJob): boolean {
+  return getSlashManagedCommand(job) !== ''
+}
+
+function managedScheduleError(job: ScheduledJob, action: string): string {
+  if (job.id === MEMORY_ENRICH_JOB_ID && action === 'run this schedule') {
+    return 'Use /enrich-memory in Chief of Staff for a one-time run, or /memory-setup to configure automatic memory enrichment.'
+  }
+  const command = getSlashManagedCommand(job)
+  if (command && command !== 'setup command') {
+    return `Use ${command} in Chief of Staff to ${action}.`
+  }
+  return `Use the setup command in Chief of Staff to ${action}.`
 }
 
 function isBuiltInJob(job: ScheduledJob): boolean {
@@ -175,8 +200,8 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
   }, [activeFilter, sortedJobs])
 
   const handleToggle = async (job: ScheduledJob) => {
-    if (isOrgPulseJob(job)) {
-      setError('Use /pulse-setup in Chief of Staff to change Daily Org Pulse.')
+    if (isSlashManagedJob(job)) {
+      setError(managedScheduleError(job, 'change this schedule'))
       return
     }
     setActionInProgress(job.id)
@@ -193,8 +218,8 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
   }
 
   const handleTrigger = async (job: ScheduledJob) => {
-    if (isOrgPulseJob(job)) {
-      setError('Use /pulse-setup in Chief of Staff before running Daily Org Pulse.')
+    if (isSlashManagedJob(job)) {
+      setError(managedScheduleError(job, 'run this schedule'))
       return
     }
     setActionInProgress(job.id)
@@ -222,8 +247,8 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
   }
 
   const handleDelete = async (job: ScheduledJob) => {
-    if (isOrgPulseJob(job)) {
-      setError('Use /pulse-setup in Chief of Staff to disable or change Daily Org Pulse.')
+    if (isSlashManagedJob(job)) {
+      setError(managedScheduleError(job, 'disable or change this schedule'))
       return
     }
     if (!window.confirm(`Delete schedule "${job.name}"?`)) return
@@ -398,7 +423,8 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
                 <div className="divide-y divide-border">
                   {filteredJobs.map((job) => {
                     const missedDelayMs = getMissedScheduleDelayMs(job)
-                    const orgPulseJob = isOrgPulseJob(job)
+                    const slashManagedCommand = getSlashManagedCommand(job)
+                    const slashManagedJob = slashManagedCommand !== ''
                     const builtInJob = isBuiltInJob(job)
                     const isRunning = job.last_status === 'running'
 
@@ -424,12 +450,12 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
                                       Paused
                                     </span>
                                   )}
-                                  {orgPulseJob && (
+                                  {slashManagedCommand && slashManagedCommand !== 'setup command' && (
                                     <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">
-                                      /pulse-setup
+                                      {slashManagedCommand}
                                     </span>
                                   )}
-                                  {builtInJob && !orgPulseJob && (
+                                  {builtInJob && !slashManagedJob && (
                                     <span className="rounded-full border border-border bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
                                       Built-in
                                     </span>
@@ -453,8 +479,8 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
                                   </span>
                                   <span>Last ran {formatLastRunLabel(job.last_run_at)}</span>
                                   <span>{job.run_count} run{job.run_count !== 1 ? 's' : ''}</span>
-                                  {orgPulseJob && <span>Managed in chat</span>}
-                                  {builtInJob && !orgPulseJob && <span>System schedule</span>}
+                                  {slashManagedJob && <span>Managed in chat</span>}
+                                  {builtInJob && !slashManagedJob && <span>System schedule</span>}
                                 </div>
 
                                 {job.query && (
@@ -483,7 +509,7 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
                                 <Square className="h-3 w-3" />
                                 Stop
                               </button>
-                            ) : orgPulseJob ? (
+                            ) : slashManagedJob ? (
                               <span className="rounded-md border border-border bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
                                 Managed in chat
                               </span>

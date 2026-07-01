@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"mcp-agent-builder-go/agent_go/pkg/fsutil"
 )
 
 // Built-in schedules are defined in Go and run for every user unless the user
@@ -16,21 +18,9 @@ import (
 
 const builtinAutoEnrichMemoryID = "builtin-auto-enrich-memory"
 
-const builtinAutoEnrichQuery = `Check for chats needing memory enrichment, then act:
+const builtinAutoEnrichQuery = `Run scheduled Chief of Staff memory enrichment.
 
-1. Count sessions that have no .enriched marker, or whose conversation.json is newer than the marker. Run (via execute_shell_command):
-
-    c=0
-    for sid in $(ls _users/default/chat_history/ 2>/dev/null); do
-      conv=_users/default/chat_history/$sid/conversation.json
-      mark=_users/default/chat_history/$sid/.enriched
-      [ -f "$conv" ] || continue
-      if [ ! -f "$mark" ] || [ "$conv" -nt "$mark" ]; then c=$((c+1)); fi
-    done
-    echo $c
-
-2. If the count is 0, reply "No new chats to enrich — skipping." and STOP. Do not call any other tools.
-3. If the count is > 0, call enrich_memory() with no arguments.`
+This built-in schedule is pre-gated by the scheduler: it only fires when one or more non-scheduled chat_history sessions have changed since their last enrichment marker. Call get_reference_doc(kind="memory-usage") if you need the memory policy, then call enrich_memory(delete_older_than_days: 7). Do not write reports, change schedules, or make workflow edits from this scheduled pass.`
 
 const builtinOrgPulseID = "builtin-org-pulse"
 
@@ -62,10 +52,10 @@ func DefaultBuiltinSchedules() []WorkflowSchedule {
 		{
 			ID:             builtinAutoEnrichMemoryID,
 			Name:           "Auto-enrich memory (every 3h)",
-			Description:    "Distill new chat sessions into memory on a schedule. Uses a Go-side pre-check so no LLM runs when there is nothing to enrich.",
+			Description:    "Distill new Chief of Staff chats into memory on a schedule. Off by default; use /memory-setup to opt in and choose cadence.",
 			CronExpression: "0 */3 * * *",
 			Timezone:       "UTC",
-			Enabled:        true,
+			Enabled:        false,
 			Mode:           "multi-agent",
 			Query:          builtinAutoEnrichQuery,
 		},
@@ -106,7 +96,41 @@ func IsDefaultBuiltinSchedule(scheduleID string) bool {
 }
 
 func IsSlashManagedBuiltinSchedule(scheduleID string) bool {
-	return scheduleID == builtinOrgPulseID
+	return scheduleID == builtinOrgPulseID || scheduleID == builtinAutoEnrichMemoryID
+}
+
+func SlashManagedBuiltinSetupCommand(scheduleID string) string {
+	switch scheduleID {
+	case builtinOrgPulseID:
+		return "/pulse-setup"
+	case builtinAutoEnrichMemoryID:
+		return "/memory-setup"
+	default:
+		return ""
+	}
+}
+
+func SlashManagedBuiltinScheduleLabel(scheduleID string) string {
+	switch scheduleID {
+	case builtinOrgPulseID:
+		return "Daily Org Pulse"
+	case builtinAutoEnrichMemoryID:
+		return "automatic memory enrichment"
+	default:
+		return "this managed schedule"
+	}
+}
+
+func SlashManagedBuiltinError(scheduleID string, action string) string {
+	if scheduleID == builtinAutoEnrichMemoryID && action == "run" {
+		return "Use /enrich-memory in Chief of Staff for a one-time run, or /memory-setup to configure automatic memory enrichment."
+	}
+	cmd := SlashManagedBuiltinSetupCommand(scheduleID)
+	label := SlashManagedBuiltinScheduleLabel(scheduleID)
+	if cmd == "" {
+		return "Use the setup command in Chief of Staff to " + action + " " + label + "."
+	}
+	return "Use " + cmd + " in Chief of Staff to " + action + " " + label + "."
 }
 
 // IsOrgPulseSchedule reports whether a multi-agent schedule IS the Org Pulse —
@@ -173,6 +197,56 @@ func NormalizeOrgPulseSchedule(sched WorkflowSchedule) WorkflowSchedule {
 	return normalized
 }
 
+func NormalizeAutoEnrichMemorySchedule(sched WorkflowSchedule) WorkflowSchedule {
+	if sched.ID != builtinAutoEnrichMemoryID {
+		return sched
+	}
+
+	builtin, ok := FindDefaultBuiltinSchedule(builtinAutoEnrichMemoryID)
+	if !ok {
+		return sched
+	}
+
+	normalized := builtin
+	normalized.ID = sched.ID
+	normalized.Enabled = sched.Enabled
+	normalized.Mode = "multi-agent"
+	normalized.TriggerPayload = sched.TriggerPayload
+	normalized.GroupNames = sched.GroupNames
+	normalized.ResumePrevious = sched.ResumePrevious
+
+	if strings.TrimSpace(sched.Name) != "" {
+		normalized.Name = sched.Name
+	}
+	if strings.TrimSpace(sched.Description) != "" {
+		normalized.Description = sched.Description
+	}
+	if strings.TrimSpace(sched.ScheduleType) != "" {
+		normalized.ScheduleType = sched.ScheduleType
+	}
+	if strings.TrimSpace(sched.CronExpression) != "" {
+		normalized.CronExpression = sched.CronExpression
+	}
+	if strings.TrimSpace(sched.Timezone) != "" {
+		normalized.Timezone = sched.Timezone
+	}
+	if len(sched.CalendarItems) > 0 {
+		normalized.CalendarItems = make([]CalendarScheduleItem, 0, len(sched.CalendarItems))
+		for _, item := range sched.CalendarItems {
+			item.Messages = nil
+			normalized.CalendarItems = append(normalized.CalendarItems, item)
+		}
+	}
+
+	return normalized
+}
+
+func NormalizeBuiltinSchedule(sched WorkflowSchedule) WorkflowSchedule {
+	sched = NormalizeOrgPulseSchedule(sched)
+	sched = NormalizeAutoEnrichMemorySchedule(sched)
+	return sched
+}
+
 // MergeBuiltinSchedules appends built-in schedules that the user has not
 // overridden. Matching is by ID — a user entry with the same ID supplies the
 // scheduling knobs (enabled, cron/timezone, calendar items). Recognized Org
@@ -182,7 +256,7 @@ func MergeBuiltinSchedules(userSchedules []WorkflowSchedule) []WorkflowSchedule 
 	existing := make(map[string]struct{}, len(userSchedules))
 	out := make([]WorkflowSchedule, 0, len(userSchedules)+len(DefaultBuiltinSchedules()))
 	for _, s := range userSchedules {
-		normalized := NormalizeOrgPulseSchedule(s)
+		normalized := NormalizeBuiltinSchedule(s)
 		existing[normalized.ID] = struct{}{}
 		out = append(out, normalized)
 	}
@@ -204,16 +278,34 @@ var PreFireChecks = map[string]PreFireCheck{
 }
 
 // chatHistoryDirForUser returns the filesystem path to a user's chat_history
-// folder. The server runs with workspace-docs/ as a sibling, so relative paths
-// resolve correctly.
+// folder.
 func chatHistoryDirForUser(userID string) string {
-	return filepath.Join("workspace-docs", "_users", userID, "chat_history")
+	return filepath.Join(fsutil.WorkspaceDocsRoot(), "_users", userID, "chat_history")
 }
 
-// hasChatsNeedingEnrichment returns true if at least one session folder has
-// a conversation.json that is newer than its .enriched marker, or no marker
-// at all. Returns false when every session has already been enriched and has
-// not grown since.
+func memoryEnrichmentMarkerPath(convPath string) string {
+	if filepath.Base(convPath) == "conversation.json" {
+		return filepath.Join(filepath.Dir(convPath), ".enriched")
+	}
+	return convPath + ".enriched"
+}
+
+func conversationNeedsMemoryEnrichment(convPath string) bool {
+	convInfo, err := os.Stat(convPath)
+	if err != nil || convInfo.IsDir() {
+		return false
+	}
+	markInfo, err := os.Stat(memoryEnrichmentMarkerPath(convPath))
+	if err != nil {
+		return true
+	}
+	return convInfo.ModTime().After(markInfo.ModTime())
+}
+
+// hasChatsNeedingEnrichment returns true if at least one non-scheduled chat
+// conversation is newer than its enrichment marker, or has no marker yet. It
+// supports both legacy chat_history/<session>/conversation.json and the current
+// date-bucket chat_history/YYYY-MM-DD/session-<id>-conversation.json layout.
 func hasChatsNeedingEnrichment(userID string) bool {
 	dir := chatHistoryDirForUser(userID)
 	entries, err := os.ReadDir(dir)
@@ -224,18 +316,26 @@ func hasChatsNeedingEnrichment(userID string) bool {
 		if !e.IsDir() {
 			continue
 		}
-		conv := filepath.Join(dir, e.Name(), "conversation.json")
-		convInfo, err := os.Stat(conv)
+
+		// Legacy layout: chat_history/<session-id>/conversation.json.
+		if !chatHistoryIsScheduleSessionID(e.Name()) &&
+			conversationNeedsMemoryEnrichment(filepath.Join(dir, e.Name(), "conversation.json")) {
+			return true
+		}
+
+		// Current layout: chat_history/YYYY-MM-DD/session-<session-id>-conversation.json.
+		matches, err := filepath.Glob(filepath.Join(dir, e.Name(), "session-*-conversation.json"))
 		if err != nil {
 			continue
 		}
-		mark := filepath.Join(dir, e.Name(), ".enriched")
-		markInfo, err := os.Stat(mark)
-		if err != nil {
-			return true
-		}
-		if convInfo.ModTime().After(markInfo.ModTime()) {
-			return true
+		for _, convPath := range matches {
+			sessionID := chatHistorySessionIDFromFileName(filepath.Base(convPath))
+			if sessionID == "" || chatHistoryIsScheduleSessionID(sessionID) {
+				continue
+			}
+			if conversationNeedsMemoryEnrichment(convPath) {
+				return true
+			}
 		}
 	}
 	return false

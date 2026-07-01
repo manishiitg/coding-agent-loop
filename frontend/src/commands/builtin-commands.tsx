@@ -62,7 +62,7 @@ export const builtinCommands: CommandDefinition[] = [
   },
   {
     command: 'review-cost',
-    description: 'Review workflow cost and how to reduce it safely',
+    description: 'Write a report-only cost review',
     icon: <Cpu className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
@@ -160,7 +160,7 @@ export const builtinCommands: CommandDefinition[] = [
   },
   {
     command: 'auto-improve',
-    description: 'Set up recurring workflow runs and lightweight optimizer checks',
+    description: 'Set up versioned run and optimizer pulses',
     icon: <Bot className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',

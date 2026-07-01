@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -152,8 +150,8 @@ func getStoredProviderAPIKey(keys *StoredProviderKeys, provider string) string {
 		return strings.TrimSpace(keys.CodexCLI)
 	case "cursor-cli":
 		return strings.TrimSpace(keys.CursorCLI)
-	case "opencode-cli":
-		return strings.TrimSpace(keys.OpenCodeCLI)
+	case "pi-cli":
+		return strings.TrimSpace(keys.PiCLI)
 	case "minimax":
 		return strings.TrimSpace(keys.MiniMax)
 	case "elevenlabs":
@@ -186,8 +184,8 @@ func setStoredProviderAPIKey(keys *StoredProviderKeys, provider, apiKey string) 
 		keys.CodexCLI = value
 	case "cursor-cli":
 		keys.CursorCLI = value
-	case "opencode-cli":
-		keys.OpenCodeCLI = value
+	case "pi-cli":
+		keys.PiCLI = value
 	case "minimax":
 		keys.MiniMax = value
 	case "elevenlabs":
@@ -344,34 +342,11 @@ func runtimeAvailableForProvider(provider string) (string, error) {
 	if command == "" {
 		return "", nil
 	}
-	if command != "opencode" {
-		path, err := exec.LookPath(command)
-		if err != nil {
-			return command, fmt.Errorf("%s not found. Install the CLI so %s is available on the backend PATH.", command, command)
-		}
-		return path, nil
+	path, err := exec.LookPath(command)
+	if err != nil {
+		return command, fmt.Errorf("%s not found. Install the CLI so %s is available on the backend PATH.", command, command)
 	}
-
-	if explicit := strings.TrimSpace(os.Getenv("OPENCODE_BIN")); explicit != "" {
-		if info, err := os.Stat(explicit); err == nil && !info.IsDir() {
-			return explicit, nil
-		}
-		return explicit, fmt.Errorf("OPENCODE_BIN is set to %q but no executable file was found", explicit)
-	}
-	if path, err := exec.LookPath("opencode"); err == nil {
-		return path, nil
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		for _, candidate := range []string{
-			filepath.Join(home, ".opencode", "bin", "opencode"),
-			filepath.Join(home, ".cache", "opencode", "bin", "opencode"),
-		} {
-			if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
-				return candidate, nil
-			}
-		}
-	}
-	return "opencode", fmt.Errorf("OpenCode CLI not found. Install OpenCode CLI so opencode is available on PATH, or set OPENCODE_BIN.")
+	return path, nil
 }
 
 func providerRuntimeAvailable(provider string) *bool {
@@ -397,24 +372,10 @@ func providerRuntime(provider string) string {
 		return "cursor-agent"
 	case string(llm.ProviderAgyCLI):
 		return "agy"
-	case string(llm.ProviderOpenCodeCLI):
-		return "opencode"
-	}
-	// OpenCode CLI sub-provider tiles all run through the `opencode`
-	// binary; route them here so runtime availability checks reuse the
-	// existing opencode-cli code path.
-	if isOpenCodeSubProviderID(normalized) {
-		return "opencode"
+	case string(llm.ProviderPiCLI):
+		return "pi"
 	}
 	return ""
-}
-
-// isOpenCodeSubProviderID reports whether the given provider identifier is
-// one of the OpenCode CLI sub-provider tiles ("opencode-cli-kimi",
-// "opencode-cli-deepseek", etc.). The check is namespace-based so adding a
-// new tile to the opencodecli catalog requires no edits here.
-func isOpenCodeSubProviderID(provider string) bool {
-	return strings.HasPrefix(provider, "opencode-cli-")
 }
 
 func providerAuthConfigured(provider string, keys *llm.ProviderAPIKeys) (bool, string) {
@@ -442,29 +403,8 @@ func providerAuthConfigured(provider string, keys *llm.ProviderAPIKeys) (bool, s
 		return true, "Cursor CLI login or CURSOR_API_KEY/workspace provider auth"
 	case string(llm.ProviderAgyCLI):
 		return true, "Antigravity CLI local sign-in"
-	case string(llm.ProviderOpenCodeCLI):
-		return true, "OpenCode CLI provider auth or OPENCODE_API_KEY/workspace provider auth"
-	case "opencode-cli-kimi", "opencode-cli-deepseek", "opencode-cli-qwen",
-		"opencode-cli-minimax", "opencode-cli-glm", "opencode-cli-openrouter":
-		// Sub-provider auth is sourced from per-sub-provider env vars or
-		// the workspace-encrypted sub-key map. The manifest endpoint
-		// already inspects MergedOpenCodeSubProviderKeys to populate the
-		// auth_configured flag, so here we return false-with-a-reason
-		// only when no credential is reachable.
-		envVar := openCodeSubProviderEnvVarForID(normalizeManagedProvider(provider))
-		if envVar == "" {
-			return false, "unknown OpenCode sub-provider"
-		}
-		// We don't have ctx here; rely on env-only check + presence in
-		// the merged map being authoritative for the manifest. This
-		// helper is used by code paths that don't pass ctx, so env-only
-		// check is the closest we can get.
-		if v := getenvTrim(envVar); v != "" {
-			return true, envVar + " or workspace provider auth"
-		}
-		return false, envVar + " required (set in OpenCode sub-provider tile)"
-	case "opencode-cli-free":
-		return true, "No API key required (rate-limited free tier)"
+	case string(llm.ProviderPiCLI):
+		return true, "Pi CLI local auth, PI_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY, or workspace provider auth"
 	case string(llm.ProviderMiniMax):
 		return keys.MiniMax != nil && strings.TrimSpace(*keys.MiniMax) != "", "MINIMAX_API_KEY or workspace provider auth"
 	case string(llm.ProviderElevenLabs):
@@ -509,7 +449,7 @@ func buildChatLLMCapabilities(keys *llm.ProviderAPIKeys, includeModels bool) []l
 		string(llm.ProviderCodexCLI),
 		string(llm.ProviderCursorCLI),
 		string(llm.ProviderAgyCLI),
-		string(llm.ProviderOpenCodeCLI),
+		string(llm.ProviderPiCLI),
 		string(llm.ProviderClaudeCode),
 		string(llm.ProviderGeminiCLI),
 		string(llm.ProviderOpenAI),
@@ -556,7 +496,7 @@ func buildFixedCapabilityProviders(keys *llm.ProviderAPIKeys, providerModels map
 		string(llm.ProviderCodexCLI),
 		string(llm.ProviderCursorCLI),
 		string(llm.ProviderAgyCLI),
-		string(llm.ProviderOpenCodeCLI),
+		string(llm.ProviderPiCLI),
 		string(llm.ProviderClaudeCode),
 		string(llm.ProviderGeminiCLI),
 		string(llm.ProviderElevenLabs),
@@ -639,18 +579,18 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 			"providers": buildFixedCapabilityProviders(
 				keys,
 				map[string][]string{
-					string(llm.ProviderClaudeCode):  {"claude-code"},
-					string(llm.ProviderCodexCLI):    {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
-					string(llm.ProviderCursorCLI):   {"cursor-cli", "gpt-5", "sonnet-4-thinking", "sonnet-4"},
-					string(llm.ProviderOpenCodeCLI): {"opencode-cli", "openai/gpt-5.1", "anthropic/claude-sonnet-4-5"},
-					string(llm.ProviderGeminiCLI):   {"gemini CLI models"},
-					string(llm.ProviderVertex):      {"gemini* models only"},
+					string(llm.ProviderClaudeCode): {"claude-code"},
+					string(llm.ProviderCodexCLI):   {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
+					string(llm.ProviderCursorCLI):  {"cursor-cli", "gpt-5", "sonnet-4-thinking", "sonnet-4"},
+					string(llm.ProviderPiCLI):      {"pi-cli", "google/gemini-3.5-flash", "google/gemini-2.5-flash"},
+					string(llm.ProviderGeminiCLI):  {"gemini CLI models"},
+					string(llm.ProviderVertex):     {"gemini* models only"},
 				},
 				map[string]string{},
 				map[string][]string{
-					string(llm.ProviderCursorCLI):   {"Uses Cursor Agent CLI through tmux; model availability follows the signed-in Cursor account."},
-					string(llm.ProviderOpenCodeCLI): {"Uses OpenCode CLI through tmux; model availability follows OpenCode provider configuration."},
-					string(llm.ProviderVertex):      {"Only published Vertex models whose model_id starts with gemini are search-capable."},
+					string(llm.ProviderCursorCLI): {"Uses Cursor Agent CLI through tmux; model availability follows the signed-in Cursor account."},
+					string(llm.ProviderPiCLI):     {"Uses Pi CLI through tmux; model availability follows Pi provider configuration."},
+					string(llm.ProviderVertex):    {"Only published Vertex models whose model_id starts with gemini are search-capable."},
 				},
 			),
 			"routing_fields": map[string]interface{}{
@@ -666,27 +606,27 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 			"providers": buildFixedCapabilityProviders(
 				keys,
 				map[string][]string{
-					string(llm.ProviderVertex):      {"gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview"},
-					string(llm.ProviderCodexCLI):    {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
-					string(llm.ProviderCursorCLI):   {"cursor-cli", "gpt-5", "sonnet-4-thinking", "sonnet-4"},
-					string(llm.ProviderAgyCLI):      {"agy-cli"},
-					string(llm.ProviderOpenCodeCLI): {"opencode-cli", "openai/gpt-5.1", "anthropic/claude-sonnet-4-5"},
-					string(llm.ProviderClaudeCode):  {"claude-code"},
+					string(llm.ProviderVertex):     {"gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview"},
+					string(llm.ProviderCodexCLI):   {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
+					string(llm.ProviderCursorCLI):  {"cursor-cli", "gpt-5", "sonnet-4-thinking", "sonnet-4"},
+					string(llm.ProviderAgyCLI):     {"agy-cli"},
+					string(llm.ProviderPiCLI):      {"pi-cli", "google/gemini-3.5-flash", "google/gemini-2.5-flash"},
+					string(llm.ProviderClaudeCode): {"claude-code"},
 				},
 				map[string]string{
-					string(llm.ProviderVertex):      "gemini-3-pro-preview",
-					string(llm.ProviderCodexCLI):    "gpt-5.4-mini",
-					string(llm.ProviderCursorCLI):   "cursor-cli",
-					string(llm.ProviderAgyCLI):      "agy-cli",
-					string(llm.ProviderOpenCodeCLI): "opencode-cli",
-					string(llm.ProviderClaudeCode):  "claude-code",
+					string(llm.ProviderVertex):     "gemini-3-pro-preview",
+					string(llm.ProviderCodexCLI):   "gpt-5.4-mini",
+					string(llm.ProviderCursorCLI):  "cursor-cli",
+					string(llm.ProviderAgyCLI):     "agy-cli",
+					string(llm.ProviderPiCLI):      "pi-cli",
+					string(llm.ProviderClaudeCode): "claude-code",
 				},
 				map[string][]string{
-					string(llm.ProviderCodexCLI):    {"Uses the local workspace image path because Codex CLI does not consume base64 ImageContent through the adapter."},
-					string(llm.ProviderCursorCLI):   {"Uses the local workspace image path because Cursor CLI tmux transport does not consume base64 ImageContent through the adapter."},
-					string(llm.ProviderAgyCLI):      {"Uses the local workspace image path through Antigravity CLI; requires local Agy sign-in."},
-					string(llm.ProviderOpenCodeCLI): {"Uses the local workspace image path because OpenCode CLI tmux transport does not consume base64 ImageContent through the adapter."},
-					string(llm.ProviderClaudeCode):  {"Uses the local workspace image path through Claude Code CLI."},
+					string(llm.ProviderCodexCLI):   {"Uses the local workspace image path because Codex CLI does not consume base64 ImageContent through the adapter."},
+					string(llm.ProviderCursorCLI):  {"Uses the local workspace image path because Cursor CLI tmux transport does not consume base64 ImageContent through the adapter."},
+					string(llm.ProviderAgyCLI):     {"Uses the local workspace image path through Antigravity CLI; requires local Agy sign-in."},
+					string(llm.ProviderPiCLI):      {"Uses the local workspace image path because Pi CLI tmux transport does not consume base64 ImageContent through the adapter."},
+					string(llm.ProviderClaudeCode): {"Uses the local workspace image path through Claude Code CLI."},
 				},
 			),
 		}
@@ -1324,7 +1264,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 			"properties": map[string]interface{}{
 				"provider": map[string]interface{}{
 					"type":        "string",
-					"description": "Provider id such as opencode-cli, codex-cli, cursor-cli, claude-code, gemini-cli, openai, anthropic, vertex, azure, or bedrock.",
+					"description": "Provider id such as pi-cli, codex-cli, cursor-cli, claude-code, gemini-cli, openai, anthropic, vertex, azure, or bedrock.",
 				},
 			},
 			"required": []string{"provider"},
@@ -1348,7 +1288,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 			"properties": map[string]interface{}{
 				"provider": map[string]interface{}{
 					"type":        "string",
-					"description": "Provider id such as opencode-cli, codex-cli, cursor-cli, claude-code, gemini-cli, openai, anthropic, vertex, azure, or bedrock.",
+					"description": "Provider id such as pi-cli, codex-cli, cursor-cli, claude-code, gemini-cli, openai, anthropic, vertex, azure, or bedrock.",
 				},
 				"model_id": map[string]interface{}{
 					"type":        "string",
@@ -1387,7 +1327,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 				return "provider is required.", nil
 			}
 			if !isPublishedLLMProviderAllowed(provider) {
-				return fmt.Sprintf("unsupported chat LLM provider %q. Use coding agents or direct API providers: codex-cli, cursor-cli, opencode-cli, claude-code, gemini-cli, bedrock, openai, anthropic, vertex, or azure.", provider), nil
+				return fmt.Sprintf("unsupported chat LLM provider %q. Use coding agents or direct API providers: codex-cli, cursor-cli, pi-cli, claude-code, gemini-cli, bedrock, openai, anthropic, vertex, or azure.", provider), nil
 			}
 
 			explicitAPIKeyProvided := strings.TrimSpace(apiKey) != ""
@@ -1486,7 +1426,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 				},
 				"provider": map[string]interface{}{
 					"type":        "string",
-					"description": "Provider id such as opencode-cli, codex-cli, cursor-cli, claude-code, gemini-cli, openai, anthropic, vertex, azure, or bedrock.",
+					"description": "Provider id such as pi-cli, codex-cli, cursor-cli, claude-code, gemini-cli, openai, anthropic, vertex, azure, or bedrock.",
 				},
 				"model_id": map[string]interface{}{
 					"type":        "string",
@@ -1510,7 +1450,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 				return "name, provider, and model_id are required.", nil
 			}
 			if !isPublishedLLMProviderAllowed(provider) {
-				return fmt.Sprintf("unsupported published LLM provider %q. Use coding agents or direct API providers: codex-cli, cursor-cli, opencode-cli, claude-code, gemini-cli, bedrock, openai, anthropic, vertex, or azure.", provider), nil
+				return fmt.Sprintf("unsupported published LLM provider %q. Use coding agents or direct API providers: codex-cli, cursor-cli, pi-cli, claude-code, gemini-cli, bedrock, openai, anthropic, vertex, or azure.", provider), nil
 			}
 
 			llms, err := LoadPublishedLLMs(ctx)
@@ -1569,7 +1509,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 			"properties": map[string]interface{}{
 				"provider": map[string]interface{}{
 					"type":        "string",
-					"description": "Provider id: opencode-cli, codex-cli, cursor-cli, gemini-cli, openai, anthropic, vertex, minimax, elevenlabs, deepgram, bedrock, or azure.",
+					"description": "Provider id: pi-cli, codex-cli, cursor-cli, gemini-cli, openai, anthropic, vertex, minimax, elevenlabs, deepgram, bedrock, or azure.",
 				},
 				"api_key": map[string]interface{}{
 					"type":        "string",

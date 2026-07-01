@@ -16,39 +16,43 @@ import (
 // ScheduledJobResponse is the API response for a scheduled job.
 // Designed to be backward-compatible with the old DB-based ScheduledJob shape.
 type ScheduledJobResponse struct {
-	ID                  string                 `json:"id"`
-	Name                string                 `json:"name"`
-	Description         string                 `json:"description"`
-	EntityType          string                 `json:"entity_type"` // "workflow" or "multi-agent"
-	WorkspacePath       string                 `json:"workspace_path"`
-	WorkflowID          string                 `json:"workflow_id,omitempty"`
-	WorkflowLabel       string                 `json:"workflow_label,omitempty"`
-	PresetQueryID       string                 `json:"preset_query_id,omitempty"` // empty — kept for frontend compat
-	TriggerPayload      json.RawMessage        `json:"trigger_payload,omitempty"`
-	GroupNames          []string               `json:"group_names,omitempty"`
-	Mode                string                 `json:"mode,omitempty"`          // "workflow", "workshop", or "multi-agent"
-	Messages            []string               `json:"messages,omitempty"`      // Predefined messages for workshop mode
-	WorkshopMode        string                 `json:"workshop_mode,omitempty"` // builder, optimizer, runner (default), debugger
-	Query               string                 `json:"query,omitempty"`         // Message to execute (multi-agent mode)
-	ResumePrevious      bool                   `json:"resume_previous,omitempty"` // Coding-agent CLI only: resume latest prior thread instead of fresh session
-	UserID              string                 `json:"user_id,omitempty"`       // User context (multi-agent mode)
-	ScheduleType        string                 `json:"schedule_type,omitempty"`
-	CalendarItems       []CalendarScheduleItem `json:"calendar_items,omitempty"`
-	CronExpression      string                 `json:"cron_expression"`
-	Timezone            string                 `json:"timezone"`
-	Enabled             bool                   `json:"enabled"`
-	LastRunAt           *time.Time             `json:"last_run_at,omitempty"`
-	NextRunAt           *time.Time             `json:"next_run_at,omitempty"`
-	LastSessionID       string                 `json:"last_session_id,omitempty"`
-	LastStatus          string                 `json:"last_status,omitempty"`
-	LastError           string                 `json:"last_error,omitempty"`
-	LastDurationMs      *int64                 `json:"last_duration_ms,omitempty"`
-	RunCount            int                    `json:"run_count"`
-	ConsecutiveFailures int                    `json:"consecutive_failures"`
-	MissedRunCount      int                    `json:"missed_run_count,omitempty"`
-	LatestMissedRunAt   *time.Time             `json:"latest_missed_run_at,omitempty"`
-	CreatedAt   string `json:"created_at,omitempty"`
-	UpdatedAt   string `json:"updated_at,omitempty"`
+	ID                   string                 `json:"id"`
+	Name                 string                 `json:"name"`
+	Description          string                 `json:"description"`
+	EntityType           string                 `json:"entity_type"` // "workflow" or "multi-agent"
+	WorkspacePath        string                 `json:"workspace_path"`
+	WorkflowID           string                 `json:"workflow_id,omitempty"`
+	WorkflowLabel        string                 `json:"workflow_label,omitempty"`
+	PresetQueryID        string                 `json:"preset_query_id,omitempty"` // empty — kept for frontend compat
+	TriggerPayload       json.RawMessage        `json:"trigger_payload,omitempty"`
+	GroupNames           []string               `json:"group_names,omitempty"`
+	Mode                 string                 `json:"mode,omitempty"`             // "workflow", "workshop", or "multi-agent"
+	Messages             []string               `json:"messages,omitempty"`         // Predefined messages for workshop mode
+	ScheduleVersion      int                    `json:"schedule_version,omitempty"` // Version of schedule product semantics
+	PromptVersion        int                    `json:"prompt_version,omitempty"`   // Version of persisted workshop messages or multi-agent query
+	CurrentPromptVersion int                    `json:"current_prompt_version,omitempty"`
+	PromptStale          bool                   `json:"prompt_stale,omitempty"`
+	WorkshopMode         string                 `json:"workshop_mode,omitempty"`   // builder, optimizer, runner (default), debugger
+	Query                string                 `json:"query,omitempty"`           // Message to execute (multi-agent mode)
+	ResumePrevious       bool                   `json:"resume_previous,omitempty"` // Coding-agent CLI only: resume latest prior thread instead of fresh session
+	UserID               string                 `json:"user_id,omitempty"`         // User context (multi-agent mode)
+	ScheduleType         string                 `json:"schedule_type,omitempty"`
+	CalendarItems        []CalendarScheduleItem `json:"calendar_items,omitempty"`
+	CronExpression       string                 `json:"cron_expression"`
+	Timezone             string                 `json:"timezone"`
+	Enabled              bool                   `json:"enabled"`
+	LastRunAt            *time.Time             `json:"last_run_at,omitempty"`
+	NextRunAt            *time.Time             `json:"next_run_at,omitempty"`
+	LastSessionID        string                 `json:"last_session_id,omitempty"`
+	LastStatus           string                 `json:"last_status,omitempty"`
+	LastError            string                 `json:"last_error,omitempty"`
+	LastDurationMs       *int64                 `json:"last_duration_ms,omitempty"`
+	RunCount             int                    `json:"run_count"`
+	ConsecutiveFailures  int                    `json:"consecutive_failures"`
+	MissedRunCount       int                    `json:"missed_run_count,omitempty"`
+	LatestMissedRunAt    *time.Time             `json:"latest_missed_run_at,omitempty"`
+	CreatedAt            string                 `json:"created_at,omitempty"`
+	UpdatedAt            string                 `json:"updated_at,omitempty"`
 }
 
 // CreateScheduleRequest is the request body for creating a schedule.
@@ -63,10 +67,10 @@ type CreateScheduleRequest struct {
 	Enabled        bool                   `json:"enabled"`
 	TriggerPayload json.RawMessage        `json:"trigger_payload,omitempty"`
 	GroupNames     []string               `json:"group_names,omitempty"`
-	Mode           string                 `json:"mode,omitempty"`          // "workflow" (default), "workshop", or "multi-agent"
-	Messages       []string               `json:"messages,omitempty"`      // Predefined messages for workshop mode
-	WorkshopMode   string                 `json:"workshop_mode,omitempty"` // builder, optimizer, runner (default), debugger
-	Query          string                 `json:"query,omitempty"`         // Message to execute (multi-agent mode)
+	Mode           string                 `json:"mode,omitempty"`            // "workflow" (default), "workshop", or "multi-agent"
+	Messages       []string               `json:"messages,omitempty"`        // Predefined messages for workshop mode
+	WorkshopMode   string                 `json:"workshop_mode,omitempty"`   // builder, optimizer, runner (default), debugger
+	Query          string                 `json:"query,omitempty"`           // Message to execute (multi-agent mode)
 	ResumePrevious *bool                  `json:"resume_previous,omitempty"` // Coding-agent CLI only: resume latest prior thread instead of fresh session (nil = default ON; explicit false opts out)
 }
 
@@ -81,27 +85,36 @@ type UpdateScheduleRequest struct {
 	Enabled        *bool                  `json:"enabled,omitempty"`
 	TriggerPayload json.RawMessage        `json:"trigger_payload,omitempty"`
 	GroupNames     []string               `json:"group_names,omitempty"`
-	Mode           string                 `json:"mode,omitempty"`          // "workflow", "workshop", or "multi-agent"
-	Messages       []string               `json:"messages,omitempty"`      // Predefined messages for workshop mode
-	WorkshopMode   string                 `json:"workshop_mode,omitempty"` // builder, optimizer, runner, debugger
-	Query          string                 `json:"query,omitempty"`         // Message to execute (multi-agent mode)
+	Mode           string                 `json:"mode,omitempty"`            // "workflow", "workshop", or "multi-agent"
+	Messages       []string               `json:"messages,omitempty"`        // Predefined messages for workshop mode
+	WorkshopMode   string                 `json:"workshop_mode,omitempty"`   // builder, optimizer, runner, debugger
+	Query          string                 `json:"query,omitempty"`           // Message to execute (multi-agent mode)
 	ResumePrevious *bool                  `json:"resume_previous,omitempty"` // Coding-agent CLI only: resume latest prior thread instead of fresh session
 }
 
 func buildJobResponse(workspacePath string, manifest *WorkflowManifest, sched WorkflowSchedule, state ScheduleRuntimeState, missed WorkflowScheduleMissedStatus) ScheduledJobResponse {
 	return ScheduledJobResponse{
-		ID:                  sched.ID,
-		Name:                sched.Name,
-		Description:         sched.Description,
-		EntityType:          "workflow",
-		WorkspacePath:       workspacePath,
-		WorkflowID:          manifest.ID,
-		WorkflowLabel:       manifest.Label,
-		PresetQueryID:       manifest.ID,
-		TriggerPayload:      sched.TriggerPayload,
-		GroupNames:          sched.GroupNames,
-		Mode:                sched.Mode,
-		Messages:            sched.Messages,
+		ID:              sched.ID,
+		Name:            sched.Name,
+		Description:     sched.Description,
+		EntityType:      "workflow",
+		WorkspacePath:   workspacePath,
+		WorkflowID:      manifest.ID,
+		WorkflowLabel:   manifest.Label,
+		PresetQueryID:   manifest.ID,
+		TriggerPayload:  sched.TriggerPayload,
+		GroupNames:      sched.GroupNames,
+		Mode:            sched.Mode,
+		Messages:        sched.Messages,
+		ScheduleVersion: sched.ScheduleVersion,
+		PromptVersion:   sched.PromptVersion,
+		CurrentPromptVersion: func() int {
+			if workflowScheduleHasVersionedPrompt(sched) {
+				return CurrentWorkflowSchedulePromptVersion
+			}
+			return 0
+		}(),
+		PromptStale:         workflowSchedulePromptStale(sched),
 		WorkshopMode:        sched.WorkshopMode,
 		ResumePrevious:      sched.ShouldResumePrevious(),
 		ScheduleType:        scheduleTypeOrDefault(sched.ScheduleType),
@@ -119,20 +132,29 @@ func buildJobResponse(workspacePath string, manifest *WorkflowManifest, sched Wo
 		ConsecutiveFailures: state.ConsecutiveFailures,
 		MissedRunCount:      missed.MissedRunCount,
 		LatestMissedRunAt:   missed.LatestMissedRunAt,
-		CreatedAt: manifest.CreatedAt,
-		UpdatedAt: manifest.UpdatedAt,
+		CreatedAt:           manifest.CreatedAt,
+		UpdatedAt:           manifest.UpdatedAt,
 	}
 }
 
 func buildMultiAgentJobResponse(userID string, sched WorkflowSchedule, state ScheduleRuntimeState) ScheduledJobResponse {
 	return ScheduledJobResponse{
-		ID:                  sched.ID,
-		Name:                sched.Name,
-		Description:         sched.Description,
-		EntityType:          "multi-agent",
-		WorkspacePath:       "_users/" + userID,
-		Mode:                "multi-agent",
-		Query:               sched.Query,
+		ID:              sched.ID,
+		Name:            sched.Name,
+		Description:     sched.Description,
+		EntityType:      "multi-agent",
+		WorkspacePath:   "_users/" + userID,
+		Mode:            "multi-agent",
+		Query:           sched.Query,
+		ScheduleVersion: sched.ScheduleVersion,
+		PromptVersion:   sched.PromptVersion,
+		CurrentPromptVersion: func() int {
+			if multiAgentScheduleHasVersionedPrompt(sched) {
+				return CurrentMultiAgentSchedulePromptVersion
+			}
+			return 0
+		}(),
+		PromptStale:         multiAgentSchedulePromptStale(sched),
 		ResumePrevious:      sched.ShouldResumePrevious(),
 		UserID:              userID,
 		ScheduleType:        scheduleTypeOrDefault(sched.ScheduleType),
@@ -435,6 +457,8 @@ func createScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 				Query:          req.Query,
 				ResumePrevious: req.ResumePrevious,
 			}
+			markMultiAgentScheduleVersionCurrent(&newSched)
+			markMultiAgentSchedulePromptCurrent(&newSched)
 
 			f.Schedules = append(f.Schedules, newSched)
 
@@ -476,7 +500,6 @@ func createScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-
 		// Create new schedule
 		newSched := WorkflowSchedule{
 			ID:             uuid.New().String(),
@@ -494,6 +517,9 @@ func createScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			WorkshopMode:   req.WorkshopMode,
 			ResumePrevious: req.ResumePrevious,
 		}
+		applyNewWorkflowScheduleDefaults(&newSched)
+		markWorkflowScheduleVersionCurrent(&newSched)
+		markWorkflowSchedulePromptCurrent(&newSched)
 
 		manifest.Schedules = append(manifest.Schedules, newSched)
 
@@ -602,12 +628,14 @@ func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			if req.Enabled != nil {
 				sched.Enabled = *req.Enabled
 			}
-			if req.Query != "" {
+			if req.Query != "" && req.Query != sched.Query {
 				sched.Query = req.Query
+				markMultiAgentSchedulePromptCurrent(sched)
 			}
 			if req.ResumePrevious != nil {
 				sched.ResumePrevious = req.ResumePrevious
 			}
+			markMultiAgentScheduleVersionCurrent(sched)
 			if err := validateScheduleRequest(scheduleTypeOrDefault(sched.ScheduleType), sched.CronExpression, sched.CalendarItems); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
@@ -671,11 +699,17 @@ func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 		if req.Mode != "" {
 			sched.Mode = req.Mode
 		}
+		promptTouched := req.Mode != "" || req.Messages != nil || req.WorkshopMode != "" || req.CalendarItems != nil
 		if req.Messages != nil {
 			sched.Messages = req.Messages
 		}
 		if req.WorkshopMode != "" {
 			sched.WorkshopMode = req.WorkshopMode
+		}
+		if promptTouched {
+			applyWorkflowScheduleWorkshopDefaults(sched)
+			markWorkflowScheduleVersionCurrent(sched)
+			markWorkflowSchedulePromptCurrent(sched)
 		}
 		if req.ResumePrevious != nil {
 			sched.ResumePrevious = req.ResumePrevious
@@ -767,6 +801,7 @@ func enableScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 
 		if result.SourceType == "multi-agent" {
 			result.ScheduleFile.Schedules[result.Index].Enabled = true
+			markMultiAgentScheduleVersionCurrent(&result.ScheduleFile.Schedules[result.Index])
 			if err := WriteMultiAgentSchedules(r.Context(), result.UserID, result.ScheduleFile); err != nil {
 				http.Error(w, "failed to write multi-agent schedules: "+err.Error(), http.StatusInternalServerError)
 				return
@@ -819,6 +854,7 @@ func disableScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 
 		if result.SourceType == "multi-agent" {
 			result.ScheduleFile.Schedules[result.Index].Enabled = false
+			markMultiAgentScheduleVersionCurrent(&result.ScheduleFile.Schedules[result.Index])
 			if err := WriteMultiAgentSchedules(r.Context(), result.UserID, result.ScheduleFile); err != nil {
 				http.Error(w, "failed to write multi-agent schedules: "+err.Error(), http.StatusInternalServerError)
 				return

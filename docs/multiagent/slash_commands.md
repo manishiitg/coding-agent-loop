@@ -93,7 +93,7 @@ Workflow slash commands are wrappers around the backend `get_workflow_command_gu
 | `/ready-to-optimize` | Check if workflow is ready to move to optimizer mode | Builder | `ready-to-optimize` |
 | `/review-plan` | Critically analyze the workflow plan and dependent artifacts | Builder, Optimizer, Run | `review-plan` |
 | `/review-speed` | Review workflow latency and how to make it faster | Optimizer | `review-speed` |
-| `/review-cost` | Review workflow cost and how to reduce it safely | Optimizer | `review-cost` |
+| `/review-cost` | Write a report-only workflow cost review with optional safe reductions | Optimizer | `review-cost` |
 | `/review-artifact-drift` | Check whether artifacts drifted from recent plan changes | Builder, Optimizer | `review-artifact-drift` |
 | `/review-code` | Review saved scripts (`main.py`) against step descriptions to detect drift | Optimizer | `review-code` |
 | `/improve-knowledge` | Improve knowledge notes with targeted cleanup or cross-step consolidation | Builder, Optimizer | `improve-knowledge` |
@@ -102,7 +102,7 @@ Workflow slash commands are wrappers around the backend `get_workflow_command_gu
 | `/improve-report` | Validate `reports/report_plan.json` and suggest layout/color improvements | Builder, Optimizer, Reporting | `improve-report` |
 | `/define-success` | One-time setup: write the Workflow Profile to `builder/improve.md` and bootstrap metrics | Optimizer | `define-success` |
 | `/improve-evaluation` | Validate `evaluation/evaluation_plan.json` and improve goal/criteria coverage | Optimizer | `improve-evaluation` |
-| `/auto-improve` | Set up recurring workflow run + frequent lightweight optimizer improvement | Optimizer | `auto-improve` |
+| `/auto-improve` | Set up recurring workflow run + versioned optimizer pulse prompts | Optimizer | `auto-improve` |
 | `/improve-workflow` | Use existing run evidence to review, replan if needed, harden, then optionally verify | Optimizer | `improve-workflow` |
 
 The workflow command source of truth is split across:

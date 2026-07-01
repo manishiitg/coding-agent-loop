@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
+
+	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 )
 
 func TestWorkshopConvertTieredLLMConfigHandlesPartialTiers(t *testing.T) {
@@ -72,6 +74,11 @@ func TestWorkshopConvertAgentLLMConfigPreservesPublishedOptions(t *testing.T) {
 }
 
 func TestWorkshopResolveLLMConfigExpandsCodingAgentMode(t *testing.T) {
+	defaults, ok := llmproviders.GetCodingAgentDefaultTierModels(llmproviders.ProviderClaudeCode)
+	if !ok {
+		t.Fatal("expected claude-code tier defaults")
+	}
+
 	phase, tiered := workshopResolveLLMConfig(&workflowtypes.PresetLLMConfig{
 		Provider:          "claude-code",
 		ModelID:           "claude-code",
@@ -81,19 +88,19 @@ func TestWorkshopResolveLLMConfigExpandsCodingAgentMode(t *testing.T) {
 	if phase == nil {
 		t.Fatal("expected coding agent phase/workshop LLM")
 	}
-	if phase.Provider != "claude-code" || phase.ModelID != "claude-opus-4-8" {
+	if phase.Provider != string(defaults.Phase.Provider) || phase.ModelID != defaults.Phase.ModelID {
 		t.Fatalf("unexpected phase config: %+v", phase)
 	}
 	if tiered == nil || tiered.Tier1 == nil || tiered.Tier2 == nil || tiered.Tier3 == nil {
 		t.Fatalf("expected full tiered config, got %+v", tiered)
 	}
-	if tiered.Tier1.ModelID != "claude-opus-4-8" {
+	if tiered.Tier1.ModelID != defaults.High.ModelID {
 		t.Fatalf("unexpected high tier: %+v", tiered.Tier1)
 	}
-	if tiered.Tier2.ModelID != "claude-sonnet-4-6" {
+	if tiered.Tier2.ModelID != defaults.Medium.ModelID {
 		t.Fatalf("unexpected medium tier: %+v", tiered.Tier2)
 	}
-	if tiered.Tier3.ModelID != "claude-haiku-4-5-20251001" {
+	if tiered.Tier3.ModelID != defaults.Low.ModelID {
 		t.Fatalf("unexpected low tier: %+v", tiered.Tier3)
 	}
 }

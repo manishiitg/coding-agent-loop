@@ -23,14 +23,14 @@ import (
 
 func TestCodingAgentPersistentInteractiveFlags(t *testing.T) {
 	tests := []struct {
-		name            string
-		provider        string
-		wantClaudeCode  bool
-		wantCodexCLI    bool
-		wantGeminiCLI   bool
-		wantCursorCLI   bool
-		wantAgyCLI      bool
-		wantOpenCodeCLI bool
+		name           string
+		provider       string
+		wantClaudeCode bool
+		wantCodexCLI   bool
+		wantGeminiCLI  bool
+		wantCursorCLI  bool
+		wantAgyCLI     bool
+		wantPiCLI      bool
 	}{
 		{
 			name:           "claude code chat gets persistent tmux",
@@ -58,9 +58,9 @@ func TestCodingAgentPersistentInteractiveFlags(t *testing.T) {
 			wantAgyCLI: true,
 		},
 		{
-			name:            "opencode chat is json based",
-			provider:        string(llm.ProviderOpenCodeCLI),
-			wantOpenCodeCLI: false,
+			name:      "pi chat gets persistent tmux",
+			provider:  string(llm.ProviderPiCLI),
+			wantPiCLI: true,
 		},
 		{
 			name:     "non coding provider never gets tmux",
@@ -70,9 +70,9 @@ func TestCodingAgentPersistentInteractiveFlags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotClaudeCode, gotCodexCLI, gotGeminiCLI, gotCursorCLI, gotAgyCLI, gotOpenCodeCLI := codingAgentPersistentInteractiveFlags(tt.provider)
-			if gotClaudeCode != tt.wantClaudeCode || gotCodexCLI != tt.wantCodexCLI || gotGeminiCLI != tt.wantGeminiCLI || gotCursorCLI != tt.wantCursorCLI || gotAgyCLI != tt.wantAgyCLI || gotOpenCodeCLI != tt.wantOpenCodeCLI {
-				t.Fatalf("flags = (%v, %v, %v, %v, %v, %v), want (%v, %v, %v, %v, %v, %v)", gotClaudeCode, gotCodexCLI, gotGeminiCLI, gotCursorCLI, gotAgyCLI, gotOpenCodeCLI, tt.wantClaudeCode, tt.wantCodexCLI, tt.wantGeminiCLI, tt.wantCursorCLI, tt.wantAgyCLI, tt.wantOpenCodeCLI)
+			gotClaudeCode, gotCodexCLI, gotGeminiCLI, gotCursorCLI, gotAgyCLI, gotPiCLI := codingAgentPersistentInteractiveFlags(tt.provider)
+			if gotClaudeCode != tt.wantClaudeCode || gotCodexCLI != tt.wantCodexCLI || gotGeminiCLI != tt.wantGeminiCLI || gotCursorCLI != tt.wantCursorCLI || gotAgyCLI != tt.wantAgyCLI || gotPiCLI != tt.wantPiCLI {
+				t.Fatalf("flags = (%v, %v, %v, %v, %v, %v), want (%v, %v, %v, %v, %v, %v)", gotClaudeCode, gotCodexCLI, gotGeminiCLI, gotCursorCLI, gotAgyCLI, gotPiCLI, tt.wantClaudeCode, tt.wantCodexCLI, tt.wantGeminiCLI, tt.wantCursorCLI, tt.wantAgyCLI, tt.wantPiCLI)
 			}
 		})
 	}
@@ -84,9 +84,9 @@ func TestCodingAgentPersistentInteractiveFlagsCoverTmuxContracts(t *testing.T) {
 			continue
 		}
 		t.Run(string(contract.Provider), func(t *testing.T) {
-			gotClaudeCode, gotCodexCLI, gotGeminiCLI, gotCursorCLI, gotAgyCLI, gotOpenCodeCLI := codingAgentPersistentInteractiveFlags(string(contract.Provider))
+			gotClaudeCode, gotCodexCLI, gotGeminiCLI, gotCursorCLI, gotAgyCLI, gotPiCLI := codingAgentPersistentInteractiveFlags(string(contract.Provider))
 			count := 0
-			for _, enabled := range []bool{gotClaudeCode, gotCodexCLI, gotGeminiCLI, gotCursorCLI, gotAgyCLI, gotOpenCodeCLI} {
+			for _, enabled := range []bool{gotClaudeCode, gotCodexCLI, gotGeminiCLI, gotCursorCLI, gotAgyCLI, gotPiCLI} {
 				if enabled {
 					count++
 				}
@@ -174,7 +174,7 @@ func TestRecordLiveCodingAgentUserMessageCapturesVisibleEvent(t *testing.T) {
 		{name: "gemini cli", provider: llm.ProviderGeminiCLI},
 		{name: "cursor cli", provider: llm.ProviderCursorCLI},
 		{name: "agy cli", provider: llm.ProviderAgyCLI},
-		{name: "opencode cli", provider: llm.ProviderOpenCodeCLI},
+		{name: "pi cli", provider: llm.ProviderPiCLI},
 	}
 
 	for _, tt := range tests {
@@ -217,8 +217,8 @@ func TestHandleSteerMessageRoutesThroughAgentDelivery(t *testing.T) {
 	defer store.Stop()
 
 	sessionID := "structured-session"
-	runningAgent := &mcpagent.Agent{ModelID: "opencode"}
-	runningAgent.SetProvider(llm.ProviderOpenCodeCLI)
+	runningAgent := &mcpagent.Agent{ModelID: "pi-cli"}
+	runningAgent.SetProvider(llm.ProviderPiCLI)
 	api := &StreamingAPI{
 		eventStore:       store,
 		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},

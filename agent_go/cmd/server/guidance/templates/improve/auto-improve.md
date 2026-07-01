@@ -137,7 +137,7 @@ SCHEDULE CREATION RULES
 1. Do NOT delete schedules unless they are clearly redundant and safe to remove. Prefer update over delete.
 2. If an existing run schedule already serves the purpose, keep it and refine it if needed. For /auto-improve, convert/update direct mode="workflow" run schedules to mode="workshop", workshop_mode="run" rather than leaving them as direct workflow schedules.
 3. If an existing optimizer/improve schedule already serves harden or replan-proposal, keep it and refine it. If a single legacy optimizer schedule does both, split it into a frequent harden schedule and a less-frequent replan-proposal schedule.
-4. Use create_schedule / update_schedule as appropriate.
+4. Use create_schedule / update_schedule as appropriate. Do not edit `prompt_version` manually; the server stamps current workshop schedule prompts when schedule tools create or update them.
 
 FINAL REPORT
 Summarize:

@@ -22,17 +22,17 @@ import "strings"
 // mode is now always on regardless of provider, so call sites that decide
 // `UseCodeExecutionMode` should just set it to true unconditionally.
 var cliProviders = map[string]struct{}{
-	"claude-code":  {},
-	"gemini-cli":   {},
-	"codex-cli":    {},
-	"cursor-cli":   {},
-	"agy-cli":      {},
-	"opencode-cli": {},
+	"claude-code": {},
+	"gemini-cli":  {},
+	"codex-cli":   {},
+	"cursor-cli":  {},
+	"agy-cli":     {},
+	"pi-cli":      {},
 }
 
 // IsCLIProvider reports whether the given provider ID is a CLI agent
 // runtime (claude-code, gemini-cli, codex-cli, cursor-cli, agy-cli,
-// opencode-cli). The lookup is
+// pi-cli). The lookup is
 // case-insensitive and whitespace-trimmed for resilience against config
 // drift.
 func IsCLIProvider(provider string) bool {

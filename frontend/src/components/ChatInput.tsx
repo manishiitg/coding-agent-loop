@@ -2651,8 +2651,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       return
     }
 
-    // Handle normal Enter to submit
-    if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
+    // Handle normal Enter to submit. Shift/Ctrl/Cmd+Enter insert a newline.
+    if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
       e.preventDefault()
 
       // Check for slash commands

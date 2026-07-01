@@ -274,6 +274,50 @@ func TestStoreMergesStructuredWorkflowToolCallsIntoTerminalContent(t *testing.T)
 	}
 }
 
+func TestStoreDoesNotAppendToolRowsToMainAgentTmuxContent(t *testing.T) {
+	store := NewStore()
+	ownerID := "main:session-1"
+	metadata := map[string]interface{}{
+		"execution_owner_id": ownerID,
+		"execution_kind":     "main_agent",
+		"scope":              "main_agent",
+		"step_transport":     "tmux",
+		"tmux_session":       "mlp-codex-main",
+		"provider":           "codex-cli",
+	}
+	toolMetadata := map[string]interface{}{
+		"execution_owner_id": ownerID,
+		"execution_kind":     "main_agent",
+		"scope":              "main_agent",
+		"step_transport":     "structured",
+	}
+	content := "╭────────────────────────────╮\n│ >_ OpenAI Codex            │\n╰────────────────────────────╯\nFinal response:\n- keep this last scroll message visible\n›"
+
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		ownerID,
+		content,
+		1,
+		metadata,
+		time.Now(),
+	))
+	store.HandleEvent("session-1", toolStartEvent(ownerID, "call-1", "execute_shell_command", `{"command":"pwd"}`, toolMetadata))
+	store.HandleEvent("session-1", toolEndEvent(ownerID, "call-1", "execute_shell_command", `{"stdout":"ok\n"}`, toolMetadata))
+
+	snapshot, ok := store.Get("session-1:" + ownerID)
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if snapshot.Content != content {
+		t.Fatalf("main-agent tmux content should stay as captured, got:\n%s", snapshot.Content)
+	}
+	if strings.Contains(snapshot.Content, "→ tool:") || strings.Contains(snapshot.Content, "✓ result") {
+		t.Fatalf("main-agent tmux content should not include synthetic tool rows:\n%s", snapshot.Content)
+	}
+	if snapshot.Status.ToolSummary != "execute_shell_command" {
+		t.Fatalf("tool summary = %q, want execute_shell_command", snapshot.Status.ToolSummary)
+	}
+}
+
 func TestSnapshotWithContextFillsReadableDisplay(t *testing.T) {
 	snapshot := Snapshot{
 		TerminalID:    "session-1:main:821ee897-76aa-4b82-ae09-85250206d104",

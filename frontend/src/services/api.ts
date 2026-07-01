@@ -1662,6 +1662,7 @@ export const agentApi = {
         completed_at?: string
         completed_steps: number
         total_steps: number
+        cost_usd?: number
         metrics_summary?: WorkflowMetricRunSummary
       } | null
       is_running: boolean

@@ -18,6 +18,7 @@ type workflowCostsResponse struct {
 	PhaseDailyCosts []workflowPhaseDailyCostEntry     `json:"phase_daily_costs"`
 	RunDailyCosts   []workflowRunDailyCostEntry       `json:"run_daily_costs"`
 	Runs            []workflowRunCostEntry            `json:"runs"`
+	Summary         workflowCostSummary               `json:"summary"`
 }
 
 type StepOutputContent struct {
@@ -87,13 +88,15 @@ func loadWorkflowCosts(ctx context.Context, workspacePath string) workflowCostsR
 	}
 
 	runDailyCosts := readWorkflowRunDailyCosts(ctx, workspacePath)
+	runs := buildWorkflowRunCostEntries(executionCosts, evaluationCosts)
 
 	return workflowCostsResponse{
 		Success:         true,
 		PhaseTokenUsage: phaseTokenUsage,
 		PhaseDailyCosts: phaseDailyCosts,
 		RunDailyCosts:   runDailyCosts,
-		Runs:            buildWorkflowRunCostEntries(executionCosts, evaluationCosts),
+		Runs:            runs,
+		Summary:         buildWorkflowCostSummary(runs, phaseTokenUsage, phaseDailyCosts),
 	}
 }
 

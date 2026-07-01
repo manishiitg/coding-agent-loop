@@ -18,6 +18,8 @@ import (
 
 // Current manifest schema version
 const WorkflowManifestSchemaVersion = 1
+const CurrentWorkflowScheduleVersion = 1
+const CurrentWorkflowSchedulePromptVersion = 1
 
 const (
 	DefaultRunRetentionCount = 5
@@ -48,6 +50,8 @@ type WorkflowManifest struct {
 	// captures nuance that enums can't.
 	OversightMode         OversightMode         `json:"oversight_mode,omitempty"`
 	DecisionLogMutability DecisionLogMutability `json:"decision_log_mutability,omitempty"`
+
+	schemaVersionMissing bool
 }
 
 // WorkflowCapabilities stores workflow-wide agent and tool configuration.
@@ -81,21 +85,23 @@ type WorkflowOwnership struct {
 
 // WorkflowSchedule represents a cron or calendar schedule stored in the manifest.
 type WorkflowSchedule struct {
-	ID             string                 `json:"id"`
-	Name           string                 `json:"name"`
-	Description    string                 `json:"description,omitempty"`
-	ScheduleType   string                 `json:"schedule_type,omitempty"` // "cron" (default) or "calendar"
-	CronExpression string                 `json:"cron_expression"`
-	Timezone       string                 `json:"timezone"`
-	Enabled        bool                   `json:"enabled"`
-	TriggerPayload json.RawMessage        `json:"trigger_payload,omitempty"`
-	CalendarItems  []CalendarScheduleItem `json:"calendar_items,omitempty"`
-	GroupNames     []string               `json:"group_names,omitempty"`
-	Mode           string                 `json:"mode,omitempty"`          // "workflow" (default/orchestrator), "workshop" (LLM-driven), or "multi-agent"
-	Messages       []string               `json:"messages,omitempty"`      // Predefined message queue for workshop mode (sent one-by-one)
-	WorkshopMode   string                 `json:"workshop_mode,omitempty"` // Workshop builder mode for scheduled runs: "run" (default) or "optimizer" (legacy "ask"/"runner"/"debugger" auto-migrated to "run")
-	Query          string                 `json:"query,omitempty"`         // Message to execute (multi-agent mode)
-	ResumePrevious *bool                  `json:"resume_previous,omitempty"` // Coding-agent CLI only: resume the latest prior thread (same provider) instead of a fresh session each run. nil = default (resume ON); explicit false opts out.
+	ID              string                 `json:"id"`
+	Name            string                 `json:"name"`
+	Description     string                 `json:"description,omitempty"`
+	ScheduleType    string                 `json:"schedule_type,omitempty"` // "cron" (default) or "calendar"
+	CronExpression  string                 `json:"cron_expression"`
+	Timezone        string                 `json:"timezone"`
+	Enabled         bool                   `json:"enabled"`
+	TriggerPayload  json.RawMessage        `json:"trigger_payload,omitempty"`
+	CalendarItems   []CalendarScheduleItem `json:"calendar_items,omitempty"`
+	GroupNames      []string               `json:"group_names,omitempty"`
+	Mode            string                 `json:"mode,omitempty"`             // "workflow" (default/orchestrator), "workshop" (LLM-driven), or "multi-agent"
+	Messages        []string               `json:"messages,omitempty"`         // Predefined message queue for workshop mode (sent one-by-one)
+	ScheduleVersion int                    `json:"schedule_version,omitempty"` // Version of schedule product semantics; 0 means legacy/unversioned.
+	PromptVersion   int                    `json:"prompt_version,omitempty"`   // Version of persisted workshop messages or multi-agent query; 0 means legacy/unversioned.
+	WorkshopMode    string                 `json:"workshop_mode,omitempty"`    // Workshop builder mode for scheduled runs: "run" (default) or "optimizer" (legacy "ask"/"runner"/"debugger" auto-migrated to "run")
+	Query           string                 `json:"query,omitempty"`            // Message to execute (multi-agent mode)
+	ResumePrevious  *bool                  `json:"resume_previous,omitempty"`  // Coding-agent CLI only: resume the latest prior thread (same provider) instead of a fresh session each run. nil = default (resume ON); explicit false opts out.
 }
 
 // ShouldResumePrevious reports whether a scheduled run should resume the
@@ -297,6 +303,7 @@ func ReadWorkflowManifest(ctx context.Context, workspacePath string) (*WorkflowM
 	if err := json.Unmarshal([]byte(content), &m); err != nil {
 		return nil, false, fmt.Errorf("failed to parse workflow.json: %w", err)
 	}
+	m.schemaVersionMissing = workflowManifestSchemaVersionMissing(content)
 
 	// Track whether any schedule IDs need auto-assignment before applying defaults.
 	hadEmptyScheduleID := false
@@ -345,6 +352,15 @@ func WriteWorkflowManifest(ctx context.Context, workspacePath string, m *Workflo
 }
 
 // --- Internal helpers ---
+
+func workflowManifestSchemaVersionMissing(content string) bool {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(content), &raw); err != nil {
+		return false
+	}
+	_, hasSchemaVersion := raw["schema_version"]
+	return !hasSchemaVersion
+}
 
 // applyManifestDefaults fills in defaults for fields that may be missing from older schema versions.
 func applyManifestDefaults(m *WorkflowManifest) {

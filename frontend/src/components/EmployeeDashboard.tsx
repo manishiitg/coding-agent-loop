@@ -18,7 +18,7 @@ import {
 } from 'recharts'
 import { agentApi, type MetricSnapshotRow, type WorkflowMetricRunSummary } from '../services/api'
 import { schedulerApi } from '../api/scheduler'
-import type { Employee, EvaluationReportEntry, ModelTokenUsage, PhaseTokenUsageFile, PlannerFile, TokenUsageFile, ToolCostUsage, WorkflowPhaseDailyCostsEntry, WorkflowReviewDataResponse, WorkflowRunCostsEntry, WorkflowRunDailyCostsEntry } from '../services/api-types'
+import type { Employee, EvaluationReportEntry, ModelTokenUsage, PhaseTokenUsageFile, PlannerFile, TokenUsageFile, ToolCostUsage, WorkflowCostSummary, WorkflowPhaseDailyCostsEntry, WorkflowReviewDataResponse, WorkflowRunCostsEntry, WorkflowRunDailyCostsEntry } from '../services/api-types'
 import ExecutionLogsPopup from './workflow/ExecutionLogsPopup'
 import { ReportView } from './workflow/ReportViewer'
 import { WorkflowCanvas } from './workflow/canvas'
@@ -74,6 +74,7 @@ const buildEmployeeWorkflowRows = (employees: EmployeeApiRecord[], summaries: Wo
     if (empId && empMap.has(empId)) {
       const empData = empMap.get(empId)!
       empData.workflows.push(summary)
+      empData.totalCost += summary.totalCost || 0
       if (summary.latestStatus === 'running') empData.runningNow++
       if (summary.latestStatus === 'completed') empData.completedToday++
     } else {
@@ -99,7 +100,7 @@ const buildEmployeeWorkflowRows = (employees: EmployeeApiRecord[], summaries: Wo
         updated_at: '',
       },
       workflows: unassigned,
-      totalCost: 0,
+      totalCost: unassigned.reduce((sum, workflow) => sum + (workflow.totalCost || 0), 0),
       completedToday: unassignedCompleted,
       runningNow: unassignedRunning,
     })
@@ -200,6 +201,7 @@ interface WorkflowReviewState {
   metricsError: string | null
   tokenUsage: TokenUsageFile | null
   evaluationTokenUsage: TokenUsageFile | null
+  costSummary: WorkflowCostSummary | null
   costRuns: WorkflowRunCostsEntry[]
   phaseDailyCosts: WorkflowPhaseDailyCostsEntry[]
   runDailyCosts: WorkflowRunDailyCostsEntry[]
@@ -256,6 +258,7 @@ const EMPTY_REVIEW_STATE: WorkflowReviewState = {
   metricsError: null,
   tokenUsage: null,
   evaluationTokenUsage: null,
+  costSummary: null,
   costRuns: [],
   phaseDailyCosts: [],
   runDailyCosts: [],
@@ -871,7 +874,7 @@ export const EmployeeDashboard: React.FC = () => {
           latestStatus,
           totalRuns: ws?.total_runs || 0,
           lastActive,
-          totalCost: null,
+          totalCost: ws?.latest_run?.cost_usd ?? null,
           metricsSummary: ws?.latest_run?.metrics_summary || null,
           workspacePath: wp,
           latestRunFolder,
@@ -1003,6 +1006,7 @@ export const EmployeeDashboard: React.FC = () => {
 
       let tokenUsage: TokenUsageFile | null = null
       let evaluationTokenUsage: TokenUsageFile | null = null
+      let costSummary: WorkflowCostSummary | null = null
       let costRuns: WorkflowRunCostsEntry[] = []
       let phaseDailyCosts: WorkflowPhaseDailyCostsEntry[] = []
       let runDailyCosts: WorkflowRunDailyCostsEntry[] = []
@@ -1011,6 +1015,7 @@ export const EmployeeDashboard: React.FC = () => {
         costRuns = costsResponse.runs || []
         phaseDailyCosts = costsResponse.phase_daily_costs || []
         runDailyCosts = costsResponse.run_daily_costs || []
+        costSummary = costsResponse.summary || null
         tokenUsage = mergeTokenUsageFiles(costRuns.map(r => r.token_usage))
         evaluationTokenUsage = mergeTokenUsageFiles(costRuns.map(r => r.evaluation_token_usage))
       } else {
@@ -1027,6 +1032,7 @@ export const EmployeeDashboard: React.FC = () => {
         metricsError,
         tokenUsage,
         evaluationTokenUsage,
+        costSummary,
         costRuns,
         phaseDailyCosts,
         runDailyCosts,
@@ -1043,6 +1049,7 @@ export const EmployeeDashboard: React.FC = () => {
         metricsError: err instanceof Error ? err.message : 'Failed to load metrics',
         tokenUsage: null,
         evaluationTokenUsage: null,
+        costSummary: null,
         costRuns: [],
         phaseDailyCosts: [],
         runDailyCosts: [],
@@ -1740,7 +1747,7 @@ export const EmployeeDashboard: React.FC = () => {
               </div>
             )}
 
-            {employeeWorkflows.map(({ employee, workflows, runningNow }) => {
+            {employeeWorkflows.map(({ employee, workflows, runningNow, totalCost }) => {
               const isCollapsed = collapsedEmployeeIds.has(employee.id)
 
               return (
@@ -1789,12 +1796,18 @@ export const EmployeeDashboard: React.FC = () => {
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-2 text-xs">
-                      {runningNow > 0 && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-info/10 px-2.5 py-1 font-medium text-info">
-                          <PlayCircle className="h-3.5 w-3.5" />
-                          {runningNow} running
-                        </span>
-                      )}
+                        {totalCost > 0 && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2.5 py-1 font-medium text-warning">
+                            <DollarSign className="h-3.5 w-3.5" />
+                            {formatUsd(totalCost)}
+                          </span>
+                        )}
+                        {runningNow > 0 && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-info/10 px-2.5 py-1 font-medium text-info">
+                            <PlayCircle className="h-3.5 w-3.5" />
+                            {runningNow} running
+                          </span>
+                        )}
                       {employee.id !== '__unassigned__' && (
                         <button
                           type="button"
@@ -1856,6 +1869,12 @@ export const EmployeeDashboard: React.FC = () => {
                                   <span>No run yet</span>
                                 )}
                                 {wf.totalRuns > 0 && <span>{wf.totalRuns} runs</span>}
+                                {wf.totalCost !== null && wf.totalCost > 0 && (
+                                  <span className="inline-flex items-center gap-1 text-warning">
+                                    <DollarSign className="w-3 h-3" />
+                                    {formatUsd(wf.totalCost)}
+                                  </span>
+                                )}
                                 {wf.nextScheduleAt ? (
                                   <span className="inline-flex items-center gap-1 text-warning">
                                     <Calendar className="w-3 h-3" />
@@ -2630,17 +2649,49 @@ export const EmployeeDashboard: React.FC = () => {
                   <div className="space-y-4">
                     {(() => {
                       const phaseCostTotal = costTrend.rows.reduce((sum, r) => sum + r.phase, 0)
-                      const grandTotal = (totalKnownCost || 0) + phaseCostTotal
+                      const summary = reviewState.costSummary
+                      const executionTotal = summary?.execution_cost_usd ?? executionCost
+                      const evaluationTotal = summary?.evaluation_cost_usd ?? evaluationCost
+                      const builderTotal = summary?.builder_cost_usd ?? (phaseCostTotal > 0 ? phaseCostTotal : null)
+                      const grandTotal = summary?.total_cost_usd ?? ((totalKnownCost || 0) + phaseCostTotal)
                       return (
                         <div className="rounded-xl border border-border bg-muted/30 px-4 py-3">
                           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Total cost</div>
                           <div className="mt-2 text-2xl font-semibold text-foreground">{formatUsd(grandTotal > 0 ? grandTotal : null)}</div>
                           <div className="mt-1 text-xs text-muted-foreground">
-                            {formatUsd(executionCost)} execution · {formatUsd(evaluationCost)} evaluation · {formatUsd(phaseCostTotal > 0 ? phaseCostTotal : null)} builder
+                            {formatUsd(executionTotal)} execution · {formatUsd(evaluationTotal)} evaluation · {formatUsd(builderTotal)} builder
                           </div>
+                          {summary?.latest_run && (
+                            <div className="mt-2 text-[11px] text-muted-foreground">
+                              Latest run {summary.latest_run.run_folder}: {formatUsd(summary.latest_run.total_cost_usd)}
+                            </div>
+                          )}
                         </div>
                       )
                     })()}
+
+                    {reviewState.costSummary?.top_drivers && reviewState.costSummary.top_drivers.length > 0 && (
+                      <div className="overflow-hidden rounded-xl border border-border">
+                        <div className="border-b border-border bg-muted/30 px-4 py-3">
+                          <div className="text-sm font-medium text-foreground">Top cost drivers</div>
+                        </div>
+                        <div className="divide-y divide-border">
+                          {reviewState.costSummary.top_drivers.map((driver, index) => (
+                            <div key={`${driver.source}:${driver.kind}:${driver.name}:${index}`} className="grid grid-cols-[1fr_auto] gap-4 px-4 py-3 text-sm">
+                              <div className="min-w-0">
+                                <div className="truncate font-medium text-foreground">{formatCostDetailLabel(driver.name)}</div>
+                                <div className="mt-0.5 text-xs text-muted-foreground">
+                                  {formatCostDetailLabel(driver.source)} · {formatCostDetailLabel(driver.kind)}
+                                  {driver.provider ? ` · ${driver.provider}` : ''}
+                                  {driver.calls ? ` · ${formatCostCount(driver.calls)} calls` : ''}
+                                </div>
+                              </div>
+                              <div className="text-right font-semibold text-foreground">{formatUsdDetailed(driver.cost_usd)}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     {reviewState.costError && !reviewState.tokenUsage && !reviewState.evaluationTokenUsage && (
                       <div className="rounded-2xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">

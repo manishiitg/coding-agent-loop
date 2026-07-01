@@ -8,7 +8,7 @@ func TestMergeStoredProviderKeyValuesPreservesAndUpdatesProviderKeys(t *testing.
 		ZAI:               "zai-existing",
 		Kimi:              "kimi-existing",
 		CodexCLI:          "codex-existing",
-		OpenCodeCLI:       "opencode-existing",
+		PiCLI:             "pi-existing",
 		MiniMax:           "minimax-existing",
 		MiniMaxCodingPlan: "coding-existing",
 		OpenRouter:        "openrouter-existing",
@@ -33,8 +33,8 @@ func TestMergeStoredProviderKeyValuesPreservesAndUpdatesProviderKeys(t *testing.
 	if merged.CodexCLI != "codex-existing" {
 		t.Fatalf("expected Codex CLI key to be preserved, got %q", merged.CodexCLI)
 	}
-	if merged.OpenCodeCLI != "opencode-existing" {
-		t.Fatalf("expected OpenCode CLI key to be preserved, got %q", merged.OpenCodeCLI)
+	if merged.PiCLI != "pi-existing" {
+		t.Fatalf("expected Pi CLI key to be preserved, got %q", merged.PiCLI)
 	}
 	if merged.MiniMax != "" {
 		t.Fatalf("expected MiniMax key to be deleted, got %q", merged.MiniMax)

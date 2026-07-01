@@ -23,12 +23,6 @@ const providerKeysFilePath = "config/provider-api-keys.json"
 
 // StoredProviderKeys holds all LLM provider API keys in a single global structure.
 // Encrypted and stored in the workspace config folder.
-//
-// OpenCode CLI is exposed as multiple first-class sub-provider tiles
-// (Kimi / DeepSeek / Qwen / MiniMax / GLM / Free). Each sub-provider has its
-// own credential field below so the encrypted store can hold them
-// independently; the server only injects the credential matching the
-// sub-provider that owns the current call.
 type StoredProviderKeys struct {
 	OpenRouter        string               `json:"openrouter,omitempty"`
 	OpenAI            string               `json:"openai,omitempty"`
@@ -40,7 +34,7 @@ type StoredProviderKeys struct {
 	CodexCLI          string               `json:"codex_cli,omitempty"`
 	CursorCLI         string               `json:"cursor_cli,omitempty"`
 	AgyCLI            string               `json:"agy_cli,omitempty"`
-	OpenCodeCLI       string               `json:"opencode_cli,omitempty"`
+	PiCLI             string               `json:"pi_cli,omitempty"`
 	MiniMax           string               `json:"minimax,omitempty"`
 	MiniMaxCodingPlan string               `json:"minimax_coding_plan,omitempty"`
 	ElevenLabs        string               `json:"elevenlabs,omitempty"`
@@ -48,10 +42,13 @@ type StoredProviderKeys struct {
 	Bedrock           *StoredBedrockConfig `json:"bedrock,omitempty"`
 	Azure             *StoredAzureConfig   `json:"azure,omitempty"`
 
-	// OpenCode CLI sub-provider credentials. Keys are env-var names
-	// understood by the OpenCode bundled SDKs:
-	//   KIMI_API_KEY, DEEPSEEK_API_KEY, DASHSCOPE_API_KEY,
-	//   MINIMAX_API_KEY, ZHIPU_API_KEY.
+	// Pi CLI provider credentials keyed by Pi provider id
+	// (for example "google", "zai", "zai-coding-cn", "deepseek").
+	PiProviderKeys map[string]string `json:"pi_provider_keys,omitempty"`
+
+	// Legacy OpenCode fields are kept only so old encrypted provider-key
+	// files can still decode. New writes use PiCLI/PiProviderKeys.
+	OpenCodeCLI        string            `json:"opencode_cli,omitempty"`
 	OpenCodeCLISubKeys map[string]string `json:"opencode_cli_sub_keys,omitempty"`
 }
 
@@ -147,8 +144,8 @@ func ProviderKeysToAPIKeysMap(keys *StoredProviderKeys) map[string]interface{} {
 	if keys.AgyCLI != "" {
 		m["agy_cli"] = keys.AgyCLI
 	}
-	if keys.OpenCodeCLI != "" {
-		m["opencode_cli"] = keys.OpenCodeCLI
+	if keys.PiCLI != "" {
+		m["pi_cli"] = keys.PiCLI
 	}
 	if keys.MiniMax != "" {
 		m["minimax"] = keys.MiniMax
@@ -213,8 +210,16 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 	if keys.AgyCLI != "" {
 		result.AgyCLI = &keys.AgyCLI
 	}
-	if keys.OpenCodeCLI != "" {
-		result.OpenCodeCLI = &keys.OpenCodeCLI
+	if keys.PiCLI != "" {
+		result.PiCLI = &keys.PiCLI
+	}
+	if len(keys.PiProviderKeys) > 0 {
+		result.PiProviderKeys = make(map[string]string, len(keys.PiProviderKeys))
+		for provider, key := range keys.PiProviderKeys {
+			if v := strings.TrimSpace(key); v != "" {
+				result.PiProviderKeys[strings.ToLower(strings.TrimSpace(provider))] = v
+			}
+		}
 	}
 	if keys.MiniMax != "" {
 		result.MiniMax = &keys.MiniMax
@@ -250,8 +255,8 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 	if result.AgyCLI != nil {
 		loaded = append(loaded, "agy-cli")
 	}
-	if result.OpenCodeCLI != nil {
-		loaded = append(loaded, "opencode-cli")
+	if result.PiCLI != nil {
+		loaded = append(loaded, "pi-cli")
 	}
 	if result.OpenAI != nil {
 		loaded = append(loaded, "openai")
@@ -314,19 +319,32 @@ func MergedProviderAPIKeys(ctx context.Context) *llm.ProviderAPIKeys {
 		return env
 	}
 	result := &llm.ProviderAPIKeys{
-		OpenAI:      pick(envKeys.OpenAI, wsKeys.OpenAI),
-		Anthropic:   pick(envKeys.Anthropic, wsKeys.Anthropic),
-		ZAI:         pick(envKeys.ZAI, wsKeys.ZAI),
-		Kimi:        pick(envKeys.Kimi, wsKeys.Kimi),
-		Vertex:      pick(envKeys.Vertex, wsKeys.Vertex),
-		GeminiCLI:   pick(envKeys.GeminiCLI, wsKeys.GeminiCLI),
-		CodexCLI:    pick(envKeys.CodexCLI, wsKeys.CodexCLI),
-		CursorCLI:   pick(envKeys.CursorCLI, wsKeys.CursorCLI),
-		AgyCLI:      pick(envKeys.AgyCLI, wsKeys.AgyCLI),
-		OpenCodeCLI: pick(envKeys.OpenCodeCLI, wsKeys.OpenCodeCLI),
-		MiniMax:     pick(envKeys.MiniMax, wsKeys.MiniMax),
-		ElevenLabs:  pick(envKeys.ElevenLabs, wsKeys.ElevenLabs),
-		Deepgram:    pick(envKeys.Deepgram, wsKeys.Deepgram),
+		OpenAI:     pick(envKeys.OpenAI, wsKeys.OpenAI),
+		Anthropic:  pick(envKeys.Anthropic, wsKeys.Anthropic),
+		ZAI:        pick(envKeys.ZAI, wsKeys.ZAI),
+		Kimi:       pick(envKeys.Kimi, wsKeys.Kimi),
+		Vertex:     pick(envKeys.Vertex, wsKeys.Vertex),
+		GeminiCLI:  pick(envKeys.GeminiCLI, wsKeys.GeminiCLI),
+		CodexCLI:   pick(envKeys.CodexCLI, wsKeys.CodexCLI),
+		CursorCLI:  pick(envKeys.CursorCLI, wsKeys.CursorCLI),
+		AgyCLI:     pick(envKeys.AgyCLI, wsKeys.AgyCLI),
+		PiCLI:      pick(envKeys.PiCLI, wsKeys.PiCLI),
+		MiniMax:    pick(envKeys.MiniMax, wsKeys.MiniMax),
+		ElevenLabs: pick(envKeys.ElevenLabs, wsKeys.ElevenLabs),
+		Deepgram:   pick(envKeys.Deepgram, wsKeys.Deepgram),
+	}
+	if len(envKeys.PiProviderKeys) > 0 || len(wsKeys.PiProviderKeys) > 0 {
+		result.PiProviderKeys = make(map[string]string, len(envKeys.PiProviderKeys)+len(wsKeys.PiProviderKeys))
+		for provider, key := range envKeys.PiProviderKeys {
+			if v := strings.TrimSpace(key); v != "" {
+				result.PiProviderKeys[strings.ToLower(strings.TrimSpace(provider))] = v
+			}
+		}
+		for provider, key := range wsKeys.PiProviderKeys {
+			if v := strings.TrimSpace(key); v != "" {
+				result.PiProviderKeys[strings.ToLower(strings.TrimSpace(provider))] = v
+			}
+		}
 	}
 	// Bedrock / Azure: workspace wins if present, else env
 	if wsKeys.Bedrock != nil {
@@ -340,68 +358,7 @@ func MergedProviderAPIKeys(ctx context.Context) *llm.ProviderAPIKeys {
 		result.Azure = envKeys.Azure
 	}
 
-	// OpenCode CLI sub-provider credentials: merge env + workspace into
-	// the shared ProviderAPIKeys struct so InitializeLLM can pull the
-	// matching key when constructing a sub-provider-scoped adapter.
-	if subKeys := MergedOpenCodeSubProviderKeys(ctx); len(subKeys) > 0 {
-		copied := make(map[string]string, len(subKeys))
-		for k, v := range subKeys {
-			copied[k] = v
-		}
-		result.OpenCodeCLISubKeys = copied
-	}
-
 	return result
-}
-
-// MergedOpenCodeSubProviderKeys returns the merged env+workspace credentials
-// for OpenCode CLI sub-providers (Kimi / DeepSeek / Qwen / MiniMax / GLM).
-// Returns a map keyed by env var name. Workspace-stored values win over the
-// process env when both are set.
-//
-// The free sub-provider (opencode-cli-free) is omitted because it does not
-// require a credential.
-func MergedOpenCodeSubProviderKeys(ctx context.Context) map[string]string {
-	out := make(map[string]string)
-
-	// Env layer: every sub-provider env var the OpenCode bundled SDK reads.
-	for _, envVar := range openCodeSubProviderEnvVars() {
-		if v := getenvTrim(envVar); v != "" {
-			out[envVar] = v
-		}
-	}
-
-	// Workspace layer: encrypted values win over env when set.
-	stored, err := LoadProviderKeys(ctx)
-	if err != nil || stored == nil {
-		return out
-	}
-	// Legacy single-keyed fields that also carry a sub-provider key.
-	legacyAliases := map[string]string{
-		"KIMI_API_KEY":    stored.Kimi,
-		"MINIMAX_API_KEY": stored.MiniMax,
-		"ZHIPU_API_KEY":   stored.ZAI,
-	}
-	for envVar, val := range legacyAliases {
-		if v := strings.TrimSpace(val); v != "" {
-			out[envVar] = v
-		}
-	}
-	// Modern per-sub-provider map wins last.
-	for envVar, val := range stored.OpenCodeCLISubKeys {
-		if v := strings.TrimSpace(val); v != "" {
-			out[envVar] = v
-		}
-	}
-	return out
-}
-
-// openCodeSubProviderEnvVars returns the env-var names every OpenCode
-// sub-provider tile may use. Sourced from the opencodecli sub-provider
-// catalog so it stays in sync automatically; the import sits in a separate
-// file (llm_provider_manifest.go) so this file keeps no extra dependencies.
-func openCodeSubProviderEnvVars() []string {
-	return openCodeSubProviderEnvVarsImpl()
 }
 
 // encryptProviderKeys encrypts data using AES-256-GCM with the derived secrets key.
@@ -518,19 +475,32 @@ func mergeStoredProviderKeyValues(existing, incoming *StoredProviderKeys) *Store
 	}
 
 	merged := &StoredProviderKeys{
-		OpenAI:      pick(existing.OpenAI, incoming.OpenAI),
-		Anthropic:   pick(existing.Anthropic, incoming.Anthropic),
-		ZAI:         pick(existing.ZAI, incoming.ZAI),
-		Kimi:        pick(existing.Kimi, incoming.Kimi),
-		Vertex:      pick(existing.Vertex, incoming.Vertex),
-		GeminiCLI:   pick(existing.GeminiCLI, incoming.GeminiCLI),
-		CodexCLI:    pick(existing.CodexCLI, incoming.CodexCLI),
-		CursorCLI:   pick(existing.CursorCLI, incoming.CursorCLI),
-		AgyCLI:      pick(existing.AgyCLI, incoming.AgyCLI),
-		OpenCodeCLI: pick(existing.OpenCodeCLI, incoming.OpenCodeCLI),
-		MiniMax:     pick(existing.MiniMax, incoming.MiniMax),
-		ElevenLabs:  pick(existing.ElevenLabs, incoming.ElevenLabs),
-		Deepgram:    pick(existing.Deepgram, incoming.Deepgram),
+		OpenAI:     pick(existing.OpenAI, incoming.OpenAI),
+		Anthropic:  pick(existing.Anthropic, incoming.Anthropic),
+		ZAI:        pick(existing.ZAI, incoming.ZAI),
+		Kimi:       pick(existing.Kimi, incoming.Kimi),
+		Vertex:     pick(existing.Vertex, incoming.Vertex),
+		GeminiCLI:  pick(existing.GeminiCLI, incoming.GeminiCLI),
+		CodexCLI:   pick(existing.CodexCLI, incoming.CodexCLI),
+		CursorCLI:  pick(existing.CursorCLI, incoming.CursorCLI),
+		AgyCLI:     pick(existing.AgyCLI, incoming.AgyCLI),
+		PiCLI:      pick(existing.PiCLI, incoming.PiCLI),
+		MiniMax:    pick(existing.MiniMax, incoming.MiniMax),
+		ElevenLabs: pick(existing.ElevenLabs, incoming.ElevenLabs),
+		Deepgram:   pick(existing.Deepgram, incoming.Deepgram),
+	}
+	if len(existing.PiProviderKeys) > 0 || len(incoming.PiProviderKeys) > 0 {
+		merged.PiProviderKeys = make(map[string]string, len(existing.PiProviderKeys)+len(incoming.PiProviderKeys))
+		for provider, key := range existing.PiProviderKeys {
+			if v := strings.TrimSpace(key); v != "" {
+				merged.PiProviderKeys[strings.ToLower(strings.TrimSpace(provider))] = v
+			}
+		}
+		for provider, key := range incoming.PiProviderKeys {
+			if v := strings.TrimSpace(key); v != "" {
+				merged.PiProviderKeys[strings.ToLower(strings.TrimSpace(provider))] = v
+			}
+		}
 	}
 
 	// Bedrock / Azure: incoming wins if present, else keep existing

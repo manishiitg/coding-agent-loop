@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -39,12 +38,11 @@ func TestBuildLLMDiscoveryShowsMissingCodingCLI(t *testing.T) {
 	}
 }
 
-func TestBuildLLMDiscoveryShowsMissingOpenCodeCLI(t *testing.T) {
+func TestBuildLLMDiscoveryShowsMissingPiCLI(t *testing.T) {
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
-	t.Setenv("SUPPORTED_LLM_PROVIDERS", "opencode-cli")
+	t.Setenv("SUPPORTED_LLM_PROVIDERS", "pi-cli")
 	t.Setenv("PATH", t.TempDir())
-	t.Setenv("OPENCODE_BIN", filepath.Join(t.TempDir(), "missing-opencode"))
-	t.Setenv("OPENCODE_API_KEY", "")
+	t.Setenv("PI_API_KEY", "")
 
 	response := buildLLMDiscovery(context.Background())
 	if len(response.Candidates) != 1 {
@@ -52,11 +50,11 @@ func TestBuildLLMDiscoveryShowsMissingOpenCodeCLI(t *testing.T) {
 	}
 
 	candidate := response.Candidates[0]
-	if candidate.Provider != "opencode-cli" {
-		t.Fatalf("provider = %q, want opencode-cli", candidate.Provider)
+	if candidate.Provider != "pi-cli" {
+		t.Fatalf("provider = %q, want pi-cli", candidate.Provider)
 	}
-	if candidate.RuntimeCommand != "opencode" {
-		t.Fatalf("runtime_command = %q, want opencode", candidate.RuntimeCommand)
+	if candidate.RuntimeCommand != "pi" {
+		t.Fatalf("runtime_command = %q, want pi", candidate.RuntimeCommand)
 	}
 	if candidate.RuntimeAvailable == nil || *candidate.RuntimeAvailable {
 		t.Fatalf("runtime_available = %v, want false", candidate.RuntimeAvailable)

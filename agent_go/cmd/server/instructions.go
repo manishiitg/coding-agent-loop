@@ -210,13 +210,13 @@ Image generation defaults are workspace-backed configuration. Provider authentic
 ## Image Analysis Defaults
 Image understanding for the ` + "`read_image`" + ` tool can be routed via workspace-backed image analysis defaults.
 - Do not read or write saved defaults with shell/file tools. Use per-call ` + "`read_image`" + ` overrides, or the dedicated UI/API configuration path when changing saved defaults.
-- Schema: ` + "`{\"primary\":{\"provider\":\"vertex\",\"model_id\":\"gemini-3-pro-preview\"},\"fallbacks\":[{\"provider\":\"codex-cli\",\"model_id\":\"gpt-5.4-mini\"},{\"provider\":\"cursor-cli\",\"model_id\":\"cursor-cli\"},{\"provider\":\"opencode-cli\",\"model_id\":\"opencode-cli\"},{\"provider\":\"claude-code\",\"model_id\":\"claude-code\"}]}`" + `
+- Schema: ` + "`{\"primary\":{\"provider\":\"vertex\",\"model_id\":\"gemini-3-pro-preview\"},\"fallbacks\":[{\"provider\":\"codex-cli\",\"model_id\":\"gpt-5.4-mini\"},{\"provider\":\"cursor-cli\",\"model_id\":\"cursor-cli\"},{\"provider\":\"pi-cli\",\"model_id\":\"pi-cli\"},{\"provider\":\"claude-code\",\"model_id\":\"claude-code\"}]}`" + `
 - If this file exists, ` + "`read_image`" + ` uses its ` + "`primary`" + ` and ordered ` + "`fallbacks`" + ` with workspace provider auth.
 - If this file does not exist, ` + "`read_image`" + ` falls back to the current chat model.
 - For one-off ` + "`read_image`" + ` calls, use ` + "`list_llm_capabilities(capability=\"read_image\", include_models=true)`" + ` and pass ` + "`provider`" + ` with the matching ` + "`model_id`" + ` when overriding defaults.
 - Codex CLI image understanding is supported via provider ` + "`codex-cli`" + ` by passing the local workspace image path to Codex CLI.
 - Cursor CLI image understanding is supported via provider ` + "`cursor-cli`" + ` by passing the local workspace image path to Cursor Agent CLI.
-- OpenCode CLI image understanding is supported via provider ` + "`opencode-cli`" + ` by passing the local workspace image path to OpenCode CLI.
+- Pi CLI image understanding is supported via provider ` + "`pi-cli`" + ` by passing the local workspace image path to Pi CLI.
 - Claude Code image understanding is supported via provider ` + "`claude-code`" + ` by passing the local workspace image path to Claude Code CLI.
 - Keep provider auth updated with the ` + "`set_provider_auth`" + ` tool; do not hand-edit encrypted auth files.
 
@@ -475,13 +475,13 @@ The ` + "`Workflow/`" + ` folder is read-only via raw shell writes — but sever
 
 **Cron schedules** — fully managed from chat. Tools:
 - ` + "`list_all_schedules`" + ` / ` + "`list_workflow_schedules(workflow_path)`" + ` — view existing schedules. Run ` + "`list_all_schedules`" + ` *before* creating a new one to avoid cron-time overlap with other workflows.
-- ` + "`create_workflow_schedule(workflow_path, name, cron_expression, ...)`" + ` — add a new schedule to a workflow.json. Supports ` + "`mode`" + `: ` + "`workflow`" + ` (default), ` + "`workshop`" + ` (LLM-driven via workshop builder), or ` + "`multi-agent`" + `.
+- ` + "`create_workflow_schedule(workflow_path, name, cron_expression, ...)`" + ` — add a new schedule to a workflow.json. Normal Pulse schedules use ` + "`mode=\"workshop\", workshop_mode=\"run\"`" + `; if messages are omitted the server creates an unattended ` + "`run_full_workflow`" + ` message. ` + "`mode=\"workflow\"`" + ` remains available only for legacy direct-orchestrator compatibility.
 - ` + "`update_workflow_schedule(job_id, ...)`" + ` — change cron/timezone/enabled/groups.
 - ` + "`delete_workflow_schedule(job_id)`" + ` — remove.
 - ` + "`trigger_workflow_schedule(job_id)`" + ` — manual run-now.
 - ` + "`get_workflow_schedule_runs(job_id)`" + ` — execution history.
 
-Default mode rule: choose ` + "`mode=\"workflow\"`" + ` unless the user explicitly asks for a builder/workshop/optimizer/evaluation/hardening schedule. Do not choose ` + "`mode=\"workshop\"`" + ` for normal recurring business runs.
+Default mode rule: choose ` + "`mode=\"workshop\", workshop_mode=\"run\"`" + ` for normal Pulse schedules. Choose ` + "`workshop_mode=\"optimizer\"`" + ` only for auto-improve/hardening pulses with explicit messages. Do not choose ` + "`mode=\"workflow\"`" + ` for new schedules unless the user explicitly asks for the legacy direct path.
 
 **Back up scheduled workflows** — whenever you create a recurring schedule, also arrange a backup so unattended runs persist their state off-box. Load ` + "`get_reference_doc(kind=\"backup-strategy\")`" + ` and wire it per mode: for ` + "`mode=\"workshop\"`" + ` append a final backup turn to ` + "`messages`" + `; for ` + "`mode=\"workflow\"`" + ` add a backup step to the workflow plan itself (there is no message queue to carry the instruction). Confirm before skipping backup on a recurring schedule.
 

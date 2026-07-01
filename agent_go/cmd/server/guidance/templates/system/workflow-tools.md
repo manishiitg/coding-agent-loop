@@ -28,7 +28,7 @@ returns the live JSON schema for the tool.
 - **`replan_workflow_from_results(group_name?, focus?)`** — Alignment rewrite: add/remove/reorder steps using actual `iteration-0` run/eval evidence so the workflow better satisfies `soul/soul.md` objective, success criteria, and any outcome metrics. Pass `group_name` to scope to one group. Use when the workflow path is misaligned with the desired result. When replanning keeps or converts a step to `agentic`, remove any stale `learnings/{step-id}/main.py` so future agents do not confuse ephemeral agentic with reusable scripted. Use `harden_workflow` for local reliability, prompt/config, validation, or artifact-drift fixes. **Precondition: call `get_reference_doc(kind="optimize-playbook")` first.**
 - **`review_workflow_results(iteration?, group_name?, focus?)`** — Read-only outcome review: checks whether a real run is achieving the objective and success criteria, and whether the evaluation actually measures them properly.
 - **`review_workflow_timing(iteration?, group_name?, focus?)`** — Read-only latency review: finds the slowest groups/steps/tools/LLM calls and recommends faster descriptions, fewer handoffs, safer step merges, or plan changes.
-- **`review_workflow_costs(iteration?, group_name?, focus?)`** — Read-only cost review: finds the biggest cost drivers and recommends cheaper models, fewer retries/handoffs, better descriptions, or plan changes without sacrificing success criteria.
+- **`review_workflow_costs(iteration?, group_name?, focus?)`** — Read-only cost report: finds the biggest cost drivers and optional safe reductions without creating action items or unresolved findings.
 - **`get_cost_summary(run_folder?)`** — Token usage and cost breakdown.
 
 ## Read-Only Info
@@ -75,9 +75,11 @@ multi-agent-only schedule cron flow, see
   { "id": "...", "name": "...", "description": "...",
     "cron_expression": "0 9 * * 1-5", "timezone": "UTC",
     "enabled": true, "trigger_payload": {},
-    "group_names": ["confida-prod"] }
+    "group_names": ["confida-prod"], "schedule_version": 1, "prompt_version": 1 }
   ```
-  Fields: `id` (auto-assigned), `name` (display label), `description` (optional), `cron_expression` (standard 5-field cron), `timezone` (IANA tz e.g. `America/New_York`), `enabled` (bool), `trigger_payload` (arbitrary JSON passed to the run), `group_names` (required array of one or more explicit group names from `variables/variables.json`).
+  Fields: `id` (auto-assigned), `name` (display label), `description` (optional), `cron_expression` (standard 5-field cron), `timezone` (IANA tz e.g. `America/New_York`), `enabled` (bool), `trigger_payload` (arbitrary JSON passed to the run), `group_names` (required array of one or more explicit group names from `variables/variables.json`), `schedule_version` (server-managed product migration version), `prompt_version` (server-managed version for workshop schedule messages).
+- **Prompt versioning:** workshop schedules created or updated through `create_schedule`, `create_calendar_schedule`, or `update_schedule` are stamped with the current `prompt_version`. Legacy workshop schedules with no/old version are still valid, but stale fires receive an upgrade-first turn until the saved prompt is updated. That turn tells the agent to load the current `workflow-tools` doc and, for `/auto-improve` pulses, `get_workflow_command_guidance(kind="auto-improve")`, then call `update_schedule` to rewrite stale messages while preserving cadence and group scope.
+- **Schedule product migration:** schedules also carry server-managed `schedule_version`. On scheduler startup, old unversioned direct schedules (`mode=""` or `mode="workflow"`) are migrated to Normal Pulse (`mode="workshop", workshop_mode="run"`) with a default unattended `run_full_workflow` message. If the workflow's top-level `workflow.json` originally had no `schema_version`, the migrated Pulse also gets a one-time first message that refreshes workflow-owned review/report HTML surfaces to the current `html-output`/`report-plan` guidance before the normal run, then calls `update_schedule` to remove itself so future fires keep only the normal Pulse message. Workflows that already had `schema_version` do not get that UI migration message. New schedules that explicitly request `mode="workflow"` are stamped current and remain on the legacy direct path.
 - Schedule management is available in **builder and optimizer modes**. If the user asks in another mode, tell them to switch.
 
 ### Two schedule types: cron vs calendar
@@ -93,7 +95,7 @@ Every schedule in `workflow.json` has a `schedule_type` — `"cron"` (default) o
 
 ```
 { "name": "March content calendar", "timezone": "Asia/Kolkata",
-  "group_names": ["group-1"], "mode": "workflow",
+  "group_names": ["group-1"], "mode": "workshop", "workshop_mode": "run",
   "calendar_items": [
     { "date": "2026-03-03", "time": "09:00", "description": "Optional note" },
     { "date": "2026-03-07", "time": "18:30" }
@@ -102,20 +104,19 @@ Every schedule in `workflow.json` has a `schedule_type` — `"cron"` (default) o
 
 - `calendar_items` (required): each needs `date` (`YYYY-MM-DD`) and `time` (`HH:MM`), both interpreted in the schedule's `timezone`. `description` is an optional per-item note; `messages` is an optional per-item message queue used **only** when `mode="workshop"`.
 - `timezone` (required, IANA — e.g. `Asia/Kolkata`, not `IST`) and `group_names` (required) work exactly as for cron schedules.
-- **Modes are the same as cron**: defaults to `mode="workflow"` (direct orchestrator, no LLM, no messages needed). Use `mode="workshop"` only for an explicit builder/optimizer/evaluation/hardening calendar — then supply per-item `messages` or a top-level default `messages` array plus `workshop_mode` (`run` or `optimizer`), following all the *Writing messages* and unattended-run rules below.
+- **Modes are the same as cron**: defaults to normal Pulse `mode="workshop", workshop_mode="run"`. You may omit messages for run calendars; the server creates a default unattended `run_full_workflow(group_name=...)` message for the selected groups. Use `workshop_mode="optimizer"` only for explicit auto-improve/hardening calendars with explicit messages. Use `mode="workflow"` only for legacy direct orchestrator compatibility.
 - Past-dated items are skipped — only future items get registered. To change a calendar schedule, update its `calendar_items` (add/remove dates); editing tools (`update_schedule`, `delete_schedule`, `trigger_schedule`, `get_schedule_runs`) work on calendar schedules too.
 
 > The cron flow for **multi-agent chat** schedules (`multiagent-schedules.json`, edited via shell) is separate and cron-only — see `get_reference_doc(kind="schedule-management")`. Calendar schedules are a **workflow-schedule** feature and live in `workflow.json`.
 
-### Three ways to schedule a workflow
+### Product schedule types
 
-1. **Execute** (`mode=workflow`, default) — runs the orchestrator directly, no LLM involved. Fast, no messages needed.
-2. **Run** (`mode=workshop`, `workshop_mode=run`) — LLM-driven execution with per-step notifications. Requires `messages` array (e.g. a single message: `"Run the full workflow using run_full_workflow(group_name=\"group-1\")"`).
-3. **Optimize** (`mode=workshop`, `workshop_mode=optimizer`) — LLM-driven optimizer run. Requires `messages` array with exact group scope, `runs/iteration-0` evidence scope, metric/eval/log review, and bounded stop conditions.
+1. **Normal Pulse** (`mode=workshop`, `workshop_mode=run`) — LLM-driven scheduled execution with saved pulse prompts, notifications, reports, cost tracking, and prompt-version migration. This is the default for new workflow schedules. If `messages` is omitted, the server creates one unattended message that calls `run_full_workflow(group_name="...")` for each configured group.
+2. **Auto Improve** (`mode=workshop`, `workshop_mode=optimizer`) — LLM-driven optimizer pulses. Requires explicit messages with exact group scope, `runs/iteration-0` evidence scope, metric/eval/log review, and bounded stop conditions.
 
-**Default mode rule:** choose `mode="workflow"` unless the user explicitly asks for a builder/workshop/optimizer/evaluation/hardening schedule. Do not choose `mode="workshop"` for normal recurring business runs.
+**Legacy compatibility:** `mode="workflow"` still runs the old direct orchestrator path for existing schedules and callers that explicitly request it. Do not use it for new Normal Pulse schedules.
 
-**`/auto-improve` exception**: When setting up continuous improvement, BOTH schedules must be workshop schedules. The recurring execution schedule uses `mode="workshop", workshop_mode="run"` and a message that calls `run_full_workflow(group_name="...")` for each configured group. The recurring improvement schedule uses `mode="workshop", workshop_mode="workshop"`. Do not use direct `mode="workflow"` for this command.
+**`/auto-improve` exception**: When setting up continuous improvement, all three schedules must be workshop schedules. The recurring execution schedule uses `mode="workshop", workshop_mode="run"` and a message that calls `run_full_workflow(group_name="...")` for each configured group. The recurring harden and replan-proposal schedules use `mode="workshop", workshop_mode="optimizer"`. Do not use direct `mode="workflow"` for this command.
 
 ### Back up scheduled workflows
 
@@ -147,7 +148,7 @@ Confirm with the user before skipping backup on a recurring schedule.
 
 ### Workshop optimizer-style schedules
 
-When creating a schedule with `workshop_mode="workshop"`, craft the message around the exact recurring job. For `/auto-improve`, the message should:
+When creating a schedule with `workshop_mode="optimizer"`, craft the message around the exact recurring job. For `/auto-improve`, the message should:
 
 - Name the configured `group_names`.
 - Use only `runs/iteration-0` evidence for those groups.

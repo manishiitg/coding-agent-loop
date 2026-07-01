@@ -42,7 +42,7 @@ Each improve pass should perform at most one primary action unless the user expl
 - `/define-success`: writes the workflow profile and starter metrics.
 - `/improve-workflow`: reads prior improve/review logs and current evidence, then chooses harden, replan, eval-plan improvement, metric cleanup, or no action.
 - `/improve-evaluation`: improves eval coverage and rubric quality.
-- `/auto-improve`: creates or updates Run-mode and Optimizer-mode schedules. The Optimizer schedule delegates each improvement pass to canonical `/improve-workflow` guidance, then performs only schedule cadence/group-scope self-tuning. Active workflows should usually be checked after every run or every two runs, not weekly, unless the workflow itself runs weekly or the user asks for a low-touch cadence.
+- `/auto-improve`: creates or updates one Run-mode schedule plus two Optimizer-mode schedules: frequent harden and less-frequent replan-proposal. Harden delegates to canonical `/improve-workflow` guidance with a harden-only focus, then performs schedule cadence/group-scope self-tuning. Replan-proposal records evidence-backed strategy proposals in `builder/improve.html` without rewriting `planning/plan.json`. Active workflows should usually be hardened after every run or every two runs, not weekly, unless the workflow itself runs weekly or the user asks for a low-touch cadence.
 
 ## Audit Discipline
 

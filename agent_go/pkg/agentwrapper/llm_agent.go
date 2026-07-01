@@ -196,7 +196,7 @@ type LLMAgentConfig struct {
 	CursorPersistentInteractiveSession     bool
 	AgyPersistentInteractiveSession        bool
 	CursorBridgeToolsMode                  bool
-	OpenCodePersistentInteractiveSession   bool
+	PiPersistentInteractiveSession         bool
 	ClaudeCodeTransport                    string
 	// ForceStructuredCodingAgent forces coding-agent CLI providers to use
 	// the structured JSON transport (--print/--exec) for this agent's
@@ -456,9 +456,9 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 		agentOptions = append(agentOptions, mcpagent.WithForceStructuredCodingAgent(true))
 		logger.Info("🔧 Coding-agent CLI: forcing structured (JSON / --print) transport for this agent")
 	}
-	if config.OpenCodePersistentInteractiveSession {
-		agentOptions = append(agentOptions, mcpagent.WithOpenCodePersistentInteractiveSession(true))
-		logger.Info("🔗 OpenCode CLI persistent interactive tmux session enabled")
+	if config.PiPersistentInteractiveSession {
+		agentOptions = append(agentOptions, mcpagent.WithPiPersistentInteractiveSession(true))
+		logger.Info("🔗 Pi CLI persistent interactive tmux session enabled")
 	}
 
 	// Add session ID for MCP connection reuse (e.g., Playwright browser sharing)

@@ -448,6 +448,10 @@ func runWorkflowInternal(ctx context.Context, api *StreamingAPI, workflowPath, g
 		agentName = fmt.Sprintf("Step: %s (%s)", stepID, workflowLabel)
 	}
 	logCtx := newServerLogContext(workflowPath, groupName, "workflow", userID, "", wfSessionID)
+	runFolder := "iteration-0"
+	if strings.TrimSpace(groupName) != "" {
+		runFolder += "/" + strings.TrimSpace(groupName)
+	}
 
 	// Register in the background agent registry so list_agents/terminate_agent see it
 	agentID := registry.NextID(agentName)
@@ -470,6 +474,7 @@ func runWorkflowInternal(ctx context.Context, api *StreamingAPI, workflowPath, g
 			"type":                "workflow_run",
 			"workflow_path":       workflowPath,
 			"group_name":          groupName,
+			"run_folder":          runFolder,
 			"step_id":             stepID,
 			"workflow_session_id": wfSessionID,
 		},

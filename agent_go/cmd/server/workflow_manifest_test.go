@@ -2,6 +2,15 @@ package server
 
 import "testing"
 
+func TestWorkflowManifestSchemaVersionMissing(t *testing.T) {
+	if !workflowManifestSchemaVersionMissing(`{"id":"wf-old","label":"Old"}`) {
+		t.Fatal("schema version missing detector = false, want true")
+	}
+	if workflowManifestSchemaVersionMissing(`{"schema_version":1,"id":"wf-new","label":"New"}`) {
+		t.Fatal("schema version missing detector = true, want false")
+	}
+}
+
 func TestNewWorkflowManifestDefaultsGlobalSecretsToNone(t *testing.T) {
 	manifest := NewWorkflowManifest("Test workflow")
 	if manifest.Capabilities.SelectedGlobalSecretNames == nil {

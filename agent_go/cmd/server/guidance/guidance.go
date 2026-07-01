@@ -61,12 +61,12 @@ type kindMeta struct {
 // switch.
 var allKinds = map[string]kindMeta{
 	// Design audits (only meaningful before run evidence accumulates)
-	"design-flow":       {Group: "builder", Description: "Inspect context dependency / handoff design between steps", Modes: []string{"workshop"}},
+	"design-flow": {Group: "builder", Description: "Inspect context dependency / handoff design between steps", Modes: []string{"workshop"}},
 
 	// Reviews — recommend, don't apply; appends to builder/review.html
 	"review-plan":           {Group: "review", Description: "Comprehensive workflow audit: plan, step descriptions, learnings, KB, db/db.sqlite, reports, variables, and eval wiring", Modes: []string{"workshop", "run"}},
 	"review-speed":          {Group: "review", Description: "Latency analysis with safe-speedup recommendations", Modes: []string{"workshop"}},
-	"review-cost":           {Group: "review", Description: "Cost analysis with safe-reduction recommendations", Modes: []string{"workshop"}},
+	"review-cost":           {Group: "review", Description: "Report-only cost analysis with optional safe-reduction recommendations", Modes: []string{"workshop"}},
 	"review-code":           {Group: "review", Description: "Saved main.py vs current step descriptions drift check", Modes: []string{"workshop"}},
 	"review-artifact-drift": {Group: "review", Description: "Audit plan changelog entries against dependent artifacts: learnings, main.py, KB, db, reports, and eval wiring", Modes: []string{"workshop"}},
 
@@ -80,10 +80,10 @@ var allKinds = map[string]kindMeta{
 	"improve-database": {Group: "db", Description: "Improve db/db.sqlite table contracts, schemas, and report compatibility", Modes: []string{"workshop"}},
 
 	// Improvements — metric-driven harden/replan flows
-	"define-success":     {Group: "improve", Description: "One-time bootstrap of optimization success criteria (Workflow Profile + metrics)", Modes: []string{"workshop"}},
-	"improve-workflow":   {Group: "improve", Description: "Unified metric-driven workflow improvement: harden or replan from run/eval evidence", Modes: []string{"workshop"}},
-	"improve-evaluation": {Group: "improve", Description: "Evaluation plan changes and metric-source health checks", Modes: []string{"workshop"}},
-	"auto-improve":       {Group: "improve", Description: "Set up recurring run + optimizer schedules", Modes: []string{"workshop"}},
+	"define-success":      {Group: "improve", Description: "One-time bootstrap of optimization success criteria (Workflow Profile + metrics)", Modes: []string{"workshop"}},
+	"improve-workflow":    {Group: "improve", Description: "Unified metric-driven workflow improvement: harden or replan from run/eval evidence", Modes: []string{"workshop"}},
+	"improve-evaluation":  {Group: "improve", Description: "Evaluation plan changes and metric-source health checks", Modes: []string{"workshop"}},
+	"auto-improve":        {Group: "improve", Description: "Set up recurring run + optimizer schedules", Modes: []string{"workshop"}},
 	"design-reporting-ui": {Group: "report", Description: "Design the reporting UI from scratch: author HTML document(s) (live data via window.report, single or tabbed per-entity) and register them in reports/report_plan.json", Modes: []string{"workshop"}},
 	"improve-report":      {Group: "report", Description: "Report layout / color / density improvements", Modes: []string{"workshop"}},
 }
@@ -115,7 +115,7 @@ var referenceKinds = map[string]kindMeta{
 	"code-authoring":      {Group: "system", Description: "Detailed main.py authoring rules and patterns (env access, sys.argv contract, data authenticity, patching discipline)", Modes: []string{"workshop"}},
 	"stores":              {Group: "system", Description: "Persistent store design contract: skill vs knowledgebase vs db, when to write to which", Modes: []string{"workshop", "run"}},
 	"message-sequence":    {Group: "system", Description: "Message-sequence patterns — route patterns (stateful specialist, test/fix loop, maker+reviewer, panel, clean-room retry, HITL re-entry, scripted conversation) AND single-step quality patterns (self-validation/interrogation gate, compute-then-reason, citation/grounding gate, self-healing script). Load when using message_sequence as a todo_task route OR as a standalone step that self-checks its own work.", Modes: []string{"workshop"}},
-		"routing":             {Group: "system", Description: "Routing step design: when to use routing vs todo_task/message_sequence, deterministic route_selection.json contract, route structure (route_id/condition/next_step_id/default_route_id), human_input→routing pairing, anti-patterns", Modes: []string{"workshop"}},
+	"routing":             {Group: "system", Description: "Routing step design: when to use routing vs todo_task/message_sequence, deterministic route_selection.json contract, route structure (route_id/condition/next_step_id/default_route_id), human_input→routing pairing, anti-patterns", Modes: []string{"workshop"}},
 	"todo-task":           {Group: "system", Description: "todo_task (orchestrator / sub-workflow / pipeline) step design: when to use vs routing / message_sequence / regular, anatomy (todo_task_step + predefined_routes), inline sub_agent_step vs orphan_step_ref, nested-todo_task 1-level limit, variables and group_name handling, anti-patterns, scripted-mode fast path. Load before adding or restructuring a todo_task step.", Modes: []string{"workshop"}},
 	"human-input":         {Group: "system", Description: "human_input step design: text vs yesno vs multiple_choice input types, pairing with a routing step for user-driven branching, schedule (unattended) considerations and the human_inputs run_full_workflow arg, downstream validation, anti-patterns. Load before adding or editing a human_input step.", Modes: []string{"workshop"}},
 	"regular":             {Group: "system", Description: "regular (default single-step worker) design: when to use vs routing / todo_task / message_sequence / human_input, anatomy (description, context flow, required validation_schema, store access), tool/agent vs code-execution (learn_code) modes, and anti-patterns. Load before adding a regular step or when unsure which step type fits.", Modes: []string{"workshop"}},

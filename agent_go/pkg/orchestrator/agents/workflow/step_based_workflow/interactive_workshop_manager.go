@@ -1746,7 +1746,7 @@ You are the intelligent orchestrator of an automated workflow system. Workflow s
 
 The person you talk to is almost always a **business owner / operator, not a developer.** Be the engineer internally, but talk to them like a helpful colleague, not a console:
 - **Short replies.** A sentence or two by default. Lead with the outcome ("Done — your report now shows X" / "That failed because Y; I fixed it"). Don't narrate every tool call or step.
-- **Plain language, no jargon.** Avoid file paths, code, SQL, schema, tool names, and internal mechanics (` + "`db.sqlite`" + `, FolderGuard, ` + "`$DB_PATH`" + `, sandbox, JSON, etc.) unless the user is clearly technical or explicitly asks. Say "the data" not "` + "`db/db.sqlite`" + `"; "the report" not "` + "`report_plan.json`" + `".
+- **Plain language, no jargon.** Avoid file paths, code, SQL, schema, tool names, and internal mechanics (`+"`db.sqlite`"+`, FolderGuard, `+"`$DB_PATH`"+`, sandbox, JSON, etc.) unless the user is clearly technical or explicitly asks. Say "the data" not "`+"`db/db.sqlite`"+`"; "the report" not "`+"`report_plan.json`"+`".
 - **Explain in business terms** — what changed and what it means for their workflow/results, not how the plumbing works.
 - **Ask simple questions.** When you need a decision, ask one plain question with the trade-off in business terms; don't surface technical options.
 - Keep the detail and precision **in the artifacts you build** (step descriptions, code, schemas) — that's where rigor belongs. The chat stays simple. Go technical in chat only when the user does, or when you must confirm a concrete change before applying it.
@@ -7571,7 +7571,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: create_schedule — Create a new cron schedule
 	if err := mcpAgent.RegisterCustomTool(
 		"create_schedule",
-		"Create a new cron schedule for this workflow. Default to mode='workflow' for normal recurring runs. Use mode='workshop' only when the user explicitly asks for a builder/workshop/optimizer/evaluation/hardening schedule; then messages are required. For /auto-improve, BOTH schedules must be workshop schedules: the run schedule uses workshop_mode='run' with a message that calls run_full_workflow(group_name=...), and the improve schedule uses workshop_mode='optimizer'. For optimizer schedules (workshop_mode='optimizer'), the message MUST include exact group scope, retained-run evidence window selection, metric/eval/log review, and bounded stop conditions so unattended runs cannot loop indefinitely. For active workflows, prefer continuous-improvement checks after every run or every two runs, approximated with frequent lightweight cron if run-completion triggers are unavailable. Weekly cadence fits workflows that run weekly or are explicitly low-touch.",
+		"Create a new cron schedule for this workflow. Default/normal Pulse is mode='workshop', workshop_mode='run'; if messages are omitted the server creates an unattended run_full_workflow message for the selected groups. Use mode='workflow' only for legacy direct orchestrator compatibility. For /auto-improve, create three workshop schedules: the run schedule uses workshop_mode='run' with a message that calls run_full_workflow(group_name=...), and the harden plus replan-proposal schedules use workshop_mode='optimizer'. For optimizer schedules (workshop_mode='optimizer'), the message MUST include exact group scope, retained-run evidence window selection, metric/eval/log review, and bounded stop conditions so unattended runs cannot loop indefinitely. For active workflows, prefer harden checks after every run or every two runs, with replan-proposal checks less frequently, approximated with frequent lightweight cron if run-completion triggers are unavailable. Weekly cadence fits workflows that run weekly or are explicitly low-touch.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -7594,13 +7594,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"mode": map[string]interface{}{
 					"type":        "string",
-					"description": "Execution mode. Use 'workflow' by default. Use 'workshop' only when explicitly scheduling builder/workshop/optimizer/evaluation/hardening work.",
+					"description": "Execution mode. Omit or use 'workshop' for normal Pulse schedules. Use 'workflow' only for legacy direct orchestrator compatibility.",
 					"enum":        []string{"workflow", "workshop"},
 				},
 				"messages": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Required when mode='workshop'. Predefined message queue sent one-by-one to the LLM. Messages should reference tools with full parameters. Example: ['Run the full workflow using run_full_workflow(group_name=\"group-1\")']. Read variables/variables.json for available group names.",
+					"description": "Predefined message queue sent one-by-one to the LLM. Optional for normal workshop run pulses; the server creates a default run_full_workflow message when omitted. Required for optimizer schedules.",
 				},
 				"workshop_mode": map[string]interface{}{
 					"type":        "string",
@@ -7609,7 +7609,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"resume_previous": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Only when this workflow runs on a coding-agent CLI (claude-code, cursor-cli, codex-cli, gemini-cli, opencode-cli, agy-cli). When true, each scheduled run resumes the previous run's thread (same CLI) instead of starting a fresh session, so the agent keeps prior context across runs. Ignored for API model providers and non-resumable runs. Defaults to false.",
+					"description": "Only when this workflow runs on a coding-agent CLI (claude-code, cursor-cli, codex-cli, gemini-cli, pi-cli, agy-cli). When true, each scheduled run resumes the previous run's thread (same CLI) instead of starting a fresh session, so the agent keeps prior context across runs. Ignored for API model providers and non-resumable runs. Defaults to false.",
 				},
 			},
 			"required": []string{"name", "cron_expression", "timezone", "group_names"},
@@ -7664,9 +7664,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if len(groupNames) == 0 {
 				return "group_names is required. Read variables/variables.json and provide at least one explicit group_name, e.g. ['group-1'].", nil
 			}
-			// Validate: workshop mode requires messages
-			if mode == "workshop" && len(messages) == 0 {
-				return "messages is required when mode='workshop'. Provide at least one message, e.g. ['Run the full workflow using run_full_workflow(group_name=\"group-1\")'].", nil
+			// Optimizer schedules need explicit intent; normal run pulses can use
+			// the server-generated run_full_workflow message.
+			if mode == "workshop" && workshopMode == "optimizer" && len(messages) == 0 {
+				return "messages is required when workshop_mode='optimizer'. Provide at least one bounded optimizer message.", nil
 			}
 			return iwm.schedulerFuncs.CreateSchedule(ctx, iwm.schedulerWorkspacePath, name, cronExpr, timezone, groupNames, mode, messages, workshopMode, resumePrevious)
 		},
@@ -7678,7 +7679,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: create_calendar_schedule — Create dated one-time runs for content calendars
 	if err := mcpAgent.RegisterCustomTool(
 		"create_calendar_schedule",
-		"Create a dated calendar schedule for this workflow, such as a full-month Instagram content calendar. Use this when the user provides specific dates/times instead of a repeating cron pattern. Default to mode='workflow' for normal content runs; use mode='workshop' only when explicitly scheduling builder/workshop/optimizer/evaluation/hardening work.",
+		"Create a dated calendar schedule for this workflow, such as a full-month Instagram content calendar. Use this when the user provides specific dates/times instead of a repeating cron pattern. Defaults to normal Pulse mode='workshop', workshop_mode='run'; use mode='workflow' only for legacy direct orchestrator compatibility.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -7698,8 +7699,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						"required": []string{"date", "time"},
 					},
 				},
-				"mode":          map[string]interface{}{"type": "string", "description": "Use 'workflow' by default. Use 'workshop' only for builder/optimizer/evaluation/hardening calendars.", "enum": []string{"workflow", "workshop"}},
-				"messages":      map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Optional default workshop messages for all items when mode='workshop'."},
+				"mode":          map[string]interface{}{"type": "string", "description": "Omit or use 'workshop' for normal Pulse calendars. Use 'workflow' only for legacy direct orchestrator compatibility.", "enum": []string{"workflow", "workshop"}},
+				"messages":      map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Optional default workshop messages for all items when mode='workshop'. Normal run calendars get a default run_full_workflow message when omitted."},
 				"workshop_mode": map[string]interface{}{"type": "string", "description": "Only set when mode='workshop'.", "enum": []string{"run", "optimizer"}},
 			},
 			"required": []string{"name", "timezone", "calendar_items", "group_names"},
@@ -7793,7 +7794,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"mode": map[string]interface{}{
 					"type":        "string",
-					"description": "Execution mode. Keep or use 'workflow' for normal recurring runs. Use 'workshop' only when explicitly scheduling builder/workshop/optimizer/evaluation/hardening work.",
+					"description": "Execution mode. Keep or use 'workshop' for normal Pulse schedules. Use 'workflow' only for legacy direct orchestrator compatibility.",
 					"enum":        []string{"workflow", "workshop"},
 				},
 				"messages": map[string]interface{}{

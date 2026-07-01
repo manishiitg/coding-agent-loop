@@ -73,13 +73,13 @@ import (
 )
 
 var (
-	cleanupClaudeCodeProviderSessions  = llmproviders.CleanupClaudeCodeTmuxSessions
-	cleanupCodexCLIProviderSessions    = llmproviders.CleanupCodexCLIInteractiveSessions
-	cleanupGeminiCLIProviderSessions   = llmproviders.CleanupGeminiCLIInteractiveSessions
-	cleanupCursorCLIProviderSessions   = llmproviders.CleanupCursorCLIInteractiveSessions
-	cleanupAgyCLIProviderSessions      = llmproviders.CleanupAgyCLIInteractiveSessions
-	cleanupOpenCodeCLIProviderSessions = llmproviders.CleanupOpenCodeCLIInteractiveSessions
-	sweepOrphanedTmuxSessions          = llmproviders.SweepOrphanedInteractiveTmuxSessions
+	cleanupClaudeCodeProviderSessions = llmproviders.CleanupClaudeCodeTmuxSessions
+	cleanupCodexCLIProviderSessions   = llmproviders.CleanupCodexCLIInteractiveSessions
+	cleanupGeminiCLIProviderSessions  = llmproviders.CleanupGeminiCLIInteractiveSessions
+	cleanupCursorCLIProviderSessions  = llmproviders.CleanupCursorCLIInteractiveSessions
+	cleanupAgyCLIProviderSessions     = llmproviders.CleanupAgyCLIInteractiveSessions
+	cleanupPiCLIProviderSessions      = llmproviders.CleanupPiCLIInteractiveSessions
+	sweepOrphanedTmuxSessions         = llmproviders.SweepOrphanedInteractiveTmuxSessions
 )
 
 // stepDelegationRegistry maps a workshop step's ForceCorrelationID ("workshop-step-*") to the
@@ -1851,7 +1851,7 @@ func cleanupCodingAgentInteractiveSessions(phase string) {
 	cleanupProvider("GEMINI-CLI", cleanupGeminiCLIProviderSessions)
 	cleanupProvider("CURSOR-CLI", cleanupCursorCLIProviderSessions)
 	cleanupProvider("AGY-CLI", cleanupAgyCLIProviderSessions)
-	cleanupProvider("OPENCODE-CLI", cleanupOpenCodeCLIProviderSessions)
+	cleanupProvider("PI-CLI", cleanupPiCLIProviderSessions)
 }
 
 func (api *StreamingAPI) cancelActiveWorkForShutdown() {
@@ -3815,7 +3815,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Create new agent with streamCtx instead of r.Context()
 		log.Printf("[AGENT CONFIG DEBUG] Creating agent with ServerName: %s, UseCodeExecutionMode: %v", serverList, useCodeExecutionMode)
-		claudeCodePersistentInteractive, codexPersistentInteractive, geminiPersistentInteractive, cursorPersistentInteractive, agyPersistentInteractive, openCodePersistentInteractive := codingAgentPersistentInteractiveFlags(finalProvider)
+		claudeCodePersistentInteractive, codexPersistentInteractive, geminiPersistentInteractive, cursorPersistentInteractive, agyPersistentInteractive, piPersistentInteractive := codingAgentPersistentInteractiveFlags(finalProvider)
 		claudeCodeTransport := codingAgentClaudeCodeChatTransport(finalProvider)
 		chatWorkingFolder := perUserChatsFolder
 		if isWorkflowPhase && workflowPhaseFolder != "" && workflowPhaseFolder != "default_workspace" {
@@ -3855,7 +3855,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			CursorPersistentInteractiveSession:     cursorPersistentInteractive,
 			AgyPersistentInteractiveSession:        agyPersistentInteractive,
 			CursorBridgeToolsMode:                  cursorPersistentInteractive,
-			OpenCodePersistentInteractiveSession:   openCodePersistentInteractive,
+			PiPersistentInteractiveSession:         piPersistentInteractive,
 			ClaudeCodeTransport:                    claudeCodeTransport,
 			CodingAgentWorkingDir:                  chatWorkingDir,
 			APIKeys:                                mergedAPIKeys,
@@ -5467,9 +5467,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// earlier RemoveAll patch) and lets the next turn relaunch with
 			// the new prompt, producing the correct rule file content.
 			//
-			// Symmetric across all five tmux-backed coding-CLI providers;
-			// opencode is structured (no persistent tmux session) so it
-			// re-reads project files per turn and needs no close.
+			// Symmetric across all tmux-backed coding-CLI providers.
 			reason := fmt.Sprintf("workshop mode changed %q -> %q", modeChangePrevMode, newWorkshopMode)
 			switch strings.ToLower(strings.TrimSpace(finalProvider)) {
 			case "agy-cli":
@@ -5480,6 +5478,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				llmproviders.CloseGeminiCLIInteractiveSessionForOwner(sessionID, reason)
 			case "codex-cli":
 				llmproviders.CloseCodexCLIInteractiveSessionForOwner(sessionID, reason)
+			case "pi-cli":
+				llmproviders.ClosePiCLIInteractiveSessionForOwner(sessionID, reason)
 			case "claude-code":
 				llmproviders.CloseClaudeCodeInteractiveSessionForOwner(sessionID, reason)
 			}
@@ -5923,7 +5923,7 @@ func (api *StreamingAPI) handleCancelCurrentTurn(w http.ResponseWriter, r *http.
 // every tmux provider. Each adapter's CloseXxxInteractiveSessionForOwner runs
 // its own graceful-then-force shutdown (e.g. agy: tmux send-keys "/exit" →
 // tmux kill-session) and is a no-op when no session is registered for the
-// owner, so calling all five is safe and provider-agnostic. (OpenCode is a
+// owner, so calling all five is safe and provider-agnostic. (Pi is a
 // structured transport with no persistent tmux session, so it needs no close.)
 func closeAllCodingCLIInteractiveSessionsForOwner(owner, reason string) {
 	llmproviders.CloseAgyCLIInteractiveSessionForOwner(owner, reason)
@@ -6471,12 +6471,12 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 				runtime.ResumeFlag = "--conversation"
 				log.Printf("[AGY CLI] Saved conversation ID %s for session %s", sid, sessionID)
 			}
-		case "opencode-cli":
-			if sid := strings.TrimSpace(underlyingAgent.OpenCodeSessionID); sid != "" {
+		case "pi-cli":
+			if sid := strings.TrimSpace(underlyingAgent.PiSessionID); sid != "" {
 				runtime.ExternalSessionID = sid
 				runtime.ResumeSupported = true
-				runtime.ResumeFlag = "--session"
-				log.Printf("[OPENCODE CLI] Saved session ID %s for session %s", sid, sessionID)
+				runtime.ResumeFlag = "--session-id"
+				log.Printf("[PI CLI] Saved session ID %s for session %s", sid, sessionID)
 			}
 		}
 		// Persist the agent's MCP server+tool selection and browser capability so
@@ -6525,8 +6525,8 @@ func codingAgentHasNativeResume(provider string, underlyingAgent *mcpagent.Agent
 		return strings.TrimSpace(underlyingAgent.CursorSessionID) != ""
 	case "agy-cli":
 		return strings.TrimSpace(underlyingAgent.AgySessionID) != ""
-	case "opencode-cli":
-		return strings.TrimSpace(underlyingAgent.OpenCodeSessionID) != ""
+	case "pi-cli":
+		return strings.TrimSpace(underlyingAgent.PiSessionID) != ""
 	default:
 		return false
 	}
@@ -6640,12 +6640,12 @@ func (api *StreamingAPI) seedCodingAgentRuntimeFromRestoredConversation(sessionI
 		underlyingAgent.AgySessionID = externalSessionID
 		log.Printf("[AGY CLI] Restored native conversation %s from chat history for session %s", externalSessionID, sessionID)
 		return true
-	case "opencode-cli":
+	case "pi-cli":
 		if externalSessionID == "" {
 			return false
 		}
-		underlyingAgent.OpenCodeSessionID = externalSessionID
-		log.Printf("[OPENCODE CLI] Restored native session %s from chat history for session %s", externalSessionID, sessionID)
+		underlyingAgent.PiSessionID = externalSessionID
+		log.Printf("[PI CLI] Restored native session %s from chat history for session %s", externalSessionID, sessionID)
 		return true
 	}
 	return false
@@ -7611,29 +7611,52 @@ func (n *workshopExecutionBgNotifier) OnExecutionComplete(execID, name, result s
 	}
 
 	duration := time.Since(agent.CreatedAt)
-	if len(meta) > 0 {
-		agent.SetMetadata(meta)
+	mergedMeta := mergeBackgroundAgentMetadata(agent.GetSnapshot().Metadata, meta)
+	if strings.TrimSpace(n.workspacePath) != "" {
+		if mergedMeta == nil {
+			mergedMeta = make(map[string]string)
+		}
+		mergedMeta["workflow_path"] = n.workspacePath
+	}
+	if costMeta := workflowCostNotificationMetadata(context.Background(), mergedMeta["workflow_path"], mergedMeta["run_folder"]); len(costMeta) > 0 {
+		if mergedMeta == nil {
+			mergedMeta = make(map[string]string, len(costMeta))
+		}
+		for k, v := range costMeta {
+			mergedMeta[k] = v
+		}
+	}
+	if len(mergedMeta) > 0 {
+		agent.SetMetadata(mergedMeta)
 	}
 	if err != nil {
 		agent.SetError(err.Error())
-		n.api.completeTrackedExecution(execID, trackedExecutionStatusFailed, err.Error(), meta)
-		n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_completed", map[string]interface{}{
+		n.api.completeTrackedExecution(execID, trackedExecutionStatusFailed, err.Error(), mergedMeta)
+		payload := map[string]interface{}{
 			"agent_id": execID,
 			"name":     name,
 			"status":   "failed",
 			"error":    err.Error(),
 			"duration": duration.Truncate(time.Second).String(),
-		})
+		}
+		if costSummary := strings.TrimSpace(mergedMeta["cost_summary"]); costSummary != "" {
+			payload["cost_summary"] = costSummary
+		}
+		n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_completed", payload)
 	} else {
 		agent.SetResult(result) // Store full result — truncation only happens at display/notification time
-		n.api.completeTrackedExecution(execID, trackedExecutionStatusCompleted, "", meta)
-		n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_completed", map[string]interface{}{
+		n.api.completeTrackedExecution(execID, trackedExecutionStatusCompleted, "", mergedMeta)
+		payload := map[string]interface{}{
 			"agent_id": execID,
 			"name":     name,
 			"status":   "completed",
 			"result":   truncateForToolResponse(result, 500),
 			"duration": duration.Truncate(time.Second).String(),
-		})
+		}
+		if costSummary := strings.TrimSpace(mergedMeta["cost_summary"]); costSummary != "" {
+			payload["cost_summary"] = costSummary
+		}
+		n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_completed", payload)
 	}
 
 	// Signal completion to the notification loop (triggers auto-notification synthetic turn).
@@ -8584,7 +8607,7 @@ func buildBackgroundAgentStartSyntheticMessage(_ string, parts []string) string 
 	// renders it inline rather than as "[Pasted text +N lines]".
 	// Completion will arrive as a separate AUTO-NOTIFICATION; the agent may call
 	// query_step to inspect live progress in the meantime.
-	const trailer = "Ack only. No tools; wait."
+	const trailer = "Ack only. No tools; resume prior task if any."
 	if len(parts) == 1 {
 		return fmt.Sprintf("[AUTO-NOTIFICATION] Started: %s\n%s", strings.TrimPrefix(parts[0], "- "), trailer)
 	}
@@ -8942,9 +8965,10 @@ func (api *StreamingAPI) buildAutoNotificationMessage(sessionID string, snap Bac
 	// multi-line user-message into a "[Pasted text +N lines]" placeholder,
 	// which hides the actual notification text from the operator.
 	contextInfo := autoNotificationInlineContext(snap.Metadata)
+	costSummary := autoNotificationCostSummaryFromMetadata(context.Background(), snap.Metadata)
 	syntheticMsg := fmt.Sprintf(
-		"[AUTO-NOTIFICATION] Agent '%s' completed — status=%s%s.\nResult: %s%s%s",
-		strings.TrimSpace(snap.Name), snap.Status, contextInfo, resultText, actionHint, workflowRunBackupDirective(snap))
+		"[AUTO-NOTIFICATION] Agent '%s' completed — status=%s%s.\nResult: %s%s%s%s",
+		strings.TrimSpace(snap.Name), snap.Status, contextInfo, resultText, costSummary, actionHint, workflowRunBackupDirective(snap))
 
 	// Bot connector sessions (slack / whatsapp / discord / telegram / etc.): the
 	// builder's reply is forwarded verbatim to a chat thread, so a faithful echo
@@ -10584,6 +10608,9 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				} else {
 					sb.WriteString("- **Groups**: all\n")
 				}
+				if workflowScheduleHasVersionedPrompt(sched) {
+					sb.WriteString(fmt.Sprintf("- **Prompt Version**: %s\n", workflowSchedulePromptStatus(sched)))
+				}
 				sb.WriteString("\n")
 			}
 			return sb.String(), nil
@@ -10615,6 +10642,9 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				WorkshopMode:   workshopMode,
 				ResumePrevious: resumePrevious,
 			}
+			applyNewWorkflowScheduleDefaults(&newSched)
+			markWorkflowScheduleVersionCurrent(&newSched)
+			markWorkflowSchedulePromptCurrent(&newSched)
 			manifest.Schedules = append(manifest.Schedules, newSched)
 			if err := WriteWorkflowManifest(ctx, workspacePath, manifest); err != nil {
 				return "", fmt.Errorf("failed to write manifest: %w", err)
@@ -10665,6 +10695,9 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				Messages:      messages,
 				WorkshopMode:  workshopMode,
 			}
+			applyNewWorkflowScheduleDefaults(&newSched)
+			markWorkflowScheduleVersionCurrent(&newSched)
+			markWorkflowSchedulePromptCurrent(&newSched)
 			manifest.Schedules = append(manifest.Schedules, newSched)
 			if err := WriteWorkflowManifest(ctx, workspacePath, manifest); err != nil {
 				return "", fmt.Errorf("failed to write manifest: %w", err)
@@ -10717,6 +10750,7 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 			if enabled != nil {
 				sched.Enabled = *enabled
 			}
+			promptTouched := mode != "" || messages != nil || workshopMode != ""
 			if mode != "" {
 				sched.Mode = mode
 			}
@@ -10725,6 +10759,11 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 			}
 			if workshopMode != "" {
 				sched.WorkshopMode = workshopMode
+			}
+			if promptTouched {
+				applyWorkflowScheduleWorkshopDefaults(sched)
+				markWorkflowScheduleVersionCurrent(sched)
+				markWorkflowSchedulePromptCurrent(sched)
 			}
 			if resumePrevious != nil {
 				sched.ResumePrevious = resumePrevious
@@ -11065,7 +11104,7 @@ func (api *StreamingAPI) buildLLMToolsCallbacks() *todo_creation_human.LLMToolsC
 				return "provider is required.", nil
 			}
 			if !isPublishedLLMProviderAllowed(provider) {
-				return fmt.Sprintf("unsupported chat LLM provider %q. Use coding agents or direct API providers: codex-cli, cursor-cli, opencode-cli, claude-code, gemini-cli, bedrock, openai, anthropic, vertex, or azure.", provider), nil
+				return fmt.Sprintf("unsupported chat LLM provider %q. Use coding agents or direct API providers: codex-cli, cursor-cli, pi-cli, claude-code, gemini-cli, bedrock, openai, anthropic, vertex, or azure.", provider), nil
 			}
 
 			validationOptions := cloneOptionsMap(options)

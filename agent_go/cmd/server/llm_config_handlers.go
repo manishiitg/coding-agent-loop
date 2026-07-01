@@ -16,7 +16,6 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/azure"
-	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/opencodecli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/utils"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
@@ -36,16 +35,7 @@ var supportedLLMProviders = []string{
 	"codex-cli",
 	"cursor-cli",
 	"agy-cli",
-	"opencode-cli",
-	// OpenCode CLI sub-provider tiles. Each routes back to the same
-	// `opencode` binary but with sub-provider-scoped credentials and a
-	// curated model catalog.
-	"opencode-cli-kimi",
-	"opencode-cli-deepseek",
-	"opencode-cli-qwen",
-	"opencode-cli-minimax",
-	"opencode-cli-glm",
-	"opencode-cli-free",
+	"pi-cli",
 }
 
 const claudeCodeDisableAutoMemoryEnv = "CLAUDE_CODE_DISABLE_AUTO_MEMORY"
@@ -53,9 +43,7 @@ const claudeCodeDisableAutoMemoryEnv = "CLAUDE_CODE_DISABLE_AUTO_MEMORY"
 func isPublishedLLMProviderAllowed(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "bedrock", "openai", "vertex", "anthropic", "azure",
-		"claude-code", "gemini-cli", "codex-cli", "cursor-cli", "agy-cli", "opencode-cli",
-		"opencode-cli-kimi", "opencode-cli-deepseek", "opencode-cli-qwen",
-		"opencode-cli-minimax", "opencode-cli-glm", "opencode-cli-free":
+		"claude-code", "gemini-cli", "codex-cli", "cursor-cli", "agy-cli", "pi-cli":
 		return true
 	default:
 		return false
@@ -66,7 +54,7 @@ func fallbackPublishedLLMProviderAndModel() (string, string) {
 	for _, provider := range []string{
 		"codex-cli",
 		"cursor-cli",
-		"opencode-cli",
+		"pi-cli",
 		"claude-code",
 		"gemini-cli",
 		"bedrock",
@@ -257,6 +245,15 @@ func getPrimaryProviderAndModelFromDefaults() (provider, modelID string) {
 	return provider, modelID
 }
 
+func firstNonEmptyProviderEnv(names ...string) string {
+	for _, name := range names {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 // buildProviderAPIKeysFromEnv builds llm.ProviderAPIKeys from environment variables (for locked mode).
 func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 	keys := &llm.ProviderAPIKeys{}
@@ -299,8 +296,8 @@ func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 	if s := os.Getenv("AGY_API_KEY"); s != "" {
 		keys.AgyCLI = &s
 	}
-	if s := os.Getenv("OPENCODE_API_KEY"); s != "" {
-		keys.OpenCodeCLI = &s
+	if s := firstNonEmptyProviderEnv("PI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"); s != "" {
+		keys.PiCLI = &s
 	}
 	if s := os.Getenv("MINIMAX_API_KEY"); s != "" {
 		keys.MiniMax = &s
@@ -357,8 +354,8 @@ func providerDisplayLabel(provider string) string {
 		return "Cursor CLI"
 	case "agy-cli":
 		return "Antigravity CLI (Alpha)"
-	case "opencode-cli":
-		return "OpenCode CLI"
+	case "pi-cli":
+		return "Pi CLI"
 	case "claude-code":
 		return "Claude Code"
 	case "gemini-cli":
@@ -411,8 +408,8 @@ func discoveryModelOptions(provider string) []string {
 		return []string{"cursor-cli", "gpt-5", "sonnet-4-thinking", "sonnet-4"}
 	case "agy-cli":
 		return []string{"agy-cli"}
-	case "opencode-cli":
-		return []string{"opencode-cli", "openai/gpt-5.1", "anthropic/claude-sonnet-4-5"}
+	case "pi-cli":
+		return []string{"pi-cli", "google/gemini-3.5-flash", "google/gemini-2.5-flash"}
 	case "claude-code":
 		return []string{"claude-code", "high", "medium", "low"}
 	case "gemini-cli":
@@ -431,8 +428,8 @@ func discoverySetupHint(provider string, runtimeMissing bool) string {
 			return "Install Cursor CLI so the cursor-agent command is available on the backend PATH."
 		case "agy-cli":
 			return "Install Antigravity CLI so the agy command is available on the backend PATH."
-		case "opencode-cli":
-			return "Install OpenCode CLI so the opencode command is available on the backend PATH, or set OPENCODE_BIN."
+		case "pi-cli":
+			return "Install Pi CLI so the pi command is available on the backend PATH."
 		case "claude-code":
 			return "Install Claude Code so the claude command is available on the backend PATH."
 		case "gemini-cli":
@@ -449,8 +446,8 @@ func discoverySetupHint(provider string, runtimeMissing bool) string {
 		return "Run cursor-agent login or set CURSOR_API_KEY, then test again."
 	case "agy-cli":
 		return "Run agy locally and complete Antigravity sign-in, then test again."
-	case "opencode-cli":
-		return "Run opencode auth/login or set OPENCODE_API_KEY, then test again."
+	case "pi-cli":
+		return "Run pi locally and complete auth, or set PI_API_KEY/GEMINI_API_KEY/GOOGLE_API_KEY, then test again."
 	case "claude-code":
 		return "Run claude to finish Claude Code authentication, then test again."
 	case "gemini-cli":
@@ -472,7 +469,7 @@ func buildLLMDiscovery(ctx context.Context) llmDiscoveryResponse {
 		"codex-cli",
 		"cursor-cli",
 		"agy-cli",
-		"opencode-cli",
+		"pi-cli",
 		"claude-code",
 		"gemini-cli",
 		"openai",
@@ -491,6 +488,12 @@ func buildLLMDiscovery(ctx context.Context) llmDiscoveryResponse {
 		authConfigured, authSource := providerAuthConfigured(provider, keys)
 		usable, runtimeCommand, runtimeOK := providerUsable(provider, authConfigured)
 		modelID := llm.GetDefaultModel(llm.Provider(provider))
+		if modelID == "" {
+			opts := discoveryModelOptions(provider)
+			if len(opts) > 0 {
+				modelID = opts[0]
+			}
+		}
 		if modelID == "" {
 			continue
 		}
@@ -614,7 +617,7 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 	// 3) Auto-generate defaults from AvailableModels for locked providers
 	var entries []map[string]interface{}
 	defaults := llm.GetLLMDefaults()
-	providers := []string{"codex-cli", "cursor-cli", "agy-cli", "opencode-cli", "claude-code", "gemini-cli", "azure", "bedrock", "openai", "anthropic", "vertex"}
+	providers := []string{"codex-cli", "cursor-cli", "agy-cli", "pi-cli", "claude-code", "gemini-cli", "azure", "bedrock", "openai", "anthropic", "vertex"}
 
 	for _, p := range providers {
 		// If provider is locked (or global lock is on), include its available models
@@ -727,7 +730,6 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 		"azure_config":          defaults.AzureConfig,
 		"zai_config":            defaults.ZAIConfig,
 		"kimi_config":           defaults.KimiConfig,
-		"opencode_cli_config":   defaults.OpenCodeConfig,
 		"minimax_config":        defaults.MinimaxConfig,
 		"elevenlabs_config":     defaults.ElevenLabsConfig,
 		"deepgram_config":       defaults.DeepgramConfig,
@@ -766,8 +768,6 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 				stripSecrets("zai_config")
 			case "kimi":
 				stripSecrets("kimi_config")
-			case "opencode-cli":
-				stripSecrets("opencode_cli_config")
 			case "vertex":
 				stripSecrets("vertex_config")
 			case "minimax":
@@ -850,23 +850,6 @@ func (api *StreamingAPI) populateValidationCredentialsFromMergedKeys(ctx context
 
 	provider := strings.ToLower(strings.TrimSpace(req.Provider))
 
-	// OpenCode CLI sub-provider tiles: pull from the per-env-var sub-key
-	// map. We do this before MergedProviderAPIKeys() so the sub-provider
-	// key is preferred over any unrelated entry the shared map might
-	// surface for a same-named field.
-	if isOpenCodeSubProviderID(provider) {
-		if req.APIKey == "" {
-			envVar := openCodeSubProviderEnvVarForID(provider)
-			if envVar != "" {
-				subKeys := MergedOpenCodeSubProviderKeys(ctx)
-				if v, ok := subKeys[envVar]; ok && strings.TrimSpace(v) != "" {
-					req.APIKey = strings.TrimSpace(v)
-				}
-			}
-		}
-		return
-	}
-
 	keys := MergedProviderAPIKeys(ctx)
 	if keys == nil {
 		return
@@ -892,8 +875,8 @@ func (api *StreamingAPI) populateValidationCredentialsFromMergedKeys(ctx context
 		setAPIKey(keys.CursorCLI)
 	case "agy-cli":
 		setAPIKey(keys.AgyCLI)
-	case "opencode-cli":
-		setAPIKey(keys.OpenCodeCLI)
+	case "pi-cli":
+		setAPIKey(keys.PiCLI)
 	case "minimax":
 		setAPIKey(keys.MiniMax)
 	case "elevenlabs":
@@ -931,14 +914,6 @@ func validateProviderConfig(req llm.APIKeyValidationRequest) llm.APIKeyValidatio
 		}
 	}
 
-	// OpenCode CLI sub-provider tiles route through the same validator as
-	// the legacy `opencode-cli` tile but with the sub-provider's curated
-	// default model and an Options map carrying the sub-provider id so
-	// the OpenCode adapter scopes credentials correctly.
-	if isOpenCodeSubProviderID(provider) {
-		return validateOpenCodeSubProvider(provider, req)
-	}
-
 	switch provider {
 	case "claude-code":
 		return validateClaudeCodeCLI()
@@ -950,8 +925,8 @@ func validateProviderConfig(req llm.APIKeyValidationRequest) llm.APIKeyValidatio
 		return validateCursorCLI(req.APIKey, req.ModelID)
 	case "agy-cli":
 		return validateAgyCLI(req.APIKey, req.ModelID)
-	case "opencode-cli":
-		return validateOpenCodeCLI(req.APIKey, req.ModelID, req.Options)
+	case "pi-cli":
+		return validatePiCLI(req.APIKey, req.ModelID, req.Options)
 	case "kimi":
 		return llm.ValidateAPIKey(req)
 	default:
@@ -959,46 +934,9 @@ func validateProviderConfig(req llm.APIKeyValidationRequest) llm.APIKeyValidatio
 	}
 }
 
-// validateOpenCodeSubProvider runs the OpenCode CLI validation for one
-// sub-provider tile (e.g. opencode-cli-kimi). It defaults the model id to
-// the tile's curated default when none was supplied and tags the request
-// options with `opencode_sub_provider_id` so the underlying validator can
-// scope credentials and tier shortcuts to the right namespace.
-func validateOpenCodeSubProvider(providerID string, req llm.APIKeyValidationRequest) llm.APIKeyValidationResponse {
-	sp, ok := opencodecli.FindOpenCodeSubProvider(providerID)
-	if !ok {
-		return llm.APIKeyValidationResponse{
-			Valid:   false,
-			Message: fmt.Sprintf("Unknown OpenCode sub-provider %q", providerID),
-		}
-	}
-	if sp.RequiresAPIKey && strings.TrimSpace(req.APIKey) == "" {
-		return llm.APIKeyValidationResponse{
-			Valid:   false,
-			Message: fmt.Sprintf("%s requires an API key. Paste a %s value into the tile.", sp.DisplayName, sp.APIKeyEnvVar),
-		}
-	}
-
-	modelID := strings.TrimSpace(req.ModelID)
-	if modelID == "" {
-		modelID = sp.DefaultModelID
-	}
-
-	options := req.Options
-	if options == nil {
-		options = map[string]interface{}{}
-	}
-	// Tag the request so the validator (and any downstream adapter
-	// instantiation) picks the right sub-provider scope.
-	options["opencode_sub_provider_id"] = sp.ID
-	options["opencode_sub_provider_env_var"] = sp.APIKeyEnvVar
-
-	return validateOpenCodeCLI(req.APIKey, modelID, options)
-}
-
-// validateOpenCodeCLI validates OpenCode CLI through the shared tmux adapter path.
-func validateOpenCodeCLI(apiKey, modelID string, options map[string]interface{}) llm.APIKeyValidationResponse {
-	if _, err := runtimeAvailableForProvider("opencode-cli"); err != nil {
+// validatePiCLI validates Pi CLI through the shared tmux adapter path.
+func validatePiCLI(apiKey, modelID string, options map[string]interface{}) llm.APIKeyValidationResponse {
+	if _, err := runtimeAvailableForProvider("pi-cli"); err != nil {
 		return llm.APIKeyValidationResponse{
 			Valid:   false,
 			Message: err.Error(),
@@ -1007,18 +945,18 @@ func validateOpenCodeCLI(apiKey, modelID string, options map[string]interface{})
 	if _, err := exec.LookPath("tmux"); err != nil {
 		return llm.APIKeyValidationResponse{
 			Valid:   false,
-			Message: "tmux not found. OpenCode CLI integration requires tmux for interactive mode.",
+			Message: "tmux not found. Pi CLI integration requires tmux for interactive mode.",
 		}
 	}
 
 	req := llm.APIKeyValidationRequest{
-		Provider: "opencode-cli",
+		Provider: "pi-cli",
 		APIKey:   apiKey,
 		ModelID:  modelID,
 		Options:  options,
 	}
 	if strings.TrimSpace(req.ModelID) == "" {
-		req.ModelID = "opencode-cli"
+		req.ModelID = "pi-cli"
 	}
 	return llm.ValidateAPIKey(req)
 }

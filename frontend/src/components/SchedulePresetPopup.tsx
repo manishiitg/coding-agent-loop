@@ -197,6 +197,8 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
           entity_type: schedulerEntityType,
           preset_query_id: presetQueryId,
           workspace_path: workspacePath,
+          mode: 'workshop',
+          workshop_mode: 'run',
           schedule_type: scheduleType,
           cron_expression: scheduleType === 'cron' ? cronExpr : undefined,
           calendar_items: scheduleType === 'calendar' ? calendarItems : undefined,

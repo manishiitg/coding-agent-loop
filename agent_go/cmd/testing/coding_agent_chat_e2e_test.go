@@ -9,12 +9,12 @@ import (
 
 func TestDefaultCodingAgentE2EModelIncludesCodingCLIProviders(st *stdtesting.T) {
 	tests := map[string]string{
-		"gemini-cli":   "gemini-3.1-flash-lite",
-		"codex-cli":    "gpt-5.3-codex-spark",
-		"cursor-cli":   "cursor-cli",
-		"agy-cli":      "agy-cli",
-		"claude-code":  "claude-code",
-		"opencode-cli": "opencode-cli",
+		"gemini-cli":  "gemini-3.1-flash-lite",
+		"codex-cli":   "gpt-5.3-codex-spark",
+		"cursor-cli":  "cursor-cli",
+		"agy-cli":     "agy-cli",
+		"claude-code": "claude-code",
+		"pi-cli":      "pi-cli",
 	}
 
 	for provider, want := range tests {
@@ -28,12 +28,12 @@ func TestDefaultCodingAgentE2EModelIncludesCodingCLIProviders(st *stdtesting.T) 
 
 func TestProviderSupportsTmuxLossResumeE2EIncludesNativeResumeProviders(st *stdtesting.T) {
 	cases := map[string]bool{
-		"claude-code":  true,
-		"codex-cli":    true,
-		"agy-cli":      true,
-		"cursor-cli":   false,
-		"gemini-cli":   false,
-		"opencode-cli": false,
+		"claude-code": true,
+		"codex-cli":   true,
+		"agy-cli":     true,
+		"cursor-cli":  false,
+		"gemini-cli":  false,
+		"pi-cli":      false,
 	}
 
 	for provider, want := range cases {

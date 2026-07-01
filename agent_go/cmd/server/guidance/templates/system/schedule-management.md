@@ -8,6 +8,7 @@ You can create scheduled tasks that run automatically on a cron schedule. Schedu
 
 ```json
 {
+  "schema_version": 1,
   "schedules": [
     {
       "id": "unique-uuid",
@@ -17,6 +18,8 @@ You can create scheduled tasks that run automatically on a cron schedule. Schedu
       "timezone": "America/New_York",
       "enabled": true,
       "mode": "multi-agent",
+      "schedule_version": 1,
+      "prompt_version": 1,
       "query": "The message/instruction to execute on schedule"
     }
   ],
@@ -37,10 +40,12 @@ Use `execute_shell_command` to read and write the schedule file:
 
 **List schedules:**
 ```bash
-cat _users/<user-id>/multiagent-schedules.json 2>/dev/null || echo '{"schedules":[],"capabilities":{}}'
+cat _users/<user-id>/multiagent-schedules.json 2>/dev/null || echo '{"schema_version":1,"schedules":[],"capabilities":{}}'
 ```
 
 **Create/update schedules:** Read the file, modify the JSON (add/update/remove entries), write it back. Use `python3` or `jq` for JSON manipulation. Always generate a UUID for new schedule IDs (`python3 -c "import uuid; print(uuid.uuid4())"`).
+
+**Versioning:** Keep root `schema_version: 1`. For new schedules and schedules whose `query` you rewrite, set `schedule_version: 1` and `prompt_version: 1`. Legacy schedules with missing/old `prompt_version` are still valid, but the scheduler will first run an upgrade prompt that asks you to refresh the saved query using this reference doc before continuing the scheduled work.
 
 **Cron expression examples:**
 - `0 9 * * *` — daily at 9:00 AM
@@ -55,8 +60,9 @@ cat _users/<user-id>/multiagent-schedules.json 2>/dev/null || echo '{"schedules"
 1. Confirm the schedule details (what to run, when, timezone)
 2. Read the current schedule file
 3. Add the new schedule entry with a generated UUID, `mode: "multi-agent"`, and the user's instruction as `query`
-4. Write the updated file back
-5. Confirm to the user what was scheduled
+4. Set `schedule_version: 1` and `prompt_version: 1` on the entry, and keep `schema_version: 1` at the file root
+5. Write the updated file back
+6. Confirm to the user what was scheduled
 
 ### Updating or removing schedules
 

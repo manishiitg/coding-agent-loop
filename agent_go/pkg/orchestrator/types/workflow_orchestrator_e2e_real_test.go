@@ -24,7 +24,7 @@ import (
 // step, real Vertex/Gemini direct-API call, no MCP servers, no
 // skills, no browser. If this passes, we extend with routing +
 // conditional steps and additional transports (gemini-cli
-// structured, opencode-cli structured, cursor-cli tmux) in
+// structured, pi-cli structured, cursor-cli tmux) in
 // follow-up tests.
 //
 // Why vertex for the first transport: GEMINI_API_KEY is already in

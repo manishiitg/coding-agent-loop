@@ -46,7 +46,7 @@ Set via `update_step_config(step_id, ...)`:
 
 ### Cost awareness
 
-- `review_workflow_costs(iteration?, group_name?, focus?)` — read-only cost analysis with safe-reduction recommendations (which steps could drop a tier).
+- `review_workflow_costs(iteration?, group_name?, focus?)` — read-only, report-only cost analysis with optional safe-reduction recommendations (which steps could drop a tier) and no action items.
 - `get_cost_summary` — current spend snapshot.
 - `estimate_llm_cost(...)` — estimate priced (media) generation before high-volume runs.
 

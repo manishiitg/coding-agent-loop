@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -117,9 +116,9 @@ var providerStaticInfoMap = map[string]providerStaticInfo{
 		authDescription: "Local CLI (Agy sign-in)",
 		requiresAPIKey:  false,
 	},
-	"opencode-cli": {
-		displayName:     "OpenCode CLI",
-		description:     "Uses the locally installed opencode CLI through tmux. Supports multiple model providers.",
+	"pi-cli": {
+		displayName:     "Pi CLI",
+		description:     "Uses the locally installed pi CLI through tmux. Supports provider-qualified models such as google/gemini-3.5-flash.",
 		integrationKind: "coding_agent",
 		authDescription: "Local CLI (API key optional)",
 		requiresAPIKey:  false,
@@ -213,7 +212,7 @@ var providerStaticInfoMap = map[string]providerStaticInfo{
 
 func providerModelSelectionMode(provider string) string {
 	switch provider {
-	case "cursor-cli", "opencode-cli":
+	case "cursor-cli":
 		return "dynamic"
 	default:
 		return "fixed_tier"
@@ -229,9 +228,6 @@ func providerKind(provider string) string {
 
 func providerCodingAgentManifestInfo(provider, modelID string) *providerCodingAgentInfo {
 	contractProvider := provider
-	if strings.HasPrefix(provider, "opencode-cli-") {
-		contractProvider = "opencode-cli"
-	}
 	contract, ok := llm.GetCodingAgentProviderContract(llm.Provider(contractProvider), modelID)
 	if !ok {
 		return nil
@@ -271,9 +267,7 @@ func (api *StreamingAPI) handleGetProviderManifest(w http.ResponseWriter, r *htt
 	capabilitiesByProvider := buildProviderCapabilities(ctx)
 
 	providerOrder := []string{
-		"codex-cli", "cursor-cli", "agy-cli", "opencode-cli",
-		"opencode-cli-kimi", "opencode-cli-deepseek", "opencode-cli-qwen",
-		"opencode-cli-minimax", "opencode-cli-glm", "opencode-cli-free",
+		"codex-cli", "cursor-cli", "pi-cli", "agy-cli",
 		"claude-code", "gemini-cli",
 		"openai", "anthropic", "vertex", "bedrock", "azure",
 		"elevenlabs", "deepgram", "minimax",
@@ -285,26 +279,8 @@ func (api *StreamingAPI) handleGetProviderManifest(w http.ResponseWriter, r *htt
 		supportedSet[p] = true
 	}
 
-	// Resolve OpenCode CLI runtime once; sub-provider tiles share it.
-	_, _, openCodeRuntimeOK := providerUsable("opencode-cli", true)
-	openCodeRuntimeAvailable := openCodeRuntimeOK != nil && *openCodeRuntimeOK
-	openCodeSubKeys := MergedOpenCodeSubProviderKeys(ctx)
-	openCodeSubEntries := openCodeSubProviderManifestEntries(openCodeRuntimeAvailable, openCodeSubKeys)
-	openCodeSubByID := make(map[string]providerManifestEntry, len(openCodeSubEntries))
-	for _, e := range openCodeSubEntries {
-		openCodeSubByID[e.ID] = e
-	}
-
 	entries := make([]providerManifestEntry, 0, len(providerOrder))
 	for _, provider := range providerOrder {
-		// OpenCode sub-provider tiles short-circuit the generic
-		// static-info pipeline — their entries are fully constructed
-		// from the opencodecli sub-provider catalog.
-		if subEntry, ok := openCodeSubByID[provider]; ok {
-			entries = append(entries, subEntry)
-			continue
-		}
-
 		if !supportedSet[provider] {
 			continue
 		}
@@ -458,8 +434,6 @@ func getDynamicModels(provider string) *dynamicModelsResponse {
 	switch provider {
 	case "cursor-cli":
 		resp = fetchCursorCLIModels()
-	case "opencode-cli":
-		resp = fetchOpenCodeCLIModels()
 	default:
 		resp = &dynamicModelsResponse{
 			Provider:           provider,
@@ -619,150 +593,6 @@ func cursorFallbackModels() []dynamicModelEntry {
 			ModelName: m.ModelName,
 			Group:     "Default",
 			IsDefault: m.ModelID == "cursor-cli",
-		})
-	}
-	return models
-}
-
-func fetchOpenCodeCLIModels() *dynamicModelsResponse {
-	resp := &dynamicModelsResponse{
-		Provider:           "opencode-cli",
-		ModelSelectionMode: "dynamic",
-		SupportsCustom:     true,
-		CustomModelHint:    "Enter as provider/model (e.g., openai/gpt-5.1)",
-		Source:             "cli_dynamic",
-		CacheTTLSeconds:    300,
-		CachedAt:           time.Now().UTC().Format(time.RFC3339),
-	}
-
-	binPath, err := runtimeAvailableForProvider("opencode-cli")
-	if err != nil {
-		resp.Source = "fallback_metadata"
-		resp.Models = opencodeFallbackModels()
-		return resp
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	out, err := exec.CommandContext(ctx, binPath, "models", "--verbose").Output()
-	if err != nil {
-		resp.Source = "fallback_metadata"
-		resp.Models = opencodeFallbackModels()
-		return resp
-	}
-
-	models, groups := parseOpenCodeModelList(string(out))
-	if len(models) == 0 {
-		resp.Source = "fallback_metadata"
-		resp.Models = opencodeFallbackModels()
-		return resp
-	}
-
-	resp.Models = models
-	resp.Groups = groups
-	return resp
-}
-
-type openCodeModelJSON struct {
-	ID         string `json:"id"`
-	ProviderID string `json:"providerID"`
-	Name       string `json:"name"`
-	Status     string `json:"status"`
-	Cost       struct {
-		Input  float64 `json:"input"`
-		Output float64 `json:"output"`
-	} `json:"cost"`
-	Limit struct {
-		Context int `json:"context"`
-		Output  int `json:"output"`
-	} `json:"limit"`
-	Capabilities struct {
-		Reasoning  bool `json:"reasoning"`
-		ToolCall   bool `json:"toolcall"`
-		Attachment bool `json:"attachment"`
-	} `json:"capabilities"`
-}
-
-func parseOpenCodeModelList(output string) ([]dynamicModelEntry, []string) {
-	lines := strings.Split(output, "\n")
-	models := make([]dynamicModelEntry, 0)
-	groupSet := map[string]bool{}
-	groupOrder := []string{}
-
-	var currentModelID string
-	var jsonBuf strings.Builder
-	inJSON := false
-	braceDepth := 0
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		if !inJSON && trimmed != "" && !strings.HasPrefix(trimmed, "{") {
-			currentModelID = trimmed
-			continue
-		}
-
-		if !inJSON && strings.HasPrefix(trimmed, "{") {
-			inJSON = true
-			braceDepth = 0
-			jsonBuf.Reset()
-		}
-
-		if inJSON {
-			jsonBuf.WriteString(line)
-			jsonBuf.WriteString("\n")
-
-			braceDepth += strings.Count(trimmed, "{") - strings.Count(trimmed, "}")
-
-			if braceDepth <= 0 {
-				inJSON = false
-				braceDepth = 0
-				var model openCodeModelJSON
-				if err := json.Unmarshal([]byte(jsonBuf.String()), &model); err == nil {
-					group := model.ProviderID
-					if group == "" {
-						group = "OpenCode"
-					}
-					if !groupSet[group] {
-						groupSet[group] = true
-						groupOrder = append(groupOrder, group)
-					}
-
-					fullID := currentModelID
-					if fullID == "" {
-						fullID = fmt.Sprintf("%s/%s", model.ProviderID, model.ID)
-					}
-
-					models = append(models, dynamicModelEntry{
-						ModelID:       fullID,
-						ModelName:     model.Name,
-						Group:         group,
-						ContextWindow: model.Limit.Context,
-						CostInput:     model.Cost.Input,
-						CostOutput:    model.Cost.Output,
-					})
-				}
-				currentModelID = ""
-			}
-		}
-	}
-
-	return models, groupOrder
-}
-
-func opencodeFallbackModels() []dynamicModelEntry {
-	allMetadata := utils.GetAllModelMetadata()
-	models := make([]dynamicModelEntry, 0)
-	for _, m := range allMetadata {
-		if m == nil || m.Provider != "opencode-cli" {
-			continue
-		}
-		models = append(models, dynamicModelEntry{
-			ModelID:   m.ModelID,
-			ModelName: m.ModelName,
-			Group:     "Default",
-			IsDefault: m.ModelID == "opencode-cli",
 		})
 	}
 	return models

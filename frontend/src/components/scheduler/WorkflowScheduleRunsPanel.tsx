@@ -1820,6 +1820,11 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                               Workshop{job.workshop_mode ? ` · ${job.workshop_mode}` : ''}
                             </span>
                           )}
+                          {job.prompt_stale && (
+                            <span className="px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 font-medium">
+                              Prompt update pending
+                            </span>
+                          )}
                         </div>
                         {job.mode === 'workshop' && job.messages && job.messages.length > 0 && (
                           <div className="mt-1 space-y-0.5">

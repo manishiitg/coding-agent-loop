@@ -17,7 +17,7 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai"
-	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/opencodecli"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/vertex"
 )
 
@@ -73,8 +73,8 @@ func getModelMetadata(provider, modelID string) (*llmtypes.ModelMetadata, error)
 		return codexcli.NewCodexCLIAdapter("", resolvedModelID, nil).GetModelMetadata(resolvedModelID)
 	case "cursor-cli":
 		return cursorcli.NewCursorCLIAdapter("", resolvedModelID, nil).GetModelMetadata(resolvedModelID)
-	case "opencode-cli":
-		return opencodecli.NewOpenCodeCLIAdapter("", resolvedModelID, nil).GetModelMetadata(resolvedModelID)
+	case "pi-cli":
+		return picli.NewPiCLIAdapter("", resolvedModelID, nil).GetModelMetadata(resolvedModelID)
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -114,14 +114,11 @@ func resolvePricingProviderAndModel(provider, modelID string) (string, string) {
 		default:
 			return "vertex", normalizedModelID
 		}
-	case "opencode-cli":
-		// opencode-cli uses a structured adapter with its own subscription pricing;
-		// return the provider+model as-is so GetModelMetadata on the opencodecli
-		// adapter can resolve actual underlying model costs if available.
-		if normalizedModelLower == "" || normalizedModelLower == "opencode-cli" {
-			return "opencode-cli", "opencode-cli"
+	case "pi-cli":
+		if normalizedModelLower == "" || normalizedModelLower == "auto" || normalizedModelLower == "pi-cli" {
+			return "pi-cli", picli.DefaultModelID
 		}
-		return "opencode-cli", normalizedModelID
+		return "pi-cli", normalizedModelID
 	default:
 		return normalizedProvider, normalizedModelID
 	}

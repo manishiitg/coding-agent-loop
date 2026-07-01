@@ -147,7 +147,7 @@ func TestWorkflowStartAutoNotificationPayloadAndDrain(t *testing.T) {
 		"space=rtsrca",
 		"group=production",
 		"step=collect-evidence",
-		"Ack only. No tools; wait.",
+		"Ack only. No tools; resume prior task if any.",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("expected start auto-notification to contain %q, got:\n%s", want, msg)
@@ -386,7 +386,7 @@ func TestWorkflowStartAutoNotificationTrailerIsCompact(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			for _, want := range []string{
 				"[AUTO-NOTIFICATION]",
-				"Ack only. No tools; wait.",
+				"Ack only. No tools; resume prior task if any.",
 			} {
 				if !strings.Contains(tt.msg, want) {
 					t.Fatalf("start trailer missing required directive %q, got:\n%s", want, tt.msg)

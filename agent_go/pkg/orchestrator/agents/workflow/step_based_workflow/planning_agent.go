@@ -233,7 +233,7 @@ type AgentConfigs struct {
 	DisableParallelToolExecution *bool           `json:"disable_parallel_tool_execution,omitempty"` // Disable parallel tool execution for this step (nil = enabled by default, true = disabled, false = explicitly enabled)
 	CodingAgentTmuxLifecycle     string          `json:"coding_agent_tmux_lifecycle,omitempty"`     // Tmux lifecycle for CLI coding providers: "close_on_completion" (default for steps) or "keep_alive" (only when a step intentionally needs the native coding session after completion).
 	// Transport selects the CLI transport for coding-agent providers
-	// (claude-code, codex-cli, cursor-cli, gemini-cli, opencode-cli)
+	// (claude-code, codex-cli, cursor-cli, gemini-cli, pi-cli)
 	// for this step:
 	//   ""           — inherit the agent/preset default (tmux interactive)
 	//   "tmux"       — force tmux interactive transport

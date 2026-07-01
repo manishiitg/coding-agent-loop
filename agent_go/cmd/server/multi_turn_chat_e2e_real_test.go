@@ -19,7 +19,7 @@ import (
 	codexcliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	cursorcliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
 	geminicliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/geminicli"
-	opencodecliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/opencodecli"
+	picliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
 
 	"mcp-agent-builder-go/agent_go/pkg/costledger"
 )
@@ -543,45 +543,41 @@ func TestMultiTurnChatE2E_Cursor(t *testing.T) {
 	})
 }
 
-// TestMultiTurnChatE2E_OpenCode is the structured-transport peer of the
-// tmux-provider tests above. OpenCode does not run a persistent tmux
-// session — it resumes via its native --session <id> flag instead, so
-// the test extracts the opencode_session_id from turn 1's
+// TestMultiTurnChatE2E_Pi is the Pi CLI tmux/native-session peer of the
+// provider tests above. Pi resumes via its native --session-id flag, so
+// the test extracts the pi_session_id from turn 1's
 // GenerationInfo and threads it through via WithResumeSessionID on
 // every later turn.
 //
-// The test pins the model to opencode's hosted free tier
+// The test pins the model to pi's hosted free tier
 // (deepseek-v4-flash-free) so no API key is required: any workstation
-// with the opencode binary on PATH can run this with
-// RUN_OPENCODE_CLI_REAL_E2E=1. Free-tier sessions have shorter
-// response budgets, so we use 3 turns instead of the 5 the tmux
-// providers run, and we don't assert intermediate-message splices or
-// cache reads — opencode emits stream-json events directly rather
-// than a transcript-file replay, and the free models don't expose
-// cache_read_input_tokens.
+// with the pi binary on PATH can run this with
+// RUN_PI_CLI_REAL_E2E=1. Free-tier sessions have shorter
+// response budgets, so we use 3 turns instead of the 5 the other tmux
+// providers run.
 //
 // Cross-turn memory is the security-critical claim: turn 3 is asked
-// to recall both earlier tokens. If opencode's --session resume is
+// to recall both earlier tokens. If Pi's --session-id resume is
 // broken (or the adapter dropped the sessionID through the metadata
 // channel), turn 3 will return without WIDGET_A47 / WIDGET_B23 and
 // the test fails loudly.
-func TestMultiTurnChatE2E_OpenCode(t *testing.T) {
-	if os.Getenv("RUN_OPENCODE_CLI_REAL_E2E") == "" {
-		t.Skip("set RUN_OPENCODE_CLI_REAL_E2E=1 to run opencode multi-turn chat e2e")
+func TestMultiTurnChatE2E_Pi(t *testing.T) {
+	if os.Getenv("RUN_PI_CLI_REAL_E2E") == "" {
+		t.Skip("set RUN_PI_CLI_REAL_E2E=1 to run pi multi-turn chat e2e")
 	}
-	if _, err := exec.LookPath("opencode"); err != nil {
-		t.Skipf("opencode binary not found: %v", err)
+	if _, err := exec.LookPath("pi"); err != nil {
+		t.Skipf("pi binary not found: %v", err)
 	}
 
-	model := strings.TrimSpace(os.Getenv("OPENCODE_CLI_REAL_E2E_MODEL"))
+	model := strings.TrimSpace(os.Getenv("PI_CLI_REAL_CONTRACT_MODEL"))
 	if model == "" {
 		// Hosted free tier — no auth needed, supports tool use, fast
 		// enough for short multi-turn sessions.
-		model = "opencode/deepseek-v4-flash-free"
+		model = picliadapter.DefaultModelID
 	}
 
-	adapter := opencodecliadapter.NewOpenCodeCLIAdapter("", model, &e2eMockLogger{})
-	ownerSessionID := fmt.Sprintf("multi-turn-e2e-opencode-%s", time.Now().Format("150405"))
+	adapter := picliadapter.NewPiCLIAdapter("", model, &e2eMockLogger{})
+	ownerSessionID := fmt.Sprintf("multi-turn-e2e-pi-%s", time.Now().Format("150405"))
 
 	const (
 		tokenA = "WIDGET_A47"
@@ -613,12 +609,11 @@ func TestMultiTurnChatE2E_OpenCode(t *testing.T) {
 	api := &StreamingAPI{costLedger: ledger}
 	observer := newCostObserver(api.costLedger, ownerSessionID, "test-user", "chat")
 
-	// Workspace dir for opencode to anchor its session — same path
-	// across turns so --session resolves against the same workspace.
+	// Workspace dir for Pi to anchor its session, reused across turns.
 	workspaceDir := t.TempDir()
 
 	var history []llmtypes.MessageContent
-	var openCodeSessionID string
+	var piSessionID string
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -631,16 +626,16 @@ func TestMultiTurnChatE2E_OpenCode(t *testing.T) {
 		})
 
 		opts := []llmtypes.CallOption{
-			opencodecliadapter.WithWorkingDir(workspaceDir),
+			picliadapter.WithWorkingDir(workspaceDir),
 		}
-		if openCodeSessionID != "" {
-			// Turn 2+: continue the conversation opencode started in
-			// turn 1. This is the contract claim — without --session
+		if piSessionID != "" {
+			// Turn 2+: continue the conversation pi started in
+			// turn 1. This is the contract claim — without --session-id
 			// the model has no memory of earlier turns.
-			opts = append(opts, opencodecliadapter.WithResumeSessionID(openCodeSessionID))
+			opts = append(opts, picliadapter.WithResumeSessionID(piSessionID))
 		}
 
-		t.Logf("→ turn %d (session=%q): %s", turn, openCodeSessionID, p.prompt)
+		t.Logf("→ turn %d (session=%q): %s", turn, piSessionID, p.prompt)
 		t0 := time.Now()
 		resp, err := adapter.GenerateContent(ctx, history, opts...)
 		elapsed := time.Since(t0)
@@ -670,7 +665,7 @@ func TestMultiTurnChatE2E_OpenCode(t *testing.T) {
 
 		for _, token := range p.mustContainAll {
 			if !strings.Contains(strings.ToUpper(content), strings.ToUpper(token)) {
-				t.Errorf("turn %d: opencode --session memory regression — response missing %q from earlier turn\n   content=%q", turn, token, content)
+				t.Errorf("turn %d: pi --session-id memory regression — response missing %q from earlier turn\n   content=%q", turn, token, content)
 			}
 		}
 		if len(p.mustContainAny) > 0 {
@@ -686,16 +681,16 @@ func TestMultiTurnChatE2E_OpenCode(t *testing.T) {
 			}
 		}
 
-		// Capture the opencode session id on turn 1 so subsequent
+		// Capture the pi session id on turn 1 so subsequent
 		// turns can resume it. Without this, the contract claim
 		// SupportsNativeResume:true in CodingAgentProviderContract is
 		// untested at the builder layer.
-		if openCodeSessionID == "" {
-			if id, ok := gi.Additional["opencode_session_id"].(string); ok && strings.TrimSpace(id) != "" {
-				openCodeSessionID = strings.TrimSpace(id)
-				t.Logf("   ✓ captured opencode_session_id=%s", openCodeSessionID)
+		if piSessionID == "" {
+			if id, ok := gi.Additional["pi_session_id"].(string); ok && strings.TrimSpace(id) != "" {
+				piSessionID = strings.TrimSpace(id)
+				t.Logf("   ✓ captured pi_session_id=%s", piSessionID)
 			} else {
-				t.Errorf("turn 1 GenerationInfo missing opencode_session_id — native resume cannot be wired without it. GI.Additional=%v", gi.Additional)
+				t.Errorf("turn 1 GenerationInfo missing pi_session_id — native resume cannot be wired without it. GI.Additional=%v", gi.Additional)
 			}
 		}
 
@@ -706,10 +701,10 @@ func TestMultiTurnChatE2E_OpenCode(t *testing.T) {
 		// without this the caller has no way to know which model
 		// produced the response — the adapter synthesizes it from the
 		// --model flag we passed in.
-		if effective, ok := gi.Additional["opencode_effective_model"].(string); !ok || strings.TrimSpace(effective) == "" {
-			t.Errorf("turn %d: GenerationInfo.Additional[\"opencode_effective_model\"] missing — adapter must surface the model name (we passed %q via --model). Additional=%v", turn, model, gi.Additional)
+		if effective, ok := gi.Additional["pi_model"].(string); !ok || strings.TrimSpace(effective) == "" {
+			t.Errorf("turn %d: GenerationInfo.Additional[\"pi_model\"] missing — adapter must surface the model name (we passed %q via --model). Additional=%v", turn, model, gi.Additional)
 		} else if turn == 1 {
-			t.Logf("   ✓ opencode_effective_model=%s", effective)
+			t.Logf("   ✓ pi_model=%s", effective)
 		}
 
 		prompt := derefInt(gi.PromptTokens, gi.InputTokens)
@@ -722,16 +717,16 @@ func TestMultiTurnChatE2E_OpenCode(t *testing.T) {
 		}
 		// Token tracking: the adapter now backstops missing
 		// stream-json step_finish events by shelling out to
-		// `opencode export <sessionID>` after each call, so tokens
+		// `pi export <sessionID>` after each call, so tokens
 		// land in resp.Usage even on free-tier short responses.
 		// Hard-fail if both come back zero — that's a regression in
 		// the transcript-reader sidecar.
 		if prompt == 0 && completion == 0 {
-			t.Errorf("turn %d: token usage absent (prompt=%d completion=%d). The opencodecli adapter is supposed to fall back to `opencode export` when stream-json events don't carry tokens. GI=%+v Usage=%+v", turn, prompt, completion, gi, resp.Usage)
+			t.Errorf("turn %d: token usage absent (prompt=%d completion=%d). The picli adapter is supposed to fall back to `pi export` when stream-json events don't carry tokens. GI=%+v Usage=%+v", turn, prompt, completion, gi, resp.Usage)
 		}
 
 		// Splice intermediate messages into history when present (the
-		// transcript-reader populates these from `opencode export`).
+		// transcript-reader populates these from `pi export`).
 		// Fall back to choice.Content only if the splice is empty —
 		// previously the structured adapter never surfaced
 		// intermediates and this branch was unreachable.
@@ -742,7 +737,7 @@ func TestMultiTurnChatE2E_OpenCode(t *testing.T) {
 			t.Logf("   ✓ turn %d intermediate.Messages=%d (provider=%s)", turn, len(intermediate.Messages), intermediate.Provider)
 			history = append(history, intermediate.Messages...)
 		} else {
-			t.Logf("   ⚠ turn %d: no intermediate messages from opencode export — falling back to choice.Content (transcript reader may have failed)", turn)
+			t.Logf("   ⚠ turn %d: no intermediate messages from pi export — falling back to choice.Content (transcript reader may have failed)", turn)
 			history = append(history, llmtypes.MessageContent{
 				Role:  llmtypes.ChatMessageTypeAI,
 				Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: content}},
@@ -759,7 +754,7 @@ func TestMultiTurnChatE2E_OpenCode(t *testing.T) {
 		}
 		tokenEvent := &unifiedevents.TokenUsageEvent{
 			ModelID:          effectiveModel,
-			Provider:         "opencodecli",
+			Provider:         "pi-cli",
 			PromptTokens:     prompt,
 			CompletionTokens: completion,
 			TotalTokens:      prompt + completion,
@@ -795,19 +790,19 @@ func TestMultiTurnChatE2E_OpenCode(t *testing.T) {
 		t.Errorf("Total.CallCount = %d, want %d (one per turn)", summary.Total.CallCount, len(prompts))
 	}
 	// Token aggregates are now a hard assertion: the transcript
-	// reader's `opencode export` backstop fills tokens even when the
+	// reader's `pi export` backstop fills tokens even when the
 	// stream-json omits step_finish, so a zero aggregate means the
 	// sidecar enrichment is broken end-to-end.
 	if summary.Total.PromptTokens == 0 {
 		t.Errorf("Total.PromptTokens = 0 across %d turns — transcript-reader sidecar regression (model=%q)", len(prompts), model)
 	}
 
-	t.Logf("✅ opencode multi-turn e2e: %d turns, session=%s, history=%d entries, prompt_tokens=%d completion_tokens=%d",
-		len(prompts), openCodeSessionID, len(history), summary.Total.PromptTokens, summary.Total.CompletionTokens)
+	t.Logf("✅ pi multi-turn e2e: %d turns, session=%s, history=%d entries, prompt_tokens=%d completion_tokens=%d",
+		len(prompts), piSessionID, len(history), summary.Total.PromptTokens, summary.Total.CompletionTokens)
 }
 
 // TestMultiTurnChatE2E_Gemini is the structured-transport peer of
-// TestMultiTurnChatE2E_OpenCode for Gemini CLI. Like opencode, gemini
+// TestMultiTurnChatE2E_Pi for Gemini CLI. Like pi, gemini
 // uses native session resume (--resume <id>) rather than a persistent
 // tmux session, and its tokens come from a transcript-file sidecar
 // (~/.gemini/tmp/gemini-cli-project-<projectDirID>/chats/session-*.jsonl)
@@ -827,7 +822,7 @@ func TestMultiTurnChatE2E_OpenCode(t *testing.T) {
 //
 // Gated on RUN_GEMINI_CLI_REAL_E2E=1 + GEMINI_API_KEY + gemini binary.
 // Cost is NOT asserted > 0 because gemini's adapter does not currently
-// emit cost_usd_estimated (same known gap as opencode and tracked in
+// emit cost_usd_estimated (same known gap as pi and tracked in
 // cost_http_e2e_gemini_real_test.go).
 func TestMultiTurnChatE2E_Gemini(t *testing.T) {
 	if os.Getenv("RUN_GEMINI_CLI_REAL_E2E") == "" && os.Getenv("RUN_GEMINI_CLI_INTERACTIVE_E2E") == "" {

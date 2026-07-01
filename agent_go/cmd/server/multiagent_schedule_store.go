@@ -12,8 +12,11 @@ import (
 
 // MultiAgentScheduleFile is the top-level structure for _users/{userID}/multiagent-schedules.json.
 type MultiAgentScheduleFile struct {
-	Schedules    []WorkflowSchedule   `json:"schedules"`
-	Capabilities WorkflowCapabilities `json:"capabilities"`
+	SchemaVersion int                  `json:"schema_version,omitempty"`
+	Schedules     []WorkflowSchedule   `json:"schedules"`
+	Capabilities  WorkflowCapabilities `json:"capabilities"`
+
+	schemaVersionMissing bool
 }
 
 func multiAgentSchedulesPath(userID string) string {
@@ -33,14 +36,19 @@ func ReadMultiAgentSchedules(ctx context.Context, userID string) (*MultiAgentSch
 	}
 	if !exists {
 		return &MultiAgentScheduleFile{
-			Schedules:    []WorkflowSchedule{},
-			Capabilities: WorkflowCapabilities{},
+			SchemaVersion: CurrentMultiAgentScheduleFileVersion,
+			Schedules:     []WorkflowSchedule{},
+			Capabilities:  WorkflowCapabilities{},
 		}, false, nil
 	}
 
 	var f MultiAgentScheduleFile
 	if err := json.Unmarshal([]byte(content), &f); err != nil {
 		return nil, false, fmt.Errorf("failed to parse multiagent-schedules.json for user %s: %w", userID, err)
+	}
+	f.schemaVersionMissing = multiAgentScheduleFileSchemaVersionMissing(content)
+	if f.SchemaVersion == 0 {
+		f.SchemaVersion = CurrentMultiAgentScheduleFileVersion
 	}
 
 	// Auto-assign IDs to schedules without one
@@ -63,6 +71,9 @@ func ReadMultiAgentSchedules(ctx context.Context, userID string) (*MultiAgentSch
 
 // WriteMultiAgentSchedules writes the schedule file for a user.
 func WriteMultiAgentSchedules(ctx context.Context, userID string, f *MultiAgentScheduleFile) error {
+	if f.SchemaVersion == 0 {
+		f.SchemaVersion = CurrentMultiAgentScheduleFileVersion
+	}
 	if f.Schedules == nil {
 		f.Schedules = []WorkflowSchedule{}
 	}

@@ -148,6 +148,7 @@ func (s *SchedulerService) Start(ctx context.Context) error {
 	// Discover all workflows by scanning workspace-docs/Workflow/*/workflow.json
 	workflows := s.discoverWorkflows(ctx)
 	scheduleLogf("[SCHEDULER] Discovered %d workflows with manifests", len(workflows))
+	s.migrateWorkflowSchedules(ctx, workflows)
 
 	// Mark any stale "running" runs as "error" — they were interrupted by a server restart
 	for _, wf := range workflows {
@@ -190,6 +191,7 @@ func (s *SchedulerService) Start(ctx context.Context) error {
 		scheduleLogf("[SCHEDULER] Warning: failed to discover multi-agent schedules: %v", err)
 	} else {
 		scheduleLogf("[SCHEDULER] Discovered %d users with multi-agent schedules", len(maScheds))
+		s.migrateMultiAgentSchedules(ctx, maScheds)
 
 		// Mark stale runs
 		for _, ma := range maScheds {
@@ -239,6 +241,81 @@ func (s *SchedulerService) Start(ctx context.Context) error {
 	<-ctx.Done()
 	scheduleLogf("[SCHEDULER] Shutting down (context canceled)")
 	return nil
+}
+
+func (s *SchedulerService) migrateWorkflowSchedules(ctx context.Context, workflows []discoveredWorkflow) {
+	migratedWorkflows := 0
+	convertedDirect := 0
+	staleWorkshopPrompts := 0
+	legacyPulseUIMigrations := 0
+
+	for _, wf := range workflows {
+		summary, changed := migrateWorkflowManifestSchedulesToCurrent(wf.Manifest)
+		if !changed {
+			staleWorkshopPrompts += summary.StaleWorkshopPrompts
+			continue
+		}
+		if err := WriteWorkflowManifest(ctx, wf.WorkspacePath, wf.Manifest); err != nil {
+			scheduleLogf("[SCHEDULER] Warning: failed to migrate schedule products in %s: %v", wf.WorkspacePath, err)
+			continue
+		}
+		migratedWorkflows++
+		convertedDirect += summary.ConvertedDirectToPulse
+		staleWorkshopPrompts += summary.StaleWorkshopPrompts
+		legacyPulseUIMigrations += summary.LegacyPulseUIMigrations
+		scheduleLogf("[SCHEDULER] Migrated schedules in %s: converted_direct_to_pulse=%d stamped=%d stale_workshop_prompts=%d legacy_pulse_ui_migrations=%d",
+			wf.WorkspacePath, summary.ConvertedDirectToPulse, summary.StampedCurrent, summary.StaleWorkshopPrompts, summary.LegacyPulseUIMigrations)
+	}
+
+	if migratedWorkflows > 0 {
+		s.InvalidateWorkflowManifestCache()
+		scheduleLogf("[SCHEDULER] Schedule migration complete: workflows=%d converted_direct_to_pulse=%d stale_workshop_prompts=%d legacy_pulse_ui_migrations=%d",
+			migratedWorkflows, convertedDirect, staleWorkshopPrompts, legacyPulseUIMigrations)
+	}
+}
+
+func (s *SchedulerService) migrateMultiAgentSchedules(ctx context.Context, maScheds []DiscoveredMultiAgentSchedules) {
+	migratedUsers := 0
+	stampedFiles := 0
+	stampedSchedules := 0
+	stalePrompts := 0
+	legacyFileRoots := 0
+
+	for _, ma := range maScheds {
+		summary, changed := migrateMultiAgentScheduleFileToCurrent(ma.ScheduleFile)
+		stalePrompts += summary.StalePrompts
+		if !changed {
+			continue
+		}
+		if err := WriteMultiAgentSchedules(ctx, ma.UserID, ma.ScheduleFile); err != nil {
+			scheduleLogf("[SCHEDULER] Warning: failed to migrate multi-agent schedules for user %s: %v", ma.UserID, err)
+			continue
+		}
+		migratedUsers++
+		stampedFiles += summary.StampedFiles
+		stampedSchedules += summary.StampedCurrent
+		legacyFileRoots += summary.LegacyFileRoots
+		scheduleLogf("[SCHEDULER] Migrated multi-agent schedules for user %s: stamped_files=%d stamped_schedules=%d stale_prompts=%d legacy_file_roots=%d",
+			ma.UserID, summary.StampedFiles, summary.StampedCurrent, summary.StalePrompts, summary.LegacyFileRoots)
+	}
+
+	if migratedUsers > 0 {
+		scheduleLogf("[SCHEDULER] Multi-agent schedule migration complete: users=%d stamped_files=%d stamped_schedules=%d stale_prompts=%d legacy_file_roots=%d",
+			migratedUsers, stampedFiles, stampedSchedules, stalePrompts, legacyFileRoots)
+	}
+}
+
+func (s *SchedulerService) migrateMultiAgentScheduleFile(ctx context.Context, userID string, f *MultiAgentScheduleFile, reason string) {
+	summary, changed := migrateMultiAgentScheduleFileToCurrent(f)
+	if !changed {
+		return
+	}
+	if err := WriteMultiAgentSchedules(ctx, userID, f); err != nil {
+		scheduleLogf("[SCHEDULER] Warning: failed to migrate multi-agent schedules for user %s %s: %v", userID, reason, err)
+		return
+	}
+	scheduleLogf("[SCHEDULER] Migrated multi-agent schedules for user %s %s: stamped_files=%d stamped_schedules=%d stale_prompts=%d legacy_file_roots=%d",
+		userID, reason, summary.StampedFiles, summary.StampedCurrent, summary.StalePrompts, summary.LegacyFileRoots)
 }
 
 // multiAgentRescanLoop periodically checks for new/changed multi-agent schedule files.
@@ -319,6 +396,7 @@ func (s *SchedulerService) rescanMultiAgentSchedules(ctx context.Context) {
 	if err != nil {
 		return
 	}
+	s.migrateMultiAgentSchedules(ctx, maScheds)
 
 	// Build set of all discovered schedule IDs
 	discovered := make(map[string]bool)
@@ -402,6 +480,15 @@ func buildScheduleContext(workspacePath string, manifest *WorkflowManifest, sche
 		Capabilities:  manifest.Capabilities,
 		SourceType:    "workflow",
 	}
+}
+
+func scheduledWorkshopExecutionMode(raw string) string {
+	if mode := normalizeChatHistoryWorkshopMode(raw); mode != "" {
+		return mode
+	}
+	// Preserve legacy blank workshop schedules, which previously launched in
+	// the merged Workshop mode. New schedules should store an explicit mode.
+	return "workshop"
 }
 
 // buildMultiAgentScheduleContext creates a ScheduleContext for a multi-agent schedule.
@@ -551,6 +638,7 @@ func (s *SchedulerService) ReloadMultiAgentSchedule(ctx context.Context, userID 
 	if err != nil || !exists {
 		return s.RemoveJob(scheduleID)
 	}
+	s.migrateMultiAgentScheduleFile(ctx, userID, f, "before reload")
 
 	for _, sched := range f.Schedules {
 		if sched.ID == scheduleID {
@@ -817,6 +905,7 @@ func (s *SchedulerService) TriggerMultiAgentNow(userID string, scheduleID string
 	if err != nil || !exists {
 		return "", fmt.Errorf("failed to read multi-agent schedules for user %s: %w", userID, err)
 	}
+	s.migrateMultiAgentScheduleFile(ctx, userID, f, "before manual trigger")
 
 	var sched *WorkflowSchedule
 	for i := range f.Schedules {
@@ -975,6 +1064,7 @@ func (s *SchedulerService) triggerSchedule(sctx *ScheduleContext) {
 			s.logf(sctx, "[SCHEDULER] ❌ Failed to reload multi-agent schedules for user %s: %v", sctx.UserID, err)
 			return
 		}
+		s.migrateMultiAgentScheduleFile(context.Background(), sctx.UserID, f, "before trigger")
 		var currentSched *WorkflowSchedule
 		for i := range f.Schedules {
 			if f.Schedules[i].ID == schedID {
@@ -1224,10 +1314,7 @@ func (s *SchedulerService) executeJob(ctx context.Context, sctx *ScheduleContext
 
 // executeWorkshopJob runs a workflow via the workshop builder path (workflow_phase mode).
 func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *ScheduleContext, runID string) (string, string, error) {
-	messages := sctx.Schedule.Messages
-	if len(messages) == 0 {
-		messages = []string{"Run the full workflow using run_full_workflow tool."}
-	}
+	messages := workflowScheduleRuntimeMessages(sctx)
 	runFolder := "iteration-0"
 
 	sessionID := s.newScheduleSessionID(sctx)
@@ -1360,7 +1447,7 @@ func (s *SchedulerService) maybeResumeLatestWorkflowThread(sctx *ScheduleContext
 }
 
 func (s *SchedulerService) executeMultiAgentJob(ctx context.Context, sctx *ScheduleContext, runID string) (string, string, error) {
-	query := strings.TrimSpace(sctx.Schedule.Query)
+	query := multiAgentScheduleRuntimeQuery(sctx)
 	if query == "" {
 		return "", "", fmt.Errorf("multi-agent schedule %s has no query", sctx.Schedule.ID)
 	}
@@ -1515,11 +1602,7 @@ func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *Sched
 		"run_mode":            "use_same_run",
 		"selected_run_folder": "iteration-0",
 		"execution_strategy":  "start_from_beginning_no_human",
-		// Scheduled runs execute the workflow builder exactly like a normal
-		// interactive chat — workshop mode. This keeps the scheduled run on the
-		// same mode as the user's interactive sessions, so it natively resumes
-		// the workflow's latest thread (same-mode) with no special handling.
-		"workshop_mode": "workshop",
+		"workshop_mode":       scheduledWorkshopExecutionMode(sctx.Schedule.WorkshopMode),
 	}
 	if len(sctx.Schedule.GroupNames) > 0 {
 		execOpts["enabled_group_names"] = sctx.Schedule.GroupNames

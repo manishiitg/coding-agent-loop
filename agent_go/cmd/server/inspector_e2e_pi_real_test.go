@@ -14,74 +14,52 @@ import (
 	"github.com/gorilla/mux"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	opencodecliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/opencodecli"
+	picliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
 
 	"mcp-agent-builder-go/agent_go/internal/inspector"
 )
 
-// TestInspectorHTTPCapturesRealOpenCodeEvents is the opencode-cli
+// TestInspectorHTTPCapturesRealPiEvents is the pi-cli
 // counterpart to TestInspectorHTTPCapturesRealAnthropicEvents. It
-// proves the inspector chain works for the structured-CLI transport,
-// not just the API transport:
-//
-//	real opencode run
-//	  → opencode-cli adapter emits InspectorEvents at request/completion
-//	  → ScopedInspectorSink injects StepContext
-//	  → inspector.Store.Sink() forwards into the per-session ring
-//	  → handleInspectorEvents reads the ring and serves JSON
-//
-// The opencode adapter routes through WithObservability the same way
-// the API adapters do (opencodecli_adapter.go:84), so if this test
-// fails the regression is either in the adapter's observability
-// wiring or in the builder's session bucketing.
-//
-// Gated on RUN_OPENCODE_CLI_REAL_E2E=1 + ZHIPU_API_KEY (for the
-// GLM coding-plan sub-provider tile) + opencode binary in PATH.
-func TestInspectorHTTPCapturesRealOpenCodeEvents(t *testing.T) {
-	if os.Getenv("RUN_OPENCODE_CLI_REAL_E2E") == "" {
-		t.Skip("set RUN_OPENCODE_CLI_REAL_E2E=1 to run this inspector HTTP e2e")
+// proves the inspector chain works for the Pi CLI transport, not just
+// the API transport.
+func TestInspectorHTTPCapturesRealPiEvents(t *testing.T) {
+	if os.Getenv("RUN_PI_CLI_REAL_E2E") == "" {
+		t.Skip("set RUN_PI_CLI_REAL_E2E=1 to run this inspector HTTP e2e")
 	}
-	apiKey := strings.TrimSpace(os.Getenv("ZHIPU_API_KEY"))
-	if apiKey == "" {
-		apiKey = strings.TrimSpace(os.Getenv("ZAI_API_KEY"))
+	if _, err := exec.LookPath("pi"); err != nil {
+		t.Skipf("pi binary not found: %v", err)
 	}
-	if apiKey == "" {
-		t.Skip("ZHIPU_API_KEY (or ZAI_API_KEY) required for opencode-cli inspector e2e")
-	}
-	if _, err := exec.LookPath("opencode"); err != nil {
-		t.Skipf("opencode binary not found: %v", err)
+	apiKey := firstNonEmptyInspectorPiEnv("GEMINI_API_KEY", "GOOGLE_API_KEY", "PI_API_KEY")
+	modelID := strings.TrimSpace(os.Getenv("PI_CLI_REAL_CONTRACT_MODEL"))
+	if modelID == "" {
+		modelID = picliadapter.DefaultModelID
 	}
 
 	// Spin up an isolated API with an inspector store.
 	store := inspector.NewStore()
 	api := &StreamingAPI{inspectorStore: store}
 
-	const sessionID = "test-session-inspector-opencode-001"
+	const sessionID = "test-session-inspector-pi-001"
 
 	stepCtx := llmtypes.StepContext{
 		SessionID:     sessionID,
-		StepID:        "opencode-glm-call",
+		StepID:        "pi-call",
 		StepType:      "regular",
 		Phase:         "execution",
-		StepName:      "OpenCode GLM call",
+		StepName:      "Pi CLI call",
 		StepIndex:     1,
 		StepTotal:     1,
 		StepStartedAt: time.Now().UTC(),
 		AgentName:     "worker",
 		Attempt:       1,
 		CallPurpose:   "main_generation",
-		WorkflowName:  "test-inspector-opencode-workflow",
+		WorkflowName:  "test-inspector-pi-workflow",
 	}
 	sink := llmtypes.NewScopedInspectorSink(store.Sink(), stepCtx)
 
-	// Real opencode-cli call scoped to the GLM coding-plan tile. We
-	// pick this tile because (a) it's the one the user actually has
-	// a verified working key for, and (b) it exercises the new
-	// opencode-cli-glm-coding-plan entry added in opencodecli_subproviders.go.
-	adapter := opencodecliadapter.NewOpenCodeCLIAdapter("", "opencode-cli", &e2eMockLogger{})
+	adapter := picliadapter.NewPiCLIAdapter(apiKey, modelID, &e2eMockLogger{})
 
-	// opencode is slow on cold start (~20-30s typical, plus possible
-	// silent-empty retry inside the adapter); budget generously.
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	_, err := adapter.GenerateContent(ctx,
@@ -90,13 +68,10 @@ func TestInspectorHTTPCapturesRealOpenCodeEvents(t *testing.T) {
 				llmtypes.TextContent{Text: "Reply with exactly the word OK and nothing else."},
 			}},
 		},
-		opencodecliadapter.WithOpenCodeSubProvider("opencode-cli-glm-coding-plan"),
-		opencodecliadapter.WithOpenCodeSubProviderAPIKey("ZHIPU_API_KEY", apiKey),
-		opencodecliadapter.WithOpenCodeModel("medium"),
 		llmtypes.WithInspectorSink(sink),
 	)
 	if err != nil {
-		t.Fatalf("opencode GenerateContent: %v", err)
+		t.Fatalf("pi GenerateContent: %v", err)
 	}
 
 	// HTTP roundtrip: /api/inspector/<session_id>
@@ -118,7 +93,7 @@ func TestInspectorHTTPCapturesRealOpenCodeEvents(t *testing.T) {
 		t.Fatalf("summary.SessionID = %q, want %q", summary.SessionID, sessionID)
 	}
 	if summary.Count == 0 {
-		t.Fatal("no events in summary; opencode adapter→sink→store chain not working")
+		t.Fatal("no events in summary; pi adapter→sink→store chain not working")
 	}
 	if summary.LatestSeq == 0 {
 		t.Fatal("LatestSeq = 0; store didn't assign sequence numbers")
@@ -137,8 +112,8 @@ func TestInspectorHTTPCapturesRealOpenCodeEvents(t *testing.T) {
 		if se.Event.Phase == llmtypes.InspectorPhaseError {
 			t.Fatalf("events[%d] unexpectedly carries an error phase: %+v", i, se.Event)
 		}
-		if se.Event.Provider != "opencode-cli" {
-			t.Fatalf("events[%d].Provider = %q, want opencode-cli", i, se.Event.Provider)
+		if se.Event.Provider != "pi-cli" {
+			t.Fatalf("events[%d].Provider = %q, want pi-cli", i, se.Event.Provider)
 		}
 	}
 
@@ -148,14 +123,23 @@ func TestInspectorHTTPCapturesRealOpenCodeEvents(t *testing.T) {
 		if se.Event.StepContext.SessionID != sessionID {
 			t.Fatalf("events[%d].StepContext.SessionID = %q, want %q", i, se.Event.StepContext.SessionID, sessionID)
 		}
-		if se.Event.StepContext.StepID != "opencode-glm-call" {
-			t.Fatalf("events[%d].StepContext.StepID = %q, want opencode-glm-call", i, se.Event.StepContext.StepID)
+		if se.Event.StepContext.StepID != "pi-call" {
+			t.Fatalf("events[%d].StepContext.StepID = %q, want pi-call", i, se.Event.StepContext.StepID)
 		}
-		if se.Event.StepContext.WorkflowName != "test-inspector-opencode-workflow" {
+		if se.Event.StepContext.WorkflowName != "test-inspector-pi-workflow" {
 			t.Fatalf("events[%d].StepContext.WorkflowName lost", i)
 		}
 	}
 
-	t.Logf("✅ opencode-cli inspector HTTP e2e: %d events captured for session %q (latest_seq=%d)",
+	t.Logf("✅ pi-cli inspector HTTP e2e: %d events captured for session %q (latest_seq=%d)",
 		summary.Count, sessionID, summary.LatestSeq)
+}
+
+func firstNonEmptyInspectorPiEnv(names ...string) string {
+	for _, name := range names {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			return value
+		}
+	}
+	return ""
 }

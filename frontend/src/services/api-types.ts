@@ -1483,12 +1483,44 @@ export interface WorkflowRunDailyCostsEntry {
   token_usage?: TokenUsageFile;
 }
 
+export interface WorkflowRunCostSummary {
+  run_folder: string;
+  total_cost_usd: number;
+  execution_cost_usd: number;
+  evaluation_cost_usd: number;
+  updated_at?: string;
+}
+
+export interface WorkflowCostDriver {
+  source: string;
+  kind: string;
+  name: string;
+  provider?: string;
+  cost_usd: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_tokens?: number;
+  reasoning_tokens?: number;
+  calls?: number;
+}
+
+export interface WorkflowCostSummary {
+  total_cost_usd: number;
+  execution_cost_usd: number;
+  evaluation_cost_usd: number;
+  builder_cost_usd: number;
+  run_count: number;
+  latest_run?: WorkflowRunCostSummary;
+  top_drivers?: WorkflowCostDriver[];
+}
+
 export interface WorkflowCostsResponse {
   success: boolean;
   phase_token_usage?: PhaseTokenUsageFile;
   phase_daily_costs: WorkflowPhaseDailyCostsEntry[];
   run_daily_costs?: WorkflowRunDailyCostsEntry[];
   runs: WorkflowRunCostsEntry[];
+  summary?: WorkflowCostSummary;
 }
 
 export interface ExecutionLogsResponse {
@@ -1976,7 +2008,11 @@ export interface ScheduledJob {
   group_names?: string[]  // undefined/empty = all groups
   mode?: 'workflow' | 'workshop' | 'multi-agent'
   messages?: string[]  // predefined messages for workshop mode
-  workshop_mode?: 'runner' | 'optimizer'  // workshop builder mode (default: runner)
+  schedule_version?: number
+  prompt_version?: number
+  current_prompt_version?: number
+  prompt_stale?: boolean
+  workshop_mode?: 'run' | 'optimizer' | string  // workshop builder mode (default: run)
   query?: string  // message to execute (multi-agent mode)
   resume_previous?: boolean  // coding-agent CLI only: resume latest prior thread instead of fresh session
   user_id?: string  // user context (multi-agent mode)
@@ -2007,6 +2043,9 @@ export interface CreateScheduledJobRequest {
   workspace_path?: string
   trigger_payload?: Record<string, unknown>
   group_names?: string[]  // undefined/empty = all groups
+  mode?: 'workflow' | 'workshop' | 'multi-agent'
+  messages?: string[]
+  workshop_mode?: 'run' | 'optimizer' | string
   schedule_type?: 'cron' | 'calendar'
   calendar_items?: CalendarScheduleItem[]
   cron_expression?: string

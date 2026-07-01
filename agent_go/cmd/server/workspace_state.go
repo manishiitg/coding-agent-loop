@@ -380,6 +380,7 @@ type RunSummary struct {
 	CompletedAt    *string                   `json:"completed_at,omitempty"`
 	CompletedSteps int                       `json:"completed_steps"`
 	TotalSteps     int                       `json:"total_steps"`
+	CostUSD        *float64                  `json:"cost_usd,omitempty"`
 	MetricsSummary *WorkflowMetricRunSummary `json:"metrics_summary,omitempty"`
 }
 
@@ -539,6 +540,18 @@ func (api *StreamingAPI) handleGetWorkflowsSummary(w http.ResponseWriter, r *htt
 				run.Status = "unknown"
 			}
 
+			costResp := loadWorkflowCosts(ctx, workspacePath)
+			for _, runCosts := range costResp.Runs {
+				if !workflowRunFolderMatches(runCosts.RunFolder, latestFolder) {
+					continue
+				}
+				totalCost := orchestrator.TokenUsageTotalCostUSD(runCosts.TokenUsage) + orchestrator.TokenUsageTotalCostUSD(runCosts.EvaluationTokenUsage)
+				if totalCost > 0 {
+					run.CostUSD = &totalCost
+				}
+				break
+			}
+
 			run.MetricsSummary = loadWorkflowMetricRunSummary(ctx, workspacePath, latestFolder)
 			summary.LatestRun = run
 			summaries[idx] = summary
@@ -668,18 +681,22 @@ func (api *StreamingAPI) handleGetWorkflowsOverview(w http.ResponseWriter, r *ht
 
 				detail.MetricsSummary = loadWorkflowMetricRunSummary(ctx, workspacePath, folder.Name)
 
-				if runCosts, ok := costByFolder[folder.Name]; ok && runCosts.TokenUsage != nil {
-					totalCost := orchestrator.TokenUsageTotalCostUSD(runCosts.TokenUsage)
+				if runCosts, ok := costByFolder[folder.Name]; ok {
+					totalCost := orchestrator.TokenUsageTotalCostUSD(runCosts.TokenUsage) + orchestrator.TokenUsageTotalCostUSD(runCosts.EvaluationTokenUsage)
 					if totalCost > 0 {
 						detail.CostUSD = &totalCost
 					}
-					if detail.StartedAt == nil && !runCosts.TokenUsage.CreatedAt.IsZero() {
-						startedAt := runCosts.TokenUsage.CreatedAt.Format("2006-01-02T15:04:05Z07:00")
+					timeUsage := runCosts.TokenUsage
+					if timeUsage == nil {
+						timeUsage = runCosts.EvaluationTokenUsage
+					}
+					if timeUsage != nil && detail.StartedAt == nil && !timeUsage.CreatedAt.IsZero() {
+						startedAt := timeUsage.CreatedAt.Format("2006-01-02T15:04:05Z07:00")
 						detail.StartedAt = &startedAt
 						detail.LastUpdated = &startedAt
 					}
-					if detail.CompletedAt == nil && detail.Status == "completed" && !runCosts.TokenUsage.UpdatedAt.IsZero() {
-						completedAt := runCosts.TokenUsage.UpdatedAt.Format("2006-01-02T15:04:05Z07:00")
+					if timeUsage != nil && detail.CompletedAt == nil && detail.Status == "completed" && !timeUsage.UpdatedAt.IsZero() {
+						completedAt := timeUsage.UpdatedAt.Format("2006-01-02T15:04:05Z07:00")
 						detail.CompletedAt = &completedAt
 						detail.LastUpdated = &completedAt
 					}

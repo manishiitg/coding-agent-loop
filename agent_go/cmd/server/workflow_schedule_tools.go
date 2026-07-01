@@ -54,7 +54,7 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 			Type: "function",
 			Function: &llmtypes.FunctionDefinition{
 				Name:        "create_workflow_schedule",
-				Description: "Create a new cron schedule on a workflow. Default to mode='workflow' (direct orchestrator) for normal recurring runs. Use mode='workshop' only when the user explicitly asks for a builder/workshop/optimizer/evaluation/hardening schedule and provide messages. Use mode='multi-agent' only for multi-agent chat schedules.",
+				Description: "Create a new cron schedule on a workflow. Default/normal Pulse is mode='workshop', workshop_mode='run'; if messages are omitted the server creates an unattended run_full_workflow message for the selected groups. Use mode='workshop', workshop_mode='optimizer' for auto-improve/hardening schedules with explicit messages. Use mode='workflow' only for legacy direct orchestrator compatibility. Use mode='multi-agent' only for multi-agent chat schedules.",
 				Parameters: &llmtypes.Parameters{
 					Type: "object",
 					Properties: map[string]interface{}{
@@ -81,13 +81,13 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 						},
 						"mode": map[string]interface{}{
 							"type":        "string",
-							"description": "Execution mode. Use 'workflow' by default. Use 'workshop' only when explicitly scheduling builder/workshop/optimizer/evaluation/hardening work. Use 'multi-agent' only for multi-agent chat schedules.",
+							"description": "Execution mode. Omit or use 'workshop' for normal Pulse schedules. Use 'workflow' only for legacy direct orchestrator compatibility. Use 'multi-agent' only for multi-agent chat schedules.",
 							"enum":        []string{"workflow", "workshop", "multi-agent"},
 						},
 						"messages": map[string]interface{}{
 							"type":        "array",
 							"items":       map[string]interface{}{"type": "string"},
-							"description": "Required when mode='workshop'. Predefined message queue sent one-by-one to the workshop LLM. Example: ['Run the full workflow using run_full_workflow(group_name=\"group-1\")'].",
+							"description": "Predefined message queue sent one-by-one to the workshop LLM. Optional for normal workshop run pulses; the server creates a default run_full_workflow message when omitted. Required for optimizer schedules.",
 						},
 						"workshop_mode": map[string]interface{}{
 							"type":        "string",
@@ -96,7 +96,7 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 						},
 						"resume_previous": map[string]interface{}{
 							"type":        "boolean",
-							"description": "For mode='workshop' (workflow builder) runs backed by a coding-agent CLI (claude-code, cursor-cli, codex-cli, gemini-cli, opencode-cli, agy-cli). When true, each scheduled run resumes the previous run's thread (same CLI) instead of starting a fresh session, so the agent keeps prior context across runs. Ignored for mode='workflow'/'multi-agent', API model providers, and non-resumable runs. Defaults to false.",
+							"description": "For mode='workshop' runs backed by a coding-agent CLI (claude-code, cursor-cli, codex-cli, gemini-cli, pi-cli, agy-cli). When true, each scheduled run resumes the previous run's thread (same CLI) instead of starting a fresh session, so the agent keeps prior context across runs. Ignored for mode='workflow'/'multi-agent', API model providers, and non-resumable runs. Defaults to false.",
 						},
 					},
 					Required: []string{"workflow_path", "name", "cron_expression", "timezone"},
@@ -164,7 +164,7 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 			Type: "function",
 			Function: &llmtypes.FunctionDefinition{
 				Name:        "create_calendar_workflow_schedule",
-				Description: "Create a dated calendar schedule for a workflow, such as a full-month Instagram content calendar. Use this when the user provides specific dates/times instead of a repeating cron pattern. Defaults to mode='workflow'; use mode='workshop' only for explicit builder/optimizer/evaluation/hardening calendars.",
+				Description: "Create a dated calendar schedule for a workflow, such as a full-month Instagram content calendar. Use this when the user provides specific dates/times instead of a repeating cron pattern. Defaults to normal Pulse mode='workshop', workshop_mode='run'; use mode='workflow' only for legacy direct orchestrator compatibility.",
 				Parameters: &llmtypes.Parameters{
 					Type: "object",
 					Properties: map[string]interface{}{
@@ -201,7 +201,7 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 						},
 						"mode": map[string]interface{}{
 							"type":        "string",
-							"description": "Use 'workflow' by default. Use 'workshop' only for explicit builder/optimizer/evaluation/hardening calendars.",
+							"description": "Omit or use 'workshop' for normal Pulse calendars. Use 'workflow' only for legacy direct orchestrator compatibility.",
 							"enum":        []string{"workflow", "workshop"},
 						},
 						"messages": map[string]interface{}{
@@ -333,8 +333,8 @@ func createWorkflowScheduleExecutors(api *StreamingAPI, currentUserID string) ma
 				}
 			}
 
-			if mode == "workshop" && len(messages) == 0 {
-				return "messages is required when mode='workshop'.", nil
+			if mode == "workshop" && workshopMode == "optimizer" && len(messages) == 0 {
+				return "messages is required when workshop_mode='optimizer'.", nil
 			}
 			if mode != "multi-agent" && len(groupNames) == 0 {
 				return "group_names is required for mode='workflow' or 'workshop'. Read variables.json and provide at least one group.", nil
@@ -367,8 +367,8 @@ func createWorkflowScheduleExecutors(api *StreamingAPI, currentUserID string) ma
 			mode, _ := args["mode"].(string)
 			messages := stringSlice(args["messages"])
 			workshopMode, _ := args["workshop_mode"].(string)
-			if mode == "workshop" && len(messages) == 0 {
-				return "messages is required when mode='workshop' unless each calendar item provides messages.", nil
+			if mode == "workshop" && workshopMode == "optimizer" && len(messages) == 0 {
+				return "messages is required when workshop_mode='optimizer' unless each calendar item provides messages.", nil
 			}
 			return cb.CreateCalendarSchedule(ctx, workflowPath, name, timezone, groupNames, string(calendarItemsJSON), mode, messages, workshopMode)
 		},
@@ -552,6 +552,9 @@ func formatGlobalSchedules(ctx context.Context, api *StreamingAPI, currentUserID
 		sb.WriteString(fmt.Sprintf("  - cron: `%s` (%s) | next: %s\n", e.sched.CronExpression, scheduleTimezoneOrDefault(e.sched.Timezone), nextRun))
 		if len(e.sched.GroupNames) > 0 {
 			sb.WriteString(fmt.Sprintf("  - groups: %v\n", e.sched.GroupNames))
+		}
+		if workflowScheduleHasVersionedPrompt(e.sched) {
+			sb.WriteString(fmt.Sprintf("  - prompt: %s\n", workflowSchedulePromptStatus(e.sched)))
 		}
 		if e.lastStatus != "" {
 			lastRun := ""

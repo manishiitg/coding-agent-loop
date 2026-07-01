@@ -27,7 +27,7 @@ import (
 	geminicliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/geminicli"
 	minimaxadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/minimax"
 	openaiadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai"
-	opencodecliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/opencodecli"
+	picliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
 	vertexadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/vertex"
 )
 
@@ -119,10 +119,10 @@ func TestTerminalPaneCrossTransportReal(t *testing.T) {
 			build:    buildCursorCLITerminalAdapter,
 		},
 		{
-			class:    "structured_cli",
-			provider: "opencode-cli",
-			gate:     "RUN_OPENCODE_CLI_REAL_E2E",
-			build:    buildOpenCodeCLITerminalAdapter,
+			class:    "tmux",
+			provider: "pi-cli",
+			gate:     "RUN_PI_CLI_REAL_E2E",
+			build:    buildPiCLITerminalAdapter,
 		},
 		{
 			class:    "tmux",
@@ -434,16 +434,26 @@ func buildCursorCLITerminalAdapter(t *testing.T) (llmtypes.Model, []llmtypes.Cal
 	return cursorcliadapter.NewCursorCLIAdapter("", model, silentLogger{}), nil, ""
 }
 
-func buildOpenCodeCLITerminalAdapter(t *testing.T) (llmtypes.Model, []llmtypes.CallOption, string) {
+func buildPiCLITerminalAdapter(t *testing.T) (llmtypes.Model, []llmtypes.CallOption, string) {
 	t.Helper()
-	if _, err := exec.LookPath("opencode"); err != nil {
-		return nil, nil, "opencode CLI not in PATH"
+	if _, err := exec.LookPath("pi"); err != nil {
+		return nil, nil, "pi CLI not in PATH"
 	}
-	model := strings.TrimSpace(os.Getenv("OPENCODE_CLI_REAL_E2E_MODEL"))
+	model := strings.TrimSpace(os.Getenv("PI_CLI_REAL_CONTRACT_MODEL"))
 	if model == "" {
-		model = "opencode-cli"
+		model = picliadapter.DefaultModelID
 	}
-	return opencodecliadapter.NewOpenCodeCLIAdapter("", model, silentLogger{}), nil, ""
+	apiKey := firstNonEmptyPiEnv("GEMINI_API_KEY", "GOOGLE_API_KEY", "PI_API_KEY")
+	return picliadapter.NewPiCLIAdapter(apiKey, model, silentLogger{}), nil, ""
+}
+
+func firstNonEmptyPiEnv(names ...string) string {
+	for _, name := range names {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func buildGeminiCLITmuxTerminalAdapter(t *testing.T) (llmtypes.Model, []llmtypes.CallOption, string) {

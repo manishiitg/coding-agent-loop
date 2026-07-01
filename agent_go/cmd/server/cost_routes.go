@@ -112,6 +112,7 @@ func extractCostAndEffectiveModel(info map[string]interface{}) (effectiveModel s
 		"codex_effective_model",
 		"gemini_effective_model",
 		"cursor_model",
+		"pi_model",
 		"opencode_effective_model",
 	} {
 		if v, ok := info[key]; ok {

@@ -24,6 +24,7 @@ var videoProviderModels = map[string][]string{
 		"veo-3.1-fast-generate-001",
 		"veo-3.1-generate-preview",
 		"veo-3.1-fast-generate-preview",
+		"gemini-omni-flash-preview",
 	},
 }
 
@@ -38,6 +39,8 @@ var videoModelPricing = map[string]videoPricing{
 	"veo-3.1-lite-generate-001":     {Rate720: 0.05, Rate1080: 0.08},
 	"veo-3.1-fast-generate-001":     {Rate720: 0.10, Rate1080: 0.12},
 	"veo-3.1-fast-generate-preview": {Rate720: 0.10, Rate1080: 0.12},
+	// Gemini Omni Flash is 720p-only (no 1080p option); $0.10/second of output.
+	"gemini-omni-flash-preview": {Rate720: 0.10, Rate1080: 0.10},
 }
 
 type VideoGenExecutorConfig struct {
@@ -71,6 +74,8 @@ func inferVideoProviderFromModel(modelID string) string {
 	switch {
 	case strings.HasPrefix(modelID, "veo-"):
 		return "vertex"
+	case strings.HasPrefix(modelID, "gemini-omni"):
+		return "vertex"
 	default:
 		return ""
 	}
@@ -99,7 +104,7 @@ func normalizeVideoProviderAndModel(provider, modelID string) (string, string, e
 }
 
 func supportedVideoProviderSummary() string {
-	return "Supported video providers: vertex (Gemini API preview models such as veo-3.1-generate-preview with API-key auth, and Vertex AI models such as veo-3.1-generate-001 / veo-3.1-lite-generate-001 with project-based auth)"
+	return "Supported video providers: vertex (Gemini API preview models such as veo-3.1-generate-preview and gemini-omni-flash-preview with API-key auth, and Vertex AI models such as veo-3.1-generate-001 / veo-3.1-lite-generate-001 with project-based auth)"
 }
 
 func videoModelsSummaryForProvider(provider string) string {
@@ -312,7 +317,7 @@ func getVideoGenToolDefinition(toolName string) llmtypes.Tool {
 	return llmtypes.Tool{
 		Function: &llmtypes.FunctionDefinition{
 			Name:        toolName,
-			Description: "Generate videos using AI from a text prompt. Requires a full absolute output_path under the workspace docs root and a model_id (the model determines the Google backend). Before choosing provider/model_id, call list_llm_capabilities(capability=\"generate_video\", include_models=true). When specifying a model_id, pass the matching provider too. Veo 3 models include native audio in the output by default. Supports image-to-video generation, aspect ratio, resolution, duration, number of videos, and negative prompt.",
+			Description: "Generate videos using AI from a text prompt. Requires a full absolute output_path under the workspace docs root and a model_id (the model determines the Google backend). Before choosing provider/model_id, call list_llm_capabilities(capability=\"generate_video\", include_models=true). When specifying a model_id, pass the matching provider too. Veo 3 models include native audio in the output by default. Gemini Omni Flash (gemini-omni-flash-preview) is a separate, newer model: 3-10s 720p clips, fast/near-real-time, and it also supports conversational multi-turn video editing and multi-subject composition at the SDK level — but this tool call itself is one-shot (no editing/composition params exposed here yet; number_of_videos is always treated as 1 for this model). Prefer Veo for longer/higher-resolution or audio-scripted output; prefer Gemini Omni Flash for quick iteration. Supports image-to-video generation, aspect ratio, resolution, duration, number of videos, and negative prompt.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -330,8 +335,8 @@ func getVideoGenToolDefinition(toolName string) llmtypes.Tool {
 					},
 					"model_id": map[string]interface{}{
 						"type":        "string",
-						"description": "Required Veo model id. Use a model from list_llm_capabilities(capability=\"generate_video\", include_models=true), and pass the matching provider in the same call. The model determines the Google backend. Gemini API backend (requires GEMINI_API_KEY/VERTEX_API_KEY): veo-3.1-generate-preview, veo-3.1-fast-generate-preview. Vertex AI backend (requires GOOGLE_CLOUD_PROJECT + ADC): veo-3.1-generate-001, veo-3.1-lite-generate-001, veo-3.1-fast-generate-001. All Veo 3 models include native audio in the output by default.",
-						"enum":        []interface{}{"veo-3.1-generate-001", "veo-3.1-lite-generate-001", "veo-3.1-fast-generate-001", "veo-3.1-generate-preview", "veo-3.1-fast-generate-preview"},
+						"description": "Required model id. Use a model from list_llm_capabilities(capability=\"generate_video\", include_models=true), and pass the matching provider in the same call. The model determines the Google backend. Gemini API backend (requires GEMINI_API_KEY/VERTEX_API_KEY): veo-3.1-generate-preview, veo-3.1-fast-generate-preview, gemini-omni-flash-preview. Vertex AI backend (requires GOOGLE_CLOUD_PROJECT + ADC): veo-3.1-generate-001, veo-3.1-lite-generate-001, veo-3.1-fast-generate-001. All Veo 3 models include native audio in the output by default. gemini-omni-flash-preview is 720p-only, 3-10s clips, fastest to generate.",
+						"enum":        []interface{}{"veo-3.1-generate-001", "veo-3.1-lite-generate-001", "veo-3.1-fast-generate-001", "veo-3.1-generate-preview", "veo-3.1-fast-generate-preview", "gemini-omni-flash-preview"},
 					},
 					"input_image": map[string]interface{}{
 						"type":        "string",
@@ -352,18 +357,18 @@ func getVideoGenToolDefinition(toolName string) llmtypes.Tool {
 					},
 					"resolution": map[string]interface{}{
 						"type":        "string",
-						"description": "Output video resolution. Model-dependent.",
+						"description": "Output video resolution. Model-dependent; gemini-omni-flash-preview only supports 720p.",
 						"enum":        []interface{}{"720p", "1080p"},
 					},
 					"duration_seconds": map[string]interface{}{
 						"type":        "integer",
-						"description": "Requested video duration in seconds. Supported values depend on the selected Veo model.",
-						"minimum":     4,
-						"maximum":     8,
+						"description": "Requested video duration in seconds. Supported values depend on the selected model: Veo models generally support 4-8s; gemini-omni-flash-preview supports 3-10s.",
+						"minimum":     3,
+						"maximum":     10,
 					},
 					"number_of_videos": map[string]interface{}{
 						"type":        "integer",
-						"description": "Number of videos to generate. Supported range depends on the selected Veo model.",
+						"description": "Number of videos to generate. Supported range depends on the selected Veo model. gemini-omni-flash-preview always generates exactly 1 video regardless of this value.",
 						"minimum":     1,
 						"maximum":     4,
 					},

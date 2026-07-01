@@ -21,10 +21,11 @@ import (
 var imageGenModelCosts = map[string]float64{
 	"gemini-3.1-flash-image-preview": 0.067, // $0.045/0.5K · $0.067/1K · $0.101/2K · $0.151/4K
 	"gemini-3-pro-image-preview":     0.134, // $0.134/1K-2K image · $0.24/4K image
+	"gemini-3.1-flash-lite-image":    0.034, // Nano Banana 2 Lite, released 2026-06-30 — fastest/cheapest tier, $0.034/1K image
 }
 
 var imageProviderModels = map[string][]string{
-	"vertex":    {"gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview"},
+	"vertex":    {"gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview", "gemini-3.1-flash-lite-image"},
 	"codex-cli": {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
 	"agy-cli":   {"agy-cli"},
 }
@@ -72,7 +73,7 @@ func GetImageGenToolDefinition() llmtypes.Tool {
 	return llmtypes.Tool{
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "image_gen",
-			Description: "Generate images using AI from a text prompt. Requires a full absolute output_path under the workspace docs root so the caller decides exactly where the generated image files should be stored. Before choosing provider/model_id, call list_llm_capabilities(capability=\"generate_image\", include_models=true). If you pass model_id, also pass the matching provider from that capability result; do not pass model_id by itself. Supports aspect ratio, resolution, number of images, and negative prompt options.",
+			Description: "Generate images using AI from a text prompt. Requires a full absolute output_path under the workspace docs root so the caller decides exactly where the generated image files should be stored. Before choosing provider/model_id, call list_llm_capabilities(capability=\"generate_image\", include_models=true). If you pass model_id, also pass the matching provider from that capability result; do not pass model_id by itself. Vertex has three tiers to choose by need (see model_id): a fast/cheap tier, a balanced default, and a higher-accuracy/control tier for complex work. Supports aspect ratio, resolution, number of images, and negative prompt options.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -90,7 +91,7 @@ func GetImageGenToolDefinition() llmtypes.Tool {
 					},
 					"model_id": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional image model override. Use a model from list_llm_capabilities(capability=\"generate_image\", include_models=true), and pass the matching provider in the same call. Examples: gemini-3.1-flash-image-preview, gemini-3-pro-image-preview, codex-cli, agy-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, or gpt-5.3-codex-spark. Do not use LLM tier labels such as low, medium, high, or auto as image model IDs.",
+						"description": "Optional image model override. Use a model from list_llm_capabilities(capability=\"generate_image\", include_models=true), and pass the matching provider in the same call. Do not use LLM tier labels such as low, medium, high, or auto as image model IDs. Vertex (Gemini) image tiers, pick by need: gemini-3.1-flash-lite-image (Nano Banana 2 Lite) - fastest/cheapest, near-real-time; use for high-volume or latency-sensitive generation. gemini-3.1-flash-image-preview (Nano Banana 2, DEFAULT) - generalist workhorse; best balance of quality, latency, and cost for most requests, use unless another tier is clearly warranted. gemini-3-pro-image-preview (Nano Banana Pro) - most capable and highest latency/cost; use only for complex/professional work needing precise control, dense/legible text rendering, or advanced reasoning, where accuracy matters more than speed. Other examples: codex-cli, agy-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, or gpt-5.3-codex-spark.",
 					},
 					"input_image": map[string]interface{}{
 						"type":        "string",
@@ -299,7 +300,7 @@ func hasImageAnalysisProviderAuth(provider string, apiKeys *llm.ProviderAPIKeys)
 }
 
 func supportedImageProviderSummary() string {
-	return "Supported image providers: vertex (gemini-3.1-flash-image-preview, gemini-3-pro-image-preview), codex-cli (codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, gpt-5.3-codex-spark), agy-cli (agy-cli)"
+	return "Supported image providers: vertex (gemini-3.1-flash-lite-image = fast/cheap tier, gemini-3.1-flash-image-preview = balanced default, gemini-3-pro-image-preview = highest-accuracy/control tier), codex-cli (codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, gpt-5.3-codex-spark), agy-cli (agy-cli)"
 }
 
 func supportedImageAnalysisProviderSummary() string {
@@ -807,7 +808,7 @@ func GetImageEditToolDefinition() llmtypes.Tool {
 					},
 					"model_id": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional image model override. Use a model from list_llm_capabilities(capability=\"generate_image\", include_models=true), and pass the matching provider in the same call. Examples: gemini-3.1-flash-image-preview, gemini-3-pro-image-preview, codex-cli, agy-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, or gpt-5.3-codex-spark. Do not use LLM tier labels such as low, medium, high, or auto as image model IDs.",
+						"description": "Optional image model override. Use a model from list_llm_capabilities(capability=\"generate_image\", include_models=true), and pass the matching provider in the same call. Do not use LLM tier labels such as low, medium, high, or auto as image model IDs. Vertex (Gemini) image tiers, pick by need: gemini-3.1-flash-lite-image (Nano Banana 2 Lite) - fastest/cheapest, near-real-time; use for high-volume or latency-sensitive generation. gemini-3.1-flash-image-preview (Nano Banana 2, DEFAULT) - generalist workhorse; best balance of quality, latency, and cost for most requests, use unless another tier is clearly warranted. gemini-3-pro-image-preview (Nano Banana Pro) - most capable and highest latency/cost; use only for complex/professional work needing precise control, dense/legible text rendering, or advanced reasoning, where accuracy matters more than speed. Other examples: codex-cli, agy-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, or gpt-5.3-codex-spark.",
 					},
 					"aspect_ratio": map[string]interface{}{
 						"type":        "string",

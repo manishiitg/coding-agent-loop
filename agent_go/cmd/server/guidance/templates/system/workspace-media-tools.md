@@ -23,6 +23,35 @@ tool, pass **`provider` and `model_id` together** from the same
 Do not pass only `model_id` and ask the backend to infer the provider —
 ambiguous routing leads to wrong-provider calls.
 
+## Basic tool vs advanced provider feature
+
+`image_gen`/`image_edit`/`generate_video`/`text_to_speech`/`speech_to_text`/`generate_music`
+each expose only the **common, basic parameters** of their underlying
+provider — prompt, a handful of style/format knobs, one input file.
+They do **not** expose every capability the provider actually has.
+Examples: Gemini Omni Flash's multi-image subject-reference composition
+and multi-turn conversational video editing (`previous_interaction_id`)
+exist at the provider API level but have no parameter on `generate_video`;
+ElevenLabs voice design/cloning, MiniMax's advanced music controls, and
+provider-side video editing of an uploaded file are the same story.
+
+**Use the tool for basic requests.** When the user's ask needs a
+capability the tool doesn't expose, don't force it through the tool's
+limited surface (e.g. stuffing instructions into the plain prompt and
+hoping) — write Python via `execute_shell_command` and call the
+provider's API directly (or use a matching skill, if one is installed
+for that provider), the same way `read_pdf` was replaced by `pypdf`.
+
+**The credential gap this creates:** provider keys stored via
+`set_provider_auth` are consumed internally by the Go-side tools only —
+they are **not** available to `execute_shell_command`. Only secrets set
+via `set_workflow_secret`/`set_user_secret` are injected into the shell
+as `SECRET_<NAME>`. So before writing provider API calls in Python,
+check whether the needed key is already a secret; if the user only ever
+ran `set_provider_auth`, ask them to also add it via `set_workflow_secret`/
+`set_user_secret` — never ask them to paste the raw key into a shell
+command or script.
+
 ## Tool reference
 
 ### Capability discovery + cost estimation
@@ -43,9 +72,10 @@ ambiguous routing leads to wrong-provider calls.
 
 ### Video generation
 
-- **`generate_video(prompt, output_path, model_id, provider?)`** — Generate videos with Veo using a provider/model pair from `list_llm_capabilities(capability="generate_video", include_models=true)`. `output_path` is required and must be a full absolute workspace-docs destination. `input_image_path`, when used, must also be absolute. `model_id` determines the Google backend:
-  - **Vertex AI** (`veo-3.1-generate-001`, `veo-3.1-lite-generate-001`, `veo-3.1-fast-generate-001`) requires `GOOGLE_CLOUD_PROJECT` + ADC and supports native audio.
-  - **Gemini API preview** (`veo-3.1-generate-preview`, `veo-3.1-fast-generate-preview`) uses API-key auth and does **not** support native audio.
+- **`generate_video(prompt, output_path, model_id, provider?)`** — Generate videos using a provider/model pair from `list_llm_capabilities(capability="generate_video", include_models=true)`. `output_path` is required and must be a full absolute workspace-docs destination. `input_image_path`, when used, must also be absolute. `model_id` determines the Google backend:
+  - **Vertex AI Veo** (`veo-3.1-generate-001`, `veo-3.1-lite-generate-001`, `veo-3.1-fast-generate-001`) requires `GOOGLE_CLOUD_PROJECT` + ADC and supports native audio.
+  - **Gemini API preview Veo** (`veo-3.1-generate-preview`, `veo-3.1-fast-generate-preview`) uses API-key auth and does **not** support native audio.
+  - **Gemini Omni Flash** (`gemini-omni-flash-preview`) uses API-key auth, is 720p-only, 3-10s clips, fastest to generate, includes native audio, and always produces exactly 1 video per call regardless of `number_of_videos`. Multi-image subject-reference composition and multi-turn conversational editing exist on the provider but are not exposed by this tool — see "Basic tool vs advanced provider feature" above.
 
 ### Audio + music
 
@@ -62,7 +92,7 @@ ambiguous routing leads to wrong-provider calls.
 ## Provider setup rules
 
 - **Published LLM entries are for chat / text routing only.** Audio, video, image, and music providers are workspace **tool** capabilities; do not conclude they are unavailable just because they are absent from a published-LLM list.
-- **For audio and music**, call `text_to_speech` or `generate_music` **directly**. Do not hand-roll provider HTTP calls through `execute_shell_command` unless the dedicated workspace tool is unavailable AND the user explicitly asks for raw API debugging.
+- **For audio and music that fit the tool's basic parameters**, call `text_to_speech` or `generate_music` **directly** rather than hand-rolling the same request through `execute_shell_command` + curl. Once the ask needs a capability the tool doesn't expose (see "Basic tool vs advanced provider feature" above), Python calling the provider directly is the expected path, not a fallback of last resort — just don't reimplement what the tool already does well for a basic request.
 - **Provider auth** is managed via the `set_provider_auth` tool. Do not read or hand-edit encrypted config files.
 - **Do not read, cat, grep, print, or manually edit config auth files** — they are encrypted and not useful to inspect as plaintext.
 - **Search provider routing** comes from the published LLM set surfaced by `list_published_llms`.
@@ -74,7 +104,7 @@ ambiguous routing leads to wrong-provider calls.
 
 - **Workspace-relative paths**: `Downloads/foo.pdf` instead of the full absolute path. The tools reject these.
 - **Passing `model_id` without `provider`**: ambiguous routing. Always pair them from the same `list_llm_capabilities` result.
-- **Pasting API keys in shell**: leaks into logs / scrollback. Always use `set_provider_auth`.
+- **Typing a raw API key value into a shell command or script**: leaks into logs / scrollback. Store it via `set_provider_auth` for the built-in tools, or `set_workflow_secret`/`set_user_secret` for Python that needs it as `SECRET_<NAME>` — never the literal value.
 - **Editing provider-auth config by hand**: auth is encrypted; manual edits corrupt it.
-- **Reaching for `execute_shell_command` + `curl` for audio/music**: the dedicated tools exist for a reason — auth, retries, output validation, cost tracking. Use them.
+- **Reaching for `execute_shell_command` + curl/Python to redo a basic request** the dedicated tool already handles well: you lose its auth wiring, retries, output validation, and cost tracking for no benefit. Reserve the Python path for capabilities the tool genuinely doesn't expose.
 - **Assuming a provider is unavailable** because it doesn't show up in the published LLM set: published LLMs are for chat/search routing, not media tools. Call `list_llm_capabilities(capability="...")` for the authoritative answer.

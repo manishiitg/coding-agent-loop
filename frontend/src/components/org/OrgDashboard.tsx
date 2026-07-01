@@ -67,7 +67,7 @@ const PROGRESS_PILL: Record<ProgressStatus, { className: string; label: string }
   'on-track': { className: 'bg-emerald-500/15 text-emerald-600', label: 'On track' },
   'at-risk': { className: 'bg-amber-500/15 text-amber-600', label: 'At risk' },
   'off-goal': { className: 'bg-red-500/15 text-red-600', label: 'Off goal' },
-  idle: { className: 'bg-muted text-muted-foreground', label: 'No goal yet' },
+  idle: { className: 'bg-muted text-muted-foreground', label: 'Not yet assessed' },
 }
 
 function relativeTime(iso: string): string {
@@ -157,17 +157,22 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
   }, [entries])
 
   const groups = useMemo(() => {
+    const ATTENTION_GROUP = 'Need attention'
+    const OK_GROUP = 'Healthy / on-track'
     const map = new Map<string, WorkflowDashEntry[]>()
     for (const e of entries) {
-      const goal = e.progress?.goal?.trim() || 'Unassigned'
-      const bucket = map.get(goal)
+      const h = healthStatus(e.health)
+      const p = progressStatus(e.progress)
+      const needsAttention = h === 'critical' || h === 'bug' || p === 'off-goal' || p === 'at-risk'
+      const group = needsAttention ? ATTENTION_GROUP : OK_GROUP
+      const bucket = map.get(group)
       if (bucket) bucket.push(e)
-      else map.set(goal, [e])
+      else map.set(group, [e])
     }
-    // Sort groups: real goals first (alpha), Unassigned last.
+    // Need attention first, always.
     return Array.from(map.entries()).sort(([a], [b]) => {
-      if (a === 'Unassigned') return 1
-      if (b === 'Unassigned') return -1
+      if (a === ATTENTION_GROUP) return -1
+      if (b === ATTENTION_GROUP) return 1
       return a.localeCompare(b)
     })
   }, [entries])
@@ -271,13 +276,17 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
         </span>
       </div>
 
-      {/* Goal groups */}
+      {/* Status groups */}
       <div className="flex-1 space-y-5 overflow-auto px-4 py-4">
-        {groups.map(([goal, items]) => (
-          <section key={goal} className="space-y-2">
+        {groups.map(([group, items]) => (
+          <section key={group} className="space-y-2">
             <div className="flex items-center gap-2">
-              <Target className="h-4 w-4 text-muted-foreground" />
-              <h3 className="text-sm font-semibold text-foreground">{goal}</h3>
+              {group === 'Need attention' ? (
+                <AlertTriangle className="h-4 w-4 text-amber-500" />
+              ) : (
+                <Activity className="h-4 w-4 text-emerald-500" />
+              )}
+              <h3 className="text-sm font-semibold text-foreground">{group}</h3>
               <span className="text-xs text-muted-foreground">
                 {items.length} workflow{items.length !== 1 ? 's' : ''}
               </span>
@@ -288,6 +297,7 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
                 const p = progressStatus(entry.progress)
                 const updated = entry.health?.updated || entry.progress?.updated || ''
                 const rel = relativeTime(updated)
+                const goalLabel = entry.health?.goal?.trim() || entry.progress?.goal?.trim() || ''
                 return (
                   <div
                     key={entry.workspacePath}
@@ -298,6 +308,12 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
                         {entry.label}
                       </h4>
                     </div>
+                    {goalLabel && (
+                      <p className="mt-0.5 flex items-center gap-1 truncate text-[11px] text-muted-foreground" title={goalLabel}>
+                        <Target className="h-3 w-3 shrink-0" />
+                        {goalLabel}
+                      </p>
+                    )}
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">
                       <Pill icon="🩺" className={HEALTH_PILL[h].className} label={HEALTH_PILL[h].label} />
                       <Pill icon="🎯" className={PROGRESS_PILL[p].className} label={PROGRESS_PILL[p].label} />

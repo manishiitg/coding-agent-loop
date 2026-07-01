@@ -71,8 +71,13 @@ always current, not "last time something was notable." Auto-improve does the sam
 ## Layout
 - **Triage bar** up top: `🔴2 · 🟠3 · 🟡1 · 🟢6 · ⚪1` — how's the org in one line.
 - **Goal scorecard** (from `goals.html`) — are we winning.
-- **Under each goal:** the cards of the workflows serving it (each card names its goal, so
-  the page groups by it). Then an **Unassigned** section.
+- **Grouped by attention, not by goal.** A workflow's goal (from `success_criteria`) is
+  almost always unique to that workflow, so grouping *by* goal just produces one-card
+  "groups" — not a real grouping, and it buries what needs a look. Built as: **"Need
+  attention"** (critical/bug health OR off-goal/at-risk progress) first, then
+  **"Healthy / on-track"**. Each card still names its own goal as a short (3-6 word)
+  distilled chip (`data-goal`, e.g. "Grow LinkedIn reach") next to the title — legible
+  without being a grouping key.
 - **Drill-downs:** `goals.html` (detailed scorecard) + `org-pulse.html` (journal) linked
   below — depth when wanted, out of the way otherwise.
 
@@ -86,7 +91,11 @@ embedded drill-down docs.
 The React UI needs the card fields without a JSON data model. **Chosen: `data-*`
 attributes on the HTML card fragments** — honors "no JSON" (the loops keep writing readable
 HTML), and the app reads `data-status`/`data-goal`/`data-headline`/`data-next`/`data-updated`
-to render its components, group by goal, sort, and filter.
+to render its components, group by attention status, sort, and filter. `data-goal` is a
+short distilled label (3-6 words), not the raw `success_criteria` text — both Pulse
+(`card.health.html`, every run) and Auto-improve (`card.progress.html`, on fire) write it,
+so the goal chip shows up from the workflow's first run rather than waiting on the
+less-frequent Auto-improve loop.
 ```html
 <article class="pulse-card" data-workflow="substack" data-axis="health"
          data-status="healthy" data-goal="grow-subs" data-updated="2026-06-30T09:12Z">

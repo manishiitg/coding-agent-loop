@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -120,7 +121,12 @@ func (api *StreamingAPI) handleListTerminals(w http.ResponseWriter, r *http.Requ
 
 	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
 	contentMode := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("content")))
-	snapshots := api.terminalStore.List(sessionID)
+	var snapshots []terminals.Snapshot
+	if isMetadataOnlyTerminalList(contentMode) {
+		snapshots = api.terminalStore.ListMetadata(sessionID)
+	} else {
+		snapshots = api.terminalStore.List(sessionID)
+	}
 	planTypes := newTerminalPlanTypeResolver(r.Context())
 	filtered := make([]terminals.Snapshot, 0, len(snapshots))
 	for _, snapshot := range snapshots {
@@ -378,7 +384,7 @@ func shouldCaptureVisibleTerminalScreen(snapshot terminals.Snapshot, r *http.Req
 	if !wantsScreenTerminalContent(r) || wantsHistoryTerminalContent(r) {
 		return false
 	}
-	if !snapshot.Active || terminalSnapshotHasPromptCompletionFallback(snapshot.Content) {
+	if !snapshot.Active {
 		return false
 	}
 	return true
@@ -1488,7 +1494,50 @@ func compactTerminalStatusForList(status terminals.Status) terminals.Status {
 	status.ToolSummary = truncateTerminalListString(status.ToolSummary, 240)
 	status.ToolName = truncateTerminalListString(status.ToolName, 180)
 	status.PreValidationSummary = truncateTerminalListString(status.PreValidationSummary, 800)
+	status.StatusMeta = compactTerminalStatusMetaForList(status.StatusMeta)
 	return status
+}
+
+func compactTerminalStatusMetaForList(meta map[string]interface{}) map[string]interface{} {
+	if len(meta) == 0 {
+		return nil
+	}
+	const maxEntries = 12
+	out := make(map[string]interface{}, min(len(meta), maxEntries))
+	keys := make([]string, 0, len(meta))
+	for key := range meta {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if len(out) >= maxEntries {
+			break
+		}
+		value, ok := compactTerminalStatusMetaValueForList(meta[key])
+		if !ok {
+			continue
+		}
+		out[key] = value
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func compactTerminalStatusMetaValueForList(value interface{}) (interface{}, bool) {
+	switch typed := value.(type) {
+	case nil:
+		return nil, false
+	case string:
+		return truncateTerminalListString(typed, 160), true
+	case bool:
+		return typed, true
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		return typed, true
+	default:
+		return nil, false
+	}
 }
 
 func truncateTerminalListString(value string, maxRunes int) string {

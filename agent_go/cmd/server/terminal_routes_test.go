@@ -383,6 +383,28 @@ func TestTerminalRoutesListCanReturnMetadataOnly(t *testing.T) {
 
 	fullContent := strings.Repeat("╭ tool output row with enough text to be expensive if parsed repeatedly ╮\n", 20000)
 	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, fullContent, 7))
+	store.HandleEvent(sessionID, storeevents.Event{
+		Type:      "status_line",
+		SessionID: sessionID,
+		Timestamp: time.Now(),
+		Data: &agentevents.AgentEvent{
+			Type: agentevents.StreamingStatusLine,
+			Data: &agentevents.GenericEventData{
+				Data: map[string]interface{}{
+					"provider": "claude-code",
+					"model":    "sonnet",
+					"metadata": map[string]interface{}{
+						"tmux_session": tmuxSession,
+						"working_dir":  "/tmp/workflow",
+						"large_blob":   strings.Repeat("provider metadata ", 20000),
+						"context_window": map[string]interface{}{
+							"large_nested_blob": strings.Repeat("nested ", 20000),
+						},
+					},
+				},
+			},
+		},
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/terminals?session_id="+sessionID+"&content=none", nil)
 	rec := httptest.NewRecorder()
@@ -956,6 +978,44 @@ func TestTerminalRoutesGetTerminalCapturesRunningTmuxVisibleScreen(t *testing.T)
 	}
 	if response.Content != "current visible pane" {
 		t.Fatalf("terminal content = %q, want current visible content", response.Content)
+	}
+}
+
+func TestTerminalRoutesGetTerminalScreenIgnoresCompletedTextInRunningMainAgent(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-main-visible"
+	terminalID := sessionID + ":main:" + sessionID
+	tmuxSession := "mlp-claude-code-main-visible"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "main:"+sessionID, tmuxSession, "sub-step\nSTATUS: COMPLETED\nold spinner", 2))
+
+	var gotArgs []string
+	oldRunOutput := runTerminalTmuxOutputCommand
+	runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
+		gotArgs = append([]string(nil), args...)
+		return "current main visible pane", nil
+	}
+	defer func() { runTerminalTmuxOutputCommand = oldRunOutput }()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/terminals/"+terminalID+"?content=screen", nil)
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
+	rec := httptest.NewRecorder()
+	api.handleGetTerminal(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	if got := strings.Join(gotArgs, " "); got != "capture-pane -p -e -J -t "+tmuxSession {
+		t.Fatalf("tmux args = %q, want visible-screen capture", got)
+	}
+	var response terminals.Snapshot
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode visible response: %v", err)
+	}
+	if response.Content != "current main visible pane" {
+		t.Fatalf("terminal content = %q, want current visible main content", response.Content)
+	}
+	if response.ContentSource != "tmux_capture" {
+		t.Fatalf("content source = %q, want tmux_capture", response.ContentSource)
 	}
 }
 

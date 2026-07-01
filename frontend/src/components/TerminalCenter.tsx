@@ -12,6 +12,7 @@ import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { TERMINAL_REFRESH_REQUEST_EVENT } from '../utils/terminalRefresh'
 import { useTheme } from '../hooks/useTheme'
 import type { Theme } from '../contexts/ThemeContext'
+import { normalizeAnsiForEmbeddedXterm } from '../utils/ansiSanitize'
 import { MarkdownRenderer } from './ui/MarkdownRenderer'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 
@@ -41,6 +42,18 @@ function stripAnsi(s: string): string {
 function hasAnsiCodes(s: string): boolean {
   // eslint-disable-next-line no-control-regex
   return s.includes('\x1B[')
+}
+
+function hasTerminalRedrawControls(s: string): boolean {
+  if (!s) return false
+  if (hasAnsiCodes(s)) return true
+  // eslint-disable-next-line no-control-regex
+  if (s.includes('\x1B]') || s.includes('\x07') || s.includes('\x0f')) return true
+  // Some persisted tmux pipe snapshots have the OSC introducer stripped but
+  // still carry the title-control payload (`]0;...`) and carriage-return redraws.
+  if (/\](?:0|1|2);/.test(s)) return true
+  // Treat bare carriage returns as terminal redraw control, but not CRLF text.
+  return /\r(?!\n)/.test(s)
 }
 
 function isTmuxContentSource(source?: string): boolean {
@@ -78,6 +91,8 @@ const TERMINAL_REFRESH_HISTORY_LINES = 10000
 const TERMINAL_ACTIVE_DISPLAY_HISTORY_LINES = 10000
 const TERMINAL_ACTIVE_RAIL_MAIN_HISTORY_LINES = 600
 const TERMINAL_ACTIVE_RAIL_STEP_HISTORY_LINES = 1200
+const TERMINAL_ACTIVE_RAIL_PROBE_SCREEN_LINES = 80
+const TERMINAL_STATIC_DETAIL_HISTORY_LINES = 1500
 const RAW_XTERM_MIN_FIT_COLS = 40
 const RAW_XTERM_MIN_FIT_ROWS = 10
 const RAW_XTERM_MIN_FIT_WIDTH_PX = 240
@@ -88,9 +103,14 @@ const PROMPT_COMPLETION_FALLBACK_SECONDS = 60
 const INACTIVE_FALLBACK_SECONDS = 120
 const EMPTY_TERMINAL_RESPONSE_GRACE_POLLS = 10
 const TERMINAL_POLL_INTERVAL_MS = 3000
-const TERMINAL_ACTIVE_RAIL_PROBE_LIMIT = 8
+const TERMINAL_ACTIVE_RAIL_PROBE_LIMIT = 4
+const ARCHIVED_TURN_PREFETCH_LIMIT = 1
 const TERMINAL_FAST_POLL_INTERVAL_MS = 300
 const TERMINAL_FAST_POLL_DURATION_MS = 7000
+const LIVE_ATTACH_RESEED_DEBOUNCE_MS = 150
+const LIVE_ATTACH_RESEED_MIN_INTERVAL_MS = 2500
+const SELECTED_LIVE_SCREEN_PROBE_INTERVAL_MS = 2000
+const SELECTED_LIVE_SCREEN_PROBE_LINES = 120
 
 type TerminalColorScheme = 'neon' | 'mono' | 'homebrew' | 'catppuccin' | 'nord' | 'gruvbox' | 'solarized' | 'tokyo'
 type TerminalDebugKey = 'enter' | 'esc' | 'ctrl-c' | 'ctrl-o' | 'tab' | 'up' | 'down'
@@ -457,21 +477,15 @@ const TERMINAL_THEMES = {
 
 type TerminalTheme = (typeof TERMINAL_THEMES)[TerminalColorScheme]
 
-const RAW_XTERM_FONT_FAMILY = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
+const RAW_XTERM_FONT_FAMILY = 'ui-monospace, Menlo, monospace'
 const RAW_XTERM_FONT_SIZE = 13
 const RAW_XTERM_LINE_HEIGHT = 1
 const RAW_XTERM_THEMES: Record<Theme, ITheme> = {
   dark: {
-    background: '#0b0d0c',
-    foreground: '#e5e7eb',
-    cursor: '#e5e7eb',
-    selectionBackground: '#334155',
+    background: '#0b0e14',
   },
   light: {
     background: '#ffffff',
-    foreground: '#111827',
-    cursor: '#111827',
-    selectionBackground: '#bfdbfe',
   },
 }
 
@@ -483,47 +497,22 @@ function applyRawXtermTheme(term: XTerm, theme: ITheme) {
   }
 }
 
-function stripAnsiBackgrounds(input: string): string {
-  // Pi/tmux captures can carry muted truecolor background fills across long
-  // wrapped lines. In the web terminal those cells read as large grey blocks,
-  // especially after static replay. Keep foreground/style SGRs, but drop
-  // background/inverse SGRs so text stays readable on the app terminal surface.
-  return input.replace(/\x1b\[([0-9;]*)m/g, (match, rawParams: string) => {
-    if (rawParams === '') return match
-    const params = rawParams.split(';')
-    const kept: string[] = []
-    for (let i = 0; i < params.length; i++) {
-      const raw = params[i]
-      const code = Number(raw)
-      if (!Number.isFinite(code)) {
-        kept.push(raw)
-        continue
-      }
-      if (
-        code === 7 ||
-        code === 27 ||
-        code === 49 ||
-        (code >= 40 && code <= 47) ||
-        (code >= 100 && code <= 107)
-      ) {
-        continue
-      }
-      if (code === 48) {
-        const mode = Number(params[i + 1])
-        if (mode === 2) {
-          i += 4
-          continue
-        }
-        if (mode === 5) {
-          i += 2
-          continue
-        }
-        continue
-      }
-      kept.push(raw)
+function clearXtermSelection(term: XTerm) {
+  try {
+    if (term.hasSelection()) {
+      term.clearSelection()
     }
-    return kept.length > 0 ? `\x1b[${kept.join(';')}m` : ''
-  })
+  } catch {
+    // Selection APIs can throw while xterm is mounting/unmounting.
+  }
+}
+
+function normalizeVisibleScreenSeed(content: string): string {
+  return normalizeAnsiForEmbeddedXterm(content).replace(/\r?\n/g, '\r\n')
+}
+
+function buildVisibleScreenReseed(content: string): string {
+  return `\x1b[0m\x1b[H\x1b[2J${normalizeVisibleScreenSeed(content)}\x1b[0m\x1b[J`
 }
 
 function scrollXtermFromWheel(
@@ -1224,6 +1213,10 @@ function isArchivedTurnTerminal(terminal: TerminalSnapshot): boolean {
   return terminal.terminal_id.includes(':turn-')
 }
 
+function terminalHasDisplayBody(terminal: TerminalSnapshot): boolean {
+  return !!(terminal.content || '').trim() || (terminal.rows?.length || 0) > 0
+}
+
 function isRailVisibleTerminal(terminal: TerminalSnapshot): boolean {
   return !(isArchivedTurnTerminal(terminal) && isMainAgentTerminal(terminal))
 }
@@ -1250,6 +1243,12 @@ function findPriorArchivedTurns(current: TerminalSnapshot, allTerminals: Termina
   const sessionID = (current.session_id || '').trim()
   const ownerID = (current.owner_id || '').trim()
   if (!sessionID || isArchivedTurnTerminal(current) || !isSyntheticTerminal(current)) {
+    return []
+  }
+  // Metadata-only selected terminals cannot yet be classified reliably. Fetch
+  // the selected terminal body first; once it is known to be structured text,
+  // archived turns can be stitched in without blocking the active pane.
+  if (!terminalHasDisplayBody(current)) {
     return []
   }
   const matchingTurns = allTerminals
@@ -1780,17 +1779,20 @@ const LiveAttachXtermPaneInner: React.FC<{
   className?: string
   contentRef: React.RefObject<HTMLDivElement | null>
   xtermTheme: ITheme
+  authoritativeContent?: string
+  authoritativeVersion?: string
   reconnectOnClose: boolean
   onViewportStickChange?: (isNearBottom: boolean) => void
   onScrollToBottomReady?: (handler: (() => void) | null) => void
   onOutputText?: (text: string) => void
-}> = ({ terminalId, className, contentRef, xtermTheme, reconnectOnClose, onViewportStickChange, onScrollToBottomReady, onOutputText }) => {
+}> = ({ terminalId, className, contentRef, xtermTheme, authoritativeContent, authoritativeVersion, reconnectOnClose, onViewportStickChange, onScrollToBottomReady, onOutputText }) => {
   const mountRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<XTerm | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectOnCloseRef = useRef(reconnectOnClose)
   const onViewportStickChangeRef = useRef(onViewportStickChange)
   const onOutputTextRef = useRef(onOutputText)
+  const lastVisibleReseedRef = useRef<{ content: string; at: number }>({ content: '', at: 0 })
 
   useEffect(() => {
     reconnectOnCloseRef.current = reconnectOnClose
@@ -1814,14 +1816,13 @@ const LiveAttachXtermPaneInner: React.FC<{
     const term = new XTerm({
       allowProposedApi: false,
       convertEol: false,
-      cursorBlink: false,
+      cursorBlink: true,
       disableStdin: true,
       // Pure passthrough: no density-profile CSS layer. Only fixed xterm metrics
       // and app light/dark colors are configured; bytes still render as raw tmux.
       fontFamily: RAW_XTERM_FONT_FAMILY,
       fontSize: RAW_XTERM_FONT_SIZE,
       lineHeight: RAW_XTERM_LINE_HEIGHT,
-      minimumContrastRatio: 4.5,
       scrollback: 20000,
       theme: xtermTheme,
     })
@@ -1875,15 +1876,18 @@ const LiveAttachXtermPaneInner: React.FC<{
       ws.onopen = () => {
         // Correct the backend's seed geometry to the real fitted grid immediately.
         sendResize()
+        clearXtermSelection(term)
       }
       ws.onmessage = ev => {
         const data = ev.data
         if (data instanceof ArrayBuffer) {
-          const text = stripAnsiBackgrounds(decoder.decode(new Uint8Array(data), { stream: true }))
+          const text = normalizeAnsiForEmbeddedXterm(decoder.decode(new Uint8Array(data), { stream: true }))
+          clearXtermSelection(term)
           term.write(text)
           onOutputTextRef.current?.(text)
         } else if (typeof data === 'string') {
-          const text = stripAnsiBackgrounds(data)
+          const text = normalizeAnsiForEmbeddedXterm(data)
+          clearXtermSelection(term)
           term.write(text)
           onOutputTextRef.current?.(text)
         }
@@ -1906,6 +1910,13 @@ const LiveAttachXtermPaneInner: React.FC<{
     const fitTerminal = () => {
       try {
         if (!hasUsableTerminalFitBox(mount)) return
+        if (hasConnected && reconnectOnCloseRef.current) {
+          // Active coding-agent TUIs rewrite status/tool regions in place. Resizing
+          // tmux mid-stream can flatten old-width and new-width repaint fragments
+          // into the visible pane. Keep the live grid stable after attach; a
+          // reconnect/remount will fit again from a clean tmux backfill.
+          return
+        }
         fit.fit()
         if (!hasUsableGrid()) return
         if (!hasConnected) connect()
@@ -1958,6 +1969,36 @@ const LiveAttachXtermPaneInner: React.FC<{
     applyRawXtermTheme(term, xtermTheme)
   }, [xtermTheme])
 
+  useEffect(() => {
+    const content = authoritativeContent || ''
+    const term = terminalRef.current
+    if (!term || !content.trim()) return
+    if (content === lastVisibleReseedRef.current.content) return
+
+    const now = Date.now()
+    const waitMs = Math.max(
+      LIVE_ATTACH_RESEED_DEBOUNCE_MS,
+      LIVE_ATTACH_RESEED_MIN_INTERVAL_MS - (now - lastVisibleReseedRef.current.at),
+    )
+    const timer = window.setTimeout(() => {
+      const currentTerm = terminalRef.current
+      if (!currentTerm) return
+      if (content === lastVisibleReseedRef.current.content) return
+
+      const distanceFromBottom = Math.max(0, currentTerm.buffer.active.baseY - currentTerm.buffer.active.viewportY)
+      if (distanceFromBottom > 1) return
+
+      lastVisibleReseedRef.current = { content, at: Date.now() }
+      clearXtermSelection(currentTerm)
+      currentTerm.write(buildVisibleScreenReseed(content), () => {
+        currentTerm.scrollToBottom()
+        onViewportStickChangeRef.current?.(true)
+      })
+    }, waitMs)
+
+    return () => window.clearTimeout(timer)
+  }, [authoritativeContent, authoritativeVersion, terminalId])
+
   const handleWheel = useCallback((event: WheelEvent) => {
     const term = terminalRef.current
     if (!term) return
@@ -1980,7 +2021,15 @@ const LiveAttachXtermPaneInner: React.FC<{
       className={className}
       style={{ backgroundColor: xtermTheme.background }}
     >
-      <div ref={mountRef} className="h-full w-full [&_.xterm]:h-full" />
+      <div
+        ref={mountRef}
+        className="runloop-raw-xterm h-full w-full p-1.5 [&_.xterm]:h-full"
+        style={{
+          fontFamily: RAW_XTERM_FONT_FAMILY,
+          fontSize: RAW_XTERM_FONT_SIZE,
+          lineHeight: RAW_XTERM_LINE_HEIGHT,
+        }}
+      />
     </div>
   )
 }
@@ -2052,12 +2101,11 @@ const StaticXtermPaneInner: React.FC<{
     const term = new XTerm({
       allowProposedApi: false,
       convertEol: true,
-      cursorBlink: false,
+      cursorBlink: true,
       disableStdin: true,
       fontFamily: RAW_XTERM_FONT_FAMILY,
       fontSize: RAW_XTERM_FONT_SIZE,
       lineHeight: RAW_XTERM_LINE_HEIGHT,
-      minimumContrastRatio: 4.5,
       scrollback: 20000,
       theme: xtermTheme,
     })
@@ -2121,7 +2169,7 @@ const StaticXtermPaneInner: React.FC<{
       onViewportStickChangeRef.current?.(true)
       return
     }
-    term.write(stripAnsiBackgrounds(content), () => {
+    term.write(normalizeAnsiForEmbeddedXterm(content), () => {
       try {
         fitRef.current?.fit()
       } catch {
@@ -2154,7 +2202,15 @@ const StaticXtermPaneInner: React.FC<{
       className={className}
       style={{ backgroundColor: xtermTheme.background }}
     >
-      <div ref={mountRef} className="h-full w-full [&_.xterm]:h-full" />
+      <div
+        ref={mountRef}
+        className="runloop-raw-xterm h-full w-full p-1.5 [&_.xterm]:h-full"
+        style={{
+          fontFamily: RAW_XTERM_FONT_FAMILY,
+          fontSize: RAW_XTERM_FONT_SIZE,
+          lineHeight: RAW_XTERM_LINE_HEIGHT,
+        }}
+      />
     </div>
   )
 }
@@ -2462,6 +2518,11 @@ const StructuredTerminalView = memo(StructuredTerminalViewInner)
 
 function isSyntheticTerminal(terminal: TerminalSnapshot): boolean {
   const transport = (terminal.step_transport || '').toLowerCase()
+  // A few workflow CLI steps can be labelled "structured" while still carrying
+  // raw TUI bytes from Claude/Codex/etc. Rendering those through the structured
+  // parser collapses spacing and exposes spinner redraw fragments. Xterm is the
+  // only renderer that can interpret that content correctly.
+  if (hasTerminalRedrawControls(terminal.content || '')) return false
   if (transport === 'tmux') return false
   if (transport === 'api' || transport === 'structured' || transport === 'structured_cli' || transport === 'non_tmux') return true
   if (terminal.tmux_session) return false
@@ -2470,7 +2531,7 @@ function isSyntheticTerminal(terminal: TerminalSnapshot): boolean {
   // If the stored content still carries terminal escape sequences, keep the
   // xterm renderer so colors, alternate-screen redraws, and terminal spacing
   // remain close to the live pane.
-  if (hasAnsiCodes(terminal.content || '')) return false
+  if (hasTerminalRedrawControls(terminal.content || '')) return false
   return true
 }
 
@@ -2497,7 +2558,7 @@ function terminalTmuxDetailOptions(terminal: TerminalSnapshot, displayDetail = f
     }
   }
   // Idle: `history` → backend serves a static full-buffer `capture-pane -S` snapshot.
-  return { content: 'history' }
+  return { content: 'history', lines: TERMINAL_STATIC_DETAIL_HISTORY_LINES }
 }
 
 function terminalScrollDebugEnabled(): boolean {
@@ -2523,6 +2584,10 @@ function withTerminalScrollDebug(options: TerminalDetailOptions | undefined, deb
 
 function terminalRequestOptions(terminal: TerminalSnapshot, displayDetail: boolean, debugSource: string): TerminalDetailOptions | undefined {
   return withTerminalScrollDebug(terminalTmuxDetailOptions(terminal, displayDetail), debugSource)
+}
+
+function terminalStoredRequestOptions(debugSource: string): TerminalDetailOptions {
+  return withTerminalScrollDebug({ content: 'stored' }, debugSource) || { content: 'stored' }
 }
 
 function terminalTextLineCount(content?: string): number {
@@ -3438,26 +3503,31 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
   useEffect(() => {
     if (priorArchivedTurns.length === 0) return
     let cancelled = false
-    const missing = priorArchivedTurns.filter(t => archivedTurnContents[t.terminal_id] === undefined)
+    const missing = priorArchivedTurns
+      .filter(t => archivedTurnContents[t.terminal_id] === undefined)
+      .slice(-ARCHIVED_TURN_PREFETCH_LIMIT)
     if (missing.length === 0) return
-    void Promise.all(missing.map(async t => {
-      try {
-        const detailOptions = withTerminalScrollDebug(undefined, 'archived-turn')
-        const detail = await agentApi.getTerminal(t.terminal_id, detailOptions)
-        logTerminalScrollDebug('archived-turn', t, detailOptions, detail)
-        return { id: t.terminal_id, content: detail.content || '' }
-      } catch (err) {
-        console.warn('Failed to load archived turn content', t.terminal_id, err)
-        return { id: t.terminal_id, content: '' }
+    void (async () => {
+      const results: Array<{ id: string; content: string }> = []
+      for (const t of missing) {
+        if (cancelled) return
+        try {
+          const detailOptions = terminalStoredRequestOptions('archived-turn')
+          const detail = await agentApi.getTerminal(t.terminal_id, detailOptions)
+          logTerminalScrollDebug('archived-turn', t, detailOptions, detail)
+          results.push({ id: t.terminal_id, content: detail.content || '' })
+        } catch (err) {
+          console.warn('Failed to load archived turn content', t.terminal_id, err)
+          results.push({ id: t.terminal_id, content: '' })
+        }
       }
-    })).then(results => {
       if (cancelled) return
       setArchivedTurnContents(prev => {
         const next = { ...prev }
         for (const r of results) next[r.id] = r.content
         return next
       })
-    })
+    })()
     return () => { cancelled = true }
   }, [priorArchivedTurns, archivedTurnContents])
 
@@ -3528,7 +3598,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     selectedDetailFetchKeysRef.current.add(detailKey)
 
     let cancelled = false
-    const detailOptions = terminalRequestOptions(selectedTerminalView, true, 'selected-detail')
+    const detailOptions = terminalRequestOptions(selectedTerminalView, true, 'selected-detail') || terminalStoredRequestOptions('selected-detail')
     void agentApi.getTerminal(selectedTerminalView.terminal_id, detailOptions)
       .then(detail => {
         if (cancelled) return
@@ -3544,6 +3614,53 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     }
   }, [
     selectedTerminalView,
+    useLiveAttachForSelected,
+    cacheTerminalDetail,
+    applyTerminalSnapshotUpdate,
+  ])
+
+  useEffect(() => {
+    if (!selectedTerminalView || !useLiveAttachForSelected) return
+    if (!stableLiveAttachId || selectedTerminalView.terminal_id !== stableLiveAttachId) return
+
+    let cancelled = false
+    let inFlight = false
+    const terminalId = selectedTerminalView.terminal_id
+
+    const probeSelectedLiveScreen = () => {
+      if (cancelled || inFlight) return
+      inFlight = true
+      const detailOptions = withTerminalScrollDebug({
+        content: 'screen',
+        lines: SELECTED_LIVE_SCREEN_PROBE_LINES,
+      }, 'selected-live-screen')
+      void agentApi.getTerminal(terminalId, detailOptions)
+        .then(detail => {
+          if (cancelled) return
+          logTerminalScrollDebug('selected-live-screen', selectedTerminalView, detailOptions, detail)
+          cacheTerminalDetail(detail)
+          applyTerminalSnapshotUpdate(detail)
+        })
+        .catch(err => {
+          if (!cancelled) {
+            console.warn('Failed to refresh selected live terminal screen', terminalId, err)
+          }
+        })
+        .finally(() => {
+          inFlight = false
+        })
+    }
+
+    probeSelectedLiveScreen()
+    const interval = window.setInterval(probeSelectedLiveScreen, SELECTED_LIVE_SCREEN_PROBE_INTERVAL_MS)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [
+    selectedTerminalView?.terminal_id,
+    selectedTerminalView?.tmux_session,
+    stableLiveAttachId,
     useLiveAttachForSelected,
     cacheTerminalDetail,
     applyTerminalSnapshotUpdate,
@@ -3587,8 +3704,10 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
         // owns that session, and a parallel capture-pane probe interferes with the
         // %output stream (makes pi's in-place redraws stack).
         if (terminal.terminal_id === stableLiveAttachId) return null
-        const detailOptions = terminalRequestOptions(terminal, false, 'rail-probe')
-        if (!detailOptions) return null
+        const detailOptions = withTerminalScrollDebug({
+          content: 'screen',
+          lines: TERMINAL_ACTIVE_RAIL_PROBE_SCREEN_LINES,
+        }, 'rail-probe')
         try {
           const detail = await agentApi.getTerminal(terminal.terminal_id, detailOptions)
           logTerminalScrollDebug('rail-probe', terminal, detailOptions, detail)
@@ -4460,6 +4579,10 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
                       terminalId={stableLiveAttachId}
                       contentRef={terminalOutputRef as React.RefObject<HTMLDivElement | null>}
                       xtermTheme={rawXtermTheme}
+                      authoritativeContent={selectedTerminalView?.terminal_id === stableLiveAttachId ? selectedTerminalDisplayContent : ''}
+                      authoritativeVersion={selectedTerminalView?.terminal_id === stableLiveAttachId
+                        ? `${selectedTerminalView.terminal_id}:${selectedTerminalView.chunk_index ?? 'x'}:${selectedTerminalView.updated_at || ''}:${selectedTerminalDisplayContent.length}`
+                        : stableLiveAttachKey}
                       reconnectOnClose={isSelectedTerminalStreaming}
                       onViewportStickChange={handleXtermViewportStickChange}
                       onScrollToBottomReady={registerXtermScrollToBottom}

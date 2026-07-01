@@ -3,7 +3,7 @@ import { restoreSession } from './sessionRestore'
 import { agentApi } from '../services/api'
 import type { ActiveSessionInfo, RunningWorkflowInfo } from '../services/api-types'
 import { useAppStore } from '../stores/useAppStore'
-import { normalizeEventViewMode, useChatStore, type ChatTab, type EventViewMode } from '../stores/useChatStore'
+import { useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
 import { useRunningWorkflowsStore } from '../stores/useRunningWorkflowsStore'
@@ -16,8 +16,15 @@ type RestoreWorkflowSessionOptions = {
   scrollToBottom?: boolean
 }
 
+const REPORT_PREVIEW_PREFERENCE_KEY = 'workflow_report_preview_preference'
+const REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT = 'workflow-report-preview-preference-changed'
+
 function normalizeWorkspacePath(path?: string): string {
   return (path || '').replace(/\/+$/, '')
+}
+
+function reportPreviewPreferenceKey(scopeId?: string | null): string {
+  return scopeId ? `${REPORT_PREVIEW_PREFERENCE_KEY}:${scopeId}` : REPORT_PREVIEW_PREFERENCE_KEY
 }
 
 function isActiveWorkflowSession(session: ActiveSessionInfo): boolean {
@@ -114,12 +121,28 @@ function requestChatScrollToBottom(): void {
   setTimeout(() => window.dispatchEvent(new CustomEvent('chat-scroll-to-bottom')), 400)
 }
 
-// Open a restored workflow session in the user's saved view-mode preference
-// (e.g. terminal), NOT whatever view the tab they're switching AWAY from
-// happened to be on. Copying the previous tab's mode is why a terminal-default
-// user sometimes landed in tree view after switching from the global monitor.
-function currentWorkflowViewMode(): EventViewMode {
-  return normalizeEventViewMode(useChatStore.getState().eventViewModePreference)
+function forceMobilePreview(scopeId?: string | null): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(reportPreviewPreferenceKey(scopeId), 'mobile')
+  } catch {
+    // UI preference only.
+  }
+  window.dispatchEvent(new CustomEvent(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, {
+    detail: { preference: 'mobile', scopeId: scopeId ?? null },
+  }))
+}
+
+function revealWorkflowTerminal(tabId: string, workspacePath?: string | null): void {
+  const chatStore = useChatStore.getState()
+  chatStore.setTabViewMode(tabId, 'terminal')
+
+  forceMobilePreview(workspacePath)
+
+  const workflowStore = useWorkflowStore.getState()
+  workflowStore.setShowChatArea(true)
+  workflowStore.setShowWorkspacePane(true)
+  workflowStore.setFocusedPane('chat')
 }
 
 export async function restoreWorkflowSessionChat(
@@ -128,8 +151,8 @@ export async function restoreWorkflowSessionChat(
 ): Promise<string> {
   const resolvedPreset = options.preset || findWorkflowPresetForSession(session, options.runningWorkflow)
   const presetId = resolvedPreset?.id || session.preset_query_id || options.runningWorkflow?.preset_query_id
+  const workspacePath = resolvedPreset?.selectedFolder?.filepath || options.runningWorkflow?.workspace_path || session.workspace_path || null
   const isActive = isActiveWorkflowSession(session)
-  const restoreViewMode = currentWorkflowViewMode()
 
   useRunningWorkflowsStore.getState().setIsRestoringWorkflow(true)
   try {
@@ -180,7 +203,7 @@ export async function restoreWorkflowSessionChat(
     if (builderTab?.sessionId !== session.session_id) {
       latestChatStore.updateTabSessionId(tabId, session.session_id)
     }
-    latestChatStore.setTabViewMode(tabId, restoreViewMode)
+    latestChatStore.setTabViewMode(tabId, 'terminal')
 
     const hasExistingEvents = latestChatStore.getTabEvents(session.session_id).length > 0
     // Fast path for switching back to an already-open running workflow:
@@ -190,8 +213,8 @@ export async function restoreWorkflowSessionChat(
     if (builderTab?.sessionId === session.session_id && hasExistingEvents) {
       latestChatStore.setTabStreaming(tabId, isActive)
       latestChatStore.setTabCompleted(tabId, !isActive)
-      useWorkflowStore.getState().setShowChatArea(true)
       activateTab(tabId)
+      revealWorkflowTerminal(tabId, workspacePath)
       if (options.scrollToBottom !== false) requestChatScrollToBottom()
       return tabId
     }
@@ -203,8 +226,8 @@ export async function restoreWorkflowSessionChat(
     // BACKGROUND, populating those overlays when it arrives.
     latestChatStore.setTabStreaming(tabId, isActive)
     latestChatStore.setTabCompleted(tabId, !isActive)
-    useWorkflowStore.getState().setShowChatArea(true)
     activateTab(tabId)
+    revealWorkflowTerminal(tabId, workspacePath)
     if (options.scrollToBottom !== false) requestChatScrollToBottom()
 
     void agentApi.getRecentSessionEvents(session.session_id)
@@ -282,7 +305,7 @@ async function restoreReadOnlyWorkflowRunChat(
 ): Promise<string> {
   const resolvedPreset = options.preset || findWorkflowPresetForSession(session, options.runningWorkflow)
   const presetId = resolvedPreset?.id || session.preset_query_id || options.runningWorkflow?.preset_query_id
-  const restoreViewMode = currentWorkflowViewMode()
+  const workspacePath = resolvedPreset?.selectedFolder?.filepath || options.runningWorkflow?.workspace_path || session.workspace_path || null
 
   useRunningWorkflowsStore.getState().setIsRestoringWorkflow(true)
   try {
@@ -315,6 +338,7 @@ async function restoreReadOnlyWorkflowRunChat(
   const interactiveTab = findTabForSession(chatStore.chatTabs, session.session_id)
   if (interactiveTab && !interactiveTab.metadata?.isViewOnly) {
     activateTab(interactiveTab.tabId)
+    revealWorkflowTerminal(interactiveTab.tabId, workspacePath)
     if (options.scrollToBottom !== false) requestChatScrollToBottom()
     return interactiveTab.tabId
   }
@@ -337,7 +361,7 @@ async function restoreReadOnlyWorkflowRunChat(
 
   const tabId = existingTab?.tabId ?? await chatStore.createChatTab(desiredName, metadata, session.session_id)
   chatStore.setTabMetadata(tabId, metadata)
-  chatStore.setTabViewMode(tabId, restoreViewMode)
+  chatStore.setTabViewMode(tabId, 'terminal')
   if (existingTab && existingTab.name !== desiredName) {
     useChatStore.setState((state) => {
       const tab = state.chatTabs[tabId]
@@ -378,8 +402,9 @@ async function restoreReadOnlyWorkflowRunChat(
   }
 
   activateTab(tabId)
+  revealWorkflowTerminal(tabId, workspacePath)
   window.dispatchEvent(new CustomEvent('workflow-readonly-run-restored', {
-    detail: { presetId, tabId }
+    detail: { presetId, tabId, workspacePath }
   }))
   if (options.scrollToBottom !== false) requestChatScrollToBottom()
   return tabId

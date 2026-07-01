@@ -1151,7 +1151,7 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 		if runFolder != "" && sctx.Schedule.WorkshopMode != "optimizer" {
 			if manifest, found, mErr := ReadWorkflowManifest(ctx, sctx.WorkspacePath); mErr == nil && found && manifest.MonitorEnabled() {
 				// Pass the run's sessionID so Pulse resumes the SAME chat (not a fresh one).
-				s.runPostRunMonitor(ctx, sctx, status, runFolder, sessionID)
+				s.runPostRunMonitor(ctx, sctx, manifest, status, runFolder, sessionID)
 			}
 		}
 	}
@@ -1169,7 +1169,7 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 // never changes the run's recorded status — failures here are logged and
 // swallowed. Pulse's behavior is defined by the post-run-monitor reference doc;
 // this just hands it the run context.
-func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *ScheduleContext, runStatus, runFolder, runSessionID string) {
+func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *ScheduleContext, manifest *WorkflowManifest, runStatus, runFolder, runSessionID string) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.logf(sctx, "[PULSE] post-run pulse panic (recovered): %v", r)
@@ -1196,7 +1196,7 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 			"Call get_reference_doc(kind=\"post-run-monitor\") and follow it. We'll go one step at a time — do ONLY the step in each message, finish it, then stop and wait for the next.",
 		runStatus, runFolder)
 
-	steps := postRunMonitorSteps()
+	steps := postRunMonitorStepsForManifest(manifest)
 
 	s.sessionLogf(sctx, sessionID, "[PULSE] starting pulse for %s (run_folder=%s status=%s) across %d steps", sctx.Schedule.ID, runFolder, runStatus, len(steps))
 	for i, st := range steps {

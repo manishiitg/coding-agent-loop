@@ -2270,6 +2270,7 @@ export interface SchedulerConfig {
 export interface WorkflowManifest {
   schema_version: number
   id: string
+  version?: string
   label: string
   capabilities: WorkflowCapabilities
   execution_defaults: WorkflowExecutionDefaults

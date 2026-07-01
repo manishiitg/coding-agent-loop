@@ -118,6 +118,7 @@ import { hydrateTabEvents } from '../../utils/sessionRestore'
 // Stable empty array for Zustand selector (must be module-level to avoid referential instability)
 const EMPTY_WORKFLOW_EVENTS: PollingEvent[] = []
 const WORKFLOW_RESTORE_TIMEOUT_MS = 8000
+const WORKFLOW_KILL_AND_START_STOP_TIMEOUT_MS = 30_000
 const WORKFLOW_CHAT_CONTENT_EVENT_TYPES = new Set(['user_message', 'conversation_end', 'unified_completion'])
 // Window during which a freshly-opened read-only Schedule/Bot run tab is
 // protected from auto tab-switching (reconnect/reconcile). Mirrors App.tsx's
@@ -472,6 +473,25 @@ function withWorkflowRestoreTimeout<T>(promise: Promise<T>, label: string, timeo
   })
 }
 
+function stopWorkflowSessionForNewChat(sessionId: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      reject(new Error(`Stopping session timed out after ${WORKFLOW_KILL_AND_START_STOP_TIMEOUT_MS / 1000}s`))
+    }, WORKFLOW_KILL_AND_START_STOP_TIMEOUT_MS)
+
+    agentApi.stopSession(sessionId, true).then(
+      () => {
+        window.clearTimeout(timeout)
+        resolve()
+      },
+      error => {
+        window.clearTimeout(timeout)
+        reject(error)
+      },
+    )
+  })
+}
+
 /**
  * Helper function to restore workflow state from loaded events
  * Called during workflow reconnection to restore:
@@ -710,6 +730,25 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     description: string
     isStopping: boolean
   }>({ isOpen: false, sessionIdsToStop: [], description: '', isStopping: false })
+  const revealWorkflowTerminal = useCallback((tabId: string) => {
+    const chatStore = useChatStore.getState()
+    if (chatStore.chatTabs[tabId]) {
+      chatStore.setTabViewMode(tabId, 'terminal')
+      chatStore.switchTab(tabId)
+    }
+    try {
+      const activeWorkspacePath = useGlobalPresetStore.getState().getActivePreset('workflow')?.selectedFolder?.filepath ?? null
+      localStorage.setItem(reportPreviewPreferenceKey(activeWorkspacePath), 'mobile')
+      window.dispatchEvent(new CustomEvent(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, {
+        detail: { preference: 'mobile', scopeId: activeWorkspacePath },
+      }))
+    } catch {
+      // UI preference only.
+    }
+    setShowChatArea(true)
+    setShowWorkspacePane(true)
+    setFocusedPane('chat')
+  }, [setFocusedPane, setShowChatArea, setShowWorkspacePane])
   useEffect(() => {
     if (!isRestoringWorkflowSessions) return
     const timeout = window.setTimeout(() => {
@@ -729,11 +768,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         presetId: detail.presetId ?? null,
         tabId: detail.tabId,
       }
+      revealWorkflowTerminal(detail.tabId)
     }
 
     window.addEventListener('workflow-readonly-run-restored', handleReadOnlyRestore)
     return () => window.removeEventListener('workflow-readonly-run-restored', handleReadOnlyRestore)
-  }, [])
+  }, [revealWorkflowTerminal])
   // NOTE: During workflow execution, we no longer auto-fetch workspace files (response is 2-3MB).
   // New files are added incrementally via addFileToTree from workspace_file_operation events.
   // The Workspace component shows a "Refresh" banner when needsRefresh is set.
@@ -1869,8 +1909,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         const builderTab = interactiveTabs.find(t => t.metadata?.phaseId === 'workflow-builder')
         const targetTab = restoredReadOnlyTab || streamingTab || builderTab || interactiveTabs[0] || newPresetTabs[0]
         console.log(`[WorkflowLayout] Switching to tab: ${targetTab.tabId.slice(0,8)} (${newPresetTabs.length} tabs for preset, restoredReadOnly=${!!restoredReadOnlyTab}, streaming=${!!streamingTab}, builder=${!!builderTab})`)
-        chatStore.switchTab(targetTab.tabId)
-        setShowChatArea(true)
+        if (restoredReadOnlyTab) {
+          revealWorkflowTerminal(restoredReadOnlyTab.tabId)
+        } else {
+          chatStore.switchTab(targetTab.tabId)
+          setShowChatArea(true)
+        }
 
         const needsHydration = interactiveTabs.some(tab =>
           tab.sessionId && chatStore.getTabEvents(tab.sessionId).length === 0
@@ -1896,7 +1940,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       // Update the ref for non-preset-change re-fires (dep changes only)
       previousPresetIdRef.current = activePresetId
     }
-  }, [activePresetId, minimizeWorkflow, selectedRunFolder, setShowChatArea, setIsRestoringWorkflowSessions, rehydrateWorkflowTabs, createFreshWorkflowBuilderTab, workspacePath])
+  }, [activePresetId, minimizeWorkflow, selectedRunFolder, setShowChatArea, setIsRestoringWorkflowSessions, rehydrateWorkflowTabs, createFreshWorkflowBuilderTab, workspacePath, revealWorkflowTerminal])
 
   // Note: Query submission is now handled via chatAreaCallbackRef when ChatArea mounts
   // No need for useEffect with setTimeout - callback ref is the proper React pattern
@@ -2105,13 +2149,23 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     setKillAndStartState(prev => ({ ...prev, isStopping: true }))
     const sessionIds = killAndStartState.sessionIdsToStop
     const results = await Promise.allSettled(
-      sessionIds.map(sid => agentApi.stopSession(sid, true))
+      sessionIds.map(stopWorkflowSessionForNewChat)
     )
-    results.forEach((r, idx) => {
-      if (r.status === 'rejected') {
-        logger.warn('WorkflowLayout', `Failed to stop session ${sessionIds[idx]} during kill-and-start:`, r.reason)
-      }
+    const failedStops = results.flatMap((result, idx) => {
+      if (result.status === 'fulfilled') return []
+      logger.warn('WorkflowLayout', `Failed to stop session ${sessionIds[idx]} during kill-and-start:`, result.reason)
+      return [sessionIds[idx]]
     })
+    if (failedStops.length > 0) {
+      setKillAndStartState(prev => ({ ...prev, isStopping: false }))
+      addToast(
+        failedStops.length === 1
+          ? 'Still stopping the running session. Try New Chat again in a moment.'
+          : 'Still stopping running sessions. Try New Chat again in a moment.',
+        'error',
+      )
+      return
+    }
     setKillAndStartState({ isOpen: false, sessionIdsToStop: [], description: '', isStopping: false })
     try {
       await createFreshWorkflowBuilderTab(activePresetId, { composerFirst: true })
@@ -2252,6 +2306,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         cancelText="Cancel"
         type="warning"
         isLoading={killAndStartState.isStopping}
+        loadingText="Stopping…"
       />
     </div>
   )

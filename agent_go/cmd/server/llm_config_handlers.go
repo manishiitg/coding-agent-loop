@@ -476,7 +476,7 @@ func discoveryModelOptions(provider string) []string {
 	case "codex-cli":
 		return []string{"codex-cli", "high", "medium", "low"}
 	case "cursor-cli":
-		return []string{"cursor-cli", "gpt-5", "sonnet-4-thinking", "sonnet-4"}
+		return []string{"cursor-cli", "composer-2.5", "gpt-5", "sonnet-4-thinking", "sonnet-4"}
 	case "agy-cli":
 		return []string{"agy-cli"}
 	case "pi-cli":
@@ -1353,6 +1353,12 @@ func validateCursorCLI(apiKey, modelID string) llm.APIKeyValidationResponse {
 
 	if modelID == "" {
 		modelID = "cursor-cli"
+	}
+	if strings.TrimSpace(apiKey) == "" && strings.TrimSpace(os.Getenv("CURSOR_API_KEY")) == "" && !cursorCLILocalAuthConfigured() {
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: cursorCLILoginRequiredMessage(),
+		}
 	}
 
 	workspaceDir, err := os.MkdirTemp("", "cursor-cli-validation-*")

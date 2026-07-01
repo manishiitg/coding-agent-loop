@@ -16,8 +16,16 @@ import (
 	"github.com/google/uuid"
 )
 
-// Current manifest schema version
+// Current manifest schema version. This is the JSON shape version.
 const WorkflowManifestSchemaVersion = 1
+
+// WorkflowContractCurrentVersion is the product-managed workflow behavior
+// contract version. Unlike schema_version, this gates agent-run workflow
+// upgrades: Pulse can add version-specific messages and stamp this value only
+// after the workflow has been checked or migrated.
+const WorkflowContractCurrentVersion = "1.0.1"
+
+const workflowContractInitialVersion = "1.0.0"
 
 const (
 	DefaultRunRetentionCount = 5
@@ -28,6 +36,7 @@ const (
 type WorkflowManifest struct {
 	SchemaVersion     int                       `json:"schema_version"`
 	ID                string                    `json:"id"`
+	Version           string                    `json:"version,omitempty"`
 	Label             string                    `json:"label"`
 	Capabilities      WorkflowCapabilities      `json:"capabilities"`
 	ExecutionDefs     WorkflowExecutionDefaults `json:"execution_defaults"`
@@ -330,6 +339,7 @@ func NewWorkflowManifest(label string) *WorkflowManifest {
 	return &WorkflowManifest{
 		SchemaVersion: WorkflowManifestSchemaVersion,
 		ID:            "wf_" + uuid.New().String()[:8],
+		Version:       WorkflowContractCurrentVersion,
 		Label:         label,
 		Capabilities: WorkflowCapabilities{
 			SelectedServers:           []string{},
@@ -404,7 +414,6 @@ func ReadWorkflowManifest(ctx context.Context, workspacePath string) (*WorkflowM
 			log.Printf("[WARN] ReadWorkflowManifest: failed to persist auto-assigned schedule IDs for %s: %v", workspacePath, err)
 		}
 	}
-
 	return &m, true, nil
 }
 

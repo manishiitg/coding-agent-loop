@@ -7,12 +7,27 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/utils"
 )
+
+var cursorCLIAuthProbeCache = struct {
+	sync.Mutex
+	checkedAt time.Time
+	ok        bool
+}{}
+
+var cursorCLIStatusJSON = func(ctx context.Context) ([]byte, error) {
+	return exec.CommandContext(ctx, "cursor-agent", "status", "--format", "json").Output()
+}
+
+func cursorCLILoginRequiredMessage() string {
+	return "Cursor Agent CLI is installed but not logged in. Run `cursor-agent login` in a terminal, or set CURSOR_API_KEY, then try again."
+}
 
 // listProviderModelsJSON returns a JSON string of all frontend-visible models for the given
 // provider. Dynamic providers use the same live/fallback model source as the frontend picker;
@@ -423,7 +438,10 @@ func providerAuthConfigured(provider string, keys *llm.ProviderAPIKeys) (bool, s
 	case string(llm.ProviderCodexCLI):
 		return true, "Codex CLI login or CODEX_API_KEY/workspace provider auth"
 	case string(llm.ProviderCursorCLI):
-		return true, "Cursor CLI login or CURSOR_API_KEY/workspace provider auth"
+		if keys.CursorCLI != nil && strings.TrimSpace(*keys.CursorCLI) != "" {
+			return true, "CURSOR_API_KEY or workspace provider auth"
+		}
+		return cursorCLILocalAuthConfigured(), "Cursor CLI login or CURSOR_API_KEY/workspace provider auth"
 	case string(llm.ProviderAgyCLI):
 		return true, "Antigravity CLI local sign-in"
 	case string(llm.ProviderPiCLI):
@@ -456,6 +474,38 @@ func piProviderAuthConfigured(keys *llm.ProviderAPIKeys) bool {
 		}
 	}
 	return false
+}
+
+func cursorCLILocalAuthConfigured() bool {
+	if _, err := exec.LookPath("cursor-agent"); err != nil {
+		return false
+	}
+
+	cursorCLIAuthProbeCache.Lock()
+	defer cursorCLIAuthProbeCache.Unlock()
+
+	if !cursorCLIAuthProbeCache.checkedAt.IsZero() && time.Since(cursorCLIAuthProbeCache.checkedAt) < 30*time.Second {
+		return cursorCLIAuthProbeCache.ok
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	out, err := cursorCLIStatusJSON(ctx)
+	ok := false
+	if err == nil {
+		var status struct {
+			IsAuthenticated bool   `json:"isAuthenticated"`
+			Status          string `json:"status"`
+		}
+		if json.Unmarshal(out, &status) == nil {
+			ok = status.IsAuthenticated || strings.EqualFold(status.Status, "authenticated")
+		}
+	}
+
+	cursorCLIAuthProbeCache.checkedAt = time.Now()
+	cursorCLIAuthProbeCache.ok = ok
+	return ok
 }
 
 func providerUsable(provider string, authConfigured bool) (bool, string, *bool) {
@@ -634,7 +684,7 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 				map[string][]string{
 					string(llm.ProviderClaudeCode): {"claude-code"},
 					string(llm.ProviderCodexCLI):   {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
-					string(llm.ProviderCursorCLI):  {"cursor-cli", "gpt-5", "sonnet-4-thinking", "sonnet-4"},
+					string(llm.ProviderCursorCLI):  {"cursor-cli", "composer-2.5", "gpt-5", "sonnet-4-thinking", "sonnet-4"},
 					string(llm.ProviderPiCLI):      {"google/gemini-3.5-flash", "google/gemini-2.5-flash"},
 					string(llm.ProviderGeminiCLI):  {"gemini CLI models"},
 					string(llm.ProviderVertex):     {"gemini* models only"},
@@ -661,7 +711,7 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 				map[string][]string{
 					string(llm.ProviderVertex):     {"gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview"},
 					string(llm.ProviderCodexCLI):   {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
-					string(llm.ProviderCursorCLI):  {"cursor-cli", "gpt-5", "sonnet-4-thinking", "sonnet-4"},
+					string(llm.ProviderCursorCLI):  {"cursor-cli", "composer-2.5", "gpt-5", "sonnet-4-thinking", "sonnet-4"},
 					string(llm.ProviderAgyCLI):     {"agy-cli"},
 					string(llm.ProviderClaudeCode): {"claude-code"},
 				},

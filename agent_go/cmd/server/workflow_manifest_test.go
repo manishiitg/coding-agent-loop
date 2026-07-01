@@ -4,6 +4,9 @@ import "testing"
 
 func TestNewWorkflowManifestDefaultsGlobalSecretsToNone(t *testing.T) {
 	manifest := NewWorkflowManifest("Test workflow")
+	if manifest.Version != WorkflowContractCurrentVersion {
+		t.Fatalf("Version = %q, want %q", manifest.Version, WorkflowContractCurrentVersion)
+	}
 	if manifest.Capabilities.SelectedGlobalSecretNames == nil {
 		t.Fatal("SelectedGlobalSecretNames = nil, want empty selection")
 	}

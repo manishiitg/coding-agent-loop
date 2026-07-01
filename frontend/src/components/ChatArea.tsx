@@ -2632,6 +2632,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     chatStore.setHasActiveChat(true)
     chatStore.setTabCompleted(currentTab.tabId, false)
     chatStore.setTabStreaming(currentTab.tabId, true)
+    requestTerminalRefreshBurst()
 
     // Reset lastEventIndex so polling starts fresh from the in-memory event store
     // (critical when continuing a restored session — DB events have different indices than in-memory)
@@ -2777,6 +2778,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         console.log('[WF_DEBUG] 4. After updateTabSessionId', { events: chatStore.getTabEvents(responseSessionId).length, activeTabSession: useChatStore.getState().chatTabs[currentTab.tabId]?.sessionId })
         chatStore.setTabStreaming(currentTab.tabId, true)
         chatStore.setTabCompleted(currentTab.tabId, false)
+        requestTerminalRefreshBurst()
 
         // Reactivate historical session if needed
         const currentSessionState = useChatStore.getState().sessionState

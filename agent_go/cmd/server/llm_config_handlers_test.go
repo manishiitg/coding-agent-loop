@@ -47,6 +47,45 @@ func TestBuildLLMDiscoveryShowsMissingCodingCLI(t *testing.T) {
 	}
 }
 
+func TestLLMDiscoveryHTTPShowsCursorLoginRequired(t *testing.T) {
+	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
+	t.Setenv("SUPPORTED_LLM_PROVIDERS", "cursor-cli")
+	withFakeExecutable(t, "cursor-agent")
+	withCursorStatusJSON(t, `{"status":"unauthenticated","isAuthenticated":false,"message":"Not logged in"}`, nil)
+
+	api := &StreamingAPI{}
+	req := httptest.NewRequest(http.MethodGet, "/api/llm-config/discovery", nil)
+	rec := httptest.NewRecorder()
+	api.handleDiscoverLLMSetup(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("discovery status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	var response llmDiscoveryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode discovery response: %v", err)
+	}
+	if len(response.Candidates) != 1 {
+		t.Fatalf("candidate count = %d, want 1: %+v", len(response.Candidates), response.Candidates)
+	}
+	candidate := response.Candidates[0]
+	if candidate.Provider != "cursor-cli" {
+		t.Fatalf("provider = %q, want cursor-cli", candidate.Provider)
+	}
+	if candidate.RuntimeAvailable == nil || !*candidate.RuntimeAvailable {
+		t.Fatalf("runtime_available = %v, want true", candidate.RuntimeAvailable)
+	}
+	if candidate.AuthConfigured {
+		t.Fatal("auth_configured = true, want false")
+	}
+	if candidate.Usable {
+		t.Fatal("usable = true, want false for logged-out Cursor CLI")
+	}
+	if !strings.Contains(candidate.SetupHint, "cursor-agent login") {
+		t.Fatalf("setup_hint = %q, want cursor-agent login hint", candidate.SetupHint)
+	}
+}
+
 func TestProviderManifestMarksDeprecatedCodingAgents(t *testing.T) {
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
 	t.Setenv("SUPPORTED_LLM_PROVIDERS", "gemini-cli,agy-cli,pi-cli")

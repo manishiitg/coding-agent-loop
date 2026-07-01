@@ -456,7 +456,7 @@ When asked to create a new workflow (e.g. via ` + "`/workflow-builder`" + ` or a
 ` + "`create_workflow(name, workflow_json, plan_json)`" + ` — creates ` + "`Workflow/<name>/`" + ` with the two JSON files in one atomic call.
 
 - **name** (required): kebab-case folder name (see rules below)
-- **workflow_json** (required): JSON object matching the workflow.json schema — must include ` + "`schema_version`" + ` (1), ` + "`id`" + `, ` + "`label`" + `
+- **workflow_json** (required): JSON object matching the workflow.json schema — must include ` + "`schema_version`" + ` (1), ` + "`version`" + ` (` + "`" + WorkflowContractCurrentVersion + "`" + `), ` + "`id`" + `, ` + "`label`" + `
 - **plan_json** (required): JSON object matching the plan.json schema — must include a non-empty ` + "`steps`" + ` array
 
 The tool refuses to overwrite existing workflows. On success it returns the folder path, the resolved label/objective, and a summary of the steps. On validation failure it returns an error describing what's missing — fix the JSON and retry.
@@ -478,13 +478,14 @@ New workflows you create via ` + "`create_workflow`" + ` will always have shell-
 
 ### File 1: ` + "`Workflow/<kebab-name>/workflow.json`" + `
 
-Workflow-level manifest. **Required fields**: ` + "`schema_version`" + ` (int, 1), ` + "`id`" + ` (string, e.g. ` + "`wf_<kebab-name>`" + `), ` + "`label`" + ` (string, human-readable name).
+Workflow-level manifest. **Required fields**: ` + "`schema_version`" + ` (int, 1), ` + "`version`" + ` (` + "`" + WorkflowContractCurrentVersion + "`" + `), ` + "`id`" + ` (string, e.g. ` + "`wf_<kebab-name>`" + `), ` + "`label`" + ` (string, human-readable name).
 
 **Sensible starter shape** — include the fields below; pick capabilities smartly from the current chat context (only the MCP servers, skills, and LLM tiers actually relevant to the workflow, not every enabled server):
 
 ` + "```json" + `
 {
   "schema_version": 1,
+  "version": "` + WorkflowContractCurrentVersion + `",
   "id": "wf_<kebab-name>",
   "label": "Human Readable Name",
   "objective": "One-sentence statement of what this workflow accomplishes",

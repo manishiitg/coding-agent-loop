@@ -12,6 +12,7 @@ interface ConfirmationDialogProps {
   cancelText?: string
   type?: 'danger' | 'warning' | 'info'
   isLoading?: boolean
+  loadingText?: string
   ignoreWorkspaceAutoCollapse?: boolean
 }
 
@@ -25,6 +26,7 @@ export default function ConfirmationDialog({
   cancelText = 'Cancel',
   type = 'danger',
   isLoading = false,
+  loadingText = 'Deleting...',
   ignoreWorkspaceAutoCollapse = false
 }: ConfirmationDialogProps) {
   // Keyboard shortcuts
@@ -129,7 +131,7 @@ export default function ConfirmationDialog({
               {isLoading ? (
                 <div className="flex items-center gap-2">
                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                  Deleting...
+                  {loadingText}
                 </div>
               ) : (
                 confirmText

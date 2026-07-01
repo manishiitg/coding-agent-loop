@@ -182,6 +182,52 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 	}
 }
 
+func TestPostRunMonitorPrependsWorkflowVersionUpgradeForOldManifest(t *testing.T) {
+	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.0"})
+	if got := len(steps); got != 7 {
+		t.Fatalf("postRunMonitorStepsForManifest(old) length = %d, want 7", got)
+	}
+	if got := steps[0].label; got != "upgrade-1.0.1" {
+		t.Fatalf("first step label = %q, want upgrade-1.0.1", got)
+	}
+	for _, want := range []string{
+		"WORKFLOW VERSION UPGRADE v1.0.0 -> v1.0.1",
+		`workflow.json "version" to "1.0.1"`,
+		`get_reference_doc(kind="review-improve-log")`,
+		`get_reference_doc(kind="publish-strategy")`,
+		"password-protected static publish contract",
+		"named secret only",
+		"StatiCrypt",
+	} {
+		if !strings.Contains(steps[0].query, want) {
+			t.Fatalf("upgrade step missing %q:\n%s", want, steps[0].query)
+		}
+	}
+	if got := steps[1].label; got != "triage" {
+		t.Fatalf("second step label = %q, want triage", got)
+	}
+}
+
+func TestPostRunMonitorPrependsWorkflowVersionUpgradeForMissingVersion(t *testing.T) {
+	steps := postRunMonitorStepsForManifest(&WorkflowManifest{})
+	if got := len(steps); got != 7 {
+		t.Fatalf("postRunMonitorStepsForManifest(missing version) length = %d, want 7", got)
+	}
+	if !strings.Contains(steps[0].query, `Current workflow.json version seen by scheduler: "1.0.0"`) {
+		t.Fatalf("missing version should be treated as 1.0.0:\n%s", steps[0].query)
+	}
+}
+
+func TestPostRunMonitorDoesNotPrependWorkflowVersionUpgradeForCurrentManifest(t *testing.T) {
+	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: WorkflowContractCurrentVersion})
+	if got := len(steps); got != 6 {
+		t.Fatalf("postRunMonitorStepsForManifest(current) length = %d, want 6", got)
+	}
+	if got := steps[0].label; got != "triage" {
+		t.Fatalf("first step label = %q, want triage", got)
+	}
+}
+
 func TestOptimizerScheduleMessagesIgnoresStoredMessagesAndInjectsCanonicalTurns(t *testing.T) {
 	stored := []string{`Do not ask for confirmation. Call get_workflow_command_guidance(kind="improve-workflow", focus="scheduled improve fire").`}
 

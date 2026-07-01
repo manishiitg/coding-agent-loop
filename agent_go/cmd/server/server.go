@@ -3637,6 +3637,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			sendError(fmt.Sprintf("Invalid provider: %v", err), true)
 			return
 		}
+		if normalizeManagedProvider(providerToValidate) == string(llm.ProviderCursorCLI) {
+			cursorAuthConfigured, _ := providerAuthConfigured(string(llm.ProviderCursorCLI), mergedAPIKeys)
+			if !cursorAuthConfigured {
+				sendError(cursorCLILoginRequiredMessage(), true)
+				return
+			}
+		}
 
 		// Validate LLM provider - no need to initialize since agent wrapper handles it
 		_ = llmProvider // Use provider variable to avoid unused variable error

@@ -114,7 +114,17 @@ The log must not grow without bound. When `builder/improve.html` passes roughly 
 
 ### Upgrading an old-format log (one-time, REQUIRED before appending)
 
-An existing `builder/improve.html` is **old-format** — and must be upgraded, not appended to — if it has **any** of: a title like "Improvement Ledger"; `## Active Improvement Index` / `## Recent Entries` / `## Archive Index` headings; ```improve-decision``` fenced/`<script>` JSON blocks; `F-…` / `I-…` ids; its own ad-hoc CSS (`.summary` / `.badge` / `.stats`, system-ui body) instead of the skeleton's; **or an older skeleton that lacks `<meta name="viewport">`, mobile-first stacked `.status` / `.run` / `.entry` layouts, or `overflow-wrap:anywhere`; **or an `.etitle` rule missing `flex:1 1 auto` (the older skeleton whose entry titles collapse to one word per line beside the `.when` meta, leaving the card half-empty)**. Legacy `builder/improve.md` / `builder/review.md` also count.
+An existing `builder/improve.html` is **old-format** — and must be upgraded, not appended to — if it has **any** of:
+
+- a title like "Improvement Ledger";
+- `## Active Improvement Index` / `## Recent Entries` / `## Archive Index` headings;
+- ```improve-decision``` fenced/`<script>` JSON blocks;
+- `F-…` / `I-…` ids;
+- legacy `builder/improve.md` / `builder/review.md`;
+- its own ad-hoc CSS (`.summary` / `.badge` / `.stats`, system-ui body) instead of the skeleton's;
+- no `<meta name="viewport">`;
+- missing mobile-first stacked `.status` / `.run` / `.entry` layouts or `overflow-wrap:anywhere`;
+- an `.etitle` rule missing `flex:1 1 auto`, or an `.ehead > .when` rule that keeps `margin-left:auto` / `white-space:nowrap` in the base mobile CSS. That older skeleton collapses entry titles and body text into narrow columns beside timestamp metadata, leaving the card half-empty in the right panel.
 
 **Do NOT append your new entry into the old structure** — that produces good content in a stale, off-brand shell. Instead, **rewrite the entire document to the Starter HTML skeleton above** as a one-time upgrade:
 

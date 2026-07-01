@@ -35,4 +35,5 @@ describe('normalizeAnsiForEmbeddedXterm', () => {
     expect(normalizeAnsiForEmbeddedXterm('\x1b[1;7;38;5;231mHello\x1b[27m'))
       .toBe('\x1b[1;7;38;5;231mHello\x1b[27m')
   })
+
 })

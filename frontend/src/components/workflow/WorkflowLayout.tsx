@@ -672,7 +672,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     const tab = state.activeTabId ? state.chatTabs[state.activeTabId] : undefined
     return tab?.metadata?.mode === 'workflow' ? tab.sessionId : undefined
   })
-
   // Use workflow store for UI state (single source of truth)
   const activePhase = useWorkflowStore(state => state.activePhase)
   const showChatArea = useWorkflowStore(state => state.showChatArea)

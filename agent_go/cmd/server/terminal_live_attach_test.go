@@ -437,13 +437,16 @@ func TestLiveAttachBackfillSeedsScrollbackThenVisibleSnapshot(t *testing.T) {
 			}
 			return "old-one\nold-two\n", nil
 		}
+		if strings.HasPrefix(joined, "display-message ") {
+			return "4\t2\n", nil
+		}
 		return "cur-one\ncur-two\n", nil
 	}
 	t.Cleanup(func() { runTerminalTmuxOutputCommand = origRun })
 
 	got := string(liveAttachBackfill(context.Background(), "sessF"))
-	if len(commands) != 2 {
-		t.Fatalf("tmux capture calls = %#v, want history then visible", commands)
+	if len(commands) != 3 {
+		t.Fatalf("tmux calls = %#v, want history then visible then cursor", commands)
 	}
 	if !strings.HasPrefix(got, "\x1bc") {
 		t.Fatalf("backfill prefix = %q, want RIS reset", got[:min(len(got), 8)])
@@ -454,7 +457,11 @@ func TestLiveAttachBackfillSeedsScrollbackThenVisibleSnapshot(t *testing.T) {
 	historyAt := strings.Index(got, "old-one\r\nold-two\r\n")
 	clearAt := strings.Index(got, "\x1b[H\x1b[2J")
 	visibleAt := strings.Index(got, "cur-one\r\ncur-two\r\n")
+	cursorAt := strings.LastIndex(got, "\x1b[3;5H")
 	if historyAt < 0 || clearAt < 0 || visibleAt < 0 || !(historyAt < clearAt && clearAt < visibleAt) {
 		t.Fatalf("backfill should seed history, clear viewport, then paint current screen: %q", got)
+	}
+	if cursorAt < 0 || cursorAt < visibleAt {
+		t.Fatalf("backfill should restore tmux cursor after visible screen: %q", got)
 	}
 }

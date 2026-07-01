@@ -901,13 +901,15 @@ export const agentApi = {
   // the Authorization header the axios client normally injects). cols/rows seed
   // the initial geometry; the client also sends resize frames after FitAddon.
   // Only meaningful when capabilities.terminal_live_attach is true.
-  getTerminalStreamUrl: (terminalId: string, cols?: number, rows?: number): string => {
+  getTerminalStreamUrl: (terminalId: string, cols?: number, rows?: number, tmuxSession?: string, sessionId?: string): string => {
     const httpBase = getApiBaseUrl() || (typeof window !== 'undefined' ? window.location.origin : '')
     // http -> ws, https -> wss.
     const wsBase = httpBase.replace(/^http/i, 'ws')
     const url = new URL(`/api/terminals/${encodeURIComponent(terminalId)}/stream`, wsBase)
     if (cols && cols > 0) url.searchParams.set('cols', String(Math.floor(cols)))
     if (rows && rows > 0) url.searchParams.set('rows', String(Math.floor(rows)))
+    if (tmuxSession) url.searchParams.set('tmux_session', tmuxSession)
+    if (sessionId) url.searchParams.set('session_id', sessionId)
     const token = getAuthToken()
     if (token) url.searchParams.set('token', token)
     return url.toString()

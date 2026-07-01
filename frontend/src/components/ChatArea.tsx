@@ -3235,7 +3235,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             {/* active — terminal-or-events by the view toggle. */}
             {workflowSurface === 'active' && activeTab?.sessionId && (
               activeEventViewMode === 'terminal' ? (
-                <TerminalCenter currentSessionId={activeTab.sessionId} compact={false} hasConversationActivity={!suppressTerminalPane && (hasConversationContent || isStreaming || !!activeTab?.isStreaming)} />
+                <TerminalCenter currentSessionId={activeTab.sessionId} compact={false} hasConversationActivity={!suppressTerminalPane && (hasConversationContent || activeTabStreaming)} />
               ) : (
                 <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
               )
@@ -3252,7 +3252,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
                 workflowPreviousChatsPanel
               ) : activeEventViewMode === 'terminal' ? (
                 activeTab?.sessionId && (
-                  <TerminalCenter currentSessionId={activeTab.sessionId} compact={false} hasConversationActivity={!suppressTerminalPane && (hasConversationContent || isStreaming || !!activeTab?.isStreaming)} />
+                  <TerminalCenter currentSessionId={activeTab.sessionId} compact={false} hasConversationActivity={!suppressTerminalPane && (hasConversationContent || activeTabStreaming)} />
                 )
               ) : (
                 <>
@@ -3297,7 +3297,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             {/* active — terminal-or-events by the view toggle. */}
             {multiAgentSurface === 'active' && activeTab?.sessionId && (
               activeEventViewMode === 'terminal' ? (
-                <TerminalCenter currentSessionId={activeTab.sessionId} compact={false} hasConversationActivity={!suppressTerminalPane && (hasConversationContent || isStreaming || !!activeTab?.isStreaming)} />
+                <TerminalCenter currentSessionId={activeTab.sessionId} compact={false} hasConversationActivity={!suppressTerminalPane && (hasConversationContent || activeTabStreaming)} />
               ) : (
                 <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
               )

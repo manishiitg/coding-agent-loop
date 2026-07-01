@@ -15,9 +15,11 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
 
 	"mcp-agent-builder-go/agent_go/internal/liveattach"
+	"mcp-agent-builder-go/agent_go/internal/terminals"
 )
 
 // Live-attach terminal transport (Phase 1, control mode).
@@ -466,7 +468,7 @@ func (api *StreamingAPI) handleTerminalStream(w http.ResponseWriter, r *http.Req
 		http.Error(w, "live-attach terminal transport disabled", http.StatusNotFound)
 		return
 	}
-	snapshot, ok := api.requireAccessibleTerminal(w, r)
+	snapshot, ok := api.resolveLiveAttachTerminal(w, r)
 	if !ok {
 		return
 	}
@@ -557,6 +559,45 @@ func (api *StreamingAPI) handleTerminalStream(w http.ResponseWriter, r *http.Req
 			api.liveAttachControlFrame(connCtx, st, snapshot.TmuxSession, data)
 		}
 	}
+}
+
+func (api *StreamingAPI) resolveLiveAttachTerminal(w http.ResponseWriter, r *http.Request) (terminals.Snapshot, bool) {
+	terminalID := strings.TrimSpace(mux.Vars(r)["terminal_id"])
+	if terminalID == "" {
+		http.Error(w, "Terminal ID is required", http.StatusBadRequest)
+		return terminals.Snapshot{}, false
+	}
+	if api.terminalStore != nil {
+		if snapshot, ok := api.terminalStore.Get(terminalID); ok && api.canAccessTerminalSession(r, snapshot.SessionID) {
+			return snapshot, true
+		}
+	}
+
+	// Backend restarts clear the in-memory terminal store while the browser can
+	// still hold the last terminal snapshot and the tmux session can still be
+	// alive. Recover the live stream from those client-supplied identifiers, but
+	// only after applying the same session access check and verifying tmux still
+	// has the target session.
+	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
+	tmuxSession := strings.TrimSpace(r.URL.Query().Get("tmux_session"))
+	if sessionID == "" || tmuxSession == "" || !api.canAccessTerminalSession(r, sessionID) {
+		http.Error(w, "Terminal not found", http.StatusNotFound)
+		return terminals.Snapshot{}, false
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), terminalTmuxActionTimeout)
+	defer cancel()
+	if err := runTerminalTmuxCommand(ctx, "", "has-session", "-t", tmuxSession); err != nil {
+		http.Error(w, "Terminal not found", http.StatusNotFound)
+		return terminals.Snapshot{}, false
+	}
+	return terminals.Snapshot{
+		TerminalID:    terminalID,
+		SessionID:     sessionID,
+		TmuxSession:   tmuxSession,
+		ContentSource: "tmux_capture",
+		Active:        true,
+		State:         "running",
+	}, true
 }
 
 type liveAttachTranscript struct {
@@ -673,7 +714,35 @@ func liveAttachBackfill(ctx context.Context, tmuxSession string) []byte {
 	body := strings.ReplaceAll(out, "\n", "\r\n")
 	b = append(b, []byte("\x1b[H\x1b[2J")...)
 	b = append(b, []byte(body)...)
+	if cursorX, cursorY, ok := liveAttachCursorPosition(cctx, tmuxSession); ok {
+		// capture-pane paints characters but does not restore cursor position.
+		// Live CLI redraws often use cursor-relative writes (spinners/status
+		// rows); leave xterm at tmux's actual cursor so the first live %output
+		// updates the seeded screen instead of duplicating it on a new row.
+		b = append(b, []byte(fmt.Sprintf("\x1b[%d;%dH", cursorY+1, cursorX+1))...)
+	}
 	return b
+}
+
+func liveAttachCursorPosition(ctx context.Context, tmuxSession string) (int, int, bool) {
+	tmuxSession = strings.TrimSpace(tmuxSession)
+	if tmuxSession == "" {
+		return 0, 0, false
+	}
+	out, err := runTerminalTmuxOutputCommand(ctx, "display-message", "-p", "-t", tmuxSession, "#{cursor_x}\t#{cursor_y}")
+	if err != nil {
+		return 0, 0, false
+	}
+	parts := strings.Split(strings.TrimSpace(out), "\t")
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	cursorX, errX := strconv.Atoi(strings.TrimSpace(parts[0]))
+	cursorY, errY := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if errX != nil || errY != nil || cursorX < 0 || cursorY < 0 {
+		return 0, 0, false
+	}
+	return cursorX, cursorY, true
 }
 
 // liveAttachRawInput forwards raw terminal input bytes faithfully via

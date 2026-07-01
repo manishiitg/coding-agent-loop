@@ -16,7 +16,6 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/azure"
-	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/utils"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 )
@@ -453,7 +452,7 @@ func providerDisplayLabel(provider string) string {
 }
 
 func modelNameForProviderModel(provider, modelID string) string {
-	for _, metadata := range utils.GetAllModelMetadata() {
+	for _, metadata := range allProviderModelMetadata() {
 		if metadata == nil {
 			continue
 		}
@@ -465,6 +464,15 @@ func modelNameForProviderModel(provider, modelID string) string {
 		}
 	}
 	return modelID
+}
+
+func stringSliceContains(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func discoveryCandidateKind(provider string) string {
@@ -482,7 +490,13 @@ func discoveryModelOptions(provider string) []string {
 	case "pi-cli":
 		return piCuratedModelIDs()
 	case "claude-code":
-		return []string{"claude-code", "high", "medium", "low"}
+		options := append([]string{}, claudeCodeCapabilityModels()...)
+		for _, alias := range []string{"high", "medium", "low"} {
+			if !stringSliceContains(options, alias) {
+				options = append(options, alias)
+			}
+		}
+		return options
 	case "gemini-cli":
 		return []string{"auto", "high", "medium", "low"}
 	default:
@@ -1643,8 +1657,7 @@ func validatePiCLI(apiKey, modelID string, options map[string]interface{}) llm.A
 
 // handleGetModelMetadata returns metadata for all available models across providers
 func (api *StreamingAPI) handleGetModelMetadata(w http.ResponseWriter, r *http.Request) {
-	// Get all model metadata from the utility function
-	models := utils.GetAllModelMetadata()
+	models := allProviderModelMetadata()
 
 	response := map[string]interface{}{
 		"models": models,

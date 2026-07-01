@@ -113,6 +113,19 @@ func TestNormalizeImageAnalysisProviderAndModelInfersCursorFromModel(t *testing.
 	}
 }
 
+func TestNormalizeImageAnalysisProviderAndModelInfersClaudeCodeFromSonnet5(t *testing.T) {
+	provider, modelID, err := normalizeImageAnalysisProviderAndModel("", "claude-sonnet-5")
+	if err != nil {
+		t.Fatalf("normalizeImageAnalysisProviderAndModel returned error: %v", err)
+	}
+	if provider != "claude-code" {
+		t.Fatalf("provider = %q, want claude-code", provider)
+	}
+	if modelID != "claude-sonnet-5" {
+		t.Fatalf("modelID = %q, want claude-sonnet-5", modelID)
+	}
+}
+
 func TestNormalizeImageAnalysisProviderAndModelInfersAgyFromModel(t *testing.T) {
 	provider, modelID, err := normalizeImageAnalysisProviderAndModel("", "agy-cli")
 	if err != nil {

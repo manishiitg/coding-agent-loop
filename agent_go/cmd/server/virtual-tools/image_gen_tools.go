@@ -217,7 +217,7 @@ func inferImageAnalysisProviderFromModel(modelID string) string {
 		return "z-ai"
 	case strings.HasPrefix(modelID, "kimi-"):
 		return "kimi"
-	case modelID == "claude-code":
+	case modelID == "claude-code", modelID == "claude-sonnet-5", modelID == "claude-sonnet-4-6":
 		return "claude-code"
 	case modelID == "cursor-cli", modelID == "gpt-5", modelID == "sonnet-4", modelID == "sonnet-4-thinking":
 		return "cursor-cli"
@@ -304,7 +304,7 @@ func supportedImageProviderSummary() string {
 }
 
 func supportedImageAnalysisProviderSummary() string {
-	return "Supported image analysis providers: vertex (Gemini vision models), codex-cli (codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, gpt-5.3-codex-spark), cursor-cli (cursor-cli, gpt-5, sonnet-4-thinking, sonnet-4), agy-cli (agy-cli), claude-code (claude-code)"
+	return "Supported image analysis providers: vertex (Gemini vision models), codex-cli (codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, gpt-5.3-codex-spark), cursor-cli (cursor-cli, gpt-5, sonnet-4-thinking, sonnet-4), agy-cli (agy-cli), claude-code (claude-code, claude-sonnet-5, claude-sonnet-4-6)"
 }
 
 func pathBasedImageAnalysisProvider(provider string) bool {

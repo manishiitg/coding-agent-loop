@@ -12,7 +12,6 @@ import (
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/llm"
-	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/utils"
 )
 
 var cursorCLIAuthProbeCache = struct {
@@ -48,7 +47,7 @@ func listProviderModelsJSON(provider string) string {
 		return prettyJSON(resp)
 	}
 
-	allModels := utils.GetAllModelMetadata()
+	allModels := allProviderModelMetadata()
 	filtered := make([]interface{}, 0, len(allModels))
 	for _, m := range allModels {
 		if m == nil {
@@ -529,7 +528,7 @@ func providerUsable(provider string, authConfigured bool) (bool, string, *bool) 
 }
 
 func buildChatLLMCapabilities(keys *llm.ProviderAPIKeys, includeModels bool) []llmCapabilityProvider {
-	metadata := utils.GetAllModelMetadata()
+	metadata := allProviderModelMetadata()
 	modelsByProvider := map[string][]string{}
 	for _, model := range metadata {
 		if model == nil {
@@ -692,7 +691,7 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 			"providers": buildFixedCapabilityProviders(
 				keys,
 				map[string][]string{
-					string(llm.ProviderClaudeCode): {"claude-code"},
+					string(llm.ProviderClaudeCode): claudeCodeCapabilityModels(),
 					string(llm.ProviderCodexCLI):   {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
 					string(llm.ProviderCursorCLI):  {"cursor-cli", "composer-2.5", "gpt-5", "sonnet-4-thinking", "sonnet-4"},
 					string(llm.ProviderPiCLI):      {"google/gemini-3.5-flash", "google/gemini-2.5-flash"},
@@ -723,7 +722,7 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 					string(llm.ProviderCodexCLI):   {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
 					string(llm.ProviderCursorCLI):  {"cursor-cli", "composer-2.5", "gpt-5", "sonnet-4-thinking", "sonnet-4"},
 					string(llm.ProviderAgyCLI):     {"agy-cli"},
-					string(llm.ProviderClaudeCode): {"claude-code"},
+					string(llm.ProviderClaudeCode): claudeCodeCapabilityModels(),
 				},
 				map[string]string{
 					string(llm.ProviderVertex):     "gemini-3-pro-preview",

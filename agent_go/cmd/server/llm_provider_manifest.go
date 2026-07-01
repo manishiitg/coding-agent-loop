@@ -15,6 +15,7 @@ import (
 	"github.com/gorilla/mux"
 	llm "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/utils"
 
 	"mcp-agent-builder-go/agent_go/pkg/common"
@@ -267,11 +268,67 @@ func providerWorkflowTierDefaults(provider string) *llm.CodingAgentDefaultTierMo
 	return defaults
 }
 
+func allProviderModelMetadata() []*llmtypes.ModelMetadata {
+	base := utils.GetAllModelMetadata()
+	out := make([]*llmtypes.ModelMetadata, 0, len(base)+8)
+	seen := make(map[string]struct{}, len(base)+8)
+	appendModel := func(model *llmtypes.ModelMetadata) {
+		if model == nil || strings.TrimSpace(model.Provider) == "" || strings.TrimSpace(model.ModelID) == "" {
+			return
+		}
+		key := strings.ToLower(strings.TrimSpace(model.Provider)) + "\x00" + strings.TrimSpace(model.ModelID)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, model)
+	}
+	for _, model := range base {
+		appendModel(model)
+	}
+	for _, model := range claudecode.GetAllClaudeCodeModels() {
+		appendModel(model)
+	}
+	return out
+}
+
+func providerModelMetadata(provider string) []*llmtypes.ModelMetadata {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	var models []*llmtypes.ModelMetadata
+	for _, model := range allProviderModelMetadata() {
+		if model == nil || strings.ToLower(strings.TrimSpace(model.Provider)) != provider {
+			continue
+		}
+		models = append(models, model)
+	}
+	return models
+}
+
+func providerModelIDs(provider string) []string {
+	models := providerModelMetadata(provider)
+	ids := make([]string, 0, len(models))
+	for _, model := range models {
+		if model == nil || strings.TrimSpace(model.ModelID) == "" {
+			continue
+		}
+		ids = append(ids, model.ModelID)
+	}
+	return ids
+}
+
+func claudeCodeCapabilityModels() []string {
+	ids := providerModelIDs("claude-code")
+	if len(ids) == 0 {
+		return []string{"claude-code", "claude-sonnet-5", "claude-sonnet-4-6"}
+	}
+	return ids
+}
+
 // handleGetProviderManifest returns the full provider manifest for the frontend.
 func (api *StreamingAPI) handleGetProviderManifest(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	keys := MergedProviderAPIKeys(ctx)
-	allMetadata := utils.GetAllModelMetadata()
+	allMetadata := allProviderModelMetadata()
 
 	metadataByProvider := map[string][]*llmtypes.ModelMetadata{}
 	for _, m := range allMetadata {
@@ -413,8 +470,8 @@ func (api *StreamingAPI) handleGetProviderModels(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// Fixed tier / API — return from metadata registry
-	allMetadata := utils.GetAllModelMetadata()
+	// Fixed tier / API — return from metadata registry plus coding-agent model metadata.
+	allMetadata := allProviderModelMetadata()
 	models := make([]dynamicModelEntry, 0)
 	for _, m := range allMetadata {
 		if m == nil || m.Provider != provider {
@@ -590,6 +647,8 @@ func inferCursorModelGroup(modelID, _ string) string {
 		return "Claude Opus 4.6"
 	case strings.Contains(id, "claude-4.5-opus"):
 		return "Claude Opus 4.5"
+	case strings.Contains(id, "claude-sonnet-5") || strings.Contains(id, "claude-5-sonnet"):
+		return "Claude Sonnet 5"
 	case strings.Contains(id, "claude-4.6-sonnet"):
 		return "Claude Sonnet 4.6"
 	case strings.Contains(id, "claude-4.5-sonnet"):

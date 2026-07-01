@@ -86,6 +86,19 @@ func TestLLMDiscoveryHTTPShowsCursorLoginRequired(t *testing.T) {
 	}
 }
 
+func TestClaudeCodeDiscoveryOptionsIncludeSonnet5(t *testing.T) {
+	options := discoveryModelOptions("claude-code")
+	if !containsLLMCapabilityString(options, "claude-sonnet-5") {
+		t.Fatalf("claude-code options = %v, want claude-sonnet-5", options)
+	}
+	if !containsLLMCapabilityString(options, "claude-sonnet-4-6") {
+		t.Fatalf("claude-code options = %v, want claude-sonnet-4-6", options)
+	}
+	if !containsLLMCapabilityString(options, "high") {
+		t.Fatalf("claude-code options = %v, want tier aliases preserved", options)
+	}
+}
+
 func TestProviderManifestMarksDeprecatedCodingAgents(t *testing.T) {
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
 	t.Setenv("SUPPORTED_LLM_PROVIDERS", "gemini-cli,agy-cli,pi-cli")

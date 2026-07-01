@@ -4,7 +4,7 @@ Write findings into `builder/improve.html` as "Open finding" timeline entries (`
 
 {{if .RunFolder}}Use the selected run folder "{{.RunFolder}}" as the primary evidence set.{{else}}If a meaningful prior run exists, use it as evidence; otherwise find the latest meaningful run first.{{end}}
 
-Anchor every judgment to the objective FIRST: read `soul/soul.md` (the workflow's goal + success criteria) and `planning/metrics.json` (+ recent `db/metrics_history.jsonl` for trend) — especially the `cost_per_run`/`total.cost_usd` metrics. A cost cut is only "safe" if it does NOT threaten a primary success or quality metric; do not label a reduction safe without checking it against these.
+Anchor every judgment to the objective FIRST: read `soul/soul.md` (the workflow's goal + success criteria), recent eval reports, and cost ledgers under `costs/`. A cost cut is only "safe" if it does NOT threaten a primary success criterion or quality check; do not label a reduction safe without checking it against these.
 
 Assess four things separately:
 1. Which steps, models, or phases are consuming the most cost?

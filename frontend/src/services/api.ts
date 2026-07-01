@@ -131,35 +131,12 @@ export interface WorkflowOverviewRunFolderDetail {
   total_steps: number
   completed_steps: number
   last_updated?: string
-  metrics_summary?: WorkflowMetricRunSummary
   cost_usd?: number
   started_at?: string
   completed_at?: string
   triggered_by?: string
   status: string
   models?: RunMetadataModels | null
-}
-
-export interface MetricSnapshotRow {
-  run_folder: string
-  completed_at: string
-  metric_id: string
-  metric_version?: number
-  value: number
-  has_value: boolean
-  resolve_error?: string
-  threshold_kind?: string
-  threshold_value?: number
-  passed?: boolean
-}
-
-export interface WorkflowMetricRunSummary {
-  total: number
-  with_value: number
-  passed: number
-  failed: number
-  unknown: number
-  rows?: MetricSnapshotRow[]
 }
 
 export interface WorkflowOverviewBatchResponse {
@@ -1740,16 +1717,6 @@ export const agentApi = {
     }
   },
 
-  // Auto-improvement framework API.
-  // See docs/workflow/auto_improvement_framework.md.
-  getAutoImprovementMetrics: async (workspacePath: string): Promise<{ success: boolean; file?: { metrics: any[] }; error?: string }> => {
-    const response = await api.get('/api/workflow/metrics', { params: { workspace_path: workspacePath } })
-    return response.data
-  },
-  getMetricsHistory: async (workspacePath: string): Promise<{ success: boolean; rows: any[]; error?: string }> => {
-    const response = await api.get('/api/workflow/metrics-history', { params: { workspace_path: workspacePath } })
-    return { ...response.data, rows: Array.isArray(response.data?.rows) ? response.data.rows : [] }
-  },
   getBuilderDoc: async (workspacePath: string, doc: 'improve' | 'review' | 'soul' | 'card-health' | 'card-progress', filePath?: string): Promise<{ success: boolean; doc: string; path: string; exists: boolean; content: string; error?: string }> => {
     const response = await api.get('/api/workflow/builder-doc', { params: { workspace_path: workspacePath, doc, path: filePath || '' } })
     return response.data
@@ -1784,8 +1751,6 @@ export const agentApi = {
     success_criteria?: string
     declared_criteria: string[]
     uncovered_criteria: string[]
-    unanchored_metrics: string[]
-    telemetry_metrics: string[]
     error?: string
   }> => {
     const response = await api.get('/api/workflow/framework-health', { params: { workspace_path: workspacePath } })
@@ -1819,7 +1784,6 @@ export const agentApi = {
         completed_at?: string
         completed_steps: number
         total_steps: number
-        metrics_summary?: WorkflowMetricRunSummary
       } | null
       is_running: boolean
       active_run_folder?: string

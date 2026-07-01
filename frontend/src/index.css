@@ -6,6 +6,12 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer utilities {
+  .font-runloop-mono {
+    font-family: var(--runloop-mono);
+  }
+}
+
 /* ===== MULTI-THEME SYSTEM ===== */
 /* This file supports multiple themes: light, dark, and custom themes */
 
@@ -15,6 +21,8 @@
 @layer base {
   /* ===== DEFAULT THEME (VS Code Light) ===== */
   :root {
+    --runloop-mono: "JetBrains Mono", "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+
     /* VS Code Light Theme Colors */
     --background: 0 0% 100%;               /* #ffffff - VS Code light background */
     --foreground: 0 0% 20%;                /* #333333 - VS Code light foreground */

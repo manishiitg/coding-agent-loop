@@ -1,6 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { Activity, AlertTriangle, LayoutDashboard, Loader2, RefreshCw, Target } from 'lucide-react'
+import {
+  Activity,
+  AlertTriangle,
+  Bug,
+  CheckCircle2,
+  CircleAlert,
+  CircleHelp,
+  LayoutDashboard,
+  Loader2,
+  RefreshCw,
+  Target,
+  X,
+} from 'lucide-react'
 import { agentApi } from '../../services/api'
+import ModalPortal from '../ui/ModalPortal'
 
 type HealthStatus = 'healthy' | 'bug' | 'critical' | 'idle'
 type ProgressStatus = 'on-track' | 'at-risk' | 'off-goal' | 'idle'
@@ -10,6 +23,7 @@ interface CardData {
   headline: string
   goal: string
   updated: string
+  title: string
 }
 
 interface WorkflowDashEntry {
@@ -36,9 +50,10 @@ function parseCard(content: string | undefined | null): CardData | null {
     const status = (el.getAttribute('data-status') || '').trim()
     const goal = (el.getAttribute('data-goal') || '').trim()
     const updated = (el.getAttribute('data-updated') || '').trim()
+    const title = (doc.querySelector('h1,h2,h3,h4')?.textContent || '').trim()
     const headlineEl = doc.querySelector('[data-field="headline"]')
     const headline = (headlineEl?.textContent || '').trim()
-    return { status, headline, goal, updated }
+    return { status, headline, goal, updated, title }
   } catch {
     return null
   }
@@ -54,20 +69,20 @@ function progressStatus(card: CardData | null): ProgressStatus {
   return 'idle'
 }
 
-const PILL_BASE = 'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium'
+const PILL_BASE = 'font-runloop-mono inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em]'
 
-const HEALTH_PILL: Record<HealthStatus, { className: string; label: string }> = {
-  healthy: { className: 'bg-emerald-500/15 text-emerald-600', label: 'Healthy' },
-  bug: { className: 'bg-amber-500/15 text-amber-600', label: 'Bug' },
-  critical: { className: 'bg-red-500/15 text-red-600', label: 'Critical' },
-  idle: { className: 'bg-muted text-muted-foreground', label: 'No status' },
+const HEALTH_PILL: Record<HealthStatus, { className: string; label: string; Icon: React.ComponentType<{ className?: string }> }> = {
+  healthy: { className: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300', label: 'Healthy', Icon: CheckCircle2 },
+  bug: { className: 'border-amber-500/25 bg-amber-500/10 text-amber-600 dark:text-amber-300', label: 'Bug', Icon: Bug },
+  critical: { className: 'border-red-500/25 bg-red-500/10 text-red-600 dark:text-red-300', label: 'Critical', Icon: CircleAlert },
+  idle: { className: 'border-border bg-muted/70 text-muted-foreground', label: 'No status', Icon: CircleHelp },
 }
 
-const PROGRESS_PILL: Record<ProgressStatus, { className: string; label: string }> = {
-  'on-track': { className: 'bg-emerald-500/15 text-emerald-600', label: 'On track' },
-  'at-risk': { className: 'bg-amber-500/15 text-amber-600', label: 'At risk' },
-  'off-goal': { className: 'bg-red-500/15 text-red-600', label: 'Off goal' },
-  idle: { className: 'bg-muted text-muted-foreground', label: 'Not yet assessed' },
+const PROGRESS_PILL: Record<ProgressStatus, { className: string; label: string; Icon: React.ComponentType<{ className?: string }> }> = {
+  'on-track': { className: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300', label: 'On track', Icon: CheckCircle2 },
+  'at-risk': { className: 'border-amber-500/25 bg-amber-500/10 text-amber-600 dark:text-amber-300', label: 'At risk', Icon: AlertTriangle },
+  'off-goal': { className: 'border-red-500/25 bg-red-500/10 text-red-600 dark:text-red-300', label: 'Off goal', Icon: CircleAlert },
+  idle: { className: 'border-border bg-muted/70 text-muted-foreground', label: 'Not assessed', Icon: Target },
 }
 
 function relativeTime(iso: string): string {
@@ -85,17 +100,146 @@ function relativeTime(iso: string): string {
   return `updated ${days}d ago`
 }
 
-const Pill: React.FC<{ icon: string; className: string; label: string }> = ({ icon, className, label }) => (
+function absoluteTime(iso: string): string {
+  if (!iso) return ''
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso
+  return date.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+const Pill: React.FC<{ Icon: React.ComponentType<{ className?: string }>; className: string; label: string }> = ({ Icon, className, label }) => (
   <span className={`${PILL_BASE} ${className}`}>
-    <span aria-hidden>{icon}</span>
+    <Icon className="h-3 w-3" aria-hidden />
     {label}
   </span>
 )
+
+const TriageMetric: React.FC<{
+  label: string
+  value: number
+  Icon: React.ComponentType<{ className?: string }>
+  className: string
+}> = ({ label, value, Icon, className }) => (
+  <span className={`font-runloop-mono inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] ${className}`}>
+    <Icon className="h-3.5 w-3.5" />
+    <span>{label}</span>
+    <span className="text-foreground">{value}</span>
+  </span>
+)
+
+const DetailRow: React.FC<{ label: string; value?: string }> = ({ label, value }) => {
+  if (!value) return null
+  return (
+    <div className="grid gap-1">
+      <div className="font-runloop-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/70">
+        {label}
+      </div>
+      <div className="text-sm leading-6 text-foreground">{value}</div>
+    </div>
+  )
+}
+
+const StatusDetail: React.FC<{
+  title: string
+  card: CardData | null
+  status: HealthStatus | ProgressStatus
+  pill: { className: string; label: string; Icon: React.ComponentType<{ className?: string }> }
+}> = ({ title, card, status, pill }) => (
+  <section className="rounded-lg border border-border bg-card/95 p-3">
+    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <div className="flex items-center gap-2">
+        <h3 className="text-sm font-semibold tracking-tight text-foreground">{title}</h3>
+        <Pill Icon={pill.Icon} className={pill.className} label={pill.label} />
+      </div>
+      <span className="font-runloop-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
+        {status}
+      </span>
+    </div>
+    {card ? (
+      <div className="space-y-4">
+        <DetailRow label="Headline" value={card.headline} />
+        <DetailRow label="Goal" value={card.goal} />
+        <DetailRow label="Updated" value={absoluteTime(card.updated)} />
+      </div>
+    ) : (
+      <p className="text-sm text-muted-foreground">No {title.toLowerCase()} card has been reported yet.</p>
+    )}
+  </section>
+)
+
+const WorkflowDetailModal: React.FC<{
+  entry: WorkflowDashEntry
+  onClose: () => void
+}> = ({ entry, onClose }) => {
+  const h = healthStatus(entry.health)
+  const p = progressStatus(entry.progress)
+  const updated = entry.health?.updated || entry.progress?.updated || ''
+  const goalLabel = entry.health?.goal?.trim() || entry.progress?.goal?.trim() || ''
+
+  return (
+    <ModalPortal>
+      <div
+        className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/55 p-4"
+        onClick={(event) => {
+          if (event.target === event.currentTarget) onClose()
+        }}
+      >
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${entry.label} details`}
+          className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-border bg-background shadow-2xl"
+        >
+          <div className="flex items-start justify-between gap-3 border-b border-border bg-card/95 px-4 py-3">
+            <div className="min-w-0">
+              <div className="font-runloop-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+                Workflow status
+              </div>
+              <h2 className="mt-1 truncate text-lg font-semibold tracking-tight text-foreground">{entry.label}</h2>
+              {goalLabel && (
+                <p className="mt-1 flex items-center gap-1.5 truncate text-xs text-muted-foreground">
+                  <Target className="h-3.5 w-3.5 shrink-0" />
+                  {goalLabel}
+                </p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close details"
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-auto p-4">
+            <div className="mb-4 grid gap-3 rounded-lg border border-border bg-card/60 p-3 sm:grid-cols-2">
+              <DetailRow label="Workspace path" value={entry.workspacePath} />
+              <DetailRow label="Latest update" value={updated ? `${absoluteTime(updated)} (${relativeTime(updated).replace(/^updated /, '')})` : ''} />
+            </div>
+            <div className="grid gap-3">
+              <StatusDetail title="Health" card={entry.health} status={h} pill={HEALTH_PILL[h]} />
+              <StatusDetail title="Goal alignment" card={entry.progress} status={p} pill={PROGRESS_PILL[p]} />
+            </div>
+          </div>
+        </div>
+      </div>
+    </ModalPortal>
+  )
+}
 
 export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
   const [entries, setEntries] = useState<WorkflowDashEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [selectedEntry, setSelectedEntry] = useState<WorkflowDashEntry | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -138,6 +282,15 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
   }, [workflows])
 
   useEffect(() => { void load() }, [load])
+
+  useEffect(() => {
+    if (!selectedEntry) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSelectedEntry(null)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [selectedEntry])
 
   const triage = useMemo(() => {
     let critical = 0, bug = 0, healthy = 0
@@ -219,7 +372,7 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
     <div className="flex items-center justify-between gap-3 px-4 pt-4">
       <div className="flex items-center gap-2">
         <LayoutDashboard className="h-5 w-5 text-primary" />
-        <h2 className="text-base font-semibold text-foreground">Org Dashboard</h2>
+        <h2 className="text-base font-semibold tracking-tight text-foreground">Org Dashboard</h2>
       </div>
       {refreshButton}
     </div>
@@ -257,23 +410,17 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
       )}
 
       {/* Triage bar */}
-      <div className="mx-4 mt-3 flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-card px-3 py-2.5 shadow-sm">
-        <span className="text-xs font-semibold text-foreground">
-          {triage.needAttention} need attention
+      <div className="mx-4 mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card/95 px-3 py-2.5 shadow-sm">
+        <span className="font-runloop-mono rounded-md border border-border bg-background/70 px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-foreground">
+          Attention {triage.needAttention}
         </span>
-        <span className="text-muted-foreground">·</span>
-        <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
-          <span className="inline-flex items-center gap-1">🔴 {triage.critical}</span>
-          <span className="inline-flex items-center gap-1">🟠 {triage.bug}</span>
-          <span className="inline-flex items-center gap-1">🟢 {triage.healthy}</span>
-        </span>
-        <span className="text-muted-foreground">·</span>
-        <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
-          <Target className="h-3.5 w-3.5" />
-          <span>off-goal {triage.offGoal}</span>
-          <span>at-risk {triage.atRisk}</span>
-          <span>on-track {triage.onTrack}</span>
-        </span>
+        <TriageMetric label="Critical" value={triage.critical} Icon={CircleAlert} className="border-red-500/25 bg-red-500/10 text-red-600 dark:text-red-300" />
+        <TriageMetric label="Bug" value={triage.bug} Icon={Bug} className="border-amber-500/25 bg-amber-500/10 text-amber-600 dark:text-amber-300" />
+        <TriageMetric label="Healthy" value={triage.healthy} Icon={CheckCircle2} className="border-emerald-500/25 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300" />
+        <span className="hidden h-5 w-px bg-border sm:block" />
+        <TriageMetric label="Off goal" value={triage.offGoal} Icon={CircleAlert} className="border-red-500/20 bg-background/60 text-muted-foreground" />
+        <TriageMetric label="At risk" value={triage.atRisk} Icon={AlertTriangle} className="border-amber-500/20 bg-background/60 text-muted-foreground" />
+        <TriageMetric label="On track" value={triage.onTrack} Icon={Target} className="border-emerald-500/20 bg-background/60 text-muted-foreground" />
       </div>
 
       {/* Status groups */}
@@ -286,8 +433,8 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
               ) : (
                 <Activity className="h-4 w-4 text-emerald-500" />
               )}
-              <h3 className="text-sm font-semibold text-foreground">{group}</h3>
-              <span className="text-xs text-muted-foreground">
+              <h3 className="text-sm font-semibold tracking-tight text-foreground">{group}</h3>
+              <span className="font-runloop-mono text-[11px] text-muted-foreground">
                 {items.length} workflow{items.length !== 1 ? 's' : ''}
               </span>
             </div>
@@ -301,12 +448,23 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
                 return (
                   <div
                     key={entry.workspacePath}
-                    className="rounded-2xl border border-border bg-card p-3 shadow-sm"
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Open ${entry.label} details`}
+                    onClick={() => setSelectedEntry(entry)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        setSelectedEntry(entry)
+                      }
+                    }}
+                    className="cursor-pointer rounded-lg border border-border bg-card/95 p-3 text-left shadow-sm transition-colors hover:border-primary/40 hover:bg-card focus:outline-none focus:ring-2 focus:ring-ring/50"
                   >
                     <div className="flex items-start justify-between gap-2">
                       <h4 className="min-w-0 truncate text-sm font-semibold text-foreground" title={entry.label}>
                         {entry.label}
                       </h4>
+                      {rel && <span className="font-runloop-mono shrink-0 text-[10px] text-muted-foreground/80">{rel.replace(/^updated /, '')}</span>}
                     </div>
                     {goalLabel && (
                       <p className="mt-0.5 flex items-center gap-1 truncate text-[11px] text-muted-foreground" title={goalLabel}>
@@ -315,21 +473,26 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
                       </p>
                     )}
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                      <Pill icon="🩺" className={HEALTH_PILL[h].className} label={HEALTH_PILL[h].label} />
-                      <Pill icon="🎯" className={PROGRESS_PILL[p].className} label={PROGRESS_PILL[p].label} />
+                      <Pill Icon={HEALTH_PILL[h].Icon} className={HEALTH_PILL[h].className} label={HEALTH_PILL[h].label} />
+                      <Pill Icon={PROGRESS_PILL[p].Icon} className={PROGRESS_PILL[p].className} label={PROGRESS_PILL[p].label} />
                     </div>
-                    <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                    <div className="mt-2 space-y-1.5 text-xs leading-5 text-muted-foreground">
                       {entry.health?.headline && (
-                        <p className="line-clamp-2">🩺 {entry.health.headline}</p>
+                        <p className="line-clamp-2">
+                          <span className="font-runloop-mono mr-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/70">Health</span>
+                          {entry.health.headline}
+                        </p>
                       )}
                       {entry.progress?.headline && (
-                        <p className="line-clamp-2">🎯 {entry.progress.headline}</p>
+                        <p className="line-clamp-2">
+                          <span className="font-runloop-mono mr-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/70">Goal</span>
+                          {entry.progress.headline}
+                        </p>
                       )}
                       {!entry.health?.headline && !entry.progress?.headline && (
                         <p className="italic">No status reported yet.</p>
                       )}
                     </div>
-                    {rel && <p className="mt-2 text-[10px] text-muted-foreground/80">{rel}</p>}
                   </div>
                 )
               })}
@@ -337,6 +500,12 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
           </section>
         ))}
       </div>
+      {selectedEntry && (
+        <WorkflowDetailModal
+          entry={selectedEntry}
+          onClose={() => setSelectedEntry(null)}
+        />
+      )}
     </div>
   )
 }

@@ -167,12 +167,12 @@ export function LogViewer({ workspacePath }: LogViewerProps) {
     )
   }
 
-  // Frame the log like a document on a page rather than a raw edge-to-edge iframe:
-  // a subtle backdrop with the content centered and width-capped, so a wide panel
-  // reads as a framed page (the way the report does) instead of a stretched column.
+  // Let the Pulse document own its responsive width. The workflow pane itself
+  // already controls laptop/mobile layout; adding another max-width here makes
+  // full-screen Pulse look artificially narrow.
   return (
     <div className="h-full w-full overflow-hidden bg-muted/30 dark:bg-black/20">
-      <div className="mx-auto h-full w-full max-w-[1040px]">
+      <div className="h-full w-full">
         {isHtml ? (
           <HtmlRenderer content={themedContent} />
         ) : (

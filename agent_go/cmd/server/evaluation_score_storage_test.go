@@ -57,16 +57,6 @@ func TestEvaluationScoreMigrationWritesOnlyScoreFiles(t *testing.T) {
 	api := &countingWorkspaceAPI{
 		base: &mockWorkspaceAPI{files: map[string]string{
 			workspacePath + "/evaluation/runs/iteration-1/default/evaluation_report.json": string(reportJSON),
-			workspacePath + "/planning/metrics.json": `{
-				"metrics": [{
-					"id": "run_score",
-					"unit": "points",
-					"direction": "higher_better",
-					"mode": "target",
-					"target": 10,
-					"source": {"type": "eval_step", "id": "eval-workflow-success", "field": "score"}
-				}]
-			}`,
 		}},
 		counts: map[string]int{},
 	}

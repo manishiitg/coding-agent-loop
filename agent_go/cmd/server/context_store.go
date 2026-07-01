@@ -91,23 +91,12 @@ func AppendContextRule(ctx context.Context, workspacePath, section, ruleText str
 
 // CaptureContext is the high-level helper used by the capture_context tool.
 // It appends the rule text to knowledgebase/context/context.md and returns a
-// summary of what was written (section, target metrics, applied changes). It
+// summary of what was written (section and applied changes). It
 // does NOT write to the improvement ledger — the agent narrates context
 // captures into builder/improve.html on its turn.
-//
-// Non-empty target_metrics is the mandatory validation gate for
-// business-context capture: every persisted rule must declare what metric(s)
-// it is meant to move. Caller is responsible for verifying the workflow
-// profile actually allows business-context accumulation.
-func CaptureContext(ctx context.Context, workspacePath, section, ruleText string, targetMetrics []string, exampleNote string) (DecisionEntry, error) {
-	if len(targetMetrics) == 0 {
-		return DecisionEntry{}, fmt.Errorf("capture_context requires non-empty target_metrics")
-	}
+func CaptureContext(ctx context.Context, workspacePath, section, ruleText string, exampleNote string) (DecisionEntry, error) {
 	if strings.TrimSpace(ruleText) == "" {
 		return DecisionEntry{}, fmt.Errorf("capture_context requires context text")
-	}
-	if err := validateContextTargetMetrics(ctx, workspacePath, targetMetrics); err != nil {
-		return DecisionEntry{}, err
 	}
 	section = strings.TrimSpace(section)
 	if section == "" {
@@ -127,7 +116,6 @@ func CaptureContext(ctx context.Context, workspacePath, section, ruleText string
 		Trigger:        "capture-context",
 		Rationale:      rationale,
 		AppliedChanges: []string{"knowledgebase/context/context.md"},
-		TargetMetrics:  targetMetrics,
 		RuleAdded:      ruleText,
 		RuleSection:    section,
 	}
@@ -135,22 +123,20 @@ func CaptureContext(ctx context.Context, workspacePath, section, ruleText string
 }
 
 type CaptureContextInput struct {
-	Section       string   `json:"section,omitempty"`
-	ContextText   string   `json:"context_text,omitempty"`
-	TargetMetrics []string `json:"target_metrics,omitempty"`
-	ExampleNote   string   `json:"example_note,omitempty"`
+	Section     string `json:"section,omitempty"`
+	ContextText string `json:"context_text,omitempty"`
+	ExampleNote string `json:"example_note,omitempty"`
 }
 
 type CaptureContextOutput struct {
 	DecisionID     string   `json:"decision_id,omitempty"`
 	Status         string   `json:"status"`
 	Section        string   `json:"section,omitempty"`
-	TargetMetrics  []string `json:"target_metrics,omitempty"`
 	AppliedChanges []string `json:"applied_changes,omitempty"`
 }
 
 func CaptureContextTool(ctx context.Context, workspacePath string, input CaptureContextInput) (*CaptureContextOutput, error) {
-	decision, err := CaptureContext(ctx, workspacePath, input.Section, input.ContextText, input.TargetMetrics, input.ExampleNote)
+	decision, err := CaptureContext(ctx, workspacePath, input.Section, input.ContextText, input.ExampleNote)
 	if err != nil {
 		return nil, err
 	}
@@ -158,41 +144,8 @@ func CaptureContextTool(ctx context.Context, workspacePath string, input Capture
 		DecisionID:     decision.ID,
 		Status:         "captured",
 		Section:        decision.RuleSection,
-		TargetMetrics:  decision.TargetMetrics,
 		AppliedChanges: decision.AppliedChanges,
 	}, nil
-}
-
-func validateContextTargetMetrics(ctx context.Context, workspacePath string, targetMetrics []string) error {
-	file, exists, err := ReadMetricsFile(ctx, workspacePath)
-	if err != nil {
-		return fmt.Errorf("read metrics.json: %w", err)
-	}
-	if !exists || file == nil || len(file.Metrics) == 0 {
-		return fmt.Errorf("capture_context requires existing planning/metrics.json metrics; run /define-success before capturing context")
-	}
-	active := make(map[string]struct{}, len(file.Metrics))
-	for _, metric := range file.Metrics {
-		id := strings.TrimSpace(metric.ID)
-		if id != "" {
-			active[id] = struct{}{}
-		}
-	}
-	var missing []string
-	for _, id := range targetMetrics {
-		trimmed := strings.TrimSpace(id)
-		if trimmed == "" {
-			missing = append(missing, "<empty>")
-			continue
-		}
-		if _, ok := active[trimmed]; !ok {
-			missing = append(missing, trimmed)
-		}
-	}
-	if len(missing) > 0 {
-		return fmt.Errorf("capture_context target_metrics not found in active metrics: %s", strings.Join(missing, ", "))
-	}
-	return nil
 }
 
 func truncate(s string, n int) string {

@@ -1267,7 +1267,7 @@ func RegisterRunFullEvaluationTool(
 ) {
 	if err := mcpAgent.RegisterCustomTool(
 		"run_full_evaluation",
-		"Run the full evaluation pipeline: execute all evaluation steps against a target execution run, then publish their outputs into evaluation_report.json for metrics and review. Evaluation always targets iteration-0 (the default execution run). Runs in background — you will be notified when complete.",
+		"Run the full evaluation pipeline: execute all evaluation steps against a target execution run, then publish their outputs into evaluation_report.json for review. Evaluation always targets iteration-0 (the default execution run). Runs in background — you will be notified when complete.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

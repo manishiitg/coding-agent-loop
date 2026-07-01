@@ -3012,7 +3012,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     
     if (activeTab) {
       chatStore.resetTabChat(activeTab.tabId)
-      chatStore.setTabConfig(activeTab.tabId, { queuedMessages: [], isQueueProcessing: false })
+      chatStore.setTabConfig(activeTab.tabId, {
+        queuedMessages: [],
+        isQueueProcessing: false,
+      })
     } else {
       // Legacy fallback for the rare case where New Chat is triggered before
       // a tab exists. Normal tabbed chats use resetTabChat above.
@@ -3243,17 +3246,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
             {/* landing — fresh automation chat. Prefer the previous-chats panel
                 (WorkflowLayout supplies the node + resume handler so the
-                workflow-scoped history logic lives in one place). With no panel,
-                fall back to the workflow empty states — in terminal view mode the
-                TerminalCenter owns its surface (empty states are suppressed there,
-                same as before) so it isn't covered by an empty state. */}
+                workflow-scoped history logic lives in one place). TerminalCenter
+                is intentionally not rendered on landing: "Waiting for terminal"
+                is only for an active/pending turn after a message was sent. */}
             {workflowSurface === 'landing' && (
               showWorkflowPreviousChatsPanel ? (
                 workflowPreviousChatsPanel
-              ) : activeEventViewMode === 'terminal' ? (
-                activeTab?.sessionId && (
-                  <TerminalCenter currentSessionId={activeTab.sessionId} compact={false} hasConversationActivity={!suppressTerminalPane && (hasConversationContent || activeTabStreaming)} />
-                )
               ) : (
                 <>
                   {/* Empty State for non-chat phases. */}

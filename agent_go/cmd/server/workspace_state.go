@@ -349,17 +349,16 @@ type WorkflowSummary struct {
 }
 
 type WorkflowOverviewRunFolderDetail struct {
-	Folder         RunFolderInfo             `json:"folder"`
-	TotalSteps     int                       `json:"total_steps"`
-	CompletedSteps int                       `json:"completed_steps"`
-	LastUpdated    *string                   `json:"last_updated,omitempty"`
-	MetricsSummary *WorkflowMetricRunSummary `json:"metrics_summary,omitempty"`
-	CostUSD        *float64                  `json:"cost_usd,omitempty"`
-	StartedAt      *string                   `json:"started_at,omitempty"`
-	CompletedAt    *string                   `json:"completed_at,omitempty"`
-	TriggeredBy    *string                   `json:"triggered_by,omitempty"`
-	Status         string                    `json:"status"`
-	Models         *RunMetadataModels        `json:"models,omitempty"`
+	Folder         RunFolderInfo      `json:"folder"`
+	TotalSteps     int                `json:"total_steps"`
+	CompletedSteps int                `json:"completed_steps"`
+	LastUpdated    *string            `json:"last_updated,omitempty"`
+	CostUSD        *float64           `json:"cost_usd,omitempty"`
+	StartedAt      *string            `json:"started_at,omitempty"`
+	CompletedAt    *string            `json:"completed_at,omitempty"`
+	TriggeredBy    *string            `json:"triggered_by,omitempty"`
+	Status         string             `json:"status"`
+	Models         *RunMetadataModels `json:"models,omitempty"`
 }
 
 type WorkflowOverview struct {
@@ -374,13 +373,12 @@ type WorkflowOverview struct {
 
 // RunSummary is the minimal metadata for the most recent run folder.
 type RunSummary struct {
-	Folder         string                    `json:"folder"`
-	Status         string                    `json:"status"`
-	CreatedAt      string                    `json:"created_at,omitempty"`
-	CompletedAt    *string                   `json:"completed_at,omitempty"`
-	CompletedSteps int                       `json:"completed_steps"`
-	TotalSteps     int                       `json:"total_steps"`
-	MetricsSummary *WorkflowMetricRunSummary `json:"metrics_summary,omitempty"`
+	Folder         string  `json:"folder"`
+	Status         string  `json:"status"`
+	CreatedAt      string  `json:"created_at,omitempty"`
+	CompletedAt    *string `json:"completed_at,omitempty"`
+	CompletedSteps int     `json:"completed_steps"`
+	TotalSteps     int     `json:"total_steps"`
 }
 
 func selectWorkflowSummaryFolder(ctx context.Context, workspacePath string, folders []string, activeRunFolder string) (string, *RunMetadata) {
@@ -539,7 +537,6 @@ func (api *StreamingAPI) handleGetWorkflowsSummary(w http.ResponseWriter, r *htt
 				run.Status = "unknown"
 			}
 
-			run.MetricsSummary = loadWorkflowMetricRunSummary(ctx, workspacePath, latestFolder)
 			summary.LatestRun = run
 			summaries[idx] = summary
 		}(i, wp)
@@ -665,8 +662,6 @@ func (api *StreamingAPI) handleGetWorkflowsOverview(w http.ResponseWriter, r *ht
 					detail.CompletedSteps = len(folder.Progress.CompletedStepIndices)
 					detail.TotalSteps = folder.Progress.TotalSteps
 				}
-
-				detail.MetricsSummary = loadWorkflowMetricRunSummary(ctx, workspacePath, folder.Name)
 
 				if runCosts, ok := costByFolder[folder.Name]; ok && runCosts.TokenUsage != nil {
 					totalCost := orchestrator.TokenUsageTotalCostUSD(runCosts.TokenUsage)

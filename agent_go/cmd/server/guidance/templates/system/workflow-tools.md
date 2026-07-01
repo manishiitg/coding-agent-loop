@@ -26,7 +26,7 @@ returns the live JSON schema for the tool.
 - **`harden_workflow(group_name?, focus?)`** — Reliability repair. Always reads `iteration-0` eval reports and execution outputs. Pass `group_name` to scope to one group, or omit it to analyze all groups under `iteration-0`. Use when the path is otherwise sound but local step behavior, validation, artifact shape, config, learnings, KB/db/report/eval wiring, or deterministic invariants are broken. It patches `main.py` only for `scripted` steps and deletes stale `main.py` files for `agentic` steps. **Precondition: call `get_reference_doc(kind="optimize-playbook")` first.**
 - **Objective + success criteria** — Edit `soul/soul.md` directly via shell (fill in the `## Objective` and `## Success Criteria` sections). `soul.md` is the canonical source; `plan.json` no longer stores these fields. No dedicated tool — use `diff_patch_workspace_file` or a shell heredoc.
 - **Notification preference** — When the user tells you *when/what they want to be alerted about* for this workflow (e.g. "ping me every run with the eval score", "only WhatsApp me when it breaks, never on recovery", "always include the Pulse log link", "don't notify me at all"), capture it verbatim-in-intent as a `## Notifications` section in `soul/soul.md` (same shell/`diff_patch` edit as above). The post-run monitor reads that section and obeys it, overriding its default transition-only policy. Keep it short and plain-language — it's an instruction to the monitor, not config. If the user hasn't said anything, leave the section out and the monitor keeps the safe default (notify only on a transition).
-- **`replan_workflow_from_results(group_name?, focus?)`** — Alignment rewrite: add/remove/reorder steps using actual `iteration-0` run/eval evidence so the workflow better satisfies `soul/soul.md` objective, success criteria, and any outcome metrics. Pass `group_name` to scope to one group. Use when the workflow path is misaligned with the desired result. When replanning keeps or converts a step to `agentic`, remove any stale `learnings/{step-id}/main.py` so future agents do not confuse ephemeral agentic with reusable scripted. Use `harden_workflow` for local reliability, prompt/config, validation, or artifact-drift fixes. **Precondition: call `get_reference_doc(kind="optimize-playbook")` first.**
+- **`replan_workflow_from_results(group_name?, focus?)`** — Alignment rewrite: add/remove/reorder steps using actual `iteration-0` run/eval evidence so the workflow better satisfies `soul/soul.md` objective and success criteria. Pass `group_name` to scope to one group. Use when the workflow path is misaligned with the desired result. When replanning keeps or converts a step to `agentic`, remove any stale `learnings/{step-id}/main.py` so future agents do not confuse ephemeral agentic with reusable scripted. Use `harden_workflow` for local reliability, prompt/config, validation, or artifact-drift fixes. **Precondition: call `get_reference_doc(kind="optimize-playbook")` first.**
 - **`review_workflow_results(iteration?, group_name?, focus?)`** — Read-only outcome review: checks whether a real run is achieving the objective and success criteria, and whether the evaluation actually measures them properly.
 - **`review_workflow_timing(iteration?, group_name?, focus?)`** — Read-only latency review: finds the slowest groups/steps/tools/LLM calls and recommends faster descriptions, fewer handoffs, safer step merges, or plan changes.
 - **`review_workflow_costs(iteration?, group_name?, focus?)`** — Read-only cost review: finds the biggest cost drivers and recommends cheaper models, fewer retries/handoffs, better descriptions, or plan changes without sacrificing success criteria.
@@ -115,7 +115,7 @@ Every schedule in `workflow.json` has a `schedule_type` — `"cron"` (default) o
 Workflow schedules always use the workshop builder execution path. Do not create direct `mode="workflow"` schedules; legacy manifests with that value are normalized to workshop execution.
 
 - **Run** (`mode=workshop`, `workshop_mode=run`) — LLM-driven execution with per-step notifications. `messages` is optional; if omitted, the scheduler sends a default full-workflow run instruction. Prefer an explicit message when you need group-specific wording, backup instructions, or strict unattended behavior.
-- **Optimize** (`mode=workshop`, `workshop_mode=optimizer`) — LLM-driven optimizer run. Provide a `messages` array with exact group scope, `runs/iteration-0` evidence scope, metric/eval/log review, and bounded stop conditions.
+- **Optimize** (`mode=workshop`, `workshop_mode=optimizer`) — LLM-driven optimizer run. Provide a `messages` array with exact group scope, `runs/iteration-0` evidence scope, eval/log review, and bounded stop conditions.
 
 **Default mode rule:** create workflow schedules with `mode="workshop"`. New schedules should never use `mode="workflow"`.
 
@@ -149,7 +149,7 @@ Confirm with the user before skipping backup on a recurring schedule.
 - Tell the agent to skip or use defaults for anything unclear rather than pausing to ask.
 - Never include open-ended questions or `"let me know"` style instructions.
 - **Bad**: `"Run the workflow and ask me which steps to optimize"`.
-- **Good**: `"Review runs/iteration-0 for group-1, read metrics/eval/log evidence, then choose harden_workflow or replan_workflow_from_results using the scheduled decision model. Log no action if nothing is ready."`
+- **Good**: `"Review runs/iteration-0 for group-1, read eval/log evidence, then choose harden_workflow or replan_workflow_from_results using the scheduled decision model. Log no action if nothing is ready."`
 
 ### Workshop optimizer-style schedules
 
@@ -159,7 +159,7 @@ For non-Auto-Improve optimizer messages:
 - Name the configured `group_names`.
 - Use only `runs/iteration-0` evidence for those groups.
 - Inspect run outputs plus execution/tool logs for failures, retries, wrong tool arguments, timeouts, validation errors, and stuck steps.
-- Read `planning/metrics.json` / `db/metrics_history.jsonl` / `builder/improve.html` (the single durable log; fold in any legacy `builder/review.html`) / recent `planning/changelog/` entries.
+- Read `builder/improve.html` (the single durable log; fold in any legacy `builder/review.html`), recent `planning/changelog/` entries, and current run/eval evidence.
 - Handle report accuracy/live-data/layout work with report-plan tools only when the recurring job explicitly includes report quality or an unresolved review/improve item queues it.
 
 For active workflows, prefer a workshop optimizer-style check after every workflow run, or at worst after every two runs; if cron cannot trigger on run completion, approximate with a frequent lightweight schedule that no-ops when there is no new evidence. Weekly continuous improvement is appropriate for weekly or explicitly low-touch workflows. After material plan/config changes, tighten the improve cadence for 24–48 hours or until the next one or two post-change `iteration-0` runs have been reviewed.

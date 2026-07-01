@@ -144,13 +144,15 @@ type PreviewDevice = 'mobile' | 'desktop'
 // Shared device-width preference, synced across the on-pane bar, the report
 // shell, and the plan/flow shell via REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT.
 // Per-workflow device preference, scoped by `scopeId` (the workflow's
-// workspacePath). A workflow with no saved choice defaults to mobile.
+// workspacePath). A workflow with no saved choice defaults to desktop so the
+// report/plan uses the available workspace unless the user explicitly chooses
+// the phone preview.
 export function usePreviewDevice(scopeId?: string | null): PreviewDevice {
   const read = (): PreviewDevice => {
     try {
       const v = localStorage.getItem(reportPreviewPreferenceKey(scopeId))
-      return v === 'mobile' || v === 'desktop' ? v : 'mobile'
-    } catch { return 'mobile' }
+      return v === 'mobile' || v === 'desktop' ? v : 'desktop'
+    } catch { return 'desktop' }
   }
   const [pref, setPref] = React.useState<PreviewDevice>(read)
   React.useEffect(() => {

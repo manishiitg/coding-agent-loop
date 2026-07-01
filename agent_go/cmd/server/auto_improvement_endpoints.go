@@ -13,76 +13,11 @@ import (
 // =====================================================================
 // HTTP endpoints for the auto-improvement framework.
 //
-// Routes (registered in server.go alongside the other api/workflow/* routes):
-//   GET  /api/workflow/metrics?workspace_path=...
-//
 // All read-only.
 // =====================================================================
 
-// MetricsResponse is the JSON shape of GET /api/workflow/metrics.
-type MetricsResponse struct {
-	Success bool         `json:"success"`
-	File    *MetricsFile `json:"file,omitempty"`
-	Error   string       `json:"error,omitempty"`
-}
-
-func (api *StreamingAPI) handleGetMetrics(w http.ResponseWriter, r *http.Request) {
-	if !setupCORS(w, r, http.MethodGet) {
-		return
-	}
-	workspacePath, ok := requireWorkspacePath(w, r)
-	if !ok {
-		return
-	}
-	file, exists, err := ReadMetricsFile(r.Context(), workspacePath)
-	if err != nil {
-		writeAIJSON(w, MetricsResponse{Success: false, Error: err.Error()})
-		return
-	}
-	if !exists {
-		writeAIJSON(w, MetricsResponse{Success: true, File: &MetricsFile{Metrics: []Metric{}}})
-		return
-	}
-	writeAIJSON(w, MetricsResponse{Success: true, File: file})
-}
-
-// MetricsHistoryResponse is the JSON shape of GET /api/workflow/metrics-history.
-// Rows are the raw appended records from db/metrics_history.jsonl, sorted by
-// completed_at ascending so the frontend can render them as a time series
-// without re-sorting.
-type MetricsHistoryResponse struct {
-	Success bool                `json:"success"`
-	Rows    []MetricSnapshotRow `json:"rows"`
-	Error   string              `json:"error,omitempty"`
-}
-
-// handleGetMetricsHistory returns the per-run metric snapshots produced by
-// the post-run snapshot hook (see metrics_snapshot.go). One row per metric per
-// run. Empty array (not error) when the file does not yet exist — common for
-// workflows whose first run hasn't completed since the hook shipped.
-func (api *StreamingAPI) handleGetMetricsHistory(w http.ResponseWriter, r *http.Request) {
-	if !setupCORS(w, r, http.MethodGet) {
-		return
-	}
-	workspacePath, ok := requireWorkspacePath(w, r)
-	if !ok {
-		return
-	}
-	historyPath := path.Join(strings.Trim(workspacePath, "/"), "db", "metrics_history.jsonl")
-	rows, err := readJSONLRecords[MetricSnapshotRow](r.Context(), historyPath)
-	if err != nil {
-		writeAIJSON(w, MetricsHistoryResponse{Success: false, Rows: []MetricSnapshotRow{}, Error: err.Error()})
-		return
-	}
-	sort.Slice(rows, func(i, j int) bool {
-		return rows[i].CompletedAt < rows[j].CompletedAt
-	})
-	writeAIJSON(w, MetricsHistoryResponse{Success: true, Rows: rows})
-}
-
 // FrameworkHealthResponse is the JSON shape of GET /api/workflow/framework-health.
-// One stop shop for "is the framework wired correctly?": soul preconditions,
-// success-criteria coverage by metrics, and the unanchored-metric set.
+// One stop shop for "is the framework wired correctly?": soul preconditions.
 type FrameworkHealthResponse struct {
 	Success           bool   `json:"success"`
 	SoulExists        bool   `json:"soul_exists"`
@@ -93,9 +28,8 @@ type FrameworkHealthResponse struct {
 	Error             string `json:"error,omitempty"`
 }
 
-// handleGetFrameworkHealth surfaces the cross-check between soul.md and
-// metrics.json so the popup can warn the operator about coverage gaps and
-// unanchored metrics in one place.
+// handleGetFrameworkHealth surfaces the soul.md preconditions used by workflow
+// setup and improvement flows.
 func (api *StreamingAPI) handleGetFrameworkHealth(w http.ResponseWriter, r *http.Request) {
 	if !setupCORS(w, r, http.MethodGet) {
 		return

@@ -39,7 +39,7 @@ Good company-style goal examples:
 - "Grow qualified outbound pipeline to **$250k by 2026-09-30**, from **$40k today**, measured
   from `Workflow/outbound/reports/pipeline.html`, owner: Sales Ops, reviewed weekly."
 - "Keep proposal quality at **>= 0.90 eval score for 4 consecutive runs** by 2026-07-31,
-  measured from `planning/metrics.json` + `db/metrics_history.jsonl`, owner: Workflow owner."
+  measured from evaluation reports, owner: Workflow owner."
 - "Reduce daily bidding cost to **<= $0.35/run** while keeping submitted proposals **>= 5/week**,
   measured from workflow cost telemetry and proposal DB, owner: Chief of Staff."
 

@@ -1150,12 +1150,10 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"improve_db",
 	}
 
-	// Auto-improvement tools. Metric tools are optimizer-only; capture_context is
-	// also available in run mode so users can say "remember this" while executing
-	// the workflow, with explicit confirmation and target metric anchoring.
+	// Auto-improvement tools. capture_context is also available in run mode so
+	// users can say "remember this" while executing the workflow, with explicit
+	// confirmation.
 	autoImprovement := []string{
-		"propose_metric",
-		"retire_metric",
 		"capture_context",
 		"get_workflow_command_guidance", // canonical slash-command prose; see guidance package.
 		"get_reference_doc",             // reference docs (system/*.md) loaded on demand; see guidance package.
@@ -1183,8 +1181,8 @@ func GetToolsForWorkshopMode(mode string) []string {
 		// derives the current "phase" from workspace state (does a plan
 		// exist? are there successful runs?) and uses the appropriate tools.
 		// Tools that only make sense post-runs (harden_workflow,
-		// replan_workflow_from_results, eval, propose_metric, retire_metric)
-		// are present here; their downstream agents check evidence and refuse
+		// replan_workflow_from_results, eval) are present here; their
+		// downstream agents check evidence and refuse
 		// when state isn't ready.
 		tools = append(tools, execution...)
 		tools = append(tools, stepConfig...)
@@ -1767,9 +1765,9 @@ The person you talk to is almost always a **business owner / operator, not a dev
 {{if eq .WorkshopMode "workshop"}}
 **First, determine the current phase from workspace state.** Read `+"`planning/plan.json`"+` (does a plan exist?) and `+"`runs/`"+` (any successful runs?) and choose your default behavior accordingly:
 
-- **No plan / incomplete plan** → DESIGN phase. Talk through the workflow before adding steps. Use plan modification tools to build it out step by step. Set new steps to `+"`agentic`"+`. Do NOT call `+"`harden_workflow`"+`, `+"`replan_workflow_from_results`"+`, eval tools, or `+"`propose_metric`"+` / `+"`retire_metric`"+` — these need run evidence to be meaningful.
+- **No plan / incomplete plan** → DESIGN phase. Talk through the workflow before adding steps. Use plan modification tools to build it out step by step. Set new steps to `+"`agentic`"+`. Do NOT call `+"`harden_workflow`"+`, `+"`replan_workflow_from_results`"+`, or eval tools — these need run evidence to be meaningful.
 - **Plan exists, no successful runs yet** → STABILIZE phase. Use `+"`execute_step`"+` and `+"`run_full_workflow`"+` to find and fix problems. Update step descriptions, validation, config. Hardening / replanning still don't apply yet — there's no evidence to base them on.
-- **Plan + successful runs** → HARDEN / IMPROVE phase. `+"`harden_workflow`"+`, `+"`replan_workflow_from_results`"+`, eval, and metric tools become available. Use evidence from `+"`runs/`"+` and `+"`evaluation/`"+` to drive decisions.
+- **Plan + successful runs** → HARDEN / IMPROVE phase. `+"`harden_workflow`"+`, `+"`replan_workflow_from_results`"+`, and eval tools become available. Use evidence from `+"`runs/`"+` and `+"`evaluation/`"+` to drive decisions.
 
 Until you've checked, do not assume the workflow needs hardening or fresh design.
 {{end}}
@@ -1797,9 +1795,9 @@ The workflow has a **live frontend report viewer** at the top toolbar's "Report"
 	{{if eq .WorkshopMode "run"}}
 	## Context Capture — Allowed In Run Mode
 
-	Run mode can execute workflow-backed work directly, run individual/orphan steps, run the full workflow, and inspect results. It may read KB/learnings/db/report/run artifacts whenever they are needed to answer correctly, but it does not edit plan/config/eval/metrics/report artifacts. One exception is durable user-owned runtime context. If the user says something that future workflow runs should remember — rules, preferences, constraints, ICP filters, approval rules, brand voice, examples, or domain assumptions — ask whether to capture it.
+	Run mode can execute workflow-backed work directly, run individual/orphan steps, run the full workflow, and inspect results. It may read KB/learnings/db/report/run artifacts whenever they are needed to answer correctly, but it does not edit plan/config/eval/report artifacts. One exception is durable user-owned runtime context. If the user says something that future workflow runs should remember — rules, preferences, constraints, ICP filters, approval rules, brand voice, examples, or domain assumptions — ask whether to capture it.
 
-	If confirmed, call `+"`capture_context`"+` with a concise `+"`context_text`"+`, a section name, and existing `+"`target_metrics`"+`. Do not manually edit `+"`knowledgebase/context/context.md`"+`; the tool writes that file for you. If there are no metrics yet, tell the user setup is needed before context can be anchored and suggest switching to Workshop for `+"`/define-success`"+`.
+	If confirmed, call `+"`capture_context`"+` with a concise `+"`context_text`"+` and a section name. Do not manually edit `+"`knowledgebase/context/context.md`"+`; the tool writes that file for you.
 	{{end}}
 
 {{if eq .WorkshopMode "workshop"}}
@@ -1852,7 +1850,7 @@ Each workflow has three separate stores that survive across runs: `+"`learnings/
 
 **Read previous builder conversations** from `+"`builder/`"+` folder (`+"`ls -t builder/*.json | head -3`"+`) to avoid repeating failed approaches.
 
-**Core loop:** run → eval → classify → act → verify. Treat harden, replan, eval improvement, metric cleanup, and no-action/blocker as peer outcomes. For the full playbook (harden_workflow details, optimization workflow steps, progressive hardening loop across groups, when-to-redirect decision tree): `+"`get_reference_doc(kind=\"workshop-mode-flow\")`"+`. Load before choosing between harden_workflow and replan_workflow_from_results, or before running a multi-group hardening loop.
+**Core loop:** run → eval → classify → act → verify. Treat harden, replan, eval improvement, and no-action/blocker as peer outcomes. For the full playbook (harden_workflow details, optimization workflow steps, progressive hardening loop across groups, when-to-redirect decision tree): `+"`get_reference_doc(kind=\"workshop-mode-flow\")`"+`. Load before choosing between harden_workflow and replan_workflow_from_results, or before running a multi-group hardening loop.
 {{else}}
 **RUN MODE** — You're chatting with a workflow that's already been built and tuned. Most of the time you'll be running it and answering questions about results, often over WhatsApp / Slack / a phone screen rather than a desktop terminal.
 
@@ -6004,7 +6002,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// that should instead have been hardened in place.
 	if err := mcpAgent.RegisterCustomTool(
 		"replan_workflow_from_results",
-		"Start a background agent that reads actual outputs, validation failures, evaluation results, and metric evidence from the retained run window (latest iteration-0 plus older iteration-N runs selected by improve.html/decision timestamps), then rewrites planning/plan.json so the workflow path better satisfies the existing objective, success criteria, and outcome metrics. When replanning keeps or converts a step to agentic, it also removes any stale learnings/{step-id}/main.py so future agents do not confuse ephemeral agentic with reusable scripted. Use this to EXPLORE a different strategy when the current approach is capped — even executed perfectly it cannot satisfy the success criteria / primary metric (typically after harden_workflow has plateaued while reliability/guardrail metrics stay healthy), or run evidence reveals a materially better, out-of-the-box approach. Replan changes the STRATEGY (different business work, a missing capability, a different output/evidence, step ordering/boundaries) — not just execution. It rewrites the plan, so the bet must be evidence-backed, not speculative. Contrast harden_workflow, which refines the SAME strategy. Returns execution_id immediately — you will be automatically notified when it completes. Precondition: call get_reference_doc(kind=\"optimize-playbook\") first.",
+		"Start a background agent that reads actual outputs, validation failures, and evaluation results from the retained run window (latest iteration-0 plus older iteration-N runs selected by improve.html/decision timestamps), then rewrites planning/plan.json so the workflow path better satisfies the existing objective and success criteria. When replanning keeps or converts a step to agentic, it also removes any stale learnings/{step-id}/main.py so future agents do not confuse ephemeral agentic with reusable scripted. Use this to EXPLORE a different strategy when the current approach is capped — even executed perfectly it cannot satisfy the success criteria — or run evidence reveals a materially better, out-of-the-box approach. Replan changes the STRATEGY (different business work, a missing capability, a different output/evidence, step ordering/boundaries) — not just execution. It rewrites the plan, so the bet must be evidence-backed, not speculative. Contrast harden_workflow, which refines the SAME strategy. Returns execution_id immediately — you will be automatically notified when it completes. Precondition: call get_reference_doc(kind=\"optimize-playbook\") first.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -7610,7 +7608,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: create_schedule — Create a new cron schedule
 	if err := mcpAgent.RegisterCustomTool(
 		"create_schedule",
-		"Create a new cron schedule for this workflow. Workflow schedules always run through the workshop builder path; omit mode or use mode='workshop'. Messages are optional for normal run schedules; when omitted, the scheduler asks the workshop to run the full workflow. For /auto-improve, BOTH schedules must be workshop schedules: the run schedule uses workshop_mode='run' with a message that calls run_full_workflow(group_name=...), and the improve schedule uses workshop_mode='optimizer'. For optimizer schedules (workshop_mode='optimizer'), the message MUST include exact group scope, retained-run evidence window selection, metric/eval/log review, and bounded stop conditions so unattended runs cannot loop indefinitely. For active workflows, prefer continuous-improvement checks after every run or every two runs, approximated with frequent lightweight cron if run-completion triggers are unavailable. Weekly cadence fits workflows that run weekly or are explicitly low-touch.",
+		"Create a new cron schedule for this workflow. Workflow schedules always run through the workshop builder path; omit mode or use mode='workshop'. Messages are optional for normal run schedules; when omitted, the scheduler asks the workshop to run the full workflow. For /auto-improve, BOTH schedules must be workshop schedules: the run schedule uses workshop_mode='run' with a message that calls run_full_workflow(group_name=...), and the improve schedule uses workshop_mode='optimizer'. For optimizer schedules (workshop_mode='optimizer'), the message MUST include exact group scope, retained-run evidence window selection, eval/log review, and bounded stop conditions so unattended runs cannot loop indefinitely. For active workflows, prefer continuous-improvement checks after every run or every two runs, approximated with frequent lightweight cron if run-completion triggers are unavailable. Weekly cadence fits workflows that run weekly or are explicitly low-touch.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -8469,7 +8467,7 @@ func workshopJSONUnmarshal(data []byte, v interface{}) error {
 
 var improveDBAgentSystemTemplate = MustRegisterTemplate("improveDBAgentSystem", `# DB Improve Agent
 
-You improve the workflow-root `+"`db/`"+` surface for the current plan. The durable structured state lives in a single SQLite database `+"`db/db.sqlite`"+` (one table per entity), queried by steps with the `+"`sqlite3`"+` CLI and read live by HTML reports via the `+"`window.report.query(sql)`"+` API; `+"`db/assets/`"+` holds durable media/file assets referenced by table rows. (`+"`db/metrics_history.jsonl`"+` stays JSONL — backend-owned, append-only — do not touch it.)
+You improve the workflow-root `+"`db/`"+` surface for the current plan. The durable structured state lives in a single SQLite database `+"`db/db.sqlite`"+` (one table per entity), queried by steps with the `+"`sqlite3`"+` CLI and read live by HTML reports via the `+"`window.report.query(sql)`"+` API; `+"`db/assets/`"+` holds durable media/file assets referenced by table rows.
 
 This is a guarded maintenance pass:
 - You may read `+"`soul/`"+`, `+"`planning/`"+`, `+"`builder/`"+`, `+"`reports/`"+`, `+"`db/`"+`, selected `+"`runs/`"+`, and `+"`evaluation/`"+` evidence.
@@ -9336,11 +9334,10 @@ Use `+"`diff_patch_workspace_file`"+` only for non-plan artifacts that are inten
 ## SOURCE-OF-TRUTH HIERARCHY
 Use this hierarchy before changing the plan:
 1. `+"`soul/soul.md`"+` is the truth: objective and success criteria define what the workflow must achieve.
-2. `+"`planning/metrics.json`"+` and `+"`db/metrics_history.jsonl`"+` operationalize `+"`soul.md`"+`: metrics are numeric evidence, but they do not override the objective or success criteria.
-3. `+"`runs/iteration-{N}/<group>/...`"+` proves runtime reality: actual outputs, tool/execution logs, validation results, and eval reports show what the workflow really did. `+"`iteration-0`"+` is latest/current; older retained iterations are supporting evidence for trends, regressions, and whether previous improve.html actions helped.
-4. `+"`evaluation/evaluation_plan.json`"+` explains measurement: use it to understand scores, but if eval conflicts with `+"`soul.md`"+`, fix eval instead of optimizing to a bad rubric.
-5. `+"`planning/plan.json`"+` is only the current implementation attempt. Judge it against `+"`soul.md`"+` and retained run evidence; do not treat the current plan as proof that the workflow is correct.
-6. `+"`builder/improve.html`"+` and `+"`builder/review.html`"+` are memory/audit logs: use them to avoid repeating past decisions, carry unresolved findings, and link fixes. They are not the source of truth when they conflict with `+"`soul.md`"+` or current run/eval/metric evidence.
+2. `+"`runs/iteration-{N}/<group>/...`"+` proves runtime reality: actual outputs, tool/execution logs, validation results, and eval reports show what the workflow really did. `+"`iteration-0`"+` is latest/current; older retained iterations are supporting evidence for trends, regressions, and whether previous improve.html actions helped.
+3. `+"`evaluation/evaluation_plan.json`"+` explains measurement: use it to understand scores, but if eval conflicts with `+"`soul.md`"+`, fix eval instead of optimizing to a bad rubric.
+4. `+"`planning/plan.json`"+` is only the current implementation attempt. Judge it against `+"`soul.md`"+` and retained run evidence; do not treat the current plan as proof that the workflow is correct.
+5. `+"`builder/improve.html`"+` and `+"`builder/review.html`"+` are memory/audit logs: use them to avoid repeating past decisions, carry unresolved findings, and link fixes. They are not the source of truth when they conflict with `+"`soul.md`"+` or current run/eval evidence.
 
 ## RULES
 1. **Use real evidence first**: Base every structural change on what actually happened in the selected retained run window, with latest `+"`iteration-0`"+` weighted highest. Do not make speculative edits when the artifacts do not support them.
@@ -9377,7 +9374,7 @@ For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`
 Build an evidence window before changing the plan:
 - Always include latest `+"`{{.TargetRunFolder}}`"+`.
 - Read `+"`builder/improve.html`"+`, `+"`planning/changelog/`"+`, and run/eval `+"`run_metadata.json`"+` timestamps to decide which older `+"`iteration-{N}`"+` folders matter.
-- Include older iterations since the last relevant harden/replan/eval/metric change, plus 1-2 runs immediately before that change when you need before/after comparison.
+- Include older iterations since the last relevant harden/replan/eval change, plus 1-2 runs immediately before that change when you need before/after comparison.
 - Ignore older iterations when they predate a material plan/config/eval change and no longer represent the current workflow, except as regression context.
 
 For each selected iteration/group, read relevant evidence:
@@ -9452,11 +9449,10 @@ Every evaluation failure should leave behind a **structural artifact** — a pre
 ## SOURCE-OF-TRUTH HIERARCHY
 Use this hierarchy before fixing:
 1. `+"`soul/soul.md`"+` is the truth: objective and success criteria define what the workflow must achieve.
-2. `+"`planning/metrics.json`"+` and `+"`db/metrics_history.jsonl`"+` operationalize `+"`soul.md`"+`: metrics are numeric evidence, but they do not override the objective or success criteria.
-3. `+"`runs/iteration-{N}/<group>/...`"+` proves runtime reality: actual outputs, tool/execution logs, validation results, and eval reports show what the workflow really did. `+"`iteration-0`"+` is latest/current; older retained iterations are supporting evidence for trends, regressions, and whether previous improve.html actions helped.
-4. `+"`evaluation/evaluation_plan.json`"+` explains measurement: use it to understand scores, but if eval conflicts with `+"`soul.md`"+`, fix eval instead of optimizing to a bad rubric.
-5. `+"`planning/plan.json`"+` is only the current implementation attempt. Judge it against `+"`soul.md`"+` and retained run evidence; do not treat the current plan as proof that the workflow is correct.
-6. `+"`builder/improve.html`"+` and `+"`builder/review.html`"+` are memory/audit logs: use them to avoid repeating past decisions, carry unresolved findings, and link fixes. They are not the source of truth when they conflict with `+"`soul.md`"+` or current run/eval/metric evidence.
+2. `+"`runs/iteration-{N}/<group>/...`"+` proves runtime reality: actual outputs, tool/execution logs, validation results, and eval reports show what the workflow really did. `+"`iteration-0`"+` is latest/current; older retained iterations are supporting evidence for trends, regressions, and whether previous improve.html actions helped.
+3. `+"`evaluation/evaluation_plan.json`"+` explains measurement: use it to understand scores, but if eval conflicts with `+"`soul.md`"+`, fix eval instead of optimizing to a bad rubric.
+4. `+"`planning/plan.json`"+` is only the current implementation attempt. Judge it against `+"`soul.md`"+` and retained run evidence; do not treat the current plan as proof that the workflow is correct.
+5. `+"`builder/improve.html`"+` and `+"`builder/review.html`"+` are memory/audit logs: use them to avoid repeating past decisions, carry unresolved findings, and link fixes. They are not the source of truth when they conflict with `+"`soul.md`"+` or current run/eval evidence.
 
 ## PERSISTENT STORES (READ BEFORE FIXING)
 
@@ -9493,9 +9489,9 @@ Use `+"`diff_patch_workspace_file`"+` only for non-plan artifacts that are inten
    e. **KB config fixes** — If the failure stems from a step consuming KB facts that don't exist (bad `+"`"+`knowledgebase_access`+"`"+`, or missing `+"`"+`knowledgebase_contribution`+"`"+` on an upstream producer step), use update_step_config to correct it.
 
 {{.MainPyAuthoringRules}}
-4. **Structural fixes are allowed when evidence demands them** — If the failure is caused by a missing step, obsolete step, wrong boundary, or bad ordering, use the plan modification tools (`+"`add_regular_step`"+`, `+"`add_todo_task_route`"+`, `+"`update_*`"+`, `+"`delete_*`"+`) to apply the smallest evidence-backed structural fix. If the exact plan edit cannot be expressed by the available tools, stop and report the limitation instead of patching `+"`planning/plan.json`"+` by file. Use `+"`replan_workflow_from_results`"+` only when the run/eval/metric evidence shows the workflow path itself is misaligned with the objective or success criteria and needs broader redesign across multiple steps/routes.
+4. **Structural fixes are allowed when evidence demands them** — If the failure is caused by a missing step, obsolete step, wrong boundary, or bad ordering, use the plan modification tools (`+"`add_regular_step`"+`, `+"`add_todo_task_route`"+`, `+"`update_*`"+`, `+"`delete_*`"+`) to apply the smallest evidence-backed structural fix. If the exact plan edit cannot be expressed by the available tools, stop and report the limitation instead of patching `+"`planning/plan.json`"+` by file. Use `+"`replan_workflow_from_results`"+` only when the run/eval evidence shows the workflow path itself is misaligned with the objective or success criteria and needs broader redesign across multiple steps/routes.
 5. **Preserve what works** — Do not modify steps that passed evaluation. Do not weaken existing pre-validation rules.
-6. **Mark reliable evidence** — If a step passed across ALL groups with linked metrics at target, increment successful_runs via update_step_config. Use 3+ successful runs only as operational stability evidence for lock_learnings consideration; do NOT promote to `+"`scripted`"+` or set `+"`lock_code=true`"+` unless the user explicitly asked for scripted, the step is highly deterministic, and script/eval evidence shows 10+ successful runs across the relevant scenario/group surface. Always pass `+"`"+`review_notes`+"`"+` with a one-sentence justification citing the concrete evidence (groups passed, metric targets, pre-validation presence, clean tool usage) — future passes read this to decide whether to unlock.
+6. **Mark reliable evidence** — If a step passed across ALL groups with clean eval/run evidence, increment successful_runs via update_step_config. Use 3+ successful runs only as operational stability evidence for lock_learnings consideration; do NOT promote to `+"`scripted`"+` or set `+"`lock_code=true`"+` unless the user explicitly asked for scripted, the step is highly deterministic, and script/eval evidence shows 10+ successful runs across the relevant scenario/group surface. Always pass `+"`"+`review_notes`+"`"+` with a one-sentence justification citing the concrete evidence (groups passed, pre-validation presence, clean tool usage) — future passes read this to decide whether to unlock.
 7. **Portability check** — When touching a step, scan for hardcoded user-specific values (account IDs, sheet URLs, paths) in descriptions and learnings. Replace with variable placeholders.
 8. **Store discipline** — If the failure evidence shows a step writing cross-run state into learnings/ or plan.json, recommend moving that content to `+"`"+`db/`+"`"+` or to the KB (via `+"`"+`knowledgebase_contribution`+"`"+`) as appropriate.
 9. **Best-practice sweep is required** — After building the failure map, inspect the workflow artifacts listed below and fix hard violations. For non-blocking concerns, append findings to your summary instead of making speculative edits.
@@ -9566,7 +9562,7 @@ For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`
 	Before building the failure map, select the retained runs that matter:
 	- Always include latest `+"`{{.TargetRunFolder}}`"+`.
 	- Read `+"`builder/improve.html`"+`, `+"`planning/changelog/`"+`, and run/eval `+"`run_metadata.json`"+` timestamps.
-	- Include older iterations since the last relevant harden/replan/eval/metric change, plus 1-2 runs immediately before that change when you need before/after comparison.
+	- Include older iterations since the last relevant harden/replan/eval change, plus 1-2 runs immediately before that change when you need before/after comparison.
 	- Use older runs to identify recurring failures, regressions, and whether a previous fix helped. Do not let stale runs override latest evidence after a material plan/config/eval change.
 
 	## DATA LAYOUT

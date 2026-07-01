@@ -702,8 +702,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // Lifted into useChatStore so ChatArea can render an in-panel spinner during restore.
   const isRestoringWorkflowSessions = useChatStore(state => state.isRestoringWorkflowSessions)
   const setIsRestoringWorkflowSessions = useChatStore(state => state.setIsRestoringWorkflowSessions)
-  const [hasPreviousWorkflowChats, setHasPreviousWorkflowChats] = useState(false)
-  const [hasLoadedPreviousWorkflowChats, setHasLoadedPreviousWorkflowChats] = useState(false)
   // Kill-and-start confirmation when "+ new chat" hits a running workflow session.
   // Holds the session ID(s) to stop and a human-readable description for the dialog.
   const [killAndStartState, setKillAndStartState] = useState<{
@@ -867,36 +865,36 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     return null
   }, [activePresetId, activeWorkflowWorkspacePath])
 
-  useEffect(() => {
-    if (!showResumeHint || !workspacePath) {
-      setHasPreviousWorkflowChats(false)
-      setHasLoadedPreviousWorkflowChats(false)
-    }
-  }, [showResumeHint, workspacePath])
-
-  const handleHasPreviousWorkflowChatsChange = useCallback((hasChats: boolean, isLoaded: boolean = true) => {
-    setHasPreviousWorkflowChats(hasChats)
-    setHasLoadedPreviousWorkflowChats(isLoaded)
-  }, [])
-
   // Show the previous-automation-chats list as the primary landing surface on a
-  // fresh builder chat (mirrors the multi-agent landing panel). We keep it up
-  // while the list is still loading, then keep it only if there are chats to
-  // resume — otherwise we fall through to the normal empty/start state so the
-  // user can just start typing.
+  // fresh builder chat (mirrors the multi-agent landing panel). The panel owns
+  // both loaded history and the "no previous chats yet" empty state; the terminal
+  // waiting surface is reserved for active/pending turns after submit.
   const showWorkflowPreviousChatsAsPrimary =
-    showResumeHint && !!workspacePath && (!hasLoadedPreviousWorkflowChats || hasPreviousWorkflowChats)
+    showResumeHint &&
+    !!workspacePath
 
   const [reportPreviewPreference, setReportPreviewPreference] = useState<'auto' | 'desktop' | 'mobile'>(() => {
     try {
       const saved = localStorage.getItem(reportPreviewPreferenceKey(workspacePath))
-      return saved === 'desktop' || saved === 'mobile' ? saved : 'mobile'
+      return saved === 'desktop' || saved === 'mobile' ? saved : 'auto'
     } catch {
-      return 'mobile'
+      return 'auto'
     }
   })
 
-  const createFreshWorkflowBuilderTab = useCallback(async (presetId: string) => {
+  const forceMobilePreview = useCallback(() => {
+    setReportPreviewPreference('mobile')
+    try {
+      localStorage.setItem(reportPreviewPreferenceKey(workspacePath), 'mobile')
+    } catch {
+      // UI preference only.
+    }
+    window.dispatchEvent(new CustomEvent(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, {
+      detail: { preference: 'mobile', scopeId: workspacePath ?? null },
+    }))
+  }, [workspacePath])
+
+  const createFreshWorkflowBuilderTab = useCallback(async (presetId: string, options?: { composerFirst?: boolean }) => {
     const chatStore = useChatStore.getState()
     const oldTabs = Object.values(chatStore.chatTabs).filter(tab =>
       tab.metadata?.mode === 'workflow' &&
@@ -915,19 +913,25 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       phaseName: 'Automation Builder',
       presetQueryId: presetId
     })
+    if (options?.composerFirst) {
+      forceMobilePreview()
+      setWorkflowWorkspaceView('builder')
+      setShowWorkspacePane(true)
+      setFocusedPane('chat')
+    }
     chatStore.switchTab(tabId)
     setShowChatArea(true)
-  }, [setShowChatArea])
+  }, [forceMobilePreview, setFocusedPane, setShowChatArea, setShowWorkspacePane, setWorkflowWorkspaceView])
 
   useEffect(() => {
-    // Re-read this workflow's scoped preference (default mobile) on mount, on
+    // Re-read this workflow's scoped preference (default auto/desktop) on mount, on
     // workflow switch, and whenever the device changes (event/storage).
     const syncReportPreviewPreference = () => {
       try {
         const saved = localStorage.getItem(reportPreviewPreferenceKey(workspacePath))
-        setReportPreviewPreference(saved === 'desktop' || saved === 'mobile' ? saved : 'mobile')
+        setReportPreviewPreference(saved === 'desktop' || saved === 'mobile' ? saved : 'auto')
       } catch {
-        setReportPreviewPreference('mobile')
+        setReportPreviewPreference('auto')
       }
     }
     syncReportPreviewPreference()
@@ -2082,12 +2086,16 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         return
       }
 
-      await createFreshWorkflowBuilderTab(activePresetId)
+      await createFreshWorkflowBuilderTab(activePresetId, { composerFirst: true })
       return
     }
 
+    forceMobilePreview()
+    setWorkflowWorkspaceView('builder')
+    setShowWorkspacePane(true)
+    setFocusedPane('chat')
     chatAreaRef.current?.handleNewChat()
-  }, [activePresetId, activeSessionId, createFreshWorkflowBuilderTab, workspacePath])
+  }, [activePresetId, activeSessionId, createFreshWorkflowBuilderTab, forceMobilePreview, setFocusedPane, setShowWorkspacePane, setWorkflowWorkspaceView, workspacePath])
 
   const handleKillAndStart = useCallback(async () => {
     if (!activePresetId) {
@@ -2106,7 +2114,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     })
     setKillAndStartState({ isOpen: false, sessionIdsToStop: [], description: '', isStopping: false })
     try {
-      await createFreshWorkflowBuilderTab(activePresetId)
+      await createFreshWorkflowBuilderTab(activePresetId, { composerFirst: true })
     } catch (err) {
       logger.error('WorkflowLayout', 'createFreshWorkflowBuilderTab failed after kill-and-start:', err)
       addToast('Failed to start new chat after stopping the previous one.', 'error')
@@ -2225,7 +2233,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
                   <WorkflowPreviousChatsPanel
                     primary
                     workspacePath={workspacePath}
-                    onHasChatsChange={handleHasPreviousWorkflowChatsChange}
                   />
                 ) : undefined}
               />

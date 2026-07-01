@@ -476,37 +476,15 @@ const TERMINAL_THEMES = {
 
 type TerminalTheme = (typeof TERMINAL_THEMES)[TerminalColorScheme]
 
-const RAW_XTERM_FONT_FAMILY = '"Andale Mono", "SFMono-Regular", "SF Mono", ui-monospace, Menlo, Monaco, Consolas, "Liberation Mono", monospace'
+const RAW_XTERM_FONT_FAMILY = '"JetBrains Mono", "SFMono-Regular", "SF Mono", Menlo, Monaco, "Cascadia Mono", "Fira Code", Consolas, "Liberation Mono", monospace'
 const RAW_XTERM_FONT_SIZE = 13
 const RAW_XTERM_CSS_LINE_HEIGHT = 'normal'
 const RAW_XTERM_THEMES: Record<Theme, ITheme> = {
   dark: {
     background: '#0b0e14',
-    foreground: '#d7dae0',
-    cursor: '#7dcfff',
-    selectionBackground: '#334155',
-    black: '#111827',
-    red: '#f7768e',
-    green: '#9ece6a',
-    yellow: '#e0af68',
-    blue: '#7aa2f7',
-    magenta: '#bb9af7',
-    cyan: '#7dcfff',
-    white: '#d7dae0',
-    brightBlack: '#6b7280',
-    brightRed: '#ff899d',
-    brightGreen: '#b9f27c',
-    brightYellow: '#f6c177',
-    brightBlue: '#8fb4ff',
-    brightMagenta: '#c8a8ff',
-    brightCyan: '#8be9ff',
-    brightWhite: '#f4f4f5',
   },
   light: {
     background: '#ffffff',
-    foreground: '#111827',
-    cursor: '#111827',
-    selectionBackground: '#cbd5e1',
   },
 }
 
@@ -3624,7 +3602,15 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     [selectedTerminalView, priorArchivedTurns, archivedTurnContents],
   )
   const selectedTerminalIsSynthetic = selectedTerminalView ? isSyntheticTerminal(selectedTerminalView) : false
-  const isSelectedTerminalStreaming = !!selectedTerminalView?.active && (selectedTerminalView.state === 'running' || selectedTerminalView.state === 'idle' || selectedTerminalView.state === undefined)
+  const selectedTerminalState = (selectedTerminalView?.state || '').trim().toLowerCase()
+  const selectedTerminalIsSettled =
+    selectedTerminalState === 'completed' ||
+    selectedTerminalState === 'failed' ||
+    selectedTerminalState === 'closing' ||
+    selectedTerminalState === 'stale'
+  const isSelectedTerminalStreaming = !!selectedTerminalView &&
+    !selectedTerminalIsSettled &&
+    (selectedTerminalView.active || selectedTerminalState === 'running' || selectedTerminalState === 'idle')
   // Live-attach is the ONLY transport for the selected live tmux terminal: it
   // renders over the /api/terminals/{id}/stream WebSocket while the selected
   // terminal is active. Completed tmux panes render through StaticXtermPane from

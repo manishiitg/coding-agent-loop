@@ -10,11 +10,10 @@ import (
 // =====================================================================
 // soul_preconditions.go — read-only soul.md health signal.
 //
-// The framework's contract: metrics operationalize success_criteria, and
-// success_criteria are the user-facing outcome. We surface whether soul.md has
-// a real objective + success criteria as a non-blocking signal (the
-// framework-health banner / goal card); defining the soul before metrics is the
-// agent's responsibility, not a hard gate. The section-extraction logic mirrors
+// The framework's contract: success_criteria are the user-facing outcome. We
+// surface whether soul.md has a real objective + success criteria as a
+// non-blocking signal (the framework-health banner / goal card). The
+// section-extraction logic mirrors
 // ReadWorkflowObjectiveFromSoul in soul_helpers.go.
 // =====================================================================
 

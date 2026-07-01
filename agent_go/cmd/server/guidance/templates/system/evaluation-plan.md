@@ -16,8 +16,7 @@ Workshop owns the eval plan: write it, validate it, run it against `iteration-0`
   - use `declared_execution_mode=agentic` only for genuinely subjective judgment (e.g. "is the report well-written?") or while the rubric is still being worked out; once the criteria are stable, promote that eval agentic→scripted
   - set per-eval-step `execution_tier` with `update_step_config(step_id="eval-step-id", execution_tier="high|medium|low")`; the tool writes `evaluation/step_config.json` when the id is from `evaluation/evaluation_plan.json`
   - tier rule of thumb: `high` for subjective/ambiguous judgment, `medium` for normal eval checks, `low` for deterministic/file-shape checks
-  - there is no final combined scoring agent; each eval step must emit the structured verdict fields that metrics need
-- **Metrics are optional and live in `planning/metrics.json` when present.** They operationalize success criteria into measurable targets, and a metric with `source.type="eval_step"` reads a structured key from an eval step's output — `source.id` (the eval step) and `source.field` (the key) are a paired contract. Keep eval structured outputs metric-ready (stable keys, numeric values); the improve-evaluation guidance covers the full contract and metric-impact analysis for eval edits.
+  - there is no final combined scoring agent; each eval step must emit structured verdict fields that downstream reviews and reports can read
 - After every edit to `evaluation/evaluation_plan.json`, call `validate_evaluation_plan`.
 - When you want to test the current eval plan, call `run_full_evaluation(group_name="...")`. Evaluation always targets `iteration-0`.
 

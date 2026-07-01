@@ -375,13 +375,12 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 			log.Printf("[WORKFLOW_PHASE] Registered reorganize_knowledgebase in %s", workflowPhaseID)
 			todo_creation_human.RegisterConsolidateKnowledgebaseTool(underlyingAgent, workshopSession, api.logger)
 			log.Printf("[WORKFLOW_PHASE] Registered consolidate_knowledgebase in %s", workflowPhaseID)
-			// Auto-improvement metric tools mutate metrics, so keep
-			// them in Workshop mode (was Optimizer before the merge).
-			// capture_context is also safe in Run mode because it
-			// requires explicit user confirmation and target metric
-			// anchoring. Legacy "optimizer" is also accepted for
-			// backward compat with persisted sessions that
-			// pre-date the merge.
+			// Auto-improvement proposer tools stay in Workshop mode
+			// (was Optimizer before the merge). capture_context is also
+			// safe in Run mode because it requires explicit user
+			// confirmation. Legacy "optimizer" is also accepted for
+			// backward compat with persisted sessions that pre-date the
+			// merge.
 			switch phaseTemplateVars["WorkshopMode"] {
 			case "workshop", "optimizer":
 				RegisterAutoImprovementProposerTools(underlyingAgent, phaseWorkspacePath, "improve-workflow", api.logger)

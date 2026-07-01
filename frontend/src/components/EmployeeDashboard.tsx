@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import {
-  Clock, DollarSign, Loader2, Calendar, FileText, BarChart3, ChevronDown, ChevronRight,
+  Clock, DollarSign, Loader2, Calendar, FileText, ChevronDown, ChevronRight,
   Plus, Minus, Database, RefreshCw, AlertCircle, Target, Activity, LayoutDashboard
 } from 'lucide-react'
 import {
@@ -12,15 +12,15 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { agentApi, type MetricSnapshotRow, type WorkflowMetricRunSummary } from '../services/api'
+import { agentApi } from '../services/api'
 import { schedulerApi } from '../api/scheduler'
 import type { EvaluationReportEntry, ModelTokenUsage, PhaseTokenUsageFile, PlannerFile, TokenUsageFile, ToolCostUsage, WorkflowPhaseDailyCostsEntry, WorkflowReviewDataResponse, WorkflowRunCostsEntry, WorkflowRunDailyCostsEntry } from '../services/api-types'
 import ExecutionLogsPopup from './workflow/ExecutionLogsPopup'
 import { ReportView } from './workflow/ReportViewer'
+import { LogViewer } from './workflow/LogViewer'
 import { WorkflowCanvas } from './workflow/canvas'
 import { useAppStore } from '../stores/useAppStore'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
-import { formatStepOutputContent, hasStepOutputContent, isFinalScoringPlaceholderText, parseEvaluationPlanDetails } from '../utils/evaluationReport'
 import { MarkdownRenderer } from './ui/MarkdownRenderer'
 import { OrgGoalsPanel, OrgPulsePanel } from './org/OrgHtmlPanels'
 import { OrgDashboard } from './org/OrgDashboard'
@@ -32,7 +32,6 @@ interface WorkflowSummary {
   totalRuns: number
   lastActive: string | null
   totalCost: number | null
-  metricsSummary: WorkflowMetricRunSummary | null
   workspacePath: string
   latestRunFolder: string | null
   scheduleCount: number
@@ -56,7 +55,7 @@ const workflowsSignature = (workflows: WorkflowSummary[]): string => {
   )
 }
 
-type ReviewTab = 'report' | 'flow' | 'evaluation' | 'cost' | 'knowledgebase' | 'logs' | 'soul' | 'skills' | 'config'
+type ReviewTab = 'report' | 'pulse' | 'flow' | 'evaluation' | 'cost' | 'knowledgebase' | 'logs' | 'soul' | 'skills' | 'config'
 
 interface ImproveDocState {
   loading: boolean
@@ -112,9 +111,6 @@ interface WorkflowReviewState {
   reviewData: WorkflowReviewDataResponse | null
   evaluation: EvaluationReportEntry | null
   evaluationError: string | null
-  metrics: MetricDefinition[]
-  metricsHistory: MetricSnapshotRow[]
-  metricsError: string | null
   tokenUsage: TokenUsageFile | null
   evaluationTokenUsage: TokenUsageFile | null
   costRuns: WorkflowRunCostsEntry[]
@@ -125,19 +121,6 @@ interface WorkflowReviewState {
 
 type WorkflowsSummaryResponse = Awaited<ReturnType<typeof agentApi.getWorkflowsSummary>>
 type WorkflowApiSummary = WorkflowsSummaryResponse['workflows'][number]
-
-interface MetricDefinition {
-  id: string
-  label?: string
-  unit: string
-  direction: 'higher_better' | 'lower_better'
-  mode: 'target' | 'slo'
-  role?: 'primary' | 'secondary' | string
-  category?: string
-  target?: number
-  floor?: number
-  ceiling?: number
-}
 
 // Mini status indicator
 const StatusDot: React.FC<{ status: string }> = ({ status }) => {
@@ -152,9 +135,6 @@ const EMPTY_REVIEW_STATE: WorkflowReviewState = {
   reviewData: null,
   evaluation: null,
   evaluationError: null,
-  metrics: [],
-  metricsHistory: [],
-  metricsError: null,
   tokenUsage: null,
   evaluationTokenUsage: null,
   costRuns: [],
@@ -618,63 +598,6 @@ const ReviewTabButton: React.FC<{
   </button>
 )
 
-const metricHealthText = (summary: WorkflowMetricRunSummary | null): string | null => {
-  if (!summary || summary.total <= 0) return null
-  if (summary.failed > 0) return `${summary.failed} failing`
-  if (summary.with_value < summary.total) return `${summary.with_value}/${summary.total} values`
-  if (summary.passed > 0) return `${summary.passed}/${summary.total} passing`
-  return `${summary.total} metrics`
-}
-
-const metricHealthClass = (summary: WorkflowMetricRunSummary | null): string => {
-  if (!summary || summary.total <= 0) return 'bg-muted text-muted-foreground ring-1 ring-inset ring-border'
-  if (summary.failed > 0) return 'bg-destructive/15 text-destructive'
-  if (summary.with_value < summary.total) return 'bg-warning/15 text-warning'
-  if (summary.passed > 0) return 'bg-success/15 text-success'
-  return 'bg-muted text-muted-foreground ring-1 ring-inset ring-border'
-}
-
-const metricRowStatusClass = (row: MetricSnapshotRow): string => {
-  if (!row.has_value) return 'text-warning'
-  if (row.passed === false) return 'text-destructive'
-  if (row.passed === true) return 'text-success'
-  return 'text-muted-foreground'
-}
-
-const metricThresholdLabel = (row: MetricSnapshotRow): string => {
-  if (!row.threshold_kind || typeof row.threshold_value !== 'number') return 'no threshold'
-  return `${row.threshold_kind} ${row.threshold_value}`
-}
-
-const metricRoleLabel = (metric: MetricDefinition | undefined): string | null => {
-  const role = metric?.role?.trim()
-  if (!role) return null
-  if (role.toLowerCase() === 'primary') return 'Primary'
-  if (role.toLowerCase() === 'secondary') return 'Secondary'
-  return role
-    .replace(/[-_]+/g, ' ')
-    .replace(/\b\w/g, match => match.toUpperCase())
-}
-
-const metricRoleClass = (label: string | null): string => {
-  const role = label?.toLowerCase()
-  if (role === 'primary') return 'border-primary/30 bg-primary/10 text-primary'
-  if (role === 'secondary') return 'border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300'
-  return 'border-border bg-muted text-muted-foreground'
-}
-
-const metricRoleRank = (metric: MetricDefinition | undefined): number => {
-  const role = metric?.role?.toLowerCase()
-  if (role === 'primary') return 0
-  if (role === 'secondary') return 1
-  return 2
-}
-
-const formatMetricDisplayValue = (value: number, unit?: string): string => {
-  const formatted = Number.isInteger(value) ? value.toLocaleString() : value.toLocaleString(undefined, { maximumFractionDigits: 3 })
-  return unit ? `${formatted} ${unit}` : formatted
-}
-
 export const EmployeeDashboard: React.FC = () => {
   const showWorkflowsOverview = useAppStore(state => state.showWorkflowsOverview)
   const workflowPresets = useGlobalPresetStore(state => state.workflowPresets)
@@ -691,7 +614,6 @@ export const EmployeeDashboard: React.FC = () => {
   const [workflowConfigState, setWorkflowConfigState] = useState<ImproveDocState>(EMPTY_WORKFLOW_CONFIG_STATE)
   const [knowledgebaseState, setKnowledgebaseState] = useState<KnowledgebaseState>(EMPTY_KNOWLEDGEBASE_STATE)
   const [workflowSkillsState, setWorkflowSkillsState] = useState<WorkflowSkillsState>(EMPTY_WORKFLOW_SKILLS_STATE)
-  const [expandedEvalSteps, setExpandedEvalSteps] = useState<Set<string>>(new Set())
   const [expandedDailyCostDates, setExpandedDailyCostDates] = useState<Set<string>>(new Set())
 
   const loadData = useCallback(async (opts?: { silent?: boolean }) => {
@@ -753,7 +675,6 @@ export const EmployeeDashboard: React.FC = () => {
           totalRuns: ws?.total_runs || 0,
           lastActive,
           totalCost: null,
-          metricsSummary: ws?.latest_run?.metrics_summary || null,
           workspacePath: wp,
           latestRunFolder,
           scheduleCount: sched?.count || 0,
@@ -839,22 +760,11 @@ export const EmployeeDashboard: React.FC = () => {
     })
 
     try {
-      const [reviewData, metricsResp, metricsHistoryResp] = await Promise.all([
+      const [reviewData] = await Promise.all([
         agentApi.getWorkflowReviewData(workspacePath, runFolder),
-        agentApi.getAutoImprovementMetrics(workspacePath).catch(err => ({ success: false, file: { metrics: [] }, error: err instanceof Error ? err.message : 'Failed to load metrics' })),
-        agentApi.getMetricsHistory(workspacePath).catch(err => ({ success: false, rows: [], error: err instanceof Error ? err.message : 'Failed to load metric history' })),
       ])
       const evaluationResponse = reviewData.evaluations
       const costsResponse = reviewData.costs
-      const metrics = metricsResp.success && metricsResp.file?.metrics
-        ? metricsResp.file.metrics as MetricDefinition[]
-        : []
-      const metricsHistory = metricsHistoryResp.success && Array.isArray(metricsHistoryResp.rows)
-        ? metricsHistoryResp.rows as MetricSnapshotRow[]
-        : []
-      const metricsError = metricsResp.success && metricsHistoryResp.success
-        ? null
-        : (metricsResp.error || metricsHistoryResp.error || 'Failed to load metrics')
 
       let evaluation: EvaluationReportEntry | null = null
       let evaluationError: string | null = null
@@ -888,9 +798,6 @@ export const EmployeeDashboard: React.FC = () => {
         reviewData,
         evaluation,
         evaluationError,
-        metrics,
-        metricsHistory,
-        metricsError,
         tokenUsage,
         evaluationTokenUsage,
         costRuns,
@@ -904,9 +811,6 @@ export const EmployeeDashboard: React.FC = () => {
         reviewData: null,
         evaluation: null,
         evaluationError: err instanceof Error ? err.message : 'Failed to load evaluation',
-        metrics: [],
-        metricsHistory: [],
-        metricsError: err instanceof Error ? err.message : 'Failed to load metrics',
         tokenUsage: null,
         evaluationTokenUsage: null,
         costRuns: [],
@@ -1145,53 +1049,6 @@ export const EmployeeDashboard: React.FC = () => {
     return sumCost(run.token_usage) + sumCost(run.evaluation_token_usage)
   }, [reviewState.costRuns, latestRunFolder])
 
-  const metricById = useMemo(() => {
-    return new Map(reviewState.metrics.map(metric => [metric.id, metric]))
-  }, [reviewState.metrics])
-
-  const latestMetricRows = useMemo(() => {
-    const rows = reviewState.metricsHistory
-    if (rows.length === 0) return []
-
-    const matchingRunRows = latestRunFolder
-      ? rows.filter(row => runFolderMatches(row.run_folder, latestRunFolder))
-      : []
-    const candidates = matchingRunRows.length > 0 ? matchingRunRows : rows
-    const latestCompletedAt = candidates.reduce((latest, row) => row.completed_at > latest ? row.completed_at : latest, '')
-    return candidates
-      .filter(row => row.completed_at === latestCompletedAt)
-      .sort((a, b) => {
-        const rankDelta = metricRoleRank(metricById.get(a.metric_id)) - metricRoleRank(metricById.get(b.metric_id))
-        if (rankDelta !== 0) return rankDelta
-        const aLabel = metricById.get(a.metric_id)?.label || a.metric_id
-        const bLabel = metricById.get(b.metric_id)?.label || b.metric_id
-        return aLabel.localeCompare(bLabel)
-      })
-  }, [metricById, reviewState.metricsHistory, latestRunFolder])
-
-  const latestMetricsSummary = useMemo<WorkflowMetricRunSummary | null>(() => {
-    if (selectedWorkflow?.metricsSummary) return selectedWorkflow.metricsSummary
-    if (latestMetricRows.length === 0) return null
-    let withValue = 0
-    let passed = 0
-    let failed = 0
-    let unknown = 0
-    for (const row of latestMetricRows) {
-      if (row.has_value) withValue++
-      if (row.passed === true) passed++
-      else if (row.passed === false) failed++
-      else unknown++
-    }
-    return {
-      total: latestMetricRows.length,
-      with_value: withValue,
-      passed,
-      failed,
-      unknown,
-      rows: latestMetricRows,
-    }
-  }, [selectedWorkflow?.metricsSummary, latestMetricRows])
-
   // Cost trend: daily totals per day, split into execution / evaluation / phase
   // (phase = workflow-builder/planning/etc, not tied to a specific run).
   const costTrend = useMemo(() => {
@@ -1319,27 +1176,6 @@ export const EmployeeDashboard: React.FC = () => {
       .sort((a, b) => a.date.localeCompare(b.date))
     return { rows }
   }, [reviewState.costRuns, reviewState.phaseDailyCosts, reviewState.runDailyCosts])
-
-  const currentEvalEntry = useMemo(() => {
-    return reviewState.evaluation
-  }, [reviewState.evaluation])
-
-  const currentEvalStepScores = useMemo(() => {
-    return Array.isArray(currentEvalEntry?.report?.step_scores) ? currentEvalEntry.report.step_scores : []
-  }, [currentEvalEntry])
-
-  const evalStepDetailsById = useMemo(() => {
-    return parseEvaluationPlanDetails(reviewState.reviewData?.evaluations?.evaluation_plan)
-  }, [reviewState.reviewData?.evaluations?.evaluation_plan])
-
-  const toggleEvalStep = useCallback((stepKey: string) => {
-    setExpandedEvalSteps(prev => {
-      const next = new Set(prev)
-      if (next.has(stepKey)) next.delete(stepKey)
-      else next.add(stepKey)
-      return next
-    })
-  }, [])
 
   const toggleDailyCostDate = useCallback((date: string) => {
     setExpandedDailyCostDates(prev => {
@@ -1527,15 +1363,6 @@ export const EmployeeDashboard: React.FC = () => {
                           No runs yet
                         </span>
                       )}
-                      {latestMetricsSummary && (
-                        <span
-                          className={`inline-flex items-center gap-1 rounded-full px-2 py-1 ${metricHealthClass(latestMetricsSummary)}`}
-                          title={`${latestMetricsSummary.passed} passing, ${latestMetricsSummary.failed} failing, ${latestMetricsSummary.unknown} unknown`}
-                        >
-                          <BarChart3 className="w-3 h-3" />
-                          Metrics {metricHealthText(latestMetricsSummary)}
-                        </span>
-                      )}
                       {latestRunCost !== null && latestRunCost > 0 && (
                         <span
                           className="inline-flex items-center gap-1 rounded-full bg-warning/15 px-2 py-1 text-warning"
@@ -1562,7 +1389,7 @@ export const EmployeeDashboard: React.FC = () => {
                   <div>
                     <h4 className="text-base font-semibold text-foreground">Latest report</h4>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Select an automation to review its report, metrics, and cost.
+                      Select an automation to review its report, Pulse, and cost.
                     </p>
                   </div>
                 )}
@@ -1571,8 +1398,8 @@ export const EmployeeDashboard: React.FC = () => {
               <div className="border-b border-border px-5 py-3">
                 <div className="inline-flex items-center gap-1 rounded-xl bg-muted/60 p-1">
                   <ReviewTabButton active={reviewTab === 'report'} label="Report" onClick={() => setReviewTab('report')} />
+                  <ReviewTabButton active={reviewTab === 'pulse'} label="Pulse" onClick={() => setReviewTab('pulse')} />
                   <ReviewTabButton active={reviewTab === 'flow'} label="Flow" onClick={() => setReviewTab('flow')} />
-                  <ReviewTabButton active={reviewTab === 'evaluation'} label="Metrics" onClick={() => setReviewTab('evaluation')} />
                   <ReviewTabButton active={reviewTab === 'cost'} label="Cost" onClick={() => setReviewTab('cost')} />
                   <ReviewTabButton active={reviewTab === 'soul'} label="Soul" onClick={() => setReviewTab('soul')} />
                   <ReviewTabButton active={reviewTab === 'skills'} label="Skills" onClick={() => setReviewTab('skills')} />
@@ -1585,13 +1412,13 @@ export const EmployeeDashboard: React.FC = () => {
               <div className="max-h-[calc(100vh-240px)] overflow-y-auto p-5">
                 {!selectedWorkflow ? (
                   <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-                    Select an automation from the left to review its report, metrics, and cost.
+                    Select an automation from the left to review its report, Pulse, and cost.
                   </div>
-                ) : reviewTab !== 'soul' && reviewTab !== 'skills' && reviewTab !== 'config' && reviewTab !== 'knowledgebase' && reviewTab !== 'logs' && reviewTab !== 'flow' && !selectedWorkflow.latestRunFolder ? (
+                ) : reviewTab !== 'pulse' && reviewTab !== 'soul' && reviewTab !== 'skills' && reviewTab !== 'config' && reviewTab !== 'knowledgebase' && reviewTab !== 'logs' && reviewTab !== 'flow' && !selectedWorkflow.latestRunFolder ? (
                   <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-                    This automation has not produced a run yet, so there is no report, metrics, or cost data to review.
+                    This automation has not produced a run yet, so there is no report or cost data to review.
                   </div>
-                ) : reviewTab !== 'soul' && reviewTab !== 'skills' && reviewTab !== 'config' && reviewTab !== 'knowledgebase' && reviewTab !== 'logs' && reviewTab !== 'flow' && reviewState.loading ? (
+                ) : reviewTab !== 'pulse' && reviewTab !== 'soul' && reviewTab !== 'skills' && reviewTab !== 'config' && reviewTab !== 'knowledgebase' && reviewTab !== 'logs' && reviewTab !== 'flow' && reviewState.loading ? (
                   <div className="flex items-center justify-center py-16 text-sm text-muted-foreground">
                     <Loader2 className="mr-2 h-5 w-5 animate-spin text-cyan-500" />
                     Loading latest automation review data...
@@ -1599,6 +1426,10 @@ export const EmployeeDashboard: React.FC = () => {
                 ) : reviewTab === 'report' ? (
                   <div className="h-[calc(100vh-320px)] min-h-[400px]">
                     <ReportView workspacePath={selectedWorkflow.workspacePath} selectedRunFolder={selectedWorkflow.latestRunFolder} reviewData={reviewState.reviewData} />
+                  </div>
+                ) : reviewTab === 'pulse' ? (
+                  <div className="h-[calc(100vh-320px)] min-h-[400px] overflow-hidden rounded-xl border border-border bg-card">
+                    <LogViewer workspacePath={selectedWorkflow.workspacePath} />
                   </div>
                 ) : reviewTab === 'flow' ? (
                   <div className="h-[calc(100vh-320px)] min-h-[520px] overflow-hidden rounded-xl border border-border bg-card">
@@ -1610,161 +1441,6 @@ export const EmployeeDashboard: React.FC = () => {
                       readOnly
                       className="h-full"
                     />
-                  </div>
-                ) : reviewTab === 'evaluation' ? (
-                  <div className="space-y-4">
-                    <div className="grid gap-3 sm:grid-cols-3">
-                      <div className="rounded-xl border border-border bg-muted/30 px-4 py-3">
-                        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Passing</div>
-                        <div className="mt-2 text-2xl font-semibold text-foreground">{latestMetricsSummary?.passed ?? 0}</div>
-                      </div>
-                      <div className="rounded-xl border border-border bg-muted/30 px-4 py-3">
-                        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Failing</div>
-                        <div className="mt-2 text-2xl font-semibold text-foreground">{latestMetricsSummary?.failed ?? 0}</div>
-                      </div>
-                      <div className="rounded-xl border border-border bg-muted/30 px-4 py-3">
-                        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Unknown</div>
-                        <div className="mt-2 text-2xl font-semibold text-foreground">{latestMetricsSummary?.unknown ?? 0}</div>
-                      </div>
-                    </div>
-
-                    {reviewState.metricsError && latestMetricRows.length === 0 && (
-                      <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-                        {reviewState.metricsError}
-                      </div>
-                    )}
-
-                    {!reviewState.metricsError && latestMetricRows.length === 0 && (
-                      <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-                        No metric snapshot exists for the latest run yet.
-                      </div>
-                    )}
-
-                    {/* Metric trends chart removed — per-metric latest values live in the
-                        summary tiles and the metric table below; trajectory now lives in the
-                        agent-curated workflow log. */}
-
-                    {latestMetricRows.length > 0 && (
-                      <div className="overflow-hidden rounded-xl border border-border bg-card">
-                        <div className="grid grid-cols-[1fr_auto_auto] items-center gap-x-4 border-b border-border bg-muted/20 px-4 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                          <div>Metric</div>
-                          <div className="text-right">Value</div>
-                          <div className="text-right">Target</div>
-                        </div>
-                        <div className="divide-y divide-border">
-                          {latestMetricRows.map(row => {
-                            const metric = metricById.get(row.metric_id)
-                            const roleLabel = metricRoleLabel(metric)
-                            return (
-                              <div key={`${row.completed_at}-${row.metric_id}`} className="grid grid-cols-[1fr_auto_auto] items-center gap-x-4 px-4 py-2.5 text-sm">
-                                <div className="min-w-0">
-                                  <div className="flex min-w-0 flex-wrap items-center gap-2">
-                                    <div className="truncate font-medium text-foreground">{metric?.label || row.metric_id}</div>
-                                    {roleLabel && (
-                                      <span className={`rounded-full border px-1.5 py-0.5 text-[10px] font-semibold uppercase leading-none ${metricRoleClass(roleLabel)}`}>
-                                        {roleLabel}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
-                                    <span className="font-mono">{row.metric_id}</span>
-                                    {row.resolve_error && <span className="truncate text-warning">{row.resolve_error}</span>}
-                                  </div>
-                                </div>
-                                <div className={`text-right font-medium ${metricRowStatusClass(row)}`}>
-                                  {row.has_value ? `${row.value}${metric?.unit ? ` ${metric.unit}` : ''}` : 'missing'}
-                                </div>
-                                <div className="text-right text-xs text-muted-foreground">
-                                  {metricThresholdLabel(row)}
-                                </div>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    )}
-
-                    {currentEvalEntry && (
-                      <div className="space-y-2">
-                        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                          Eval evidence ({currentEvalStepScores.length})
-                        </div>
-                        {currentEvalStepScores.length === 0 && (
-                          <div className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning">
-                            This evaluation report has no step_scores. It may be from an older or incomplete eval run.
-                          </div>
-                        )}
-                        {currentEvalStepScores.map((step, idx) => {
-                          const stepKey = `${currentEvalEntry.run_folder}-${step.step_id}-${idx}`
-                          const isExpanded = expandedEvalSteps.has(stepKey)
-                          const outputText = formatStepOutputContent(step.output_content)
-                          const showReasoning = Boolean(step.reasoning && !isFinalScoringPlaceholderText(step.reasoning))
-                          const showEvidence = Boolean(step.evidence && !isFinalScoringPlaceholderText(step.evidence))
-                          const stepDetails = evalStepDetailsById.get(step.step_id)
-                          return (
-                            <div key={stepKey} className="overflow-hidden rounded-xl border border-border bg-card">
-                              <button
-                                type="button"
-                                onClick={() => toggleEvalStep(stepKey)}
-                                className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-accent/50"
-                              >
-                                {isExpanded ? (
-                                  <ChevronDown className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-                                ) : (
-                                  <ChevronRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-                                )}
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-center gap-2">
-                                    <span className="rounded bg-muted px-1 py-0.5 font-mono text-[10px] text-muted-foreground">#{idx + 1}</span>
-                                    <span className="truncate text-sm font-medium text-foreground">{stepDetails?.title || step.step_id}</span>
-                                    {stepDetails?.title && (
-                                      <span className="truncate font-mono text-[10px] text-muted-foreground">{step.step_id}</span>
-                                    )}
-                                  </div>
-                                </div>
-                              </button>
-                              {isExpanded && (stepDetails?.description || hasStepOutputContent(step) || showReasoning || showEvidence) && (
-                                <div className="space-y-3 border-t border-border bg-muted/20 px-4 py-3">
-                                  {stepDetails?.description && (
-                                    <div>
-                                      <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Description</div>
-                                      <p className="whitespace-pre-wrap text-xs text-foreground">{stepDetails.description}</p>
-                                    </div>
-                                  )}
-                                  {outputText && (
-                                    <div>
-                                      <div className="mb-1 flex items-center justify-between gap-2">
-                                        <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Output</div>
-                                        {step.output_content?.file_path && (
-                                          <span className="truncate font-mono text-[10px] text-muted-foreground">{step.output_content.file_path}</span>
-                                        )}
-                                      </div>
-                                      <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded border border-border bg-background p-2 text-[11px]">
-                                        {outputText}
-                                      </pre>
-                                    </div>
-                                  )}
-                                  {showReasoning && (
-                                    <div>
-                                      <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Reasoning</div>
-                                      <p className="whitespace-pre-wrap text-xs text-foreground">{step.reasoning}</p>
-                                    </div>
-                                  )}
-                                  {showEvidence && (
-                                    <div>
-                                      <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Evidence</div>
-                                      <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded border border-border bg-background p-2 text-[11px]">
-                                        {step.evidence}
-                                      </pre>
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          )
-                        })}
-                      </div>
-                    )}
                   </div>
                 ) : reviewTab === 'soul' ? (
                   <div className="space-y-3">

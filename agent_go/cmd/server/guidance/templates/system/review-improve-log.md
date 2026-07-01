@@ -35,21 +35,21 @@ A verdict, a goal-criterion status, or a tile can silently go stale if no recent
 Every workflow is judged on two independent axes, and the header shows **both** as separate pills — never collapse them into a single "health":
 
 - **Bug** — did it *run correctly*? Errors, skipped steps, missing/empty artifacts, regressions vs the last run. A bug is fixed by **hardening**. Operational, roughly binary.
-- **Goal** — is it *achieving its success criteria*? Eval scores and outcome metrics vs `soul.md`, trending over runs. A goal gap is fixed by **refining or replanning**. Continuous.
+- **Goal** — is it *achieving its success criteria*? Eval scores and run evidence vs `soul.md`, trending over runs. A goal gap is fixed by **refining or replanning**. Continuous.
 
-They are orthogonal: a run can be **Bug: broken** (a step silently skipped) while **Goal: on-target**, or **Bug: clean** while **Goal: short** (it runs perfectly but produces output that misses the point). You need both lenses — operational monitoring can't see a goal gap, and outcome metrics can't see a skipped step. **Health gates goal:** a run that wasn't operationally clean produces no trustworthy goal signal, so never judge the goal on a broken run.
+They are orthogonal: a run can be **Bug: broken** (a step silently skipped) while **Goal: on-target**, or **Bug: clean** while **Goal: short** (it runs perfectly but produces output that misses the point). You need both lenses: operational monitoring catches run failures, while eval and output review catch goal gaps. **Health gates goal:** a run that wasn't operationally clean produces no trustworthy goal signal, so never judge the goal on a broken run.
 
 Tag each **Monitor**, **Open finding**, and **Decision** entry with the axis it belongs to — a small **Bug** or **Goal** chip — so the timeline is filterable and the fix path is obvious (Bug → harden, Goal → refine/replan).
 
 ### The goal card
 
-Directly under the verdicts, show **what the workflow is for**: the one-line objective plus the success criteria from `soul.md`, each with a live status — **Met / Short / At risk** — and the metric or evidence behind that status. This is what the **Goal** verdict is measured against; without it the verdict is opaque. Keep it current as criteria are met or slip. (The `/auto-improve` setup seeds this from `soul.md` when it bootstraps the goal.)
+Directly under the verdicts, show **what the workflow is for**: the one-line objective plus the success criteria from `soul.md`, each with a live status — **Met / Short / At risk** — and the eval/run evidence behind that status. This is what the **Goal** verdict is measured against; without it the verdict is opaque. Keep it current as criteria are met or slip. (The `/auto-improve` setup seeds this from `soul.md` when it bootstraps the goal.)
 
 The goal card **reads from `soul.md`** — it does not replace it. `soul.md` stays Markdown (it's parsed for objective/success-criteria); **do not create a `soul.html`** or convert it. This Pulse log is the only HTML document; soul.md is its Markdown source.
 
 ### Signal tiles — grouped by verdict
 
-Render metrics as readable tiles (value + movement in words: `eval 0.78 ▶ target 0.90`, `cost ¢19 ▲ from ¢12`, `wall 4m12s · LLM 2m08s`), grouped into **Bug tiles** (did it run: tests executed, last-run status, runtime), **Goal tiles** (is it achieving: eval scores vs target, outcome metrics vs success criteria), and **Cost/time tiles** (what the run spent: total cost/tokens, wall/LLM/tool time, top-cost step/agent, slowest step/agent). Read every number from `planning/metrics.json`, `db/metrics_history.jsonl`, `scores/evaluation/`, cost ledgers under `costs/`, and timing summaries under `runs/<run_folder>/logs/<step-id>/execution/` — the deterministic source of truth. Never fabricate a value or a trend, and never use charts.
+Render readable signal tiles (value + movement in words: `eval 0.78 -> target 0.90`, `cost 19c -> from 12c`, `wall 4m12s · LLM 2m08s`), grouped into **Bug tiles** (did it run: tests executed, last-run status, runtime), **Goal tiles** (is it achieving: eval scores and output checks vs success criteria), and **Cost/time tiles** (what the run spent: total cost/tokens, wall/LLM/tool time, top-cost step/agent, slowest step/agent). Read every number from eval reports, run outputs/logs, cost ledgers under `costs/`, and timing summaries under `runs/<run_folder>/logs/<step-id>/execution/` — the deterministic source of truth. Never fabricate a value or a trend, and never use charts.
 
 ### Cost/time readout — one compact operational report per run
 
@@ -77,7 +77,7 @@ Each entry is a small card: a date, a kind tag, a one-line title, and a short pr
 - **Run** — a one-line row in the recent-runs strip: run id, status, key numbers (tests, eval, cost/tokens, wall time), the **backup result** (`backed up ✓ <commit/ref>`, `unchanged — already backed up`, or `backup ✗ <reason>`), and a short note only when something stands out. Routine runs stay terse; flag a run only when it regressed, the backup failed, cost/time evidence is missing, or one step/agent dominates spend/time.
 - **Monitor** — a post-run observation: what changed in the output and the most likely cause, correlated against the plan changelog ("output regressed at run N; you tightened step X two runs earlier — likely cause").
 - **Decision** — a change applied or proposed, with the one-line rationale and the file(s) touched. If it fixes an open finding, close that finding out (below).
-- **Chief of Staff recommendation** — an org-level recommendation written by Chief of Staff / Org Pulse after reading workflow evidence against org goals. It should name the org goal/KPI target or `supporting/no explicit goal`, give an alignment verdict (`aligned`, `supporting`, `unaligned`, or `unknown-measurement`), cite evidence, state the gap, suggest a builder action, and describe the expected KPI/success-criteria impact. Treat it like an external **Open finding**: verify the cited evidence, then choose the normal builder path (Bug → `harden_workflow`, Goal/strategy → `replan_workflow_from_results` or a targeted builder edit, measurement gap → metric/eval/report fix, cost/ops → review/apply if safe). Do not assume it is correct or already applied; close it only after the builder decision is made.
+- **Chief of Staff recommendation** — an org-level recommendation written by Chief of Staff / Org Pulse after reading workflow evidence against org goals. It should name the org goal/KPI target or `supporting/no explicit goal`, give an alignment verdict (`aligned`, `supporting`, `unaligned`, or `unknown-measurement`), cite evidence, state the gap, suggest a builder action, and describe the expected KPI/success-criteria impact. Treat it like an external **Open finding**: verify the cited evidence, then choose the normal builder path (Bug → `harden_workflow`, Goal/strategy → `replan_workflow_from_results` or a targeted builder edit, measurement gap → eval/report fix, cost/ops → review/apply if safe). Do not assume it is correct or already applied; close it only after the builder decision is made.
 - **User rule** — a constraint the user stated. Mark it clearly as authoritative ("USER RULE — authoritative") so future agents treat it as a hard constraint, never silently override it. This replaces the old `source: "user"` field — say it in words.
 - **Note** — a freeform observation or watchpoint that explains weird runs ("staging UI is mid-redesign, expect selector churn through ~June 20 — not a workflow bug").
 - **Open finding** — something wrong that is not yet fixed. Give it a short stable anchor id (e.g. `id="of-2026-06-07-screenshots"`) **only so a later Decision can mark it resolved** — that is the one place an id earns its keep. No other entry kind needs an id.
@@ -266,13 +266,13 @@ After this one rewrite the file is in skeleton format; from then on you just pre
     <div class="obj"><span class="l">What this workflow is for</span><!-- one-line objective from soul.md --></div>
     <div class="crit"><span class="cs short">↑ Short</span><span class="ct"><!-- success criterion --><span class="m">not yet measured — needs a run</span></span></div>
     <!-- one .crit row per success criterion; cs = met | short | risk.
-         End each .m metric line with the run it's as-of so freshness is visible:
+         End each .m evidence line with the run it's as-of so freshness is visible:
          <span class="m">eval 0.81 ▶ 0.90 target · run #41</span>. A criterion whose route this run
          didn't exercise is "not run this route" (cs short, neutral), never Short/At-risk. -->
   </div>
 
-  <!-- SIGNAL TILES grouped by verdict. Read every number from planning/metrics.json,
-       db/metrics_history.jsonl, scores/evaluation/, costs/, and timing summaries. Never invent. -->
+  <!-- SIGNAL TILES grouped by verdict. Read every number from eval reports,
+       run outputs/logs, costs/, and timing summaries. Never invent. -->
   <div class="grouplbl">Bug · operational health</div>
   <div class="tiles">
     <div class="tile"><div class="k">—</div><div class="v">—</div><div class="d">no runs yet</div></div>

@@ -141,8 +141,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 	hcpo.GetLogger().Info("✅ Evaluation execution completed successfully")
 
 	// Build the evaluation report directly from individual eval step outputs.
-	// There is no final scoring agent: metric extraction reads the structured
-	// output_content for each eval step.
+	// There is no final scoring agent; output_content remains the source of
+	// truth for each eval step.
 	hcpo.GetLogger().Info("📊 Building evaluation report from step outputs")
 	report, err := hcpo.runEvaluationReportPhase(ctx, evaluationPlan, targetRunFolder, internalEvalRunFolder, skippedStepScores)
 	if err != nil {
@@ -151,13 +151,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Evaluation complete. Captured %d evaluation step output(s)", len(report.StepScores)))
-
-	// Snapshot per-run metric values now that the evaluation_report.json has
-	// been published to evaluation/runs/<originalTarget>/. This fires for both
-	// workflow-run-triggered eval (via MaybeRunAutoEvaluation) and standalone
-	// eval (triggered from the builder), since both flow through here.
-	// No-op when planning/metrics.json is absent.
-	hcpo.snapshotRunMetrics(ctx, originalTarget)
 
 	return fmt.Sprintf("Evaluation complete. Captured %d evaluation step output(s)", len(report.StepScores)), nil
 }
@@ -182,7 +175,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runEvaluationReportPhase(ctx context.
 			StepID:    step.ID,
 			Score:     0,
 			MaxScore:  0,
-			Reasoning: "Final scoring is disabled; this report preserves the eval step output for metrics and review.",
+			Reasoning: "Final scoring is disabled; this report preserves the eval step output for review.",
 			Evidence:  "Inspect output_content for the eval step's structured verdict and evidence.",
 		})
 	}
@@ -445,9 +438,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) MaybeRunAutoEvaluation(ctx context.Co
 
 	hcpo.GetLogger().Info(fmt.Sprintf("📊 Starting auto-evaluation for run folder: %s", targetRunFolder))
 
-	// Call the same evaluation process as manual evaluation. ExecuteEvaluationOnly
-	// also snapshots per-run metric values at its tail, so any caller (this auto
-	// path, builder-triggered eval-only) gets the snapshot for free.
+	// Call the same evaluation process as manual evaluation.
 	_, err = hcpo.ExecuteEvaluationOnly(ctx, hcpo.GetObjective(), hcpo.GetWorkspacePath(), targetRunFolder)
 	if err != nil {
 		return fmt.Errorf("auto-evaluation failed: %w", err)

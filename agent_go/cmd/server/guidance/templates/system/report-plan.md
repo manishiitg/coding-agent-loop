@@ -1,6 +1,6 @@
 ## REPORT PLAN — reports/report_plan.json
 
-Workshop may maintain the live frontend report defined by `reports/report_plan.json` so the report stays aligned with current outputs, metrics, and evaluation evidence. Use report-plan tools for report edits; use workshop tools only when the underlying workflow behavior or eval coverage actually needs to change.
+Workshop may maintain the live frontend report defined by `reports/report_plan.json` so the report stays aligned with current outputs and evaluation evidence. Use report-plan tools for report edits; use workshop tools only when the underlying workflow behavior or eval coverage actually needs to change.
 
 ### The report model — an HTML document
 
@@ -26,7 +26,7 @@ HTML is a superset of anything a plain document needs — prose, headings, table
 
 The viewer hands the HTML the live data and the HTML renders its own visuals (charts, custom tables, branded CSS). Inside the iframe the viewer exposes `window.report`:
 - `await window.report.query(sql)` — run a read-only SQL query against `db/db.sqlite` → array of row objects (the primary data source). Do the joining, summing, filtering, grouping, and latest-row selection in SQL (`JOIN`, `WHERE`, `GROUP BY`, `ORDER BY`, `LIMIT`).
-- `await window.report.get(path)` — fetch a workflow file live → parsed JSON (or text). Reads the stores AND the operational/config data (costs, metrics, evals, groups, workflow.json, …) — see **Read scope** below. Use for files/assets/operational data; for bulk `db/` rows prefer `query`.
+- `await window.report.get(path)` — fetch a workflow file live → parsed JSON (or text). Reads the stores AND the operational/config data (costs, evals, groups, workflow.json, …) — see **Read scope** below. Use for files/assets/operational data; for bulk `db/` rows prefer `query`.
 - `await window.report.getText(path)` — raw file text
 - `await window.report.getHtml(path)` — render a **markdown file** to an HTML string (the app's markdown engine + GFM tables), wrapped in `<div class="report-markdown">` with a default theme-aware prose style. Use it to **embed a rendered `.md` inline inside your HTML report**: `el.innerHTML = await window.report.getHtml('db/reports/notes.md')`. Lets you keep your custom HTML design and drop a markdown-rendered section in between. Override `.report-markdown` in your CSS to restyle.
 - `window.report.renderMarkdown(md)` — same renderer, but for a markdown **string you already hold** (not a file): a `db`/`sql` value, a knowledgebase field, or inline text. **Synchronous** (no `await`), returns the same `<div class="report-markdown">…</div>`. Use it to render markdown that lives in your data, e.g. a notes column in a table: `cell.innerHTML = window.report.renderMarkdown(row.notes_md)`. This is the answer to "my content is markdown but my report is HTML" — call it from your HTML report; you do NOT need a React markdown component.
@@ -36,7 +36,6 @@ The viewer hands the HTML the live data and the HTML renders its own visuals (ch
 
 **Read scope — what a report can pull.** Beyond `db/`, `knowledgebase/`, `docs/`, `get`/`getText`/`getHtml` can also read the workflow's operational + config data (all stable top-level paths — read them and surface whatever the report actually needs; you do NOT have to use all of it):
 - **Costs / tokens** — `get('costs/phase/token_usage.json')`, `get('costs/execution/<group>/<date>.json')`
-- **Metrics** — `get('planning/metrics.json')`
 - **Eval results** — `get('evaluation/evaluation_plan.json')` and the `evaluation/` scores
 - **Variable groups** — `get('variables/variables.json')` → `groups: [{ name, enabled, values }]`
 - **Workflow config** — `get('workflow.json')` (id, label, schedule, …)
@@ -67,14 +66,14 @@ A report answers questions and drives action — it is not a mirror of the datab
 - **Surface the exceptions.** Call out outliers, failures, regressions, and stale/missing data explicitly — sort/filter so what matters is on top; don't make the reader hunt the one red row in a long table.
 - **Assign status from explicit thresholds.** Drive ✅ ok / ⚠️ attention / ❌ fail from stated rules (e.g. "≥90% = ok") so the colour is consistent and trustworthy.
 - **One entity per tab.** Per-PAN/route/account reports give each entity its own document/tab with its own verdict — never blend unrelated entities into one page.
-- **Content quality starts upstream.** The report only shows what the workflow's steps write to `db/db.sqlite`. If the data needed to answer the key question isn't there (a computed metric, a baseline, a status flag), the fix is in the producing step — instruct it to emit that — not in the HTML.
+- **Content quality starts upstream.** The report only shows what the workflow's steps write to `db/db.sqlite`. If the data needed to answer the key question isn't there (a computed value, a baseline, a status flag), the fix is in the producing step — instruct it to emit that — not in the HTML.
 
 ### Writing a GOOD report document (formatting)
 
 The content section above decides WHAT to show; these make it READABLE when you author the HTML:
 - **Structure + scannability.** Use clear section headings; short paragraphs and bullets over walls of prose; **bold** the key figures; one logical section per topic/entity. For multi-entity reports, one document (tab) per entity.
 - **Show data as data.** Use tables for numbers — never dump raw JSON or logs into the prose. Use status labels/semantic colour (✅ ok / ⚠️ attention / ❌ fail) for pass-fail fields.
-- **Keep live data live.** For anything that changes (totals, per-entity tables, file lists, metrics), read it from `window.report` so the report never goes stale. Only hardcode genuinely static narrative.
+- **Keep live data live.** For anything that changes (totals, per-entity tables, file lists, status values), read it from `window.report` so the report never goes stale. Only hardcode genuinely static narrative.
 - **Link, don't inline, big artifacts.** Reference PDFs/files with relative links (clickable, open in the in-report viewer) instead of pasting their contents.
 - **Self-contained.** Inline all CSS/JS, no external CDN. **Height auto-sizes to your content** — do NOT pin the body to a fixed or viewport height (`height: 100vh`/`100%`) and do NOT build your own scroll container; let content flow top-to-bottom and the report frame grows to fit it (no clipping, no inner scrollbar). Get live data from `window.report` (above).
 - **Design quality — aim for a polished, "designed" report, not a default-styled page.** You own the look; hold a high bar:

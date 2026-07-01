@@ -653,14 +653,14 @@ export function ReportViewer({ workspacePath, isOpen, onClose }: ReportViewerPro
 function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onClose, focusTier }: ReportViewProps) {
   // Two explicit preview widths plus 'auto'. The internal name 'desktop' is
   // surfaced as "Laptop" in the UI to match the user's mental model — laptop
-  // viewports are what fill the full max-width shell. 'auto' falls back to the
-  // mobilePreview prop, used when nothing has been selected yet.
+  // viewports are what fill the full max-width shell. 'auto' falls back to
+  // desktop unless the parent explicitly requests a focused mobile pane.
   const [previewPreference, setPreviewPreference] = useState<'auto' | 'desktop' | 'mobile'>(() => {
     try {
       const saved = localStorage.getItem(reportPreviewPreferenceKey(workspacePath))
-      return saved === 'desktop' || saved === 'mobile' ? saved : 'mobile'
+      return saved === 'desktop' || saved === 'mobile' ? saved : 'auto'
     } catch {
-      return 'mobile'
+      return 'auto'
     }
   })
   // Re-read the per-workflow preference when the workflow (workspacePath) changes,
@@ -668,9 +668,9 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
   useEffect(() => {
     try {
       const saved = localStorage.getItem(reportPreviewPreferenceKey(workspacePath))
-      setPreviewPreference(saved === 'desktop' || saved === 'mobile' ? saved : 'mobile')
+      setPreviewPreference(saved === 'desktop' || saved === 'mobile' ? saved : 'auto')
     } catch {
-      setPreviewPreference('mobile')
+      setPreviewPreference('auto')
     }
   }, [workspacePath])
   const [loading, setLoading] = useState(false)

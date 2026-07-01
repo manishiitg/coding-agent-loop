@@ -39,7 +39,7 @@ Set via `update_step_config(step_id, ...)`:
 ### Choosing — a short decision framework
 
 1. **Start with tiers, not pins.** Set sensible tier_1/2/3 once via `set_workflow_llm_config` and let maturity selection do the rest. Most steps never need a per-step override.
-2. **Don't force a cheaper tier before reliability is proven.** Drop a step to `medium`/`low` only after it's stable with eval/metric evidence at target — premature downgrading trades correctness for cost.
+2. **Don't force a cheaper tier before reliability is proven.** Drop a step to `medium`/`low` only after it's stable with eval/run evidence at target — premature downgrading trades correctness for cost.
 3. **Use `execution_tier` for "usually cheaper/faster", `execution_llm` for "must be this exact model".** Don't hardcode a model when a tier expresses the intent.
 4. **Trial before committing.** Use `execute_step(..., tier="...")` or `test_llm` to validate a model on a real run before making it persistent.
 5. **Match tier to the work.** Subjective/ambiguous judgment → high; routine checks → medium; deterministic/file-shape → low.

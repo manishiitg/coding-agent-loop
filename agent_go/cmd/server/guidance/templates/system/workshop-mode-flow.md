@@ -25,20 +25,20 @@ and build on previous progress.
 
 Also read `builder/improve.html` before improvement decisions. Chief of Staff
 recommendation cards in that log are external open findings: verify their
-evidence against current runs/metrics/soul.md, then choose the normal builder
+evidence against current runs/eval/soul.md, then choose the normal builder
 path (`harden_workflow`, `replan_workflow_from_results`, targeted config/plan
 tool, or no action with rationale).
 
 ## The core optimization loop: run → eval → classify → act → verify
 
-Treat **harden, replan, eval improvement, metric cleanup, and
+Treat **harden, replan, eval improvement, and
 no-action/blocker** as peer outcomes. Classify the evidence first, then
 choose the action whose scope matches the failure.
 
 - Choose `harden_workflow` when the workflow path is basically right
   but reliability, validation, artifact shape, eval wiring,
   KB/db/report contracts, or local step behavior is broken.
-- Choose `replan_workflow_from_results` when primary outcome metrics or
+- Choose `replan_workflow_from_results` when run/eval evidence or
   success criteria show a strategy/path gap that local repair is
   unlikely to close.
 
@@ -73,11 +73,11 @@ reliability. Use replanning for strategy or path redesign.
    each group you need to score. Evaluation always targets
    `iteration-0`.
 3. **Classify** — decide whether the evidence calls for harden, replan,
-   eval-plan improvement, metric cleanup, or no action/blocker.
+   eval-plan improvement, or no action/blocker.
 4. **Act** — call the matching tool or apply the matching bounded edit.
 5. **Re-run and verify** — execute again only when one targeted
    verification would materially reduce uncertainty.
-6. **Repeat** until primary metrics and success criteria are healthy,
+6. **Repeat** until eval evidence and success criteria are healthy,
    not merely until local step checks pass.
 
 ### Progressive hardening loop
@@ -94,8 +94,8 @@ the next group runs:
       `run_full_evaluation(group_name="...")`.
    c. Classify the failure. For local reliability/contract failures,
       run `harden_workflow(group_name="...")`. For strategy/path,
-      measurement, or metric-definition failures, use
-      `replan_workflow_from_results`, eval tools, or metric tools.
+      or measurement failures, use `replan_workflow_from_results` or
+      eval tools.
 3. After all groups have run: summarize overall scores and remaining
    issues.
 4. If any groups still failing: repeat the loop (max 2 full iterations
@@ -108,7 +108,7 @@ validation/extraction step, remove an obsolete step, split/merge a
 clearly broken boundary), `harden_workflow` may use the plan
 modification tools directly.
 
-Use `replan_workflow_from_results` when run/eval/metric evidence shows
+Use `replan_workflow_from_results` when run/eval evidence shows
 the workflow path itself is misaligned with the objective or success
 criteria — for example, it is doing the wrong business work, collecting
 the wrong evidence, optimizing the wrong artifact, or producing outputs
@@ -122,7 +122,7 @@ Workshop is for the run/eval/classify/act loop. If the user asks about:
 - **Report documents (HTML/Markdown), themes, tabs, custom colors** → handle them
   here with the report-plan tools. Workshop can maintain
   `reports/report_plan.json` when report changes need to reflect
-  run/eval/metric evidence.
+  run/eval evidence.
 - **Greenfield workflow design — adding new execution steps or
   defining a new workflow's structure from scratch** → handle it here.
   Workshop owns both greenfield design and hardening of an existing structure.

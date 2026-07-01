@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { Activity, Brain, PanelRightClose, RefreshCw, Target } from 'lucide-react'
+import jetBrainsMonoLatin400Woff2 from '@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2?url'
+import jetBrainsMonoLatin600Woff2 from '@fontsource/jetbrains-mono/files/jetbrains-mono-latin-600-normal.woff2?url'
 import { agentApi } from '../../services/api'
 import { useAuthStore } from '../../stores/useAuthStore'
 import { useTheme } from '../../hooks/useTheme'
@@ -15,13 +17,29 @@ import {
 const ORG_PULSE_LOG_PATH = 'pulse/org-pulse.html'
 const ORG_GOALS_PATH = 'pulse/goals.html'
 
+const ORG_HTML_FONT_STYLE = `
+<style data-runloop-org-html-fonts>
+@font-face{font-family:"JetBrains Mono";font-style:normal;font-display:swap;font-weight:400;src:url("${jetBrainsMonoLatin400Woff2}") format("woff2")}
+@font-face{font-family:"JetBrains Mono";font-style:normal;font-display:swap;font-weight:600;src:url("${jetBrainsMonoLatin600Woff2}") format("woff2")}
+:root{--mono:"JetBrains Mono","SFMono-Regular","SF Mono",Menlo,Monaco,Consolas,"Liberation Mono",monospace}
+code,pre,kbd,samp{font-family:var(--mono)}
+</style>`
+
+function injectOrgHtmlFonts(content: string): string {
+  if (content.includes('data-runloop-org-html-fonts')) return content
+  if (/<\/head>/i.test(content)) {
+    return content.replace(/<\/head>/i, `${ORG_HTML_FONT_STYLE}</head>`)
+  }
+  return `${ORG_HTML_FONT_STYLE}${content}`
+}
+
 function applyThemeToOrgHtml(content: string, isDark: boolean): string {
   const themeAttr = isDark ? 'dark' : 'light'
   const trimmed = content.trimStart()
 
   if (/^<(!doctype|html)/i.test(trimmed)) {
-    if (!/<html[\s>]/i.test(content)) return content
-    return content.replace(/<html\b([^>]*)>/i, (_m, attrs: string) => {
+    if (!/<html[\s>]/i.test(content)) return injectOrgHtmlFonts(content)
+    const themed = content.replace(/<html\b([^>]*)>/i, (_m, attrs: string) => {
       let next = attrs
       if (/\sdata-theme=(["']).*?\1/i.test(next)) {
         next = next.replace(/\sdata-theme=(["']).*?\1/i, ` data-theme="${themeAttr}"`)
@@ -43,6 +61,7 @@ function applyThemeToOrgHtml(content: string, isDark: boolean): string {
 
       return `<html${next}>`
     })
+    return injectOrgHtmlFonts(themed)
   }
 
   return `<!doctype html><html data-theme="${themeAttr}"${isDark ? ' class="dark"' : ''}><head><meta charset="utf-8"><style>
@@ -50,9 +69,9 @@ function applyThemeToOrgHtml(content: string, isDark: boolean): string {
     html[data-theme="dark"]{color-scheme:dark;--bg:#0f0f12;--fg:#f1f0f4;--muted:#a3a2aa;--line:#2b2b33;--card:#17171c}
     html,body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;line-height:1.55}
     body{padding:24px;max-width:920px}
-    a{color:inherit} code{background:rgba(127,127,127,.16);padding:1px 5px;border-radius:4px}
+    a{color:inherit} code{font-family:var(--mono);background:rgba(127,127,127,.16);padding:1px 5px;border-radius:4px}
     table{width:100%;border-collapse:collapse} th,td{border-bottom:1px solid var(--line);padding:8px;text-align:left}
-  </style></head><body>${content}</body></html>`
+  </style>${ORG_HTML_FONT_STYLE}</head><body>${content}</body></html>`
 }
 
 interface OrgHtmlPanelProps {

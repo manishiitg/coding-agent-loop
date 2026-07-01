@@ -122,8 +122,8 @@ type StepOutputContent struct {
 }
 
 // EvaluationStepScore is the per-step entry in evaluation_report.json.
-// The legacy score fields are retained only for old reports and old metric
-// definitions; new evaluation runs treat output_content as the source of truth.
+// The legacy score fields are retained only for old reports; new evaluation
+// runs treat output_content as the source of truth.
 // step_title and success_criteria are intentionally absent — UI consumers can
 // look them up by step_id from evaluation_plan.json (the plan is loaded next
 // to the report by the same API endpoint).
@@ -140,7 +140,7 @@ type EvaluationStepScore struct {
 
 // EvaluationReport captures eval step outputs for a target run. The aggregate
 // score fields are legacy-only; new reports omit them because there is no final
-// scoring agent. Metrics should read explicit fields from step output_content.
+// scoring agent.
 type EvaluationReport struct {
 	TargetRunFolder  string                 `json:"target_run_folder"`
 	GeneratedAt      string                 `json:"generated_at"`

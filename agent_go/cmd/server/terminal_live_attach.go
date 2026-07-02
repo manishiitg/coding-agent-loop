@@ -500,32 +500,44 @@ func (st *liveAttachStream) seedViewer(ctx context.Context, cols, rows int) (ch 
 	resultCh := make(chan []byte, 1)
 
 	// The seed chain runs entirely in the scanner goroutine (each step is an
-	// onReply callback), so all steps are serialized against %output:
+	// onReply callback), serialized against %output. Command order is chosen so
+	// the CURRENT-SCREEN capture is the LAST command and the viewer is spliced
+	// on ITS %end:
 	//   1. #{history_size} — tmux clamps a capture-pane -S/-E range into the
 	//      visible screen when the scrollback is empty, which would seed the
 	//      first screen row twice; only capture history that actually exists.
 	//   2. capture-pane history slice (scrollback only, no -J).
-	//   3. capture-pane current screen.
-	//   4. cursor query — its %end is the splice point.
-	var historyCmd, screenCmd *liveAttachCmd
-	finish := func(cursor liveattach.Reply) {
+	//   3. cursor query.
+	//   4. capture-pane current screen — its %end is the splice point.
+	//
+	// The screen MUST be captured last and be the splice point. tmux emits pane
+	// %output between our consecutive commands (never inside a reply block), so
+	// any %output produced before the screen capture is folded into that
+	// snapshot, and any %output after it is delivered to the freshly-spliced
+	// viewer — no byte is both captured and streamed (duplication) or neither
+	// (a gap that permanently desyncs xterm's grid from the CLI). The cursor is
+	// queried just BEFORE the screen; a %output that moves the cursor in that
+	// microscopic window leaves the seeded cursor momentarily stale, which the
+	// first live redraw corrects — strictly preferable to dropping that output.
+	var historyCmd, cursorCmd *liveAttachCmd
+	finish := func(screen liveattach.Reply) {
 		seedMu.Lock()
 		defer seedMu.Unlock()
 		if abandoned {
 			return
 		}
-		// The history/screen replies are FIFO-earlier, so their buffered done
+		// The history/cursor replies are FIFO-earlier, so their buffered done
 		// channels are guaranteed filled (historyCmd may be nil: no scrollback).
-		var history, screen liveattach.Reply
+		var history, cursor liveattach.Reply
 		if historyCmd != nil {
 			select {
 			case history = <-historyCmd.done:
 			default:
 			}
 		}
-		if screenCmd != nil {
+		if cursorCmd != nil {
 			select {
-			case screen = <-screenCmd.done:
+			case cursor = <-cursorCmd.done:
 			default:
 			}
 		}
@@ -555,11 +567,12 @@ func (st *liveAttachStream) seedViewer(ctx context.Context, cols, rows int) (ch 
 					return // stream dying; the seed waiter unblocks via st.done
 				}
 			}
-			screenCmd, sendErr = st.sendCommand(fmt.Sprintf("capture-pane -t %s -p -e", st.tmuxSession), nil)
+			cursorCmd, sendErr = st.sendCommand(fmt.Sprintf("display-message -p -t %s '#{cursor_x},#{cursor_y}'", st.tmuxSession), nil)
 			if sendErr != nil {
 				return
 			}
-			if _, sendErr = st.sendCommand(fmt.Sprintf("display-message -p -t %s '#{cursor_x},#{cursor_y}'", st.tmuxSession), finish); sendErr != nil {
+			// Screen capture LAST; finish() splices the viewer on its %end.
+			if _, sendErr = st.sendCommand(fmt.Sprintf("capture-pane -t %s -p -e", st.tmuxSession), finish); sendErr != nil {
 				return
 			}
 		},

@@ -213,13 +213,14 @@ func TestLiveAttachSeedSpliceExcludesPreSeedOutput(t *testing.T) {
 			return liveattach.Reply{Lines: []string{"1"}}
 		case strings.HasPrefix(cmd, "capture-pane") && strings.Contains(cmd, " -S "):
 			return liveattach.Reply{Lines: []string{"history"}}
-		case strings.HasPrefix(cmd, "capture-pane"):
-			return liveattach.Reply{Lines: []string{"screen-with-spinner"}}
 		case strings.Contains(cmd, "#{cursor_x}"):
-			// Pane output that arrived between the screen capture and the
-			// cursor reply — pre-splice, so it must be dropped.
-			stRef.broadcast([]byte("pre-seed-spinner-tick"))
 			return liveattach.Reply{Lines: []string{"0,0"}}
+		case strings.HasPrefix(cmd, "capture-pane"):
+			// The screen capture is the splice point. Pane output observed up to
+			// this instant is, by protocol order, already folded into this
+			// snapshot — it must NOT also be streamed to the viewer.
+			stRef.broadcast([]byte("pre-seed-spinner-tick"))
+			return liveattach.Reply{Lines: []string{"screen-with-spinner"}}
 		}
 		return liveattach.Reply{}
 	})
@@ -632,25 +633,51 @@ func TestLiveAttachRealTmuxEndToEnd(t *testing.T) {
 	// duplicate means the seed capture and the live splice overlapped (the
 	// stacked-spinner bug); tick numbers may be partially cut at both ends of
 	// the observation window, so only fully-framed lines are counted.
-	ticks := map[string]int{}
+	ticks := map[int]int{}
 	for _, m := range strings.Split(got, "\n") {
 		m = strings.TrimSpace(stripAnsiForTest(m))
-		if strings.HasPrefix(m, "tick-x-") {
-			ticks[m]++
+		if !strings.HasPrefix(m, "tick-x-") {
+			continue
+		}
+		if n, err := strconv.Atoi(strings.TrimPrefix(m, "tick-x-")); err == nil {
+			ticks[n]++
 		}
 	}
 	if len(ticks) < 5 {
 		t.Fatalf("too few ticker lines observed (%d); stream not live?\ntranscript tail: %q", len(ticks), tail(got, 800))
 	}
-	dups := 0
-	for line, n := range ticks {
-		if n > 1 {
-			dups++
-			t.Errorf("ticker line %q appeared %d times (duplication)", line, n)
+	// No duplicates: a duplicated tick means the seed capture and the live
+	// splice overlapped (the stacked-spinner bug).
+	for n, c := range ticks {
+		if c > 1 {
+			t.Errorf("tick %d appeared %d times (duplication)", n, c)
 		}
 	}
-	if dups == 0 {
-		t.Logf("verified %d unique ticker lines, zero duplicates", len(ticks))
+	// No gap: between the lowest and highest fully-framed tick, every number
+	// must be present. A missing middle tick means %output fell into the seed's
+	// capture->splice gap and was dropped, permanently desyncing xterm (the
+	// exact corruption this transport must not produce). Tick numbers may be
+	// clipped only at the two ends of the observation window.
+	lo, hi := 1<<30, 0
+	for n := range ticks {
+		if n < lo {
+			lo = n
+		}
+		if n > hi {
+			hi = n
+		}
+	}
+	var missing []int
+	for n := lo; n <= hi; n++ {
+		if ticks[n] == 0 {
+			missing = append(missing, n)
+		}
+	}
+	if len(missing) > 0 {
+		t.Errorf("gap in ticker stream: missing %v within observed range [%d,%d]\ntranscript tail: %q", missing, lo, hi, tail(got, 800))
+	}
+	if !t.Failed() {
+		t.Logf("verified contiguous ticks [%d,%d], %d lines, zero dup/gap", lo, hi, len(ticks))
 	}
 }
 

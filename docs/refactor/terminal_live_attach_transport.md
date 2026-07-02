@@ -1,8 +1,60 @@
 # Design: Live-attach terminal transport (replace snapshot/replay mirror)
 
-**Status:** Design — Phase 0 PoC complete (**control-mode chosen**, reversed from the initial PTY-attach pick; see §3). Phase 1 not started. Supersedes the snapshot/replay mirror.
+**Status:** ✅ **SHIPPED (on `main`), sole transport.** Control mode chosen (§3). The
+snapshot/replay mirror is replaced for the selected live tmux pane. §§1–3 (why, target,
+control-mode-vs-PTY-attach decision) remain accurate. §§4–9 are the *original* migration
+plan and contain decisions that were **superseded during implementation** — read §0 first;
+it lists exactly what changed.
 **Author/driver:** terminal-stability refactor.
-**Related:** `cli_live_input_unification.md` (input routing — stays valid; this doc is the *output/render* transport).
+**Related:** `cli_live_input_unification.md` (input routing — stays valid; this doc is the *output/render* transport). Debug/incident journal: `live_attach_app_vs_demo_debug.md`.
+
+---
+
+## 0. As-built (2026-07-02) — READ THIS FIRST
+
+The shipped transport (`agent_go/cmd/server/terminal_live_attach.go`,
+`agent_go/internal/liveattach/`, `frontend/src/components/TerminalCenter.tsx →
+LiveAttachXtermPane`) matches §§1–3 but differs from the §§4–9 plan on these points:
+
+1. **In-band control channel (the defining change; not in the original plan).** Every
+   tmux command the transport needs — `resize-window`, the `capture-pane` seed/backfill,
+   `#{history_size}` and cursor queries — is written to the control client's **own stdin**
+   and answered in-stream between `%begin`/`%end` guards. `liveattach.Protocol` frames
+   those replies (FIFO by command number; tmux serializes them with `%output`, so a reply
+   is an exact ordering barrier). A viewer's byte channel is spliced into the broadcast
+   **inside the scanner goroutine at its seed's `%end`**, so the seed and the live stream
+   can neither overlap (duplicate frames) nor gap. There are **no out-of-band `tmux`
+   subprocesses on the connect path** and **no drain timers**.
+
+2. **`window-size manual` + explicit `resize-window`, NOT `window-size latest`.** §4.2 is
+   **superseded.** The browser xterm grid is authoritative, but geometry is applied by
+   pinning `window-size manual` at attach and issuing an in-band `resize-window` to the
+   fitted grid (deduped). `window-size latest` (client-driven PTY size) was not used — the
+   control client's PTY size is not authoritative enough across CLIs/macOS.
+
+3. **Resize is in-band `resize-window`, not `pty.Setsize`.** The §2 diagram's
+   `pty.Setsize(cols,rows)` note is superseded by the in-band command above.
+
+4. **Manual `term.write`, not `AttachAddon`.** The frontend writes WS bytes to xterm
+   directly. The first frame of every (re)connect is the backend's in-band **seed** (RIS
+   reset + bounded scrollback history + current screen + cursor); it is run through
+   `normalizeAnsiForEmbeddedXterm` (strips Claude Code's neutral bg-237 canvas fill, which
+   otherwise renders as grey panels/bars); live `%output` after it is written verbatim.
+   `FitAddon.fit()` is the **sole** sizing authority (no manual DOM-ruler override — that
+   caused a double resize per layout tick). No `SerializeAddon`: reconnect re-seeds from
+   the backend instead.
+
+5. **Feature flag removed.** `RUNLOOP_TERMINAL_LIVE_ATTACH` (§6) no longer exists;
+   live-attach is always on for the selected tmux terminal, gated only by a minimum tmux
+   version check (2.9). The phased/flagged rollout in §6 is historical.
+
+6. **History capture omits `-J`** (joining preserves trailing spaces → background fills
+   become full-width grey bars) and queries `#{history_size}` first (tmux clamps
+   `capture-pane -S … -E -1` into the visible screen when scrollback is empty, which would
+   seed row 0 twice). **Slow viewers are dropped whole** (WS close → reconnect → fresh
+   seed), not fed a holed stream.
+
+Everything else below is the original design record, kept for rationale.
 
 ---
 
@@ -27,8 +79,8 @@ Every terminal bug this cycle — litter, duplicated frames, stacked spinners, w
       │  PTY bytes
       ▼
  backend ATTACH STREAMER  (per SELECTED terminal)        ── NEW
-   pty.Start("tmux attach -t <session>")  (read-only: we read PTY master, never write its stdin)
-   resize: pty.Setsize(cols,rows)  → tmux client follows → clean redraw frame
+   pty.Start("tmux -CC attach -t <session>")  (control mode; PTY needed for the client's own stdio)
+   resize: in-band `resize-window -x C -y R` on the control channel   [as-built; NOT pty.Setsize — see §0]
       │  raw terminal bytes (live, in order, at the xterm's geometry)
       ▼
  WebSocket (binary, 1:1)                                  ── NEW
@@ -66,7 +118,13 @@ Control mode delivers the app's **exact bytes with zero chrome**, reports exit/r
 ## 4. Constraints / assumptions (locked with product owner)
 
 1. **Single viewer per terminal** → 1 attach client ↔ 1 WebSocket ↔ 1 xterm. No fanout, no multi-client size negotiation.
-2. **xterm grid is the authoritative size.** Flip the session to **`window-size latest`** (client-driven) — the PoC confirmed the current `window-size manual` *ignores* the client size, so resize only takes effect after this flip. (Note: control mode still needs a **PTY for the client's own stdio** — plain pipes fail `tcgetattr` — so creack/pty / go-pty is used regardless of transport.)
+2. **xterm grid is the authoritative size.** ⚠️ **SUPERSEDED (see §0.2):** the as-built
+   transport does **not** use `window-size latest`. It keeps **`window-size manual`** and
+   applies the browser grid with an explicit in-band **`resize-window`** (the control
+   client's own PTY size is not authoritative enough). This bullet's original claim — flip
+   to `window-size latest` — was not adopted. (Note: control mode still needs a **PTY for
+   the client's own stdio** — plain pipes fail `tcgetattr` — so creack/pty / go-pty is used
+   regardless of transport.)
 3. **Live stream renders; `capture-pane` (or xterm `SerializeAddon`) is used only for (re)connect backfill** — never for live rendering.
 4. **Platforms:** macOS + Linux first-class. **Windows via WSL2** (= the Linux path; tmux already required, so no new dependency). **Native Windows out of scope** — blocker is tmux (no native equivalent), not the PTY. Use a **portable PTY lib** (e.g. `aymanbagabas/go-pty`: creack/pty on Unix, ConPTY on Windows) so the PTY layer keeps ConPTY optionality cheaply.
 5. **Attach only the SELECTED terminal.** A chat/session can have several terminals (`main:<session>`, `workflow-step:<…>`), each its own tmux session. Only the focused one gets a live attach+WS; the rail/others stay low-freq `capture-pane` thumbnails/metadata. Switch → detach old, attach new.

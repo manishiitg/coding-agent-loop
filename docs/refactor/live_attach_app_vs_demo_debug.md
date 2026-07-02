@@ -37,9 +37,25 @@ pane is transiently hidden (used to strand the stream permanently); per-connecti
 `TextDecoder`.
 
 **Regression net:** `TestLiveAttachRealTmuxEndToEnd` (cmd/server) drives the real
-tmux + real WS handler against a continuously-printing pane and asserts every line
-arrives exactly once; `TestLiveAttachSeedSpliceExcludesPreSeedOutput` pins the
-splice semantics; parser tests pin `%begin/%end/%error` framing.
+tmux + real WS handler against a continuously-printing pane and asserts the stream is
+both duplicate-free AND contiguous (no gap); `TestLiveAttachSeedSpliceExcludesPreSeedOutput`
+pins the splice semantics; parser tests pin `%begin/%end/%error` framing.
+
+**Follow-up fix (commit `e19452b1`) — the seed SPLICE POINT.** The first cut spliced the
+viewer on the CURSOR query's `%end`, with the screen captured one command earlier. tmux
+emits `%output` *between* consecutive commands, so `%output` produced in the
+screen→cursor window was lost: not in the snapshot (captured before it), not streamed
+(spliced after it). A single dropped byte permanently desyncs xterm's grid → cursor-
+addressed redraws land on wrong cells → characters from two logical lines interleave on
+one row (the exact corruption reported). It only bites when the pane streams heavily
+*during* the connect — e.g. a **scheduled/headless workflow the browser attaches to
+mid-run** — so a quick interactive test looked clean. Fix: the current-screen
+`capture-pane` is now the LAST seed command and the viewer splices on ITS `%end`, so
+every byte is either in the snapshot or streamed, never both, never neither. Cursor is
+queried just before the screen (benign momentary staleness, corrected by the first live
+redraw). **Decisive diagnostic:** `tmux capture-pane -p -t <session>` showed the pane
+content perfectly clean while the browser was garbled+frozen ⇒ transport/render bug, not
+the session (the handoff's §8 test).
 
 ---
 

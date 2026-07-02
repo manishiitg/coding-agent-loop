@@ -1031,7 +1031,7 @@ export const agentApi = {
     return response.data
   },
 
-  // Send a tmux control key (e.g. "Escape") to a running coding-agent session.
+  // Send a tmux control key (e.g. "Escape", "Enter", "Up", "Down") to a running coding-agent session.
   // Only valid when the provider transport supports live input (claude-code,
   // gemini-cli, codex-cli, cursor-cli). Used to route ESC keystrokes to the
   // foreground CLI pane instead of cancelling the agent context.

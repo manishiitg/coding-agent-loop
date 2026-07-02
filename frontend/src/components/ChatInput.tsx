@@ -1847,14 +1847,18 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // the caller should fall back to onStopStreaming() to cancel the agent
   // context the old way.
   const escSentinelRef = useRef(false)
-  const sendLiveCodingAgentControlKey = useCallback(async (key: string): Promise<boolean> => {
+  const sendLiveCodingAgentControlKey = useCallback(async (key: string, options?: { showToast?: boolean }): Promise<boolean> => {
     if (!isStreaming || !supportsLiveCodingAgentInput || !canSteer || !tabSessionId) return false
-    if (escSentinelRef.current) return true // debounce rapid double-presses
-    escSentinelRef.current = true
-    setTimeout(() => { escSentinelRef.current = false }, 250)
+    if (key === 'Escape') {
+      if (escSentinelRef.current) return true // debounce rapid double-presses
+      escSentinelRef.current = true
+      setTimeout(() => { escSentinelRef.current = false }, 250)
+    }
     try {
       await agentApi.sendControlKey(tabSessionId, key)
-      addToast(`Sent ${key} to ${effectiveProviderForSteer || 'CLI'} — Stop button ends the session`, 'info')
+      if (options?.showToast ?? key === 'Escape') {
+        addToast(`Sent ${key} to ${effectiveProviderForSteer || 'CLI'} — Stop button ends the session`, 'info')
+      }
       return true
     } catch (err) {
       const status = getHttpErrorStatus(err)
@@ -2752,6 +2756,31 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       } else {
         onStopStreaming()
       }
+      return
+    }
+
+    // With an empty input, route common CLI prompt/menu keys into the live
+    // coding-agent pane. Enter is deliberately special: typed text still submits
+    // as a chat message, while bare Enter confirms the CLI prompt.
+    const liveCliKey =
+      e.key === 'Enter' ? 'Enter' :
+      e.key === 'ArrowUp' ? 'Up' :
+      e.key === 'ArrowDown' ? 'Down' :
+      ''
+    if (
+      liveCliKey &&
+      isStreaming &&
+      supportsLiveCodingAgentInput &&
+      canSteer &&
+      tabSessionId &&
+      !e.shiftKey &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey &&
+      !(queryToSubmit?.trim())
+    ) {
+      e.preventDefault()
+      void sendLiveCodingAgentControlKey(liveCliKey, { showToast: false })
       return
     }
 

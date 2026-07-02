@@ -7029,9 +7029,10 @@ func (api *StreamingAPI) startNextTurnFromLiveInput(w http.ResponseWriter, r *ht
 	return true
 }
 
-// handleControlKey injects a tmux control key (e.g. "Escape") into a running
-// coding-agent session. Used by the chat UI to route ESC keystrokes to the
-// foreground CLI pane instead of cancelling the agent's Go context.
+// handleControlKey injects a tmux control key (e.g. "Escape", "Enter", "Up",
+// "Down") into a running coding-agent session. Used by the chat UI to route
+// interrupt/navigation/confirmation keys to the foreground CLI pane instead of
+// always cancelling the agent's Go context.
 func (api *StreamingAPI) handleControlKey(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)

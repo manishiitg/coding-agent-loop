@@ -1,7 +1,7 @@
 Improve this workflow using actual retained run evidence. Your job is to decide whether the next action is `harden_workflow`, `replan_workflow_from_results`, eval-plan improvement, skill scoping cleanup, report accuracy/live-data cleanup, KB cleanup (`improve_kb`), learning cleanup (`improve_learnings`), DB cleanup (`improve_db`), or no action. Use `builder/improve.html` as the shared improvement ledger entry point: read it first if it exists, create it if it does not, read referenced archive files only when they matter, and update the ledger before finishing.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 MENTAL MODEL
-Think like a sharp business analyst auditing the workflow's actual outputs against `soul.md` success criteria. These are business-process workflows, not software systems. The important question is: "What change would make the workflow better satisfy its goal on the next runs?"
+Think like a sharp business analyst and expert operator auditing the workflow's actual outputs against `soul.md` success criteria. These are business-process workflows, not software systems. The important question is: "What change would make the workflow better satisfy its goal on the next runs?" Also ask: "What would an experienced advisor suggest that the current plan does not even consider, but could materially advance the goal?"
 
 SOURCE-OF-TRUTH HIERARCHY
 Use this hierarchy when deciding harden vs replan:
@@ -48,6 +48,22 @@ PHASE 1 - OUTPUT + EVIDENCE REVIEW
    - `db/db.sqlite` tables for broken data contracts or write/read drift
 7. List the top 1-3 candidate actions. Each candidate must name the evidence and the expected success-criteria impact.
 
+PHASE 1B - EXPERT ADVISOR SCAN
+Run this scan on every scheduled improve fire after the evidence review, even when the current plan is technically healthy. This is where Auto Improve acts like an experienced advisor, not just a mechanic for the existing plan.
+
+1. Look beyond `planning/plan.json`: what adjacent channel, data source, user touchpoint, offer, validation loop, pricing/cost lever, risk control, reporting angle, or new automation would help the `soul.md` goal but is absent from the plan?
+2. Separate evidence from hypothesis. A valid advisor idea may be partly speculative, but it must cite at least one of: success criterion gap, run/eval trend, report/dashboard blind spot, user-stated objective, org/Chief-of-Staff recommendation, known business-process pattern, or a clear assumption that needs validation.
+3. Do NOT auto-apply out-of-plan ideas from this scan alone. If the idea is already strongly supported by cross-run evidence and is the best next action, classify it normally as `replan` in PHASE 2. Otherwise, log it proposal-only.
+4. Keep the proposal list tight: 0-3 ideas. Prefer one high-leverage idea over a brainstorm dump. Skip the scan entry when there is truly no credible upside beyond the current plan.
+5. Log each credible idea in `builder/improve.html` as `Decision - Auto-improve - Proposed`, usually `entry decision major`, with `<span class="kind goal">Goal</span><span class="worklabel advisor">Advisor idea</span>`. The card must state:
+   - why this matters now
+   - what current plan assumption it challenges
+   - evidence and explicit assumptions
+   - proposed next decision or experiment
+   - expected success-criteria impact
+   - risk / gap / what would prove it wrong
+   - `Files touched: builder/improve.html only` unless a separate normal action was also applied
+
 REPORT DASHBOARD QUALITY BAR
 Treat the report dashboard as a first-class user artifact, not just a rendering target. On scheduled improve fires, run at least a quick relevance check even when the report is technically valid:
 - Does the first screen tell the user whether the workflow is achieving `soul.md` success criteria?
@@ -93,7 +109,11 @@ Harden and replan have the same plan tools; the difference is intent, not capabi
 8. Data / DB contract hygiene - `db/db.sqlite` tables have drifted from writer/consumer steps or report widgets.
    Action: call `improve_db(mode="auto", instruction="<specific db contract/schema/report-compatibility fix>", focus="<brief>")` when the db shape/schema/contract itself is wrong.
 
-9. No action - there is no new evidence since the last improvement pass, an unresolved dependency blocks action, or the current issue needs human input. Log that explicitly in `builder/improve.html`.
+9. Advisor opportunity - an out-of-plan idea could materially help the goal, but evidence is not yet strong enough to rewrite the workflow unattended, or the idea needs user/business judgment.
+   Examples: add a new acquisition channel the workflow does not touch, measure a leading indicator before optimizing the current output, create a sibling workflow for follow-up, change the offer/positioning instead of only improving copy, add a human approval checkpoint for a high-risk decision, or track a new external signal that the plan currently ignores.
+   Action: log proposal-only in `builder/improve.html` as `Decision - Auto-improve - Proposed` with the `Advisor idea` label. Do not call `replan_workflow_from_results` unless PHASE 2 evidence already clears the normal replan bar.
+
+10. No action - there is no new evidence since the last improvement pass, an unresolved dependency blocks action, or the current issue needs human input. Log that explicitly in `builder/improve.html`.
 
 If unclear, call `review_plan({{if .Focus}}focus="{{.Focus}}"{{end}})` first, wait/query until it completes, then classify. Review is diagnosis only; it does not apply changes.
 
@@ -125,7 +145,7 @@ After each applied change:
    ```
 2. Ensure the action is recorded as a readable Decision entry in `builder/improve.html` using the dedicated Decision card contract from `get_reference_doc(kind="review-improve-log")`: `<div class="entry decision">` for normal actions, `<div class="entry decision major">` for replans, report/eval measurement changes, cadence/scope changes, or user-facing dashboard interpretation changes.
 3. The Decision card tag must clearly say whether this was applied or only proposed: `Decision - Auto-improve - Applied` or `Decision - Auto-improve - Proposed`. Include the fixed fields **Why now**, **Evidence**, **Change**, **Expected impact**, **Files touched**, and **Risk / gap** so the user can see why a big decision happened without reading raw files.
-4. Use action types: `harden`, `replan`, `eval_update`, `skill_update`, `report_update`, `kb_update`, `learning_update`, `db_update`, or `no_action`.
+4. Use action types: `harden`, `replan`, `eval_update`, `skill_update`, `report_update`, `kb_update`, `learning_update`, `db_update`, `advisor_proposal`, or `no_action`.
 5. If the log is too long, compact older resolved/no-action/repeated detailed entries into `builder/improve-archive/YYYY-MM.html`. Do not archive open findings, current hypotheses, current eval gaps, or the latest semantic plan/eval change.
 
 NOTIFICATION
@@ -139,13 +159,14 @@ Default policy when there is no explicit `soul.md ## Notifications` preference: 
 - a material schedule cadence or group-scope change
 - an intended improvement failed and needs human action
 
-Stay silent on steady scheduled fires: no fresh evidence, no action, minor log/archive maintenance, or cleanup with no user-facing effect. When writing any Decision or Open finding to `builder/improve.html`, use the classification chips from `get_reference_doc(kind="review-improve-log")`: `Improvement` for strategy/plan/cadence/user-facing dashboard upgrades, `Report fix` for report/dashboard repair, `Eval fix` for evaluation repair, `Artifact drift` when resolving Artifact Review findings, `Cost/time` for telemetry fixes, and `Bug fix` only when this pass is explicitly closing a runtime Bug finding rather than doing structural improvement. When notifying, call `notify_user` at most once. When Gmail/email fields are available, email is the default rich rendering: set `email_subject`, `email_html`, and plain `email_body` on that same call unless the user's notification preference explicitly says not to email. Set `email_to` only when the user's notification preference asks to replace the configured default To recipient; set `email_cc` only when the preference asks for CC recipients.
+Stay silent on steady scheduled fires: no fresh evidence, no action, minor log/archive maintenance, or cleanup with no user-facing effect. When writing any Decision or Open finding to `builder/improve.html`, use the classification chips from `get_reference_doc(kind="review-improve-log")`: `Improvement` for strategy/plan/cadence/user-facing dashboard upgrades, `Advisor idea` for out-of-plan expert recommendations that are proposal-only, `Report fix` for report/dashboard repair, `Eval fix` for evaluation repair, `Artifact drift` when resolving Artifact Review findings, `Cost/time` for telemetry fixes, and `Bug fix` only when this pass is explicitly closing a runtime Bug finding rather than doing structural improvement. A high-impact Advisor idea can be notification-worthy when it needs a user decision; routine speculative ideas should stay in the log only. When notifying, call `notify_user` at most once. When Gmail/email fields are available, email is the default rich rendering: set `email_subject`, `email_html`, and plain `email_body` on that same call unless the user's notification preference explicitly says not to email. Set `email_to` only when the user's notification preference asks to replace the configured default To recipient; set `email_cc` only when the preference asks for CC recipients.
 
 FINAL REPORT
 Summarize:
 - evidence reviewed
 - top output/eval findings
 - action chosen and why
+- advisor opportunities proposed, if any
 - tool calls made
 - expected success-criteria impact
 - remaining gaps or human decisions needed

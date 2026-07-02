@@ -992,7 +992,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // laptop mode would only change the inner max-width while the surrounding
   // pane stayed pinned at 50% of the screen.
   //
-  //   mobile  → report 480px column, chat takes the rest (review-style)
+  //   mobile  → preview/files 480px column, chat takes the rest (review-style)
   //   laptop  → chat is hidden, report fills the full width
   //   default → 50/50 split (no preview pref, or running in non-report views)
   const isPreviewableWorkspaceCanvas =
@@ -1018,7 +1018,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       ? 'hidden md:flex'
       : 'flex'
   // The device selection (mobile/laptop) drives the outer pane width:
-  //   mobile → report pane 480px, chat fills the rest (chat is col 1, report col 2)
+  //   mobile/files → right pane 480px, chat fills the rest (chat is col 1, pane col 2)
   //   laptop → chat is hidden; the report fills the full width (see laptopHidesChat)
   const previewDevice = usePreviewDevice(workspacePath)
   const effectiveTier: 'mobile' | 'laptop' =
@@ -1027,7 +1027,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // plan — the workspace canvas takes the full width.
   const laptopHidesChat = !isFilesWorkspace && previewDevice === 'desktop' && showChatArea && workspacePaneVisible
   const splitGridCols = isFilesWorkspace
-    ? 'md:grid-cols-[minmax(0,1fr)_384px]'
+    ? 'md:grid-cols-[minmax(0,1fr)_480px]'
     : effectiveTier === 'mobile' ? 'md:grid-cols-[minmax(0,1fr)_480px]'
     : 'md:grid-cols-[minmax(0,1fr)]'
   // Animate the GRID TRACK widths on the container so the chat↔report resize

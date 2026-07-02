@@ -614,10 +614,19 @@ func (st *liveAttachStream) seedViewer(ctx context.Context, cols, rows int) (ch 
 // a connecting viewer:
 //  1. RIS clears stale emulator state from the previous mount/session.
 //  2. The bounded history slice becomes xterm-native scrollback.
-//  3. CSI 2J clears only the viewport, preserving that scrollback.
-//  4. The current visible tmux screen is painted as the authoritative live
-//     frame, and the cursor is left at tmux's real cursor so cursor-relative
-//     live redraws (spinners/status rows) update the seeded screen in place.
+//  3. The current visible tmux screen is painted immediately below it as the
+//     authoritative live frame — `capture-pane -p` always yields the full pane
+//     height, so the screen lines scroll the history up into scrollback and
+//     land exactly on the viewport. The cursor is left at tmux's real cursor
+//     so cursor-relative live redraws (spinners/status rows) update the
+//     seeded screen in place.
+//
+// Do NOT clear the viewport between history and screen: xterm.js ED(2)
+// (\x1b[2J) ERASES viewport rows in place (no scrollback push unless
+// scrollOnEraseInDisplay is set, which we don't set — live TUI repaints would
+// stack stale frames). Right after a RIS the tail of the history is still IN
+// the viewport, so a 2J here destroyed up to one screenful of the most recent
+// scrollback on every (re)connect — with short histories, all of it.
 //
 // The history capture deliberately omits -J: joining preserves trailing
 // spaces, which drags cell background fills (e.g. Claude Code's neutral
@@ -635,7 +644,9 @@ func buildLiveAttachSeed(history, screen, cursor liveattach.Reply) []byte {
 		b = append(b, []byte("\r\n")...)
 	}
 
-	b = append(b, []byte("\x1b[H\x1b[2J")...)
+	// SGR reset so attributes from the last history line can't bleed into the
+	// screen paint (each capture-pane -e line re-establishes its own colors).
+	b = append(b, []byte("\x1b[0m")...)
 	if !screen.Err {
 		b = append(b, []byte(strings.Join(screen.Lines, "\r\n"))...)
 	}

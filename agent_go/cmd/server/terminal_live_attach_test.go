@@ -176,11 +176,17 @@ func TestLiveAttachAddViewerSeedsAndStreams(t *testing.T) {
 		t.Fatalf("seed prefix = %q, want RIS reset", got[:min(len(got), 8)])
 	}
 	historyAt := strings.Index(got, "old-one\r\nold-two\r\n")
-	clearAt := strings.Index(got, "\x1b[H\x1b[2J")
 	visibleAt := strings.Index(got, "cur-one\r\ncur-two")
 	cursorAt := strings.LastIndex(got, "\x1b[3;5H")
-	if historyAt < 0 || clearAt < 0 || visibleAt < 0 || !(historyAt < clearAt && clearAt < visibleAt) {
-		t.Fatalf("seed should be history, viewport clear, then current screen: %q", got)
+	if historyAt < 0 || visibleAt < 0 || historyAt >= visibleAt {
+		t.Fatalf("seed should be history then current screen: %q", got)
+	}
+	// Regression guard: no viewport clear between history and screen. xterm.js
+	// ED(2) erases in place (no scrollback push), so a 2J here destroys the
+	// history tail that is still inside the viewport right after the RIS —
+	// the screen paint must scroll history into scrollback naturally instead.
+	if strings.Contains(got, "\x1b[2J") {
+		t.Fatalf("seed must not clear the viewport (erases in-viewport history): %q", got)
 	}
 	if cursorAt < 0 || cursorAt < visibleAt {
 		t.Fatalf("seed should restore tmux cursor after visible screen: %q", got)

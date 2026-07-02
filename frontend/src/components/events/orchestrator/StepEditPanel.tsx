@@ -300,7 +300,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   };
 
   // Helper to get preset default LLM for an agent type
-  const getPresetDefaultLLM = (agentType: 'execution' | 'validation' | 'learning' | 'conditional'): LLMOption | null => {
+  const getPresetDefaultLLM = (agentType: 'execution' | 'validation' | 'conditional'): LLMOption | null => {
     if (!presetLLMConfig) {
       return null;
     }
@@ -310,11 +310,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
         provider: presetLLMConfig.provider,
         model_id: presetLLMConfig.model_id
       } : undefined;
-    } else if (agentType === 'learning') {
-      config = presetLLMConfig.learning_llm || (presetLLMConfig.provider && presetLLMConfig.model_id ? {
-        provider: presetLLMConfig.provider,
-        model_id: presetLLMConfig.model_id
-      } : undefined);
     } else if (agentType === 'conditional') {
       // Conditional LLM uses the same default as the workflow preset default.
       config = presetLLMConfig.provider && presetLLMConfig.model_id ? {
@@ -550,14 +545,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     }));
   };
 
-  // Update learning LLM
-  const handleLearningLLMSelect = (llm: LLMOption) => {
-    setAgentConfigs((prev) => ({
-      ...prev,
-      learning_llm: optionToLLMConfig(llm),
-    }));
-  };
-
   // Update conditional LLM
   const handleConditionalLLMSelect = (llm: LLMOption) => {
     setAgentConfigs((prev) => ({
@@ -724,7 +711,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   const getAgentConfigSummary = () => {
     // Priority: step config > preset default > global default
     const execLLM = llmConfigToOption(agentConfigs.execution_llm) || getPresetDefaultLLM('execution') || getCurrentLLMOption();
-    const learnLLM = llmConfigToOption(agentConfigs.learning_llm) || getPresetDefaultLLM('learning') || getCurrentLLMOption();
     
     // Get effective code execution mode (step config > preset default)
     const effectiveCodeExecMode = agentConfigs.use_code_execution_mode !== undefined 
@@ -736,9 +722,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       let codeExecLabel = 'Simple';
       if (effectiveCodeExecMode) codeExecLabel = 'Code Exec';
       parts.push(`Exec: ${execLLM.label} (${codeExecLabel})`);
-    }
-    if (learnLLM && !agentConfigs.disable_learning) {
-      parts.push(`Learn: ${learnLLM.label} (Exact)`);
     }
     if (agentConfigs.disable_learning) parts.push('Learn: Disabled');
     
@@ -1356,18 +1339,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
               </div>
               {!agentConfigs.disable_learning ? (
                 <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 min-w-0">
-                      <LLMSelectionDropdown
-                        availableLLMs={availableLLMs}
-                        selectedLLM={llmConfigToOption(agentConfigs.learning_llm) || getPresetDefaultLLM('learning') || getCurrentLLMOption()}
-                        onLLMSelect={handleLearningLLMSelect}
-                        onRefresh={loadDefaultsFromBackend}
-                        inModal={false}
-                        openDirection="down"
-                      />
-                    </div>
-                  </div>
                   <div className="flex items-center gap-2 pt-1">
                     <label className="flex items-center gap-1.5 cursor-pointer">
                       <input

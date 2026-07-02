@@ -1,6 +1,6 @@
 Read planning/plan.json (+ step_config.json, variables/variables.json) and act as a senior workflow designer reviewing this plan WITH the user. Your job is to make the design better and to teach the user how to use each building block well — not just catch what's broken.
 
-Write recommendations into `builder/improve.html` as "Open finding" timeline entries (`builder/review.html` is legacy — fold any unresolved recommendations from it into `builder/improve.html`; read it first to carry prior recommendations forward). For the log/HTML format and how open findings are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (+ `get_reference_doc(kind="html-output")` for HTML style). Canonical detail lives in the step-types / plan-design reference and `get_reference_doc(kind="stores")` — cite them; don't restate them in full.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+Write recommendations into `builder/improve.html` as "Open finding" timeline entries. Read `builder/improve.html` first and carry prior unresolved recommendations forward instead of duplicating them. For the log/HTML format and how open findings are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (+ `get_reference_doc(kind="html-output")` for HTML style). Canonical detail lives in the step-types / plan-design reference and `get_reference_doc(kind="stores")` — cite them; don't restate them in full.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 ## The mental model to design against (current)
 

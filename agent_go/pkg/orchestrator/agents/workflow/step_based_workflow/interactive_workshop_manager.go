@@ -1596,7 +1596,7 @@ func workshopWritePaths(workspacePath string) []string {
 		fmt.Sprintf("%s/memory", workspacePath),
 		fmt.Sprintf("%s/execution", workspacePath),
 		fmt.Sprintf("%s/variables", workspacePath),
-		fmt.Sprintf("%s/builder", workspacePath), // improve.html, review.html
+		fmt.Sprintf("%s/builder", workspacePath), // improve.html and archives
 	}
 }
 
@@ -3531,7 +3531,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"clear_fields": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Field names to CLEAR (remove from step_config.json) so the step uses preset/default behavior again. Use this when you want to UNDO a prior override, e.g. remove a learning_llm override so the step uses the preset's learning LLM instead. Clearing enabled_skills removes explicit step skills; step execution does not inherit workflow-selected skills, so set enabled_skills explicitly when the step needs installed skills. Only fields with a corresponding setter in this tool are clearable. Valid names: execution_llm, execution_tier, learning_llm, servers, tools, enabled_custom_tools, enabled_skills, learning_objective, lock_learnings, lock_code, use_code_execution_mode, disable_parallel_tool_execution, coding_agent_tmux_lifecycle, transport, description_reviewed, knowledgebase_access, knowledgebase_contribution, knowledgebase_write_method, learnings_access, learnings_write_method, db_access, review_notes, declared_execution_mode, declared_execution_mode_reason, global_skill_objective, validation_schema. Unknown names are reported as errors; nothing else in the same call is applied.",
+					"description": "Field names to CLEAR (remove from step_config.json) so the step uses preset/default behavior again. Clearing enabled_skills removes explicit step skills; step execution does not inherit workflow-selected skills, so set enabled_skills explicitly when the step needs installed skills. Only fields with a corresponding setter in this tool are clearable. Valid names: execution_llm, execution_tier, servers, tools, enabled_custom_tools, enabled_skills, learning_objective, lock_learnings, lock_code, use_code_execution_mode, disable_parallel_tool_execution, coding_agent_tmux_lifecycle, transport, description_reviewed, knowledgebase_access, knowledgebase_contribution, knowledgebase_write_method, learnings_access, learnings_write_method, db_access, review_notes, declared_execution_mode, declared_execution_mode_reason, global_skill_objective, validation_schema. Unknown names are reported as errors; nothing else in the same call is applied.",
 				},
 				"servers": map[string]interface{}{
 					"type":        "array",
@@ -3663,29 +3663,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"properties": map[string]interface{}{
 						"provider": map[string]interface{}{"type": "string"},
 						"model_id": map[string]interface{}{"type": "string"},
-					},
-				},
-				"learning_llm": map[string]interface{}{
-					"type":        "object",
-					"description": "Override the learning LLM for this step.",
-					"properties": map[string]interface{}{
-						"published_llm_id": map[string]interface{}{"type": "string", "description": "Optional id from the published LLM set."},
-						"provider":         map[string]interface{}{"type": "string"},
-						"model_id":         map[string]interface{}{"type": "string"},
-						"options":          map[string]interface{}{"type": "object", "description": "Provider-specific runtime options copied from the published LLM, such as reasoning_effort.", "additionalProperties": true},
-						"fallbacks": map[string]interface{}{
-							"type":        "array",
-							"description": "Optional ordered fallback models.",
-							"items": map[string]interface{}{
-								"type": "object",
-								"properties": map[string]interface{}{
-									"published_llm_id": map[string]interface{}{"type": "string"},
-									"provider":         map[string]interface{}{"type": "string"},
-									"model_id":         map[string]interface{}{"type": "string"},
-									"options":          map[string]interface{}{"type": "object", "additionalProperties": true},
-								},
-							},
-						},
 					},
 				},
 				"validation_schema": map[string]interface{}{
@@ -3952,7 +3929,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				target **AgentLLMConfig
 			}{
 				{"execution_llm", &targetConfig.AgentConfigs.ExecutionLLM},
-				{"learning_llm", &targetConfig.AgentConfigs.LearningLLM},
 			}
 			for _, f := range llmFields {
 				if val, ok := args[f.key]; ok && val != nil {
@@ -4132,13 +4108,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				errors = append(errors, "learnings_access=\"read-write\" requires a non-empty learning_objective. The direct learnings turn needs an extraction instruction; set learning_objective or drop access to \"read\"/\"none\".")
 			}
 			isLocked := targetConfig.AgentConfigs.LockLearnings != nil && *targetConfig.AgentConfigs.LockLearnings
-			if !hasObjective {
-				if isLocked {
-					errors = append(errors, "lock_learnings=true requires a non-empty learning_objective. Locking a step with no objective means learning never ran; set learning_objective first or unlock.")
-				}
-				if targetConfig.AgentConfigs.LearningLLM != nil && effectiveAccess != LearningsAccessReadWrite {
-					errors = append(errors, "learning_llm override is meaningful only for write-capable learnings_access. Set learnings_access=\"read-write\" and learning_objective to opt in to writing.")
-				}
+			if !hasObjective && isLocked {
+				errors = append(errors, "lock_learnings=true requires a non-empty learning_objective. Locking a step with no objective means learning never ran; set learning_objective first or unlock.")
 			}
 
 			// 6b. Validate execution_tier.
@@ -5374,7 +5345,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 7f1: review_artifact_sync — background audit of plan changelog vs dependent artifacts
 	if err := mcpAgent.RegisterCustomTool(
 		"review_artifact_sync",
-		"Start a background agent that audits recent planning/changelog entries against dependent artifacts: planning/step_config.json, learnings, saved main.py, KB notes, db files, reports/report_plan.json, and evaluation/evaluation_plan.json. It uses builder/review.html as the Artifact Sync Cursor and appends findings there. Returns execution_id immediately — you will be automatically notified when it completes.",
+		"Start a background agent that audits recent planning/changelog entries against dependent artifacts: planning/step_config.json, learnings, saved main.py, KB notes, db files, reports/report_plan.json, and evaluation/evaluation_plan.json. It uses builder/improve.html as the Artifact Sync Cursor and appends a report-only Artifact Review item there. Returns execution_id immediately — you will be automatically notified when it completes.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -5384,7 +5355,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"step_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional step id to limit the audit to. If omitted, audits all changed steps since the Artifact Sync Cursor in builder/review.html.",
+					"description": "Optional step id to limit the audit to. If omitted, audits all changed steps since the Artifact Sync Cursor in builder/improve.html.",
 				},
 			},
 		},
@@ -6302,7 +6273,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						continue
 					}
 					ac := sc.AgentConfigs
-					if ac.ExecutionLLM == nil && ac.LearningLLM == nil {
+					if ac.ExecutionLLM == nil {
 						continue
 					}
 					if !hasOverrides {
@@ -6312,9 +6283,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					sb.WriteString(fmt.Sprintf("\n**%s**:\n", sc.ID))
 					if ac.ExecutionLLM != nil {
 						sb.WriteString(fmt.Sprintf("  - execution: %s/%s\n", ac.ExecutionLLM.Provider, ac.ExecutionLLM.ModelID))
-					}
-					if ac.LearningLLM != nil {
-						sb.WriteString(fmt.Sprintf("  - learning: %s/%s\n", ac.LearningLLM.Provider, ac.LearningLLM.ModelID))
 					}
 				}
 				if !hasOverrides {
@@ -6822,7 +6790,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"post_run_monitor": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Enable the per-run monitor (auto-improve's review-only cadence): after each scheduled run a cheap pass records Bug + Goal findings into builder/improve.html, which the harden/replan schedules consume. Set true for workflows where a silent failure matters (scheduled QA, production); default off. /auto-improve turns this on as part of setup.",
+					"description": "Enable the per-run monitor (Pulse): after each scheduled run a focused pass records Bug + Goal findings, runs a separate report-only Artifact Review item, and writes LLM/cost/time into builder/improve.html for harden/replan/org consumers. Set true for workflows where a silent failure matters (scheduled QA, production); default off. /auto-improve turns this on as part of setup.",
 				},
 			},
 		},
@@ -8626,7 +8594,7 @@ Review these files/directories when present. Stay read-only:
 - `+"`knowledgebase/notes/_index.json`"+` and relevant `+"`knowledgebase/notes/*.md`"+`: check topic registry, stale/duplicated notes, and whether steps that produce domain facts have matching KB contribution contracts.
 - `+"`db/README.md`"+`, `+"`db/db.sqlite`"+`, and `+"`db/assets/`"+`: check schema/DDL documentation, table shape, primary keys, upsert rules, indexes, writer ownership, group separation, durable asset metadata/provenance, and report compatibility.
 - `+"`reports/report_plan.json`"+` + the HTML report document(s): check whether the report's `+"`window.report.query`"+` SQL reads durable `+"`db/db.sqlite`"+` tables (and references `+"`db/assets/`"+`/KB via `+"`window.report.get`"+`/`+"`fileUrl`"+`) rather than volatile run paths, whether referenced columns exist, and whether derived report helper tables could be collapsed into the report's query (JOIN/GROUP BY).
-- `+"`builder/review.html`"+`: read if present to avoid repeating already-known findings and to see unresolved prior review items.
+- `+"`builder/improve.html`"+`: read if present to avoid repeating already-known findings and to see unresolved prior review items.
 
 {{if .TargetRunFolder}}## OPTIONAL RUN EVIDENCE
 If useful, read:
@@ -8683,14 +8651,14 @@ var reviewPlanAgentUserTemplate = MustRegisterTemplate("reviewPlanAgentUser", `C
 
 var reviewArtifactSyncAgentSystemTemplate = MustRegisterTemplate("reviewArtifactSyncAgentSystem", `# Artifact Sync Review Agent
 
-You audit whether recent plan/config changes have been propagated to dependent artifacts. The source of truth for changes is `+"`planning/changelog/changelog-*.json`"+`. The checkpoint and human-facing findings live in `+"`builder/review.html`"+` under an **Artifact Sync Cursor** block. Do not create a new state file.
+You audit whether recent plan/config changes have been propagated to dependent artifacts. The source of truth for changes is `+"`planning/changelog/changelog-*.json`"+`. The checkpoint and human-facing Artifact Review report live in `+"`builder/improve.html`"+` under an **Artifact Sync Cursor** block. Do not create a new state file.
 
 You have a harden-like tool surface so you can inspect workflow state deeply. For this tool, you are still a reviewer:
 - do not update the plan
 - do not update step_config
 - do not patch main.py
 - do not change reports/evals/KB/db
-- the only file you may write is `+"`builder/review.html`"+`, to maintain the cursor and append findings
+- the only file you may write is `+"`builder/improve.html`"+`, to maintain the cursor and append the report-only Artifact Review item
 
 ## Context
 - Workspace: {{.WorkspacePath}}
@@ -8713,7 +8681,7 @@ For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`
 
 ## Required Procedure
 
-1. Read `+"`builder/review.html`"+`. If it does not exist, create it.
+1. Read `+"`builder/improve.html`"+`. If it does not exist, create it using the current Pulse log structure.
 2. Ensure exactly one cursor block near the top:
 
 `+"```md"+`
@@ -8756,9 +8724,9 @@ Create a finding when:
 
 Do not flag artifacts that you inspected and found aligned. Include clean checks briefly.
 
-## Writing builder/review.html
+## Writing builder/improve.html
 
-Use `+"`diff_patch_workspace_file`"+` to update `+"`builder/review.html`"+`. Preserve existing findings and resolved markers.
+Use `+"`diff_patch_workspace_file`"+` to update `+"`builder/improve.html`"+`. Preserve existing findings and resolved markers.
 
 Append:
 
@@ -8777,7 +8745,7 @@ Clean checks:
 - <step-id> — <artifact(s)> matched the current contract.
 `+"```"+`
 
-Finding IDs must continue today's highest `+"`F-YYYY-MM-DD-NNN`"+` sequence already in `+"`builder/review.html`"+`.
+Finding IDs must continue today's highest `+"`F-YYYY-MM-DD-NNN`"+` sequence already in `+"`builder/improve.html`"+`.
 
 Rewrite only the Artifact Sync Cursor block to the latest fully inspected changelog entry. If the audit is interrupted or skips entries due to missing files/errors, do not advance past the last fully inspected entry.
 
@@ -8791,7 +8759,7 @@ Return a concise summary:
 - next recommended fix owner
 `)
 
-var reviewArtifactSyncAgentUserTemplate = MustRegisterTemplate("reviewArtifactSyncAgentUser", `Run the artifact drift review. Read planning/changelog entries after the Artifact Sync Cursor in builder/review.html, audit changed step artifacts, append findings to builder/review.html, and update the cursor.{{if .StepID}} Limit to step "{{.StepID}}" and do not advance past uninspected entries.{{end}}{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
+var reviewArtifactSyncAgentUserTemplate = MustRegisterTemplate("reviewArtifactSyncAgentUser", `Run the artifact drift review. Read planning/changelog entries after the Artifact Sync Cursor in builder/improve.html, audit changed step artifacts, append a report-only Artifact Review item to builder/improve.html, and update the cursor.{{if .StepID}} Limit to step "{{.StepID}}" and do not advance past uninspected entries.{{end}}{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
 
 var reviewWorkflowResultsAgentSystemTemplate = MustRegisterTemplate("reviewWorkflowResultsAgentSystem", `# Workflow Results Review Agent
 
@@ -9329,7 +9297,7 @@ This tool is **evidence-driven and mutating**:
 - Cleanup stale step configs: `+"`cleanup_orphan_step_configs`"+`
 - Update validation/config: `+"`update_validation_schema`"+`, `+"`update_step_config`"+`
 
-Use `+"`diff_patch_workspace_file`"+` only for non-plan artifacts that are intentionally file-authored, such as `+"`builder/improve.html`"+`, `+"`builder/review.html`"+`, `+"`learnings/_global/SKILL.md`"+`, scripted `+"`main.py`"+`, KB notes, db schema docs, or report plans.
+Use `+"`diff_patch_workspace_file`"+` only for non-plan artifacts that are intentionally file-authored, such as `+"`builder/improve.html`"+`, `+"`learnings/_global/SKILL.md`"+`, scripted `+"`main.py`"+`, KB notes, db schema docs, or report plans.
 
 ## SOURCE-OF-TRUTH HIERARCHY
 Use this hierarchy before changing the plan:
@@ -9337,7 +9305,7 @@ Use this hierarchy before changing the plan:
 2. `+"`runs/iteration-{N}/<group>/...`"+` proves runtime reality: actual outputs, tool/execution logs, validation results, and eval reports show what the workflow really did. `+"`iteration-0`"+` is latest/current; older retained iterations are supporting evidence for trends, regressions, and whether previous improve.html actions helped.
 3. `+"`evaluation/evaluation_plan.json`"+` explains measurement: use it to understand scores, but if eval conflicts with `+"`soul.md`"+`, fix eval instead of optimizing to a bad rubric.
 4. `+"`planning/plan.json`"+` is only the current implementation attempt. Judge it against `+"`soul.md`"+` and retained run evidence; do not treat the current plan as proof that the workflow is correct.
-5. `+"`builder/improve.html`"+` and `+"`builder/review.html`"+` are memory/audit logs: use them to avoid repeating past decisions, carry unresolved findings, and link fixes. They are not the source of truth when they conflict with `+"`soul.md`"+` or current run/eval evidence.
+5. `+"`builder/improve.html`"+` is the memory/audit log: use it to avoid repeating past decisions, carry unresolved findings, and link fixes. It is not the source of truth when it conflicts with `+"`soul.md`"+` or current run/eval evidence.
 
 ## RULES
 1. **Use real evidence first**: Base every structural change on what actually happened in the selected retained run window, with latest `+"`iteration-0`"+` weighted highest. Do not make speculative edits when the artifacts do not support them.
@@ -9452,7 +9420,7 @@ Use this hierarchy before fixing:
 2. `+"`runs/iteration-{N}/<group>/...`"+` proves runtime reality: actual outputs, tool/execution logs, validation results, and eval reports show what the workflow really did. `+"`iteration-0`"+` is latest/current; older retained iterations are supporting evidence for trends, regressions, and whether previous improve.html actions helped.
 3. `+"`evaluation/evaluation_plan.json`"+` explains measurement: use it to understand scores, but if eval conflicts with `+"`soul.md`"+`, fix eval instead of optimizing to a bad rubric.
 4. `+"`planning/plan.json`"+` is only the current implementation attempt. Judge it against `+"`soul.md`"+` and retained run evidence; do not treat the current plan as proof that the workflow is correct.
-5. `+"`builder/improve.html`"+` and `+"`builder/review.html`"+` are memory/audit logs: use them to avoid repeating past decisions, carry unresolved findings, and link fixes. They are not the source of truth when they conflict with `+"`soul.md`"+` or current run/eval evidence.
+5. `+"`builder/improve.html`"+` is the memory/audit log: use it to avoid repeating past decisions, carry unresolved findings, and link fixes. It is not the source of truth when it conflicts with `+"`soul.md`"+` or current run/eval evidence.
 
 ## PERSISTENT STORES (READ BEFORE FIXING)
 
@@ -9476,7 +9444,7 @@ Per-step KB config:
 - Cleanup stale step configs: `+"`cleanup_orphan_step_configs`"+`
 - Validation/config edits: `+"`update_validation_schema`"+`, `+"`update_step_config`"+`, `+"`update_workflow_config`"+`
 
-Use `+"`diff_patch_workspace_file`"+` only for non-plan artifacts that are intentionally file-authored, such as `+"`learnings/_global/SKILL.md`"+`, scripted `+"`main.py`"+`, KB notes, db schema docs, report plans, `+"`builder/improve.html`"+`, or `+"`builder/review.html`"+`.
+Use `+"`diff_patch_workspace_file`"+` only for non-plan artifacts that are intentionally file-authored, such as `+"`learnings/_global/SKILL.md`"+`, scripted `+"`main.py`"+`, KB notes, db schema docs, report plans, or `+"`builder/improve.html`"+`.
 
 ## RULES
 1. **Evidence-first, invariant-aware**: Fix every actual failure. You may also fix objective best-practice violations even on passing steps when the violation is deterministic and non-speculative: stale `+"`agentic`"+` main.py, invalid lock state, KB/db/report contract mismatch, missing pre-validation for a produced output, hardcoded secrets/paths, or config that runtime validation would reject. Do not redesign passing behavior without evidence.
@@ -10160,7 +10128,7 @@ func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, t
 	return result, nil
 }
 
-// runReviewArtifactSyncAgent audits plan changelog entries against dependent artifacts and updates builder/review.html.
+// runReviewArtifactSyncAgent audits plan changelog entries against dependent artifacts and updates builder/improve.html.
 func (iwm *InteractiveWorkshopManager) runReviewArtifactSyncAgent(ctx context.Context, stepID string, focus string) (string, error) {
 	workspacePath := iwm.controller.GetWorkspacePath()
 	logger := iwm.controller.GetLogger()

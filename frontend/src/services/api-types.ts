@@ -415,11 +415,13 @@ export interface GmailAuthStatus {
 export interface GmailConfigRequest {
   enabled: boolean
   default_to: string
+  allowed_recipients?: string[]
 }
 
 export interface GmailConfigResponse {
   enabled: boolean
   default_to?: string
+  allowed_recipients?: string[]
   auth: GmailAuthStatus
   ready: boolean  // enabled + recipient + authenticated + gmail scope
 }
@@ -1109,9 +1111,9 @@ export interface PresetLLMConfig {
   model_id?: string
   options?: Record<string, unknown>
 
-  // New: Agent-specific default models (takes priority over legacy fields)
-  learning_llm?: AgentLLMConfig         // Default for learning agents
+  // Agent-specific defaults.
   phase_llm?: AgentLLMConfig            // Default for all phase agents (planning, anonymization, plan improvement, etc.)
+  auto_improve_llm?: AgentLLMConfig     // Optional scheduled Auto Improve override
 
   // Feature toggles
   use_knowledgebase?: boolean           // nil/true = enabled (default), false = disabled
@@ -1768,7 +1770,6 @@ export interface RunMetadataLLM {
 export interface RunMetadataModels {
   allocation_mode?: string; // "manual" or "tiered"
   execution_llm?: RunMetadataLLM;
-  learning_llm?: RunMetadataLLM;
   phase_llm?: RunMetadataLLM;
   tier_1?: RunMetadataLLM;
   tier_2?: RunMetadataLLM;

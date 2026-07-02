@@ -16,7 +16,7 @@ READ FIRST
 
 1. Read `soul/soul.md` if present to understand the workflow objective and success criteria.
 2. Read `planning/plan.json` and `planning/step_config.json` if present. Use them to understand current steps, `learnings_access`, `learning_objective`, `lock_learnings`, and `lock_code` decisions.
-3. Read `builder/improve.html` if present (and any legacy `builder/review.html`). Carry unresolved learning/code findings, prior cleanup attempts, recent harden/replan actions, and recent plan changes into the instruction.
+3. Read `builder/improve.html` if present. Carry unresolved learning/code findings, prior cleanup attempts, recent harden/replan actions, and recent plan changes into the instruction.
 4. Read `learnings/_global/SKILL.md` and relevant files under `learnings/_global/references/`. Do not blindly load every large reference file; use the index and file names to pick relevant files.
 
 WHEN TO USE EACH MODE

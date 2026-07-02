@@ -97,8 +97,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
     }
   }, [])
 
-  const [learningLLM, setLearningLLM] = useState<AgentLLMConfig | null>(null);
   const [phaseLLM, setPhaseLLM] = useState<AgentLLMConfig | null>(null);
+  const [autoImproveLLM, setAutoImproveLLM] = useState<AgentLLMConfig | null>(null);
   const [tier1LLM, setTier1LLM] = useState<AgentLLMConfig | null>(null);
   const [tier2LLM, setTier2LLM] = useState<AgentLLMConfig | null>(null);
   const [tier3LLM, setTier3LLM] = useState<AgentLLMConfig | null>(null);
@@ -246,20 +246,39 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
     return null;
   }, [llmConfig, primaryConfig]);
 
-  const effectiveTier1LLM = useMemo<AgentLLMConfig | null>(() => tier1LLM || defaultAgentLLM, [tier1LLM, defaultAgentLLM]);
-  const effectiveTier2LLM = useMemo<AgentLLMConfig | null>(() => tier2LLM || defaultAgentLLM, [tier2LLM, defaultAgentLLM]);
-  const effectiveTier3LLM = useMemo<AgentLLMConfig | null>(() => tier3LLM || defaultAgentLLM, [tier3LLM, defaultAgentLLM]);
+  const workflowDefaultTierLLMs = useMemo(() => {
+    const option = currentLLMOption || (llmConfig ? findLLMOptionForConfig(llmConfig) : null);
+    return option ? getWorkflowLLMTierDefaults(option, providerManifest) : null;
+  }, [currentLLMOption, findLLMOptionForConfig, llmConfig, providerManifest]);
+
+  const effectiveTier1LLM = useMemo<AgentLLMConfig | null>(() => tier1LLM || workflowDefaultTierLLMs?.tier1 || defaultAgentLLM, [tier1LLM, workflowDefaultTierLLMs, defaultAgentLLM]);
+  const effectiveTier2LLM = useMemo<AgentLLMConfig | null>(() => tier2LLM || workflowDefaultTierLLMs?.tier2 || defaultAgentLLM, [tier2LLM, workflowDefaultTierLLMs, defaultAgentLLM]);
+  const effectiveTier3LLM = useMemo<AgentLLMConfig | null>(() => tier3LLM || workflowDefaultTierLLMs?.tier3 || defaultAgentLLM, [tier3LLM, workflowDefaultTierLLMs, defaultAgentLLM]);
+  const effectivePhaseLLM = useMemo<AgentLLMConfig | null>(() => phaseLLM || workflowDefaultTierLLMs?.phase || effectiveTier1LLM || defaultAgentLLM, [phaseLLM, workflowDefaultTierLLMs, effectiveTier1LLM, defaultAgentLLM]);
+  const effectiveAutoImproveLLM = useMemo<AgentLLMConfig | null>(() => autoImproveLLM || workflowDefaultTierLLMs?.autoImprove || defaultAgentLLM, [autoImproveLLM, workflowDefaultTierLLMs, defaultAgentLLM]);
   const selectedWorkflowLLMOption = useMemo(() => {
     if (llmConfig && currentLLMOption) return currentLLMOption;
-    const selected = phaseLLM || effectiveTier1LLM || defaultAgentLLM;
+    const selected = effectivePhaseLLM || effectiveTier1LLM || defaultAgentLLM;
     if (!selected) return currentLLMOption;
     return findLLMOptionForConfig(selected) || currentLLMOption;
-  }, [currentLLMOption, defaultAgentLLM, effectiveTier1LLM, findLLMOptionForConfig, llmConfig, phaseLLM]);
+  }, [currentLLMOption, defaultAgentLLM, effectivePhaseLLM, effectiveTier1LLM, findLLMOptionForConfig, llmConfig]);
+
+  const formatAgentLLMConfig = useCallback((config?: AgentLLMConfig | null) => {
+    if (!config?.provider || !config?.model_id) return 'Not resolved';
+    return `${config.provider}/${config.model_id}`;
+  }, []);
+
+  const getEffectiveTierLLM = useCallback((tierNum: number) => {
+    if (tierNum === 1) return effectiveTier1LLM;
+    if (tierNum === 2) return effectiveTier2LLM;
+    return effectiveTier3LLM;
+  }, [effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM]);
   // Draft create paths can collide with existing workflows, so only load scoped secrets for persisted workflows.
   const workflowSecretPath = editingPreset ? selectedFolder?.filepath : undefined;
 
   const hasAdvancedWorkflowLLMConfig = useCallback((presetLLM?: PresetLLMConfig | null) => {
     if (!presetLLM) return false;
+    if (presetLLM.auto_improve_llm) return true;
     if (presetLLM.llm_allocation_mode === 'tiered') return true;
     if (presetLLM.llm_allocation_mode === 'coding_agent' || presetLLM.llm_allocation_mode === 'coding_plan') {
       return false;
@@ -268,8 +287,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
     const t2 = presetLLM?.tiered_config?.tier_2;
     const t3 = presetLLM?.tiered_config?.tier_3;
     const phase = presetLLM?.phase_llm;
-    const learning = presetLLM?.learning_llm;
-    const configured = [t1, t2, t3, phase, learning].filter(Boolean);
+    const configured = [t1, t2, t3, phase].filter(Boolean);
     const key = (cfg?: AgentLLMConfig | null) => cfg?.provider && cfg?.model_id ? `${cfg.provider}/${cfg.model_id}` : '';
     if (presetLLM.llm_allocation_mode === 'manual' && configured.length > 0) return true;
     if (configured.some(cfg => (cfg?.fallbacks ?? []).length > 0)) return true;
@@ -283,7 +301,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
     setTier2LLM(defaults.tier2);
     setTier3LLM(defaults.tier3);
     setPhaseLLM(defaults.phase);
-    setLearningLLM(defaults.tier2);
     setTier1Fallbacks([]);
     setTier2Fallbacks([]);
     setTier3Fallbacks([]);
@@ -325,8 +342,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         }
       }
       // Load agent-specific configs if available
-      setLearningLLM(presetLLM.learning_llm || null);
       setPhaseLLM(presetLLM.phase_llm || null);
+      setAutoImproveLLM(presetLLM.auto_improve_llm || null);
       // Load tiered LLM allocation config
       setTier1LLM(presetLLM.tiered_config?.tier_1 || null);
       setTier2LLM(presetLLM.tiered_config?.tier_2 || null);
@@ -356,8 +373,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setLlmConfig(defaultLLM);
       setBrowserModeState('none'); // Default no browser
       // Initialize agent-specific configs to null (will use legacy default)
-      setLearningLLM(null);
       setPhaseLLM(null);
+      setAutoImproveLLM(null);
       // Initialize tiered config
       setTier1LLM(null);
       setTier2LLM(null);
@@ -436,8 +453,12 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       // execution_llm is step-only and is not persisted at the workflow level.
       let finalLLMConfig: PresetLLMConfig | undefined = llmConfig || undefined;
       if (effectiveAgentMode === 'workflow') {
-        const workflowBaseLLMConfig = { ...((llmConfig || {}) as PresetLLMConfig & { execution_llm?: unknown }) };
+        const workflowBaseLLMConfig = { ...((llmConfig || {}) as PresetLLMConfig & { execution_llm?: unknown; learning_llm?: unknown }) };
         delete workflowBaseLLMConfig.execution_llm;
+        delete workflowBaseLLMConfig.learning_llm;
+        if (!showWorkflowLLMAdvanced) {
+          delete workflowBaseLLMConfig.auto_improve_llm;
+        }
         const defaultWorkflowLLM = defaultAgentLLM || undefined;
         const withFallbacks = (llm: AgentLLMConfig, fallbacks: AgentLLMFallback[]): AgentLLMConfig => ({
           ...llm,
@@ -450,9 +471,9 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         } : undefined;
 
         if (!showWorkflowLLMAdvanced && !workflowBaseLLMConfig.published_llm_id && workflowBaseLLMConfig.provider && hasWorkflowLLMTierDefaults(workflowBaseLLMConfig.provider, providerManifest)) {
-          delete workflowBaseLLMConfig.learning_llm;
           delete workflowBaseLLMConfig.phase_llm;
           delete workflowBaseLLMConfig.tiered_config;
+          delete workflowBaseLLMConfig.auto_improve_llm;
           finalLLMConfig = {
             ...workflowBaseLLMConfig,
             llm_allocation_mode: 'coding_agent' as const,
@@ -461,16 +482,18 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
           // Advanced mode and non-coding-agent simple selections keep explicit pinned defaults.
           finalLLMConfig = {
             ...workflowBaseLLMConfig,
-            learning_llm: learningLLM || defaultWorkflowLLM,
-            phase_llm: phaseLLM || effectiveTier1LLM || defaultWorkflowLLM,
+            phase_llm: effectivePhaseLLM || defaultWorkflowLLM,
+            auto_improve_llm: autoImproveLLM || undefined,
             llm_allocation_mode: explicitTieredConfig ? 'tiered' as const : 'manual' as const,
             ...(explicitTieredConfig ? { tiered_config: explicitTieredConfig } : {}),
           };
         }
       }
       console.log('[PRESET_MODAL] Agent LLM configs being saved:', {
-        learningLLM: learningLLM,
         phaseLLM: phaseLLM,
+        effectivePhaseLLM: effectivePhaseLLM || undefined,
+        autoImproveLLM: autoImproveLLM,
+        effectiveAutoImproveLLM: effectiveAutoImproveLLM || undefined,
         defaultAgentLLM: defaultAgentLLM || undefined,
         effectiveTier1LLM: effectiveTier1LLM || undefined,
         effectiveTier2LLM: effectiveTier2LLM || undefined,
@@ -495,7 +518,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       );
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, learningLLM, phaseLLM, enableBrowserAccess, browserMode, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, enableContextSummarization, defaultAgentLLM, effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM, showWorkflowLLMAdvanced, providerManifest]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, phaseLLM, effectivePhaseLLM, autoImproveLLM, effectiveAutoImproveLLM, enableBrowserAccess, browserMode, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, enableContextSummarization, defaultAgentLLM, effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM, showWorkflowLLMAdvanced, providerManifest]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -628,6 +651,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                         <WorkflowLLMTierPreview selectedLLM={selectedWorkflowLLMOption} providerManifest={providerManifest} />
                         <div className="text-xs text-gray-500 mt-2">
                           Coding agents save high, medium, and low automation tiers. Workshop work uses high.
+                          Auto Improve uses the provider default when available unless an advanced override is set.
                         </div>
                         <button
                           type="button"
@@ -645,7 +669,10 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                         <div className="flex justify-end">
                           <button
                             type="button"
-                            onClick={() => setShowWorkflowLLMAdvanced(false)}
+                            onClick={() => {
+                              setShowWorkflowLLMAdvanced(false);
+                              setAutoImproveLLM(null);
+                            }}
                             className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
                           >
                             Use simple setup
@@ -655,7 +682,9 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           { label: 'Tier 1 - High Reasoning', tooltip: 'Used for first-time execution (no learnings yet) and initial learning extraction.', desc: 'Most capable model for complex first-time tasks.', llm: tier1LLM, setLLM: setTier1LLM, fallbacks: tier1Fallbacks, setFallbacks: setTier1Fallbacks, num: 1 },
                           { label: 'Tier 2 - Medium Reasoning', tooltip: 'Used for execution with existing learnings and learning refinement.', desc: 'Balanced model for tasks with existing learnings.', llm: tier2LLM, setLLM: setTier2LLM, fallbacks: tier2Fallbacks, setFallbacks: setTier2Fallbacks, num: 2 },
                           { label: 'Tier 3 - Low Reasoning', tooltip: 'Used for validation (always) and mature learning refinement (2+ runs).', desc: 'Cost-efficient model for validation and mature learnings.', llm: tier3LLM, setLLM: setTier3LLM, fallbacks: tier3Fallbacks, setFallbacks: setTier3Fallbacks, num: 3 },
-                        ].map((tier) => (
+                        ].map((tier) => {
+                          const effectiveTierLLM = getEffectiveTierLLM(tier.num);
+                          return (
                         <div key={tier.num}>
                           <div className="flex items-center gap-1.5 mb-2">
                             <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
@@ -674,20 +703,16 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           </div>
                           <LLMSelectionDropdown
                             availableLLMs={workflowLLMOptions}
-                            selectedLLM={(() => {
-                              const effectiveTierLLM =
-                                tier.num === 1 ? effectiveTier1LLM :
-                                tier.num === 2 ? effectiveTier2LLM :
-                                effectiveTier3LLM;
-                              if (!effectiveTierLLM) return currentLLMOption;
-                              return findLLMOptionForConfig(effectiveTierLLM) || null;
-                            })()}
+                            selectedLLM={effectiveTierLLM ? findLLMOptionForConfig(effectiveTierLLM) || null : currentLLMOption}
                             onLLMSelect={(llm) => tier.setLLM(toAgentLLMConfig(llm))}
                             onRefresh={loadDefaultsFromBackend}
                             disabled={false}
                             inModal={true}
                             openDirection="down"
                           />
+                          <div className="mt-1 font-mono text-[11px] text-gray-700 dark:text-gray-300" title={formatAgentLLMConfig(effectiveTierLLM)}>
+                            {formatAgentLLMConfig(effectiveTierLLM)}
+                          </div>
                           <div className="mt-1.5">
                             {tier.fallbacks.map((fb, i) => (
                               <span key={`t${tier.num}-fb-${i}`} className="inline-flex items-center gap-1 mr-1 mb-1 px-2 py-0.5 bg-gray-100 dark:bg-gray-700 text-xs rounded-full">
@@ -699,10 +724,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                             ))}
                             <LLMSelectionDropdown
                               availableLLMs={availableLLMs.filter(llm => {
-                                const effectiveTierLLM =
-                                  tier.num === 1 ? effectiveTier1LLM :
-                                  tier.num === 2 ? effectiveTier2LLM :
-                                  effectiveTier3LLM;
                                 const key = llmOptionKey(llm);
                                 return !(
                                   effectiveTierLLM &&
@@ -722,7 +743,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                             {tier.desc}
                           </div>
                         </div>
-                        ))}
+                          );
+                        })}
                         {/* Workshop LLM */}
                         <div>
                           <div className="flex items-center gap-1.5 mb-2">
@@ -742,15 +764,63 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           </div>
                           <LLMSelectionDropdown
                             availableLLMs={workflowLLMOptions}
-                            selectedLLM={phaseLLM ? findLLMOptionForConfig(phaseLLM) || null : (effectiveTier1LLM ? findLLMOptionForConfig(effectiveTier1LLM) || null : currentLLMOption)}
+                            selectedLLM={effectivePhaseLLM ? findLLMOptionForConfig(effectivePhaseLLM) || null : currentLLMOption}
                             onLLMSelect={(llm) => setPhaseLLM(toAgentLLMConfig(llm))}
                             onRefresh={loadDefaultsFromBackend}
                             disabled={false}
                             inModal={true}
                             openDirection="down"
                           />
+                          <div className="mt-1 font-mono text-[11px] text-gray-700 dark:text-gray-300" title={formatAgentLLMConfig(effectivePhaseLLM)}>
+                            {formatAgentLLMConfig(effectivePhaseLLM)}
+                          </div>
                           <div className="text-xs text-gray-500 mt-1">
                             Used for planning, evaluation design, anonymization, plan improvement, and debugging. Defaults to Tier 1 if not set.
+                          </div>
+                        </div>
+                        {/* Auto Improve LLM */}
+                        <div>
+                          <div className="flex items-center justify-between gap-2 mb-2">
+                            <div className="flex items-center gap-1.5">
+                              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                                Auto Improve LLM
+                              </label>
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
+                                  </TooltipTrigger>
+                                  <TooltipContent className="max-w-xs">
+                                    <p className="text-xs">Optional override used only by scheduled Auto Improve. Leave empty to use the provider default when available.</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            </div>
+                            {autoImproveLLM && (
+                              <button
+                                type="button"
+                                onClick={() => setAutoImproveLLM(null)}
+                                className="text-xs text-red-400 hover:text-red-600"
+                              >
+                                Clear
+                              </button>
+                            )}
+                          </div>
+                          <LLMSelectionDropdown
+                            availableLLMs={workflowLLMOptions}
+                            selectedLLM={effectiveAutoImproveLLM ? findLLMOptionForConfig(effectiveAutoImproveLLM) || null : null}
+                            onLLMSelect={(llm) => setAutoImproveLLM(toAgentLLMConfig(llm))}
+                            onRefresh={loadDefaultsFromBackend}
+                            disabled={false}
+                            inModal={true}
+                            openDirection="down"
+                            placeholder={effectiveAutoImproveLLM ? `Defaults to ${effectiveAutoImproveLLM.model_id}` : 'Defaults to provider default'}
+                          />
+                          <div className="mt-1 font-mono text-[11px] text-gray-700 dark:text-gray-300" title={formatAgentLLMConfig(effectiveAutoImproveLLM)}>
+                            {formatAgentLLMConfig(effectiveAutoImproveLLM)}
+                          </div>
+                          <div className="text-xs text-gray-500 mt-1">
+                            Used only for scheduled optimizer runs. Normal schedules, Pulse, and manual workflow runs use the workflow model.
                           </div>
                         </div>
                         {/* Info panel */}
@@ -760,6 +830,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           <div>Learning: Tier 2 → Tier 3 (after 2+ runs)</div>
                           <div>Validation: Always Tier 3</div>
                           <div>Workshop LLM: Independent — always uses the configured Workshop LLM above</div>
+                          <div>Auto Improve LLM: Optional scheduled optimizer override; empty uses the provider default when available</div>
                         </div>
                       </>
                     )}

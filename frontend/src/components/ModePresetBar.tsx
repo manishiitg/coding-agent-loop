@@ -141,8 +141,8 @@ const workflowManifestToPreset = (manifest: WorkflowManifest, workspacePath: str
     llmConfig: caps?.llm_config ? {
       provider: caps.llm_config.provider,
       model_id: caps.llm_config.model_id,
-      learning_llm: caps.llm_config.learning_llm,
       phase_llm: caps.llm_config.phase_llm,
+      auto_improve_llm: caps.llm_config.auto_improve_llm,
       use_knowledgebase: caps.llm_config.use_knowledgebase,
       llm_allocation_mode: caps.llm_config.llm_allocation_mode,
       tiered_config: caps.llm_config.tiered_config,

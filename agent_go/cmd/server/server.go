@@ -771,7 +771,6 @@ func presetPrimaryLLMForChat(preset *workflowtypes.PresetLLMConfig) *workflowtyp
 	}
 	for _, candidate := range []*workflowtypes.AgentLLMConfig{
 		preset.PhaseLLM,
-		preset.LearningLLM,
 	} {
 		if candidate != nil && strings.TrimSpace(candidate.Provider) != "" && strings.TrimSpace(candidate.ModelID) != "" {
 			return candidate
@@ -1809,6 +1808,11 @@ func runServer(cmd *cobra.Command, args []string) {
 	// request from the frontend gets real data instead of an empty list.
 	fmt.Printf("🔄 Initializing tool cache on server startup...\n")
 	api.initializeToolCache()
+
+	// Start the coding-CLI rate-limit watchdog: force-stops sessions whose tmux
+	// pane is parked on a provider usage/rate-limit wall, so they do not wedge
+	// "running" forever and lock the UI.
+	api.startCodingTmuxRateLimitWatchdog()
 
 	// Sync system skills (currently skill-creator; see GetSystemSkills) in
 	// background. Browser skills (agent-browser, playwright) are builtin —
@@ -3352,9 +3356,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						models := &RunMetadataModels{}
 						if presetLLMConfig != nil {
 							models.AllocationMode = presetLLMConfig.LLMAllocationMode
-							if presetLLMConfig.LearningLLM != nil {
-								models.LearningLLM = &RunMetadataLLM{Provider: presetLLMConfig.LearningLLM.Provider, ModelID: presetLLMConfig.LearningLLM.ModelID}
-							}
 							if presetLLMConfig.PhaseLLM != nil {
 								models.PhaseLLM = &RunMetadataLLM{Provider: presetLLMConfig.PhaseLLM.Provider, ModelID: presetLLMConfig.PhaseLLM.ModelID}
 							}

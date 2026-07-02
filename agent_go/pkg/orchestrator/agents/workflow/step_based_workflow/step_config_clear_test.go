@@ -20,14 +20,6 @@ func TestClearStepConfigField(t *testing.T) {
 		assertJSONGone string // JSON key that must disappear after clearing
 	}{
 		{
-			name:  "clears LLM pointer override",
-			field: "learning_llm",
-			prep: func(sc *StepConfig) {
-				sc.AgentConfigs = &AgentConfigs{LearningLLM: &AgentLLMConfig{Provider: "anthropic", ModelID: "claude-opus"}}
-			},
-			assertJSONGone: "learning_llm",
-		},
-		{
 			name:  "clears execution tier override",
 			field: "execution_tier",
 			prep: func(sc *StepConfig) {
@@ -118,6 +110,7 @@ func TestClearStepConfigField_UnknownName(t *testing.T) {
 		"orchestration_max_iterations",
 		"todo_task_orchestrator_tier",
 		"learn_code_max_fix_iterations",
+		"learning_llm",
 	}
 	for _, bad := range unknowns {
 		if clearStepConfigField(sc, bad) {
@@ -135,9 +128,6 @@ func TestClearStepConfigField_NilAgentConfigs(t *testing.T) {
 
 	if !clearStepConfigField(sc, "validation_schema") {
 		t.Error("expected validation_schema to be clearable even with nil AgentConfigs")
-	}
-	if !clearStepConfigField(sc, "learning_llm") {
-		t.Error("expected learning_llm to be recognized as a valid field name even with nil AgentConfigs")
 	}
 	if clearStepConfigField(sc, "not_a_real_field") {
 		t.Error("expected nonexistent field to return false")

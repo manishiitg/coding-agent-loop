@@ -42,15 +42,15 @@ workflow's state.
 | | **Pulse** | **Auto-improve** |
 |---|---|---|
 | Job | **FIX** — keep it *working* | **IMPROVE** — make it *win* |
-| Axis | 🩺 operational ("does it run right?") | 🎯 goal ("is it achieving its goal?") |
+| Axis | 🩺 operational + 💵 spend/time ("does it run right, and did it spend sanely?") | 🎯 goal ("is it achieving its goal?") |
 | Trigger | **after every run** (reactive) | **scheduled** (proactive) |
 | Autonomy | applies low-risk fixes itself (`harden_workflow`) | **proposal-only** for big changes (replan); user/builder approve |
-| Statuses | healthy / bug / critical | on-track / at-risk / off-goal |
+| Statuses | healthy / bug / critical; normal / elevated / missing cost | on-track / at-risk / off-goal |
 | Code | `runPostRunMonitor` / `postRunMonitorSteps` (`scheduler.go`) | `optimizerScheduleMessages` (`scheduler.go`) |
 | Guidance | `post-run-monitor.md`, `optimize-playbook.md` | `optimize-playbook.md` + `get_workflow_command_guidance(kind="improve-workflow")` |
 | Detailed doc | `pulse_consolidation.md` | `auto_improvement_framework.md` |
 
-**Pulse step sequence** (one focused turn per step): triage → fix/harden → LLM/cost report
+**Pulse step sequence** (one focused turn per step): triage → fix/harden → artifact review → LLM/cost report
 → backup → publish → notify.
 
 **Auto-improve step sequence:** pre-backup → improve → final backup → publish → notify.
@@ -68,6 +68,9 @@ newest-first. It *is* the loop's memory:
 - **Verdict pills** (Bug, Goal), stamped with the run they're as-of.
 - **Goal card** — each success criterion's Met/Short/At-risk + evidence.
 - **Decision cards** — each fix (harden/replan) the loop applied.
+- **Auto-improve major decision cards** — visually distinct decision entries with `Why now`,
+  evidence, change, expected impact, files touched, and remaining risk/gap, so material
+  replans/report/eval/cadence changes do not look like routine Pulse notes.
 - **Self-verification** — on a later run the loop *confirms the last unconfirmed Decision*:
   `ok` (cite before→after), `bad` (regressed → reopen a finding), or `flat` (path not hit →
   stays pending). So "I fixed X last run → re-check X" is built in.
@@ -78,9 +81,10 @@ See `review-improve-log.md` for the log's structure and the confirm-Decision rul
 Each loop also writes a compact **dashboard card** in the workflow's own workspace, every
 run (overwrite), via the existing `update_workspace_file`:
 - Pulse → `builder/card.health.html` (🩺 status + headline, `data-*` attributes)
+- Pulse report step → `builder/card.cost.html` (💵 cost/time status + headline/metric)
 - Auto-improve → `builder/card.progress.html` (🎯 status + goal + headline)
 
-These are served to the UI by `getBuilderDoc(workspace, "card-health"|"card-progress")`
+These are served to the UI by `getBuilderDoc(workspace, "card-health"|"card-progress"|"card-cost")`
 (`auto_improvement_endpoints.go`).
 
 ## 4. The reporting / steering surfaces

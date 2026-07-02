@@ -1,6 +1,6 @@
-Run the artifact drift review through the dedicated background tool. This command checks whether dependent artifacts drifted from recent plan/config changes: step config, learnings, saved main.py, KB notes, db files, reports, evaluation, and recent run outputs. It is a review command, not a fix command.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+Run the artifact drift review through the dedicated background tool. This command checks whether dependent artifacts drifted from recent plan/config changes: step config, learnings, saved main.py, KB notes, db files, reports, evaluation, and recent run outputs. It is a review command, not a fix command. When Pulse calls it, it is a separate report-only Pulse item, not part of `harden_workflow`.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
-Write findings into `builder/improve.html` as "Open finding" timeline entries (`builder/review.html` is legacy — fold any unresolved findings from it into `builder/improve.html`). For the log format, the one-time migration, and how open findings are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
+Write findings into `builder/improve.html` as "Open finding" timeline entries. For the log format, one-time old Markdown migration, and how open findings are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
 
 PROCEDURE
 
@@ -18,4 +18,4 @@ PROCEDURE
    - whether the `builder/improve.html` Artifact Sync Cursor advanced
    - recommended next owner for fixes: Builder or Optimizer
 
-The `review_artifact_sync` tool owns the full audit procedure and has the same deep inspection access needed for hardening-style consistency checks. It writes only to `builder/improve.html`, where it maintains the `Artifact Sync Cursor` and records findings as open-finding entries. Do not create a separate cursor or state file.
+The `review_artifact_sync` tool owns the full audit procedure and has the same deep inspection access needed for hardening-style consistency checks. It writes only to `builder/improve.html`, where it maintains the `Artifact Sync Cursor` and records Artifact Review findings. Do not create a separate cursor or state file. If called by Pulse, record a compact report item even for a clean/no-pending result, but do not apply fixes from this command.

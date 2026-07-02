@@ -12,7 +12,7 @@ import (
 )
 
 // hashStepDescription returns a hex SHA256 of the step description, trimmed of
-// surrounding whitespace. It is used for observability so builder/review tools
+// surrounding whitespace. It is used for observability so builder review tools
 // can see whether successful runs happened against a stable step description.
 func hashStepDescription(desc string) string {
 	sum := sha256.Sum256([]byte(strings.TrimSpace(desc)))

@@ -86,8 +86,14 @@ func TestLLMDiscoveryHTTPShowsCursorLoginRequired(t *testing.T) {
 	}
 }
 
-func TestClaudeCodeDiscoveryOptionsIncludeSonnet5(t *testing.T) {
+func TestClaudeCodeDiscoveryOptionsIncludeManualNewModels(t *testing.T) {
 	options := discoveryModelOptions("claude-code")
+	if !containsLLMCapabilityString(options, "claude-fable-5") {
+		t.Fatalf("claude-code options = %v, want claude-fable-5", options)
+	}
+	if !containsLLMCapabilityString(options, "claude-opus-4-8") {
+		t.Fatalf("claude-code options = %v, want claude-opus-4-8", options)
+	}
 	if !containsLLMCapabilityString(options, "claude-sonnet-5") {
 		t.Fatalf("claude-code options = %v, want claude-sonnet-5", options)
 	}

@@ -125,7 +125,7 @@ func TestValidatePathAgainstGuard_ExactFileWritePathIsNotPrefix(t *testing.T) {
 		},
 		{
 			name:      "sibling builder file is not writable",
-			path:      "Workflow/rtslatency/builder/review.html",
+			path:      "Workflow/rtslatency/builder/other.html",
 			wantError: true,
 		},
 		{

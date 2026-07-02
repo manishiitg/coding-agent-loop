@@ -19,7 +19,6 @@ export interface AgentLLMConfig {
 export interface AgentConfigs {
   execution_llm?: AgentLLMConfig;
   execution_tier?: 'high' | 'medium' | 'low';
-  learning_llm?: AgentLLMConfig;
   conditional_llm?: AgentLLMConfig;
   execution_max_turns?: number;
   validation_max_turns?: number;

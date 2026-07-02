@@ -55,10 +55,10 @@ func (api *StreamingAPI) handleGetFrameworkHealth(w http.ResponseWriter, r *http
 }
 
 // BuilderDocResponse is the JSON shape of GET /api/workflow/builder-doc.
-// It returns the markdown content (or empty if the file does not exist yet).
+// It returns document content (or empty if the file does not exist yet).
 type BuilderDocResponse struct {
 	Success bool   `json:"success"`
-	Doc     string `json:"doc"`     // "improve" | "review" | "soul" — echoed back
+	Doc     string `json:"doc"`     // "improve" | "soul" — echoed back
 	Path    string `json:"path"`    // workspace-relative path that was read
 	Exists  bool   `json:"exists"`  // false if the file does not exist yet
 	Content string `json:"content"` // markdown body, "" when !exists
@@ -76,9 +76,8 @@ type BuilderDocArchivesResponse struct {
 	Error   string                  `json:"error,omitempty"`
 }
 
-// handleGetBuilderDoc serves the contents of builder/improve.html (with .md fallback),
-// builder/review.html (with .md fallback), or soul/soul.md so the AutoImprovementPopup can render
-// them inline.
+// handleGetBuilderDoc serves the contents of builder/improve.html, soul/soul.md,
+// and compact dashboard card fragments so the UI can render them inline.
 // The "doc" query param picks which file. Read-only.
 func (api *StreamingAPI) handleGetBuilderDoc(w http.ResponseWriter, r *http.Request) {
 	if !setupCORS(w, r, http.MethodGet) {
@@ -94,21 +93,21 @@ func (api *StreamingAPI) handleGetBuilderDoc(w http.ResponseWriter, r *http.Requ
 	switch doc {
 	case "improve":
 		rel = "builder/improve.html"
-	case "review":
-		rel = "builder/review.html"
 	case "soul":
 		rel = "soul/soul.md"
 	case "card-health":
 		rel = "builder/card.health.html"
 	case "card-progress":
 		rel = "builder/card.progress.html"
+	case "card-cost":
+		rel = "builder/card.cost.html"
 	default:
-		http.Error(w, "doc must be one of: improve, review, soul, card-health, card-progress", http.StatusBadRequest)
+		http.Error(w, "doc must be one of: improve, soul, card-health, card-progress, card-cost", http.StatusBadRequest)
 		return
 	}
 	if requestedPath != "" {
-		if doc != "improve" && doc != "review" {
-			http.Error(w, "path is only supported for improve/review archive files", http.StatusBadRequest)
+		if doc != "improve" {
+			http.Error(w, "path is only supported for improve archive files", http.StatusBadRequest)
 			return
 		}
 		cleanPath := path.Clean(requestedPath)
@@ -119,7 +118,7 @@ func (api *StreamingAPI) handleGetBuilderDoc(w http.ResponseWriter, r *http.Requ
 		rel = cleanPath
 	}
 	// If the primary HTML file doesn't exist, fall back to the legacy .md file.
-	if requestedPath == "" && (doc == "improve" || doc == "review") {
+	if requestedPath == "" && doc == "improve" {
 		htmlFull := path.Join(strings.Trim(workspacePath, "/"), rel)
 		_, htmlExists, _ := readFileFromWorkspace(r.Context(), htmlFull)
 		if !htmlExists {
@@ -151,13 +150,11 @@ type BuilderDocStatus struct {
 type BuilderDocsStatusResponse struct {
 	Success bool             `json:"success"`
 	Improve BuilderDocStatus `json:"improve"`
-	Review  BuilderDocStatus `json:"review"`
 	Error   string           `json:"error,omitempty"`
 }
 
 // handleGetBuilderDocsStatus: GET /api/workflow/builder-docs-status?workspace_path=...
-// Returns existence + last-modified for builder/improve.html and
-// builder/review.html (falling back to the legacy .md) so the toolbar can show
+// Returns existence + last-modified for builder/improve.html so the toolbar can show
 // a "new since you last looked" dot without downloading the docs repeatedly.
 func (api *StreamingAPI) handleGetBuilderDocsStatus(w http.ResponseWriter, r *http.Request) {
 	if !setupCORS(w, r, http.MethodGet) {
@@ -170,7 +167,6 @@ func (api *StreamingAPI) handleGetBuilderDocsStatus(w http.ResponseWriter, r *ht
 	writeAIJSON(w, BuilderDocsStatusResponse{
 		Success: true,
 		Improve: builderDocStatus(r.Context(), workspacePath, "builder/improve.html"),
-		Review:  builderDocStatus(r.Context(), workspacePath, "builder/review.html"),
 	})
 }
 
@@ -199,8 +195,8 @@ func (api *StreamingAPI) handleGetBuilderDocArchives(w http.ResponseWriter, r *h
 	if doc == "" {
 		doc = "improve"
 	}
-	if doc != "improve" && doc != "review" {
-		http.Error(w, "doc must be one of: improve, review", http.StatusBadRequest)
+	if doc != "improve" {
+		http.Error(w, "doc must be improve", http.StatusBadRequest)
 		return
 	}
 	folder := path.Join(strings.Trim(workspacePath, "/"), "builder", doc+"-archive")
@@ -235,7 +231,7 @@ func (api *StreamingAPI) handleGetBuilderDocArchives(w http.ResponseWriter, r *h
 func isBuilderDocArchivePath(doc, rel string) bool {
 	rel = path.Clean(strings.TrimSpace(rel))
 	ext := strings.ToLower(path.Ext(rel))
-	return (doc == "improve" || doc == "review") &&
+	return doc == "improve" &&
 		strings.HasPrefix(rel, "builder/"+doc+"-archive/") &&
 		(ext == ".md" || ext == ".html") &&
 		!strings.Contains(rel, "..")

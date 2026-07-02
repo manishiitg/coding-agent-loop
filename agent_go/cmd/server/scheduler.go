@@ -1142,8 +1142,9 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 
 		// Pulse: the post-run steward. When enabled it triages the run (Bug + Goal
 		// verdicts into the Pulse log), applies the full plan-step harden for Bug
-		// findings, records the report-only LLM/cost/time readout, backs up the final
-		// state, publishes, and notifies on a transition — see runPostRunMonitor.
+		// findings, runs a separate report-only artifact drift review, records the
+		// report-only LLM/cost/time readout, backs up the final state, publishes, and
+		// notifies on a transition — see runPostRunMonitor.
 		// Opt-in per workflow (post_run_monitor in workflow.json) — runs only when
 		// the user / builder enabled Pulse. Only after an actual workflow RUN, not an
 		// optimizer/improvement pass (there's no fresh run output to triage there).
@@ -1164,8 +1165,9 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 // verdict and a Goal verdict (recorded into builder/improve.html — the Pulse
 // log, the single source of truth), applies the full plan-step harden for Bug
 // findings (recording the Goal finding + evidence for the scheduled improve
-// loop, which applies the replan), records the report-only LLM/cost/time readout,
-// backs up the final state before publish, and notifies on a transition. It
+// loop, which applies the replan), runs a separate report-only artifact drift
+// review, records the report-only LLM/cost/time readout, backs up the final state
+// before publish, and notifies on a transition. It
 // never changes the run's recorded status — failures here are logged and
 // swallowed. Pulse's behavior is defined by the post-run-monitor reference doc;
 // this just hands it the run context.
@@ -1187,7 +1189,7 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 	reqMap := s.buildWorkshopRequest(ctx, sctx)
 
 	// Run Pulse as a SEQUENCE of smaller turns — one step per message — rather than
-	// one giant prompt that asks the agent to juggle triage→fix→report→backup→publish→notify
+	// one giant prompt that asks the agent to juggle triage→fix→artifact→report→backup→publish→notify
 	// in a single reply. Each turn does one focused job and builds on the prior turns'
 	// context in the same resumed session, the way a message_sequence works, and the
 	// user watches it progress step by step.
@@ -1229,10 +1231,11 @@ func postRunMonitorSteps() []postRunMonitorStep {
 	return []postRunMonitorStep{
 		{"triage", "STEP 1 — TRIAGE. Read the run evidence, the plan changelog, and eval files; form a Bug verdict and a Goal verdict. Triage is diagnosis/verdict only — hardening happens in the next step. ALSO sanity-check the two layers that silently break and poison the verdict: the EVAL (did it run; does it produce usable evidence?) and the REPORT dashboard (does it render; do its window.report.query SQLs work; is it non-empty?). A broken eval or report is a Bug. Update builder/improve.html (verdict pills, goal card, Bug/Goal signal tiles, and one latest run row with status; leave backup and LLM/cost/time fields for later steps). ALSO overwrite builder/card.health.html with one compact org-dashboard card fragment (inline content only, single-quoted attributes), every run so the dashboard stays live: <article class='pulse-card' data-axis='health' data-workflow='<workflow name>' data-goal='<the workflow's own goal distilled to 3-6 words from planning/plan.json success_criteria, e.g. 'Grow LinkedIn reach' or 'Cut infra spend' — never the full criteria text, empty only if no success_criteria exists>' data-status='<healthy|bug|critical>' data-updated='<ISO8601 UTC>'><h4><workflow name></h4><p data-field='headline'><one short line from the Bug verdict, e.g. 'Healthy — clean run' or 'Critical — publish step failing 3 runs'></p></article> (healthy=clean; bug=fixable issue found; critical=broken/blocking). Report the two verdicts (note any broken eval/report), then stop."},
 		{"fix", "STEP 2 — FIX / HARDEN. This turn does not improvise manual workflow edits. If triage found a real Bug, first call get_reference_doc(kind=\"optimize-playbook\"), then call harden_workflow(focus=\"<concise Bug finding + evidence paths from triage>\") as the canonical repair path; include group_name only when the completed run was scoped to a single group. harden_workflow owns the full plan-step harden: guards, retries, selector/prompt tightening, missing-field defaults, validation, artifact-shape fixes, KB/db/report/eval contract repair, learning hygiene, stale-description cleanup, and small evidence-backed structural fixes. If triage found only a Goal finding, do NOT call harden_workflow; record the Goal finding / replan proposal for the scheduled improve loop. If the run was clean, do nothing. Never harden because a report-only LLM/cost/time observation exists. Report the harden_workflow execution_id/result or the no-fix reason, then stop."},
-		{"report", "STEP 3 — LLM/COST/TIME REPORT (report-only, after fix/harden). This is separate from triage and must not drive Bug hardening by itself. Read workflow.json capabilities.llm_config / step execution tiers, get_cost_summary(run_folder) when available, costs/execution + costs/evaluation + costs/phase/token_usage.json, and timing summaries under runs/<run_folder>/logs/<step-id>/execution. Create a compact run telemetry report: total cost, total tokens, wall/LLM/tool time, configured tier/model vs observed provider/model, broken down by plan step and by agent/sub-agent when evidence supports it; call missing telemetry \"missing evidence\" instead of estimating. This is reporting only: do NOT change model tiers, LLM config, prompts, schedules, or agent allocation. Update builder/improve.html cost/time tiles, the latest run row, and a compact report-only Note/Pulse detail when material. Report the LLM/cost/time summary and evidence paths, then stop."},
-		{"backup", "STEP 4 — BACK UP FINAL STATE (always, before publish). Read workflow.json.backup and back up per get_reference_doc(kind=\"backup-strategy\"). The triage, fix/harden, and LLM/cost/time report changes are already written; snapshot the updated workflow artifacts now so publish has a backed-up source. If backup is disabled, set it up with the zero-config local-git default and back up. Skip the actual push only when backup/status.json shows the current source is already backed up (unchanged). Always write backup/status.json and update the latest run row with the backup result. Report the backup result, then stop."},
-		{"publish", "STEP 5 — PUBLISH (only if publish is on). If workflow.json.publish is enabled, re-publish the updated HTML per get_reference_doc(kind=\"publish-strategy\") — but ONLY when the destination is already VERIFIED (publish/status.json shows a prior successful publish). Every run changes the published artifacts — new db data plus a fresh Pulse entry in builder/improve.html — so there is no \"unchanged\" run to skip; always re-publish to a verified destination. Never do the first/verifying publish here unattended — that is the user's manual set-up step. Always write publish/status.json. Report the result, then stop."},
-		{"notify", "STEP 6 — NOTIFY once on a state transition per the post-run-monitor doc's notification step — honor a user `## Notifications` preference in soul/soul.md, otherwise a single notify_user call only on broke/recovered/new-finding, and silence on a steady run. When you DO notify and publish is on, include the public dashboard URL from publish/status.json (the `url`, only when its state is `published`) in the message so the user can open the live report in one tap. Use the doc's standard one-line format (emoji · workflow · headline · metric · dashboard URL), and prefer a formatted HTML email body (email_html) when Gmail is on. Stay scoped: never rewrite the plan wholesale or dispatch a full improvement run here."},
+		{"artifact", "STEP 3 — ARTIFACT REVIEW (report-only, after fix/harden). This is a separate Pulse item, not part of harden. Read planning/changelog/ and the Artifact Sync Cursor in builder/improve.html. If there are material changelog entries after the cursor, or no cursor exists, call get_workflow_command_guidance(kind=\"review-artifact-drift\", focus=\"Pulse artifact review after this run; report-only; do not fix\") and follow it: call review_artifact_sync(focus=\"Pulse artifact review after this run; report-only; do not fix\"), then wait with query_step(execution_id) until it completes. If there is nothing new to inspect, do not start the background agent; update builder/improve.html with a compact report-only Artifact Review note/latest-run detail saying there is no pending artifact changelog drift. If drift is found, record it as an Artifact Review finding with the recommended next owner, but do NOT call harden_workflow, replan_workflow_from_results, plan-modification tools, or hand-patch artifacts from this step. Report cursor before/after, entries inspected, findings count, or the no-op reason, then stop."},
+		{"report", "STEP 4 — LLM/COST/TIME REPORT (report-only, after artifact review). This is separate from triage and must not drive Bug hardening by itself. Read workflow.json capabilities.llm_config / step execution tiers, get_cost_summary(run_folder) when available, costs/execution + costs/evaluation + costs/phase/token_usage.json, and timing summaries under runs/<run_folder>/logs/<step-id>/execution. Create a compact run telemetry report: total cost, total tokens, wall/LLM/tool time, configured tier/model vs observed provider/model, broken down by plan step and by agent/sub-agent when evidence supports it; call missing telemetry \"missing evidence\" instead of estimating. This is reporting only: do NOT change model tiers, LLM config, prompts, schedules, or agent allocation. Update builder/improve.html cost/time tiles, the latest run row, and a compact report-only Note/Pulse detail when material. ALSO overwrite builder/card.cost.html with one compact org-dashboard card fragment (inline content only, single-quoted attributes), every run so the dashboard shows spend health: <article class='pulse-card' data-axis='cost' data-workflow='<workflow name>' data-goal='<same 3-6 word goal label used by card.health.html>' data-status='<normal|elevated|missing>' data-updated='<ISO8601 UTC>'><h4><workflow name></h4><p data-field='headline'><one short line, e.g. 'Cost normal — $0.12 / 18k tokens' or 'Missing cost telemetry — execution ledger absent'></p><p data-field='metric'><total USD or unpriced · total tokens · wall time></p><p data-field='detail'><top-cost step/agent or missing evidence path></p></article> (normal=telemetry present and no material concern; elevated=cost/time outlier, high spend, runaway retries, or slow/expensive step worth watching; missing=no reliable cost/time telemetry). If a report dashboard exists, use get_reference_doc(kind=\"report-plan\") and add/update a bounded live cost/time strip using existing live sources such as window.report.get('costs/phase/token_usage.json'), window.report.get('costs/execution/...'), workflow.json, eval summaries, and builder/improve.html; do not bake stale static numbers into the report, and if the report shape cannot be safely patched, record that reporting cost coverage is missing in builder/improve.html instead. Report the LLM/cost/time summary and evidence paths, then stop."},
+		{"backup", "STEP 5 — BACK UP FINAL STATE (always, before publish). Read workflow.json.backup and back up per get_reference_doc(kind=\"backup-strategy\"). The triage, fix/harden, Artifact Review, and LLM/cost/time report changes are already written; snapshot the updated workflow artifacts now so publish has a backed-up source. If backup is disabled, set it up with the zero-config local-git default and back up. Skip the actual push only when backup/status.json shows the current source is already backed up (unchanged). Always write backup/status.json and update the latest run row with the backup result. Report the backup result, then stop."},
+		{"publish", "STEP 6 — PUBLISH (only if publish is on). If workflow.json.publish is enabled, re-publish the updated HTML per get_reference_doc(kind=\"publish-strategy\") — but ONLY when the destination is already VERIFIED (publish/status.json shows a prior successful publish). Every run changes the published artifacts — new db data plus a fresh Pulse entry in builder/improve.html — so there is no \"unchanged\" run to skip; always re-publish to a verified destination. Never do the first/verifying publish here unattended — that is the user's manual set-up step. Always write publish/status.json. Report the result, then stop."},
+		{"notify", "STEP 7 — NOTIFY once on a state transition per the post-run-monitor doc's notification step — honor a user `## Notifications` preference in soul/soul.md, otherwise a single notify_user call only on broke/recovered/new-finding, and silence on a steady run. When you DO notify and publish is on, include the public dashboard URL from publish/status.json (the `url`, only when its state is `published`) in the message so the user can open the live report in one tap. Include the compact cost/time headline from STEP 4 when it was material, requested by `## Notifications`, or the cost card is elevated/missing; otherwise keep cost detail in builder/improve.html and builder/card.cost.html. Use the doc's standard one-line format (emoji · workflow · headline · metric · dashboard URL), and prefer a formatted HTML email body (email_html) when Gmail is on. Stay scoped: never rewrite the plan wholesale or dispatch a full improvement run here."},
 	}
 }
 
@@ -1265,8 +1268,9 @@ func defaultOptimizerImproveMessage(groupNames []string) string {
 			"Read builder/improve.html, soul/soul.md, "+
 			"latest run/eval evidence for the configured group_names, and planning/changelog/. Then call "+
 			"get_workflow_command_guidance(kind=\"improve-workflow\", focus=\"scheduled improve fire; group_names=%s; "+
+			"run a critical evidence review for hallucinations, unsupported claims, bugs, misreporting, and report/dashboard misstatements; "+
 			"apply structural replan only on strong cross-run Goal/strategy evidence; apply evidence-chain freshness cleanup "+
-			"for stale reports/learnings/KB/db; do NOT call harden_workflow; do NOT call notify_user because backup/publish/notify "+
+			"for stale reports/learnings/KB/db; keep the report dashboard in best possible shape to measure and track the workflow goal: success-criteria status, tracked signals, trend/delta, current plan/strategy, blockers, and issues; do NOT call harden_workflow; do NOT call notify_user because backup/publish/notify "+
 			"are split into later scheduler turns; record notification-worthy decisions in builder/improve.html\"). "+
 			"Follow the returned guidance exactly. Stop after the improve decision and any cadence update are logged.",
 		groupScope, groupScope)
@@ -1278,7 +1282,7 @@ func wrapOptimizerImproveMessage(message string, groupNames []string) string {
 			"The scheduler already ran STEP 1/5 pre-backup and will run STEP 3/5 final backup, STEP 4/5 publish, and STEP 5/5 notify after this turn. "+
 			"Treat the completed STEP 1/5 pre-backup as the required pre-change checkpoint; if it did not clearly complete, stop and record the blocker instead of mutating files. "+
 			"Do not call notify_user, publish, or perform final backup in this turn. Do not call harden_workflow for immediate per-run Bugs; Pulse owns those. "+
-			"Record any notification-worthy decision in builder/improve.html for STEP 5/5. After the improve decision is logged, OVERWRITE builder/card.progress.html with one compact org-dashboard card fragment (inline content only, single-quoted attributes), every improve fire so the dashboard stays live: <article class='pulse-card' data-axis='progress' data-workflow='<workflow name>' data-goal='<the workflow's own goal distilled to 3-6 words, same short form as card.health.html — e.g. 'Grow LinkedIn reach', not the full success_criteria text>' data-status='<on-track|at-risk|off-goal>' data-updated='<ISO8601 UTC>'><h4><workflow name></h4><p data-field='headline'><one short line: goal progress + the active improvement, e.g. 'Off-goal — open-rate flat; testing subject-line variants'></p></article>. If you call get_workflow_command_guidance(kind=\"improve-workflow\"), "+
+			"Record any notification-worthy decision in builder/improve.html for STEP 5/5. When you record an auto-improve action, use the dedicated Decision card design from get_reference_doc(kind=\"review-improve-log\"): tag it `Decision - Auto-improve - Applied` or `Decision - Auto-improve - Proposed`, use `entry decision major` for replans/report/eval/cadence/user-facing dashboard changes, and include Why now, Evidence, Change, Expected impact, Files touched, and Risk / gap. After the improve decision is logged, OVERWRITE builder/card.progress.html with one compact org-dashboard card fragment (inline content only, single-quoted attributes), every improve fire so the dashboard stays live: <article class='pulse-card' data-axis='progress' data-workflow='<workflow name>' data-goal='<the workflow's own goal distilled to 3-6 words, same short form as card.health.html — e.g. 'Grow LinkedIn reach', not the full success_criteria text>' data-status='<on-track|at-risk|off-goal>' data-updated='<ISO8601 UTC>'><h4><workflow name></h4><p data-field='headline'><one short line: goal progress + the active improvement, e.g. 'Off-goal — open-rate flat; testing subject-line variants'></p></article>. If you call get_workflow_command_guidance(kind=\"improve-workflow\"), "+
 			"include that backup/publish/notify are split into later turns.\n\nCANONICAL AUTO IMPROVE MESSAGE:\n%s",
 		optimizerGroupScope(groupNames), strings.TrimSpace(message))
 }
@@ -1736,12 +1740,36 @@ func (s *SchedulerService) applyLLMAndSecretsToReqMap(ctx context.Context, reqMa
 
 	if sctx.Capabilities.LLMConfig != nil {
 		llmCfg := sctx.Capabilities.LLMConfig
-		if llmCfg.Provider != "" && llmCfg.ModelID != "" {
+		provider := strings.TrimSpace(llmCfg.Provider)
+		modelID := strings.TrimSpace(llmCfg.ModelID)
+		var options map[string]interface{}
+		if strings.EqualFold(strings.TrimSpace(sctx.Schedule.WorkshopMode), "optimizer") {
+			autoImproveLLM := llmCfg.AutoImproveLLM
+			if autoImproveLLM == nil {
+				if resolved, ok := workflowtypes.ResolveCodingAgentAutoImproveConfig(llmCfg); ok {
+					autoImproveLLM = resolved
+				}
+			}
+			if autoImproveLLM != nil {
+				autoImproveProvider := strings.TrimSpace(autoImproveLLM.Provider)
+				autoImproveModelID := strings.TrimSpace(autoImproveLLM.ModelID)
+				if autoImproveProvider != "" && autoImproveModelID != "" {
+					provider = autoImproveProvider
+					modelID = autoImproveModelID
+					options = autoImproveLLM.Options
+				}
+			}
+		}
+		if provider != "" && modelID != "" {
+			primary := map[string]interface{}{
+				"provider": provider,
+				"model_id": modelID,
+			}
+			if len(options) > 0 {
+				primary["options"] = options
+			}
 			llmConfig := map[string]interface{}{
-				"primary": map[string]interface{}{
-					"provider": llmCfg.Provider,
-					"model_id": llmCfg.ModelID,
-				},
+				"primary": primary,
 			}
 			reqMap["llm_config"] = llmConfig
 		}

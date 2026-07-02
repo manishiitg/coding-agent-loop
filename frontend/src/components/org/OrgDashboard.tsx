@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   CircleAlert,
   CircleHelp,
+  DollarSign,
   LayoutDashboard,
   Loader2,
   RefreshCw,
@@ -17,6 +18,7 @@ import ModalPortal from '../ui/ModalPortal'
 
 type HealthStatus = 'healthy' | 'bug' | 'critical' | 'idle'
 type ProgressStatus = 'on-track' | 'at-risk' | 'off-goal' | 'idle'
+type CostStatus = 'normal' | 'elevated' | 'missing' | 'idle'
 
 interface CardData {
   status: string
@@ -24,6 +26,8 @@ interface CardData {
   goal: string
   updated: string
   title: string
+  metric: string
+  detail: string
 }
 
 interface WorkflowDashEntry {
@@ -31,6 +35,7 @@ interface WorkflowDashEntry {
   label: string
   health: CardData | null
   progress: CardData | null
+  cost: CardData | null
   failed: boolean
 }
 
@@ -40,6 +45,7 @@ interface OrgDashboardProps {
 
 const HEALTH_VALUES: ReadonlySet<string> = new Set(['healthy', 'bug', 'critical'])
 const PROGRESS_VALUES: ReadonlySet<string> = new Set(['on-track', 'at-risk', 'off-goal'])
+const COST_VALUES: ReadonlySet<string> = new Set(['normal', 'elevated', 'missing'])
 
 function parseCard(content: string | undefined | null): CardData | null {
   if (!content || !content.trim()) return null
@@ -53,7 +59,9 @@ function parseCard(content: string | undefined | null): CardData | null {
     const title = (doc.querySelector('h1,h2,h3,h4')?.textContent || '').trim()
     const headlineEl = doc.querySelector('[data-field="headline"]')
     const headline = (headlineEl?.textContent || '').trim()
-    return { status, headline, goal, updated, title }
+    const metric = (doc.querySelector('[data-field="metric"]')?.textContent || '').trim()
+    const detail = (doc.querySelector('[data-field="detail"]')?.textContent || '').trim()
+    return { status, headline, goal, updated, title, metric, detail }
   } catch {
     return null
   }
@@ -67,6 +75,30 @@ function healthStatus(card: CardData | null): HealthStatus {
 function progressStatus(card: CardData | null): ProgressStatus {
   if (card && PROGRESS_VALUES.has(card.status)) return card.status as ProgressStatus
   return 'idle'
+}
+
+function costStatus(card: CardData | null): CostStatus {
+  if (card && COST_VALUES.has(card.status)) return card.status as CostStatus
+  return 'idle'
+}
+
+function latestUpdated(...cards: Array<CardData | null>): string {
+  let latest = ''
+  let latestMs = Number.NEGATIVE_INFINITY
+  for (const card of cards) {
+    const updated = card?.updated?.trim()
+    if (!updated) continue
+    const ms = new Date(updated).getTime()
+    if (Number.isNaN(ms)) {
+      if (!latest) latest = updated
+      continue
+    }
+    if (ms > latestMs) {
+      latestMs = ms
+      latest = updated
+    }
+  }
+  return latest
 }
 
 const PILL_BASE = 'font-runloop-mono inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em]'
@@ -83,6 +115,13 @@ const PROGRESS_PILL: Record<ProgressStatus, { className: string; label: string; 
   'at-risk': { className: 'border-amber-500/25 bg-amber-500/10 text-amber-600 dark:text-amber-300', label: 'At risk', Icon: AlertTriangle },
   'off-goal': { className: 'border-red-500/25 bg-red-500/10 text-red-600 dark:text-red-300', label: 'Off goal', Icon: CircleAlert },
   idle: { className: 'border-border bg-muted/70 text-muted-foreground', label: 'Not assessed', Icon: Target },
+}
+
+const COST_PILL: Record<CostStatus, { className: string; label: string; Icon: React.ComponentType<{ className?: string }> }> = {
+  normal: { className: 'border-sky-500/25 bg-sky-500/10 text-sky-600 dark:text-sky-300', label: 'Cost ok', Icon: DollarSign },
+  elevated: { className: 'border-amber-500/25 bg-amber-500/10 text-amber-600 dark:text-amber-300', label: 'Cost watch', Icon: AlertTriangle },
+  missing: { className: 'border-red-500/25 bg-red-500/10 text-red-600 dark:text-red-300', label: 'Cost missing', Icon: CircleAlert },
+  idle: { className: 'border-border bg-muted/70 text-muted-foreground', label: 'No cost', Icon: DollarSign },
 }
 
 function relativeTime(iso: string): string {
@@ -148,7 +187,7 @@ const DetailRow: React.FC<{ label: string; value?: string }> = ({ label, value }
 const StatusDetail: React.FC<{
   title: string
   card: CardData | null
-  status: HealthStatus | ProgressStatus
+  status: HealthStatus | ProgressStatus | CostStatus
   pill: { className: string; label: string; Icon: React.ComponentType<{ className?: string }> }
 }> = ({ title, card, status, pill }) => (
   <section className="rounded-lg border border-border bg-card/95 p-3">
@@ -164,6 +203,8 @@ const StatusDetail: React.FC<{
     {card ? (
       <div className="space-y-4">
         <DetailRow label="Headline" value={card.headline} />
+        <DetailRow label="Metric" value={card.metric} />
+        <DetailRow label="Detail" value={card.detail} />
         <DetailRow label="Goal" value={card.goal} />
         <DetailRow label="Updated" value={absoluteTime(card.updated)} />
       </div>
@@ -179,8 +220,9 @@ const WorkflowDetailModal: React.FC<{
 }> = ({ entry, onClose }) => {
   const h = healthStatus(entry.health)
   const p = progressStatus(entry.progress)
-  const updated = entry.health?.updated || entry.progress?.updated || ''
-  const goalLabel = entry.health?.goal?.trim() || entry.progress?.goal?.trim() || ''
+  const c = costStatus(entry.cost)
+  const updated = latestUpdated(entry.health, entry.progress, entry.cost)
+  const goalLabel = entry.health?.goal?.trim() || entry.progress?.goal?.trim() || entry.cost?.goal?.trim() || ''
 
   return (
     <ModalPortal>
@@ -227,6 +269,7 @@ const WorkflowDetailModal: React.FC<{
             <div className="grid gap-3">
               <StatusDetail title="Health" card={entry.health} status={h} pill={HEALTH_PILL[h]} />
               <StatusDetail title="Goal alignment" card={entry.progress} status={p} pill={PROGRESS_PILL[p]} />
+              <StatusDetail title="Cost and time" card={entry.cost} status={c} pill={COST_PILL[c]} />
             </div>
           </div>
         </div>
@@ -248,15 +291,17 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
       const results = await Promise.all(
         workflows.map(async (wf): Promise<WorkflowDashEntry> => {
           try {
-            const [health, progress] = await Promise.all([
+            const [health, progress, cost] = await Promise.all([
               agentApi.getBuilderDoc(wf.workspacePath, 'card-health'),
               agentApi.getBuilderDoc(wf.workspacePath, 'card-progress'),
+              agentApi.getBuilderDoc(wf.workspacePath, 'card-cost'),
             ])
             return {
               workspacePath: wf.workspacePath,
               label: wf.label,
               health: health.success && health.exists ? parseCard(health.content) : null,
               progress: progress.success && progress.exists ? parseCard(progress.content) : null,
+              cost: cost.success && cost.exists ? parseCard(cost.content) : null,
               failed: false,
             }
           } catch {
@@ -265,6 +310,7 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
               label: wf.label,
               health: null,
               progress: null,
+              cost: null,
               failed: true,
             }
           }
@@ -295,6 +341,7 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
   const triage = useMemo(() => {
     let critical = 0, bug = 0, healthy = 0
     let offGoal = 0, atRisk = 0, onTrack = 0
+    let costElevated = 0, costMissing = 0, costNormal = 0
     for (const e of entries) {
       const h = healthStatus(e.health)
       if (h === 'critical') critical++
@@ -304,9 +351,13 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
       if (p === 'off-goal') offGoal++
       else if (p === 'at-risk') atRisk++
       else if (p === 'on-track') onTrack++
+      const c = costStatus(e.cost)
+      if (c === 'elevated') costElevated++
+      else if (c === 'missing') costMissing++
+      else if (c === 'normal') costNormal++
     }
-    const needAttention = critical + bug + offGoal + atRisk
-    return { critical, bug, healthy, offGoal, atRisk, onTrack, needAttention }
+    const needAttention = critical + bug + offGoal + atRisk + costElevated + costMissing
+    return { critical, bug, healthy, offGoal, atRisk, onTrack, costElevated, costMissing, costNormal, needAttention }
   }, [entries])
 
   const groups = useMemo(() => {
@@ -316,7 +367,8 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
     for (const e of entries) {
       const h = healthStatus(e.health)
       const p = progressStatus(e.progress)
-      const needsAttention = h === 'critical' || h === 'bug' || p === 'off-goal' || p === 'at-risk'
+      const c = costStatus(e.cost)
+      const needsAttention = h === 'critical' || h === 'bug' || p === 'off-goal' || p === 'at-risk' || c === 'elevated' || c === 'missing'
       const group = needsAttention ? ATTENTION_GROUP : OK_GROUP
       const bucket = map.get(group)
       if (bucket) bucket.push(e)
@@ -331,7 +383,7 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
   }, [entries])
 
   const hasAnyCard = useMemo(
-    () => entries.some(e => e.health || e.progress),
+    () => entries.some(e => e.health || e.progress || e.cost),
     [entries]
   )
 
@@ -388,7 +440,7 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
           <p className="text-sm font-medium text-foreground">Org dashboard is warming up</p>
           <p className="max-w-md text-xs">
             Org dashboard is warming up — status cards appear here after your workflows run their
-            Pulse (health) and Auto-improve (goal) loops.
+            Pulse (health/cost) and Auto-improve (goal) loops.
           </p>
         </div>
       </div>
@@ -421,6 +473,10 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
         <TriageMetric label="Off goal" value={triage.offGoal} Icon={CircleAlert} className="border-red-500/20 bg-background/60 text-muted-foreground" />
         <TriageMetric label="At risk" value={triage.atRisk} Icon={AlertTriangle} className="border-amber-500/20 bg-background/60 text-muted-foreground" />
         <TriageMetric label="On track" value={triage.onTrack} Icon={Target} className="border-emerald-500/20 bg-background/60 text-muted-foreground" />
+        <span className="hidden h-5 w-px bg-border sm:block" />
+        <TriageMetric label="Cost watch" value={triage.costElevated} Icon={AlertTriangle} className="border-amber-500/20 bg-background/60 text-muted-foreground" />
+        <TriageMetric label="Cost missing" value={triage.costMissing} Icon={CircleAlert} className="border-red-500/20 bg-background/60 text-muted-foreground" />
+        <TriageMetric label="Cost ok" value={triage.costNormal} Icon={DollarSign} className="border-sky-500/20 bg-background/60 text-muted-foreground" />
       </div>
 
       {/* Status groups */}
@@ -442,9 +498,10 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
               {items.map(entry => {
                 const h = healthStatus(entry.health)
                 const p = progressStatus(entry.progress)
-                const updated = entry.health?.updated || entry.progress?.updated || ''
+                const c = costStatus(entry.cost)
+                const updated = latestUpdated(entry.health, entry.progress, entry.cost)
                 const rel = relativeTime(updated)
-                const goalLabel = entry.health?.goal?.trim() || entry.progress?.goal?.trim() || ''
+                const goalLabel = entry.health?.goal?.trim() || entry.progress?.goal?.trim() || entry.cost?.goal?.trim() || ''
                 return (
                   <div
                     key={entry.workspacePath}
@@ -475,6 +532,7 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">
                       <Pill Icon={HEALTH_PILL[h].Icon} className={HEALTH_PILL[h].className} label={HEALTH_PILL[h].label} />
                       <Pill Icon={PROGRESS_PILL[p].Icon} className={PROGRESS_PILL[p].className} label={PROGRESS_PILL[p].label} />
+                      <Pill Icon={COST_PILL[c].Icon} className={COST_PILL[c].className} label={COST_PILL[c].label} />
                     </div>
                     <div className="mt-2 space-y-1.5 text-xs leading-5 text-muted-foreground">
                       {entry.health?.headline && (
@@ -489,7 +547,13 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
                           {entry.progress.headline}
                         </p>
                       )}
-                      {!entry.health?.headline && !entry.progress?.headline && (
+                      {entry.cost?.headline && (
+                        <p className="line-clamp-2">
+                          <span className="font-runloop-mono mr-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/70">Cost</span>
+                          {entry.cost.headline}
+                        </p>
+                      )}
+                      {!entry.health?.headline && !entry.progress?.headline && !entry.cost?.headline && (
                         <p className="italic">No status reported yet.</p>
                       )}
                     </div>

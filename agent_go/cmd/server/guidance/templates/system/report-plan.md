@@ -40,7 +40,7 @@ The viewer hands the HTML the live data and the HTML renders its own visuals (ch
 - **Variable groups** — `get('variables/variables.json')` → `groups: [{ name, enabled, values }]`
 - **Workflow config** — `get('workflow.json')` (id, label, schedule, …)
 - **Soul / persona** — `getHtml('soul.md')`
-- **Prior generated docs** — `getText('improve.html')` (the single durable log; legacy `review.html` if present)
+- **Pulse / improvement log** — `getText('builder/improve.html')` (the single durable log)
 
 Use this to make reports context-aware — e.g. show this run's cost and eval score, badge the active variable group, or include the workflow's purpose from `soul.md`. (`runs/` per-run transcripts are NOT exposed: per-run paths aren't knowable at authoring time and can be sensitive.)
 
@@ -67,6 +67,18 @@ A report answers questions and drives action — it is not a mirror of the datab
 - **Assign status from explicit thresholds.** Drive ✅ ok / ⚠️ attention / ❌ fail from stated rules (e.g. "≥90% = ok") so the colour is consistent and trustworthy.
 - **One entity per tab.** Per-PAN/route/account reports give each entity its own document/tab with its own verdict — never blend unrelated entities into one page.
 - **Content quality starts upstream.** The report only shows what the workflow's steps write to `db/db.sqlite`. If the data needed to answer the key question isn't there (a computed value, a baseline, a status flag), the fix is in the producing step — instruct it to emit that — not in the HTML.
+
+### Dashboard goal tracking contract
+
+For workflow dashboards, the report should help the user measure and track the workflow's goal, not just browse outputs. When evidence exists, make the first screen answer:
+- **Goal status:** whether the latest evidence is on track against `soul.md` success criteria.
+- **Tracked success signals:** for each important success criterion, show the current value/state, target or baseline, trend/delta vs prior run/window, last updated, and status. If a criterion cannot be measured yet, say exactly what evidence is missing.
+- **Current plan/strategy:** the current workflow strategy or active plan draft/replan proposal in plain language, especially after Auto Improve changed direction.
+- **Issues and blockers:** broken steps, missing/stale data, eval failures, Pulse open findings, operational blockers, and material cost/time outliers.
+- **What changed since last run:** trend/delta or a short latest-run note so the user can see movement without opening logs.
+- **Evidence path:** the database/eval/Pulse source behind the claim, linked or summarized without exposing internal file noise to nontechnical users.
+
+Use live sources for those sections: `db/db.sqlite` for durable result rows, `evaluation/` for score/eval summaries, `costs/` for cost/time signals, `builder/improve.html` for Pulse/open findings, and `workflow.json`/`soul.md` for purpose and schedule context. If a needed value is missing, show an honest empty/error state or record a workflow improvement requirement; do not hardcode guesses into the report and do not introduce a separate metrics system.
 
 ### Writing a GOOD report document (formatting)
 

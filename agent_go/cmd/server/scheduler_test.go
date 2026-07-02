@@ -105,10 +105,10 @@ func TestWorkflowScheduleShouldResumePreviousIsOptIn(t *testing.T) {
 
 func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 	steps := postRunMonitorSteps()
-	if got := len(steps); got != 6 {
-		t.Fatalf("postRunMonitorSteps() length = %d, want 6", got)
+	if got := len(steps); got != 7 {
+		t.Fatalf("postRunMonitorSteps() length = %d, want 7", got)
 	}
-	for i, want := range []string{"triage", "fix", "report", "backup", "publish", "notify"} {
+	for i, want := range []string{"triage", "fix", "artifact", "report", "backup", "publish", "notify"} {
 		if got := steps[i].label; got != want {
 			t.Fatalf("postRunMonitorSteps()[%d].label = %q, want %q", i, got, want)
 		}
@@ -116,8 +116,10 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 
 	var triage string
 	var fix string
+	var artifact string
 	var report string
 	var backup string
+	var notify string
 	for _, step := range steps {
 		if step.label == "triage" {
 			triage = step.query
@@ -125,11 +127,17 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 		if step.label == "fix" {
 			fix = step.query
 		}
+		if step.label == "artifact" {
+			artifact = step.query
+		}
 		if step.label == "report" {
 			report = step.query
 		}
 		if step.label == "backup" {
 			backup = step.query
+		}
+		if step.label == "notify" {
+			notify = step.query
 		}
 	}
 	if triage == "" {
@@ -138,11 +146,17 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 	if fix == "" {
 		t.Fatal("fix step not found")
 	}
+	if artifact == "" {
+		t.Fatal("artifact step not found")
+	}
 	if report == "" {
 		t.Fatal("report step not found")
 	}
 	if backup == "" {
 		t.Fatal("backup step not found")
+	}
+	if notify == "" {
+		t.Fatal("notify step not found")
 	}
 	if strings.Contains(triage, "LLM/COST/TIME REPORT") || strings.Contains(triage, "costs/execution") {
 		t.Fatalf("triage step should not include report-only LLM/cost/time audit:\n%s", triage)
@@ -162,19 +176,42 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 			t.Fatalf("fix step missing %q:\n%s", want, fix)
 		}
 	}
+	for _, want := range []string{
+		"ARTIFACT REVIEW",
+		`get_workflow_command_guidance(kind="review-artifact-drift"`,
+		"review_artifact_sync",
+		"not part of harden",
+	} {
+		if !strings.Contains(artifact, want) {
+			t.Fatalf("artifact step missing %q:\n%s", want, artifact)
+		}
+	}
 
 	for _, want := range []string{
 		"LLM/COST/TIME REPORT",
-		"after fix/harden",
+		"after artifact review",
 		"costs/execution",
 		"costs/evaluation",
 		"costs/phase/token_usage.json",
 		"timing summaries",
 		"by plan step and by agent/sub-agent",
+		"builder/card.cost.html",
+		"data-axis='cost'",
+		"normal|elevated|missing",
+		`get_reference_doc(kind="report-plan")`,
+		"window.report.get",
 		"do NOT change model tiers",
 	} {
 		if !strings.Contains(report, want) {
 			t.Fatalf("report step missing %q:\n%s", want, report)
+		}
+	}
+	for _, want := range []string{
+		"cost card is elevated/missing",
+		"builder/card.cost.html",
+	} {
+		if !strings.Contains(notify, want) {
+			t.Fatalf("notify step missing %q:\n%s", want, notify)
 		}
 	}
 	if !strings.Contains(backup, "BACK UP FINAL STATE") || !strings.Contains(backup, "before publish") {
@@ -184,8 +221,8 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 
 func TestPostRunMonitorPrependsWorkflowVersionUpgradeForOldManifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.0"})
-	if got := len(steps); got != 7 {
-		t.Fatalf("postRunMonitorStepsForManifest(old) length = %d, want 7", got)
+	if got := len(steps); got != 8 {
+		t.Fatalf("postRunMonitorStepsForManifest(old) length = %d, want 8", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.1" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.1", got)
@@ -210,8 +247,8 @@ func TestPostRunMonitorPrependsWorkflowVersionUpgradeForOldManifest(t *testing.T
 
 func TestPostRunMonitorPrependsWorkflowVersionUpgradeForMissingVersion(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{})
-	if got := len(steps); got != 7 {
-		t.Fatalf("postRunMonitorStepsForManifest(missing version) length = %d, want 7", got)
+	if got := len(steps); got != 8 {
+		t.Fatalf("postRunMonitorStepsForManifest(missing version) length = %d, want 8", got)
 	}
 	if !strings.Contains(steps[0].query, `Current workflow.json version seen by scheduler: "1.0.0"`) {
 		t.Fatalf("missing version should be treated as 1.0.0:\n%s", steps[0].query)
@@ -220,11 +257,25 @@ func TestPostRunMonitorPrependsWorkflowVersionUpgradeForMissingVersion(t *testin
 
 func TestPostRunMonitorDoesNotPrependWorkflowVersionUpgradeForCurrentManifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: WorkflowContractCurrentVersion})
-	if got := len(steps); got != 6 {
-		t.Fatalf("postRunMonitorStepsForManifest(current) length = %d, want 6", got)
+	if got := len(steps); got != 7 {
+		t.Fatalf("postRunMonitorStepsForManifest(current) length = %d, want 7", got)
 	}
 	if got := steps[0].label; got != "triage" {
 		t.Fatalf("first step label = %q, want triage", got)
+	}
+	if got := steps[2].label; got != "artifact" {
+		t.Fatalf("third step label = %q, want artifact", got)
+	}
+	for _, want := range []string{
+		"STEP 3",
+		"ARTIFACT REVIEW",
+		`get_workflow_command_guidance(kind="review-artifact-drift"`,
+		`review_artifact_sync`,
+		"not part of harden",
+	} {
+		if !strings.Contains(steps[2].query, want) {
+			t.Fatalf("artifact step missing %q:\n%s", want, steps[2].query)
+		}
 	}
 }
 
@@ -245,6 +296,13 @@ func TestOptimizerScheduleMessagesIgnoresStoredMessagesAndInjectsCanonicalTurns(
 		{1, "CANONICAL AUTO IMPROVE MESSAGE"},
 		{1, "group_names=prod"},
 		{1, `get_workflow_command_guidance(kind="improve-workflow"`},
+		{1, "critical evidence review"},
+		{1, "hallucinations, unsupported claims, bugs, misreporting"},
+		{1, "report dashboard in best possible shape"},
+		{1, "measure and track the workflow goal"},
+		{1, "Decision - Auto-improve - Applied"},
+		{1, "entry decision major"},
+		{1, "Why now, Evidence, Change, Expected impact, Files touched, and Risk / gap"},
 		{1, "Do not call notify_user"},
 		{2, "STEP 3/5 - BACKUP FINAL STATE"},
 		{3, "STEP 4/5 - PUBLISH"},
@@ -268,6 +326,9 @@ func TestOptimizerScheduleMessagesDefaultsToImproveWhenNoStoredMessage(t *testin
 	for _, want := range []string{
 		`get_workflow_command_guidance(kind="improve-workflow"`,
 		"group_names=group-a",
+		"report/dashboard misstatements",
+		"success-criteria status, tracked signals, trend/delta",
+		"Decision - Auto-improve - Applied",
 		"do NOT call harden_workflow",
 		"do NOT call notify_user",
 	} {
@@ -303,6 +364,135 @@ func TestOptimizerScheduleMessagesReplacesLegacyExplicitQueue(t *testing.T) {
 		if !strings.Contains(strings.Join(got, "\n"), want) {
 			t.Fatalf("optimizerScheduleMessages() missing %q:\n%s", want, strings.Join(got, "\n"))
 		}
+	}
+}
+
+func TestApplyLLMAndSecretsToReqMapUsesAutoImproveOverrideOnlyForOptimizer(t *testing.T) {
+	baseConfig := &workflowtypes.PresetLLMConfig{
+		Provider: "claude-code",
+		ModelID:  "claude-opus-4-6",
+		AutoImproveLLM: &workflowtypes.AgentLLMConfig{
+			Provider: "gemini-cli",
+			ModelID:  "gemini-2.5-pro",
+		},
+	}
+
+	tests := []struct {
+		name         string
+		workshopMode string
+		wantProvider string
+		wantModelID  string
+	}{
+		{
+			name:         "normal schedule uses workflow model",
+			workshopMode: "run",
+			wantProvider: "claude-code",
+			wantModelID:  "claude-opus-4-6",
+		},
+		{
+			name:         "optimizer schedule uses auto improve override",
+			workshopMode: "optimizer",
+			wantProvider: "gemini-cli",
+			wantModelID:  "gemini-2.5-pro",
+		},
+		{
+			name:         "optimizer mode is case insensitive",
+			workshopMode: " OPTIMIZER ",
+			wantProvider: "gemini-cli",
+			wantModelID:  "gemini-2.5-pro",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reqMap := map[string]interface{}{}
+			(&SchedulerService{}).applyLLMAndSecretsToReqMap(context.Background(), reqMap, &ScheduleContext{
+				Schedule: WorkflowSchedule{WorkshopMode: tt.workshopMode},
+				Capabilities: WorkflowCapabilities{
+					LLMConfig: baseConfig,
+				},
+			})
+
+			llmConfig, ok := reqMap["llm_config"].(map[string]interface{})
+			if !ok {
+				t.Fatalf("llm_config missing or wrong type: %#v", reqMap["llm_config"])
+			}
+			primary, ok := llmConfig["primary"].(map[string]interface{})
+			if !ok {
+				t.Fatalf("llm_config.primary missing or wrong type: %#v", llmConfig["primary"])
+			}
+			if got := primary["provider"]; got != tt.wantProvider {
+				t.Fatalf("provider = %#v, want %q", got, tt.wantProvider)
+			}
+			if got := primary["model_id"]; got != tt.wantModelID {
+				t.Fatalf("model_id = %#v, want %q", got, tt.wantModelID)
+			}
+		})
+	}
+}
+
+func TestApplyLLMAndSecretsToReqMapUsesCodingAgentAutoImproveDefaultForOptimizer(t *testing.T) {
+	reqMap := map[string]interface{}{}
+	(&SchedulerService{}).applyLLMAndSecretsToReqMap(context.Background(), reqMap, &ScheduleContext{
+		Schedule: WorkflowSchedule{WorkshopMode: "optimizer"},
+		Capabilities: WorkflowCapabilities{
+			LLMConfig: &workflowtypes.PresetLLMConfig{
+				Provider:          "claude-code",
+				ModelID:           "claude-code",
+				LLMAllocationMode: workflowtypes.LLMAllocationModeCodingAgent,
+			},
+		},
+	})
+
+	llmConfig, ok := reqMap["llm_config"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("llm_config missing or wrong type: %#v", reqMap["llm_config"])
+	}
+	primary, ok := llmConfig["primary"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("llm_config.primary missing or wrong type: %#v", llmConfig["primary"])
+	}
+	if got := primary["provider"]; got != "claude-code" {
+		t.Fatalf("provider = %#v, want claude-code", got)
+	}
+	if got := primary["model_id"]; got != "claude-fable-5" {
+		t.Fatalf("model_id = %#v, want claude-fable-5", got)
+	}
+}
+
+func TestApplyLLMAndSecretsToReqMapPreservesAutoImproveDefaultOptions(t *testing.T) {
+	reqMap := map[string]interface{}{}
+	(&SchedulerService{}).applyLLMAndSecretsToReqMap(context.Background(), reqMap, &ScheduleContext{
+		Schedule: WorkflowSchedule{WorkshopMode: "optimizer"},
+		Capabilities: WorkflowCapabilities{
+			LLMConfig: &workflowtypes.PresetLLMConfig{
+				Provider:          "codex-cli",
+				ModelID:           "codex-cli",
+				LLMAllocationMode: workflowtypes.LLMAllocationModeCodingAgent,
+			},
+		},
+	})
+
+	llmConfig, ok := reqMap["llm_config"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("llm_config missing or wrong type: %#v", reqMap["llm_config"])
+	}
+	primary, ok := llmConfig["primary"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("llm_config.primary missing or wrong type: %#v", llmConfig["primary"])
+	}
+	if got := primary["provider"]; got != "codex-cli" {
+		t.Fatalf("provider = %#v, want codex-cli", got)
+	}
+	if got := primary["model_id"]; got != "gpt-5.5" {
+		t.Fatalf("model_id = %#v, want gpt-5.5", got)
+	}
+	options, ok := primary["options"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("options missing or wrong type: %#v", primary["options"])
+	}
+	if got := options["reasoning_effort"]; got != "xhigh" {
+		t.Fatalf("reasoning_effort = %#v, want xhigh", got)
 	}
 }
 

@@ -78,6 +78,7 @@ export interface ProviderDefaultTierModels {
   medium: ProviderTierModelRef
   low: ProviderTierModelRef
   phase: ProviderTierModelRef
+  auto_improve?: ProviderTierModelRef
 }
 
 export interface IntegrationKindInfo {

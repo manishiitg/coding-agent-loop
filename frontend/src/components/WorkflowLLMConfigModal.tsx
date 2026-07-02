@@ -19,6 +19,7 @@ interface WorkflowLLMConfigModalProps {
 
 function hasAdvancedWorkflowLLMConfig(config?: PresetLLMConfig | null): boolean {
   if (!config) return false
+  if (config.auto_improve_llm) return true
   if (config.llm_allocation_mode === 'tiered') return true
   if (config.llm_allocation_mode === 'coding_agent' || config.llm_allocation_mode === 'coding_plan') {
     return false
@@ -28,8 +29,7 @@ function hasAdvancedWorkflowLLMConfig(config?: PresetLLMConfig | null): boolean 
   const t2 = config.tiered_config?.tier_2
   const t3 = config.tiered_config?.tier_3
   const phase = config.phase_llm
-  const learning = config.learning_llm
-  const configured = [t1, t2, t3, phase, learning].filter(Boolean)
+  const configured = [t1, t2, t3, phase].filter(Boolean)
   const key = (cfg?: AgentLLMConfig | null) => cfg?.provider && cfg?.model_id ? `${cfg.provider}/${cfg.model_id}` : ''
 
   if (config.llm_allocation_mode === 'manual' && configured.length > 0) return true
@@ -80,6 +80,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
   const [tier2, setTier2] = useState<AgentLLMConfig | null>(manifestLLM?.tiered_config?.tier_2 ?? existing?.tiered_config?.tier_2 ?? null)
   const [tier3, setTier3] = useState<AgentLLMConfig | null>(manifestLLM?.tiered_config?.tier_3 ?? existing?.tiered_config?.tier_3 ?? null)
   const [phaseLLM, setPhaseLLM] = useState<AgentLLMConfig | null>(manifestLLM?.phase_llm ?? existing?.phase_llm ?? null)
+  const [autoImproveLLM, setAutoImproveLLM] = useState<AgentLLMConfig | null>(manifestLLM?.auto_improve_llm ?? existing?.auto_improve_llm ?? null)
   const [showAdvanced, setShowAdvanced] = useState(() => hasAdvancedWorkflowLLMConfig(manifestLLM ?? existing))
 
   if (!activePreset) return null
@@ -101,6 +102,22 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
     return workflowLLMOptions.find(o => o.provider === cfg.provider && o.model === cfg.model_id) ?? null
   }
 
+  const defaultTierLLMs = (() => {
+    const selected = findOption(selectedCodingAgentLLM)
+    return selected ? getWorkflowLLMTierDefaults(selected, providerManifest) : null
+  })()
+
+  const effectiveTier1 = tier1 ?? defaultTierLLMs?.tier1 ?? null
+  const effectiveTier2 = tier2 ?? defaultTierLLMs?.tier2 ?? null
+  const effectiveTier3 = tier3 ?? defaultTierLLMs?.tier3 ?? null
+  const effectivePhaseLLM = phaseLLM ?? defaultTierLLMs?.phase ?? effectiveTier1
+  const effectiveAutoImproveLLM = autoImproveLLM ?? defaultTierLLMs?.autoImprove ?? selectedCodingAgentLLM
+
+  const formatAgentLLMConfig = (cfg?: AgentLLMConfig | null) => {
+    if (!cfg?.provider || !cfg?.model_id) return 'Not resolved'
+    return `${cfg.provider}/${cfg.model_id}`
+  }
+
   const getFallbackOptions = (primary: AgentLLMConfig | null): LLMOption[] => {
     if (!primary) return workflowLLMOptions
     const excluded = new Set([
@@ -118,7 +135,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
     ...(fallbacks && fallbacks.length > 0 ? { fallbacks } : {}),
   })
 
-  const sharedWorkflowLLM = selectedCodingAgentLLM ?? phaseLLM ?? tier1 ?? tier2 ?? tier3
+  const sharedWorkflowLLM = selectedCodingAgentLLM ?? effectivePhaseLLM ?? effectiveTier1 ?? effectiveTier2 ?? effectiveTier3
   const sharedSelectedLLM = findOption(sharedWorkflowLLM)
 
   const handleSharedWorkflowLLMSelect = (opt: LLMOption) => {
@@ -176,6 +193,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
           if (refreshed.tiered_config?.tier_2) setTier2(refreshed.tiered_config.tier_2)
           if (refreshed.tiered_config?.tier_3) setTier3(refreshed.tiered_config.tier_3)
           if (refreshed.phase_llm) setPhaseLLM(refreshed.phase_llm)
+          setAutoImproveLLM(refreshed.auto_improve_llm ?? null)
           setShowAdvanced(hasAdvancedWorkflowLLMConfig(refreshed))
         }
       }
@@ -187,30 +205,34 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
   const handleSave = async () => {
     setIsSaving(true)
     try {
-      const tieredConfig = tier1 && tier2 && tier3
-        ? { tier_1: tier1, tier_2: tier2, tier_3: tier3 }
+      const tieredConfig = effectiveTier1 && effectiveTier2 && effectiveTier3
+        ? { tier_1: effectiveTier1, tier_2: effectiveTier2, tier_3: effectiveTier3 }
         : undefined
-      const existingWithoutExecution = { ...((existing ?? {}) as PresetLLMConfig & { execution_llm?: unknown }) }
+      const existingWithoutExecution = { ...((existing ?? {}) as PresetLLMConfig & { execution_llm?: unknown; learning_llm?: unknown }) }
       delete existingWithoutExecution.execution_llm
+      delete existingWithoutExecution.learning_llm
       const nextBaseLLMConfig = {
         ...existingWithoutExecution,
         ...(selectedCodingAgentLLM ? agentLLMToPresetBase(selectedCodingAgentLLM) : {}),
       }
+      if (!showAdvanced) {
+        delete nextBaseLLMConfig.auto_improve_llm
+      }
 
       let newLLMConfig: PresetLLMConfig
       if (!showAdvanced && !nextBaseLLMConfig.published_llm_id && nextBaseLLMConfig.provider && hasWorkflowLLMTierDefaults(nextBaseLLMConfig.provider, providerManifest)) {
-        delete nextBaseLLMConfig.learning_llm
         delete nextBaseLLMConfig.phase_llm
         delete nextBaseLLMConfig.tiered_config
+        delete nextBaseLLMConfig.auto_improve_llm
         newLLMConfig = {
           ...nextBaseLLMConfig,
           llm_allocation_mode: 'coding_agent',
         }
       } else {
-        const effectivePhaseLLM = phaseLLM ?? (tieredConfig ? tier1 : null)
         newLLMConfig = {
           ...nextBaseLLMConfig,
           phase_llm: effectivePhaseLLM ?? undefined,
+          auto_improve_llm: showAdvanced ? (autoImproveLLM ?? undefined) : undefined,
           llm_allocation_mode: tieredConfig ? 'tiered' : 'manual',
           ...(tieredConfig ? { tiered_config: tieredConfig } : {}),
         }
@@ -257,11 +279,12 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
     icon: typeof Brain
     color: string
     value: AgentLLMConfig | null
+    canClear: boolean
     setter: React.Dispatch<React.SetStateAction<AgentLLMConfig | null>>
   }> = [
-    { label: 'Tier 1 — High Reasoning', desc: 'First-time execution & initial learning extraction', icon: Brain, color: 'text-purple-500', value: tier1, setter: setTier1 },
-    { label: 'Tier 2 — Medium Reasoning', desc: 'Execution with learnings & learning refinement', icon: Gauge, color: 'text-blue-500', value: tier2, setter: setTier2 },
-    { label: 'Tier 3 — Low Reasoning', desc: 'Validation & mature learning refinement (2+ runs)', icon: Zap, color: 'text-green-500', value: tier3, setter: setTier3 },
+    { label: 'Tier 1 — High Reasoning', desc: 'First-time execution & initial learning extraction', icon: Brain, color: 'text-purple-500', value: effectiveTier1, canClear: Boolean(tier1), setter: setTier1 },
+    { label: 'Tier 2 — Medium Reasoning', desc: 'Execution with learnings & learning refinement', icon: Gauge, color: 'text-blue-500', value: effectiveTier2, canClear: Boolean(tier2), setter: setTier2 },
+    { label: 'Tier 3 — Low Reasoning', desc: 'Validation & mature learning refinement (2+ runs)', icon: Zap, color: 'text-green-500', value: effectiveTier3, canClear: Boolean(tier3), setter: setTier3 },
   ]
 
   return (
@@ -310,6 +333,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
                     <p><span className="font-medium">Tier 2</span> — execution once learnings exist + refinement</p>
                     <p><span className="font-medium">Tier 3</span> — validation (always) + mature refinement (2+ runs)</p>
                     <p><span className="font-medium">Workshop LLM</span> — planning, eval design, debugging, anonymization. Independent of tier assignment.</p>
+                    <p><span className="font-medium">Auto Improve LLM</span> — optional scheduled optimizer override. Empty uses the provider default when available.</p>
                   </div>
                 </>
               ) : (
@@ -319,6 +343,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
                     <p>Pick one coding agent or model for this automation.</p>
                     <p>Coding agents save high, medium, and low tiers automatically.</p>
                     <p>Workshop work uses the high tier.</p>
+                    <p>Auto Improve uses the provider default when available unless an advanced override is set.</p>
                   </div>
                 </>
               )}
@@ -375,13 +400,16 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
               <div className="flex justify-end">
                 <button
                   type="button"
-                  onClick={() => setShowAdvanced(false)}
+                  onClick={() => {
+                    setShowAdvanced(false)
+                    setAutoImproveLLM(null)
+                  }}
                   className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
                 >
                   Use simple setup
                 </button>
               </div>
-            {TIERS.map(({ label, desc, icon: Icon, color, value, setter }) => (
+            {TIERS.map(({ label, desc, icon: Icon, color, value, canClear, setter }) => (
               <div key={label} className="border border-gray-200 dark:border-slate-600 rounded-lg p-3">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
@@ -391,7 +419,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
                       <span className="text-xs text-gray-400 dark:text-gray-500 ml-1.5">{desc}</span>
                     </div>
                   </div>
-                  {value && (
+                  {canClear && (
                     <button onClick={() => setter(null)} className="text-xs text-red-400 hover:text-red-600">Clear</button>
                   )}
                 </div>
@@ -402,6 +430,9 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
                   inModal={true}
                   openDirection="down"
                 />
+                <div className="mt-1 font-mono text-[11px] text-gray-700 dark:text-gray-300" title={formatAgentLLMConfig(value)}>
+                  {formatAgentLLMConfig(value)}
+                </div>
                 {value && (
                   <div className="mt-2">
                     <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Fallbacks</div>
@@ -447,12 +478,42 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
               </div>
               <LLMSelectionDropdown
                 availableLLMs={workflowLLMOptions}
-                selectedLLM={findOption(phaseLLM)}
+                selectedLLM={findOption(effectivePhaseLLM)}
                 onLLMSelect={opt => setPhaseLLM(toAgentLLM(opt))}
                 inModal={true}
                 openDirection="down"
-                placeholder={tier1 ? `Defaults to Tier 1 (${tier1.model_id})` : 'Select workshop LLM'}
+                placeholder={effectiveTier1 ? `Defaults to Tier 1 (${effectiveTier1.model_id})` : 'Select workshop LLM'}
               />
+              <div className="mt-1 font-mono text-[11px] text-gray-700 dark:text-gray-300" title={formatAgentLLMConfig(effectivePhaseLLM)}>
+                {formatAgentLLMConfig(effectivePhaseLLM)}
+              </div>
+            </div>
+
+            {/* Auto Improve LLM */}
+            <div className="border border-gray-200 dark:border-slate-600 rounded-lg p-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <RefreshCw className="w-4 h-4 text-cyan-500" />
+                  <div>
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Auto Improve LLM</span>
+                    <span className="text-xs text-gray-400 dark:text-gray-500 ml-1.5">scheduled optimizer only</span>
+                  </div>
+                </div>
+                {autoImproveLLM && (
+                  <button onClick={() => setAutoImproveLLM(null)} className="text-xs text-red-400 hover:text-red-600">Clear</button>
+                )}
+              </div>
+              <LLMSelectionDropdown
+                availableLLMs={workflowLLMOptions}
+                selectedLLM={findOption(effectiveAutoImproveLLM)}
+                onLLMSelect={opt => setAutoImproveLLM(toAgentLLM(opt))}
+                inModal={true}
+                openDirection="down"
+                placeholder={effectiveAutoImproveLLM ? `Defaults to ${effectiveAutoImproveLLM.model_id}` : 'Defaults to provider default'}
+              />
+              <div className="mt-1 font-mono text-[11px] text-gray-700 dark:text-gray-300" title={formatAgentLLMConfig(effectiveAutoImproveLLM)}>
+                {formatAgentLLMConfig(effectiveAutoImproveLLM)}
+              </div>
             </div>
               </>
             )}

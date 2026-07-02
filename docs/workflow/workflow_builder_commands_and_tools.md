@@ -20,7 +20,7 @@ Optimizer actions are deliberately small in number:
 ## Workshop Modes
 
 - `builder`: creates and debugs workflow structure. Builder defaults steps to `code_exec`; learn-code promotion belongs to Optimizer only after explicit user request, deterministic behavior, and 10+ scenario-covering successful runs.
-- `optimizer`: improves existing workflows from `runs/iteration-0`, eval reports, metrics, logs, `builder/improve.md`, and `builder/review.md`.
+- `optimizer`: improves existing workflows from `runs/iteration-0`, eval reports, metrics, logs, and `builder/improve.html`.
 - `run`: user-facing runtime for Slack/WhatsApp and normal operation. It can answer directly from workflow state, read KB/learnings/db/run artifacts, execute normal or orphan utility steps, or run the full workflow. It should not mutate plan/config/eval/report definitions; durable user-owned runtime context is captured through `capture_context`.
 - Reporting authoring is available in Builder and Optimizer through report-plan tools. The legacy Reporting mode remains for compatibility.
 

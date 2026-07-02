@@ -1305,17 +1305,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) getLearningMaxTurns(stepConfig *Agent
 	return 500
 }
 
-// selectLearningLLM selects the LLM config for learning agents
+// selectLearningLLM selects the LLM config for learning agents.
 //
 // Priority:
 //  1. maintenance tool override — explicit builder/optimizer tools that should use phase LLM
-//  2. step config LearningLLM   — only when tiered mode is not active
-//  3. tiered mode               — learning tier resolution
+//  2. tiered mode               — learning tier resolution
+//  3. workflow primary model    — legacy/manual fallback
 func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context, stepConfig *AgentConfigs, stepID string, stepPath string) *orchestrator.LLMConfig {
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
 	if orchestratorLLMConfig == nil {
 		orchestratorLLMConfig = &orchestrator.LLMConfig{}
 	}
+	_ = stepConfig
+	_ = stepID
 
 	if override, ok := ctx.Value(maintenanceToolLLMOverrideKey).(*orchestrator.LLMConfig); ok && override != nil && override.Primary.Provider != "" && override.Primary.ModelID != "" {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 [MAINTENANCE TOOL] Using explicit LLM override for learning agent %s: %s/%s",
@@ -1323,27 +1325,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context
 		return override
 	}
 
-	// ── 1. STEP CONFIG LearningLLM ───────────────────────────────────────────
-	// Skipped when tiered mode is active — tiered resolver handles model selection.
-	// Only used as fallback when no tier resolver is configured (legacy/manual mode).
-	if hcpo.tierResolver == nil && stepConfig != nil && stepConfig.LearningLLM != nil && stepConfig.LearningLLM.Provider != "" && stepConfig.LearningLLM.ModelID != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 [STEP OVERRIDE] Using step LearningLLM for step %s: %s/%s (no tier resolver)",
-			stepPath, stepConfig.LearningLLM.Provider, stepConfig.LearningLLM.ModelID))
-		return &orchestrator.LLMConfig{
-			Primary: orchestrator.LLMModel{
-				Provider: stepConfig.LearningLLM.Provider,
-				ModelID:  stepConfig.LearningLLM.ModelID,
-				Options:  stepConfig.LearningLLM.Options,
-			},
-			Fallbacks: convertAgentFallbacks(stepConfig.LearningLLM.Fallbacks),
-			APIKeys:   orchestratorLLMConfig.APIKeys,
-		}
-	} else if hcpo.tierResolver != nil && stepConfig != nil && stepConfig.LearningLLM != nil && stepConfig.LearningLLM.Provider != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ [SKIPPED] step LearningLLM (%s/%s) skipped for step %s — tiered mode is active",
-			stepConfig.LearningLLM.Provider, stepConfig.LearningLLM.ModelID, stepPath))
-	}
-
-	// ── 2. TIERED MODE ───────────────────────────────────────────────────────
+	// ── 1. TIERED MODE ───────────────────────────────────────────────────────
 	if hcpo.tierResolver != nil {
 		llmConfig, tier := hcpo.tierResolver.ResolveForLearning()
 		if llmConfig != nil {
@@ -1353,8 +1335,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context
 		return llmConfig
 	}
 
-	// Tiered mode is required. If we reach here, something is misconfigured.
-	hcpo.GetLogger().Warn(fmt.Sprintf("selectLearningLLM: no valid LLM configuration found for step %s — tier resolver is required, returning nil", stepPath))
+	if orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 [WORKFLOW DEFAULT] Learning agent for step %s using workflow primary: %s/%s",
+			stepPath, orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
+		return orchestratorLLMConfig
+	}
+
+	hcpo.GetLogger().Warn(fmt.Sprintf("selectLearningLLM: no valid LLM configuration found for step %s", stepPath))
 	return nil
 }
 
@@ -1632,10 +1619,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx conte
 
 	// 2. Determine settings (extracted methods)
 	maxTurns := hcpo.getLearningMaxTurns(stepConfig)
-	// Use learning LLM config - Priority: cost-optimization > step config > preset default
+	// Use learning LLM config from tiered allocation or workflow primary fallback.
 	llmConfig := hcpo.selectLearningLLM(ctx, stepConfig, stepID, stepPath)
 	if llmConfig == nil {
-		return nil, fmt.Errorf("no valid LLM configuration found for learning agent: step config and preset learning LLM are both empty or invalid")
+		return nil, fmt.Errorf("no valid LLM configuration found for learning agent")
 	}
 
 	// 3. Create config

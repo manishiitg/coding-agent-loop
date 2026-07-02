@@ -1,4 +1,4 @@
 window.__APP_RUNTIME_CONFIG__ = {
-  apiBaseUrl: "http://localhost:18743",
-  workspaceApiBaseUrl: "http://localhost:18744"
+  apiBaseUrl: "http://127.0.0.1:18743",
+  workspaceApiBaseUrl: "http://127.0.0.1:18744"
 };

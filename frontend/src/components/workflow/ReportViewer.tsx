@@ -968,7 +968,7 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
       // few stable top-level files. runs/ is intentionally excluded — per-run paths
       // aren't knowable at report-authoring time and transcripts can be sensitive.
       const folderPrefixes = ['db/', 'knowledgebase/', 'docs/', 'planning/', 'evaluation/', 'costs/', 'variables/']
-      const exactFiles = ['soul.md', 'workflow.json', 'improve.html', 'review.html']
+      const exactFiles = ['soul.md', 'workflow.json', 'improve.html']
       if (folderPrefixes.some((pre) => n.startsWith(pre)) || exactFiles.includes(n)) return n
       return ''
     }

@@ -1717,20 +1717,19 @@ export const agentApi = {
     }
   },
 
-  getBuilderDoc: async (workspacePath: string, doc: 'improve' | 'review' | 'soul' | 'card-health' | 'card-progress', filePath?: string): Promise<{ success: boolean; doc: string; path: string; exists: boolean; content: string; error?: string }> => {
+  getBuilderDoc: async (workspacePath: string, doc: 'improve' | 'soul' | 'card-health' | 'card-progress' | 'card-cost', filePath?: string): Promise<{ success: boolean; doc: string; path: string; exists: boolean; content: string; error?: string }> => {
     const response = await api.get('/api/workflow/builder-doc', { params: { workspace_path: workspacePath, doc, path: filePath || '' } })
     return response.data
   },
   getBuilderDocsStatus: async (workspacePath: string): Promise<{
     success: boolean
     improve: { exists: boolean; last_modified?: string; path: string }
-    review: { exists: boolean; last_modified?: string; path: string }
     error?: string
   }> => {
     const response = await api.get('/api/workflow/builder-docs-status', { params: { workspace_path: workspacePath } })
     return response.data
   },
-  getBuilderDocArchives: async (workspacePath: string, doc: 'improve' | 'review' = 'improve'): Promise<{ success: boolean; files: Array<{ path: string; label: string }>; error?: string }> => {
+  getBuilderDocArchives: async (workspacePath: string, doc: 'improve' = 'improve'): Promise<{ success: boolean; files: Array<{ path: string; label: string }>; error?: string }> => {
     const response = await api.get('/api/workflow/builder-doc-archives', { params: { workspace_path: workspacePath, doc } })
     return { ...response.data, files: Array.isArray(response.data?.files) ? response.data.files : [] }
   },

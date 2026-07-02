@@ -17,21 +17,23 @@ import (
 
 // GmailConfigRequest is the body the UI posts to enable/disable Gmail.
 type GmailConfigRequest struct {
-	Enabled         bool   `json:"enabled"`
-	DefaultTo       string `json:"default_to"`
-	GwsPath         string `json:"gws_path,omitempty"`
-	ConfigHome      string `json:"config_home,omitempty"`
-	CredentialsFile string `json:"credentials_file,omitempty"`
-	Token           string `json:"token,omitempty"`
+	Enabled           bool     `json:"enabled"`
+	DefaultTo         string   `json:"default_to"`
+	AllowedRecipients []string `json:"allowed_recipients,omitempty"`
+	GwsPath           string   `json:"gws_path,omitempty"`
+	ConfigHome        string   `json:"config_home,omitempty"`
+	CredentialsFile   string   `json:"credentials_file,omitempty"`
+	Token             string   `json:"token,omitempty"`
 }
 
 // GmailConfigResponse is the saved config plus live, auto-detected auth state,
 // so the UI can render the toggle and a "Connected / Connect Gmail" badge
 // without the user inspecting anything on the host.
 type GmailConfigResponse struct {
-	Enabled   bool                     `json:"enabled"`
-	DefaultTo string                   `json:"default_to,omitempty"`
-	Auth      services.GmailAuthStatus `json:"auth"`
+	Enabled           bool                     `json:"enabled"`
+	DefaultTo         string                   `json:"default_to,omitempty"`
+	AllowedRecipients []string                 `json:"allowed_recipients,omitempty"`
+	Auth              services.GmailAuthStatus `json:"auth"`
 	// Ready is the bottom-line "this channel will actually send" signal:
 	// enabled + a default recipient + gws installed/authenticated with a Gmail scope.
 	Ready bool `json:"ready"`
@@ -62,10 +64,11 @@ func ensureGmailService() (*services.GmailService, error) {
 
 func buildGmailConfigResponse(svc *services.GmailService, cfg *services.GmailConfig, auth services.GmailAuthStatus) GmailConfigResponse {
 	return GmailConfigResponse{
-		Enabled:   cfg.Enabled,
-		DefaultTo: cfg.DefaultTo,
-		Auth:      auth,
-		Ready:     cfg.Enabled && cfg.DefaultTo != "" && auth.Authenticated && auth.HasGmailScope,
+		Enabled:           cfg.Enabled,
+		DefaultTo:         cfg.DefaultTo,
+		AllowedRecipients: cfg.AllowedRecipients,
+		Auth:              auth,
+		Ready:             cfg.Enabled && cfg.DefaultTo != "" && auth.Authenticated && auth.HasGmailScope,
 	}
 }
 
@@ -117,12 +120,13 @@ func updateGmailConfigHandler(api *StreamingAPI) http.HandlerFunc {
 		}
 
 		cfg := &services.GmailConfig{
-			Enabled:         req.Enabled,
-			DefaultTo:       req.DefaultTo,
-			GwsPath:         req.GwsPath,
-			ConfigHome:      req.ConfigHome,
-			CredentialsFile: req.CredentialsFile,
-			Token:           req.Token,
+			Enabled:           req.Enabled,
+			DefaultTo:         req.DefaultTo,
+			AllowedRecipients: req.AllowedRecipients,
+			GwsPath:           req.GwsPath,
+			ConfigHome:        req.ConfigHome,
+			CredentialsFile:   req.CredentialsFile,
+			Token:             req.Token,
 		}
 		if err := svc.SaveConfig(r.Context(), cfg); err != nil {
 			http.Error(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)

@@ -225,8 +225,7 @@ type ConsistencyRule struct {
 // AgentConfigs represents per-agent configuration for a step
 type AgentConfigs struct {
 	ExecutionLLM                 *AgentLLMConfig `json:"execution_llm,omitempty"`
-	ExecutionTier                string          `json:"execution_tier,omitempty"` // Persistent execution tier override in tiered mode: "high" | "medium" | "low"
-	LearningLLM                  *AgentLLMConfig `json:"learning_llm,omitempty"`
+	ExecutionTier                string          `json:"execution_tier,omitempty"`                  // Persistent execution tier override in tiered mode: "high" | "medium" | "low"
 	ExecutionMaxTurns            *int            `json:"execution_max_turns,omitempty"`             // default: 500
 	LearningObjective            string          `json:"learning_objective,omitempty"`              // What SKILL.md should capture from successful runs of this step — selectors, timings, auth flows, tool-call patterns, API quirks. This is the instruction the step agent uses during its post-completion turn to know what HOW-to-run knowledge to extract. Required when learnings_access includes write; must be specific (not "learn from this run").
 	LearningsAccess              string          `json:"learnings_access,omitempty"`                // "read" | "read-write" | "none". Mirrors knowledgebase_access. "read" (default): step sees global SKILL.md in its prompt but doesn't write. "read-write": reads and writes — requires learning_objective to be non-empty. "none": no read, no write. Empty = legacy auto-migration (see resolveLearningsAccess). Writes happen via the step agent's own post-completion turn (shell + diff_patch_workspace_file); no separate analyzer runs.

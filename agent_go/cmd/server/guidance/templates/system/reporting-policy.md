@@ -52,6 +52,12 @@ rules** are all in `get_reference_doc(kind="report-plan")`; the HTML skeleton is
 in `get_reference_doc(kind="html-output")`. Load those before authoring — don't
 restate them here.
 
+A report dashboard should answer the workflow's business question, not just list
+files. Prefer a first-screen goal-tracking structure that tells the user the
+goal status, tracked success signals, current plan/strategy or active
+improvement, important issues/blockers, latest movement since the prior run, and
+the evidence behind the claim.
+
 ### Diagnosis
 
 - **When the report shows "No report yet":** `reports/report_plan.json`

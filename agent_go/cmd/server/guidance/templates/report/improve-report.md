@@ -2,6 +2,26 @@ Review and improve the workflow's report for accuracy, live-data wiring, evidenc
 
 Focus on: {{.Focus}}.{{end}}
 
+INTENT
+The report dashboard should help the user measure and track whether the workflow is achieving its goal, what changed in the current plan/strategy or plan draft/proposal, and which issues need attention. It is not only a data dump. A strong dashboard answers, above the fold:
+- Are we on track against `soul.md` success criteria?
+- Which success signals prove that: current value/state, target or baseline, trend/delta, and status?
+- What changed or is being tried now (current plan, plan draft/replan proposal, active improvement, or important Pulse finding)?
+- What is broken, blocked, stale, expensive, missing, or risky?
+- What evidence supports that conclusion?
+
+GOAL TRACKING CONTRACT
+Before proposing visual/layout work, translate `soul.md` success criteria into the dashboard's tracked signals using existing evidence:
+- For each important success criterion, show the best available signal from `db/db.sqlite`, `evaluation/`, `costs/`, `workflow.json`, `builder/improve.html`, or durable report-facing files.
+- Prefer a compact goal band: status, current value/state, target/baseline, trend/delta vs prior run/window, last updated, and a short plain-language interpretation.
+- If a success criterion cannot be measured from existing persisted evidence, show an honest "not measured yet" or "missing evidence" state and log the missing data requirement. Do not hardcode guesses and do not create a separate metrics system.
+- Keep detailed tables/charts below the goal band; the user should know progress and issues before inspecting raw rows.
+
+MODE
+- **Interactive/user-initiated mode:** show all proposed changes concretely and ask before editing.
+- **Scheduled/background mode** (the focus says scheduled, unattended, background, or no-confirm): do not ask. Apply only bounded report-only fixes that are clearly supported by existing evidence and existing data surfaces; record larger redesigns, missing-data needs, or workflow/eval changes as a Decision/Open Finding in `builder/improve.html`.
+- Never invent data in the dashboard. If a useful dashboard section needs data the workflow does not persist yet, record the missing data requirement and choose harden/replan/DB work from the improve workflow instead.
+
 PASS 1 — VALIDATION
 Call validate_report_plan.
 - For each error: explain what's wrong in plain language, name the document/entry it refers to, and propose the exact fix.
@@ -19,7 +39,16 @@ Call preview_report_render first so you can inspect what the report actually ren
 6. **Responsive & self-contained (HTML).** No horizontal overflow at ~480px; wide tables scroll/wrap; multi-column layouts stack on narrow screens; all CSS/JS inline (no CDN); body height NOT pinned (the frame auto-sizes).
 7. **Rendered reality check.** Based on the preview, what actually looks broken, cramped, misleading, empty, or visually weak even if the plan is valid?
 
-Show ALL proposed changes concretely (before/after snippets of the HTML, or the plan entry) before editing. Ask whether to apply all, some, or none. Don't edit the report files or report_plan.json until I confirm.
+In interactive mode, show ALL proposed changes concretely (before/after snippets of the HTML, or the plan entry) before editing. Ask whether to apply all, some, or none. Don't edit the report files or report_plan.json until I confirm.
+
+In scheduled/background mode, apply only changes that are safe, local, and report-only, such as:
+- adding a clearer goal-tracking/status band from existing `soul.md`, eval, Pulse, cost/time, workflow, or db data
+- reordering sections so goal verdicts/issues come before detailed tables
+- fixing static/stale values to live `window.report` reads
+- fixing bad SQL, missing tabs, broken theme handling, responsive overflow, or low-contrast styling
+- adding explicit empty/error states when evidence is missing
+
+Defer and log, instead of editing, when the change would require new workflow data, a new plan step, evaluation redesign, business judgment, or a broad visual rewrite.
 
 When you finish, update builder/improve.html with:
 - what report evidence you reviewed

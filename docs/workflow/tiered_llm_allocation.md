@@ -55,8 +55,8 @@ Inside tiered resolution, execution uses this order:
 
 Current priority in `selectLearningLLM()`:
 
-1. step `learning_llm`, only when tiered mode is **not** active
-2. tiered learning resolution
+1. tiered learning resolution
+2. workflow primary model fallback
 3. no valid config => error
 
 ### Conditional agents
@@ -122,7 +122,7 @@ value is ignored at resolution time.
 In tiered mode:
 
 - per-step `execution_llm` still overrides the execution selector directly
-- per-step `learning_llm` is still ignored by the main learning selector
+- per-step `learning_llm` has been removed; use tiered allocation instead
 - runtime otherwise uses the tier resolver
 - `orchestrator_llm` and `sub_agent_llm` still work because they are separate todo-task overrides
 

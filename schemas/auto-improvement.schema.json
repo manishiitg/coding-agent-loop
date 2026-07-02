@@ -195,7 +195,7 @@
         "linked_review_finding": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "builder/review.md finding ids (F-YYYY-MM-DD-NNN) this decision resolves or partially resolves."
+          "description": "Open finding ids in builder/improve.html that this decision resolves or partially resolves."
         },
         "linked_improve_entry": {
           "type": "array",

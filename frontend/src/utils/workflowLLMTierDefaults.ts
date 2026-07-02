@@ -1,5 +1,5 @@
 import type { AgentLLMConfig, LLMProvider } from '../services/api-types'
-import type { ProviderManifestEntry, ProviderDefaultTierModels } from '../services/llm-config-api'
+import type { ProviderManifestEntry, ProviderTierModelRef } from '../services/llm-config-api'
 import type { LLMOption } from '../types/llm'
 
 type WorkflowTierDefaults = {
@@ -8,6 +8,7 @@ type WorkflowTierDefaults = {
   tier2: AgentLLMConfig
   tier3: AgentLLMConfig
   phase: AgentLLMConfig
+  autoImprove: AgentLLMConfig
   usesTierDefaults: boolean
 }
 
@@ -26,7 +27,7 @@ function toAgentLLMConfig(option: LLMOption, modelID: string, provider = option.
 
 function toAgentLLMConfigFromRef(
   option: LLMOption,
-  ref: ProviderDefaultTierModels[keyof ProviderDefaultTierModels],
+  ref: ProviderTierModelRef,
 ): AgentLLMConfig {
   const config = toAgentLLMConfig(option, ref.model_id, ref.provider)
   if (hasOptions(ref.options)) {
@@ -43,6 +44,7 @@ function sameModelDefaults(option: LLMOption): WorkflowTierDefaults {
     tier2: base,
     tier3: base,
     phase: base,
+    autoImprove: base,
     usesTierDefaults: false,
   }
 }
@@ -74,6 +76,7 @@ export function getWorkflowLLMTierDefaults(
     tier2: toAgentLLMConfigFromRef(option, defaults.medium),
     tier3: toAgentLLMConfigFromRef(option, defaults.low),
     phase: toAgentLLMConfigFromRef(option, defaults.phase),
+    autoImprove: toAgentLLMConfigFromRef(option, defaults.auto_improve ?? defaults.high),
     usesTierDefaults: true,
   }
 }

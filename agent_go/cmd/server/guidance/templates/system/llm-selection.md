@@ -26,7 +26,7 @@ Set via `update_step_config(step_id, ...)`:
 
 - **`execution_tier`** (`"high"` | `"medium"` | `"low"`) — a *persistent* tier override for one step in tiered mode. Use **high** for subjective/ambiguous judgment, **medium** for normal checks, **low** for deterministic/file-shape checks. Prefer this over pinning an exact model when the intent is just "this step can usually run cheaper/faster".
 - **`execution_llm`** (`{provider, model_id, fallbacks?}`) — pins an *exact* model for one step. Use only when a specific model is genuinely required (a capability only that model has).
-- **`validation_llm`** / **`learning_llm`** — same shape, override the model used for that step's validation or learning extraction respectively.
+- **`validation_llm`** — same shape, overrides the model used for that step's validation. Learning model selection is handled by tiered allocation; there is no separate `learning_llm` setting.
 
 **Precedence (highest wins):**
 1. `execute_step(step_id, group_name, tier="...")` — a one-off tier for a single trial run; changes nothing persistent.

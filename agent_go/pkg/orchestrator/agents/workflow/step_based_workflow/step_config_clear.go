@@ -30,8 +30,6 @@ func clearStepConfigField(sc *StepConfig, name string) bool {
 		ac.ExecutionLLM = nil
 	case "execution_tier":
 		ac.ExecutionTier = ""
-	case "learning_llm":
-		ac.LearningLLM = nil
 
 	// Slice selections
 	case "servers":
@@ -97,7 +95,7 @@ func clearStepConfigField(sc *StepConfig, name string) bool {
 // an already-empty struct.
 func isKnownAgentConfigClearField(name string) bool {
 	switch name {
-	case "execution_llm", "execution_tier", "learning_llm",
+	case "execution_llm", "execution_tier",
 		"servers", "tools", "enabled_custom_tools", "enabled_skills",
 		"learning_objective", "lock_learnings", "lock_code",
 		"use_code_execution_mode",

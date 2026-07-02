@@ -10,9 +10,10 @@ The workflow keeps a **single durable log** — `builder/improve.html` — the w
 - **review findings** (what `/review-*` flagged — recommendations, REVIEW = recommend, do NOT apply),
 - **run notes and the recent-run log** (what happened on recent runs),
 - **monitor observations** (post-run regressions / drift the monitor caught),
+- **Artifact Review reports** (plan-change artifact drift cursor, clean/no-pending result, or drift findings),
 - **user rules** (authoritative constraints the user stated).
 
-`builder/review.html` is **legacy**. If you encounter one with unresolved findings, fold them into `builder/improve.html` as open-finding entries, then stop writing to it. Do not create new `review.html` files.
+Do not create a separate review document. All review findings, monitor notes, decisions, user rules, Artifact Review entries, and run notes belong in `builder/improve.html`.
 
 It is a **self-contained, human-readable HTML document — not Markdown, not a data dump.** This is the page the user opens to understand the workflow, so make it genuinely good to read. Call `get_reference_doc(kind="html-output")` for the style baseline, and copy the **Starter HTML skeleton** at the bottom of this doc for the exact structure and polish. Top to bottom the document reads: **two verdicts → status headline → the goal → signal tiles → cost/time readout → recent runs → newest-first timeline → archive**.
 
@@ -39,7 +40,7 @@ Every workflow is judged on two independent axes, and the header shows **both** 
 
 They are orthogonal: a run can be **Bug: broken** (a step silently skipped) while **Goal: on-target**, or **Bug: clean** while **Goal: short** (it runs perfectly but produces output that misses the point). You need both lenses: operational monitoring catches run failures, while eval and output review catch goal gaps. **Health gates goal:** a run that wasn't operationally clean produces no trustworthy goal signal, so never judge the goal on a broken run.
 
-Tag each **Monitor**, **Open finding**, and **Decision** entry with the axis it belongs to — a small **Bug** or **Goal** chip — so the timeline is filterable and the fix path is obvious (Bug → harden, Goal → refine/replan).
+Tag each **Monitor**, **Open finding**, and **Decision** entry with the axis it belongs to — a small **Bug** or **Goal** chip — so the timeline is filterable and the fix path is obvious (Bug → harden, Goal → refine/replan). Auto-improve decisions must be visually distinct from Pulse harden notes: use the dedicated Decision card classes below, not a generic Note or Agent card.
 
 ### The goal card
 
@@ -76,7 +77,8 @@ Each entry is a small card: a date, a kind tag, a one-line title, and a short pr
 
 - **Run** — a one-line row in the recent-runs strip: run id, status, key numbers (tests, eval, cost/tokens, wall time), the **backup result** (`backed up ✓ <commit/ref>`, `unchanged — already backed up`, or `backup ✗ <reason>`), and a short note only when something stands out. Routine runs stay terse; flag a run only when it regressed, the backup failed, cost/time evidence is missing, or one step/agent dominates spend/time.
 - **Monitor** — a post-run observation: what changed in the output and the most likely cause, correlated against the plan changelog ("output regressed at run N; you tightened step X two runs earlier — likely cause").
-- **Decision** — a change applied or proposed, with the one-line rationale and the file(s) touched. If it fixes an open finding, close that finding out (below).
+- **Artifact Review** — a report-only Pulse/review entry: changelog range inspected, Artifact Sync Cursor before/after, steps inspected, clean/no-pending result or drift findings, and the recommended next owner. Do not present this entry as a fix that already happened; Pulse does not call harden/replan from this item.
+- **Decision** — a change applied or proposed, with the one-line rationale and the file(s) touched. If it fixes an open finding, close that finding out (below). Auto-improve decisions use `<div class="entry decision">` with tag text `Decision - Auto-improve - Applied` or `Decision - Auto-improve - Proposed`; use `<div class="entry decision major">` for material replans, report/eval changes that alter user-facing success measurement, cadence/scope changes, or any change the user should notice.
 - **Chief of Staff recommendation** — an org-level recommendation written by Chief of Staff / Org Pulse after reading workflow evidence against org goals. It should name the org goal/KPI target or `supporting/no explicit goal`, give an alignment verdict (`aligned`, `supporting`, `unaligned`, or `unknown-measurement`), cite evidence, state the gap, suggest a builder action, and describe the expected KPI/success-criteria impact. Treat it like an external **Open finding**: verify the cited evidence, then choose the normal builder path (Bug → `harden_workflow`, Goal/strategy → `replan_workflow_from_results` or a targeted builder edit, measurement gap → eval/report fix, cost/ops → review/apply if safe). Do not assume it is correct or already applied; close it only after the builder decision is made.
 - **User rule** — a constraint the user stated. Mark it clearly as authoritative ("USER RULE — authoritative") so future agents treat it as a hard constraint, never silently override it. This replaces the old `source: "user"` field — say it in words.
 - **Note** — a freeform observation or watchpoint that explains weird runs ("staging UI is mid-redesign, expect selector churn through ~June 20 — not a workflow bug").
@@ -91,6 +93,36 @@ Resolved 2026-06-09 — added a non-empty-screenshot pre-validation rule to audi
 ```
 
 Reference the finding by its anchor id (or, if it has none, by its date + title). This keeps the "what's still outstanding vs. what's been handled" view honest.
+
+### Decision cards (clear action and why)
+
+A Decision card is the visual proof that an agent took or proposed an action. It should never read like a routine note. Use:
+
+- `<div class="entry decision">` for normal applied/proposed auto-improve decisions.
+- `<div class="entry decision major">` when the decision changes plan strategy, report/eval measurement, workflow cadence/scope, user-facing dashboard interpretation, or materially affects cost/quality/risk.
+- `.tag.decision` with one of these exact labels: `Decision - Auto-improve - Applied`, `Decision - Auto-improve - Proposed`, `Decision - Pulse harden`, or `Decision - Manual`.
+- `.decisiongrid` rows for the fixed fields: **Why now**, **Evidence**, **Change**, **Expected impact**, **Files touched**, and **Risk / gap**. Omit a row only when it truly does not apply; do not bury these fields in prose.
+
+Example:
+
+```html
+<div class="entry decision major">
+  <div class="ehead">
+    <span class="tag decision">Decision - Auto-improve - Applied</span>
+    <span class="kind goal">Goal</span>
+    <span class="etitle">Replanned lead-scoring around verified replies</span>
+    <span class="when">2026-07-02 · scheduled improve</span>
+  </div>
+  <div class="decisiongrid">
+    <div><b>Why now</b><span>Reply rate stayed below the 8% target for three clean runs.</span></div>
+    <div><b>Evidence</b><span>evaluation/latest.json · db/reports/dashboard.html · run #43</span></div>
+    <div><b>Change</b><span>Reordered enrichment before outreach and added a verified-reply gate.</span></div>
+    <div><b>Expected impact</b><span>Raise reply-rate evidence toward the success criterion without increasing send volume.</span></div>
+    <div><b>Files touched</b><span>planning/plan.json · planning/step_config.json · builder/improve.html</span></div>
+    <div><b>Risk / gap</b><span>Needs two more clean runs before confirming impact.</span></div>
+  </div>
+</div>
+```
 
 ### Confirming a decision's outcome (did the change actually work?)
 
@@ -120,7 +152,7 @@ An existing `builder/improve.html` is **old-format** — and must be upgraded, n
 - `## Active Improvement Index` / `## Recent Entries` / `## Archive Index` headings;
 - ```improve-decision``` fenced/`<script>` JSON blocks;
 - `F-…` / `I-…` ids;
-- legacy `builder/improve.md` / `builder/review.md`;
+- legacy Markdown improve logs;
 - its own ad-hoc CSS (`.summary` / `.badge` / `.stats`, system-ui body) instead of the skeleton's;
 - no `<meta name="viewport">`;
 - missing mobile-first stacked `.status` / `.run` / `.entry` layouts or `overflow-wrap:anywhere`;
@@ -152,7 +184,7 @@ After this one rewrite the file is in skeleton format; from then on you just pre
     --ink:#191917;--ink-2:#57564f;--ink-3:#8a897f;
     --line:#eceae4;--line-2:#e0ded7;
     --ok:#3f7a4a;--ok-bg:#eaf3ea;--warn:#9a6a05;--warn-bg:#fbf2dd;--bad:#b0322b;--bad-bg:#fbe9e6;
-    --goal:#7c4a90;--goal-bg:#f4ecf7;--user:#3a4a8f;--user-bg:#eceffb;
+    --goal:#7c4a90;--goal-bg:#f4ecf7;--decision:#0d6b78;--decision-bg:#e8f6f8;--major:#6f4eb5;--major-bg:#f1edfb;--user:#3a4a8f;--user-bg:#eceffb;
     --shadow:0 1px 2px rgba(20,20,18,.04),0 4px 16px -8px rgba(20,20,18,.10);
     --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;--sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;--r:14px;}
   /* Dark palette — the app injects data-theme="dark" on <html> when its theme is dark. Keep this block. */
@@ -161,7 +193,7 @@ After this one rewrite the file is in skeleton format; from then on you just pre
     --ink:#f1f0f4;--ink-2:#9b9ba6;--ink-3:#64646e;
     --line:#212128;--line-2:#2e2e37;
     --ok:#5fd08a;--ok-bg:#0f2419;--warn:#e6b450;--warn-bg:#241d0c;--bad:#f47e76;--bad-bg:#2a1412;
-    --goal:#d3a0e6;--goal-bg:#231829;--user:#92a6f5;--user-bg:#141a32;
+    --goal:#d3a0e6;--goal-bg:#231829;--decision:#77d5e4;--decision-bg:#102a30;--major:#c9b7ff;--major-bg:#211936;--user:#92a6f5;--user-bg:#141a32;
     --shadow:0 1px 0 rgba(255,255,255,.04) inset,0 1px 2px rgba(0,0,0,.45),0 10px 30px -14px rgba(0,0,0,.75);}
   html{color-scheme:light} html[data-theme="dark"]{color-scheme:dark}
   *{box-sizing:border-box}
@@ -209,15 +241,18 @@ After this one rewrite the file is in skeleton format; from then on you just pre
   .run .col b{color:var(--ink);font-weight:620}.run .note{grid-column:1/-1;color:var(--warn);font:560 12px/1.35 var(--sans)}.run .ago{grid-column:1/-1;color:var(--ink-3)}
   .entry{position:relative;background:var(--surface);border:1px solid var(--line-2);border-radius:13px;padding:15px 14px 15px 18px;margin-bottom:12px;box-shadow:var(--shadow);min-width:0}
   .entry::before{content:"";position:absolute;left:0;top:14px;bottom:14px;width:3px;border-radius:3px;background:var(--line-2)}
-  .entry.monitor::before{background:var(--warn)} .entry.agent::before{background:var(--ok)} .entry.user::before{background:var(--user)} .entry.open::before{background:var(--bad)} .entry.note::before{background:var(--ink-3)}
+  .entry.monitor::before{background:var(--warn)} .entry.agent::before{background:var(--ok)} .entry.decision::before{background:var(--decision)} .entry.decision.major::before{background:var(--major);width:4px} .entry.user::before{background:var(--user)} .entry.open::before{background:var(--bad)} .entry.note::before{background:var(--ink-3)}
+  .entry.decision{border-color:color-mix(in srgb,var(--decision) 28%,var(--line-2));background:linear-gradient(180deg,color-mix(in srgb,var(--decision-bg) 46%,var(--surface)),var(--surface) 72%)}
+  .entry.decision.major{border-color:color-mix(in srgb,var(--major) 38%,var(--line-2));background:linear-gradient(180deg,color-mix(in srgb,var(--major-bg) 62%,var(--surface)),var(--surface) 76%);box-shadow:0 0 0 1px color-mix(in srgb,var(--major) 15%,transparent),var(--shadow)}
   .ehead{display:flex;align-items:center;gap:7px;margin-bottom:8px;flex-wrap:wrap}
   .tag{font:700 9.5px/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;padding:4px 8px;border-radius:6px}
-  .tag.monitor{background:var(--warn-bg);color:var(--warn)} .tag.agent{background:var(--ok-bg);color:var(--ok)} .tag.user{background:var(--user-bg);color:var(--user)} .tag.open{background:var(--bad-bg);color:var(--bad)} .tag.note{background:var(--surface-2);color:var(--ink-2);border:1px solid var(--line-2)}
+  .tag.monitor{background:var(--warn-bg);color:var(--warn)} .tag.agent{background:var(--ok-bg);color:var(--ok)} .tag.decision{background:var(--decision-bg);color:var(--decision);border:1px solid color-mix(in srgb,var(--decision) 22%,transparent)} .entry.major .tag.decision{background:var(--major-bg);color:var(--major);border-color:color-mix(in srgb,var(--major) 25%,transparent)} .tag.user{background:var(--user-bg);color:var(--user)} .tag.open{background:var(--bad-bg);color:var(--bad)} .tag.note{background:var(--surface-2);color:var(--ink-2);border:1px solid var(--line-2)}
   .kind{font:700 8.5px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;padding:4px 7px;border-radius:6px;border:1px solid}
   .kind.bug{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 22%,transparent)} .kind.goal{color:var(--goal);border-color:color-mix(in srgb,var(--goal) 22%,transparent)}
   .etitle{font-weight:630;font-size:14px;line-height:1.25;letter-spacing:-.01em;flex:1 1 auto;min-width:0}.ehead>.when{margin-left:0;flex-basis:100%;font:540 11px/1.35 var(--mono);color:var(--ink-3)}
   .entry p{margin:0;font-size:13.5px;color:var(--ink);overflow-wrap:anywhere}.entry p+p{margin-top:8px}
   .entry .meta{margin-top:11px;padding-top:11px;border-top:1px solid var(--line);font:540 12px/1.5 var(--mono);color:var(--ink-3)} .entry .meta code{background:var(--surface-2);border:1px solid var(--line);border-radius:5px;padding:1px 6px;color:var(--ink-2)}
+  .decisiongrid{display:grid;grid-template-columns:1fr;gap:8px;margin-top:11px}.decisiongrid>div{padding:9px 10px;border:1px solid color-mix(in srgb,var(--decision) 15%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--surface) 88%,var(--decision-bg))}.entry.major .decisiongrid>div{border-color:color-mix(in srgb,var(--major) 18%,var(--line));background:color-mix(in srgb,var(--surface) 86%,var(--major-bg))}.decisiongrid b{display:block;margin-bottom:4px;font:700 9.5px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}.decisiongrid span{display:block;color:var(--ink);font-size:13px;line-height:1.4}
   .resolved{margin-top:11px;display:inline-flex;align-items:center;gap:7px;font:620 12.5px/1.4 var(--sans);color:var(--ok)} .resolved::before{content:"✓";font-size:11px;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;background:var(--ok-bg)}
   /* Outcome stamp on a Decision card — did the change actually move the number, judged by a later run. */
   .outcome{margin-top:11px;display:inline-flex;align-items:flex-start;gap:7px;font:600 12.5px/1.45 var(--sans)}
@@ -239,6 +274,7 @@ After this one rewrite the file is in skeleton format; from then on you just pre
     .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.tile{padding:15px 16px}
     .run{display:flex;align-items:center;gap:13px;padding:12px 16px;font-size:13px;line-height:1}.run .id{width:38px}.run .st{width:96px}.run .col{width:78px}.run .note{grid-column:auto}.run .ago{grid-column:auto;margin-left:auto}
     .entry{padding:17px 19px 17px 22px}.etitle{font-size:15px}.ehead>.when{margin-left:auto;flex-basis:auto;white-space:nowrap;font-size:12px}.entry p{font-size:14.5px}
+    .decisiongrid{grid-template-columns:repeat(2,minmax(0,1fr))}.decisiongrid span{font-size:13.5px}
     .arow{display:flex;gap:13px;align-items:center;padding:14px 18px;font-size:14px}.arow .n{display:block;margin-left:auto;margin-top:0;font-size:12px}
   }
 </style>
@@ -311,6 +347,7 @@ After this one rewrite the file is in skeleton format; from then on you just pre
        <span class="kind bug">Bug</span> or <span class="kind goal">Goal</span> chip. Card kinds:
        <div class="entry monitor"><div class="ehead"><span class="tag monitor">Monitor</span><span class="kind bug">Bug</span><span class="etitle">…</span><span class="when">…</span></div><p>…</p></div>
        <div class="entry agent"><div class="ehead"><span class="tag agent">Agent · hardened</span><span class="kind bug">Bug</span><span class="etitle">…</span><span class="when">…</span></div><p>…</p><p class="resolved">Resolved YYYY-MM-DD — how.</p></div>
+       <div class="entry decision major"><div class="ehead"><span class="tag decision">Decision - Auto-improve - Applied</span><span class="kind goal">Goal</span><span class="etitle">…</span><span class="when">…</span></div><div class="decisiongrid"><div><b>Why now</b><span>…</span></div><div><b>Evidence</b><span>…</span></div><div><b>Change</b><span>…</span></div><div><b>Expected impact</b><span>…</span></div><div><b>Files touched</b><span>…</span></div><div><b>Risk / gap</b><span>…</span></div></div></div>
        <div class="entry open" id="of-YYYY-MM-DD-slug"><div class="ehead"><span class="tag open">Open finding</span><span class="kind goal">Goal</span><span class="etitle">…</span><span class="when">…</span></div><p>…</p></div>
        <div class="entry user"><div class="ehead"><span class="tag user">User rule · authoritative</span><span class="etitle">…</span><span class="when">…</span></div><p>…</p></div>
        <div class="entry note"><div class="ehead"><span class="tag note">Note</span><span class="etitle">…</span><span class="when">…</span></div><p>…</p></div>

@@ -77,6 +77,13 @@ func TestWorkshopResolveLLMConfigExpandsCodingAgentMode(t *testing.T) {
 	if !ok {
 		t.Fatal("expected Claude Code coding-agent defaults")
 	}
+	if defaults.Main.ModelID != "claude-code" ||
+		defaults.High.ModelID == "claude-fable-5" ||
+		defaults.Medium.ModelID == "claude-fable-5" ||
+		defaults.Low.ModelID == "claude-fable-5" ||
+		defaults.AutoImprove.ModelID != "claude-fable-5" {
+		t.Fatalf("fable should be auto-improve only, got defaults: %+v", defaults)
+	}
 
 	phase, tiered := workshopResolveLLMConfig(&workflowtypes.PresetLLMConfig{
 		Provider:          "claude-code",

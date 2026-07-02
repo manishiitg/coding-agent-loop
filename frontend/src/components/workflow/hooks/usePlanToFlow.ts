@@ -1579,7 +1579,6 @@ function processSteps(
   changes: PlanChanges | null | undefined,
   presetUseCodeExecutionMode: boolean,
   presetLLMConfig: AgentLLMConfig | undefined,
-  presetLearningLLM: AgentLLMConfig | undefined,
   availableLLMs: Array<{ provider: string; model: string; label: string }>,
   completedStepIndices: number[] = [],
   stepStatusMap?: Map<string, 'pending' | 'running' | 'completed' | 'failed'>,
@@ -1954,7 +1953,6 @@ function processSteps(
           changes,
           presetUseCodeExecutionMode,
           presetLLMConfig,
-          presetLearningLLM,
           availableLLMs,
           completedStepIndices,
           stepStatusMap,
@@ -2011,7 +2009,6 @@ function processSteps(
           changes,
           presetUseCodeExecutionMode,
           presetLLMConfig,
-          presetLearningLLM,
           availableLLMs,
           completedStepIndices,
           stepStatusMap,
@@ -2511,8 +2508,6 @@ export function usePlanToFlow(
 
   // Get preset LLM configs
   const presetLLMConfig = activePreset?.llmConfig || undefined
-  const presetLearningLLM = activePreset?.llmConfig?.learning_llm
-
   // Get available LLMs for model name formatting
   const { availableLLMs } = useLLMStore()
 
@@ -2616,7 +2611,6 @@ export function usePlanToFlow(
       changes,
       presetUseCodeExecutionMode,
       presetLLMConfig,
-      presetLearningLLM,
       availableLLMs,
       completedStepIndices,
       stepStatusMapAsMap,
@@ -2636,7 +2630,6 @@ export function usePlanToFlow(
         changes,
         presetUseCodeExecutionMode,
         presetLLMConfig,
-        presetLearningLLM,
         availableLLMs,
         [],  // no completed step indices for orphan steps
         stepStatusMapAsMap,
@@ -3405,7 +3398,7 @@ export function usePlanToFlow(
   // Status updates are handled by the fast-path effect in WorkflowCanvas (surgical node updates),
   // so we avoid recalculating the entire node/edge layout on every status change.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [disabled, plan, showDependencyEdges, changes, presetUseCodeExecutionMode, presetLLMConfig, presetLearningLLM, availableLLMs, completedStepIndices, options.workspacePath, options.selectedRunFolder, variablesManifest, onOpenVariablesSidebar, isLoadingVariables, layoutDirection])
+  }, [disabled, plan, showDependencyEdges, changes, presetUseCodeExecutionMode, presetLLMConfig, availableLLMs, completedStepIndices, options.workspacePath, options.selectedRunFolder, variablesManifest, onOpenVariablesSidebar, isLoadingVariables, layoutDirection])
 }
 
 export default usePlanToFlow

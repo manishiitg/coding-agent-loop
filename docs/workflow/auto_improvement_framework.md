@@ -28,7 +28,7 @@ They are orthogonal — a run can be Bug-broken while Goal-on-target, or Bug-cle
 - `route_selection.json`: which route a run took (so the monitor judges only that path).
 - `runs/iteration-0`: current optimizer evidence target.
 
-`builder/review.html` / `builder/improve.md` / `builder/review.md` are **legacy**. If you find one with unresolved findings, fold them into `builder/improve.html` as open-finding entries and stop writing to it; do not create new ones. The old structured `improve-decision` JSON blocks and `F-`/`I-` ids are retired in favor of readable prose cards.
+Old Markdown improve logs are **legacy**. Carry their unresolved findings into `builder/improve.html` as open-finding entries and stop writing Markdown logs. The old structured `improve-decision` JSON blocks and `F-`/`I-` ids are retired in favor of readable prose cards.
 
 ## Truth Hierarchy
 

@@ -98,7 +98,6 @@ func multiAgentChatPrimaryLLM(preset *workflowtypes.PresetLLMConfig) *workflowty
 	}
 	for _, candidate := range []*workflowtypes.AgentLLMConfig{
 		preset.PhaseLLM,
-		preset.LearningLLM,
 	} {
 		if candidate != nil && strings.TrimSpace(candidate.Provider) != "" && strings.TrimSpace(candidate.ModelID) != "" {
 			return candidate

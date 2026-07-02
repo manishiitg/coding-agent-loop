@@ -5,6 +5,7 @@ import (
 	"mime/multipart"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -169,21 +170,59 @@ func TestParseGwsMessageID(t *testing.T) {
 }
 
 func TestGmailPickRecipient(t *testing.T) {
-	g := &GmailService{defaultTo: "fallback@example.com"}
+	g := &GmailService{
+		defaultTo: "fallback@example.com",
+		config: &GmailConfig{
+			DefaultTo:         "fallback@example.com",
+			AllowedRecipients: []string{"fallback@example.com", "hint@example.com"},
+		},
+	}
 
 	// explicit hint wins
 	dest := &NotificationDestination{Gmail: &GmailDest{Email: "hint@example.com"}}
-	if got := g.pickRecipient(dest); got != "hint@example.com" {
-		t.Errorf("explicit hint = %q, want hint@example.com", got)
+	if got, err := g.pickRecipient(dest); err != nil || got != "hint@example.com" {
+		t.Fatalf("explicit hint = %q, err=%v, want hint@example.com", got, err)
+	}
+
+	// explicit hint outside the allowlist is blocked before any send happens
+	if got, err := g.pickRecipient(&NotificationDestination{Gmail: &GmailDest{Email: "outside@example.com"}}); err == nil || got != "" {
+		t.Fatalf("outside hint = %q, err=%v, want blocked recipient error", got, err)
 	}
 
 	// no hint, no user -> workspace default
-	if got := g.pickRecipient(nil); got != "fallback@example.com" {
-		t.Errorf("default = %q, want fallback@example.com", got)
+	if got, err := g.pickRecipient(nil); err != nil || got != "fallback@example.com" {
+		t.Errorf("default = %q, err=%v, want fallback@example.com", got, err)
 	}
 
 	// disabled service still resolves recipient via fields (enablement gates at SendNotification)
-	if got := g.pickRecipient(&NotificationDestination{}); got != "fallback@example.com" {
-		t.Errorf("empty dest = %q, want fallback@example.com", got)
+	if got, err := g.pickRecipient(&NotificationDestination{}); err != nil || got != "fallback@example.com" {
+		t.Errorf("empty dest = %q, err=%v, want fallback@example.com", got, err)
+	}
+}
+
+func TestNormalizeGmailConfigIncludesDefaultAndDedupes(t *testing.T) {
+	cfg := normalizeGmailConfig(&GmailConfig{
+		DefaultTo:         " Owner@Example.COM ",
+		AllowedRecipients: []string{"other@example.com", "owner@example.com", "a@b.com, C@D.com", "other@example.com"},
+	})
+
+	wantAllowed := []string{"owner@example.com", "other@example.com", "a@b.com", "c@d.com"}
+	if cfg.DefaultTo != "Owner@Example.COM" {
+		t.Fatalf("DefaultTo = %q, want trimmed original case", cfg.DefaultTo)
+	}
+	if !reflect.DeepEqual(cfg.AllowedRecipients, wantAllowed) {
+		t.Fatalf("AllowedRecipients = %#v, want %#v", cfg.AllowedRecipients, wantAllowed)
+	}
+}
+
+func TestGmailAllowlistDefaultsToDefaultRecipient(t *testing.T) {
+	g := &GmailService{defaultTo: "fallback@example.com"}
+
+	if got, err := g.pickRecipient(nil); err != nil || got != "fallback@example.com" {
+		t.Fatalf("default = %q, err=%v, want fallback@example.com", got, err)
+	}
+
+	if got, err := g.pickRecipient(&NotificationDestination{Gmail: &GmailDest{Email: "hint@example.com"}}); err == nil || got != "" {
+		t.Fatalf("outside hint = %q, err=%v, want blocked recipient error", got, err)
 	}
 }

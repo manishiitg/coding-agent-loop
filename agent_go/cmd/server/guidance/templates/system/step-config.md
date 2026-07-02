@@ -35,7 +35,7 @@ Only pass a lock field when you are explicitly changing it — passing `lock_lea
   - **Builder promoting agentic→scripted on its own initiative** → only when behavior is deterministic AND proven across 10+ scenario-covering successful runs. That's the guardrail against silently freezing a brittle script the user didn't ask to freeze.
   - Set `declared_execution_mode_reason` either way.
 - **`use_code_execution_mode`**: per-step override of the preset's code-execution toggle (nil = inherit).
-- **Model selection**: `execution_tier` (`high`/`medium`/`low`) maps to the workflow's tiered allocation; `execution_llm` / `validation_llm` / `learning_llm` pin a specific published model for that role. Prefer tiers over hard pins. Full framework: `get_reference_doc(kind="llm-selection")`.
+- **Model selection**: `execution_tier` (`high`/`medium`/`low`) maps to the workflow's tiered allocation; `execution_llm` / `validation_llm` pin a specific published model for that role. Prefer tiers over hard pins. Full framework: `get_reference_doc(kind="llm-selection")`.
 
 ### Other common fields
 

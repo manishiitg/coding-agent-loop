@@ -12,7 +12,7 @@ BOUNDARIES
 READ FIRST
 
 1. Read `soul/soul.md` if present to understand the workflow objective and success criteria.
-2. Read `builder/improve.html` if present (and any legacy `builder/review.html`). Use unresolved KB/db/report findings, prior failed cleanup attempts, recent harden/replan actions, and plan changes as context.
+2. Read `builder/improve.html` if present. Use unresolved KB/db/report findings, prior failed cleanup attempts, recent harden/replan actions, and plan changes as context.
 3. Read `planning/plan.json` and `planning/step_config.json` if present so the KB improvement is aligned with the current plan.
 4. Read `knowledgebase/notes/_index.json` before opening topic files.
 5. Read only topic markdown files relevant to the requested cleanup or consolidation. Do not glob or load every `knowledgebase/notes/*.md` file.

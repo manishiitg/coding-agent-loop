@@ -1,6 +1,6 @@
 {{if .Focus}}Run review_step_code(step_id="{{.Focus}}") to audit the saved main.py for step "{{.Focus}}".{{else}}Run review_step_code() to audit every saved main.py script across workflow steps and evaluation steps against its current description and best practices.{{end}} This is not a spell-check — it's a behavior audit.
 
-Write findings into `builder/improve.html` as "Open finding" timeline entries (`builder/review.html` is legacy — fold any unresolved findings from it into `builder/improve.html`). For the log format, the one-time migration, and how open findings are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
+Write findings into `builder/improve.html` as "Open finding" timeline entries. For the log format, one-time old Markdown migration, and how open findings are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
 
 The code must actually deliver what the description promises, do it dynamically (not via hardcoded shortcuts), and follow durable patterns when it touches a browser. Flag findings by severity (CRITICAL / WARNING / INFO).
 

@@ -7,7 +7,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.43.0
 	github.com/aws/aws-sdk-go-v2/config v1.32.17
 	github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.50.6
-	github.com/blues/jsonata-go v1.5.4
+	github.com/creack/pty v1.1.24
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
@@ -15,8 +15,8 @@ require (
 	github.com/invopop/jsonschema v0.13.0
 	github.com/joho/godotenv v1.5.1
 	github.com/manishiitg/mcp-agent-builder-go/workspace v0.0.0
-	github.com/manishiitg/mcpagent v1.7.6
-	github.com/manishiitg/multi-llm-provider-go v0.5.10
+	github.com/manishiitg/mcpagent v1.7.8
+	github.com/manishiitg/multi-llm-provider-go v0.5.11
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/openai/openai-go/v3 v3.36.0
 	github.com/pkoukk/tiktoken-go v0.1.8
@@ -67,7 +67,6 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
 	github.com/coder/websocket v1.8.14 // indirect
-	github.com/creack/pty v1.1.24 // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/elliotchance/orderedmap/v3 v3.1.0 // indirect

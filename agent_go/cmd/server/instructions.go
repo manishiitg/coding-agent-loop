@@ -69,7 +69,9 @@ func GetWorkspaceMap(docsRoot, chatsFolder, memoryFolder string) string {
 	return `
 ## Workspace
 
-**Always use absolute paths in shell commands.** The workspace docs root is: ` + "`" + p.DocsRoot + "`" + `. Every absolute path you reference in a shell command MUST start with this exact prefix. The path guard rejects absolute paths under any other host root (` + "`" + "/Users/..." + "`" + `, ` + "`" + "/home/..." + "`" + `) that are not under the docs root. Do NOT prepend the project root, your home directory, or anything else — always use ` + "`" + p.DocsRoot + "`" + ` as the prefix. When tool descriptions show paths like ` + "`" + "Workflow/<name>/" + "`" + ` or ` + "`" + "Chats/<folder>/" + "`" + `, those are RELATIVE to the docs root; the absolute equivalent is the docs root + that suffix.
+**Always use absolute paths in shell commands.** The workspace docs root is: ` + "`" + p.DocsRoot + "`" + `. Every absolute path you reference in a shell command MUST start with this exact prefix. The path guard rejects absolute paths under any other host root (` + "`" + "/Users/..." + "`" + `, ` + "`" + "/home/..." + "`" + `) that are not under the docs root. Do NOT prepend the project root, your home directory, or anything else — always use ` + "`" + p.DocsRoot + "`" + ` as the prefix. When tool descriptions show paths like ` + "`" + "Workflow/<name>/" + "`" + `, ` + "`" + "pulse/goals.html" + "`" + `, or ` + "`" + "Chats/<folder>/" + "`" + `, those are LOCAL paths RELATIVE to the docs root; the absolute equivalent is the docs root + that suffix.
+
+**Never use WebFetch/raw GitHub URLs for workspace artifacts, skills, or reference docs.** Files such as ` + "`" + "pulse/goals.html" + "`" + `, ` + "`" + "pulse/org-pulse.html" + "`" + `, ` + "`" + "Workflow/<name>/builder/improve.html" + "`" + `, and ` + "`" + "skills/<name>/SKILL.md" + "`" + ` live on local disk under the docs root above. Read them with the declared local tools/shell, or load canonical reference docs with ` + "`" + "get_reference_doc(kind=\"...\")" + "`" + `.
 
 | Path | Access | Purpose |
 |------|--------|---------|
@@ -352,7 +354,7 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
   Builder-mode audits:
     - design-plan            → design review: is the plan following best practices (step types, stores, validation, flow)
 
-  Reviews (recommend, don't apply; appends to ` + "`builder/review.html`" + `):
+  Reviews (recommend, don't apply; appends to ` + "`builder/improve.html`" + `):
     - review-plan            → comprehensive plan audit (structure + per-step descriptions + todo_task orchestrators)
     - review-speed           → latency analysis
     - review-cost            → cost analysis
@@ -381,7 +383,7 @@ The existing ` + "`/improve-evaluation`" + `, ` + "`/improve-workflow`" + `, ` +
 
 ### Resolution discipline
 
-` + "`builder/improve.html`" + ` is the workflow's single durable log and the user's view of what's outstanding (format: see the **Workflow log conventions** reference — one HTML document, newest-on-top, with signal tiles, a recent-run strip, and a timeline of decisions / review findings / monitor notes / user rules). It goes stale fast unless every fix that lands is reflected back into it — otherwise the next ` + "`/review-*`" + ` run re-flags the same items and the user can't tell what's been handled. ` + "`builder/review.html`" + ` is legacy: fold any unresolved findings into ` + "`builder/improve.html`" + ` and stop writing new ones.
+` + "`builder/improve.html`" + ` is the workflow's single durable log and the user's view of what's outstanding (format: see the **Workflow log conventions** reference — one HTML document, newest-on-top, with signal tiles, a recent-run strip, and a timeline of decisions / review findings / monitor notes / user rules). It goes stale fast unless every fix that lands is reflected back into it — otherwise the next ` + "`/review-*`" + ` run re-flags the same items and the user can't tell what's been handled. Do not create a separate review document.
 
 **Close-out.** When you apply a fix that addresses an existing open finding — whether from a slash command, a chat-intent fix, a harden/replan action, or a manual user request — edit that finding's entry in place to add a resolved line:
 

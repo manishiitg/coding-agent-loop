@@ -12,6 +12,7 @@ const tierRows = [
   { key: 'tier2', label: 'Medium', usage: 'execution with learnings' },
   { key: 'tier3', label: 'Low', usage: 'validation, mature learnings' },
   { key: 'phase', label: 'Workshop', usage: 'planning, eval, debugging' },
+  { key: 'autoImprove', label: 'Auto Improve', usage: 'scheduled optimizer' },
 ] as const
 
 function formatModel(provider: string, modelID: string) {
@@ -27,6 +28,7 @@ export default function WorkflowLLMTierPreview({ selectedLLM, providerManifest }
     tier2: defaults.tier2,
     tier3: defaults.tier3,
     phase: defaults.phase,
+    autoImprove: defaults.autoImprove,
   }
 
   return (

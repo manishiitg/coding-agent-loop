@@ -388,11 +388,11 @@ func TestChiefOfStaffRecommendationWriteAccessIsImproveLogOnly(t *testing.T) {
 	}{
 		{name: "main can write improve log", wrapped: mainWrapped, filepath: improveLog},
 		{name: "main cannot write workflow manifest", wrapped: mainWrapped, filepath: workflowRoot + "/workflow.json", wantError: true},
-		{name: "main cannot write sibling builder file", wrapped: mainWrapped, filepath: workflowRoot + "/builder/review.html", wantError: true},
+		{name: "main cannot write sibling builder file", wrapped: mainWrapped, filepath: workflowRoot + "/builder/other.html", wantError: true},
 		{name: "main exact file path is not prefix writable", wrapped: mainWrapped, filepath: improveLog + "/child.html", wantError: true},
 		{name: "delegate can write improve log", wrapped: delegatedWrapped, filepath: improveLog},
 		{name: "delegate cannot write workflow manifest", wrapped: delegatedWrapped, filepath: workflowRoot + "/workflow.json", wantError: true},
-		{name: "delegate cannot write sibling builder file", wrapped: delegatedWrapped, filepath: workflowRoot + "/builder/review.html", wantError: true},
+		{name: "delegate cannot write sibling builder file", wrapped: delegatedWrapped, filepath: workflowRoot + "/builder/other.html", wantError: true},
 		{name: "delegate exact file path is not prefix writable", wrapped: delegatedWrapped, filepath: improveLog + "/child.html", wantError: true},
 	}
 

@@ -52,6 +52,28 @@ interface WhatsAppStatus {
 type SimStatus = 'idle' | 'sending' | 'running' | 'completed' | 'error'
 interface ChatMessage { id: string; text: string; is_bot: boolean; timestamp: string }
 
+const normalizeGmailRecipients = (values: string | string[] | undefined): string[] => {
+  const source = Array.isArray(values) ? values : [values || '']
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of source) {
+    for (const part of String(raw).split(/[\s,;]+/)) {
+      const email = part.trim().toLowerCase()
+      if (!email || seen.has(email)) continue
+      seen.add(email)
+      out.push(email)
+    }
+  }
+  return out
+}
+
+const buildGmailAllowedRecipients = (defaultTo: string | undefined, allowedText: string): string[] => {
+  const defaultRecipient = (defaultTo || '').trim().toLowerCase()
+  return normalizeGmailRecipients([defaultRecipient, allowedText])
+}
+
+const formatGmailRecipients = (values: string[] | undefined): string => normalizeGmailRecipients(values).join('\n')
+
 export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModalProps) {
   const [activeSection, setActiveSection] = useState<Section>('slack')
 
@@ -111,7 +133,8 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
     auth: { gws_installed: false, authenticated: false, has_gmail_scope: false },
     ready: false,
   })
-  const [gmailOriginal, setGmailOriginal] = useState<{ enabled: boolean; default_to: string }>({ enabled: false, default_to: '' })
+  const [gmailAllowedText, setGmailAllowedText] = useState('')
+  const [gmailOriginal, setGmailOriginal] = useState<{ enabled: boolean; default_to: string; allowed_recipients: string[] }>({ enabled: false, default_to: '', allowed_recipients: [] })
   const [gmailLoading, setGmailLoading] = useState(true)
   const [gmailChecking, setGmailChecking] = useState(false) // background auth refresh
   const [gmailSaving, setGmailSaving] = useState(false)
@@ -174,8 +197,10 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
         // keep the user's in-progress edits (recipient, toggle, test result).
         setGmailConfig(c => ({ ...c, auth: data.auth, ready: data.ready }))
       } else {
-        setGmailConfig(data)
-        setGmailOriginal({ enabled: data.enabled, default_to: data.default_to || '' })
+        const allowed = normalizeGmailRecipients(data.allowed_recipients || (data.default_to ? [data.default_to] : []))
+        setGmailConfig({ ...data, allowed_recipients: allowed })
+        setGmailAllowedText(formatGmailRecipients(allowed))
+        setGmailOriginal({ enabled: data.enabled, default_to: data.default_to || '', allowed_recipients: allowed })
       }
     } catch (err) {
       setGmailError(err instanceof Error ? err.message : 'Failed to load Gmail configuration')
@@ -531,10 +556,16 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
       setGmailSaving(true)
       setGmailError(null)
       setGmailSuccess(null)
-      const req: GmailConfigRequest = { enabled: gmailConfig.enabled, default_to: gmailConfig.default_to || '' }
+      const req: GmailConfigRequest = {
+        enabled: gmailConfig.enabled,
+        default_to: gmailConfig.default_to || '',
+        allowed_recipients: buildGmailAllowedRecipients(gmailConfig.default_to || '', gmailAllowedText),
+      }
       const data = await agentApi.updateGmailFeedbackConfig(req)
-      setGmailConfig(data)
-      setGmailOriginal({ enabled: data.enabled, default_to: data.default_to || '' })
+      const allowed = normalizeGmailRecipients(data.allowed_recipients || (data.default_to ? [data.default_to] : []))
+      setGmailConfig({ ...data, allowed_recipients: allowed })
+      setGmailAllowedText(formatGmailRecipients(allowed))
+      setGmailOriginal({ enabled: data.enabled, default_to: data.default_to || '', allowed_recipients: allowed })
       setGmailSuccess('Saved successfully!')
       setTimeout(() => setGmailSuccess(null), 3000)
     } catch (err) {
@@ -549,7 +580,11 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
       setGmailTestResult(null)
       // Test the typed recipient if present, else the saved default.
       const req: GmailConfigRequest | undefined = gmailConfig.default_to
-        ? { enabled: gmailConfig.enabled, default_to: gmailConfig.default_to }
+        ? {
+          enabled: gmailConfig.enabled,
+          default_to: gmailConfig.default_to,
+          allowed_recipients: buildGmailAllowedRecipients(gmailConfig.default_to || '', gmailAllowedText),
+        }
         : undefined
       const result = await agentApi.testGmailConnection(req)
       setGmailTestResult(result)
@@ -628,7 +663,10 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
   if (!isOpen) return null
 
   const slackHasChanges = JSON.stringify(slackConfig) !== JSON.stringify(slackOriginal)
-  const gmailHasChanges = gmailConfig.enabled !== gmailOriginal.enabled || (gmailConfig.default_to || '') !== gmailOriginal.default_to
+  const currentGmailAllowed = buildGmailAllowedRecipients(gmailConfig.default_to || '', gmailAllowedText)
+  const gmailHasChanges = gmailConfig.enabled !== gmailOriginal.enabled
+    || (gmailConfig.default_to || '') !== gmailOriginal.default_to
+    || JSON.stringify(currentGmailAllowed) !== JSON.stringify(gmailOriginal.allowed_recipients)
   // Enable is allowed only after a successful test for the *current* recipient.
   const gmailTestPassed = gmailTestResult?.success === true && gmailTestedTo !== null && gmailTestedTo === (gmailConfig.default_to || '')
 
@@ -1501,6 +1539,21 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                         <label className="block text-sm font-medium text-foreground mb-2">Default recipient <span className="text-red-500">*</span></label>
                         <input type="email" value={gmailConfig.default_to || ''} onChange={e => setGmailConfig({ ...gmailConfig, default_to: e.target.value })} placeholder="you@example.com" className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary" />
                         <p className="text-xs text-muted-foreground mt-1">Where notifications go when no per-user Gmail preference is set.</p>
+                      </Card>
+
+                      {/* Allowed recipients */}
+                      <Card className="p-4">
+                        <label className="block text-sm font-medium text-foreground mb-2">Allowed recipients</label>
+                        <textarea
+                          value={gmailAllowedText}
+                          onChange={e => setGmailAllowedText(e.target.value)}
+                          placeholder={'you@example.com\nops@example.com'}
+                          rows={4}
+                          className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm resize-y"
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Gmail notifications are only sent to these addresses. The default recipient is always included; per-user preferences or agent destination hints outside this list are blocked.
+                        </p>
                       </Card>
 
                       {/* Test */}

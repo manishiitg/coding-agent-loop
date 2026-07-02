@@ -16,13 +16,14 @@ runs; the Org page **assembles** those into the live dashboard. No central file 
 multiple writers share. No separate JSON data model — the agents keep producing readable
 HTML (see "Data carrier").
 
-## Two loops = two axes (the core insight)
+## Two loops = three axes (the core insight)
 Every workflow runs two distinct loops; they answer different questions and own different
-halves of a card:
+parts of a card:
 
 | Loop | Cadence | Job | Axis | Statuses |
 |---|---|---|---|---|
 | **Pulse** | per run | **fix** — keep it working (backup → triage → low-risk fix → notify) | 🩺 Operational ("is it working?") | healthy / bug / critical |
+| **Pulse report step** | per run | **report** — surface spend and elapsed-time telemetry without optimizing | 💵 Cost/time ("is it spending sanely?") | normal / elevated / missing |
 | **Auto-improve** | scheduled | **improve** — move it toward its goal long-term (experiments, replan, harden, db/KB/learnings) | 🎯 Goal progress ("is it winning?") | on-track / at-risk / off-goal |
 
 "Working but off-goal" is a normal, important state (runs fine, not moving the goal) — the
@@ -37,16 +38,18 @@ pulse/
   org-pulse.html                ← CoS Org Pulse (dated journal)             [daily]
   cards/
     <workflow>.health.html      ← Pulse loop        (🩺 + last fix + trend) [per run]
+    <workflow>.cost.html        ← Pulse report step (💵 + spend/time)       [per run]
     <workflow>.progress.html    ← Auto-improve loop (🎯 + improvement)      [per improve run]
 ```
-A workflow's Pulse only touches `*.health.html`; its Auto-improve only touches
-`*.progress.html`; the CoS only touches `goals.html`/`org-pulse.html`. No two writers ever
-share a file → no races even when everything runs at once.
+A workflow's Pulse only touches `*.health.html` and `*.cost.html`; its Auto-improve only
+touches `*.progress.html`; the CoS only touches `goals.html`/`org-pulse.html`. No two
+writers ever share a file → no races even when everything runs at once.
 
-## The card (assembled per workflow from its two fragments)
+## The card (assembled per workflow from its fragments)
 ```
 Substack growth
 🩺 Working   (Pulse: no bugs, last fix 3d ago)
+💵 Cost ok   (Pulse report: $0.12 / 18k tokens · top spend reviewer)
 🎯 Off-goal  (Auto-improve: open-rate flat · experiment "subject lines" running 2/5)
 Trend ●●🔴🟢🟢                                          → click: improve.html (full history)
 ```
@@ -61,7 +64,7 @@ Parallel to `notify_user`: a tool (e.g. **`update_org_dashboard`**) each loop ca
 its card fields. Important cadence difference from notify:
 ```
 Pulse run → improve.html (detailed log)
-          → update_org_dashboard(health card)   ← ALWAYS (keeps dashboard live)
+          → update_org_dashboard(health + cost cards) ← ALWAYS (keeps dashboard live)
           → notify_user(email/whatsapp)          ← ONLY on a decision-worthy change
 ```
 `notify_user` is sparing (don't spam); the **card updates every run** so the dashboard is
@@ -74,7 +77,8 @@ always current, not "last time something was notable." Auto-improve does the sam
 - **Grouped by attention, not by goal.** A workflow's goal (from `success_criteria`) is
   almost always unique to that workflow, so grouping *by* goal just produces one-card
   "groups" — not a real grouping, and it buries what needs a look. Built as: **"Need
-  attention"** (critical/bug health OR off-goal/at-risk progress) first, then
+  attention"** (critical/bug health OR off-goal/at-risk progress OR elevated/missing cost)
+  first, then
   **"Healthy / on-track"**. Each card still names its own goal as a short (3-6 word)
   distilled chip (`data-goal`, e.g. "Grow LinkedIn reach") next to the title — legible
   without being a grouping key.
@@ -90,10 +94,12 @@ embedded drill-down docs.
 ## Data carrier (decision: data-attributes; JSON noted as the alternative)
 The React UI needs the card fields without a JSON data model. **Chosen: `data-*`
 attributes on the HTML card fragments** — honors "no JSON" (the loops keep writing readable
-HTML), and the app reads `data-status`/`data-goal`/`data-headline`/`data-next`/`data-updated`
-to render its components, group by attention status, sort, and filter. `data-goal` is a
-short distilled label (3-6 words), not the raw `success_criteria` text — both Pulse
-(`card.health.html`, every run) and Auto-improve (`card.progress.html`, on fire) write it,
+HTML), and the app reads `data-status`/`data-goal`/`data-updated` plus `data-field="headline"`,
+`data-field="metric"`, and `data-field="detail"` to render its components, group by attention
+status, sort, and filter. `data-goal` is a
+short distilled label (3-6 words), not the raw `success_criteria` text — Pulse
+(`card.health.html` and `card.cost.html`, every run) and Auto-improve
+(`card.progress.html`, on fire) write it,
 so the goal chip shows up from the workflow's first run rather than waiting on the
 less-frequent Auto-improve loop.
 ```html
@@ -107,9 +113,11 @@ cleaner feed is preferred later, a tiny per-card JSON (`{status, verdict, goal, 
 next}`) is the alternative — but that reintroduces the JSON we chose to avoid.
 
 ## Classification
-Split across the two axes (loop-set, not UI-derived):
+Split across the three axes (loop-set, not UI-derived):
 - 🩺 **healthy / bug / critical** (Pulse). critical = broken/blocking, act now; bug =
   fixable, not urgent.
+- 💵 **normal / elevated / missing** (Pulse report step). elevated = spend/time outlier
+  worth watching; missing = no reliable telemetry.
 - 🎯 **on-track / at-risk / off-goal** (Auto-improve).
 - `⚪ idle` when no recent runs/data.
 The triage bar and filters key off these.
@@ -136,20 +144,23 @@ per-workflow loop cannot write into the org/CoS workspace's `pulse/`. Corrected,
 model (as wired):
 
 - **Cards live in each workflow's OWN workspace, next to improve.html:**
-  `builder/card.health.html` (Pulse loop) + `builder/card.progress.html` (Auto-improve
-  loop). Perfect ownership, no shared dir, no cross-workspace writes.
+  `builder/card.health.html` (Pulse loop) + `builder/card.cost.html` (Pulse report step) +
+  `builder/card.progress.html` (Auto-improve loop). Perfect ownership, no shared dir, no
+  cross-workspace writes.
 - **No new tool.** The loops already have `update_workspace_file` (they write
   `improve.html` with it). The card contract is inlined in the loop step prompts in
   `cmd/server/scheduler.go`: Pulse `postRunMonitorSteps()` STEP 1 (triage) writes
-  `card.health.html`; Auto-improve `wrapOptimizerImproveMessage()` STEP 2 writes
-  `card.progress.html`. Both OVERWRITE every run so the dashboard stays live.
+  `card.health.html`; Pulse STEP 4 (LLM/cost/time report) writes `card.cost.html`;
+  Auto-improve `wrapOptimizerImproveMessage()` STEP 2 writes `card.progress.html`. The
+  owning step OVERWRITES its card so the dashboard stays live.
 - **Dashboard assembly (frontend, to build):** enumerate workflows via the existing
   `getWorkflowsOverview(workspacePaths[])` path, then per workflow read
   `getBuilderDoc(workspacePath, doc, filePath='builder/card.health.html')` +
-  `'builder/card.progress.html'`, parse the `data-*` attributes, render the triage bar +
-  goal-grouped cards. `pulse/goals.html` stays org-level (read as today).
+  `'builder/card.progress.html'` + `'builder/card.cost.html'`, parse the `data-*`
+  attributes, render the triage bar + attention-grouped cards. `pulse/goals.html` stays
+  org-level (read as today).
 - **Card contract** (single-quoted attrs — survives the Go string literal AND email):
-  `<article class='pulse-card' data-axis='health|progress' data-workflow='…'
-  data-status='healthy|bug|critical (health) | on-track|at-risk|off-goal (progress)'
+  `<article class='pulse-card' data-axis='health|progress|cost' data-workflow='…'
+  data-status='healthy|bug|critical (health) | on-track|at-risk|off-goal (progress) | normal|elevated|missing (cost)'
   data-goal='…' data-updated='ISO8601'><h4>name</h4><p data-field='headline'>…</p></article>`
 - **v1 scope:** current-status cards. Rolling trend deferred to v2.

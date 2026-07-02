@@ -18,11 +18,11 @@ function submitGuidedWorkflowCommand(
   const guidanceCall = `get_workflow_command_guidance(${args.join(', ')})`
 
   // Read-only reviews run as a background task so the chat stays responsive: the
-  // background agent (same tools) does the heavy read→analyze→write builder/review.html
+  // background agent (same tools) does the heavy read→analyze→write builder/improve.html
   // and auto-notifies on completion; the chat agent then surfaces the Top 3 for discussion.
   if (options.background) {
     const instruction =
-      `Call ${guidanceCall} and follow the returned instructions verbatim — read the plan and artifacts and write your recommendations to builder/review.html. ` +
+      `Call ${guidanceCall} and follow the returned instructions verbatim — read the plan and artifacts and write your recommendations to builder/improve.html. ` +
       `Treat focus as the request context before the slash command. The tool returns the canonical guided-flow text; do not paraphrase or skip its steps.`
     ctx.onSubmit(
       `Run the /${kind} review as a BACKGROUND task so this chat stays responsive. ` +
@@ -152,7 +152,7 @@ export const builtinCommands: CommandDefinition[] = [
   },
   {
     command: 'improve-report',
-    description: 'Validate reports/report_plan.json and suggest layout/color improvements',
+    description: 'Improve the report dashboard for goal tracking, plan context, issues, and live data clarity',
     icon: <CheckCircle className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',

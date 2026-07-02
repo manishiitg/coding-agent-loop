@@ -49,6 +49,12 @@ type GmailConfig struct {
 	// destination hint and the target user has no Gmail preference set.
 	DefaultTo string `json:"default_to"`
 
+	// AllowedRecipients is a hard allowlist for outbound Gmail recipients. The
+	// default recipient is always added during normalization. Explicit
+	// destination hints and per-user Gmail preferences outside this list are
+	// rejected instead of being sent.
+	AllowedRecipients []string `json:"allowed_recipients,omitempty"`
+
 	// GwsPath is the path to the gws binary. Empty means "gws" on $PATH.
 	GwsPath string `json:"gws_path,omitempty"`
 
@@ -130,6 +136,7 @@ func (g *GmailService) ReloadConfig(ctx context.Context) error {
 
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	cfg = normalizeGmailConfig(cfg)
 	g.config = cfg
 
 	gwsPath := strings.TrimSpace(cfg.GwsPath)
@@ -153,7 +160,7 @@ func (g *GmailService) ReloadConfig(ctx context.Context) error {
 		log.Printf("[GMAIL] Service disabled: enabled=%v, hasDefaultTo=%v, gwsFound=%v",
 			cfg.Enabled, g.defaultTo != "", binaryOK)
 	} else if g.enabled {
-		log.Printf("[GMAIL] Service enabled (single-user): default_to=%s, gws=%s", g.defaultTo, g.gwsPath)
+		log.Printf("[GMAIL] Service enabled: default_to=%s, allowed_recipients=%d, gws=%s", g.defaultTo, len(cfg.AllowedRecipients), g.gwsPath)
 	}
 	return nil
 }
@@ -166,6 +173,7 @@ func (g *GmailService) GetConfig() *GmailConfig {
 		return &GmailConfig{}
 	}
 	c := *g.config
+	c.AllowedRecipients = append([]string(nil), g.config.AllowedRecipients...)
 	return &c
 }
 
@@ -176,6 +184,7 @@ func (g *GmailService) SaveConfig(ctx context.Context, cfg *GmailConfig) error {
 	if cfg == nil {
 		cfg = &GmailConfig{}
 	}
+	cfg = normalizeGmailConfig(cfg)
 	out, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal gmail config: %w", err)
@@ -266,18 +275,27 @@ func (g *GmailService) IsEnabled() bool {
 //
 // Returns "" only when Gmail is disabled or has no default and no hint — the
 // caller treats that as "skip silently".
-func (g *GmailService) pickRecipient(dest *NotificationDestination) string {
+func (g *GmailService) pickRecipient(dest *NotificationDestination) (string, error) {
+	candidate := ""
 	if dest != nil && dest.Gmail != nil && strings.TrimSpace(dest.Gmail.Email) != "" {
-		return strings.TrimSpace(dest.Gmail.Email)
-	}
-	if dest != nil && dest.UserID != "" {
+		candidate = strings.TrimSpace(dest.Gmail.Email)
+	} else if dest != nil && dest.UserID != "" {
 		if pref := getNotificationPreferences(dest.UserID); pref != nil && pref.GmailEmail != "" && !pref.GmailDisabled {
-			return pref.GmailEmail
+			candidate = strings.TrimSpace(pref.GmailEmail)
 		}
 	}
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-	return g.defaultTo
+	if candidate == "" {
+		g.mu.RLock()
+		candidate = g.defaultTo
+		g.mu.RUnlock()
+	}
+	if candidate == "" {
+		return "", nil
+	}
+	if !g.isAllowedRecipient(candidate) {
+		return "", fmt.Errorf("gmail recipient %q is not in the allowed recipients list", candidate)
+	}
+	return candidate, nil
 }
 
 // SendNotification implements NotificationConnector. It renders the feedback
@@ -289,7 +307,10 @@ func (g *GmailService) SendNotification(ctx context.Context, uniqueID string, me
 	if !g.IsEnabled() {
 		return "", nil
 	}
-	to := g.pickRecipient(dest)
+	to, err := g.pickRecipient(dest)
+	if err != nil {
+		return "", err
+	}
 	if to == "" {
 		return "", nil
 	}
@@ -326,7 +347,10 @@ func (g *GmailService) SendUserNotification(ctx context.Context, message string,
 	if !g.IsEnabled() {
 		return "", nil
 	}
-	to := g.pickRecipient(dest)
+	to, err := g.pickRecipient(dest)
+	if err != nil {
+		return "", err
+	}
 	if to == "" {
 		return "", nil
 	}
@@ -559,6 +583,59 @@ func (g *GmailService) SendTest(ctx context.Context, to string) (string, error) 
 	return g.send(ctx, to,
 		"[Agent] Gmail test message",
 		"This is a test from your agent's Gmail channel. If you received it, outbound Gmail is configured correctly.")
+}
+
+func normalizeGmailConfig(cfg *GmailConfig) *GmailConfig {
+	if cfg == nil {
+		return &GmailConfig{}
+	}
+	out := *cfg
+	out.DefaultTo = strings.TrimSpace(out.DefaultTo)
+	out.AllowedRecipients = normalizeEmailList(append([]string{out.DefaultTo}, out.AllowedRecipients...))
+	return &out
+}
+
+func normalizeEmailList(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, raw := range values {
+		for _, part := range strings.FieldsFunc(raw, func(r rune) bool {
+			return r == ',' || r == ';' || r == '\n' || r == '\r' || r == '\t' || r == ' '
+		}) {
+			email := strings.ToLower(strings.TrimSpace(part))
+			if email == "" || seen[email] {
+				continue
+			}
+			seen[email] = true
+			out = append(out, email)
+		}
+	}
+	return out
+}
+
+func (g *GmailService) isAllowedRecipient(email string) bool {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return false
+	}
+	g.mu.RLock()
+	cfg := g.config
+	defaultTo := g.defaultTo
+	g.mu.RUnlock()
+
+	allowed := []string{}
+	if cfg != nil {
+		allowed = cfg.AllowedRecipients
+	}
+	if len(allowed) == 0 && strings.TrimSpace(defaultTo) != "" {
+		allowed = []string{defaultTo}
+	}
+	for _, candidate := range normalizeEmailList(allowed) {
+		if candidate == email {
+			return true
+		}
+	}
+	return false
 }
 
 // gmailChildEnv builds the environment for the gws child process, layering the

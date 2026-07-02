@@ -18,11 +18,17 @@ import (
 // end catch any provider that prints a recognizable phrase.
 var rateLimitPatterns = []*regexp.Regexp{
 	// Claude Code: prints messages like "5-hour limit reached", "Your
-	// usage limit will reset at <time>", "You have run out of credits".
+	// usage limit will reset at <time>", "You have run out of credits",
+	// "You've hit your session limit · resets <time>" followed by a
+	// "/usage-credits to finish what you're working on." line. NOTE: the
+	// "session" wording was missing from the (message|usage|rate) group below
+	// and silently slipped past detection, leaving runs wedged "running" -
+	// keep "session" here and the dedicated /usage-credits line.
 	regexp.MustCompile(`(?i)(5[- ]hour|5h)\s+limit\s+(reached|hit)`),
-	regexp.MustCompile(`(?i)usage\s+limit\s+(reached|hit|will\s+reset)`),
-	regexp.MustCompile(`(?i)you\s+have\s+(reached|hit)\s+your\s+(message|usage|rate)\s+limit`),
-	regexp.MustCompile(`(?i)you'?ve?\s+run\s+out\s+of\s+credits`),
+	regexp.MustCompile(`(?i)(session|usage)\s+limit\s+(reached|hit|will\s+reset)`),
+	regexp.MustCompile(`(?i)you(?:'?ve|\s+have)?\s+(reached|hit)\s+your\s+(message|session|usage|rate)\s+limit`),
+	regexp.MustCompile(`(?i)you(?:'?ve|\s+have)?\s+run\s+out\s+of\s+credits`),
+	regexp.MustCompile(`(?i)/usage-credits\s+to\s+finish`),
 
 	// Codex CLI / OpenAI: prints messages with HTTP 429 hints, "rate
 	// limit exceeded", "quota exceeded", "tokens per minute".
@@ -45,6 +51,13 @@ var rateLimitPatterns = []*regexp.Regexp{
 	// Generic Anthropic / API responses surfaced by structured CLIs.
 	regexp.MustCompile(`(?i)anthropic[._]rate[._]limit`),
 	regexp.MustCompile(`(?i)overloaded_error`),
+}
+
+// DetectRateLimit is the exported form of detectRateLimit for callers outside
+// this package, such as the coding-CLI watchdog that force-stops panes parked
+// on a provider limit wall.
+func DetectRateLimit(content string) bool {
+	return detectRateLimit(content)
 }
 
 // detectRateLimit returns true when the rendered pane content contains

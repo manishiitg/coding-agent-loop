@@ -318,9 +318,6 @@ func MergeAgentConfigFields(target *AgentConfigs, source *AgentConfigs, stepID s
 	if source.ExecutionTier != "" {
 		target.ExecutionTier = source.ExecutionTier
 	}
-	if source.LearningLLM != nil {
-		target.LearningLLM = source.LearningLLM
-	}
 	if source.SelectedServers != nil {
 		target.SelectedServers = source.SelectedServers
 	}

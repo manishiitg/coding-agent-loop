@@ -163,7 +163,6 @@ content, err := json.MarshalIndent(file, "", "  ")
 |-------|------|---------|---------|
 | `execution_llm` | `object` | Preset default | LLM config for execution agent (`{ provider: string, model_id: string }`) |
 | `validation_llm` | `object` | Preset default | LLM config for validation agent |
-| `learning_llm` | `object` | Preset default | LLM config for learning agent |
 | `conditional_llm` | `object` | Preset default | Step-specific conditional LLM for conditional step evaluation |
 
 ### Max Turns Configuration

@@ -67,8 +67,11 @@ type PresetLLMConfig struct {
 	ModelID  string `json:"model_id,omitempty"`
 
 	// Agent-specific defaults — take priority over the legacy single-model form.
-	LearningLLM *AgentLLMConfig `json:"learning_llm,omitempty"`
-	PhaseLLM    *AgentLLMConfig `json:"phase_llm,omitempty"`
+	PhaseLLM *AgentLLMConfig `json:"phase_llm,omitempty"`
+
+	// Optional scheduled Auto Improve override. When omitted, coding-agent
+	// providers may supply a provider-owned Auto Improve default.
+	AutoImproveLLM *AgentLLMConfig `json:"auto_improve_llm,omitempty"`
 
 	// Feature toggles.
 	UseKnowledgebase           *bool  `json:"use_knowledgebase,omitempty"`
@@ -155,6 +158,25 @@ func ResolveCodingAgentConfig(config *PresetLLMConfig) (*AgentLLMConfig, *Tiered
 	return phase, tiered, true
 }
 
+func ResolveCodingAgentAutoImproveConfig(config *PresetLLMConfig) (*AgentLLMConfig, bool) {
+	if config == nil || config.Provider == "" {
+		return nil, false
+	}
+
+	defaults, ok := llmproviders.GetCodingAgentDefaultTierModels(llmproviders.Provider(config.Provider))
+	if !ok {
+		return nil, false
+	}
+	autoImprove := agentLLMConfigFromCodingAgentRef(defaults.AutoImprove)
+	if autoImprove == nil {
+		autoImprove = agentLLMConfigFromCodingAgentRef(defaults.High)
+	}
+	if autoImprove == nil {
+		return nil, false
+	}
+	return autoImprove, true
+}
+
 // ResolveCodingPlanConfig is kept for legacy call sites and old saved configs.
 func ResolveCodingPlanConfig(config *PresetLLMConfig) (*AgentLLMConfig, *TieredLLMConfig, bool) {
 	return ResolveCodingAgentConfig(config)
@@ -185,6 +207,9 @@ func ValidatePresetLLMConfigPublic(config *PresetLLMConfig) error {
 		if _, ok := llmproviders.GetCodingAgentDefaultTierModels(llmproviders.Provider(config.Provider)); !ok {
 			return fmt.Errorf("provider %q does not expose coding agent tier defaults", config.Provider)
 		}
+		if err := validatePresetAgentLLMConfig(config.AutoImproveLLM, "auto_improve_llm"); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -211,6 +236,9 @@ func ValidatePresetLLMConfigPublic(config *PresetLLMConfig) error {
 				return fmt.Errorf("invalid provider for %s: %w", tierConfig.name, err)
 			}
 		}
+		if err := validatePresetAgentLLMConfig(config.AutoImproveLLM, "auto_improve_llm"); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -225,23 +253,35 @@ func ValidatePresetLLMConfigPublic(config *PresetLLMConfig) error {
 		config *AgentLLMConfig
 		name   string
 	}{
-		{config.LearningLLM, "learning_llm"},
 		{config.PhaseLLM, "phase_llm"},
 	}
 	hasValidAgentConfig := false
 	for _, agentConfig := range agentConfigs {
 		if agentConfig.config != nil {
-			if agentConfig.config.ModelID == "" {
-				return fmt.Errorf("model_id is required for %s", agentConfig.name)
-			}
-			if _, err := llmproviders.ValidateProvider(agentConfig.config.Provider); err != nil {
-				return fmt.Errorf("invalid provider for %s: %w", agentConfig.name, err)
+			if err := validatePresetAgentLLMConfig(agentConfig.config, agentConfig.name); err != nil {
+				return err
 			}
 			hasValidAgentConfig = true
 		}
 	}
+	if err := validatePresetAgentLLMConfig(config.AutoImproveLLM, "auto_improve_llm"); err != nil {
+		return err
+	}
 	if !hasLegacyConfig && !hasValidAgentConfig {
 		return fmt.Errorf("llm_config must have either legacy provider+model_id or at least one non-nil agent-specific config with valid provider and model_id")
+	}
+	return nil
+}
+
+func validatePresetAgentLLMConfig(config *AgentLLMConfig, name string) error {
+	if config == nil {
+		return nil
+	}
+	if config.ModelID == "" {
+		return fmt.Errorf("model_id is required for %s", name)
+	}
+	if _, err := llmproviders.ValidateProvider(config.Provider); err != nil {
+		return fmt.Errorf("invalid provider for %s: %w", name, err)
 	}
 	return nil
 }

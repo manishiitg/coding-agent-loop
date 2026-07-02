@@ -162,3 +162,42 @@ func TestHandleNotifyUserFansOutToRegisteredConnectors(t *testing.T) {
 		t.Fatal("expected Slack connector to be considered in fanout")
 	}
 }
+
+func TestHandleNotifyUserEmailToOverridesDestination(t *testing.T) {
+	manager := services.GetNotificationManager()
+	ch := make(chan *services.NotificationDestination, 1)
+	connector := &testUserNotificationConnector{name: "gmail", ch: ch}
+	manager.RegisterConnector(connector)
+	t.Cleanup(func() {
+		manager.UnregisterConnector("gmail")
+	})
+
+	ctx := context.WithValue(context.Background(), common.UserIDKey, "user-1")
+	ctx = context.WithValue(ctx, BotNotificationDestinationKey, &services.NotificationDestination{
+		UserID: "user-1",
+		Gmail:  &services.GmailDest{Email: "default@example.com"},
+	})
+
+	if _, err := handleNotifyUser(ctx, map[string]interface{}{
+		"message_for_user": "FYI: done",
+		"email_to":         []interface{}{"Override@Example.com", "ops@example.com"},
+		"email_cc":         []interface{}{"cc@example.com"},
+	}); err != nil {
+		t.Fatalf("handleNotifyUser returned error: %v", err)
+	}
+
+	select {
+	case dest := <-ch:
+		if dest == nil || dest.Gmail == nil || dest.Gmail.Email != "override@example.com, ops@example.com" {
+			t.Fatalf("gmail destination = %#v, want replacement To recipients", dest)
+		}
+		if dest.Content == nil || dest.Content.Gmail == nil {
+			t.Fatalf("gmail content = %#v, want Gmail content", dest.Content)
+		}
+		if got := strings.Join(dest.Content.Gmail.CC, ","); got != "cc@example.com" {
+			t.Fatalf("gmail cc = %q, want cc@example.com", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected Gmail notification")
+	}
+}

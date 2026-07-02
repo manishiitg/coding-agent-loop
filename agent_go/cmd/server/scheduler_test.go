@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -172,6 +173,10 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 		`get_reference_doc(kind="optimize-playbook")`,
 		"harden_workflow",
 		"This turn does not improvise manual workflow edits",
+		"Decision - Pulse harden",
+		"Bug fix",
+		"Report fix",
+		"Eval fix",
 	} {
 		if !strings.Contains(fix, want) {
 			t.Fatalf("fix step missing %q:\n%s", want, fix)
@@ -181,7 +186,9 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 		"ARTIFACT REVIEW",
 		`get_workflow_command_guidance(kind="review-artifact-drift"`,
 		"review_artifact_sync",
+		"mark_changelog_artifact_reviewed",
 		"not part of harden",
+		"Artifact drift",
 	} {
 		if !strings.Contains(artifact, want) {
 			t.Fatalf("artifact step missing %q:\n%s", want, artifact)
@@ -202,6 +209,8 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 		`get_reference_doc(kind="report-plan")`,
 		"window.report.get",
 		"do NOT change model tiers",
+		"Cost/time",
+		"Report fix",
 	} {
 		if !strings.Contains(report, want) {
 			t.Fatalf("report step missing %q:\n%s", want, report)
@@ -272,11 +281,75 @@ func TestPostRunMonitorDoesNotPrependWorkflowVersionUpgradeForCurrentManifest(t 
 		"ARTIFACT REVIEW",
 		`get_workflow_command_guidance(kind="review-artifact-drift"`,
 		`review_artifact_sync`,
+		`mark_changelog_artifact_reviewed`,
 		"not part of harden",
+		"Artifact drift",
 	} {
 		if !strings.Contains(steps[2].query, want) {
 			t.Fatalf("artifact step missing %q:\n%s", want, steps[2].query)
 		}
+	}
+}
+
+func TestWorkflowHasPendingPlanChangelogArtifactReview(t *testing.T) {
+	tests := []struct {
+		name      string
+		files     map[string]string
+		want      bool
+		wantError bool
+	}{
+		{
+			name:  "missing changelog folder",
+			files: map[string]string{},
+			want:  false,
+		},
+		{
+			name: "unreviewed changelog entry",
+			files: map[string]string{
+				"Workflow/demo/planning/changelog/changelog-2026-07-02-06-12-46.json": `{"entries":[{"timestamp":"2026-07-02T06:12:46Z","tool":"update_regular_step","reason":"test","step_ids":["step-a"]}]}`,
+			},
+			want: true,
+		},
+		{
+			name: "reviewed changelog entries",
+			files: map[string]string{
+				"Workflow/demo/planning/changelog/changelog-2026-07-02-06-12-46.json": `{"entries":[{"timestamp":"2026-07-02T06:12:46Z","tool":"update_regular_step","reason":"test","step_ids":["step-a"],"artifact_review":{"done":true,"reviewed_at":"2026-07-02T06:20:00Z","reviewed_by":"review_artifact_sync","result":"clean"}}]}`,
+			},
+			want: false,
+		},
+		{
+			name: "one unreviewed entry keeps review pending",
+			files: map[string]string{
+				"Workflow/demo/planning/changelog/changelog-2026-07-02-06-12-46.json": `{"entries":[{"timestamp":"2026-07-02T06:12:46Z","tool":"update_regular_step","reason":"old","artifact_review":{"done":true}},{"timestamp":"2026-07-02T06:13:46Z","tool":"update_step_config","reason":"new"}]}`,
+			},
+			want: true,
+		},
+		{
+			name: "malformed changelog is pending",
+			files: map[string]string{
+				"Workflow/demo/planning/changelog/changelog-2026-07-02-06-12-46.json": `{`,
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			workspace := httptest.NewServer(&mockWorkspaceAPI{files: tt.files})
+			defer workspace.Close()
+			t.Setenv("WORKSPACE_API_URL", workspace.URL)
+
+			got, err := workflowHasPendingPlanChangelogArtifactReview(context.Background(), "Workflow/demo")
+			if tt.wantError && err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !tt.wantError && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("workflowHasPendingPlanChangelogArtifactReview() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -303,6 +376,11 @@ func TestOptimizerScheduleMessagesIgnoresStoredMessagesAndInjectsCanonicalTurns(
 		{1, "measure and track the workflow goal"},
 		{1, "Decision - Auto-improve - Applied"},
 		{1, "entry decision major"},
+		{1, "Improvement"},
+		{1, "Report fix"},
+		{1, "Eval fix"},
+		{1, "Artifact drift"},
+		{1, "Cost/time"},
 		{1, "Why now, Evidence, Change, Expected impact, Files touched, and Risk / gap"},
 		{1, "Do not call notify_user"},
 		{2, "STEP 3/5 - BACKUP FINAL STATE"},

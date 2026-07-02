@@ -139,7 +139,7 @@ Default policy when there is no explicit `soul.md ## Notifications` preference: 
 - a material schedule cadence or group-scope change
 - an intended improvement failed and needs human action
 
-Stay silent on steady scheduled fires: no fresh evidence, no action, minor log/archive maintenance, or cleanup with no user-facing effect. When notifying, call `notify_user` at most once. When Gmail/email fields are available, email is the default rich rendering: set `email_subject`, `email_html`, and plain `email_body` on that same call unless the user's notification preference explicitly says not to email.
+Stay silent on steady scheduled fires: no fresh evidence, no action, minor log/archive maintenance, or cleanup with no user-facing effect. When writing any Decision or Open finding to `builder/improve.html`, use the classification chips from `get_reference_doc(kind="review-improve-log")`: `Improvement` for strategy/plan/cadence/user-facing dashboard upgrades, `Report fix` for report/dashboard repair, `Eval fix` for evaluation repair, `Artifact drift` when resolving Artifact Review findings, `Cost/time` for telemetry fixes, and `Bug fix` only when this pass is explicitly closing a runtime Bug finding rather than doing structural improvement. When notifying, call `notify_user` at most once. When Gmail/email fields are available, email is the default rich rendering: set `email_subject`, `email_html`, and plain `email_body` on that same call unless the user's notification preference explicitly says not to email. Set `email_to` only when the user's notification preference asks to replace the configured default To recipient; set `email_cc` only when the preference asks for CC recipients.
 
 FINAL REPORT
 Summarize:

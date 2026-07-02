@@ -894,13 +894,22 @@ type PlanFieldChange struct {
 // successful plan-mod tool call appends one entry to the active session file
 // under planning/changelog/.
 type PlanChangelogEntry struct {
-	Timestamp    string            `json:"timestamp"`               // ISO 8601 UTC
-	Tool         string            `json:"tool"`                    // tool name (e.g. "update_regular_step")
-	Reason       string            `json:"reason"`                  // mandatory rationale supplied by the agent
-	StepIDs      []string          `json:"step_ids,omitempty"`      // affected step IDs
-	Changes      []PlanFieldChange `json:"changes,omitempty"`       // per-field old/new values when known
-	AddedSteps   []json.RawMessage `json:"added_steps,omitempty"`   // full JSON of steps added (for revert)
-	DeletedSteps []json.RawMessage `json:"deleted_steps,omitempty"` // full JSON of steps deleted (for revert)
+	Timestamp      string                       `json:"timestamp"`                 // ISO 8601 UTC
+	Tool           string                       `json:"tool"`                      // tool name (e.g. "update_regular_step")
+	Reason         string                       `json:"reason"`                    // mandatory rationale supplied by the agent
+	StepIDs        []string                     `json:"step_ids,omitempty"`        // affected step IDs
+	Changes        []PlanFieldChange            `json:"changes,omitempty"`         // per-field old/new values when known
+	AddedSteps     []json.RawMessage            `json:"added_steps,omitempty"`     // full JSON of steps added (for revert)
+	DeletedSteps   []json.RawMessage            `json:"deleted_steps,omitempty"`   // full JSON of steps deleted (for revert)
+	ArtifactReview *PlanChangelogArtifactReview `json:"artifact_review,omitempty"` // Pulse Artifact Review completion metadata
+}
+
+type PlanChangelogArtifactReview struct {
+	Done          bool   `json:"done"`
+	ReviewedAt    string `json:"reviewed_at,omitempty"`
+	ReviewedBy    string `json:"reviewed_by,omitempty"`
+	Result        string `json:"result,omitempty"`
+	ReportEntryID string `json:"report_entry_id,omitempty"`
 }
 
 // PlanChangelog is the per-session changelog file under planning/changelog/.

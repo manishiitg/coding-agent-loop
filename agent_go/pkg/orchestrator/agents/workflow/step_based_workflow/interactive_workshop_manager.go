@@ -1369,6 +1369,9 @@ func (iwm *InteractiveWorkshopManager) registerWorkshopReviewToolsForToolAgent(a
 	}
 	mcpAgentRef := agent.GetBaseAgent().Agent()
 	registerInteractiveWorkshopTools(iwm, mcpAgentRef, logger)
+	if err := iwm.registerMarkChangelogArtifactReviewedTool(mcpAgentRef, workspacePath, logger); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ %s: failed to register changelog artifact-review marker tool: %v", agentName, err))
+	}
 	if err := RegisterEvaluationValidationTools(
 		mcpAgentRef,
 		workspacePath,
@@ -1406,6 +1409,160 @@ func (iwm *InteractiveWorkshopManager) registerWorkshopReviewToolsForToolAgent(a
 	}
 	mcpAgentRef.SetToolAllowList(allowedToolNames)
 	logger.Info(fmt.Sprintf("🔧 %s: registered workshop review tools and applied allow list (%d tools)", agentName, len(allowedToolNames)))
+}
+
+func (iwm *InteractiveWorkshopManager) registerMarkChangelogArtifactReviewedTool(mcpAgent *mcpagent.Agent, workspacePath string, logger loggerv2.Logger) error {
+	if mcpAgent == nil {
+		return fmt.Errorf("nil mcp agent")
+	}
+	return mcpAgent.RegisterCustomTool(
+		"mark_changelog_artifact_reviewed",
+		"Mark planning/changelog entries as fully inspected by Artifact Review. This is the only supported way for review_artifact_sync to set artifact_review.done=true; do not edit changelog JSON directly.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"marks": map[string]interface{}{
+					"type":        "array",
+					"description": "Changelog files and zero-based entry indexes to mark reviewed.",
+					"items": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"file": map[string]interface{}{
+								"type":        "string",
+								"description": "The changelog filename, e.g. changelog-2026-07-02-06-12-46.json. A planning/changelog/... path is accepted; only the basename is used.",
+							},
+							"entry_indexes": map[string]interface{}{
+								"type":        "array",
+								"description": "Zero-based indexes in the file's entries array that were fully inspected or cursor-backfilled.",
+								"items":       map[string]interface{}{"type": "integer"},
+							},
+						},
+						"required": []string{"file", "entry_indexes"},
+					},
+				},
+				"result": map[string]interface{}{
+					"type":        "string",
+					"enum":        []interface{}{"clean", "findings", "cursor-backfill"},
+					"description": "Review result to stamp on all marked entries.",
+				},
+				"report_entry_id": map[string]interface{}{
+					"type":        "string",
+					"description": "ID/heading slug of the builder/improve.html Artifact Review entry that records this review.",
+				},
+				"reviewed_at": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional RFC3339 UTC timestamp. Defaults to now.",
+				},
+			},
+			"required": []string{"marks", "result"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			return iwm.markChangelogArtifactReviewed(ctx, workspacePath, args, logger)
+		},
+		"workflow",
+	)
+}
+
+func (iwm *InteractiveWorkshopManager) markChangelogArtifactReviewed(ctx context.Context, workspacePath string, args map[string]interface{}, logger loggerv2.Logger) (string, error) {
+	rawMarks, ok := args["marks"].([]interface{})
+	if !ok || len(rawMarks) == 0 {
+		return "marks is required", nil
+	}
+	result := strings.TrimSpace(asString(args["result"]))
+	switch result {
+	case "clean", "findings", "cursor-backfill":
+	default:
+		return `result must be one of "clean", "findings", or "cursor-backfill"`, nil
+	}
+	reviewedAt := strings.TrimSpace(asString(args["reviewed_at"]))
+	if reviewedAt == "" {
+		reviewedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	reportEntryID := strings.TrimSpace(asString(args["report_entry_id"]))
+
+	marksByFile := map[string]map[int]bool{}
+	for _, raw := range rawMarks {
+		obj, ok := raw.(map[string]interface{})
+		if !ok {
+			return "each marks item must be an object", nil
+		}
+		file := filepath.Base(strings.TrimSpace(asString(obj["file"])))
+		if file == "." || file == "" || !strings.HasPrefix(file, "changelog-") || !strings.HasSuffix(strings.ToLower(file), ".json") {
+			return fmt.Sprintf("invalid changelog file %q", asString(obj["file"])), nil
+		}
+		rawIndexes, ok := obj["entry_indexes"].([]interface{})
+		if !ok || len(rawIndexes) == 0 {
+			return fmt.Sprintf("entry_indexes is required for %s", file), nil
+		}
+		if marksByFile[file] == nil {
+			marksByFile[file] = map[int]bool{}
+		}
+		for _, rawIndex := range rawIndexes {
+			var idx int
+			switch v := rawIndex.(type) {
+			case float64:
+				idx = int(v)
+				if float64(idx) != v {
+					return fmt.Sprintf("entry index %v for %s is not an integer", rawIndex, file), nil
+				}
+			case int:
+				idx = v
+			default:
+				return fmt.Sprintf("entry index %v for %s is not an integer", rawIndex, file), nil
+			}
+			if idx < 0 {
+				return fmt.Sprintf("entry index %d for %s is negative", idx, file), nil
+			}
+			marksByFile[file][idx] = true
+		}
+	}
+
+	totalMarked := 0
+	touchedFiles := make([]string, 0, len(marksByFile))
+	for file, indexSet := range marksByFile {
+		changelogPath := strings.Trim(strings.TrimSpace(workspacePath), "/") + "/planning/changelog/" + file
+		if strings.HasPrefix(changelogPath, "/") {
+			changelogPath = strings.TrimPrefix(changelogPath, "/")
+		}
+		content, err := iwm.controller.ReadWorkspaceFile(ctx, changelogPath)
+		if err != nil {
+			return "", fmt.Errorf("read %s: %w", changelogPath, err)
+		}
+		var changelog PlanChangelog
+		if err := json.Unmarshal([]byte(content), &changelog); err != nil {
+			return "", fmt.Errorf("parse %s: %w", changelogPath, err)
+		}
+		for idx := range indexSet {
+			if idx >= len(changelog.Entries) {
+				return fmt.Sprintf("entry index %d out of range for %s (entries=%d)", idx, file, len(changelog.Entries)), nil
+			}
+		}
+		for idx := range indexSet {
+			changelog.Entries[idx].ArtifactReview = &PlanChangelogArtifactReview{
+				Done:          true,
+				ReviewedAt:    reviewedAt,
+				ReviewedBy:    "review_artifact_sync",
+				Result:        result,
+				ReportEntryID: reportEntryID,
+			}
+			totalMarked++
+		}
+		data, err := json.MarshalIndent(changelog, "", "  ")
+		if err != nil {
+			return "", fmt.Errorf("marshal %s: %w", changelogPath, err)
+		}
+		if err := iwm.controller.WriteWorkspaceFile(ctx, changelogPath, string(data)); err != nil {
+			return "", fmt.Errorf("write %s: %w", changelogPath, err)
+		}
+		touchedFiles = append(touchedFiles, file)
+		logger.Info(fmt.Sprintf("📝 Artifact Review: marked %d changelog entries reviewed in %s", len(indexSet), file))
+	}
+	sort.Strings(touchedFiles)
+	entryWord := "entry"
+	if totalMarked != 1 {
+		entryWord = "entries"
+	}
+	return fmt.Sprintf("Marked %d changelog %s artifact_review.done=true across %d file(s): %s", totalMarked, entryWord, len(touchedFiles), strings.Join(touchedFiles, ", ")), nil
 }
 
 // detectWorkshopMode returns the default workshop mode when the frontend has not
@@ -5345,7 +5502,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 7f1: review_artifact_sync — background audit of plan changelog vs dependent artifacts
 	if err := mcpAgent.RegisterCustomTool(
 		"review_artifact_sync",
-		"Start a background agent that audits recent planning/changelog entries against dependent artifacts: planning/step_config.json, learnings, saved main.py, KB notes, db files, reports/report_plan.json, and evaluation/evaluation_plan.json. It uses builder/improve.html as the Artifact Sync Cursor and appends a report-only Artifact Review item there. Returns execution_id immediately — you will be automatically notified when it completes.",
+		"Start a background agent that audits unreviewed planning/changelog entries against dependent artifacts: planning/step_config.json, learnings, saved main.py, KB notes, db files, reports/report_plan.json, and evaluation/evaluation_plan.json. It uses builder/improve.html as the Artifact Sync Cursor, appends a report-only Artifact Review item there, and marks fully inspected changelog entries via mark_changelog_artifact_reviewed. Returns execution_id immediately — you will be automatically notified when it completes.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -8661,14 +8818,15 @@ var reviewPlanAgentUserTemplate = MustRegisterTemplate("reviewPlanAgentUser", `C
 
 var reviewArtifactSyncAgentSystemTemplate = MustRegisterTemplate("reviewArtifactSyncAgentSystem", `# Artifact Sync Review Agent
 
-You audit whether recent plan/config changes have been propagated to dependent artifacts. The source of truth for changes is `+"`planning/changelog/changelog-*.json`"+`. The checkpoint and human-facing Artifact Review report live in `+"`builder/improve.html`"+` under an **Artifact Sync Cursor** block. Do not create a new state file.
+You audit whether recent plan/config changes have been propagated to dependent artifacts. The source of truth for changes is `+"`planning/changelog/changelog-*.json`"+`. Entries marked `+"`artifact_review.done=true`"+` are already reviewed and should be skipped unless the user explicitly asks to re-audit them. The checkpoint and human-facing Artifact Review report live in `+"`builder/improve.html`"+` under an **Artifact Sync Cursor** block. Do not create a new state file.
 
 You have a harden-like tool surface so you can inspect workflow state deeply. For this tool, you are still a reviewer:
 - do not update the plan
 - do not update step_config
 - do not patch main.py
 - do not change reports/evals/KB/db
-- the only file you may write is `+"`builder/improve.html`"+`, to maintain the cursor and append the report-only Artifact Review item
+- the only file you may write directly is `+"`builder/improve.html`"+`, to maintain the cursor and append the report-only Artifact Review item
+- do not edit `+"`planning/changelog/changelog-*.json`"+` directly; after the report is written, call `+"`mark_changelog_artifact_reviewed`"+` to set `+"`artifact_review.done=true`"+` on the exact entries you fully inspected or cursor-backfilled
 
 ## Context
 - Workspace: {{.WorkspacePath}}
@@ -8704,8 +8862,8 @@ last_synced_at: <RFC3339 timestamp or none>
 `+"```"+`
 
 3. List `+"`planning/changelog/changelog-*.json`"+` sorted by filename ascending.
-4. Select entries strictly after the cursor. If no cursor exists, initialize the cursor and audit from the earliest changelog entry unless there are more than 100 entries; if more than 100, audit only the latest 100 and clearly say older entries were skipped because there was no prior cursor.
-5. If `+"`{{.StepID}}`"+` is non-empty, only inspect entries that affect that step id. Do not advance past entries you did not inspect.
+4. Select entries whose `+"`artifact_review.done`"+` is not true. If no reviewed markers exist yet but the cursor already covers older entries, you may mark entries at or before the cursor as `+"`artifact_review.done=true`"+` with `+"`result=\"cursor-backfill\"`"+` without re-auditing; then audit only unreviewed entries after the cursor. If no cursor exists, initialize the cursor and audit from the earliest unreviewed changelog entry unless there are more than 100 unreviewed entries; if more than 100, audit only the latest 100 and clearly say older entries were skipped because there was no prior cursor.
+5. If `+"`{{.StepID}}`"+` is non-empty, only inspect entries that affect that step id. Do not advance past or mark reviewed any entries you did not inspect or cursor-backfill.
 6. Treat an entry as material when it touches description, title, context_dependencies, context_output, validation/pre_validation, step type, route membership, enabled tools/servers/skills, declared_execution_mode, lock_code, lock_learnings, learnings_access, learning_objective, learnings_write_method, knowledgebase_access, knowledgebase_contribution, or add/delete operations.
 7. For each affected step inspect:
    - current step in `+"`planning/plan.json`"+`
@@ -8738,6 +8896,8 @@ Do not flag artifacts that you inspected and found aligned. Include clean checks
 
 Use `+"`diff_patch_workspace_file`"+` to update `+"`builder/improve.html`"+`. Preserve existing findings and resolved markers.
 
+Append a report-only Artifact Review card using the current Pulse log structure. It must include an `+"`Artifact drift`"+` action label chip (`+"`<span class=\"worklabel artifact\">Artifact drift</span>`"+`) so the user can distinguish plan-change drift review from Bug hardening and Auto Improve decisions. If a finding is report-specific, eval-specific, or strategy-side, you may add one secondary work label (`+"`Report fix`"+`, `+"`Eval fix`"+`, or `+"`Improvement`"+`) to show the recommended owner/fix type, but do not present the review itself as a fix.
+
 Append:
 
 `+"```md"+`
@@ -8759,6 +8919,20 @@ Finding IDs must continue today's highest `+"`F-YYYY-MM-DD-NNN`"+` sequence alre
 
 Rewrite only the Artifact Sync Cursor block to the latest fully inspected changelog entry. If the audit is interrupted or skips entries due to missing files/errors, do not advance past the last fully inspected entry.
 
+After writing the report, call `+"`mark_changelog_artifact_reviewed`"+` for each changelog entry you fully inspected. Pass file names plus zero-based `+"`entries[]`"+` indexes. The tool stamps this metadata:
+
+`+"```json"+`
+"artifact_review": {
+  "done": true,
+  "reviewed_at": "<RFC3339 UTC>",
+  "reviewed_by": "review_artifact_sync",
+  "result": "clean|findings|cursor-backfill",
+  "report_entry_id": "<builder/improve.html entry id or heading slug>"
+}
+`+"```"+`
+
+Do not delete changelog files and do not patch them yourself. The scheduler uses `+"`artifact_review.done=true`"+` to skip this Pulse turn on future runs when there is nothing new to inspect.
+
 ## Final Response
 
 Return a concise summary:
@@ -8766,6 +8940,7 @@ Return a concise summary:
 - steps inspected
 - findings count by severity
 - cursor before/after
+- changelog entries marked reviewed
 - next recommended fix owner
 `)
 
@@ -9671,7 +9846,14 @@ When you finish, name the group explicitly in your summary (e.g. "Hardened step 
    - **Lock guard**: If you suspect the step description changed since the last review (description_reviewed may no longer reflect the current description), flag the step as "description may have changed since last review — re-review before locking" and leave lock_learnings / lock_code at their previous values.{{if .GroupName}}
    - **Single-group caution**: locking after only one group passing is weaker evidence than after all-groups passing. Be more conservative — prefer incrementing successful_runs to locking outright unless the count is already at 3+.{{end}}
 
-7. **Produce a summary** with:
+7. **Update `+"`builder/improve.html`"+` when you changed anything**:
+   - Follow `+"`get_reference_doc(kind=\"review-improve-log\")`"+` if available in this mode.
+   - Add or refresh one Decision card tagged `+"`Decision - Pulse harden`"+` when this pass was launched by Pulse, otherwise `+"`Decision - Manual`"+`.
+   - Include the `+"`Bug`"+` verdict chip.
+   - Include a primary action label chip: `+"`Bug fix`"+` by default; use `+"`Report fix`"+` for report/dashboard repairs, `+"`Eval fix`"+` for evaluation/pre-validation/rubric wiring repairs, `+"`Artifact drift`"+` when closing an Artifact Review finding, and `+"`Manual`"+` when the fix is explicitly user-requested.
+   - If you resolved an existing Open finding, edit that finding in place with a `+"`Resolved YYYY-MM-DD — <how>`"+` line. Do not delete the original finding.
+
+8. **Produce a summary** with:
    - Steps hardened (with specific changes made)
    - Best-practice violations cleaned up
    - Best-practice concerns intentionally left as findings only
@@ -10223,6 +10405,7 @@ func (iwm *InteractiveWorkshopManager) runReviewArtifactSyncAgent(ctx context.Co
 
 	allowedToolNames := []string{
 		"execute_shell_command", "diff_patch_workspace_file",
+		"mark_changelog_artifact_reviewed",
 		"get_step_prompts", "get_workflow_config", "get_llm_config",
 		"get_report_plan", "validate_report_plan", "preview_report_render",
 		"validate_evaluation_plan",

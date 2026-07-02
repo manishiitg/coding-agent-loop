@@ -67,6 +67,11 @@ func CreateHumanTools() []llmtypes.Tool {
 			"type":        "string",
 			"description": "PLAIN-TEXT email body (longer than message_for_user). When Gmail is enabled, set this as the plain fallback by default for workflow/Pulse/auto-improve notifications unless the user explicitly asked not to email. Do NOT put HTML here — for a formatted email use email_html. If omitted, message_for_user is the body. (HTML accidentally placed here is auto-detected and rendered, but email_html is correct.)",
 		}
+		notifyProps["email_to"] = map[string]interface{}{
+			"type":        "array",
+			"items":       map[string]interface{}{"type": "string"},
+			"description": "Optional Gmail To recipients that replace the configured default To recipient for this notification. Use only when the user's notification preference explicitly asks to send the email to different primary recipient(s). Every address must be in Gmail's allowed recipients list. Other channels ignore this.",
+		}
 		notifyProps["email_cc"] = map[string]interface{}{
 			"type":        "array",
 			"items":       map[string]interface{}{"type": "string"},
@@ -167,7 +172,7 @@ func buildNotifyDescription() string {
 	}
 	desc := base + " Currently enabled delivery channels: " + strings.Join(labels, ", ") + ". The message is delivered to all enabled channels — you do not choose which."
 	if gmailOn {
-		desc += " Gmail is enabled, so email_subject, email_body, email_cc, email_html, email_html_file, and email_attachments are available for the email rendering (other channels ignore these). For workflow, Pulse, org pulse, and auto-improve notifications, treat email as the default rich rendering: set email_subject, email_html, and plain email_body on the same notify_user call unless the user's notification preference explicitly says not to email. Keep email_body plain text as the fallback."
+		desc += " Gmail is enabled, so email_subject, email_body, email_to, email_cc, email_html, email_html_file, and email_attachments are available for the email rendering (other channels ignore these). For workflow, Pulse, org pulse, and auto-improve notifications, treat email as the default rich rendering: set email_subject, email_html, and plain email_body on the same notify_user call unless the user's notification preference explicitly says not to email. Set email_to only when the user's preference asks to replace the configured default To recipient; set email_cc only when the preference asks for CC recipients. Keep email_body plain text as the fallback."
 	}
 	return desc
 }
@@ -349,6 +354,12 @@ func handleNotifyUser(ctx context.Context, args map[string]interface{}) (string,
 	}
 
 	dest := NotificationDestinationFromContext(ctx)
+	if to := emailListFromArg(args["email_to"]); len(to) > 0 {
+		if dest == nil {
+			dest = &services.NotificationDestination{}
+		}
+		dest.Gmail = &services.GmailDest{Email: strings.Join(to, ", ")}
+	}
 	gc, err := gmailContentFromArgs(args)
 	if err != nil {
 		return "", err // e.g. email_html_file not found — feed the problem back to the agent

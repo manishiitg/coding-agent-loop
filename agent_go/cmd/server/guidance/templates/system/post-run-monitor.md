@@ -33,11 +33,13 @@ Format per `get_reference_doc(kind="review-improve-log")` (single log, newest-on
 - **Refresh the Bug and Goal signal tiles** with the latest run/eval evidence. Leave the cost/time tiles for the later report-only turn.
 - **Prepend or refresh one Run row** in the recent-runs strip: id, status, key Bug/Goal numbers, route/group when relevant, and a short note only if something stood out. Leave **total cost/tokens**, **wall time**, and **backup result** blank/placeholder until the later report and backup turns fill them.
 - **Confirm the last unconfirmed Decision.** If a prior harden/replan Decision card is still unconfirmed (no `.outcome` stamp) and this run exercised its changed path, judge whether it worked against the effect it predicted and add **one** outcome stamp in place: `ok` (number moved the right way — cite before → after), `bad` (no effect/regressed — say so and open/reopen a finding), or `flat` (this run didn't hit the changed path — leave it pending). Per `get_reference_doc(kind="review-improve-log")`. Don't stamp a decision made on this same run.
+- **Use action labels on every non-routine entry.** In addition to the `Bug`/`Goal` verdict chip, add the relevant `worklabel` chip from `get_reference_doc(kind="review-improve-log")`: `Bug fix` for harden changes, `Improvement` for auto-improve/strategy/reporting improvements, `Artifact drift` for Artifact Review findings, `Report fix` for report/dashboard repairs, `Eval fix` for eval repairs, `Cost/time` for telemetry observations, `Backup/publish` for backup or publish issues, and `Manual` for user-requested changes.
 
 Then, **only if something is wrong, changed, or worth the user's attention**, prepend a **Monitor** entry tagged `Bug` or `Goal`:
 - one or two plain sentences: what you observed and, for a regression, the most likely cause correlated to a specific changelog entry ("login-flow has returned skipped for 2 runs; the maker-reviewer gate was tightened on run #39 — likely cause");
 - name the fix path — `Bug` → the next turn calls `harden_workflow` with this finding as focus; `Goal` → you record the finding + its evidence for the scheduled auto-improve loop, which applies the replan when evidence is strong;
 - if it's a new problem, make it an **Open finding** (tagged Bug or Goal) with a short anchor id so the fix can close it out; if it continues an existing open finding, don't duplicate it.
+- if the entry points to a likely work type, add the action label too (for example `Bug` + `Bug fix` for a runtime break, `Bug` + `Report fix` for a broken dashboard, `Goal` + `Improvement` for a success-criteria gap).
 
 If everything is healthy and on-target, do **not** invent a problem — just the refreshed verdicts/tiles and the one Run row. Silence on a good run is correct.
 
@@ -47,6 +49,7 @@ Only when triage found a real problem this run — a clean run skips this step.
 
 - **Bug → call `harden_workflow`.** First call `get_reference_doc(kind="optimize-playbook")`, then call `harden_workflow(focus="<concise Bug finding + evidence paths from triage>")`. If the completed run was scoped to a single group, pass that `group_name`; otherwise omit it so the harden agent can inspect current groups under `iteration-0`. Do **not** hand-patch workflow internals from the Pulse turn. The spawned harden agent owns the full plan-step harden: guards, retries, selector/prompt tightening, missing-field defaults, validation, artifact-shape fixes, KB/db/report/eval contract repair, learning hygiene, stale-description cleanup, and small evidence-backed structural fixes. It also owns grounding hallucination-prone steps, reviewing touched descriptions, and deleting stale agentic `main.py` artifacts. The scheduler waits for that background harden execution before the later Artifact Review/report/backup turns.
 - **Broken eval or report → include it in the `harden_workflow` focus.** A crashed eval step, report render failure, bad `window.report.query`, or empty/erroring dashboard is still a Bug. Put the exact eval/report evidence path in the focus and let the harden agent repair the operational breakage. Do **not** redesign the eval rubric or report layout from Pulse.
+- **When harden changes something**, record/refresh a Decision card using `Decision - Pulse harden`, the `Bug` verdict chip, and a primary action label: `Bug fix` by default, or `Report fix` / `Eval fix` when the concrete repair was report/eval-specific. If it resolves an Open finding, add the resolved line to that finding too.
 - **Goal → record for the loop, don't rewrite.** For a Goal finding, do **not** rewrite the plan here. Record the **finding + its evidence** in the log (what fell short and the run/eval evidence) for the **scheduled auto-improve loop**, which owns structural `replan` changes and APPLIES the replan when cross-run evidence is strong. Pulse never runs `replan` or a full improvement pass itself.
 - **If `harden_workflow` cannot run, don't improvise.** Record the failure in `builder/improve.html` with the Bug evidence and leave it open for the builder/scheduled improve loop. Pulse owns starting the canonical harden tool; it does not bypass that tool with broad manual edits. Structural redesign remains the scheduled loop's job.
 
@@ -56,11 +59,11 @@ This is a separate Pulse item. It is not part of `harden_workflow`, and it never
 
 Run it after the fix/harden turn so it sees any plan/config/artifact changes harden just made. Read:
 
-- `planning/changelog/changelog-*.json`
+- unreviewed entries in `planning/changelog/changelog-*.json` (entries without `artifact_review.done=true`)
 - the `Artifact Sync Cursor` in `builder/improve.html`
 - any unresolved Artifact Review findings already in `builder/improve.html`
 
-If there are no material changelog entries after the cursor, do not start a background review. Update the latest run row or a compact report-only Note with `Artifact Review: no pending plan-change drift` and the cursor value you checked.
+The scheduler normally skips this whole Pulse turn when there are no unreviewed changelog entries. If you are in this turn, assume there is work to inspect unless the changelog was concurrently marked reviewed.
 
 If the cursor is missing, or material changelog entries exist after it, call `get_workflow_command_guidance(kind="review-artifact-drift", focus="Pulse artifact review; report-only; do not fix")` and follow it. The command should start `review_artifact_sync`, wait for the returned `execution_id` to complete, and record:
 
@@ -68,9 +71,11 @@ If the cursor is missing, or material changelog entries exist after it, call `ge
 - steps inspected
 - findings count by severity
 - cursor before/after
+- number of changelog entries marked `artifact_review.done=true` via `mark_changelog_artifact_reviewed`
 - recommended next owner for fixes
 
 If drift is found, record it as an **Artifact Review** finding in `builder/improve.html` with evidence and recommended owner (`Builder` for concrete repair, `Optimizer` for strategy/goal-side follow-up). Do **not** call `harden_workflow`, `replan_workflow_from_results`, plan-modification tools, or hand-patch artifacts from this step. The next builder/optimizer pass decides whether to act.
+Use the `Artifact drift` action label on Artifact Review entries. If a later builder/optimizer action actually fixes that drift, the Decision card should carry the real fix label as well (`Artifact drift` + `Report fix`, `Eval fix`, `Bug fix`, or `Improvement` depending on what changed).
 
 ### 5. Report LLM/model, cost, and time (report-only)
 
@@ -125,7 +130,7 @@ of this report-only step.
 Update the cost/time tiles and the latest Run row in `builder/improve.html` with total cost/tokens,
 wall time, LLM time, tool time, top-cost step/agent, top-time step/agent, configured tier/model vs
 observed model, and missing telemetry if relevant. Add or refresh a compact report-only Note/Pulse
-detail when material. Use a small table or bullets that wrap on mobile; never paste raw JSON.
+detail when material. Use the `Cost/time` action label on any cost/time note or finding. Use a small table or bullets that wrap on mobile; never paste raw JSON.
 
 Also overwrite `builder/card.cost.html` every run so the org dashboard can show spend health next
 to health and goal progress:
@@ -198,6 +203,7 @@ You own the notification.
 - *"notify me on every run with timing/cost by step"* → push every run with the total, top-cost step/agent, and slowest step/agent; put the full breakdown in the Pulse log/email, not the chat line.
 - *"only alert me on Bugs, never on Goal drift"* → push on a Bug transition; stay silent on a Goal-only change.
 - *"WhatsApp the one-liner, email me a fuller summary"* → still one `notify_user` call (it fans out), but set `email_subject`/`email_body` to the fuller version while keeping `message_for_user` terse.
+- *"email this to ops@example.com instead of me"* → set `email_to` to the replacement recipient(s); this replaces the default To recipient rather than adding a CC.
 - *"always include the Pulse log link / the run folder"* → append it to the message/email.
 - *"don't notify me at all"* → never call `notify_user`; just keep the log current.
 
@@ -218,6 +224,7 @@ On any of those, call `notify_user` **once**. Use this **standard one-line `mess
 - `email_subject`: a clean inbox subject — `<workflow> — broke` / `— recovered` / `— new issue`.
 - **`email_html`:** a small, designed HTML email with a consistent skeleton — a status header (`<emoji> <workflow> — <broke|recovered|new finding>`), the headline sentence, a `Bug: <state> · Goal: <state>` line, a **Dashboard** link/button when publish is on, and a footer pointing to the Pulse log. Keep it compact, **inline-styled** (email clients strip `<style>`/external CSS) and dark-text-on-light so it renders everywhere.
 - Include cost/time only when it is material, requested by `## Notifications`, useful context for the transition, or the latest `builder/card.cost.html` status is `elevated`/`missing`: total cost/time plus top step/agent or missing evidence. Keep the detailed table in the Pulse log unless the user explicitly asked for email detail.
+- `email_to`: optional replacement To recipient(s) only when the user's `## Notifications` preference asks to send email somewhere other than the configured default; every address must be configured as an allowed Gmail recipient.
 - `email_cc`: optional CC recipients only when the user's `## Notifications` preference asks for CC; every address must be configured as an allowed Gmail recipient.
 - **`email_body` (plain-text fallback):** the same content as plain text for clients that don't render HTML — your headline, then `Bug: <state> · Goal: <state>`, then `See the Pulse log for detail.` Set it alongside `email_html`; never put HTML in `email_body`.
 

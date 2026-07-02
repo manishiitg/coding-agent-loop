@@ -23,13 +23,22 @@ type planChangelogFieldChange struct {
 // planChangelogEntry mirrors PlanChangelogEntry. One entry per successful
 // plan-mod tool call, appended to planning/changelog/changelog-*.json.
 type planChangelogEntry struct {
-	Timestamp string                     `json:"timestamp"`
-	Tool      string                     `json:"tool"`
-	Reason    string                     `json:"reason"`
-	StepIDs   []string                   `json:"step_ids,omitempty"`
-	Changes   []planChangelogFieldChange `json:"changes,omitempty"`
+	Timestamp      string                       `json:"timestamp"`
+	Tool           string                       `json:"tool"`
+	Reason         string                       `json:"reason"`
+	StepIDs        []string                     `json:"step_ids,omitempty"`
+	Changes        []planChangelogFieldChange   `json:"changes,omitempty"`
+	ArtifactReview *planChangelogArtifactReview `json:"artifact_review,omitempty"`
 	// Source changelog file this entry came from (added by the server, not on disk).
 	File string `json:"file,omitempty"`
+}
+
+type planChangelogArtifactReview struct {
+	Done          bool   `json:"done"`
+	ReviewedAt    string `json:"reviewed_at,omitempty"`
+	ReviewedBy    string `json:"reviewed_by,omitempty"`
+	Result        string `json:"result,omitempty"`
+	ReportEntryID string `json:"report_entry_id,omitempty"`
 }
 
 type planChangelogFile struct {

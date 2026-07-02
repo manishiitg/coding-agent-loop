@@ -37,7 +37,7 @@ returns the live JSON schema for the tool.
 - **`get_step_prompts(step_id, attempt?, iteration?)`** — System prompt and user message for a step.
 - **`get_workflow_config`** — Inspect the workflow's current MCP servers, selected skills, available secrets, and LLM config. Use this instead of `cat workflow.json`. For the global installed skill catalog, use `list_skills`.
 - **`get_llm_config`** — Per-step LLM overrides.
-- **`get_workflow_command_guidance(kind="review-artifact-drift", focus?)`** *(Workshop only)* — Canonical artifact drift audit after material plan/config changes. Checks `planning/changelog/` entries against learnings, saved `main.py`, KB, db, reports, and eval wiring. In Pulse it runs as its own report-only Artifact Review item, separate from `harden_workflow`. Writes its cursor in `builder/improve.html`; do not create a new state file.
+- **`get_workflow_command_guidance(kind="review-artifact-drift", focus?)`** *(Workshop only)* — Canonical artifact drift audit after material plan/config changes. Checks unreviewed `planning/changelog/` entries against learnings, saved `main.py`, KB, db, reports, and eval wiring. In Pulse it runs as its own report-only Artifact Review item, separate from `harden_workflow`. Writes its cursor/report in `builder/improve.html` and uses `mark_changelog_artifact_reviewed` to stamp inspected entries with `artifact_review.done=true`; do not edit/delete changelog files directly or create a new state file.
 
 ## Plan Modification (Workshop mode)
 

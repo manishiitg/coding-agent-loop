@@ -298,6 +298,9 @@ per-workflow Pulse's transition discipline, adapted for the org:
   status header, one-sentence headline, goal scorecard summary, workflow
   alignment delta, LLM/cost highlight when material, top recommendation or decision
   needed, and buttons/links for Goals and Pulse when published.
+- `email_to`: optional replacement To recipient(s) only when the user's org
+  notification preference asks to send email somewhere other than the configured
+  default; every address must be configured as an allowed Gmail recipient.
 - `email_cc`: optional CC recipients only when the user's org notification
   preference asks for CC; every address must be configured as an allowed Gmail recipient.
 - `email_body`: plain-text fallback with the same facts; never put HTML here.

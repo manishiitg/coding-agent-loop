@@ -40,7 +40,7 @@ Every workflow is judged on two independent axes, and the header shows **both** 
 
 They are orthogonal: a run can be **Bug: broken** (a step silently skipped) while **Goal: on-target**, or **Bug: clean** while **Goal: short** (it runs perfectly but produces output that misses the point). You need both lenses: operational monitoring catches run failures, while eval and output review catch goal gaps. **Health gates goal:** a run that wasn't operationally clean produces no trustworthy goal signal, so never judge the goal on a broken run.
 
-Tag each **Monitor**, **Open finding**, and **Decision** entry with the axis it belongs to — a small **Bug** or **Goal** chip — so the timeline is filterable and the fix path is obvious (Bug → harden, Goal → refine/replan). Auto-improve decisions must be visually distinct from Pulse harden notes: use the dedicated Decision card classes below, not a generic Note or Agent card.
+Tag each **Monitor**, **Open finding**, **Artifact Review**, and **Decision** entry with the axis it belongs to — a small **Bug** or **Goal** chip when applicable — so the timeline is filterable and the fix path is obvious (Bug → harden, Goal → refine/replan). Also add an action label chip when work was done or proposed (`Bug fix`, `Improvement`, `Artifact drift`, `Report fix`, `Eval fix`, `Cost/time`, `Backup/publish`, `Manual`). Auto-improve decisions must be visually distinct from Pulse harden notes: use the dedicated Decision card classes below, not a generic Note or Agent card.
 
 ### The goal card
 
@@ -73,7 +73,7 @@ New entries go at the **top** of the timeline, not appended at the bottom. The f
 
 ### Entry kinds
 
-Each entry is a small card: a date, a kind tag, a one-line title, and a short prose body (2–4 sentences, plain language — explain *what* and *why*, link the evidence file or changelog entry when relevant). Use these kinds:
+Each entry is a small card: a date, a kind tag, optional classification chips, a one-line title, and a short prose body (2–4 sentences, plain language — explain *what* and *why*, link the evidence file or changelog entry when relevant). Use these kinds:
 
 - **Run** — a one-line row in the recent-runs strip: run id, status, key numbers (tests, eval, cost/tokens, wall time), the **backup result** (`backed up ✓ <commit/ref>`, `unchanged — already backed up`, or `backup ✗ <reason>`), and a short note only when something stands out. Routine runs stay terse; flag a run only when it regressed, the backup failed, cost/time evidence is missing, or one step/agent dominates spend/time.
 - **Monitor** — a post-run observation: what changed in the output and the most likely cause, correlated against the plan changelog ("output regressed at run N; you tightened step X two runs earlier — likely cause").
@@ -83,6 +83,26 @@ Each entry is a small card: a date, a kind tag, a one-line title, and a short pr
 - **User rule** — a constraint the user stated. Mark it clearly as authoritative ("USER RULE — authoritative") so future agents treat it as a hard constraint, never silently override it. This replaces the old `source: "user"` field — say it in words.
 - **Note** — a freeform observation or watchpoint that explains weird runs ("staging UI is mid-redesign, expect selector churn through ~June 20 — not a workflow bug").
 - **Open finding** — something wrong that is not yet fixed. Give it a short stable anchor id (e.g. `id="of-2026-06-07-screenshots"`) **only so a later Decision can mark it resolved** — that is the one place an id earns its keep. No other entry kind needs an id.
+
+### Classification chips
+
+Use two different chip families so the user can scan what happened:
+
+- **Verdict chip**: `<span class="kind bug">Bug</span>` or `<span class="kind goal">Goal</span>` answers which verdict lane the entry belongs to. Monitor, Open finding, Decision, and Artifact Review entries should carry one when applicable.
+- **Action label chip**: `<span class="worklabel ...">...</span>` answers what kind of work/fix this was. Use at most two per entry, immediately after the verdict chip.
+
+Canonical action labels:
+
+- `worklabel bugfix` → `Bug fix`: Pulse/harden changed prompts/config/guards/validation/code shape to make the workflow run correctly.
+- `worklabel improvement` → `Improvement`: Auto Improve or a builder change improved strategy, plan quality, success criteria alignment, cadence, or user-facing usefulness.
+- `worklabel artifact` → `Artifact drift`: Artifact Review found or resolved plan-change drift in reports, evals, KB/learnings, saved code, db wiring, or generated HTML.
+- `worklabel report` → `Report fix`: report dashboard/query/HTML/data-binding repair.
+- `worklabel eval` → `Eval fix`: evaluation rubric, eval wiring, route scoping, or score evidence repair.
+- `worklabel cost` → `Cost/time`: LLM/model/cost/time telemetry observation or repair.
+- `worklabel backup` → `Backup/publish`: backup or publish repair/status issue.
+- `worklabel manual` → `Manual`: user-requested/manual builder action.
+
+Do not over-label routine clean runs. If a change spans categories, choose the primary action label and add one secondary label only when it helps scanning (for example `Bug fix` + `Report fix`).
 
 ### Closing out an open finding
 
@@ -101,6 +121,7 @@ A Decision card is the visual proof that an agent took or proposed an action. It
 - `<div class="entry decision">` for normal applied/proposed auto-improve decisions.
 - `<div class="entry decision major">` when the decision changes plan strategy, report/eval measurement, workflow cadence/scope, user-facing dashboard interpretation, or materially affects cost/quality/risk.
 - `.tag.decision` with one of these exact labels: `Decision - Auto-improve - Applied`, `Decision - Auto-improve - Proposed`, `Decision - Pulse harden`, or `Decision - Manual`.
+- A verdict chip plus an action label chip. Examples: Pulse harden uses `<span class="kind bug">Bug</span><span class="worklabel bugfix">Bug fix</span>`; an auto-improve replan uses `<span class="kind goal">Goal</span><span class="worklabel improvement">Improvement</span>`; a report dashboard repair uses `<span class="kind bug">Bug</span><span class="worklabel report">Report fix</span>`.
 - `.decisiongrid` rows for the fixed fields: **Why now**, **Evidence**, **Change**, **Expected impact**, **Files touched**, and **Risk / gap**. Omit a row only when it truly does not apply; do not bury these fields in prose.
 
 Example:
@@ -110,6 +131,7 @@ Example:
   <div class="ehead">
     <span class="tag decision">Decision - Auto-improve - Applied</span>
     <span class="kind goal">Goal</span>
+    <span class="worklabel improvement">Improvement</span>
     <span class="etitle">Replanned lead-scoring around verified replies</span>
     <span class="when">2026-07-02 · scheduled improve</span>
   </div>
@@ -157,6 +179,7 @@ An existing `builder/improve.html` is **old-format** — and must be upgraded, n
 - no `<meta name="viewport">`;
 - missing mobile-first stacked `.status` / `.run` / `.entry` layouts or `overflow-wrap:anywhere`;
 - an `.etitle` rule missing `flex:1 1 auto`, or an `.ehead > .when` rule that keeps `margin-left:auto` / `white-space:nowrap` in the base mobile CSS. That older skeleton collapses entry titles and body text into narrow columns beside timestamp metadata, leaving the card half-empty in the right panel.
+- missing `.worklabel` CSS/action-label examples. Current logs need action chips such as `Bug fix`, `Improvement`, `Artifact drift`, `Report fix`, `Eval fix`, `Cost/time`, `Backup/publish`, and `Manual` so the user can scan what kind of work happened.
 
 **Do NOT append your new entry into the old structure** — that produces good content in a stale, off-brand shell. Instead, **rewrite the entire document to the Starter HTML skeleton above** as a one-time upgrade:
 
@@ -249,6 +272,8 @@ After this one rewrite the file is in skeleton format; from then on you just pre
   .tag.monitor{background:var(--warn-bg);color:var(--warn)} .tag.agent{background:var(--ok-bg);color:var(--ok)} .tag.decision{background:var(--decision-bg);color:var(--decision);border:1px solid color-mix(in srgb,var(--decision) 22%,transparent)} .entry.major .tag.decision{background:var(--major-bg);color:var(--major);border-color:color-mix(in srgb,var(--major) 25%,transparent)} .tag.user{background:var(--user-bg);color:var(--user)} .tag.open{background:var(--bad-bg);color:var(--bad)} .tag.note{background:var(--surface-2);color:var(--ink-2);border:1px solid var(--line-2)}
   .kind{font:700 8.5px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;padding:4px 7px;border-radius:6px;border:1px solid}
   .kind.bug{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 22%,transparent)} .kind.goal{color:var(--goal);border-color:color-mix(in srgb,var(--goal) 22%,transparent)}
+  .worklabel{font:700 8.5px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:4px 7px;border-radius:999px;background:var(--surface-2);border:1px solid var(--line-2);color:var(--ink-2)}
+  .worklabel.bugfix{color:var(--bad);background:var(--bad-bg);border-color:color-mix(in srgb,var(--bad) 20%,transparent)} .worklabel.improvement{color:var(--goal);background:var(--goal-bg);border-color:color-mix(in srgb,var(--goal) 20%,transparent)} .worklabel.artifact{color:var(--decision);background:var(--decision-bg);border-color:color-mix(in srgb,var(--decision) 20%,transparent)} .worklabel.report,.worklabel.eval{color:var(--warn);background:var(--warn-bg);border-color:color-mix(in srgb,var(--warn) 20%,transparent)} .worklabel.cost{color:var(--ink-2);background:var(--surface-2);border-color:var(--line-2)} .worklabel.backup{color:var(--ok);background:var(--ok-bg);border-color:color-mix(in srgb,var(--ok) 20%,transparent)} .worklabel.manual{color:var(--user);background:var(--user-bg);border-color:color-mix(in srgb,var(--user) 20%,transparent)}
   .etitle{font-weight:630;font-size:14px;line-height:1.25;letter-spacing:-.01em;flex:1 1 auto;min-width:0}.ehead>.when{margin-left:0;flex-basis:100%;font:540 11px/1.35 var(--mono);color:var(--ink-3)}
   .entry p{margin:0;font-size:13.5px;color:var(--ink);overflow-wrap:anywhere}.entry p+p{margin-top:8px}
   .entry .meta{margin-top:11px;padding-top:11px;border-top:1px solid var(--line);font:540 12px/1.5 var(--mono);color:var(--ink-3)} .entry .meta code{background:var(--surface-2);border:1px solid var(--line);border-radius:5px;padding:1px 6px;color:var(--ink-2)}
@@ -343,11 +368,12 @@ After this one rewrite the file is in skeleton format; from then on you just pre
 
   <div class="seclabel">Latest — newest first</div>
   <!-- LOG ENTRIES: newest first -->
-  <!-- Insert each new entry card immediately below this anchor. Monitor/Open-finding/Decision carry a
-       <span class="kind bug">Bug</span> or <span class="kind goal">Goal</span> chip. Card kinds:
+  <!-- Insert each new entry card immediately below this anchor. Monitor/Open-finding/Decision/Artifact Review carry a
+       <span class="kind bug">Bug</span> or <span class="kind goal">Goal</span> verdict chip when applicable, plus a
+       <span class="worklabel bugfix">Bug fix</span>, <span class="worklabel improvement">Improvement</span>, <span class="worklabel artifact">Artifact drift</span>, <span class="worklabel report">Report fix</span>, <span class="worklabel eval">Eval fix</span>, <span class="worklabel cost">Cost/time</span>, <span class="worklabel backup">Backup/publish</span>, or <span class="worklabel manual">Manual</span> action chip when work was done/proposed. Card kinds:
        <div class="entry monitor"><div class="ehead"><span class="tag monitor">Monitor</span><span class="kind bug">Bug</span><span class="etitle">…</span><span class="when">…</span></div><p>…</p></div>
-       <div class="entry agent"><div class="ehead"><span class="tag agent">Agent · hardened</span><span class="kind bug">Bug</span><span class="etitle">…</span><span class="when">…</span></div><p>…</p><p class="resolved">Resolved YYYY-MM-DD — how.</p></div>
-       <div class="entry decision major"><div class="ehead"><span class="tag decision">Decision - Auto-improve - Applied</span><span class="kind goal">Goal</span><span class="etitle">…</span><span class="when">…</span></div><div class="decisiongrid"><div><b>Why now</b><span>…</span></div><div><b>Evidence</b><span>…</span></div><div><b>Change</b><span>…</span></div><div><b>Expected impact</b><span>…</span></div><div><b>Files touched</b><span>…</span></div><div><b>Risk / gap</b><span>…</span></div></div></div>
+       <div class="entry agent"><div class="ehead"><span class="tag agent">Agent · hardened</span><span class="kind bug">Bug</span><span class="worklabel bugfix">Bug fix</span><span class="etitle">…</span><span class="when">…</span></div><p>…</p><p class="resolved">Resolved YYYY-MM-DD — how.</p></div>
+       <div class="entry decision major"><div class="ehead"><span class="tag decision">Decision - Auto-improve - Applied</span><span class="kind goal">Goal</span><span class="worklabel improvement">Improvement</span><span class="etitle">…</span><span class="when">…</span></div><div class="decisiongrid"><div><b>Why now</b><span>…</span></div><div><b>Evidence</b><span>…</span></div><div><b>Change</b><span>…</span></div><div><b>Expected impact</b><span>…</span></div><div><b>Files touched</b><span>…</span></div><div><b>Risk / gap</b><span>…</span></div></div></div>
        <div class="entry open" id="of-YYYY-MM-DD-slug"><div class="ehead"><span class="tag open">Open finding</span><span class="kind goal">Goal</span><span class="etitle">…</span><span class="when">…</span></div><p>…</p></div>
        <div class="entry user"><div class="ehead"><span class="tag user">User rule · authoritative</span><span class="etitle">…</span><span class="when">…</span></div><p>…</p></div>
        <div class="entry note"><div class="ehead"><span class="tag note">Note</span><span class="etitle">…</span><span class="when">…</span></div><p>…</p></div>

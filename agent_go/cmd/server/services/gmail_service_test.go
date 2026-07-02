@@ -177,7 +177,7 @@ func TestGmailPickRecipient(t *testing.T) {
 		defaultTo: "fallback@example.com",
 		config: &GmailConfig{
 			DefaultTo:         "fallback@example.com",
-			AllowedRecipients: []string{"fallback@example.com", "hint@example.com"},
+			AllowedRecipients: []string{"fallback@example.com", "hint@example.com", "ops@example.com"},
 		},
 	}
 
@@ -185,6 +185,11 @@ func TestGmailPickRecipient(t *testing.T) {
 	dest := &NotificationDestination{Gmail: &GmailDest{Email: "hint@example.com"}}
 	if got, err := g.pickRecipient(dest); err != nil || got != "hint@example.com" {
 		t.Fatalf("explicit hint = %q, err=%v, want hint@example.com", got, err)
+	}
+
+	// explicit To override may contain more than one allowed recipient
+	if got, err := g.pickRecipient(&NotificationDestination{Gmail: &GmailDest{Email: "Hint@Example.com, ops@example.com"}}); err != nil || got != "hint@example.com, ops@example.com" {
+		t.Fatalf("multi-recipient explicit hint = %q, err=%v, want two allowed recipients", got, err)
 	}
 
 	// explicit hint outside the allowlist is blocked before any send happens

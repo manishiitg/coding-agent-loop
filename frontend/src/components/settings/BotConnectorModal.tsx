@@ -72,7 +72,7 @@ const buildGmailAllowedRecipients = (defaultTo: string | undefined, allowedText:
   return normalizeGmailRecipients([defaultRecipient, allowedText])
 }
 
-const formatGmailRecipients = (values: string[] | undefined): string => normalizeGmailRecipients(values).join('\n')
+const formatGmailRecipients = (values: string[] | undefined): string => normalizeGmailRecipients(values).join(', ')
 
 export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModalProps) {
   const [activeSection, setActiveSection] = useState<Section>('slack')
@@ -1547,7 +1547,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                         <textarea
                           value={gmailAllowedText}
                           onChange={e => setGmailAllowedText(e.target.value)}
-                          placeholder={'you@example.com\nops@example.com'}
+                          placeholder="you@example.com, ops@example.com"
                           rows={4}
                           className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm resize-y"
                         />

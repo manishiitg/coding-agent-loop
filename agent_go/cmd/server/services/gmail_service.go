@@ -292,20 +292,28 @@ func (g *GmailService) pickRecipient(dest *NotificationDestination) (string, err
 	if candidate == "" {
 		return "", nil
 	}
-	if !g.isAllowedRecipient(candidate) {
-		return "", fmt.Errorf("gmail recipient %q is not in the allowed recipients list", candidate)
+	recipients, err := g.validateRecipients([]string{candidate}, "to")
+	if err != nil {
+		return "", err
 	}
-	return candidate, nil
+	if len(recipients) == 0 {
+		return "", nil
+	}
+	return strings.Join(recipients, ", "), nil
 }
 
 func (g *GmailService) validateCCRecipients(cc []string) ([]string, error) {
-	cc = normalizeEmailList(cc)
-	for _, recipient := range cc {
+	return g.validateRecipients(cc, "cc")
+}
+
+func (g *GmailService) validateRecipients(recipients []string, label string) ([]string, error) {
+	recipients = normalizeEmailList(recipients)
+	for _, recipient := range recipients {
 		if !g.isAllowedRecipient(recipient) {
-			return nil, fmt.Errorf("gmail cc recipient %q is not in the allowed recipients list", recipient)
+			return nil, fmt.Errorf("gmail %s recipient %q is not in the allowed recipients list", label, recipient)
 		}
 	}
-	return cc, nil
+	return recipients, nil
 }
 
 // SendNotification implements NotificationConnector. It renders the feedback
@@ -436,7 +444,7 @@ const maxGmailAttachmentBytes = 20 * 1024 * 1024 // 20 MB
 func (g *GmailService) deliver(ctx context.Context, to string, cc []string, subject, body, htmlBody string, attachments []string) (string, error) {
 	// The plain gws --body path can't carry HTML or attachments, so route through
 	// the raw-MIME path whenever either is present.
-	if htmlBody == "" && len(attachments) == 0 && len(cc) == 0 {
+	if htmlBody == "" && len(attachments) == 0 && len(cc) == 0 && !strings.Contains(to, ",") {
 		return g.send(ctx, to, subject, body)
 	}
 	return g.sendRaw(ctx, to, cc, subject, body, htmlBody, attachments)

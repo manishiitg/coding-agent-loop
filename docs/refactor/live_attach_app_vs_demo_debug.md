@@ -57,6 +57,23 @@ redraw). **Decisive diagnostic:** `tmux capture-pane -p -t <session>` showed the
 content perfectly clean while the browser was garbled+frozen ⇒ transport/render bug, not
 the session (the handoff's §8 test).
 
+**Follow-up fix (commit `1fe27d1c`) — seed `2J` erased in-viewport history ("can't
+scroll up").** The seed was `RIS → history → \x1b[H\x1b[2J → screen`, with a comment
+claiming 2J "clears only the viewport, preserving scrollback". Wrong in the case that
+matters: xterm.js ED(2) *erases viewport rows in place* — it only pushes to scrollback
+if `scrollOnEraseInDisplay` is set, which we deliberately leave off (live TUI repaints
+would stack stale frames into scrollback). Right after the RIS, the *tail* of the
+just-written history is still inside the viewport (only lines scrolled past enter
+scrollback), so the 2J destroyed up to one screenful of the most recent history on
+every (re)connect. For in-place-repaint TUIs like Claude Code — whose tmux history
+stays small because completed turns are redrawn, not scrolled — that was often *all*
+of it: the pane could not scroll up past roughly the current screen even though
+`capture-pane` showed tmux retaining the full render. Fix: drop the clear entirely.
+`capture-pane -p` always returns the full pane height, so painting the screen directly
+below the history scrolls the history up into xterm scrollback naturally and lands the
+screen exactly on the viewport (cursor rows stay aligned); an SGR reset between the two
+stops attribute bleed. Unit test now fails if any `2J` reappears in the seed.
+
 ---
 
 **Original resolution:** commit `d1ec56d6` "Fix live attach initial repaint

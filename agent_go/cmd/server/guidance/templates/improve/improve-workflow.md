@@ -139,7 +139,7 @@ Default policy when there is no explicit `soul.md ## Notifications` preference: 
 - a material schedule cadence or group-scope change
 - an intended improvement failed and needs human action
 
-Stay silent on steady scheduled fires: no fresh evidence, no action, minor log/archive maintenance, or cleanup with no user-facing effect. When notifying, call `notify_user` at most once.
+Stay silent on steady scheduled fires: no fresh evidence, no action, minor log/archive maintenance, or cleanup with no user-facing effect. When notifying, call `notify_user` at most once. When Gmail/email fields are available, email is the default rich rendering: set `email_subject`, `email_html`, and plain `email_body` on that same call unless the user's notification preference explicitly says not to email.
 
 FINAL REPORT
 Summarize:

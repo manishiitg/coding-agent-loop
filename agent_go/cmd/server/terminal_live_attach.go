@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -22,7 +23,7 @@ import (
 	"mcp-agent-builder-go/agent_go/internal/terminals"
 )
 
-// Live-attach terminal transport (Phase 1, control mode).
+// Live-attach terminal transport (control mode, in-band).
 //
 // This is the output/render transport described in
 // docs/refactor/terminal_live_attach_transport.md. It is the selected-terminal
@@ -33,20 +34,22 @@ import (
 // `tmux -CC attach` control-mode client per tmux session, parses %output into
 // the live pane byte stream, and forwards browser input / resize back to the
 // session.
+//
+// All tmux commands the transport needs (resize-window, the capture-pane
+// backfill, the cursor query) are written to the control client's OWN stdin
+// and answered in-stream between %begin/%end guards. tmux serializes those
+// replies with %output, so a reply is an exact barrier: a viewer spliced into
+// the broadcast at its seed's %end can never see output that the seed capture
+// already contained (no duplicated spinners) and never misses output produced
+// after it (no gap). The previous design ran capture-pane/display-message as
+// separate tmux processes, which raced the live stream on every (re)connect.
 
 const (
 	// liveAttachSubBuffer bounds a single viewer's pending-bytes channel. A
-	// viewer that falls this far behind has bytes dropped (not the whole
-	// stream blocked); the frontend re-seeds via the current-screen backfill on
-	// reconnect.
+	// viewer that falls this far behind is dropped entirely (its channel is
+	// closed, the WebSocket closes, and the frontend reconnects and re-seeds);
+	// silently dropping individual chunks would tear escape sequences.
 	liveAttachSubBuffer = 256
-	// liveAttachInitialDrainDelay gives a newly-created control-mode attach client
-	// a short no-subscriber window to emit tmux's initial screen repaint. The PoC
-	// had the attach loop running before the browser connected, so this first
-	// repaint was naturally dropped; without the same warm-up here the browser gets
-	// backfill followed by the attach repaint of the same screen.
-	liveAttachInitialDrainDelay = 180 * time.Millisecond
-	liveAttachInitialDrainWait  = 750 * time.Millisecond
 	// liveAttachScannerInitial is the initial control-line scan buffer; it grows
 	// up to liveattach.MaxControlLineBytes for large %output bursts.
 	liveAttachScannerInitial = 1 << 16
@@ -64,8 +67,6 @@ const (
 	liveAttachMinTmuxMajor = 2
 	liveAttachMinTmuxMinor = 9
 )
-
-var liveAttachBackfillFn = liveAttachBackfill
 
 // liveAttachEnabled reports whether the live-attach transport is turned on.
 // Live-attach is now the only transport for the selected terminal, so this is
@@ -155,6 +156,15 @@ func newLiveAttachManager() *liveAttachManager {
 	return &liveAttachManager{sessions: make(map[string]*liveAttachStream)}
 }
 
+// liveAttachCmd is one in-band command written to the control client's stdin.
+// Its reply arrives on done; onReply (optional) runs first, inline in the
+// scanner goroutine, so it is ordered exactly against the %output stream.
+type liveAttachCmd struct {
+	text    string
+	onReply func(liveattach.Reply)
+	done    chan liveattach.Reply
+}
+
 // liveAttachStream is a single `tmux -CC attach` control-mode client.
 type liveAttachStream struct {
 	mgr         *liveAttachManager
@@ -162,15 +172,28 @@ type liveAttachStream struct {
 
 	mu          sync.Mutex
 	subs        map[chan []byte]struct{}
-	ptmx        *os.File
 	cancel      context.CancelFunc
 	done        chan struct{}
-	drainedOnce sync.Once
-	drained     chan struct{}
-	cols        int
-	rows        int
 	appliedCols int
 	appliedRows int
+	// seeding counts viewers between seedViewer entry and splice/abandon, so
+	// idle-stop logic does not kill the attach under a viewer that has not
+	// reached the subs map yet.
+	seeding int
+
+	// In-band command plumbing. sendCommand enqueues onto writeCh; a single
+	// writer pump (started when the control stdin exists) appends each command
+	// to pending and then writes it, so queue order always equals write order
+	// and no lock is ever held across the (potentially blocking) write.
+	// deliverReply pops pending FIFO from the scanner goroutine.
+	pendingMu sync.Mutex
+	pending   []*liveAttachCmd
+	writeCh   chan *liveAttachCmd
+	pumpOnce  sync.Once
+
+	// initial geometry for the attach PTY.
+	cols int
+	rows int
 }
 
 // liveAttachAttachFn runs the real control-mode attach loop for a stream. It is
@@ -190,15 +213,15 @@ func (m *liveAttachManager) hasSession(tmuxSession string) bool {
 	return ok
 }
 
-// subscribe registers a viewer for a tmux session, starting the attach client
-// on the first subscriber. It returns the shared stream and the viewer's byte
-// channel; both are nil if the session name is empty.
-func (m *liveAttachManager) subscribe(tmuxSession string, cols, rows int) (*liveAttachStream, chan []byte) {
+// stream returns the live control-mode stream for a tmux session, creating and
+// starting it on first use. Returns nil for an empty session name.
+func (m *liveAttachManager) stream(tmuxSession string, cols, rows int) *liveAttachStream {
 	tmuxSession = strings.TrimSpace(tmuxSession)
 	if tmuxSession == "" {
-		return nil, nil
+		return nil
 	}
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	st := m.sessions[tmuxSession]
 	if st != nil && st.isDone() {
 		delete(m.sessions, tmuxSession)
@@ -210,30 +233,43 @@ func (m *liveAttachManager) subscribe(tmuxSession string, cols, rows int) (*live
 			tmuxSession: tmuxSession,
 			subs:        make(map[chan []byte]struct{}),
 			done:        make(chan struct{}),
-			drained:     make(chan struct{}),
+			writeCh:     make(chan *liveAttachCmd, 64),
 			cols:        cols,
 			rows:        rows,
 		}
 		m.sessions[tmuxSession] = st
+		// Queued before start so it is the first in-band command: pin the
+		// window so explicit resize-window calls own the geometry (the browser
+		// grid is authoritative, not the control client's PTY size).
+		if _, err := st.sendCommand(fmt.Sprintf("set-window-option -t %s window-size manual", tmuxSession), nil); err != nil {
+			log.Printf("[live-attach] queue window-size manual session=%s: %v", tmuxSession, err)
+		}
 		st.start()
 	}
-	m.mu.Unlock()
+	return st
+}
 
-	// Apply the desired grid before adding this viewer. On the first subscribe,
-	// there are no subscribers yet, so tmux's resize repaint and control-mode
-	// attach's initial full-screen repaint are drained instead of being appended
-	// after the backfill.
-	st.setSize(cols, rows)
-	st.waitInitialDrain()
-	if st.isDone() {
-		return nil, nil
+// addViewer registers a viewer for a tmux session and returns the shared
+// stream, the viewer's byte channel, and the seed frame (reset + scrollback
+// history + current screen + cursor). The seed is captured IN-BAND: the viewer
+// channel is spliced into the broadcast set at the seed's %end, inside the
+// scanner goroutine, so seed and stream can neither overlap nor gap.
+func (m *liveAttachManager) addViewer(ctx context.Context, tmuxSession string, cols, rows int) (*liveAttachStream, chan []byte, []byte, error) {
+	// Validate before ANY in-band command is built: control-mode command lines
+	// are string-parsed by tmux, so an unsafe session name must never reach
+	// the queue.
+	if err := liveAttachValidTarget(strings.TrimSpace(tmuxSession)); err != nil {
+		return nil, nil, nil, err
 	}
-
-	ch := make(chan []byte, liveAttachSubBuffer)
-	st.mu.Lock()
-	st.subs[ch] = struct{}{}
-	st.mu.Unlock()
-	return st, ch
+	st := m.stream(tmuxSession, cols, rows)
+	if st == nil {
+		return nil, nil, nil, fmt.Errorf("empty tmux session name")
+	}
+	ch, seed, err := st.seedViewer(ctx, cols, rows)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return st, ch, seed, nil
 }
 
 func (st *liveAttachStream) isDone() bool {
@@ -262,7 +298,6 @@ func (m *liveAttachManager) dropStream(st *liveAttachStream) {
 		delete(st.subs, ch)
 		close(ch)
 	}
-	st.ptmx = nil
 	st.mu.Unlock()
 }
 
@@ -272,27 +307,10 @@ func (st *liveAttachStream) start() {
 	st.cancel = cancel
 	go func() {
 		defer cancel()
-		defer st.markInitialDrainComplete()
 		defer st.mgr.dropStream(st)
 		defer close(st.done)
 		liveAttachAttachFn(st, ctx)
 	}()
-}
-
-func (st *liveAttachStream) markInitialDrainComplete() {
-	st.drainedOnce.Do(func() {
-		close(st.drained)
-	})
-}
-
-func (st *liveAttachStream) waitInitialDrain() {
-	if st == nil || st.drained == nil {
-		return
-	}
-	select {
-	case <-st.drained:
-	case <-time.After(liveAttachInitialDrainWait):
-	}
 }
 
 // stop cancels the attach client; the goroutine then unwinds via dropStream.
@@ -313,71 +331,347 @@ func (st *liveAttachStream) unsubscribe(ch chan []byte) {
 		delete(st.subs, ch)
 		close(ch)
 	}
-	last := ok && len(st.subs) == 0
+	last := ok && len(st.subs) == 0 && st.seeding == 0
 	st.mu.Unlock()
 	if last {
 		st.stop()
 	}
 }
 
-// broadcast fans a decoded pane chunk out to all viewers, dropping for any
-// viewer whose buffer is full rather than blocking the whole stream.
+// broadcast fans a decoded pane chunk out to all viewers. A viewer whose
+// buffer is full is dropped entirely (channel closed -> its WebSocket closes ->
+// the frontend reconnects and re-seeds); forwarding a stream with holes would
+// tear escape sequences and corrupt the pane.
 func (st *liveAttachStream) broadcast(b []byte) {
 	if len(b) == 0 {
 		return
 	}
 	cp := make([]byte, len(b))
 	copy(cp, b)
+	dropped := false
 	st.mu.Lock()
 	for ch := range st.subs {
 		select {
 		case ch <- cp:
 		default:
-			// Slow viewer: drop. Reconnect re-seeds via current-screen backfill.
+			delete(st.subs, ch)
+			close(ch)
+			dropped = true
+			log.Printf("[live-attach] session=%s dropped slow viewer (buffer full)", st.tmuxSession)
 		}
 	}
+	last := dropped && len(st.subs) == 0 && st.seeding == 0
 	st.mu.Unlock()
+	if last {
+		st.stop()
+	}
 }
 
-// setSize records the requested geometry and applies it directly to the tmux
-// window. The app's live pane must be the same grid as browser xterm; relying on
-// the control-mode PTY size is not authoritative for pi-cli sessions on macOS.
-// This mirrors the static resize path and the PoC demo: pin window-size manual,
-// then resize-window to the fitted xterm grid.
+// setControlWriter publishes the control client's stdin and starts the single
+// writer pump that flushes queued commands to it.
+func (st *liveAttachStream) setControlWriter(w io.Writer) {
+	st.pumpOnce.Do(func() {
+		go st.writePump(w)
+	})
+}
+
+// writePump is the ONLY goroutine that writes command lines to the control
+// stdin. Appending to pending and writing happen in one goroutine, so queue
+// order always equals write order (tmux numbers replies in arrival order) and
+// no lock is held across the write — a blocked write can therefore never
+// deadlock deliverReply on the scanner side.
+func (st *liveAttachStream) writePump(w io.Writer) {
+	for {
+		select {
+		case cmd := <-st.writeCh:
+			st.pendingMu.Lock()
+			st.pending = append(st.pending, cmd)
+			st.pendingMu.Unlock()
+			if _, err := io.WriteString(w, cmd.text+"\n"); err != nil {
+				// A broken control stdin means the attach is dying; the scanner
+				// will unwind the stream and close st.done, which unblocks any
+				// waiters. Nothing more useful to do here.
+				log.Printf("[live-attach] session=%s write command %q: %v", st.tmuxSession, cmd.text, err)
+				return
+			}
+		case <-st.done:
+			return
+		}
+	}
+}
+
+// enqueuePending appends a command to the reply queue without writing it.
+// Used for the attach handshake, whose %begin/%end pair tmux emits unasked.
+func (st *liveAttachStream) enqueuePending(cmd *liveAttachCmd) {
+	st.pendingMu.Lock()
+	st.pending = append(st.pending, cmd)
+	st.pendingMu.Unlock()
+}
+
+// sendCommand queues one command line for the control client's stdin and
+// registers it for FIFO reply matching.
+func (st *liveAttachStream) sendCommand(text string, onReply func(liveattach.Reply)) (*liveAttachCmd, error) {
+	cmd := &liveAttachCmd{text: text, onReply: onReply, done: make(chan liveattach.Reply, 1)}
+	select {
+	case st.writeCh <- cmd:
+		return cmd, nil
+	case <-st.done:
+		return nil, fmt.Errorf("live-attach stream for %s is closed", st.tmuxSession)
+	}
+}
+
+// deliverReply hands a completed %begin/%end block to the oldest pending
+// command. Runs in the scanner goroutine, so onReply callbacks are perfectly
+// ordered against broadcast %output.
+func (st *liveAttachStream) deliverReply(reply liveattach.Reply) {
+	st.pendingMu.Lock()
+	var cmd *liveAttachCmd
+	if len(st.pending) > 0 {
+		cmd = st.pending[0]
+		st.pending = st.pending[1:]
+	}
+	st.pendingMu.Unlock()
+	if cmd == nil {
+		log.Printf("[live-attach] session=%s unmatched command reply (number=%s err=%v)", st.tmuxSession, reply.Number, reply.Err)
+		return
+	}
+	if reply.Err {
+		log.Printf("[live-attach] session=%s command failed: %q -> %s", st.tmuxSession, cmd.text, strings.Join(reply.Lines, " / "))
+	}
+	if cmd.onReply != nil {
+		cmd.onReply(reply)
+	}
+	cmd.done <- reply
+}
+
+// setSize applies the requested geometry to the tmux window via an in-band
+// resize-window. The app's live pane must be the same grid as browser xterm;
+// window-size manual (pinned at attach) makes these calls authoritative.
 func (st *liveAttachStream) setSize(cols, rows int) {
 	if cols < terminalMinResizeCols || rows < terminalMinResizeRows {
 		return
 	}
 	st.mu.Lock()
 	if st.appliedCols == cols && st.appliedRows == rows {
-		st.cols, st.rows = cols, rows
 		st.mu.Unlock()
-		ctx, cancel := context.WithTimeout(context.Background(), terminalTmuxActionTimeout)
-		defer cancel()
-		if curW, curH, ok := terminalWindowSize(ctx, st.tmuxSession); ok && curW == cols && curH == rows {
-			return
-		}
-	} else {
-		st.cols, st.rows = cols, rows
-		st.mu.Unlock()
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), terminalTmuxActionTimeout)
-	defer cancel()
-	st.enableManualWindowSize(ctx)
-	if err := runTerminalTmuxCommand(ctx, "", "resize-window", "-t", st.tmuxSession, "-x", strconv.Itoa(cols), "-y", strconv.Itoa(rows)); err != nil {
-		log.Printf("[live-attach] resize-window session=%s %dx%d: %v", st.tmuxSession, cols, rows, err)
 		return
 	}
-	st.mu.Lock()
+	// Optimistic: FIFO ordering means the last sent resize is the one that
+	// sticks; a failed reply just allows a redundant retry later.
 	st.appliedCols, st.appliedRows = cols, rows
 	st.mu.Unlock()
+	if _, err := st.sendCommand(fmt.Sprintf("resize-window -t %s -x %d -y %d", st.tmuxSession, cols, rows), nil); err != nil {
+		log.Printf("[live-attach] resize-window session=%s %dx%d: %v", st.tmuxSession, cols, rows, err)
+		st.mu.Lock()
+		if st.appliedCols == cols && st.appliedRows == rows {
+			st.appliedCols, st.appliedRows = 0, 0
+		}
+		st.mu.Unlock()
+	}
+}
+
+// seedViewer captures the seed in-band and splices the viewer channel into the
+// broadcast set at the final reply's %end (inside the scanner goroutine).
+func (st *liveAttachStream) seedViewer(ctx context.Context, cols, rows int) (ch chan []byte, seed []byte, err error) {
+	st.mu.Lock()
+	st.seeding++
+	st.mu.Unlock()
+	seeded := false
+	defer func() {
+		st.mu.Lock()
+		st.seeding--
+		idle := len(st.subs) == 0 && st.seeding == 0 && !seeded
+		st.mu.Unlock()
+		if idle {
+			// The seed failed before any viewer reached the subs map; without
+			// this the attach would idle forever with zero viewers.
+			st.stop()
+		}
+	}()
+
+	if err := liveAttachValidTarget(st.tmuxSession); err != nil {
+		return nil, nil, err
+	}
+	st.setSize(cols, rows)
+
+	ch = make(chan []byte, liveAttachSubBuffer)
+	var seedMu sync.Mutex
+	abandoned := false
+	resultCh := make(chan []byte, 1)
+
+	// The seed chain runs entirely in the scanner goroutine (each step is an
+	// onReply callback), so all steps are serialized against %output:
+	//   1. #{history_size} — tmux clamps a capture-pane -S/-E range into the
+	//      visible screen when the scrollback is empty, which would seed the
+	//      first screen row twice; only capture history that actually exists.
+	//   2. capture-pane history slice (scrollback only, no -J).
+	//   3. capture-pane current screen.
+	//   4. cursor query — its %end is the splice point.
+	var historyCmd, screenCmd *liveAttachCmd
+	finish := func(cursor liveattach.Reply) {
+		seedMu.Lock()
+		defer seedMu.Unlock()
+		if abandoned {
+			return
+		}
+		// The history/screen replies are FIFO-earlier, so their buffered done
+		// channels are guaranteed filled (historyCmd may be nil: no scrollback).
+		var history, screen liveattach.Reply
+		if historyCmd != nil {
+			select {
+			case history = <-historyCmd.done:
+			default:
+			}
+		}
+		if screenCmd != nil {
+			select {
+			case screen = <-screenCmd.done:
+			default:
+			}
+		}
+		// Splice before the scanner classifies any further line: every %output
+		// after this instant post-dates the screen capture.
+		st.mu.Lock()
+		st.subs[ch] = struct{}{}
+		st.mu.Unlock()
+		resultCh <- buildLiveAttachSeed(history, screen, cursor)
+	}
+	_, err = st.sendCommand(
+		fmt.Sprintf("display-message -p -t %s '#{history_size}'", st.tmuxSession),
+		func(sizeReply liveattach.Reply) {
+			historySize := 0
+			if !sizeReply.Err && len(sizeReply.Lines) > 0 {
+				if n, err := strconv.Atoi(strings.TrimSpace(sizeReply.Lines[0])); err == nil {
+					historySize = n
+				}
+			}
+			if historySize > liveAttachBackfillHistoryLines {
+				historySize = liveAttachBackfillHistoryLines
+			}
+			var sendErr error
+			if historySize > 0 {
+				historyCmd, sendErr = st.sendCommand(fmt.Sprintf("capture-pane -t %s -p -e -S -%d -E -1", st.tmuxSession, historySize), nil)
+				if sendErr != nil {
+					return // stream dying; the seed waiter unblocks via st.done
+				}
+			}
+			screenCmd, sendErr = st.sendCommand(fmt.Sprintf("capture-pane -t %s -p -e", st.tmuxSession), nil)
+			if sendErr != nil {
+				return
+			}
+			if _, sendErr = st.sendCommand(fmt.Sprintf("display-message -p -t %s '#{cursor_x},#{cursor_y}'", st.tmuxSession), finish); sendErr != nil {
+				return
+			}
+		},
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	abandon := func() {
+		seedMu.Lock()
+		abandoned = true
+		seedMu.Unlock()
+		// If the splice raced ahead of the abandon flag, undo it.
+		select {
+		case <-resultCh:
+			st.unsubscribe(ch)
+		default:
+		}
+	}
+
+	timeout := time.NewTimer(terminalTmuxActionTimeout)
+	defer timeout.Stop()
+	select {
+	case seed := <-resultCh:
+		seeded = true
+		return ch, seed, nil
+	case <-st.done:
+		return nil, nil, fmt.Errorf("live-attach stream for %s closed during seed", st.tmuxSession)
+	case <-ctx.Done():
+		abandon()
+		return nil, nil, ctx.Err()
+	case <-timeout.C:
+		abandon()
+		return nil, nil, fmt.Errorf("live-attach seed for %s timed out", st.tmuxSession)
+	}
+}
+
+// buildLiveAttachSeed renders the in-band capture replies as a clean seed for
+// a connecting viewer:
+//  1. RIS clears stale emulator state from the previous mount/session.
+//  2. The bounded history slice becomes xterm-native scrollback.
+//  3. CSI 2J clears only the viewport, preserving that scrollback.
+//  4. The current visible tmux screen is painted as the authoritative live
+//     frame, and the cursor is left at tmux's real cursor so cursor-relative
+//     live redraws (spinners/status rows) update the seeded screen in place.
+//
+// The history capture deliberately omits -J: joining preserves trailing
+// spaces, which drags cell background fills (e.g. Claude Code's neutral
+// canvas) out to full-width gray bars in scrollback.
+func buildLiveAttachSeed(history, screen, cursor liveattach.Reply) []byte {
+	var b []byte
+	b = append(b, []byte("\x1bc")...)
+
+	historyLines := history.Lines
+	for len(historyLines) > 0 && strings.TrimSpace(historyLines[len(historyLines)-1]) == "" {
+		historyLines = historyLines[:len(historyLines)-1]
+	}
+	if !history.Err && len(historyLines) > 0 {
+		b = append(b, []byte(strings.Join(historyLines, "\r\n"))...)
+		b = append(b, []byte("\r\n")...)
+	}
+
+	b = append(b, []byte("\x1b[H\x1b[2J")...)
+	if !screen.Err {
+		b = append(b, []byte(strings.Join(screen.Lines, "\r\n"))...)
+	}
+
+	if x, y, ok := parseLiveAttachCursor(cursor); ok {
+		b = append(b, []byte(fmt.Sprintf("\x1b[%d;%dH", y+1, x+1))...)
+	}
+	return b
+}
+
+// parseLiveAttachCursor reads the "#{cursor_x},#{cursor_y}" reply.
+func parseLiveAttachCursor(cursor liveattach.Reply) (int, int, bool) {
+	if cursor.Err || len(cursor.Lines) == 0 {
+		return 0, 0, false
+	}
+	parts := strings.Split(strings.TrimSpace(cursor.Lines[0]), ",")
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	x, errX := strconv.Atoi(strings.TrimSpace(parts[0]))
+	y, errY := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if errX != nil || errY != nil || x < 0 || y < 0 {
+		return 0, 0, false
+	}
+	return x, y, true
+}
+
+// liveAttachValidTarget rejects session names that could not be written safely
+// as a bare in-band command argument. App session names (mlp-…) always pass.
+func liveAttachValidTarget(tmuxSession string) error {
+	if tmuxSession == "" {
+		return fmt.Errorf("empty tmux session name")
+	}
+	for _, r := range tmuxSession {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '-' || r == '_' || r == '.' || r == ':':
+		default:
+			return fmt.Errorf("tmux session name %q contains unsupported character %q", tmuxSession, r)
+		}
+	}
+	return nil
 }
 
 // runControlMode is the real attach loop: it starts `tmux -CC attach` under a
 // PTY (control mode still needs a real tty for the client's own stdio — plain
-// pipes fail tcgetattr), parses the control protocol, and broadcasts decoded
-// pane bytes. It returns on ctx cancel, %exit, or the session going away.
+// pipes fail tcgetattr), parses the control protocol, answers in-band command
+// replies, and broadcasts decoded pane bytes. It returns on ctx cancel, %exit,
+// or the session going away.
 func (st *liveAttachStream) runControlMode(ctx context.Context) {
 	st.mu.Lock()
 	cols, rows := st.cols, st.rows
@@ -389,10 +683,6 @@ func (st *liveAttachStream) runControlMode(ctx context.Context) {
 		rows = liveAttachDefaultRows
 	}
 
-	// Keep explicit resize-window calls authoritative. Control-mode PTY sizing is
-	// not reliable enough here; the browser grid owns the tmux window size.
-	st.enableManualWindowSize(ctx)
-
 	cmd := exec.CommandContext(ctx, "tmux", "-CC", "attach", "-t", st.tmuxSession)
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
@@ -400,11 +690,13 @@ func (st *liveAttachStream) runControlMode(ctx context.Context) {
 		log.Printf("[live-attach] attach failed session=%s: %v", st.tmuxSession, err)
 		return
 	}
-	drainTimer := time.AfterFunc(liveAttachInitialDrainDelay, st.markInitialDrainComplete)
-	defer drainTimer.Stop()
-	st.mu.Lock()
-	st.ptmx = ptmx
-	st.mu.Unlock()
+
+	// tmux emits an unsolicited empty %begin/%end pair for the attach itself;
+	// give it a queue slot before any real command so FIFO matching holds.
+	// Enqueued before the writer pump starts, so it is guaranteed to sit ahead
+	// of every queued command in pending.
+	st.enqueuePending(&liveAttachCmd{text: "(attach)", done: make(chan liveattach.Reply, 1)})
+	st.setControlWriter(ptmx)
 
 	// Reap the PTY and control client when the context is canceled.
 	go func() {
@@ -415,10 +707,15 @@ func (st *liveAttachStream) runControlMode(ctx context.Context) {
 		}
 	}()
 
+	proto := &liveattach.Protocol{}
 	sc := bufio.NewScanner(ptmx)
 	sc.Buffer(make([]byte, liveAttachScannerInitial), liveattach.MaxControlLineBytes)
 	for sc.Scan() {
-		pl := liveattach.ClassifyLine(sc.Text())
+		pl, reply := proto.Feed(sc.Text())
+		if reply != nil {
+			st.deliverReply(*reply)
+			continue
+		}
 		switch pl.Kind {
 		case liveattach.LinePaneOutput:
 			st.broadcast(pl.Data)
@@ -427,26 +724,15 @@ func (st *liveAttachStream) runControlMode(ctx context.Context) {
 				log.Printf("[live-attach] session=%s control exit: %s", st.tmuxSession, pl.Raw)
 				return
 			}
-			// %layout-change / %window-renamed / %session-changed / %begin /
-			// %end / … : routed here, never into the pane stream. Phase 1 has
-			// no per-event handling beyond %exit; reconnect backfill covers
-			// layout/size changes.
+			// %layout-change / %window-renamed / %session-changed / … : routed
+			// here, never into the pane stream. No per-event handling needed;
+			// reconnect re-seeds cover layout changes.
 		default:
-			// LineEmpty / LineStray: ignore.
+			// LineEmpty / LineStray / LineReplyBody: ignore.
 		}
 	}
 	if err := sc.Err(); err != nil {
 		log.Printf("[live-attach] scanner error session=%s: %v", st.tmuxSession, err)
-	}
-}
-
-// enableManualWindowSize pins the tmux window so explicit resize-window calls
-// govern the geometry. Best-effort.
-func (st *liveAttachStream) enableManualWindowSize(ctx context.Context) {
-	cctx, cancel := context.WithTimeout(ctx, terminalTmuxActionTimeout)
-	defer cancel()
-	if err := runTerminalTmuxCommand(cctx, "", "set-window-option", "-t", st.tmuxSession, "window-size", "manual"); err != nil {
-		log.Printf("[live-attach] set window-size manual session=%s: %v", st.tmuxSession, err)
 	}
 }
 
@@ -493,11 +779,15 @@ func (api *StreamingAPI) handleTerminalStream(w http.ResponseWriter, r *http.Req
 	connCtx, connCancel := context.WithCancel(context.Background())
 	defer connCancel()
 
-	// 1) Subscribe to the shared control-mode attach for this tmux session. On a
-	//    first viewer, subscribe warms the attach with no subscriber so tmux's
-	//    initial repaint is drained before the browser sees live bytes.
-	st, ch := api.liveAttach.subscribe(snapshot.TmuxSession, cols, rows)
-	if st == nil || ch == nil {
+	// Seed + subscribe in one atomic in-band operation: the viewer channel is
+	// spliced into the broadcast exactly at the seed capture's %end, so the
+	// seed and the live stream can neither overlap (duplicated frames) nor
+	// gap. If the attach dies during seeding this returns an error and the
+	// WebSocket closes, prompting the frontend to reconnect against the
+	// latest terminal snapshot.
+	st, ch, seed, err := api.liveAttach.addViewer(connCtx, snapshot.TmuxSession, cols, rows)
+	if err != nil {
+		log.Printf("[live-attach] seed terminal=%s session=%s: %v", snapshot.TerminalID, snapshot.TmuxSession, err)
 		return
 	}
 	defer st.unsubscribe(ch)
@@ -506,22 +796,19 @@ func (api *StreamingAPI) handleTerminalStream(w http.ResponseWriter, r *http.Req
 		api.persistLiveAttachTranscript(snapshot.TerminalID, transcript.content())
 	}
 
-	// 2) One current-screen backfill snapshot so the fresh viewer sees current
-	//    screen state before queued live %output resumes. The writer goroutine is
-	//    started after this, so any live bytes produced during capture are
-	//    delivered after the backfill instead of interleaving with it.
-	if bf := liveAttachBackfillFn(connCtx, snapshot.TmuxSession); len(bf) > 0 {
-		transcript.append(bf)
+	if len(seed) > 0 {
+		transcript.append(seed)
 		persistTranscript()
-		_ = conn.WriteMessage(websocket.BinaryMessage, bf)
+		_ = conn.WriteMessage(websocket.BinaryMessage, seed)
 	}
 	defer persistTranscript()
 
 	// Writer: decoded pane bytes -> WebSocket (binary). Ends when the channel
-	// is closed (unsubscribe / stream death) or the connection write fails.
-	// If the tmux stream dies before the browser sends input, actively close the
-	// WebSocket so the frontend reconnects against the latest terminal snapshot
-	// instead of sitting on a blank/stale "connected" stream.
+	// is closed (unsubscribe / stream death / slow-viewer drop) or the
+	// connection write fails. If the tmux stream dies before the browser sends
+	// input, actively close the WebSocket so the frontend reconnects against
+	// the latest terminal snapshot instead of sitting on a blank/stale
+	// "connected" stream.
 	var writeMu sync.Mutex
 	go func() {
 		defer persistTranscript()
@@ -678,73 +965,6 @@ func liveAttachInitialSize(r *http.Request) (int, int) {
 	return cols, rows
 }
 
-// liveAttachBackfill returns a clean seed for a connecting viewer:
-//  1. RIS clears stale emulator state from the previous mount/session.
-//  2. A bounded history slice is written as plain terminal lines, giving xterm
-//     real native scrollback after reconnect/resume.
-//  3. CSI 2J clears only the viewport, preserving that scrollback.
-//  4. The current visible tmux screen is painted last as the authoritative live
-//     frame before control-mode %output resumes.
-//
-// Do not use a single `capture-pane -S ...` as the visible seed. Flattened
-// scrollback can contain old spinner/status frames and line wrapping from prior
-// geometry; painting the current screen separately keeps those artifacts out of
-// the viewport while still making manual scroll work.
-func liveAttachBackfill(ctx context.Context, tmuxSession string) []byte {
-	cctx, cancel := context.WithTimeout(ctx, terminalTmuxActionTimeout)
-	defer cancel()
-
-	var b []byte
-	b = append(b, []byte("\x1bc")...)
-	if history, err := runTerminalTmuxOutputCommand(cctx, "capture-pane", "-t", tmuxSession, "-p", "-e", "-J", "-S", fmt.Sprintf("-%d", liveAttachBackfillHistoryLines), "-E", "-1"); err == nil {
-		history = strings.TrimRight(history, "\r\n")
-		if history != "" {
-			b = append(b, []byte(strings.ReplaceAll(history, "\n", "\r\n"))...)
-			b = append(b, []byte("\r\n")...)
-		}
-	} else {
-		log.Printf("[live-attach] history backfill session=%s: %v", tmuxSession, err)
-	}
-
-	out, err := runTerminalTmuxOutputCommand(cctx, "capture-pane", "-t", tmuxSession, "-p", "-e")
-	if err != nil {
-		log.Printf("[live-attach] backfill session=%s: %v", tmuxSession, err)
-		return b
-	}
-	body := strings.ReplaceAll(out, "\n", "\r\n")
-	b = append(b, []byte("\x1b[H\x1b[2J")...)
-	b = append(b, []byte(body)...)
-	if cursorX, cursorY, ok := liveAttachCursorPosition(cctx, tmuxSession); ok {
-		// capture-pane paints characters but does not restore cursor position.
-		// Live CLI redraws often use cursor-relative writes (spinners/status
-		// rows); leave xterm at tmux's actual cursor so the first live %output
-		// updates the seeded screen instead of duplicating it on a new row.
-		b = append(b, []byte(fmt.Sprintf("\x1b[%d;%dH", cursorY+1, cursorX+1))...)
-	}
-	return b
-}
-
-func liveAttachCursorPosition(ctx context.Context, tmuxSession string) (int, int, bool) {
-	tmuxSession = strings.TrimSpace(tmuxSession)
-	if tmuxSession == "" {
-		return 0, 0, false
-	}
-	out, err := runTerminalTmuxOutputCommand(ctx, "display-message", "-p", "-t", tmuxSession, "#{cursor_x}\t#{cursor_y}")
-	if err != nil {
-		return 0, 0, false
-	}
-	parts := strings.Split(strings.TrimSpace(out), "\t")
-	if len(parts) != 2 {
-		return 0, 0, false
-	}
-	cursorX, errX := strconv.Atoi(strings.TrimSpace(parts[0]))
-	cursorY, errY := strconv.Atoi(strings.TrimSpace(parts[1]))
-	if errX != nil || errY != nil || cursorX < 0 || cursorY < 0 {
-		return 0, 0, false
-	}
-	return cursorX, cursorY, true
-}
-
 // liveAttachRawInput forwards raw terminal input bytes faithfully via
 // `send-keys -H` (hex), so Enter (0d), Ctrl-C (03), arrows, and pastes all pass
 // through. Reuses the existing tmux exec helper.
@@ -764,10 +984,10 @@ func (api *StreamingAPI) liveAttachRawInput(ctx context.Context, tmuxSession str
 	}
 }
 
-// liveAttachControlFrame handles a JSON text frame: resize (control PTY size),
-// input (load-buffer+paste-buffer, the existing path), or key (send-keys named
-// key, the existing path). Unrecognized JSON falls back to raw input for
-// robustness.
+// liveAttachControlFrame handles a JSON text frame: resize (in-band
+// resize-window), input (load-buffer+paste-buffer, the existing path), or key
+// (send-keys named key, the existing path). Unrecognized JSON falls back to
+// raw input for robustness.
 func (api *StreamingAPI) liveAttachControlFrame(ctx context.Context, st *liveAttachStream, tmuxSession string, data []byte) {
 	var ctrl struct {
 		Type   string `json:"type"`

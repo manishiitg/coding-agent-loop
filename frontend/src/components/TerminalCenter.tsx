@@ -544,17 +544,13 @@ function measureRawXtermElementSize(el: HTMLElement | null): { cols: number; row
   return { cols, rows }
 }
 
-function fitRawXtermToVisibleGrid(
-  term: XTerm,
-  fit: FitAddon,
-  mount: HTMLElement,
-  visibleContainer: HTMLElement | null,
-): void {
-  const measured = measureRawXtermElementSize(visibleContainer || mount)
+// FitAddon is the single sizing authority for embedded xterm panes. Do NOT
+// re-measure with DOM rulers and term.resize() on top of fit(): the two
+// metrics always disagree slightly, so every layout tick resizes the grid
+// twice, each firing a resize-window -> full CLI repaint (stacked spinners,
+// mis-wrapped frames). The PoC demo used bare fit() and rendered flawlessly.
+function fitRawXtermToVisibleGrid(fit: FitAddon): void {
   fit.fit()
-  if (measured && (term.cols !== measured.cols || term.rows !== measured.rows)) {
-    term.resize(measured.cols, measured.rows)
-  }
 }
 
 function scrollXtermFromWheel(
@@ -1799,9 +1795,11 @@ const ColoredText: React.FC<{ rawText: string; className?: string }> = ({ rawTex
 // LiveAttachXtermPane is the live-attach transport (see
 // docs/refactor/terminal_live_attach_transport.md). It renders the SELECTED live
 // tmux terminal directly from the /api/terminals/{id}/stream WebSocket instead of
-// the snapshot/replay polling path: the backend's first frame is a current-screen
-// backfill/reset, then the live control-mode %output byte stream. We write those
-// bytes straight into xterm — no content-prop replay.
+// the snapshot/replay polling path: the backend's first frame is a seed captured
+// IN-BAND on the tmux control channel (reset + scrollback history + current
+// screen, atomic with the stream — no overlap, no gap), then the live
+// control-mode %output byte stream. We write those bytes straight into xterm —
+// no content-prop replay.
 //
 // It is rendered for every selected non-synthetic terminal with a tmux session;
 // the rail/other terminals are untouched. It is mounted with a key that includes
@@ -1909,32 +1907,55 @@ const LiveAttachXtermPaneInner: React.FC<{
     let closed = false
     let reconnectTimer: number | undefined
     let hasConnected = false
-    const decoder = new TextDecoder()
     const connect = () => {
       if (closed) return
-      if (!hasUsableGrid()) return
+      if (!hasUsableGrid()) {
+        // The pane can be transiently hidden/collapsed when a reconnect fires.
+        // Retry instead of bailing: returning here used to strand the stream
+        // permanently (hasConnected stayed true, so nothing called connect again).
+        reconnectTimer = window.setTimeout(connect, 500)
+        return
+      }
       hasConnected = true
       const url = agentApi.getTerminalStreamUrl(terminalId, term.cols, term.rows, tmuxSession, sessionId)
       const ws = new WebSocket(url)
       ws.binaryType = 'arraybuffer'
       wsRef.current = ws
+      // Per-connection decoder: a partial multibyte sequence from a dropped
+      // socket must not leak into the next connection's first chunk.
+      const decoder = new TextDecoder()
+      // The first frame of every (re)connect is the backend's in-band seed
+      // (reset + scrollback history + current screen). It gets the same
+      // embedded-xterm ANSI normalization as the static snapshot path (drops
+      // Claude Code's neutral canvas fill, which renders as gray panels/bars).
+      // Live %output after it is written verbatim, like a real terminal, and
+      // never clears the user's selection.
+      let seedPending = true
       ws.onopen = () => {
         // Correct the backend's seed geometry to the real fitted grid immediately.
         sendResize()
-        clearXtermSelection(term)
       }
       ws.onmessage = ev => {
         const data = ev.data
+        if (seedPending) {
+          seedPending = false
+          const text = data instanceof ArrayBuffer
+            ? decoder.decode(new Uint8Array(data))
+            : String(data)
+          clearXtermSelection(term)
+          term.write(normalizeAnsiForEmbeddedXterm(text))
+          onOutputTextRef.current?.(text)
+          return
+        }
         if (data instanceof ArrayBuffer) {
-          const text = decoder.decode(new Uint8Array(data), { stream: true })
-          clearXtermSelection(term)
-          term.write(text)
-          onOutputTextRef.current?.(text)
+          const bytes = new Uint8Array(data)
+          term.write(bytes)
+          if (onOutputTextRef.current) {
+            onOutputTextRef.current(decoder.decode(bytes, { stream: true }))
+          }
         } else if (typeof data === 'string') {
-          const text = data
-          clearXtermSelection(term)
-          term.write(text)
-          onOutputTextRef.current?.(text)
+          term.write(data)
+          onOutputTextRef.current?.(data)
         }
       }
       ws.onclose = () => {
@@ -1955,7 +1976,7 @@ const LiveAttachXtermPaneInner: React.FC<{
     const fitTerminal = () => {
       try {
         if (!hasUsableTerminalFitBox(contentRef.current || mount)) return
-        fitRawXtermToVisibleGrid(term, fit, mount, contentRef.current)
+        fitRawXtermToVisibleGrid(fit)
         if (!hasUsableGrid()) return
         if (!hasConnected) connect()
         else sendResize()
@@ -2170,7 +2191,7 @@ const StaticXtermPaneInner: React.FC<{
 
     const fitTerminal = () => {
       try {
-        fitRawXtermToVisibleGrid(term, fit, mount, contentRef.current)
+        fitRawXtermToVisibleGrid(fit)
       } catch {
         // Fit can fail during unmount or while the pane is display:none.
       }
@@ -2211,7 +2232,7 @@ const StaticXtermPaneInner: React.FC<{
     const mount = mountRef.current
     try {
       if (fit && mount) {
-        fitRawXtermToVisibleGrid(term, fit, mount, contentRef.current)
+        fitRawXtermToVisibleGrid(fit)
       }
     } catch {
       // Fit can fail while the pane is briefly hidden during tab/layout changes.
@@ -2226,7 +2247,7 @@ const StaticXtermPaneInner: React.FC<{
         const currentFit = fitRef.current
         const currentMount = mountRef.current
         if (currentFit && currentMount) {
-          fitRawXtermToVisibleGrid(term, currentFit, currentMount, contentRef.current)
+          fitRawXtermToVisibleGrid(currentFit)
         }
       } catch {
         // ignore

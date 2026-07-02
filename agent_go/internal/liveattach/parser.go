@@ -41,6 +41,10 @@ const (
 	LineEvent
 	// LineEmpty is a blank line (after trimming). Callers ignore it.
 	LineEmpty
+	// LineReplyBody is a line consumed into a pending %begin..%end command
+	// reply by Protocol.Feed (including the %begin line itself). It carries no
+	// pane bytes and no event; the completed reply is returned separately.
+	LineReplyBody
 )
 
 // ParsedLine is the result of classifying one control-mode line.
@@ -117,4 +121,80 @@ func ClassifyLine(raw string) ParsedLine {
 // followed by a reason; the Event field holds just the "%exit" token.
 func (p ParsedLine) IsExit() bool {
 	return p.Kind == LineEvent && p.Event == "%exit"
+}
+
+// Reply is one completed in-band command reply: the block of lines tmux emits
+// between `%begin <ts> <num> <flags>` and the matching `%end`/`%error`.
+// Command replies are serialized with `%output` in the control stream, so a
+// Reply is an exact barrier: pane output classified before it reflects state
+// the command already saw, output after it does not.
+type Reply struct {
+	// Number is the command-number token from the %begin line. tmux assigns
+	// numbers in submission order, so replies map FIFO onto sent commands.
+	Number string
+	// Lines are the verbatim body lines (trailing CR trimmed, escape bytes
+	// intact — tmux does not octal-escape command output, unlike %output).
+	Lines []string
+	// Err is true when the block ended with %error instead of %end.
+	Err bool
+}
+
+// Protocol is a stateful control-mode line reader that frames command replies.
+// Feed each scanner line in order; outside a reply block it behaves exactly
+// like ClassifyLine, and %begin starts a block whose body lines are collected
+// verbatim until the matching %end/%error (matched by command number, so body
+// text that merely looks like a protocol line cannot terminate the block).
+// Protocol is not safe for concurrent use; feed it from a single goroutine.
+type Protocol struct {
+	inBlock bool
+	number  string
+	lines   []string
+}
+
+// Feed consumes one raw control-mode line. It returns the line classification
+// and, when this line completed a command reply, the finished Reply. Lines
+// consumed into a block (including %begin/%end themselves) come back as
+// LineReplyBody so callers can never route them into the pane stream.
+func (p *Protocol) Feed(raw string) (ParsedLine, *Reply) {
+	if p.inBlock {
+		line := strings.TrimRight(raw, "\r")
+		if kind, num := parseBlockGuard(line); num == p.number {
+			switch kind {
+			case "%end", "%error":
+				reply := &Reply{Number: p.number, Lines: p.lines, Err: kind == "%error"}
+				p.inBlock = false
+				p.number = ""
+				p.lines = nil
+				return ParsedLine{Kind: LineReplyBody, Raw: line}, reply
+			}
+		}
+		p.lines = append(p.lines, line)
+		return ParsedLine{Kind: LineReplyBody, Raw: line}, nil
+	}
+
+	pl := ClassifyLine(raw)
+	if pl.Kind == LineEvent && pl.Event == "%begin" {
+		if kind, num := parseBlockGuard(pl.Raw); kind == "%begin" && num != "" {
+			p.inBlock = true
+			p.number = num
+			p.lines = nil
+			return ParsedLine{Kind: LineReplyBody, Raw: pl.Raw}, nil
+		}
+	}
+	return pl, nil
+}
+
+// parseBlockGuard reads a "%begin/%end/%error <timestamp> <number> <flags>"
+// guard line and returns its kind token and command number ("" when the line
+// is not a well-formed guard).
+func parseBlockGuard(line string) (string, string) {
+	fields := strings.Fields(line)
+	if len(fields) < 3 {
+		return "", ""
+	}
+	switch fields[0] {
+	case "%begin", "%end", "%error":
+		return fields[0], fields[2]
+	}
+	return "", ""
 }

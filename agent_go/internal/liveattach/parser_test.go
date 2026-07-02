@@ -114,44 +114,44 @@ func TestClassifyLine(t *testing.T) {
 			wantKind: LineStray,
 		},
 		{
-			name:      "exit",
-			in:        "%exit",
-			wantKind:  LineEvent, wantEvent: "%exit", wantExit: true,
+			name:     "exit",
+			in:       "%exit",
+			wantKind: LineEvent, wantEvent: "%exit", wantExit: true,
 		},
 		{
-			name:      "exit with reason",
-			in:        "%exit server exited",
-			wantKind:  LineEvent, wantEvent: "%exit", wantExit: true,
+			name:     "exit with reason",
+			in:       "%exit server exited",
+			wantKind: LineEvent, wantEvent: "%exit", wantExit: true,
 		},
 		{
-			name:      "layout change",
-			in:        "%layout-change @0 b25d,80x24,0,0,0",
-			wantKind:  LineEvent, wantEvent: "%layout-change",
+			name:     "layout change",
+			in:       "%layout-change @0 b25d,80x24,0,0,0",
+			wantKind: LineEvent, wantEvent: "%layout-change",
 		},
 		{
-			name:      "window renamed",
-			in:        "%window-renamed @0 newname",
-			wantKind:  LineEvent, wantEvent: "%window-renamed",
+			name:     "window renamed",
+			in:       "%window-renamed @0 newname",
+			wantKind: LineEvent, wantEvent: "%window-renamed",
 		},
 		{
-			name:      "session changed",
-			in:        "%session-changed $0 main",
-			wantKind:  LineEvent, wantEvent: "%session-changed",
+			name:     "session changed",
+			in:       "%session-changed $0 main",
+			wantKind: LineEvent, wantEvent: "%session-changed",
 		},
 		{
-			name:      "begin",
-			in:        "%begin 1700000000 1 0",
-			wantKind:  LineEvent, wantEvent: "%begin",
+			name:     "begin",
+			in:       "%begin 1700000000 1 0",
+			wantKind: LineEvent, wantEvent: "%begin",
 		},
 		{
-			name:      "end",
-			in:        "%end 1700000000 1 0",
-			wantKind:  LineEvent, wantEvent: "%end",
+			name:     "end",
+			in:       "%end 1700000000 1 0",
+			wantKind: LineEvent, wantEvent: "%end",
 		},
 		{
-			name:      "bare percent event no args",
-			in:        "%pause",
-			wantKind:  LineEvent, wantEvent: "%pause",
+			name:     "bare percent event no args",
+			in:       "%pause",
+			wantKind: LineEvent, wantEvent: "%pause",
 		},
 		{
 			name:     "empty line",
@@ -192,5 +192,93 @@ func TestClassifyLine(t *testing.T) {
 				t.Fatalf("event line leaked pane Data = %q", got.Data)
 			}
 		})
+	}
+}
+
+func TestProtocolFramesReplyBlocks(t *testing.T) {
+	p := &Protocol{}
+
+	feed := func(line string) (ParsedLine, *Reply) {
+		t.Helper()
+		return p.Feed(line)
+	}
+
+	// Output outside any block is classified normally.
+	pl, reply := feed("%output %1 before")
+	if pl.Kind != LinePaneOutput || string(pl.Data) != "before" || reply != nil {
+		t.Fatalf("pre-block output = %+v reply=%v", pl, reply)
+	}
+
+	// %begin opens a block; the guard line itself is reply body.
+	pl, reply = feed("%begin 1700000000 42 1")
+	if pl.Kind != LineReplyBody || reply != nil {
+		t.Fatalf("begin line = %+v reply=%v", pl, reply)
+	}
+
+	// Body lines are verbatim — even ones that look like protocol lines, and
+	// ones carrying raw escape bytes.
+	bodies := []string{
+		"\x1b[31mRED\x1b[39m line",
+		"%output %1 this is screen text, not pane output",
+		"%end 1700000000 999 1", // wrong number: still body
+		"",
+	}
+	for _, b := range bodies {
+		pl, reply = feed(b)
+		if pl.Kind != LineReplyBody || reply != nil {
+			t.Fatalf("body line %q = %+v reply=%v", b, pl, reply)
+		}
+	}
+
+	// Matching %end completes the reply with all body lines intact.
+	pl, reply = feed("%end 1700000001 42 1")
+	if pl.Kind != LineReplyBody || reply == nil {
+		t.Fatalf("end line = %+v reply=%v", pl, reply)
+	}
+	if reply.Err || reply.Number != "42" {
+		t.Fatalf("reply = %+v", reply)
+	}
+	if len(reply.Lines) != len(bodies) {
+		t.Fatalf("reply lines = %q, want %d lines", reply.Lines, len(bodies))
+	}
+	for i, want := range bodies {
+		if reply.Lines[i] != want {
+			t.Fatalf("reply line %d = %q, want %q", i, reply.Lines[i], want)
+		}
+	}
+
+	// Output after the block flows normally again.
+	pl, reply = feed("%output %1 after")
+	if pl.Kind != LinePaneOutput || string(pl.Data) != "after" || reply != nil {
+		t.Fatalf("post-block output = %+v reply=%v", pl, reply)
+	}
+}
+
+func TestProtocolErrorBlock(t *testing.T) {
+	p := &Protocol{}
+	p.Feed("%begin 1700000000 7 1")
+	p.Feed("parse error: unknown command")
+	_, reply := p.Feed("%error 1700000000 7 1")
+	if reply == nil || !reply.Err || reply.Number != "7" {
+		t.Fatalf("error reply = %+v", reply)
+	}
+	if len(reply.Lines) != 1 || reply.Lines[0] != "parse error: unknown command" {
+		t.Fatalf("error reply lines = %q", reply.Lines)
+	}
+	// The protocol resumes normal classification after an %error block.
+	pl, _ := p.Feed("%output %1 ok")
+	if pl.Kind != LinePaneOutput {
+		t.Fatalf("post-error line kind = %v", pl.Kind)
+	}
+}
+
+func TestProtocolEmptyReplyAndCRTrim(t *testing.T) {
+	p := &Protocol{}
+	// The initial attach handshake is an empty %begin/%end pair; lines may
+	// carry a trailing CR from the control client's PTY.
+	p.Feed("\x1bP1000p%begin 1700000000 3 0\r")
+	_, reply := p.Feed("%end 1700000000 3 0\r")
+	if reply == nil || reply.Err || reply.Number != "3" || len(reply.Lines) != 0 {
+		t.Fatalf("attach handshake reply = %+v", reply)
 	}
 }

@@ -1,8 +1,51 @@
 # Live-Attach Terminal: App vs PoC Demo — Debug Handoff
 
-**Status:** ✅ **RESOLVED** — commit `d1ec56d6` "Fix live attach initial repaint
+**Status:** ✅ **RESOLVED**, then **REARCHITECTED IN-BAND (2026-07-02)** — see below.
+The PoC at `docs/refactor/ccdemo-poc/` remains the reference oracle.
+
+## REARCHITECTURE (2026-07-02): in-band control-channel transport
+
+The `d1ec56d6` fix (drain timer + out-of-band capture) still left residual races:
+the 180 ms drain was a guess (attach repaint could land late → double paint), the
+subscribe→capture-pane ordering replayed output that the snapshot already contained
+(duplicate spinners on every (re)connect during streaming), and the frontend's manual
+fit override fought FitAddon (double resize → repaint storms). Grey lines came from
+`-J` (preserves trailing spaces → bg fills become full-width gray bars) plus the
+unsanitized live path (Claude Code's neutral bg-237 canvas).
+
+**New design (`terminal_live_attach.go` + `internal/liveattach`):** all transport
+commands — `resize-window`, the capture-pane backfill, `#{history_size}`/cursor
+queries — are written to the control client's OWN stdin and answered in-stream
+between `%begin/%end` guards (`liveattach.Protocol` frames them; verified against
+tmux 3.6a: replies are FIFO by command number, serialized with `%output`, ESC bytes
+verbatim, `%error` keeps the queue in order). A viewer is spliced into the broadcast
+**inside the scanner goroutine at its seed's `%end`**, so the seed and the live
+stream can neither overlap nor gap — no drain timers, no replay window, no
+out-of-band subprocesses on the hot path. A single writer-pump goroutine owns
+control-stdin writes (never hold a lock across that write — it deadlocks against
+`deliverReply`). `#{history_size}` is queried first because tmux clamps
+`capture-pane -S … -E -1` into the visible screen when scrollback is empty
+(otherwise row 0 seeds twice). History capture drops `-J`. Slow viewers are dropped
+whole (WS close → reconnect → fresh seed) instead of losing mid-stream chunks.
+
+**Frontend (`LiveAttachXtermPane`):** `fit.fit()` is the single sizing authority
+(manual DOM-ruler override deleted — it guaranteed a double resize per layout tick);
+the first frame of every (re)connect (the seed) gets `normalizeAnsiForEmbeddedXterm`
+(gray-canvas strip) + selection clear, live bytes are written verbatim as raw
+`Uint8Array` and never clear the selection; reconnect reschedules itself when the
+pane is transiently hidden (used to strand the stream permanently); per-connection
+`TextDecoder`.
+
+**Regression net:** `TestLiveAttachRealTmuxEndToEnd` (cmd/server) drives the real
+tmux + real WS handler against a continuously-printing pane and asserts every line
+arrives exactly once; `TestLiveAttachSeedSpliceExcludesPreSeedOutput` pins the
+splice semantics; parser tests pin `%begin/%end/%error` framing.
+
+---
+
+**Original resolution:** commit `d1ec56d6` "Fix live attach initial repaint
 duplication". Root cause + fix below; the rest of this doc is the original investigation
-(kept for context). The PoC at `docs/refactor/ccdemo-poc/` remains the reference oracle.
+(kept for context).
 
 ## RESOLUTION (commit `d1ec56d6`)
 **Root cause:** the app's control-mode attach starts **lazily** (on the first browser

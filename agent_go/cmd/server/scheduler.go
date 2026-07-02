@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
+	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/fsutil"
 	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 )
@@ -1187,6 +1188,7 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 		sessionID = s.newScheduleSessionID(sctx)
 	}
 	reqMap := s.buildWorkshopRequest(ctx, sctx)
+	s.applyPulseLLMToReqMap(reqMap, sctx, sessionID)
 
 	// Run Pulse as a SEQUENCE of smaller turns — one step per message — rather than
 	// one giant prompt that asks the agent to juggle triage→fix→artifact→report→backup→publish→notify
@@ -1235,7 +1237,7 @@ func postRunMonitorSteps() []postRunMonitorStep {
 		{"report", "STEP 4 — LLM/COST/TIME REPORT (report-only, after artifact review). This is separate from triage and must not drive Bug hardening by itself. Read workflow.json capabilities.llm_config / step execution tiers, get_cost_summary(run_folder) when available, costs/execution + costs/evaluation + costs/phase/token_usage.json, and timing summaries under runs/<run_folder>/logs/<step-id>/execution. Create a compact run telemetry report: total cost, total tokens, wall/LLM/tool time, configured tier/model vs observed provider/model, broken down by plan step and by agent/sub-agent when evidence supports it; call missing telemetry \"missing evidence\" instead of estimating. This is reporting only: do NOT change model tiers, LLM config, prompts, schedules, or agent allocation. Update builder/improve.html cost/time tiles, the latest run row, and a compact report-only Note/Pulse detail when material. ALSO overwrite builder/card.cost.html with one compact org-dashboard card fragment (inline content only, single-quoted attributes), every run so the dashboard shows spend health: <article class='pulse-card' data-axis='cost' data-workflow='<workflow name>' data-goal='<same 3-6 word goal label used by card.health.html>' data-status='<normal|elevated|missing>' data-updated='<ISO8601 UTC>'><h4><workflow name></h4><p data-field='headline'><one short line, e.g. 'Cost normal — $0.12 / 18k tokens' or 'Missing cost telemetry — execution ledger absent'></p><p data-field='metric'><total USD or unpriced · total tokens · wall time></p><p data-field='detail'><top-cost step/agent or missing evidence path></p></article> (normal=telemetry present and no material concern; elevated=cost/time outlier, high spend, runaway retries, or slow/expensive step worth watching; missing=no reliable cost/time telemetry). If a report dashboard exists, use get_reference_doc(kind=\"report-plan\") and add/update a bounded live cost/time strip using existing live sources such as window.report.get('costs/phase/token_usage.json'), window.report.get('costs/execution/...'), workflow.json, eval summaries, and builder/improve.html; do not bake stale static numbers into the report, and if the report shape cannot be safely patched, record that reporting cost coverage is missing in builder/improve.html instead. Report the LLM/cost/time summary and evidence paths, then stop."},
 		{"backup", "STEP 5 — BACK UP FINAL STATE (always, before publish). Read workflow.json.backup and back up per get_reference_doc(kind=\"backup-strategy\"). The triage, fix/harden, Artifact Review, and LLM/cost/time report changes are already written; snapshot the updated workflow artifacts now so publish has a backed-up source. If backup is disabled, set it up with the zero-config local-git default and back up. Skip the actual push only when backup/status.json shows the current source is already backed up (unchanged). Always write backup/status.json and update the latest run row with the backup result. Report the backup result, then stop."},
 		{"publish", "STEP 6 — PUBLISH (only if publish is on). If workflow.json.publish is enabled, re-publish the updated HTML per get_reference_doc(kind=\"publish-strategy\") — but ONLY when the destination is already VERIFIED (publish/status.json shows a prior successful publish). Every run changes the published artifacts — new db data plus a fresh Pulse entry in builder/improve.html — so there is no \"unchanged\" run to skip; always re-publish to a verified destination. Never do the first/verifying publish here unattended — that is the user's manual set-up step. Always write publish/status.json. Report the result, then stop."},
-		{"notify", "STEP 7 — NOTIFY once on a state transition per the post-run-monitor doc's notification step — honor a user `## Notifications` preference in soul/soul.md, otherwise a single notify_user call only on broke/recovered/new-finding, and silence on a steady run. When you DO notify and publish is on, include the public dashboard URL from publish/status.json (the `url`, only when its state is `published`) in the message so the user can open the live report in one tap. Include the compact cost/time headline from STEP 4 when it was material, requested by `## Notifications`, or the cost card is elevated/missing; otherwise keep cost detail in builder/improve.html and builder/card.cost.html. Use the doc's standard one-line format (emoji · workflow · headline · metric · dashboard URL). When Gmail/email fields are available, email is the default rich rendering: set email_subject, email_html, and plain email_body on the same notify_user call unless the user's Notifications preference explicitly says not to email. Stay scoped: never rewrite the plan wholesale or dispatch a full improvement run here."},
+		{"notify", "STEP 7 — NOTIFY once on a state transition per the post-run-monitor doc's notification step — honor a user `## Notifications` preference in soul/soul.md, otherwise a single notify_user call only on broke/recovered/new-finding, and silence on a steady run. When you DO notify and publish is on, include the public dashboard URL from publish/status.json (the `url`, only when its state is `published`) in the message so the user can open the live report in one tap. Include the compact cost/time headline from STEP 4 when it was material, requested by `## Notifications`, or the cost card is elevated/missing; otherwise keep cost detail in builder/improve.html and builder/card.cost.html. Use the doc's standard one-line format (emoji · workflow · headline · metric · dashboard URL). When Gmail/email fields are available, email is the default rich rendering: set email_subject, email_html, and plain email_body on the same notify_user call unless the user's Notifications preference explicitly says not to email; set email_cc only when the preference asks for CC recipients. Stay scoped: never rewrite the plan wholesale or dispatch a full improvement run here."},
 	}
 }
 
@@ -1313,7 +1315,7 @@ func optimizerPublishMessage() string {
 }
 
 func optimizerNotifyMessage() string {
-	return "STEP 5/5 - NOTIFY. Do not ask for confirmation. Read soul/soul.md ## Notifications if present, builder/improve.html entries from this improve fire, backup/status.json, and publish/status.json. Notify once with notify_user only for a decision-worthy improve change/proposal/blocker, or when the Notifications preference explicitly asks: applied replan, user-facing report/eval update, material KB/learnings/db cleanup, material cadence/scope change, high-impact proposal held for oversight/evidence, or blocked improvement needing human action. Stay silent on no-action/steady fires. Include the published dashboard URL only when publish/status.json.state is published. When Gmail/email fields are available, email is the default rich rendering: set email_subject, email_html, and plain email_body on the same notify_user call unless the Notifications preference explicitly says not to email. Report whether notification was sent/skipped and why, then stop."
+	return "STEP 5/5 - NOTIFY. Do not ask for confirmation. Read soul/soul.md ## Notifications if present, builder/improve.html entries from this improve fire, backup/status.json, and publish/status.json. Notify once with notify_user only for a decision-worthy improve change/proposal/blocker, or when the Notifications preference explicitly asks: applied replan, user-facing report/eval update, material KB/learnings/db cleanup, material cadence/scope change, high-impact proposal held for oversight/evidence, or blocked improvement needing human action. Stay silent on no-action/steady fires. Include the published dashboard URL only when publish/status.json.state is published. When Gmail/email fields are available, email is the default rich rendering: set email_subject, email_html, and plain email_body on the same notify_user call unless the Notifications preference explicitly says not to email; set email_cc only when the preference asks for CC recipients. Report whether notification was sent/skipped and why, then stop."
 }
 
 // executeJob builds a session request from the manifest and runs it.
@@ -1616,6 +1618,7 @@ func (s *SchedulerService) executeMultiAgentJob(ctx context.Context, sctx *Sched
 
 	// Apply LLM config and secrets
 	s.applyLLMAndSecretsToReqMap(ctx, reqMap, sctx)
+	s.applyChiefOfStaffLLMToReqMap(ctx, reqMap, sctx, sessionID)
 
 	// Load user-level secrets if configured
 	if len(sctx.Capabilities.SelectedSecrets) > 0 && sctx.UserID != "" {
@@ -1784,6 +1787,156 @@ func (s *SchedulerService) applyLLMAndSecretsToReqMap(ctx context.Context, reqMa
 			}
 		}
 	}
+}
+
+func applyPrimaryLLMConfigToReqMap(reqMap map[string]interface{}, cfg *workflowtypes.AgentLLMConfig) bool {
+	if reqMap == nil || cfg == nil {
+		return false
+	}
+	provider := strings.TrimSpace(cfg.Provider)
+	modelID := strings.TrimSpace(cfg.ModelID)
+	if provider == "" || modelID == "" {
+		return false
+	}
+
+	primary := map[string]interface{}{
+		"provider": provider,
+		"model_id": modelID,
+	}
+	if len(cfg.Options) > 0 {
+		primary["options"] = cfg.Options
+	}
+	reqMap["llm_config"] = map[string]interface{}{
+		"primary": primary,
+	}
+	return true
+}
+
+func (s *SchedulerService) applyPulseLLMToReqMap(reqMap map[string]interface{}, sctx *ScheduleContext, sessionID string) {
+	if sctx == nil || sctx.Capabilities.LLMConfig == nil {
+		return
+	}
+	pulseLLM := sctx.Capabilities.LLMConfig.PulseLLM
+	if pulseLLM == nil {
+		if resolved, ok := workflowtypes.ResolveCodingAgentPulseConfig(sctx.Capabilities.LLMConfig); ok {
+			pulseLLM = resolved
+		}
+	}
+	if !applyPrimaryLLMConfigToReqMap(reqMap, pulseLLM) {
+		return
+	}
+	s.sessionLogf(sctx, sessionID, "[PULSE] using configured pulse LLM %s/%s", strings.TrimSpace(pulseLLM.Provider), strings.TrimSpace(pulseLLM.ModelID))
+}
+
+func (s *SchedulerService) applyChiefOfStaffLLMToReqMap(ctx context.Context, reqMap map[string]interface{}, sctx *ScheduleContext, sessionID string) {
+	if sctx == nil || sctx.SourceType != "multi-agent" {
+		return
+	}
+	chiefOfStaffLLM := resolveChiefOfStaffLLMForSchedule(ctx, sctx)
+	if !applyPrimaryLLMConfigToReqMap(reqMap, chiefOfStaffLLM) {
+		return
+	}
+	label := "Chief of Staff"
+	if isMemoryEnrichmentSchedule(sctx) {
+		label = "memory"
+	}
+	s.sessionLogf(sctx, sessionID, "[SCHEDULER] using configured %s LLM %s/%s", label, strings.TrimSpace(chiefOfStaffLLM.Provider), strings.TrimSpace(chiefOfStaffLLM.ModelID))
+}
+
+func resolveChiefOfStaffLLMForSchedule(ctx context.Context, sctx *ScheduleContext) *workflowtypes.AgentLLMConfig {
+	if sctx == nil {
+		return nil
+	}
+	memorySchedule := isMemoryEnrichmentSchedule(sctx)
+	if llmCfg := sctx.Capabilities.LLMConfig; llmCfg != nil {
+		if memorySchedule {
+			if llmCfg.PulseLLM != nil {
+				return llmCfg.PulseLLM
+			}
+			if resolved, ok := workflowtypes.ResolveCodingAgentMemoryConfig(llmCfg); ok {
+				return resolved
+			}
+			return nil
+		}
+		if llmCfg.ChiefOfStaffLLM != nil {
+			return llmCfg.ChiefOfStaffLLM
+		}
+		if resolved, ok := workflowtypes.ResolveCodingAgentChiefOfStaffConfig(llmCfg); ok {
+			return resolved
+		}
+		return nil
+	}
+
+	tierConfig, err := LoadDelegationTierConfig(ctx)
+	if err != nil {
+		return nil
+	}
+	if memorySchedule {
+		return resolveMemoryLLMFromDelegationConfig(tierConfig)
+	}
+	return resolveChiefOfStaffLLMFromDelegationConfig(tierConfig)
+}
+
+func isMemoryEnrichmentSchedule(sctx *ScheduleContext) bool {
+	return sctx != nil && sctx.Schedule.ID == builtinAutoEnrichMemoryID
+}
+
+func resolveChiefOfStaffLLMFromDelegationConfig(tierConfig *virtualtools.DelegationTierConfig) *workflowtypes.AgentLLMConfig {
+	if tierConfig == nil {
+		return nil
+	}
+	if tierConfig.ChiefOfStaff != nil {
+		return agentLLMConfigFromTierModel(tierConfig.ChiefOfStaff)
+	}
+	for _, candidate := range []*virtualtools.TierModel{tierConfig.Main, tierConfig.High} {
+		if cfg := agentLLMConfigFromTierModel(candidate); cfg != nil {
+			if resolved, ok := workflowtypes.ResolveCodingAgentChiefOfStaffConfig(&workflowtypes.PresetLLMConfig{Provider: cfg.Provider}); ok {
+				return resolved
+			}
+			return cfg
+		}
+	}
+	return nil
+}
+
+func resolveMemoryLLMFromDelegationConfig(tierConfig *virtualtools.DelegationTierConfig) *workflowtypes.AgentLLMConfig {
+	if tierConfig == nil {
+		return nil
+	}
+	for _, candidate := range []*virtualtools.TierModel{tierConfig.Main, tierConfig.High} {
+		if cfg := agentLLMConfigFromTierModel(candidate); cfg != nil {
+			if resolved, ok := workflowtypes.ResolveCodingAgentMemoryConfig(&workflowtypes.PresetLLMConfig{Provider: cfg.Provider}); ok {
+				return resolved
+			}
+			return cfg
+		}
+	}
+	return nil
+}
+
+func agentLLMConfigFromTierModel(tier *virtualtools.TierModel) *workflowtypes.AgentLLMConfig {
+	if tier == nil || strings.TrimSpace(tier.Provider) == "" || strings.TrimSpace(tier.ModelID) == "" {
+		return nil
+	}
+	cfg := &workflowtypes.AgentLLMConfig{
+		Provider: strings.TrimSpace(tier.Provider),
+		ModelID:  strings.TrimSpace(tier.ModelID),
+	}
+	if len(tier.Fallbacks) > 0 {
+		cfg.Fallbacks = make([]workflowtypes.AgentLLMFallback, 0, len(tier.Fallbacks))
+		for _, fallback := range tier.Fallbacks {
+			provider := strings.TrimSpace(fallback.Provider)
+			modelID := strings.TrimSpace(fallback.ModelID)
+			if provider == "" || modelID == "" {
+				continue
+			}
+			cfg.Fallbacks = append(cfg.Fallbacks, workflowtypes.AgentLLMFallback{
+				Provider: provider,
+				ModelID:  modelID,
+			})
+		}
+	}
+	return cfg
 }
 
 // buildWorkshopRequest creates the base request map for workshop mode execution.

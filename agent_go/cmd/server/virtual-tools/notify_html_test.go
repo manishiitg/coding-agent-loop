@@ -34,6 +34,16 @@ func TestGmailContentHTMLRescue(t *testing.T) {
 	if gc3 == nil || gc3.HTMLBody != "" {
 		t.Errorf("plain text misdetected as HTML: %+v", gc3)
 	}
+	gc4, _ := gmailContentFromArgs(map[string]interface{}{
+		"email_cc": []interface{}{" CC@Example.com ", "other@example.com,cc@example.com"},
+	})
+	if gc4 == nil {
+		t.Fatal("email_cc should create GmailContent")
+	}
+	if len(gc4.CC) != 2 || gc4.CC[0] != "cc@example.com" || gc4.CC[1] != "other@example.com" {
+		t.Fatalf("email_cc parsed as %#v, want cc@example.com and other@example.com", gc4.CC)
+	}
+
 	// Deterministic: prose that merely contains "<" must NOT be treated as HTML.
 	for _, prose := range []string{"a < b is true", "score <3", "use x<y here", "1 < 2 < 3"} {
 		if gc, _ := gmailContentFromArgs(map[string]interface{}{"email_body": prose}); gc != nil && gc.HTMLBody != "" {

@@ -8301,14 +8301,16 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagen
 	// set_workflow_llm_config — saves tiered LLM config directly to workflow.json
 	if err := mcpAgent.RegisterCustomTool(
 		"set_workflow_llm_config",
-		"Save the workflow's tiered LLM configuration to workflow.json capabilities.llm_config. Requires get_reference_doc(kind=\"llm-selection\") to be loaded first. Use list_published_llms to see available models first. Each tier accepts provider and model_id (both required if setting a tier), plus optional published_llm_id and options copied from the published entry. Fallbacks are optional ordered lists. phase_llm is the model used for planning, eval design, and debugging phases.",
+		"Save the workflow's tiered LLM configuration to workflow.json capabilities.llm_config. Requires get_reference_doc(kind=\"llm-selection\") to be loaded first. Use list_published_llms to see available models first. Each tier accepts provider and model_id (both required if setting a tier), plus optional published_llm_id and options copied from the published entry. Fallbacks are optional ordered lists. phase_llm is the model used for planning, eval design, and debugging phases. auto_improve_llm is the optional scheduled optimizer override. pulse_llm is the optional scheduled Pulse/post-run QA override.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"tier_1":    llmEntrySchema("High-reasoning tier: first-time execution and initial learning extraction.", "Ordered fallback models tried if the primary fails."),
-				"tier_2":    llmEntrySchema("Medium-reasoning tier: execution with learnings and learning refinement.", "Ordered fallback models tried if the primary fails."),
-				"tier_3":    llmEntrySchema("Low-reasoning tier: validation (always) and mature learning refinement (2+ runs).", "Ordered fallback models tried if the primary fails."),
-				"phase_llm": llmEntrySchema("LLM for planning, eval design, debugging, and anonymization phases. Defaults to tier_1 if not set.", "Ordered fallback models tried if the phase LLM fails."),
+				"tier_1":           llmEntrySchema("High-reasoning tier: first-time execution and initial learning extraction.", "Ordered fallback models tried if the primary fails."),
+				"tier_2":           llmEntrySchema("Medium-reasoning tier: execution with learnings and learning refinement.", "Ordered fallback models tried if the primary fails."),
+				"tier_3":           llmEntrySchema("Low-reasoning tier: validation (always) and mature learning refinement (2+ runs).", "Ordered fallback models tried if the primary fails."),
+				"phase_llm":        llmEntrySchema("LLM for planning, eval design, debugging, and anonymization phases. Defaults to tier_1 if not set.", "Ordered fallback models tried if the phase LLM fails."),
+				"auto_improve_llm": llmEntrySchema("Optional LLM used only by scheduled Auto Improve optimizer runs. Defaults to the provider Auto Improve default when available.", "Ordered fallback models tried if the Auto Improve LLM fails."),
+				"pulse_llm":        llmEntrySchema("Optional LLM used only by scheduled Pulse/post-run QA. Defaults to the provider Pulse default when available if not set.", "Ordered fallback models tried if the Pulse LLM fails."),
 			},
 		},
 		guidance.WithDocPrecondition([]string{"llm-selection"}, guidance.DefaultTracker(), func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -8403,9 +8405,17 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagen
 					updated = append(updated, fmt.Sprintf("phase_llm=%v/%v", entry["provider"], entry["model_id"]))
 				}
 			}
+			for _, key := range []string{"auto_improve_llm", "pulse_llm"} {
+				if raw, ok := args[key]; ok {
+					if entry := buildTierEntry(raw); entry != nil {
+						llmCfg[key] = entry
+						updated = append(updated, fmt.Sprintf("%s=%v/%v", key, entry["provider"], entry["model_id"]))
+					}
+				}
+			}
 
 			if len(updated) == 0 {
-				return "No valid tier or phase_llm values provided. Use list_published_llms to see available models.", nil
+				return "No valid tier, phase_llm, auto_improve_llm, or pulse_llm values provided. Use list_published_llms to see available models.", nil
 			}
 
 			caps["llm_config"] = llmCfg

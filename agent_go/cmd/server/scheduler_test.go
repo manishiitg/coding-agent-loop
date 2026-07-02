@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 )
 
@@ -493,6 +494,290 @@ func TestApplyLLMAndSecretsToReqMapPreservesAutoImproveDefaultOptions(t *testing
 	}
 	if got := options["reasoning_effort"]; got != "xhigh" {
 		t.Fatalf("reasoning_effort = %#v, want xhigh", got)
+	}
+}
+
+func TestApplyPulseLLMToReqMapUsesPulseOverrideWhenConfigured(t *testing.T) {
+	reqMap := map[string]interface{}{}
+	sctx := &ScheduleContext{
+		Schedule: WorkflowSchedule{WorkshopMode: "run"},
+		Capabilities: WorkflowCapabilities{
+			LLMConfig: &workflowtypes.PresetLLMConfig{
+				Provider: "claude-code",
+				ModelID:  "claude-opus-4-6",
+				PulseLLM: &workflowtypes.AgentLLMConfig{
+					Provider: "codex-cli",
+					ModelID:  "gpt-5.5",
+					Options:  map[string]interface{}{"reasoning_effort": "high"},
+				},
+			},
+		},
+	}
+
+	svc := &SchedulerService{}
+	svc.applyLLMAndSecretsToReqMap(context.Background(), reqMap, sctx)
+	svc.applyPulseLLMToReqMap(reqMap, sctx, "test-session")
+
+	llmConfig, ok := reqMap["llm_config"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("llm_config missing or wrong type: %#v", reqMap["llm_config"])
+	}
+	primary, ok := llmConfig["primary"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("llm_config.primary missing or wrong type: %#v", llmConfig["primary"])
+	}
+	if got := primary["provider"]; got != "codex-cli" {
+		t.Fatalf("provider = %#v, want codex-cli", got)
+	}
+	if got := primary["model_id"]; got != "gpt-5.5" {
+		t.Fatalf("model_id = %#v, want gpt-5.5", got)
+	}
+	options, ok := primary["options"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("options missing or wrong type: %#v", primary["options"])
+	}
+	if got := options["reasoning_effort"]; got != "high" {
+		t.Fatalf("reasoning_effort = %#v, want high", got)
+	}
+}
+
+func TestApplyPulseLLMToReqMapUsesCodingAgentPulseDefaultWhenUnset(t *testing.T) {
+	reqMap := map[string]interface{}{}
+	sctx := &ScheduleContext{
+		Schedule: WorkflowSchedule{WorkshopMode: "run"},
+		Capabilities: WorkflowCapabilities{
+			LLMConfig: &workflowtypes.PresetLLMConfig{
+				Provider:          "claude-code",
+				ModelID:           "claude-code",
+				LLMAllocationMode: workflowtypes.LLMAllocationModeCodingAgent,
+			},
+		},
+	}
+
+	svc := &SchedulerService{}
+	svc.applyLLMAndSecretsToReqMap(context.Background(), reqMap, sctx)
+	svc.applyPulseLLMToReqMap(reqMap, sctx, "test-session")
+
+	llmConfig, ok := reqMap["llm_config"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("llm_config missing or wrong type: %#v", reqMap["llm_config"])
+	}
+	primary, ok := llmConfig["primary"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("llm_config.primary missing or wrong type: %#v", llmConfig["primary"])
+	}
+	if got := primary["provider"]; got != "claude-code" {
+		t.Fatalf("provider = %#v, want claude-code", got)
+	}
+	if got := primary["model_id"]; got != "claude-sonnet-5" {
+		t.Fatalf("model_id = %#v, want claude-sonnet-5", got)
+	}
+	options, ok := primary["options"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("options missing or wrong type: %#v", primary["options"])
+	}
+	if got := options["reasoning_effort"]; got != "high" {
+		t.Fatalf("reasoning_effort = %#v, want high", got)
+	}
+}
+
+func TestApplyPulseLLMToReqMapKeepsWorkflowModelWhenNoProviderDefault(t *testing.T) {
+	reqMap := map[string]interface{}{}
+	sctx := &ScheduleContext{
+		Schedule: WorkflowSchedule{WorkshopMode: "run"},
+		Capabilities: WorkflowCapabilities{
+			LLMConfig: &workflowtypes.PresetLLMConfig{
+				Provider: "openai",
+				ModelID:  "gpt-5.4",
+			},
+		},
+	}
+
+	svc := &SchedulerService{}
+	svc.applyLLMAndSecretsToReqMap(context.Background(), reqMap, sctx)
+	svc.applyPulseLLMToReqMap(reqMap, sctx, "test-session")
+
+	llmConfig, ok := reqMap["llm_config"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("llm_config missing or wrong type: %#v", reqMap["llm_config"])
+	}
+	primary, ok := llmConfig["primary"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("llm_config.primary missing or wrong type: %#v", llmConfig["primary"])
+	}
+	if got := primary["provider"]; got != "openai" {
+		t.Fatalf("provider = %#v, want openai", got)
+	}
+	if got := primary["model_id"]; got != "gpt-5.4" {
+		t.Fatalf("model_id = %#v, want gpt-5.4", got)
+	}
+}
+
+func TestResolveChiefOfStaffLLMForScheduleUsesExplicitOverride(t *testing.T) {
+	sctx := &ScheduleContext{
+		SourceType: "multi-agent",
+		Capabilities: WorkflowCapabilities{
+			LLMConfig: &workflowtypes.PresetLLMConfig{
+				Provider: "claude-code",
+				ModelID:  "claude-code",
+				ChiefOfStaffLLM: &workflowtypes.AgentLLMConfig{
+					Provider: "codex-cli",
+					ModelID:  "gpt-5.5",
+					Options:  map[string]interface{}{"reasoning_effort": "xhigh"},
+				},
+			},
+		},
+	}
+
+	got := resolveChiefOfStaffLLMForSchedule(context.Background(), sctx)
+	if got == nil {
+		t.Fatal("resolveChiefOfStaffLLMForSchedule() = nil")
+	}
+	if got.Provider != "codex-cli" || got.ModelID != "gpt-5.5" {
+		t.Fatalf("resolveChiefOfStaffLLMForSchedule() = %+v, want codex-cli/gpt-5.5", got)
+	}
+	if got.Options["reasoning_effort"] != "xhigh" {
+		t.Fatalf("reasoning_effort = %#v, want xhigh", got.Options["reasoning_effort"])
+	}
+}
+
+func TestResolveChiefOfStaffLLMForScheduleUsesCodingAgentDefault(t *testing.T) {
+	sctx := &ScheduleContext{
+		SourceType: "multi-agent",
+		Capabilities: WorkflowCapabilities{
+			LLMConfig: &workflowtypes.PresetLLMConfig{
+				Provider:          "claude-code",
+				ModelID:           "claude-code",
+				LLMAllocationMode: workflowtypes.LLMAllocationModeCodingAgent,
+			},
+		},
+	}
+
+	got := resolveChiefOfStaffLLMForSchedule(context.Background(), sctx)
+	if got == nil {
+		t.Fatal("resolveChiefOfStaffLLMForSchedule() = nil")
+	}
+	if got.Provider != "claude-code" || got.ModelID != "claude-fable-5" {
+		t.Fatalf("resolveChiefOfStaffLLMForSchedule() = %+v, want claude-code/claude-fable-5", got)
+	}
+	if got.Options["reasoning_effort"] != "high" {
+		t.Fatalf("reasoning_effort = %#v, want high", got.Options["reasoning_effort"])
+	}
+}
+
+func TestResolveChiefOfStaffLLMForMemoryScheduleUsesPulseOverride(t *testing.T) {
+	sctx := &ScheduleContext{
+		SourceType: "multi-agent",
+		Schedule:   WorkflowSchedule{ID: builtinAutoEnrichMemoryID},
+		Capabilities: WorkflowCapabilities{
+			LLMConfig: &workflowtypes.PresetLLMConfig{
+				Provider: "claude-code",
+				ModelID:  "claude-code",
+				PulseLLM: &workflowtypes.AgentLLMConfig{
+					Provider: "codex-cli",
+					ModelID:  "gpt-5.4",
+				},
+				ChiefOfStaffLLM: &workflowtypes.AgentLLMConfig{
+					Provider: "codex-cli",
+					ModelID:  "gpt-5.5",
+					Options:  map[string]interface{}{"reasoning_effort": "xhigh"},
+				},
+			},
+		},
+	}
+
+	got := resolveChiefOfStaffLLMForSchedule(context.Background(), sctx)
+	if got == nil {
+		t.Fatal("resolveChiefOfStaffLLMForSchedule() = nil")
+	}
+	if got.Provider != "codex-cli" || got.ModelID != "gpt-5.4" {
+		t.Fatalf("resolveChiefOfStaffLLMForSchedule() = %+v, want codex-cli/gpt-5.4", got)
+	}
+}
+
+func TestResolveChiefOfStaffLLMForMemoryScheduleUsesCodingAgentPulseDefault(t *testing.T) {
+	sctx := &ScheduleContext{
+		SourceType: "multi-agent",
+		Schedule:   WorkflowSchedule{ID: builtinAutoEnrichMemoryID},
+		Capabilities: WorkflowCapabilities{
+			LLMConfig: &workflowtypes.PresetLLMConfig{
+				Provider:          "claude-code",
+				ModelID:           "claude-code",
+				LLMAllocationMode: workflowtypes.LLMAllocationModeCodingAgent,
+				ChiefOfStaffLLM: &workflowtypes.AgentLLMConfig{
+					Provider: "codex-cli",
+					ModelID:  "gpt-5.5",
+					Options:  map[string]interface{}{"reasoning_effort": "xhigh"},
+				},
+			},
+		},
+	}
+
+	got := resolveChiefOfStaffLLMForSchedule(context.Background(), sctx)
+	if got == nil {
+		t.Fatal("resolveChiefOfStaffLLMForSchedule() = nil")
+	}
+	if got.Provider != "claude-code" || got.ModelID != "claude-sonnet-5" {
+		t.Fatalf("resolveChiefOfStaffLLMForSchedule() = %+v, want claude-code/claude-sonnet-5", got)
+	}
+	if got.Options["reasoning_effort"] != "high" {
+		t.Fatalf("reasoning_effort = %#v, want high", got.Options["reasoning_effort"])
+	}
+}
+
+func TestResolveChiefOfStaffLLMFromDelegationConfigUsesExplicitScheduledModel(t *testing.T) {
+	got := resolveChiefOfStaffLLMFromDelegationConfig(&virtualtools.DelegationTierConfig{
+		ChiefOfStaff: &virtualtools.TierModel{
+			Provider: "codex-cli",
+			ModelID:  "gpt-5.5",
+		},
+		Main: &virtualtools.TierModel{
+			Provider: "claude-code",
+			ModelID:  "claude-code",
+		},
+	})
+	if got == nil {
+		t.Fatal("resolveChiefOfStaffLLMFromDelegationConfig() = nil")
+	}
+	if got.Provider != "codex-cli" || got.ModelID != "gpt-5.5" {
+		t.Fatalf("resolveChiefOfStaffLLMFromDelegationConfig() = %+v, want codex-cli/gpt-5.5", got)
+	}
+}
+
+func TestResolveChiefOfStaffLLMFromDelegationConfigUsesProviderDefault(t *testing.T) {
+	got := resolveChiefOfStaffLLMFromDelegationConfig(&virtualtools.DelegationTierConfig{
+		Main: &virtualtools.TierModel{
+			Provider: "claude-code",
+			ModelID:  "claude-code",
+		},
+	})
+	if got == nil {
+		t.Fatal("resolveChiefOfStaffLLMFromDelegationConfig() = nil")
+	}
+	if got.Provider != "claude-code" || got.ModelID != "claude-fable-5" {
+		t.Fatalf("resolveChiefOfStaffLLMFromDelegationConfig() = %+v, want claude-code/claude-fable-5", got)
+	}
+}
+
+func TestResolveMemoryLLMFromDelegationConfigUsesProviderPulseDefault(t *testing.T) {
+	got := resolveMemoryLLMFromDelegationConfig(&virtualtools.DelegationTierConfig{
+		ChiefOfStaff: &virtualtools.TierModel{
+			Provider: "codex-cli",
+			ModelID:  "gpt-5.5",
+		},
+		Main: &virtualtools.TierModel{
+			Provider: "claude-code",
+			ModelID:  "claude-code",
+		},
+	})
+	if got == nil {
+		t.Fatal("resolveMemoryLLMFromDelegationConfig() = nil")
+	}
+	if got.Provider != "claude-code" || got.ModelID != "claude-sonnet-5" {
+		t.Fatalf("resolveMemoryLLMFromDelegationConfig() = %+v, want claude-code/claude-sonnet-5", got)
+	}
+	if got.Options["reasoning_effort"] != "high" {
+		t.Fatalf("reasoning_effort = %#v, want high", got.Options["reasoning_effort"])
 	}
 }
 

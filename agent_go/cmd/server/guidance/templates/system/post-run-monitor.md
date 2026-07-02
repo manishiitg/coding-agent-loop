@@ -218,6 +218,7 @@ On any of those, call `notify_user` **once**. Use this **standard one-line `mess
 - `email_subject`: a clean inbox subject — `<workflow> — broke` / `— recovered` / `— new issue`.
 - **`email_html`:** a small, designed HTML email with a consistent skeleton — a status header (`<emoji> <workflow> — <broke|recovered|new finding>`), the headline sentence, a `Bug: <state> · Goal: <state>` line, a **Dashboard** link/button when publish is on, and a footer pointing to the Pulse log. Keep it compact, **inline-styled** (email clients strip `<style>`/external CSS) and dark-text-on-light so it renders everywhere.
 - Include cost/time only when it is material, requested by `## Notifications`, useful context for the transition, or the latest `builder/card.cost.html` status is `elevated`/`missing`: total cost/time plus top step/agent or missing evidence. Keep the detailed table in the Pulse log unless the user explicitly asked for email detail.
+- `email_cc`: optional CC recipients only when the user's `## Notifications` preference asks for CC; every address must be configured as an allowed Gmail recipient.
 - **`email_body` (plain-text fallback):** the same content as plain text for clients that don't render HTML — your headline, then `Bug: <state> · Goal: <state>`, then `See the Pulse log for detail.` Set it alongside `email_html`; never put HTML in `email_body`.
 
 One call, rendered terse on chat and fuller in email.

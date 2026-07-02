@@ -6435,6 +6435,10 @@ func resolveDelegationTierConfig(frontendConfig *virtualtools.DelegationTierConf
 			result.Main = main
 			hasAny = true
 		}
+		if chiefOfStaff := sanitizeTierModel(frontendConfig.ChiefOfStaff); chiefOfStaff != nil {
+			result.ChiefOfStaff = chiefOfStaff
+			hasAny = true
+		}
 		if high := sanitizeTierModel(frontendConfig.High); high != nil {
 			result.High = high
 			hasAny = true

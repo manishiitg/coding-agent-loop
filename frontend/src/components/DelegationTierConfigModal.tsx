@@ -28,7 +28,7 @@ const descToSlug = (desc: string): string => {
 // Check if config has any values (built-in or custom)
 const hasAnyConfig = (config: DelegationTierConfig | null): boolean => {
   if (!config) return false
-  return !!(config.main || config.high || config.medium || config.low ||
+  return !!(config.main || config.chief_of_staff || config.high || config.medium || config.low ||
     (config.custom && Object.keys(config.custom).length > 0))
 }
 
@@ -143,10 +143,36 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
   const handleSharedLLMSelect = (llm: LLMOption) => {
     updateConfig({
       main: tierModelForOption(llm, 'main'),
+      ...(delegationTierConfig?.chief_of_staff ? { chief_of_staff: delegationTierConfig.chief_of_staff } : {}),
       high: tierModelForOption(llm, 'high'),
       medium: tierModelForOption(llm, 'medium'),
       low: tierModelForOption(llm, 'low'),
     })
+  }
+
+  const chiefOfStaffTierModelForOption = (llm: LLMOption): TierModel => {
+    const defaults = getWorkflowLLMTierDefaults(llm, providerManifest)
+    return toTierModel(defaults.chiefOfStaff)
+  }
+
+  const defaultChiefOfStaffTierModel = (() => {
+    const sourceOption = sharedSelectedLLM
+      || findOptionForTier(delegationTierConfig?.main, 'main agent model')
+      || findOptionForTier(delegationTierConfig?.high, 'high reasoning tier')
+    if (!sourceOption) return undefined
+    return chiefOfStaffTierModelForOption(sourceOption)
+  })()
+
+  const effectiveChiefOfStaffTierModel = delegationTierConfig?.chief_of_staff || defaultChiefOfStaffTierModel
+
+  const updateChiefOfStaffTier = (tier?: TierModel) => {
+    const nextConfig: DelegationTierConfig = { ...(delegationTierConfig ?? {}) }
+    if (tier) {
+      nextConfig.chief_of_staff = tier
+    } else {
+      delete nextConfig.chief_of_staff
+    }
+    updateConfig(hasAnyConfig(nextConfig) ? nextConfig : null)
   }
 
   const handleRefresh = async () => {
@@ -342,6 +368,43 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
                   </div>
                 </div>
 
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Scheduled Chief of Staff LLM</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                    Used by scheduled Chief of Staff work such as Org Pulse. Empty uses the provider default when available.
+                  </p>
+                  <div className="border border-gray-200 dark:border-slate-600 rounded-lg p-4">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
+                        {delegationTierConfig?.chief_of_staff ? 'Custom override' : 'Provider default'}
+                      </span>
+                      {delegationTierConfig?.chief_of_staff && (
+                        <button
+                          type="button"
+                          onClick={() => updateChiefOfStaffTier(undefined)}
+                          className="text-xs text-red-400 hover:text-red-600"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                    <LLMSelectionDropdown
+                      availableLLMs={delegationLLMOptions}
+                      selectedLLM={findOptionForTier(effectiveChiefOfStaffTierModel, 'scheduled Chief of Staff model')}
+                      onLLMSelect={(llm: LLMOption) => updateChiefOfStaffTier(chiefOfStaffTierModelForOption(llm))}
+                      inModal={true}
+                      openDirection="down"
+                      title="Select scheduled Chief of Staff model"
+                      placeholder={effectiveChiefOfStaffTierModel ? `Defaults to ${effectiveChiefOfStaffTierModel.model_id}` : 'Defaults to provider default'}
+                    />
+                    {effectiveChiefOfStaffTierModel && (
+                      <p className="mt-2 font-mono text-[11px] text-gray-600 dark:text-gray-300">
+                        {effectiveChiefOfStaffTierModel.provider}/{effectiveChiefOfStaffTierModel.model_id}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
                 <button
                   type="button"
                   onClick={() => setShowAdvanced(true)}
@@ -444,6 +507,45 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
                     disabled={getAvailableFallbackOptions(delegationTierConfig.main).length === 0}
                   />
                 </div>
+              )}
+            </div>
+
+            <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Scheduled Chief of Staff</h3>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+              Optional override for scheduled Chief of Staff work such as Org Pulse. Defaults to the provider Chief of Staff model.
+            </p>
+            <div className="border border-gray-200 dark:border-slate-600 rounded-lg p-3 mb-5">
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-blue-500" />
+                  <div>
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Scheduled Chief of Staff LLM</span>
+                    <span className="text-xs text-gray-400 dark:text-gray-500 ml-1.5">Org Pulse &amp; recurring CoS tasks</span>
+                  </div>
+                </div>
+                {delegationTierConfig?.chief_of_staff && (
+                  <button
+                    type="button"
+                    onClick={() => updateChiefOfStaffTier(undefined)}
+                    className="text-xs text-red-400 hover:text-red-600"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              <LLMSelectionDropdown
+                availableLLMs={delegationLLMOptions}
+                selectedLLM={findOptionForTier(effectiveChiefOfStaffTierModel, 'scheduled Chief of Staff model')}
+                onLLMSelect={(llm: LLMOption) => updateChiefOfStaffTier(chiefOfStaffTierModelForOption(llm))}
+                inModal={true}
+                openDirection="down"
+                title="Select scheduled Chief of Staff model"
+                placeholder={effectiveChiefOfStaffTierModel ? `Defaults to ${effectiveChiefOfStaffTierModel.model_id}` : 'Defaults to provider default'}
+              />
+              {effectiveChiefOfStaffTierModel && (
+                <p className="mt-2 font-mono text-[11px] text-gray-600 dark:text-gray-300">
+                  {effectiveChiefOfStaffTierModel.provider}/{effectiveChiefOfStaffTierModel.model_id}
+                </p>
               )}
             </div>
 

@@ -81,8 +81,9 @@ func TestWorkshopResolveLLMConfigExpandsCodingAgentMode(t *testing.T) {
 		defaults.High.ModelID == "claude-fable-5" ||
 		defaults.Medium.ModelID == "claude-fable-5" ||
 		defaults.Low.ModelID == "claude-fable-5" ||
-		defaults.AutoImprove.ModelID != "claude-fable-5" {
-		t.Fatalf("fable should be auto-improve only, got defaults: %+v", defaults)
+		defaults.AutoImprove.ModelID != "claude-fable-5" ||
+		defaults.Pulse.ModelID != "claude-sonnet-5" {
+		t.Fatalf("fable should be auto-improve only and sonnet 5 should be pulse default, got defaults: %+v", defaults)
 	}
 
 	phase, tiered := workshopResolveLLMConfig(&workflowtypes.PresetLLMConfig{

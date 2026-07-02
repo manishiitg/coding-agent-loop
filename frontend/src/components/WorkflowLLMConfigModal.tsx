@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from 'react'
-import { X, Brain, Zap, Gauge, Cpu, Loader2, RefreshCw, SlidersHorizontal } from 'lucide-react'
+import { X, Brain, Zap, Gauge, Cpu, Loader2, RefreshCw, SlidersHorizontal, Activity } from 'lucide-react'
 import { Button } from './ui/Button'
 import { useLLMStore, useChatStore } from '../stores'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
@@ -20,6 +20,7 @@ interface WorkflowLLMConfigModalProps {
 function hasAdvancedWorkflowLLMConfig(config?: PresetLLMConfig | null): boolean {
   if (!config) return false
   if (config.auto_improve_llm) return true
+  if (config.pulse_llm) return true
   if (config.llm_allocation_mode === 'tiered') return true
   if (config.llm_allocation_mode === 'coding_agent' || config.llm_allocation_mode === 'coding_plan') {
     return false
@@ -81,6 +82,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
   const [tier3, setTier3] = useState<AgentLLMConfig | null>(manifestLLM?.tiered_config?.tier_3 ?? existing?.tiered_config?.tier_3 ?? null)
   const [phaseLLM, setPhaseLLM] = useState<AgentLLMConfig | null>(manifestLLM?.phase_llm ?? existing?.phase_llm ?? null)
   const [autoImproveLLM, setAutoImproveLLM] = useState<AgentLLMConfig | null>(manifestLLM?.auto_improve_llm ?? existing?.auto_improve_llm ?? null)
+  const [pulseLLM, setPulseLLM] = useState<AgentLLMConfig | null>(manifestLLM?.pulse_llm ?? existing?.pulse_llm ?? null)
   const [showAdvanced, setShowAdvanced] = useState(() => hasAdvancedWorkflowLLMConfig(manifestLLM ?? existing))
 
   if (!activePreset) return null
@@ -112,6 +114,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
   const effectiveTier3 = tier3 ?? defaultTierLLMs?.tier3 ?? null
   const effectivePhaseLLM = phaseLLM ?? defaultTierLLMs?.phase ?? effectiveTier1
   const effectiveAutoImproveLLM = autoImproveLLM ?? defaultTierLLMs?.autoImprove ?? selectedCodingAgentLLM
+  const effectivePulseLLM = pulseLLM ?? defaultTierLLMs?.pulse ?? selectedCodingAgentLLM
 
   const formatAgentLLMConfig = (cfg?: AgentLLMConfig | null) => {
     if (!cfg?.provider || !cfg?.model_id) return 'Not resolved'
@@ -194,6 +197,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
           if (refreshed.tiered_config?.tier_3) setTier3(refreshed.tiered_config.tier_3)
           if (refreshed.phase_llm) setPhaseLLM(refreshed.phase_llm)
           setAutoImproveLLM(refreshed.auto_improve_llm ?? null)
+          setPulseLLM(refreshed.pulse_llm ?? null)
           setShowAdvanced(hasAdvancedWorkflowLLMConfig(refreshed))
         }
       }
@@ -217,6 +221,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
       }
       if (!showAdvanced) {
         delete nextBaseLLMConfig.auto_improve_llm
+        delete nextBaseLLMConfig.pulse_llm
       }
 
       let newLLMConfig: PresetLLMConfig
@@ -224,6 +229,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
         delete nextBaseLLMConfig.phase_llm
         delete nextBaseLLMConfig.tiered_config
         delete nextBaseLLMConfig.auto_improve_llm
+        delete nextBaseLLMConfig.pulse_llm
         newLLMConfig = {
           ...nextBaseLLMConfig,
           llm_allocation_mode: 'coding_agent',
@@ -233,6 +239,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
           ...nextBaseLLMConfig,
           phase_llm: effectivePhaseLLM ?? undefined,
           auto_improve_llm: showAdvanced ? (autoImproveLLM ?? undefined) : undefined,
+          pulse_llm: showAdvanced ? (pulseLLM ?? undefined) : undefined,
           llm_allocation_mode: tieredConfig ? 'tiered' : 'manual',
           ...(tieredConfig ? { tiered_config: tieredConfig } : {}),
         }
@@ -334,6 +341,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
                     <p><span className="font-medium">Tier 3</span> — validation (always) + mature refinement (2+ runs)</p>
                     <p><span className="font-medium">Workshop LLM</span> — planning, eval design, debugging, anonymization. Independent of tier assignment.</p>
                     <p><span className="font-medium">Auto Improve LLM</span> — optional scheduled optimizer override. Empty uses the provider default when available.</p>
+                    <p><span className="font-medium">Pulse LLM</span> — optional post-run QA/harden override. Empty uses the provider Pulse default when available.</p>
                   </div>
                 </>
               ) : (
@@ -344,6 +352,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
                     <p>Coding agents save high, medium, and low tiers automatically.</p>
                     <p>Workshop work uses the high tier.</p>
                     <p>Auto Improve uses the provider default when available unless an advanced override is set.</p>
+                    <p>Pulse uses the provider Pulse default when available unless an advanced override is set.</p>
                   </div>
                 </>
               )}
@@ -403,6 +412,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
                   onClick={() => {
                     setShowAdvanced(false)
                     setAutoImproveLLM(null)
+                    setPulseLLM(null)
                   }}
                   className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
                 >
@@ -513,6 +523,33 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
               />
               <div className="mt-1 font-mono text-[11px] text-gray-700 dark:text-gray-300" title={formatAgentLLMConfig(effectiveAutoImproveLLM)}>
                 {formatAgentLLMConfig(effectiveAutoImproveLLM)}
+              </div>
+            </div>
+
+            {/* Pulse LLM */}
+            <div className="border border-gray-200 dark:border-slate-600 rounded-lg p-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-sky-500" />
+                  <div>
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Pulse LLM</span>
+                    <span className="text-xs text-gray-400 dark:text-gray-500 ml-1.5">post-run QA loop only</span>
+                  </div>
+                </div>
+                {pulseLLM && (
+                  <button onClick={() => setPulseLLM(null)} className="text-xs text-red-400 hover:text-red-600">Clear</button>
+                )}
+              </div>
+              <LLMSelectionDropdown
+                availableLLMs={workflowLLMOptions}
+                selectedLLM={findOption(effectivePulseLLM)}
+                onLLMSelect={opt => setPulseLLM(toAgentLLM(opt))}
+                inModal={true}
+                openDirection="down"
+                placeholder={effectivePulseLLM ? `Defaults to ${effectivePulseLLM.model_id}` : 'Defaults to provider pulse default'}
+              />
+              <div className="mt-1 font-mono text-[11px] text-gray-700 dark:text-gray-300" title={formatAgentLLMConfig(effectivePulseLLM)}>
+                {formatAgentLLMConfig(effectivePulseLLM)}
               </div>
             </div>
               </>

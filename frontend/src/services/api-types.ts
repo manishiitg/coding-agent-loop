@@ -170,6 +170,7 @@ export interface AgentQueryRequest {
 // Delegation tier configuration for multi-LLM support
 export interface DelegationTierConfig {
   main?: TierModel    // orchestrator/main agent model
+  chief_of_staff?: TierModel // scheduled Chief of Staff / Org Pulse model
   high?: TierModel
   medium?: TierModel
   low?: TierModel
@@ -1114,6 +1115,8 @@ export interface PresetLLMConfig {
   // Agent-specific defaults.
   phase_llm?: AgentLLMConfig            // Default for all phase agents (planning, anonymization, plan improvement, etc.)
   auto_improve_llm?: AgentLLMConfig     // Optional scheduled Auto Improve override
+  pulse_llm?: AgentLLMConfig            // Optional scheduled Pulse override
+  chief_of_staff_llm?: AgentLLMConfig   // Optional scheduled Chief of Staff override
 
   // Feature toggles
   use_knowledgebase?: boolean           // nil/true = enabled (default), false = disabled

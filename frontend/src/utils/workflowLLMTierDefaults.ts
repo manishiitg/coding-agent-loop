@@ -9,6 +9,8 @@ type WorkflowTierDefaults = {
   tier3: AgentLLMConfig
   phase: AgentLLMConfig
   autoImprove: AgentLLMConfig
+  pulse: AgentLLMConfig
+  chiefOfStaff: AgentLLMConfig
   usesTierDefaults: boolean
 }
 
@@ -45,6 +47,8 @@ function sameModelDefaults(option: LLMOption): WorkflowTierDefaults {
     tier3: base,
     phase: base,
     autoImprove: base,
+    pulse: base,
+    chiefOfStaff: base,
     usesTierDefaults: false,
   }
 }
@@ -77,6 +81,8 @@ export function getWorkflowLLMTierDefaults(
     tier3: toAgentLLMConfigFromRef(option, defaults.low),
     phase: toAgentLLMConfigFromRef(option, defaults.phase),
     autoImprove: toAgentLLMConfigFromRef(option, defaults.auto_improve ?? defaults.high),
+    pulse: toAgentLLMConfigFromRef(option, defaults.pulse ?? defaults.high),
+    chiefOfStaff: toAgentLLMConfigFromRef(option, defaults.chief_of_staff ?? defaults.auto_improve ?? defaults.pulse ?? defaults.high),
     usesTierDefaults: true,
   }
 }

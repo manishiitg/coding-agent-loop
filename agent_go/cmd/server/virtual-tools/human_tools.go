@@ -67,6 +67,11 @@ func CreateHumanTools() []llmtypes.Tool {
 			"type":        "string",
 			"description": "PLAIN-TEXT email body (longer than message_for_user). When Gmail is enabled, set this as the plain fallback by default for workflow/Pulse/auto-improve notifications unless the user explicitly asked not to email. Do NOT put HTML here — for a formatted email use email_html. If omitted, message_for_user is the body. (HTML accidentally placed here is auto-detected and rendered, but email_html is correct.)",
 		}
+		notifyProps["email_cc"] = map[string]interface{}{
+			"type":        "array",
+			"items":       map[string]interface{}{"type": "string"},
+			"description": "Optional Gmail CC recipients. Every address must be in Gmail's allowed recipients list. Other channels ignore this.",
+		}
 		notifyProps["email_attachments"] = map[string]interface{}{
 			"type":        "array",
 			"items":       map[string]interface{}{"type": "string"},
@@ -162,7 +167,7 @@ func buildNotifyDescription() string {
 	}
 	desc := base + " Currently enabled delivery channels: " + strings.Join(labels, ", ") + ". The message is delivered to all enabled channels — you do not choose which."
 	if gmailOn {
-		desc += " Gmail is enabled, so email_subject, email_body, email_html, email_html_file, and email_attachments are available for the email rendering (other channels ignore these). For workflow, Pulse, org pulse, and auto-improve notifications, treat email as the default rich rendering: set email_subject, email_html, and plain email_body on the same notify_user call unless the user's notification preference explicitly says not to email. Keep email_body plain text as the fallback."
+		desc += " Gmail is enabled, so email_subject, email_body, email_cc, email_html, email_html_file, and email_attachments are available for the email rendering (other channels ignore these). For workflow, Pulse, org pulse, and auto-improve notifications, treat email as the default rich rendering: set email_subject, email_html, and plain email_body on the same notify_user call unless the user's notification preference explicitly says not to email. Keep email_body plain text as the fallback."
 	}
 	return desc
 }
@@ -200,6 +205,7 @@ func gmailContentFromArgs(args map[string]interface{}) (*services.GmailContent, 
 	subject, _ := args["email_subject"].(string)
 	body, _ := args["email_body"].(string)
 	html, _ := args["email_html"].(string)
+	cc := emailListFromArg(args["email_cc"])
 
 	// email_html_file: absolute path to an .html file on the server host; its
 	// contents become the HTML body (an alternative to inline email_html).
@@ -228,15 +234,53 @@ func gmailContentFromArgs(args map[string]interface{}) (*services.GmailContent, 
 			}
 		}
 	}
-	if strings.TrimSpace(subject) == "" && strings.TrimSpace(body) == "" && strings.TrimSpace(html) == "" && len(attachments) == 0 {
+	if strings.TrimSpace(subject) == "" && strings.TrimSpace(body) == "" && strings.TrimSpace(html) == "" && len(attachments) == 0 && len(cc) == 0 {
 		return nil, nil
 	}
 	return &services.GmailContent{
 		Subject:     strings.TrimSpace(subject),
+		CC:          cc,
 		Body:        body,
 		HTMLBody:    html,
 		Attachments: attachments,
 	}, nil
+}
+
+func emailListFromArg(raw interface{}) []string {
+	switch v := raw.(type) {
+	case []interface{}:
+		values := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				values = append(values, s)
+			}
+		}
+		return normalizeNotifyEmailList(values)
+	case []string:
+		return normalizeNotifyEmailList(v)
+	case string:
+		return normalizeNotifyEmailList([]string{v})
+	default:
+		return nil
+	}
+}
+
+func normalizeNotifyEmailList(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, raw := range values {
+		for _, part := range strings.FieldsFunc(raw, func(r rune) bool {
+			return r == ',' || r == ';' || r == '\n' || r == '\r' || r == '\t' || r == ' '
+		}) {
+			email := strings.ToLower(strings.TrimSpace(part))
+			if email == "" || seen[email] {
+				continue
+			}
+			seen[email] = true
+			out = append(out, email)
+		}
+	}
+	return out
 }
 
 // GetToolCategory returns the category name for human tools

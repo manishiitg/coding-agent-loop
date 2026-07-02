@@ -15,10 +15,11 @@ type NotificationContent struct {
 }
 
 // GmailContent is the Gmail-specific rendering. Every field is optional and
-// falls back: Subject → derived from the message's first line; Body → the
-// plain message; Attachments → none.
+// falls back: Subject → derived from the message's first line; CC → none;
+// Body → the plain message; Attachments → none.
 type GmailContent struct {
 	Subject     string
+	CC          []string
 	Body        string   // plain-text body (also the fallback when HTMLBody is set)
 	HTMLBody    string   // optional rich HTML body; sent as a text/html alternative
 	Attachments []string // absolute file paths on the server host (see Gmail raw send)

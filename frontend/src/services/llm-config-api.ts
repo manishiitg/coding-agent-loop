@@ -79,6 +79,8 @@ export interface ProviderDefaultTierModels {
   low: ProviderTierModelRef
   phase: ProviderTierModelRef
   auto_improve?: ProviderTierModelRef
+  pulse?: ProviderTierModelRef
+  chief_of_staff?: ProviderTierModelRef
 }
 
 export interface IntegrationKindInfo {

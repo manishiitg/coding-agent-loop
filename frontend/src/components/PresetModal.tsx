@@ -99,6 +99,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
 
   const [phaseLLM, setPhaseLLM] = useState<AgentLLMConfig | null>(null);
   const [autoImproveLLM, setAutoImproveLLM] = useState<AgentLLMConfig | null>(null);
+  const [pulseLLM, setPulseLLM] = useState<AgentLLMConfig | null>(null);
   const [tier1LLM, setTier1LLM] = useState<AgentLLMConfig | null>(null);
   const [tier2LLM, setTier2LLM] = useState<AgentLLMConfig | null>(null);
   const [tier3LLM, setTier3LLM] = useState<AgentLLMConfig | null>(null);
@@ -256,6 +257,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const effectiveTier3LLM = useMemo<AgentLLMConfig | null>(() => tier3LLM || workflowDefaultTierLLMs?.tier3 || defaultAgentLLM, [tier3LLM, workflowDefaultTierLLMs, defaultAgentLLM]);
   const effectivePhaseLLM = useMemo<AgentLLMConfig | null>(() => phaseLLM || workflowDefaultTierLLMs?.phase || effectiveTier1LLM || defaultAgentLLM, [phaseLLM, workflowDefaultTierLLMs, effectiveTier1LLM, defaultAgentLLM]);
   const effectiveAutoImproveLLM = useMemo<AgentLLMConfig | null>(() => autoImproveLLM || workflowDefaultTierLLMs?.autoImprove || defaultAgentLLM, [autoImproveLLM, workflowDefaultTierLLMs, defaultAgentLLM]);
+  const effectivePulseLLM = useMemo<AgentLLMConfig | null>(() => pulseLLM || workflowDefaultTierLLMs?.pulse || defaultAgentLLM, [pulseLLM, workflowDefaultTierLLMs, defaultAgentLLM]);
   const selectedWorkflowLLMOption = useMemo(() => {
     if (llmConfig && currentLLMOption) return currentLLMOption;
     const selected = effectivePhaseLLM || effectiveTier1LLM || defaultAgentLLM;
@@ -279,6 +281,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const hasAdvancedWorkflowLLMConfig = useCallback((presetLLM?: PresetLLMConfig | null) => {
     if (!presetLLM) return false;
     if (presetLLM.auto_improve_llm) return true;
+    if (presetLLM.pulse_llm) return true;
     if (presetLLM.llm_allocation_mode === 'tiered') return true;
     if (presetLLM.llm_allocation_mode === 'coding_agent' || presetLLM.llm_allocation_mode === 'coding_plan') {
       return false;
@@ -344,6 +347,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       // Load agent-specific configs if available
       setPhaseLLM(presetLLM.phase_llm || null);
       setAutoImproveLLM(presetLLM.auto_improve_llm || null);
+      setPulseLLM(presetLLM.pulse_llm || null);
       // Load tiered LLM allocation config
       setTier1LLM(presetLLM.tiered_config?.tier_1 || null);
       setTier2LLM(presetLLM.tiered_config?.tier_2 || null);
@@ -375,6 +379,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       // Initialize agent-specific configs to null (will use legacy default)
       setPhaseLLM(null);
       setAutoImproveLLM(null);
+      setPulseLLM(null);
       // Initialize tiered config
       setTier1LLM(null);
       setTier2LLM(null);
@@ -458,6 +463,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         delete workflowBaseLLMConfig.learning_llm;
         if (!showWorkflowLLMAdvanced) {
           delete workflowBaseLLMConfig.auto_improve_llm;
+          delete workflowBaseLLMConfig.pulse_llm;
         }
         const defaultWorkflowLLM = defaultAgentLLM || undefined;
         const withFallbacks = (llm: AgentLLMConfig, fallbacks: AgentLLMFallback[]): AgentLLMConfig => ({
@@ -474,6 +480,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
           delete workflowBaseLLMConfig.phase_llm;
           delete workflowBaseLLMConfig.tiered_config;
           delete workflowBaseLLMConfig.auto_improve_llm;
+          delete workflowBaseLLMConfig.pulse_llm;
           finalLLMConfig = {
             ...workflowBaseLLMConfig,
             llm_allocation_mode: 'coding_agent' as const,
@@ -484,6 +491,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
             ...workflowBaseLLMConfig,
             phase_llm: effectivePhaseLLM || defaultWorkflowLLM,
             auto_improve_llm: autoImproveLLM || undefined,
+            pulse_llm: pulseLLM || undefined,
             llm_allocation_mode: explicitTieredConfig ? 'tiered' as const : 'manual' as const,
             ...(explicitTieredConfig ? { tiered_config: explicitTieredConfig } : {}),
           };
@@ -494,6 +502,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         effectivePhaseLLM: effectivePhaseLLM || undefined,
         autoImproveLLM: autoImproveLLM,
         effectiveAutoImproveLLM: effectiveAutoImproveLLM || undefined,
+        pulseLLM: pulseLLM,
+        effectivePulseLLM: effectivePulseLLM || undefined,
         defaultAgentLLM: defaultAgentLLM || undefined,
         effectiveTier1LLM: effectiveTier1LLM || undefined,
         effectiveTier2LLM: effectiveTier2LLM || undefined,
@@ -518,7 +528,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       );
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, phaseLLM, effectivePhaseLLM, autoImproveLLM, effectiveAutoImproveLLM, enableBrowserAccess, browserMode, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, enableContextSummarization, defaultAgentLLM, effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM, showWorkflowLLMAdvanced, providerManifest]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, phaseLLM, effectivePhaseLLM, autoImproveLLM, effectiveAutoImproveLLM, pulseLLM, effectivePulseLLM, enableBrowserAccess, browserMode, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, enableContextSummarization, defaultAgentLLM, effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM, showWorkflowLLMAdvanced, providerManifest]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -652,6 +662,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                         <div className="text-xs text-gray-500 mt-2">
                           Coding agents save high, medium, and low automation tiers. Workshop work uses high.
                           Auto Improve uses the provider default when available unless an advanced override is set.
+                          Pulse uses the provider Pulse default when available unless an advanced override is set.
                         </div>
                         <button
                           type="button"
@@ -672,6 +683,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                             onClick={() => {
                               setShowWorkflowLLMAdvanced(false);
                               setAutoImproveLLM(null);
+                              setPulseLLM(null);
                             }}
                             className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
                           >
@@ -820,7 +832,52 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                             {formatAgentLLMConfig(effectiveAutoImproveLLM)}
                           </div>
                           <div className="text-xs text-gray-500 mt-1">
-                            Used only for scheduled optimizer runs. Normal schedules, Pulse, and manual workflow runs use the workflow model.
+                            Used only for scheduled optimizer runs. Normal schedules and manual workflow runs use the workflow model.
+                          </div>
+                        </div>
+                        {/* Pulse LLM */}
+                        <div>
+                          <div className="flex items-center justify-between gap-2 mb-2">
+                            <div className="flex items-center gap-1.5">
+                              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                                Pulse LLM
+                              </label>
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
+                                  </TooltipTrigger>
+                                  <TooltipContent className="max-w-xs">
+                                    <p className="text-xs">Optional override used only by scheduled Pulse/post-run QA. Leave empty to use the provider Pulse default when available.</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            </div>
+                            {pulseLLM && (
+                              <button
+                                type="button"
+                                onClick={() => setPulseLLM(null)}
+                                className="text-xs text-red-400 hover:text-red-600"
+                              >
+                                Clear
+                              </button>
+                            )}
+                          </div>
+                          <LLMSelectionDropdown
+                            availableLLMs={workflowLLMOptions}
+                            selectedLLM={effectivePulseLLM ? findLLMOptionForConfig(effectivePulseLLM) || null : null}
+                            onLLMSelect={(llm) => setPulseLLM(toAgentLLMConfig(llm))}
+                            onRefresh={loadDefaultsFromBackend}
+                            disabled={false}
+                            inModal={true}
+                            openDirection="down"
+                            placeholder={effectivePulseLLM ? `Defaults to ${effectivePulseLLM.model_id}` : 'Defaults to provider pulse default'}
+                          />
+                          <div className="mt-1 font-mono text-[11px] text-gray-700 dark:text-gray-300" title={formatAgentLLMConfig(effectivePulseLLM)}>
+                            {formatAgentLLMConfig(effectivePulseLLM)}
+                          </div>
+                          <div className="text-xs text-gray-500 mt-1">
+                            Used only for scheduled Pulse after normal runs. Empty means Pulse uses the provider Pulse default when available.
                           </div>
                         </div>
                         {/* Info panel */}
@@ -831,6 +888,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           <div>Validation: Always Tier 3</div>
                           <div>Workshop LLM: Independent — always uses the configured Workshop LLM above</div>
                           <div>Auto Improve LLM: Optional scheduled optimizer override; empty uses the provider default when available</div>
+                          <div>Pulse LLM: Optional post-run QA override; empty uses the provider Pulse default when available</div>
                         </div>
                       </>
                     )}

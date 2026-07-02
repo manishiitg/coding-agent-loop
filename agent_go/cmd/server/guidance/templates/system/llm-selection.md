@@ -10,6 +10,8 @@ A workflow runs in **tiered mode**: instead of hardcoding a model per step, you 
 - **tier_2 — medium**: execution once learnings exist, and learning refinement.
 - **tier_3 — low**: fast/cheap, for deterministic or file-shape work.
 - **phase_llm**: the model used for planning, eval design, and debugging phases (not step execution).
+- **auto_improve_llm**: optional model used only by scheduled Auto Improve optimizer runs. Leave unset to use the provider Auto Improve default when available.
+- **pulse_llm**: optional model used only by scheduled Pulse/post-run QA. Leave unset to use the provider Pulse default when available (Claude Code defaults to `claude-sonnet-5` with high reasoning).
 
 Each tier takes a `provider` + `model_id` (both required to set a tier) and an optional ordered `fallbacks` list (tried if the primary fails).
 
@@ -17,7 +19,7 @@ Each tier takes a `provider` + `model_id` (both required to set a tier) and an o
 - `list_published_llms` — the models available to this workflow (start here; never guess provider/model_id).
 - `list_provider_models` — models exposed by a configured provider.
 - `test_llm` — smoke-test a provider/model before committing to it.
-- `set_workflow_llm_config(tier_1, tier_2, tier_3, phase_llm?)` — save the tiered config to `workflow.json` → `capabilities.llm_config`. Do NOT edit `workflow.json` by hand.
+- `set_workflow_llm_config(tier_1, tier_2, tier_3, phase_llm?, auto_improve_llm?, pulse_llm?)` — save the tiered config to `workflow.json` → `capabilities.llm_config`. Do NOT edit `workflow.json` by hand.
 - `get_llm_config` / `get_workflow_config` — inspect the current tiered config, phase LLM, and any per-step overrides.
 
 ### Per-step overrides (use sparingly)

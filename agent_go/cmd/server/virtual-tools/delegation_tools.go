@@ -75,11 +75,12 @@ func GetChatsFolder(ctx context.Context) string {
 
 // DelegationTierConfig holds provider/model for each reasoning tier
 type DelegationTierConfig struct {
-	Main   *TierModel                  `json:"main,omitempty"` // orchestrator/main agent model
-	High   *TierModel                  `json:"high,omitempty"`
-	Medium *TierModel                  `json:"medium,omitempty"`
-	Low    *TierModel                  `json:"low,omitempty"`
-	Custom map[string]*CustomTierModel `json:"custom,omitempty"`
+	Main         *TierModel                  `json:"main,omitempty"` // orchestrator/main agent model
+	ChiefOfStaff *TierModel                  `json:"chief_of_staff,omitempty"`
+	High         *TierModel                  `json:"high,omitempty"`
+	Medium       *TierModel                  `json:"medium,omitempty"`
+	Low          *TierModel                  `json:"low,omitempty"`
+	Custom       map[string]*CustomTierModel `json:"custom,omitempty"`
 }
 
 // TierModel represents a specific provider+model for a tier
@@ -724,7 +725,7 @@ Read workflow files with shell tools, but **do not modify workflow internals** f
 ` + "`notify_user(message_for_user)`" + ` pushes a message to the user's connected channels (Slack / WhatsApp / email). Use it when work you started **completes detached from the current turn** and the user is not watching this thread — an async ` + "`delegate`" + ` finished, a ` + "`run_workflow`" + ` / ` + "`run_step`" + ` you launched produced its result, or a schedule you set fired. In a deployed bot channel it's how you say "done — here's the result" after you've already ended the turn.
 
 - **Don't** use it for your normal reply. When you're answering inline in this conversation, just reply — that text already reaches the user. ` + "`notify_user`" + ` is for the out-of-band ping, not a duplicate of your answer.
-- One call fans out to every connected channel. If an email channel is connected the tool also offers ` + "`email_subject`" + ` / ` + "`email_body`" + ` (and ` + "`email_html`" + ` / ` + "`email_attachments`" + `) so the email reads fuller than the terse chat line. It reports back per-channel delivery; if no channel is connected it's a harmless no-op.
+- One call fans out to every connected channel. If an email channel is connected the tool also offers ` + "`email_subject`" + ` / ` + "`email_body`" + ` (and ` + "`email_cc`" + ` / ` + "`email_html`" + ` / ` + "`email_attachments`" + `) so the email reads fuller than the terse chat line. It reports back per-channel delivery; if no channel is connected it's a harmless no-op.
 
 ### Process
 

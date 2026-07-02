@@ -18,7 +18,7 @@ func TestBuildGmailMIME(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	raw, err := buildGmailMIME("you@example.com", "Subject ☂", "body text", "", []string{att})
+	raw, err := buildGmailMIME("you@example.com", []string{"cc@example.com"}, "Subject ☂", "body text", "", []string{att})
 	if err != nil {
 		t.Fatalf("buildGmailMIME: %v", err)
 	}
@@ -26,6 +26,9 @@ func TestBuildGmailMIME(t *testing.T) {
 
 	if !strings.Contains(s, "To: you@example.com\r\n") {
 		t.Error("missing To header")
+	}
+	if !strings.Contains(s, "Cc: cc@example.com\r\n") {
+		t.Error("missing Cc header")
 	}
 	if !strings.Contains(s, "Content-Type: multipart/mixed;") {
 		t.Error("missing multipart content-type")
@@ -64,7 +67,7 @@ func TestBuildGmailMIME(t *testing.T) {
 }
 
 func TestBuildGmailMIMEHTML(t *testing.T) {
-	raw, err := buildGmailMIME("you@example.com", "Subj", "plain fallback", "<h1>Hello</h1>", nil)
+	raw, err := buildGmailMIME("you@example.com", nil, "Subj", "plain fallback", "<h1>Hello</h1>", nil)
 	if err != nil {
 		t.Fatalf("buildGmailMIME html: %v", err)
 	}
@@ -197,6 +200,29 @@ func TestGmailPickRecipient(t *testing.T) {
 	// disabled service still resolves recipient via fields (enablement gates at SendNotification)
 	if got, err := g.pickRecipient(&NotificationDestination{}); err != nil || got != "fallback@example.com" {
 		t.Errorf("empty dest = %q, err=%v, want fallback@example.com", got, err)
+	}
+}
+
+func TestGmailValidateCCRecipients(t *testing.T) {
+	g := &GmailService{
+		defaultTo: "fallback@example.com",
+		config: &GmailConfig{
+			DefaultTo:         "fallback@example.com",
+			AllowedRecipients: []string{"fallback@example.com", "cc@example.com", "other@example.com"},
+		},
+	}
+
+	got, err := g.validateCCRecipients([]string{" CC@Example.com ", "other@example.com,cc@example.com"})
+	if err != nil {
+		t.Fatalf("validateCCRecipients returned error: %v", err)
+	}
+	want := []string{"cc@example.com", "other@example.com"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("validateCCRecipients = %#v, want %#v", got, want)
+	}
+
+	if got, err := g.validateCCRecipients([]string{"outside@example.com"}); err == nil || len(got) != 0 {
+		t.Fatalf("outside cc = %#v, err=%v, want blocked recipient error", got, err)
 	}
 }
 

@@ -298,6 +298,16 @@ func (g *GmailService) pickRecipient(dest *NotificationDestination) (string, err
 	return candidate, nil
 }
 
+func (g *GmailService) validateCCRecipients(cc []string) ([]string, error) {
+	cc = normalizeEmailList(cc)
+	for _, recipient := range cc {
+		if !g.isAllowedRecipient(recipient) {
+			return nil, fmt.Errorf("gmail cc recipient %q is not in the allowed recipients list", recipient)
+		}
+	}
+	return cc, nil
+}
+
 // SendNotification implements NotificationConnector. It renders the feedback
 // request as a plain email. Gmail is an OUTBOUND-ONLY connector: it notifies
 // the recipient that input is needed, but the response itself is collected
@@ -327,19 +337,25 @@ func (g *GmailService) SendNotification(ctx context.Context, uniqueID string, me
 	// Typed Gmail content (if provided) overrides the derived subject/body and
 	// can carry attachments.
 	var attachments []string
+	var cc []string
 	var htmlBody string
 	if gc := gmailContentFrom(dest); gc != nil {
 		if s := strings.TrimSpace(gc.Subject); s != "" {
 			subject = s
 		}
+		cc = gc.CC
 		if b := strings.TrimSpace(gc.Body); b != "" {
 			body = b
 		}
 		htmlBody = gc.HTMLBody
 		attachments = gc.Attachments
 	}
+	cc, err = g.validateCCRecipients(cc)
+	if err != nil {
+		return "", err
+	}
 
-	return g.deliver(ctx, to, subject, body, htmlBody, attachments)
+	return g.deliver(ctx, to, cc, subject, body, htmlBody, attachments)
 }
 
 // SendUserNotification sends a non-blocking informational email.
@@ -360,11 +376,13 @@ func (g *GmailService) SendUserNotification(ctx context.Context, message string,
 		body += "\n\n" + c
 	}
 	var attachments []string
+	var cc []string
 	var htmlBody string
 	if gc := gmailContentFrom(dest); gc != nil {
 		if s := strings.TrimSpace(gc.Subject); s != "" {
 			subject = s
 		}
+		cc = gc.CC
 		if b := strings.TrimSpace(gc.Body); b != "" {
 			body = b
 		}
@@ -374,7 +392,11 @@ func (g *GmailService) SendUserNotification(ctx context.Context, message string,
 	if strings.TrimSpace(body) == "" && strings.TrimSpace(htmlBody) == "" && len(attachments) == 0 {
 		return "", nil
 	}
-	return g.deliver(ctx, to, subject, body, htmlBody, attachments)
+	cc, err = g.validateCCRecipients(cc)
+	if err != nil {
+		return "", err
+	}
+	return g.deliver(ctx, to, cc, subject, body, htmlBody, attachments)
 }
 
 // send shells out to `gws gmail +send` and returns the sent message ID.
@@ -411,18 +433,18 @@ const maxGmailAttachmentBytes = 20 * 1024 * 1024 // 20 MB
 
 // deliver routes to the simple `+send` helper for plain text, or to the raw
 // MIME path when attachments are present (gws `+send` can't attach files).
-func (g *GmailService) deliver(ctx context.Context, to, subject, body, htmlBody string, attachments []string) (string, error) {
+func (g *GmailService) deliver(ctx context.Context, to string, cc []string, subject, body, htmlBody string, attachments []string) (string, error) {
 	// The plain gws --body path can't carry HTML or attachments, so route through
 	// the raw-MIME path whenever either is present.
-	if htmlBody == "" && len(attachments) == 0 {
+	if htmlBody == "" && len(attachments) == 0 && len(cc) == 0 {
 		return g.send(ctx, to, subject, body)
 	}
-	return g.sendRaw(ctx, to, subject, body, htmlBody, attachments)
+	return g.sendRaw(ctx, to, cc, subject, body, htmlBody, attachments)
 }
 
 // sendRaw builds an RFC 2822 MIME message (body + attachments) and posts it via
 // `gws gmail users messages send --json '{"raw": <base64url>}'`.
-func (g *GmailService) sendRaw(ctx context.Context, to, subject, body, htmlBody string, attachments []string) (string, error) {
+func (g *GmailService) sendRaw(ctx context.Context, to string, cc []string, subject, body, htmlBody string, attachments []string) (string, error) {
 	g.mu.RLock()
 	gwsPath := g.gwsPath
 	cfg := g.config
@@ -431,7 +453,7 @@ func (g *GmailService) sendRaw(ctx context.Context, to, subject, body, htmlBody 
 		gwsPath = "gws"
 	}
 
-	mimeBytes, err := buildGmailMIME(to, subject, body, htmlBody, attachments)
+	mimeBytes, err := buildGmailMIME(to, cc, subject, body, htmlBody, attachments)
 	if err != nil {
 		return "", fmt.Errorf("build email: %w", err)
 	}
@@ -459,7 +481,7 @@ func (g *GmailService) sendRaw(ctx context.Context, to, subject, body, htmlBody 
 // buildGmailMIME assembles a multipart/mixed RFC 2822 message: a UTF-8 text
 // body plus one base64 part per attachment. Attachment paths are read from the
 // host filesystem (the same host gws runs on), so any file type is supported.
-func buildGmailMIME(to, subject, body, htmlBody string, attachments []string) ([]byte, error) {
+func buildGmailMIME(to string, cc []string, subject, body, htmlBody string, attachments []string) ([]byte, error) {
 	parts := &bytes.Buffer{}
 	mw := multipart.NewWriter(parts)
 
@@ -547,6 +569,9 @@ func buildGmailMIME(to, subject, body, htmlBody string, attachments []string) ([
 
 	full := &bytes.Buffer{}
 	fmt.Fprintf(full, "To: %s\r\n", to)
+	if len(cc) > 0 {
+		fmt.Fprintf(full, "Cc: %s\r\n", strings.Join(normalizeEmailList(cc), ", "))
+	}
 	fmt.Fprintf(full, "Subject: %s\r\n", mime.QEncoding.Encode("UTF-8", subject))
 	full.WriteString("MIME-Version: 1.0\r\n")
 	fmt.Fprintf(full, "Content-Type: multipart/mixed; boundary=%q\r\n\r\n", mw.Boundary())

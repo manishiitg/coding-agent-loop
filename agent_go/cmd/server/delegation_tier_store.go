@@ -24,6 +24,10 @@ func sanitizeDelegationTierConfig(config *virtualtools.DelegationTierConfig) *vi
 		result.Main = main
 		hasAny = true
 	}
+	if chiefOfStaff := sanitizeTierModel(config.ChiefOfStaff); chiefOfStaff != nil {
+		result.ChiefOfStaff = chiefOfStaff
+		hasAny = true
+	}
 	if high := sanitizeTierModel(config.High); high != nil {
 		result.High = high
 		hasAny = true
@@ -82,10 +86,11 @@ func mergeDelegationTierConfig(base, override *virtualtools.DelegationTierConfig
 	}
 
 	result := &virtualtools.DelegationTierConfig{
-		Main:   base.Main,
-		High:   base.High,
-		Medium: base.Medium,
-		Low:    base.Low,
+		Main:         base.Main,
+		ChiefOfStaff: base.ChiefOfStaff,
+		High:         base.High,
+		Medium:       base.Medium,
+		Low:          base.Low,
 	}
 
 	if len(base.Custom) > 0 {
@@ -98,6 +103,9 @@ func mergeDelegationTierConfig(base, override *virtualtools.DelegationTierConfig
 
 	if override.Main != nil {
 		result.Main = override.Main
+	}
+	if override.ChiefOfStaff != nil {
+		result.ChiefOfStaff = override.ChiefOfStaff
 	}
 	if override.High != nil {
 		result.High = override.High

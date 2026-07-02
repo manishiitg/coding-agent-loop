@@ -73,6 +73,14 @@ type PresetLLMConfig struct {
 	// providers may supply a provider-owned Auto Improve default.
 	AutoImproveLLM *AgentLLMConfig `json:"auto_improve_llm,omitempty"`
 
+	// Optional scheduled Pulse override. When omitted, coding-agent providers may
+	// supply a provider-owned Pulse default.
+	PulseLLM *AgentLLMConfig `json:"pulse_llm,omitempty"`
+
+	// Optional scheduled Chief of Staff override. When omitted, coding-agent
+	// providers may supply a provider-owned Chief of Staff default.
+	ChiefOfStaffLLM *AgentLLMConfig `json:"chief_of_staff_llm,omitempty"`
+
 	// Feature toggles.
 	UseKnowledgebase           *bool  `json:"use_knowledgebase,omitempty"`
 	LockKnowledgebase          *bool  `json:"lock_knowledgebase,omitempty"`
@@ -177,6 +185,57 @@ func ResolveCodingAgentAutoImproveConfig(config *PresetLLMConfig) (*AgentLLMConf
 	return autoImprove, true
 }
 
+func ResolveCodingAgentPulseConfig(config *PresetLLMConfig) (*AgentLLMConfig, bool) {
+	if config == nil || config.Provider == "" {
+		return nil, false
+	}
+
+	defaults, ok := llmproviders.GetCodingAgentDefaultTierModels(llmproviders.Provider(config.Provider))
+	if !ok {
+		return nil, false
+	}
+	pulse := agentLLMConfigFromCodingAgentRef(defaults.Pulse)
+	if pulse == nil {
+		pulse = agentLLMConfigFromCodingAgentRef(defaults.High)
+	}
+	if pulse == nil {
+		return nil, false
+	}
+	return pulse, true
+}
+
+// ResolveCodingAgentMemoryConfig returns the model used by scheduled memory
+// enrichment. Memory follows the Pulse default because it is frequent,
+// report-free background maintenance rather than strategic Chief of Staff work.
+func ResolveCodingAgentMemoryConfig(config *PresetLLMConfig) (*AgentLLMConfig, bool) {
+	return ResolveCodingAgentPulseConfig(config)
+}
+
+func ResolveCodingAgentChiefOfStaffConfig(config *PresetLLMConfig) (*AgentLLMConfig, bool) {
+	if config == nil || config.Provider == "" {
+		return nil, false
+	}
+
+	defaults, ok := llmproviders.GetCodingAgentDefaultTierModels(llmproviders.Provider(config.Provider))
+	if !ok {
+		return nil, false
+	}
+	chiefOfStaff := agentLLMConfigFromCodingAgentRef(defaults.ChiefOfStaff)
+	if chiefOfStaff == nil {
+		chiefOfStaff = agentLLMConfigFromCodingAgentRef(defaults.AutoImprove)
+	}
+	if chiefOfStaff == nil {
+		chiefOfStaff = agentLLMConfigFromCodingAgentRef(defaults.Pulse)
+	}
+	if chiefOfStaff == nil {
+		chiefOfStaff = agentLLMConfigFromCodingAgentRef(defaults.High)
+	}
+	if chiefOfStaff == nil {
+		return nil, false
+	}
+	return chiefOfStaff, true
+}
+
 // ResolveCodingPlanConfig is kept for legacy call sites and old saved configs.
 func ResolveCodingPlanConfig(config *PresetLLMConfig) (*AgentLLMConfig, *TieredLLMConfig, bool) {
 	return ResolveCodingAgentConfig(config)
@@ -210,6 +269,12 @@ func ValidatePresetLLMConfigPublic(config *PresetLLMConfig) error {
 		if err := validatePresetAgentLLMConfig(config.AutoImproveLLM, "auto_improve_llm"); err != nil {
 			return err
 		}
+		if err := validatePresetAgentLLMConfig(config.PulseLLM, "pulse_llm"); err != nil {
+			return err
+		}
+		if err := validatePresetAgentLLMConfig(config.ChiefOfStaffLLM, "chief_of_staff_llm"); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -239,6 +304,12 @@ func ValidatePresetLLMConfigPublic(config *PresetLLMConfig) error {
 		if err := validatePresetAgentLLMConfig(config.AutoImproveLLM, "auto_improve_llm"); err != nil {
 			return err
 		}
+		if err := validatePresetAgentLLMConfig(config.PulseLLM, "pulse_llm"); err != nil {
+			return err
+		}
+		if err := validatePresetAgentLLMConfig(config.ChiefOfStaffLLM, "chief_of_staff_llm"); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -265,6 +336,12 @@ func ValidatePresetLLMConfigPublic(config *PresetLLMConfig) error {
 		}
 	}
 	if err := validatePresetAgentLLMConfig(config.AutoImproveLLM, "auto_improve_llm"); err != nil {
+		return err
+	}
+	if err := validatePresetAgentLLMConfig(config.PulseLLM, "pulse_llm"); err != nil {
+		return err
+	}
+	if err := validatePresetAgentLLMConfig(config.ChiefOfStaffLLM, "chief_of_staff_llm"); err != nil {
 		return err
 	}
 	if !hasLegacyConfig && !hasValidAgentConfig {

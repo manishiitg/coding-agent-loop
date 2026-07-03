@@ -35,6 +35,9 @@ type WorkflowPublishStatus struct {
 	LastAttemptAt      string                             `json:"last_attempt_at,omitempty"`
 	LastAgentSessionID string                             `json:"last_agent_session_id,omitempty"`
 	LastSourceHash     string                             `json:"last_source_hash,omitempty"`
+	Visibility         string                             `json:"visibility,omitempty"`
+	SecretName         string                             `json:"secret_name,omitempty"`
+	Targets            []json.RawMessage                  `json:"targets,omitempty"`
 	Summary            string                             `json:"summary,omitempty"`
 	Destinations       []WorkflowPublishDestinationStatus `json:"destinations,omitempty"`
 	LastError          string                             `json:"last_error,omitempty"`

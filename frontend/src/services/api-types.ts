@@ -2112,6 +2112,9 @@ export interface WorkflowPublishStatus {
   last_attempt_at?: string
   last_agent_session_id?: string
   last_source_hash?: string
+  visibility?: string
+  secret_name?: string
+  targets?: Array<string | { id?: string; artifact?: string; [k: string]: unknown }>
   summary?: string
   destinations?: WorkflowPublishDestinationStatus[]
   last_error?: string

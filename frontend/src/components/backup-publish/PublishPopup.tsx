@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { AlertCircle, Check, Copy, ExternalLink, Globe, Info, Loader2, RefreshCw, X } from 'lucide-react'
+import { AlertCircle, Check, Copy, ExternalLink, Globe, Info, Loader2, LockKeyhole, RefreshCw, X } from 'lucide-react'
 import type { WorkflowPublishInfoResponse, WorkflowPublishStrategyInfo } from '../../services/api-types'
 import ModalPortal from '../ui/ModalPortal'
 import { formatPublishStateLabel, getPublishStateVisual } from '../workflow/publishStatus'
@@ -38,10 +38,88 @@ const iconButtonClass = 'inline-flex h-8 w-8 items-center justify-center rounded
 const actionClass = 'inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-2.5 py-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted'
 
 const formatTargets = (info: WorkflowPublishInfoResponse | null, fallback: string): string => {
-  const targets = info?.config?.targets || []
+  const targets = info?.config?.targets?.length ? info.config.targets : (info?.status?.targets || [])
   return targets.length
     ? targets.map(target => (typeof target === 'string' ? target : (target.id || target.artifact || 'artifact'))).join(', ')
     : fallback
+}
+
+type PublishAccessInfo = {
+  mode: 'public' | 'private' | 'unguessable'
+  label: string
+  detail: string
+  secretName?: string
+}
+
+const normalizeText = (value?: string): string => (value || '').trim()
+
+const extractSecretNameFromText = (text: string): string | undefined => {
+  const match = text.match(/(?:workflow\s+secret|secret)\s+([A-Z][A-Z0-9_]{2,})\b/i)
+  return match?.[1]
+}
+
+const secretLooksLikePassword = (secretName?: string): boolean => (
+  Boolean(secretName && /(PASSWORD|PASS|PASSPHRASE|STATICRYPT)/i.test(secretName))
+)
+
+const readDestinationAccessInfo = (
+  visibility?: string,
+  secretName?: string,
+  fallback?: PublishAccessInfo
+): PublishAccessInfo => {
+  const normalizedVisibility = normalizeText(visibility).toLowerCase()
+  const usableSecretName = secretLooksLikePassword(secretName) ? secretName : undefined
+
+  if (
+    normalizedVisibility === 'private' ||
+    normalizedVisibility === 'password' ||
+    normalizedVisibility === 'password-protected' ||
+    normalizedVisibility === 'protected' ||
+    usableSecretName
+  ) {
+    return {
+      mode: 'private',
+      label: 'Password protected',
+      detail: usableSecretName ? `Secret: ${usableSecretName}` : 'Password required',
+      secretName: usableSecretName,
+    }
+  }
+
+  if (normalizedVisibility === 'unguessable-link') {
+    return {
+      mode: 'unguessable',
+      label: 'Unguessable link',
+      detail: 'Anyone with the URL can open it',
+    }
+  }
+
+  return fallback || {
+    mode: 'public',
+    label: 'Public',
+    detail: 'Anyone with the URL can open it',
+  }
+}
+
+const getPublishAccessInfo = (info: WorkflowPublishInfoResponse | null): PublishAccessInfo => {
+  const statusVisibility = normalizeText(info?.status?.visibility)
+  const destinationVisibility = info?.config?.destinations
+    ?.map(destination => normalizeText(destination.visibility))
+    .find(Boolean)
+  const summaryText = [info?.status?.summary, info?.config?.notes, ...(info?.config?.destinations || []).map(destination => destination.notes)]
+    .filter(Boolean)
+    .join(' ')
+  const summaryImpliesPassword = /staticrypt|password[-\s]?protected|password gate|passphrase/i.test(summaryText)
+  const statusSecretName = normalizeText(info?.status?.secret_name)
+  const inferredSecretName = statusSecretName || extractSecretNameFromText(summaryText)
+
+  if (statusVisibility || summaryImpliesPassword || inferredSecretName) {
+    return readDestinationAccessInfo(
+      statusVisibility || (summaryImpliesPassword ? 'private' : undefined),
+      inferredSecretName,
+    )
+  }
+
+  return readDestinationAccessInfo(destinationVisibility)
 }
 
 const PublishPopup: React.FC<PublishPopupProps> = ({
@@ -102,6 +180,7 @@ const PublishPopup: React.FC<PublishPopupProps> = ({
   const destinations = info?.config?.destinations || []
   const supported = info?.supported?.length ? info.supported : fallbackStrategies
   const url = info?.url || info?.status?.url || ''
+  const accessInfo = getPublishAccessInfo(info)
   const setupControl = setupAction.onClick ? (
     <button type="button" onClick={setupAction.onClick} className={actionClass}>
       {setupAction.label}
@@ -178,6 +257,12 @@ const PublishPopup: React.FC<PublishPopupProps> = ({
                     <div className="flex items-center gap-2 border-t border-border px-4 py-3">
                       <Globe className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
                       <a href={url} target="_blank" rel="noopener noreferrer" className="min-w-0 flex-1 truncate text-sm font-medium text-primary hover:underline" title={url}>{url}</a>
+                      {accessInfo.mode === 'private' && (
+                        <span className="hidden items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300 sm:inline-flex">
+                          <LockKeyhole className="h-3 w-3" />
+                          Password
+                        </span>
+                      )}
                       <button onClick={() => { void copyUrl(url) }} className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Copy URL">
                         {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
                       </button>
@@ -187,7 +272,7 @@ const PublishPopup: React.FC<PublishPopupProps> = ({
                     </div>
                   )}
 
-                  <div className="grid border-t border-border text-sm sm:grid-cols-3">
+                  <div className="grid border-t border-border text-sm sm:grid-cols-4">
                     <div className="border-b border-border px-4 py-3 sm:border-b-0 sm:border-r">
                       <div className="text-xs text-muted-foreground">Last published</div>
                       <div className="mt-1 font-medium text-foreground">{formatRelativeTime(info?.status?.last_published_at)}</div>
@@ -199,6 +284,16 @@ const PublishPopup: React.FC<PublishPopupProps> = ({
                     <div className="px-4 py-3">
                       <div className="text-xs text-muted-foreground">Publishing</div>
                       <div className="mt-1 font-medium text-foreground">{formatTargets(info, defaultTargetLabel)}</div>
+                    </div>
+                    <div className="border-t border-border px-4 py-3 sm:border-t-0 sm:border-l">
+                      <div className="text-xs text-muted-foreground">Access</div>
+                      <div className="mt-1 flex items-center gap-1.5 font-medium text-foreground">
+                        {accessInfo.mode === 'private' && <LockKeyhole className="h-3.5 w-3.5 text-amber-500" />}
+                        {accessInfo.label}
+                      </div>
+                      <div className="mt-0.5 truncate text-xs text-muted-foreground" title={accessInfo.detail}>
+                        {accessInfo.detail}
+                      </div>
                     </div>
                   </div>
                 </section>
@@ -220,6 +315,11 @@ const PublishPopup: React.FC<PublishPopupProps> = ({
                         const destinationState = status?.state || 'configured_not_verified'
                         const destinationVisual = getPublishStateVisual(destinationState)
                         const DestinationIcon = destinationVisual.Icon
+                        const destinationAccess = readDestinationAccessInfo(
+                          destination.visibility,
+                          destination.secret_name,
+                          destinations.length === 1 ? accessInfo : undefined,
+                        )
                         return (
                           <div key={destination.id || publishDestinationTitle(destination)} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
                             <div className="min-w-0">
@@ -228,6 +328,12 @@ const PublishPopup: React.FC<PublishPopupProps> = ({
                                 <span className="text-sm font-medium text-foreground">{destination.id || 'Destination'}</span>
                                 <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] uppercase tracking-wide text-muted-foreground">{destination.provider}</span>
                                 {destination.method && <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{destination.method}</span>}
+                                {destinationAccess.mode !== 'public' && (
+                                  <span className="inline-flex items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-700 dark:text-amber-300">
+                                    {destinationAccess.mode === 'private' && <LockKeyhole className="h-3 w-3" />}
+                                    {destinationAccess.label}
+                                  </span>
+                                )}
                               </div>
                               <div className="mt-1 truncate text-xs text-muted-foreground">{publishDestinationTitle(destination)}</div>
                               {status?.url && <a href={status.url} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block truncate text-xs text-primary hover:underline">{status.url}</a>}

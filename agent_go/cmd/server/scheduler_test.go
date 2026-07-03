@@ -166,6 +166,16 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 	if !strings.Contains(triage, "Triage is diagnosis/verdict only") {
 		t.Fatalf("triage step should clarify that hardening is separate:\n%s", triage)
 	}
+	for _, want := range []string{
+		"pending Chief of Staff recommendation cards",
+		"mark_cos_recommendation_status",
+		"queued_auto_improve",
+		"CoS rec_ids processed",
+	} {
+		if !strings.Contains(triage, want) {
+			t.Fatalf("triage step missing Chief of Staff handoff text %q:\n%s", want, triage)
+		}
+	}
 	if !strings.Contains(fix, "FIX / HARDEN") {
 		t.Fatalf("fix step should be the harden step:\n%s", fix)
 	}
@@ -177,6 +187,7 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 		"Bug fix",
 		"Report fix",
 		"Eval fix",
+		"mark_cos_recommendation_status",
 	} {
 		if !strings.Contains(fix, want) {
 			t.Fatalf("fix step missing %q:\n%s", want, fix)
@@ -411,6 +422,8 @@ func TestOptimizerScheduleMessagesDefaultsToImproveWhenNoStoredMessage(t *testin
 		"report/dashboard misstatements",
 		"out-of-plan opportunities",
 		"Advisor idea",
+		"Chief of Staff recommendation cards",
+		"mark_cos_recommendation_status",
 		"success-criteria status, tracked signals, trend/delta",
 		"Decision - Auto-improve - Applied",
 		"do NOT call harden_workflow",

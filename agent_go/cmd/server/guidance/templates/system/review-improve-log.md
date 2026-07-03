@@ -85,6 +85,53 @@ Each entry is a small card: a date, a kind tag, optional classification chips, a
 - **Note** — a freeform observation or watchpoint that explains weird runs ("staging UI is mid-redesign, expect selector churn through ~June 20 — not a workflow bug").
 - **Open finding** — something wrong that is not yet fixed. Give it a short stable anchor id (e.g. `id="of-2026-06-07-screenshots"`) **only so a later Decision can mark it resolved** — that is the one place an id earns its keep. No other entry kind needs an id.
 
+### Chief of Staff Recommendation Handoff
+
+Chief of Staff / Org Pulse and workflow Pulse communicate through structured cards in this log. A CoS card must be an entry element with:
+
+- `class` including `cos-rec`
+- `data-cos-rec-id="<stable id>"` (stable across days; do not regenerate for the same goal/gap)
+- `data-goal-id="<org goal id or supporting>"`
+- `data-status="<status>"`
+- `data-priority="high|medium|low"`
+- `data-suggested-action="harden_workflow|replan_workflow_from_results|eval_report_measurement_fix|manual_review|no_action_watchpoint|queued_auto_improve"`
+- optional `data-impact`, `data-effort`, and `data-status-*` attributes written by the marker tool
+
+Lifecycle statuses:
+
+- `proposed` — Org Pulse suggested it; workflow Pulse has not triaged it yet.
+- `accepted` — workflow Pulse agrees the recommendation is valid but has not routed it yet.
+- `queued_auto_improve` — strategic/Goal work that scheduled Auto Improve should consider.
+- `in_progress` — a builder/auto-improve action is currently addressing it.
+- `needs_evidence` — the recommendation may be right but lacks enough evidence or measurement.
+- `done` — workflow Pulse or Auto Improve handled it and cited the confirming evidence.
+- `dismissed` — workflow Pulse rejected it with a reason.
+- `blocked` — valid, but waiting on user input, credentials, external data, or another dependency.
+
+Workflow Pulse and Auto Improve must use `mark_cos_recommendation_status` to change these statuses instead of hand-editing lifecycle attributes. They may still add a visible Decision/Monitor entry that explains the action, but the status marker is the machine-readable reply that Org Pulse reads next time.
+
+Example:
+
+```html
+<article class="entry cos-rec open-finding" id="cos-2026-07-03-reply-rate"
+  data-cos-rec-id="cos-2026-07-03-reply-rate"
+  data-goal-id="goal-qualified-pipeline"
+  data-status="proposed"
+  data-priority="high"
+  data-impact="high"
+  data-effort="medium"
+  data-suggested-action="replan_workflow_from_results">
+  <div class="ehead">
+    <span class="tag">Chief of Staff recommendation</span>
+    <span class="kind goal">Goal</span>
+    <span class="worklabel improvement">Improvement</span>
+    <span class="etitle">Retarget outreach around verified replies</span>
+    <span class="when">2026-07-03 · Org Pulse</span>
+  </div>
+  <p><b>Goal/KPI:</b> Qualified pipeline · reply-rate target. <b>Evidence:</b> reports/dashboard.html · evaluation/latest.json. <b>Gap:</b> reply rate is capped despite clean runs. <b>Expected impact:</b> improve reply-rate evidence before increasing volume.</p>
+</article>
+```
+
 ### Classification chips
 
 Use two different chip families so the user can scan what happened:

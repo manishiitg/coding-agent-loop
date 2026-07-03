@@ -67,6 +67,9 @@ For **each** workflow under `Workflow/<name>/`:
 - `builder/improve.html` — the Bug/Goal verdict pills + status headline its **own** Pulse already formed
   (`{bug, goal, headline}`), plus the latest workflow Pulse LLM/model/cost/time readout when present.
   This is your endgame and operational telemetry signal; trust it before drilling into raw cost files.
+  Also extract existing Chief of Staff recommendation cards (`.cos-rec`, `data-cos-rec-id`, `data-status`,
+  `data-goal-id`, `data-status-updated-at`, and `data-status-note`). These cards are the workflow's reply
+  channel back to you; read them before creating any new recommendation.
 - `workflow.json` — workflow label/objective, `capabilities.llm_config`, execution defaults, schedules,
   and any explicit provider/model/tier configuration. This is evidence for the LLM/cost audit; read it,
   but do not edit it.
@@ -85,6 +88,7 @@ workflow's `builder/improve.html` as a **Chief of Staff recommendation** card un
 newest-first log anchor. This card is the handoff from org management to the workflow builder,
 so it must be goal-aligned and actionable:
 
+- **Stable recommendation id:** `data-cos-rec-id`, reused across days for the same goal/gap.
 - **Org goal / KPI target:** name the goal and target from `pulse/goals.html`, or say
   `supporting/no explicit goal` when the workflow is operational support.
 - **Alignment verdict:** `aligned`, `supporting`, `unaligned`, or `unknown-measurement`.
@@ -95,6 +99,7 @@ so it must be goal-aligned and actionable:
   eval/report measurement fix, manual review, or no-action watchpoint.
 - **Expected impact:** the KPI or workflow success criterion that should move if the builder
   accepts the recommendation.
+- **Lifecycle status:** start as `data-status="proposed"` unless you are updating an existing card.
 
 This is a recommendation for the workflow builder to verify later, not an applied fix.
 
@@ -191,6 +196,11 @@ Every recommendation must be:
 - **Tied to a goal + evidence.** Name the goal/KPI target from `pulse/goals.html` and the
   concrete evidence (run, report, table, Pulse headline, conversation) that motivates it. No
   evidence, no recommendation — never invent a metric or a need.
+- **Checked against prior recommendations.** Before writing a new recommendation, scan existing
+  org-level cards in `pulse/goals.html` and workflow-level `.cos-rec` cards in `builder/improve.html`.
+  If the same goal/gap already has an open recommendation (`proposed`, `accepted`, `queued_auto_improve`,
+  `in_progress`, `needs_evidence`, or `blocked`), update/follow up on that card instead of duplicating it.
+  If it is stale and important, surface it as a stale open decision in `pulse/org-pulse.html`.
 - **Ranked by impact / effort.** State the expected goal movement (impact) and the rough cost
   to try it (effort), and order recommendations so the highest-impact / lowest-effort ones come
   first. The user should be able to read the top one and act.
@@ -217,14 +227,17 @@ Write recommendations to the **right surface**, never both:
   newest-first Chief of Staff recommendation card to that workflow's `builder/improve.html` — the
   per-automation recommendation ledger, the one workflow-internal surface you may write. Include
   goal/KPI, alignment verdict, evidence, gap, priority, suggested builder action, and expected
-  impact (the card fields from step 3). It is a recommendation for the builder to verify later,
-  not an applied fix.
+  impact (the card fields from step 3), plus `class="entry cos-rec"`, stable `data-cos-rec-id`,
+  `data-status`, `data-priority`, and `data-suggested-action`. It is a recommendation for the
+  builder to verify later, not an applied fix. Workflow Pulse / Auto Improve replies by calling
+  `mark_cos_recommendation_status`; do not rewrite those workflow-side lifecycle attributes yourself
+  unless you are creating the initial card.
 - **Org-level recommendation → the Recommendations section of `pulse/goals.html`.** When the move
   spans the org — a new automation for an unserved goal, a different approach for a capped goal,
   a cross-automation synergy, or a promotion — write it to the **Recommendations** section of
   `pulse/goals.html` (see `get_reference_doc(kind="org-html")` for the structure), newest-first,
   each marked as a proposal with goal, impact/effort, and status. Update an existing open
-  recommendation instead of duplicating it; mark accepted/dismissed ones rather than deleting.
+  recommendation instead of duplicating it; mark accepted/dismissed/done ones rather than deleting.
 
 Also summarize the recommendations in today's Org Pulse log entry (step 9) so the user sees them
 in the narrative, but the durable home is the two surfaces above.

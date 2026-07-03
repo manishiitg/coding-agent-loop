@@ -1154,6 +1154,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 	// confirmation.
 	autoImprovement := []string{
 		"capture_context",
+		"mark_cos_recommendation_status",
 		"get_workflow_command_guidance", // canonical slash-command prose; see guidance package.
 		"get_reference_doc",             // reference docs (system/*.md) loaded on demand; see guidance package.
 	}
@@ -1296,6 +1297,7 @@ func optimizerToolAgentAllowedToolNames() []string {
 		// Workflow-level config that affects future execution.
 		"update_variable", "add_group", "update_group", "delete_group",
 		"update_workflow_config", "test_llm", "set_workflow_llm_config",
+		"mark_cos_recommendation_status",
 
 		// Report artifact maintenance.
 		"get_report_plan", "upsert_report_widget", "remove_report_widget",
@@ -1322,6 +1324,15 @@ func (iwm *InteractiveWorkshopManager) registerWorkshopMutationToolsForToolAgent
 		logger.Warn(fmt.Sprintf("⚠️ %s: failed to register plan modification tools: %v", agentName, err))
 	}
 	registerInteractiveWorkshopTools(iwm, mcpAgentRef, logger)
+	if err := RegisterChiefOfStaffRecommendationStatusTool(
+		mcpAgentRef,
+		workspacePath,
+		logger,
+		iwm.controller.ReadWorkspaceFile,
+		iwm.controller.WriteWorkspaceFile,
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ %s: failed to register Chief of Staff recommendation status tool: %v", agentName, err))
+	}
 	if err := RegisterEvaluationValidationTools(
 		mcpAgentRef,
 		workspacePath,
@@ -1368,6 +1379,15 @@ func (iwm *InteractiveWorkshopManager) registerWorkshopReviewToolsForToolAgent(a
 	}
 	mcpAgentRef := agent.GetBaseAgent().Agent()
 	registerInteractiveWorkshopTools(iwm, mcpAgentRef, logger)
+	if err := RegisterChiefOfStaffRecommendationStatusTool(
+		mcpAgentRef,
+		workspacePath,
+		logger,
+		iwm.controller.ReadWorkspaceFile,
+		iwm.controller.WriteWorkspaceFile,
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ %s: failed to register Chief of Staff recommendation status tool: %v", agentName, err))
+	}
 	if err := iwm.registerMarkChangelogArtifactReviewedTool(mcpAgentRef, workspacePath, logger); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ %s: failed to register changelog artifact-review marker tool: %v", agentName, err))
 	}

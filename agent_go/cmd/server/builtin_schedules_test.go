@@ -38,6 +38,34 @@ func TestBuiltinOrgPulseSequenceIncludesReadOnlyLLMCostAudit(t *testing.T) {
 	}
 }
 
+func TestBuiltinOrgPulseRecommendationLifecycleHandoff(t *testing.T) {
+	sched, ok := FindDefaultBuiltinSchedule(builtinOrgPulseID)
+	if !ok {
+		t.Fatal("builtin org pulse schedule not found")
+	}
+	if len(sched.Messages) < 4 {
+		t.Fatalf("builtin org pulse messages = %d, want at least 4", len(sched.Messages))
+	}
+
+	recStep := sched.Messages[3]
+	for _, want := range []string{
+		"First read existing org-level recommendation cards",
+		"workflow-level Chief of Staff cards",
+		"data-cos-rec-id",
+		"queued_auto_improve",
+		"update/follow up instead of duplicating",
+		`data-status="proposed"`,
+		"stale open decisions",
+	} {
+		if !strings.Contains(recStep, want) {
+			t.Fatalf("Org Pulse recommendation step missing %q:\n%s", want, recStep)
+		}
+	}
+	if !strings.Contains(builtinOrgPulseQuery, "follow up on existing recommendations before creating new ones") {
+		t.Fatalf("single-turn Org Pulse fallback missing recommendation lifecycle follow-up:\n%s", builtinOrgPulseQuery)
+	}
+}
+
 func TestBuiltinOrgPulseUpdatesGoalsScorecard(t *testing.T) {
 	sched, ok := FindDefaultBuiltinSchedule(builtinOrgPulseID)
 	if !ok {

@@ -79,6 +79,43 @@ var (
 	sweepOrphanedTmuxSessions         = llmproviders.SweepOrphanedInteractiveTmuxSessions
 )
 
+var mcpBridgeCustomToolCategories = map[string]bool{
+	"workspace":            true,
+	"workspace_tools":      true,
+	"workspace_browser":    true,
+	"workspace_advanced":   true,
+	"workspace_image":      true,
+	"workspace_image_gen":  true,
+	"workspace_image_edit": true,
+	"human":                true,
+	"human_tools":          true,
+	"workflow":             true,
+	"workflow_creator":     true,
+	"knowledgebase_tools":  true,
+	"llm_config_tools":     true,
+	"secret_tools":         true,
+	"skill_tools":          true,
+	"mcp_server_tools":     true,
+	"activity_status":      true,
+	"auto_improvement":     true,
+}
+
+var mcpBridgeVirtualToolCategories = map[string]bool{
+	"memory": true,
+}
+
+func normalizeMCPBridgeCategory(name string) string {
+	return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(name), "-", "_"))
+}
+
+func isMCPBridgeCustomToolCategory(name string) bool {
+	return mcpBridgeCustomToolCategories[normalizeMCPBridgeCategory(name)]
+}
+
+func isMCPBridgeVirtualToolCategory(name string) bool {
+	return mcpBridgeVirtualToolCategories[normalizeMCPBridgeCategory(name)]
+}
+
 // stepDelegationRegistry maps a workshop step's ForceCorrelationID ("workshop-step-*") to the
 // delegation IDs spawned within that step. This lets query_step include tool calls from API-based
 // delegation sub-agents that use their own correlation ID ("delegation-<index>-<ts>") instead of
@@ -1337,31 +1374,13 @@ func runServer(cmd *cobra.Command, args []string) {
 	// and virtual tool categories (e.g. workflow) alongside real MCP servers. Claude Code agents
 	// call them all via /tools/mcp/{server}/{tool}. The routeMCPRequest helper detects these
 	// categories and redirects to the correct handler (custom or virtual).
-	customToolCategories := map[string]bool{
-		"workspace": true, "workspace_browser": true,
-		"workspace_advanced": true, "workspace_image": true,
-		"workspace_image_gen": true, "workspace_image_edit": true, "human": true,
-		"workflow": true, "workflow_creator": true,
-		"llm_config_tools": true, "secret_tools": true, "skill_tools": true,
-		"mcp_server_tools": true, "activity_status": true,
-		// Tools registered by guidance.RegisterGuidanceTool — namespaced as
-		// "auto_improvement" in the tool index. Without this entry, the LLM's
-		// curl call to /tools/mcp/auto_improvement/get_workflow_command_guidance
-		// falls through to MCP-server lookup and returns "server not configured".
-		"auto_improvement": true,
-	}
-	virtualToolCategories := map[string]bool{
-		"memory": true,
-	}
 	routeMCPRequest := func(w http.ResponseWriter, r *http.Request, server, tool string) {
-		// Normalize: hyphens to underscores for category lookup
-		normalized := strings.ReplaceAll(server, "-", "_")
-		if customToolCategories[normalized] {
+		if isMCPBridgeCustomToolCategory(server) {
 			log.Printf("[ROUTE] Redirecting /tools/mcp/%s/%s → custom tool handler", server, tool)
 			executorHandlers.HandlePerToolCustomRequest(w, r, tool)
 			return
 		}
-		if virtualToolCategories[normalized] {
+		if isMCPBridgeVirtualToolCategory(server) {
 			log.Printf("[ROUTE] Redirecting /tools/mcp/%s/%s → virtual tool handler", server, tool)
 			executorHandlers.HandlePerToolVirtualRequest(w, r, tool)
 			return

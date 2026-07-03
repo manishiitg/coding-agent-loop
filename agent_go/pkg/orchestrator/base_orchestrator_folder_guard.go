@@ -71,7 +71,6 @@ func (bo *BaseOrchestrator) EnhanceToolDescriptionWithFolderGuard(toolName, orig
 		"list_workspace_files":  true,
 		"execute_shell_command": true,
 		"read_image":            true,
-		"read_video":            true,
 	}
 
 	writeTools := map[string]bool{
@@ -193,7 +192,6 @@ func (bo *BaseOrchestrator) wrapWorkspaceToolsWithPaths(snapshotReadPaths, snaps
 		"list_workspace_files":  {"folder"},
 		"execute_shell_command": {},
 		"read_image":            {"filepath"},
-		"read_video":            {"filepath"},
 	}
 
 	writeTools := map[string][]string{

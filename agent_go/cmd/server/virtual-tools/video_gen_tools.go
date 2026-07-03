@@ -317,7 +317,7 @@ func getVideoGenToolDefinition(toolName string) llmtypes.Tool {
 	return llmtypes.Tool{
 		Function: &llmtypes.FunctionDefinition{
 			Name:        toolName,
-			Description: "Generate videos using AI from a text prompt. Requires a full absolute output_path under the workspace docs root and a model_id (the model determines the Google backend). Before choosing provider/model_id, call list_llm_capabilities(capability=\"generate_video\", include_models=true). When specifying a model_id, pass the matching provider too. Veo 3 models include native audio in the output by default. Gemini Omni Flash (gemini-omni-flash-preview) is a separate, newer model: 3-10s 720p clips, fast/near-real-time, and it also supports conversational multi-turn video editing and multi-subject composition at the SDK level — but this tool call itself is one-shot (no editing/composition params exposed here yet; number_of_videos is always treated as 1 for this model). Prefer Veo for longer/higher-resolution or audio-scripted output; prefer Gemini Omni Flash for quick iteration. Supports image-to-video generation, aspect ratio, resolution, duration, number of videos, and negative prompt.",
+			Description: "Generate videos using AI from a text prompt. Requires a full absolute output_path under the workspace docs root and a model_id (the model determines the Google backend). Before choosing provider/model_id, call list_llm_capabilities(capability=\"generate_video\", include_models=true). When specifying a model_id, pass the matching provider too. Veo 3 models include native audio in the output by default. Gemini Omni Flash (gemini-omni-flash-preview) is a separate, newer model: 3-10s 720p clips, fast/near-real-time, and it also supports conversational multi-turn video editing and multi-subject composition at the SDK level — but this tool call itself is one-shot (no editing/composition params exposed here yet; number_of_videos is always treated as 1 for this model). Prefer Veo when you need first-frame/last-frame control, longer/higher-resolution output, or audio-scripted output; prefer Gemini Omni Flash for quick iteration. Supports image-to-video generation, optional last-frame interpolation for Veo, aspect ratio, resolution, duration, number of videos, and negative prompt.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -349,6 +349,18 @@ func getVideoGenToolDefinition(toolName string) llmtypes.Tool {
 					"input_image_mime_type": map[string]interface{}{
 						"type":        "string",
 						"description": "MIME type of the input image (e.g. 'image/png', 'image/jpeg'). Defaults to 'image/png'.",
+					},
+					"last_frame": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional base64-encoded image to use as the final frame for first-frame/last-frame interpolation. Requires input_image or input_image_path. Supported by Veo 3.1 models; gemini-omni-flash-preview rejects this option in the current tool path.",
+					},
+					"last_frame_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional full absolute workspace-docs image path to use as the final frame for first-frame/last-frame interpolation. Requires input_image_path or input_image. Workspace-relative paths are rejected.",
+					},
+					"last_frame_mime_type": map[string]interface{}{
+						"type":        "string",
+						"description": "MIME type of the last frame image (e.g. 'image/png', 'image/jpeg'). Defaults from last_frame_path extension, or 'image/png' for base64.",
 					},
 					"aspect_ratio": map[string]interface{}{
 						"type":        "string",
@@ -457,6 +469,7 @@ func CreateVideoGenExecutor(cfg VideoGenExecutorConfig) func(ctx context.Context
 		durationSeconds := 0
 		resolution := ""
 		normalizedInputImagePath := ""
+		normalizedLastFramePath := ""
 		if ar, ok := args["aspect_ratio"].(string); ok && ar != "" {
 			opts = append(opts, llmtypes.WithVideoAspectRatio(ar))
 		}
@@ -487,8 +500,25 @@ func CreateVideoGenExecutor(cfg VideoGenExecutorConfig) func(ctx context.Context
 				return "", pathErr
 			}
 		}
-		if inputImageB64, ok := args["input_image"].(string); ok && inputImageB64 != "" && normalizedInputImagePath != "" {
+		inputImageB64, _ := args["input_image"].(string)
+		inputImageB64 = strings.TrimSpace(inputImageB64)
+		if inputImageB64 != "" && normalizedInputImagePath != "" {
 			return "", fmt.Errorf("provide either input_image or input_image_path, not both")
+		}
+		if lastFramePath, ok := args["last_frame_path"].(string); ok && strings.TrimSpace(lastFramePath) != "" {
+			var pathErr error
+			normalizedLastFramePath, pathErr = normalizeRequiredAbsoluteWorkspaceDocumentPath(lastFramePath, "last_frame_path")
+			if pathErr != nil {
+				return "", pathErr
+			}
+		}
+		lastFrameB64, _ := args["last_frame"].(string)
+		lastFrameB64 = strings.TrimSpace(lastFrameB64)
+		if lastFrameB64 != "" && normalizedLastFramePath != "" {
+			return "", fmt.Errorf("provide either last_frame or last_frame_path, not both")
+		}
+		if (lastFrameB64 != "" || normalizedLastFramePath != "") && inputImageB64 == "" && normalizedInputImagePath == "" {
+			return "", fmt.Errorf("last_frame requires input_image or input_image_path")
 		}
 		if normalizedInputImagePath != "" {
 			if cfg.WorkspaceAPIURL == "" {
@@ -517,7 +547,7 @@ func CreateVideoGenExecutor(cfg VideoGenExecutorConfig) func(ctx context.Context
 				}
 			}
 			opts = append(opts, llmtypes.WithVideoInputImage(imgBytes, mimeType))
-		} else if inputImageB64, ok := args["input_image"].(string); ok && inputImageB64 != "" {
+		} else if inputImageB64 != "" {
 			imgBytes, err := base64.StdEncoding.DecodeString(inputImageB64)
 			if err != nil {
 				return "", fmt.Errorf("invalid input_image base64: %w", err)
@@ -527,6 +557,44 @@ func CreateVideoGenExecutor(cfg VideoGenExecutorConfig) func(ctx context.Context
 				mimeType = "image/png"
 			}
 			opts = append(opts, llmtypes.WithVideoInputImage(imgBytes, mimeType))
+		}
+		if normalizedLastFramePath != "" {
+			if cfg.WorkspaceAPIURL == "" {
+				return "", fmt.Errorf("workspace API URL is required for last_frame_path")
+			}
+			wsReadClient := workspace.NewClient(
+				cfg.WorkspaceAPIURL,
+				workspace.WithUserID(cfg.UserID),
+			)
+			if err := wsReadClient.ValidatePathWithContext(ctx, normalizedLastFramePath, false); err != nil {
+				return "", fmt.Errorf("last_frame_path is outside the current session's readable folder: %w", err)
+			}
+			imgBytes, err := wsReadClient.DownloadFile(ctx, normalizedLastFramePath)
+			if err != nil {
+				return "", fmt.Errorf("failed to fetch last frame from workspace: %w", err)
+			}
+			mimeType, _ := args["last_frame_mime_type"].(string)
+			if mimeType == "" {
+				switch strings.ToLower(path.Ext(normalizedLastFramePath)) {
+				case ".jpg", ".jpeg":
+					mimeType = "image/jpeg"
+				case ".webp":
+					mimeType = "image/webp"
+				default:
+					mimeType = "image/png"
+				}
+			}
+			opts = append(opts, llmtypes.WithVideoLastFrame(imgBytes, mimeType))
+		} else if lastFrameB64 != "" {
+			imgBytes, err := base64.StdEncoding.DecodeString(lastFrameB64)
+			if err != nil {
+				return "", fmt.Errorf("invalid last_frame base64: %w", err)
+			}
+			mimeType, _ := args["last_frame_mime_type"].(string)
+			if mimeType == "" {
+				mimeType = "image/png"
+			}
+			opts = append(opts, llmtypes.WithVideoLastFrame(imgBytes, mimeType))
 		}
 
 		resp, err := model.GenerateVideos(ctx, prompt, opts...)

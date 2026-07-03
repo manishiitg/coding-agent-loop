@@ -115,6 +115,12 @@ If `pulse/goals.html` exists, evaluate each goal first:
   a proxy metric.
 - Surface workflow gaps as suggestions, not fixes.
 
+After measuring, update `pulse/goals.html` as the durable current scorecard whenever concrete
+evidence changes a goal's status, latest evidence path, confidence, freshness/last-reviewed
+marker, or history. Load `get_reference_doc(kind="org-html")` before writing, preserve existing
+goal history, and add the smallest useful history row for this Org Pulse pass. If the evidence is
+incomplete, leave the scorecard unchanged and name the missing evidence in `pulse/org-pulse.html`.
+
 Then evaluate workflow alignment — **only when `pulse/goals.html` exists.** With no goals file
 there is nothing to align to: do **not** classify workflows as Unaligned or emit attach/retire
 suggestions — the single "no explicit goals yet, create them" suggestion from the evidence sweep
@@ -133,22 +139,36 @@ against what its report shows. Note anything that changed since yesterday (a wor
 broke, recovered, or started drifting) — that delta is what the user cares about, not the
 steady state.
 
-### 5. Report LLM/model tiers and cost posture (report-only)
+### 5. Report LLM/model tier setup and cost posture (report-only)
 
-Create a concise LLM/cost scorecard across workflows. This is an operational audit, not an
-optimization pass.
+Create a concise LLM/tier scorecard across workflows. This is primarily a configuration audit:
+does every workflow have a proper high / medium / low tier setup, and are schedules or explicit
+overrides using the right tier? Cost is supporting evidence, not the main objective. This is an
+operational audit, not an optimization pass.
 
 For each workflow, identify:
 
-- the configured provider/model/tier from `workflow.json` (`capabilities.llm_config`, execution
-  defaults, schedule overrides, or any explicit high/medium/low tier reference);
+- whether `workflow.json` defines a complete high / medium / low tier setup under
+  `capabilities.llm_config`, and which provider/model each tier resolves to;
+- the tier or explicit model actually selected by execution defaults, schedules, Pulse/auto-improve
+  settings, and any schedule override;
 - the recent observed provider/model from cost/status evidence when available;
 - recent cost/tokens from `costs/`, run folders, report metadata, or Pulse/run evidence;
-- whether cost evidence is present, stale, or missing.
+- whether cost/model evidence is present, stale, or missing.
+
+Classify each workflow's tier setup as:
+
+- `complete` — high / medium / low are present and schedules use a sensible tier for the workflow;
+- `missing-tier` — one or more high / medium / low entries are absent or do not resolve to a model;
+- `override-mismatch` — a schedule or explicit model bypasses the intended tier without clear reason;
+- `over-tiered` — high-cost/high-reasoning tier is used for stable, low-value, or maintenance work;
+- `under-tiered` — low/medium tier is used for goal-critical, failing, drifting, or complex work;
+- `unknown` — the available evidence does not show what tier/model actually ran.
 
 Then summarize at the org level:
 
 - workflows using high / medium / low tiers, and any explicit models;
+- workflows with incomplete or suspicious tier setup;
 - cost concentration: the top spenders and whether spend is tied to goal-critical work;
 - missing cost/model evidence that prevents confident reporting;
 - notable mismatches worth a CEO seeing, for example a high tier on low-value maintenance or a
@@ -265,10 +285,11 @@ Prepend **one dated entry** for today (a steady day warrants a short one — or 
 - **Org health** — the one-liner: which workflows are on-target / drifting / broken, and the
   delta since yesterday (what broke, recovered, or started drifting), framed against the
   org goals when they exist.
-- **LLM/cost audit** — a compact table or bullet group listing workflow, configured tier/model,
-  recent observed model, recent cost/tokens, evidence path, and note. Call out top spenders,
-  missing cost evidence, and material tier/value mismatches. This is report-only: no config or
-  model changes were made.
+- **LLM/cost audit** — a compact table or bullet group listing workflow, tier setup verdict
+  (`complete`, `missing-tier`, `override-mismatch`, `over-tiered`, `under-tiered`, `unknown`),
+  configured high/medium/low models, selected/observed tier or model, recent cost/tokens,
+  evidence path, and note. Call out incomplete tier setup, top spenders, missing cost evidence,
+  and material tier/value mismatches. This is report-only: no config or model changes were made.
 - **Recommendations** — a brief summary of the proposal-only recommendations you generated in
   step 6 and where they live (per-automation cards in each `builder/improve.html`; org-level
   recs in the Recommendations section of `pulse/goals.html`). Lead with the highest-impact one.

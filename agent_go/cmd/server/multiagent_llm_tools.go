@@ -431,7 +431,10 @@ func providerAuthConfigured(provider string, keys *llm.ProviderAPIKeys) (bool, s
 	case string(llm.ProviderKimi):
 		return keys.Kimi != nil && strings.TrimSpace(*keys.Kimi) != "", "KIMI_API_KEY or workspace provider auth"
 	case string(llm.ProviderVertex):
-		return keys.Vertex != nil && strings.TrimSpace(*keys.Vertex) != "", "VERTEX_API_KEY/GOOGLE_API_KEY/GEMINI_API_KEY/ADC or workspace provider auth"
+		return (keys.Vertex != nil && strings.TrimSpace(*keys.Vertex) != "") ||
+				strings.TrimSpace(os.Getenv("GOOGLE_CLOUD_PROJECT")) != "" ||
+				strings.TrimSpace(os.Getenv("VERTEX_PROJECT_ID")) != "",
+			"VERTEX_API_KEY/GOOGLE_API_KEY/GEMINI_API_KEY/ADC project env or workspace provider auth"
 	case string(llm.ProviderGeminiCLI):
 		return keys.GeminiCLI != nil && strings.TrimSpace(*keys.GeminiCLI) != "", "GEMINI_API_KEY or workspace provider auth"
 	case string(llm.ProviderCodexCLI):
@@ -741,13 +744,6 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 		}
 	}
 
-	if capability == "all" || capability == "read_video" || capability == "video_analysis" {
-		all["read_video"] = map[string]interface{}{
-			"description": "No direct video-understanding provider is exposed by default. Use a coding agent chat model for local video workflows, or add a dedicated provider implementation before advertising read_video.",
-			"providers":   []llmCapabilityProvider{},
-		}
-	}
-
 	if capability == "all" || capability == "generate_image" || capability == "image_generation" {
 		all["generate_image"] = map[string]interface{}{
 			"description": "Providers usable by image_gen/image_edit.",
@@ -863,7 +859,6 @@ func buildLLMCapabilityPromptSection(ctx context.Context) string {
 		"chat",
 		"search_web",
 		"read_image",
-		"read_video",
 		"generate_image",
 		"generate_video",
 		"text_to_speech",
@@ -1158,13 +1153,13 @@ func (api *StreamingAPI) registerMultiAgentLLMTools(underlyingAgent *mcpagent.Ag
 func registerLLMCapabilityDiscoveryTools(registerTool func(string, string, map[string]interface{}, func(context.Context, map[string]interface{}) (string, error)) error) error {
 	if err := registerTool(
 		"list_llm_capabilities",
-		"List supported and currently usable LLM providers/models by capability: chat, search_web, read_image, read_video, generate_image, generate_video, text_to_speech, speech_to_text, and generate_music. Use include_models=true before choosing an explicit provider/model_id pair for provider-backed tools. Includes workspace defaults, auth requirements, CLI runtime availability, and static pricing metadata where available.",
+		"List supported and currently usable LLM providers/models by capability: chat, search_web, read_image, generate_image, generate_video, text_to_speech, speech_to_text, and generate_music. Use include_models=true before choosing an explicit provider/model_id pair for provider-backed tools. Includes workspace defaults, auth requirements, CLI runtime availability, and static pricing metadata where available.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"capability": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional filter. Supported values: all, chat, search_web, read_image, read_video, generate_image, generate_video, text_to_speech, speech_to_text, generate_music.",
+					"description": "Optional filter. Supported values: all, chat, search_web, read_image, generate_image, generate_video, text_to_speech, speech_to_text, generate_music.",
 				},
 				"include_models": map[string]interface{}{
 					"type":        "boolean",
@@ -1257,13 +1252,13 @@ func (api *StreamingAPI) registerWorkflowLLMDiscoveryTools(underlyingAgent *mcpa
 func registerLLMCapabilityTools(registerTool func(string, string, map[string]interface{}, func(context.Context, map[string]interface{}) (string, error)) error) error {
 	if err := registerTool(
 		"list_llm_capabilities",
-		"List supported and currently usable LLM providers/models by capability: chat, search_web, read_image, read_video, generate_image, generate_video, text_to_speech, speech_to_text, and generate_music. Use include_models=true before choosing an explicit provider/model_id pair for provider-backed tools. Includes workspace defaults, auth requirements, CLI runtime availability, and static pricing metadata where available.",
+		"List supported and currently usable LLM providers/models by capability: chat, search_web, read_image, generate_image, generate_video, text_to_speech, speech_to_text, and generate_music. Use include_models=true before choosing an explicit provider/model_id pair for provider-backed tools. Includes workspace defaults, auth requirements, CLI runtime availability, and static pricing metadata where available.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"capability": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional filter. Supported values: all, chat, search_web, read_image, read_video, generate_image, generate_video, text_to_speech, speech_to_text, generate_music.",
+					"description": "Optional filter. Supported values: all, chat, search_web, read_image, generate_image, generate_video, text_to_speech, speech_to_text, generate_music.",
 				},
 				"include_models": map[string]interface{}{
 					"type":        "boolean",

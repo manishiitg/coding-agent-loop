@@ -775,6 +775,7 @@ Whenever the instructions above mention ` + "`execute_shell_command(...)`" + `, 
 The following tools are NOT available as direct function calls — call them via curl through ` + "`" + executeTool + "`" + `:
 
 - **Delegation tools**: delegate, query_agent, terminate_agent, list_agents
+- **Human tools**: notify_user, submit_human_answer
 - **Memory tools**: save_memory, recall_memory, enrich_memory
 - **LLM config tools**: list_published_llms, list_provider_models, test_llm, save_published_llm, set_provider_auth, list_llm_capabilities, estimate_llm_cost
 
@@ -810,9 +811,15 @@ payload='{"provider": "claude-code"}'
 curl -sS --json "$payload" -H "$MCP_AUTH" "$MCP_CUSTOM/list_provider_models"
 ` + "```" + `
 
+notify the user:
+` + "```" + `bash
+payload='{"message_for_user": "Done"}'
+curl -sS --json "$payload" -H "$MCP_AUTH" "$MCP_CUSTOM/notify_user"
+` + "```" + `
+
 $MCP_CUSTOM and $MCP_AUTH are pre-set environment variables — use them as-is.
 
-**Important:** Whenever instructions mention ` + "`delegate(...)`" + `, ` + "`save_memory(...)`" + `, or LLM config tools, translate to the curl pattern above. Do NOT call these as direct function calls.
+**Important:** Whenever instructions mention ` + "`delegate(...)`" + `, ` + "`notify_user(...)`" + `, ` + "`save_memory(...)`" + `, or LLM config tools, translate to the curl pattern above. Do NOT call these as direct function calls.
 
 Do **NOT** read or edit ` + "`config/`" + ` files for LLM/provider configuration. Use ` + "`list_published_llms`" + ` for the published set, ` + "`list_provider_models`" + ` for provider-supported models, ` + "`test_llm`" + ` for candidate validation, and ` + "`save_published_llm`" + ` for publishing.
 

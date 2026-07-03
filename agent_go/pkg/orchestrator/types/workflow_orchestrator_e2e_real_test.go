@@ -502,9 +502,9 @@ func startLocalMCPBridgeForPiWorkflowE2E(t *testing.T) {
 	routeMCPRequest := func(w http.ResponseWriter, r *http.Request, server, tool string) {
 		normalized := strings.ReplaceAll(server, "-", "_")
 		switch normalized {
-		case "workspace", "workspace_browser", "workspace_advanced", "workspace_image", "workspace_image_gen", "workspace_image_edit",
-			"human", "workflow", "workflow_creator", "llm_config_tools", "secret_tools", "skill_tools", "mcp_server_tools",
-			"activity_status", "auto_improvement":
+		case "workspace", "workspace_tools", "workspace_browser", "workspace_advanced", "workspace_image", "workspace_image_gen", "workspace_image_edit",
+			"human", "human_tools", "workflow", "workflow_creator", "knowledgebase_tools", "llm_config_tools", "secret_tools", "skill_tools",
+			"mcp_server_tools", "activity_status", "auto_improvement":
 			handlers.HandlePerToolCustomRequest(w, r, tool)
 		case "memory":
 			handlers.HandlePerToolVirtualRequest(w, r, tool)

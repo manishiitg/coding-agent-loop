@@ -324,7 +324,7 @@ func TestExecuteShellCommand_InjectsSessionEnv(t *testing.T) {
 	sessionID := "test-session-env"
 	common.SetSessionShellEnv(sessionID, map[string]string{
 		"DB_PATH":         "/abs/workflow/db/db.sqlite",
-		"STEP_OUTPUT_DIR": "/abs/workflow/runs/r/execution/step",
+		"STEP_OUTPUT_DIR": "/abs/workspace-docs/Workflow/test-workflow/runs/iteration-0/default/execution/step-score",
 	})
 	defer ClearSessionShellConfig(sessionID)
 
@@ -353,8 +353,23 @@ func TestExecuteShellCommand_InjectsSessionEnv(t *testing.T) {
 	if got.ExtraEnv["DB_PATH"] != "/per/call/override.sqlite" {
 		t.Fatalf("per-call extra_env should win: DB_PATH=%q", got.ExtraEnv["DB_PATH"])
 	}
-	if got.ExtraEnv["STEP_OUTPUT_DIR"] != "/abs/workflow/runs/r/execution/step" {
+	if got.ExtraEnv["STEP_OUTPUT_DIR"] != "/abs/workspace-docs/Workflow/test-workflow/runs/iteration-0/default/execution/step-score" {
 		t.Fatalf("session STEP_OUTPUT_DIR not injected: %q", got.ExtraEnv["STEP_OUTPUT_DIR"])
+	}
+	if got.ExtraEnv["RUNLOOP_OWNER"] != "workflow" {
+		t.Fatalf("RUNLOOP_OWNER not inferred: %q", got.ExtraEnv["RUNLOOP_OWNER"])
+	}
+	if got.ExtraEnv["RUNLOOP_WORKFLOW_ID"] != "test-workflow" {
+		t.Fatalf("RUNLOOP_WORKFLOW_ID not inferred: %q", got.ExtraEnv["RUNLOOP_WORKFLOW_ID"])
+	}
+	if got.ExtraEnv["RUNLOOP_RUN_ID"] != "iteration-0/default" {
+		t.Fatalf("RUNLOOP_RUN_ID not inferred: %q", got.ExtraEnv["RUNLOOP_RUN_ID"])
+	}
+	if got.ExtraEnv["RUNLOOP_STEP_ID"] != "step-score" {
+		t.Fatalf("RUNLOOP_STEP_ID not inferred: %q", got.ExtraEnv["RUNLOOP_STEP_ID"])
+	}
+	if got.ExtraEnv["RUNLOOP_SESSION_ID"] != sessionID {
+		t.Fatalf("RUNLOOP_SESSION_ID not set: %q", got.ExtraEnv["RUNLOOP_SESSION_ID"])
 	}
 
 	// Without a per-call override, the session DB_PATH must be injected.

@@ -66,6 +66,7 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Sync system skills on startup (installs missing required skills via npx)
 	go syncSystemSkillsOnStartup(docsDir)
+	handlers.StartWorkflowProcessSweeper(docsDir)
 
 	// Set Gin mode
 	if debug {
@@ -117,6 +118,8 @@ func runServer(cmd *cobra.Command, args []string) {
 
 		// Shell execution route
 		api.POST("/execute", handlers.ExecuteShellCommand)
+		api.GET("/processes", handlers.ListWorkflowProcesses)
+		api.POST("/processes/cleanup", handlers.CleanupWorkflowProcesses)
 
 		// Read-only SQLite query routes (report widgets + DatabasePopup).
 		// Connection opened mode=ro + query_only — writes are rejected by the engine.

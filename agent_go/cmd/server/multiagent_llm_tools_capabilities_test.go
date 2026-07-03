@@ -133,17 +133,26 @@ func TestValidateCursorCLIReportsLoginRequiredBeforeTmuxRun(t *testing.T) {
 }
 
 func capabilityHasProvider(caps map[string]interface{}, capability, provider string) bool {
+	_, ok := capabilityProvider(caps, capability, provider)
+	return ok
+}
+
+func capabilityProvider(caps map[string]interface{}, capability, provider string) (llmCapabilityProvider, bool) {
 	entry, _ := caps[capability].(map[string]interface{})
 	if entry == nil {
-		return false
+		return llmCapabilityProvider{}, false
 	}
 	providers, _ := entry["providers"].([]llmCapabilityProvider)
+	return capabilityProviderInList(providers, provider)
+}
+
+func capabilityProviderInList(providers []llmCapabilityProvider, provider string) (llmCapabilityProvider, bool) {
 	for _, candidate := range providers {
 		if candidate.Provider == provider {
-			return true
+			return candidate, true
 		}
 	}
-	return false
+	return llmCapabilityProvider{}, false
 }
 
 func withFakeExecutable(t *testing.T, name string) {

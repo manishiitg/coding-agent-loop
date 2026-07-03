@@ -94,11 +94,11 @@ workflow builder by adding a Chief of Staff recommendation card to that workflow
 priority, suggested builder action, and expected KPI/success-criteria impact. Do not edit the
 workflow plan/config directly from Chief of Staff chat.
 
-Update `pulse/goals.html` only when the run provides concrete new evidence that changes the
-scorecard (status, latest evidence, confidence, or history). Before editing, load
-`get_reference_doc(kind="org-html")`, preserve existing goal history, and add a history row
-for the run. If the evidence is incomplete, leave the scorecard unchanged and report the gap
-instead.
+Update `pulse/goals.html` when a run or Org Pulse pass provides concrete new evidence that
+changes the scorecard (status, latest evidence, confidence, freshness/last-reviewed, or history).
+Before editing, load `get_reference_doc(kind="org-html")`, preserve existing goal history, and add
+a compact history row for the run or pulse pass. If the evidence is incomplete, leave the
+scorecard unchanged and report the gap instead.
 
 If no goal names the workflow, classify the run as:
 
@@ -158,8 +158,9 @@ anchors) so future Chief of Staff turns and Org Pulse can update the page reliab
 
 ### 5. What Org Pulse Does With Goals
 
-Org Pulse reads `pulse/goals.html`, measures the named workflows against those goals, and
-writes the measured scorecard into `pulse/org-pulse.html`.
+Org Pulse reads `pulse/goals.html`, measures the named workflows against those goals, updates
+`pulse/goals.html` as the durable current scorecard when evidence changes, and writes the daily
+measured narrative into `pulse/org-pulse.html`.
 
 `pulse/goals.html` is the planned target and current scorecard. `pulse/org-pulse.html` is the
 daily measured narrative: what changed, what is drifting, what was harvested into memory,

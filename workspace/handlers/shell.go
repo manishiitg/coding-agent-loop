@@ -189,12 +189,12 @@ func ExecuteShellCommand(c *gin.Context) {
 	// This applies to both isolated and non-isolated execution paths
 	extraEnvCount := 0
 	for k, v := range req.ExtraEnv {
-		if strings.HasPrefix(k, "MCP_") || strings.HasPrefix(k, "SECRET_") || strings.HasPrefix(k, "VAR_") || strings.HasPrefix(k, "STEP_") || strings.HasPrefix(k, "SCRIPT_") || k == "PYTHONDONTWRITEBYTECODE" {
+		if strings.HasPrefix(k, "MCP_") || strings.HasPrefix(k, "SECRET_") || strings.HasPrefix(k, "VAR_") || strings.HasPrefix(k, "STEP_") || strings.HasPrefix(k, "SCRIPT_") || strings.HasPrefix(k, "RUNLOOP_") || k == "PYTHONDONTWRITEBYTECODE" {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
 			extraEnvCount++
 		}
 	}
-	log.Printf("[SHELL_ENV_DEBUG] ExtraEnv received: %d keys total, %d whitelisted (MCP_*/SECRET_*/VAR_*/STEP_*)", len(req.ExtraEnv), extraEnvCount)
+	log.Printf("[SHELL_ENV_DEBUG] ExtraEnv received: %d keys total, %d whitelisted (MCP_*/SECRET_*/VAR_*/STEP_*/RUNLOOP_*)", len(req.ExtraEnv), extraEnvCount)
 	if len(req.ExtraEnv) > 0 {
 		keys := make([]string, 0, len(req.ExtraEnv))
 		for k := range req.ExtraEnv {
@@ -212,6 +212,23 @@ func ExecuteShellCommand(c *gin.Context) {
 	startTime := time.Now()
 
 	// Execute command
+	if err := cmd.Start(); err != nil {
+		executionTime := time.Since(startTime)
+		c.JSON(http.StatusInternalServerError, models.APIResponse[models.ExecuteShellResponse]{
+			Success: false,
+			Message: "Failed to start command",
+			Error:   err.Error(),
+			Data: models.ExecuteShellResponse{
+				Stdout:          stdoutBuf.String(),
+				Stderr:          err.Error(),
+				ExitCode:        -1,
+				ExecutionTimeMs: int(executionTime.Milliseconds()),
+				Command:         fullCommand,
+			},
+		})
+		return
+	}
+	processRecord := registerShellProcess(cmd, ownerFromShellRequest(req.ExtraEnv, workingDir, fullCommand), fullCommand, workingDir, timeoutSeconds)
 	done := make(chan struct{})
 	go func() {
 		select {
@@ -220,39 +237,44 @@ func ExecuteShellCommand(c *gin.Context) {
 		case <-done:
 		}
 	}()
-	err := cmd.Run()
+	err := cmd.Wait()
 	close(done)
 	executionTime := time.Since(startTime)
 
 	// Get exit code
 	exitCode := 0
+	status := "completed"
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			timeoutExitCode := -1
+			finishShellProcess(processRecord.PID, "timeout", &timeoutExitCode)
+			// Build stderr with timeout info prepended so the LLM sees it clearly
+			timeoutMsg := fmt.Sprintf("TIMEOUT: Command killed after %d seconds\n", timeoutSeconds)
+			capturedStderr := stderrBuf.String()
+			if capturedStderr != "" {
+				timeoutMsg += capturedStderr
+			}
+			c.JSON(http.StatusRequestTimeout, models.APIResponse[models.ExecuteShellResponse]{
+				Success: false,
+				Message: "Command execution timed out",
+				Error:   fmt.Sprintf("Command exceeded timeout of %d seconds", timeoutSeconds),
+				Data: models.ExecuteShellResponse{
+					Stdout:          stdoutBuf.String(),
+					Stderr:          timeoutMsg,
+					ExitCode:        -1,
+					ExecutionTimeMs: int(executionTime.Milliseconds()),
+					Command:         fullCommand,
+				},
+			})
+			return
+		}
 		if exitError, ok := err.(*exec.ExitError); ok {
 			exitCode = exitError.ExitCode()
+			status = "failed"
 		} else {
-			// Handle timeout or other execution errors
-			if ctx.Err() == context.DeadlineExceeded {
-				// Build stderr with timeout info prepended so the LLM sees it clearly
-				timeoutMsg := fmt.Sprintf("TIMEOUT: Command killed after %d seconds\n", timeoutSeconds)
-				capturedStderr := stderrBuf.String()
-				if capturedStderr != "" {
-					timeoutMsg += capturedStderr
-				}
-				c.JSON(http.StatusRequestTimeout, models.APIResponse[models.ExecuteShellResponse]{
-					Success: false,
-					Message: "Command execution timed out",
-					Error:   fmt.Sprintf("Command exceeded timeout of %d seconds", timeoutSeconds),
-					Data: models.ExecuteShellResponse{
-						Stdout:          stdoutBuf.String(),
-						Stderr:          timeoutMsg,
-						ExitCode:        -1,
-						ExecutionTimeMs: int(executionTime.Milliseconds()),
-						Command:         fullCommand,
-					},
-				})
-				return
-			}
 			// Other execution errors (e.g., command not found)
+			errorExitCode := -1
+			finishShellProcess(processRecord.PID, "failed", &errorExitCode)
 			errorStderr := stderrBuf.String()
 			if errorStderr == "" {
 				errorStderr = err.Error()
@@ -272,6 +294,7 @@ func ExecuteShellCommand(c *gin.Context) {
 			return
 		}
 	}
+	finishShellProcess(processRecord.PID, status, &exitCode)
 
 	// Success response
 	c.JSON(http.StatusOK, models.APIResponse[models.ExecuteShellResponse]{

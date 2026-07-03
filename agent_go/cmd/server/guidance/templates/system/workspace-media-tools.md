@@ -2,7 +2,7 @@
 
 This skill is the deep reference for workspace-level provider-backed
 capabilities — text generation, image / video / audio / music
-generation, image / video / PDF reading, transcription, web search.
+generation, image reading, transcription, web search.
 The inline system prompt now carries only a one-line-per-tool cheat
 sheet; this doc has the full signatures, parameters, defaults,
 provider routing rules, and provider-setup discipline.
@@ -29,9 +29,9 @@ ambiguous routing leads to wrong-provider calls.
 each expose only the **common, basic parameters** of their underlying
 provider — prompt, a handful of style/format knobs, one input file.
 They do **not** expose every capability the provider actually has.
-Examples: Gemini Omni Flash's multi-image subject-reference composition
-and multi-turn conversational video editing (`previous_interaction_id`)
-exist at the provider API level but have no parameter on `generate_video`;
+Examples: Gemini Omni Flash's multi-turn conversational video editing
+(`previous_interaction_id`) exists at the provider API level but has no
+parameter on `generate_video`;
 ElevenLabs voice design/cloning, MiniMax's advanced music controls, and
 provider-side video editing of an uploaded file are the same story.
 
@@ -56,7 +56,7 @@ command or script.
 
 ### Capability discovery + cost estimation
 
-- **`list_llm_capabilities(capability?, include_models?)`** — Inspect which providers/models are supported and currently usable for `chat`, `search_web`, `read_image`, `read_video`, `generate_image`, `generate_video`, `text_to_speech`, `speech_to_text`, `generate_music`. Use this **before** choosing a provider when the user's request depends on provider capability, auth, pricing, or runtime availability.
+- **`list_llm_capabilities(capability?, include_models?)`** — Inspect which providers/models are supported and currently usable for `chat`, `search_web`, `read_image`, `generate_image`, `generate_video`, `text_to_speech`, `speech_to_text`, `generate_music`. Use this **before** choosing a provider when the user's request depends on provider capability, auth, pricing, or runtime availability.
 - **`estimate_llm_cost(capability, provider, model_id?, characters?, seconds?, minutes?, count?)`** — Estimate priced media generation / transcription costs before high-volume `generate_video`, `text_to_speech`, `speech_to_text`, or `generate_music` runs.
 - **`set_provider_auth(provider, api_key?, region?, endpoint?, api_version?)`** — Store provider auth in the encrypted workspace provider store. If the user provides an API key for Gemini/Vertex, MiniMax, ElevenLabs, Deepgram, or another managed provider, call this directly — **do not paste the key into shell commands, scripts, curl calls, logs, or config files**.
 
@@ -72,10 +72,10 @@ command or script.
 
 ### Video generation
 
-- **`generate_video(prompt, output_path, model_id, provider?)`** — Generate videos using a provider/model pair from `list_llm_capabilities(capability="generate_video", include_models=true)`. `output_path` is required and must be a full absolute workspace-docs destination. `input_image_path`, when used, must also be absolute. `model_id` determines the Google backend:
+- **`generate_video(prompt, output_path, model_id, provider?)`** — Generate videos using a provider/model pair from `list_llm_capabilities(capability="generate_video", include_models=true)`. `output_path` is required and must be a full absolute workspace-docs destination. `input_image_path` and `last_frame_path`, when used, must also be absolute. Use `last_frame` / `last_frame_path` with `input_image` / `input_image_path` for Veo first-frame/last-frame interpolation; the current Gemini Omni tool path rejects `last_frame`. `model_id` determines the Google backend:
   - **Vertex AI Veo** (`veo-3.1-generate-001`, `veo-3.1-lite-generate-001`, `veo-3.1-fast-generate-001`) requires `GOOGLE_CLOUD_PROJECT` + ADC and supports native audio.
   - **Gemini API preview Veo** (`veo-3.1-generate-preview`, `veo-3.1-fast-generate-preview`) uses API-key auth and does **not** support native audio.
-  - **Gemini Omni Flash** (`gemini-omni-flash-preview`) uses API-key auth, is 720p-only, 3-10s clips, fastest to generate, includes native audio, and always produces exactly 1 video per call regardless of `number_of_videos`. Multi-image subject-reference composition and multi-turn conversational editing exist on the provider but are not exposed by this tool — see "Basic tool vs advanced provider feature" above.
+  - **Gemini Omni Flash** (`gemini-omni-flash-preview`) uses API-key auth, is 720p-only, 3-10s clips, fastest to generate, includes native audio, and always produces exactly 1 video per call regardless of `number_of_videos`. Multi-turn conversational editing exists on the provider but is not exposed by this tool — see "Basic tool vs advanced provider feature" above.
 
 ### Audio + music
 
@@ -86,8 +86,7 @@ command or script.
 ### Media + document reading
 
 - **`read_image(filepath, query, provider?, model_id?)`** — Analyze an image file using a provider/model pair from `list_llm_capabilities(capability="read_image", include_models=true)` or workspace-backed image analysis defaults. `filepath` must be a full absolute path under the workspace docs root; do not pass workspace-relative paths. If no image-analysis defaults exist, it falls back to the current chat model. `codex-cli`, `cursor-cli`, and `claude-code` are supported by passing the local workspace image path to the CLI; `agy-cli` is deprecated and only retained for existing legacy defaults.
-- **`read_video(filepath, query, provider?, model_id?)`** — Analyze a workspace video file using a provider/model pair from `list_llm_capabilities(capability="read_video", include_models=true)`. `filepath` must be a full absolute workspace-docs path. Direct video providers are not advertised by default; prefer a published coding-agent model until a dedicated provider is configured.
-- **PDFs have no dedicated tool.** Extract text with `execute_shell_command` and Python's `pypdf` (already installed) instead — no provider round-trip needed for plain text extraction.
+- **Videos and PDFs have no dedicated reading tool.** Inspect videos with local `execute_shell_command` workflows such as frame/audio extraction, and extract PDF text with Python's `pypdf` (already installed) — no provider round-trip needed for plain text extraction.
 
 ## Provider setup rules
 
@@ -98,7 +97,7 @@ command or script.
 - **Search provider routing** comes from the published LLM set surfaced by `list_published_llms`.
 - **Image generation defaults** come from workspace-backed image generation config; override per call with explicit provider/model when needed.
 - **Image analysis defaults** come from workspace-backed image analysis config; override per call with explicit provider/model when needed.
-- **Video analysis** uses Kimi provider auth / `KIMI_API_KEY` by default. For Z.AI MCP video analysis, set provider auth for `z-ai` / `Z_AI_API_KEY` and pass `provider="z-ai"`.
+- **Video analysis** is not exposed as a built-in workspace tool right now. Use local extraction or provider-specific scripts only when the needed credentials are available as workflow/user secrets.
 
 ## Common mistakes
 

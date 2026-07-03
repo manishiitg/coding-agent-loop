@@ -19,7 +19,7 @@ Available tools:
 - **Image**: ` + "`image_gen(prompt, output_path, ...)`" + ` · ` + "`image_edit(image_path, output_path, prompt, ...)`" + `.
 - **Video**: ` + "`generate_video(prompt, output_path, model_id, ...)`" + ` — Veo models (native audio) or Gemini Omni Flash (` + "`gemini-omni-flash-preview`" + `, native audio, fastest/720p-only).
 - **Audio + music**: ` + "`text_to_speech`" + `, ` + "`speech_to_text`" + ` (default Deepgram nova-3), ` + "`generate_music`" + ` (default ElevenLabs music_v1).
-- **Media reading**: ` + "`read_image`" + `, ` + "`read_video`" + `. No dedicated PDF tool — extract text with ` + "`execute_shell_command`" + ` + Python's ` + "`pypdf`" + `.
+- **Media reading**: ` + "`read_image`" + `. No dedicated video/PDF tool — inspect videos or extract PDF text with ` + "`execute_shell_command`" + ` and local scripts/libs as needed.
 
 Provider-setup essentials (do not hand-edit provider-auth storage — it's encrypted and managed via ` + "`set_provider_auth`" + `; audio/video/image/music providers are workspace **tool** capabilities, not published-LLM entries — call ` + "`list_llm_capabilities(capability=\"...\")`" + ` for the authoritative availability answer).
 

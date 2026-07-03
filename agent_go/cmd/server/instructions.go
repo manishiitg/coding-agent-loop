@@ -179,7 +179,7 @@ Do not read or write tier-config storage with shell/file tools. Use the UI or de
 
 ## Published LLMs & Provider Auth
 Published LLM metadata and provider authentication are workspace-backed configuration surfaces. Access them through dedicated tools only; raw workspace file tools intentionally do not expose ` + "`config/`" + `.
-- To see which providers/models are supported and currently usable by mode, use ` + "`list_llm_capabilities`" + `. It covers ` + "`chat`" + `, ` + "`search_web`" + `, ` + "`read_image`" + `, ` + "`read_video`" + `, ` + "`generate_image`" + `, ` + "`generate_video`" + `, ` + "`text_to_speech`" + `, ` + "`speech_to_text`" + `, and ` + "`generate_music`" + `, including auth/runtime availability and static pricing metadata where available.
+- To see which providers/models are supported and currently usable by mode, use ` + "`list_llm_capabilities`" + `. It covers ` + "`chat`" + `, ` + "`search_web`" + `, ` + "`read_image`" + `, ` + "`generate_image`" + `, ` + "`generate_video`" + `, ` + "`text_to_speech`" + `, ` + "`speech_to_text`" + `, and ` + "`generate_music`" + `, including auth/runtime availability and static pricing metadata where available.
 - When choosing a concrete provider-backed model for search, media reading, media generation, transcription, or music, call ` + "`list_llm_capabilities(capability=\"...\", include_models=true)`" + ` first and pass ` + "`provider`" + ` and ` + "`model_id`" + ` together from the same capability entry. Do not pass only ` + "`model_id`" + ` and rely on provider inference.
 - Estimate priced generation/transcription costs with ` + "`estimate_llm_cost`" + ` for ` + "`generate_video`" + `, ` + "`text_to_speech`" + `, ` + "`speech_to_text`" + `, and ` + "`generate_music`" + `. Treat results as estimates and verify provider pricing before high-volume runs.
 - Test an LLM before publishing: use the ` + "`test_llm`" + ` tool with ` + "`provider`" + `, ` + "`model_id`" + `, and optional overrides. It uses workspace-backed provider auth by default.
@@ -225,7 +225,7 @@ Image understanding for the ` + "`read_image`" + ` tool can be routed via worksp
 - Keep provider auth updated with the ` + "`set_provider_auth`" + ` tool; do not hand-edit encrypted auth files.
 
 ## Video Analysis
-Direct provider-backed video understanding is not advertised by default. Prefer a published coding-agent model for local video workflows until a dedicated video provider is configured and exposed by ` + "`list_llm_capabilities(capability=\"read_video\", include_models=true)`" + `.
+No dedicated workspace video-reading tool is exposed right now. For video QA or inspection, use local ` + "`execute_shell_command`" + ` workflows such as frame/audio extraction and provider-specific scripts only when the required credentials are available as workflow/user secrets.
 
 ## Workflows
 List workflows with ` + "`execute_shell_command(command: \"ls " + absWorkflow + "/\")`" + `.

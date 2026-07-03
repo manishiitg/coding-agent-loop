@@ -80,3 +80,19 @@ func TestLLMMediaToolDefinitionsReferenceCapabilityDiscovery(t *testing.T) {
 		})
 	}
 }
+
+func TestGenerateVideoToolDefinitionIncludesLastFrameInputs(t *testing.T) {
+	encoded, err := json.Marshal(GetGenerateVideoToolDefinition())
+	if err != nil {
+		t.Fatalf("marshal generate_video tool definition: %v", err)
+	}
+	text := string(encoded)
+	for _, field := range []string{`"last_frame"`, `"last_frame_path"`, `"last_frame_mime_type"`} {
+		if !strings.Contains(text, field) {
+			t.Fatalf("generate_video definition missing %s: %s", field, text)
+		}
+	}
+	if !strings.Contains(text, "first-frame/last-frame") {
+		t.Fatalf("generate_video definition should describe first-frame/last-frame interpolation: %s", text)
+	}
+}

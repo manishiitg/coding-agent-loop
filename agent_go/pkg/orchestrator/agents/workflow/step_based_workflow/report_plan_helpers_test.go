@@ -79,8 +79,8 @@ func TestNormalizeReportPlanPreservesThemeAndLayout(t *testing.T) {
 	}
 }
 
-// Normalization drops legacy data-viz widget kinds (chart/table/stat/etc) since
-// reports are documents only.
+// Normalization drops legacy data-viz and markdown widget kinds since reports
+// are HTML file documents only.
 func TestNormalizeReportPlanDropsLegacyWidgetKinds(t *testing.T) {
 	t.Parallel()
 
@@ -91,6 +91,7 @@ func TestNormalizeReportPlanDropsLegacyWidgetKinds(t *testing.T) {
 			Entries: []reportPlanDocumentEntry{
 				{Kind: "single", Widget: &reportPlanDocumentWidget{Kind: "stat", Source: "db/summary.json"}},
 				{Kind: "single", Widget: &reportPlanDocumentWidget{Kind: "markdown", Source: "docs/intro.md"}},
+				{Kind: "single", Widget: &reportPlanDocumentWidget{Kind: "file", Source: "db/reports/report.html", RenderFormat: "html"}},
 			},
 		}},
 	}
@@ -100,10 +101,10 @@ func TestNormalizeReportPlanDropsLegacyWidgetKinds(t *testing.T) {
 		t.Fatalf("expected 1 section, got %d", len(out.Sections))
 	}
 	if got := len(out.Sections[0].Entries); got != 1 {
-		t.Fatalf("expected only the markdown widget to survive, got %d entries", got)
+		t.Fatalf("expected only the HTML file widget to survive, got %d entries", got)
 	}
-	if kind := out.Sections[0].Entries[0].Widget.Kind; kind != "markdown" {
-		t.Fatalf("expected surviving widget kind=markdown, got %q", kind)
+	if widget := out.Sections[0].Entries[0].Widget; widget.Kind != "file" || widget.RenderFormat != "html" {
+		t.Fatalf("expected surviving widget to be file/html, got %+v", widget)
 	}
 }
 
@@ -117,7 +118,7 @@ func TestValidateReportPlanFileWidgetsAllowArtifactsWithoutData(t *testing.T) {
 		  "sections": [{
 		    "heading": "Artifacts",
 		    "entries": [
-		      {"kind": "single", "widget": {"kind": "file", "source": "docs/report.md", "renderFormat": "markdown"}},
+		      {"kind": "single", "widget": {"kind": "file", "source": "db/reports/report.html", "renderFormat": "html"}},
 		      {"kind": "single", "widget": {"kind": "file-list", "source": "docs/evidence", "listFormat": "gallery", "extensions": ["png", "pdf"]}}
 		    ]
 		  }]

@@ -20,6 +20,7 @@ var builtinToolCategories = map[string]bool{
 	"human_tools":          true,
 	"workflow":             true,
 	"workflow_creator":     true,
+	"knowledgebase_tools":  true,
 	"llm_config_tools":     true,
 	"secret_tools":         true,
 	"skill_tools":          true,

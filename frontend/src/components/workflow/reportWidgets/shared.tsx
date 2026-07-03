@@ -3,8 +3,8 @@
 // the orchestration code along. Anything used by 2+ widgets — or by both a
 // widget and ReportViewer's WidgetCard dispatcher — lives here.
 //
-// The widget renderers themselves live in sibling files
-// (MarkdownWidget.tsx, FileWidget.tsx) and import from this module.
+// The widget renderers themselves live in sibling files and import from this
+// module.
 
 import React from 'react'
 import type { ReportWidget } from '../../../services/api-types'
@@ -67,17 +67,16 @@ export function StandaloneWidgetNotice({
 // Wraps table/chart/pivot widgets in a calm, flat "paper" card — a single
 // hairline border, generous padding, no gradient fill or hover shadow-lift.
 // Editorial restraint over dashboard flourish.
-// A "document" widget renders a self-contained .md/.html document (which carries
-// its own heading/structure). These render bare — no card box, no widget title —
-// so the document isn't double-framed.
+// A "document" widget renders a self-contained HTML document (which carries its
+// own heading/structure). These render bare — no card box, no widget title — so
+// the document isn't double-framed.
 export function isDocumentWidget(widget: ReportWidget): boolean {
-  if (widget.kind === 'markdown') return true
   if (widget.kind === 'file') {
     const fmt = widget.renderFormat || 'auto'
-    if (fmt === 'markdown' || fmt === 'html') return true
+    if (fmt === 'html') return true
     if (fmt === 'auto') {
       const ext = (widget.source || '').split('.').pop()?.toLowerCase()
-      return ext === 'md' || ext === 'markdown' || ext === 'html' || ext === 'htm'
+      return ext === 'html' || ext === 'htm'
     }
   }
   return false
@@ -106,7 +105,7 @@ export function WidgetShell({
   children: React.ReactNode
   onToggleHidden?: () => void
 }) {
-  // Document widgets (md/html) bring their own structure — render full-bleed.
+  // HTML document widgets bring their own structure — render full-bleed.
   if (isDocumentWidget(widget)) return <>{children}</>
   const shellClassName =
     'group relative px-0 py-0 transition-colors duration-200 sm:overflow-hidden sm:rounded-xl sm:border sm:border-border sm:bg-card sm:px-3.5 sm:py-2.5'

@@ -140,7 +140,6 @@ func TestWorkspaceAdvancedToolBundleIncludesProviderMediaTools(t *testing.T) {
 
 	for _, name := range []string{
 		"read_image",
-		"read_video",
 		"search_web_llm",
 		"image_gen",
 		"image_edit",

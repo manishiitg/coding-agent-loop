@@ -35,7 +35,7 @@ export interface ReportPlanDocumentEntry {
 export interface ReportPlanDocumentWidget {
   id?: string;
   hidden?: boolean;
-  kind: "markdown" | "file" | "file-list";
+  kind: "file" | "file-list";
   source?: string;
   db?: string;
   sql?: string;
@@ -45,7 +45,7 @@ export interface ReportPlanDocumentWidget {
   description?: string;
   height?: number;
   showIf?: string;
-  renderFormat?: "auto" | "markdown" | "html" | "text" | "code" | "json" | "image" | "video" | "audio" | "pdf" | "link";
+  renderFormat?: "auto" | "html" | "text" | "code" | "json" | "image" | "video" | "audio" | "pdf" | "link";
   listFormat?: "list" | "cards" | "table" | "gallery";
   recursive?: boolean;
   extensions?: string[];

@@ -1663,8 +1663,8 @@ import type {
 // consuming field, so these are independently useful where callsites need
 // to name an enum (function args, switch exhaustiveness checks, etc.). They
 // must mirror the Go enum tags; if these drift, callsites will break.
-export type ReportWidgetKind = 'markdown' | 'file' | 'file-list';
-export type ReportFileRenderFormat = 'auto' | 'markdown' | 'html' | 'text' | 'code' | 'json' | 'image' | 'video' | 'audio' | 'pdf' | 'link';
+export type ReportWidgetKind = 'file' | 'file-list';
+export type ReportFileRenderFormat = 'auto' | 'html' | 'text' | 'code' | 'json' | 'image' | 'video' | 'audio' | 'pdf' | 'link';
 export type ReportFileListFormat = 'list' | 'cards' | 'table' | 'gallery';
 export type ReportFormatterName =
   | 'currency-inr'
@@ -1688,10 +1688,9 @@ export type ReportSectionLayout = ReportPlanDocumentSectionLayout;
 // can rely on it being defined — the schema makes it optional because Go's
 // omitempty allows it to be absent on the wire.
 //
-// Data widgets (table/chart/cards/stat/alert/pivot/text) bind via `db` + `sql`
-// and render from the read-only SQLite query endpoint. `source` is for
-// file/file-list/markdown widgets that point at a file (under db/,
-// knowledgebase/, or docs/) — those keep self-fetching their own content.
+// Reports render stored artifacts only. HTML reports read db/db.sqlite live via
+// the injected window.report API; `source` points at a file or folder under db/,
+// knowledgebase/, or docs/.
 export type ReportWidget = ReportPlanDocumentWidget & {
   source?: string;
   db?: string;

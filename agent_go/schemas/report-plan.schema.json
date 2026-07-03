@@ -125,7 +125,6 @@
         "kind": {
           "type": "string",
           "enum": [
-            "markdown",
             "file",
             "file-list"
           ]
@@ -161,7 +160,6 @@
           "type": "string",
           "enum": [
             "auto",
-            "markdown",
             "html",
             "text",
             "code",

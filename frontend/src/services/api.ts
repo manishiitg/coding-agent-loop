@@ -988,6 +988,62 @@ export const agentApi = {
     return response.data;
   },
 
+  getWorkflowProcesses: async (): Promise<{
+    success: boolean;
+    managed: Array<{
+      pid: number;
+      pgid?: number;
+      ppid?: number;
+      command: string;
+      working_dir?: string;
+      started_at: string;
+      timeout_sec?: number;
+      owner?: {
+        owner?: string;
+        workflow_id?: string;
+        run_id?: string;
+        step_id?: string;
+        execution_id?: string;
+        session_id?: string;
+      };
+      status: string;
+      exit_code?: number;
+    }>;
+    stale: Array<{
+      pid: number;
+      ppid: number;
+      pgid?: number;
+      elapsed: number;
+      command: string;
+      reason: string;
+      workflow_id?: string;
+      run_id?: string;
+      step_id?: string;
+    }>;
+    threshold: string;
+  }> => {
+    const response = await workspaceApi.get('/api/processes', { timeout: 10000 });
+    return response.data;
+  },
+
+  cleanupWorkflowProcesses: async (): Promise<{
+    success: boolean;
+    killed: Array<{
+      pid: number;
+      ppid: number;
+      pgid?: number;
+      elapsed: number;
+      command: string;
+      reason: string;
+      workflow_id?: string;
+      run_id?: string;
+      step_id?: string;
+    }>;
+  }> => {
+    const response = await workspaceApi.post('/api/processes/cleanup', {}, { timeout: 10000 });
+    return response.data;
+  },
+
   // LLM Guidance Management
   // Set LLM guidance for a session
   setLLMGuidance: async (sessionId: string, guidance: string, memoryFolder?: string): Promise<LLMGuidanceResponse> => {

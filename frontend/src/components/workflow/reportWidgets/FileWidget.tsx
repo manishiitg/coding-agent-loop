@@ -2,10 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { File, FileJson, FileText, FolderOpen, Image, Music, Video } from 'lucide-react'
 import type { PlannerFile, ReportFileListFormat, ReportFileRenderFormat, ReportWidget } from '../../../services/api-types'
 import { agentApi, workspaceApi } from '../../../services/api'
-import { MarkdownRenderer } from '../../ui/MarkdownRenderer'
 import { WidgetError, WidgetHeader } from './shared'
 import { useReportFilePreviewStore } from '../../../stores/useReportFilePreviewStore'
-import { useEmbeddedWidgetRenderer } from './reportEmbedContext'
 import { HtmlReportFrame } from './HtmlWidgetFrame'
 
 // previewReportFile opens a file-list entry in the in-report preview modal.
@@ -14,7 +12,7 @@ function previewReportFile(file: PlannerFile) {
   useReportFilePreviewStore.getState().show({ path: file.filepath, name: basename(file.filepath) })
 }
 
-type ArtifactKind = 'markdown' | 'html' | 'text' | 'code' | 'json' | 'image' | 'video' | 'audio' | 'pdf' | 'other'
+type ArtifactKind = 'html' | 'text' | 'code' | 'json' | 'image' | 'video' | 'audio' | 'pdf' | 'other'
 
 type FileContentState =
   | { status: 'loading' }
@@ -54,8 +52,8 @@ function extensionFor(path: string): string {
 
 function artifactKind(path: string): ArtifactKind {
   const ext = extensionFor(path)
-  if (ext === 'md' || ext === 'markdown') return 'markdown'
   if (ext === 'html' || ext === 'htm') return 'html'
+  if (ext === 'md' || ext === 'markdown') return 'text'
   if (ext === 'json' || ext === 'jsonl') return 'json'
   if (ext === 'pdf') return 'pdf'
   if (IMAGE_EXTENSIONS.has(ext)) return 'image'
@@ -140,7 +138,7 @@ function ArtifactIcon({ kind }: { kind: ArtifactKind }) {
   if (kind === 'video') return <Video className={className} />
   if (kind === 'audio') return <Music className={className} />
   if (kind === 'json') return <FileJson className={className} />
-  if (kind === 'markdown' || kind === 'text' || kind === 'code' || kind === 'html' || kind === 'pdf') return <FileText className={className} />
+  if (kind === 'text' || kind === 'code' || kind === 'html' || kind === 'pdf') return <FileText className={className} />
   return <File className={className} />
 }
 
@@ -202,9 +200,7 @@ function useFileContent(widget: ReportWidget, workspacePath: string): FileConten
 export function FileWidget({ widget, workspacePath }: { widget: ReportWidget; workspacePath: string }) {
   const state = useFileContent(widget, workspacePath)
   const format = effectiveRenderFormat(widget)
-  const path = workspaceFilePath(workspacePath, (widget.source ?? ''))
   const name = basename((widget.source ?? ''))
-  const renderEmbeddedWidget = useEmbeddedWidgetRenderer() ?? undefined
 
   if (!isAllowedArtifactSource((widget.source ?? ''))) {
     return <WidgetError widget={widget} message="Unsupported file source." hint="Use db/, knowledgebase/, or docs/." />
@@ -217,19 +213,14 @@ export function FileWidget({ widget, workspacePath }: { widget: ReportWidget; wo
     return <WidgetError widget={widget} message={`Could not load ${(widget.source ?? '')}.`} hint={state.message} />
   }
 
-  // Markdown/HTML documents carry their own heading, so suppress the widget
+  // HTML documents carry their own heading, so suppress the widget
   // title to avoid a redundant double-heading (e.g. a "Full Report" label above
   // an HTML report that already starts with its own <h1>).
-  const suppressHeader = format === 'markdown' || format === 'html'
+  const suppressHeader = format === 'html'
 
   return (
     <div className="flex flex-col gap-2">
       {!suppressHeader && <WidgetHeader widget={widget} />}
-      {format === 'markdown' && (
-        <div className="text-sm text-foreground">
-          <MarkdownRenderer content={state.content || ''} basePath={path} className="max-w-none" maxHeight="none" renderEmbeddedWidget={renderEmbeddedWidget} />
-        </div>
-      )}
       {format === 'html' && (
         <HtmlReportFrame
           html={state.content || ''}
@@ -561,12 +552,11 @@ function useAbsoluteFileContent(path: string, kind: ArtifactKind): FileContentSt
 
 // FilePreviewByPath renders a single workspace file inline given its absolute
 // path — the body of the in-report preview modal. Handles the same formats as
-// the single-file FileWidget (pdf/image/video/audio/markdown/html/text/code/json).
+// the single-file FileWidget (pdf/image/video/audio/html/text/code/json).
 export function FilePreviewByPath({ path, name }: { path: string; name?: string }) {
   const kind = artifactKind(path)
   const state = useAbsoluteFileContent(path, kind)
   const label = name || basename(path)
-  const renderEmbeddedWidget = useEmbeddedWidgetRenderer() ?? undefined
 
   if (state.status === 'loading') {
     return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Loading {label}…</div>
@@ -580,13 +570,6 @@ export function FilePreviewByPath({ path, name }: { path: string; name?: string 
     )
   }
 
-  if (kind === 'markdown') {
-    return (
-      <div className="h-full overflow-auto px-4 py-3 text-sm text-foreground">
-        <MarkdownRenderer content={state.content || ''} basePath={path} className="max-w-none" maxHeight="none" renderEmbeddedWidget={renderEmbeddedWidget} />
-      </div>
-    )
-  }
   if (kind === 'html') {
     return <HtmlReportFrame html={state.content || ''} title={label} className="h-full w-full bg-background" />
   }

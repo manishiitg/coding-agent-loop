@@ -5,6 +5,7 @@ import LlmTriggerButton from './topbar/LlmTriggerButton'
 import McpControl from './topbar/McpControl'
 import SkillsControl from './topbar/SkillsControl'
 import SecretsControl from './topbar/SecretsControl'
+import RuntimeHealthControl from './topbar/RuntimeHealthControl'
 import DesktopAppControl from './topbar/DesktopAppControl'
 import NotificationsControl from './topbar/NotificationsControl'
 import AccountControl from './topbar/AccountControl'
@@ -25,6 +26,7 @@ export default function WorkspaceTopBarControls() {
         <McpControl />
         <SkillsControl />
         <SecretsControl />
+        <RuntimeHealthControl />
 
         <span className="mx-0.5 h-5 w-px bg-gray-200 dark:bg-gray-700" />
 

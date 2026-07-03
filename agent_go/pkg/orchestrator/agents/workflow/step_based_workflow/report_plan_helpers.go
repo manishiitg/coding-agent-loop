@@ -18,7 +18,6 @@ import (
 // reports/report_plan.json.
 
 var (
-	reportPlanFenceRE    = regexp.MustCompile("^```\\s*widget:([\\w-]+)\\s*$")
 	reportPlanHexColorRE = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$`)
 	reportPlanCSSNamedRE = regexp.MustCompile(`^[a-zA-Z]+$`)
 	// Mirrors evaluateShowIf in reportPlanParser.ts. Intentionally permissive —
@@ -36,8 +35,8 @@ func reportPlanIsPlausibleColor(v string) bool {
 }
 
 type reportPlanWidget struct {
-	Kind   string // "text" | "table" | "chart"
-	Source string // file/file-list/markdown widgets: a file path under db/, knowledgebase/, docs/
+	Kind   string // "file" | "file-list"
+	Source string // file/file-list widgets: a file path under db/, knowledgebase/, docs/
 	Path   string
 	Filter string
 	Fields map[string]string // raw optional fields, lowercase keys
@@ -109,14 +108,15 @@ type reportPlanDocumentDefaultSort struct {
 	Direction string `json:"direction,omitempty" jsonschema:"enum=asc,enum=desc"`
 }
 
-// Reports are HTML-only documents now: a widget renders a `markdown` body, a
-// `file` artifact (HTML/markdown/asset), or lists a folder via `file-list`. The
-// legacy data-viz widget kinds (chart/table/cards/stat/alert/pivot/text) and
-// their config fields were removed.
+// Reports are HTML-only: register a `file` widget that points at an HTML
+// document under db/reports/ with renderFormat=html. `file-list` remains
+// available for durable evidence/assets folders. Legacy markdown and data-viz
+// widget kinds are intentionally not supported; Pulse/workflow-version
+// migrations upgrade old workflows before they reach the viewer.
 type reportPlanDocumentWidget struct {
 	ID           string                          `json:"id,omitempty"`
 	Hidden       bool                            `json:"hidden,omitempty"`
-	Kind         string                          `json:"kind" jsonschema:"required,enum=markdown,enum=file,enum=file-list"`
+	Kind         string                          `json:"kind" jsonschema:"required,enum=file,enum=file-list"`
 	Source       string                          `json:"source,omitempty"`
 	DB           string                          `json:"db,omitempty"`
 	SQL          string                          `json:"sql,omitempty"`
@@ -126,7 +126,7 @@ type reportPlanDocumentWidget struct {
 	Description  string                          `json:"description,omitempty"`
 	Height       int                             `json:"height,omitempty"`
 	ShowIf       string                          `json:"showIf,omitempty"`
-	RenderFormat string                          `json:"renderFormat,omitempty" jsonschema:"enum=auto,enum=markdown,enum=html,enum=text,enum=code,enum=json,enum=image,enum=video,enum=audio,enum=pdf,enum=link"`
+	RenderFormat string                          `json:"renderFormat,omitempty" jsonschema:"enum=auto,enum=html,enum=text,enum=code,enum=json,enum=image,enum=video,enum=audio,enum=pdf,enum=link"`
 	ListFormat   string                          `json:"listFormat,omitempty" jsonschema:"enum=list,enum=cards,enum=table,enum=gallery"`
 	Recursive    *bool                           `json:"recursive,omitempty"`
 	Extensions   []string                        `json:"extensions,omitempty"`
@@ -175,11 +175,8 @@ type reportPlanValidationResult struct {
 	Errors      []reportPlanDiagnostic `json:"errors,omitempty"`
 	Warnings    []reportPlanDiagnostic `json:"warnings,omitempty"`
 	Suggestions []string               `json:"suggestions,omitempty"`
-	// Parsed shows what the parser actually extracted from the markdown. Useful
-	// for debugging silent-blank widgets: if a widget isn't here, the fence tag
-	// didn't match or the block was missing `source:`. Dumped even when
-	// validation succeeds so the LLM can verify "what the parser saw" matches
-	// intent without re-reading the markdown.
+	// Parsed shows what the validator actually extracted. Useful for debugging
+	// silent-blank widgets after normalization drops unsupported legacy kinds.
 	Parsed []reportPlanParsedSection `json:"parsed,omitempty"`
 }
 
@@ -211,7 +208,6 @@ type reportPlanRenderPreviewResult struct {
 	Widgets         int                         `json:"widgets"`
 	PlanFilePath    string                      `json:"plan_file_path,omitempty"`
 	PlanFormat      string                      `json:"plan_format,omitempty"`
-	PlanMarkdown    string                      `json:"plan_markdown"`
 	PlanJSON        *reportPlanDocument         `json:"plan_json,omitempty"`
 	PreviewMarkdown string                      `json:"preview_markdown"`
 	Validation      *reportPlanValidationResult `json:"validation,omitempty"`
@@ -280,7 +276,7 @@ func parseReportPlanJSONDocument(raw string) (*reportPlanDocument, error) {
 }
 
 func reportPlanDocumentWidgetKindAllowed(kind string) bool {
-	return kind == "markdown" || kind == "file" || kind == "file-list"
+	return kind == "file" || kind == "file-list"
 }
 
 func normalizeReportPlanDocument(doc *reportPlanDocument) *reportPlanDocument {
@@ -449,156 +445,6 @@ func reportPlanSlug(value string) string {
 	return slug
 }
 
-// parseReportPlan walks the markdown and returns sections+widgets. Intentionally
-// forgiving — matches the frontend parser behavior so we flag what would silently
-// fail to render rather than refusing to parse.
-func parseReportPlan(markdown string) []reportPlanSection {
-	if strings.TrimSpace(markdown) == "" {
-		return nil
-	}
-	lines := strings.Split(markdown, "\n")
-	var sections []reportPlanSection
-	var current *reportPlanSection
-	i := 0
-	for i < len(lines) {
-		raw := lines[i]
-		trimmed := strings.TrimSpace(raw)
-
-		// H2 heading (not H3+) starts a new section.
-		if strings.HasPrefix(trimmed, "## ") && !strings.HasPrefix(trimmed, "### ") {
-			if current != nil {
-				sections = append(sections, *current)
-			}
-			current = &reportPlanSection{Heading: strings.TrimSpace(strings.TrimPrefix(trimmed, "##"))}
-			i++
-			continue
-		}
-
-		if m := reportPlanFenceRE.FindStringSubmatch(trimmed); m != nil {
-			kind := m[1]
-			startLine := i + 1
-			var body []string
-			i++
-			for i < len(lines) && strings.TrimSpace(lines[i]) != "```" {
-				body = append(body, lines[i])
-				i++
-			}
-			if i < len(lines) {
-				i++ // skip closing fence
-			}
-			if current == nil {
-				continue // widgets outside a heading are dropped by the renderer
-			}
-			sectionHeading := current.Heading
-			if kind == "row" {
-				for idx, w := range parseReportPlanRow(body) {
-					w.Section = sectionHeading
-					w.LineNum = startLine
-					w.InRow = true
-					w.RowIndex = idx
-					current.Widgets = append(current.Widgets, w)
-				}
-				continue
-			}
-			if !reportPlanDocumentWidgetKindAllowed(kind) {
-				continue
-			}
-			w := parseReportPlanKeyValue(kind, body)
-			if w == nil {
-				continue
-			}
-			w.Section = sectionHeading
-			w.LineNum = startLine
-			current.Widgets = append(current.Widgets, w)
-			continue
-		}
-		i++
-	}
-	if current != nil {
-		sections = append(sections, *current)
-	}
-	return sections
-}
-
-func parseReportPlanKeyValue(kind string, body []string) *reportPlanWidget {
-	fields := map[string]string{}
-	for _, line := range body {
-		t := strings.TrimSpace(line)
-		if t == "" || strings.HasPrefix(t, "#") {
-			continue
-		}
-		sep := strings.Index(t, ":")
-		if sep <= 0 {
-			continue
-		}
-		key := strings.ToLower(strings.TrimSpace(t[:sep]))
-		val := strings.TrimSpace(t[sep+1:])
-		if val != "" {
-			fields[key] = val
-		}
-	}
-	if fields["source"] == "" {
-		return nil
-	}
-	return &reportPlanWidget{
-		Kind:   kind,
-		Source: fields["source"],
-		Path:   normalizeReportPlanPath(fields["path"]),
-		Filter: fields["filter"],
-		Fields: fields,
-	}
-}
-
-func parseReportPlanRow(body []string) []*reportPlanWidget {
-	var out []*reportPlanWidget
-	for _, raw := range body {
-		line := strings.TrimSpace(raw)
-		line = strings.TrimPrefix(line, "-")
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		parts := strings.Split(line, "|")
-		cleaned := make([]string, 0, len(parts))
-		for _, p := range parts {
-			p = strings.TrimSpace(p)
-			if p != "" {
-				cleaned = append(cleaned, p)
-			}
-		}
-		if len(cleaned) < 2 {
-			continue
-		}
-		kind := strings.ToLower(cleaned[0])
-		if !reportPlanDocumentWidgetKindAllowed(kind) {
-			continue
-		}
-		fields := map[string]string{}
-		for _, seg := range cleaned[1:] {
-			sep := strings.Index(seg, ":")
-			if sep <= 0 {
-				continue
-			}
-			key := strings.ToLower(strings.TrimSpace(seg[:sep]))
-			val := strings.TrimSpace(seg[sep+1:])
-			if val != "" {
-				fields[key] = val
-			}
-		}
-		if fields["source"] == "" {
-			continue
-		}
-		out = append(out, &reportPlanWidget{
-			Kind:   kind,
-			Source: fields["source"],
-			Path:   normalizeReportPlanPath(fields["path"]),
-			Filter: fields["filter"],
-			Fields: fields,
-		})
-	}
-	return out
-}
-
 func normalizeReportPlanPath(raw string) string {
 	t := strings.TrimSpace(raw)
 	if t == "" || t == "$" || t == "$[*]" || t == "." || t == "*" {
@@ -704,9 +550,9 @@ func reportPlanWidgetSourceLabel(w *reportPlanWidget) string {
 	return w.Source
 }
 
-// validateReportPlan parses the canonical JSON report plan (with markdown fallback)
-// and checks each widget against its referenced source file. Returns a structured
-// result for the LLM to act on.
+// validateReportPlan parses the canonical JSON report plan and checks each
+// widget against its referenced source file. Returns a structured result for the
+// LLM to act on.
 func validateReportPlan(
 	ctx context.Context,
 	workspacePath string,
@@ -717,12 +563,7 @@ func validateReportPlan(
 		return nil, err
 	}
 
-	var sections []reportPlanSection
-	if planRead.Format == "markdown" {
-		sections = parseReportPlan(planRead.RawContent)
-	} else {
-		sections = flattenReportPlanDocument(planRead.Document)
-	}
+	sections := flattenReportPlanDocument(planRead.Document)
 	result := &reportPlanValidationResult{Valid: true, Sections: len(sections)}
 
 	if len(sections) == 0 {
@@ -735,10 +576,9 @@ func validateReportPlan(
 		return result, nil
 	}
 
-	// Reports are HTML-only documents: a widget renders a markdown body, a file
-	// artifact (HTML/markdown/asset), or lists a folder via file-list. The
-	// data-viz widget grammar (chart/table/cards/stat/alert/pivot/text) was
-	// removed; unknown kinds are dropped during normalization before we get here.
+	// Reports are HTML documents registered as file widgets. file-list remains
+	// available for durable assets/evidence folders. Legacy markdown and data-viz
+	// widget kinds are dropped during normalization before we get here.
 	for _, section := range sections {
 		for _, w := range section.Widgets {
 			result.Widgets++
@@ -748,15 +588,15 @@ func validateReportPlan(
 				locator = fmt.Sprintf("row[%d]:%s", w.RowIndex, locator)
 			}
 
-			// File/file-list/markdown widgets point `source` at a file under
-			// db/, knowledgebase/, or docs/.
+			// File/file-list widgets point `source` at a file under db/,
+			// knowledgebase/, or docs/.
 			src := strings.TrimSpace(w.Source)
 			if src == "" {
 				result.Valid = false
 				result.Errors = append(result.Errors, reportPlanDiagnostic{
 					Severity: "error", Section: section.Heading, Line: w.LineNum, Widget: locator,
 					Message: "widget has no data binding.",
-					Hint:    "file/file-list/markdown widgets need a `source` under db/, knowledgebase/, or docs/.",
+					Hint:    "file/file-list widgets need a `source` under db/, knowledgebase/, or docs/.",
 				})
 				continue
 			}
@@ -802,12 +642,12 @@ func validateReportPlanOptions(
 ) {
 	if raw := strings.ToLower(reportPlanFirstNonEmpty(w.Fields["render_format"], w.Fields["renderformat"])); raw != "" {
 		switch raw {
-		case "auto", "markdown", "html", "text", "code", "json", "image", "video", "audio", "pdf", "link":
+		case "auto", "html", "text", "code", "json", "image", "video", "audio", "pdf", "link":
 		default:
 			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
 				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
 				Message: fmt.Sprintf("unknown render_format %q — file widget will fall back to auto.", raw),
-				Hint:    "Use one of: auto, markdown, html, text, code, json, image, video, audio, pdf, link.",
+				Hint:    "Use one of: auto, html, text, code, json, image, video, audio, pdf, link.",
 			})
 		}
 		if !reportPlanIsFileWidgetKind(w.Kind) {
@@ -989,12 +829,7 @@ func previewReportRender(
 		return nil, validationErr
 	}
 
-	var sections []reportPlanSection
-	if planRead.Format == "markdown" {
-		sections = parseReportPlan(planRead.RawContent)
-	} else {
-		sections = flattenReportPlanDocument(planRead.Document)
-	}
+	sections := flattenReportPlanDocument(planRead.Document)
 	result := &reportPlanRenderPreviewResult{
 		Valid:      validation.Valid,
 		Sections:   len(sections),
@@ -1002,11 +837,7 @@ func previewReportRender(
 	}
 	result.PlanFormat = planRead.Format
 	result.PlanFilePath = planRead.FilePath
-	if planRead.Format == "markdown" {
-		result.PlanMarkdown = planRead.RawContent
-	} else {
-		result.PlanJSON = planRead.Document
-	}
+	result.PlanJSON = planRead.Document
 
 	var rendered strings.Builder
 	for _, section := range sections {
@@ -1058,7 +889,7 @@ func buildReportPlanWidgetPreview(w *reportPlanWidget) reportPlanPreviewWidget {
 		return out
 	}
 
-	// File / file-list / markdown-from-file widgets render a file.
+	// File / file-list widgets render durable files.
 	if !reportPlanValidFileWidgetSource(w.Source) {
 		out.Visible = false
 		out.RenderState = "error"
@@ -1227,10 +1058,10 @@ func reportPlanWidgetFromMap(payload map[string]interface{}) (*reportPlanDocumen
 	// catch it after the fact.
 	if rf := strings.ToLower(strings.TrimSpace(widget.RenderFormat)); rf != "" {
 		switch rf {
-		case "auto", "markdown", "html", "text", "code", "json", "image", "video", "audio", "pdf", "link":
+		case "auto", "html", "text", "code", "json", "image", "video", "audio", "pdf", "link":
 			widget.RenderFormat = rf
 		default:
-			return nil, fmt.Errorf("unsupported renderFormat %q (use auto, markdown, html, text, code, json, image, video, audio, pdf, or link)", widget.RenderFormat)
+			return nil, fmt.Errorf("unsupported renderFormat %q (use auto, html, text, code, json, image, video, audio, pdf, or link)", widget.RenderFormat)
 		}
 	}
 	if lf := strings.ToLower(strings.TrimSpace(widget.ListFormat)); lf != "" {
@@ -1485,12 +1316,12 @@ func registerReportPlanManagementTools(
 		"properties": {
 			"id": { "type": "string" },
 			"hidden": { "type": "boolean" },
-			"source": { "type": "string", "description": "File path for file/file-list/markdown widgets (under db/, knowledgebase/, or docs/). For a markdown or file widget, point at the document; for file-list point at a folder." },
+			"source": { "type": "string", "description": "File path under db/, knowledgebase/, or docs/. For reports use a file widget pointing at an HTML document under db/reports/; file-list points at a durable assets/evidence folder." },
 			"title": { "type": "string" },
 			"description": { "type": "string" },
 			"height": { "type": "integer" },
 			"showIf": { "type": "string" },
-			"renderFormat": { "type": "string", "enum": ["auto", "markdown", "html", "text", "code", "json", "image", "video", "audio", "pdf", "link"], "description": "file widget only. auto infers from extension; explicit formats render markdown/html/text/code/json/image/video/audio/pdf or a link tile." },
+			"renderFormat": { "type": "string", "enum": ["auto", "html", "text", "code", "json", "image", "video", "audio", "pdf", "link"], "description": "file widget only. Report documents must use html. Other formats are attachment compatibility paths." },
 			"listFormat": { "type": "string", "enum": ["list", "cards", "table", "gallery"], "description": "file-list widget only. gallery is best for image/video evidence; table is best for dense inventories." },
 			"recursive": { "type": "boolean", "description": "file-list widget only. Whether to include nested folder files." },
 			"extensions": { "type": "array", "items": { "type": "string" }, "description": "file-list widget only. Optional extension allowlist, e.g. [\"png\", \"jpg\", \"pdf\"]." },
@@ -1515,7 +1346,7 @@ func registerReportPlanManagementTools(
 			"row_id": { "type": "string" },
 			"widget_id": { "type": "string" },
 			"tab": { "type": "string", "description": "Optional tab label for this widget entry when the section layout mode is tabs. Use the user-facing route name, e.g. \"Happy path\" or \"Fallback route\". Updating an existing widget with tab sets or clears the containing entry tab." },
-			"kind": { "type": "string", "enum": ["markdown", "file", "file-list"] },
+			"kind": { "type": "string", "enum": ["file", "file-list"], "description": "Use file for HTML reports. file-list is for durable assets/evidence folders." },
 			"index": { "type": "integer" },
 			"config": %s
 		},
@@ -1527,8 +1358,8 @@ func registerReportPlanManagementTools(
 	mcpAgent.RegisterCustomTool(
 		"upsert_report_widget",
 		"Create or update one report widget in reports/report_plan.json. Reports are documents only. If widget_id exists, this merges the provided config into the existing widget. If widget_id is omitted, it creates a new widget in the target section; pass row_id to insert into an existing row entry.\n\n"+
-			"Supported widget kinds: markdown (a formatted text/markdown body), file (render one stored artifact — typically an HTML report document via renderFormat: html, or a markdown document), file-list (list a folder of artifacts).\n\n"+
-			"Binding: every widget points `source` at a path under db/, knowledgebase/, or docs/. For a `file` widget set optional `renderFormat` (html for the primary report document); for multiple images/videos/PDFs use `kind:\"file-list\"` with a source folder plus `listFormat`, `recursive`, `extensions`, and `maxItems`.\n\n"+
+			"Report authoring is HTML-only: create an HTML document under `db/reports/` and register it with `kind:\"file\"`, `renderFormat:\"html\"`, and `source` set to that file. Markdown report widgets are not supported; old workflows must be upgraded through Pulse/workflow-version migration.\n\n"+
+			"Binding: every widget points `source` at a path under db/, knowledgebase/, or docs/. For multiple images/videos/PDFs use `kind:\"file-list\"` with a source folder plus `listFormat`, `recursive`, `extensions`, and `maxItems`.\n\n"+
 			"Per-widget grid layout: when the parent section has section.layout.columns set, pass `layout: { span: N, minWidth: 320 }` in config to span N grid columns. For route dashboards, prefer set_section_layout(mode=\"tabs\") on one shared conceptual section and pass `tab: \"Route name\"` so entries with the same route label render together.",
 		upsertParams,
 		func(ctx context.Context, args map[string]interface{}) (string, error) {

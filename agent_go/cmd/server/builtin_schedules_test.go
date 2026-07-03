@@ -19,7 +19,10 @@ func TestBuiltinOrgPulseSequenceIncludesReadOnlyLLMCostAudit(t *testing.T) {
 		t.Fatalf("third org pulse message should be LLM/cost audit, got: %s", audit)
 	}
 	for _, want := range []string{
+		"complete high/medium/low LLM tier setup",
+		"complete, missing-tier, override-mismatch, over-tiered, under-tiered, or unknown",
 		"high/medium/low",
+		"where tier evidence is missing",
 		"cost evidence is missing",
 		"do NOT change workflow.json",
 		"do NOT run optimizers or fixes",
@@ -32,6 +35,32 @@ func TestBuiltinOrgPulseSequenceIncludesReadOnlyLLMCostAudit(t *testing.T) {
 	final := sched.Messages[len(sched.Messages)-1]
 	if !strings.Contains(final, "LLM/model tier + cost audit") || !strings.Contains(final, "Report the log entry, LLM/cost summary") {
 		t.Fatalf("final org pulse message should require LLM/cost reporting in pulse and final report:\n%s", final)
+	}
+}
+
+func TestBuiltinOrgPulseUpdatesGoalsScorecard(t *testing.T) {
+	sched, ok := FindDefaultBuiltinSchedule(builtinOrgPulseID)
+	if !ok {
+		t.Fatal("builtin org pulse schedule not found")
+	}
+	if len(sched.Messages) < 2 {
+		t.Fatalf("builtin org pulse messages = %d, want at least 2", len(sched.Messages))
+	}
+
+	evidenceAndGoals := sched.Messages[1]
+	for _, want := range []string{
+		`get_reference_doc(kind="org-html")`,
+		"update pulse/goals.html as the durable current scorecard",
+		"status, latest evidence, confidence, freshness/last-reviewed, or history",
+		"whether pulse/goals.html was updated",
+	} {
+		if !strings.Contains(evidenceAndGoals, want) {
+			t.Fatalf("evidence/goals message missing %q:\n%s", want, evidenceAndGoals)
+		}
+	}
+
+	if !strings.Contains(builtinOrgPulseQuery, "update pulse/goals.html as the durable current scorecard") {
+		t.Fatalf("single-turn Org Pulse fallback should update goals.html scorecard:\n%s", builtinOrgPulseQuery)
 	}
 }
 

@@ -1,13 +1,12 @@
-// Dynamic report viewer — parses reports/report_plan.json. Data widgets bind via
-// `db` + `sql` and render from the read-only SQLite query endpoint; file/markdown
-// widgets fetch their `source` file directly.
+// Dynamic report viewer — parses reports/report_plan.json. HTML file widgets
+// fetch their `source` file directly; HTML documents read live
+// data through the window.report API injected into their iframe.
 // See docs/workflow/persistent_stores_design.md.
 
-import { createElement, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createElement, memo, useEffect, useMemo, useRef, useState } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { MarkdownWidget } from './reportWidgets/MarkdownWidget'
 import { FileListWidget, FileWidget } from './reportWidgets/FileWidget'
 import { FilePreviewModal } from './reportWidgets/FilePreviewModal'
 import { ReportEmbedProvider, type ReportDataApi } from './reportWidgets/reportEmbedContext'
@@ -119,6 +118,10 @@ function reportExportFilename(workspacePath: string, format: ReportExportFormat)
   const safeName = workflowName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'workflow'
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
   return `${safeName}-report-${timestamp}.${format}`
+}
+
+function reportSectionDomId(sectionIndex: number): string {
+  return `workflow-report-section-${sectionIndex}`
 }
 
 function renderReportElementToSvg(reportElement: HTMLElement): string {
@@ -503,8 +506,8 @@ useRunningWorkflowsStore.subscribe((state) => {
   reportTerminalRunKeys = terminalNow
 })
 
-// File-path sources for file/file-list/markdown widgets that point `source` at
-// a file under the workspace.
+// File-path sources for file/file-list widgets that point `source` at a file
+// under the workspace.
 function widgetSourcePaths(widget: ReportWidget): string[] {
   return widget.source ? [widget.source] : []
 }
@@ -546,12 +549,10 @@ async function loadReportDataSnapshot(workspacePath: string, force = false): Pro
       paths.map(async (path): Promise<readonly [string, unknown]> => {
         const content = await readWorkspaceText(`${workspacePath}/${path}`)
         if (content === null || content.trim() === '') return [path, null] as const
-        // Raw-text sources (markdown / plain text) are not JSON — keep the file
-        // content verbatim so a `markdown` widget can point `source` directly at
-        // a .md file in the workspace and render it inline (no `path` needed).
-        // resolveJSONPath returns a bare string unchanged when no path is set,
-        // and relative links inside the file resolve against basePath=source.
-        if (/\.(md|markdown|txt)$/i.test(path)) return [path, content] as const
+        // Raw-text sources are not JSON. File widgets self-fetch their content,
+        // but keeping plain text here preserves source visibility for any future
+        // lightweight non-JSON attachment widget.
+        if (/\.(txt)$/i.test(path)) return [path, content] as const
         try {
           return [path, JSON.parse(content)] as const
         } catch {
@@ -579,7 +580,7 @@ function widgetSourceLabel(widget: ReportWidget): string {
   return widget.source ?? ''
 }
 
-// Resolve a file/markdown widget's `source` file from the prefetched cache.
+// Resolve a file widget's `source` file from the prefetched cache.
 function resolveWidgetSourceInput(widget: ReportWidget, sources: SourceCache): WidgetSourceInput {
   const label = widgetSourceLabel(widget)
   if (!widget.source) return { status: 'missing', label }
@@ -911,8 +912,9 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
   const documentOnlyReport = documentWidgets != null
   // HTML documents render in iframes that own their full width/scroll; when EVERY
   // document is HTML the report goes full-width with no reserved scrollbar gutter.
-  // (Mixed md+html keeps the readable content width so markdown stays legible.)
+  // (Mixed attachments keep the readable content width.)
   const htmlOnlyReport = documentWidgets != null && documentWidgets.every(isHtmlDocumentWidget)
+  const showDocumentSectionNavigator = documentOnlyReport && visibleSections.length > 1
 
   const previewContentClassName =
     previewMode === 'mobile'
@@ -927,27 +929,6 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
   // (`hsl(var(--primary))`). Anything we don't override falls through to the
   // named theme block and ultimately the workspace defaults.
   const themeStyle = useMemo(() => buildThemeStyle(plan.themeColors), [plan.themeColors])
-
-  // Renderer for ```report-widget blocks embedded in markdown documents — gives
-  // them the live, db-bound WidgetCard with the report's loaded sources.
-  const renderEmbeddedWidget = useCallback(
-    (spec: unknown) => (
-      // Wrap embeds in a themed app surface. Critical for HTML embeds, which
-      // mount in a separate iframe document outside the report's themed
-      // container: this carries the report theme + CSS variables, sets the app
-      // base surface/typography (bg-background / text-foreground / font-sans),
-      // and isolates the widget from the host HTML's inherited fonts and colors
-      // (otherwise stats/tables inherit the document's styling and look wrong).
-      <div
-        className="report-embed-root rounded-lg bg-background p-2 text-foreground font-sans"
-        data-report-theme={plan.theme || undefined}
-        style={themeStyle}
-      >
-        <EmbeddedReportWidget spec={spec} workspacePath={workspacePath} baseSources={sources} />
-      </div>
-    ),
-    [workspacePath, sources, plan.theme, themeStyle],
-  )
 
   // Live data API exposed to HTML report documents as `window.report`. HTML
   // renders its own visuals; we just deliver data. `query` runs read-only SQL
@@ -1035,10 +1016,7 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
     return { workspacePath, query, get, getText, getHtml, renderMarkdown, fileUrl, openFile }
   }, [workspacePath])
 
-  const reportRuntime = useMemo(
-    () => ({ renderEmbeddedWidget, data: dataApi }),
-    [renderEmbeddedWidget, dataApi],
-  )
+  const reportRuntime = useMemo(() => ({ data: dataApi }), [dataApi])
 
   return (
     <ReportEmbedProvider value={reportRuntime}>
@@ -1104,9 +1082,31 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
 
             {!loading && !error && hasAnyContent && (
               <div className="flex flex-col gap-4 animate-in fade-in duration-200 sm:gap-5">
+                {showDocumentSectionNavigator && (
+                  <div className="sticky top-0 z-20 -mx-1 bg-background/95 px-1 py-1.5 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+                    <div className="flex gap-1 overflow-x-auto [scrollbar-width:thin]" aria-label="Report sections">
+                      {visibleSections.map(({ section, sectionIndex }) => (
+                        <button
+                          key={sectionIndex}
+                          type="button"
+                          onClick={() => {
+                            document.getElementById(reportSectionDomId(sectionIndex))?.scrollIntoView({
+                              behavior: 'smooth',
+                              block: 'start',
+                            })
+                          }}
+                          className="shrink-0 rounded-md border border-border/70 bg-card/80 px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        >
+                          <span className="block max-w-52 truncate">{section.heading}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {visibleSections.map(({ section, sectionIndex, entries }) => (
                   <SectionContainer
                     key={sectionIndex}
+                    domId={reportSectionDomId(sectionIndex)}
                     section={section}
                     sectionIndex={sectionIndex}
                     workspacePath={workspacePath}
@@ -1114,6 +1114,7 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
                     sources={sources}
                     hiddenWidgetKeys={hiddenWidgetKeys}
                     handleToggleWidgetHidden={handleToggleWidgetHidden}
+                    showDocumentSectionHeading={visibleSections.length > 1}
                   />
                 ))}
               </div>
@@ -1273,6 +1274,7 @@ function MobileTabPicker({
 // scale proportionally so a widget with span: 4 keeps roughly its share of
 // the row at every tier.
 function SectionContainer({
+  domId,
   section,
   sectionIndex,
   workspacePath,
@@ -1280,7 +1282,9 @@ function SectionContainer({
   sources,
   hiddenWidgetKeys,
   handleToggleWidgetHidden,
+  showDocumentSectionHeading = false,
 }: {
+  domId?: string
   section: ReportSection
   sectionIndex: number
   workspacePath: string
@@ -1288,6 +1292,7 @@ function SectionContainer({
   sources: SourceCache
   hiddenWidgetKeys: Set<string>
   handleToggleWidgetHidden: (widgetKey: string) => void
+  showDocumentSectionHeading?: boolean
 }) {
   const tabsEnabled = section.layout?.mode === 'tabs'
   const tabGroups = useMemo(() => {
@@ -1365,9 +1370,13 @@ function SectionContainer({
   const documentOnly =
     entries.length > 0 &&
     entries.every(({ entry }) => entry.kind === 'single' && isDocumentWidget(entry.widget))
+  const shouldShowSectionHeader = !documentOnly || showDocumentSectionHeading
   return (
-    <section className={documentOnly ? 'flex flex-col' : 'flex flex-col gap-2 p-0 sm:gap-2.5 sm:rounded-2xl sm:border sm:border-border/50 sm:bg-card/55 sm:p-3 sm:shadow-sm'}>
-      {!documentOnly && <SectionHeader heading={section.heading} />}
+    <section
+      id={domId}
+      className={documentOnly ? 'flex scroll-mt-14 flex-col gap-2' : 'flex scroll-mt-14 flex-col gap-2 p-0 sm:gap-2.5 sm:rounded-2xl sm:border sm:border-border/50 sm:bg-card/55 sm:p-3 sm:shadow-sm'}
+    >
+      {shouldShowSectionHeader && <SectionHeader heading={section.heading} />}
       {tabsEnabled && tabGroups.length > 0 && (
         sizeTier === 'phone' ? (
           <MobileTabPicker
@@ -1436,58 +1445,6 @@ function SectionContainer({
   )
 }
 
-// EmbeddedReportWidget renders a widget spec parsed from a ```report-widget
-// block inside a markdown document. Embedded specs reference source files the
-// plan scanner never saw, so it loads any that aren't already in the report
-// snapshot, then defers to the normal WidgetCard so embedded widgets behave
-// exactly like plan widgets (live, db-bound).
-function EmbeddedReportWidget({
-  spec,
-  workspacePath,
-  baseSources,
-}: {
-  spec: unknown
-  workspacePath: string
-  baseSources: SourceCache
-}) {
-  const widget = (spec && typeof spec === 'object' ? spec : {}) as ReportWidget
-  const validKind = typeof widget.kind === 'string' && VALID_WIDGET_KINDS.has(widget.kind)
-  const needed = useMemo(() => (validKind ? widgetSourcePaths(widget) : []), [validKind, widget])
-  const missing = useMemo(() => needed.filter(p => !(p in baseSources)), [needed, baseSources])
-  const missingKey = missing.join('|')
-  const [extra, setExtra] = useState<SourceCache | null>(missing.length === 0 ? {} : null)
-
-  useEffect(() => {
-    if (missing.length === 0) { setExtra({}); return }
-    let cancelled = false
-    setExtra(null)
-    void Promise.all(
-      missing.map(async (path): Promise<readonly [string, unknown]> => {
-        const content = await readWorkspaceText(`${workspacePath}/${path}`)
-        if (content === null || content.trim() === '') return [path, null] as const
-        if (/\.(md|markdown|txt)$/i.test(path)) return [path, content] as const
-        try { return [path, JSON.parse(content)] as const } catch { return [path, null] as const }
-      })
-    ).then(entries => { if (!cancelled) setExtra(Object.fromEntries(entries)) })
-    return () => { cancelled = true }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspacePath, missingKey])
-
-  if (!validKind) {
-    return (
-      <WidgetError
-        widget={widget}
-        message={`Unknown embedded widget kind "${String(widget.kind ?? '')}".`}
-        hint="Use a valid kind: markdown, file, file-list."
-      />
-    )
-  }
-  if (extra === null) {
-    return <div className="py-2 text-xs italic text-muted-foreground">Loading embedded widget…</div>
-  }
-  return <WidgetCard widget={widget} workspacePath={workspacePath} sources={{ ...baseSources, ...extra }} />
-}
-
 function EntryRenderer({
   entry,
   entryIndex,
@@ -1541,13 +1498,6 @@ function EntryRenderer({
     </div>
   )
 }
-
-// Reports are documents only. The supported widget kinds are:
-//   - markdown   — renders a .md/.txt source file inline (collection path:
-//                  resolves `path` + `filter` then hands the value to the renderer)
-//   - file       — renders one stored artifact (HTML/markdown/asset)
-//   - file-list  — lists a folder of artifacts
-const VALID_WIDGET_KINDS: ReadonlySet<string> = new Set<ReportWidgetKind>(['markdown', 'file', 'file-list'])
 
 // Renderer registries. Each map covers one dispatch path.
 type CollectionWidgetRenderer = React.FC<{ value: unknown; widget: ReportWidget }>
@@ -1622,7 +1572,7 @@ function WidgetCard({
     )
   }
 
-  // markdown widget binds to a file via `source`.
+  // Non-file widgets are ignored by the parser; this is a defensive fallback.
   if (!widget.source) {
     return (
       <div
@@ -1691,6 +1641,5 @@ function WidgetCard({
 // Widget registry. WidgetCard reads from these maps to render the kept,
 // documents-only widget kinds.
 // ---------------------------------------------------------------------------
-COLLECTION_WIDGET_RENDERERS.markdown = MarkdownWidget
 FILE_WIDGET_RENDERERS.file = FileWidget
 FILE_WIDGET_RENDERERS['file-list'] = FileListWidget

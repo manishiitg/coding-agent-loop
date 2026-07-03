@@ -4,7 +4,6 @@ import { agentApi, workspaceApi } from '../services/api'
 import type { PlannerFile } from '../services/api-types'
 import PlannerFileList from './workspace/PlannerFileList'
 import { isValidJSON } from '../utils/event-helpers'
-import BrowserProcesses from './workspace/BrowserProcesses'
 import CreateFolderDialog from './workspace/CreateFolderDialog'
 import MoveFileDialog from './workspace/MoveFileDialog'
 import RenameFileDialog from './workspace/RenameFileDialog'
@@ -2013,13 +2012,6 @@ export default function Workspace({
                     </div>
                   </div>
                   )}
-                </div>
-              )}
-
-              {/* Browser Processes - Hidden in selection mode */}
-              {!isSelectionMode && (
-                <div className="relative">
-                  <BrowserProcesses />
                 </div>
               )}
 

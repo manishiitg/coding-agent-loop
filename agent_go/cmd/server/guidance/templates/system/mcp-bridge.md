@@ -43,7 +43,7 @@ writes, and commands; other workspace tools when explicitly available).
 
 ## Calling an MCP tool
 
-MCP tools live at `$MCP_MCP/{server}/{tool}`. Authenticate with
+Real MCP-server tools live at `$MCP_MCP/{server}/{tool}`. Authenticate with
 `-H "$MCP_AUTH"`. Use any shell that fits — curl, jq, node, python,
 whatever. Shell-first; Python is optional.
 
@@ -51,6 +51,22 @@ whatever. Shell-first; Python is optional.
 payload='{"arg1":"value1"}'
 curl -sS --json "$payload" -H "$MCP_AUTH" "$MCP_MCP/{server_name}/{tool_name}" | jq
 ```
+
+## Calling a custom / built-in tool
+
+Built-in categories such as `human_tools`, `workflow`, `workspace_advanced`,
+`workspace_browser`, `auto_improvement`, and `knowledgebase_tools` are not MCP
+servers from the workflow's selected server list. Call their tools through
+`$MCP_CUSTOM/{tool_name}` with no category segment in the URL.
+
+```bash
+payload='{"message_for_user":"Done"}'
+curl -sS --json "$payload" -H "$MCP_AUTH" "$MCP_CUSTOM/notify_user" | jq
+```
+
+Do not call `notify_user` as `$MCP_MCP/human_tools/notify_user`; that treats
+`human_tools` as a real MCP server and can be blocked by the session MCP
+server allowlist.
 
 **Response envelope:** `{"success": true|false, "result": ..., "error": "..."}`.
 Always check `success` before treating `result` as authoritative.

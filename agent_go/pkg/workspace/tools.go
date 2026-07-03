@@ -143,14 +143,6 @@ func NewAdvancedExecutor(client *Client) map[string]func(ctx context.Context, ar
 		return client.ReadImage(ctx, params)
 	}
 
-	executors["read_video"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
-		var params ReadVideoParams
-		if err := mapToStruct(args, &params); err != nil {
-			return "", fmt.Errorf("invalid arguments: %w", err)
-		}
-		return client.ReadVideo(ctx, params)
-	}
-
 	executors["diff_patch_workspace_file"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
 		var params DiffPatchWorkspaceFileParams
 		if err := mapToStruct(args, &params); err != nil {

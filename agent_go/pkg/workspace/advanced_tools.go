@@ -64,39 +64,6 @@ func imageToolDef() llmtypes.Tool {
 	}
 }
 
-// videoReadToolDef returns the read_video tool definition (single source of truth).
-func videoReadToolDef() llmtypes.Tool {
-	return llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "read_video",
-			Description: "Read a video file from workspace and ask a question about it using a provider-backed video-understanding model. Direct video providers are not advertised by default; before choosing provider/model_id, call list_llm_capabilities(capability=\"read_video\", include_models=true).",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"filepath": map[string]interface{}{
-						"type":        "string",
-						"description": "Full absolute path to the video file under the workspace docs root (e.g., '/Users/.../workspace-docs/_users/default/Chats/demo.mp4', '/app/workspace-docs/_users/default/Downloads/demo.mp4'). Workspace-relative paths are rejected. Absolute paths outside the workspace docs root are rejected.",
-					},
-					"query": map[string]interface{}{
-						"type":        "string",
-						"description": "Question to ask about the video (e.g., 'Summarize this video', 'What actions happen?', 'Extract visible text and events').",
-					},
-					"provider": map[string]interface{}{
-						"type":        "string",
-						"description": "Optional video-understanding provider override. Discover currently usable providers with list_llm_capabilities(capability=\"read_video\", include_models=true). If specifying model_id, pass the matching provider too.",
-					},
-					"model_id": map[string]interface{}{
-						"type":        "string",
-						"description": "Optional video-understanding model id. Use a model from list_llm_capabilities(capability=\"read_video\", include_models=true), and pass the matching provider in the same call.",
-					},
-				},
-				"required": []string{"filepath", "query"},
-			}),
-		},
-	}
-}
-
 // generateTextLLMToolDef returns the generate_text_llm tool definition (single source of truth).
 func generateTextLLMToolDef() llmtypes.Tool {
 	return llmtypes.Tool{
@@ -182,9 +149,9 @@ func GetShellToolDefinitions() []llmtypes.Tool {
 	return []llmtypes.Tool{shellToolDef()}
 }
 
-// GetImageToolDefinitions returns image/video understanding tools.
+// GetImageToolDefinitions returns image understanding tools.
 func GetImageToolDefinitions() []llmtypes.Tool {
-	return []llmtypes.Tool{imageToolDef(), videoReadToolDef()}
+	return []llmtypes.Tool{imageToolDef()}
 }
 
 // GetGenerateTextLLMToolDefinitions returns only the text generation tool.

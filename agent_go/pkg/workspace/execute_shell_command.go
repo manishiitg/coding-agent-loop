@@ -415,6 +415,10 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 			}
 		}
 	}
+	if params.ExtraEnv == nil {
+		params.ExtraEnv = make(map[string]string)
+	}
+	populateRunloopProcessEnv(params.ExtraEnv, sessionID, params.WorkingDirectory, params.Command)
 	common.PopulateMCPBridgeShortEnv(params.ExtraEnv)
 
 	path := "/api/execute"
@@ -436,6 +440,92 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 		log.Printf("[SHELL_RESULT_DEBUG] call_sub_agent via shell: stdout_len=%d raw_resp_len=%d", len(result.Stdout), len(respBody))
 	}
 	return result, nil
+}
+
+func populateRunloopProcessEnv(env map[string]string, sessionID, workingDir, command string) {
+	if env == nil {
+		return
+	}
+	setDefault := func(key, value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		if _, exists := env[key]; !exists {
+			env[key] = value
+		}
+	}
+	setDefault("RUNLOOP_SESSION_ID", sessionID)
+
+	for _, candidate := range []string{
+		env["STEP_OUTPUT_DIR"],
+		env["STEP_EXECUTION_DIR"],
+		workingDir,
+		command,
+	} {
+		owner := inferRunloopOwnerFromPath(candidate)
+		setDefault("RUNLOOP_WORKFLOW_ID", owner.WorkflowID)
+		setDefault("RUNLOOP_RUN_ID", owner.RunID)
+		setDefault("RUNLOOP_STEP_ID", owner.StepID)
+		if env["RUNLOOP_WORKFLOW_ID"] != "" && env["RUNLOOP_RUN_ID"] != "" && env["RUNLOOP_STEP_ID"] != "" {
+			break
+		}
+	}
+	if env["RUNLOOP_WORKFLOW_ID"] != "" {
+		setDefault("RUNLOOP_OWNER", "workflow")
+	}
+}
+
+type runloopProcessOwner struct {
+	WorkflowID string
+	RunID      string
+	StepID     string
+}
+
+func inferRunloopOwnerFromPath(raw string) runloopProcessOwner {
+	slash := filepath.ToSlash(strings.TrimSpace(raw))
+	if slash == "" {
+		return runloopProcessOwner{}
+	}
+	parts := strings.Split(slash, "/")
+	workflowIdx := -1
+	for i, part := range parts {
+		if part == "Workflow" {
+			workflowIdx = i
+			break
+		}
+	}
+	if workflowIdx < 0 || workflowIdx+1 >= len(parts) {
+		return runloopProcessOwner{}
+	}
+	owner := runloopProcessOwner{WorkflowID: parts[workflowIdx+1]}
+	runsIdx := -1
+	for i := workflowIdx + 2; i < len(parts); i++ {
+		if parts[i] == "runs" {
+			runsIdx = i
+			break
+		}
+	}
+	if runsIdx < 0 {
+		return owner
+	}
+	executionIdx := -1
+	for i := runsIdx + 1; i < len(parts); i++ {
+		if parts[i] == "execution" {
+			executionIdx = i
+			break
+		}
+	}
+	if executionIdx < 0 {
+		return owner
+	}
+	if executionIdx > runsIdx+1 {
+		owner.RunID = strings.Join(parts[runsIdx+1:executionIdx], "/")
+	}
+	if executionIdx+1 < len(parts) {
+		owner.StepID = parts[executionIdx+1]
+	}
+	return owner
 }
 
 // containsAgentBrowserInvocation reports whether cmd appears to invoke the agent-browser

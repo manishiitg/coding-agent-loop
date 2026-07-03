@@ -68,20 +68,6 @@ func TestReadImageRejectsRelativePathBeforeWorkspaceAPI(t *testing.T) {
 	}
 }
 
-func TestReadVideoRejectsRelativePathBeforeWorkspaceAPI(t *testing.T) {
-	client := NewClient("http://127.0.0.1:1")
-	_, err := client.ReadVideo(context.Background(), ReadVideoParams{
-		Filepath: "Downloads/sample.mp4",
-		Query:    "Summarize this video.",
-	})
-	if err == nil {
-		t.Fatal("expected relative read_video path to be rejected before API call")
-	}
-	if !strings.Contains(err.Error(), "absolute") {
-		t.Fatalf("error = %q, want mention of absolute path", err.Error())
-	}
-}
-
 func TestLLMBackedToolDefinitionsReferenceCapabilityDiscovery(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -93,12 +79,6 @@ func TestLLMBackedToolDefinitionsReferenceCapabilityDiscovery(t *testing.T) {
 			name:       "read_image",
 			tool:       imageToolDef,
 			capability: "read_image",
-			wantFields: []string{"provider", "model_id"},
-		},
-		{
-			name:       "read_video",
-			tool:       videoReadToolDef,
-			capability: "read_video",
 			wantFields: []string{"provider", "model_id"},
 		},
 		{

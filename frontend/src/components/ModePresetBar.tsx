@@ -514,10 +514,10 @@ export const ModePresetBar: React.FC = () => {
     }
 
     try {
+      const deletingActiveWorkflow = useGlobalPresetStore.getState().activePresetIds.workflow === preset.id
       await agentApi.deleteWorkflowFolder(workspacePath)
-      await refreshPresets()
 
-      if (activePreset?.id === preset.id) {
+      if (deletingActiveWorkflow) {
         clearActivePreset('workflow')
         useGlobalPresetStore.getState().setSelectedPresetFolder(null)
         useGlobalPresetStore.getState().setCurrentPresetServers([])
@@ -527,6 +527,8 @@ export const ModePresetBar: React.FC = () => {
         setShowFileContent(false)
       }
 
+      await refreshPresets()
+
       setShowPresetModal(false)
       setEditingPreset(null)
       setShowPresetDropdown(false)
@@ -535,7 +537,7 @@ export const ModePresetBar: React.FC = () => {
       alert('Failed to delete automation. Please try again.')
       throw error
     }
-  }, [activePreset?.id, clearActivePreset, refreshPresets, setSelectedFile, setShowFileContent])
+  }, [clearActivePreset, refreshPresets, setSelectedFile, setShowFileContent])
 
   const handleDuplicatePreset = useCallback(async (presetId: string, e: React.MouseEvent) => {
     e.stopPropagation()

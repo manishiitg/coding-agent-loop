@@ -21,3 +21,24 @@ export function hasLiveBackgroundAgents(
   return session.has_running_background_agents === true ||
     (session.running_background_agent_count ?? 0) > 0
 }
+
+// A main-agent coding CLI keeps its tmux pane alive after a turn finishes so the
+// user can send a follow-up without relaunching. The backend flips such an idle,
+// non-steerable session to status "completed" (so chat streaming state clears and
+// the next message starts a fresh turn), which would otherwise drop it from the
+// activity monitor. But the agent is still ALIVE and waiting — it should stay
+// visible, distinctly from an actively-processing one (clock vs spinner). Bounded
+// to a window after the last activity so a truly-forgotten pane eventually clears;
+// matches the 30-min abandonment window the backend uses for background agents.
+export const RETAINED_TMUX_ACTIVE_WINDOW_MS = 30 * 60 * 1000
+export function hasIdleAliveCodingAgent(
+  session: Pick<ActiveSessionInfo, 'has_retained_tmux_session' | 'last_activity'>,
+  now: number = Date.now(),
+): boolean {
+  if (session.has_retained_tmux_session !== true) return false
+  const last = session.last_activity ? Date.parse(session.last_activity) : NaN
+  // Unknown/unparseable timestamp: the live pane is the primary signal — show it
+  // (the backend reaper still bounds how long the pane itself stays alive).
+  if (Number.isNaN(last)) return true
+  return now - last < RETAINED_TMUX_ACTIVE_WINDOW_MS
+}

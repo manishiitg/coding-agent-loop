@@ -9,7 +9,7 @@ import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { isScheduledWorkflowSession, openActiveSession, workflowSessionBotPlatform } from '../utils/workflowSessionRestore'
 import { useAppStore } from '../stores/useAppStore'
 import { isLocalActivityFallbackTab } from '../utils/activityFallback'
-import { hasLiveBackgroundAgents, normalizedActivityStatus } from '../utils/activitySessions'
+import { hasIdleAliveCodingAgent, hasLiveBackgroundAgents, normalizedActivityStatus } from '../utils/activitySessions'
 
 const ACTIVITY_DETAILS_POLL_MS = 30000
 
@@ -46,6 +46,10 @@ function isActiveSession(session: ActiveSessionInfo): boolean {
       hasLiveBackgroundAgents(session)
     )
   }
+
+  // Idle-but-alive coding-agent CLI: a live tmux pane still holding agent context,
+  // ready to resume the moment the user sends another message. Shown as idle (clock).
+  if (hasIdleAliveCodingAgent(session)) return true
 
   if (
     session.needs_user_input === true ||
@@ -153,6 +157,10 @@ function headerStatusLabel(session: ActiveSessionInfo, workflow?: RunningWorkflo
   if ((status === 'waiting' || status === 'waiting_feedback') && hasBackgroundAgents) return 'waiting for background agents'
   if (status === 'waiting' || status === 'waiting_feedback') return 'waiting'
   if ((status === 'completed' || status === 'idle') && hasBackgroundAgents) return 'background running'
+  // Idle-but-alive coding CLI (backend marked it completed once the turn ended, but
+  // the tmux agent is still up waiting for input): show it as idle (clock), never as
+  // a spinner. Precedence: a genuinely-running/busy session keeps status "running".
+  if ((status === 'completed' || status === 'idle') && hasIdleAliveCodingAgent(session)) return 'idle'
   if (status === 'completed' && isWorkflowSession(session)) return 'idle'
   return status || 'running'
 }

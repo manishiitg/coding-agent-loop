@@ -90,8 +90,17 @@ function sanitizeSavedLLM(llm: SavedLLM): SavedLLM {
     ...sanitizeLLMModel(llm),
     id: llm.id,
     name: llm.name,
+    source: llm.source,
     created_at: llm.created_at,
   }
+}
+
+function isAutoPublishedLLM(llm: SavedLLM): boolean {
+  return llm.source === 'auto_coding_agent' || llm.id?.startsWith('auto:')
+}
+
+function persistablePublishedLLMs(llms: SavedLLM[]): SavedLLM[] {
+  return filterPublishedLLMs(llms).filter(llm => !isAutoPublishedLLM(llm))
 }
 
 function filterPublishedLLMs(llms: SavedLLM[]): SavedLLM[] {
@@ -733,7 +742,7 @@ export const useLLMStore = create<LLMState>()(
           })
           const nextSavedLLMs = filterPublishedLLMs([...(existingLLMs || []), newSavedLLM])
 
-          await llmConfigService.savePublishedLLMs(nextSavedLLMs)
+          await llmConfigService.savePublishedLLMs(persistablePublishedLLMs(nextSavedLLMs))
           set({ savedLLMs: nextSavedLLMs })
           await refreshAvailableLLMs()
         },
@@ -744,7 +753,7 @@ export const useLLMStore = create<LLMState>()(
           const existingLLMs = filterPublishedLLMs(await llmConfigService.getPublishedLLMs().catch(() => get().savedLLMs))
           const nextSavedLLMs = (existingLLMs || []).filter(llm => llm.id !== id)
 
-          await llmConfigService.savePublishedLLMs(nextSavedLLMs)
+          await llmConfigService.savePublishedLLMs(persistablePublishedLLMs(nextSavedLLMs))
           set({ savedLLMs: nextSavedLLMs })
           await refreshAvailableLLMs()
         },
@@ -892,23 +901,37 @@ export const useLLMStore = create<LLMState>()(
             }
 
             const localPublishedLLMs = filterPublishedLLMs((currentState.savedLLMs || []).map(sanitizeSavedLLM))
-            let workspacePublishedLLMs = Array.isArray(loadedPublishedLLMs)
-              ? filterPublishedLLMs(loadedPublishedLLMs.map(sanitizeSavedLLM))
+            const localPersistedPublishedLLMs = persistablePublishedLLMs(localPublishedLLMs)
+            const loadedSanitizedPublishedLLMs = Array.isArray(loadedPublishedLLMs)
+              ? loadedPublishedLLMs.map(sanitizeSavedLLM)
               : []
-            if (Array.isArray(loadedPublishedLLMs) && loadedPublishedLLMs.length !== workspacePublishedLLMs.length) {
+            let workspacePublishedLLMs = Array.isArray(loadedPublishedLLMs)
+              ? filterPublishedLLMs(loadedSanitizedPublishedLLMs)
+              : []
+            let workspacePersistedPublishedLLMs = persistablePublishedLLMs(workspacePublishedLLMs)
+            const loadedPersistedPublishedLLMs = loadedSanitizedPublishedLLMs.filter(llm => !isAutoPublishedLLM(llm))
+            if (Array.isArray(loadedPublishedLLMs) && loadedPersistedPublishedLLMs.length !== workspacePersistedPublishedLLMs.length) {
               try {
-                await llmConfigService.savePublishedLLMs(workspacePublishedLLMs)
+                await llmConfigService.savePublishedLLMs(workspacePersistedPublishedLLMs)
               } catch (error) {
                 console.warn('Failed to remove deprecated published LLM providers from workspace storage:', error)
               }
             }
-            if (workspacePublishedLLMs.length === 0 && localPublishedLLMs.length > 0) {
+            if (workspacePersistedPublishedLLMs.length === 0 && localPersistedPublishedLLMs.length > 0) {
               try {
-                await llmConfigService.savePublishedLLMs(localPublishedLLMs)
-                workspacePublishedLLMs = localPublishedLLMs
+                await llmConfigService.savePublishedLLMs(localPersistedPublishedLLMs)
+                workspacePublishedLLMs = [
+                  ...workspacePublishedLLMs.filter(isAutoPublishedLLM),
+                  ...localPersistedPublishedLLMs,
+                ]
+                workspacePersistedPublishedLLMs = localPersistedPublishedLLMs
               } catch (error) {
                 console.warn('Failed to migrate published LLMs from legacy local storage:', error)
-                workspacePublishedLLMs = localPublishedLLMs
+                workspacePublishedLLMs = [
+                  ...workspacePublishedLLMs.filter(isAutoPublishedLLM),
+                  ...localPersistedPublishedLLMs,
+                ]
+                workspacePersistedPublishedLLMs = localPersistedPublishedLLMs
               }
             }
 

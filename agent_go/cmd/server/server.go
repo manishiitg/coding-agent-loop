@@ -8072,7 +8072,7 @@ func (api *StreamingAPI) registerMultiAgentSkillTools(underlyingAgent *mcpagent.
 func (api *StreamingAPI) buildLLMToolsCallbacks() *todo_creation_human.LLMToolsCallbacks {
 	return &todo_creation_human.LLMToolsCallbacks{
 		ListPublishedLLMs: func(ctx context.Context) (string, error) {
-			llms, err := LoadPublishedLLMs(ctx)
+			llms, err := LoadPublishedLLMsWithAuto(ctx)
 			if err != nil {
 				return "", fmt.Errorf("failed to load published LLMs: %w", err)
 			}

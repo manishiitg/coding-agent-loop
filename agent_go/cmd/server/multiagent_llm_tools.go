@@ -1343,7 +1343,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 			"properties": map[string]interface{}{},
 		},
 		func(ctx context.Context, _ map[string]interface{}) (string, error) {
-			llms, err := LoadPublishedLLMs(ctx)
+			llms, err := LoadPublishedLLMsWithAuto(ctx)
 			if err != nil {
 				return "", fmt.Errorf("failed to load published LLMs: %w", err)
 			}

@@ -35,6 +35,9 @@ const getOptionsSummary = (options?: Record<string, unknown>): string => {
   return parts.join(' • ')
 }
 
+const isAutoPublishedLLM = (llm: SavedLLM): boolean =>
+  llm.source === 'auto_coding_agent' || llm.id?.startsWith('auto:')
+
 const providerOrderRank = (provider: string): number => {
   const index = PROVIDER_ORDER.indexOf(provider as typeof PROVIDER_ORDER[number])
   return index === -1 ? Number.MAX_SAFE_INTEGER : index
@@ -173,6 +176,7 @@ export function LibraryTab() {
                             const metadata = metadataMap[`${llm.provider}:${llm.model_id}`] || metadataMap[llm.model_id]
                             const optionsSummary = getOptionsSummary(llm.options)
                             const showPricing = shouldShowLLMPricing(llm.provider, llm.model_id)
+                            const autoPublished = isAutoPublishedLLM(llm)
                             const apiKeyLast4 = llm.api_key && llm.api_key.length >= 4
                               ? `...${llm.api_key.slice(-4)}`
                               : null
@@ -187,7 +191,7 @@ export function LibraryTab() {
                                         {llm.model_id}
                                       </div>
                                     </div>
-                                    {!defaultPublishedLLMsLocked && (
+                                    {!defaultPublishedLLMsLocked && !autoPublished && (
                                       <Button
                                         size="sm"
                                         variant="ghost"
@@ -206,6 +210,14 @@ export function LibraryTab() {
                                         Key {apiKeyLast4}
                                       </span>
                                   </div>
+                                  )}
+
+                                  {autoPublished && (
+                                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                      <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary">
+                                        Auto
+                                      </span>
+                                    </div>
                                   )}
 
                                   <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">

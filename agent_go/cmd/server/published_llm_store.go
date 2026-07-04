@@ -6,11 +6,24 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 )
 
 const publishedLLMsFilePath = "config/published-llms.json"
+const autoPublishedLLMSource = "auto_coding_agent"
+const autoPublishedLLMIDPrefix = "auto:"
+
+var autoPublishedCodexCLIModelIDs = []string{
+	"gpt-5.3-codex-spark",
+	"gpt-5.4-mini",
+	"gpt-5.4",
+	"gpt-5.5",
+}
 
 // StoredPublishedLLM is the workspace-backed published LLM record.
 // Secrets are intentionally not stored here; provider auth lives in config/provider-api-keys.json.
@@ -30,7 +43,13 @@ type StoredPublishedLLM struct {
 	CachedInputCostPer1M      *float64               `json:"cached_input_cost_per_1m,omitempty"`
 	CachedInputCostWritePer1M *float64               `json:"cached_input_cost_write_per_1m,omitempty"`
 	Options                   map[string]interface{} `json:"options,omitempty"`
+	Source                    string                 `json:"source,omitempty"`
 	CreatedAt                 string                 `json:"created_at,omitempty"`
+}
+
+func isAutoPublishedLLM(entry StoredPublishedLLM) bool {
+	return strings.EqualFold(strings.TrimSpace(entry.Source), autoPublishedLLMSource) ||
+		strings.HasPrefix(strings.TrimSpace(entry.ID), autoPublishedLLMIDPrefix)
 }
 
 func sanitizePublishedLLM(entry StoredPublishedLLM) (StoredPublishedLLM, bool) {
@@ -39,6 +58,7 @@ func sanitizePublishedLLM(entry StoredPublishedLLM) (StoredPublishedLLM, bool) {
 	entry.Provider = strings.TrimSpace(entry.Provider)
 	entry.ModelID = strings.TrimSpace(entry.ModelID)
 	entry.SearchRole = strings.ToLower(strings.TrimSpace(entry.SearchRole))
+	entry.Source = strings.TrimSpace(entry.Source)
 	entry.CreatedAt = strings.TrimSpace(entry.CreatedAt)
 
 	// Published chat LLM entries are a routing registry, not a pricing/model
@@ -73,18 +93,30 @@ func sanitizePublishedLLM(entry StoredPublishedLLM) (StoredPublishedLLM, bool) {
 	return entry, true
 }
 
-// SavePublishedLLMs saves published LLMs as plain JSON in the workspace config folder.
-func SavePublishedLLMs(ctx context.Context, llms []StoredPublishedLLM) error {
-	log.Printf("[PUBLISHED_LLM] SavePublishedLLMs called with %d entries", len(llms))
+func sanitizePersistedPublishedLLMs(llms []StoredPublishedLLM) []StoredPublishedLLM {
 	sanitized := make([]StoredPublishedLLM, 0, len(llms))
 	for _, entry := range llms {
+		if isAutoPublishedLLM(entry) {
+			log.Printf("[PUBLISHED_LLM] Skipping auto-published entry during persistence: id=%q provider=%q model_id=%q", entry.ID, entry.Provider, entry.ModelID)
+			continue
+		}
 		clean, ok := sanitizePublishedLLM(entry)
 		if !ok {
-			log.Printf("[PUBLISHED_LLM] Dropping invalid entry during save: id=%q name=%q provider=%q model_id=%q", entry.ID, entry.Name, entry.Provider, entry.ModelID)
+			log.Printf("[PUBLISHED_LLM] Dropping invalid entry during persistence: id=%q name=%q provider=%q model_id=%q", entry.ID, entry.Name, entry.Provider, entry.ModelID)
+			continue
+		}
+		if isAutoPublishedLLM(clean) {
 			continue
 		}
 		sanitized = append(sanitized, clean)
 	}
+	return sanitized
+}
+
+// SavePublishedLLMs saves published LLMs as plain JSON in the workspace config folder.
+func SavePublishedLLMs(ctx context.Context, llms []StoredPublishedLLM) error {
+	log.Printf("[PUBLISHED_LLM] SavePublishedLLMs called with %d entries", len(llms))
+	sanitized := sanitizePersistedPublishedLLMs(llms)
 	log.Printf("[PUBLISHED_LLM] Sanitized save payload contains %d entries", len(sanitized))
 
 	data, err := json.Marshal(sanitized)
@@ -126,11 +158,278 @@ func LoadPublishedLLMs(ctx context.Context) ([]StoredPublishedLLM, error) {
 			log.Printf("[PUBLISHED_LLM] Dropping invalid entry during load: id=%q name=%q provider=%q model_id=%q", entry.ID, entry.Name, entry.Provider, entry.ModelID)
 			continue
 		}
+		if isAutoPublishedLLM(clean) {
+			log.Printf("[PUBLISHED_LLM] Dropping generated entry found in persisted file during load: id=%q provider=%q model_id=%q", clean.ID, clean.Provider, clean.ModelID)
+			continue
+		}
 		sanitized = append(sanitized, clean)
 	}
 	log.Printf("[PUBLISHED_LLM] Returning %d published LLM entries from %s", len(sanitized), publishedLLMsFilePath)
 
 	return sanitized, nil
+}
+
+func LoadPublishedLLMsWithAuto(ctx context.Context) ([]StoredPublishedLLM, error) {
+	saved, err := LoadPublishedLLMs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if saved == nil {
+		saved = []StoredPublishedLLM{}
+	}
+
+	auto := buildAutoPublishedCodingAgentLLMs(ctx, saved)
+	merged := make([]StoredPublishedLLM, 0, len(saved)+len(auto))
+	merged = append(merged, saved...)
+	merged = append(merged, auto...)
+	log.Printf("[PUBLISHED_LLM] Returning %d entries (%d saved, %d auto)", len(merged), len(saved), len(auto))
+	return merged, nil
+}
+
+func buildAutoPublishedCodingAgentLLMs(ctx context.Context, saved []StoredPublishedLLM) []StoredPublishedLLM {
+	supported := getSupportedProviders()
+	supportedSet := make(map[string]bool, len(supported))
+	for _, provider := range supported {
+		supportedSet[provider] = true
+	}
+
+	existing := make(map[string]bool, len(saved))
+	for _, entry := range saved {
+		clean, ok := sanitizePublishedLLM(entry)
+		if !ok {
+			continue
+		}
+		existing[publishedLLMIdentityKey(clean)] = true
+	}
+
+	providers := []string{"claude-code", "codex-cli"}
+	generated := make([]StoredPublishedLLM, 0, 16)
+	for _, provider := range providers {
+		if !supportedSet[provider] {
+			continue
+		}
+		authConfigured, _ := providerAuthConfigured(provider, nil)
+		usable, _, _ := providerUsable(provider, authConfigured)
+		if !usable {
+			continue
+		}
+		for _, entry := range autoPublishedCodingAgentLLMsForProvider(provider) {
+			key := publishedLLMIdentityKey(entry)
+			if existing[key] {
+				continue
+			}
+			existing[key] = true
+			generated = append(generated, entry)
+		}
+	}
+	return generated
+}
+
+func autoPublishedCodingAgentLLMsForProvider(provider string) []StoredPublishedLLM {
+	models := autoPublishedCodingAgentModelMetadata(provider)
+	entries := make([]StoredPublishedLLM, 0, len(models)*2)
+	for _, model := range models {
+		for _, effort := range autoPublishedReasoningEfforts(provider, model) {
+			options := map[string]interface{}{}
+			if effort != "" {
+				options["reasoning_effort"] = effort
+			}
+			if len(options) == 0 {
+				options = nil
+			}
+			entry := StoredPublishedLLM{
+				ID:       autoPublishedLLMID(provider, model.ModelID, effort),
+				Name:     autoPublishedLLMName(provider, model, effort),
+				Provider: provider,
+				ModelID:  model.ModelID,
+				Options:  options,
+				Source:   autoPublishedLLMSource,
+			}
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func autoPublishedCodingAgentModelMetadata(provider string) []*llmtypes.ModelMetadata {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	models := providerModelMetadata(provider)
+	if provider == "codex-cli" {
+		models = append(models, autoPublishedCodexCLIModels()...)
+	}
+	filtered := make([]*llmtypes.ModelMetadata, 0, len(models))
+	seen := map[string]bool{}
+	for _, model := range models {
+		if model == nil {
+			continue
+		}
+		modelID := strings.TrimSpace(model.ModelID)
+		if modelID == "" || seen[modelID] || isCodingAgentAliasModel(provider, modelID) {
+			continue
+		}
+		seen[modelID] = true
+		filtered = append(filtered, model)
+	}
+	sort.SliceStable(filtered, func(i, j int) bool {
+		leftRank := autoPublishedModelRank(provider, filtered[i].ModelID)
+		rightRank := autoPublishedModelRank(provider, filtered[j].ModelID)
+		if leftRank != rightRank {
+			return leftRank < rightRank
+		}
+		return strings.ToLower(filtered[i].ModelID) < strings.ToLower(filtered[j].ModelID)
+	})
+	return filtered
+}
+
+func autoPublishedCodexCLIModels() []*llmtypes.ModelMetadata {
+	adapter := codexcli.NewCodexCLIAdapter("", "", nil)
+	models := make([]*llmtypes.ModelMetadata, 0, len(autoPublishedCodexCLIModelIDs))
+	for _, modelID := range autoPublishedCodexCLIModelIDs {
+		meta, err := adapter.GetModelMetadata(modelID)
+		if err != nil || meta == nil {
+			meta = &llmtypes.ModelMetadata{
+				ModelID:                 modelID,
+				ModelName:               modelID,
+				Provider:                "codex-cli",
+				SupportsReasoningEffort: true,
+				ReasoningEffortLevels:   []string{"low", "medium", "high", "xhigh"},
+			}
+		}
+		meta.ModelID = modelID
+		meta.Provider = "codex-cli"
+		models = append(models, meta)
+	}
+	return models
+}
+
+func isCodingAgentAliasModel(provider, modelID string) bool {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	modelID = strings.ToLower(strings.TrimSpace(modelID))
+	if provider == "codex-cli" {
+		switch modelID {
+		case "high", "medium", "low":
+			return true
+		}
+	}
+	return modelID == "" || modelID == provider || modelID == "auto" || modelID == "claude-code" || modelID == "codex-cli"
+}
+
+func autoPublishedModelRank(provider, modelID string) int {
+	id := strings.ToLower(strings.TrimSpace(modelID))
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "claude-code":
+		switch {
+		case strings.Contains(id, "haiku"):
+			return 10
+		case strings.Contains(id, "sonnet-5"):
+			return 20
+		case strings.Contains(id, "sonnet"):
+			return 30
+		case strings.Contains(id, "opus-4-8"):
+			return 40
+		case strings.Contains(id, "opus"):
+			return 50
+		case strings.Contains(id, "fable"):
+			return 60
+		}
+	case "codex-cli":
+		switch {
+		case strings.Contains(id, "spark"):
+			return 10
+		case strings.Contains(id, "gpt-5.3"):
+			return 20
+		case strings.Contains(id, "gpt-5.4-mini"):
+			return 30
+		case strings.Contains(id, "gpt-5.4"):
+			return 40
+		case strings.Contains(id, "gpt-5.5"):
+			return 50
+		}
+	}
+	return 1000
+}
+
+func autoPublishedReasoningEfforts(provider string, model *llmtypes.ModelMetadata) []string {
+	if model == nil || !model.SupportsReasoningEffort {
+		return []string{""}
+	}
+
+	levels := map[string]bool{}
+	for _, level := range model.ReasoningEffortLevels {
+		levels[strings.ToLower(strings.TrimSpace(level))] = true
+	}
+
+	desired := []string{"high", "xhigh"}
+	if strings.EqualFold(provider, "claude-code") {
+		desired = []string{"high", "max"}
+	}
+
+	result := make([]string, 0, len(desired))
+	for _, level := range desired {
+		if levels[level] {
+			result = append(result, level)
+		}
+	}
+	if len(result) == 0 && levels["high"] {
+		result = append(result, "high")
+	}
+	if len(result) == 0 {
+		return []string{""}
+	}
+	return result
+}
+
+func autoPublishedLLMID(provider, modelID, effort string) string {
+	parts := []string{autoPublishedLLMIDPrefix + strings.ToLower(strings.TrimSpace(provider)), strings.TrimSpace(modelID)}
+	if strings.TrimSpace(effort) != "" {
+		parts = append(parts, strings.ToLower(strings.TrimSpace(effort)))
+	}
+	return strings.Join(parts, ":")
+}
+
+func autoPublishedLLMName(provider string, model *llmtypes.ModelMetadata, effort string) string {
+	modelName := strings.TrimSpace(model.ModelName)
+	if modelName == "" {
+		modelName = strings.TrimSpace(model.ModelID)
+	}
+	if strings.EqualFold(provider, "claude-code") && !strings.HasPrefix(strings.ToLower(modelName), "claude ") {
+		modelName = "Claude " + modelName
+	}
+
+	parts := []string{providerDisplayLabel(provider), modelName}
+	if label := reasoningEffortDisplayName(effort); label != "" {
+		parts = append(parts, label)
+	}
+	return strings.Join(parts, " · ")
+}
+
+func reasoningEffortDisplayName(effort string) string {
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "xhigh", "max":
+		return "Extra High"
+	case "high":
+		return "High"
+	case "medium":
+		return "Medium"
+	case "low":
+		return "Low"
+	default:
+		return ""
+	}
+}
+
+func publishedLLMIdentityKey(entry StoredPublishedLLM) string {
+	options := entry.Options
+	if len(options) == 0 {
+		options = nil
+	}
+	optionsJSON := "{}"
+	if options != nil {
+		if data, err := json.Marshal(options); err == nil {
+			optionsJSON = string(data)
+		}
+	}
+	return strings.ToLower(strings.TrimSpace(entry.Provider)) + "\x00" + strings.TrimSpace(entry.ModelID) + "\x00" + optionsJSON
 }
 
 // handleSavePublishedLLMs saves published LLMs to the workspace config folder.
@@ -169,7 +468,7 @@ func (api *StreamingAPI) handleLoadPublishedLLMs(w http.ResponseWriter, r *http.
 	}
 	log.Printf("[PUBLISHED_LLM] HTTP load request received")
 
-	llms, err := LoadPublishedLLMs(r.Context())
+	llms, err := LoadPublishedLLMsWithAuto(r.Context())
 	if err != nil {
 		log.Printf("[PUBLISHED_LLM] Load request failed: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to load published llms: %v", err), http.StatusInternalServerError)

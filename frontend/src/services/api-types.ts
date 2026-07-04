@@ -49,6 +49,7 @@ export interface SavedLLM extends LLMModel {
   reasoning_cost_per_1m?: number
   cached_input_cost_per_1m?: number
   cached_input_cost_write_per_1m?: number
+  source?: 'auto_coding_agent' | string
   created_at?: string
 }
 

@@ -173,8 +173,8 @@ provider-default tier setup even when `tiered_config`, `pulse_llm`, or `auto_imp
 written into `workflow.json`. Resolve it as the current coding-agent provider defaults before
 classifying it: Claude Code uses high=`claude-opus-4-8`, medium=`claude-sonnet-5`,
 low=`claude-haiku-4-5-20251001`, phase=`claude-opus-4-8`, Pulse=`claude-sonnet-5`, and
-Auto Improve / Chief of Staff=`claude-opus-4-8`; Codex uses high/Pulse=`gpt-5.5`,
-medium=`gpt-5.4`, low=`gpt-5.3-codex-spark`, and Auto Improve / Chief of Staff=`gpt-5.5`
+Auto Improve / Chief of Staff=`claude-opus-4-8`; Codex uses high=`gpt-5.5` xhigh,
+Pulse=`gpt-5.5` high, medium=`gpt-5.4`, low=`gpt-5.3-codex-spark`, and Auto Improve / Chief of Staff=`gpt-5.5` xhigh
 with xhigh reasoning. For Pi, Cursor, Gemini, and other coding-agent providers, treat their
 provider default tier map as complete; if the provider exposes only one effective model, report
 that the tiers collapse to the same model rather than calling the setup missing.

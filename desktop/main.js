@@ -92,6 +92,11 @@ let mainWindow = null;
 let settingsWindow = null;
 let tray = null;
 let agentPromptLogPruneInterval = null;
+let baseDockIcon = null;
+let dockActivityFrameTimer = null;
+let dockActivityFrameIndex = 0;
+let dockActivityRunningCount = 0;
+let dockActivityBounceId = null;
 
 // --- Diagnostic logging -----------------------------------------------------
 // Console output is lost when the renderer blanks out and DevTools/terminal
@@ -806,6 +811,12 @@ ipcMain.on('set-dock-badge', (event, text) => {
   }
 });
 
+ipcMain.on('set-running-activity', (_event, payload) => {
+  const count = Number(payload && payload.count);
+  dockActivityRunningCount = Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
+  updateDockActivityAnimation();
+});
+
 // IPC Handler for opening external URLs
 ipcMain.on('open-external', (event, url) => {
   console.log('[main] Received open-external request for:', url);
@@ -876,21 +887,123 @@ function getAppIconPath() {
   return path.join(__dirname, 'resources', 'icons', 'icon.png');
 }
 
-function applyAppIcon() {
+function loadAppIcon() {
   const iconPath = getAppIconPath();
   if (!fs.existsSync(iconPath)) {
     console.warn(`[main] App icon not found at ${iconPath}`);
-    return;
+    return null;
   }
 
   const icon = nativeImage.createFromPath(iconPath);
   if (icon.isEmpty()) {
     console.warn(`[main] Failed to load app icon from ${iconPath}`);
-    return;
+    return null;
   }
+
+  return icon;
+}
+
+function applyAppIcon() {
+  const icon = loadAppIcon();
+  if (!icon) return;
+  baseDockIcon = icon;
 
   if (process.platform === 'darwin' && app.dock) {
     app.dock.setIcon(icon);
+  }
+}
+
+function createDockActivityIcon(frameIndex) {
+  const baseIcon = baseDockIcon || loadAppIcon();
+  if (!baseIcon || baseIcon.isEmpty()) return null;
+  baseDockIcon = baseIcon;
+
+  const size = 256;
+  const bitmap = Buffer.from(baseIcon.resize({ width: size, height: size }).toBitmap());
+  const frames = [
+    { ringOpacity: 0.28, dotOpacity: 0.95, radius: 22 },
+    { ringOpacity: 0.58, dotOpacity: 1, radius: 34 },
+    { ringOpacity: 0.24, dotOpacity: 0.9, radius: 46 },
+  ];
+  const frame = frames[frameIndex % frames.length];
+  const cx = 196;
+  const cy = 60;
+  const stroke = 14;
+  const cyan = { r: 34, g: 211, b: 238 };
+
+  const blendPixel = (x, y, opacity) => {
+    if (x < 0 || y < 0 || x >= size || y >= size) return;
+    const idx = (y * size + x) * 4;
+    const inv = 1 - opacity;
+    // Electron bitmap buffers are BGRA; keep alpha opaque so the Dock tile stays crisp.
+    bitmap[idx] = Math.round(bitmap[idx] * inv + cyan.b * opacity);
+    bitmap[idx + 1] = Math.round(bitmap[idx + 1] * inv + cyan.g * opacity);
+    bitmap[idx + 2] = Math.round(bitmap[idx + 2] * inv + cyan.r * opacity);
+    bitmap[idx + 3] = 255;
+  };
+
+  const minX = Math.max(0, Math.floor(cx - frame.radius - stroke));
+  const maxX = Math.min(size - 1, Math.ceil(cx + frame.radius + stroke));
+  const minY = Math.max(0, Math.floor(cy - frame.radius - stroke));
+  const maxY = Math.min(size - 1, Math.ceil(cy + frame.radius + stroke));
+
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      const dist = Math.hypot(x - cx, y - cy);
+      if (dist <= 18) {
+        blendPixel(x, y, frame.dotOpacity);
+      } else if (Math.abs(dist - frame.radius) <= stroke / 2) {
+        blendPixel(x, y, frame.ringOpacity);
+      }
+    }
+  }
+
+  return nativeImage.createFromBitmap(bitmap, { width: size, height: size });
+}
+
+function isMainWindowBackgrounded() {
+  if (!mainWindow || mainWindow.isDestroyed()) return true;
+  return mainWindow.isMinimized() || !mainWindow.isVisible();
+}
+
+function stopDockActivityAnimation() {
+  if (dockActivityFrameTimer) {
+    clearInterval(dockActivityFrameTimer);
+    dockActivityFrameTimer = null;
+  }
+  if (process.platform === 'darwin' && app.dock && dockActivityBounceId !== null) {
+    app.dock.cancelBounce(dockActivityBounceId);
+    dockActivityBounceId = null;
+  }
+  dockActivityFrameIndex = 0;
+  if (process.platform === 'darwin' && app.dock && baseDockIcon && !baseDockIcon.isEmpty()) {
+    app.dock.setIcon(baseDockIcon);
+  }
+}
+
+function renderDockActivityFrame() {
+  if (process.platform !== 'darwin' || !app.dock) return;
+  const icon = createDockActivityIcon(dockActivityFrameIndex);
+  dockActivityFrameIndex += 1;
+  if (icon && !icon.isEmpty()) {
+    app.dock.setIcon(icon);
+  }
+}
+
+function updateDockActivityAnimation() {
+  if (process.platform !== 'darwin' || !app.dock) return;
+  const shouldAnimate = dockActivityRunningCount > 0 && isMainWindowBackgrounded();
+  if (!shouldAnimate) {
+    stopDockActivityAnimation();
+    return;
+  }
+
+  if (!dockActivityFrameTimer) {
+    renderDockActivityFrame();
+    dockActivityFrameTimer = setInterval(renderDockActivityFrame, 650);
+    if (dockActivityBounceId === null) {
+      dockActivityBounceId = app.dock.bounce('informational');
+    }
   }
 }
 
@@ -1655,10 +1768,26 @@ function createWindow(initialUrl) {
   });
 
   mainWindow.loadURL(targetUrl);
+
+  ['minimize', 'hide', 'restore', 'show', 'focus'].forEach((eventName) => {
+    mainWindow.on(eventName, updateDockActivityAnimation);
+  });
+
+  if (process.env.RUNLOOP_DOCK_ACTIVITY_PREVIEW === '1') {
+    dockActivityRunningCount = 1;
+    setTimeout(() => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (process.env.RUNLOOP_DOCK_ACTIVITY_PREVIEW_MINIMIZE === '1') {
+        mainWindow.minimize();
+      }
+      updateDockActivityAnimation();
+    }, 1200);
+  }
   
   mainWindow.on('closed', () => {
     console.log('[main] Main window closed');
     mainWindow = null;
+    updateDockActivityAnimation();
   });
 }
 
@@ -1760,8 +1889,12 @@ app.on('activate', () => {
   openMainWindow();
 });
 
+app.on('hide', updateDockActivityAnimation);
+app.on('show', updateDockActivityAnimation);
+
 app.on('before-quit', () => {
   console.log('[main] before-quit');
+  stopDockActivityAnimation();
   killChildren();
 });
 

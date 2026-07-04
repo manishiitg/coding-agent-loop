@@ -55,6 +55,8 @@ org-level artifacts so the daily steward pass is reversible. This mirrors workfl
 
 You know the fixed set up front — read it in a few batched shell commands with clear
 `=== NAME ===` delimiters, not one file per call. Don't explore.
+For workflow filesystem structure and store boundaries, use
+`get_reference_doc(kind="file-layout")` and `get_reference_doc(kind="stores")`.
 
 First read:
 - `pulse/goals.html` if it exists — the org goal scorecard. Extract each goal's target,
@@ -73,8 +75,13 @@ For **each** workflow under `Workflow/<name>/`:
 - `workflow.json` — workflow label/objective, `capabilities.llm_config`, execution defaults, schedules,
   and any explicit provider/model/tier configuration. This is evidence for the LLM/cost audit; read it,
   but do not edit it.
-- the latest `reports/` (query the report's tables + read the newest finished-run
-  `reports/<group>/<timestamp>.md`) — what the workflow actually produced.
+- `reports/report_plan.json` plus registered HTML documents under `db/reports/` — the live dashboard
+  surface the user sees. Extract the `window.report.query` SQL and the business questions the dashboard
+  claims to answer.
+- `db/README.md`, `db/db.sqlite` schema, and targeted row counts/latest rows for the tables used by the
+  report and goal evidence — the durable structured output. Do not scan or dump the entire DB.
+- any legacy finished-run files under `reports/` when present — supporting evidence, not the primary
+  live dashboard contract.
 - `knowledgebase/notes/_index.json` then only the topic files that look new/relevant —
   what the workflow discovered.
 - `learnings/_global/SKILL.md` — the durable, generalized learnings.
@@ -160,6 +167,17 @@ For each workflow, identify:
 - the recent observed provider/model from cost/status evidence when available;
 - recent cost/tokens from `costs/`, run folders, report metadata, or Pulse/run evidence;
 - whether cost/model evidence is present, stale, or missing.
+
+Important: `llm_allocation_mode: "coding_agent"` (and legacy `"coding_plan"`) is a complete
+provider-default tier setup even when `tiered_config`, `pulse_llm`, or `auto_improve_llm` are not
+written into `workflow.json`. Resolve it as the current coding-agent provider defaults before
+classifying it: Claude Code uses high=`claude-opus-4-8`, medium=`claude-sonnet-5`,
+low=`claude-haiku-4-5-20251001`, phase=`claude-opus-4-8`, Pulse=`claude-sonnet-5`, and
+Auto Improve / Chief of Staff=`claude-opus-4-8`; Codex uses high/Pulse=`gpt-5.5`,
+medium=`gpt-5.4`, low=`gpt-5.3-codex-spark`, and Auto Improve / Chief of Staff=`gpt-5.5`
+with xhigh reasoning. For Pi, Cursor, Gemini, and other coding-agent providers, treat their
+provider default tier map as complete; if the provider exposes only one effective model, report
+that the tiers collapse to the same model rather than calling the setup missing.
 
 Classify each workflow's tier setup as:
 
@@ -288,7 +306,7 @@ Use the Org Pulse skeleton from `org-html`. The active page must read top to bot
 4. newest-first pulse entries inserted after `<!-- ORG PULSE ENTRIES: newest first -->`,
 5. archive section when the active file grows large.
 
-Prepend **one dated entry** for today (a steady day warrants a short one — or nothing):
+Prepend **one dated entry** for today (a steady day with changed workflow/chat/output evidence warrants a concise all-healthy entry; write nothing only when the freshness check found no changes):
 - **Goal scorecard** — one row/card per goal from `pulse/goals.html`: status, evidence,
   target progress (baseline -> current -> target), contributing workflows, owner, and
   confidence. If no goals file exists, show "No org goals set" and suggest creating
@@ -313,31 +331,39 @@ Prepend **one dated entry** for today (a steady day warrants a short one — or 
   already have open and unactioned; update it instead.
 
 Keep it to **what the user should actually decide or know**. A steady day with nothing
-notable warrants a one-line "all healthy" entry, not invented concern.
+notable warrants a calm "all healthy" digest, not invented concern.
 
-**Notify only when it's decision-worthy** — a workflow broke or recovered, or a new
-high-value suggestion. Honor any notification preference in the user's memory if present;
-otherwise one `notify_user` call at most, and silence on a steady day. Mirror the
-per-workflow Pulse's transition discipline, adapted for the org:
+**Send a daily Org Pulse digest when this pass runs.** The freshness gate already stopped
+the pass if nothing changed. If you reached the log/publish step, call `notify_user` once
+with a daily digest unless the user's org notification preference explicitly says not to.
+Decision-worthy changes — a workflow broke or recovered, a goal started drifting, a cost/model
+problem appeared, or a high-value suggestion needs attention — affect severity and ordering,
+not whether you send the digest.
 
 - `message_for_user`: one terse line for chat channels, formatted as
-  `<emoji> Org Pulse — <headline> · <goal/workflow metric> · <url>`.
-  Use `⚠️` for broke/drifting, `✅` for recovered/on-track, and `🔎` for a new
-  high-value suggestion. Append the public org URL only when
+  `<emoji> Org Pulse — daily digest · <workflow health> · <goal metric> · <top decision or all healthy> · <url>`.
+  Use `⚠️` when something broke/drifted, `✅` when recovered/on-track/all healthy, and `🔎`
+  when the main item is a new high-value suggestion. Append the public org URL only when
   `pulse/publish/status.json.state` is `published`; never guess a URL.
-- `email_subject`: `Org Pulse — <broke|recovered|new suggestion|goal update>`.
-- `email_html`: when Gmail/email is available, always send a compact formatted
+- `email_subject`: `Org Pulse — daily digest` for steady days, or
+  `Org Pulse — <broke|recovered|new suggestion|goal update>` when one item dominates.
+- `email_html`: when Gmail/email is available, always send an in-depth formatted
   HTML body instead of raw plain text. Keep it inline-styled for email clients,
   dark text on a light background, and no external CSS. Required sections:
-  status header, one-sentence headline, goal scorecard summary, workflow
-  alignment delta, LLM/cost highlight when material, top recommendation or decision
-  needed, and buttons/links for Goals and Pulse when published.
+  status header; what changed since the last pulse; goal scorecard summary;
+  workflow health table/list with healthy, drifting, broken, recovered, and unknown
+  workflows; workflow alignment delta; LLM/model tier + cost audit including top
+  spenders and missing telemetry; recommendation lifecycle summary with new,
+  queued, blocked, stale, and done items; harvested memory/promotions; top decisions
+  or follow-ups; and buttons/links for Goals and Pulse when published.
 - `email_to`: optional replacement To recipient(s) only when the user's org
   notification preference asks to send email somewhere other than the configured
   default; every address must be configured as an allowed Gmail recipient.
 - `email_cc`: optional CC recipients only when the user's org notification
   preference asks for CC; every address must be configured as an allowed Gmail recipient.
-- `email_body`: plain-text fallback with the same facts; never put HTML here.
+- `email_body`: plain-text fallback with the same facts; never put HTML here. It should
+  still be useful without HTML: headline, workflow health counts, goal scorecard,
+  cost/model highlight, top recommendations, and links.
 
 Do not include secrets, raw memory, staging paths, tokens, long logs, or full HTML dumps in
 the notification.
@@ -370,6 +396,6 @@ You are a cheap daily steward, not an improvement run.
   surprise.
 - Back up → read → judge the endgame → report LLM/cost posture → generate proposal-only
   recommendations → curate the keepers into memory → propose promotions → surface suggestions → publish only if
-  verified/configured → notify only if decision-worthy → stop. You never run a workflow,
+  verified/configured → send the daily digest notification unless explicitly disabled → stop. You never run a workflow,
   dispatch a full improvement pass, edit workflow internals, apply a recommendation, or create
   the skill/workflow yourself — those are the user's to trigger from your suggestions.

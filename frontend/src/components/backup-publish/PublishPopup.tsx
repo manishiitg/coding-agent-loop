@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { AlertCircle, Check, Copy, ExternalLink, Globe, Info, Loader2, LockKeyhole, RefreshCw, X } from 'lucide-react'
+import { AlertCircle, Check, Copy, ExternalLink, Eye, EyeOff, Globe, Info, Loader2, LockKeyhole, RefreshCw, X } from 'lucide-react'
 import type { WorkflowPublishInfoResponse, WorkflowPublishStrategyInfo } from '../../services/api-types'
 import ModalPortal from '../ui/ModalPortal'
 import { formatPublishStateLabel, getPublishStateVisual } from '../workflow/publishStatus'
@@ -30,6 +30,7 @@ export interface PublishPopupProps {
   defaultTargetLabel: string
   setupAction: PublishSetupAction
   getSummary: (info: WorkflowPublishInfoResponse | null) => string
+  loadAccessSecret?: (secretName: string) => Promise<string>
   loadErrorMessage?: string
   showEnabledBadge?: boolean
 }
@@ -137,6 +138,7 @@ const PublishPopup: React.FC<PublishPopupProps> = ({
   defaultTargetLabel,
   setupAction,
   getSummary,
+  loadAccessSecret,
   loadErrorMessage = 'Failed to load publish status',
   showEnabledBadge = false,
 }) => {
@@ -144,6 +146,12 @@ const PublishPopup: React.FC<PublishPopupProps> = ({
   const [info, setInfo] = useState<WorkflowPublishInfoResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [accessSecretValue, setAccessSecretValue] = useState<string | null>(null)
+  const [accessSecretVisible, setAccessSecretVisible] = useState(false)
+  const [accessSecretLoading, setAccessSecretLoading] = useState(false)
+  const [accessSecretCopied, setAccessSecretCopied] = useState(false)
+  const [accessSecretError, setAccessSecretError] = useState<string | null>(null)
+  const accessInfo = getPublishAccessInfo(info)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -163,11 +171,63 @@ const PublishPopup: React.FC<PublishPopupProps> = ({
     if (isOpen) void load()
   }, [isOpen, load])
 
+  useEffect(() => {
+    if (!isOpen) {
+      setAccessSecretValue(null)
+      setAccessSecretVisible(false)
+      setAccessSecretCopied(false)
+      setAccessSecretError(null)
+    }
+  }, [isOpen])
+
+  useEffect(() => {
+    setAccessSecretValue(null)
+    setAccessSecretVisible(false)
+    setAccessSecretCopied(false)
+    setAccessSecretError(null)
+  }, [accessInfo.secretName])
+
   const copyUrl = async (url: string) => {
     try {
       await navigator.clipboard.writeText(url)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
+    } catch { /* clipboard unavailable */ }
+  }
+
+  const fetchAccessSecret = async (): Promise<string | null> => {
+    if (!accessInfo.secretName || !loadAccessSecret) return null
+    if (accessSecretValue !== null) return accessSecretValue
+    setAccessSecretLoading(true)
+    setAccessSecretError(null)
+    try {
+      const value = await loadAccessSecret(accessInfo.secretName)
+      setAccessSecretValue(value)
+      return value
+    } catch (err) {
+      setAccessSecretError(extractErrorMessage(err, 'Failed to load publish password'))
+      return null
+    } finally {
+      setAccessSecretLoading(false)
+    }
+  }
+
+  const toggleAccessSecretVisible = async () => {
+    if (accessSecretVisible) {
+      setAccessSecretVisible(false)
+      return
+    }
+    const value = await fetchAccessSecret()
+    if (value !== null) setAccessSecretVisible(true)
+  }
+
+  const copyAccessSecret = async () => {
+    const value = await fetchAccessSecret()
+    if (!value) return
+    try {
+      await navigator.clipboard.writeText(value)
+      setAccessSecretCopied(true)
+      setTimeout(() => setAccessSecretCopied(false), 2000)
     } catch { /* clipboard unavailable */ }
   }
 
@@ -180,7 +240,6 @@ const PublishPopup: React.FC<PublishPopupProps> = ({
   const destinations = info?.config?.destinations || []
   const supported = info?.supported?.length ? info.supported : fallbackStrategies
   const url = info?.url || info?.status?.url || ''
-  const accessInfo = getPublishAccessInfo(info)
   const setupControl = setupAction.onClick ? (
     <button type="button" onClick={setupAction.onClick} className={actionClass}>
       {setupAction.label}
@@ -294,6 +353,40 @@ const PublishPopup: React.FC<PublishPopupProps> = ({
                       <div className="mt-0.5 truncate text-xs text-muted-foreground" title={accessInfo.detail}>
                         {accessInfo.detail}
                       </div>
+                      {accessInfo.mode === 'private' && accessInfo.secretName && loadAccessSecret && (
+                        <div className="mt-2 space-y-1.5">
+                          {accessSecretVisible && accessSecretValue && (
+                            <div className="rounded border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-800 dark:text-amber-200 break-all">
+                              {accessSecretValue}
+                            </div>
+                          )}
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => { void toggleAccessSecretVisible() }}
+                              disabled={accessSecretLoading}
+                              className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                              aria-label={accessSecretVisible ? 'Hide publish password' : 'Reveal publish password'}
+                            >
+                              {accessSecretLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : accessSecretVisible ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                              {accessSecretVisible ? 'Hide' : 'Reveal'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { void copyAccessSecret() }}
+                              disabled={accessSecretLoading}
+                              className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                              aria-label="Copy publish password"
+                            >
+                              {accessSecretCopied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+                              {accessSecretCopied ? 'Copied' : 'Copy password'}
+                            </button>
+                          </div>
+                          {accessSecretError && (
+                            <div className="text-[11px] text-destructive">{accessSecretError}</div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </section>

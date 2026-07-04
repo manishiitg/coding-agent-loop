@@ -35,10 +35,9 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
   hideHeader?: boolean
   hideInput?: boolean
   compact?: boolean
-  hidePhaseChatEmptyState?: boolean
   suppressTerminalPane?: boolean
   workflowPreviousChatsPanel?: React.ReactNode
-}>(({ onNewChat, hideHeader, hideInput, compact, hidePhaseChatEmptyState, suppressTerminalPane, workflowPreviousChatsPanel }, ref) => {
+}>(({ onNewChat, hideHeader, hideInput, compact, suppressTerminalPane, workflowPreviousChatsPanel }, ref) => {
   // Prefer the active workflow tab when one is selected. The tab strip keeps
   // active workflow tabs visible even while preset metadata is catching up
   // after reload; ChatArea must use the same rule or the input area disappears.
@@ -90,7 +89,6 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
       hideHeader={hideHeader}
       hideInput={effectiveHideInput}
       compact={compact}
-      hidePhaseChatEmptyState={hidePhaseChatEmptyState}
       suppressTerminalPane={suppressTerminalPane}
       workflowPreviousChatsPanel={workflowPreviousChatsPanel}
       // Pass null (not undefined) when no tab matches the active workflow preset.
@@ -2281,7 +2279,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
                 onNewChat={onNewChat}
                 hideHeader
                 compact
-                hidePhaseChatEmptyState={showWorkflowPreviousChatsAsPrimary}
                 suppressTerminalPane={showWorkflowPreviousChatsAsPrimary}
                 workflowPreviousChatsPanel={showWorkflowPreviousChatsAsPrimary && workspacePath ? (
                   <WorkflowPreviousChatsPanel

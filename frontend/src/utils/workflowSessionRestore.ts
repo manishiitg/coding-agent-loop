@@ -423,16 +423,16 @@ async function restoreReadOnlyWorkflowRunChat(
 // sessions activate their existing tab or restore a fresh one.
 export async function openActiveSession(
   session: ActiveSessionInfo,
-  options: { runningWorkflow?: RunningWorkflowInfo; title?: string; source?: string } = {},
+  options: { preset?: CustomPreset | PredefinedPreset; runningWorkflow?: RunningWorkflowInfo; title?: string; source?: string } = {},
 ): Promise<void> {
   const isWorkflow = (session.agent_mode || '').toLowerCase().includes('workflow')
   if (isWorkflow) {
     if (isScheduledWorkflowSession(session, options.runningWorkflow)) {
-      await restoreScheduledWorkflowRunChat(session, { runningWorkflow: options.runningWorkflow })
+      await restoreScheduledWorkflowRunChat(session, { preset: options.preset, runningWorkflow: options.runningWorkflow })
     } else if (isBotWorkflowSession(session, options.runningWorkflow)) {
-      await restoreBotWorkflowRunChat(session, { runningWorkflow: options.runningWorkflow })
+      await restoreBotWorkflowRunChat(session, { preset: options.preset, runningWorkflow: options.runningWorkflow })
     } else {
-      await restoreWorkflowSessionChat(session, { runningWorkflow: options.runningWorkflow })
+      await restoreWorkflowSessionChat(session, { preset: options.preset, runningWorkflow: options.runningWorkflow })
     }
     return
   }

@@ -35,7 +35,7 @@ vs status contract, rooted under `pulse/`:
 - `pulse/backup.json` is the declarative contract: enabled, mode, triggers, destinations,
   coverage, notes.
 - `pulse/backup/status.json` is the operational result of the latest org backup attempt.
-- Back up `pulse/goals.html`, `pulse/org-pulse.html`, memory files, org config, and
+- Back up `pulse/goals.html`, `pulse/org-pulse.html`, `pulse/task.html`, memory files, org config, and
   multi-agent schedule/config files. Do not back up secrets.
 - Do not write org backup status into any workflow's `workflow.json` or into the HTML files.
 - The zero-config default is a local git repo/commit covering these org-level text artifacts;
@@ -120,7 +120,7 @@ Use git when content is small, mostly text, benefits from per-line diffs,
 and needs to be cheap to clone:
 
 - `workflow.json`, `planning/plan.json`, `planning/step_config.json`
-- Org Goals/Pulse config and content: `pulse/goals.html`, `pulse/org-pulse.html`,
+- Org Goals/Pulse/Tasks config and content: `pulse/goals.html`, `pulse/org-pulse.html`, `pulse/task.html`,
   `pulse/backup.json`, `pulse/publish.json`
 - `knowledgebase/`, `learnings/`, `subagents/`, `skills/`
 - Chief of Staff memory and org config files
@@ -364,7 +364,7 @@ config file directly from a secret.
 |-------------------------------------------------|--------------------------|
 | `workflow.json`, `planning/`, `knowledgebase/`  | git (per-workflow repo)  |
 | `learnings/`, `skills/`, `subagents/`           | git                      |
-| `pulse/goals.html`, `pulse/org-pulse.html`      | git                      |
+| `pulse/goals.html`, `pulse/org-pulse.html`, `pulse/task.html` | git                      |
 | `pulse/backup.json`, `pulse/publish.json`       | git                      |
 | Chief of Staff memory / org config              | git                      |
 | Small JSON metadata in `db/`                    | git                      |

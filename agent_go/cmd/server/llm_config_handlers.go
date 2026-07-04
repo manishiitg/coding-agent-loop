@@ -911,7 +911,7 @@ func (api *StreamingAPI) handleTestImageGen(w http.ResponseWriter, r *http.Reque
 		cfg.Provider = "vertex"
 	}
 	if cfg.ModelID == "" {
-		cfg.ModelID = "imagen-4.0-generate-001"
+		cfg.ModelID = "gemini-3.1-flash-image"
 	}
 
 	executor := virtualtools.CreateImageGenExecutor(cfg)

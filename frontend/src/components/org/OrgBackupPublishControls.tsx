@@ -134,11 +134,17 @@ const OrgPublishPopup: React.FC<{
     return 'Org publish status is waiting for the Chief of Staff to update pulse/publish/status.json.'
   }, [])
 
+  const loadAccessSecret = useCallback(async (secretName: string) => {
+    const resp = await agentApi.getOrgPublishSecret(secretName)
+    return resp.value
+  }, [])
+
   return (
     <PublishPopup
       isOpen={isOpen}
       onClose={onClose}
       loadInfo={agentApi.getOrgPublish}
+      loadAccessSecret={loadAccessSecret}
       onStateLoaded={onStateLoaded}
       fallbackStrategies={FALLBACK_ORG_PUBLISH_STRATEGIES}
       subtitle="Share org Goals/Pulse pages at a static URL"

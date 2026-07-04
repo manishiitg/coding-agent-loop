@@ -11,10 +11,8 @@ import { WorkflowModeHandler, type WorkflowModeHandlerRef, signalPlanModified } 
 import { ToastContainer } from './ui/Toast'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
-import { WorkflowExplanation } from './WorkflowExplanation'
 import { useAppStore, useLLMStore, useMCPStore, useChatStore, useGlobalPresetStore } from '../stores'
 import { useModeStore, type ModeCategory } from '../stores/useModeStore'
-import { ModeEmptyState } from './ModeEmptyState'
 import { PreviousChatHistoryPanel } from './PreviousChatHistoryPanel'
 import { resolveChatSurface } from './resolveChatSurface'
 import { PresetSelectionOverlay } from './PresetSelectionOverlay'
@@ -30,6 +28,7 @@ import { useSessionExecutionTree } from '../hooks/useSessionExecutionTree'
 import { useSessionTerminals } from '../hooks/useSessionTerminals'
 import { useResumePreviousChat } from '../hooks/useResumePreviousChat'
 import { requestTerminalRefreshBurst } from '../utils/terminalRefresh'
+import { isLiveWorkflowTerminal } from '../utils/workflowTerminalActivity'
 import {
   determineModeFlag,
   buildLLMConfigWithApiKeys,
@@ -388,111 +387,6 @@ function isStaleQueuedAutoNotification(message: string): boolean {
   return ts !== null && Date.now() - ts > AUTO_NOTIFICATION_MAX_AGE_MS
 }
 
-const STEP_TYPES = [
-  { name: 'Regular', desc: 'LLM agent executes instructions and writes output files' },
-  { name: 'Conditional', desc: 'Evaluates a condition, then runs if_true or if_false branch steps' },
-  { name: 'Decision', desc: 'Executes then evaluates output to route to different next steps' },
-  { name: 'Routing', desc: 'Multi-way conditional — evaluates a question to pick one of several routes' },
-  { name: 'Orchestrator', desc: 'Dynamic task list with sub-agents delegated per task' },
-  { name: 'Human Input', desc: 'Collects user input (text, yes/no, or multiple choice)' },
-]
-
-const PHASE_CHAT_INFO: Record<string, {
-  title: string
-  description: string
-  capabilities: string[]
-  limitations: string[]
-  showStepTypes?: boolean
-}> = {
-  'workflow-builder': {
-    title: 'Automation Builder',
-    description: 'Execute steps, update the plan, debug, generate learnings, tweak configs, manage schedules, and run evaluations — all in one conversation.',
-    capabilities: [
-      'Run any plan step in the background and poll for results',
-      'Cancel a running step mid-execution',
-      'Update plan steps (add, edit, reorder, delete)',
-      'Update step_config.json — servers, tools, learnings access/locks',
-      'Generate/update learnings with optional human guidance',
-      'View the system prompt and conversation from a past run',
-      'Run shell commands for investigation',
-      'Create, update, delete, and trigger cron schedules',
-      'Import skills from GitHub and manage workspace skills',
-      'Create, edit, and run evaluation plans against execution runs',
-    ],
-    limitations: [
-      'Steps run one at a time per execute_step call',
-      'System prompts only available for runs after this feature was added',
-    ],
-  },
-}
-
-function PhaseChatEmptyState({ phaseId, compact = false }: { phaseId: string; compact?: boolean }) {
-  const info = PHASE_CHAT_INFO[phaseId]
-  if (!info) return null
-  const capabilities = compact ? info.capabilities.slice(0, 3) : info.capabilities
-
-  return (
-    <div className={`flex min-h-full flex-col items-center overflow-y-auto text-center ${compact ? 'justify-start p-3' : 'justify-center p-8'}`}>
-      {!compact && (
-        <div className="mb-4 h-10 w-10 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
-          <span className="text-blue-600 dark:text-blue-400 text-lg">💬</span>
-        </div>
-      )}
-      <h3 className={`${compact ? 'text-lg' : 'text-xl'} font-bold text-gray-900 dark:text-white mb-2`}>
-        {info.title}
-      </h3>
-      <p className={`text-sm text-gray-600 dark:text-gray-400 ${compact ? 'mb-3 max-w-2xl' : 'mb-6 max-w-sm'}`}>
-        {info.description}
-      </p>
-      <div className={`${compact ? 'max-w-2xl' : 'max-w-md'} w-full text-left`}>
-        {!compact && (
-          <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
-            What it can do
-          </h4>
-        )}
-        <div className={`${compact ? 'grid gap-2 sm:grid-cols-2 mb-0' : 'space-y-2 mb-5'}`}>
-          {capabilities.map((cap, i) => (
-            <div key={i} className="flex items-start gap-2 text-sm text-gray-600 dark:text-gray-400">
-              <div className="w-1.5 h-1.5 bg-green-500 rounded-full mt-1.5 flex-shrink-0" />
-              {cap}
-            </div>
-          ))}
-        </div>
-        {!compact && (
-          <>
-            <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
-              What it cannot do
-            </h4>
-            <div className="space-y-2 mb-5">
-              {info.limitations.map((lim, i) => (
-                <div key={i} className="flex items-start gap-2 text-sm text-gray-600 dark:text-gray-400">
-                  <div className="w-1.5 h-1.5 bg-red-400 rounded-full mt-1.5 flex-shrink-0" />
-                  {lim}
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-        {info.showStepTypes && (
-          <>
-            <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
-              Available step types
-            </h4>
-            <div className="grid grid-cols-2 gap-2">
-              {STEP_TYPES.map((st, i) => (
-                <div key={i} className="bg-gray-50 dark:bg-gray-800 rounded-lg p-2 border border-gray-200 dark:border-gray-700">
-                  <div className="text-xs font-medium text-gray-800 dark:text-gray-200">{st.name}</div>
-                  <div className="text-[11px] text-gray-500 dark:text-gray-400 leading-tight mt-0.5">{st.desc}</div>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  )
-}
-
 interface ChatAreaProps {
   // New chat handler
   onNewChat: () => void
@@ -502,8 +396,6 @@ interface ChatAreaProps {
   hideInput?: boolean
   // Compact mode for smaller font sizes (used in workflow layout)
   compact?: boolean
-  // Hide the phase-specific empty help when the parent renders a better empty state.
-  hidePhaseChatEmptyState?: boolean
   // Suppress terminal content while the parent renders an idle/history state.
   suppressTerminalPane?: boolean
   // Tab ID - if provided, use this tab's session ID (works for both chat and workflow modes).
@@ -539,7 +431,7 @@ let globalHasRestored = false
 
 // Inner component for chat area
 const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAreaRef>) => {
-  const { onNewChat, hideHeader = false, hideInput = false, compact = false, hidePhaseChatEmptyState = false, suppressTerminalPane = false, tabId, previousChatsCompact = false, workflowPreviousChatsPanel } = props
+  const { onNewChat, hideHeader = false, hideInput = false, compact = false, suppressTerminalPane = false, tabId, previousChatsCompact = false, workflowPreviousChatsPanel } = props
   // null means "inactive — don't subscribe to any tab or run any effects"
   const isInactive = tabId === null
 
@@ -547,11 +439,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   const {
     agentMode,
     setCurrentQuery,
-    showWorkflowsOverview,
   } = useAppStore(useShallow(state => ({
     agentMode: state.agentMode,
     setCurrentQuery: state.setCurrentQuery,
-    showWorkflowsOverview: state.showWorkflowsOverview,
   })))
   
   const { selectedModeCategory, getAgentModeFromCategory } = useModeStore(useShallow(state => ({
@@ -891,12 +781,19 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // the previous-chats landing once the settle window elapsed. Probe the same
   // terminal list that decides TerminalCenter's "No terminals yet" empty state;
   // a present terminal means the resumed tab's surface is the terminal pane.
+  const shouldProbeSessionTerminals =
+    !!activeSessionId &&
+    (
+      activeTabHasRestoredConversation ||
+      (selectedModeCategory === 'workflow' && activeEventViewMode === 'terminal')
+    )
   const { data: sessionTerminals } = useSessionTerminals(
     activeSessionId,
-    !!activeSessionId && activeTabHasRestoredConversation,
+    shouldProbeSessionTerminals,
   )
+  const restoredSessionTerminals = sessionTerminals?.terminals || []
   const restoredSessionHasTerminal =
-    activeTabHasRestoredConversation && (sessionTerminals?.terminals?.length ?? 0) > 0
+    activeTabHasRestoredConversation && restoredSessionTerminals.length > 0
   // Any recognized "this resumed tab is live" signal: execution-tree activity OR
   // a live terminal pane. Feeds the resolver's active-over-landing decision.
   const hasRestoredLiveContent = restoredSessionHasExecutionContent || restoredSessionHasTerminal
@@ -3065,6 +2962,18 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // sessionId + clears the per-tab flag but does not reset the global one), which
   // wrongly kept a fresh New-Chat tab on 'active' (empty terminal) instead of
   // 'landing'. Reading the per-tab flag scopes "is streaming" to THIS session.
+  const activeTabHasRunningBackendSession = !!activeTab?.sessionId && activeSessionsCache.some(session => {
+    if (session.session_id !== activeTab.sessionId) return false
+    const status = (session.status || '').toLowerCase()
+    return status === 'running' || status === 'paused'
+  })
+  const hasLiveWorkflowTerminal = selectedModeCategory === 'workflow' && restoredSessionTerminals.some(isLiveWorkflowTerminal)
+  // The terminal empty-state copy is narrower still: "Starting terminal / Your
+  // message was sent" is only true for a live submitted/running turn, not merely
+  // because an opened/restored workflow tab has historical conversation events.
+  const hasPendingTerminalActivity = !suppressTerminalPane && (
+    activeTabStreaming || activeTabHasRunningBackendSession
+  )
   const multiAgentSurface = resolveChatSurface({
     isRestoring: isRestoringChatSessions,
     // The resolver's resume-pending → 'restoring' input is now the SYNCHRONOUS
@@ -3089,6 +2998,20 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     hasRestoredLiveContent,
     isReadOnlyRunView,
   })
+  // In workflow terminal mode, old events are not enough to show the terminal
+  // surface. Ctrl+K should open an idle automation to its normal landing/history
+  // view unless there is a live submitted turn, a running backend session, or an
+  // actual terminal snapshot for this resumed session. Restored terminal rows can
+  // be stale snapshots when tmux is gone; they still need to render TerminalCenter
+  // so Resume never lands on a blank workflow pane.
+  const workflowHasTerminalSurface =
+    hasPendingTerminalActivity || hasLiveWorkflowTerminal || restoredSessionHasTerminal
+  const visibleWorkflowSurface =
+    workflowSurface === 'active' &&
+    activeEventViewMode === 'terminal' &&
+    !workflowHasTerminalSurface
+      ? 'landing'
+      : workflowSurface
 
   // Keep the bottom "Resuming coding session" indicator in sync with the surface
   // (both modes). A native/terminal resume that settles onto the previous-chats
@@ -3097,7 +3020,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // silently resuming a chat you're no longer viewing. (File-fallback resumes —
   // NativeResume false — stay: their attached file context still drives the next
   // turn. Read-only run views never reach landing, so they're untouched.)
-  const activeChatSurface = selectedModeCategory === 'workflow' ? workflowSurface : multiAgentSurface
+  const activeChatSurface = selectedModeCategory === 'workflow' ? visibleWorkflowSurface : multiAgentSurface
   useEffect(() => {
     if (activeChatSurface !== 'landing') return
     const tabId = activeTab?.tabId
@@ -3134,7 +3057,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // Layout: the terminal pane is full-height unless the multi-agent landing list
   // is covering it; the two landing panels are also full-height. (Preserves the
   // original shouldRenderTerminalPane / shouldUseFullHeightContent formulas.)
-  const shouldRenderTerminalPane = activeEventViewMode === 'terminal' && !showNormalPreviousChatsPanel
+  const shouldRenderTerminalPane =
+    activeEventViewMode === 'terminal' &&
+    !showNormalPreviousChatsPanel &&
+    !(selectedModeCategory === 'workflow' && visibleWorkflowSurface === 'landing')
   const shouldUseFullHeightContent = shouldRenderTerminalPane || showNormalPreviousChatsPanel || showWorkflowPreviousChatsPanel
 
   return (
@@ -3213,15 +3139,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             </div>
           )}
 
-          {/* Show workflow explanation when in workflow mode but no preset selected */}
-          {selectedModeCategory === 'workflow' && !activeTab?.metadata?.isOrganizationAssistant && (
-            <WorkflowExplanation agentMode={correctAgentMode} selectedWorkflowPreset={selectedWorkflowPreset} />
-          )}
-
-
-          {/* Show Deep Search explanation when in Deep Search mode */}
-
-
         {selectedModeCategory === 'workflow' ? (
           <WorkflowModeHandler
             ref={workflowModeHandlerRef}
@@ -3230,7 +3147,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             onWorkflowPhaseChange={setCurrentWorkflowPhase}
           >
             {/* restoring — reconnectWorkflowTabs is replaying events. */}
-            {workflowSurface === 'restoring' && (
+            {visibleWorkflowSurface === 'restoring' && (
               <div className="flex flex-col items-center justify-center py-12 gap-3">
                 <div className="w-6 h-6 border-2 border-gray-300 dark:border-gray-600 border-t-blue-600 dark:border-t-blue-400 rounded-full animate-spin"></div>
                 <p className="text-sm text-gray-500 dark:text-gray-400">Restoring previous session...</p>
@@ -3238,9 +3155,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             )}
 
             {/* active — terminal-or-events by the view toggle. */}
-            {workflowSurface === 'active' && activeTab?.sessionId && (
+            {visibleWorkflowSurface === 'active' && activeTab?.sessionId && (
               activeEventViewMode === 'terminal' ? (
-                <TerminalCenter currentSessionId={activeTab.sessionId} compact={false} hasConversationActivity={!suppressTerminalPane && (hasConversationContent || activeTabStreaming)} />
+                <TerminalCenter currentSessionId={activeTab.sessionId} compact={false} hasPendingTerminalActivity={hasPendingTerminalActivity} />
               ) : (
                 <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
               )
@@ -3251,22 +3168,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
                 workflow-scoped history logic lives in one place). TerminalCenter
                 is intentionally not rendered on landing: "Waiting for terminal"
                 is only for an active/pending turn after a message was sent. */}
-            {workflowSurface === 'landing' && (
-              showWorkflowPreviousChatsPanel ? (
-                workflowPreviousChatsPanel
-              ) : (
-                <>
-                  {/* Empty State for non-chat phases. */}
-                  {!isChatCompatiblePhase(activeTab?.metadata?.phaseId) && (
-                    <ModeEmptyState modeCategory={selectedModeCategory} />
-                  )}
-                  {/* Phase Chat Help — shown only before the workflow-builder
-                      conversation starts, on chat-compatible phases. */}
-                  {!hidePhaseChatEmptyState && !showWorkflowsOverview && !activeTab?.metadata?.isOrganizationAssistant && isChatCompatiblePhase(activeTab?.metadata?.phaseId) && (
-                    <PhaseChatEmptyState phaseId={activeTab!.metadata!.phaseId!} compact={compact} />
-                  )}
-                </>
-              )
+            {visibleWorkflowSurface === 'landing' && (
+              workflowPreviousChatsPanel ?? null
             )}
           </WorkflowModeHandler>
         ) : (
@@ -3280,8 +3183,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             )}
 
             {/* landing — fresh chat / New Chat. The panel renders the list OR its
-                own "No previous chats yet." empty, so it subsumes the old
-                standalone ModeEmptyState case for multi-agent. */}
+                own "No previous chats yet." empty, so no separate help page is
+                needed here. */}
             {multiAgentSurface === 'landing' && (
               <PreviousChatHistoryPanel
                 activeSessionId={hasConversationContent ? activeTab?.sessionId ?? undefined : undefined}
@@ -3297,7 +3200,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             {/* active — terminal-or-events by the view toggle. */}
             {multiAgentSurface === 'active' && activeTab?.sessionId && (
               activeEventViewMode === 'terminal' ? (
-                <TerminalCenter currentSessionId={activeTab.sessionId} compact={false} hasConversationActivity={!suppressTerminalPane && (hasConversationContent || activeTabStreaming)} />
+                <TerminalCenter currentSessionId={activeTab.sessionId} compact={false} hasPendingTerminalActivity={hasPendingTerminalActivity} />
               ) : (
                 <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
               )

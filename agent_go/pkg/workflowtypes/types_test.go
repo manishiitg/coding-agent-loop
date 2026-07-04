@@ -97,8 +97,8 @@ func TestResolveCodingAgentAutoImproveConfigUsesProviderDefault(t *testing.T) {
 	if !ok {
 		t.Fatal("ResolveCodingAgentAutoImproveConfig() ok = false")
 	}
-	if got.Provider != "claude-code" || got.ModelID != "claude-fable-5" {
-		t.Fatalf("ResolveCodingAgentAutoImproveConfig() = %+v, want claude-code/claude-fable-5", got)
+	if got.Provider != "claude-code" || got.ModelID != "claude-opus-4-8" {
+		t.Fatalf("ResolveCodingAgentAutoImproveConfig() = %+v, want claude-code/claude-opus-4-8", got)
 	}
 }
 
@@ -151,8 +151,8 @@ func TestResolveCodingAgentChiefOfStaffConfigUsesProviderDefault(t *testing.T) {
 	if !ok {
 		t.Fatal("ResolveCodingAgentChiefOfStaffConfig() ok = false")
 	}
-	if got.Provider != "claude-code" || got.ModelID != "claude-fable-5" {
-		t.Fatalf("ResolveCodingAgentChiefOfStaffConfig() = %+v, want claude-code/claude-fable-5", got)
+	if got.Provider != "claude-code" || got.ModelID != "claude-opus-4-8" {
+		t.Fatalf("ResolveCodingAgentChiefOfStaffConfig() = %+v, want claude-code/claude-opus-4-8", got)
 	}
 	if got.Options["reasoning_effort"] != "high" {
 		t.Fatalf("reasoning_effort = %#v, want high", got.Options["reasoning_effort"])

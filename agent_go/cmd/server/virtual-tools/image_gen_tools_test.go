@@ -16,7 +16,7 @@ func TestNormalizeImageProviderAndModelProviderAliasDefaultsModel(t *testing.T) 
 			name:      "vertex alias",
 			provider:  "vertex",
 			modelID:   "vertex",
-			wantModel: "gemini-3.1-flash-image-preview",
+			wantModel: "gemini-3.1-flash-image",
 		},
 		{
 			name:      "codex alias",
@@ -49,9 +49,35 @@ func TestNormalizeImageProviderAndModelProviderAliasDefaultsModel(t *testing.T) 
 }
 
 func TestNormalizeImageProviderAndModelRejectsWrongModelForProvider(t *testing.T) {
-	_, _, err := normalizeImageProviderAndModel("codex-cli", "gemini-3.1-flash-image-preview")
+	_, _, err := normalizeImageProviderAndModel("codex-cli", "gemini-3.1-flash-image")
 	if err == nil {
 		t.Fatal("normalizeImageProviderAndModel returned nil error for unsupported provider/model pair")
+	}
+}
+
+func TestNormalizeImageProviderAndModelMigratesLegacyImagen(t *testing.T) {
+	provider, modelID, err := normalizeImageProviderAndModel("vertex", "imagen-deprecated-model")
+	if err != nil {
+		t.Fatalf("normalizeImageProviderAndModel returned error: %v", err)
+	}
+	if provider != "vertex" {
+		t.Fatalf("provider = %q, want vertex", provider)
+	}
+	if modelID != "gemini-3.1-flash-image" {
+		t.Fatalf("modelID = %q, want gemini-3.1-flash-image", modelID)
+	}
+}
+
+func TestNormalizeImageProviderAndModelMigratesPreviewGeminiImage(t *testing.T) {
+	provider, modelID, err := normalizeImageProviderAndModel("vertex", "gemini-3.1-flash-image-preview")
+	if err != nil {
+		t.Fatalf("normalizeImageProviderAndModel returned error: %v", err)
+	}
+	if provider != "vertex" {
+		t.Fatalf("provider = %q, want vertex", provider)
+	}
+	if modelID != "gemini-3.1-flash-image" {
+		t.Fatalf("modelID = %q, want gemini-3.1-flash-image", modelID)
 	}
 }
 

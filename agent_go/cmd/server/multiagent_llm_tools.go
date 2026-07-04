@@ -750,12 +750,12 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 			"providers": buildFixedCapabilityProviders(
 				keys,
 				map[string][]string{
-					string(llm.ProviderVertex):   {"gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview"},
+					string(llm.ProviderVertex):   {"gemini-3.1-flash-image", "gemini-3-pro-image", "gemini-3.1-flash-lite-image"},
 					string(llm.ProviderCodexCLI): {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
 					string(llm.ProviderAgyCLI):   {"agy-cli"},
 				},
 				map[string]string{
-					string(llm.ProviderVertex):   "gemini-3.1-flash-image-preview",
+					string(llm.ProviderVertex):   "gemini-3.1-flash-image",
 					string(llm.ProviderCodexCLI): "gpt-5.4-mini",
 					string(llm.ProviderAgyCLI):   "agy-cli",
 				},

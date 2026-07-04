@@ -7,9 +7,11 @@ import type { ChatTab } from '../stores/useChatStore'
 import { useAppStore } from '../stores/useAppStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import type { ActiveSessionInfo, PollingEvent } from '../services/api-types'
+import { agentApi } from '../services/api'
 import { activateTab } from '../utils/activateTab'
-import { isBotWorkflowSession, isScheduledWorkflowSession, openActiveSession, restoreBotWorkflowRunChat, restoreScheduledWorkflowRunChat, restoreWorkflowSessionChat, workflowSessionBotPlatform } from '../utils/workflowSessionRestore'
+import { isBotWorkflowSession, isScheduledWorkflowSession, openActiveSession, workflowSessionBotPlatform } from '../utils/workflowSessionRestore'
 import { formatEventMemoryBytes, hasEventMemoryPressure, type EventMemoryStats } from '../utils/eventMemory'
+import { liveWorkflowTerminalSessionForPreset } from '../utils/workflowTerminalActivity'
 
 interface QuickSwitcherProps {
   isOpen: boolean
@@ -75,6 +77,7 @@ const EMPTY_ACTIVE_SESSIONS: ActiveSessionInfo[] = []
 const EMPTY_WORKFLOW_PRESETS: Array<CustomPreset | PredefinedPreset> = []
 const EMPTY_RECENT_PRESET_ORDER: string[] = []
 const EMPTY_RECENT_PRESET_ACCESSED_AT: Record<string, number> = {}
+const WORKFLOW_TERMINAL_LOOKUP_TIMEOUT_MS = 1500
 
 const isWorkflowSession = (session: ActiveSessionInfo): boolean => {
   return session.agent_mode === 'workflow' ||
@@ -122,6 +125,23 @@ const activeSessionStatusLabel = (session: ActiveSessionInfo): string => {
 const sessionShortId = (sessionId: string): string => sessionId.slice(0, 8)
 
 const normalizeWorkspacePath = (path?: string): string => (path || '').replace(/\/+$/, '')
+
+const findLiveWorkflowTerminalSession = async (
+  preset: CustomPreset | PredefinedPreset,
+  title: string,
+): Promise<ActiveSessionInfo | undefined> => {
+  try {
+    const response = await Promise.race([
+      agentApi.listTerminals(undefined, 'none'),
+      new Promise<undefined>(resolve => setTimeout(() => resolve(undefined), WORKFLOW_TERMINAL_LOOKUP_TIMEOUT_MS)),
+    ])
+    if (!response) return undefined
+    return liveWorkflowTerminalSessionForPreset(response.terminals || [], preset, title)
+  } catch (error) {
+    console.warn('[QuickSwitcher] Failed to inspect live workflow terminals', error)
+    return undefined
+  }
+}
 
 const findTabForSession = (tabs: Record<string, ChatTab>, sessionId: string): ChatTab | undefined => {
   return Object.values(tabs).find(tab => tab.sessionId === sessionId)
@@ -563,22 +583,30 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     presetStore.applyPreset(item.preset, 'workflow')
 
     // Use the cached active sessions (30s TTL + background poller keep it fresh,
-    // and the switcher list itself is rendered from this same cache) instead of a
-    // forced server round-trip. The forced refresh made Ctrl+K block on the network
-    // for idle workflows — where item.activeSession is undefined — even though the
-    // fetch only ever confirmed there was nothing to restore. Running workflows
-    // already short-circuit via the pre-computed item.activeSession.
+    // and the switcher list itself is rendered from this same cache) for the main
+    // restore decision. If that misses, we do only a short terminal-registry probe
+    // below because retained workflow tmux panes can outlive active-session rows.
     const refreshedActiveSession = item.activeSession ||
       pickWorkflowActiveSession(await useChatStore.getState().getActiveSessions(), item.preset, useChatStore.getState().chatTabs)
 
     if (refreshedActiveSession) {
-      if (isScheduledWorkflowSession(refreshedActiveSession)) {
-        await restoreScheduledWorkflowRunChat(refreshedActiveSession, { preset: item.preset })
-      } else if (isBotWorkflowSession(refreshedActiveSession)) {
-        await restoreBotWorkflowRunChat(refreshedActiveSession, { preset: item.preset })
-      } else {
-        await restoreWorkflowSessionChat(refreshedActiveSession, { preset: item.preset })
-      }
+      await openActiveSession(refreshedActiveSession, {
+        preset: item.preset,
+        title: item.label,
+        source: 'quick-switcher',
+      })
+      console.timeEnd('[QuickSwitcher] workflow-switch-total')
+      onClose()
+      return
+    }
+
+    const terminalBackedSession = await findLiveWorkflowTerminalSession(item.preset, item.label)
+    if (terminalBackedSession) {
+      await openActiveSession(terminalBackedSession, {
+        preset: item.preset,
+        title: item.label,
+        source: 'quick-switcher-terminal',
+      })
       console.timeEnd('[QuickSwitcher] workflow-switch-total')
       onClose()
       return

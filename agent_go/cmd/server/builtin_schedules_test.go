@@ -36,6 +36,26 @@ func TestBuiltinOrgPulseSequenceIncludesReadOnlyLLMCostAudit(t *testing.T) {
 	if !strings.Contains(final, "LLM/model tier + cost audit") || !strings.Contains(final, "Report the log entry, LLM/cost summary") {
 		t.Fatalf("final org pulse message should require LLM/cost reporting in pulse and final report:\n%s", final)
 	}
+	for _, want := range []string{
+		"DAILY DIGEST",
+		"one daily Org Pulse digest",
+		"steady healthy day still gets a calm all-healthy digest",
+		"email is the default in-depth rendering",
+		"notification result",
+	} {
+		if !strings.Contains(final, want) {
+			t.Fatalf("final org pulse message missing daily digest requirement %q:\n%s", want, final)
+		}
+	}
+	for _, want := range []string{
+		"daily Org Pulse digest",
+		"Do not stay silent on a steady day",
+		"set email_cc",
+	} {
+		if !strings.Contains(builtinOrgPulseQuery, want) {
+			t.Fatalf("single-turn Org Pulse fallback missing daily digest requirement %q:\n%s", want, builtinOrgPulseQuery)
+		}
+	}
 }
 
 func TestBuiltinOrgPulseRecommendationLifecycleHandoff(t *testing.T) {

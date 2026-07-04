@@ -1136,6 +1136,11 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 		if err := UpdateMultiAgentScheduleRun(ctx, sctx.UserID, runID, status, errMsg, &durationMs, sessionID); err != nil {
 			s.sessionLogf(sctx, sessionID, "[SCHEDULER] Failed to update multi-agent run entry for %s: %v", schedID, err)
 		}
+		if shouldUpdateChiefTaskReport(sctx) {
+			if err := s.runChiefTaskReportUpdate(ctx, sctx, runID, status, errMsg, durationMs, startTime, time.Now().UTC(), sessionID); err != nil {
+				s.sessionLogf(sctx, sessionID, "[TASK_REPORT] Failed to update pulse/task.html for %s: %v", schedID, err)
+			}
+		}
 	} else {
 		if err := UpdateScheduleRun(ctx, sctx.WorkspacePath, runID, status, errMsg, &durationMs, runFolder, sessionID); err != nil {
 			s.sessionLogf(sctx, sessionID, "[SCHEDULER] Failed to update run entry for %s: %v", schedID, err)
@@ -1145,7 +1150,7 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 		// verdicts into the Pulse log), applies the full plan-step harden for Bug
 		// findings, runs a separate report-only artifact drift review, records the
 		// report-only LLM/cost/time readout, backs up the final state, publishes, and
-		// notifies on a transition — see runPostRunMonitor.
+		// sends a run summary notification — see runPostRunMonitor.
 		// Opt-in per workflow (post_run_monitor in workflow.json) — runs only when
 		// the user / builder enabled Pulse. Only after an actual workflow RUN, not an
 		// optimizer/improvement pass (there's no fresh run output to triage there).
@@ -1159,6 +1164,113 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 	}
 
 	return sessionID, execErr
+}
+
+func shouldUpdateChiefTaskReport(sctx *ScheduleContext) bool {
+	if sctx == nil || sctx.SourceType != "multi-agent" {
+		return false
+	}
+	if IsDefaultBuiltinSchedule(sctx.Schedule.ID) || IsOrgPulseSchedule(sctx.Schedule) {
+		return false
+	}
+	hay := strings.ToLower(strings.Join([]string{
+		sctx.Schedule.ID,
+		sctx.Schedule.Name,
+		sctx.Schedule.Description,
+		sctx.Schedule.Query,
+		strings.Join(sctx.Schedule.Messages, "\n"),
+	}, "\n"))
+	return !strings.Contains(hay, "enrich_memory") &&
+		!strings.Contains(hay, "memory enrichment") &&
+		!strings.Contains(hay, "auto-enrich memory")
+}
+
+func (s *SchedulerService) runChiefTaskReportUpdate(ctx context.Context, sctx *ScheduleContext, runID, status, errMsg string, durationMs int64, startedAt, completedAt time.Time, sessionID string) error {
+	if s == nil || s.api == nil {
+		return fmt.Errorf("scheduler API is not configured")
+	}
+	if sessionID == "" {
+		return fmt.Errorf("missing session id")
+	}
+
+	reqMap := map[string]interface{}{
+		"agent_mode":              "simple",
+		"triggered_by":            "cron",
+		"query":                   buildChiefTaskReportUpdateMessage(sctx, runID, status, errMsg, durationMs, startedAt, completedAt, sessionID),
+		"task_report_update_turn": true,
+	}
+	if len(sctx.Capabilities.SelectedServers) > 0 {
+		reqMap["servers"] = sctx.Capabilities.SelectedServers
+	}
+	if len(sctx.Capabilities.SelectedSkills) > 0 {
+		reqMap["selected_skills"] = sctx.Capabilities.SelectedSkills
+	}
+	if sctx.Capabilities.BrowserMode != "" && sctx.Capabilities.BrowserMode != "none" {
+		reqMap["browser_mode"] = sctx.Capabilities.BrowserMode
+	}
+	if sctx.Capabilities.UseCodeExecutionMode {
+		reqMap["use_code_execution_mode"] = true
+	}
+	s.applyChiefOfStaffLLMToReqMap(ctx, reqMap, sctx, sessionID)
+
+	s.sessionLogf(sctx, sessionID, "[TASK_REPORT] updating pulse/task.html for schedule %s run %s", sctx.Schedule.ID, runID)
+	if err := s.api.startSessionInternal(ctx, reqMap, sessionID, sctx.UserID, nil); err != nil {
+		return fmt.Errorf("task report update turn failed: %w", err)
+	}
+	if err := s.waitForWorkshopIdle(ctx, sessionID); err != nil {
+		return fmt.Errorf("task report update idle wait failed: %w", err)
+	}
+	return nil
+}
+
+func buildChiefTaskReportUpdateMessage(sctx *ScheduleContext, runID, status, errMsg string, durationMs int64, startedAt, completedAt time.Time, sessionID string) string {
+	if sctx == nil {
+		sctx = &ScheduleContext{}
+	}
+	taskText := strings.TrimSpace(sctx.Schedule.Query)
+	if taskText == "" && len(sctx.Schedule.Messages) > 0 {
+		taskText = strings.TrimSpace(strings.Join(sctx.Schedule.Messages, "\n\n"))
+	}
+	if taskText == "" {
+		taskText = "(no query recorded)"
+	}
+	errLine := ""
+	if strings.TrimSpace(errMsg) != "" {
+		errLine = "\n- error: " + strings.TrimSpace(errMsg)
+	}
+	return fmt.Sprintf(`TASK REPORT UPDATE - normal Chief of Staff schedule completed.
+
+Call get_reference_doc(kind="chief-task-report") and follow it exactly.
+
+Update the single shared Tasks page at pulse/task.html. This is separate from Org Pulse.
+Do not create per-task files. Do not edit pulse/org-pulse.html, pulse/goals.html, memory, workflow files, schedules, or secrets.
+Do not redo the task; summarize the just-completed scheduled task run from this current conversation.
+Do not call notify_user from this report-update turn unless the original task explicitly required a notification.
+
+Run metadata:
+- schedule_id: %s
+- schedule_name: %s
+- schedule_description: %s
+- run_id: %s
+- session_id: %s
+- status: %s%s
+- started_at: %s
+- completed_at: %s
+- duration_ms: %d
+- cron_expression: %s
+- timezone: %s
+
+Original scheduled task:
+%s
+
+What to write:
+- Create pulse/task.html if missing using the chief-task-report skeleton.
+- Prepend one .task-entry after <!-- CHIEF TASK ENTRIES: newest first -->.
+- Update the top summary tiles/counts and latest update timestamp.
+- Capture result summary, decisions/recommendations/findings, affected workflows/entities, evidence paths, and next action.
+- If the task failed, record the failure clearly with the error and suggested next action.
+- Keep the page concise; this is a durable task ledger, not a transcript dump.
+`, sctx.Schedule.ID, sctx.Schedule.Name, sctx.Schedule.Description, runID, sessionID, status, errLine, startedAt.Format(time.RFC3339), completedAt.Format(time.RFC3339), durationMs, sctx.Schedule.CronExpression, sctx.Schedule.Timezone, taskText)
 }
 
 // runPostRunMonitor fires the Pulse pass after a scheduled workflow run. Pulse
@@ -1231,10 +1343,11 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 	}
 	s.sessionLogf(sctx, sessionID, "[PULSE] pulse completed for %s", sctx.Schedule.ID)
 	// Pulse owns its own notification: per its reference doc it calls notify_user
-	// once, only on a state transition it reads from the durable Pulse log. The
-	// scheduler no longer pushes a templated message — that avoids a double-send and
-	// lets the agent author the exact, nuanced sentence. The Bug/Goal verdict lives in
-	// builder/improve.html (pills + headline) — the single source of truth, no separate file.
+	// once with a compact run summary, highlighting state transitions it reads from
+	// the durable Pulse log. The scheduler no longer pushes a templated message —
+	// that avoids a double-send and lets the agent author the exact, nuanced sentence.
+	// The Bug/Goal verdict lives in builder/improve.html (pills + headline) — the
+	// single source of truth, no separate file.
 }
 
 type postRunMonitorStep struct{ label, query string }
@@ -1292,9 +1405,10 @@ func postRunMonitorSteps() []postRunMonitorStep {
 		{"fix", "STEP 2 — FIX / HARDEN. This turn does not improvise manual workflow edits. If triage found a real Bug, first call get_reference_doc(kind=\"optimize-playbook\"), then call harden_workflow(focus=\"<concise Bug finding + evidence paths from triage, including Chief of Staff rec_id when applicable>\") as the canonical repair path; include group_name only when the completed run was scoped to a single group. harden_workflow owns the full plan-step harden: guards, retries, selector/prompt tightening, missing-field defaults, validation, artifact-shape fixes, KB/db/report/eval contract repair, learning hygiene, stale-description cleanup, and small evidence-backed structural fixes. When harden changes anything, record/refresh a `Decision - Pulse harden` card in builder/improve.html with the `Bug` verdict chip and a work label: `Bug fix` by default, or `Report fix` / `Eval fix` when that was the concrete repair. If harden acted on a Chief of Staff recommendation, call mark_cos_recommendation_status after the result: done with the Decision/evidence path when fixed, blocked when harden could not proceed, or needs_evidence when the recommendation lacked proof. If triage found only a Goal finding, do NOT call harden_workflow; record the Goal finding / replan proposal for the scheduled improve loop with the `Improvement` label. If the run was clean, do nothing. Never harden because a report-only LLM/cost/time observation exists. Report the harden_workflow execution_id/result, CoS rec status updates, or the no-fix reason, then stop."},
 		{"artifact", "STEP 3 — ARTIFACT REVIEW (report-only, after fix/harden). This is a separate Pulse item, not part of harden, and the scheduler only sends this turn when planning/changelog contains entries not yet marked artifact_review.done=true. Read planning/changelog/ and the Artifact Sync Cursor in builder/improve.html. If there are material unreviewed changelog entries, or no cursor exists, call get_workflow_command_guidance(kind=\"review-artifact-drift\", focus=\"Pulse artifact review after this run; report-only; do not fix\") and follow it: call review_artifact_sync(focus=\"Pulse artifact review after this run; report-only; do not fix\"), then wait with query_step(execution_id) until it completes. review_artifact_sync must append/update the report-only Artifact Review item in builder/improve.html with the `Artifact drift` action label and call mark_changelog_artifact_reviewed to mark every fully inspected changelog entry with artifact_review.done=true metadata; do not edit or delete changelog files directly. If drift is found, record it as an Artifact Review finding with the recommended next owner, but do NOT call harden_workflow, replan_workflow_from_results, plan-modification tools, or hand-patch artifacts from this step. Report cursor before/after, entries inspected, findings count, and changelog entries marked reviewed, then stop."},
 		{"report", "STEP 4 — LLM/COST/TIME REPORT (report-only, after artifact review). This is separate from triage and must not drive Bug hardening by itself. Read workflow.json capabilities.llm_config / step execution tiers, get_cost_summary(run_folder) when available, costs/execution + costs/evaluation + costs/phase/token_usage.json, and timing summaries under runs/<run_folder>/logs/<step-id>/execution. Create a compact run telemetry report: total cost, total tokens, wall/LLM/tool time, configured tier/model vs observed provider/model, broken down by plan step and by agent/sub-agent when evidence supports it; call missing telemetry \"missing evidence\" instead of estimating. This is reporting only: do NOT change model tiers, LLM config, prompts, schedules, or agent allocation. Update builder/improve.html cost/time tiles, the latest run row, and a compact report-only Note/Pulse detail with the `Cost/time` action label when material. ALSO overwrite builder/card.cost.html with one compact org-dashboard card fragment (inline content only, single-quoted attributes), every run so the dashboard shows spend health: <article class='pulse-card' data-axis='cost' data-workflow='<workflow name>' data-goal='<same 3-6 word goal label used by card.health.html>' data-status='<normal|elevated|missing>' data-updated='<ISO8601 UTC>'><h4><workflow name></h4><p data-field='headline'><one short line, e.g. 'Cost normal — $0.12 / 18k tokens' or 'Missing cost telemetry — execution ledger absent'></p><p data-field='metric'><total USD or unpriced · total tokens · wall time></p><p data-field='detail'><top-cost step/agent or missing evidence path></p></article> (normal=telemetry present and no material concern; elevated=cost/time outlier, high spend, runaway retries, or slow/expensive step worth watching; missing=no reliable cost/time telemetry). If a report dashboard exists, use get_reference_doc(kind=\"report-plan\") and add/update a bounded live cost/time strip using existing live sources such as window.report.get('costs/phase/token_usage.json'), window.report.get('costs/execution/...'), workflow.json, eval summaries, and builder/improve.html; if this patches the dashboard, label the entry `Report fix` + `Cost/time`; do not bake stale static numbers into the report, and if the report shape cannot be safely patched, record that reporting cost coverage is missing in builder/improve.html instead. Report the LLM/cost/time summary and evidence paths, then stop."},
-		{"backup", "STEP 5 — BACK UP FINAL STATE (always, before publish). Read workflow.json.backup and back up per get_reference_doc(kind=\"backup-strategy\"). The triage, fix/harden, Artifact Review, and LLM/cost/time report changes are already written; snapshot the updated workflow artifacts now so publish has a backed-up source. If backup is disabled, set it up with the zero-config local-git default and back up. Skip the actual push only when backup/status.json shows the current source is already backed up (unchanged). Always write backup/status.json and update the latest run row with the backup result. Report the backup result, then stop."},
-		{"publish", "STEP 6 — PUBLISH (only if publish is on). If workflow.json.publish is enabled, re-publish the updated HTML per get_reference_doc(kind=\"publish-strategy\") — but ONLY when the destination is already VERIFIED (publish/status.json shows a prior successful publish). Every run changes the published artifacts — new db data plus a fresh Pulse entry in builder/improve.html — so there is no \"unchanged\" run to skip; always re-publish to a verified destination. Never do the first/verifying publish here unattended — that is the user's manual set-up step. Always write publish/status.json. Report the result, then stop."},
-		{"notify", "STEP 7 — NOTIFY once on a state transition per the post-run-monitor doc's notification step — honor a user `## Notifications` preference in soul/soul.md, otherwise a single notify_user call only on broke/recovered/new-finding, and silence on a steady run. When you DO notify and publish is on, include the public dashboard URL from publish/status.json (the `url`, only when its state is `published`) in the message so the user can open the live report in one tap. Include the compact cost/time headline from STEP 4 when it was material, requested by `## Notifications`, or the cost card is elevated/missing; otherwise keep cost detail in builder/improve.html and builder/card.cost.html. Use the doc's standard one-line format (emoji · workflow · headline · metric · dashboard URL). When Gmail/email fields are available, email is the default rich rendering: set email_subject, email_html, and plain email_body on the same notify_user call unless the user's Notifications preference explicitly says not to email; set email_to only when the preference asks to replace the default To recipient; set email_cc only when the preference asks for CC recipients. Stay scoped: never rewrite the plan wholesale or dispatch a full improvement run here."},
+		{"cadence", "STEP 5 — AUTO-IMPROVE CADENCE (cron-only, before backup). This step may update ONLY the existing optimizer schedule's cron_expression via list_schedules/get_schedule_runs/update_schedule; never edit workflow.json directly and never add a new schedule field. Read builder/improve.html recent Bug/Goal verdicts, open findings, the latest run row, recent schedule runs, and planning/changelog. Find exactly one enabled schedule with workshop_mode=\"optimizer\"; if none or multiple, record a `Decision - Auto-improve cadence` note with the reason and do not guess. Preserve the existing minute/hour/timezone when changing cadence. Use only these cron cadences: weekly = '<minute> <hour> * * 1'; twice-weekly = '<minute> <hour> * * 1,4'; daily-until-recovered = '<minute> <hour> * * *'; biweekly-over-time = '<minute> <hour> 1,15 * *' (cron-only twice-monthly approximation; do not add custom scheduler state). Policy: daily-until-recovered for severe Goal drift, repeated failures, fresh material plan/config changes, or repeated harden/report/eval failures; twice-weekly for active workflows with mild repeated drift or unresolved high-value findings; weekly for stable active workflows; biweekly-over-time only after sustained clean/on-target history and no open material findings. Do not change cadence more than once per day unless escalating to daily-until-recovered for a fresh break. If you update cron, record `Decision - Auto-improve cadence` in builder/improve.html with the `Improvement` label, old cron, new cron, evidence, and recovery condition. Report updated/skipped and why, then stop."},
+		{"backup", "STEP 6 — BACK UP FINAL STATE (always, before publish). Read workflow.json.backup and back up per get_reference_doc(kind=\"backup-strategy\"). The triage, fix/harden, Artifact Review, LLM/cost/time report, and any auto-improve cadence update are already written; snapshot the updated workflow artifacts now so publish has a backed-up source. If backup is disabled, set it up with the zero-config local-git default and back up. Skip the actual push only when backup/status.json shows the current source is already backed up (unchanged). Always write backup/status.json and update the latest run row with the backup result. Report the backup result, then stop."},
+		{"publish", "STEP 7 — PUBLISH (only if publish is on). If workflow.json.publish is enabled, re-publish the updated HTML per get_reference_doc(kind=\"publish-strategy\") — but ONLY when the destination is already VERIFIED (publish/status.json shows a prior successful publish). Every run changes the published artifacts — new db data plus a fresh Pulse entry in builder/improve.html — so there is no \"unchanged\" run to skip; always re-publish to a verified destination. Never do the first/verifying publish here unattended — that is the user's manual set-up step. Always write publish/status.json. Report the result, then stop."},
+		{"notify", "STEP 8 — NOTIFY a compact run summary once per Pulse run per the post-run-monitor doc's notification step. Honor a user `## Notifications` preference in soul/soul.md; if it explicitly says not to notify, skip and report that. Otherwise call notify_user once every run, using the state transition from builder/improve.html only to choose severity and wording: broke/recovered/new-finding should read urgent; a steady healthy or steady still-bad run should read as a concise run summary, not an alert. When publish is on, include the public dashboard URL from publish/status.json (the `url`, only when its state is `published`) in the message so the user can open the live report in one tap. Include the compact cost/time headline from STEP 4 whenever evidence is available, and include cadence changes from STEP 5 when cadence changed; always include cost/time when requested by `## Notifications` or the cost card is elevated/missing; keep detailed breakdowns in builder/improve.html and builder/card.cost.html. Use the doc's standard one-line format (emoji · workflow · headline · Bug/Goal state · cost/time metric · dashboard URL). When Gmail/email fields are available, email is the default rich rendering: set email_subject, email_html, and plain email_body on the same notify_user call unless the user's Notifications preference explicitly says not to email; set email_to only when the preference asks to replace the default To recipient; set email_cc only when the preference asks for CC recipients. Stay scoped: never rewrite the plan wholesale or dispatch a full improvement run here."},
 	}
 }
 
@@ -1804,6 +1918,7 @@ func (s *SchedulerService) applyLLMAndSecretsToReqMap(ctx context.Context, reqMa
 		provider := strings.TrimSpace(llmCfg.Provider)
 		modelID := strings.TrimSpace(llmCfg.ModelID)
 		var options map[string]interface{}
+		llmConfigSource := ""
 		if strings.EqualFold(strings.TrimSpace(sctx.Schedule.WorkshopMode), "optimizer") {
 			autoImproveLLM := llmCfg.AutoImproveLLM
 			if autoImproveLLM == nil {
@@ -1818,6 +1933,7 @@ func (s *SchedulerService) applyLLMAndSecretsToReqMap(ctx context.Context, reqMa
 					provider = autoImproveProvider
 					modelID = autoImproveModelID
 					options = autoImproveLLM.Options
+					llmConfigSource = llmConfigSourceScheduledAutoImprove
 				}
 			}
 		}
@@ -1833,6 +1949,9 @@ func (s *SchedulerService) applyLLMAndSecretsToReqMap(ctx context.Context, reqMa
 				"primary": primary,
 			}
 			reqMap["llm_config"] = llmConfig
+			if llmConfigSource != "" {
+				reqMap["llm_config_source"] = llmConfigSource
+			}
 		}
 	}
 	// API keys are now handled by MergedProviderAPIKeys in buildWorkshopConfig
@@ -1883,6 +2002,7 @@ func (s *SchedulerService) applyPulseLLMToReqMap(reqMap map[string]interface{}, 
 	if !applyPrimaryLLMConfigToReqMap(reqMap, pulseLLM) {
 		return
 	}
+	reqMap["llm_config_source"] = llmConfigSourceScheduledPulse
 	s.sessionLogf(sctx, sessionID, "[PULSE] using configured pulse LLM %s/%s", strings.TrimSpace(pulseLLM.Provider), strings.TrimSpace(pulseLLM.ModelID))
 }
 
@@ -1894,6 +2014,7 @@ func (s *SchedulerService) applyChiefOfStaffLLMToReqMap(ctx context.Context, req
 	if !applyPrimaryLLMConfigToReqMap(reqMap, chiefOfStaffLLM) {
 		return
 	}
+	reqMap["llm_config_source"] = llmConfigSourceScheduledChiefOfStaff
 	label := "Chief of Staff"
 	if isMemoryEnrichmentSchedule(sctx) {
 		label = "memory"

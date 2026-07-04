@@ -96,3 +96,45 @@ func TestSteerBackgroundAgentCompletionFallsBackWhenNoRunningAgent(t *testing.T)
 		t.Fatal("agent.notified = true after a declined steer; the queue path must still own delivery")
 	}
 }
+
+func TestSteerBackgroundAgentCompletionDefersPlainDelegation(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	defer store.Stop()
+
+	sessionID := "busy-chief-session"
+	runningAgent := &mcpagent.Agent{ModelID: "claude-code"}
+	runningAgent.SetProvider(llm.ProviderClaudeCode)
+
+	api := &StreamingAPI{
+		eventStore:       store,
+		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
+		runningAgentsMux: sync.RWMutex{},
+		agentCancelFuncs: map[string]context.CancelFunc{sessionID: func() {}},
+		agentCancelMux:   sync.RWMutex{},
+		bgAgentRegistry:  NewBackgroundAgentRegistry(),
+	}
+
+	bg := &BackgroundAgent{
+		ID:        "delegate-1",
+		Name:      "Research task",
+		SessionID: sessionID,
+		Kind:      "delegation",
+		Status:    BGAgentCompleted,
+		Result:    "done",
+	}
+	api.bgAgentRegistry.Register(sessionID, bg)
+
+	if api.steerBackgroundAgentCompletion(sessionID, bg.ID) {
+		t.Fatal("plain delegation completion should not be live-steered; it needs a separate synthetic completion turn")
+	}
+
+	bg.mu.RLock()
+	notified := bg.notified
+	bg.mu.RUnlock()
+	if notified {
+		t.Fatal("plain delegation completion was marked notified before the synthetic turn")
+	}
+	if got := runningAgent.DrainSteerMessages(); len(got) != 0 {
+		t.Fatalf("plain delegation completion should not be delivered to the active turn, got %#v", got)
+	}
+}

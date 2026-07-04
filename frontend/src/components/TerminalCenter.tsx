@@ -84,7 +84,7 @@ function rawAfterVisibleChars(raw: string, visibleCharCount: number): string {
 interface TerminalCenterProps {
   currentSessionId?: string
   compact?: boolean
-  hasConversationActivity?: boolean
+  hasPendingTerminalActivity?: boolean
 }
 
 const TERMINAL_REFRESH_HISTORY_LINES = 10000
@@ -109,7 +109,6 @@ const TERMINAL_FAST_POLL_INTERVAL_MS = 750
 const TERMINAL_FAST_POLL_DURATION_MS = 5000
 const LIVE_ATTACH_RESEED_DEBOUNCE_MS = 150
 const LIVE_ATTACH_RESEED_MIN_INTERVAL_MS = 2500
-const SELECTED_LIVE_SCREEN_PROBE_LINES = 120
 
 type TerminalColorScheme = 'neon' | 'mono' | 'homebrew' | 'catppuccin' | 'nord' | 'gruvbox' | 'solarized' | 'tokyo'
 type TerminalDebugKey = 'enter' | 'esc' | 'ctrl-c' | 'ctrl-o' | 'tab' | 'up' | 'down'
@@ -2886,7 +2885,7 @@ function writeDismissedTerminalErrorIDs(sessionId: string | undefined, ids: Set<
   }
 }
 
-const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, compact, hasConversationActivity = false }) => {
+const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, compact, hasPendingTerminalActivity = false }) => {
   const { theme: appTheme } = useTheme()
   // terminalCenterOpen was the legacy toggle gate (separate sidekick
   // panel); kept here for any callers that still pass the flag but no
@@ -3718,7 +3717,8 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     // The selected live tmux pane is rendered from the WebSocket byte stream.
     // Polling capture-pane in parallel reseeds xterm and makes in-place TUI
     // redraws look like the whole screen is refreshing. Once the pane is no
-    // longer streaming, take one final screen snapshot for the settled view.
+    // longer streaming, take one final history snapshot for the settled view so
+    // Claude/Codex transcript text above the final screen remains scrollable.
     const probePrefix = `${selectedTerminalView.terminal_id}:${selectedTerminalView.tmux_session}:`
     if (isSelectedTerminalStreaming) {
       for (const key of Array.from(selectedSettledScreenProbeKeysRef.current)) {
@@ -3734,23 +3734,23 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     let inFlight = false
     const terminalId = selectedTerminalView.terminal_id
 
-    const probeSelectedLiveScreen = () => {
+    const probeSelectedSettledHistory = () => {
       if (cancelled || inFlight) return
       inFlight = true
       const detailOptions = withTerminalScrollDebug({
-        content: 'screen',
-        lines: SELECTED_LIVE_SCREEN_PROBE_LINES,
-      }, 'selected-live-screen')
+        content: 'history',
+        lines: TERMINAL_ACTIVE_DISPLAY_HISTORY_LINES,
+      }, 'selected-settled-history')
       void agentApi.getTerminal(terminalId, detailOptions)
         .then(detail => {
           if (cancelled) return
-          logTerminalScrollDebug('selected-live-screen', selectedTerminalView, detailOptions, detail)
+          logTerminalScrollDebug('selected-settled-history', selectedTerminalView, detailOptions, detail)
           cacheTerminalDetail(detail)
           applyTerminalSnapshotUpdate(detail)
         })
         .catch(err => {
           if (!cancelled) {
-            console.warn('Failed to refresh selected live terminal screen', terminalId, err)
+            console.warn('Failed to refresh selected settled terminal history', terminalId, err)
           }
         })
         .finally(() => {
@@ -3758,7 +3758,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
         })
     }
 
-    probeSelectedLiveScreen()
+    probeSelectedSettledHistory()
     return () => {
       cancelled = true
     }
@@ -4207,7 +4207,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
   return (
     <div ref={terminalCenterRef} className={`flex min-h-0 min-w-0 flex-col bg-[#191a18] text-neutral-100 ${compact ? '' : 'flex-1 overflow-hidden'}`}>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        {(!hasConversationActivity && groupedTerminals.orderedTerminals.length === 0) ? (
+        {(!hasPendingTerminalActivity && groupedTerminals.orderedTerminals.length === 0) ? (
           <TerminalWaitingPane
             className="min-h-0 flex-1"
             xtermTheme={rawXtermTheme}
@@ -4267,16 +4267,16 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
           <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-12 text-center">
             <Terminal className="h-10 w-10 text-neutral-700" strokeWidth={1.25} />
             <div className="text-sm font-medium text-neutral-300">
-              {hasConversationActivity ? 'Starting terminal...' : 'No terminals yet'}
+              {hasPendingTerminalActivity ? 'Starting terminal...' : 'No terminals yet'}
             </div>
             <div className="max-w-md text-xs leading-relaxed text-neutral-500">
-              {hasConversationActivity
+              {hasPendingTerminalActivity
                 ? 'Your message was sent. The coding agent is attaching its terminal; output will appear here as soon as the backend registers the pane.'
                 : 'Run an automation step, send a message to the main agent, or kick off a coding-agent task to see its activity stream here. Each call becomes its own pane — the rail on the left lists them all, the right pane shows live output, tool calls, and cost.'}
             </div>
             <div className="mt-1 flex items-center gap-1.5 text-[11px] text-neutral-600">
               <span className={`inline-block h-1.5 w-1.5 animate-pulse rounded-full ${terminalTheme.emptyPulse}`} />
-              <span>{hasConversationActivity ? 'Waiting for terminal...' : 'Watching for activity...'}</span>
+              <span>{hasPendingTerminalActivity ? 'Waiting for terminal...' : 'Watching for activity...'}</span>
             </div>
           </div>
         )}
@@ -4774,7 +4774,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
 
 // FIX A: Memoized so typing in the chat input — which re-renders ChatArea (the
 // parent) — does NOT re-render the terminal subtree and disturb the live xterm
-// panes. Props (currentSessionId, compact, hasConversationActivity) are all
+// panes. Props (currentSessionId, compact, hasPendingTerminalActivity) are all
 // primitives and stable while typing, so the shallow-prop comparison short-
 // circuits the re-render.
 export const TerminalCenter = memo(TerminalCenterInner)

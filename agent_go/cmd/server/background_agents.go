@@ -1797,6 +1797,10 @@ func (api *StreamingAPI) steerBackgroundAgentCompletion(sessionID, agentID strin
 	if snap.Status != BGAgentCompleted && snap.Status != BGAgentFailed {
 		return false
 	}
+	if shouldDeferBackgroundCompletionToSyntheticTurn(snap) {
+		log.Printf("[BG AGENT] Deferring plain delegation completion for agent %s in session %s to a separate synthetic turn", agentID, sessionID)
+		return false
+	}
 
 	// Dedup without committing: do not set notified until delivery succeeds, so a
 	// failed steer can still fall through to the queue path.
@@ -1855,6 +1859,10 @@ func (api *StreamingAPI) steerBackgroundAgentCompletion(sessionID, agentID strin
 	})
 	log.Printf("[BG AGENT] Steered completion for agent %s into busy session %s (provider=%s status=%s)", agentID, sessionID, provider, deliveryStatus)
 	return true
+}
+
+func shouldDeferBackgroundCompletionToSyntheticTurn(snap BackgroundAgentSnapshot) bool {
+	return strings.EqualFold(strings.TrimSpace(snap.Kind), "delegation")
 }
 
 func (api *StreamingAPI) isFinalBotAutoNotification(sessionID string) bool {

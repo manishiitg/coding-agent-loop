@@ -435,6 +435,32 @@ func TestTryDeliverQueryAsLiveInputSkipsNonCodingAgent(t *testing.T) {
 	}
 }
 
+func TestRequestLLMConfigOverridesManifestOnlyForScheduledSources(t *testing.T) {
+	req := QueryRequest{
+		LLMConfig: &orchestrator.LLMConfig{
+			Primary: orchestrator.LLMModel{Provider: "claude-code", ModelID: "claude-sonnet-5"},
+		},
+	}
+	if requestLLMConfigOverridesManifest(req) {
+		t.Fatal("untagged request LLM config should not override workflow manifest phase LLM")
+	}
+
+	req.LLMConfigSource = llmConfigSourceScheduledPulse
+	if !requestLLMConfigOverridesManifest(req) {
+		t.Fatal("scheduled Pulse LLM config should override workflow manifest phase LLM")
+	}
+
+	req.LLMConfigSource = llmConfigSourceScheduledAutoImprove
+	if !requestLLMConfigOverridesManifest(req) {
+		t.Fatal("scheduled Auto Improve LLM config should override workflow manifest phase LLM")
+	}
+
+	req.LLMConfigSource = "manual"
+	if requestLLMConfigOverridesManifest(req) {
+		t.Fatal("manual request LLM config should keep workflow manifest as source of truth")
+	}
+}
+
 func TestIdleCompletionDoesNotCompleteStaleBusyTurn(t *testing.T) {
 	sessionID := "stale-busy-session"
 	api := &StreamingAPI{

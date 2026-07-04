@@ -3,7 +3,7 @@ import { useEffect, useCallback, useRef, useState, forwardRef } from "react";
 import { ThemeProvider } from "./contexts/ThemeContext.tsx";
 import { UpdateProgressToast } from "./components/UpdateProgressToast";
 import Workspace from "./components/Workspace.tsx";
-import { MemoryPanel, OrgGoalsPanel, OrgPulsePanel } from "./components/org/OrgHtmlPanels";
+import { ChiefTasksPanel, MemoryPanel, OrgGoalsPanel, OrgPulsePanel } from "./components/org/OrgHtmlPanels";
 import { ORG_HTML_PREVIEW_PREFERENCE_CHANGED_EVENT, getOrgHtmlPreviewDevice, setOrgHtmlPreviewDevice as persistOrgHtmlPreviewDevice, type OrgHtmlPreviewDevice } from "./components/org/orgHtmlPreview";
 import ChatArea, { type ChatAreaRef } from "./components/ChatArea.tsx";
 import { MarkdownRenderer, MermaidDiagram } from "./components/ui/MarkdownRenderer";
@@ -1571,6 +1571,13 @@ function App() {
         </button>
         <button
           type="button"
+          onClick={() => setMultiAgentRightPanelView('tasks')}
+          className={multiAgentPanelTabClass(multiAgentRightPanelView === 'tasks')}
+        >
+          Tasks
+        </button>
+        <button
+          type="button"
           onClick={() => setMultiAgentRightPanelView('memory')}
           className={multiAgentPanelTabClass(multiAgentRightPanelView === 'memory')}
         >
@@ -1715,6 +1722,11 @@ function App() {
                               />
                             ) : multiAgentRightPanelView === 'org-goals' ? (
                               <OrgGoalsPanel
+                                toolbarLeading={multiAgentPanelTabs}
+                                onClosePanel={toggleMultiAgentPanelMinimize}
+                              />
+                            ) : multiAgentRightPanelView === 'tasks' ? (
+                              <ChiefTasksPanel
                                 toolbarLeading={multiAgentPanelTabs}
                                 onClosePanel={toggleMultiAgentPanelMinimize}
                               />

@@ -225,7 +225,7 @@ func runImageGenProvidersTest(cmd *cobra.Command, args []string) error {
 func defaultImageGenProviderModel(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "vertex":
-		return "gemini-3.1-flash-image-preview"
+		return "gemini-3.1-flash-image"
 	case "codex-cli":
 		return "codex-cli"
 	default:
@@ -301,7 +301,7 @@ func init() {
 	imageGenProvidersTestCmd.Flags().String("prompt", "", "Prompt to use for image generation")
 	imageGenProvidersTestCmd.Flags().String("aspect-ratio", "1:1", "Aspect ratio to request")
 	imageGenProvidersTestCmd.Flags().String("providers", "", "Comma-separated providers to test (default: vertex,codex-cli)")
-	imageGenProvidersTestCmd.Flags().String("models", "", "Comma-separated provider=model overrides, e.g. vertex=gemini-3.1-flash-image-preview,codex-cli=codex-cli")
+	imageGenProvidersTestCmd.Flags().String("models", "", "Comma-separated provider=model overrides, e.g. vertex=gemini-3.1-flash-image,codex-cli=codex-cli")
 	imageGenProvidersTestCmd.Flags().String("output-folder", "", "Workspace-docs-relative folder used to build the absolute output_path for generated test images")
 	imageGenProvidersTestCmd.Flags().String("provider-timeout", "4m", "Timeout per provider")
 	imageGenProvidersTestCmd.Flags().Bool("include-unconfigured", false, "Attempt providers even when auth/runtime preflight is missing")

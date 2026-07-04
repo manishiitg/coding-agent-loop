@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { X, Eye, EyeOff, ImagePlus, CheckCircle, XCircle, Loader2 } from 'lucide-react'
-import { useImageGenStore } from '../stores/useImageGenStore'
+import { DEFAULT_IMAGE_GEN_MODEL_ID, normalizeImageGenModelId, useImageGenStore } from '../stores/useImageGenStore'
 import { agentApi } from '../services/api'
 
 interface ImageGenerationConfigModalProps {
@@ -10,8 +10,8 @@ interface ImageGenerationConfigModalProps {
 
 const IMAGE_GEN_MODELS: Record<string, { id: string; label: string; cost: string }[]> = {
   vertex: [
-    { id: 'gemini-3.1-flash-image-preview', label: 'Nano Banana 2 (Gemini 3.1 Flash Image)', cost: '$0.045/0.5K · $0.067/1K · $0.101/2K · $0.151/4K' },
-    { id: 'gemini-3-pro-image-preview', label: 'Nano Banana Pro (Gemini 3 Pro Image)', cost: '$0.134/1K-2K · $0.24/4K' },
+    { id: DEFAULT_IMAGE_GEN_MODEL_ID, label: 'Nano Banana 2 (Gemini 3.1 Flash Image)', cost: '$0.045/0.5K · $0.067/1K · $0.101/2K · $0.151/4K' },
+    { id: 'gemini-3-pro-image', label: 'Nano Banana Pro (Gemini 3 Pro Image)', cost: '$0.134/1K-2K · $0.24/4K' },
   ],
 }
 
@@ -19,7 +19,10 @@ export const ImageGenerationConfigModal: React.FC<ImageGenerationConfigModalProp
   const { config, setConfig } = useImageGenStore()
   const [showApiKey, setShowApiKey] = useState(false)
   const [localConfig, setLocalConfig] = useState(() => {
-    if (IMAGE_GEN_MODELS[config.provider]) return { ...config }
+    const modelId = normalizeImageGenModelId(config.modelId)
+    if (IMAGE_GEN_MODELS[config.provider]?.some((m) => m.id === modelId)) {
+      return { ...config, modelId }
+    }
     const fallbackModel = IMAGE_GEN_MODELS.vertex[0]?.id ?? ''
     return { ...config, provider: 'vertex', modelId: fallbackModel }
   })
@@ -100,7 +103,7 @@ export const ImageGenerationConfigModal: React.FC<ImageGenerationConfigModalProp
               }}
               className="w-full bg-gray-800 border border-gray-600 text-white text-sm rounded-md px-3 py-2 focus:outline-none focus:ring-1 focus:ring-purple-500"
             >
-              <option value="vertex">Vertex AI (Gemini/Imagen)</option>
+              <option value="vertex">Vertex AI (Gemini)</option>
             </select>
           </div>
 

@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   setDockBadge: (text) => ipcRenderer.send('set-dock-badge', text),
+  setRunningActivity: (payload) => ipcRenderer.send('set-running-activity', payload),
   openExternal: (url) => ipcRenderer.send('open-external', url),
   printToPDF: (filename) => ipcRenderer.invoke('print-to-pdf', filename),
   saveFlowImage: (payload) => ipcRenderer.invoke('save-flow-image', payload),

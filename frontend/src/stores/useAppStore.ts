@@ -4,7 +4,7 @@ import type { AgentMode } from './types'
 import { useModeStore, type ModeCategory } from './useModeStore'
 import { getWorkspaceScopedStorageKey } from './useWorkspaceConnectionStore'
 
-export type MultiAgentRightPanelView = 'files' | 'memory' | 'org-goals' | 'org-pulse'
+export type MultiAgentRightPanelView = 'files' | 'memory' | 'org-goals' | 'org-pulse' | 'tasks'
 
 interface AppState {
   // Agent configuration
@@ -219,7 +219,8 @@ export const useAppStore = create<AppState>()(
           state.multiAgentRightPanelView !== 'files' &&
           state.multiAgentRightPanelView !== 'memory' &&
           state.multiAgentRightPanelView !== 'org-goals' &&
-          state.multiAgentRightPanelView !== 'org-pulse'
+          state.multiAgentRightPanelView !== 'org-pulse' &&
+          state.multiAgentRightPanelView !== 'tasks'
         ) {
           state.multiAgentRightPanelView = 'files'
         }

@@ -3,7 +3,7 @@
 // data through the window.report API injected into their iframe.
 // See docs/workflow/persistent_stores_design.md.
 
-import { createElement, memo, useEffect, useMemo, useRef, useState } from 'react'
+import { createElement, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -122,6 +122,44 @@ function reportExportFilename(workspacePath: string, format: ReportExportFormat)
 
 function reportSectionDomId(sectionIndex: number): string {
   return `workflow-report-section-${sectionIndex}`
+}
+
+type ReportViewUiState = {
+  scrollTop: number
+  tabsBySection: Record<string, string>
+}
+
+const reportViewUiStateCache = new Map<string, ReportViewUiState>()
+
+function reportViewUiStateKey(workspacePath: string, selectedRunFolder?: string | null): string {
+  return selectedRunFolder ? `${workspacePath}::run:${selectedRunFolder}` : workspacePath
+}
+
+function getReportViewUiState(key: string): ReportViewUiState {
+  const existing = reportViewUiStateCache.get(key)
+  if (existing) return existing
+  const created: ReportViewUiState = { scrollTop: 0, tabsBySection: {} }
+  reportViewUiStateCache.set(key, created)
+  return created
+}
+
+function setReportViewScrollTop(key: string, scrollTop: number): void {
+  const state = getReportViewUiState(key)
+  state.scrollTop = Math.max(0, scrollTop)
+}
+
+function reportSectionTabStateKey(section: ReportSection, sectionIndex: number): string {
+  const heading = section.heading?.trim().toLowerCase() || 'section'
+  return `${sectionIndex}:${heading}`
+}
+
+function getReportSectionTabKey(viewStateKey: string, sectionStateKey: string): string | null {
+  return getReportViewUiState(viewStateKey).tabsBySection[sectionStateKey] ?? null
+}
+
+function setReportSectionTabKey(viewStateKey: string, sectionStateKey: string, tabKey: string): void {
+  const state = getReportViewUiState(viewStateKey)
+  state.tabsBySection[sectionStateKey] = tabKey
 }
 
 function renderReportElementToSvg(reportElement: HTMLElement): string {
@@ -463,6 +501,10 @@ interface ReportViewProps {
   // When the report pane is chat-focused in Mobile it shrinks, so the parent caps
   // the report to mobile so it fits the narrow column. undefined = no override.
   focusTier?: 'mobile'
+  // Workflow canvas has its own floating Files/Pulse/Report controls in the
+  // pane's top-right corner. Keep the in-report section navigator below that
+  // toolbar so section headings never block those controls.
+  reserveTopControlsSpace?: boolean
 }
 
 // Source content cached per workspace-relative path. `undefined` = not yet fetched;
@@ -651,7 +693,7 @@ export function ReportViewer({ workspacePath, isOpen, onClose }: ReportViewerPro
 
 // Inline content — renders the report plan directly without modal chrome. Used by the
 // workflow canvas when canvasViewMode === 'report'.
-function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onClose, focusTier }: ReportViewProps) {
+function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onClose, focusTier, reserveTopControlsSpace = false }: ReportViewProps) {
   // Two explicit preview widths plus 'auto'. The internal name 'desktop' is
   // surfaced as "Laptop" in the UI to match the user's mental model — laptop
   // viewports are what fill the full max-width shell. 'auto' falls back to
@@ -684,7 +726,12 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
   const [hiddenWidgetKeys, setHiddenWidgetKeys] = useState<Set<string>>(() => new Set())
   const [isExportingReport, setIsExportingReport] = useState(false)
   const reportExportRef = useRef<HTMLDivElement>(null)
+  const reportScrollContainerRef = useRef<HTMLDivElement>(null)
   const refreshWorkspaceRef = useRef<string | null>(null)
+  const viewStateKey = useMemo(
+    () => reportViewUiStateKey(workspacePath, selectedRunFolder),
+    [workspacePath, selectedRunFolder],
+  )
 
   const plan: ParsedReportPlan = useMemo(() => {
     if (!planSource) return { sections: [] }
@@ -744,11 +791,18 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
       cancelled = true
       clearTimeout(loadTimer)
     }
-  }, [workspacePath, refreshNonce, focusTier])
+  }, [workspacePath, refreshNonce])
 
   useEffect(() => {
     setHiddenWidgetKeys(new Set())
   }, [workspacePath, planSource, refreshNonce])
+
+  useEffect(() => {
+    const container = reportScrollContainerRef.current
+    return () => {
+      if (container) setReportViewScrollTop(viewStateKey, container.scrollTop)
+    }
+  }, [viewStateKey])
 
   const handleRefresh = () => {
     setInitialLoadDeferred(false)
@@ -877,6 +931,19 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
     }
     return false
   }, [planExists, plan, sources, hiddenWidgetKeys])
+
+  useEffect(() => {
+    if (!hasAnyContent) return
+    const container = reportScrollContainerRef.current
+    if (!container) return
+    const savedScrollTop = getReportViewUiState(viewStateKey).scrollTop
+    if (savedScrollTop <= 0) return
+    const frame = window.requestAnimationFrame(() => {
+      const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
+      container.scrollTop = Math.min(savedScrollTop, maxScrollTop)
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [hasAnyContent, planSource, viewStateKey])
   // Report renders at the selected device width. When the pane is chat-focused in
   // Mobile the parent passes focusTier='mobile' so the report fits the narrow pane;
   // otherwise it follows the user's saved preference. Device selection lives in the
@@ -886,6 +953,15 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
     : (previewPreference === 'mobile' || previewPreference === 'desktop'
         ? previewPreference
         : 'desktop')
+  useLayoutEffect(() => {
+    if (!hasAnyContent) return
+    const container = reportScrollContainerRef.current
+    if (!container) return
+    const savedScrollTop = getReportViewUiState(viewStateKey).scrollTop
+    if (savedScrollTop <= 0) return
+    const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
+    container.scrollTop = Math.min(savedScrollTop, maxScrollTop)
+  }, [hasAnyContent, previewMode, viewStateKey])
   // Per-mode shell width. Mobile mimics a phone (~480px); laptop fills available
   // space. Content width mirrors the shell so widget reflow tests against the
   // right container size.
@@ -1038,7 +1114,11 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
         </div>
       )}
 
-      <div className={`min-h-0 flex-1 overflow-y-auto overscroll-y-contain ${htmlOnlyReport ? '' : '[scrollbar-gutter:stable]'} ${documentOnlyReport ? '' : 'px-2 py-2 sm:px-3 sm:py-3'}`}>
+      <div
+        ref={reportScrollContainerRef}
+        onScroll={event => setReportViewScrollTop(viewStateKey, event.currentTarget.scrollTop)}
+        className={`min-h-0 flex-1 overflow-y-auto overscroll-y-contain ${htmlOnlyReport ? '' : '[scrollbar-gutter:stable]'} ${documentOnlyReport ? '' : 'px-2 py-2 sm:px-3 sm:py-3'}`}
+      >
         <div ref={reportExportRef} className={previewShellClassName}>
           <div className={`flex flex-col gap-3 ${previewContentClassName}`}>
             {loading && <ReportSkeleton />}
@@ -1083,7 +1163,7 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
             {!loading && !error && hasAnyContent && (
               <div className="flex flex-col gap-4 animate-in fade-in duration-200 sm:gap-5">
                 {showDocumentSectionNavigator && (
-                  <div className="sticky top-0 z-20 -mx-1 bg-background/95 px-1 py-1.5 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+                  <div className={`sticky ${reserveTopControlsSpace ? 'top-10 z-10 mt-9' : 'top-0 z-20'} -mx-1 bg-background/95 px-1 py-1.5 backdrop-blur supports-[backdrop-filter]:bg-background/80`}>
                     <div className="flex gap-1 overflow-x-auto [scrollbar-width:thin]" aria-label="Report sections">
                       {visibleSections.map(({ section, sectionIndex }) => (
                         <button
@@ -1109,6 +1189,7 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
                     domId={reportSectionDomId(sectionIndex)}
                     section={section}
                     sectionIndex={sectionIndex}
+                    viewStateKey={viewStateKey}
                     workspacePath={workspacePath}
                     entries={entries}
                     sources={sources}
@@ -1277,6 +1358,7 @@ function SectionContainer({
   domId,
   section,
   sectionIndex,
+  viewStateKey,
   workspacePath,
   entries,
   sources,
@@ -1287,6 +1369,7 @@ function SectionContainer({
   domId?: string
   section: ReportSection
   sectionIndex: number
+  viewStateKey: string
   workspacePath: string
   entries: Array<{ entry: ReportEntry; entryIndex: number }>
   sources: SourceCache
@@ -1312,13 +1395,48 @@ function SectionContainer({
     }
     return groups
   }, [entries, tabsEnabled])
-  const [activeTabKey, setActiveTabKey] = useState<string | null>(null)
+  const sectionStateKey = useMemo(
+    () => reportSectionTabStateKey(section, sectionIndex),
+    [section.heading, sectionIndex],
+  )
+  const tabStateScope = `${viewStateKey}::${sectionStateKey}`
+  const [activeTabState, setActiveTabState] = useState<{ scope: string; key: string | null }>(() => ({
+    scope: tabStateScope,
+    key: getReportSectionTabKey(viewStateKey, sectionStateKey),
+  }))
+  const activeTabKey = activeTabState.scope === tabStateScope
+    ? activeTabState.key
+    : getReportSectionTabKey(viewStateKey, sectionStateKey)
   useEffect(() => {
-    if (!tabsEnabled || tabGroups.length === 0) return
-    if (!activeTabKey || !tabGroups.some(tab => tab.key === activeTabKey)) {
-      setActiveTabKey(tabGroups[0].key)
+    if (activeTabState.scope !== tabStateScope) {
+      setActiveTabState({
+        scope: tabStateScope,
+        key: getReportSectionTabKey(viewStateKey, sectionStateKey),
+      })
     }
-  }, [activeTabKey, tabGroups, tabsEnabled])
+  }, [activeTabState.scope, sectionStateKey, tabStateScope, viewStateKey])
+  useEffect(() => {
+    if (!tabsEnabled || tabGroups.length === 0) {
+      if (activeTabState.scope !== tabStateScope || activeTabState.key !== null) {
+        setActiveTabState({ scope: tabStateScope, key: null })
+      }
+      return
+    }
+    const savedTabKey = getReportSectionTabKey(viewStateKey, sectionStateKey)
+    const nextTabKey = activeTabKey && tabGroups.some(tab => tab.key === activeTabKey)
+      ? activeTabKey
+      : savedTabKey && tabGroups.some(tab => tab.key === savedTabKey)
+        ? savedTabKey
+        : tabGroups[0].key
+    if (activeTabState.scope !== tabStateScope || activeTabState.key !== nextTabKey) {
+      setActiveTabState({ scope: tabStateScope, key: nextTabKey })
+    }
+    setReportSectionTabKey(viewStateKey, sectionStateKey, nextTabKey)
+  }, [activeTabKey, activeTabState.key, activeTabState.scope, sectionStateKey, tabGroups, tabStateScope, tabsEnabled, viewStateKey])
+  const handleSelectTab = (tabKey: string) => {
+    setReportSectionTabKey(viewStateKey, sectionStateKey, tabKey)
+    setActiveTabState({ scope: tabStateScope, key: tabKey })
+  }
 
   // Container size tier — phone / tablet / desktop, matching the project's
   // sm/md Tailwind breakpoints. Container-width based, so it works in
@@ -1379,18 +1497,18 @@ function SectionContainer({
       {shouldShowSectionHeader && <SectionHeader heading={section.heading} />}
       {tabsEnabled && tabGroups.length > 0 && (
         sizeTier === 'phone' ? (
-          <MobileTabPicker
-            tabGroups={tabGroups}
-            activeKey={activeTab?.key ?? tabGroups[0]?.key}
-            onSelect={setActiveTabKey}
-          />
+            <MobileTabPicker
+              tabGroups={tabGroups}
+              activeKey={activeTab?.key ?? tabGroups[0]?.key}
+              onSelect={handleSelectTab}
+            />
         ) : (
           <div className="flex gap-1 overflow-x-auto border-b border-border/60 pb-1 [scrollbar-width:thin]">
             {tabGroups.map(tab => (
               <button
                 key={tab.key}
                 type="button"
-                onClick={() => setActiveTabKey(tab.key)}
+                onClick={() => handleSelectTab(tab.key)}
                 className={`shrink-0 rounded-t-md border px-3 py-1.5 text-sm transition-colors ${
                   (activeTab?.key ?? tabGroups[0]?.key) === tab.key
                     ? 'border-border border-b-background bg-background font-medium text-foreground shadow-sm'

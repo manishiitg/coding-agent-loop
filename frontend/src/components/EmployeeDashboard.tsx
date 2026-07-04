@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import {
   Clock, DollarSign, Loader2, Calendar, FileText, ChevronDown, ChevronRight,
-  Plus, Minus, Database, RefreshCw, AlertCircle, Target, Activity, LayoutDashboard
+  Plus, Minus, Database, RefreshCw, AlertCircle, Target, Activity, LayoutDashboard, ListChecks
 } from 'lucide-react'
 import {
   Bar,
@@ -22,7 +22,7 @@ import { WorkflowCanvas } from './workflow/canvas'
 import { useAppStore } from '../stores/useAppStore'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { MarkdownRenderer } from './ui/MarkdownRenderer'
-import { OrgGoalsPanel, OrgPulsePanel } from './org/OrgHtmlPanels'
+import { ChiefTasksPanel, OrgGoalsPanel, OrgPulsePanel } from './org/OrgHtmlPanels'
 import { OrgDashboard } from './org/OrgDashboard'
 
 interface WorkflowSummary {
@@ -607,7 +607,7 @@ export const EmployeeDashboard: React.FC = () => {
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null)
-  const [orgView, setOrgView] = useState<'workflow' | 'goals' | 'pulse' | 'dashboard'>('dashboard')
+  const [orgView, setOrgView] = useState<'workflow' | 'goals' | 'pulse' | 'tasks' | 'dashboard'>('dashboard')
   const [reviewTab, setReviewTab] = useState<ReviewTab>('report')
   const [reviewState, setReviewState] = useState<WorkflowReviewState>(EMPTY_REVIEW_STATE)
   const [soulDocState, setSoulDocState] = useState<ImproveDocState>(EMPTY_SOUL_DOC_STATE)
@@ -1270,6 +1270,18 @@ export const EmployeeDashboard: React.FC = () => {
                   <Activity className="h-4 w-4 shrink-0 text-muted-foreground" />
                   <span className="truncate text-sm font-medium text-foreground">Org Pulse</span>
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setOrgView('tasks')}
+                  className={`flex w-full items-center gap-2 px-5 py-3 text-left transition-colors ${
+                    orgView === 'tasks'
+                      ? 'border-l-2 border-l-primary bg-primary/10'
+                      : 'border-l-2 border-l-transparent hover:bg-muted/40'
+                  }`}
+                >
+                  <ListChecks className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span className="truncate text-sm font-medium text-foreground">Tasks</span>
+                </button>
               </div>
             </div>
 
@@ -1333,16 +1345,20 @@ export const EmployeeDashboard: React.FC = () => {
 
           <div className="lg:sticky lg:top-6 self-start">
             {orgView === 'dashboard' ? (
-              <div className="h-[calc(100vh-160px)] min-h-[480px] overflow-auto rounded-2xl border border-border bg-card shadow-sm">
+              <div className="h-[calc(100vh-160px)] min-h-[480px] overflow-hidden bg-background">
                 <OrgDashboard workflows={workflows} />
               </div>
             ) : orgView === 'goals' ? (
-              <div className="h-[calc(100vh-160px)] min-h-[480px] overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-                <OrgGoalsPanel fixedDevice="desktop" />
+              <div className="h-[calc(100vh-160px)] min-h-[480px] overflow-hidden bg-background">
+                <OrgGoalsPanel fixedDevice="desktop" hideHeader />
               </div>
             ) : orgView === 'pulse' ? (
-              <div className="h-[calc(100vh-160px)] min-h-[480px] overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-                <OrgPulsePanel fixedDevice="desktop" />
+              <div className="h-[calc(100vh-160px)] min-h-[480px] overflow-hidden bg-background">
+                <OrgPulsePanel fixedDevice="desktop" hideHeader />
+              </div>
+            ) : orgView === 'tasks' ? (
+              <div className="h-[calc(100vh-160px)] min-h-[480px] overflow-hidden bg-background">
+                <ChiefTasksPanel fixedDevice="desktop" hideHeader />
               </div>
             ) : (
             <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">

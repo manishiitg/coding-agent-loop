@@ -30,11 +30,18 @@ const WorkflowPublishPopup: React.FC<WorkflowPublishPopupProps> = ({ isOpen, onC
     return agentApi.getWorkflowPublish(workspacePath)
   }, [workspacePath])
 
+  const loadAccessSecret = useCallback(async (secretName: string) => {
+    if (!workspacePath) throw new Error('No workflow is selected')
+    const resp = await agentApi.getWorkflowPublishSecret(workspacePath, secretName)
+    return resp.value
+  }, [workspacePath])
+
   return (
     <PublishPopup
       isOpen={isOpen}
       onClose={onClose}
       loadInfo={loadInfo}
+      loadAccessSecret={loadAccessSecret}
       onStateLoaded={onStateLoaded}
       fallbackStrategies={FALLBACK_SUPPORTED}
       subtitle="Share this automation's Pulse log & report dashboard at a public URL"

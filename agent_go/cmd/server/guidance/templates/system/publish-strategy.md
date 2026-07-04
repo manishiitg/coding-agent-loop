@@ -144,19 +144,167 @@ for those by default, and **never ask the user for an access token** to make a p
 
 Instead, gate it **client-side** with a passphrase — free, one command, identical on every
 host. Encrypt the static HTML with **StatiCrypt** *after* baking + theming, in the staging dir,
-in **one invocation** so a single unlock covers the whole site for the browser session:
+in **one invocation** so a single unlock covers the whole site for the browser session. The
+password prompt is user-facing UI: do not ship StatiCrypt's default green/white page. Use the
+Runloop dark gate styling below every time.
 
 ```
 cd /tmp/publish-<workflow>
 npx staticrypt dashboard.html pulse.html index.html \
-  -p "$SECRET_PUBLISH_PASSWORD" --remember --salt <fixed-32-hex> -d .
+  -p "$SECRET_PUBLISH_PASSWORD" --remember --salt <fixed-32-hex> -d . \
+  --template-title "Runloop Private Report" \
+  --template-instructions "Enter the publish password to open this report." \
+  --template-button "Unlock report" \
+  --template-placeholder "Publish password" \
+  --template-remember "Remember this browser" \
+  --template-error "That password did not unlock this report." \
+  --template-color-primary "#0ea5e9" \
+  --template-color-secondary "#070b12"
+
+cat > runloop-staticrypt-gate.css <<'CSS'
+.staticrypt-html,
+.staticrypt-body {
+  min-height: 100%;
+  background: #070b12 !important;
+}
+.staticrypt-content {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 24px;
+  background: #070b12 !important;
+  color: #e5e7eb;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.staticrypt-page {
+  width: min(100%, 420px);
+  padding: 0;
+  margin: 0;
+}
+.staticrypt-form {
+  max-width: 420px;
+  margin: 0;
+  padding: 28px;
+  text-align: left;
+  color: #e5e7eb;
+  background: #111827;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
+}
+.staticrypt-instructions {
+  margin: 0 0 18px;
+  color: #aab4c5;
+}
+.staticrypt-instructions p {
+  margin: 0;
+  line-height: 1.5;
+}
+.staticrypt-title {
+  margin: 0 0 8px;
+  color: #f8fafc;
+  font-size: 22px;
+  font-weight: 750;
+  letter-spacing: 0;
+}
+.staticrypt-hr {
+  margin: 0 0 18px;
+  border: 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+}
+.staticrypt-password-container {
+  margin: 0 0 14px;
+  background: #070b12;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+}
+.staticrypt-form input[type="password"],
+.staticrypt-form input[type="text"],
+input[type="text"] {
+  min-height: 46px;
+  color: #f8fafc;
+  background: transparent;
+  font-size: 15px;
+}
+.staticrypt-form input::placeholder {
+  color: #7f8a9d;
+}
+.staticrypt-toggle-password-visibility {
+  opacity: 0.72;
+  filter: invert(1);
+}
+label.staticrypt-remember {
+  margin: 0 0 18px;
+  color: #cbd5e1;
+  font-size: 14px;
+}
+.staticrypt-remember input[type="checkbox"] {
+  accent-color: #0ea5e9;
+}
+.staticrypt-form .staticrypt-decrypt-button {
+  min-height: 46px;
+  padding: 0 16px;
+  background: #0ea5e9;
+  border-radius: 8px;
+  color: #03111f;
+  font-size: 15px;
+  font-weight: 750;
+  text-transform: none;
+  box-shadow: 0 12px 28px rgba(14, 165, 233, 0.22);
+}
+.staticrypt-form .staticrypt-decrypt-button:hover,
+.staticrypt-form .staticrypt-decrypt-button:active,
+.staticrypt-form .staticrypt-decrypt-button:focus {
+  background: #38bdf8;
+}
+.staticrypt-spinner {
+  border-color: rgba(148, 163, 184, 0.45);
+  border-right-color: transparent;
+}
+@media (max-width: 480px) {
+  .staticrypt-content {
+    padding: 18px;
+  }
+  .staticrypt-form {
+    padding: 22px;
+  }
+  .staticrypt-title {
+    font-size: 20px;
+  }
+}
+CSS
+
+python3 - <<'PY'
+from pathlib import Path
+css = Path("runloop-staticrypt-gate.css").read_text()
+for name in ("dashboard.html", "pulse.html", "index.html"):
+    path = Path(name)
+    if not path.exists():
+        continue
+    html = path.read_text()
+    if "staticrypt-html" not in html:
+        raise SystemExit(f"{name} was not encrypted by StatiCrypt")
+    if "runloop-staticrypt-gate" not in html:
+        if "</head>" not in html:
+            raise SystemExit(f"{name} has no closing </head> tag")
+        html = html.replace(
+            "</head>",
+            '<style id="runloop-staticrypt-gate">\n' + css + "\n</style>\n</head>",
+            1,
+        )
+        path.write_text(html)
+PY
+rm -f runloop-staticrypt-gate.css
 ```
 
 Then deploy the (now-encrypted) files. Use `--remember` **plus a shared `--salt`** (any fixed
 32-hex string, reused across all three files) so the unlock carries across the nav and its
 iframes in one browser session — the viewer types the password **once** on `index.html`.
-Verify after deploy; if a frame still prompts, inline the two views into the single nav page
-and encrypt just that one file.
+Verify after deploy in a fresh/private browser session (or append `#staticrypt_logout`) that
+the gate is dark/app-like, not the default green/white prompt. If a frame still prompts,
+inline the two views into the single nav page and encrypt just that one file.
 
 **Store the password as a named secret — never in plaintext.** For workflow publish, put it in
 the workflow's secret store (e.g. `PUBLISH_PASSWORD`) and read it as `$SECRET_PUBLISH_PASSWORD`,

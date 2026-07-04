@@ -14,6 +14,7 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/anthropic"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/azure"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/bedrock"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai"
@@ -69,6 +70,8 @@ func getModelMetadata(provider, modelID string) (*llmtypes.ModelMetadata, error)
 		return bedrock.GetBedrockModelMetadata(resolvedModelID)
 	case "azure":
 		return azure.GetAzureModelMetadata(resolvedModelID)
+	case "claude-code":
+		return claudecode.NewClaudeCodeInteractiveAdapter(resolvedModelID, nil).GetModelMetadata(resolvedModelID)
 	case "codex-cli":
 		return codexcli.NewCodexCLIAdapter("", resolvedModelID, nil).GetModelMetadata(resolvedModelID)
 	case "cursor-cli":
@@ -86,11 +89,10 @@ func resolvePricingProviderAndModel(provider, modelID string) (string, string) {
 	normalizedModelLower := strings.ToLower(normalizedModelID)
 
 	switch normalizedProvider {
+	case "anthropic":
+		return "anthropic", normalizeAnthropicPricingModel(normalizedModelLower, normalizedModelID)
 	case "claude-code":
-		if normalizedModelLower == "" || normalizedModelLower == "auto" || normalizedModelLower == "claude-code" {
-			return "anthropic", anthropic.ModelClaudeOpus46
-		}
-		return "anthropic", normalizedModelID
+		return "claude-code", normalizeClaudeCodePricingModel(normalizedModelLower, normalizedModelID)
 	case "codex-cli":
 		if normalizedModelLower == "" || normalizedModelLower == "auto" || normalizedModelLower == "codex-cli" {
 			return "codex-cli", openai.ModelGPT54
@@ -122,6 +124,74 @@ func resolvePricingProviderAndModel(provider, modelID string) (string, string) {
 	default:
 		return normalizedProvider, normalizedModelID
 	}
+}
+
+func normalizeAnthropicPricingModel(modelLower, originalModelID string) string {
+	switch modelLower {
+	case "opus", "claude-opus":
+		return anthropic.ModelClaudeOpus48
+	case "sonnet", "claude-sonnet":
+		return anthropic.ModelClaudeSonnet46
+	case "haiku", "claude-haiku":
+		return anthropic.ModelClaudeHaiku45
+	}
+
+	modelKey := pricingAliasKey(modelLower)
+	switch {
+	case strings.Contains(modelKey, "opus-4-8") || strings.Contains(modelKey, "4-8-opus"):
+		return anthropic.ModelClaudeOpus48
+	case strings.Contains(modelKey, "opus-4-6") || strings.Contains(modelKey, "4-6-opus"):
+		return anthropic.ModelClaudeOpus46
+	case strings.Contains(modelKey, "opus-4-5") || strings.Contains(modelKey, "4-5-opus"):
+		return anthropic.ModelClaudeOpus45
+	case strings.Contains(modelKey, "sonnet-4-6") || strings.Contains(modelKey, "4-6-sonnet"):
+		return anthropic.ModelClaudeSonnet46
+	case strings.Contains(modelKey, "sonnet-4-5") || strings.Contains(modelKey, "4-5-sonnet"):
+		return anthropic.ModelClaudeSonnet45
+	case strings.Contains(modelKey, "haiku-4-5") || strings.Contains(modelKey, "4-5-haiku"):
+		return anthropic.ModelClaudeHaiku45
+	default:
+		return originalModelID
+	}
+}
+
+func normalizeClaudeCodePricingModel(modelLower, originalModelID string) string {
+	switch modelLower {
+	case "", "auto", "claude-code":
+		return "claude-opus-4-8"
+	case "opus", "claude-opus":
+		return "claude-opus-4-8"
+	case "sonnet", "claude-sonnet":
+		return "claude-sonnet-5"
+	case "fable", "claude-fable":
+		return "claude-fable-5"
+	}
+
+	modelKey := pricingAliasKey(modelLower)
+	switch {
+	case strings.Contains(modelKey, "fable-5"):
+		return "claude-fable-5"
+	case strings.Contains(modelKey, "opus-4-8") || strings.Contains(modelKey, "4-8-opus"):
+		return "claude-opus-4-8"
+	case strings.Contains(modelKey, "opus-4-7") || strings.Contains(modelKey, "4-7-opus"):
+		return "claude-opus-4-7"
+	case strings.Contains(modelKey, "opus-4-6") || strings.Contains(modelKey, "4-6-opus"):
+		return "claude-opus-4-6"
+	case strings.Contains(modelKey, "sonnet-5") || strings.Contains(modelKey, "5-sonnet"):
+		return "claude-sonnet-5"
+	case strings.Contains(modelKey, "sonnet-4-6") || strings.Contains(modelKey, "4-6-sonnet"):
+		return "claude-sonnet-4-6"
+	default:
+		return originalModelID
+	}
+}
+
+func pricingAliasKey(modelLower string) string {
+	modelKey := strings.NewReplacer("_", "-", " ", "-", ".", "-").Replace(modelLower)
+	for strings.Contains(modelKey, "--") {
+		modelKey = strings.ReplaceAll(modelKey, "--", "-")
+	}
+	return strings.Trim(modelKey, "-")
 }
 
 // CachePricing holds separated cache read and write costs

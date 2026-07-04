@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -71,6 +72,12 @@ type WorkflowPublishInfoResponse struct {
 	CurrentSourceHash string                        `json:"current_source_hash,omitempty"`
 	Supported         []WorkflowPublishStrategyInfo `json:"supported"`
 	StatusPath        string                        `json:"status_path"`
+}
+
+type WorkflowPublishSecretResponse struct {
+	Success bool   `json:"success"`
+	Name    string `json:"name"`
+	Value   string `json:"value"`
 }
 
 func workflowPublishStatusPath(workspacePath string) string {
@@ -211,4 +218,151 @@ func (api *StreamingAPI) handleGetWorkflowPublish(w http.ResponseWriter, r *http
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (api *StreamingAPI) handleGetWorkflowPublishSecret(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	workspacePath := strings.TrimSpace(r.URL.Query().Get("workspace_path"))
+	requestedSecretName := strings.TrimSpace(r.URL.Query().Get("secret_name"))
+	if workspacePath == "" {
+		http.Error(w, "workspace_path parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	manifest, found, err := ReadWorkflowManifest(r.Context(), workspacePath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !found {
+		http.Error(w, "workflow not found", http.StatusNotFound)
+		return
+	}
+	status, _, statusErr := readWorkflowPublishStatus(r.Context(), workspacePath)
+	if statusErr != nil {
+		log.Printf("[PUBLISH] Failed to read publish status for %s: %v", workspacePath, statusErr)
+	}
+	api.writePublishSecretResponse(w, r, workspacePath, manifest.Publish, status, requestedSecretName)
+}
+
+func (api *StreamingAPI) handleGetOrgPublishSecret(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	config, _, configErr := readOrgPublishConfig(r.Context())
+	if configErr != nil {
+		log.Printf("[ORG_PUBLISH] Failed to read org publish config: %v", configErr)
+	}
+	status, _, statusErr := readOrgPublishStatus(r.Context())
+	if statusErr != nil {
+		log.Printf("[ORG_PUBLISH] Failed to read org publish status: %v", statusErr)
+	}
+	api.writePublishSecretResponse(w, r, "", config, status, strings.TrimSpace(r.URL.Query().Get("secret_name")))
+}
+
+func (api *StreamingAPI) writePublishSecretResponse(w http.ResponseWriter, r *http.Request, workflowPath string, config *WorkflowPublishConfig, status *WorkflowPublishStatus, requestedSecretName string) {
+	secretName, ok := resolvePublishPasswordSecretName(requestedSecretName, config, status)
+	if !ok {
+		http.Error(w, "publish password secret is not configured", http.StatusNotFound)
+		return
+	}
+
+	value, found := api.resolvePublishSecretValue(r.Context(), GetUserIDFromContext(r.Context()), workflowPath, secretName)
+	if !found {
+		http.Error(w, "publish password secret value was not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(WorkflowPublishSecretResponse{
+		Success: true,
+		Name:    secretName,
+		Value:   value,
+	})
+}
+
+func (api *StreamingAPI) resolvePublishSecretValue(ctx context.Context, userID, workflowPath, secretName string) (string, bool) {
+	secretName = strings.TrimSpace(secretName)
+	if secretName == "" {
+		return "", false
+	}
+	selected := api.loadSelectedSecrets(ctx, userID, workflowPath, []string{secretName})
+	selectedGlobals := []string{secretName}
+	for _, secret := range mergeGlobalSecrets(selected, &selectedGlobals) {
+		if secret.Name == secretName && secret.Value != "" {
+			return secret.Value, true
+		}
+	}
+	return "", false
+}
+
+func resolvePublishPasswordSecretName(requested string, config *WorkflowPublishConfig, status *WorkflowPublishStatus) (string, bool) {
+	allowed := collectPublishPasswordSecretNames(config, status)
+	if len(allowed) == 0 {
+		return "", false
+	}
+	if requested != "" {
+		if canonical, ok := allowed[strings.ToUpper(strings.TrimSpace(requested))]; ok {
+			return canonical, true
+		}
+		return "", false
+	}
+	if len(allowed) == 1 {
+		for _, canonical := range allowed {
+			return canonical, true
+		}
+	}
+	return "", false
+}
+
+func collectPublishPasswordSecretNames(config *WorkflowPublishConfig, status *WorkflowPublishStatus) map[string]string {
+	names := make(map[string]string)
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" || !publishSecretLooksLikePassword(name) {
+			return
+		}
+		names[strings.ToUpper(name)] = name
+	}
+
+	if config != nil {
+		add(extractPublishSecretNameFromText(config.Notes))
+		for _, destination := range config.Destinations {
+			add(destination.SecretName)
+			add(extractPublishSecretNameFromText(destination.Notes))
+		}
+	}
+	if status != nil {
+		add(status.SecretName)
+		add(extractPublishSecretNameFromText(status.Summary))
+		for _, destination := range status.Destinations {
+			add(extractPublishSecretNameFromText(destination.Summary))
+		}
+	}
+
+	return names
+}
+
+func publishSecretLooksLikePassword(name string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(name))
+	return strings.Contains(upper, "PASSWORD") ||
+		strings.Contains(upper, "PASSPHRASE") ||
+		strings.Contains(upper, "STATICRYPT") ||
+		strings.HasSuffix(upper, "_PASS") ||
+		upper == "PASS"
+}
+
+var publishSecretNamePattern = regexp.MustCompile(`(?i)(?:workflow\s+secret|secret)\s+([A-Z][A-Z0-9_]{2,})\b`)
+
+func extractPublishSecretNameFromText(text string) string {
+	match := publishSecretNamePattern.FindStringSubmatch(text)
+	if len(match) < 2 {
+		return ""
+	}
+	return match[1]
 }

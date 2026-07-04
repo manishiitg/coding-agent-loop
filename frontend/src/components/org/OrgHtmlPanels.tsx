@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { Activity, Brain, PanelRightClose, RefreshCw, Target } from 'lucide-react'
+import { Activity, Brain, ListChecks, PanelRightClose, RefreshCw, Target } from 'lucide-react'
 import jetBrainsMonoLatin400Woff2 from '@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2?url'
 import jetBrainsMonoLatin600Woff2 from '@fontsource/jetbrains-mono/files/jetbrains-mono-latin-600-normal.woff2?url'
 import { agentApi } from '../../services/api'
@@ -16,14 +16,19 @@ import {
 
 const ORG_PULSE_LOG_PATH = 'pulse/org-pulse.html'
 const ORG_GOALS_PATH = 'pulse/goals.html'
+const ORG_TASKS_PATH = 'pulse/task.html'
+const MEMORY_EMPTY_TEXT = 'No memory index yet. Use /memory-setup to configure automatic enrichment, or /enrich-memory for a one-time run.'
 
 const ORG_HTML_FONT_STYLE = `
-<style data-runloop-org-html-fonts>
-@font-face{font-family:"JetBrains Mono";font-style:normal;font-display:swap;font-weight:400;src:url("${jetBrainsMonoLatin400Woff2}") format("woff2")}
-@font-face{font-family:"JetBrains Mono";font-style:normal;font-display:swap;font-weight:600;src:url("${jetBrainsMonoLatin600Woff2}") format("woff2")}
-:root{--mono:"JetBrains Mono","SFMono-Regular","SF Mono",Menlo,Monaco,Consolas,"Liberation Mono",monospace}
-code,pre,kbd,samp{font-family:var(--mono)}
-</style>`
+	<style data-runloop-org-html-fonts>
+	@font-face{font-family:"JetBrains Mono";font-style:normal;font-display:swap;font-weight:400;src:url("${jetBrainsMonoLatin400Woff2}") format("woff2")}
+	@font-face{font-family:"JetBrains Mono";font-style:normal;font-display:swap;font-weight:600;src:url("${jetBrainsMonoLatin600Woff2}") format("woff2")}
+	:root{--mono:"JetBrains Mono","SFMono-Regular","SF Mono",Menlo,Monaco,Consolas,"Liberation Mono",monospace}
+	code,pre,kbd,samp{font-family:var(--mono)}
+	html,body{max-width:100%;overflow-x:hidden}
+	*,*::before,*::after{box-sizing:border-box}
+	img,svg,canvas,video{max-width:100%}
+	</style>`
 
 function injectOrgHtmlFonts(content: string): string {
   if (content.includes('data-runloop-org-html-fonts')) return content
@@ -85,11 +90,16 @@ interface OrgHtmlPanelProps {
   // When set, the panel renders at this device width and hides the device toggle
   // (used when embedded in a narrow column, e.g. the org page goals column).
   fixedDevice?: OrgHtmlPreviewDevice
+  hideHeader?: boolean
 }
 
 const toolbarIconBtnClass = 'inline-flex h-7 w-7 flex-none items-center justify-center rounded-lg border border-border bg-background/90 text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50'
 
-const OrgHtmlPanel: React.FC<OrgHtmlPanelProps> = ({ title, path, loadingText, emptyText, Icon, toolbarLeading, onClosePanel, fixedDevice }) => {
+function isMissingFileMessage(message: unknown): boolean {
+  return typeof message === 'string' && /file does not exist|not found|no such file/i.test(message)
+}
+
+const OrgHtmlPanel: React.FC<OrgHtmlPanelProps> = ({ title, path, loadingText, emptyText, Icon, toolbarLeading, onClosePanel, fixedDevice, hideHeader = false }) => {
   const [content, setContent] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -110,7 +120,7 @@ const OrgHtmlPanel: React.FC<OrgHtmlPanelProps> = ({ title, path, loadingText, e
       const rawContent = response.success && response.data ? response.data.content ?? '' : ''
       if (!response.success || !rawContent) {
         setContent('')
-        setError(response.message || emptyText)
+        setError(isMissingFileMessage(response.message) ? emptyText : response.message || emptyText)
         return
       }
       setContent(typeof rawContent === 'string' ? rawContent : String(rawContent))
@@ -141,29 +151,31 @@ const OrgHtmlPanel: React.FC<OrgHtmlPanelProps> = ({ title, path, loadingText, e
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      <div className="flex flex-wrap items-center justify-between gap-1 border-b border-border bg-muted/40 px-2 py-2">
-        <div className="min-w-0 flex-none">
-          {toolbarLeading || (
-            <div className="flex min-w-0 items-center gap-2 px-1">
-              <Icon className="h-4 w-4 flex-none text-primary" />
-              <div className="min-w-0">
-                <h2 className="truncate text-sm font-semibold text-foreground">{title}</h2>
-                <p className="truncate text-xs text-muted-foreground">{path}</p>
+      {!hideHeader && (
+        <div className="flex flex-wrap items-center justify-between gap-1 border-b border-border bg-muted/40 px-2 py-2">
+          <div className="min-w-0 flex-none">
+            {toolbarLeading || (
+              <div className="flex min-w-0 items-center gap-2 px-1">
+                <Icon className="h-4 w-4 flex-none text-primary" />
+                <div className="min-w-0">
+                  <h2 className="truncate text-sm font-semibold text-foreground">{title}</h2>
+                  <p className="truncate text-xs text-muted-foreground">{path}</p>
+                </div>
               </div>
-            </div>
-          )}
-        </div>
-        <div className="flex flex-none items-center gap-1">
-          <button type="button" onClick={refresh} disabled={loading} title="Refresh" aria-label="Refresh" className={toolbarIconBtnClass}>
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-          {onClosePanel && (
-            <button type="button" onClick={onClosePanel} title="Hide panel" aria-label="Hide panel" className={toolbarIconBtnClass}>
-              <PanelRightClose className="h-4 w-4" />
+            )}
+          </div>
+          <div className="flex flex-none items-center gap-1">
+            <button type="button" onClick={refresh} disabled={loading} title="Refresh" aria-label="Refresh" className={toolbarIconBtnClass}>
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             </button>
-          )}
+            {onClosePanel && (
+              <button type="button" onClick={onClosePanel} title="Hide panel" aria-label="Hide panel" className={toolbarIconBtnClass}>
+                <PanelRightClose className="h-4 w-4" />
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="min-h-0 flex-1 overflow-hidden bg-muted/20">
         {loading && !content ? (
@@ -184,7 +196,7 @@ const OrgHtmlPanel: React.FC<OrgHtmlPanelProps> = ({ title, path, loadingText, e
   )
 }
 
-export const OrgGoalsPanel: React.FC<{ toolbarLeading?: React.ReactNode; onClosePanel?: () => void; fixedDevice?: OrgHtmlPreviewDevice }> = ({ toolbarLeading, onClosePanel, fixedDevice }) => (
+export const OrgGoalsPanel: React.FC<{ toolbarLeading?: React.ReactNode; onClosePanel?: () => void; fixedDevice?: OrgHtmlPreviewDevice; hideHeader?: boolean }> = ({ toolbarLeading, onClosePanel, fixedDevice, hideHeader }) => (
   <OrgHtmlPanel
     title="Org Goals"
     path={ORG_GOALS_PATH}
@@ -194,10 +206,11 @@ export const OrgGoalsPanel: React.FC<{ toolbarLeading?: React.ReactNode; onClose
     toolbarLeading={toolbarLeading}
     onClosePanel={onClosePanel}
     fixedDevice={fixedDevice}
+    hideHeader={hideHeader}
   />
 )
 
-export const OrgPulsePanel: React.FC<{ toolbarLeading?: React.ReactNode; onClosePanel?: () => void; fixedDevice?: OrgHtmlPreviewDevice }> = ({ toolbarLeading, onClosePanel, fixedDevice }) => (
+export const OrgPulsePanel: React.FC<{ toolbarLeading?: React.ReactNode; onClosePanel?: () => void; fixedDevice?: OrgHtmlPreviewDevice; hideHeader?: boolean }> = ({ toolbarLeading, onClosePanel, fixedDevice, hideHeader }) => (
   <OrgHtmlPanel
     title="Org Pulse"
     path={ORG_PULSE_LOG_PATH}
@@ -207,6 +220,21 @@ export const OrgPulsePanel: React.FC<{ toolbarLeading?: React.ReactNode; onClose
     toolbarLeading={toolbarLeading}
     onClosePanel={onClosePanel}
     fixedDevice={fixedDevice}
+    hideHeader={hideHeader}
+  />
+)
+
+export const ChiefTasksPanel: React.FC<{ toolbarLeading?: React.ReactNode; onClosePanel?: () => void; fixedDevice?: OrgHtmlPreviewDevice; hideHeader?: boolean }> = ({ toolbarLeading, onClosePanel, fixedDevice, hideHeader }) => (
+  <OrgHtmlPanel
+    title="Tasks"
+    path={ORG_TASKS_PATH}
+    loadingText="Loading Tasks..."
+    emptyText="No scheduled Chief tasks yet. Normal Chief of Staff schedules will appear here after they complete."
+    Icon={ListChecks}
+    toolbarLeading={toolbarLeading}
+    onClosePanel={onClosePanel}
+    fixedDevice={fixedDevice}
+    hideHeader={hideHeader}
   />
 )
 
@@ -242,11 +270,12 @@ export const MemoryPanel: React.FC<{ toolbarLeading?: React.ReactNode; onClosePa
 
       setContent('')
       setPath(primaryPath)
-      setError(primary.message || legacy.message || 'No memory index yet. Use /memory-setup to configure automatic enrichment, or /enrich-memory for a one-time run.')
+      const message = primary.message || legacy.message
+      setError(isMissingFileMessage(message) ? MEMORY_EMPTY_TEXT : message || MEMORY_EMPTY_TEXT)
     } catch {
       setContent('')
       setPath(primaryPath)
-      setError('No memory index yet. Use /memory-setup to configure automatic enrichment, or /enrich-memory for a one-time run.')
+      setError(MEMORY_EMPTY_TEXT)
     } finally {
       setLoading(false)
     }

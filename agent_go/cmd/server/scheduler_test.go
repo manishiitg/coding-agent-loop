@@ -105,12 +105,121 @@ func TestWorkflowScheduleShouldResumePreviousIsOptIn(t *testing.T) {
 	}
 }
 
+func TestShouldUpdateChiefTaskReport(t *testing.T) {
+	tests := []struct {
+		name string
+		sctx *ScheduleContext
+		want bool
+	}{
+		{
+			name: "normal chief schedule updates task report",
+			sctx: &ScheduleContext{
+				SourceType: "multi-agent",
+				Schedule: WorkflowSchedule{
+					ID:          "weekly-market-review",
+					Name:        "Weekly market review",
+					Description: "Review three workflows and recommend changes",
+					Query:       "Prepare a cross-workflow recommendation report.",
+				},
+			},
+			want: true,
+		},
+		{
+			name: "workflow schedule does not update chief task report",
+			sctx: &ScheduleContext{
+				SourceType: "workflow",
+				Schedule:   WorkflowSchedule{ID: "daily-run", Name: "Daily run"},
+			},
+			want: false,
+		},
+		{
+			name: "builtin org pulse is excluded",
+			sctx: &ScheduleContext{
+				SourceType: "multi-agent",
+				Schedule:   WorkflowSchedule{ID: builtinOrgPulseID, Name: "Daily Org Pulse"},
+			},
+			want: false,
+		},
+		{
+			name: "org pulse duplicate is excluded",
+			sctx: &ScheduleContext{
+				SourceType: "multi-agent",
+				Schedule:   WorkflowSchedule{ID: "custom-pulse", Name: "Daily Org Pulse scan"},
+			},
+			want: false,
+		},
+		{
+			name: "builtin memory schedule is excluded",
+			sctx: &ScheduleContext{
+				SourceType: "multi-agent",
+				Schedule:   WorkflowSchedule{ID: builtinAutoEnrichMemoryID, Name: "Auto-enrich memory"},
+			},
+			want: false,
+		},
+		{
+			name: "memory-like schedule is excluded",
+			sctx: &ScheduleContext{
+				SourceType: "multi-agent",
+				Schedule: WorkflowSchedule{
+					ID:    "custom-memory",
+					Name:  "Memory enrichment",
+					Query: "Run enrich_memory for recent conversations.",
+				},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldUpdateChiefTaskReport(tt.sctx); got != tt.want {
+				t.Fatalf("shouldUpdateChiefTaskReport() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildChiefTaskReportUpdateMessageUsesSingleSharedTaskHTML(t *testing.T) {
+	startedAt := time.Date(2026, 7, 4, 10, 15, 0, 0, time.UTC)
+	completedAt := startedAt.Add(2 * time.Minute)
+	sctx := &ScheduleContext{
+		SourceType: "multi-agent",
+		Schedule: WorkflowSchedule{
+			ID:             "weekly-market-review",
+			Name:           "Weekly market review",
+			Description:    "Review three workflows and recommend changes",
+			Query:          "Prepare a cross-workflow recommendation report.",
+			CronExpression: "0 9 * * 1",
+			Timezone:       "Asia/Kolkata",
+		},
+	}
+
+	msg := buildChiefTaskReportUpdateMessage(sctx, "run-123", "success", "", 120000, startedAt, completedAt, "session-abc")
+	for _, want := range []string{
+		`get_reference_doc(kind="chief-task-report")`,
+		"Update the single shared Tasks page at pulse/task.html",
+		"Do not create per-task files",
+		"Do not edit pulse/org-pulse.html, pulse/goals.html",
+		"schedule_id: weekly-market-review",
+		"schedule_name: Weekly market review",
+		"run_id: run-123",
+		"session_id: session-abc",
+		"status: success",
+		"Prepare a cross-workflow recommendation report.",
+		"Prepend one .task-entry",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("task report update message missing %q:\n%s", want, msg)
+		}
+	}
+}
+
 func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 	steps := postRunMonitorSteps()
-	if got := len(steps); got != 7 {
-		t.Fatalf("postRunMonitorSteps() length = %d, want 7", got)
+	if got := len(steps); got != 8 {
+		t.Fatalf("postRunMonitorSteps() length = %d, want 8", got)
 	}
-	for i, want := range []string{"triage", "fix", "artifact", "report", "backup", "publish", "notify"} {
+	for i, want := range []string{"triage", "fix", "artifact", "report", "cadence", "backup", "publish", "notify"} {
 		if got := steps[i].label; got != want {
 			t.Fatalf("postRunMonitorSteps()[%d].label = %q, want %q", i, got, want)
 		}
@@ -120,6 +229,7 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 	var fix string
 	var artifact string
 	var report string
+	var cadence string
 	var backup string
 	var notify string
 	for _, step := range steps {
@@ -134,6 +244,9 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 		}
 		if step.label == "report" {
 			report = step.query
+		}
+		if step.label == "cadence" {
+			cadence = step.query
 		}
 		if step.label == "backup" {
 			backup = step.query
@@ -153,6 +266,9 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 	}
 	if report == "" {
 		t.Fatal("report step not found")
+	}
+	if cadence == "" {
+		t.Fatal("cadence step not found")
 	}
 	if backup == "" {
 		t.Fatal("backup step not found")
@@ -228,11 +344,30 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
+		"once every run",
+		"steady healthy",
+		"Bug/Goal state",
 		"cost card is elevated/missing",
 		"builder/card.cost.html",
 	} {
 		if !strings.Contains(notify, want) {
 			t.Fatalf("notify step missing %q:\n%s", want, notify)
+		}
+	}
+	for _, want := range []string{
+		"AUTO-IMPROVE CADENCE",
+		"cron-only",
+		"list_schedules",
+		"update_schedule",
+		"never edit workflow.json directly",
+		"weekly",
+		"twice-weekly",
+		"daily-until-recovered",
+		"biweekly-over-time",
+		"Decision - Auto-improve cadence",
+	} {
+		if !strings.Contains(cadence, want) {
+			t.Fatalf("cadence step missing %q:\n%s", want, cadence)
 		}
 	}
 	if !strings.Contains(backup, "BACK UP FINAL STATE") || !strings.Contains(backup, "before publish") {
@@ -242,8 +377,8 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 
 func TestPostRunMonitorPrependsWorkflowVersionUpgradeForOldManifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.0"})
-	if got := len(steps); got != 8 {
-		t.Fatalf("postRunMonitorStepsForManifest(old) length = %d, want 8", got)
+	if got := len(steps); got != 10 {
+		t.Fatalf("postRunMonitorStepsForManifest(old) length = %d, want 10", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.1" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.1", got)
@@ -256,9 +391,48 @@ func TestPostRunMonitorPrependsWorkflowVersionUpgradeForOldManifest(t *testing.T
 		"password-protected static publish contract",
 		"named secret only",
 		"StatiCrypt",
+		"Runloop dark password-gate styling",
 	} {
 		if !strings.Contains(steps[0].query, want) {
 			t.Fatalf("upgrade step missing %q:\n%s", want, steps[0].query)
+		}
+	}
+	if got := steps[1].label; got != "upgrade-1.0.2" {
+		t.Fatalf("second step label = %q, want upgrade-1.0.2", got)
+	}
+	if got := steps[2].label; got != "triage" {
+		t.Fatalf("third step label = %q, want triage", got)
+	}
+}
+
+func TestPostRunMonitorPrependsWorkflowVersionUpgradeForMissingVersion(t *testing.T) {
+	steps := postRunMonitorStepsForManifest(&WorkflowManifest{})
+	if got := len(steps); got != 10 {
+		t.Fatalf("postRunMonitorStepsForManifest(missing version) length = %d, want 10", got)
+	}
+	if !strings.Contains(steps[0].query, `Current workflow.json version seen by scheduler: "1.0.0"`) {
+		t.Fatalf("missing version should be treated as 1.0.0:\n%s", steps[0].query)
+	}
+}
+
+func TestPostRunMonitorPrependsPublishGateUpgradeForVersion101Manifest(t *testing.T) {
+	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.1"})
+	if got := len(steps); got != 9 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.1) length = %d, want 9", got)
+	}
+	if got := steps[0].label; got != "upgrade-1.0.2" {
+		t.Fatalf("first step label = %q, want upgrade-1.0.2", got)
+	}
+	for _, want := range []string{
+		"WORKFLOW VERSION UPGRADE v1.0.1 -> v1.0.2",
+		`workflow.json "version" to "1.0.2"`,
+		`get_reference_doc(kind="publish-strategy")`,
+		"Runloop dark password-gate contract",
+		"default green/white StatiCrypt page",
+		"normal verified publish turn will republish with the new gate",
+	} {
+		if !strings.Contains(steps[0].query, want) {
+			t.Fatalf("publish gate upgrade step missing %q:\n%s", want, steps[0].query)
 		}
 	}
 	if got := steps[1].label; got != "triage" {
@@ -266,20 +440,10 @@ func TestPostRunMonitorPrependsWorkflowVersionUpgradeForOldManifest(t *testing.T
 	}
 }
 
-func TestPostRunMonitorPrependsWorkflowVersionUpgradeForMissingVersion(t *testing.T) {
-	steps := postRunMonitorStepsForManifest(&WorkflowManifest{})
-	if got := len(steps); got != 8 {
-		t.Fatalf("postRunMonitorStepsForManifest(missing version) length = %d, want 8", got)
-	}
-	if !strings.Contains(steps[0].query, `Current workflow.json version seen by scheduler: "1.0.0"`) {
-		t.Fatalf("missing version should be treated as 1.0.0:\n%s", steps[0].query)
-	}
-}
-
 func TestPostRunMonitorDoesNotPrependWorkflowVersionUpgradeForCurrentManifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: WorkflowContractCurrentVersion})
-	if got := len(steps); got != 7 {
-		t.Fatalf("postRunMonitorStepsForManifest(current) length = %d, want 7", got)
+	if got := len(steps); got != 8 {
+		t.Fatalf("postRunMonitorStepsForManifest(current) length = %d, want 8", got)
 	}
 	if got := steps[0].label; got != "triage" {
 		t.Fatalf("first step label = %q, want triage", got)
@@ -524,6 +688,13 @@ func TestApplyLLMAndSecretsToReqMapUsesAutoImproveOverrideOnlyForOptimizer(t *te
 			if got := primary["model_id"]; got != tt.wantModelID {
 				t.Fatalf("model_id = %#v, want %q", got, tt.wantModelID)
 			}
+			if tt.workshopMode == "run" {
+				if _, ok := reqMap["llm_config_source"]; ok {
+					t.Fatalf("normal run set llm_config_source: %#v", reqMap["llm_config_source"])
+				}
+			} else if got := reqMap["llm_config_source"]; got != llmConfigSourceScheduledAutoImprove {
+				t.Fatalf("llm_config_source = %#v, want %q", got, llmConfigSourceScheduledAutoImprove)
+			}
 		})
 	}
 }
@@ -552,8 +723,11 @@ func TestApplyLLMAndSecretsToReqMapUsesCodingAgentAutoImproveDefaultForOptimizer
 	if got := primary["provider"]; got != "claude-code" {
 		t.Fatalf("provider = %#v, want claude-code", got)
 	}
-	if got := primary["model_id"]; got != "claude-fable-5" {
-		t.Fatalf("model_id = %#v, want claude-fable-5", got)
+	if got := primary["model_id"]; got != "claude-opus-4-8" {
+		t.Fatalf("model_id = %#v, want claude-opus-4-8", got)
+	}
+	if got := reqMap["llm_config_source"]; got != llmConfigSourceScheduledAutoImprove {
+		t.Fatalf("llm_config_source = %#v, want %q", got, llmConfigSourceScheduledAutoImprove)
 	}
 }
 
@@ -590,6 +764,9 @@ func TestApplyLLMAndSecretsToReqMapPreservesAutoImproveDefaultOptions(t *testing
 	}
 	if got := options["reasoning_effort"]; got != "xhigh" {
 		t.Fatalf("reasoning_effort = %#v, want xhigh", got)
+	}
+	if got := reqMap["llm_config_source"]; got != llmConfigSourceScheduledAutoImprove {
+		t.Fatalf("llm_config_source = %#v, want %q", got, llmConfigSourceScheduledAutoImprove)
 	}
 }
 
@@ -628,12 +805,18 @@ func TestApplyPulseLLMToReqMapUsesPulseOverrideWhenConfigured(t *testing.T) {
 	if got := primary["model_id"]; got != "gpt-5.5" {
 		t.Fatalf("model_id = %#v, want gpt-5.5", got)
 	}
+	if got := reqMap["llm_config_source"]; got != llmConfigSourceScheduledPulse {
+		t.Fatalf("llm_config_source = %#v, want %q", got, llmConfigSourceScheduledPulse)
+	}
 	options, ok := primary["options"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("options missing or wrong type: %#v", primary["options"])
 	}
 	if got := options["reasoning_effort"]; got != "high" {
 		t.Fatalf("reasoning_effort = %#v, want high", got)
+	}
+	if got := reqMap["llm_config_source"]; got != llmConfigSourceScheduledPulse {
+		t.Fatalf("llm_config_source = %#v, want %q", got, llmConfigSourceScheduledPulse)
 	}
 }
 
@@ -753,8 +936,8 @@ func TestResolveChiefOfStaffLLMForScheduleUsesCodingAgentDefault(t *testing.T) {
 	if got == nil {
 		t.Fatal("resolveChiefOfStaffLLMForSchedule() = nil")
 	}
-	if got.Provider != "claude-code" || got.ModelID != "claude-fable-5" {
-		t.Fatalf("resolveChiefOfStaffLLMForSchedule() = %+v, want claude-code/claude-fable-5", got)
+	if got.Provider != "claude-code" || got.ModelID != "claude-opus-4-8" {
+		t.Fatalf("resolveChiefOfStaffLLMForSchedule() = %+v, want claude-code/claude-opus-4-8", got)
 	}
 	if got.Options["reasoning_effort"] != "high" {
 		t.Fatalf("reasoning_effort = %#v, want high", got.Options["reasoning_effort"])
@@ -850,8 +1033,8 @@ func TestResolveChiefOfStaffLLMFromDelegationConfigUsesProviderDefault(t *testin
 	if got == nil {
 		t.Fatal("resolveChiefOfStaffLLMFromDelegationConfig() = nil")
 	}
-	if got.Provider != "claude-code" || got.ModelID != "claude-fable-5" {
-		t.Fatalf("resolveChiefOfStaffLLMFromDelegationConfig() = %+v, want claude-code/claude-fable-5", got)
+	if got.Provider != "claude-code" || got.ModelID != "claude-opus-4-8" {
+		t.Fatalf("resolveChiefOfStaffLLMFromDelegationConfig() = %+v, want claude-code/claude-opus-4-8", got)
 	}
 }
 

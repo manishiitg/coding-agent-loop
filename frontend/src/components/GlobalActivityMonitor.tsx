@@ -10,8 +10,10 @@ import { isScheduledWorkflowSession, openActiveSession, workflowSessionBotPlatfo
 import { useAppStore } from '../stores/useAppStore'
 import { isLocalActivityFallbackTab } from '../utils/activityFallback'
 import { hasIdleAliveCodingAgent, hasLiveBackgroundAgents, normalizedActivityStatus } from '../utils/activitySessions'
+import { activeSessionsFromLiveWorkflowTerminals } from '../utils/workflowTerminalActivity'
 
 const ACTIVITY_DETAILS_POLL_MS = 30000
+const MAX_INLINE_ACTIVITY_ITEMS = 2
 
 type RuntimeExecutionDetail = {
   label: string
@@ -387,6 +389,7 @@ function activityKeysForTab(tab: ChatTab): string[] {
 export const GlobalActivityMonitor: React.FC = () => {
   const [open, setOpen] = useState(false)
   const [runningWorkflowsBySession, setRunningWorkflowsBySession] = useState<Record<string, RunningWorkflowInfo>>({})
+  const [terminalBackedSessions, setTerminalBackedSessions] = useState<ActiveSessionInfo[]>([])
   const [currentExecutionBySession, setCurrentExecutionBySession] = useState<Record<string, RuntimeExecutionDetail>>({})
   const containerRef = useRef<HTMLDivElement | null>(null)
   // Session IDs the server has 404'd on for execution-tree (ghosts from a previous
@@ -403,56 +406,79 @@ export const GlobalActivityMonitor: React.FC = () => {
     const presetId = state.activePresetIds.workflow
     return state.workflowPresets.find(preset => preset.id === presetId)?.label ?? null
   })
+  const workflowPresets = useGlobalPresetStore(state => state.workflowPresets)
 
   useEffect(() => {
     const refresh = async () => {
-      const active = await getActiveSessions(true).catch(() => [])
-      try {
-        const response = await agentApi.listRunningWorkflows()
-        const running = response.running || []
+      const [activeResult, runningResult, terminalsResult] = await Promise.allSettled([
+        getActiveSessions(true),
+        agentApi.listRunningWorkflows(),
+        agentApi.listTerminals(undefined, 'none'),
+      ])
+      const active = activeResult.status === 'fulfilled' ? activeResult.value : []
+      const running = runningResult.status === 'fulfilled' ? (runningResult.value.running || []) : []
+
+      if (runningResult.status === 'fulfilled') {
         setRunningWorkflowsBySession(Object.fromEntries(
           running.map(workflow => [workflow.session_id, workflow]),
         ))
-        const runningSessionIds = active
-          .filter(isActiveSession)
-          .map(session => session.session_id)
-        const sessionIds = Array.from(new Set([
-          ...runningSessionIds,
-          ...running.map(workflow => workflow.session_id),
-        ]))
-          .filter(Boolean)
-          .filter(sessionId => !ghostSessionIdsRef.current.has(sessionId))
-          .slice(0, 20)
-        const treeResults = await Promise.allSettled(
-          sessionIds.map(async sessionId => {
-            try {
-              const tree = await agentApi.getSessionExecutionTree(sessionId)
-              const current = findCurrentExecutionNode(tree.root) || findLatestExecutionNode(tree.root)
-              return current
-                ? [sessionId, {
-                  label: current.name,
-                  kind: current.kind,
-                  status: current.status,
-                  startedAt: current.started_at,
-                }] as const
-                : null
-            } catch (err) {
-              const status = (err as { response?: { status?: number } })?.response?.status
-              if (status === 404) {
-                ghostSessionIdsRef.current.add(sessionId)
-              }
-              throw err
-            }
-          }),
-        )
-        setCurrentExecutionBySession(Object.fromEntries(
-          treeResults
-            .flatMap(result => result.status === 'fulfilled' && result.value ? [result.value] : []),
-        ))
-      } catch {
+      } else {
         setRunningWorkflowsBySession({})
-        setCurrentExecutionBySession({})
       }
+
+      const terminalSessions = terminalsResult.status === 'fulfilled'
+        ? activeSessionsFromLiveWorkflowTerminals(
+          terminalsResult.value.terminals || [],
+          workflowPresets,
+        )
+        : []
+      setTerminalBackedSessions(terminalSessions)
+
+      if (runningResult.status !== 'fulfilled') {
+        setCurrentExecutionBySession({})
+        return
+      }
+
+      const runningSessionIds = active
+        .filter(isActiveSession)
+        .map(session => session.session_id)
+      const terminalSessionIds = terminalSessions
+        .filter(isActiveSession)
+        .map(session => session.session_id)
+      const sessionIds = Array.from(new Set([
+        ...runningSessionIds,
+        ...running.map(workflow => workflow.session_id),
+        ...terminalSessionIds,
+      ]))
+        .filter(Boolean)
+        .filter(sessionId => !ghostSessionIdsRef.current.has(sessionId))
+        .slice(0, 20)
+      const treeResults = await Promise.allSettled(
+        sessionIds.map(async sessionId => {
+          try {
+            const tree = await agentApi.getSessionExecutionTree(sessionId)
+            const current = findCurrentExecutionNode(tree.root) || findLatestExecutionNode(tree.root)
+            return current
+              ? [sessionId, {
+                label: current.name,
+                kind: current.kind,
+                status: current.status,
+                startedAt: current.started_at,
+              }] as const
+              : null
+          } catch (err) {
+            const status = (err as { response?: { status?: number } })?.response?.status
+            if (status === 404) {
+              ghostSessionIdsRef.current.add(sessionId)
+            }
+            throw err
+          }
+        }),
+      )
+      setCurrentExecutionBySession(Object.fromEntries(
+        treeResults
+          .flatMap(result => result.status === 'fulfilled' && result.value ? [result.value] : []),
+      ))
     }
 
     refresh()
@@ -460,7 +486,7 @@ export const GlobalActivityMonitor: React.FC = () => {
       refresh()
     }, ACTIVITY_DETAILS_POLL_MS)
     return () => window.clearInterval(interval)
-  }, [getActiveSessions])
+  }, [getActiveSessions, workflowPresets])
 
   useEffect(() => {
     if (!open) return
@@ -491,8 +517,21 @@ export const GlobalActivityMonitor: React.FC = () => {
       }
     }
 
+    for (const session of terminalBackedSessions) {
+      const existing = bySession.get(session.session_id)
+      if (!existing || !isActiveSession(existing)) {
+        bySession.set(session.session_id, existing ? { ...existing, ...session } : session)
+        continue
+      }
+      bySession.set(session.session_id, {
+        ...session,
+        ...existing,
+        has_retained_tmux_session: existing.has_retained_tmux_session || session.has_retained_tmux_session,
+      })
+    }
+
     return Array.from(bySession.values()).filter(isActiveSession)
-  }, [activeSessionsCache, runningWorkflowsBySession])
+  }, [activeSessionsCache, runningWorkflowsBySession, terminalBackedSessions])
 
   const currentSessionId = useMemo(() => {
     if (showWorkflowsOverview || !activeTabId) return null
@@ -596,6 +635,39 @@ export const GlobalActivityMonitor: React.FC = () => {
     })),
   ], [sortedSessions, fallbackBuilderTabs])
 
+  const dockRunningActivityCount = useMemo(() => {
+    const busySessionIds = new Set<string>()
+    for (const session of activeSessions) {
+      const workflow = runningWorkflowsBySession[session.session_id]
+      const tone = statusTone(session, workflow)
+      if (tone === 'running' || tone === 'background' || tone === 'needs-input') {
+        busySessionIds.add(session.session_id)
+      }
+    }
+
+    let localBusyTabCount = 0
+    for (const tab of Object.values(chatTabs)) {
+      if (!tab.isStreaming && !tab.isSyntheticTurn) continue
+      if (tab.sessionId && busySessionIds.has(tab.sessionId)) continue
+      localBusyTabCount += 1
+    }
+
+    return busySessionIds.size + localBusyTabCount
+  }, [activeSessions, chatTabs, runningWorkflowsBySession])
+
+  useEffect(() => {
+    const api = (window as any).electronAPI
+    if (!api?.setRunningActivity) return
+    api.setRunningActivity({ count: dockRunningActivityCount })
+  }, [dockRunningActivityCount])
+
+  useEffect(() => {
+    return () => {
+      const api = (window as any).electronAPI
+      api?.setRunningActivity?.({ count: 0 })
+    }
+  }, [])
+
   const primarySession = sortedSessions[0]
 
   const primaryTab = primarySession
@@ -649,14 +721,17 @@ export const GlobalActivityMonitor: React.FC = () => {
     return null
   }
 
-  // Each active item gets its own pill. Name length shrinks as pill count grows.
-  const totalPillCount = activityItems.length
+  const inlineActivityItems = activityItems.slice(0, MAX_INLINE_ACTIVITY_ITEMS)
+  const overflowActivityCount = Math.max(0, activityItems.length - inlineActivityItems.length)
+  // Keep the header compact: show one or two direct-jump pills, then send the
+  // rest to Ctrl+K's @active view.
+  const totalPillCount = inlineActivityItems.length + (overflowActivityCount > 0 ? 1 : 0)
   const nameCharLimit = totalPillCount >= 3 ? 5 : totalPillCount === 2 ? 8 : 12
   const pillClasses = 'flex items-center gap-1 px-2 py-1 rounded-md border text-xs font-medium transition-colors border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:border-blue-800/60 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60'
 
   return (
     <div ref={containerRef} className="relative flex items-center gap-1">
-      {activityItems.map((item, i) => {
+      {inlineActivityItems.map((item, i) => {
         if (item.type === 'builder-tab') {
           const builderBusy = item.tab.isStreaming || item.tab.isSyntheticTurn
           const builderWorkflowName = (item.tab.name && item.tab.name !== 'Automation Builder')
@@ -719,6 +794,21 @@ export const GlobalActivityMonitor: React.FC = () => {
           </React.Fragment>
         )
       })}
+
+      {overflowActivityCount > 0 && (
+        <>
+          {inlineActivityItems.length > 0 && <span className="text-gray-400 dark:text-gray-600 select-none text-xs">/</span>}
+          <button
+            type="button"
+            onClick={openActiveWorkInQuickSwitcher}
+            className={pillClasses}
+            title={`Open ${overflowActivityCount} more active item${overflowActivityCount === 1 ? '' : 's'} in Ctrl+K`}
+            aria-label={`Open ${overflowActivityCount} more active item${overflowActivityCount === 1 ? '' : 's'} in Ctrl+K`}
+          >
+            <span className="whitespace-nowrap">+{overflowActivityCount}</span>
+          </button>
+        </>
+      )}
 
       {false && open && (
         <div className="absolute right-0 top-full mt-2 w-[460px] max-w-[calc(100vw-2rem)] rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900 z-50 overflow-hidden">

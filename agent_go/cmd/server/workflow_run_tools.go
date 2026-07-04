@@ -13,91 +13,9 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-// createWorkflowRunTools returns the tool definitions for workflow run management.
+// createWorkflowRunTools returns the Chief of Staff workflow execution tools.
 func createWorkflowRunTools() []llmtypes.Tool {
-	return []llmtypes.Tool{
-		{
-			Type: "function",
-			Function: &llmtypes.FunctionDefinition{
-				Name:        "run_workflow",
-				Description: "Run a full workflow execution in the background. Returns an execution ID immediately — you'll be notified when it completes. The workflow runs all steps for the specified group. After completion, inspect the run/report/Pulse evidence and measure the result against any org goals in pulse/goals.html that name this workflow.",
-				Parameters: &llmtypes.Parameters{
-					Type: "object",
-					Properties: map[string]interface{}{
-						"workflow_path": map[string]interface{}{
-							"type":        "string",
-							"description": "Workspace-relative workflow path (e.g. 'Workflow/ICICI BANK PARSING')",
-						},
-						"group_name": map[string]interface{}{
-							"type":        "string",
-							"description": "Variable group name to run (e.g. 'icici', 'group-1'). Read the workflow's variables/variables.json to see available groups.",
-						},
-						"instructions": map[string]interface{}{
-							"type":        "string",
-							"description": "Optional context or instructions for the workflow agent (e.g. 'only process Q1 data', 'skip validation'). Passed as the user message to the workflow.",
-						},
-						"route_selections": map[string]interface{}{
-							"type":                 "object",
-							"description":          "Optional deterministic routing selections keyed by routing step ID. Each value may be a route_id or a unique next_step_id.",
-							"additionalProperties": map[string]interface{}{"type": "string"},
-						},
-					},
-					Required: []string{"workflow_path", "group_name"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: &llmtypes.FunctionDefinition{
-				Name:        "run_step",
-				Description: "Run a single workflow step in the background. Returns an execution ID immediately — you'll be notified when it completes. After completion, inspect the step/run/report/Pulse evidence and measure the result against any org goals in pulse/goals.html that name this workflow.",
-				Parameters: &llmtypes.Parameters{
-					Type: "object",
-					Properties: map[string]interface{}{
-						"workflow_path": map[string]interface{}{
-							"type":        "string",
-							"description": "Workspace-relative workflow path (e.g. 'Workflow/ICICI BANK PARSING')",
-						},
-						"step_id": map[string]interface{}{
-							"type":        "string",
-							"description": "Step ID from plan.json (e.g. 'step-parse-data', '1', 'step-1')",
-						},
-						"group_name": map[string]interface{}{
-							"type":        "string",
-							"description": "Variable group name to run (e.g. 'icici', 'group-1')",
-						},
-						"instructions": map[string]interface{}{
-							"type":        "string",
-							"description": "Optional context or instructions for the step agent (e.g. 'use the new API endpoint', 'focus on error handling').",
-						},
-						"route_selections": map[string]interface{}{
-							"type":                 "object",
-							"description":          "Optional deterministic routing selections keyed by routing step ID. Each value may be a route_id or a unique next_step_id.",
-							"additionalProperties": map[string]interface{}{"type": "string"},
-						},
-					},
-					Required: []string{"workflow_path", "step_id", "group_name"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: &llmtypes.FunctionDefinition{
-				Name:        "stop_workflow_run",
-				Description: "Stop a background workflow execution started by run_workflow or run_step. Use the agent_id returned by those tools.",
-				Parameters: &llmtypes.Parameters{
-					Type: "object",
-					Properties: map[string]interface{}{
-						"agent_id": map[string]interface{}{
-							"type":        "string",
-							"description": "The agent_id returned by run_workflow or run_step.",
-						},
-					},
-					Required: []string{"agent_id"},
-				},
-			},
-		},
-	}
+	return nil
 }
 
 // createWorkflowRunExecutors returns the tool executors for workflow run management.
@@ -106,9 +24,6 @@ func createWorkflowRunExecutors(api *StreamingAPI) map[string]func(ctx context.C
 	return map[string]func(ctx context.Context, args map[string]interface{}) (string, error){
 		"run_workflow": func(ctx context.Context, args map[string]interface{}) (string, error) {
 			return handleRunWorkflow(ctx, api, args)
-		},
-		"run_step": func(ctx context.Context, args map[string]interface{}) (string, error) {
-			return handleRunStep(ctx, api, args)
 		},
 		"stop_workflow_run": func(ctx context.Context, args map[string]interface{}) (string, error) {
 			return handleStopWorkflowRun(ctx, api, args)
@@ -319,8 +234,9 @@ func (api *StreamingAPI) stopWorkflowRunSession(sessionID string) []string {
 	return queryIDs
 }
 
-// runWorkflowInternal is the shared implementation for both run_workflow and run_step.
-// When stepID is empty, it runs the full workflow. When set, it runs a single step.
+// runWorkflowInternal is the shared implementation for full and step-scoped execution.
+// Chief of Staff does not expose workflow execution tools right now; these
+// handlers are retained for internal callers that still need them.
 // instructions is optional user context passed as the query to the workflow agent.
 func runWorkflowInternal(ctx context.Context, api *StreamingAPI, workflowPath, groupName, stepID, instructions string, routeSelections map[string]string) (string, error) {
 	// Load manifest to get capabilities

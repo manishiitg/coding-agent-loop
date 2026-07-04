@@ -77,6 +77,7 @@ import type {
   StartRestoredTerminalResponse,
   WorkflowCapabilities,
   WorkflowBackupInfoResponse,
+  WorkflowPublishSecretResponse,
 } from './api-types'
 import type { PlanStep, AgentConfigs } from '../utils/stepConfigMatching'
 
@@ -1986,6 +1987,13 @@ export const agentApi = {
     return response.data
   },
 
+  getWorkflowPublishSecret: async (workspacePath: string, secretName: string): Promise<WorkflowPublishSecretResponse> => {
+    const response = await api.get('/api/workflow/publish/secret', {
+      params: { workspace_path: workspacePath, secret_name: secretName }
+    })
+    return response.data
+  },
+
   getOrgBackup: async (): Promise<WorkflowBackupInfoResponse> => {
     const response = await api.get('/api/org/backup')
     return response.data
@@ -1993,6 +2001,13 @@ export const agentApi = {
 
   getOrgPublish: async (): Promise<import('./api-types').WorkflowPublishInfoResponse> => {
     const response = await api.get('/api/org/publish')
+    return response.data
+  },
+
+  getOrgPublishSecret: async (secretName: string): Promise<WorkflowPublishSecretResponse> => {
+    const response = await api.get('/api/org/publish/secret', {
+      params: { secret_name: secretName }
+    })
     return response.data
   },
 

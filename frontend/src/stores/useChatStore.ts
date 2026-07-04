@@ -2451,8 +2451,8 @@ export const useChatStore = create<ChatState>()(
         // We do NOT drop tabEvents on entering Terminal mode. Earlier
         // attempts to drop caused two cascading issues: (1) optimistic
         // user messages briefly disappeared on switch-back, and (2)
-        // the workflow's ModeEmptyState and other "no conversation"
-        // gates flipped on and visually covered the terminal pane.
+        // workflow "no conversation" gates flipped on and visually
+        // covered the terminal pane.
         // Memory savings come from disconnecting SSE + pausing poll
         // (see ChatArea useEffects); the events that existed at
         // terminal-mode entry stay in memory but don't grow.

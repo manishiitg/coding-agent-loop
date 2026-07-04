@@ -76,6 +76,7 @@ func readOrgPublishStatus(ctx context.Context) (*WorkflowPublishStatus, bool, er
 var orgBackupHashFiles = []string{
 	"pulse/goals.html",
 	"pulse/org-pulse.html",
+	"pulse/task.html",
 	"pulse/backup.json",
 	"pulse/publish.json",
 	"org.json",

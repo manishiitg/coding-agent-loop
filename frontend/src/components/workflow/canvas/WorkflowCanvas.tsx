@@ -284,7 +284,7 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: 
   const [expanded, setExpanded] = React.useState(false)
   if (!expanded) {
     return (
-      <div className="absolute right-2 top-2 z-20 flex items-center gap-1">
+      <div className="absolute right-2 top-2 z-50 flex items-center gap-1">
         <button
           type="button"
           onMouseEnter={() => setExpanded(true)}
@@ -311,7 +311,7 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: 
   }
   return (
     <div
-      className="absolute right-2 top-2 z-20 flex flex-wrap items-center justify-end gap-1"
+      className="absolute right-2 top-2 z-50 flex flex-wrap items-center justify-end gap-1"
       onMouseLeave={() => setExpanded(false)}
       onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setExpanded(false) }}
     >
@@ -461,7 +461,7 @@ const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasPr
               ? <LogViewer workspacePath={workspacePath} />
               : paneMode === 'soul'
                 ? <SoulViewer workspacePath={workspacePath} />
-                : <ReportView workspacePath={workspacePath} focusTier={reportFocusTier} />)}
+                : <ReportView workspacePath={workspacePath} focusTier={reportFocusTier} reserveTopControlsSpace />)}
           </div>
         )}
       </div>
@@ -2986,7 +2986,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         {toolbarOnly ? null : effectiveCanvasViewMode === 'report' ? (
           <div className="h-full min-h-0 relative">
             <PreviewPaneControls hasPlan={hasPlan} onExportPlan={() => { void handleExportImage('png') }} onRefreshPlan={() => { void handleRefresh() }} scopeId={workspacePath} />
-            {workspacePath && <ReportView workspacePath={workspacePath} focusTier={reportFocusTier} />}
+            {workspacePath && <ReportView workspacePath={workspacePath} focusTier={reportFocusTier} reserveTopControlsSpace />}
           </div>
         ) : <div className="h-full min-h-0 relative flex">
           <PreviewPaneControls hasPlan={hasPlan} onExportPlan={() => { void handleExportImage('png') }} onRefreshPlan={() => { void handleRefresh() }} scopeId={workspacePath} />

@@ -497,19 +497,20 @@ func spaStaticFileHandler(root string) http.Handler {
 
 // QueryRequest represents an agent query request
 type QueryRequest struct {
-	Query          string                  `json:"query"`
-	Message        string                  `json:"message,omitempty"` // Alias for Query (used by frontend)
-	Servers        []string                `json:"servers,omitempty"`
-	EnabledServers []string                `json:"enabled_servers,omitempty"`
-	SelectedTools  []string                `json:"selected_tools,omitempty"` // Array of "server:tool" strings
-	Provider       string                  `json:"provider,omitempty"`
-	ModelID        string                  `json:"model_id,omitempty"`
-	Temperature    float64                 `json:"temperature,omitempty"`
-	MaxTurns       int                     `json:"max_turns,omitempty"`
-	AgentMode      string                  `json:"agent_mode,omitempty"`
-	LLMConfig      *orchestrator.LLMConfig `json:"llm_config,omitempty"`
-	PresetQueryID  string                  `json:"preset_query_id,omitempty"`
-	LLMGuidance    string                  `json:"llm_guidance,omitempty"` // LLM guidance message
+	Query           string                  `json:"query"`
+	Message         string                  `json:"message,omitempty"` // Alias for Query (used by frontend)
+	Servers         []string                `json:"servers,omitempty"`
+	EnabledServers  []string                `json:"enabled_servers,omitempty"`
+	SelectedTools   []string                `json:"selected_tools,omitempty"` // Array of "server:tool" strings
+	Provider        string                  `json:"provider,omitempty"`
+	ModelID         string                  `json:"model_id,omitempty"`
+	Temperature     float64                 `json:"temperature,omitempty"`
+	MaxTurns        int                     `json:"max_turns,omitempty"`
+	AgentMode       string                  `json:"agent_mode,omitempty"`
+	LLMConfig       *orchestrator.LLMConfig `json:"llm_config,omitempty"`
+	LLMConfigSource string                  `json:"llm_config_source,omitempty"`
+	PresetQueryID   string                  `json:"preset_query_id,omitempty"`
+	LLMGuidance     string                  `json:"llm_guidance,omitempty"` // LLM guidance message
 	// Code execution mode: When enabled, only virtual tools are added to LLM
 	// MCP tools are accessed via generated Go code using discover_code_files and write_code
 	UseCodeExecutionMode bool `json:"use_code_execution_mode,omitempty"`
@@ -609,7 +610,7 @@ func notificationDestinationFromQuery(req QueryRequest, userID string) *services
 // ImageGenConfig holds image generation provider configuration
 type ImageGenConfig struct {
 	Provider string `json:"provider"` // e.g. "vertex"
-	ModelID  string `json:"model_id"` // e.g. "imagen-4.0-generate-001"
+	ModelID  string `json:"model_id"` // e.g. "gemini-3.1-flash-image"
 	APIKey   string `json:"api_key"`  // e.g. GEMINI_API_KEY value (optional; backend falls back to env var)
 }
 
@@ -859,6 +860,24 @@ type QueryResponse struct {
 // tmux-transport CLI input: the frontend always POSTs /api/query and the backend
 // disambiguates deliver-vs-new-turn.
 const queryStatusLiveInputDelivered = "live_input_delivered"
+
+const (
+	llmConfigSourceScheduledAutoImprove  = "scheduled_auto_improve"
+	llmConfigSourceScheduledPulse        = "scheduled_pulse"
+	llmConfigSourceScheduledChiefOfStaff = "scheduled_chief_of_staff"
+)
+
+func requestLLMConfigOverridesManifest(req QueryRequest) bool {
+	if req.LLMConfig == nil {
+		return false
+	}
+	switch strings.TrimSpace(req.LLMConfigSource) {
+	case llmConfigSourceScheduledAutoImprove, llmConfigSourceScheduledPulse, llmConfigSourceScheduledChiefOfStaff:
+		return true
+	default:
+		return false
+	}
+}
 
 // LLMGuidanceRequest represents a request to set LLM guidance for a session
 type LLMGuidanceRequest struct {
@@ -1590,7 +1609,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		return nil
 	})
 	// Install the bot manager as the spawn listener. Any tool that registers a
-	// parent chat (run_workflow, run_step, run_full_workflow, …) will now
+	// parent chat (run_full_workflow, scheduled runs, …) will now
 	// automatically mirror its background session's agent messages into the
 	// parent's Slack thread — no per-tool hooks required.
 	virtualtools.SetSpawnListener(botManager)
@@ -1755,8 +1774,10 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	apiRouter.HandleFunc("/workflow/backup", api.handleGetWorkflowBackup).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/publish", api.handleGetWorkflowPublish).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/publish/secret", requireWorkflowWriteAccess(api.handleGetWorkflowPublishSecret)).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/org/backup", api.handleGetOrgBackup).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/org/publish", api.handleGetOrgPublish).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/org/publish/secret", requireWorkflowWriteAccess(api.handleGetOrgPublishSecret)).Methods("GET", "OPTIONS")
 
 	// Manifest-backed workflow API routes (file-backed workflow definitions)
 	apiRouter.HandleFunc("/workflows/summary", api.handleGetWorkflowsSummary).Methods("GET", "OPTIONS")
@@ -2522,7 +2543,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// path below. Auto-notifications keep their synthetic-turn semantics and are
 	// never short-circuited. Scoped to live-input-capable coding agents so API/LLM
 	// chat is unchanged.
-	if !req.IsAutoNotification && api.tryDeliverQueryAsLiveInput(w, r, sessionID, req.Query, queryID) {
+	if !req.IsAutoNotification && !requestLLMConfigOverridesManifest(req) && api.tryDeliverQueryAsLiveInput(w, r, sessionID, req.Query, queryID) {
 		return
 	}
 
@@ -2768,9 +2789,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if manifest.Capabilities.LLMConfig != nil {
 					phaseLLM, _ := workshopResolveLLMConfig(manifest.Capabilities.LLMConfig)
 					if phaseLLM != nil && phaseLLM.Provider != "" && phaseLLM.ModelID != "" {
-						finalProvider = phaseLLM.Provider
-						finalModelID = phaseLLM.ModelID
-						logfWithContext(queryLogCtx.WithWorkflow(resolvedWPath), "[WORKFLOW_PHASE] Using workshop LLM from manifest: %s/%s", finalProvider, finalModelID)
+						if requestLLMConfigOverridesManifest(req) {
+							logfWithContext(queryLogCtx.WithWorkflow(resolvedWPath), "[WORKFLOW_PHASE] Preserving request LLM %s/%s from %s over manifest phase LLM %s/%s",
+								finalProvider, finalModelID, req.LLMConfigSource, phaseLLM.Provider, phaseLLM.ModelID)
+						} else {
+							finalProvider = phaseLLM.Provider
+							finalModelID = phaseLLM.ModelID
+							logfWithContext(queryLogCtx.WithWorkflow(resolvedWPath), "[WORKFLOW_PHASE] Using workshop LLM from manifest: %s/%s", finalProvider, finalModelID)
+						}
 					}
 				}
 				// If manifest has explicit selection, use it; otherwise leave nil (= all globals included)
@@ -4273,7 +4299,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 					refreshMultiAgentDelegationTools = registerDelegationTools
 
-					// Register workflow run tools (run_workflow, run_step, stop_workflow_run)
+					// Register Chief workflow execution tools. This is currently
+					// disabled; users run workflows manually from the automation UI.
 					wfRunTools := createWorkflowRunTools()
 					wfRunExecutors := createWorkflowRunExecutors(api)
 					for _, tool := range wfRunTools {

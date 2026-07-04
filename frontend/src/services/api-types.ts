@@ -2150,6 +2150,12 @@ export interface WorkflowPublishInfoResponse {
   status_path: string
 }
 
+export interface WorkflowPublishSecretResponse {
+  success: boolean
+  name: string
+  value: string
+}
+
 // Scheduled Jobs
 export interface ScheduledJob {
   id: string

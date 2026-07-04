@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	"mcp-agent-builder-go/agent_go/internal/terminals"
 	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 )
 
@@ -377,8 +379,8 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 
 func TestPostRunMonitorPrependsWorkflowVersionUpgradeForOldManifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.0"})
-	if got := len(steps); got != 10 {
-		t.Fatalf("postRunMonitorStepsForManifest(old) length = %d, want 10", got)
+	if got := len(steps); got != 11 {
+		t.Fatalf("postRunMonitorStepsForManifest(old) length = %d, want 11", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.1" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.1", got)
@@ -400,15 +402,18 @@ func TestPostRunMonitorPrependsWorkflowVersionUpgradeForOldManifest(t *testing.T
 	if got := steps[1].label; got != "upgrade-1.0.2" {
 		t.Fatalf("second step label = %q, want upgrade-1.0.2", got)
 	}
-	if got := steps[2].label; got != "triage" {
-		t.Fatalf("third step label = %q, want triage", got)
+	if got := steps[2].label; got != "upgrade-1.0.3" {
+		t.Fatalf("third step label = %q, want upgrade-1.0.3", got)
+	}
+	if got := steps[3].label; got != "triage" {
+		t.Fatalf("fourth step label = %q, want triage", got)
 	}
 }
 
 func TestPostRunMonitorPrependsWorkflowVersionUpgradeForMissingVersion(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{})
-	if got := len(steps); got != 10 {
-		t.Fatalf("postRunMonitorStepsForManifest(missing version) length = %d, want 10", got)
+	if got := len(steps); got != 11 {
+		t.Fatalf("postRunMonitorStepsForManifest(missing version) length = %d, want 11", got)
 	}
 	if !strings.Contains(steps[0].query, `Current workflow.json version seen by scheduler: "1.0.0"`) {
 		t.Fatalf("missing version should be treated as 1.0.0:\n%s", steps[0].query)
@@ -417,8 +422,8 @@ func TestPostRunMonitorPrependsWorkflowVersionUpgradeForMissingVersion(t *testin
 
 func TestPostRunMonitorPrependsPublishGateUpgradeForVersion101Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.1"})
-	if got := len(steps); got != 9 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.1) length = %d, want 9", got)
+	if got := len(steps); got != 10 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.1) length = %d, want 10", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.2" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.2", got)
@@ -433,6 +438,36 @@ func TestPostRunMonitorPrependsPublishGateUpgradeForVersion101Manifest(t *testin
 	} {
 		if !strings.Contains(steps[0].query, want) {
 			t.Fatalf("publish gate upgrade step missing %q:\n%s", want, steps[0].query)
+		}
+	}
+	if got := steps[1].label; got != "upgrade-1.0.3" {
+		t.Fatalf("second step label = %q, want upgrade-1.0.3", got)
+	}
+	if got := steps[2].label; got != "triage" {
+		t.Fatalf("third step label = %q, want triage", got)
+	}
+}
+
+func TestPostRunMonitorPrependsHTMLReportUpgradeForVersion102Manifest(t *testing.T) {
+	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.2"})
+	if got := len(steps); got != 9 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.2) length = %d, want 9", got)
+	}
+	if got := steps[0].label; got != "upgrade-1.0.3" {
+		t.Fatalf("first step label = %q, want upgrade-1.0.3", got)
+	}
+	for _, want := range []string{
+		"WORKFLOW VERSION UPGRADE v1.0.2 -> v1.0.3",
+		`reports/report_plan.json`,
+		`db/reports/`,
+		`window.report.query(sql)`,
+		`kind "file"`,
+		`renderFormat "html"`,
+		"Remove legacy widget kinds",
+		`workflow.json "version" to "1.0.3"`,
+	} {
+		if !strings.Contains(steps[0].query, want) {
+			t.Fatalf("html report upgrade step missing %q:\n%s", want, steps[0].query)
 		}
 	}
 	if got := steps[1].label; got != "triage" {
@@ -817,6 +852,115 @@ func TestApplyPulseLLMToReqMapUsesPulseOverrideWhenConfigured(t *testing.T) {
 	}
 	if got := reqMap["llm_config_source"]; got != llmConfigSourceScheduledPulse {
 		t.Fatalf("llm_config_source = %#v, want %q", got, llmConfigSourceScheduledPulse)
+	}
+}
+
+func TestBuildWorkshopRequestDisablesLiveInputDeliveryForSchedulerTurns(t *testing.T) {
+	svc := &SchedulerService{}
+	sctx := &ScheduleContext{
+		WorkflowID:    "wf_test",
+		WorkspacePath: "Workflow/test",
+		Schedule:      WorkflowSchedule{ID: "daily", Name: "Daily"},
+		Capabilities:  WorkflowCapabilities{},
+		SourceType:    "workflow",
+	}
+
+	reqMap := svc.buildWorkshopRequest(context.Background(), sctx)
+	if got := reqMap["disable_live_input_delivery"]; got != true {
+		t.Fatalf("disable_live_input_delivery = %#v, want true", got)
+	}
+}
+
+func TestRefreshSessionTmuxSnapshotsForIdleCheckCapturesFreshPane(t *testing.T) {
+	store := terminals.NewStore()
+	sessionID := "session-scheduler-refresh"
+	tmuxSession := "tmux-scheduler-refresh"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, "old pane", 1))
+
+	oldRunOutput := runTerminalTmuxOutputCommand
+	defer func() { runTerminalTmuxOutputCommand = oldRunOutput }()
+	var calls [][]string
+	runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
+		calls = append(calls, append([]string(nil), args...))
+		return "fresh pane\n❯", nil
+	}
+
+	svc := &SchedulerService{api: &StreamingAPI{terminalStore: store}}
+	if err := svc.refreshSessionTmuxSnapshotsForIdleCheck(context.Background(), sessionID); err != nil {
+		t.Fatalf("refreshSessionTmuxSnapshotsForIdleCheck returned error: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("tmux capture calls = %d, want 1", len(calls))
+	}
+	snapshots := store.ListMetadata(sessionID)
+	if len(snapshots) != 1 {
+		t.Fatalf("snapshots = %d, want 1", len(snapshots))
+	}
+	if got := snapshots[0].Content; !strings.Contains(got, "fresh pane") {
+		t.Fatalf("snapshot content = %q, want fresh capture", got)
+	}
+	if got := snapshots[0].ContentSource; got != "tmux_capture" {
+		t.Fatalf("content source = %q, want tmux_capture", got)
+	}
+}
+
+func TestRefreshSessionTmuxSnapshotsForIdleCheckMarksMissingPaneStale(t *testing.T) {
+	store := terminals.NewStore()
+	sessionID := "session-scheduler-missing"
+	tmuxSession := "tmux-scheduler-missing"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, "old pane", 1))
+
+	oldRunOutput := runTerminalTmuxOutputCommand
+	defer func() { runTerminalTmuxOutputCommand = oldRunOutput }()
+	runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
+		return "", errors.New("can't find session: tmux-scheduler-missing")
+	}
+
+	svc := &SchedulerService{api: &StreamingAPI{terminalStore: store}}
+	if err := svc.refreshSessionTmuxSnapshotsForIdleCheck(context.Background(), sessionID); err != nil {
+		t.Fatalf("refreshSessionTmuxSnapshotsForIdleCheck returned error: %v", err)
+	}
+	snapshots := store.ListMetadata(sessionID)
+	if len(snapshots) != 1 {
+		t.Fatalf("snapshots = %d, want 1", len(snapshots))
+	}
+	if snapshots[0].Active {
+		t.Fatalf("missing tmux snapshot should be inactive")
+	}
+	if got := snapshots[0].State; got != "stale" {
+		t.Fatalf("state = %q, want stale", got)
+	}
+	if got := snapshots[0].TmuxSession; got != "" {
+		t.Fatalf("tmux session = %q, want cleared", got)
+	}
+}
+
+func TestWaitForWorkshopIdleRequiresTwoFreshIdleTmuxChecks(t *testing.T) {
+	oldInterval := schedulerWorkshopIdlePollInterval
+	schedulerWorkshopIdlePollInterval = time.Millisecond
+	defer func() { schedulerWorkshopIdlePollInterval = oldInterval }()
+
+	store := terminals.NewStore()
+	sessionID := "session-scheduler-idle"
+	tmuxSession := "tmux-scheduler-idle"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, "old pane", 1))
+
+	oldRunOutput := runTerminalTmuxOutputCommand
+	defer func() { runTerminalTmuxOutputCommand = oldRunOutput }()
+	calls := 0
+	runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
+		calls++
+		return "done\n❯", nil
+	}
+
+	svc := &SchedulerService{api: &StreamingAPI{terminalStore: store}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := svc.waitForWorkshopIdle(ctx, sessionID); err != nil {
+		t.Fatalf("waitForWorkshopIdle returned error: %v", err)
+	}
+	if calls != schedulerWorkshopIdleConsecutiveChecks {
+		t.Fatalf("tmux captures = %d, want %d", calls, schedulerWorkshopIdleConsecutiveChecks)
 	}
 }
 

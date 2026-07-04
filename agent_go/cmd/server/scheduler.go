@@ -1194,10 +1194,11 @@ func (s *SchedulerService) runChiefTaskReportUpdate(ctx context.Context, sctx *S
 	}
 
 	reqMap := map[string]interface{}{
-		"agent_mode":              "simple",
-		"triggered_by":            "cron",
-		"query":                   buildChiefTaskReportUpdateMessage(sctx, runID, status, errMsg, durationMs, startedAt, completedAt, sessionID),
-		"task_report_update_turn": true,
+		"agent_mode":                  "simple",
+		"triggered_by":                "cron",
+		"query":                       buildChiefTaskReportUpdateMessage(sctx, runID, status, errMsg, durationMs, startedAt, completedAt, sessionID),
+		"task_report_update_turn":     true,
+		"disable_live_input_delivery": true,
 	}
 	if len(sctx.Capabilities.SelectedServers) > 0 {
 		reqMap["servers"] = sctx.Capabilities.SelectedServers
@@ -1767,8 +1768,9 @@ func (s *SchedulerService) executeMultiAgentJob(ctx context.Context, sctx *Sched
 	// servers, skills, browser/code-exec, LLM config, and secrets — is shared by
 	// every turn of the sequence.
 	reqMap := map[string]interface{}{
-		"agent_mode":   "simple",
-		"triggered_by": "cron",
+		"agent_mode":                  "simple",
+		"triggered_by":                "cron",
+		"disable_live_input_delivery": true,
 	}
 	if query != "" {
 		reqMap["query"] = query
@@ -2121,16 +2123,17 @@ func agentLLMConfigFromTierModel(tier *virtualtools.TierModel) *workflowtypes.Ag
 // buildWorkshopRequest creates the base request map for workshop mode execution.
 func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *ScheduleContext) map[string]interface{} {
 	reqMap := map[string]interface{}{
-		"agent_mode":              "workflow_phase",
-		"phase_id":                workflowtypes.WorkflowStatusWorkflowBuilder,
-		"preset_query_id":         sctx.WorkflowID,
-		"selected_folder":         sctx.WorkspacePath,
-		"triggered_by":            "cron",
-		"servers":                 sctx.Capabilities.SelectedServers,
-		"selected_tools":          sctx.Capabilities.SelectedTools,
-		"selected_skills":         sctx.Capabilities.SelectedSkills,
-		"browser_mode":            sctx.Capabilities.BrowserMode,
-		"use_code_execution_mode": sctx.Capabilities.UseCodeExecutionMode,
+		"agent_mode":                  "workflow_phase",
+		"phase_id":                    workflowtypes.WorkflowStatusWorkflowBuilder,
+		"preset_query_id":             sctx.WorkflowID,
+		"selected_folder":             sctx.WorkspacePath,
+		"triggered_by":                "cron",
+		"servers":                     sctx.Capabilities.SelectedServers,
+		"selected_tools":              sctx.Capabilities.SelectedTools,
+		"selected_skills":             sctx.Capabilities.SelectedSkills,
+		"browser_mode":                sctx.Capabilities.BrowserMode,
+		"use_code_execution_mode":     sctx.Capabilities.UseCodeExecutionMode,
+		"disable_live_input_delivery": true,
 	}
 
 	s.applyLLMAndSecretsToReqMap(ctx, reqMap, sctx)
@@ -2153,24 +2156,77 @@ func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *Sched
 	return reqMap
 }
 
-// waitForWorkshopIdle polls until all background agents and synthetic turns have completed.
+var schedulerWorkshopIdlePollInterval = 3 * time.Second
+
+const schedulerWorkshopIdleConsecutiveChecks = 2
+const schedulerWorkshopIdleMaxRefreshErrors = 3
+
+// waitForWorkshopIdle polls until all background agents, tracked executions, and
+// tmux-backed turns have completed.
 func (s *SchedulerService) waitForWorkshopIdle(ctx context.Context, sessionID string) error {
-	ticker := time.NewTicker(3 * time.Second)
+	ticker := time.NewTicker(schedulerWorkshopIdlePollInterval)
 	defer ticker.Stop()
 
+	consecutiveIdleChecks := 0
+	consecutiveRefreshErrors := 0
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
+			if err := s.refreshSessionTmuxSnapshotsForIdleCheck(ctx, sessionID); err != nil {
+				consecutiveIdleChecks = 0
+				consecutiveRefreshErrors++
+				if consecutiveRefreshErrors >= schedulerWorkshopIdleMaxRefreshErrors {
+					return err
+				}
+				continue
+			}
+			consecutiveRefreshErrors = 0
 			// Consolidated status — same busy/idle/stopped the UI sees, so the
 			// scheduler doesn't fire the next message while the (possibly tmux-
 			// backed) agent is still working.
 			if !s.api.sessionIsBusy(sessionID) {
-				return nil
+				consecutiveIdleChecks++
+				if consecutiveIdleChecks >= schedulerWorkshopIdleConsecutiveChecks {
+					return nil
+				}
+				continue
 			}
+			consecutiveIdleChecks = 0
 		}
 	}
+}
+
+func (s *SchedulerService) refreshSessionTmuxSnapshotsForIdleCheck(ctx context.Context, sessionID string) error {
+	if s == nil || s.api == nil || s.api.terminalStore == nil || strings.TrimSpace(sessionID) == "" {
+		return nil
+	}
+
+	seenTmuxSessions := map[string]struct{}{}
+	for _, snapshot := range s.api.terminalStore.ListMetadata(sessionID) {
+		tmuxSession := strings.TrimSpace(snapshot.TmuxSession)
+		if tmuxSession == "" {
+			continue
+		}
+		if _, seen := seenTmuxSessions[tmuxSession]; seen {
+			continue
+		}
+		seenTmuxSessions[tmuxSession] = struct{}{}
+
+		captureCtx, cancel := context.WithTimeout(ctx, terminalTmuxActionTimeout)
+		content, err := captureTerminalPaneLines(captureCtx, tmuxSession, terminalDefaultRefreshLines)
+		cancel()
+		if err != nil {
+			if isMissingTmuxTargetError(err) {
+				s.api.terminalStore.MarkStale(snapshot.TerminalID)
+				continue
+			}
+			return fmt.Errorf("refresh tmux snapshot %q: %w", tmuxSession, err)
+		}
+		s.api.terminalStore.ReplaceContentWithSource(snapshot.TerminalID, content, "tmux_capture")
+	}
+	return nil
 }
 
 // getOrCreateRuntimeState returns (or creates) the in-memory runtime state for a schedule.

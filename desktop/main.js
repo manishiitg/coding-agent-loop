@@ -817,10 +817,36 @@ ipcMain.on('set-running-activity', (_event, payload) => {
   updateDockActivityAnimation();
 });
 
+function normalizeExternalUrl(rawUrl) {
+  if (typeof rawUrl !== 'string') return null;
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:' || parsed.protocol === 'mailto:') {
+      return parsed.toString();
+    }
+  } catch (_) {
+    return null;
+  }
+  return null;
+}
+
+function openExternalUrl(rawUrl, source) {
+  const externalUrl = normalizeExternalUrl(rawUrl);
+  if (!externalUrl) {
+    console.warn(`[main] Blocked unsupported external URL from ${source}:`, rawUrl);
+    return;
+  }
+  shell.openExternal(externalUrl).catch(err => {
+    console.error(`[main] Failed to open external URL from ${source}:`, err);
+  });
+}
+
 // IPC Handler for opening external URLs
 ipcMain.on('open-external', (event, url) => {
   console.log('[main] Received open-external request for:', url);
-  shell.openExternal(url);
+  openExternalUrl(url, 'ipc');
 });
 
 function getResourcesDir() {
@@ -1717,17 +1743,19 @@ function createWindow(initialUrl) {
   // Handle new window requests (e.g. target="_blank" or window.open)
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     console.log('[main] setWindowOpenHandler intercepted request for:', url);
-    
-    // Check if it's an external URL (not our local server)
+
     if (url.startsWith('http://127.0.0.1') || url.startsWith('http://localhost')) {
       console.log('[main] Allowing internal window/popup for:', url);
       return { action: 'allow' };
     }
 
-    console.log('[main] Opening external URL in system browser:', url);
-    shell.openExternal(url).catch(err => {
-      console.error('[main] Failed to open external URL:', err);
-    });
+    const externalUrl = normalizeExternalUrl(url);
+    if (externalUrl) {
+      console.log('[main] Opening external URL in system browser:', externalUrl);
+      openExternalUrl(externalUrl, 'window-open');
+    } else {
+      console.warn('[main] Blocking unsupported window-open URL:', url);
+    }
 
     return { action: 'deny' };
   });
@@ -1743,12 +1771,14 @@ function createWindow(initialUrl) {
     u.startsWith('app://') ||
     u.startsWith('about:');
   const redirectExternalNavigation = (event, url) => {
-    if (!isInternalNavUrl(url) && /^https?:\/\//i.test(url)) {
+    const externalUrl = normalizeExternalUrl(url);
+    if (!isInternalNavUrl(url) && externalUrl) {
       event.preventDefault();
-      console.log('[main] will-navigate → opening external URL in system browser:', url);
-      shell.openExternal(url).catch(err => {
-        console.error('[main] Failed to open external URL:', err);
-      });
+      console.log('[main] will-navigate -> opening external URL in system browser:', externalUrl);
+      openExternalUrl(externalUrl, 'will-navigate');
+    } else if (!isInternalNavUrl(url) && !externalUrl) {
+      event.preventDefault();
+      console.warn('[main] Blocking unsupported navigation URL:', url);
     }
   };
   mainWindow.webContents.on('will-navigate', redirectExternalNavigation);

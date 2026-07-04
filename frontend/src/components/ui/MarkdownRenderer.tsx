@@ -50,6 +50,32 @@ const hasWorkspacePrefix = (path: string): boolean => workspacePrefixes.some(pre
 
 const hasExplicitUrlProtocol = (href: string): boolean => /^[a-z][a-z0-9+.-]*:/i.test(href)
 
+const resolveSafeExternalHref = (href?: string | null): string | null => {
+  const trimmed = (href || '').trim()
+  if (!/^(https?:|mailto:)/i.test(trimmed)) return null
+  try {
+    const url = new URL(trimmed)
+    if (url.protocol === 'http:' || url.protocol === 'https:' || url.protocol === 'mailto:') {
+      return url.toString()
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+const openExternalHref = (href?: string | null): boolean => {
+  const externalHref = resolveSafeExternalHref(href)
+  if (!externalHref) return false
+  const electronAPI = (window as unknown as { electronAPI?: { openExternal?: (url: string) => void } }).electronAPI
+  if (electronAPI?.openExternal) {
+    electronAPI.openExternal(externalHref)
+    return true
+  }
+  window.open(externalHref, '_blank', 'noopener,noreferrer')
+  return true
+}
+
 const splitPipeTableCells = (line: string): string[] => {
   const trimmed = line.trim()
   if (!trimmed.startsWith('|')) return []
@@ -1175,6 +1201,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           em: ({ children }) => <em className="italic break-words overflow-wrap-anywhere">{children}</em>,
           a: ({ href, children }) => {
             const workspaceTarget = resolveWorkspaceHref(href)
+            const externalHref = resolveSafeExternalHref(href)
 
             if (workspaceTarget) {
               return (
@@ -1193,11 +1220,27 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                 </a>
               )
             }
+            if (!externalHref) {
+              return (
+                <span
+                  className="text-gray-600 dark:text-gray-300 break-words overflow-wrap-anywhere"
+                  title={href ? `Unsupported link: ${href}` : undefined}
+                >
+                  {children}
+                </span>
+              )
+            }
             return (
-              <a 
-                href={href} 
-                target="_blank" 
+              <a
+                href={externalHref}
+                target="_blank"
                 rel="noopener noreferrer"
+                onClick={(e) => {
+                  if (openExternalHref(externalHref)) {
+                    e.preventDefault()
+                    e.stopPropagation()
+                  }
+                }}
                 className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 underline break-words overflow-wrap-anywhere"
               >
                 {children}

@@ -579,6 +579,11 @@ type QueryRequest struct {
 	// Auto-notification flag: when true, this is a background agent completion notification
 	// (not user-initiated). Backend treats it as a synthetic turn so frontend doesn't block input.
 	IsAutoNotification bool `json:"is_auto_notification,omitempty"`
+	// Internal/system callers can force a real server-tracked turn instead of the
+	// retained coding-CLI live-input shortcut. Scheduler sequences rely on this so
+	// the next cron message waits for turn completion instead of racing a tmux
+	// snapshot that may not have flipped to busy yet.
+	DisableLiveInputDelivery bool `json:"disable_live_input_delivery,omitempty"`
 	// Internal: user ID for synthetic turn reconstruction (not from JSON)
 	userID string `json:"-"`
 }
@@ -2543,7 +2548,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// path below. Auto-notifications keep their synthetic-turn semantics and are
 	// never short-circuited. Scoped to live-input-capable coding agents so API/LLM
 	// chat is unchanged.
-	if !req.IsAutoNotification && !requestLLMConfigOverridesManifest(req) && api.tryDeliverQueryAsLiveInput(w, r, sessionID, req.Query, queryID) {
+	if !req.DisableLiveInputDelivery && !req.IsAutoNotification && !requestLLMConfigOverridesManifest(req) && api.tryDeliverQueryAsLiveInput(w, r, sessionID, req.Query, queryID) {
 		return
 	}
 

@@ -1195,7 +1195,6 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
                     sources={sources}
                     hiddenWidgetKeys={hiddenWidgetKeys}
                     handleToggleWidgetHidden={handleToggleWidgetHidden}
-                    showDocumentSectionHeading={visibleSections.length > 1}
                   />
                 ))}
               </div>
@@ -1364,7 +1363,6 @@ function SectionContainer({
   sources,
   hiddenWidgetKeys,
   handleToggleWidgetHidden,
-  showDocumentSectionHeading = false,
 }: {
   domId?: string
   section: ReportSection
@@ -1375,7 +1373,6 @@ function SectionContainer({
   sources: SourceCache
   hiddenWidgetKeys: Set<string>
   handleToggleWidgetHidden: (widgetKey: string) => void
-  showDocumentSectionHeading?: boolean
 }) {
   const tabsEnabled = section.layout?.mode === 'tabs'
   const tabGroups = useMemo(() => {
@@ -1488,11 +1485,14 @@ function SectionContainer({
   const documentOnly =
     entries.length > 0 &&
     entries.every(({ entry }) => entry.kind === 'single' && isDocumentWidget(entry.widget))
-  const shouldShowSectionHeader = !documentOnly || showDocumentSectionHeading
+  const shouldShowSectionHeader = !documentOnly
+  const tabListClassName = documentOnly
+    ? 'flex gap-1 overflow-x-auto rounded-xl border border-border/70 bg-muted/45 p-1 shadow-sm [scrollbar-width:thin]'
+    : 'flex gap-1 overflow-x-auto border-b border-border/60 pb-1 [scrollbar-width:thin]'
   return (
     <section
       id={domId}
-      className={documentOnly ? 'flex scroll-mt-14 flex-col gap-2' : 'flex scroll-mt-14 flex-col gap-2 p-0 sm:gap-2.5 sm:rounded-2xl sm:border sm:border-border/50 sm:bg-card/55 sm:p-3 sm:shadow-sm'}
+      className={documentOnly ? 'flex scroll-mt-14 flex-col gap-3' : 'flex scroll-mt-14 flex-col gap-2 p-0 sm:gap-2.5 sm:rounded-2xl sm:border sm:border-border/50 sm:bg-card/55 sm:p-3 sm:shadow-sm'}
     >
       {shouldShowSectionHeader && <SectionHeader heading={section.heading} />}
       {tabsEnabled && tabGroups.length > 0 && (
@@ -1503,19 +1503,26 @@ function SectionContainer({
               onSelect={handleSelectTab}
             />
         ) : (
-          <div className="flex gap-1 overflow-x-auto border-b border-border/60 pb-1 [scrollbar-width:thin]">
+          <div className={tabListClassName}>
             {tabGroups.map(tab => (
               <button
                 key={tab.key}
                 type="button"
                 onClick={() => handleSelectTab(tab.key)}
-                className={`shrink-0 rounded-t-md border px-3 py-1.5 text-sm transition-colors ${
-                  (activeTab?.key ?? tabGroups[0]?.key) === tab.key
-                    ? 'border-border border-b-background bg-background font-medium text-foreground shadow-sm'
-                    : 'border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground'
-                }`}
+                className={documentOnly
+                  ? `shrink-0 rounded-lg border px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${
+                      (activeTab?.key ?? tabGroups[0]?.key) === tab.key
+                        ? 'border-border bg-background text-foreground shadow-sm'
+                        : 'border-transparent text-muted-foreground hover:bg-background/60 hover:text-foreground'
+                    }`
+                  : `shrink-0 rounded-t-md border px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${
+                      (activeTab?.key ?? tabGroups[0]?.key) === tab.key
+                        ? 'border-border border-b-background bg-background font-medium text-foreground shadow-sm'
+                        : 'border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                    }`
+                }
               >
-                <span>{tab.label}</span>
+                <span className="block max-w-72 truncate">{tab.label}</span>
               </button>
             ))}
           </div>

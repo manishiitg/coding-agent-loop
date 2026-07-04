@@ -23,7 +23,7 @@ const WorkflowManifestSchemaVersion = 1
 // contract version. Unlike schema_version, this gates agent-run workflow
 // upgrades: Pulse can add version-specific messages and stamp this value only
 // after the workflow has been checked or migrated.
-const WorkflowContractCurrentVersion = "1.0.2"
+const WorkflowContractCurrentVersion = "1.0.3"
 
 const workflowContractInitialVersion = "1.0.0"
 

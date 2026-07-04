@@ -311,6 +311,9 @@ func isCodingAgentAliasModel(provider, modelID string) bool {
 			return true
 		}
 	}
+	if provider == "claude-code" && modelID == "claude-opus-4-7" {
+		return true
+	}
 	return modelID == "" || modelID == provider || modelID == "auto" || modelID == "claude-code" || modelID == "codex-cli"
 }
 

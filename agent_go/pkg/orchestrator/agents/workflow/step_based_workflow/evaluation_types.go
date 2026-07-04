@@ -150,13 +150,13 @@ type EvaluationReport struct {
 	StepScores       []*EvaluationStepScore `json:"step_scores"`
 }
 
-// EvaluationReportFileName is the filename the scoring agent writes its report to
-// inside the eval run folder. Kept as a constant so the validation schema and the
-// post-validation file-rewrite use the same path.
+// EvaluationReportFileName is the filename the Go report phase writes the assembled
+// report to inside the eval run folder. Kept as a constant so the validation schema
+// and the report writer use the same path.
 const EvaluationReportFileName = "evaluation_report.json"
 
 // BuildEvaluationReportValidationSchema returns a fixed pre-validation schema for the
-// scoring agent's JSON report. Same shape as any step's validation_schema, so it flows
+// assembled evaluation report JSON. Same shape as any step's validation_schema, so it flows
 // through the existing RunPreValidation engine. Validates per-step structure (score
 // range 0-10, min text lengths for reasoning/evidence) and pins the step_scores array
 // length to numSteps.

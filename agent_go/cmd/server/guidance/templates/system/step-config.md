@@ -20,7 +20,7 @@ A step's access to each store is independent and defaults differently. Grant the
 
 | Lock | Scope | Effect | Set when |
 |---|---|---|---|
-| `lock_learnings` | per-step | Freezes `learnings/{step}/SKILL.md` — still read, no new writes | deliberate builder/user decision; never a runtime side effect |
+| `lock_learnings` | per-step | Stops this step's post-run learning writes to `learnings/_global/SKILL.md` (writes still allowed while `_global/` is empty, to bootstrap). Reads unaffected | deliberate builder/user decision, or the description-hash auto-lock after 3 same-description runs |
 | `lock_code` | per-step (scripted) | Freezes `learnings/{step}/main.py`, skips the fix loop | **user asks to lock** → allow it; **builder auto-locking on its own** → only after 10+ scenario-covering runs |
 | `lock_knowledgebase` | workflow-wide | Freezes `knowledgebase/notes/` auto-updates | when KB is curated and should stop auto-evolving |
 

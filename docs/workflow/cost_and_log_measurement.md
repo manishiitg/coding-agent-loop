@@ -215,7 +215,7 @@ Common files:
 
 There are also builder/session logs under:
 
-- `builder/session-{sessionId}-conversation.json`
+- `builder/conversation/YYYY-MM-DD/session-{sessionId}-conversation.json`
 
 ## Who Writes The Logs
 

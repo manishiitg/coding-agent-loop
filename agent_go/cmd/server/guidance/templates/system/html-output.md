@@ -7,11 +7,12 @@ Load this doc before any step or agent that writes a `.html` file as a final art
 | Output goes to | Format |
 |----------------|--------|
 | Downstream step as structured data | **JSON** — always |
-| Final human-readable report / analysis / dashboard | **HTML** — always |
+| Dedicated HTML surfaces: `builder/improve.html`, org pages (`pulse/*.html`), dashboard cards, published pages | **HTML** — that's what this doc is for |
+| Final human-readable report / analysis | **Markdown by default** — reach for HTML only when the layout genuinely needs it (see `code-authoring`); an actual dashboard belongs in the report system (`reports/report_plan.json`), not a hand-authored page |
 | Short prose note / KB append / learnings | **Markdown** |
 | Raw data the user may download | **JSON or CSV** |
 
-Never write Markdown for a final report that a human will open in the viewer. HTML renders richly; Markdown is a plain-text fallback.
+Markdown is the default for human-readable step output — it renders richly in the viewer and gets clickable workspace links. Write HTML when producing one of the dedicated HTML surfaces above or when the user asked for a rich standalone page; then follow every rule below.
 
 ### Non-negotiable rules
 

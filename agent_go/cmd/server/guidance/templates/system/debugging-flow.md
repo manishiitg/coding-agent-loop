@@ -8,7 +8,7 @@ model — use it to investigate.
 
 1. Pick the action that matches the failure: if the workflow path is
    sound but reliability is broken, run `harden_workflow(group_name?)`.
-   If primary metrics or success criteria show a strategy gap, run
+   If eval verdicts or the goal card show a success-criteria gap, run
    `replan_workflow_from_results(group_name?)`. For local fixes
    (description, `validation_schema`, context wiring, step config),
    apply them directly with the matching update tool.

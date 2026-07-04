@@ -88,7 +88,7 @@ It defines the correct anatomy of a skill (SKILL.md + references/ + scripts/ + a
 
 Use this block to drive CROSS-STEP consolidation that a single step's learning agent can't see:
 - If multiple objectives imply the same HOW-knowledge (e.g. two different steps' objectives both mention "OTP timing after PAN submit"), promote the shared lesson to a common section in `+"`"+`references/`+"`"+` and remove the step-specific duplicates from SKILL.md.
-- If an objective's scope has NO corresponding content in SKILL.md/references/, flag it in your final summary (line like "diagnostic: step X's learning_objective not reflected in current skill — likely the learning agent didn't run successfully for it") — do NOT silently re-learn it; that's the per-step learning agent's job.
+- If an objective's scope has NO corresponding content in SKILL.md/references/, flag it in your final summary (line like "diagnostic: step X's learning_objective not reflected in current skill — likely its direct-learnings turn didn't run successfully") — do NOT silently re-learn it; the step's own direct-learnings turn owns that on its next run.
 - If the current SKILL.md has sections that no declared objective covers, decide: is it stale (from a removed step) or genuinely shared? Stale → remove; shared → move to a `+"`"+`references/`+"`"+` file with a clear scope note.
 {{end}}
 {{if .ExecutionLogsPath}}

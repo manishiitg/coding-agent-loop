@@ -67,12 +67,13 @@ These are the structured framework fields that drive behavior:
 - `oversight_mode`: `manual`, `supervised`, or `autonomous`. Recommended defaults: deterministic or ratcheting workflow -> `manual`; exploratory -> `autonomous`; contextual/business-context -> `supervised`.
 - `post_run_monitor`: `true` or `false`. Recommend `true` for workflows where a silently broken or drifting run would matter and is not watched live. Leave off for scratch, experimental, or interactive-only workflows where the extra per-run triage pass is not worth it.
 
-When turning `post_run_monitor` on, ask the user how they want to be notified. Default: the monitor pings once only on a transition (broke / recovered / new finding) and is silent on steady runs. If they want something else, capture it as a `## Notifications` section in `soul/soul.md`. If they accept the default, leave the section out.
+When turning `post_run_monitor` on, ask the user how they want to be notified. Default: the monitor sends one compact run summary after every run, and marks broke / recovered / new finding transitions clearly. If they want something else, capture it as a `## Notifications` section in `soul/soul.md`. If they accept the default, leave the section out.
 
 STEP 4 - VERIFY EVAL COVERAGE
-Read `evaluation/evaluation_plan.json` and compare it to `soul.md`:
-- Does each important success criterion have eval coverage?
-- Does the eval also catch operational failures: missing artifacts, malformed output, unsupported claims, wrong tool use, skipped steps, and stale data?
+Read `evaluation/evaluation_plan.json` and compare it to `soul.md` (the coverage matrix, both ways):
+- Does each important success criterion have an eval step measuring it?
+- Does any eval step map to no criterion, or duplicate operational checks that Pulse triage / `pre_validation` already own (missing artifacts, malformed output, skipped steps)? Flag those for retirement — eval measures the goal; Pulse owns operational quality.
+- Do eval steps fail closed when inputs are missing (never pass on absent evidence)?
 - Are eval thresholds aligned with the confirmed success criteria?
 
 If important coverage is missing, record an open finding in `builder/improve.html` and suggest `/improve-evaluation` with a focused instruction. Do not create separate workflow measurement artifacts; that feature is currently disabled.

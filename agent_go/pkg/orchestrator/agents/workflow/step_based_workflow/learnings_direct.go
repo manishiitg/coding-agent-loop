@@ -32,10 +32,9 @@ var learningsGlobalFileMutex sync.Mutex
 // to the same file; the serialization mutex prevents parallel writes from
 // racing.
 //
-// Learn-code note: the step's main.py is copied to learnings/<stepID>/code/
-// automatically by Go code (controller_execution.go:2672 via
-// saveScriptedScriptToLearnings), independent of both the post-step learning
-// agent and this direct-mode turn. The step agent is NOT asked to do that copy
+// Scripted note: the step's main.py is copied into the learnings/<stepID>/ root
+// automatically by Go code (saveScriptedScriptToLearnings), independent of this
+// direct-mode turn. The step agent is NOT asked to do that copy
 // here — that would double-write a shared file and open needless write access
 // to learnings/<stepID>/. Direct-mode learnings only targets _global/ for
 // author-authored domain knowledge beyond what main.py encodes.

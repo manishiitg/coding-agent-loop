@@ -10,17 +10,19 @@ The current system is file-backed and execution-oriented:
 
 ## What Evaluation Is For
 
-Evaluation is the workflow's scoring layer for completed execution runs.
+Evaluation is the workflow's goal-measurement layer for completed execution runs.
 
 It answers:
-- did a target run actually satisfy the intended outcomes?
-- what did each evaluation step conclude?
-- what overall score should this run receive?
+- did a target run actually satisfy the success criteria in `soul/soul.md`?
+- what did each evaluation step conclude, with what evidence?
 
 It is separate from:
-- execution-time pre-validation
+- execution-time pre-validation (mechanical run-shape checks)
+- Pulse per-run triage (operational breakage: errors, skipped steps, empty artifacts, hallucinated successes)
 - step learning
 - workflow execution itself
+
+Division of labor: **Pulse owns "did it run right"; evals own "did it achieve the goal."** Eval steps should map one-to-one to success criteria and never duplicate operational checks — see the `evaluation-plan` guidance template for the authoring contract. Pulse reads the eval report each run and maps verdicts onto the per-criterion goal card in `builder/improve.html`, which is the durable goal signal (there is no separate numeric metrics layer).
 
 ## Current Mental Model
 
@@ -122,40 +124,21 @@ The eval step runs in the eval sandbox, but reads the original artifacts through
 
 This is the correct way to reference original execution outputs in eval steps.
 
-## Scoring Phase
+## Report Phase
 
-After eval steps finish, the system runs a scoring phase that produces a single `evaluation_report.json` covering every eval step.
+After eval steps finish, the runtime builds a single `evaluation_report.json` covering every eval step — directly in Go (`runEvaluationReportPhase` in `evaluation_execution.go`). **There is no scoring agent, no combined LLM scoring call, and no learn_code scoring fast path** (all removed); each eval step's own structured output is its verdict.
 
 ### Report shape
 
 The on-disk report contains:
 - `target_run_folder`, `generated_at`
-- `total_score`, `max_possible_score`, `score_percentage` (computed in Go after validation)
 - `step_scores[]`, one entry per eval step:
-  - `step_id`, `score` (0-10), `max_score`, `reasoning` (≥20 chars), `evidence` (≥10 chars)
+  - `step_id`
+  - placeholder `score: 0` / `max_score: 0` with fixed `reasoning`/`evidence` text pointing readers at `output_content` ("Final scoring is disabled; this report preserves the eval step output for review")
+  - `output_content` — the eval step's own structured output, attached from the first of: `output_content.json`, the step's `context_output` file, a `pre_validation` file, or `context_output.json` in the eval sandbox (`enrichEvaluationReportWithStepOutputs`)
+- eval steps skipped by `applies_to_routes` appear as skipped entries with `max_score: 0`, so a run is not penalized for route paths it did not take
 
-There is intentionally **no `summary`, `step_title`, or `success_criteria` field on the score**. UI consumers look those up by `step_id` from `evaluation_plan.json`, which is returned alongside reports by the same API endpoint.
-
-### Top-level score vs `output_content` (what metrics read)
-
-Each eval step's `score`/`max_score` is its top-line verdict. In addition, a step may emit `output_content` — a structured JSON object with domain-specific numeric keys (e.g. `{"score": 8, "max_score": 10, "coverage": 0.95, "accuracy": 0.87}`). Metrics in `planning/metrics.json` with `source.type="eval_step"` and a non-empty `source.field` resolve from `output_content`; a metric with an empty/`score` field falls back to the top-level `score`/`max_score` as a percentage (see `metrics_snapshot.go`, `resolveMetricValueFromStep`). Rule of thumb: the top-level score summarizes the verdict for humans and the report; `output_content` carries the individual judgment dimensions that metrics track over time.
-
-### Two scoring paths
-
-The scoring phase has two paths, controlled by an optional `__evaluation_scoring__` entry in `evaluation/step_config.json`:
-
-**LLM scoring (default)**
-- The runtime spins up a single scoring agent (one LLM call covering all eval steps)
-- The agent receives every eval step's id/title/description/execution_output in its user prompt
-- The agent uses standard workspace tools (`execute_shell_command`, `diff_patch_workspace_file`) to write the report file directly to an absolute path provided in the user prompt
-- After the agent's turn loop ends, Go runs the fixed pre-validation schema against the produced file. On failure the runtime feeds the error list back to the same agent as a follow-up user message and lets it fix `evaluation_report.json` in place; this repeats up to 3 attempts before the eval fails.
-
-**learn_code fast path (opt-in)**
-- Optimizer may set `{ "id": "__evaluation_scoring__", "agent_configs": { "declared_execution_mode": "learn_code" } }` in `evaluation/step_config.json` only when the user explicitly asks to freeze/reuse deterministic scoring code and 10+ eval runs cover the relevant output scenarios.
-- On every eval run, the runtime checks for `learnings/__evaluation_scoring__/main.py`
-  - If present: writes `scoring_inputs.json` (with all step inputs + resolved `target_run_path`) and execs `python3 main.py <inputs> <output>`. The script writes `evaluation_report.json` deterministically; Go validates it against the same fixed schema. **No LLM call.**
-  - If missing or the script fails or the output fails validation: falls back to the LLM scoring path. The LLM is also instructed to author/refine `main.py` so future runs hit the fast path.
-- One `main.py` works across all groups — the runtime resolves all per-group paths into `scoring_inputs.json` so the script never hardcodes anything.
+`output_content` is the source of truth for each eval step's verdict: the step should emit its own `score`, `max_score`, `reasoning`, and `evidence` (plus any domain-specific judgment dimensions) as structured output, enforced by the step's validation schema. Consumers — Pulse triage, the goal card in `builder/improve.html`, the scheduled improve loop, the UI — read the per-step verdicts; nothing numeric is aggregated downstream.
 
 ### Where the report lands
 
@@ -164,14 +147,6 @@ Whichever path produces it, the runtime writes the report to:
 - published path: `evaluation/runs/{targetRunFolder}/evaluation_report.json`
 
 The publish step is what makes evaluation reports line up with the execution run the user asked about.
-
-### Scoring agent overrides
-
-The reserved `__evaluation_scoring__` step config entry accepts the same `agent_configs` shape as a regular step:
-- `use_code_execution_mode` (`*bool`) — overrides the auto-detected code-exec mode (default: provider-based; CLI providers force true)
-- `declared_execution_mode` (`"learn_code"`) — opts into the fast-path described above after the explicit-user-request, deterministic-scoring, and 10+ eval-run gates are satisfied
-
-Implementation lives in [evaluation_scoring_agent.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/evaluation_scoring_agent.go), [evaluation_scoring_learn_code.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/evaluation_scoring_learn_code.go), and `createEvaluationScoringAgent` in [controller_agent_factory.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go).
 
 ## Auto-Evaluation
 
@@ -248,6 +223,8 @@ Current corrections:
 - the published report is copied to the target run folder path
 - evaluation costs come from the `costs/` ledger, not primarily from legacy per-run token files
 - the eval plan is edited and loaded directly from `evaluation/evaluation_plan.json`
+- the combined LLM scoring agent and the `__evaluation_scoring__` learn_code fast path were removed — the report is assembled in Go from per-step `output_content`
+- the numeric metrics layer (`planning/metrics.json`, `db/metrics_history.jsonl`, `propose_metric`/`retire_metric`) was removed (2026-07-01) — the goal signal is the per-criterion goal card in `builder/improve.html`, maintained agentically by Pulse from eval reports + `soul.md`
 
 ## Practical Summary
 

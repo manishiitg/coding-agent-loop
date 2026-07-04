@@ -10,7 +10,7 @@ Auto-improve runs over the one workflow log (`builder/improve.html`) with the sa
 
 GOAL
 Set up the per-run review and the complementary schedules:
-0. Turn Pulse on: call `update_workflow_config(post_run_monitor=true)`. From then on, after every run Pulse backs up, records Bug/Goal findings in the log, applies the full plan-step harden for Bug findings, runs a separate report-only Artifact Review item, and records LLM/cost/time. It never does a structural rewrite; see `get_reference_doc(kind="post-run-monitor")`.
+0. Turn Pulse on: call `update_workflow_config(post_run_monitor=true)`. From then on, after every run Pulse triages (records Bug/Goal findings in the log), applies the full plan-step harden for Bug findings, runs a separate report-only Artifact Review item, records LLM/cost/time, then backs up, publishes, and notifies. It never does a structural rewrite; see `get_reference_doc(kind="post-run-monitor")`.
 1. A workshop Run-mode schedule for recurring execution.
 2. A workshop Optimizer-mode IMPROVE schedule. Each fire reads the log, run/eval evidence, and planning changelog, runs the expert-advisor scan for credible out-of-plan ideas, then follows `get_workflow_command_guidance(kind="improve-workflow")`.
 
@@ -29,10 +29,10 @@ DISCOVERY
 SCHEDULE STRATEGY
 1. Prefer updating or reusing good existing schedules instead of creating duplicates.
 2. Only create a new schedule when no existing schedule already serves the purpose.
-3. The IMPROVE schedule fires on a regular cadence: initial roughly every 1-2 runs, widening as the workflow stabilizes. It applies a structural replan only when cross-run evidence is strong, refreshes stale evidence-chain artifacts per fire, and notifies only on decision-worthy changes.
-4. If cadence is not obvious, choose a practical recurring run cadence from the workflow objective and start the improve schedule roughly every 1-2 runs. For unknown active workflows, base the run cadence at every 6-12 hours, not weekly.
-5. If `planning/changelog/` shows material plan/config changes since the last log entry or unresolved open finding, tighten the improve schedule for 24-48 hours or until the next one or two post-change runs have been reviewed.
-6. Each scheduled improve fire may review cadence and use `update_schedule` when history, schedule runs, changelog entries, or run/eval evidence shows the cadence is too slow, too fast, stale, or mis-scoped.
+3. The IMPROVE schedule uses a bounded cron cadence: **weekly**, **twice-weekly**, **daily-until-recovered**, or **biweekly-over-time**. It applies a structural replan only when cross-run evidence is strong, refreshes stale evidence-chain artifacts per fire, and notifies only on decision-worthy changes.
+4. If cadence is not obvious, choose a practical recurring run cadence from the workflow objective and start Auto Improve at **weekly** for stable workflows, **twice-weekly** for active/new workflows, or **daily-until-recovered** when there is fresh drift, a material plan/config change, or repeated failure evidence.
+5. If `planning/changelog/` shows material plan/config changes since the last log entry or unresolved open finding, tighten the improve schedule to **daily-until-recovered** or **twice-weekly** until the next one or two post-change runs have been reviewed.
+6. Pulse may later tune the Auto Improve cron using `update_schedule`; do not add new schedule JSON fields. Each scheduled improve fire may also review cadence and use `update_schedule` when history, schedule runs, changelog entries, or run/eval evidence shows the cadence is too slow, too fast, stale, or mis-scoped.
 7. Preserve a good existing timezone if one is already in use. Otherwise use the workflow's local/current timezone.
 
 RUN SCHEDULE
@@ -55,7 +55,7 @@ Create or update a single optimizer-mode improve schedule with:
 - `mode="workshop"`, `workshop_mode="optimizer"`
 - valid `group_names`
 - a clear name and description marking it as the IMPROVE schedule
-- a regular cadence, initially roughly every 1-2 runs and widening as the workflow stabilizes
+- a regular cron cadence chosen from weekly, twice-weekly, daily-until-recovered, or biweekly-over-time
 - no custom scheduled message. Omit `messages` entirely for auto-improve; the scheduler owns the canonical improve prompt and ignores persisted optimizer messages.
 
 The scheduler injects the runtime sequence:
@@ -102,7 +102,12 @@ The focus string must include:
 
 SCHEDULE SELF-TUNING RULES
 - If the run schedule is too infrequent to produce useful run/eval evidence, update cadence or log the blocker when changing cadence would be risky.
-- IMPROVE cadence: start roughly every 1-2 runs. When recent fires increasingly surface no materially new strategy change and no stale evidence-chain artifacts to refresh, widen the interval step by step. When a material plan/config change lands or a regression appears, tighten back toward every 1-2 runs for 24-48 hours or until one or two post-change runs have been reviewed.
+- IMPROVE cadence is cron-only; do not add schedule JSON fields. Preserve the existing minute/hour/timezone when possible:
+  - weekly: `<minute> <hour> * * 1`
+  - twice-weekly: `<minute> <hour> * * 1,4`
+  - daily-until-recovered: `<minute> <hour> * * *`
+  - biweekly-over-time: `<minute> <hour> 1,15 * *` (twice-monthly approximation; standard cron cannot express exact every-14-days without extra scheduler state)
+- When recent fires increasingly surface no materially new strategy change and no stale evidence-chain artifacts to refresh, widen the interval step by step: daily-until-recovered -> twice-weekly -> weekly -> biweekly-over-time. When a material plan/config change lands or a regression appears, tighten back to daily-until-recovered or twice-weekly until one or two post-change runs have been reviewed.
 - If group names drift from `variables/variables.json`, update both schedules.
 - Never create duplicate run/improve schedules when an existing schedule can be updated.
 

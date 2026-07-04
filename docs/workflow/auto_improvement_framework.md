@@ -6,14 +6,14 @@ Auto-improvement gives the optimizer durable evidence and an audit trail for imp
 - **Scheduled harden (act, frequent):** applies local reliability/contract/artifact fixes for **Bug** findings.
 - **Scheduled replan-proposal (act, less frequent):** recommends plan/strategy changes for **Goal** gaps — it proposes, it does not auto-rewrite the plan.
 
-The model is intentionally simple: metrics and run evidence are the inputs, and the optimizer chooses between hardening, replanning, eval-plan improvement, metric cleanup, or no action.
+The model is intentionally simple: run and eval evidence are the inputs, and the optimizer chooses between hardening, replanning, eval-plan improvement, or no action.
 
 ## Two verdicts: Bug and Goal
 
 Every run is judged on two independent axes, shown as separate pills in the Pulse header — never collapsed into one "health":
 
 - **Bug** — did it *run correctly*? Errors, skipped steps, missing/empty artifacts, regressions vs the last run. Fixed by **hardening**. Roughly binary.
-- **Goal** — is it *achieving its success criteria*? Eval scores and outcome metrics vs `soul.md`, trending over runs. Fixed by **refining or replanning**. Continuous.
+- **Goal** — is it *achieving its success criteria*? Eval verdicts and run outputs vs `soul.md`, trending over runs via the goal card in `builder/improve.html`. Fixed by **refining or replanning**. Continuous.
 
 They are orthogonal — a run can be Bug-broken while Goal-on-target, or Bug-clean while Goal-short. **Health gates goal:** a run that wasn't operationally clean produces no trustworthy goal signal, so the goal is never judged on a broken run. For routed workflows the monitor judges **only the path that ran** — a step or eval belonging to a route this run didn't take is not-applicable, never a failure.
 
@@ -22,9 +22,7 @@ They are orthogonal — a run can be Bug-broken while Goal-on-target, or Bug-cle
 - `soul/soul.md`: objective and success criteria. The north star (Markdown — parsed for objective/success-criteria; there is no `soul.html`).
 - `builder/improve.html`: the **Pulse** — the single, self-contained, human-readable HTML log and the user's primary window into the workflow. Holds the two verdicts, a status headline, the goal card, signal tiles, the recent-runs strip, and a newest-first timeline of monitor observations, decisions, open findings, user rules, and notes. Read it before every improve pass. See `get_reference_doc(kind="review-improve-log")` for the format.
 - `builder/improve-archive/YYYY-MM.html`: monthly archive files for old resolved findings and routine entries. Read only the archive files referenced by the active log's archive index or an unresolved id.
-- `builder/monitor-verdict.json`: a small per-run signal (`bug`, `goal`, `headline`, `new_finding`) the monitor overwrites each run so the scheduler can decide whether to notify. Internal signal, not the user surface.
-- `planning/metrics.json`: metric definitions. Mutated through metric tools.
-- `db/metrics_history.jsonl`: per-run metric time series.
+- `builder/card.health.html`: the compact per-run dashboard card the monitor overwrites each run (status + headline in `data-*` attributes). The Bug/Goal verdicts themselves live in the Pulse log's pills + goal card — there is no separate verdict file.
 - `route_selection.json`: which route a run took (so the monitor judges only that path).
 - `runs/iteration-0`: current optimizer evidence target.
 
@@ -35,31 +33,29 @@ Old Markdown improve logs are **legacy**. Carry their unresolved findings into `
 Use this hierarchy when deciding what is true:
 
 1. `soul/soul.md`: canonical objective and success criteria.
-2. `planning/metrics.json` + `db/metrics_history.jsonl`: numeric evidence that operationalizes success criteria.
-3. `runs/iteration-0/<group>/...`: current reality from actual outputs, tool logs, validation, and eval reports.
-4. `evaluation/evaluation_plan.json`: measurement definition; fix it when it conflicts with `soul.md`.
-5. `planning/plan.json`: current implementation attempt, judged against `soul.md` and iteration-0 evidence.
-6. `builder/improve.html` + referenced `builder/improve-archive/*.html`: memory and audit trail for past decisions, unresolved findings, deferred ideas, and resolution links.
+2. `runs/iteration-0/<group>/...`: current reality from actual outputs, tool logs, validation, and eval reports.
+3. `evaluation/evaluation_plan.json`: measurement definition; fix it when it conflicts with `soul.md`.
+4. `planning/plan.json`: current implementation attempt, judged against `soul.md` and iteration-0 evidence.
+5. `builder/improve.html` + referenced `builder/improve-archive/*.html`: memory and audit trail for past decisions, unresolved findings, deferred ideas, resolution links — and the per-criterion goal card, which is the durable goal signal over runs.
 
 ## Decision Model
 
 The per-run monitor only **detects and records**. The scheduled passes then choose one bounded action.
 
-Harden and replan are the two ends of an **exploit/explore** ladder against the metric+success definition — same plan tools, opposite intent:
+Harden and replan are the two ends of an **exploit/explore** ladder against the success-criteria definition — same plan tools, opposite intent:
 
-- `harden_workflow(group_name?, focus?)` — **exploit: refine the current strategy.** The approach is right but execution/wiring is weak: prompts, config, validation, KB, learnings, db/report wiring, eval coverage, or metric wiring need repair. Not a redesign. Harden removes stale `learnings/{step-id}/main.py` for `code_exec` steps; only `learn_code` steps should retain reusable `main.py`.
-- `replan_workflow_from_results(group_name?, focus?)` — **explore: a different strategy for better success.** The current approach is **capped** — even executed cleanly it cannot satisfy the success criteria / primary metric — or run evidence reveals a materially better approach. The escalation tier: reach for it when hardening has **plateaued** (primary metric / success stays short while reliability metrics are healthy) or when the path is structurally wrong for the goal. It rewrites `plan.json`, so the bet must be evidence-backed. When replan keeps or converts a step to `code_exec`, it should remove stale `learnings/{step-id}/main.py` and clear `lock_code`.
-- Eval-plan improvement: evaluation coverage, scoring, structured output, validation schema, or metric-to-eval wiring is weak enough that measurement cannot be trusted.
-- `propose_metric` or `retire_metric`: the metric definition is missing, stale, duplicated, unresolved, or no longer tied to the goal. Use `propose_metric` with `amend_existing:{id,reason}` to correct an existing metric under the same id; the previous definition is archived and the version increments.
+- `harden_workflow(group_name?, focus?)` — **exploit: refine the current strategy.** The approach is right but execution/wiring is weak: prompts, config, validation, KB, learnings, db/report wiring, or eval coverage need repair. Not a redesign. Harden removes stale `learnings/{step-id}/main.py` for `code_exec` steps; only `learn_code` steps should retain reusable `main.py`.
+- `replan_workflow_from_results(group_name?, focus?)` — **explore: a different strategy for better success.** The current approach is **capped** — even executed cleanly it cannot satisfy the success criteria — or run evidence reveals a materially better approach. The escalation tier: reach for it when hardening has **plateaued** (the goal card stays short across clean runs) or when the path is structurally wrong for the goal. It rewrites `plan.json`, so the bet must be evidence-backed. When replan keeps or converts a step to `code_exec`, it should remove stale `learnings/{step-id}/main.py` and clear `lock_code`.
+- Eval-plan improvement: evaluation coverage, scoring, structured output, or validation schema is weak enough that measurement cannot be trusted — a success criterion is unmeasured, an eval step is orphaned or duplicates Pulse/pre-validation, the rubric drifts, or eval cost is out of proportion to run cost.
 - No action: evidence is weak, recent changes need more runs, or the workflow is already aligned.
 
 Each improve pass should perform at most one primary action unless the user explicitly asks for a broader pass.
 
 ## Commands
 
-- `/define-success`: writes the workflow profile and starter metrics, and seeds the Pulse goal card from `soul.md`.
+- `/define-success`: confirms the goal with the user, writes the workflow profile, and seeds the Pulse goal card from `soul.md`.
 - `/monitor` (and the **Monitor** toggle in the workflow toolbar): turns on the per-run review-only pass via `post_run_monitor` so every run records Bug/Goal findings.
-- `/improve-workflow`: reads the Pulse and current evidence, then chooses harden, replan, eval-plan improvement, metric cleanup, or no action.
+- `/improve-workflow`: reads the Pulse and current evidence, then chooses harden, replan, eval-plan improvement, or no action.
 - `/improve-evaluation`: improves eval coverage and rubric quality.
 - `/auto-improve`: turns on the per-run monitor, then creates or updates the Optimizer-mode **harden** schedule (frequent — ~every 1-2 runs) and **replan-proposal** schedule (less frequent — ~every 3-4 runs). Each Optimizer fire delegates the improvement pass to canonical `/improve-workflow` guidance, then self-tunes only its own cadence/scope.
 
@@ -67,7 +63,7 @@ Each improve pass should perform at most one primary action unless the user expl
 
 - **Open findings** carry a short anchor id only so a later fix can close them; closing a finding edits its card in place to add a `Resolved …` line — never delete it, never open a duplicate.
 - **Decisions are confirmed, not assumed.** A harden/replan decision states the effect it expects when written, and stays **unconfirmed** until a later run measures it — at which point the monitor stamps the decision card once: confirmed (cite before → after), no-effect/regressed (reopen a finding), or inconclusive (the run didn't exercise the changed path). A change that quietly failed is worse than no change, so it is never hidden.
-- Metric movement is evidence, not proof. Do not claim an improvement worked until run/eval/metric evidence supports it, and call out confounds such as small sample size, source-data drift, rubric changes, or multiple decisions in the same window.
+- Eval-score movement is evidence, not proof. Do not claim an improvement worked until run/eval evidence supports it, and call out confounds such as small sample size, source-data drift, rubric changes, or multiple decisions in the same window. Rubric changes are the loop's biggest confound — they change what scores mean, so they go through a deliberate eval-plan-improvement pass with a major Decision card, never bundled with a harden/replan.
 
 ## Pulse Log Retention
 

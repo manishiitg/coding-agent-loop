@@ -10,9 +10,11 @@ All paths below are relative to the workspace root (prepend the absolute root wh
 ### Plan & Config
 | Path | Contents |
 |------|----------|
+| workflow.json | Workflow-level config — selected servers/tools/skills, LLM config, schedules, retention, publish/backup pointers |
 | planning/plan.json | Workflow plan — step definitions, descriptions, validation schemas |
 | planning/step_config.json | Step-level config overrides (LLM, execution mode, learnings, etc.) |
-| reports/report_plan.json | Registers the report's HTML/Markdown document(s) under db/reports/ (see persistent-stores design) |
+| variables/variables.json | Runtime variables and groups |
+| reports/report_plan.json | Registers live report HTML document(s) under db/reports/ (see persistent-stores design) |
 | soul/soul.md | Canonical workflow north star: objective, success criteria, and an optional `## Notifications` section (user's preference for when/what the post-run monitor alerts on) |
 
 ### Execution Outputs (per run, per group)
@@ -68,12 +70,19 @@ Use this order when debugging latency:
 ### Other
 | Path | Contents |
 |------|----------|
-| builder/session-{id}-conversation.json | Previous builder chat sessions |
+| builder/conversation/YYYY-MM-DD/session-{id}-conversation.json | Previous builder chat sessions |
 | db/db.sqlite | Workflow state and results — one SQLite database, one table per entity (rows written by steps via `sqlite3`; upsert on the primary key; see persistent-stores design) |
 | db/README.md | Per-table schema contract (DDL, primary key, upsert rule, indexes, writers, consumers) |
 | db/assets/* | Durable media/file assets referenced by db.sqlite rows, reports, or later steps |
+| db/reports/*.html | Live report documents registered from reports/report_plan.json; they read db/db.sqlite through window.report |
 | knowledgebase/context/context.md | User-supplied runtime business context that steps with KB read access must respect |
 | knowledgebase/notes/*.md | Per-topic narrative markdown — durable observations discovered by the workflow. Normally written by step agents in direct-write mode; post-step KB agent only when explicitly requested. |
 | knowledgebase/notes/_index.json | Topic registry (covers, size_bytes, section_count, last_updated) kept in sync with notes/*.md |
 
-**Cleanup**: Delete old builder conversation files when >3 exist (`ls -t builder/session-*.json`, keep latest).
+### Outside The Workflow Root
+
+| Path | Contents |
+|------|----------|
+| skills/<folder>/SKILL.md | Installed workspace skills shared by all workflows; workflow.json records selected skills, and planning/step_config.json records per-step enabled_skills |
+
+**Cleanup**: Delete old builder conversation files when >3 exist (`ls -t builder/conversation/*/session-*.json`, keep latest).

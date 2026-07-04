@@ -211,7 +211,7 @@ The interactive builder writes and reads several kinds of state:
 - variables/group data
 
 ### Builder chat artifacts
-- `builder/session-{sessionId}-conversation.json`
+- `builder/conversation/YYYY-MM-DD/session-{sessionId}-conversation.json`
 
 ### Builder phase costs
 - `costs/phase/token_usage.json`

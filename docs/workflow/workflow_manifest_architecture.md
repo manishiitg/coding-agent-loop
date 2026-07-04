@@ -194,8 +194,7 @@ These still live alongside it:
 - `planning/output_plan.json`
 - `variables/variables.json`
 - `evaluation/evaluation_plan.json`
-- `planning/metrics.json` — defines the workflow's quantified goals and how each value is sourced per run. Lives under `planning/` so the existing FolderGuard `BlockedWritePaths` makes it tool-only — only the privileged `propose_metric` tool can write here (same pattern as `planning/step_config.json` / `update_step_config`). See [auto_improvement_framework.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/auto_improvement_framework.md).
-- `builder/improve.md` — single source-of-truth entry point for auto-improvement narrative, active index, archive index, recent structured `improve-decision` fenced audit blocks, and links to older monthly `builder/improve-archive/YYYY-MM.md` details.
+- `builder/improve.html` — the Pulse log: single source-of-truth entry point for auto-improvement narrative, verdict pills, the per-criterion goal card (the workflow's goal signal — the former `planning/metrics.json` numeric layer was removed 2026-07-01), open findings, decision cards, and links to older monthly `builder/improve-archive/YYYY-MM.html` details. See [auto_improvement_framework.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/auto_improvement_framework.md).
 - `knowledgebase/rules/rules.md` and `knowledgebase/rules/examples/` — Type 3 business-rule store. User-supplied rules are captured through chat-intent rule capture. Excluded from `reorganize_knowledgebase` and `consolidate_knowledgebase` passes — never silently rewritten by the optimizer. Audit trail folded into structured `builder/improve.md` entries (filter to `source: user` + `trigger: capture-context`).
 
 `workflow.json` is the workflow-level definition file.

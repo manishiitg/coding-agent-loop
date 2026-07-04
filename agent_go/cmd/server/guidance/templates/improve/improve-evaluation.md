@@ -2,11 +2,13 @@ Review and improve `evaluation/evaluation_plan.json`.
 
 Write to `builder/improve.html` - the single durable log. For the log/HTML format, one-time migration from legacy review files, and close-out rules, follow `get_reference_doc(kind="review-improve-log")` and `get_reference_doc(kind="html-output")`.
 
-Eval is the framework's measurement layer. It bridges "the plan ran" and "the goal was met." A good eval plan covers both dimensions:
-- Operational quality: how well each step actually ran, including output shape, completeness, validation pass rate, tool use, and format conformance.
-- Goal achievement: whether the workflow's outputs satisfy the success criteria from `soul.md`.
+Eval is the framework's goal-measurement layer: does a run satisfy the success criteria in `soul.md`? Operational quality — errored/skipped steps, empty or malformed artifacts, tool misuse, hallucinated successes — is owned by the per-run Pulse triage and by `pre_validation`, not by eval steps. An eval step that would pass on any operationally clean run duplicates Pulse and inflates the score; treat such steps as retirement candidates.
 
-If the eval plan only checks one dimension, it is incomplete. A plan that runs cleanly but misses the goal is silent failure; a plan that hits the goal but produces malformed outputs breaks downstream consumers.
+The eval plan's completeness test is the two-way coverage matrix:
+- every important success criterion has an eval step measuring it (unmeasured criterion → add coverage), and
+- every eval step maps to a criterion (orphan step → retire it).
+
+Eval is also a per-run tax: auto-eval runs after every execution, so cost matters. Fewer, deeper steps; scripted fact-extraction; model judgment only on verdicts. Eval spend rivaling execution spend (see `costs/evaluation/`) is itself a finding.
 
 Eval changes are special-cased because they change what is measured, not the workflow's behavior. Handle them carefully and record rubric changes in `builder/improve.html` so future agents can interpret before/after runs honestly.{{if .Focus}}
 
@@ -25,15 +27,16 @@ PASS 1 - VALIDATION
 PASS 2 - OUTPUT-FIRST ALIGNMENT
 1. Read the latest meaningful run outputs under `runs/`, then read the matching eval reports.{{if .RunFolder}} Use the selected run folder "{{.RunFolder}}" as the primary evidence set.{{end}}
 2. Read `planning/plan.json` so you understand what the workflow is producing.
-3. Compare the run outputs, eval reports, and `soul.md` success criteria:
+3. Compare the run outputs, eval reports, and `soul.md` success criteria (the coverage matrix, both ways):
    - which success criteria are directly measured by the current eval
    - which are weakly or indirectly measured
    - which are not measured at all
+   - which eval steps map to NO criterion (orphans) or duplicate Pulse triage / `pre_validation` (operational checks) — both are retirement candidates
    - whether any eval checks give false confidence or miss obvious failure modes
 4. Routed workflows: check each eval step's `applies_to_routes` scoping. Route-specific evals must gate themselves to the routes they apply to; route-agnostic evals should omit the field.
 
 PASS 2.5 - AGENT BEHAVIOR AUDIT
-For every consequential step in `planning/plan.json` - especially steps that browse, call tools/APIs, post externally, transform user-visible data, or claim success - inspect the target run's execution logs in addition to artifacts:
+Behavior auditing — hallucination, claim-vs-tool mismatch, tool misuse, skipped work — is Pulse triage's per-run job, not eval's. This pass spot-checks whether behavior problems exist that neither Pulse nor eval caught. For every consequential step in `planning/plan.json` - especially steps that browse, call tools/APIs, post externally, transform user-visible data, or claim success - inspect the target run's execution logs in addition to artifacts:
 - `runs/<target>/logs/<step-id>/execution/*-conversation.json`
 - `runs/<target>/logs/<step-id>/execution/*-timing.json`
 - `runs/<target>/logs/<step-id>/pre_validation.json`
@@ -49,12 +52,14 @@ For each consequential step, judge whether the current eval detects:
 - tool misuse or missing tool use
 - evidence completeness for downstream steps or the user
 
-If any of these are important to reliability and the current eval does not check them, propose a dedicated behavior-audit eval step. Prefer deterministic `scripted` checks for log-parsable facts and LLM judgment only for genuinely semantic checks.
+Then route what you find:
+- If the behavior IS a success criterion (e.g. "posts to the external site correctly", "every claim is sourced"), propose a dedicated eval step for it — scripted extraction of log-parsable facts, LLM judgment only for the genuinely semantic part.
+- Otherwise record the gap as an open finding tagged Bug for the monitor/harden side. Do NOT add an eval step that duplicates Pulse triage.
 
 PASS 3 - IMPROVEMENT SUGGESTIONS
 Propose improvements in these categories. Tag each suggestion as OPERATIONAL or GOAL:
 1. Goal coverage: does each important success criterion from `soul.md` have a clear eval step?
-2. Operational coverage: does every consequential step have an eval check on shape, completeness, validation, and tool behavior?
+2. Pulse redundancy: which eval steps duplicate Pulse triage or `pre_validation` (existence/format/step-ran/tool-behavior checks)? Propose retiring them — operational coverage is the monitor's job.
 3. Directness: is the eval checking the actual desired outcome, or only a proxy?
 4. Determinism: are any eval steps too vague, subjective, or hard to reproduce?
 5. Redundancy: are multiple eval steps measuring the same thing with little added value?
@@ -62,7 +67,7 @@ Propose improvements in these categories. Tag each suggestion as OPERATIONAL or 
 7. Reality check: where human-visible outputs are clearly bad or good, does the eval reflect that honestly?
 8. Agent behavior coverage: does eval inspect execution logs for consequential steps where behavior matters?
 9. Schema coverage: every eval step should have a validation schema covering required fields, types, and value ranges. At minimum include `score`, `max_score`, `reasoning`, and `evidence`, plus every structured-output key the eval emits.
-10. Cost/tier/execution-mode fit: for each eval step, read `evaluation/step_config.json` and match `execution_tier` and `declared_execution_mode` to the eval's actual nature. Do not promote evals to `scripted` unless the user explicitly asks and there is enough scenario coverage to trust the saved script.
+10. Cost/tier/execution-mode fit: for each eval step, read `evaluation/step_config.json` and match `execution_tier` and `declared_execution_mode` to the eval's actual nature. Scripting an objective, contract-anchored check is allowed anytime (no gate); the explicit-user-request + scenario-coverage bar applies only to locking/freezing a saved script. Flag scripted evals coupled to incidental artifact shapes — replans change those; scripts should anchor to stable contracts (`db/README.md` schemas, the report contract). Compare `costs/evaluation/` to `costs/execution/`: eval spend rivaling execution spend means the plan needs fewer/cheaper steps (retire redundant steps, demote tiers, script the extraction).
 11. Fail-closed robustness: missing input files, null/empty fields, stale artifacts, and parse errors must all produce a failing score with the failure named in `reasoning`.
 
 For every proposed eval change:

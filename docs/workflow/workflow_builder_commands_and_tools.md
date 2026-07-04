@@ -7,20 +7,19 @@ This document is a compact reference for the current workflow-builder surface. T
 Workflow improvement has three layers:
 
 - **Plan**: `planning/plan.json` plus `soul/soul.md`. This defines what the workflow does and what "done" means.
-- **Eval**: `evaluation/evaluation_plan.json` plus per-run reports. This measures both operational quality and success-criteria achievement.
-- **Metrics**: `planning/metrics.json` plus `db/metrics_history.jsonl`. Metrics are evidence for decisions; they do not create a separate action path.
+- **Eval**: `evaluation/evaluation_plan.json` plus per-run reports. This measures success-criteria achievement (operational quality is Pulse triage's per-run job).
+- **Goal card**: the per-criterion Met/Short/At-risk card in `builder/improve.html`, maintained agentically by Pulse from eval reports + `soul.md`. It is the durable goal signal over runs; there is no separate numeric metrics layer.
 
 Optimizer actions are deliberately small in number:
 
-- `harden_workflow(group_name?, focus?)`: use when the workflow path is basically right, but prompts, config, validation, KB, learnings, db/report wiring, eval coverage, or metric wiring need repair. It should delete stale `learnings/{step-id}/main.py` for `code_exec` steps and only patch `main.py` for `learn_code`.
-- `replan_workflow_from_results(group_name?, focus?)`: use when run/eval/metric evidence shows the workflow path is not aligned with `soul.md` success criteria or outcome metrics. If replan keeps or converts a step to `code_exec`, it should remove stale `learnings/{step-id}/main.py` and clear `lock_code`.
-- Eval-plan improvement: use when eval coverage, scoring, structured output, validation schema, or metric-to-eval wiring is weak enough that measurement cannot be trusted.
-- `propose_metric` / `retire_metric`: use only for metric-definition cleanup.
+- `harden_workflow(group_name?, focus?)`: use when the workflow path is basically right, but prompts, config, validation, KB, learnings, db/report wiring, or eval coverage need repair. It should delete stale `learnings/{step-id}/main.py` for `code_exec` steps and only patch `main.py` for `learn_code`.
+- `replan_workflow_from_results(group_name?, focus?)`: use when run/eval evidence shows the workflow path is not aligned with `soul.md` success criteria. If replan keeps or converts a step to `code_exec`, it should remove stale `learnings/{step-id}/main.py` and clear `lock_code`.
+- Eval-plan improvement: use when eval coverage, scoring, structured output, or validation schema is weak enough that measurement cannot be trusted, or eval cost is out of proportion to run cost.
 
 ## Workshop Modes
 
 - `builder`: creates and debugs workflow structure. Builder defaults steps to `code_exec`; learn-code promotion belongs to Optimizer only after explicit user request, deterministic behavior, and 10+ scenario-covering successful runs.
-- `optimizer`: improves existing workflows from `runs/iteration-0`, eval reports, metrics, logs, and `builder/improve.html`.
+- `optimizer`: improves existing workflows from `runs/iteration-0`, eval reports, logs, and `builder/improve.html`.
 - `run`: user-facing runtime for Slack/WhatsApp and normal operation. It can answer directly from workflow state, read KB/learnings/db/run artifacts, execute normal or orphan utility steps, or run the full workflow. It should not mutate plan/config/eval/report definitions; durable user-owned runtime context is captured through `capture_context`.
 - Reporting authoring is available in Builder and Optimizer through report-plan tools. The legacy Reporting mode remains for compatibility.
 
@@ -68,8 +67,8 @@ improve-report
 | `/improve-knowledge` | Builder, Optimizer | Improve knowledgebase notes with targeted cleanup or cross-step consolidation. |
 | `/improve-learnings` | Builder, Optimizer | Improve global learnings with targeted cleanup or current-plan consolidation. |
 | `/improve-data` | Builder, Optimizer | Improve durable data contracts, schemas, and report compatibility. |
-| `/define-success` | Optimizer | Write workflow profile and propose starter metrics. |
-| `/improve-workflow` | Optimizer | Read prior improve/review logs, run/eval/metric/log evidence, then choose harden, replan, eval-plan improvement, metric cleanup, or no action. |
+| `/define-success` | Optimizer | Confirm the goal, write the workflow profile, and seed the Pulse goal card. |
+| `/improve-workflow` | Optimizer | Read prior improve/review logs and run/eval/log evidence, then choose harden, replan, eval-plan improvement, or no action. |
 | `/improve-evaluation` | Optimizer | Improve evaluation coverage and rubric quality. |
 | `/auto-improve` | Optimizer | Create/update frequent Run-mode and Optimizer-mode schedules. |
 | `/improve-report` | Builder, Optimizer | Improve report layout, color, density, and widget/data wiring. |
@@ -82,7 +81,6 @@ improve-report
 | Plan/config | `add_regular_step`, `add_routing_step`, `add_human_input_step`, `add_todo_task_step`, `update_*_step`, `delete_plan_steps`, `cleanup_orphan_step_configs`, `update_step_config`, `update_validation_schema` |
 | Review | `review_plan`, `review_artifact_sync`, `review_workflow_results`, `review_workflow_timing`, `review_workflow_costs` |
 | Optimizer | `harden_workflow`, `replan_workflow_from_results` |
-| Metrics | `propose_metric`, `retire_metric` |
 | Eval | `validate_evaluation_plan`, `run_full_evaluation` |
 | Reports | `get_report_plan`, `upsert_report_widget`, `move_report_widget`, `toggle_report_widget`, `remove_report_widget`, `set_report_theme`, `set_section_layout`, `validate_report_plan`, `preview_report_render` |
 | Schedules | `create_schedule`, `create_calendar_schedule`, `update_schedule`, `delete_schedule`, `trigger_schedule`, `get_schedule_runs` |

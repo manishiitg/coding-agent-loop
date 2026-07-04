@@ -201,12 +201,12 @@ Published LLM metadata and provider authentication are workspace-backed configur
 ## Image Generation Defaults
 Image generation defaults are workspace-backed configuration. Provider authentication is managed separately through ` + "`set_provider_auth`" + `.
 - Do not read or write saved defaults with shell/file tools. Use runtime ` + "`image_gen_config`" + ` overrides for the current chat session, or the dedicated UI/API configuration path when changing saved defaults.
-- Schema: ` + "`{\"primary\":{\"provider\":\"vertex\",\"model_id\":\"gemini-3.1-flash-image-preview\"},\"fallbacks\":[{\"provider\":\"codex-cli\",\"model_id\":\"gpt-5.4-mini\"}]}`" + `
+- Schema: ` + "`{\"primary\":{\"provider\":\"vertex\",\"model_id\":\"gemini-3.1-flash-image\"},\"fallbacks\":[{\"provider\":\"codex-cli\",\"model_id\":\"gpt-5.4-mini\"}]}`" + `
 - ` + "`primary`" + ` is tried first. ` + "`fallbacks`" + ` are tried in order when the primary provider lacks workspace auth.
 - Runtime ` + "`image_gen_config`" + ` overrides this file for the current chat session only.
 - Keep provider auth updated with the ` + "`set_provider_auth`" + ` tool; do not hand-edit encrypted auth files.
 - Do not infer image-generation support from ` + "`list_provider_models`" + ` or the normal LLM model catalog. Those lists are for chat/text models, not image models.
-- Vertex image generation is supported via provider ` + "`vertex`" + ` with models such as ` + "`gemini-3.1-flash-image-preview`" + ` and ` + "`gemini-3-pro-image-preview`" + `.
+- Vertex image generation is supported via provider ` + "`vertex`" + ` with models such as ` + "`gemini-3.1-flash-image`" + ` and ` + "`gemini-3-pro-image`" + `.
 - Codex CLI image generation is supported via provider ` + "`codex-cli`" + ` with models such as ` + "`gpt-5.4-mini`" + `.
 - Antigravity CLI image generation is deprecated for new setup. Existing legacy defaults using provider ` + "`agy-cli`" + ` and model ` + "`agy-cli`" + ` remain runnable when local ` + "`agy`" + ` sign-in is present.
 - For one-off ` + "`image_gen`" + ` or ` + "`image_edit`" + ` calls, use ` + "`list_llm_capabilities(capability=\"generate_image\", include_models=true)`" + ` and pass ` + "`provider`" + ` with the matching ` + "`model_id`" + ` when overriding defaults.
@@ -257,7 +257,9 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 - ` + "`runs/iteration-{N}/{group-name}/logs/step-X/`" + ` — per-step logs (see Log Layout below)
 
 **Reports & evaluation:**
-- ` + "`reports/{group-name}/{timestamp}.md`" + ` — final output reports generated after a successful run (one per group, per run timestamp)
+- ` + "`reports/report_plan.json`" + ` — registers the workflow's live report HTML document(s)
+- ` + "`db/reports/*.html`" + ` — live report documents rendered by the Report tab; they read ` + "`db/db.sqlite`" + ` through ` + "`window.report`" + `
+- ` + "`reports/{group-name}/{timestamp}.md`" + ` — legacy/auxiliary finished-run prose when present; not the live report dashboard contract
 - ` + "`evaluation/runs/{runFolder}/evaluation_report.json`" + ` — evaluation step outputs and evidence (eval pipeline only, separate from normal runs)
 - ` + "`evaluation/runs/iteration-0/`" + ` — ephemeral eval sandbox used during evaluation execution
 
@@ -291,7 +293,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 - **Global workflow learnings:** ` + "`execute_shell_command(command: \"cat " + absWorkflow + "/<name>/learnings/_global/SKILL.md\")`" + `
 - **Saved step code (scripted steps only):** ` + "`execute_shell_command(command: \"cat " + absWorkflow + "/<name>/learnings/<step-id>/main.py\")`" + `
 - **Run logs:** start with ` + "`execute_shell_command(command: \"ls " + absWorkflow + "/<name>/runs/iteration-0/\")`" + ` for the latest active run, then inspect older retained ` + "`iteration-{N}`" + ` folders when improve.html / decision timestamps indicate a relevant before-after window.
-- **Latest final reports:** ` + "`execute_shell_command(command: \"ls " + absWorkflow + "/<name>/reports/\")`" + `
+- **Live report plan/docs:** ` + "`execute_shell_command(command: \"cat " + absWorkflow + "/<name>/reports/report_plan.json && find " + absWorkflow + "/<name>/db/reports -maxdepth 1 -type f -name '*.html' -print\")`" + `
 - **Full config (when needed):** ` + "`execute_shell_command(command: \"cat " + absWorkflow + "/<name>/workflow.json\")`" + `
 
 ### When the user asks about a workflow by name
@@ -303,10 +305,10 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 1. **Identify the workflow.** Resolve the name to a folder under ` + "`" + absWorkflow + "/`" + ` (` + "`ls`" + ` it if unsure).
 2. **Read workflow state to answer the question.** Pick the right source per the question:
    - "What has the workflow produced / found / extracted?" → ` + "`runs/iteration-0/`" + ` (latest run outputs) or ` + "`db/db.sqlite`" + ` (accumulated structured state across runs; query tables with sqlite3).
-   - "What does the workflow know about X?" → ` + "`knowledgebase/graph.json`" + ` (entities/relationships) and ` + "`knowledgebase/notes/`" + ` (narratives).
+   - "What does the workflow know about X?" → ` + "`knowledgebase/context/context.md`" + ` for user-supplied runtime context, then ` + "`knowledgebase/notes/_index.json`" + ` plus selected ` + "`knowledgebase/notes/*.md`" + ` for narratives.
    - "How does the workflow do X?" → ` + "`learnings/_global/SKILL.md`" + `.
    - "Why does the workflow exist / what's its goal?" → ` + "`soul/soul.md`" + ` (objective, success criteria).
-   - "Latest results / most recent report?" → ` + "`reports/`" + ` (most recent markdown file).
+   - "Latest results / most recent report?" → ` + "`reports/report_plan.json`" + ` + ` + "`db/reports/*.html`" + ` for the live dashboard, and ` + "`db/db.sqlite`" + ` for the rows it shows.
 3. **Synthesize a direct answer** grounded in what you read. If none of the workflow state covers the question, say so explicitly and offer to look elsewhere.
 
 **Do not**: answer a question about a named workflow without first consulting its state, even if the question seems general ("tell me about some recent findings").
@@ -490,8 +492,8 @@ Workflow-level manifest. **Required fields**: ` + "`schema_version`" + ` (int, 1
   "version": "` + WorkflowContractCurrentVersion + `",
   "id": "wf_<kebab-name>",
   "label": "Human Readable Name",
-  "objective": "One-sentence statement of what this workflow accomplishes",
-  "success_criteria": "How to tell a run succeeded",
+  "objective": "One-sentence fallback copy — the canonical home is soul/soul.md ## Objective",
+  "success_criteria": "Fallback copy — the canonical home is soul/soul.md ## Success Criteria",
   "capabilities": {
     "selected_servers": ["mcp-server-name"],
     "selected_tools": [],
@@ -524,14 +526,12 @@ Workflow-level manifest. **Required fields**: ` + "`schema_version`" + ` (int, 1
 
 ### File 2: ` + "`Workflow/<kebab-name>/planning/plan.json`" + `
 
-Step definitions. **Required field**: ` + "`steps`" + ` (array, at least 1 step). Each step needs ` + "`type`" + `, ` + "`id`" + ` (kebab-case, unique), and ` + "`title`" + ` at minimum.
+Step definitions. **Required field**: ` + "`steps`" + ` (array, at least 1 step). Each step needs ` + "`type`" + `, ` + "`id`" + ` (kebab-case, unique), and ` + "`title`" + ` at minimum. Do NOT add root ` + "`objective`" + `/` + "`success_criteria`" + ` here — plan.json no longer owns them; after creating the files, fill in ` + "`soul/soul.md`" + ` (scaffolded automatically) with the real ` + "`## Objective`" + ` and ` + "`## Success Criteria`" + `.
 
 **Sensible starter shape**:
 
 ` + "```json" + `
 {
-  "objective": "Same or more specific than workflow.json objective",
-  "success_criteria": "How the overall plan succeeds",
   "steps": [
     {
       "type": "regular",
@@ -847,12 +847,13 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 - Per-step saved scripts: `+"`%s/learnings/{step_id}/main.py`"+` — persistent script for `+"`scripted`"+` steps (source of truth, reused across runs)
 - Knowledgebase: `+"`%s/knowledgebase/`"+` — persistent files across runs
 - Runs: `+"`%s/runs/iteration-0/`"+` is the **active** run; older runs are backed up to monotonic `+"`iteration-{N}/`"+` folders. `+"`workflow.json::run_retention_count`"+` controls how many backups are kept; default 5. Per-run layout: `+"`runs/iteration-{N}/{group}/execution/step-{N}/code/main.py`"+` for working main.py copies.
-- Final reports: `+"`%s/reports/{group-name}/{timestamp}.md`"+` — per-group final output reports
+- Live report dashboard: `+"`%s/reports/report_plan.json`"+` plus `+"`%s/db/reports/*.html`"+` — HTML documents that read `+"`db/db.sqlite`"+` through `+"`window.report`"+`
+- Legacy finished-run prose: `+"`%s/reports/{group-name}/{timestamp}.md`"+` — supporting evidence when present, not the live dashboard contract
 - Evaluation reports: `+"`%s/evaluation/runs/{runFolder}/evaluation_report.json`"+`
 - Builder sessions: `+"`%s/builder/conversation/YYYY-MM-DD/session-{id}-conversation.json`"+` — workshop chat histories
-- Improve ledger: `+"`%s/builder/improve.html`"+` — single source-of-truth entry point for auto-improvement narrative, active index, archive index, and recent structured `+"```improve-decision"+` audit entries. Older detail may live in referenced `+"`%s/builder/improve-archive/YYYY-MM.html`"+` files.
-- Context store: `+"`%s/knowledgebase/context/context.md`"+` and `+"`%s/knowledgebase/context/examples/`"+` — accumulated user-supplied runtime business context; excluded from KB reorganize/consolidate passes. Audit trail folded into structured entries in `+"`builder/improve.html`"+` (source=user + trigger=capture-context).
-`, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath))
+- Improve ledger: `+"`%s/builder/improve.html`"+` — the Pulse log: single source-of-truth entry point for verdict pills, the goal card, open findings, and Decision cards. Older detail may live in referenced `+"`%s/builder/improve-archive/YYYY-MM.html`"+` files.
+- Context store: `+"`%s/knowledgebase/context/context.md`"+` and `+"`%s/knowledgebase/context/examples/`"+` — accumulated user-supplied runtime business context; excluded from KB reorganize/consolidate passes. Each capture is recorded as a User rule card in `+"`builder/improve.html`"+`.
+`, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath))
 
 	// 7. Step folder naming conventions and log file guide
 	parts = append(parts, `**Step Folder Naming (inside execution/ and logs/):**

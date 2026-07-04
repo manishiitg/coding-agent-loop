@@ -25,7 +25,8 @@ gating, and reliability:
 
 1. **Post-run monitor** (`runPostRunMonitor`, `scheduler.go:1164`) — opt-in
    (`post_run_monitor`), a dedicated read-only agent pass that writes the Pulse log
-   (`builder/improve.html`) + `monitor-verdict.json`. Auto-improve **cadence #1**.
+   (`builder/improve.html` verdict pills + goal card) and the `builder/card.health.html`
+   dashboard card. Auto-improve **cadence #1**.
 2. **Scheduled harden** — auto-improve **cadence #2**, applies low-risk Bug fixes on
    its own schedule.
 3. **Scheduled replan-proposal** — auto-improve **cadence #3**, proposes Goal changes.

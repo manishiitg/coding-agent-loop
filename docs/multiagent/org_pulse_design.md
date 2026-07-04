@@ -39,8 +39,9 @@ lightweight (a minimal manifest + one-step plan). Keep that true.
 A **daily, opt-in pass on the CoS chat** — the chat-level parallel to the per-workflow
 Pulse toggle (`post_run_monitor`). When **on**, once a day the CoS:
 
-1. **Judges the endgame** — reads each workflow's `builder/monitor-verdict.json`
-   (`{bug, goal, headline}`, written by the per-workflow Pulse) and rolls the Goal
+1. **Judges the endgame** — reads each workflow's Pulse verdicts (the Bug/Goal
+   pills + goal card in `builder/improve.html` and the `card.health.html` dashboard
+   card, written by the per-workflow Pulse) and rolls the Goal
    verdicts into an org-level "are we achieving our goals" view. Cheap — the per-workflow
    Pulse already did the judging.
 2. **Harvests** — reads each workflow's `reports/`, `knowledgebase/`, and
@@ -56,7 +57,7 @@ harvests its learnings. Doing per-workflow Pulse first was the right order.
 
 This is the load-bearing constraint (see the agentic-not-deterministic principle).
 
-- **Wrong (import):** a Go job that parses `monitor-verdict.json` + learnings on a
+- **Wrong (import):** a Go job that parses Pulse verdicts + learnings on a
   schedule and copies fields into a CoS KB table. Fixed schema, 1:1 mirror, rots.
 - **Right (harvest):** Org Pulse is a **CoS reasoning session driven by a reference
   doc**. Go supplies only **access** (read tools it already has), **cadence** (the daily
@@ -107,7 +108,7 @@ writes a CoS file, that's an import — make it a line in the reference doc inst
    single **`pulse/org-pulse.html`** log (HTML-only, no JSON — decided 2026-06-22), notify
    only when decision-worthy. Build + guidance tests pass.
 4. **Extend the CoS access recipe** — ✅ Done (2026-06-22). `employee-management.md` sweep
-   now reads each workflow's `monitor-verdict.json` (health), `knowledgebase/`, and
+   now reads each workflow's Pulse health (improve.html pills / `card.health.html`), `knowledgebase/`, and
    `learnings/_global/SKILL.md`, not just runs/db/reports.
 5. **Org Pulse view** — ✅ Done (2026-06-22). HTML-only: an **"Org Pulse" button** in the
    CoS chat header (`ChatTabs.tsx`) opens `pulse/org-pulse.html` in the existing right-side

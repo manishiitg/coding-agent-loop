@@ -29,7 +29,6 @@ import (
 	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	"mcp-agent-builder-go/agent_go/pkg/skills"
 	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
-	"mcp-agent-builder-go/agent_go/pkg/workspace"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -1104,7 +1103,6 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"update_human_input_step", "update_todo_task_step", "update_todo_task_route",
 		"delete_todo_task_route", "delete_plan_steps", "cleanup_orphan_step_configs",
 		"update_validation_schema",
-		"publish_workflow_version", "restore_workflow_version",
 	}
 
 	// Variable & config tools
@@ -1990,7 +1988,7 @@ You may maintain the live frontend report (`+"`reports/report_plan.json`"+`) so 
 {{if eq .WorkshopMode "workshop"}}
 ### Evaluation plan — evaluation/evaluation_plan.json (brief)
 
-Workshop owns the eval plan: write it, validate it, run it against `+"`iteration-0`"+`, and keep it sharp as you harden the workflow. Each eval step needs `+"`id`"+` + `+"`title`"+` + `+"`description`"+`; eval step IDs must NOT collide with execution-plan step IDs (both share `+"`learnings/{stepID}/`"+`). Focus on workflow outcomes, not intermediate files. **Prefer scripted (deterministic) eval steps** for objective checks — cheaper, repeatable, not gameable; use agentic only for subjective judgment. A good eval must **catch fake/placeholder/empty data and score 0** (cross-checked against the source artifact), not pass just because a field is non-empty; ground scoring in the real run via `+"`{{\"{{TARGET_RUN_PATH}}\"}}`"+` + `+"`db/db.sqlite`"+`. After every edit, call `+"`validate_evaluation_plan`"+`; to test, call `+"`run_full_evaluation(group_name=\"...\")`"+` (always targets `+"`iteration-0`"+`).
+Workshop owns the eval plan: write it, validate it, run it against `+"`iteration-0`"+`, and keep it sharp as you harden the workflow. Each eval step needs `+"`id`"+` + `+"`title`"+` + `+"`description`"+`; eval step IDs must NOT collide with execution-plan step IDs (both share `+"`learnings/{stepID}/`"+`). **Evals measure GOAL achievement against `+"`soul.md`"+` success criteria — one eval step per criterion; Pulse triage and `+"`pre_validation`"+` own operational checks (file-exists/format/step-ran), so never duplicate those in eval.** Compute facts in code, judge the verdict against the criterion: fully scripted only for contract-anchored mechanical checks, agentic with a frozen rubric for subjective quality. Eval runs after every execution, so keep it cheap: few steps, low tiers for extraction, route gating. A good eval must **catch fake/placeholder/empty data and score 0** (cross-checked against the source artifact), not pass just because a field is non-empty; ground scoring in the real run via `+"`{{\"{{TARGET_RUN_PATH}}\"}}`"+` + `+"`db/db.sqlite`"+`. After every edit, call `+"`validate_evaluation_plan`"+`; to test, call `+"`run_full_evaluation(group_name=\"...\")`"+` (always targets `+"`iteration-0`"+`).
 
 Files: plan at `+"`evaluation/evaluation_plan.json`"+`, per-step config at `+"`evaluation/step_config.json`"+`, eval runs/reports at `+"`evaluation/runs/iteration-0[/group]/`"+`.
 
@@ -2161,7 +2159,7 @@ This is the one-line-per-category map. For full signatures, parameters, when-to-
 {{end}}
 - **Read-only info**: `+"`get_step_prompts`"+`, `+"`get_workflow_config`"+`, `+"`get_llm_config`"+`{{if eq .WorkshopMode "workshop"}}, `+"`get_workflow_command_guidance(kind=\"review-artifact-drift\")`"+`{{else}}. Artifact drift reviews belong in Workshop — switch modes and run `+"`/review-artifact-drift`"+` if needed{{end}}.
 {{if eq .WorkshopMode "workshop"}}
-- **Plan modification**: `+"`create_plan`"+`, `+"`add_<type>_step`"+`, `+"`update_<type>_step`"+`, `+"`delete_plan_steps`"+`, `+"`cleanup_orphan_step_configs`"+`, todo-task route tools, `+"`update_validation_schema`"+`, `+"`publish_workflow_version`"+`, `+"`restore_workflow_version`"+`.
+- **Plan modification**: `+"`create_plan`"+`, `+"`add_<type>_step`"+`, `+"`update_<type>_step`"+`, `+"`delete_plan_steps`"+`, `+"`cleanup_orphan_step_configs`"+`, todo-task route tools, `+"`update_validation_schema`"+`.
 - **Variables & config**: `+"`update_variable`"+`, `+"`add_group`"+`/`+"`update_group`"+`/`+"`delete_group`"+`, `+"`update_workflow_config`"+`. Use `+"`update_workflow_config`"+` for workflow MCP servers, workflow-level MCP tool allowlists, selected skills, selected secrets, browser_mode, KB lock, run retention, and the per-run monitor (`+"`post_run_monitor`"+`). Do NOT edit `+"`workflow.json`"+` manually.
 - **Schedule management**: `+"`create_schedule`"+`, `+"`create_calendar_schedule`"+`, `+"`update_schedule`"+`, `+"`delete_schedule`"+`, `+"`trigger_schedule`"+`, `+"`get_schedule_runs`"+`. Cron / message-authoring rules, workshop run vs optimizer scheduling, the `+"`/auto-improve`"+` exception, infinite-loop prevention rules, and unattended-message discipline — all live in the `+"`workflow-tools`"+` ref doc. Workflow schedules always use the workshop path; do not create direct `+"`mode=\"workflow\"`"+` schedules. **Whenever you create a recurring schedule, also pair it with a backup** so unattended runs persist their state off-box — see `+"`get_reference_doc(kind=\"backup-strategy\")`"+`.
 {{end}}
@@ -2420,70 +2418,6 @@ func resolveWorkshopStepConfigTarget(ctx context.Context, controller *StepBasedW
 	}
 
 	return "", "", false, fmt.Errorf("step %q not found in planning/plan.json or evaluation/evaluation_plan.json", inputID)
-}
-
-var workshopVersionedConfigFiles = []string{
-	"planning/plan.json",
-	"planning/step_config.json",
-	"planning/workflow_layout.json",
-	"planning/step_override.json",
-	"reports/report_plan.json",
-	"variables/variables.json",
-	"evaluation/evaluation_plan.json",
-}
-
-var workshopVersionedFolderRoots = []string{
-	"learnings",
-}
-
-func resolveWorkshopWorkspacePath(controller *StepBasedWorkflowOrchestrator, path string) string {
-	workspacePath := controller.GetWorkspacePath()
-	if workspacePath == "" || path == "" {
-		return path
-	}
-	if path == workspacePath || strings.HasPrefix(path, workspacePath+"/") {
-		return path
-	}
-	return workspacePath + "/" + path
-}
-
-func flattenWorkshopWorkspaceFiles(files []virtualtools.WorkspaceFile) []virtualtools.WorkspaceFile {
-	var result []virtualtools.WorkspaceFile
-	for _, file := range files {
-		result = append(result, file)
-		if len(file.Children) > 0 {
-			result = append(result, flattenWorkshopWorkspaceFiles(file.Children)...)
-		}
-	}
-	return result
-}
-
-func listWorkshopWorkspaceTree(ctx context.Context, controller *StepBasedWorkflowOrchestrator, dirPath string, maxDepth int) ([]virtualtools.WorkspaceFile, error) {
-	resolvedPath := resolveWorkshopWorkspacePath(controller, dirPath)
-
-	result, err := controller.WorkspaceClient.ListWorkspaceFiles(ctx, workspace.ListWorkspaceFilesParams{
-		Folder:   resolvedPath,
-		MaxDepth: &maxDepth,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	rawStr := string(result.Raw)
-	if strings.Contains(rawStr, "exists but contains no files") {
-		return []virtualtools.WorkspaceFile{}, nil
-	}
-
-	filesList, parseErr := virtualtools.ParseWorkspaceFilesList(rawStr)
-	if parseErr != nil {
-		return nil, parseErr
-	}
-
-	if len(filesList) == 1 && filesList[0].Type == "folder" && filesList[0].FilePath == resolvedPath && len(filesList[0].Children) > 0 {
-		filesList = filesList[0].Children
-	}
-
-	return flattenWorkshopWorkspaceFiles(filesList), nil
 }
 
 // registerInteractiveWorkshopTools registers the custom workshop tools on the agent.
@@ -3687,12 +3621,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 	// Tool 4: update_step_config — update step_config.json for a specific step
 	declaredExecutionModeEnum := []interface{}{"agentic", "scripted"}
-	declaredExecutionModeDescription := "Required mode declaration for this step. Always set this intentionally so the optimizer records the final decision explicitly. Workshop mode accepts only agentic. In Workshop mode, set scripted only when the user explicitly asked for it, the step is highly deterministic, and 10+ successful runs across relevant scenarios/groups prove the saved script is safe."
+	declaredExecutionModeDescription := "Required mode declaration for this step. Always set this intentionally so the improve pass records the final decision explicitly. Default is agentic. Set scripted only when the user explicitly asked for it and the step is highly deterministic; freezing the saved script afterwards (lock_code) additionally requires 10+ successful scenario-covering runs."
 	lockCodeDescription := "If true, lock the saved main.py script — prevents LLM-rewritten scripts from being saved back to learnings, and skips the fix loop (falls back directly to agentic mode). Only applies to scripted steps. Use only when the user explicitly wanted scripted, the script is deterministic, and script_metadata/eval evidence shows 10+ successful scenario-covering runs."
 	if iwm.currentWorkshopModeFromConfigs(nil) == "builder" {
 		declaredExecutionModeEnum = []interface{}{"agentic"}
-		declaredExecutionModeDescription = "Workshop mode only accepts agentic. Create and debug the workflow with agentic steps; scripted promotion requires Workshop mode and requires explicit user request plus 10+ scenario-covering successful runs."
-		lockCodeDescription = "Unavailable in Workshop mode. Workshop creates and debugs agentic steps; lock_code freezes scripted main.py scripts and requires workshop mode plus explicit user intent plus 10+ scenario-covering successful runs prove the script is stable. Passing lock_code=true without the scripted promotion gate is rejected."
+		declaredExecutionModeDescription = "Builder mode only accepts agentic. Create and debug the workflow with agentic steps; promote to scripted later (Workshop/Optimizer) on explicit user request — 10+ scenario-covering runs gate lock_code, not scripted itself."
+		lockCodeDescription = "Unavailable in Builder mode. Builder creates and debugs agentic steps; lock_code freezes a scripted step's main.py and requires explicit user intent plus 10+ scenario-covering successful runs proving the script is stable. Passing lock_code=true here is rejected."
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_step_config",
@@ -3895,12 +3829,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if workshopMode == "builder" {
 				if val, ok := args["declared_execution_mode"]; ok && val != nil {
 					if s, ok := val.(string); ok && canonicalDeclaredExecutionMode(s) == StepModeScripted {
-						return "Workshop mode only creates and debugs agentic steps. Use declared_execution_mode=\"agentic\" here. Promotion to scripted mode requires Workshop mode plus explicit user request plus 10+ scenario-covering successful runs.", nil
+						return "Builder mode only creates and debugs agentic steps. Use declared_execution_mode=\"agentic\" here. Promote to scripted from Workshop/Optimizer on explicit user request — 10+ scenario-covering runs gate lock_code, not scripted itself.", nil
 					}
 				}
 				if val, ok := args["lock_code"]; ok && val != nil {
 					if b, ok := val.(bool); ok && b {
-						return "lock_code is optimizer-only because it freezes scripted main.py. Workshop mode should keep steps in agentic and use execute_step/query_step to debug them.", nil
+						return "lock_code is unavailable in Builder mode because it freezes scripted main.py. Keep steps agentic while building and use execute_step/query_step to debug; lock later from Workshop/Optimizer once the scripted step has 10+ scenario-covering successful runs.", nil
 					}
 				}
 			}
@@ -7522,224 +7456,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register update_workflow_config tool: %v", err))
 	}
 
-	// Tool: publish_workflow_version — snapshot the current workflow config and learnings.
-	if err := mcpAgent.RegisterCustomTool(
-		"publish_workflow_version",
-		"Create a numbered snapshot of the current workflow state. Saves planning/config files plus the learnings/ folder under versions/vN/. Use this before risky edits so you can restore later.",
-		map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"label": map[string]interface{}{
-					"type":        "string",
-					"description": "Required version label describing this snapshot (for example: 'stable before refactor' or 'added bank validation').",
-				},
-			},
-			"required": []string{"label"},
-		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			label, _ := args["label"].(string)
-			label = strings.TrimSpace(label)
-			if label == "" {
-				return "label is required", nil
-			}
-
-			versions, err := iwm.controller.ListWorkspaceFiles(ctx, "versions")
-			nextVersion := 1
-			if err == nil {
-				for _, name := range versions {
-					var versionNum int
-					if _, scanErr := fmt.Sscanf(name, "v%d", &versionNum); scanErr == nil && versionNum >= nextVersion {
-						nextVersion = versionNum + 1
-					}
-				}
-			}
-
-			versionFolder := fmt.Sprintf("versions/v%d", nextVersion)
-			var filesSnapshot []string
-
-			for _, relPath := range workshopVersionedConfigFiles {
-				exists, err := iwm.controller.CheckWorkspaceFileExists(ctx, relPath)
-				if err != nil || !exists {
-					continue
-				}
-
-				content, err := iwm.controller.ReadWorkspaceFile(ctx, relPath)
-				if err != nil {
-					logger.Warn(fmt.Sprintf("⚠️ publish_workflow_version: failed to read %s: %v", relPath, err))
-					continue
-				}
-				if err := iwm.controller.WriteWorkspaceFile(ctx, versionFolder+"/"+relPath, content); err != nil {
-					return "", fmt.Errorf("failed to write snapshot file %s: %w", relPath, err)
-				}
-				filesSnapshot = append(filesSnapshot, relPath)
-			}
-
-			for _, folderRoot := range workshopVersionedFolderRoots {
-				items, err := listWorkshopWorkspaceTree(ctx, iwm.controller, folderRoot, 100)
-				if err != nil {
-					logger.Warn(fmt.Sprintf("⚠️ publish_workflow_version: failed to list %s: %v", folderRoot, err))
-					continue
-				}
-				for _, item := range items {
-					if item.Type == "folder" {
-						continue
-					}
-					relPath := strings.TrimPrefix(item.FilePath, iwm.controller.GetWorkspacePath()+"/")
-					if relPath == "" || relPath == item.FilePath {
-						continue
-					}
-					content, err := iwm.controller.ReadWorkspaceFile(ctx, relPath)
-					if err != nil {
-						logger.Warn(fmt.Sprintf("⚠️ publish_workflow_version: failed to read %s: %v", relPath, err))
-						continue
-					}
-					if err := iwm.controller.WriteWorkspaceFile(ctx, versionFolder+"/"+relPath, content); err != nil {
-						return "", fmt.Errorf("failed to write snapshot file %s: %w", relPath, err)
-					}
-					filesSnapshot = append(filesSnapshot, relPath)
-				}
-			}
-
-			if len(filesSnapshot) == 0 {
-				return "No workflow config or learning files were found to version.", nil
-			}
-
-			meta := map[string]interface{}{
-				"version":         nextVersion,
-				"label":           label,
-				"created_at":      time.Now().UTC().Format(time.RFC3339),
-				"files_snapshot":  filesSnapshot,
-				"managed_files":   workshopVersionedConfigFiles,
-				"managed_folders": workshopVersionedFolderRoots,
-			}
-			metaJSON, _ := json.MarshalIndent(meta, "", "  ")
-			if err := iwm.controller.WriteWorkspaceFile(ctx, versionFolder+"/version_meta.json", string(metaJSON)); err != nil {
-				return "", fmt.Errorf("failed to write version metadata: %w", err)
-			}
-
-			return fmt.Sprintf("Published workflow version v%d (%s) with %d files. Restore later with restore_workflow_version(version=%d).", nextVersion, label, len(filesSnapshot), nextVersion), nil
-		},
-		"workflow",
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register publish_workflow_version tool: %v", err))
-	}
-
-	// Tool: restore_workflow_version — restore a previous snapshot into the live workspace.
-	if err := mcpAgent.RegisterCustomTool(
-		"restore_workflow_version",
-		"Restore a previously published workflow version from versions/vN/. This overwrites the current planning/config files and restores learnings from that snapshot.",
-		map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"version": map[string]interface{}{
-					"type":        "integer",
-					"description": "Version number to restore (for example: 1 restores versions/v1).",
-				},
-			},
-			"required": []string{"version"},
-		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			versionRaw, ok := args["version"].(float64)
-			if !ok {
-				return "version is required", nil
-			}
-			versionNum := int(versionRaw)
-			if versionNum < 1 {
-				return "version must be >= 1", nil
-			}
-
-			versionFolder := fmt.Sprintf("versions/v%d", versionNum)
-			metaContent, err := iwm.controller.ReadWorkspaceFile(ctx, versionFolder+"/version_meta.json")
-			if err != nil {
-				return fmt.Sprintf("Version v%d not found.", versionNum), nil
-			}
-
-			var meta map[string]interface{}
-			if err := json.Unmarshal([]byte(metaContent), &meta); err != nil {
-				return "", fmt.Errorf("failed to parse version metadata: %w", err)
-			}
-
-			rawSnapshot, ok := meta["files_snapshot"].([]interface{})
-			if !ok || len(rawSnapshot) == 0 {
-				return fmt.Sprintf("Version v%d has no files to restore.", versionNum), nil
-			}
-
-			var snapshotPaths []string
-			snapshotSet := make(map[string]struct{}, len(rawSnapshot))
-			for _, item := range rawSnapshot {
-				relPath, ok := item.(string)
-				if !ok || relPath == "" {
-					continue
-				}
-				snapshotPaths = append(snapshotPaths, relPath)
-				snapshotSet[relPath] = struct{}{}
-			}
-
-			toStringSlice := func(value interface{}) []string {
-				items, ok := value.([]interface{})
-				if !ok {
-					return nil
-				}
-				out := make([]string, 0, len(items))
-				for _, item := range items {
-					if s, ok := item.(string); ok && s != "" {
-						out = append(out, s)
-					}
-				}
-				return out
-			}
-
-			managedFiles := toStringSlice(meta["managed_files"])
-			managedFolders := toStringSlice(meta["managed_folders"])
-
-			for _, folderRoot := range managedFolders {
-				fullFolderPath := resolveWorkshopWorkspacePath(iwm.controller, folderRoot)
-				if err := iwm.controller.CleanupDirectory(ctx, fullFolderPath, folderRoot); err != nil {
-					return "", fmt.Errorf("failed to clear %s before restore: %w", folderRoot, err)
-				}
-			}
-
-			for _, relPath := range managedFiles {
-				if _, exists := snapshotSet[relPath]; exists {
-					continue
-				}
-				exists, err := iwm.controller.CheckWorkspaceFileExists(ctx, relPath)
-				if err != nil || !exists {
-					continue
-				}
-				if err := iwm.controller.DeleteWorkspaceFile(ctx, resolveWorkshopWorkspacePath(iwm.controller, relPath)); err != nil {
-					return "", fmt.Errorf("failed to remove %s before restore: %w", relPath, err)
-				}
-			}
-
-			filesRestored := 0
-			for _, relPath := range snapshotPaths {
-				content, err := iwm.controller.ReadWorkspaceFile(ctx, versionFolder+"/"+relPath)
-				if err != nil {
-					logger.Warn(fmt.Sprintf("⚠️ restore_workflow_version: failed to read %s from v%d: %v", relPath, versionNum, err))
-					continue
-				}
-				if err := iwm.controller.WriteWorkspaceFile(ctx, relPath, content); err != nil {
-					return "", fmt.Errorf("failed to restore %s: %w", relPath, err)
-				}
-				filesRestored++
-			}
-
-			label, _ := meta["label"].(string)
-			if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
-				logger.Warn(fmt.Sprintf("⚠️ restore_workflow_version: restored files but failed to reload plan: %v", err))
-			}
-
-			if label != "" {
-				return fmt.Sprintf("Restored workflow version v%d (%s). %d files restored.", versionNum, label, filesRestored), nil
-			}
-			return fmt.Sprintf("Restored workflow version v%d. %d files restored.", versionNum, filesRestored), nil
-		},
-		"workflow",
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register restore_workflow_version tool: %v", err))
-	}
-
 	// === Schedule management tools ===
 
 	// Tool: create_schedule — Create a new cron schedule
@@ -8898,6 +8614,7 @@ Create a finding when:
 - KB contribution still describes the old extraction/update behavior
 - the report's `+"`window.report.query`"+` SQL (or asset/file references) point at old tables, columns, paths, labels, or assumptions
 - eval steps check old files, fields, thresholds, labels, or behavior
+- the change leaves the eval plan misaligned with the goal: a changed/added success criterion or output has no eval step measuring it, an eval step no longer maps to any criterion (orphan), or an eval step only re-checks what `+"`pre_validation`"+`/Pulse triage already cover — recommend eval-plan improvement (owner: Optimizer, label `+"`Eval fix`"+`)
 - the changed step should write cross-run/report-facing data but no db target is named
 - a deleted step still has step_config, learnings, report, eval, or KB references
 - a new step lacks config/review notes where scoped tools, KB, learnings, report, or eval wiring clearly matters

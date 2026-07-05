@@ -60,7 +60,10 @@ export const useModeStore = create<ModeState>()(
             import('./useWorkspaceStore').then(({ useWorkspaceStore }) => {
               const ws = useWorkspaceStore.getState()
               ws.setActiveFolder(null)
-              ws.fetchFiles(undefined, { force: true }).catch(() => {})
+              ws.fetchFiles(
+                undefined,
+                normalizedCategory === 'workflow' ? { force: true } : { force: true, maxDepth: 2 }
+              ).catch(() => {})
             }).catch(() => {})
 
             // Automatically sync AppStore's agentMode when category changes

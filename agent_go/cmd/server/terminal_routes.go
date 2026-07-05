@@ -1230,6 +1230,7 @@ func sendTerminalKey(ctx context.Context, tmuxSession, key string) error {
 	if !ok {
 		return fmt.Errorf("unsupported terminal key %q", key)
 	}
+	log.Printf("[TERMINAL_KEY] send key=%q resolved=%q tmux_session=%s", key, tmuxKey, tmuxSession)
 	return runTerminalTmuxCommand(ctx, "", "send-keys", "-t", tmuxSession, tmuxKey)
 }
 

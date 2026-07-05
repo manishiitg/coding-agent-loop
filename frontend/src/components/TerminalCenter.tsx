@@ -1104,6 +1104,27 @@ function hasTerminalDebugActions(terminal: TerminalSnapshot): boolean {
   return Boolean(terminal.tmux_session)
 }
 
+function isCursorTerminal(terminal: TerminalSnapshot): boolean {
+  const haystack = [
+    terminal.status?.provider_label,
+    terminal.label,
+    terminal.display_title,
+    terminal.execution_kind,
+    terminal.tmux_session,
+  ].filter(Boolean).join(' ').toLowerCase()
+  return haystack.includes('cursor')
+}
+
+function ctrlODebugLabel(terminal: TerminalSnapshot): string {
+  return isCursorTerminal(terminal) ? 'Send Ctrl+O (raw key)' : 'Send Ctrl+O (expand)'
+}
+
+function ctrlODebugTitle(terminal: TerminalSnapshot): string {
+  return isCursorTerminal(terminal)
+    ? 'Sends raw Ctrl+O to the Cursor tmux pane. Cursor CLI may ignore this shortcut depending on its current prompt state.'
+    : 'Sends Ctrl+O to the tmux pane. Some coding CLIs use this to expand a collapsed view.'
+}
+
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
@@ -4497,10 +4518,11 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
                                     onMouseDown={event => event.preventDefault()}
                                     onClick={() => { setDebugPanelOpenForID(null); void sendTerminalDebugKey(selectedTerminalView, 'ctrl-o') }}
                                     disabled={terminalActionBusy === 'ctrl-o'}
+                                    title={ctrlODebugTitle(selectedTerminalView)}
                                     className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-neutral-800/80 disabled:cursor-wait disabled:opacity-50"
                                   >
                                     <Braces className="h-3.5 w-3.5 shrink-0" />
-                                    <span>Send Ctrl+O (expand)</span>
+                                    <span>{ctrlODebugLabel(selectedTerminalView)}</span>
                                   </button>
                                   <button
                                     type="button"

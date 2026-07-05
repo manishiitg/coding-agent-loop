@@ -380,9 +380,6 @@ function dedupedGet<T>(key: string, request: () => Promise<T>): Promise<T> {
 
 export const workspaceApi = axios.create({
   baseURL: WORKSPACE_API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
 })
 
 function shouldRefreshRuntimeConfig(error: unknown): boolean {

@@ -1521,6 +1521,19 @@ function App() {
       : selectedModeCategory === 'workflow' || selectedModeCategory === 'multi-agent'
         ? Boolean(workspaceMinimizedByMode?.[selectedModeCategory])
         : workspaceMinimized
+
+  useEffect(() => {
+    if (layoutWorkspaceMinimized) return
+    if (multiAgentRightPanelView !== 'files') return
+    if (selectedModeCategory === 'workflow') return
+
+    const workspace = useWorkspaceStore.getState()
+    workspace.setActiveFolder(null)
+    workspace.fetchFiles(undefined, { force: true, maxDepth: 2 }).catch(error => {
+      console.error('[Workspace] Failed to load multi-agent files panel:', error)
+    })
+  }, [layoutWorkspaceMinimized, multiAgentRightPanelView, selectedModeCategory])
+
   const toggleMultiAgentPanelMinimize = useCallback(() => {
     setWorkspaceMinimized(!layoutWorkspaceMinimized)
   }, [layoutWorkspaceMinimized, setWorkspaceMinimized])

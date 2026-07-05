@@ -528,6 +528,36 @@ function setFileTreeCacheEntry(key: string, entry: FileTreeCacheEntry) {
 
 // Tracks in-flight fetchFiles requests to deduplicate concurrent calls for the same folder/depth
 let inflightFetch: { key: string; promise: Promise<void> } | null = null
+let fetchAttemptSequence = 0
+const latestFetchAttemptByKey = new Map<string, number>()
+
+function describeWorkspaceFetchError(err: unknown): { message: string; details: Record<string, unknown> } {
+  if (!err || typeof err !== 'object') {
+    return { message: 'Failed to fetch files', details: { error: String(err) } }
+  }
+
+  const error = err as {
+    message?: string
+    code?: string
+    config?: { baseURL?: string; url?: string; params?: unknown; method?: string }
+    response?: { status?: number; statusText?: string; data?: unknown }
+  }
+
+  return {
+    message: error.message || 'Failed to fetch files',
+    details: {
+      message: error.message,
+      code: error.code,
+      method: error.config?.method,
+      baseURL: error.config?.baseURL,
+      url: error.config?.url,
+      params: error.config?.params,
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      responseData: error.response?.data,
+    }
+  }
+}
 
 // Merge a fetched subfolder node into an existing file tree (replaces the matching stub node)
 function mergeSubfolderIntoTree(tree: PlannerFile[], targetPath: string, replacement: PlannerFile): PlannerFile[] {
@@ -575,7 +605,10 @@ export const useWorkspaceStore = create<WorkspaceState>()(
 
         if (scopedDirtyFolders.size === 0) {
           if (options?.fallbackToFullFetch) {
-            await get().fetchFiles(state.activeFolder ?? undefined, { force: true })
+            await get().fetchFiles(
+              state.activeFolder ?? undefined,
+              state.activeFolder ? { force: true } : { force: true, maxDepth: 2 }
+            )
             return
           }
 
@@ -666,7 +699,11 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             })
             // Refresh file list after a manual save — bypass cache so the tree reflects
             // any filesystem-level changes immediately.
-            await get().fetchFiles(undefined, { force: true })
+            const activeFolder = get().activeFolder
+            await get().fetchFiles(
+              activeFolder ?? undefined,
+              activeFolder ? { force: true } : { force: true, maxDepth: 2 }
+            )
             return { success: true }
           } else {
             set({ isSaving: false })
@@ -960,6 +997,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           const scopedDirtyFolders = pruneDirtyFoldersToScope(state.dirtyFolders, folder)
           return {
             activeFolder: folder,
+            error: null,
             dirtyFolders: scopedDirtyFolders,
             needsRefresh: hasRelevantDirtyFolders(scopedDirtyFolders, folder)
           }
@@ -1018,6 +1056,16 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           return inflightFetch.promise
         }
 
+        const requestId = ++fetchAttemptSequence
+        latestFetchAttemptByKey.set(requestKey, requestId)
+        const isLatestFetchAttempt = () => latestFetchAttemptByKey.get(requestKey) === requestId
+        const shouldApplyFetchError = () => {
+          const attemptedFolder = normalizeWorkspacePath(effectiveFolder)
+          const currentActiveFolder = normalizeWorkspacePath(get().activeFolder)
+          const isVisibleScope = attemptedFolder === currentActiveFolder || (!attemptedFolder && !currentActiveFolder)
+          return isLatestFetchAttempt() && (isVisibleScope || get().files.length === 0)
+        }
+
         const promise = (async () => {
           try {
             set({ loading: true, error: null })
@@ -1064,10 +1112,18 @@ export const useWorkspaceStore = create<WorkspaceState>()(
                 return
               }
 
-              set({ error: message })
+              if (shouldApplyFetchError()) {
+                set({ error: message })
+              } else {
+                console.warn('[WorkspaceStore] Ignoring stale/background file fetch response error:', {
+                  folder: effectiveFolder,
+                  message
+                })
+              }
             }
           } catch (err) {
-            console.error('Failed to fetch Planner files:', err)
+            const describedError = describeWorkspaceFetchError(err)
+            console.error('Failed to fetch Planner files:', JSON.stringify(describedError.details))
             const currentActiveFolder = get().activeFolder
             const isScopedSubfolderFetch = !!(
               effectiveFolder &&
@@ -1075,7 +1131,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
               effectiveFolder !== currentActiveFolder &&
               effectiveFolder.startsWith(currentActiveFolder + '/')
             )
-            const message = err instanceof Error ? err.message : 'Failed to fetch files'
+            const message = describedError.message
 
             if (isScopedSubfolderFetch && /folder does not exist/i.test(message)) {
               console.warn('[WorkspaceStore] Ignoring missing scoped subfolder error during lazy-load:', effectiveFolder)
@@ -1089,10 +1145,22 @@ export const useWorkspaceStore = create<WorkspaceState>()(
               return
             }
 
-            set({ error: message })
+            if (shouldApplyFetchError()) {
+              set({ error: message })
+            } else {
+              console.warn('[WorkspaceStore] Ignoring stale/background file fetch error:', {
+                folder: effectiveFolder,
+                message
+              })
+            }
           } finally {
             set({ loading: false })
-            inflightFetch = null
+            if (inflightFetch?.key === requestKey) {
+              inflightFetch = null
+            }
+            if (latestFetchAttemptByKey.get(requestKey) === requestId) {
+              latestFetchAttemptByKey.delete(requestKey)
+            }
           }
         })()
 

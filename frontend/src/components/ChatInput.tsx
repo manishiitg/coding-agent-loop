@@ -3166,7 +3166,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
 
       const ws = useWorkspaceStore.getState()
-      ws.fetchFiles(ws.activeFolder ?? undefined).catch(() => {})
+      ws.fetchFiles(
+        ws.activeFolder ?? undefined,
+        ws.activeFolder ? undefined : { maxDepth: 2 }
+      ).catch(() => {})
 
       addToast(
         `Uploaded ${uploadedPaths.length}/${files.length} file${files.length > 1 ? 's' : ''} to ${uploadTargetFolder}`,

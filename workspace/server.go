@@ -148,6 +148,9 @@ func runServer(cmd *cobra.Command, args []string) {
 		api.DELETE("/folders/*folderpath", handlers.DeleteFolder)
 
 		// Document management routes - SPECIFIC routes BEFORE wildcard
+		api.OPTIONS("/documents", func(c *gin.Context) {
+			c.Status(http.StatusNoContent)
+		})
 		api.POST("/documents", handlers.CreateDocument)
 		api.GET("/documents", handlers.ListDocuments)
 

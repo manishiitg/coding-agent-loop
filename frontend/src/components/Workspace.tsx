@@ -612,13 +612,18 @@ export default function Workspace({
   const handleRefreshAndSearch = useCallback(async () => {
     setServerSearchLoading(true)
     try {
-      await fetchFiles(undefined, { force: true })
+      await fetchFiles(
+        activeFolder ?? undefined,
+        activeFolder || selectedModeCategory === 'workflow'
+          ? { force: true }
+          : { force: true, maxDepth: 2 }
+      )
     } catch (err) {
       console.error('Failed to refresh files:', err)
     } finally {
       setServerSearchLoading(false)
     }
-  }, [fetchFiles])
+  }, [activeFolder, fetchFiles, selectedModeCategory])
 
   // File highlighting with auto-scroll.
   // In workflow mode we only scroll — we do NOT call expandFoldersForFile() because it
@@ -784,7 +789,7 @@ export default function Workspace({
             }
           })
       } else {
-        fetch(activeFolder)
+        fetch(activeFolder, { maxDepth: 2 })
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2173,7 +2178,10 @@ export default function Workspace({
                 onFileDelete={handleFileDelete}
                 onFolderDelete={handleFolderDelete}
                 onDeleteAllFilesInFolder={handleDeleteAllFilesInFolder}
-                onRetry={() => fetchFiles(activeFolder, { force: true })}
+                onRetry={() => fetchFiles(
+                  activeFolder,
+                  selectedModeCategory === 'workflow' ? { force: true } : { force: true, maxDepth: 2 }
+                )}
                 expandedFolders={expandedFolders}
                 loadingChildren={emptyLoadingSet}
                 chatFileContext={chatFileContext}

@@ -20,7 +20,7 @@ import (
 //
 //nolint:unused // preserved for callers still being migrated off the legacy active-workflow map.
 func (api *StreamingAPI) runningWorkflowBySessionLocked(sessionID string) *ActiveWorkflowExecution {
-	exec := api.runningWorkflowExecutionBySessionLocked(sessionID)
+	exec := api.runningWorkflowListExecutionBySessionLocked(sessionID)
 	if exec == nil {
 		return nil
 	}
@@ -70,7 +70,7 @@ func (api *StreamingAPI) handleGetRunningWorkflow(w http.ResponseWriter, r *http
 	}
 
 	api.trackedWorkflowExecutionsMux.RLock()
-	exec := api.runningWorkflowExecutionBySessionLocked(sessionID)
+	exec := api.runningWorkflowListExecutionBySessionLocked(sessionID)
 	var out ActiveWorkflowExecution
 	found := exec != nil
 	if found {
@@ -119,7 +119,7 @@ func (api *StreamingAPI) handleUpdateRunningWorkflow(w http.ResponseWriter, r *h
 	}
 
 	api.trackedWorkflowExecutionsMux.Lock()
-	exec := api.runningWorkflowExecutionBySessionLocked(sessionID)
+	exec := api.runningWorkflowListExecutionBySessionLocked(sessionID)
 	if exec == nil {
 		api.trackedWorkflowExecutionsMux.Unlock()
 		http.Error(w, `{"error":"running workflow not found"}`, http.StatusNotFound)

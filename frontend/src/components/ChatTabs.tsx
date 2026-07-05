@@ -3,7 +3,6 @@ import { Plus, ArrowDown, ListTree, Terminal, Globe, DollarSign, CalendarClock, 
 import { normalizeEventViewMode, useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useAppStore } from '../stores/useAppStore'
 import { OrgPulseControl } from './OrgPulseControl'
-import { MemoryControl } from './MemoryControl'
 import { OrgBackupPublishControls } from './org/OrgBackupPublishControls'
 import { useModeStore } from '../stores/useModeStore'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
@@ -364,7 +363,6 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
 
       <div className="ml-auto flex items-center gap-1">
         <OrgPulseControl />
-        <MemoryControl />
         {/* Delegation tiers (H/M/L) — CoS-specific config, lives next to Org Pulse
             so the org-level controls stay grouped together. */}
         <Tooltip>

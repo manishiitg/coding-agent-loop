@@ -18,11 +18,7 @@ func TestMCPBridgeCategoryRouting(t *testing.T) {
 		}
 	}
 
-	if !isMCPBridgeVirtualToolCategory("memory") {
-		t.Fatal("expected memory to route to virtual tool handler")
-	}
-
-	for _, name := range []string{"google_sheets", "playwright", "gmail"} {
+	for _, name := range []string{"google_sheets", "playwright", "gmail", "memory"} {
 		if isMCPBridgeCustomToolCategory(name) || isMCPBridgeVirtualToolCategory(name) {
 			t.Fatalf("real MCP server %q must not be redirected as a built-in category", name)
 		}

@@ -12,19 +12,12 @@ var safeUserIDForPath = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // sanitizeUserIDForPath returns a userID safe to use as a filesystem path segment.
 // Falls back to "default" when the input is empty, too long, or contains characters
-// outside the allowed set. Used to route per-user folders like memories under _users/<id>/.
+// outside the allowed set. Used to route per-user folders under _users/<id>/.
 func sanitizeUserIDForPath(userID string) string {
 	if userID == "" || len(userID) > 128 || !safeUserIDForPath.MatchString(userID) {
 		return "default"
 	}
 	return userID
-}
-
-// perUserMemoryFolderFor returns the workspace-relative memory folder path for a given user,
-// e.g. "_users/alice/memories". This is the canonical location where save_memory / recall_memory /
-// enrich_memory read and write data — replacing the older global "memories/" folder.
-func perUserMemoryFolderFor(userID string) string {
-	return fmt.Sprintf("_users/%s/memories", sanitizeUserIDForPath(userID))
 }
 
 // perUserChatsFolderFor returns the workspace-relative Chats folder path for a given user,

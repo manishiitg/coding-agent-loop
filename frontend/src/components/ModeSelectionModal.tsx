@@ -268,7 +268,7 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
             <ModeCard
               category="multi-agent"
               title="Chief of Staff"
-              description="Your operations hub — runs automations, keeps shared memory, and delegates ad-hoc work."
+              description="Your operations hub — reviews automations, tracks task findings, and delegates ad-hoc work."
               icon={<Users className="w-5 h-5 text-indigo-600" />}
               features={getModeInfoForModal('multi-agent').features}
               exampleQueries={getModeInfoForModal('multi-agent').examples}

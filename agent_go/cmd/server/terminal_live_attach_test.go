@@ -536,6 +536,76 @@ func TestHandleTerminalStreamPersistsAnsiTranscript(t *testing.T) {
 	}
 }
 
+func TestHandleTerminalStreamRejectsCrossSiteOrigin(t *testing.T) {
+	store := terminals.NewStore()
+	sessionID := "session-live-attach-origin-reject"
+	terminalID := sessionID + ":main:" + sessionID
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "main:"+sessionID, "tmux-origin-reject", "pane", 1))
+	api := &StreamingAPI{
+		config:        ServerConfig{CORSOrigins: []string{"loopback"}},
+		terminalStore: store,
+		liveAttach:    newLiveAttachManager(),
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r = mux.SetURLVars(r, map[string]string{"terminal_id": terminalID})
+		api.handleTerminalStream(w, r)
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/stream?cols=80&rows=24"
+	header := http.Header{"Origin": []string{"https://evil.example"}}
+	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err == nil {
+		conn.Close()
+		t.Fatal("dial stream succeeded from disallowed origin")
+	}
+	if resp == nil || resp.StatusCode != http.StatusForbidden {
+		status := 0
+		if resp != nil {
+			status = resp.StatusCode
+		}
+		t.Fatalf("status = %d, want %d", status, http.StatusForbidden)
+	}
+}
+
+func TestHandleTerminalStreamAllowsLoopbackOrigin(t *testing.T) {
+	installFakeAttach(t, seedResponder(nil, []string{"loopback seed"}, "0,0"))
+
+	store := terminals.NewStore()
+	sessionID := "session-live-attach-origin-allow"
+	terminalID := sessionID + ":main:" + sessionID
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "main:"+sessionID, "tmux-origin-allow", "pane", 1))
+	api := &StreamingAPI{
+		config:        ServerConfig{CORSOrigins: []string{"loopback"}},
+		terminalStore: store,
+		liveAttach:    newLiveAttachManager(),
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r = mux.SetURLVars(r, map[string]string{"terminal_id": terminalID})
+		api.handleTerminalStream(w, r)
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/stream?cols=80&rows=24"
+	header := http.Header{"Origin": []string{"http://127.0.0.1:51734"}}
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err != nil {
+		t.Fatalf("dial stream from loopback origin: %v", err)
+	}
+	defer conn.Close()
+
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, seed, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read seed: %v", err)
+	}
+	if !strings.Contains(string(seed), "loopback seed") {
+		t.Fatalf("seed = %q, want loopback seed", string(seed))
+	}
+}
+
 func TestBuildLiveAttachSeedOmitsHistoryJoinArtifacts(t *testing.T) {
 	// History uses no -J: the capture command must not join wrapped lines
 	// (joining preserves trailing spaces, which drags background fills out to

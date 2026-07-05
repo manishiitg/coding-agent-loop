@@ -47,7 +47,7 @@ Report the files changed and any intentional no-op decisions, then stop.`,
 	},
 	{
 		from:  "1.0.2",
-		to:    WorkflowContractCurrentVersion,
+		to:    "1.0.3",
 		label: "upgrade-1.0.3",
 		query: `WORKFLOW VERSION UPGRADE v1.0.2 -> v1.0.3.
 
@@ -65,7 +65,77 @@ Goal: move old report dashboards to the current HTML-only contract. The React re
 8. Append one concise Pulse entry to builder/improve.html, if that file exists, that says this workflow was upgraded from v1.0.2 to v1.0.3 and lists which report sections were migrated or why the migration was a no-op.
 9. Only after the applicable checks/updates are complete, update workflow.json "version" to "1.0.3". Do not change schema_version. Do not run the workflow, do not alter schedules, and do not call notify_user in this step.
 
-Report the files changed, legacy widgets removed, HTML reports created or updated, validation result, and any intentional no-op decisions, then stop.`,
+	Report the files changed, legacy widgets removed, HTML reports created or updated, validation result, and any intentional no-op decisions, then stop.`,
+	},
+	{
+		from:  "1.0.3",
+		to:    "1.0.4",
+		label: "upgrade-1.0.4",
+		query: `WORKFLOW VERSION UPGRADE v1.0.3 -> v1.0.4.
+
+This is a product-managed Pulse pre-step. Do ONLY this Pulse report readability upgrade, then stop and wait for the normal Pulse triage step.
+
+Goal: refresh workflow Pulse logs so builder/improve.html reads like a concise human/operator dashboard first, with the detailed evidence log below. This upgrade is for layout, readability, and stale-count cleanup only; do not change workflow behavior.
+
+1. Read workflow.json, builder/improve.html if it exists, soul.md if it exists, recent run/cost/timing evidence if needed, and reports/report_plan.json only if it helps understand current report naming. Treat a missing workflow.json "version" as "1.0.0".
+2. Call get_reference_doc(kind="review-improve-log") and update builder/improve.html to the current Pulse skeleton/CSS where needed:
+   - first screen: two Bug/Goal verdict pills, one short status headline, chips, a "What matters now" brief, goal card, grouped signal tiles, and compact cost/time tiles;
+   - recent runs: metadata row first, long prose/evidence note on a full-width second row, metadata/chips/timestamps no-wrap, prose/evidence fields wrap safely, no one-character metadata columns;
+   - timeline: keep exactly one ` + "`<!-- LOG ENTRIES: newest first -->`" + ` anchor before the newest-first cards;
+   - remove stale labels/counts only when evidence clearly supports the correction.
+3. Preserve all existing unresolved findings, decisions, user rules, Chief of Staff recommendations, Artifact Review entries, recent-run evidence, and archive links. Do not delete evidence just because you are redesigning the shell.
+4. If builder/improve.html is already on the current layout, make this a no-op except for appending the concise upgrade entry.
+5. Append one concise Pulse entry to builder/improve.html that says this workflow was upgraded from v1.0.3 to v1.0.4 and lists what was applied or skipped.
+6. Only after the applicable checks/updates are complete, update workflow.json "version" to "1.0.4". Do not change schema_version. Do not run the workflow, do not alter schedules, and do not call notify_user in this step.
+
+	Report the files changed, Pulse sections refreshed, evidence preserved, and any intentional no-op decisions, then stop.`,
+	},
+	{
+		from:  "1.0.4",
+		to:    "1.0.5",
+		label: "upgrade-1.0.5",
+		query: `WORKFLOW VERSION UPGRADE v1.0.4 -> v1.0.5.
+
+This is a product-managed Pulse pre-step. Do ONLY this filterability upgrade, then stop and wait for the normal Pulse triage step.
+
+Goal: make builder/improve.html searchable by exact date, activity kind, and text so the user can inspect all Pulse / Auto Improve / Chief of Staff actions and notes for a specific day.
+
+1. Read workflow.json and builder/improve.html. Treat a missing workflow.json "version" as "1.0.0".
+2. Call get_reference_doc(kind="review-improve-log") and update builder/improve.html to the current filterable Pulse skeleton where needed:
+   - add the .filters bar with Date, Kind, Search, Reset, and match count controls;
+   - add the static filter script from the reference doc; this UI script is allowed and is not a legacy JSON data block;
+   - add data-date="YYYY-MM-DD" and data-kind="run|monitor|artifact|decision|advisor|cos|open|user|note" to every recent-run row and timeline entry;
+   - preserve exactly one <!-- LOG ENTRIES: newest first --> anchor before the newest-first timeline cards.
+3. Backfill data dates/kinds from visible entry dates, run ids/folders, timestamp labels, tag text, or best available evidence. If a date is genuinely unknown, leave that specific old item unfiltered rather than fabricating a date, and mention it in the upgrade entry.
+4. Preserve all existing unresolved findings, decisions, user rules, Chief of Staff recommendations, Artifact Review entries, run evidence, and archive links. Do not delete evidence while adding filter metadata.
+5. Append one concise Pulse entry to builder/improve.html that says this workflow was upgraded from v1.0.4 to v1.0.5 and lists how many rows/cards were made filterable plus any skipped unknown-date items.
+6. Only after the applicable checks/updates are complete, update workflow.json "version" to "1.0.5". Do not change schema_version. Do not run the workflow, do not alter schedules, and do not call notify_user in this step.
+
+Report the files changed, filter metadata added, skipped unknown-date items if any, and any intentional no-op decisions, then stop.`,
+	},
+	{
+		from:  "1.0.5",
+		to:    WorkflowContractCurrentVersion,
+		label: "upgrade-1.0.6",
+		query: `WORKFLOW VERSION UPGRADE v1.0.5 -> v1.0.6.
+
+This is a product-managed Pulse pre-step. Do ONLY this richer Pulse dashboard upgrade, then stop and wait for the normal Pulse triage step.
+
+Goal: make builder/improve.html more colorful, less text-heavy, and more widget-oriented so the user can understand workflow state quickly in the right panel.
+
+1. Read workflow.json, builder/improve.html if it exists, soul.md if it exists, and recent run/cost/timing evidence only when needed to populate visible tiles. Treat a missing workflow.json "version" as "1.0.0".
+2. Call get_reference_doc(kind="review-improve-log") and update builder/improve.html to the current rich widget Pulse shell where needed:
+   - first screen has two Bug/Goal verdict pills, a one-sentence status banner, What matters now widget cards, a goal card, color-coded signal tiles, and cost/time tiles;
+   - use .tile.ok, .tile.warn, .tile.bad, .tile.info, .tile.goal, and .tile.cost classes where the status is known;
+   - replace dense first-screen prose/tables with compact widgets, chips, and card sections;
+   - preserve the Date/Kind/Search filter bar, data-date/data-kind attributes, and exactly one ` + "`<!-- LOG ENTRIES: newest first -->`" + ` anchor;
+   - keep recent runs as readable mobile-first cards/rows with metadata first and long notes on a full-width second row.
+3. Preserve all existing unresolved findings, decisions, user rules, Chief of Staff recommendations, Artifact Review entries, recent-run evidence, archive links, and filter metadata. Do not delete evidence just because you are redesigning the shell.
+4. If builder/improve.html is already on the current rich widget layout, make this a no-op except for appending the concise upgrade entry.
+5. Append one concise Pulse entry to builder/improve.html that says this workflow was upgraded from v1.0.5 to v1.0.6 and lists which visual sections were refreshed or skipped.
+6. Only after the applicable checks/updates are complete, update workflow.json "version" to "1.0.6". Do not change schema_version. Do not run the workflow, do not alter schedules, and do not call notify_user in this step.
+
+Report the files changed, widget sections refreshed, evidence preserved, and any intentional no-op decisions, then stop.`,
 	},
 }
 

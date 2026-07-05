@@ -20,7 +20,7 @@ Call get_reference_doc(kind="backup-strategy") and follow its org-level workflow
 Scope:
 - pulse/goals.html
 - pulse/org-pulse.html
-- Chief of Staff memory files
+- pulse/task.html
 - employee/org config files
 - multi-agent schedules/config
 
@@ -43,14 +43,14 @@ If org publish is NOT configured: ask me which static host to use, default to pr
 
 If org publish IS configured and verified: publish now only if the org HTML changed since the last publish. Stage files outside the workspace, force dark mode, deploy, then come back and update pulse/publish/status.json with state "published", the url, and last_source_hash.
 
-Always write pulse/publish/status.json. Never publish secrets or raw memory files. Never write org publish state into any workflow.json or content HTML file.`
+Always write pulse/publish/status.json. Never publish secrets or raw task transcripts. Never write org publish state into any workflow.json or content HTML file.`
 
 const FALLBACK_ORG_BACKUP_STRATEGIES: WorkflowBackupStrategyInfo[] = [
   {
     id: 'git',
     label: 'Git / GitHub',
-    description: 'Default for org goals, pulse HTML, memory index, schedule/config snapshots, and small text artifacts.',
-    best_for: ['org-goals', 'org-pulse', 'memory', 'schedules']
+    description: 'Default for org goals, pulse/task HTML, schedule/config snapshots, and small text artifacts.',
+    best_for: ['org-goals', 'org-pulse', 'tasks', 'schedules']
   },
   {
     id: 'object_store',
@@ -100,7 +100,7 @@ const OrgBackupPopup: React.FC<{
       loadInfo={agentApi.getOrgBackup}
       onStateLoaded={onStateLoaded}
       fallbackStrategies={FALLBACK_ORG_BACKUP_STRATEGIES}
-      subtitle="Org goals, pulse, memory, schedules, and config"
+      subtitle="Org goals, pulse, tasks, schedules, and config"
       emptyDestinationsText="Use setup to configure the zero-config local git default or a remote destination."
       destinationsHelp="The Chief of Staff writes destination status after each backup."
       statusPathFallback="pulse/backup/status.json"

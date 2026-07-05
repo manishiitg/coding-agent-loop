@@ -1,12 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { Activity, Brain, ListChecks, PanelRightClose, RefreshCw, Target } from 'lucide-react'
+import { Activity, ListChecks, PanelRightClose, RefreshCw, Target } from 'lucide-react'
 import jetBrainsMonoLatin400Woff2 from '@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2?url'
 import jetBrainsMonoLatin600Woff2 from '@fontsource/jetbrains-mono/files/jetbrains-mono-latin-600-normal.woff2?url'
 import { agentApi } from '../../services/api'
-import { useAuthStore } from '../../stores/useAuthStore'
 import { useTheme } from '../../hooks/useTheme'
 import { HtmlRenderer } from '../ui/HtmlRenderer'
-import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 import {
   ORG_HTML_PREVIEW_PREFERENCE_CHANGED_EVENT,
   getOrgHtmlPreviewDevice,
@@ -17,7 +15,6 @@ import {
 const ORG_PULSE_LOG_PATH = 'pulse/org-pulse.html'
 const ORG_GOALS_PATH = 'pulse/goals.html'
 const ORG_TASKS_PATH = 'pulse/task.html'
-const MEMORY_EMPTY_TEXT = 'No memory index yet. Use /memory-setup to configure automatic enrichment, or /enrich-memory for a one-time run.'
 
 const ORG_HTML_FONT_STYLE = `
 	<style data-runloop-org-html-fonts>
@@ -237,95 +234,3 @@ export const ChiefTasksPanel: React.FC<{ toolbarLeading?: React.ReactNode; onClo
     hideHeader={hideHeader}
   />
 )
-
-export const MemoryPanel: React.FC<{ toolbarLeading?: React.ReactNode; onClosePanel?: () => void }> = ({ toolbarLeading, onClosePanel }) => {
-  const authUser = useAuthStore(state => state.user)
-  const userId = authUser?.id || 'default'
-  const primaryPath = `_users/${userId}/memories/index.md`
-  const legacyPath = 'memories/index.md'
-  const [content, setContent] = useState('')
-  const [path, setPath] = useState(primaryPath)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const primary = await agentApi.getPlannerFileContent(primaryPath)
-      const primaryContent = primary.success && primary.data ? primary.data.content ?? '' : ''
-      if (primaryContent) {
-        setContent(typeof primaryContent === 'string' ? primaryContent : String(primaryContent))
-        setPath(primaryPath)
-        return
-      }
-
-      const legacy = await agentApi.getPlannerFileContent(legacyPath)
-      const legacyContent = legacy.success && legacy.data ? legacy.data.content ?? '' : ''
-      if (legacyContent) {
-        setContent(typeof legacyContent === 'string' ? legacyContent : String(legacyContent))
-        setPath(legacyPath)
-        return
-      }
-
-      setContent('')
-      setPath(primaryPath)
-      const message = primary.message || legacy.message
-      setError(isMissingFileMessage(message) ? MEMORY_EMPTY_TEXT : message || MEMORY_EMPTY_TEXT)
-    } catch {
-      setContent('')
-      setPath(primaryPath)
-      setError(MEMORY_EMPTY_TEXT)
-    } finally {
-      setLoading(false)
-    }
-  }, [primaryPath])
-
-  useEffect(() => { void load() }, [load])
-
-  return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
-      <div className="flex flex-wrap items-center justify-between gap-1 border-b border-border bg-muted/40 px-2 py-2">
-        <div className="min-w-0 flex-none">
-          {toolbarLeading || (
-            <div className="flex min-w-0 items-center gap-2 px-1">
-              <Brain className="h-4 w-4 flex-none text-primary" />
-              <div className="min-w-0">
-                <h2 className="truncate text-sm font-semibold text-foreground">Memory</h2>
-                <p className="truncate text-xs text-muted-foreground">{path}</p>
-              </div>
-            </div>
-          )}
-        </div>
-        <div className="flex flex-none items-center gap-1">
-          <button type="button" onClick={() => { void load() }} disabled={loading} title="Refresh memory" aria-label="Refresh memory" className={toolbarIconBtnClass}>
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-          {onClosePanel && (
-            <button type="button" onClick={onClosePanel} title="Hide panel" aria-label="Hide panel" className={toolbarIconBtnClass}>
-              <PanelRightClose className="h-4 w-4" />
-            </button>
-          )}
-        </div>
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {loading && !content ? (
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Loading Memory...</div>
-        ) : content ? (
-          <MarkdownRenderer
-            content={content}
-            basePath={path.includes('/') ? path.split('/').slice(0, -1).join('/') : undefined}
-            className="text-sm [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm [&_p]:leading-6 [&_li]:leading-6"
-          />
-        ) : (
-          <div className="flex h-full items-center justify-center p-4 text-center">
-            <div className="rounded-md bg-muted/60 px-3 py-2.5 text-xs text-muted-foreground">
-              {error || 'No memory index yet. Use /memory-setup to configure automatic enrichment, or /enrich-memory for a one-time run.'}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}

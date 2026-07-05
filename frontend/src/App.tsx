@@ -3,7 +3,7 @@ import { useEffect, useCallback, useRef, useState, forwardRef } from "react";
 import { ThemeProvider } from "./contexts/ThemeContext.tsx";
 import { UpdateProgressToast } from "./components/UpdateProgressToast";
 import Workspace from "./components/Workspace.tsx";
-import { ChiefTasksPanel, MemoryPanel, OrgGoalsPanel, OrgPulsePanel } from "./components/org/OrgHtmlPanels";
+import { ChiefTasksPanel, OrgGoalsPanel, OrgPulsePanel } from "./components/org/OrgHtmlPanels";
 import { ORG_HTML_PREVIEW_PREFERENCE_CHANGED_EVENT, getOrgHtmlPreviewDevice, setOrgHtmlPreviewDevice as persistOrgHtmlPreviewDevice, type OrgHtmlPreviewDevice } from "./components/org/orgHtmlPreview";
 import ChatArea, { type ChatAreaRef } from "./components/ChatArea.tsx";
 import { MarkdownRenderer, MermaidDiagram } from "./components/ui/MarkdownRenderer";
@@ -1525,7 +1525,7 @@ function App() {
     setWorkspaceMinimized(!layoutWorkspaceMinimized)
   }, [layoutWorkspaceMinimized, setWorkspaceMinimized])
   // Device-preview toggle (Mobile / Laptop). Lives alongside the panel tabs so it
-  // renders in EVERY right-panel view header (Pulse/Goals/Memory/Files) — critical
+  // renders in EVERY right-panel view header (Pulse/Goals/Tasks/Files) — critical
   // because Laptop hides the chat/terminal column, so this toggle is the only way
   // back to Mobile to interact with the agent. Persists + broadcasts the choice;
   // App's own listener mirrors it into local state.
@@ -1575,13 +1575,6 @@ function App() {
           className={multiAgentPanelTabClass(multiAgentRightPanelView === 'tasks')}
         >
           Tasks
-        </button>
-        <button
-          type="button"
-          onClick={() => setMultiAgentRightPanelView('memory')}
-          className={multiAgentPanelTabClass(multiAgentRightPanelView === 'memory')}
-        >
-          Memory
         </button>
         <button
           type="button"
@@ -1727,11 +1720,6 @@ function App() {
                               />
                             ) : multiAgentRightPanelView === 'tasks' ? (
                               <ChiefTasksPanel
-                                toolbarLeading={multiAgentPanelTabs}
-                                onClosePanel={toggleMultiAgentPanelMinimize}
-                              />
-                            ) : multiAgentRightPanelView === 'memory' ? (
-                              <MemoryPanel
                                 toolbarLeading={multiAgentPanelTabs}
                                 onClosePanel={toggleMultiAgentPanelMinimize}
                               />

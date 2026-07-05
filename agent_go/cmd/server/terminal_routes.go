@@ -1468,6 +1468,25 @@ func (api *StreamingAPI) canAccessTerminalSession(r *http.Request, sessionID str
 	return currentUserID == GetDefaultUserID()
 }
 
+func (api *StreamingAPI) canUseSessionIDForQuery(r *http.Request, sessionID string) bool {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return false
+	}
+
+	currentUserID := GetUserIDFromContext(r.Context())
+	activeSession, exists := api.getActiveSession(sessionID)
+	if exists {
+		return activeSession.UserID == "" || activeSession.UserID == currentUserID
+	}
+	if api.eventStore != nil {
+		if owner := api.eventStore.GetSessionOwner(sessionID); owner != "" {
+			return owner == currentUserID
+		}
+	}
+	return true
+}
+
 func compactTerminalSnapshotForList(snapshot terminals.Snapshot, contentMode string) terminals.Snapshot {
 	switch contentMode {
 	case "none", "metadata":

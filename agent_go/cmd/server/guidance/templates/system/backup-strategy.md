@@ -35,7 +35,7 @@ vs status contract, rooted under `pulse/`:
 - `pulse/backup.json` is the declarative contract: enabled, mode, triggers, destinations,
   coverage, notes.
 - `pulse/backup/status.json` is the operational result of the latest org backup attempt.
-- Back up `pulse/goals.html`, `pulse/org-pulse.html`, `pulse/task.html`, memory files, org config, and
+- Back up `pulse/goals.html`, `pulse/org-pulse.html`, `pulse/task.html`, org config, and
   multi-agent schedule/config files. Do not back up secrets.
 - Do not write org backup status into any workflow's `workflow.json` or into the HTML files.
 - The zero-config default is a local git repo/commit covering these org-level text artifacts;
@@ -123,7 +123,7 @@ and needs to be cheap to clone:
 - Org Goals/Pulse/Tasks config and content: `pulse/goals.html`, `pulse/org-pulse.html`, `pulse/task.html`,
   `pulse/backup.json`, `pulse/publish.json`
 - `knowledgebase/`, `learnings/`, `subagents/`, `skills/`
-- Chief of Staff memory and org config files
+- Chief of Staff org config files
 - Small JSON metadata in `db/` (post records, run summaries)
 - Documentation and notes
 - Source code, scripts, configs
@@ -366,7 +366,7 @@ config file directly from a secret.
 | `learnings/`, `skills/`, `subagents/`           | git                      |
 | `pulse/goals.html`, `pulse/org-pulse.html`, `pulse/task.html` | git                      |
 | `pulse/backup.json`, `pulse/publish.json`       | git                      |
-| Chief of Staff memory / org config              | git                      |
+| Chief of Staff org config                       | git                      |
 | Small JSON metadata in `db/`                    | git                      |
 | Generated images, audio, video                  | HF dataset (or S3/R2/B2) |
 | Conversation dumps, per-iteration run logs      | HF dataset, or skip      |

@@ -1,5 +1,5 @@
 import React from 'react'
-import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, GitBranch, CheckCircle, Search, BookOpen, Activity, Cloud, Globe, Target, Brain } from 'lucide-react'
+import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, GitBranch, CheckCircle, Search, BookOpen, Activity, Cloud, Globe, Target } from 'lucide-react'
 import type { CommandContext, CommandDefinition } from './types'
 
 function submitGuidedWorkflowCommand(
@@ -348,7 +348,7 @@ If goals exist, help me choose or confirm:
 - cadence and timezone
 - whether it should notify only on decision-worthy changes
 - whether the current pulse/org-pulse.html needs to be bootstrapped with the org-html skeleton
-- whether org backup should be enabled before Daily Org Pulse writes goals/pulse/memory
+- whether org backup should be enabled before Daily Org Pulse writes goals/pulse/tasks
 - whether org publish should share pulse/goals.html + pulse/org-pulse.html after verified runs
 
 Only enable or change the built-in Org Pulse schedule after I confirm the cadence/timezone. Do not manually run Org Pulse from this command unless I explicitly ask for a one-time run.`
@@ -358,7 +358,7 @@ Only enable or change the built-in Org Pulse schedule after I confirm the cadenc
   },
   {
     command: 'org-backup',
-    description: 'Set up or run backup for org goals, pulse, and memory',
+    description: 'Set up or run backup for org goals, pulse, and tasks',
     icon: <Cloud className="w-4 h-4" />,
     modes: ['multi-agent'],
     source: 'builtin',
@@ -374,7 +374,7 @@ Call get_reference_doc(kind="backup-strategy") and follow its org-level workflow
 Scope:
 - pulse/goals.html
 - pulse/org-pulse.html
-- Chief of Staff memory files
+- pulse/task.html
 - employee/org config files
 - multi-agent schedules/config
 
@@ -411,7 +411,7 @@ If org publish is NOT configured: ask me which static host to use, default to pr
 
 If org publish IS configured and verified: publish now only if the org HTML changed since the last publish. Stage files outside the workspace, force dark mode, deploy, then come back and update pulse/publish/status.json with state "published", the url, and last_source_hash.
 
-Always write pulse/publish/status.json. Never publish secrets or raw memory files. Never write org publish state into any workflow.json or content HTML file.`
+Always write pulse/publish/status.json. Never publish secrets or raw task transcripts. Never write org publish state into any workflow.json or content HTML file.`
 
       ctx.onSubmit(focus ? `${focus}\n\n${instruction}` : instruction)
     }
@@ -511,54 +511,6 @@ After the tool returns, tell me:
         : instruction
 
       ctx.onSubmit(message)
-    }
-  },
-  {
-    command: 'memory-setup',
-    description: 'Set up or tune automatic Chief of Staff memory enrichment',
-    icon: <Brain className="w-4 h-4" />,
-    modes: ['multi-agent'],
-    source: 'builtin',
-    execute: (ctx) => {
-      const appStore = ctx.getAppStore()
-      appStore.setWorkspaceMinimized(false)
-      appStore.setMultiAgentRightPanelView?.('memory')
-
-      const focus = ctx.beforeSlash.trim()
-      const instruction = `Set up automatic Chief of Staff memory enrichment.
-
-Call get_reference_doc(kind="memory-usage") and follow it for what should and should not be saved. Before editing schedules, call get_reference_doc(kind="schedule-management").
-First call list_multiagent_schedules and find the built-in memory schedule builtin-auto-enrich-memory. Report whether it is enabled, its cron, timezone, and last/next run state.
-To enable, disable, or configure automatic memory enrichment, ALWAYS call update_multiagent_schedule on builtin-auto-enrich-memory. NEVER call create_multiagent_schedule for memory enrichment.
-
-Help me choose or confirm:
-- enabled or disabled
-- cadence and timezone
-- whether old chat sessions should be pruned after enrichment; default is 7 days
-- whether I want to run /enrich-memory once now after setup
-
-Only enable or change the built-in memory schedule after I confirm the cadence/timezone. Do not manually run memory enrichment from this command unless I explicitly ask for a one-time run.`
-
-      ctx.onSubmit(focus ? `${focus}\n\n${instruction}` : instruction)
-    }
-  },
-  // ===== Auto-improvement framework =====
-  // See docs/workflow/auto_improvement_framework.md.
-  // Note: business-context capture is intentionally NOT a slash command.
-  // The builder agent's system prompt teaches it to recognize business
-  // rules in conversation and offer to persist them via the
-  // capture_context tool. A separate slash command would be redundant.
-  {
-    command: 'enrich-memory',
-    description: 'Distil recent chats into memory and consolidate (deletes chats older than 7 days)',
-    icon: <Minimize2 className="w-4 h-4" />,
-    modes: ['multi-agent'],
-    source: 'builtin',
-    execute: (ctx) => {
-      const msg = ctx.beforeSlash
-        ? `Enrich my memory, focusing on: ${ctx.beforeSlash}. Use enrich_memory — extract insights from chat_history into memories, then consolidate. Delete chat sessions older than 7 days.`
-        : 'Enrich my memory. Use enrich_memory to extract insights from every session in chat_history into today\u2019s date folder + entity files, then consolidate all memories and regenerate index.md. Delete chat sessions older than 7 days.'
-      ctx.onSubmit(msg)
     }
   }
 ]

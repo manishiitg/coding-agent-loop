@@ -111,9 +111,12 @@ const terminalPromptCompletionInactiveAfter = time.Minute
 const terminalToolTextMaxRunes = 2400
 
 var (
-	regexpMCPToken    = regexp.MustCompile(`(?i)(MCP_API_TOKEN=)[^\s"'\\]+`)
-	regexpBearerToken = regexp.MustCompile(`(?i)(Authorization:\s*Bearer\s+)[^\s"'\\]+`)
-	regexpSecretEnv   = regexp.MustCompile(`(?m)(SECRET_[A-Z0-9_]+=)[^\s"'\\]+`)
+	regexpMCPToken      = regexp.MustCompile(`(?i)(MCP_API_TOKEN=)[^\s"'\\]+`)
+	regexpSensitiveEnv  = regexp.MustCompile(`(?i)\b([A-Z0-9_]*(?:API_KEY|TOKEN|SECRET)=)[^\s"'\\]+`)
+	regexpBearerToken   = regexp.MustCompile(`(?i)(Authorization:\s*Bearer\s+)[^\s"'\\]+`)
+	regexpSecretEnv     = regexp.MustCompile(`(?m)(SECRET_[A-Z0-9_]+=)[^\s"'\\]+`)
+	regexpProviderSKKey = regexp.MustCompile(`\bsk-[A-Za-z0-9][A-Za-z0-9_-]{10,}\b`)
+	regexpGoogleAPIKey  = regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{20,}\b`)
 )
 
 type terminalToolLines struct {
@@ -916,8 +919,11 @@ func redactTerminalToolText(value string) string {
 // is surfaced outside the terminal package.
 func RedactSensitiveTerminalText(value string) string {
 	value = regexpMCPToken.ReplaceAllString(value, "$1[redacted]")
+	value = regexpSensitiveEnv.ReplaceAllString(value, "$1[redacted]")
 	value = regexpBearerToken.ReplaceAllString(value, "$1[redacted]")
 	value = regexpSecretEnv.ReplaceAllString(value, "$1[redacted]")
+	value = regexpProviderSKKey.ReplaceAllString(value, "sk-[redacted]")
+	value = regexpGoogleAPIKey.ReplaceAllString(value, "AIza[redacted]")
 	return value
 }
 

@@ -21,7 +21,8 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
     isMultiUserModeChecked,
     isLoading,
     checkAuthMode,
-    checkAuth
+    checkAuth,
+    login
   } = useAuthStore()
 
   const [sharedFilePath, setSharedFilePath] = useState<string | null>(null)
@@ -29,6 +30,7 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
   const [reportWorkspacePath, setReportWorkspacePath] = useState<string | null>(null)
   const [sharedUid, setSharedUid] = useState<string | null>(null)
   const [isAuthCallback, setIsAuthCallback] = useState(false)
+  const [singleUserAuthAttempted, setSingleUserAuthAttempted] = useState(false)
 
   // Check for shared file/folder URL or OAuth callback
   useEffect(() => {
@@ -78,6 +80,16 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
     checkAuth()
   }, [checkAuthMode, checkAuth])
 
+  useEffect(() => {
+    if (!isMultiUserModeChecked || isMultiUserMode || isAuthenticated || isLoading || singleUserAuthAttempted) {
+      return
+    }
+    setSingleUserAuthAttempted(true)
+    login('', '').catch((error) => {
+      console.error('[AUTH] Failed to initialize single-user token:', error)
+    })
+  }, [isMultiUserModeChecked, isMultiUserMode, isAuthenticated, isLoading, singleUserAuthAttempted, login])
+
   // If viewing a shared file, render it directly
   if (sharedFilePath) {
     return (
@@ -111,8 +123,8 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
     return <AuthCallback />
   }
 
-  // Still loading auth mode
-  if (!isMultiUserModeChecked || isLoading) {
+  // Still loading auth mode or local single-user token
+  if (!isMultiUserModeChecked || isLoading || (!isMultiUserMode && !isAuthenticated && !singleUserAuthAttempted)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-900">
         <WorkspaceConnectionSwitcher placement="auth" />

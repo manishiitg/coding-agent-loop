@@ -7,7 +7,6 @@ import ModalPortal from '../ui/ModalPortal'
 
 const MISSED_SCHEDULE_GRACE_MS = 60_000
 const ORG_PULSE_JOB_ID = 'builtin-org-pulse'
-const MEMORY_ENRICH_JOB_ID = 'builtin-auto-enrich-memory'
 type JobFilter = 'running' | 'enabled' | 'paused' | 'missed' | 'issues' | 'all'
 
 function describeCron(expr: string): string {
@@ -90,7 +89,6 @@ function isOrgPulseJob(job: ScheduledJob): boolean {
 
 function getSlashManagedCommand(job: ScheduledJob): string {
   if (isOrgPulseJob(job)) return '/pulse-setup'
-  if (job.id === MEMORY_ENRICH_JOB_ID) return '/memory-setup'
   if (job.managed_by === 'slash-command') return 'setup command'
   return ''
 }
@@ -100,9 +98,6 @@ function isSlashManagedJob(job: ScheduledJob): boolean {
 }
 
 function managedScheduleError(job: ScheduledJob, action: string): string {
-  if (job.id === MEMORY_ENRICH_JOB_ID && action === 'run this schedule') {
-    return 'Use /enrich-memory in Chief of Staff for a one-time run, or /memory-setup to configure automatic memory enrichment.'
-  }
   const command = getSlashManagedCommand(job)
   if (command && command !== 'setup command') {
     return `Use ${command} in Chief of Staff to ${action}.`

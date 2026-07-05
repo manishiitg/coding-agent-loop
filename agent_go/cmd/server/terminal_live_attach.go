@@ -762,13 +762,23 @@ func (st *liveAttachStream) runControlMode(ctx context.Context) {
 
 // liveAttachUpgrader upgrades the request to a WebSocket. Authentication and
 // session ownership are enforced by the route's AuthMiddleware +
-// requireAccessibleTerminal before the upgrade; CheckOrigin is permissive
-// because access is already gated by the JWT/ownership check (the same posture
-// as the existing authed API surface).
-var liveAttachUpgrader = websocket.Upgrader{
-	ReadBufferSize:  4096,
-	WriteBufferSize: 64 * 1024,
-	CheckOrigin:     func(r *http.Request) bool { return true },
+// requireAccessibleTerminal before the upgrade. Browser-origin checks are an
+// additional CSRF/WS-hijacking backstop because this stream can inject pane
+// input, not just observe it.
+func (api *StreamingAPI) liveAttachUpgrader() websocket.Upgrader {
+	return websocket.Upgrader{
+		ReadBufferSize:  4096,
+		WriteBufferSize: 64 * 1024,
+		CheckOrigin:     api.checkLiveAttachOrigin,
+	}
+}
+
+func (api *StreamingAPI) checkLiveAttachOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	return isAllowedCORSOrigin(origin, api.config.CORSOrigins)
 }
 
 // handleTerminalStream is GET /api/terminals/{terminal_id}/stream — the
@@ -791,7 +801,8 @@ func (api *StreamingAPI) handleTerminalStream(w http.ResponseWriter, r *http.Req
 
 	// The request log middleware wraps the ResponseWriter; unwrap to the raw
 	// writer so gorilla/websocket can Hijack it.
-	conn, err := liveAttachUpgrader.Upgrade(unwrapResponseWriter(w), r, nil)
+	upgrader := api.liveAttachUpgrader()
+	conn, err := upgrader.Upgrade(unwrapResponseWriter(w), r, nil)
 	if err != nil {
 		// Upgrade already wrote an error response.
 		return

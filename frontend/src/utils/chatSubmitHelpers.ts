@@ -61,8 +61,10 @@ export function buildLLMConfigWithApiKeys(
 ): ExtendedLLMConfiguration & { api_keys: Record<string, unknown> } {
   // API keys are now loaded server-side from workspace encrypted store.
   // No keys are sent from the frontend.
+  const configWithoutApiKey = { ...effectiveLLMConfig }
+  delete configWithoutApiKey.api_key
   return {
-    ...effectiveLLMConfig,
+    ...configWithoutApiKey,
     api_keys: {},
   }
 }

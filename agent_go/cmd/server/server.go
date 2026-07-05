@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	_ "net/http/pprof" // Register pprof handlers
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -100,9 +101,7 @@ var mcpBridgeCustomToolCategories = map[string]bool{
 	"auto_improvement":     true,
 }
 
-var mcpBridgeVirtualToolCategories = map[string]bool{
-	"memory": true,
-}
+var mcpBridgeVirtualToolCategories = map[string]bool{}
 
 func normalizeMCPBridgeCategory(name string) string {
 	return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(name), "-", "_"))
@@ -194,7 +193,7 @@ Examples:
   mcp-agent server                           # Start server with default settings
   mcp-agent server --port 8000              # Start on custom port
   mcp-agent server --provider openai        # Use OpenAI provider
-  mcp-agent server --cors-origins "*"       # Enable CORS for all origins`,
+  mcp-agent server --cors-origins "https://app.example.com"  # Allow a specific browser origin`,
 	Run: runServer,
 }
 
@@ -228,11 +227,10 @@ type ActiveSessionInfo struct {
 	WorkshopMode                string     `json:"workshop_mode,omitempty"`
 	BotPlatform                 string     `json:"bot_platform,omitempty"`
 	TriggeredBy                 string     `json:"triggered_by,omitempty"`
-	LLMGuidance                 string     `json:"llm_guidance,omitempty"`  // LLM guidance message for this session
-	MemoryFolder                string     `json:"memory_folder,omitempty"` // Per-user memory folder (default: _users/<userID>/memories)
-	ChatsFolder                 string     `json:"chats_folder,omitempty"`  // Per-user Chats folder (default: _users/<userID>/Chats)
-	UserID                      string     `json:"-"`                       // User ID for session isolation (not exposed in JSON)
-	IsSyntheticTurn             bool       `json:"is_synthetic_turn"`       // True when running an auto-notification turn (not user-initiated)
+	LLMGuidance                 string     `json:"llm_guidance,omitempty"` // LLM guidance message for this session
+	ChatsFolder                 string     `json:"chats_folder,omitempty"` // Per-user Chats folder (default: _users/<userID>/Chats)
+	UserID                      string     `json:"-"`                      // User ID for session isolation (not exposed in JSON)
+	IsSyntheticTurn             bool       `json:"is_synthetic_turn"`      // True when running an auto-notification turn (not user-initiated)
 	HasRunningBackgroundAgents  bool       `json:"has_running_background_agents,omitempty"`
 	RunningBackgroundAgentCount int        `json:"running_background_agent_count,omitempty"`
 	HasRetainedTmuxSession      bool       `json:"has_retained_tmux_session,omitempty"`
@@ -886,9 +884,8 @@ func requestLLMConfigOverridesManifest(req QueryRequest) bool {
 
 // LLMGuidanceRequest represents a request to set LLM guidance for a session
 type LLMGuidanceRequest struct {
-	SessionID    string `json:"session_id"`
-	Guidance     string `json:"guidance"`
-	MemoryFolder string `json:"memory_folder,omitempty"` // Optional override for memory folder path
+	SessionID string `json:"session_id"`
+	Guidance  string `json:"guidance"`
 }
 
 // LLMGuidanceResponse represents the response for LLM guidance operations
@@ -955,8 +952,8 @@ type HumanFeedbackResponse struct {
 func init() {
 	// Add server command flags
 	ServerCmd.Flags().IntP("port", "p", 8000, "Server port")
-	ServerCmd.Flags().StringP("host", "H", "0.0.0.0", "Server host")
-	ServerCmd.Flags().StringSlice("cors-origins", []string{"*"}, "CORS allowed origins")
+	ServerCmd.Flags().StringP("host", "H", "127.0.0.1", "Server host")
+	ServerCmd.Flags().StringSlice("cors-origins", []string{"loopback"}, "CORS allowed origins; use loopback for localhost/127.0.0.1/::1")
 	ServerCmd.Flags().String("provider", "bedrock", "LLM provider (bedrock, openai, anthropic)")
 	ServerCmd.Flags().String("model", "", "Model ID (uses provider default if empty)")
 	ServerCmd.Flags().Float64("temperature", 0.0, "Temperature for LLM")
@@ -1047,10 +1044,8 @@ func runServer(cmd *cobra.Command, args []string) {
 		config.ModelID = llm.GetDefaultModel(llmProvider)
 	}
 
-	// In multi-user mode, AUTH_SECRET must be explicitly set for secure JWT signing.
-	// In single-user mode, auth is bypassed entirely so AUTH_SECRET is not needed.
-	if IsMultiUserMode() && os.Getenv("AUTH_SECRET") == "" {
-		log.Fatal("[AUTH] FATAL: AUTH_SECRET env var must be set when MULTI_USER_MODE=true. Generate a random secret and add it to your deployment configuration.")
+	if err := ValidateConfiguredAuthSecret(); err != nil {
+		log.Fatalf("[AUTH] FATAL: %v. Generate a random secret and add it to your deployment configuration.", err)
 	}
 
 	// Clean up stale agent-browser runtime state (dead PID files, sockets)
@@ -2285,24 +2280,56 @@ func (api *StreamingAPI) loadSelectedSecrets(ctx context.Context, userID, workfl
 func (api *StreamingAPI) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		for _, allowed := range api.config.CORSOrigins {
-			if allowed == "*" || allowed == origin {
-				w.Header().Set("Access-Control-Allow-Origin", origin)
-				break
-			}
+		originAllowed := origin != "" && isAllowedCORSOrigin(origin, api.config.CORSOrigins)
+		if originAllowed {
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
 		}
 
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Session-ID")
-		w.Header().Set("Access-Control-Allow-Credentials", "true")
 
 		if r.Method == "OPTIONS" {
+			if origin != "" && !originAllowed {
+				http.Error(w, `{"error": "CORS origin not allowed"}`, http.StatusForbidden)
+				return
+			}
 			w.WriteHeader(http.StatusOK)
 			return
 		}
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func isAllowedCORSOrigin(origin string, allowedOrigins []string) bool {
+	for _, allowed := range allowedOrigins {
+		allowed = strings.TrimSpace(allowed)
+		if allowed == "" {
+			continue
+		}
+		if allowed == "loopback" && isLoopbackOrigin(origin) {
+			return true
+		}
+		if allowed == origin {
+			return true
+		}
+	}
+	return false
+}
+
+func isLoopbackOrigin(origin string) bool {
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	host := parsed.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 var apiRequestsInFlight int64
@@ -2468,6 +2495,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.Header.Get("X-Session-ID")
 	if sessionID == "" {
 		sessionID = queryID // fallback: use queryID as sessionID if not provided
+	} else if !api.canUseSessionIDForQuery(r, sessionID) {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
 	}
 
 	// Get current user ID for session isolation
@@ -2623,19 +2653,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	api.activeSessionsMux.Unlock()
 
-	// Per-user memory and chat folders. Both live under _users/<userID>/ so different users
-	// don't share each other's persistent memory or chat output files. If a prior LLMGuidance
-	// endpoint call already set a session override, that wins; otherwise default to the
-	// per-user path and pre-create the folder on disk so the first write succeeds.
-	perUserMemoryFolder := perUserMemoryFolderFor(currentUserID)
+	// Per-user chat folder. It lives under _users/<userID>/ so different users
+	// don't share each other's chat output files.
 	perUserChatsFolder := perUserChatsFolderFor(currentUserID)
 	api.activeSessionsMux.Lock()
 	if sess, ok := api.activeSessions[sessionID]; ok {
-		if sess.MemoryFolder == "" {
-			sess.MemoryFolder = perUserMemoryFolder
-		} else {
-			perUserMemoryFolder = sess.MemoryFolder
-		}
 		if sess.ChatsFolder == "" {
 			sess.ChatsFolder = perUserChatsFolder
 		} else {
@@ -2643,10 +2665,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	api.activeSessionsMux.Unlock()
-	for _, rel := range []string{perUserMemoryFolder, perUserChatsFolder} {
-		if err := createWorkspaceFolder(context.Background(), rel); err != nil {
-			logfWithContext(queryLogCtx, "[SESSION] Warning: could not pre-create per-user folder %s: %v", rel, err)
-		}
+	if err := createWorkspaceFolder(context.Background(), perUserChatsFolder); err != nil {
+		logfWithContext(queryLogCtx, "[SESSION] Warning: could not pre-create per-user folder %s: %v", perUserChatsFolder, err)
 	}
 
 	enableBrowserAccess := req.EnableBrowserAccess != nil && *req.EnableBrowserAccess
@@ -2869,11 +2889,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			},
 		}
 
-		// Create custom tools for workflow agents (workspace tools + human tools)
-		// Workflow agents can be Simple or ReAct agents, tools are registered based on mode
-		// TODO: Memory tools removed from workflow - only needed for individual React agents
-		// memoryTools := virtualtools.CreateMemoryTools()
-		// memoryExecutors := virtualtools.CreateMemoryToolExecutors()
+		// Create custom tools for workflow agents (workspace tools + human tools).
+		// Workflow agents can be Simple or ReAct agents, tools are registered based on mode.
 		allTools, allExecutors, toolCategories := createCustomTools(true, currentUserID, sessionID) // Workflow mode: session-aware
 
 		// NOTE: Workspace executor replacement with session + secrets happens after secrets are merged (see below).
@@ -3897,7 +3914,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		var memoryBgDelegate virtualtools.BackgroundDelegateFunc
 		var refreshMultiAgentDelegationTools func() error
 		var workspaceEnv map[string]string // hoisted so secrets can be injected after allChatSecrets is computed
 		log.Printf("[CHAT_TOOLS_DEBUG] isChatMode=%v agentNonNil=%v enableImageGenPtr=%v", isChatMode, llmAgent.GetUnderlyingAgent() != nil, req.EnableImageGeneration)
@@ -4021,44 +4037,40 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Apply folder guard to restrict writes based on mode.
 			// Non-workflow plan/chat sessions write to the per-user Chats folder.
 			// Workflow phase writes to the active workflow folder (plus
-			// Downloads, memory, and chat_history) and keeps Chats read-only so
+			// Downloads and chat_history) and keeps Chats read-only so
 			// builder artifacts cannot drift into normal chat storage.
 			if !isWorkflowPhase {
-				// Per-user memory and chat folders replace the legacy global "memories/" and "Chats/" write paths.
-				perUserMemWrite := perUserMemoryFolder + "/"
+				// Per-user chat folders replace the legacy global "Chats/" write path.
 				perUserChatsWrite := perUserChatsFolder + "/"
 				perUserChatHistory := strings.TrimSuffix(perUserChatsFolder, "Chats") + "chat_history/"
 				orgPulseWrite := "pulse/"
 				additionalFolders := append([]string{}, resolvedGrants.WriteFolders...)
 				additionalFolders = append(additionalFolders, fileContextWriteFolders...)
 				additionalFolders = append(additionalFolders, chiefOfStaffRecommendationWrites...)
-				additionalFolders = append(additionalFolders, perUserMemWrite)
 				additionalFolders = append(additionalFolders, perUserChatHistory)
 				additionalFolders = append(additionalFolders, orgPulseWrite)
 				workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, perUserChatsFolder, workflowReadOnlyFolders, additionalFolders...)
 				workspace.SetSessionWorkingDir(sessionID, chatWorkingFolder)
-				readPaths := append([]string{perUserChatsWrite, perUserChatHistory, "skills/", "subagents/", "Downloads/", "Workflow/", perUserMemWrite}, additionalFolders...)
+				readPaths := append([]string{perUserChatsWrite, perUserChatHistory, "skills/", "subagents/", "Downloads/", "Workflow/"}, additionalFolders...)
 				readPaths = append(readPaths, resolvedGrants.ReadOnlyExtra...)
 				readPaths = append(readPaths, workflowReadOnlyFolders...)
 				workspace.SetSessionFolderGuard(sessionID,
 					readPaths,
-					append([]string{perUserChatsWrite, "Downloads/", perUserMemWrite, perUserChatHistory}, additionalFolders...),
+					append([]string{perUserChatsWrite, "Downloads/", perUserChatHistory}, additionalFolders...),
 				)
 				if hostDownloads := common.GrantSessionCDPHostDownloadsReadOnly(sessionID, req.BrowserMode); hostDownloads != "" {
 					log.Printf("[MULTI-AGENT FOLDER GUARD] Added read-only CDP host Downloads: %s", hostDownloads)
 				}
-				log.Printf("[MULTI-AGENT FOLDER GUARD] Applied per-user folder restriction (chats: %s, mem: %s, write: %v, read-only: %v, grants: %v)", perUserChatsWrite, perUserMemWrite, additionalFolders, workflowReadOnlyFolders, resolvedGrants.AppliedNames)
+				log.Printf("[MULTI-AGENT FOLDER GUARD] Applied per-user folder restriction (chats: %s, write: %v, read-only: %v, grants: %v)", perUserChatsWrite, additionalFolders, workflowReadOnlyFolders, resolvedGrants.AppliedNames)
 			} else {
-				perUserMemWrite := perUserMemoryFolder + "/"
 				perUserChatsWrite := perUserChatsFolder + "/"
 				perUserChatHistory := strings.TrimSuffix(perUserChatsFolder, "Chats") + "chat_history/"
 				extraFolders := append([]string{}, resolvedGrants.WriteFolders...)
 				extraFolders = append(extraFolders, fileContextWriteFolders...)
-				extraFolders = append(extraFolders, perUserMemWrite)
 				extraFolders = append(extraFolders, perUserChatHistory)
 				workspaceExecutors = wrapExecutorsWithWorkflowPhaseFolderGuard(workspaceExecutors, workflowPhaseFolder, workflowReadOnlyFolders, fileContextBlockedWriteFolders, extraFolders...)
 				workspace.SetSessionWorkingDir(sessionID, chatWorkingFolder)
-				readPaths := append([]string{perUserChatsWrite, perUserChatHistory, "Downloads/", "skills/", "subagents/", "Workflow/", perUserMemWrite}, extraFolders...)
+				readPaths := append([]string{perUserChatsWrite, perUserChatHistory, "Downloads/", "skills/", "subagents/", "Workflow/"}, extraFolders...)
 				readPaths = append(readPaths, workflowReadOnlyFolders...)
 				writePaths := workflowPhaseWriteFolders(workflowPhaseFolder, extraFolders...)
 				workspace.SetSessionFolderGuard(sessionID,
@@ -4077,7 +4089,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if hostDownloads := common.GrantSessionCDPHostDownloadsReadOnly(sessionID, req.BrowserMode); hostDownloads != "" {
 					log.Printf("[WORKFLOW PHASE FOLDER GUARD] Added read-only CDP host Downloads: %s", hostDownloads)
 				}
-				log.Printf("[WORKFLOW PHASE FOLDER GUARD] Applied workflow folder restriction (workflow writes: %v, chats read-only: %s, mem: %s, read-only: %v, blocked-write: %v)", writePaths, perUserChatsWrite, perUserMemWrite, workflowReadOnlyFolders, fileContextBlockedWriteFolders)
+				log.Printf("[WORKFLOW PHASE FOLDER GUARD] Applied workflow folder restriction (workflow writes: %v, chats read-only: %s, read-only: %v, blocked-write: %v)", writePaths, perUserChatsWrite, workflowReadOnlyFolders, fileContextBlockedWriteFolders)
 			}
 
 			// Apply skill folder guard if filesystem skills are selected (read-only access to selected skills only).
@@ -4214,7 +4226,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					bgDelegateFunc := func(bgCtx context.Context, name, instruction string) (string, error) {
 						return api.executeBackgroundDelegatedTask(bgCtx, req, sessionID, name, instruction)
 					}
-					memoryBgDelegate = bgDelegateFunc
 					bgQuerier := &bgAgentQuerierImpl{registry: api.bgAgentRegistry}
 
 					// Register all delegation tools (agent decides autonomously what to use).
@@ -4258,8 +4269,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 									eventStore: api.eventStore,
 									sessionID:  sessionID,
 								})
-								// Propagate per-user memory + chats folders so sub-agents inherit them.
-								ctx = context.WithValue(ctx, virtualtools.MemoryFolderKey, perUserMemoryFolder)
+								// Propagate the per-user Chats folder so sub-agents inherit it.
 								ctx = context.WithValue(ctx, virtualtools.ChatsFolderKey, perUserChatsFolder)
 								if tierConfig != nil {
 									ctx = context.WithValue(ctx, virtualtools.DelegationTierConfigKey, tierConfig)
@@ -4505,87 +4515,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 			log.Printf("[CUSTOM TOOLS] Registered %d custom tools with agent", registeredCount)
 
-			// Register memory tools for the multi-agent personal chat ONLY.
-			// Memory is the cross-session user-model for the assistant chat; the
-			// workflow builder (workshop / workflow_phase) must NOT get memory tools,
-			// so a workflow's authoring chat never reads/writes _users/<id>/memories.
-			// In plan mode, memory tools can spawn background memory agents.
-			// The memory workspace client is scoped to the per-user memory folder so all
-			// memory file I/O lands under _users/<userID>/memories/.
-			memoryTools := virtualtools.CreateMemoryTools()
-			if isWorkflowPhase {
-				memoryTools = nil // workshop/builder chat: no personal memory
-			}
-			memoryExecutors := virtualtools.CreateMemoryToolExecutors()
-			memoryCategory := virtualtools.GetDelegationToolCategory()
-			memoryWritePaths := []string{perUserMemoryFolder, perUserChatsFolder}
-			memoryWorkspaceClient := workspace.NewClient(
-				getWorkspaceAPIURL(),
-				workspace.WithFolderGuard(&workspace.FolderGuardConfig{
-					Enabled:      true,
-					WritePaths:   memoryWritePaths,
-					BlockedPaths: []string{},
-				}),
-				workspace.WithUserID(currentUserID),
-			)
-
-			registeredMemoryCount := 0
-			for _, tool := range memoryTools {
-				if tool.Function == nil {
-					continue
-				}
-				toolName := tool.Function.Name
-				exec, exists := memoryExecutors[toolName]
-				if !exists {
-					continue
-				}
-
-				var params map[string]interface{}
-				if tool.Function.Parameters != nil {
-					paramsBytes, err := json.Marshal(tool.Function.Parameters)
-					if err == nil {
-						json.Unmarshal(paramsBytes, &params)
-					}
-				}
-				if params == nil {
-					params = make(map[string]interface{})
-				}
-
-				execCopy := exec
-				wrappedMemoryExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
-					ctx = context.WithValue(ctx, virtualtools.WorkspaceClientKey, memoryWorkspaceClient)
-					if memoryBgDelegate != nil {
-						ctx = context.WithValue(ctx, virtualtools.BackgroundDelegateKey, memoryBgDelegate)
-					}
-					// Inject per-session memory and chats folder overrides
-					api.activeSessionsMux.RLock()
-					sess, sessExists := api.activeSessions[sessionID]
-					api.activeSessionsMux.RUnlock()
-					if sessExists && sess.MemoryFolder != "" {
-						ctx = context.WithValue(ctx, virtualtools.MemoryFolderKey, sess.MemoryFolder)
-					}
-					if sessExists && sess.ChatsFolder != "" {
-						ctx = context.WithValue(ctx, virtualtools.ChatsFolderKey, sess.ChatsFolder)
-					}
-					return execCopy(ctx, args)
-				}
-
-				if err := underlyingAgent.RegisterCustomToolWithTimeout(
-					toolName,
-					tool.Function.Description,
-					params,
-					wrappedMemoryExecutor,
-					0, // Memory operations may involve background delegation; do not enforce timeout.
-					memoryCategory,
-				); err != nil {
-					log.Printf("[MEMORY TOOLS ERROR] Failed to register tool %s: %v", toolName, err)
-					continue
-				}
-				registeredMemoryCount++
-				log.Printf("[MEMORY TOOLS] Registered memory tool: %s (category: %s)", toolName, memoryCategory)
-			}
-			log.Printf("[MEMORY TOOLS] Registered %d memory tools with agent", registeredMemoryCount)
-
 			isMultiAgentChat := !isWorkflowPhase
 			if isMultiAgentChat {
 				if err := api.registerMultiAgentLLMTools(underlyingAgent); err != nil {
@@ -4642,16 +4571,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				logfWithContext(queryLogCtx, "[SECRET TOOLS] Registered multi-agent secret tools (list_secrets, set_user_secret, delete_user_secret; global names read-only)")
 			}
 
-			// Read session state early for guidance injection
-			// (before delegation / memory instructions).
+			// Read session state early for guidance injection.
 			// NOTE: UpdateCodeExecutionRegistry is called AFTER all AppendSystemPrompt calls
 			// so that AppendedSystemPrompts is fully populated before the registry rebuild
 			// re-assembles the final system prompt.
 			api.activeSessionsMux.RLock()
-			memFolderForPrompt := ""
 			llmGuidance := ""
 			if sess, ok := api.activeSessions[sessionID]; ok {
-				memFolderForPrompt = sess.MemoryFolder
 				llmGuidance = sess.LLMGuidance
 			}
 			api.activeSessionsMux.RUnlock()
@@ -4695,9 +4621,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// 2. WORKSPACE MAP — compact folder listing with absolute paths and access levels.
 			if isWorkflowPhase {
-				underlyingAgent.AppendSystemPrompt(GetWorkflowPhaseWorkspaceMap(shellRoot, workflowPhaseFolder, perUserMemoryFolder))
+				underlyingAgent.AppendSystemPrompt(GetWorkflowPhaseWorkspaceMap(shellRoot, workflowPhaseFolder))
 			} else {
-				underlyingAgent.AppendSystemPrompt(GetWorkspaceMap(shellRoot, perUserChatsFolder, perUserMemoryFolder))
+				underlyingAgent.AppendSystemPrompt(GetWorkspaceMap(shellRoot, perUserChatsFolder))
 			}
 			if capabilitySection := buildLLMCapabilityPromptSection(r.Context()); capabilitySection != "" {
 				underlyingAgent.AppendSystemPrompt(capabilitySection)
@@ -4734,13 +4660,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[CHANNEL] Added %s formatting rules to system prompt", req.BotPlatform)
 			}
 
-			// 4. MODE-SPECIFIC — browser and memory.
+			// 4. MODE-SPECIFIC — browser.
 			//
-			// The full guides for both live in the workflow-reference mega-skill
-			// (`browser-usage`, `memory-usage`) and are loaded on demand. We only
+			// The full guide lives in the workflow-reference mega-skill
+			// (`browser-usage`) and is loaded on demand. We only
 			// inject a one-line pointer per capability so the agent KNOWS the
-			// surface exists, without paying for the ~10KB browser block and ~3KB
-			// memory block on every single turn.
+			// surface exists, without paying for the ~10KB browser block on every
+			// single turn.
 			chatBrowserCfg := buildChatBrowserConfig(req)
 			if chatBrowserCfg.HasPlaywright || chatBrowserCfg.HasAgentBrowser {
 				underlyingAgent.AppendSystemPrompt(
@@ -4751,37 +4677,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[BROWSER] Added browser-skill pointer to system prompt (playwright=%v, agent-browser=%v, cdp=%v)",
 					chatBrowserCfg.HasPlaywright, chatBrowserCfg.HasAgentBrowser, chatBrowserCfg.CdpPort > 0)
 			}
-			memoryFolderForPointer := strings.TrimSpace(memFolderForPrompt)
-			if memoryFolderForPointer == "" {
-				memoryFolderForPointer = virtualtools.MemoryFolderPath
-			}
-			underlyingAgent.AppendSystemPrompt(
-				"\n## Memory\n\nPersistent cross-session memory is available via the `save_memory` / " +
-					"`recall_memory` / `enrich_memory` tools. Your memory folder is `" + memoryFolderForPointer + "`. " +
-					"For save rules (user-explicit asks only), recall guidelines, and the user-model " +
-					"philosophy of what to save vs not save, call `get_reference_doc(kind=\"memory-usage\")`. " +
-					"Your memory index is auto-loaded below when one exists.\n",
-			)
-
-			// Auto-inject memory index.md so the agent has prior context without needing a tool call.
-			// This is critical for the orchestrator which would otherwise skip recall_memory entirely.
-			{
-				indexPath := perUserMemoryFolder + "/index.md"
-				if indexContent, exists, err := readFileFromWorkspace(context.Background(), indexPath); err == nil && exists && indexContent != "" {
-					// Truncate very large indices to avoid bloating the prompt
-					if len(indexContent) > 4000 {
-						indexContent = indexContent[:4000] + "\n\n... (truncated — use recall_memory for full details)"
-					}
-					underlyingAgent.AppendSystemPrompt("\n## Your Memory (auto-loaded)\n\n" + indexContent)
-					log.Printf("[MEMORY] Auto-injected index.md (%d chars) into system prompt", len(indexContent))
-				}
-			}
-
 			// 5. REFERENCE DOCS — detailed config schemas, workflow structure, workflow creation.
 			//    Only for worker agents (workflow phase). The orchestrator delegates all file
 			//    work so it doesn't need 300+ lines of config schemas and parsing commands.
 			if isWorkflowPhase {
-				underlyingAgent.AppendSystemPrompt(GetWorkspaceReference(shellRoot, perUserChatsFolder, perUserMemoryFolder))
+				underlyingAgent.AppendSystemPrompt(GetWorkspaceReference(shellRoot, perUserChatsFolder))
 			}
 
 			// 6. SUPPLEMENTARY — conditional grants, CLI provider overrides.
@@ -5056,15 +4956,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if variableNames != "" {
 					phaseTemplateVars["VariableNames"] = variableNames
 					log.Printf("[WORKFLOW_PHASE] Loaded variable names")
-				}
-
-				// Load workflow memory from memory/ folder (user-saved knowledge for this workflow)
-				if phaseWorkspacePath != "" {
-					memoryContent := loadWorkflowMemory(phaseWorkspacePath, phaseReadFile, setupCtx)
-					if memoryContent != "" {
-						phaseTemplateVars["CustomInstructions"] = memoryContent
-						log.Printf("[WORKFLOW_PHASE] Loaded workflow memory (%d bytes)", len(memoryContent))
-					}
 				}
 
 				// Generate phase-specific system prompt (dispatches by phaseId)
@@ -6767,10 +6658,6 @@ func (api *StreamingAPI) handleSetLLMGuidance(w http.ResponseWriter, r *http.Req
 	// Update guidance in activeSessions
 	api.activeSessionsMux.Lock()
 	session.LLMGuidance = req.Guidance
-	if req.MemoryFolder != "" {
-		session.MemoryFolder = req.MemoryFolder
-		log.Printf("[LLM_GUIDANCE] Set memory folder for session %s: %s", sessionID, req.MemoryFolder)
-	}
 	session.LastActivity = time.Now()
 	api.activeSessionsMux.Unlock()
 
@@ -6885,6 +6772,10 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 	sessionID := vars["session_id"]
 	if sessionID == "" {
 		http.Error(w, "Session ID is required", http.StatusBadRequest)
+		return
+	}
+	if !api.canAccessTerminalSession(r, sessionID) {
+		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
 

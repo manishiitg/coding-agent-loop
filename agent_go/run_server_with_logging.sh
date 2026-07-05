@@ -666,18 +666,77 @@ export AGENT_PORT
 export MCP_AGENT_SERVER_URL="${LOCALHOST_BASE_URL}:${AGENT_PORT}"
 echo "✅ Using agent server port: $AGENT_PORT"
 
+generate_auth_secret() {
+    if command -v openssl >/dev/null 2>&1; then
+        openssl rand -hex 32
+        return
+    fi
+    python3 - <<'PY'
+import secrets
+print(secrets.token_hex(32))
+PY
+}
+
+ensure_local_auth_secret() {
+    if [ -n "${AUTH_SECRET:-}" ] && [ "$AUTH_SECRET" != "dev-secret-change-in-production" ]; then
+        return
+    fi
+
+    local target_env_file="${ENV_FILE_PATH:-.env}"
+    local generated_secret
+    generated_secret="$(generate_auth_secret)"
+    if [ -z "$generated_secret" ]; then
+        echo "❌ Error: failed to generate AUTH_SECRET"
+        exit 1
+    fi
+
+    export AUTH_SECRET="$generated_secret"
+    mkdir -p "$(dirname "$target_env_file")"
+
+    if [ -f "$target_env_file" ]; then
+        local tmp_env_file
+        tmp_env_file="$(mktemp)"
+        awk -v auth_line="AUTH_SECRET=${AUTH_SECRET}" '
+            BEGIN { written = 0 }
+            /^AUTH_SECRET=/ {
+                if (!written) {
+                    print auth_line
+                    written = 1
+                }
+                next
+            }
+            { print }
+            END {
+                if (!written) {
+                    print auth_line
+                }
+            }
+        ' "$target_env_file" > "$tmp_env_file" && mv "$tmp_env_file" "$target_env_file"
+    else
+        printf 'AUTH_SECRET=%s\n' "$AUTH_SECRET" > "$target_env_file"
+    fi
+
+    chmod 600 "$target_env_file" 2>/dev/null || true
+    echo "🔐 Generated local AUTH_SECRET in $target_env_file"
+}
+
 # Source environment variables from .env file if it exists
+ENV_FILE_PATH=""
 if [ -f "../agent_go/.env" ]; then
     echo "🔧 Loading environment variables from ../agent_go/.env..."
+    ENV_FILE_PATH="../agent_go/.env"
     source ../agent_go/.env
     echo "✅ Environment variables loaded (including Langfuse configuration)"
 elif [ -f ".env" ]; then
     echo "🔧 Loading environment variables from .env..."
+    ENV_FILE_PATH=".env"
     source .env
     echo "✅ Environment variables loaded (including Langfuse configuration)"
 else
     echo "⚠️  No .env file found. Langfuse tracing will be disabled."
 fi
+
+ensure_local_auth_secret
 
 if [ "$MCP_SERVER_API_TOKEN_ARG_SET" = true ]; then
     export MCP_SERVER_API_TOKEN="$MCP_SERVER_API_TOKEN_ARG"
@@ -817,7 +876,7 @@ EOF
 
 write_frontend_runtime_config
 
-# Explicitly set single-user mode (no authentication required)
+# Explicitly set single-user mode (local JWT is still required for API routes)
 export MULTI_USER_MODE="false"
 
 # Enable local mode (enables CDP browser connection and other local-only features)

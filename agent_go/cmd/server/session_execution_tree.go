@@ -487,7 +487,6 @@ func (api *StreamingAPI) buildSessionExecutionTree(session *ActiveSessionInfo) *
 		}
 	}
 
-	now := time.Now()
 	for _, agent := range api.bgAgentRegistry.GetAll(session.SessionID) {
 		if agent == nil {
 			continue
@@ -519,7 +518,7 @@ func (api *StreamingAPI) buildSessionExecutionTree(session *ActiveSessionInfo) *
 			Source:            "background_agent_registry",
 			Kind:              kind,
 			Name:              name,
-			Status:            backgroundAgentExecutionStatusForActivity(snap, now),
+			Status:            string(snap.Status),
 			StartedAt:         snap.CreatedAt,
 			CompletedAt:       snap.CompletedAt,
 			Error:             snap.Error,

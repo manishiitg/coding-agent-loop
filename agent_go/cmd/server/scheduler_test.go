@@ -151,10 +151,10 @@ func TestShouldUpdateChiefTaskReport(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "builtin memory schedule is excluded",
+			name: "deprecated builtin memory schedule is excluded",
 			sctx: &ScheduleContext{
 				SourceType: "multi-agent",
-				Schedule:   WorkflowSchedule{ID: builtinAutoEnrichMemoryID, Name: "Auto-enrich memory"},
+				Schedule:   WorkflowSchedule{ID: deprecatedAutoEnrichMemoryID, Name: "Auto-enrich memory"},
 			},
 			want: false,
 		},
@@ -209,10 +209,49 @@ func TestBuildChiefTaskReportUpdateMessageUsesSingleSharedTaskHTML(t *testing.T)
 		"status: success",
 		"Prepare a cross-workflow recommendation report.",
 		"Prepend one .task-entry",
+		"key findings to reuse",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("task report update message missing %q:\n%s", want, msg)
 		}
+	}
+}
+
+func TestWithChiefTaskRunContextAddsPriorTaskReportInstruction(t *testing.T) {
+	sctx := &ScheduleContext{
+		SourceType: "multi-agent",
+		Schedule: WorkflowSchedule{
+			ID:    "weekly-market-review",
+			Name:  "Weekly market review",
+			Query: "Prepare a cross-workflow recommendation report.",
+		},
+	}
+
+	msg := withChiefTaskRunContext(sctx, sctx.Schedule.Query)
+	for _, want := range []string{
+		"NORMAL CHIEF OF STAFF TASK RUN",
+		"read pulse/task.html if it exists",
+		`data-schedule-id="weekly-market-review"`,
+		"key findings",
+		"durable context",
+		"Do not use or update Chief of Staff memory tools/files",
+		"Prepare a cross-workflow recommendation report.",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("task run context missing %q:\n%s", want, msg)
+		}
+	}
+}
+
+func TestWithChiefTaskRunContextSkipsOrgPulse(t *testing.T) {
+	sctx := &ScheduleContext{
+		SourceType: "multi-agent",
+		Schedule:   WorkflowSchedule{ID: builtinOrgPulseID, Name: "Daily Org Pulse"},
+	}
+
+	const query = "Run Org Pulse."
+	if got := withChiefTaskRunContext(sctx, query); got != query {
+		t.Fatalf("withChiefTaskRunContext() = %q, want original query", got)
 	}
 }
 
@@ -379,8 +418,8 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 
 func TestPostRunMonitorPrependsWorkflowVersionUpgradeForOldManifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.0"})
-	if got := len(steps); got != 11 {
-		t.Fatalf("postRunMonitorStepsForManifest(old) length = %d, want 11", got)
+	if got := len(steps); got != 14 {
+		t.Fatalf("postRunMonitorStepsForManifest(old) length = %d, want 14", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.1" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.1", got)
@@ -405,15 +444,24 @@ func TestPostRunMonitorPrependsWorkflowVersionUpgradeForOldManifest(t *testing.T
 	if got := steps[2].label; got != "upgrade-1.0.3" {
 		t.Fatalf("third step label = %q, want upgrade-1.0.3", got)
 	}
-	if got := steps[3].label; got != "triage" {
-		t.Fatalf("fourth step label = %q, want triage", got)
+	if got := steps[3].label; got != "upgrade-1.0.4" {
+		t.Fatalf("fourth step label = %q, want upgrade-1.0.4", got)
+	}
+	if got := steps[4].label; got != "upgrade-1.0.5" {
+		t.Fatalf("fifth step label = %q, want upgrade-1.0.5", got)
+	}
+	if got := steps[5].label; got != "upgrade-1.0.6" {
+		t.Fatalf("sixth step label = %q, want upgrade-1.0.6", got)
+	}
+	if got := steps[6].label; got != "triage" {
+		t.Fatalf("seventh step label = %q, want triage", got)
 	}
 }
 
 func TestPostRunMonitorPrependsWorkflowVersionUpgradeForMissingVersion(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{})
-	if got := len(steps); got != 11 {
-		t.Fatalf("postRunMonitorStepsForManifest(missing version) length = %d, want 11", got)
+	if got := len(steps); got != 14 {
+		t.Fatalf("postRunMonitorStepsForManifest(missing version) length = %d, want 14", got)
 	}
 	if !strings.Contains(steps[0].query, `Current workflow.json version seen by scheduler: "1.0.0"`) {
 		t.Fatalf("missing version should be treated as 1.0.0:\n%s", steps[0].query)
@@ -422,8 +470,8 @@ func TestPostRunMonitorPrependsWorkflowVersionUpgradeForMissingVersion(t *testin
 
 func TestPostRunMonitorPrependsPublishGateUpgradeForVersion101Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.1"})
-	if got := len(steps); got != 10 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.1) length = %d, want 10", got)
+	if got := len(steps); got != 13 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.1) length = %d, want 13", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.2" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.2", got)
@@ -443,15 +491,24 @@ func TestPostRunMonitorPrependsPublishGateUpgradeForVersion101Manifest(t *testin
 	if got := steps[1].label; got != "upgrade-1.0.3" {
 		t.Fatalf("second step label = %q, want upgrade-1.0.3", got)
 	}
-	if got := steps[2].label; got != "triage" {
-		t.Fatalf("third step label = %q, want triage", got)
+	if got := steps[2].label; got != "upgrade-1.0.4" {
+		t.Fatalf("third step label = %q, want upgrade-1.0.4", got)
+	}
+	if got := steps[3].label; got != "upgrade-1.0.5" {
+		t.Fatalf("fourth step label = %q, want upgrade-1.0.5", got)
+	}
+	if got := steps[4].label; got != "upgrade-1.0.6" {
+		t.Fatalf("fifth step label = %q, want upgrade-1.0.6", got)
+	}
+	if got := steps[5].label; got != "triage" {
+		t.Fatalf("sixth step label = %q, want triage", got)
 	}
 }
 
 func TestPostRunMonitorPrependsHTMLReportUpgradeForVersion102Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.2"})
-	if got := len(steps); got != 9 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.2) length = %d, want 9", got)
+	if got := len(steps); got != 12 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.2) length = %d, want 12", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.3" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.3", got)
@@ -468,6 +525,105 @@ func TestPostRunMonitorPrependsHTMLReportUpgradeForVersion102Manifest(t *testing
 	} {
 		if !strings.Contains(steps[0].query, want) {
 			t.Fatalf("html report upgrade step missing %q:\n%s", want, steps[0].query)
+		}
+	}
+	if got := steps[1].label; got != "upgrade-1.0.4" {
+		t.Fatalf("second step label = %q, want upgrade-1.0.4", got)
+	}
+	if got := steps[2].label; got != "upgrade-1.0.5" {
+		t.Fatalf("third step label = %q, want upgrade-1.0.5", got)
+	}
+	if got := steps[3].label; got != "upgrade-1.0.6" {
+		t.Fatalf("fourth step label = %q, want upgrade-1.0.6", got)
+	}
+	if got := steps[4].label; got != "triage" {
+		t.Fatalf("fifth step label = %q, want triage", got)
+	}
+}
+
+func TestPostRunMonitorPrependsPulseReadabilityUpgradeForVersion103Manifest(t *testing.T) {
+	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.3"})
+	if got := len(steps); got != 11 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.3) length = %d, want 11", got)
+	}
+	if got := steps[0].label; got != "upgrade-1.0.4" {
+		t.Fatalf("first step label = %q, want upgrade-1.0.4", got)
+	}
+	for _, want := range []string{
+		"WORKFLOW VERSION UPGRADE v1.0.3 -> v1.0.4",
+		`builder/improve.html`,
+		`get_reference_doc(kind="review-improve-log")`,
+		"What matters now",
+		"recent runs: metadata row first",
+		"full-width second row",
+		`<!-- LOG ENTRIES: newest first -->`,
+		`workflow.json "version" to "1.0.4"`,
+	} {
+		if !strings.Contains(steps[0].query, want) {
+			t.Fatalf("pulse readability upgrade step missing %q:\n%s", want, steps[0].query)
+		}
+	}
+	if got := steps[1].label; got != "upgrade-1.0.5" {
+		t.Fatalf("second step label = %q, want upgrade-1.0.5", got)
+	}
+	if got := steps[2].label; got != "upgrade-1.0.6" {
+		t.Fatalf("third step label = %q, want upgrade-1.0.6", got)
+	}
+	if got := steps[3].label; got != "triage" {
+		t.Fatalf("fourth step label = %q, want triage", got)
+	}
+}
+
+func TestPostRunMonitorPrependsPulseFilterUpgradeForVersion104Manifest(t *testing.T) {
+	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.4"})
+	if got := len(steps); got != 10 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.4) length = %d, want 10", got)
+	}
+	if got := steps[0].label; got != "upgrade-1.0.5" {
+		t.Fatalf("first step label = %q, want upgrade-1.0.5", got)
+	}
+	for _, want := range []string{
+		"WORKFLOW VERSION UPGRADE v1.0.4 -> v1.0.5",
+		`builder/improve.html`,
+		`get_reference_doc(kind="review-improve-log")`,
+		"Date, Kind, Search, Reset",
+		`data-date="YYYY-MM-DD"`,
+		`data-kind="run|monitor|artifact|decision|advisor|cos|open|user|note"`,
+		`<!-- LOG ENTRIES: newest first -->`,
+		`workflow.json "version" to "1.0.5"`,
+	} {
+		if !strings.Contains(steps[0].query, want) {
+			t.Fatalf("pulse filter upgrade step missing %q:\n%s", want, steps[0].query)
+		}
+	}
+	if got := steps[1].label; got != "upgrade-1.0.6" {
+		t.Fatalf("second step label = %q, want upgrade-1.0.6", got)
+	}
+	if got := steps[2].label; got != "triage" {
+		t.Fatalf("third step label = %q, want triage", got)
+	}
+}
+
+func TestPostRunMonitorPrependsRichPulseWidgetUpgradeForVersion105Manifest(t *testing.T) {
+	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.5"})
+	if got := len(steps); got != 9 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.5) length = %d, want 9", got)
+	}
+	if got := steps[0].label; got != "upgrade-1.0.6" {
+		t.Fatalf("first step label = %q, want upgrade-1.0.6", got)
+	}
+	for _, want := range []string{
+		"WORKFLOW VERSION UPGRADE v1.0.5 -> v1.0.6",
+		`builder/improve.html`,
+		`get_reference_doc(kind="review-improve-log")`,
+		"What matters now widget cards",
+		"color-coded signal tiles",
+		".tile.ok",
+		`<!-- LOG ENTRIES: newest first -->`,
+		`workflow.json "version" to "1.0.6"`,
+	} {
+		if !strings.Contains(steps[0].query, want) {
+			t.Fatalf("rich pulse widget upgrade step missing %q:\n%s", want, steps[0].query)
 		}
 	}
 	if got := steps[1].label; got != "triage" {
@@ -964,6 +1120,50 @@ func TestWaitForWorkshopIdleRequiresTwoFreshIdleTmuxChecks(t *testing.T) {
 	}
 }
 
+func TestWaitForLiveInputTurnCompleteRequiresBusyBeforeIdle(t *testing.T) {
+	oldInterval := liveInputTurnPollInterval
+	oldStableAfter := liveInputTurnNoBusyStableAfter
+	liveInputTurnPollInterval = time.Millisecond
+	liveInputTurnNoBusyStableAfter = time.Hour
+	defer func() {
+		liveInputTurnPollInterval = oldInterval
+		liveInputTurnNoBusyStableAfter = oldStableAfter
+	}()
+
+	store := terminals.NewStore()
+	sessionID := "session-live-input-wait"
+	tmuxSession := "tmux-live-input-wait"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "main:"+sessionID, tmuxSession, "old pane\n❯", 1))
+
+	oldRunOutput := runTerminalTmuxOutputCommand
+	defer func() { runTerminalTmuxOutputCommand = oldRunOutput }()
+	outputs := []string{
+		"prompt echoed\n❯",
+		"thinking\nesc to interrupt",
+		"final answer\n❯",
+		"final answer\n❯",
+	}
+	calls := 0
+	runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
+		if calls >= len(outputs) {
+			return outputs[len(outputs)-1], nil
+		}
+		out := outputs[calls]
+		calls++
+		return out, nil
+	}
+
+	api := &StreamingAPI{terminalStore: store}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := api.waitForLiveInputTurnComplete(ctx, nil, sessionID); err != nil {
+		t.Fatalf("waitForLiveInputTurnComplete returned error: %v", err)
+	}
+	if calls < 4 {
+		t.Fatalf("tmux captures = %d, want at least 4; initial idle must not complete the live-input turn", calls)
+	}
+}
+
 func TestApplyPulseLLMToReqMapUsesCodingAgentPulseDefaultWhenUnset(t *testing.T) {
 	reqMap := map[string]interface{}{}
 	sctx := &ScheduleContext{
@@ -1088,66 +1288,6 @@ func TestResolveChiefOfStaffLLMForScheduleUsesCodingAgentDefault(t *testing.T) {
 	}
 }
 
-func TestResolveChiefOfStaffLLMForMemoryScheduleUsesPulseOverride(t *testing.T) {
-	sctx := &ScheduleContext{
-		SourceType: "multi-agent",
-		Schedule:   WorkflowSchedule{ID: builtinAutoEnrichMemoryID},
-		Capabilities: WorkflowCapabilities{
-			LLMConfig: &workflowtypes.PresetLLMConfig{
-				Provider: "claude-code",
-				ModelID:  "claude-code",
-				PulseLLM: &workflowtypes.AgentLLMConfig{
-					Provider: "codex-cli",
-					ModelID:  "gpt-5.4",
-				},
-				ChiefOfStaffLLM: &workflowtypes.AgentLLMConfig{
-					Provider: "codex-cli",
-					ModelID:  "gpt-5.5",
-					Options:  map[string]interface{}{"reasoning_effort": "xhigh"},
-				},
-			},
-		},
-	}
-
-	got := resolveChiefOfStaffLLMForSchedule(context.Background(), sctx)
-	if got == nil {
-		t.Fatal("resolveChiefOfStaffLLMForSchedule() = nil")
-	}
-	if got.Provider != "codex-cli" || got.ModelID != "gpt-5.4" {
-		t.Fatalf("resolveChiefOfStaffLLMForSchedule() = %+v, want codex-cli/gpt-5.4", got)
-	}
-}
-
-func TestResolveChiefOfStaffLLMForMemoryScheduleUsesCodingAgentPulseDefault(t *testing.T) {
-	sctx := &ScheduleContext{
-		SourceType: "multi-agent",
-		Schedule:   WorkflowSchedule{ID: builtinAutoEnrichMemoryID},
-		Capabilities: WorkflowCapabilities{
-			LLMConfig: &workflowtypes.PresetLLMConfig{
-				Provider:          "claude-code",
-				ModelID:           "claude-code",
-				LLMAllocationMode: workflowtypes.LLMAllocationModeCodingAgent,
-				ChiefOfStaffLLM: &workflowtypes.AgentLLMConfig{
-					Provider: "codex-cli",
-					ModelID:  "gpt-5.5",
-					Options:  map[string]interface{}{"reasoning_effort": "xhigh"},
-				},
-			},
-		},
-	}
-
-	got := resolveChiefOfStaffLLMForSchedule(context.Background(), sctx)
-	if got == nil {
-		t.Fatal("resolveChiefOfStaffLLMForSchedule() = nil")
-	}
-	if got.Provider != "claude-code" || got.ModelID != "claude-sonnet-5" {
-		t.Fatalf("resolveChiefOfStaffLLMForSchedule() = %+v, want claude-code/claude-sonnet-5", got)
-	}
-	if got.Options["reasoning_effort"] != "high" {
-		t.Fatalf("reasoning_effort = %#v, want high", got.Options["reasoning_effort"])
-	}
-}
-
 func TestResolveChiefOfStaffLLMFromDelegationConfigUsesExplicitScheduledModel(t *testing.T) {
 	got := resolveChiefOfStaffLLMFromDelegationConfig(&virtualtools.DelegationTierConfig{
 		ChiefOfStaff: &virtualtools.TierModel{
@@ -1179,28 +1319,6 @@ func TestResolveChiefOfStaffLLMFromDelegationConfigUsesProviderDefault(t *testin
 	}
 	if got.Provider != "claude-code" || got.ModelID != "claude-opus-4-8" {
 		t.Fatalf("resolveChiefOfStaffLLMFromDelegationConfig() = %+v, want claude-code/claude-opus-4-8", got)
-	}
-}
-
-func TestResolveMemoryLLMFromDelegationConfigUsesProviderPulseDefault(t *testing.T) {
-	got := resolveMemoryLLMFromDelegationConfig(&virtualtools.DelegationTierConfig{
-		ChiefOfStaff: &virtualtools.TierModel{
-			Provider: "codex-cli",
-			ModelID:  "gpt-5.5",
-		},
-		Main: &virtualtools.TierModel{
-			Provider: "claude-code",
-			ModelID:  "claude-code",
-		},
-	})
-	if got == nil {
-		t.Fatal("resolveMemoryLLMFromDelegationConfig() = nil")
-	}
-	if got.Provider != "claude-code" || got.ModelID != "claude-sonnet-5" {
-		t.Fatalf("resolveMemoryLLMFromDelegationConfig() = %+v, want claude-code/claude-sonnet-5", got)
-	}
-	if got.Options["reasoning_effort"] != "high" {
-		t.Fatalf("reasoning_effort = %#v, want high", got.Options["reasoning_effort"])
 	}
 }
 

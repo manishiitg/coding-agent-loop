@@ -19,6 +19,7 @@ type PublishedLLMMetadataSnapshot = {
 const DEFAULT_CHAT_PROVIDER: LLMProvider = 'codex-cli'
 const DEFAULT_CHAT_MODEL = 'codex-cli'
 const FRONTEND_DEPRECATED_PROVIDER_IDS = new Set<string>(['gemini-cli', 'agy-cli'])
+const MASKED_PROVIDER_KEY_PREFIX = '********'
 const SUPPORTED_PROVIDERS_FALLBACK: LLMProvider[] = [
   'bedrock',
   'openai',
@@ -36,6 +37,16 @@ const SUPPORTED_PROVIDERS_FALLBACK: LLMProvider[] = [
 
 function isFrontendDeprecatedProvider(provider?: string): boolean {
   return !!provider && FRONTEND_DEPRECATED_PROVIDER_IDS.has(provider)
+}
+
+function isMaskedProviderKey(value?: string): boolean {
+  return !!value?.trim().startsWith(MASKED_PROVIDER_KEY_PREFIX)
+}
+
+function unmaskedProviderKey(value?: string): string | undefined {
+  const trimmed = value?.trim()
+  if (!trimmed || isMaskedProviderKey(trimmed)) return undefined
+  return trimmed
 }
 
 function hasUsableLLMIdentity(model?: { provider?: string; model_id?: string }): model is { provider: LLMProvider; model_id: string } {
@@ -163,20 +174,20 @@ function extractStoredProviderKeysFromState(state: {
   savedLLMs: SavedLLM[]
 }): StoredProviderKeys {
   const keys: StoredProviderKeys = {
-    openai: state.openaiConfig?.api_key || undefined,
-    anthropic: state.anthropicConfig?.api_key || undefined,
-    zai: state.zaiConfig?.api_key || undefined,
-    kimi: state.kimiConfig?.api_key || undefined,
-    vertex: state.vertexConfig?.api_key || undefined,
-    gemini_cli: state.geminiCliApiKey || undefined,
-    minimax: state.minimaxConfig?.api_key || undefined,
-    elevenlabs: state.elevenlabsConfig?.api_key || undefined,
-    deepgram: state.deepgramConfig?.api_key || undefined,
+    openai: unmaskedProviderKey(state.openaiConfig?.api_key),
+    anthropic: unmaskedProviderKey(state.anthropicConfig?.api_key),
+    zai: unmaskedProviderKey(state.zaiConfig?.api_key),
+    kimi: unmaskedProviderKey(state.kimiConfig?.api_key),
+    vertex: unmaskedProviderKey(state.vertexConfig?.api_key),
+    gemini_cli: unmaskedProviderKey(state.geminiCliApiKey),
+    minimax: unmaskedProviderKey(state.minimaxConfig?.api_key),
+    elevenlabs: unmaskedProviderKey(state.elevenlabsConfig?.api_key),
+    deepgram: unmaskedProviderKey(state.deepgramConfig?.api_key),
     bedrock: state.bedrockConfig?.region ? { region: state.bedrockConfig.region } : undefined,
-    azure: state.azureConfig?.endpoint && state.azureConfig?.api_key
+    azure: state.azureConfig?.endpoint && unmaskedProviderKey(state.azureConfig?.api_key)
       ? {
           endpoint: state.azureConfig.endpoint,
-          api_key: state.azureConfig.api_key,
+          api_key: unmaskedProviderKey(state.azureConfig.api_key)!,
           api_version: (state.azureConfig.options?.api_version as string) || undefined,
           region: state.azureConfig.region || undefined,
         }
@@ -184,19 +195,20 @@ function extractStoredProviderKeysFromState(state: {
   }
 
   for (const llm of state.savedLLMs || []) {
-    if (llm.provider === 'openai' && llm.api_key && !keys.openai) keys.openai = llm.api_key
-    if (llm.provider === 'anthropic' && llm.api_key && !keys.anthropic) keys.anthropic = llm.api_key
-    if (llm.provider === 'z-ai' && llm.api_key && !keys.zai) keys.zai = llm.api_key
-    if (llm.provider === 'kimi' && llm.api_key && !keys.kimi) keys.kimi = llm.api_key
-    if (llm.provider === 'vertex' && llm.api_key && !keys.vertex) keys.vertex = llm.api_key
-    if (llm.provider === 'codex-cli' && llm.api_key && !keys.codex_cli) keys.codex_cli = llm.api_key
-    if (llm.provider === 'pi-cli' && llm.api_key && !keys.pi_cli) keys.pi_cli = llm.api_key
-    if (llm.provider === 'minimax' && llm.api_key && !keys.minimax) keys.minimax = llm.api_key
+    const apiKey = unmaskedProviderKey(llm.api_key)
+    if (llm.provider === 'openai' && apiKey && !keys.openai) keys.openai = apiKey
+    if (llm.provider === 'anthropic' && apiKey && !keys.anthropic) keys.anthropic = apiKey
+    if (llm.provider === 'z-ai' && apiKey && !keys.zai) keys.zai = apiKey
+    if (llm.provider === 'kimi' && apiKey && !keys.kimi) keys.kimi = apiKey
+    if (llm.provider === 'vertex' && apiKey && !keys.vertex) keys.vertex = apiKey
+    if (llm.provider === 'codex-cli' && apiKey && !keys.codex_cli) keys.codex_cli = apiKey
+    if (llm.provider === 'pi-cli' && apiKey && !keys.pi_cli) keys.pi_cli = apiKey
+    if (llm.provider === 'minimax' && apiKey && !keys.minimax) keys.minimax = apiKey
     if (llm.provider === 'bedrock' && llm.region && !keys.bedrock) keys.bedrock = { region: llm.region }
-    if (llm.provider === 'azure' && llm.endpoint && llm.api_key && !keys.azure) {
+    if (llm.provider === 'azure' && llm.endpoint && apiKey && !keys.azure) {
       keys.azure = {
         endpoint: llm.endpoint,
-        api_key: llm.api_key,
+        api_key: apiKey,
         api_version: (llm.options?.api_version as string) || undefined,
         region: llm.region || undefined,
       }
@@ -1562,22 +1574,24 @@ function syncProviderKeysToServer() {
   _syncTimer = setTimeout(async () => {
     try {
       const s = useLLMStore.getState()
+      const piSavedKey = unmaskedProviderKey(s.savedLLMs.find(llm => llm.provider === 'pi-cli' && unmaskedProviderKey(llm.api_key))?.api_key)
+      const azureApiKey = unmaskedProviderKey(s.azureConfig?.api_key)
       await providerKeysApi.save({
-        openai: s.openaiConfig?.api_key || undefined,
-        anthropic: s.anthropicConfig?.api_key || undefined,
-        zai: s.zaiConfig?.api_key || undefined,
-        kimi: s.kimiConfig?.api_key || undefined,
-        vertex: s.vertexConfig?.api_key || undefined,
-        gemini_cli: s.geminiCliApiKey || undefined,
-        pi_cli: s.savedLLMs.find(llm => llm.provider === 'pi-cli' && llm.api_key)?.api_key || undefined,
-        minimax: s.minimaxConfig?.api_key || undefined,
-        elevenlabs: s.elevenlabsConfig?.api_key || undefined,
-        deepgram: s.deepgramConfig?.api_key || undefined,
+        openai: unmaskedProviderKey(s.openaiConfig?.api_key),
+        anthropic: unmaskedProviderKey(s.anthropicConfig?.api_key),
+        zai: unmaskedProviderKey(s.zaiConfig?.api_key),
+        kimi: unmaskedProviderKey(s.kimiConfig?.api_key),
+        vertex: unmaskedProviderKey(s.vertexConfig?.api_key),
+        gemini_cli: unmaskedProviderKey(s.geminiCliApiKey),
+        pi_cli: piSavedKey,
+        minimax: unmaskedProviderKey(s.minimaxConfig?.api_key),
+        elevenlabs: unmaskedProviderKey(s.elevenlabsConfig?.api_key),
+        deepgram: unmaskedProviderKey(s.deepgramConfig?.api_key),
         bedrock: s.bedrockConfig?.region ? { region: s.bedrockConfig.region } : undefined,
-        azure: s.azureConfig?.endpoint && s.azureConfig?.api_key
+        azure: s.azureConfig?.endpoint && azureApiKey
           ? {
               endpoint: s.azureConfig.endpoint,
-              api_key: s.azureConfig.api_key,
+              api_key: azureApiKey,
               api_version: (s.azureConfig.options?.api_version as string) || undefined,
               region: s.azureConfig.region || undefined,
             }

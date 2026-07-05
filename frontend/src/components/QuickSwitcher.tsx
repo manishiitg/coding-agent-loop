@@ -6,7 +6,7 @@ import { useChatStore } from '../stores'
 import type { ChatTab } from '../stores/useChatStore'
 import { useAppStore } from '../stores/useAppStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
-import type { ActiveSessionInfo, PollingEvent } from '../services/api-types'
+import type { ActiveSessionInfo, PollingEvent, RunningWorkflowInfo } from '../services/api-types'
 import { agentApi } from '../services/api'
 import { activateTab } from '../utils/activateTab'
 import { isBotWorkflowSession, isScheduledWorkflowSession, openActiveSession, workflowSessionBotPlatform } from '../utils/workflowSessionRestore'
@@ -29,6 +29,7 @@ interface WorkflowItem {
   preset: CustomPreset | PredefinedPreset
   eventStats?: EventMemoryStats
   activeSession?: ActiveSessionInfo
+  runningWorkflow?: RunningWorkflowInfo
 }
 
 interface ChatTabItem {
@@ -51,6 +52,7 @@ interface ActiveWorkItem {
   isActive: boolean
   lastAccessedAt: number
   session: ActiveSessionInfo
+  runningWorkflow?: RunningWorkflowInfo
   tabId?: string
   mode: 'workflow' | 'multi-agent'
   eventStats?: EventMemoryStats
@@ -112,6 +114,39 @@ const activeSessionLabel = (session: ActiveSessionInfo): string => {
       'Automation'
   }
   return session.title || session.query || 'Chat'
+}
+
+const runningWorkflowFallbackName = (workflow: RunningWorkflowInfo): string => {
+  return workflow.preset_name ||
+    workflow.title ||
+    workflow.workspace_path?.split('/').filter(Boolean).pop() ||
+    workflow.query ||
+    'Automation'
+}
+
+const sessionFromRunningWorkflow = (workflow: RunningWorkflowInfo): ActiveSessionInfo => {
+  const timestamp = workflow.started_at || new Date().toISOString()
+  const label = runningWorkflowFallbackName(workflow)
+  return {
+    session_id: workflow.session_id,
+    observer_id: '',
+    agent_mode: 'workflow',
+    status: workflow.status || 'running',
+    last_activity: timestamp,
+    created_at: timestamp,
+    query: workflow.query || label,
+    title: workflow.title || label,
+    workflow_name: label,
+    workflow_label: label,
+    workspace_path: workflow.workspace_path,
+    preset_name: workflow.preset_name,
+    preset_query_id: workflow.preset_query_id,
+    triggered_by: workflow.triggered_by,
+    current_execution_name: workflow.current_step_title || workflow.phase_name || workflow.title,
+    needs_user_input: workflow.needs_user_input,
+    waiting_message: workflow.waiting_message,
+    waiting_since: workflow.waiting_since,
+  }
 }
 
 const activeSessionStatusLabel = (session: ActiveSessionInfo): string => {
@@ -261,6 +296,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
 }) => {
   const [query, setQuery] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [runningWorkflowsBySession, setRunningWorkflowsBySession] = useState<Record<string, RunningWorkflowInfo>>({})
   const searchInputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -310,7 +346,18 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       setQuery(initialQuery)
       setSelectedIndex(0)
       void useChatStore.getState().getActiveSessions(true)
+      agentApi.listRunningWorkflows()
+        .then(response => {
+          setRunningWorkflowsBySession(Object.fromEntries(
+            (response.running || [])
+              .filter(workflow => workflow.session_id)
+              .map(workflow => [workflow.session_id, workflow]),
+          ))
+        })
+        .catch(() => setRunningWorkflowsBySession({}))
       setTimeout(() => searchInputRef.current?.focus(), 50)
+    } else {
+      setRunningWorkflowsBySession({})
     }
   }, [isOpen, initialQuery])
 
@@ -331,7 +378,32 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       if (stats) acc[sessionId] = stats
       return acc
     }, {})
-    const visibleActiveSessions = activeSessions.filter(isVisibleActiveSession)
+    const activeSessionsByID = new Map<string, ActiveSessionInfo>()
+    for (const session of activeSessions.filter(isVisibleActiveSession)) {
+      const workflow = runningWorkflowsBySession[session.session_id]
+      activeSessionsByID.set(session.session_id, workflow
+        ? {
+            ...session,
+            status: workflow.status || session.status,
+            preset_query_id: session.preset_query_id || workflow.preset_query_id,
+            preset_name: session.preset_name || workflow.preset_name,
+            workspace_path: session.workspace_path || workflow.workspace_path,
+            workflow_name: session.workflow_name || workflow.preset_name || workflow.title,
+            workflow_label: session.workflow_label || workflow.preset_name || workflow.title,
+            triggered_by: session.triggered_by || workflow.triggered_by,
+            current_execution_name: session.current_execution_name || workflow.current_step_title || workflow.phase_name || workflow.title,
+            needs_user_input: session.needs_user_input || workflow.needs_user_input,
+            waiting_message: session.waiting_message || workflow.waiting_message,
+            waiting_since: session.waiting_since || workflow.waiting_since,
+          }
+        : session)
+    }
+    for (const workflow of Object.values(runningWorkflowsBySession)) {
+      if (!activeSessionsByID.has(workflow.session_id)) {
+        activeSessionsByID.set(workflow.session_id, sessionFromRunningWorkflow(workflow))
+      }
+    }
+    const visibleActiveSessions = Array.from(activeSessionsByID.values()).filter(isVisibleActiveSession)
 
     const builderStateSuffix = (tab?: ChatTab): string => {
       if (!tab?.hasRunningBgAgents) return ''
@@ -366,6 +438,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
           .flatMap(tab => tabEvents[tab.sessionId!] || [])
         const eventStats = lightweightEventStats(presetEvents)
         const activeSession = pickWorkflowActiveSession(visibleActiveSessions, p, chatTabs)
+        const runningWorkflow = activeSession ? runningWorkflowsBySession[activeSession.session_id] : undefined
         const workflowTab = allTabs.find(tab => tab.metadata?.mode === 'workflow' && tab.metadata?.presetQueryId === p.id)
         return {
           type: 'workflow' as const,
@@ -380,11 +453,11 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
           preset: p,
           eventStats,
           activeSession,
+          runningWorkflow,
         }
       })
 
-    const activeItems: ActiveWorkItem[] = activeSessions
-      .filter(isVisibleActiveSession)
+    const activeItems: ActiveWorkItem[] = visibleActiveSessions
       .filter(session => {
         const tab = findTabForSession(chatTabs, session.session_id)
         if (tab && !tab.metadata?.isOrganizationAssistant) return false
@@ -410,6 +483,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
           isActive: !!tab && tab.tabId === activeTabId,
           lastAccessedAt: tab?.lastAccessedAt || tab?.createdAt || Date.parse(session.last_activity || session.created_at || '') || 0,
           session,
+          runningWorkflow: runningWorkflowsBySession[session.session_id],
           tabId: tab?.tabId,
           mode: workflow ? 'workflow' : 'multi-agent',
           eventStats,
@@ -454,7 +528,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       if (a.type !== b.type) return itemTypeRank(a) - itemTypeRank(b)
       return a.label.localeCompare(b.label)
     })
-  }, [isOpen, isWorkflowMode, isChatMode, activePresetId, chatTabs, tabEvents, activeSessions, activeTabId, workflowPresets, recentPresetOrder, recentPresetAccessedAt])
+  }, [isOpen, isWorkflowMode, isChatMode, activePresetId, chatTabs, tabEvents, activeSessions, runningWorkflowsBySession, activeTabId, workflowPresets, recentPresetOrder, recentPresetAccessedAt])
 
   // Filter and sort
   const filteredItems = useMemo<QuickSwitcherItem[]>(() => {
@@ -537,6 +611,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       // Shared path with the header activity monitor so opening the same session
       // behaves identically from either surface.
       await openActiveSession(item.session, {
+        runningWorkflow: item.runningWorkflow,
         title: item.label,
         source: 'quick-switcher',
       })
@@ -592,6 +667,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     if (refreshedActiveSession) {
       await openActiveSession(refreshedActiveSession, {
         preset: item.preset,
+        runningWorkflow: item.runningWorkflow,
         title: item.label,
         source: 'quick-switcher',
       })

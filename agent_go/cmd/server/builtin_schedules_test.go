@@ -33,7 +33,7 @@ func TestBuiltinOrgPulseSequenceIncludesReadOnlyLLMCostAudit(t *testing.T) {
 	}
 
 	final := sched.Messages[len(sched.Messages)-1]
-	if !strings.Contains(final, "LLM/model tier + cost audit") || !strings.Contains(final, "Report the log entry, LLM/cost summary") {
+	if !strings.Contains(final, "LLM/model tier + cost audit") || !strings.Contains(final, "task findings/promotions") || !strings.Contains(final, "Report the log entry, LLM/cost summary") {
 		t.Fatalf("final org pulse message should require LLM/cost reporting in pulse and final report:\n%s", final)
 	}
 	for _, want := range []string{
@@ -49,11 +49,27 @@ func TestBuiltinOrgPulseSequenceIncludesReadOnlyLLMCostAudit(t *testing.T) {
 	}
 	for _, want := range []string{
 		"daily Org Pulse digest",
-		"Do not stay silent on a steady day",
+		"Send a calm all-healthy digest on steady days",
 		"set email_cc",
 	} {
 		if !strings.Contains(builtinOrgPulseQuery, want) {
 			t.Fatalf("single-turn Org Pulse fallback missing daily digest requirement %q:\n%s", want, builtinOrgPulseQuery)
+		}
+	}
+	for _, forbidden := range []string{
+			"If nothing has changed, write nothing and stop",
+			"STOP the whole pass",
+			"Org idle since last pulse",
+			"harvest what's worth keeping into your memory",
+			"Harvest what's worth keeping into your shared memory",
+		} {
+		if strings.Contains(builtinOrgPulseQuery, forbidden) {
+			t.Fatalf("single-turn Org Pulse fallback should not include skip/no-op gate %q:\n%s", forbidden, builtinOrgPulseQuery)
+		}
+		for _, msg := range sched.Messages {
+			if strings.Contains(msg, forbidden) {
+				t.Fatalf("Org Pulse message should not include skip/no-op gate %q:\n%s", forbidden, msg)
+			}
 		}
 	}
 }
@@ -98,6 +114,8 @@ func TestBuiltinOrgPulseUpdatesGoalsScorecard(t *testing.T) {
 	evidenceAndGoals := sched.Messages[1]
 	for _, want := range []string{
 		`get_reference_doc(kind="org-html")`,
+		"pulse/task.html",
+		"task findings used",
 		"update pulse/goals.html as the durable current scorecard",
 		"status, latest evidence, confidence, freshness/last-reviewed, or history",
 		"whether pulse/goals.html was updated",

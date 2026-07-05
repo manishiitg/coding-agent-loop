@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -19,6 +20,8 @@ type ContextKey string
 
 // UserContextKey is the key for user claims in context
 const UserContextKey ContextKey = "user"
+
+const deprecatedDefaultAuthSecret = "dev-secret-change-in-production"
 
 // UserClaims represents the JWT claims for authenticated users
 type UserClaims struct {
@@ -126,20 +129,30 @@ func GetDefaultUserID() string {
 	return "default"
 }
 
-// GetAuthSecret returns the JWT signing secret
-func GetAuthSecret() []byte {
-	secret := os.Getenv("AUTH_SECRET")
+// ValidateConfiguredAuthSecret verifies the runtime JWT/encryption secret is explicit.
+func ValidateConfiguredAuthSecret() error {
+	return ValidateAuthSecretValue(os.Getenv("AUTH_SECRET"))
+}
+
+// ValidateAuthSecretValue verifies an AUTH_SECRET value is not empty or public.
+func ValidateAuthSecretValue(secret string) error {
+	secret = strings.TrimSpace(secret)
 	if secret == "" {
-		// Default secret for development - should be set in production
-		secret = "dev-secret-change-in-production"
-		log.Printf("[AUTH] WARNING: Using default AUTH_SECRET - set AUTH_SECRET env var in production")
+		return fmt.Errorf("AUTH_SECRET env var must be set")
 	}
-	return []byte(secret)
+	if secret == deprecatedDefaultAuthSecret {
+		return fmt.Errorf("AUTH_SECRET is using the deprecated public default")
+	}
+	return nil
+}
+
+// GetAuthSecret returns the JWT signing secret.
+func GetAuthSecret() []byte {
+	return []byte(strings.TrimSpace(os.Getenv("AUTH_SECRET")))
 }
 
 // AuthMiddleware handles JWT authentication for API routes
-// In single-user mode, it injects the default user ID
-// In multi-user mode, it validates JWT tokens
+// API routes require JWT tokens in both single-user and multi-user modes.
 func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Skip auth for certain paths
@@ -148,20 +161,10 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// In single-user mode, use the hardcoded DEFAULT_USER_ID
-		if !IsMultiUserMode() {
-			ctx := context.WithValue(r.Context(), UserContextKey, &UserClaims{
-				UserID:   GetDefaultUserID(),
-				Username: "user",
-			})
-			next.ServeHTTP(w, r.WithContext(ctx))
-			return
-		}
-
-		// Multi-user mode: require JWT authentication
+		// Require JWT authentication. EventSource/SSE callers may pass the token as
+		// a query parameter because browsers cannot set custom SSE headers.
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
-			// Fallback: check query parameter (needed for EventSource/SSE which can't set headers)
 			if qToken := r.URL.Query().Get("token"); qToken != "" {
 				authHeader = "Bearer " + qToken
 			}
@@ -262,6 +265,10 @@ func GenerateJWT(userID, username, email string) (string, error) {
 
 // GenerateJWTWithProvider creates a new JWT token for a user with provider information
 func GenerateJWTWithProvider(userID, username, email, provider string) (string, error) {
+	if err := ValidateConfiguredAuthSecret(); err != nil {
+		return "", err
+	}
+
 	claims := &UserClaims{
 		UserID:   userID,
 		Username: username,

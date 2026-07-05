@@ -1182,7 +1182,8 @@ func shouldUpdateChiefTaskReport(sctx *ScheduleContext) bool {
 	}, "\n"))
 	return !strings.Contains(hay, "enrich_memory") &&
 		!strings.Contains(hay, "memory enrichment") &&
-		!strings.Contains(hay, "auto-enrich memory")
+		!strings.Contains(hay, "auto-enrich memory") &&
+		sctx.Schedule.ID != deprecatedAutoEnrichMemoryID
 }
 
 func (s *SchedulerService) runChiefTaskReportUpdate(ctx context.Context, sctx *ScheduleContext, runID, status, errMsg string, durationMs int64, startedAt, completedAt time.Time, sessionID string) error {
@@ -1244,7 +1245,7 @@ func buildChiefTaskReportUpdateMessage(sctx *ScheduleContext, runID, status, err
 Call get_reference_doc(kind="chief-task-report") and follow it exactly.
 
 Update the single shared Tasks page at pulse/task.html. This is separate from Org Pulse.
-Do not create per-task files. Do not edit pulse/org-pulse.html, pulse/goals.html, memory, workflow files, schedules, or secrets.
+Do not create per-task files. Do not edit pulse/org-pulse.html, pulse/goals.html, workflow files, schedules, memory tools/files, or secrets.
 Do not redo the task; summarize the just-completed scheduled task run from this current conversation.
 Do not call notify_user from this report-update turn unless the original task explicitly required a notification.
 
@@ -1264,14 +1265,28 @@ Run metadata:
 Original scheduled task:
 %s
 
-What to write:
-- Create pulse/task.html if missing using the chief-task-report skeleton.
-- Prepend one .task-entry after <!-- CHIEF TASK ENTRIES: newest first -->.
-- Update the top summary tiles/counts and latest update timestamp.
-- Capture result summary, decisions/recommendations/findings, affected workflows/entities, evidence paths, and next action.
-- If the task failed, record the failure clearly with the error and suggested next action.
-- Keep the page concise; this is a durable task ledger, not a transcript dump.
-`, sctx.Schedule.ID, sctx.Schedule.Name, sctx.Schedule.Description, runID, sessionID, status, errLine, startedAt.Format(time.RFC3339), completedAt.Format(time.RFC3339), durationMs, sctx.Schedule.CronExpression, sctx.Schedule.Timezone, taskText)
+	What to write:
+	- Create pulse/task.html if missing using the chief-task-report skeleton.
+	- Prepend one .task-entry after <!-- CHIEF TASK ENTRIES: newest first -->.
+	- Update the top summary tiles/counts and latest update timestamp.
+	- Capture result summary, decisions/recommendations/findings, key findings to reuse on the next run, affected workflows/entities, evidence paths, and next action.
+	- If the task failed, record the failure clearly with the error and suggested next action.
+	- Keep the page concise; this is a durable task ledger, not a transcript dump.
+	`, sctx.Schedule.ID, sctx.Schedule.Name, sctx.Schedule.Description, runID, sessionID, status, errLine, startedAt.Format(time.RFC3339), completedAt.Format(time.RFC3339), durationMs, sctx.Schedule.CronExpression, sctx.Schedule.Timezone, taskText)
+}
+
+func withChiefTaskRunContext(sctx *ScheduleContext, query string) string {
+	if !shouldUpdateChiefTaskReport(sctx) {
+		return query
+	}
+	return fmt.Sprintf(`NORMAL CHIEF OF STAFF TASK RUN.
+
+Before doing the task, read pulse/task.html if it exists. Use only prior .task-entry items with data-schedule-id=%q as reusable context for this same scheduled task: key findings, open next actions, prior decisions, recurring entities/workflows, and evidence paths. Treat that page as the task's durable context. Do not use or update Chief of Staff memory tools/files.
+
+After the task finishes, stop normally. The scheduler will send a separate report-update turn to write this run's summary and key findings back into pulse/task.html.
+
+Scheduled task:
+%s`, sctx.Schedule.ID, query)
 }
 
 // runPostRunMonitor fires the Pulse pass after a scheduled workflow run. Pulse
@@ -1753,6 +1768,9 @@ func (s *SchedulerService) executeMultiAgentJob(ctx context.Context, sctx *Sched
 	if len(messages) == 0 && query == "" {
 		return "", "", fmt.Errorf("multi-agent schedule %s has no messages or query", sctx.Schedule.ID)
 	}
+	if query != "" {
+		query = withChiefTaskRunContext(sctx, query)
+	}
 
 	sessionID := s.newScheduleSessionID(sctx)
 
@@ -1815,6 +1833,9 @@ func (s *SchedulerService) executeMultiAgentJob(ctx context.Context, sctx *Sched
 			stepReq := make(map[string]interface{}, len(reqMap))
 			for k, v := range reqMap {
 				stepReq[k] = v
+			}
+			if i == 0 {
+				msg = withChiefTaskRunContext(sctx, msg)
 			}
 			stepReq["query"] = msg
 
@@ -2017,28 +2038,14 @@ func (s *SchedulerService) applyChiefOfStaffLLMToReqMap(ctx context.Context, req
 		return
 	}
 	reqMap["llm_config_source"] = llmConfigSourceScheduledChiefOfStaff
-	label := "Chief of Staff"
-	if isMemoryEnrichmentSchedule(sctx) {
-		label = "memory"
-	}
-	s.sessionLogf(sctx, sessionID, "[SCHEDULER] using configured %s LLM %s/%s", label, strings.TrimSpace(chiefOfStaffLLM.Provider), strings.TrimSpace(chiefOfStaffLLM.ModelID))
+	s.sessionLogf(sctx, sessionID, "[SCHEDULER] using configured Chief of Staff LLM %s/%s", strings.TrimSpace(chiefOfStaffLLM.Provider), strings.TrimSpace(chiefOfStaffLLM.ModelID))
 }
 
 func resolveChiefOfStaffLLMForSchedule(ctx context.Context, sctx *ScheduleContext) *workflowtypes.AgentLLMConfig {
 	if sctx == nil {
 		return nil
 	}
-	memorySchedule := isMemoryEnrichmentSchedule(sctx)
 	if llmCfg := sctx.Capabilities.LLMConfig; llmCfg != nil {
-		if memorySchedule {
-			if llmCfg.PulseLLM != nil {
-				return llmCfg.PulseLLM
-			}
-			if resolved, ok := workflowtypes.ResolveCodingAgentMemoryConfig(llmCfg); ok {
-				return resolved
-			}
-			return nil
-		}
 		if llmCfg.ChiefOfStaffLLM != nil {
 			return llmCfg.ChiefOfStaffLLM
 		}
@@ -2052,14 +2059,7 @@ func resolveChiefOfStaffLLMForSchedule(ctx context.Context, sctx *ScheduleContex
 	if err != nil {
 		return nil
 	}
-	if memorySchedule {
-		return resolveMemoryLLMFromDelegationConfig(tierConfig)
-	}
 	return resolveChiefOfStaffLLMFromDelegationConfig(tierConfig)
-}
-
-func isMemoryEnrichmentSchedule(sctx *ScheduleContext) bool {
-	return sctx != nil && sctx.Schedule.ID == builtinAutoEnrichMemoryID
 }
 
 func resolveChiefOfStaffLLMFromDelegationConfig(tierConfig *virtualtools.DelegationTierConfig) *workflowtypes.AgentLLMConfig {
@@ -2072,21 +2072,6 @@ func resolveChiefOfStaffLLMFromDelegationConfig(tierConfig *virtualtools.Delegat
 	for _, candidate := range []*virtualtools.TierModel{tierConfig.Main, tierConfig.High} {
 		if cfg := agentLLMConfigFromTierModel(candidate); cfg != nil {
 			if resolved, ok := workflowtypes.ResolveCodingAgentChiefOfStaffConfig(&workflowtypes.PresetLLMConfig{Provider: cfg.Provider}); ok {
-				return resolved
-			}
-			return cfg
-		}
-	}
-	return nil
-}
-
-func resolveMemoryLLMFromDelegationConfig(tierConfig *virtualtools.DelegationTierConfig) *workflowtypes.AgentLLMConfig {
-	if tierConfig == nil {
-		return nil
-	}
-	for _, candidate := range []*virtualtools.TierModel{tierConfig.Main, tierConfig.High} {
-		if cfg := agentLLMConfigFromTierModel(candidate); cfg != nil {
-			if resolved, ok := workflowtypes.ResolveCodingAgentMemoryConfig(&workflowtypes.PresetLLMConfig{Provider: cfg.Provider}); ok {
 				return resolved
 			}
 			return cfg
@@ -2199,12 +2184,18 @@ func (s *SchedulerService) waitForWorkshopIdle(ctx context.Context, sessionID st
 }
 
 func (s *SchedulerService) refreshSessionTmuxSnapshotsForIdleCheck(ctx context.Context, sessionID string) error {
-	if s == nil || s.api == nil || s.api.terminalStore == nil || strings.TrimSpace(sessionID) == "" {
+	if s == nil || s.api == nil {
 		return nil
 	}
+	return s.api.refreshSessionTmuxSnapshotsForIdleCheck(ctx, sessionID)
+}
 
+func (api *StreamingAPI) refreshSessionTmuxSnapshotsForIdleCheck(ctx context.Context, sessionID string) error {
+	if api == nil || api.terminalStore == nil || strings.TrimSpace(sessionID) == "" {
+		return nil
+	}
 	seenTmuxSessions := map[string]struct{}{}
-	for _, snapshot := range s.api.terminalStore.ListMetadata(sessionID) {
+	for _, snapshot := range api.terminalStore.ListMetadata(sessionID) {
 		tmuxSession := strings.TrimSpace(snapshot.TmuxSession)
 		if tmuxSession == "" {
 			continue
@@ -2219,12 +2210,12 @@ func (s *SchedulerService) refreshSessionTmuxSnapshotsForIdleCheck(ctx context.C
 		cancel()
 		if err != nil {
 			if isMissingTmuxTargetError(err) {
-				s.api.terminalStore.MarkStale(snapshot.TerminalID)
+				api.terminalStore.MarkStale(snapshot.TerminalID)
 				continue
 			}
 			return fmt.Errorf("refresh tmux snapshot %q: %w", tmuxSession, err)
 		}
-		s.api.terminalStore.ReplaceContentWithSource(snapshot.TerminalID, content, "tmux_capture")
+		api.terminalStore.ReplaceContentWithSource(snapshot.TerminalID, content, "tmux_capture")
 	}
 	return nil
 }

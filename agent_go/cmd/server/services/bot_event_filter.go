@@ -1098,8 +1098,6 @@ func (f *BotEventFilter) describeToolCall(event BotEventData) string {
 		name == "debug_step" || name == "query_step" || name == "analyze_step" ||
 		name == "cleanup_orphan_step_configs":
 		return "Updating the workflow"
-	case name == "save_memory" || name == "recall_memory" || name == "enrich_memory":
-		return "Working with memory"
 	case name == "human_feedback":
 		return "Asking the user"
 	case name == "generate_text_llm":

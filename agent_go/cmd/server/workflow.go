@@ -636,6 +636,7 @@ func extractIterationFoldersFromChildren(children []interface{}, existingFolders
 type ActiveWorkflowExecution struct {
 	QueryID       string    `json:"query_id"`
 	SessionID     string    `json:"session_id"`
+	Kind          string    `json:"kind,omitempty"`
 	PresetQueryID string    `json:"preset_query_id,omitempty"`
 	PresetName    string    `json:"preset_name,omitempty"`
 	WorkspacePath string    `json:"workspace_path"`

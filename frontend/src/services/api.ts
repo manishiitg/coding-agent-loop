@@ -1047,9 +1047,8 @@ export const agentApi = {
 
   // LLM Guidance Management
   // Set LLM guidance for a session
-  setLLMGuidance: async (sessionId: string, guidance: string, memoryFolder?: string): Promise<LLMGuidanceResponse> => {
+  setLLMGuidance: async (sessionId: string, guidance: string): Promise<LLMGuidanceResponse> => {
     const body: LLMGuidanceRequest = { session_id: sessionId, guidance }
-    if (memoryFolder) body.memory_folder = memoryFolder
     const response = await api.post(`/api/sessions/${sessionId}/llm-guidance`, body, {
       headers: { 'X-Session-ID': sessionId }
     })

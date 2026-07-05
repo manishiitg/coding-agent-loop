@@ -465,20 +465,13 @@ func (r *BackgroundAgentRegistry) Cleanup(sessionID string) {
 	}
 }
 
-const (
-	// hasRunningAgentsGracePeriod is how long a recently-completed agent still counts as
-	// "running". This keeps the frontend builder-idle chip visible briefly after the last
-	// step finishes so the user has time to notice before the indicator disappears.
-	hasRunningAgentsGracePeriod = 8 * time.Second
+// hasRunningAgentsGracePeriod is how long a recently-completed agent still counts as
+// "running". This keeps the frontend builder-idle chip visible briefly after the last
+// step finishes so the user has time to notice before the indicator disappears.
+const hasRunningAgentsGracePeriod = 8 * time.Second
 
-	// hasRunningAgentsMaxAge is the maximum time a still-running agent counts toward
-	// has_running_background_agents. After 30 minutes the user has likely abandoned the
-	// workflow and the indicator should stop showing.
-	hasRunningAgentsMaxAge = 30 * time.Minute
-)
-
-// HasRunningAgents returns true if the session has any running agents (subject to the
-// 30-minute max-age cap), or if any agent completed within the 8-second grace period.
+// HasRunningAgents returns true if the session has any running agents, or if any agent
+// completed within the 8-second grace period.
 func (r *BackgroundAgentRegistry) HasRunningAgents(sessionID string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -498,19 +491,12 @@ func (r *BackgroundAgentRegistry) HasRunningAgents(sessionID string) bool {
 func backgroundAgentCountsAsLiveActivity(snap BackgroundAgentSnapshot, now time.Time) bool {
 	switch snap.Status {
 	case BGAgentRunning:
-		return !snap.CreatedAt.IsZero() && now.Sub(snap.CreatedAt) < hasRunningAgentsMaxAge
+		return true
 	case BGAgentCompleted, BGAgentFailed:
 		return snap.CompletedAt != nil && now.Sub(*snap.CompletedAt) < hasRunningAgentsGracePeriod
 	default:
 		return false
 	}
-}
-
-func backgroundAgentExecutionStatusForActivity(snap BackgroundAgentSnapshot, now time.Time) string {
-	if snap.Status == BGAgentRunning && !backgroundAgentCountsAsLiveActivity(snap, now) {
-		return "stale"
-	}
-	return string(snap.Status)
 }
 
 // ---------------------------------------------------------------------------
@@ -536,11 +522,8 @@ func (api *StreamingAPI) executeBackgroundDelegatedTask(
 	bgSpec.BackgroundAgentID = agentID
 	bgCtx = virtualtools.WithSubAgentSpec(bgCtx, bgSpec)
 
-	// Propagate per-user memory + chats folders to background sub-agents so their
-	// shell commands against memories/ and Chats/ resolve to the right user's folder.
-	if mf, ok := ctx.Value(virtualtools.MemoryFolderKey).(string); ok && mf != "" {
-		bgCtx = context.WithValue(bgCtx, virtualtools.MemoryFolderKey, mf)
-	}
+	// Propagate per-user Chats folder to background sub-agents so shell commands
+	// resolve to the right user's workspace folder.
 	if cf, ok := ctx.Value(virtualtools.ChatsFolderKey).(string); ok && cf != "" {
 		bgCtx = context.WithValue(bgCtx, virtualtools.ChatsFolderKey, cf)
 	}

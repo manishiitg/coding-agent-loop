@@ -137,17 +137,17 @@ func TestBuildSessionExecutionTreeFinalizesEventDerivedNodesForCompletedSession(
 	}
 }
 
-func TestBuildSessionExecutionTreeMarksStaleRunningBackgroundAgent(t *testing.T) {
+func TestBuildSessionExecutionTreeKeepsOldRunningBackgroundAgentActive(t *testing.T) {
 	now := time.Now()
-	sessionID := "session-stale-bg"
+	sessionID := "session-old-running-bg"
 	registry := NewBackgroundAgentRegistry()
 	registry.Register(sessionID, &BackgroundAgent{
 		ID:        "work-0001",
-		Name:      "Workflow: stale",
+		Name:      "Workflow: old running",
 		SessionID: sessionID,
 		Kind:      "workflow_run_tool",
 		Status:    BGAgentRunning,
-		CreatedAt: now.Add(-hasRunningAgentsMaxAge - time.Minute),
+		CreatedAt: now.Add(-time.Hour),
 	})
 
 	api := &StreamingAPI{
@@ -164,21 +164,21 @@ func TestBuildSessionExecutionTreeMarksStaleRunningBackgroundAgent(t *testing.T)
 	if tree == nil {
 		t.Fatal("expected execution tree")
 	}
-	if tree.Summary.RunningCount != 0 {
-		t.Fatalf("expected stale background agent not to count as running, got %d", tree.Summary.RunningCount)
+	if tree.Summary.RunningCount != 1 {
+		t.Fatalf("expected old running background agent to count as running, got %d", tree.Summary.RunningCount)
 	}
-	if tree.Summary.HasRunningBackgroundAgents {
-		t.Fatal("stale background agent should not mark tree summary as background-running")
+	if !tree.Summary.HasRunningBackgroundAgents {
+		t.Fatal("old running background agent should mark tree summary as background-running")
 	}
 
-	var stale *SessionExecutionTreeNode
+	var oldRunning *SessionExecutionTreeNode
 	var walk func(*SessionExecutionTreeNode)
 	walk = func(node *SessionExecutionTreeNode) {
-		if node == nil || stale != nil {
+		if node == nil || oldRunning != nil {
 			return
 		}
 		if node.ExecutionID == "work-0001" {
-			stale = node
+			oldRunning = node
 			return
 		}
 		for _, child := range node.Children {
@@ -186,11 +186,11 @@ func TestBuildSessionExecutionTreeMarksStaleRunningBackgroundAgent(t *testing.T)
 		}
 	}
 	walk(tree.Root)
-	if stale == nil {
-		t.Fatal("expected stale background node to remain inspectable")
+	if oldRunning == nil {
+		t.Fatal("expected old running background node to remain inspectable")
 	}
-	if stale.Status != "stale" {
-		t.Fatalf("expected stale node status, got %q", stale.Status)
+	if oldRunning.Status != "running" {
+		t.Fatalf("expected running node status, got %q", oldRunning.Status)
 	}
 }
 

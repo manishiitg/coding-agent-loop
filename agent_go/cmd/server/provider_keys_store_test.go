@@ -71,6 +71,76 @@ func TestMergeStoredProviderKeyValuesPreservesAndUpdatesProviderKeys(t *testing.
 	}
 }
 
+func TestMergeStoredProviderKeyValuesIgnoresMaskedIncomingKeys(t *testing.T) {
+	maskedIncoming := maskedProviderKeyPrefix + "cret"
+	existing := &StoredProviderKeys{
+		OpenAI: "openai-existing-secret",
+		PiProviderKeys: map[string]string{
+			"zai": "zai-existing-secret",
+		},
+		Azure: &StoredAzureConfig{
+			Endpoint: "https://old.openai.azure.com",
+			APIKey:   "azure-existing-secret",
+		},
+	}
+	incoming := &StoredProviderKeys{
+		OpenAI: maskedIncoming,
+		PiProviderKeys: map[string]string{
+			"zai": maskedIncoming,
+		},
+		Azure: &StoredAzureConfig{
+			Endpoint: "https://new.openai.azure.com",
+			APIKey:   maskedIncoming,
+		},
+	}
+
+	merged := mergeStoredProviderKeyValues(existing, incoming)
+
+	if merged.OpenAI != "openai-existing-secret" {
+		t.Fatalf("OpenAI = %q, want existing secret", merged.OpenAI)
+	}
+	if merged.PiProviderKeys["zai"] != "zai-existing-secret" {
+		t.Fatalf("PiProviderKeys[zai] = %q, want existing secret", merged.PiProviderKeys["zai"])
+	}
+	if merged.Azure.APIKey != "azure-existing-secret" {
+		t.Fatalf("Azure APIKey = %q, want existing secret", merged.Azure.APIKey)
+	}
+	if merged.Azure.Endpoint != "https://new.openai.azure.com" {
+		t.Fatalf("Azure Endpoint = %q, want updated endpoint", merged.Azure.Endpoint)
+	}
+}
+
+func TestMaskStoredProviderKeysMasksSecretsWithLastFour(t *testing.T) {
+	keys := &StoredProviderKeys{
+		OpenAI: "sk-openai-123456",
+		PiProviderKeys: map[string]string{
+			"zai": "zai-secret-7890",
+		},
+		Azure: &StoredAzureConfig{
+			Endpoint: "https://example.openai.azure.com",
+			APIKey:   "azure-secret-3456",
+		},
+	}
+
+	masked := maskStoredProviderKeys(keys)
+
+	if masked.OpenAI != maskedProviderKeyPrefix+"3456" {
+		t.Fatalf("masked OpenAI = %q", masked.OpenAI)
+	}
+	if masked.PiProviderKeys["zai"] != maskedProviderKeyPrefix+"7890" {
+		t.Fatalf("masked Pi key = %q", masked.PiProviderKeys["zai"])
+	}
+	if masked.Azure.APIKey != maskedProviderKeyPrefix+"3456" {
+		t.Fatalf("masked Azure key = %q", masked.Azure.APIKey)
+	}
+	if masked.Azure.Endpoint != keys.Azure.Endpoint {
+		t.Fatalf("Azure endpoint changed: %q", masked.Azure.Endpoint)
+	}
+	if keys.OpenAI != "sk-openai-123456" {
+		t.Fatalf("masking mutated original key: %q", keys.OpenAI)
+	}
+}
+
 func TestHasStoredProviderKeysRequiresMeaningfulValues(t *testing.T) {
 	tests := []struct {
 		name string
@@ -80,6 +150,7 @@ func TestHasStoredProviderKeysRequiresMeaningfulValues(t *testing.T) {
 		{name: "nil", keys: nil, want: false},
 		{name: "empty", keys: &StoredProviderKeys{}, want: false},
 		{name: "whitespace key", keys: &StoredProviderKeys{OpenAI: "   "}, want: false},
+		{name: "masked key", keys: &StoredProviderKeys{OpenAI: maskedProviderKeyPrefix + "1234"}, want: false},
 		{name: "api key", keys: &StoredProviderKeys{OpenAI: "sk-test"}, want: true},
 		{name: "pi cli key", keys: &StoredProviderKeys{PiCLI: "pi-key"}, want: true},
 		{name: "pi provider key", keys: &StoredProviderKeys{PiProviderKeys: map[string]string{"zai": "zai-key"}}, want: true},

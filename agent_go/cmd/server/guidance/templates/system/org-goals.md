@@ -166,5 +166,5 @@ Org Pulse reads `pulse/goals.html`, measures the named workflows against those g
 measured narrative into `pulse/org-pulse.html`.
 
 `pulse/goals.html` is the planned target and current scorecard. `pulse/org-pulse.html` is the
-daily measured narrative: what changed, what is drifting, what was harvested into memory,
-and what decision the CEO should make next.
+daily measured narrative: what changed, what is drifting, which task findings matter, and what
+decision the CEO should make next.

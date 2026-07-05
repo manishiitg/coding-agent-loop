@@ -6,7 +6,7 @@ import (
 )
 
 func TestWorkspaceMapForbidsWebFetchForLocalArtifacts(t *testing.T) {
-	out := GetWorkspaceMap("/tmp/workspace-docs", "_users/default/Chats", "_users/default/memories")
+	out := GetWorkspaceMap("/tmp/workspace-docs", "_users/default/Chats")
 
 	mustContain := []string{
 		"pulse/goals.html",

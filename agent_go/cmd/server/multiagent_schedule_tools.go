@@ -192,7 +192,7 @@ func createMultiAgentScheduleExecutors(api *StreamingAPI, currentUserID string) 
 			if err != nil {
 				return "", err
 			}
-			// Merge in product built-ins (Org Pulse, memory enrich, …) so the agent
+			// Merge in product built-ins (Org Pulse, …) so the agent
 			// sees their effective state — a same-ID entry in the user file wins, so
 			// the user's enable/disable/cron override of a built-in is reflected here
 			// exactly as the scheduler and the Scheduled Tasks UI compute it.

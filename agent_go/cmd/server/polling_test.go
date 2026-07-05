@@ -56,18 +56,18 @@ func TestBuildActiveSessionInfoSummaryKeepsCompletedStatusForBackgroundAgents(t 
 	}
 }
 
-func TestBuildActiveSessionInfoSummaryIgnoresStaleRunningBackgroundAgent(t *testing.T) {
-	const sessionID = "session-bg-stale"
+func TestBuildActiveSessionInfoSummaryKeepsOldRunningBackgroundAgentActive(t *testing.T) {
+	const sessionID = "session-bg-old-running"
 
 	api := &StreamingAPI{
 		bgAgentRegistry: NewBackgroundAgentRegistry(),
 	}
 	api.bgAgentRegistry.Register(sessionID, &BackgroundAgent{
-		ID:        "bg-stale",
-		Name:      "Stale background follow-up",
+		ID:        "bg-old-running",
+		Name:      "Old background follow-up",
 		SessionID: sessionID,
 		Status:    BGAgentRunning,
-		CreatedAt: time.Now().Add(-hasRunningAgentsMaxAge - time.Minute),
+		CreatedAt: time.Now().Add(-time.Hour),
 	})
 
 	summary := api.buildActiveSessionInfoSummary(&ActiveSessionInfo{
@@ -76,14 +76,14 @@ func TestBuildActiveSessionInfoSummaryIgnoresStaleRunningBackgroundAgent(t *test
 		CreatedAt: time.Now().Add(-time.Hour),
 	})
 
-	if summary.HasRunningBackgroundAgents {
-		t.Fatal("stale running background agent should not mark the session active")
+	if !summary.HasRunningBackgroundAgents {
+		t.Fatal("old running background agent should keep the session active")
 	}
-	if summary.RunningBackgroundAgentCount != 0 {
-		t.Fatalf("expected no running background agents, got %d", summary.RunningBackgroundAgentCount)
+	if summary.RunningBackgroundAgentCount != 1 {
+		t.Fatalf("expected 1 running background agent, got %d", summary.RunningBackgroundAgentCount)
 	}
-	if summary.CurrentExecutionName != "" {
-		t.Fatalf("expected no current execution name for stale agent, got %q", summary.CurrentExecutionName)
+	if summary.CurrentExecutionName != "Old background follow-up" {
+		t.Fatalf("expected current execution name for old running agent, got %q", summary.CurrentExecutionName)
 	}
 }
 

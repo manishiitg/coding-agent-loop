@@ -26,7 +26,6 @@ type workspacePaths struct {
 	Downloads   string
 	Subagents   string
 	Config      string
-	Memory      string
 	Pulse       string
 	ChatHistory string
 }
@@ -41,12 +40,9 @@ func resolveWorkspacePath(docsRoot, rel string) string {
 	return docsRoot + "/" + rel
 }
 
-func newWorkspacePaths(docsRoot, chatsFolder, memoryFolder string) workspacePaths {
+func newWorkspacePaths(docsRoot, chatsFolder string) workspacePaths {
 	if chatsFolder == "" {
 		chatsFolder = "_users/default/Chats"
-	}
-	if memoryFolder == "" {
-		memoryFolder = "_users/default/memories"
 	}
 	return workspacePaths{
 		DocsRoot:    docsRoot,
@@ -56,7 +52,6 @@ func newWorkspacePaths(docsRoot, chatsFolder, memoryFolder string) workspacePath
 		Downloads:   resolveWorkspacePath(docsRoot, "Downloads"),
 		Subagents:   resolveWorkspacePath(docsRoot, "subagents"),
 		Config:      resolveWorkspacePath(docsRoot, "config"),
-		Memory:      resolveWorkspacePath(docsRoot, memoryFolder),
 		Pulse:       resolveWorkspacePath(docsRoot, "pulse"),
 		ChatHistory: resolveWorkspacePath(docsRoot, strings.TrimSuffix(chatsFolder, "/Chats")+"/chat_history"),
 	}
@@ -64,8 +59,8 @@ func newWorkspacePaths(docsRoot, chatsFolder, memoryFolder string) workspacePath
 
 // GetWorkspaceMap returns a compact folder listing with absolute paths and access levels.
 // This is the high-priority section — placed early in the prompt before reference docs.
-func GetWorkspaceMap(docsRoot, chatsFolder, memoryFolder string) string {
-	p := newWorkspacePaths(docsRoot, chatsFolder, memoryFolder)
+func GetWorkspaceMap(docsRoot, chatsFolder string) string {
+	p := newWorkspacePaths(docsRoot, chatsFolder)
 	return `
 ## Workspace
 
@@ -77,7 +72,6 @@ func GetWorkspaceMap(docsRoot, chatsFolder, memoryFolder string) string {
 |------|--------|---------|
 | ` + "`" + p.Chats + "/`" + ` | read/write | Your workspace — save all output files here |
 | ` + "`" + p.Pulse + "/`" + ` | read/write | Org-level goals and Pulse artifacts (` + "`goals.html`" + `, ` + "`org-pulse.html`" + `) |
-| ` + "`" + p.Memory + "/`" + ` | read/write | Persistent memory (use save_memory / recall_memory tools) |
 | ` + "`" + p.Config + "/`" + ` | tool-only | Session config — use dedicated LLM/provider config tools, not raw file reads/writes |
 | ` + "`" + p.ChatHistory + "/`" + ` | read/write | Past conversation histories |
 | ` + "`" + p.Skills + "/`" + ` | read-only | Skill definitions (SKILL.md + supporting files) |
@@ -108,9 +102,9 @@ Reuse existing project folders for follow-up work on the same topic.
 // GetWorkflowPhaseWorkspaceMap returns workflow-phase-specific workspace instructions.
 // Unlike chat mode, workflow-phase work should treat the active workflow folder as the
 // primary writable root and avoid surfacing internal per-user Chats paths.
-func GetWorkflowPhaseWorkspaceMap(docsRoot, workflowFolder, memoryFolder string) string {
+func GetWorkflowPhaseWorkspaceMap(docsRoot, workflowFolder string) string {
 	if strings.TrimSpace(workflowFolder) == "" {
-		return GetWorkspaceMap(docsRoot, "", memoryFolder)
+		return GetWorkspaceMap(docsRoot, "")
 	}
 
 	workflowFolder = path.Clean(workflowFolder)
@@ -119,7 +113,6 @@ func GetWorkflowPhaseWorkspaceMap(docsRoot, workflowFolder, memoryFolder string)
 	absWorkflowRoot := resolveWorkspacePath(docsRoot, "Workflow")
 	absDownloads := resolveWorkspacePath(docsRoot, "Downloads")
 	absConfig := resolveWorkspacePath(docsRoot, "config")
-	absMemory := resolveWorkspacePath(docsRoot, memoryFolder)
 
 	return `
 ## Workspace
@@ -137,7 +130,6 @@ Save workflow outputs, generated media, test artifacts, and builder-side files i
 | ` + "`" + absWorkflowFolder + "/`" + ` | read/write | Active workflow workspace — save builder outputs and generated files here |
 | ` + "`" + absPlanningFolder + "/`" + ` | read-only via shell | Plan/config source of truth — inspect freely, but change it through workflow/builder tools rather than raw file writes |
 | ` + "`" + absConfig + "/`" + ` | tool-only | Session config — use dedicated LLM/provider config tools, not raw file reads/writes |
-| ` + "`" + absMemory + "/`" + ` | read/write | Persistent memory (use save_memory / recall_memory tools) |
 | ` + "`" + absDownloads + "/`" + ` | read/write | Scratchpad for downloads and browser artifacts |
 | ` + "`" + absWorkflowRoot + "/`" + ` | read-only outside the active workflow | Other workflow definitions |
 
@@ -161,8 +153,8 @@ If you generate a test image, video, or other artifact for this workflow, place 
 // GetWorkspaceReference returns detailed reference documentation for workspace config,
 // workflow structure, and workflow creation. This is lower-priority reference material —
 // placed after the operating mode instructions in the prompt.
-func GetWorkspaceReference(docsRoot, chatsFolder, memoryFolder string) string {
-	p := newWorkspacePaths(docsRoot, chatsFolder, memoryFolder)
+func GetWorkspaceReference(docsRoot, chatsFolder string) string {
+	p := newWorkspacePaths(docsRoot, chatsFolder)
 	absWorkflow := p.Workflow
 
 	instructions := utils.GetCommonFileInstructions()
@@ -317,7 +309,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 - **Reuse global workflow learnings**: ` + "`learnings/_global/SKILL.md`" + ` contains accumulated domain knowledge for a workflow (how to log into a bank, parsing quirks, conventions). Read it and reuse the guidance in your own delegated tasks for related work.
 - **Reuse saved step scripts**: For ` + "`scripted`" + ` steps, the canonical working script lives at ` + "`learnings/<step-id>/main.py`" + `. Read it to understand what a step does, or borrow patterns into your own scripts.
 - **Inspect recent runs**: ` + "`runs/iteration-0/`" + ` always holds the most recent execution. Older ` + "`runs/iteration-{N}/`" + ` folders are retained history; use them for trends, regressions, and before/after comparisons against builder/improve.html timestamps.
-- **Use memory**: save patterns and trends about what each workflow produces over time.
+- **Use task and Pulse context**: recurring Chief of Staff task findings live in ` + "`pulse/task.html`" + `; org-wide decisions and recommendations live in ` + "`pulse/org-pulse.html`" + ` and ` + "`pulse/goals.html`" + `.
 
 ## Auto-Improvement Framework — When to Use the Tools
 
@@ -775,20 +767,6 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 		parts = append(parts, "```json")
 		parts = append(parts, manifestContent)
 		parts = append(parts, "```")
-		parts = append(parts, "")
-	}
-
-	// 0b. Workflow memory (memory/ folder) — user-saved knowledge for this workflow
-	// Also check legacy instructions.md for backward compatibility
-	memoryDir := path.Join(wsPath, "memory")
-	memoryContent := readDirectoryMarkdownFiles(client, memoryDir)
-	if memoryContent == "" {
-		// Fallback: read legacy instructions.md
-		memoryContent = readFileContent(client, path.Join(wsPath, "instructions.md"))
-	}
-	if memoryContent != "" {
-		parts = append(parts, "**Workflow Memory:**")
-		parts = append(parts, memoryContent)
 		parts = append(parts, "")
 	}
 

@@ -213,7 +213,7 @@ The builder's primitives referenced below: `regular`, `todo_task`, `routing`, `h
 **Why message_sequence is referenced differently here**: it is a step-internal conversation pattern, not a whole-workflow topology. Prefer it inside these patterns whenever several ordered turns need the same context and one durable validation/output boundary.
 
 **Industry patterns not used here**:
-- *Swarm* / *Shared Scratchpad* (LangGraph) — this builder does not support peer agents with shared memory. Use #2 (Scoped Investigation) or #4 (Fan-out) instead.
+- *Swarm* / *Shared Scratchpad* (LangGraph) — this builder does not support peer agents with a shared scratchpad. Use #2 (Scoped Investigation) or #4 (Fan-out) instead.
 - *Long-running autonomous agent* — use `message_sequence` if this is genuinely what the user needs.
 
 **When in doubt**: a workflow is almost always **#3 Linear Pipeline** with one or two of #5, #6, #7, #9 attached. Start there. Reach for #1, #2, #4, #8 only when the structure demands it.

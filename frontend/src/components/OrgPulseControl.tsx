@@ -134,7 +134,7 @@ export const OrgPulseControl: React.FC = () => {
                     {enabled ? 'ON' : 'OFF'}
                   </span>
                 </div>
-                <p>When <span className="font-medium text-foreground">on</span>, your Chief of Staff reviews the whole org <span className="font-medium text-foreground">once a day</span> — rolls up each workflow's health, harvests reports &amp; learnings into memory, and records suggestions in a single log you open on the right.</p>
+                <p>When <span className="font-medium text-foreground">on</span>, your Chief of Staff reviews the whole org <span className="font-medium text-foreground">once a day</span> — rolls up each workflow's health, uses task findings from <code className="rounded bg-muted px-1 py-0.5 font-medium text-foreground">pulse/task.html</code>, and records suggestions in a single log you open on the right.</p>
                 <p>It only <span className="font-medium text-foreground">reviews and suggests</span> — it never changes a workflow. Acting on a suggestion (e.g. turning a repeated task into a workflow) is up to you.</p>
                 <p>Use <code className="rounded bg-muted px-1 py-0.5 font-medium text-foreground">/org-backup</code> and <code className="rounded bg-muted px-1 py-0.5 font-medium text-foreground">/org-publish</code> to protect or share the org Goals/Pulse pages. They use the same config/status pattern as workflow backup and publish.</p>
                 <div className="grid grid-cols-2 gap-2 pt-1">

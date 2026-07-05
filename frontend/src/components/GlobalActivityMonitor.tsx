@@ -304,6 +304,12 @@ function findLatestExecutionNode(node?: SessionExecutionTreeNode): SessionExecut
 
 function executionKindLabel(kind: string): string {
   switch (kind) {
+    case 'workflow_builder_task':
+      return 'builder'
+    case 'full_workflow':
+      return 'workflow'
+    case 'full_evaluation':
+      return 'evaluation'
     case 'workflow_step':
       return 'step'
     case 'background_agent':
@@ -323,6 +329,9 @@ function currentWorkLabel(session: ActiveSessionInfo, workflow?: RunningWorkflow
   }
   if (workflow?.current_step_title) return `step: ${workflow.current_step_title}`
   if (workflow?.current_step_id) return `step: ${workflow.current_step_id}`
+  if (workflow?.kind) {
+    return `${executionKindLabel(workflow.kind)}: ${workflow.title || workflow.phase_name || workflow.preset_name || workflowFallbackName(workflow)}`
+  }
   if (session.current_execution_name) return `active: ${session.current_execution_name}`
   return ''
 }

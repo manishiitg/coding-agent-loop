@@ -20,6 +20,7 @@ import (
 func getenvTrim(k string) string { return strings.TrimSpace(os.Getenv(k)) }
 
 const providerKeysFilePath = "config/provider-api-keys.json"
+const maskedProviderKeyPrefix = "********"
 
 // StoredProviderKeys holds all LLM provider API keys in a single encrypted
 // structure stored in the workspace config folder.
@@ -110,22 +111,31 @@ func hasStoredProviderKeys(keys *StoredProviderKeys) bool {
 		keys.Deepgram,
 	}
 	for _, value := range stringValues {
-		if strings.TrimSpace(value) != "" {
+		if isMeaningfulProviderKey(value) {
 			return true
 		}
 	}
 	for _, value := range keys.PiProviderKeys {
-		if strings.TrimSpace(value) != "" {
+		if isMeaningfulProviderKey(value) {
 			return true
 		}
 	}
 	if keys.Bedrock != nil && strings.TrimSpace(keys.Bedrock.Region) != "" {
 		return true
 	}
-	if keys.Azure != nil && strings.TrimSpace(keys.Azure.Endpoint) != "" && strings.TrimSpace(keys.Azure.APIKey) != "" {
+	if keys.Azure != nil && strings.TrimSpace(keys.Azure.Endpoint) != "" && isMeaningfulProviderKey(keys.Azure.APIKey) {
 		return true
 	}
 	return false
+}
+
+func isMeaningfulProviderKey(value string) bool {
+	value = strings.TrimSpace(value)
+	return value != "" && !isMaskedProviderKey(value)
+}
+
+func isMaskedProviderKey(value string) bool {
+	return strings.HasPrefix(strings.TrimSpace(value), maskedProviderKeyPrefix)
 }
 
 // LoadProviderKeys reads and decrypts provider API keys from the workspace.
@@ -509,7 +519,7 @@ func (api *StreamingAPI) handleSaveProviderKeys(w http.ResponseWriter, r *http.R
 func mergeStoredProviderKeys(ctx context.Context, incoming *StoredProviderKeys) *StoredProviderKeys {
 	existing, err := LoadProviderKeys(ctx)
 	if err != nil || existing == nil {
-		return incoming // nothing to merge with
+		return discardMaskedProviderKeys(incoming) // nothing to merge with
 	}
 
 	return mergeStoredProviderKeyValues(existing, incoming)
@@ -529,8 +539,8 @@ func mergeStoredProviderKeyValues(existing, incoming *StoredProviderKeys) *Store
 		if incomingVal == "__DELETE__" {
 			return ""
 		}
-		if incomingVal != "" {
-			return incomingVal
+		if isMeaningfulProviderKey(incomingVal) {
+			return strings.TrimSpace(incomingVal)
 		}
 		return existingVal
 	}
@@ -558,13 +568,45 @@ func mergeStoredProviderKeyValues(existing, incoming *StoredProviderKeys) *Store
 	} else {
 		merged.Bedrock = existing.Bedrock
 	}
-	if incoming.Azure != nil {
-		merged.Azure = incoming.Azure
-	} else {
-		merged.Azure = existing.Azure
-	}
+	merged.Azure = mergeStoredAzureConfig(existing.Azure, incoming.Azure)
 
 	return merged
+}
+
+func mergeStoredAzureConfig(existing, incoming *StoredAzureConfig) *StoredAzureConfig {
+	if incoming == nil {
+		return existing
+	}
+	if existing == nil {
+		incomingCopy := *incoming
+		if isMaskedProviderKey(incomingCopy.APIKey) {
+			incomingCopy.APIKey = ""
+		}
+		if strings.TrimSpace(incomingCopy.Endpoint) == "" && strings.TrimSpace(incomingCopy.APIKey) == "" {
+			return nil
+		}
+		return &incomingCopy
+	}
+
+	merged := *existing
+	if endpoint := strings.TrimSpace(incoming.Endpoint); endpoint != "" {
+		merged.Endpoint = endpoint
+	}
+	if incoming.APIKey == "__DELETE__" {
+		merged.APIKey = ""
+	} else if isMeaningfulProviderKey(incoming.APIKey) {
+		merged.APIKey = strings.TrimSpace(incoming.APIKey)
+	}
+	if apiVersion := strings.TrimSpace(incoming.APIVersion); apiVersion != "" {
+		merged.APIVersion = apiVersion
+	}
+	if region := strings.TrimSpace(incoming.Region); region != "" {
+		merged.Region = region
+	}
+	if strings.TrimSpace(merged.Endpoint) == "" && strings.TrimSpace(merged.APIKey) == "" {
+		return nil
+	}
+	return &merged
 }
 
 func mergeStoredPiProviderKeys(existing, incoming map[string]string) map[string]string {
@@ -586,7 +628,7 @@ func mergeStoredPiProviderKeys(existing, incoming map[string]string) map[string]
 			delete(merged, provider)
 			continue
 		}
-		if key != "" {
+		if isMeaningfulProviderKey(key) {
 			merged[provider] = key
 		}
 	}
@@ -594,6 +636,101 @@ func mergeStoredPiProviderKeys(existing, incoming map[string]string) map[string]
 		return nil
 	}
 	return merged
+}
+
+func discardMaskedProviderKeys(keys *StoredProviderKeys) *StoredProviderKeys {
+	if keys == nil {
+		return nil
+	}
+	sanitized := *keys
+	clearMasked := func(value string) string {
+		if isMaskedProviderKey(value) {
+			return ""
+		}
+		return value
+	}
+	sanitized.OpenRouter = clearMasked(sanitized.OpenRouter)
+	sanitized.OpenAI = clearMasked(sanitized.OpenAI)
+	sanitized.Anthropic = clearMasked(sanitized.Anthropic)
+	sanitized.ZAI = clearMasked(sanitized.ZAI)
+	sanitized.Kimi = clearMasked(sanitized.Kimi)
+	sanitized.Vertex = clearMasked(sanitized.Vertex)
+	sanitized.GeminiCLI = clearMasked(sanitized.GeminiCLI)
+	sanitized.CodexCLI = clearMasked(sanitized.CodexCLI)
+	sanitized.CursorCLI = clearMasked(sanitized.CursorCLI)
+	sanitized.AgyCLI = clearMasked(sanitized.AgyCLI)
+	sanitized.PiCLI = clearMasked(sanitized.PiCLI)
+	sanitized.MiniMax = clearMasked(sanitized.MiniMax)
+	sanitized.MiniMaxCodingPlan = clearMasked(sanitized.MiniMaxCodingPlan)
+	sanitized.ElevenLabs = clearMasked(sanitized.ElevenLabs)
+	sanitized.Deepgram = clearMasked(sanitized.Deepgram)
+	if keys.PiProviderKeys != nil {
+		sanitized.PiProviderKeys = map[string]string{}
+		for provider, key := range keys.PiProviderKeys {
+			if !isMaskedProviderKey(key) {
+				sanitized.PiProviderKeys[provider] = key
+			}
+		}
+		if len(sanitized.PiProviderKeys) == 0 {
+			sanitized.PiProviderKeys = nil
+		}
+	}
+	if keys.Azure != nil {
+		azure := *keys.Azure
+		azure.APIKey = clearMasked(azure.APIKey)
+		sanitized.Azure = &azure
+	}
+	return &sanitized
+}
+
+func maskStoredProviderKeys(keys *StoredProviderKeys) *StoredProviderKeys {
+	if keys == nil {
+		return &StoredProviderKeys{}
+	}
+	masked := *keys
+	masked.OpenRouter = maskProviderKey(masked.OpenRouter)
+	masked.OpenAI = maskProviderKey(masked.OpenAI)
+	masked.Anthropic = maskProviderKey(masked.Anthropic)
+	masked.ZAI = maskProviderKey(masked.ZAI)
+	masked.Kimi = maskProviderKey(masked.Kimi)
+	masked.Vertex = maskProviderKey(masked.Vertex)
+	masked.GeminiCLI = maskProviderKey(masked.GeminiCLI)
+	masked.CodexCLI = maskProviderKey(masked.CodexCLI)
+	masked.CursorCLI = maskProviderKey(masked.CursorCLI)
+	masked.AgyCLI = maskProviderKey(masked.AgyCLI)
+	masked.PiCLI = maskProviderKey(masked.PiCLI)
+	masked.MiniMax = maskProviderKey(masked.MiniMax)
+	masked.MiniMaxCodingPlan = maskProviderKey(masked.MiniMaxCodingPlan)
+	masked.ElevenLabs = maskProviderKey(masked.ElevenLabs)
+	masked.Deepgram = maskProviderKey(masked.Deepgram)
+	if keys.PiProviderKeys != nil {
+		masked.PiProviderKeys = map[string]string{}
+		for provider, key := range keys.PiProviderKeys {
+			if maskedKey := maskProviderKey(key); maskedKey != "" {
+				masked.PiProviderKeys[provider] = maskedKey
+			}
+		}
+		if len(masked.PiProviderKeys) == 0 {
+			masked.PiProviderKeys = nil
+		}
+	}
+	if keys.Azure != nil {
+		azure := *keys.Azure
+		azure.APIKey = maskProviderKey(azure.APIKey)
+		masked.Azure = &azure
+	}
+	return &masked
+}
+
+func maskProviderKey(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if len(value) <= 4 {
+		return maskedProviderKeyPrefix
+	}
+	return maskedProviderKeyPrefix + value[len(value)-4:]
 }
 
 func mergePiProviderKeyMaps(envKeys, workspaceKeys map[string]string) map[string]string {
@@ -793,9 +930,7 @@ func (api *StreamingAPI) handleLoadProviderKeys(w http.ResponseWriter, r *http.R
 	if keys == nil {
 		keys = &StoredProviderKeys{}
 	}
-	keys.OpenRouter = ""
-	keys.MiniMaxCodingPlan = ""
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(keys)
+	json.NewEncoder(w).Encode(maskStoredProviderKeys(keys))
 }

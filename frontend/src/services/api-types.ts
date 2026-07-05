@@ -300,7 +300,6 @@ export interface APIKeyValidationResponse {
 export interface LLMGuidanceRequest {
   session_id: string
   guidance: string
-  memory_folder?: string  // Optional override for memory storage path
 }
 
 export interface LLMGuidanceResponse {
@@ -1031,6 +1030,7 @@ export interface UpdateChatSessionRequest {
 export interface RunningWorkflowInfo {
   query_id: string;
   session_id: string;
+  kind?: string;
   preset_query_id?: string;
   preset_name?: string;
   workspace_path: string;

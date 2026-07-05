@@ -126,16 +126,21 @@ func trackedExecutionAppearsInRunningWorkflowList(exec *TrackedWorkflowExecution
 	if kind == "" {
 		kind = inferTrackedExecutionKind(exec.Source, exec.PhaseID, exec.Name, exec.Metadata)
 	}
-	return kind == "full_workflow"
+	return kind == "full_workflow" || kind == "workflow_builder_task"
 }
 
 func trackedExecutionToActive(exec *TrackedWorkflowExecution) ActiveWorkflowExecution {
 	if exec == nil {
 		return ActiveWorkflowExecution{}
 	}
+	kind := normalizeTrackedExecutionKind(exec.Kind)
+	if kind == "" {
+		kind = inferTrackedExecutionKind(exec.Source, exec.PhaseID, exec.Name, exec.Metadata)
+	}
 	return ActiveWorkflowExecution{
 		QueryID:          exec.ExecutionID,
 		SessionID:        exec.SessionID,
+		Kind:             kind,
 		PresetQueryID:    exec.PresetQueryID,
 		PresetName:       exec.PresetName,
 		WorkspacePath:    exec.WorkspacePath,
@@ -341,6 +346,24 @@ func (api *StreamingAPI) runningTrackedExecutionBySessionLocked(sessionID string
 	var best *TrackedWorkflowExecution
 	for _, exec := range api.trackedWorkflowExecutions {
 		if exec == nil || exec.Status != trackedExecutionStatusRunning || exec.SessionID != sessionID {
+			continue
+		}
+		if best == nil || exec.StartedAt.After(best.StartedAt) {
+			best = exec
+		}
+	}
+	return best
+}
+
+// runningWorkflowListExecutionBySessionLocked returns the latest running
+// execution for a session that is eligible for /api/workflow/running. This
+// deliberately differs from runningTrackedExecutionBySessionLocked, which can
+// return internal workflow steps/sub-agents that should not be top-level rows.
+// api.trackedWorkflowExecutionsMux must already be held.
+func (api *StreamingAPI) runningWorkflowListExecutionBySessionLocked(sessionID string) *TrackedWorkflowExecution {
+	var best *TrackedWorkflowExecution
+	for _, exec := range api.trackedWorkflowExecutions {
+		if exec == nil || exec.SessionID != sessionID || !trackedExecutionAppearsInRunningWorkflowList(exec) {
 			continue
 		}
 		if best == nil || exec.StartedAt.After(best.StartedAt) {

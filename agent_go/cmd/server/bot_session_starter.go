@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"time"
 
 	"github.com/manishiitg/mcpagent/events"
 
@@ -77,6 +79,13 @@ func (api *StreamingAPI) startSessionInternal(
 
 	if isScheduledSession(sessionID) {
 		scheduleLogfWithContext(newServerLogContext("", "", "", userID, "", sessionID), "[BOT_SESSION] Internal session started: sessionID=%s queryID=%s", sessionID, queryResp.QueryID)
+	}
+
+	if queryResp.Status == queryStatusLiveInputDelivered {
+		if isScheduledSession(sessionID) {
+			scheduleLogfWithContext(newServerLogContext("", "", "", userID, "", sessionID), "[BOT_SESSION] Internal session delivered as live input; waiting for retained CLI activity/idle")
+		}
+		return api.waitForLiveInputTurnComplete(ctx, sub, sessionID)
 	}
 
 	// Now wait for the session to complete using the already-active subscription
@@ -176,4 +185,158 @@ func waitForEvents(ctx context.Context, sub *internalevents.Subscriber) error {
 			}
 		}
 	}
+}
+
+var liveInputTurnPollInterval = time.Second
+var liveInputTurnNoBusyStableAfter = 2 * time.Minute
+
+const liveInputTurnIdleConsecutiveChecks = 2
+const liveInputTurnMaxRefreshErrors = 3
+
+// waitForLiveInputTurnComplete handles retained coding-CLI turns delivered via
+// live input. That delivery path does not create a new server-owned foreground
+// goroutine and therefore may never emit the completion event that waitForEvents
+// normally relies on. Use the terminal pane as the fallback source of truth:
+// wait until activity is observed, then require consecutive idle checks.
+func (api *StreamingAPI) waitForLiveInputTurnComplete(ctx context.Context, sub *internalevents.Subscriber, sessionID string) error {
+	ticker := time.NewTicker(liveInputTurnPollInterval)
+	defer ticker.Stop()
+
+	lastFingerprint := api.terminalFingerprint(sessionID)
+	startedAt := time.Now()
+	lastChangedAt := startedAt
+	sawBusy := api.liveInputTurnLooksBusy(sessionID)
+	sawChange := false
+	consecutiveIdleChecks := 0
+	consecutiveRefreshErrors := 0
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case evt, ok := <-subscriberEvents(sub):
+			if !ok {
+				return nil
+			}
+			if done, err := completionEventResult(evt); done {
+				return err
+			}
+		case <-ticker.C:
+			if err := api.refreshSessionTmuxSnapshotsForIdleCheck(ctx, sessionID); err != nil {
+				consecutiveIdleChecks = 0
+				consecutiveRefreshErrors++
+				if consecutiveRefreshErrors >= liveInputTurnMaxRefreshErrors {
+					return err
+				}
+				continue
+			}
+			consecutiveRefreshErrors = 0
+
+			now := time.Now()
+			fingerprint := api.terminalFingerprint(sessionID)
+			if fingerprint != "" && fingerprint != lastFingerprint {
+				sawChange = true
+				lastChangedAt = now
+				lastFingerprint = fingerprint
+			}
+
+			if api.liveInputTurnLooksBusy(sessionID) {
+				sawBusy = true
+				consecutiveIdleChecks = 0
+				continue
+			}
+
+			if sawBusy {
+				consecutiveIdleChecks++
+				if consecutiveIdleChecks >= liveInputTurnIdleConsecutiveChecks {
+					return nil
+				}
+				continue
+			}
+
+			// Some CLI panes do not expose a reliable busy string for every model.
+			// As a fallback, allow completion only after the pane changed and then
+			// remained idle/stable for a longer grace period. This prevents the
+			// original race where the initial prompt echo counted as completion in
+			// the first two short idle polls.
+			if sawChange && now.Sub(lastChangedAt) >= liveInputTurnNoBusyStableAfter && now.Sub(startedAt) >= liveInputTurnNoBusyStableAfter {
+				consecutiveIdleChecks++
+				if consecutiveIdleChecks >= liveInputTurnIdleConsecutiveChecks {
+					return nil
+				}
+				continue
+			}
+
+			consecutiveIdleChecks = 0
+		}
+	}
+}
+
+func (api *StreamingAPI) liveInputTurnLooksBusy(sessionID string) bool {
+	if api == nil {
+		return false
+	}
+	return api.sessionIsBusy(sessionID) ||
+		(api.terminalStore != nil && api.terminalStore.SessionHasBusyCodingTmux(sessionID))
+}
+
+func subscriberEvents(sub *internalevents.Subscriber) <-chan internalevents.Event {
+	if sub == nil {
+		return nil
+	}
+	return sub.Ch
+}
+
+func completionEventResult(evt internalevents.Event) (bool, error) {
+	switch evt.Type {
+	case "agent_end", "conversation_end":
+		return true, nil
+	case "agent_error", "conversation_error":
+		errMsg := "session failed"
+		if evt.Error != "" {
+			errMsg = evt.Error
+		}
+		return true, fmt.Errorf("%s", errMsg)
+	case "unified_completion":
+		if evt.Data != nil && evt.Data.Data != nil {
+			if uc, ok := evt.Data.Data.(*events.UnifiedCompletionEvent); ok {
+				if uc.Status == "error" {
+					errMsg := "session failed"
+					if uc.Error != "" {
+						errMsg = uc.Error
+					}
+					return true, fmt.Errorf("%s", errMsg)
+				}
+			}
+		}
+		if evt.Error != "" {
+			return true, fmt.Errorf("%s", evt.Error)
+		}
+		return true, nil
+	default:
+		return false, nil
+	}
+}
+
+func (api *StreamingAPI) terminalFingerprint(sessionID string) string {
+	if api == nil || api.terminalStore == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, snapshot := range api.terminalStore.List(sessionID) {
+		if strings.TrimSpace(snapshot.TmuxSession) == "" {
+			continue
+		}
+		b.WriteString(snapshot.TerminalID)
+		b.WriteByte('|')
+		b.WriteString(snapshot.TmuxSession)
+		b.WriteByte('|')
+		b.WriteString(snapshot.State)
+		b.WriteByte('|')
+		b.WriteString(snapshot.UpdatedAt.UTC().Format(time.RFC3339Nano))
+		b.WriteByte('|')
+		b.WriteString(snapshot.Content)
+		b.WriteByte('\n')
+	}
+	return b.String()
 }

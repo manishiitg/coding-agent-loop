@@ -29,9 +29,10 @@ the org-specific structure and visual system.
   `@media (min-width: ...)`.
   Do not design desktop first and then patch mobile with max-width overrides. No
   `height: 100vh`, no fixed page width, no inner body scroll container.
-- **Operational density.** This is not a landing page. Use compact cards, tables, chips, and
-  timelines. Avoid giant hero sections, decorative gradients, big illustrations, and empty
-  marketing copy.
+- **Widget-first operational density.** This is not a landing page and not a prose memo.
+  The first screen should be mostly UI widgets: status banner, KPI tiles, priority/action
+  board, evidence chips, score/progress bars, compact lists, and timeline cards. Use short
+  prose only inside widgets; avoid long paragraph blocks.
 - **Evidence first.** Every status needs a source: workflow name, run number/date, report,
   db table, Pulse headline, or explicit "missing evidence". Never color a card green/yellow/red
   without the rule or evidence line that explains it.
@@ -44,10 +45,12 @@ the org-specific structure and visual system.
   on the user-facing scorecard and log.
 - **Newest-first history.** For logs/history, prepend entries after the anchor comment. Do
   not append at the bottom.
-- **No text collisions.** Long workflow names, goal titles, timestamps, table cells, and
-  evidence strings must wrap or horizontally scroll inside their container. Use
-  `overflow-wrap:anywhere`, `min-width:0`, stacked `.row` layouts on mobile, and reserve
-  desktop-only side-by-side metadata for `@media (min-width: 640px)`.
+- **No text collisions.** Long workflow names, goal titles, table prose, and evidence
+  strings must wrap or horizontally scroll inside their container. Use `overflow-wrap:anywhere`
+  only on prose/evidence fields, not on metadata, chips, timestamps, or table headers.
+  Metadata must keep `white-space:nowrap; overflow-wrap:normal; word-break:normal`; use
+  `min-width:0`, stacked `.row` layouts on mobile, and reserve desktop-only side-by-side
+  metadata for `@media (min-width: 640px)`.
 - **Valid CSS, no escaped braces.** Write raw CSS exactly as browsers expect it:
   `@media (min-width:640px){ ... }`, never `{{"{{"}} ... {{"}}"}}`. Repeated visual elements must use
   classes from the baseline (`.kpi`, `.pill`, `.entry`, `.suggestions`), not repeated inline
@@ -55,20 +58,24 @@ the org-specific structure and visual system.
 
 ### Shared visual language
 
-Both org pages should use the same shell:
+Both org pages should use the same richer shell:
 
 - eyebrow: `chief of staff`
 - title: `Org Goals` or `Org Pulse`
 - meta row: last updated date/time and evidence freshness
 - status banner: the one-sentence read
-- KPI strip: compact tiles for counts/status
-- content cards: status, evidence, next action
-- timeline/history: newest first
+- KPI strip: compact color-coded tiles for counts/status
+- priority board: decision-needed / watch / healthy or next / blocked / done lanes
+- evidence chips: source paths, workflow names, confidence, freshness
+- progress/score bars: baseline -> current -> target, run freshness, or completion ratio
+- content cards: status, evidence, next action; never long freeform blocks
+- timeline/history: newest first, with each entry broken into small sub-widgets
 
 When editing an existing `pulse/goals.html` or `pulse/org-pulse.html`, upgrade the shell if
 it predates this mobile-first contract. Treat the page as needing a skeleton refresh if it
 lacks `<meta name="viewport">`, uses desktop-first grid/flex rows as the base layout, has
-side-by-side timestamps that can overlap text, lacks `overflow-wrap:anywhere`, or relies on
+side-by-side timestamps that can overlap text, applies global `overflow-wrap:anywhere` to
+metadata/table cells, lacks prose-safe overflow handling, or relies on
 `@media (max-width: ...)` patches for the right-panel layout. Preserve the scorecard/pulse
 entries and history, but rewrite the CSS/shell to the current baseline.
 
@@ -95,11 +102,15 @@ so `goals.html` and `org-pulse.html` feel like one product.
     --bg:#f7f7f4;--surface:#fff;--surface-2:#fbfaf7;
     --ink:#191917;--ink-2:#595852;--ink-3:#8a887f;
     --line:#ebe8df;--line-2:#ded9cf;
-    --ok:#3f7a4a;--ok-bg:#eaf3ea;
-    --warn:#9a6a05;--warn-bg:#fbf1d8;
-    --bad:#b23a2f;--bad-bg:#fbe8e4;
-    --unknown:#696a73;--unknown-bg:#eeedf0;
-    --accent:#8a5a44;--accent-bg:#f4ece6;
+    --ok:#247a58;--ok-bg:#e4f7ed;
+    --warn:#a45f00;--warn-bg:#fff0cf;
+    --bad:#bd3445;--bad-bg:#ffe3e8;
+    --unknown:#626b7a;--unknown-bg:#eef1f5;
+    --accent:#2c70c9;--accent-bg:#e7f0ff;
+    --teal:#168477;--teal-bg:#dff7f2;
+    --violet:#7c4dd8;--violet-bg:#f0e9ff;
+    --rose:#c43d79;--rose-bg:#ffe4f0;
+    --amber:#b65c00;--amber-bg:#fff0d6;
     --shadow:0 1px 2px rgba(20,20,18,.04),0 8px 24px -16px rgba(20,20,18,.18);
     --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
     --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
@@ -110,28 +121,36 @@ so `goals.html` and `org-pulse.html` feel like one product.
     --bg:#0f0f12;--surface:#17171c;--surface-2:#121217;
     --ink:#f1f0f4;--ink-2:#aaa8b1;--ink-3:#74727d;
     --line:#292832;--line-2:#373541;
-    --ok:#62d58b;--ok-bg:#10281a;
-    --warn:#e8b85a;--warn-bg:#2a210d;
-    --bad:#f08078;--bad-bg:#311815;
-    --unknown:#aaa8b1;--unknown-bg:#24232b;
-    --accent:#d8a184;--accent-bg:#261c18;
+    --ok:#69dfa0;--ok-bg:#10291d;
+    --warn:#f0ba59;--warn-bg:#2c210e;
+    --bad:#ff8794;--bad-bg:#32151b;
+    --unknown:#aaa8b1;--unknown-bg:#242630;
+    --accent:#82b8ff;--accent-bg:#10213b;
+    --teal:#5ee4d2;--teal-bg:#0d2a27;
+    --violet:#c4a7ff;--violet-bg:#201632;
+    --rose:#ff8abc;--rose-bg:#321421;
+    --amber:#f5b45f;--amber-bg:#2d1f0c;
     --shadow:0 1px 0 rgba(255,255,255,.04) inset,0 10px 30px -18px rgba(0,0,0,.8);
   }
   *{box-sizing:border-box}
   html,body{margin:0;min-height:100%;width:100%;max-width:100%;overflow-x:hidden;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.5;font-variant-numeric:tabular-nums}
-  body{padding:0}
-  body,.card,.entry,.kpi,.status,td,th{overflow-wrap:anywhere}
+  body{padding:0;overflow-wrap:normal;word-break:normal}
+  .status .text,.status .sub,.kpi .note,.card-b,.entry p,.evidence,.next,.widget,.mini-list,td.long,code{overflow-wrap:anywhere}
   .wrap{width:100%;max-width:980px;margin:0 auto;padding:12px 10px 48px}
   .top{display:block}
   .eyebrow{font:700 10px/1 var(--mono);letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3)}
   h1{margin:6px 0 0;font-size:22px;line-height:1.08;letter-spacing:-.01em}
-  .meta{margin-top:8px;color:var(--ink-3);font:520 11px/1.45 var(--mono)}
+  .meta{margin-top:8px;color:var(--ink-3);font:520 11px/1.45 var(--mono);overflow-wrap:normal;word-break:normal}
   .status{display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;margin:14px 0 12px;padding:11px 12px;border:1px solid var(--line-2);border-radius:var(--r);background:var(--surface);box-shadow:var(--shadow)}
   .status .dot{flex:none;width:9px;height:9px;border-radius:50%;margin-top:7px;background:currentColor;box-shadow:0 0 0 4px color-mix(in srgb,currentColor 16%,transparent)}
   .status.ok{color:var(--ok)}.status.warn{color:var(--warn)}.status.bad{color:var(--bad)}.status.unknown{color:var(--unknown)}
   .status .text{color:var(--ink);font-weight:620;min-width:0;flex:1 1 220px}.status .sub{margin-top:3px;color:var(--ink-2);font-size:12px}
   .kpis{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:12px 0 18px}
   .kpi{min-width:0;border:1px solid var(--line-2);border-radius:var(--r);background:var(--surface);padding:10px 11px;box-shadow:var(--shadow)}
+  .kpi.ok{border-color:color-mix(in srgb,var(--ok) 24%,var(--line-2));background:linear-gradient(180deg,color-mix(in srgb,var(--ok-bg) 38%,var(--surface)),var(--surface))}
+  .kpi.warn{border-color:color-mix(in srgb,var(--warn) 26%,var(--line-2));background:linear-gradient(180deg,color-mix(in srgb,var(--warn-bg) 42%,var(--surface)),var(--surface))}
+  .kpi.bad{border-color:color-mix(in srgb,var(--bad) 24%,var(--line-2));background:linear-gradient(180deg,color-mix(in srgb,var(--bad-bg) 40%,var(--surface)),var(--surface))}
+  .kpi.info{border-color:color-mix(in srgb,var(--accent) 22%,var(--line-2));background:linear-gradient(180deg,color-mix(in srgb,var(--accent-bg) 40%,var(--surface)),var(--surface))}
   .kpi .label{font:700 9.5px/1.2 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
   .kpi .value{margin-top:6px;font-size:22px;font-weight:720;letter-spacing:-.02em}
   .kpi .note{margin-top:3px;color:var(--ink-2);font-size:11.5px}
@@ -142,26 +161,40 @@ so `goals.html` and `org-pulse.html` feel like one product.
   .card-h{display:block;padding:12px;border-bottom:1px solid var(--line)}
   .card-h h2,.card-h h3{margin:0;font-size:14.5px;line-height:1.25}
   .card-b{padding:12px}
-  .pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 7px;font:700 9.5px/1 var(--mono);letter-spacing:.05em;text-transform:uppercase;border:1px solid transparent;white-space:nowrap}
+  .pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 7px;font:700 9.5px/1 var(--mono);letter-spacing:.05em;text-transform:uppercase;border:1px solid transparent;white-space:nowrap;overflow-wrap:normal;word-break:normal}
   .pill.mini{padding:2px 6px;font-size:9.5px}
   .pill.ok{color:var(--ok);background:var(--ok-bg);border-color:color-mix(in srgb,var(--ok) 18%,transparent)}
   .pill.warn{color:var(--warn);background:var(--warn-bg);border-color:color-mix(in srgb,var(--warn) 18%,transparent)}
   .pill.bad{color:var(--bad);background:var(--bad-bg);border-color:color-mix(in srgb,var(--bad) 18%,transparent)}
   .pill.unknown{color:var(--unknown);background:var(--unknown-bg);border-color:color-mix(in srgb,var(--unknown) 18%,transparent)}
   .pill.supporting{color:var(--accent);background:var(--accent-bg);border-color:color-mix(in srgb,var(--accent) 18%,transparent)}
+  .pill.teal{color:var(--teal);background:var(--teal-bg);border-color:color-mix(in srgb,var(--teal) 18%,transparent)}
+  .pill.violet{color:var(--violet);background:var(--violet-bg);border-color:color-mix(in srgb,var(--violet) 18%,transparent)}
+  .pill.rose{color:var(--rose);background:var(--rose-bg);border-color:color-mix(in srgb,var(--rose) 18%,transparent)}
   .grid-2{display:grid;grid-template-columns:1fr;gap:10px}
+  .widget-grid{display:grid;grid-template-columns:1fr;gap:8px;margin:12px 0}
+  .widget{min-width:0;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);padding:10px}
+  .widget b{display:block;margin-bottom:5px;font:750 9.5px/1.2 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+  .widget .big{display:block;font-size:19px;font-weight:760;line-height:1.05;color:var(--ink);letter-spacing:-.01em}
+  .widget .sub{display:block;margin-top:4px;color:var(--ink-2);font-size:12px}
+  .board{display:grid;grid-template-columns:1fr;gap:8px;margin:12px 0}
+  .lane{min-width:0;border:1px solid var(--line-2);border-radius:10px;background:var(--surface);padding:10px;box-shadow:var(--shadow)}
+  .lane h3{margin:0 0 8px;font:750 10px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+  .mini-list{display:grid;gap:6px}.mini-item{padding:8px;border-radius:8px;background:var(--surface-2);border:1px solid var(--line);font-size:12.5px;color:var(--ink-2)}.mini-item b{color:var(--ink)}
+  .scorebar{height:8px;border-radius:999px;background:var(--line);overflow:hidden;margin-top:8px}.scorebar span{display:block;height:100%;width:var(--pct,0%);border-radius:inherit;background:linear-gradient(90deg,var(--accent),var(--teal))}
+  .evidence-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
   .evidence{margin-top:9px;color:var(--ink-2);font-size:12.5px}
   .evidence b{color:var(--ink)}
   .next{margin-top:10px;padding:9px 10px;border-radius:8px;background:var(--surface-2);border:1px solid var(--line);font-size:12.5px;color:var(--ink-2)}
   ul{margin:8px 0 0;padding-left:18px}li+li{margin-top:6px}
   table{width:100%;border-collapse:collapse;font-size:12px;display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
-  th{color:var(--ink-3);font:700 10px/1 var(--mono);letter-spacing:.07em;text-transform:uppercase;text-align:left}
+  th{color:var(--ink-3);font:700 10px/1 var(--mono);letter-spacing:.07em;text-transform:uppercase;text-align:left;white-space:nowrap;overflow-wrap:normal;word-break:normal}
   th,td{padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:top;min-width:80px}
   td.num{text-align:right;font-variant-numeric:tabular-nums}
   .history,.timeline{display:grid;gap:10px}
   .entry{border:1px solid var(--line-2);border-radius:var(--r);background:var(--surface);padding:12px;box-shadow:var(--shadow)}
   .entry .row{display:block}
-  .entry h3{margin:0;font-size:14px;line-height:1.25}.entry time{display:block;margin-top:5px;font:520 11px/1.35 var(--mono);color:var(--ink-3);white-space:normal}
+  .entry h3{margin:0;font-size:14px;line-height:1.25}.entry time{display:block;margin-top:5px;font:520 11px/1.35 var(--mono);color:var(--ink-3);white-space:normal;overflow-wrap:normal;word-break:normal}
   .entry p{margin:8px 0 0;color:var(--ink-2);font-size:12.5px}
   .suggestions{margin-top:12px;display:grid;gap:8px;grid-template-columns:1fr}
   @media (min-width:640px){
@@ -172,12 +205,13 @@ so `goals.html` and `org-pulse.html` feel like one product.
     .meta{font-size:12px}
     .status{gap:12px;margin:22px 0 16px;padding:15px 17px}.status .sub{font-size:13px}
     .kpis{margin:16px 0 24px}
-    .grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .grid-2,.widget-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .board{grid-template-columns:repeat(3,minmax(0,1fr))}
     .card-h{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:15px 16px}.card-h h2,.card-h h3{font-size:16px}.card-b{padding:14px 16px}
     table{display:table;font-size:13px}th,td{padding:10px 8px;min-width:0}
     .entry .row{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.entry h3{font-size:15px}.entry time{margin-top:0;font-size:12px;white-space:nowrap}.entry p{font-size:13.5px}
   }
-  @media (min-width:760px){.kpis{grid-template-columns:repeat(4,minmax(0,1fr))}.suggestions{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  @media (min-width:760px){.kpis{grid-template-columns:repeat(4,minmax(0,1fr))}.suggestions{grid-template-columns:repeat(2,minmax(0,1fr))}.widget-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
   @media (max-width:360px){.kpis{grid-template-columns:1fr}.hide-sm{display:none}.pill{margin-top:8px}}
 </style>
 ```
@@ -258,10 +292,16 @@ Starter body:
   </section>
 
   <section class="kpis" aria-label="Goal summary">
-    <div class="kpi"><div class="label">Goals</div><div class="value">0</div><div class="note">defined</div></div>
-    <div class="kpi"><div class="label">On track</div><div class="value">0</div><div class="note">meeting threshold</div></div>
-    <div class="kpi"><div class="label">At risk</div><div class="value">0</div><div class="note">needs attention</div></div>
-    <div class="kpi"><div class="label">Unknown</div><div class="value">0</div><div class="note">missing evidence</div></div>
+    <div class="kpi info"><div class="label">Goals</div><div class="value">0</div><div class="note">defined</div></div>
+    <div class="kpi ok"><div class="label">On track</div><div class="value">0</div><div class="note">meeting threshold</div></div>
+    <div class="kpi warn"><div class="label">At risk</div><div class="value">0</div><div class="note">needs attention</div></div>
+    <div class="kpi bad"><div class="label">Unknown</div><div class="value">0</div><div class="note">missing evidence</div></div>
+  </section>
+
+  <section class="board" aria-label="Goal action board">
+    <div class="lane"><h3>Decide</h3><div class="mini-list"><div class="mini-item"><b>No CEO decision yet.</b> Add the first measurable goal.</div></div></div>
+    <div class="lane"><h3>Watch</h3><div class="mini-list"><div class="mini-item">No watchpoints until workflow evidence exists.</div></div></div>
+    <div class="lane"><h3>Healthy</h3><div class="mini-list"><div class="mini-item">No goals are measured yet.</div></div></div>
   </section>
 
   <div class="section-title">Goals</div>
@@ -279,6 +319,12 @@ Starter body:
         <div><b>Target outcome</b><div class="evidence"><!-- concrete outcome --></div></div>
         <div><b>Measurement</b><div class="evidence"><!-- metric + threshold/status rule + source --></div></div>
       </div>
+      <div class="widget-grid">
+        <div class="widget"><b>Current</b><span class="big"><!-- current value --></span><span class="sub">from latest evidence</span></div>
+        <div class="widget"><b>Target</b><span class="big"><!-- target value --></span><span class="sub">due <!-- date --></span></div>
+        <div class="widget"><b>Freshness</b><span class="big"><!-- e.g. 2d --></span><span class="sub">since evidence update</span></div>
+      </div>
+      <div class="scorebar" aria-label="Progress toward target" style="--pct:0%"><span></span></div>
       <table aria-label="Goal targets">
         <thead><tr><th>Target</th><th>Baseline</th><th>Current</th><th>Goal</th><th>Due</th><th>Owner</th></tr></thead>
         <tbody>
@@ -292,7 +338,11 @@ Starter body:
           </tr>
         </tbody>
       </table>
-      <div class="evidence"><b>Contributing workflows:</b> <span data-workflow="Workflow/name">Workflow name</span></div>
+      <div class="evidence-row">
+        <span class="pill mini teal" data-workflow="Workflow/name">Workflow name</span>
+        <span class="pill mini unknown">confidence: low</span>
+        <span class="pill mini violet">freshness: missing</span>
+      </div>
       <div class="evidence"><b>Latest evidence:</b> Missing until the contributing workflow reports this metric.</div>
       <div class="next"><b>Next action:</b> Add measurement to the workflow report/evaluation or refine the goal.</div>
     </div>
@@ -351,15 +401,16 @@ Starter body:
 ### `pulse/org-pulse.html` required structure
 
 `org-pulse.html` is the daily measured narrative. It should answer: what changed, what is
-drifting, what was harvested into memory, and what decision should the CEO make next.
+drifting, which task findings matter, and what decision should the CEO make next.
 
 Top to bottom:
 
 1. Header and meta.
 2. One status banner: the latest org read.
 3. KPI strip: goals on-track, workflows broken/drifting, unaligned workflows, suggestions.
-4. Newest-first pulse entries.
-5. Archive index if the file grows large.
+4. Priority board: decisions needed, watchpoints, healthy/recovered items.
+5. Newest-first pulse entries, each as widget sections rather than a prose block.
+6. Archive index if the file grows large.
 
 Each daily entry should include:
 
@@ -367,7 +418,7 @@ Each daily entry should include:
 - workflow alignment delta
 - org health one-liner
 - LLM/model tier and cost audit (report-only)
-- memory harvested, if any
+- task findings/promotions, if any
 - suggestion cards, if any
 
 Starter body:
@@ -400,10 +451,16 @@ Starter body:
   </section>
 
   <section class="kpis" aria-label="Org pulse summary">
-    <div class="kpi"><div class="label">Goals on track</div><div class="value">0</div><div class="note">of 0</div></div>
-    <div class="kpi"><div class="label">Workflow issues</div><div class="value">0</div><div class="note">broken or drifting</div></div>
-    <div class="kpi"><div class="label">Unaligned</div><div class="value">0</div><div class="note">needs decision</div></div>
-    <div class="kpi"><div class="label">Suggestions</div><div class="value">0</div><div class="note">open</div></div>
+    <div class="kpi ok"><div class="label">Goals on track</div><div class="value">0</div><div class="note">of 0</div></div>
+    <div class="kpi bad"><div class="label">Workflow issues</div><div class="value">0</div><div class="note">broken or drifting</div></div>
+    <div class="kpi warn"><div class="label">Unaligned</div><div class="value">0</div><div class="note">needs decision</div></div>
+    <div class="kpi info"><div class="label">Suggestions</div><div class="value">0</div><div class="note">open</div></div>
+  </section>
+
+  <section class="board" aria-label="Org priority board">
+    <div class="lane"><h3>Decisions</h3><div class="mini-list"><div class="mini-item">No decisions yet.</div></div></div>
+    <div class="lane"><h3>Watch</h3><div class="mini-list"><div class="mini-item">No watchpoints yet.</div></div></div>
+    <div class="lane"><h3>Healthy</h3><div class="mini-list"><div class="mini-item">No measured healthy items yet.</div></div></div>
   </section>
 
   <div class="section-title">Latest entries</div>
@@ -411,10 +468,16 @@ Starter body:
     <!-- ORG PULSE ENTRIES: newest first -->
     <article class="entry pulse-entry" data-date="YYYY-MM-DD" data-status="unknown">
       <div class="row"><h3>No goals set</h3><time>YYYY-MM-DD</time></div>
-      <p><b>Goal scorecard:</b> No `pulse/goals.html` evidence is available yet.</p>
-      <p><b>Org health:</b> Workflow health can be reviewed, but goal progress cannot be measured until goals exist.</p>
-      <p><b>LLM/cost audit:</b> No workflow model/cost evidence recorded yet.</p>
-      <p><b>Harvested:</b> Nothing written to memory.</p>
+      <div class="widget-grid">
+        <div class="widget"><b>Goal scorecard</b><span class="big">Not set</span><span class="sub">No `pulse/goals.html` evidence yet.</span></div>
+        <div class="widget"><b>Org health</b><span class="big">Unknown</span><span class="sub">Workflow health can be reviewed, but goal progress cannot.</span></div>
+        <div class="widget"><b>LLM/cost</b><span class="big">No data</span><span class="sub">No model/cost evidence recorded yet.</span></div>
+      </div>
+      <div class="evidence-row">
+        <span class="pill mini unknown">goals missing</span>
+        <span class="pill mini violet">task findings: none</span>
+        <span class="pill mini teal">next: setup</span>
+      </div>
       <div class="next"><b>Suggestion:</b> Run `/org-setup` in Chief of Staff to define measurable goals.</div>
     </article>
   </section>

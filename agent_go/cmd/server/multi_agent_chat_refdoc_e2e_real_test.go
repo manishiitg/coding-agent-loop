@@ -228,22 +228,22 @@ func TestMultiAgentChatPromptSteersToReferenceDocs_ClaudeCode(t *testing.T) {
 	})
 
 	type caseSpec struct {
-		name         string
-		userMsg      string
-		expectKind   string
-		mustMention  []string // additional phrases that should appear in the response
+		name        string
+		userMsg     string
+		expectKind  string
+		mustMention []string // additional phrases that should appear in the response
 	}
 	cases := []caseSpec{
 		{
-			name:    "schedule_request_describes_schedule_doc_load",
-			userMsg: "I want to schedule a multi-agent task that runs every weekday at 9 AM. Walk me through exactly what tools you would call, in order, to set this up. Be specific about tool names and arguments.",
-			expectKind: "schedule-management",
+			name:        "schedule_request_describes_schedule_doc_load",
+			userMsg:     "I want to schedule a multi-agent task that runs every weekday at 9 AM. Walk me through exactly what tools you would call, in order, to set this up. Be specific about tool names and arguments.",
+			expectKind:  "schedule-management",
 			mustMention: []string{"get_reference_doc"},
 		},
 		{
-			name:    "secret_storage_describes_secret_doc_load",
-			userMsg: "I want to save a Slack API token as SLACK_TOKEN. Walk me through exactly what tools you would call, in order, to store it correctly. Be specific about tool names and arguments.",
-			expectKind: "secret-management",
+			name:        "secret_storage_describes_secret_doc_load",
+			userMsg:     "I want to save a Slack API token as SLACK_TOKEN. Walk me through exactly what tools you would call, in order, to store it correctly. Be specific about tool names and arguments.",
+			expectKind:  "secret-management",
 			mustMention: []string{"get_reference_doc"},
 		},
 	}
@@ -293,21 +293,19 @@ func TestMultiAgentChatPromptSteersToReferenceDocs_ClaudeCode(t *testing.T) {
 
 // TestMultiAgentChatFullConversation_ClaudeCode is a single multi-turn
 // conversation that exercises every capability the multi-agent chat prompt
-// is supposed to surface: schedule management, secret management, memory
-// save/recall, employees + workflow assignments context, and workflow
+// is supposed to surface: schedule management, secret management,
+// employees + workflow assignments context, and workflow
 // context inspection. The whole flow runs in ONE conversation (the adapter
 // threads claude-code's native session via NativeSessionID), so each turn
 // gets to depend on prior context if the LLM is steered correctly.
 //
 // What this proves end-to-end:
-//   - The full assembled system prompt (delegation rules + memory
-//     instructions + synthetic employees/workflow context) holds together
+//   - The full assembled system prompt (delegation rules + synthetic
+//     employees/workflow context) holds together
 //     and steers the LLM on every relevant axis.
 //   - get_reference_doc pointers actually steer the model on schedule and
 //     secret asks (same as the per-capability tests above, but verified in
 //     a real session not just a one-shot).
-//   - Memory tool surface (save_memory / recall_memory) shows up in the
-//     model's plan when the user explicitly asks to remember / recall.
 //   - Auto-injected employees context lets the model resolve "who handles
 //     X workflow?" by name without re-asking the user.
 //   - Auto-injected workflow context lets the model describe a workflow's
@@ -332,12 +330,10 @@ func TestMultiAgentChatFullConversation_ClaudeCode(t *testing.T) {
 
 	// Build the full system prompt the chat session would normally see.
 	// Delegation prompt: real (cheat sheets + pointers).
-	// Memory prompt: real.
 	// Employees + workflow context: synthetic — production reads files
 	// at request time, but for an isolated e2e test we inject fixed
 	// content with distinctive names/tokens we can grep for.
 	delegationPrompt := virtualtools.GetMultiAgentDelegationInstructionsWithUser("Chats", "default")
-	memoryPrompt := virtualtools.GetMemoryInstructions("_users/default/memory")
 	const employeeName = "Priya"
 	const employeeWorkflow = "Workflow/bot-whatsapp-customer-support"
 	const workflowDescription = "an automated customer-support bot that triages incoming WhatsApp messages, classifies intent, and routes to the right handler step (refund, escalation, FAQ-bot, human-agent)"
@@ -367,7 +363,7 @@ This workflow is ` + workflowDescription + `. It runs continuously and updates `
 - step-classify-intent: LLM classifies each message into one of (refund, escalation, faq, human-handoff)
 - step-route-handler: dispatches each message to the appropriate sub-agent
 `
-	systemPrompt := delegationPrompt + employeesSection + workflowContextSection + memoryPrompt
+	systemPrompt := delegationPrompt + employeesSection + workflowContextSection
 
 	adapter := claudecodeadapter.NewClaudeCodeInteractiveAdapter(model, &e2eMockLogger{})
 	t.Cleanup(func() {
@@ -394,8 +390,8 @@ This workflow is ` + workflowDescription + `. It runs continuously and updates `
 	}
 
 	type turn struct {
-		name          string
-		userMsg       string
+		name           string
+		userMsg        string
 		mustMentionAny [][]string // groups: response must contain at least one phrase from EACH group
 		mustNotMention []string   // response must NOT contain these (red flags)
 	}
@@ -417,22 +413,7 @@ This workflow is ` + workflowDescription + `. It runs continuously and updates `
 			},
 		},
 		{
-			name:    "3_memory_save",
-			userMsg: "Please remember for future sessions: I prefer all my notifications routed to the Slack #ops channel rather than email. Save that as a preference.",
-			mustMentionAny: [][]string{
-				{"save_memory"},
-			},
-		},
-		{
-			name:    "4_memory_recall",
-			userMsg: "What preference did I ask you to save earlier in this conversation? If you need to, recall it from memory.",
-			mustMentionAny: [][]string{
-				// Either it remembers from session context OR it states intent to recall from memory.
-				{"slack", "#ops", "recall_memory", "notifications"},
-			},
-		},
-		{
-			name:    "5_employees_lookup",
+			name:    "3_employees_lookup",
 			userMsg: "Who handles the bot-whatsapp-customer-support workflow? Use the employee context you already have — don't ask me, just answer from what's loaded.",
 			mustMentionAny: [][]string{
 				// Either name or workflow path. Should NOT invent another name.
@@ -443,7 +424,7 @@ This workflow is ` + workflowDescription + `. It runs continuously and updates `
 			},
 		},
 		{
-			name:    "6_workflow_context_inspect",
+			name:    "4_workflow_context_inspect",
 			userMsg: "Briefly describe what the bot-whatsapp-customer-support workflow does, based on the workflow context loaded in this session. Don't make anything up — only use what's already in the system prompt.",
 			mustMentionAny: [][]string{
 				// Should reference the distinctive content from the synthetic workflow context.
@@ -638,8 +619,8 @@ This workflow is ` + workflowDescription + `. It runs continuously and updates `
 	// Sanity: at minimum the persisted file must include every turn's
 	// human message and every assistant response. Decode and inspect.
 	var roundtrip struct {
-		SessionID           string                     `json:"session_id"`
-		ConversationHistory []llmtypes.MessageContent  `json:"conversation_history"`
+		SessionID           string                    `json:"session_id"`
+		ConversationHistory []llmtypes.MessageContent `json:"conversation_history"`
 	}
 	if err := json.Unmarshal(convJSON, &roundtrip); err != nil {
 		t.Fatalf("roundtrip conversation history: %v", err)

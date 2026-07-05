@@ -305,22 +305,10 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		// read/write files. Sub-agents are actual file workers that need this orientation.
 		// Use the same per-user Chats folder as the parent session.
 		subAgentChatsFolder := perUserChatsFolderFor(subAgentUserID)
-		subAgentMemoryFolder := perUserMemoryFolderFor(subAgentUserID)
 		subShellRoot := fsutil.WorkspaceShellRoot()
-		underlyingAgent.AppendSystemPrompt(GetWorkspaceMap(subShellRoot, subAgentChatsFolder, subAgentMemoryFolder))
-		underlyingAgent.AppendSystemPrompt(GetWorkspaceReference(subShellRoot, subAgentChatsFolder, subAgentMemoryFolder))
+		underlyingAgent.AppendSystemPrompt(GetWorkspaceMap(subShellRoot, subAgentChatsFolder))
+		underlyingAgent.AppendSystemPrompt(GetWorkspaceReference(subShellRoot, subAgentChatsFolder))
 		log.Printf("[DELEGATION] Added workspace instructions to sub-agent (chats=%s)", subAgentChatsFolder)
-
-		// Give sub-agents access to memory tools so they can persist key discoveries
-		// across tasks (reads from Chats/memories/ by default).
-		api.activeSessionsMux.RLock()
-		subAgentMemFolder := ""
-		if sess, ok := api.activeSessions[sessionID]; ok {
-			subAgentMemFolder = sess.MemoryFolder
-		}
-		api.activeSessionsMux.RUnlock()
-		underlyingAgent.AppendSystemPrompt(virtualtools.GetMemoryInstructions(subAgentMemFolder))
-		log.Printf("[DELEGATION] Added memory instructions to sub-agent")
 
 		// [BROWSER] Add browser instructions using standardized builder (same as parent chat agent).
 		// Sub-agents need their own transformer registration because each Agent instance has
@@ -410,17 +398,15 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		}
 
 		// Apply per-user folder guard for all sub-agents.
-		// Writes scoped to _users/<subAgentUserID>/Chats/ and _users/<subAgentUserID>/memories/.
+		// Writes are scoped to _users/<subAgentUserID>/Chats/ plus explicit task grants.
 		{
 			subPerUserChatsFolder := perUserChatsFolderFor(subAgentUserID)
 			subPerUserChatsWrite := subPerUserChatsFolder + "/"
-			subPerUserMemWrite := perUserMemoryFolderFor(subAgentUserID) + "/"
 			subPerUserChatHistory := strings.TrimSuffix(subPerUserChatsFolder, "Chats") + "chat_history/"
 			orgPulseWrite := "pulse/"
 			extraFolders := append([]string{}, subResolvedGrants.WriteFolders...)
 			extraFolders = append(extraFolders, fileContextWriteFolders...)
 			extraFolders = append(extraFolders, chiefOfStaffRecommendationWrites...)
-			extraFolders = append(extraFolders, subPerUserMemWrite)
 			extraFolders = append(extraFolders, subPerUserChatHistory)
 			extraFolders = append(extraFolders, orgPulseWrite)
 			// Delegation path has no #workflow-derived blocked-write prefix (the parent
@@ -428,12 +414,12 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			// spawned with their own folder scope). Pass nil.
 			workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, workflowReadOnlyFolders, nil, extraFolders...)
 			workspace.SetSessionWorkingDir(sessionID, subPerUserChatsFolder)
-			readPaths := append([]string{subPerUserChatsWrite, subPerUserChatHistory, "Downloads/", "skills/", "subagents/", "Workflow/", subPerUserMemWrite}, extraFolders...)
+			readPaths := append([]string{subPerUserChatsWrite, subPerUserChatHistory, "Downloads/", "skills/", "subagents/", "Workflow/"}, extraFolders...)
 			readPaths = append(readPaths, subResolvedGrants.ReadOnlyExtra...)
 			readPaths = append(readPaths, workflowReadOnlyFolders...)
 			workspace.SetSessionFolderGuard(sessionID,
 				readPaths,
-				append([]string{subPerUserChatsWrite, "Downloads/", subPerUserMemWrite, subPerUserChatHistory}, extraFolders...),
+				append([]string{subPerUserChatsWrite, "Downloads/", subPerUserChatHistory}, extraFolders...),
 			)
 			if hostDownloads := common.GrantSessionCDPHostDownloadsReadOnly(sessionID, browserReq.BrowserMode); hostDownloads != "" {
 				log.Printf("[DELEGATION FOLDER GUARD] Added read-only CDP host Downloads for sub-agent: %s", hostDownloads)
@@ -533,7 +519,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		underlyingAgent.AppendSystemPrompt(fmt.Sprintf(`## Your Role
 You are a focused background worker. Complete the assigned task using available tools and return a clear, concise result.
 - You cannot spawn further sub-agents
-- You have no shared memory with the caller — all context is in the instruction you received
+- You do not share hidden context with the caller — all context is in the instruction you received
 - Save any output files under %s/ (use the sub-folder specified in your instruction, or create a descriptive one if none is given)
 - Return a summary of what you did and what you found`, subWorkerChatsFolder))
 		log.Printf("[DELEGATION] Added worker context to sub-agent (chats=%s)", subWorkerChatsFolder)

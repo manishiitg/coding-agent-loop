@@ -1796,6 +1796,11 @@ func (api *StreamingAPI) steerBackgroundAgentCompletion(sessionID, agentID strin
 
 	msg := api.buildAutoNotificationMessage(sessionID, snap)
 
+	if agentSupportsLiveInputDelivery(runningAgent) {
+		releaseInputLane := api.lockSessionInputLane(sessionID)
+		defer releaseInputLane()
+	}
+
 	inputCtx, cancel := context.WithTimeout(context.Background(), liveCodingAgentInputTimeout)
 	defer cancel()
 	delivery, err := runningAgent.DeliverUserMessage(inputCtx, mcpagent.UserMessageDeliveryRequest{

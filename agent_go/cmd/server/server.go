@@ -397,6 +397,14 @@ type StreamingAPI struct {
 	runningAgents    map[string]*mcpagent.Agent
 	runningAgentsMux sync.RWMutex
 
+	// Per-session input lane for interactive/coding-agent chats. /api/query
+	// returns before the background goroutine finishes launching/materializing a
+	// coding CLI, so a second rapid submit can otherwise overtake the first by
+	// taking the retained live-input path. Hold this lane until a new turn has
+	// handed its prompt to StreamWithEvents, then live steering can resume.
+	sessionInputLanes   map[string]*sync.Mutex
+	sessionInputLanesMu sync.Mutex
+
 	// Last-seen WorkshopMode per session — used to detect mode toggles between
 	// turns. When the mode changes, native coding-agent resume is skipped for
 	// that turn (so the new system prompt + tool list actually take effect on
@@ -882,6 +890,36 @@ func requestLLMConfigOverridesManifest(req QueryRequest) bool {
 	}
 }
 
+func shouldSerializeInteractiveQueryInput(req QueryRequest) bool {
+	if req.IsAutoNotification {
+		return false
+	}
+	mode := normalizeAgentMode(req.AgentMode)
+	return mode == "workflow_phase" || isToolBackedChatMode(mode)
+}
+
+func (api *StreamingAPI) lockSessionInputLane(sessionID string) func() {
+	if api == nil || strings.TrimSpace(sessionID) == "" {
+		return func() {}
+	}
+	api.sessionInputLanesMu.Lock()
+	if api.sessionInputLanes == nil {
+		api.sessionInputLanes = make(map[string]*sync.Mutex)
+	}
+	lane := api.sessionInputLanes[sessionID]
+	if lane == nil {
+		lane = &sync.Mutex{}
+		api.sessionInputLanes[sessionID] = lane
+	}
+	api.sessionInputLanesMu.Unlock()
+
+	lane.Lock()
+	var once sync.Once
+	return func() {
+		once.Do(lane.Unlock)
+	}
+}
+
 // LLMGuidanceRequest represents a request to set LLM guidance for a session
 type LLMGuidanceRequest struct {
 	SessionID string `json:"session_id"`
@@ -911,10 +949,6 @@ type LiveInputResponse struct {
 	MessageID      string `json:"message_id,omitempty"`
 	QueryID        string `json:"query_id,omitempty"`
 }
-
-// Backward-compatible names for the legacy /steer endpoint and tests.
-type SteerMessageRequest = LiveInputRequest
-type SteerMessageResponse = LiveInputResponse
 
 // ControlKeyRequest carries a tmux control key (e.g. "Escape") to inject into
 // a running coding-agent session.
@@ -1232,6 +1266,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		sessionWorkspaceFolders:         make(map[string]string),
 		sessionAgents:                   make(map[string]*agent.LLMAgentWrapper),
 		runningAgents:                   make(map[string]*mcpagent.Agent),
+		sessionInputLanes:               make(map[string]*sync.Mutex),
 		completionLoopStarted:           make(map[string]bool),
 		lastWorkshopModeBySession:       make(map[string]string),
 		stoppedSessions:                 make(map[string]bool),
@@ -1524,10 +1559,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	// LLM Guidance API routes
 	apiRouter.HandleFunc("/sessions/{session_id}/llm-guidance", api.handleSetLLMGuidance).Methods("POST", "OPTIONS")
 
-	// Live input API route. /steer is retained as a legacy alias for older
-	// clients/tests; new clients should use /live-input.
 	apiRouter.HandleFunc("/sessions/{session_id}/live-input", api.handleLiveInputMessage).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/sessions/{session_id}/steer", api.handleSteerMessage).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/sessions/{session_id}/control", api.handleControlKey).Methods("POST", "OPTIONS")
 
 	// Context Summarization API routes
@@ -2506,6 +2538,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	logfWithContext(queryLogCtx, "[USER_ID_DEBUGGING] HTTP handler: currentUserID=%q (from auth context)", currentUserID)
 
 	api.applySavedMultiAgentChatConfig(r.Context(), &req, currentUserID)
+
+	var releaseInputLane func()
+	if shouldSerializeInteractiveQueryInput(req) {
+		releaseInputLane = api.lockSessionInputLane(sessionID)
+		defer func() {
+			if releaseInputLane != nil {
+				releaseInputLane()
+			}
+		}()
+	}
 
 	// Default maxTurns only when omitted (0). Negative values are preserved to mean "no turn cap".
 	// Multi-agent chat and the workflow builder run uncapped by default.
@@ -3619,8 +3661,20 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Load merged API keys (env + workspace) while r.Context() is still valid (before goroutine)
 	mergedAPIKeys := MergedProviderAPIKeys(r.Context())
 
+	queryInputLaneRelease := releaseInputLane
+	if queryInputLaneRelease != nil {
+		// Ownership moves to the background turn. It must stay held past the
+		// immediate /api/query response; otherwise a rapid second submit can reach
+		// the retained tmux pane before this first prompt has actually been sent.
+		releaseInputLane = nil
+	}
+
 	// Process the query in the background
 	go func() {
+		if queryInputLaneRelease != nil {
+			defer queryInputLaneRelease()
+		}
+
 		// Clear session busy when the agent turn completes
 		if !isWorkflowPhase {
 			defer func() {
@@ -5451,6 +5505,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			sendError(fmt.Sprintf("Failed to start streaming: %v", err), true)
 			return
 		}
+		if queryInputLaneRelease != nil {
+			queryInputLaneRelease()
+			queryInputLaneRelease = nil
+		}
 		logfWithContext(queryLogCtx, "[LATENCY_DEBUG] T+%dms | StreamWithEvents channel opened | queryID=%s", time.Since(startTime).Milliseconds(), queryID)
 		log.Printf("[AGENT DEBUG] llmAgent.StreamWithEvents() started successfully for query %s", queryID)
 
@@ -6674,11 +6732,6 @@ func (api *StreamingAPI) handleSetLLMGuidance(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(response)
 }
 
-// handleSteerMessage is the legacy route name kept for compatibility.
-func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Request) {
-	api.handleLiveInputMessage(w, r)
-}
-
 // agentSupportsLiveInputDelivery reports whether the retained agent is a coding
 // agent whose provider contract supports live input (tmux-transport CLIs). Only
 // these short-circuit a /api/query into CLI delivery; API/LLM agents fall through
@@ -6708,6 +6761,10 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 		return false
 	}
 	hasActiveForegroundTurn := api.hasActiveTurnCancel(sessionID)
+	if !hasActiveForegroundTurn && !api.sessionHasLiveCodingTmux(sessionID) {
+		log.Printf("[QUERY→LIVE] Retained CLI agent for session %s has no active turn and no live tmux; starting a new turn", sessionID)
+		return false
+	}
 
 	if err := r.Context().Err(); err != nil {
 		log.Printf("[QUERY→LIVE] Request canceled before delivery for session %s: %v", sessionID, err)
@@ -6812,6 +6869,20 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 		return
 	}
 	hasActiveForegroundTurn := api.hasActiveTurnCancel(sessionID)
+	if !hasActiveForegroundTurn && agentSupportsLiveInputDelivery(runningAgent) && !api.sessionHasLiveCodingTmux(sessionID) {
+		log.Printf("[LIVE INPUT] Retained CLI agent for session %s has no active turn and no live tmux; starting next turn", sessionID)
+		api.setSessionBusy(sessionID, false)
+		if api.startNextTurnFromLiveInput(w, r, sessionID, req.Message, runningAgent) {
+			return
+		}
+		http.Error(w, "No active foreground turn or live terminal for this session", http.StatusConflict)
+		return
+	}
+	var releaseLiveInputLane func()
+	if agentSupportsLiveInputDelivery(runningAgent) {
+		releaseLiveInputLane = api.lockSessionInputLane(sessionID)
+		defer releaseLiveInputLane()
+	}
 	if !hasActiveForegroundTurn {
 		// API/LLM agents still need a server-owned foreground turn. Retained
 		// tmux-transport CLIs can accept the next message directly, whether their

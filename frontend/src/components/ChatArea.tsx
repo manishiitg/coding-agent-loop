@@ -29,6 +29,7 @@ import { useSessionTerminals } from '../hooks/useSessionTerminals'
 import { useResumePreviousChat } from '../hooks/useResumePreviousChat'
 import { requestTerminalRefreshBurst } from '../utils/terminalRefresh'
 import { isLiveWorkflowTerminal } from '../utils/workflowTerminalActivity'
+import { startRestoredTransportTerminal } from '../utils/restoredTerminal'
 import {
   determineModeFlag,
   buildLLMConfigWithApiKeys,
@@ -664,6 +665,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // through EventHierarchy props → eventTree memo → flattenedItems memo → Virtuoso diff,
   // all for zero actual change.
   const displayEventsRef = useRef<PollingEvent[]>([])
+  const emptyTerminalRestoreAttemptRef = useRef<Set<string>>(new Set())
 
   const displayEvents = useMemo(() => {
     const filtered = tabEvents.filter(event => {
@@ -787,7 +789,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       activeTabHasRestoredConversation ||
       (selectedModeCategory === 'workflow' && activeEventViewMode === 'terminal')
     )
-  const { data: sessionTerminals } = useSessionTerminals(
+  const { data: sessionTerminals, isFetched: sessionTerminalsFetched } = useSessionTerminals(
     activeSessionId,
     shouldProbeSessionTerminals,
   )
@@ -2974,6 +2976,41 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   const hasPendingTerminalActivity = !suppressTerminalPane && (
     activeTabStreaming || activeTabHasRunningBackendSession
   )
+  useEffect(() => {
+    if (!activeSessionId || !sessionTerminalsFetched) return
+    if (activeEventViewMode !== 'terminal') return
+    if (hasPendingTerminalActivity || restoredSessionTerminals.length > 0) return
+
+    const restoredPath = activeTab?.config?.restoredConversationPath?.trim() || ''
+    const sourceSessionId = activeTab?.config?.restoredConversationNativeResume === true || selectedModeCategory === 'workflow'
+      ? activeSessionId
+      : ''
+    if (!restoredPath && !sourceSessionId) return
+
+    const workspacePath = selectedModeCategory === 'workflow'
+      ? activeWorkflowPreset?.selectedFolder?.filepath
+      : undefined
+    const attemptKey = `${activeSessionId}:${restoredPath || 'session'}:${workspacePath || ''}`
+    if (emptyTerminalRestoreAttemptRef.current.has(attemptKey)) return
+    emptyTerminalRestoreAttemptRef.current.add(attemptKey)
+
+    startRestoredTransportTerminal(
+      activeSessionId,
+      restoredPath || undefined,
+      sourceSessionId || undefined,
+      workspacePath,
+    )
+  }, [
+    activeEventViewMode,
+    activeSessionId,
+    activeTab?.config?.restoredConversationNativeResume,
+    activeTab?.config?.restoredConversationPath,
+    activeWorkflowPreset?.selectedFolder?.filepath,
+    hasPendingTerminalActivity,
+    restoredSessionTerminals.length,
+    selectedModeCategory,
+    sessionTerminalsFetched,
+  ])
   const multiAgentSurface = resolveChatSurface({
     isRestoring: isRestoringChatSessions,
     // The resolver's resume-pending → 'restoring' input is now the SYNCHRONOUS

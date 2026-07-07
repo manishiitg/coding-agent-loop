@@ -1052,9 +1052,7 @@ export const agentApi = {
     return response.data
   },
 
-  // Live input - deliver a user message to a live coding-agent session. This
-  // replaces the older /steer naming for CLI transports; /steer is still kept
-  // server-side as a compatibility alias.
+  // Live input - deliver a user message to a live coding-agent session.
   sendLiveInput: async (sessionId: string, message: string): Promise<{
     success: boolean
     message?: string
@@ -1064,21 +1062,6 @@ export const agentApi = {
     query_id?: string
   }> => {
     const response = await api.post(`/api/sessions/${sessionId}/live-input`, { message }, {
-      headers: { 'X-Session-ID': sessionId }
-    })
-    return response.data
-  },
-
-  // Legacy message steering endpoint used by non-CLI steering UI.
-  steerMessage: async (sessionId: string, message: string): Promise<{
-    success: boolean
-    message?: string
-    delivery_status?: 'sent_to_cli' | 'queued_for_injection' | 'next_turn_started'
-    provider?: string
-    message_id?: string
-    query_id?: string
-  }> => {
-    const response = await api.post(`/api/sessions/${sessionId}/steer`, { message }, {
       headers: { 'X-Session-ID': sessionId }
     })
     return response.data

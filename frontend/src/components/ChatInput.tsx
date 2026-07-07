@@ -1123,7 +1123,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     setSteeringIndex(index)
     try {
-      const response = await agentApi.steerMessage(tabSessionId, msg)
+      const response = await agentApi.sendLiveInput(tabSessionId, msg)
       setLiveMessageDelivery({
         status: response.delivery_status || 'queued_for_injection',
         message: msg,

@@ -15,6 +15,7 @@ import (
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	internalevents "mcp-agent-builder-go/agent_go/internal/events"
+	"mcp-agent-builder-go/agent_go/internal/terminals"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 
 	pkgevents "github.com/manishiitg/mcpagent/events"
@@ -266,7 +267,7 @@ func TestHandleLiveInputMessageRoutesThroughAgentDelivery(t *testing.T) {
 	}
 }
 
-func TestHandleSteerMessageDeliversToRetainedCodingAgentWithoutActiveTurn(t *testing.T) {
+func TestHandleLiveInputMessageDeliversToRetainedCodingAgentWithoutActiveTurn(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	defer store.Stop()
 
@@ -275,19 +276,21 @@ func TestHandleSteerMessageDeliversToRetainedCodingAgentWithoutActiveTurn(t *tes
 	runningAgent.SetProvider(llm.ProviderClaudeCode)
 	api := &StreamingAPI{
 		eventStore:       store,
+		terminalStore:    terminals.NewStore(),
 		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
 		runningAgentsMux: sync.RWMutex{},
 		sessionBusy:      map[string]bool{sessionID: true},
 		sessionBusySince: map[string]time.Time{sessionID: time.Now().Add(-time.Minute)},
 		sessionBusyMu:    sync.RWMutex{},
 	}
+	api.terminalStore.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "main:"+sessionID, "mlp-claude-live", "claude ready\n> ", 1))
 
 	body := bytes.NewBufferString(`{"message":"this should become a new turn"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/steer", body)
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/live-input", body)
 	req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
 	rr := httptest.NewRecorder()
 
-	api.handleSteerMessage(rr, req)
+	api.handleLiveInputMessage(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s, want 200 retained CLI delivery", rr.Code, rr.Body.String())
 	}
@@ -363,13 +366,40 @@ func TestTryDeliverQueryAsLiveInputBusyCodingAgent(t *testing.T) {
 }
 
 // Single-entry routing: a retained coding-agent CLI should accept the next
-// message even when the server has no foreground-turn/busy proof. The CLI owns
-// how to handle the input in its tmux session.
-func TestTryDeliverQueryAsLiveInputRetainedCodingAgentDoesNotRequireBusyTurn(t *testing.T) {
+// message when there is no foreground-turn/busy proof but the live tmux pane is
+// still registered. The CLI owns how to handle the input in its tmux session.
+func TestTryDeliverQueryAsLiveInputRetainedCodingAgentUsesLiveTmuxWithoutBusyTurn(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	defer store.Stop()
 
 	sessionID := "retained-coding-session"
+	runningAgent := &mcpagent.Agent{ModelID: "claude-sonnet-4-6"}
+	runningAgent.SetProvider(llm.ProviderClaudeCode)
+	api := &StreamingAPI{
+		eventStore:       store,
+		terminalStore:    terminals.NewStore(),
+		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
+		runningAgentsMux: sync.RWMutex{},
+		agentCancelFuncs: map[string]context.CancelFunc{}, // no active turn
+		agentCancelMux:   sync.RWMutex{},
+	}
+	api.terminalStore.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "main:"+sessionID, "mlp-claude-retained", "claude ready\n> ", 1))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/query", nil)
+	rr := httptest.NewRecorder()
+	if !api.tryDeliverQueryAsLiveInput(rr, req, sessionID, "next message", "query_test_retained") {
+		t.Fatalf("tryDeliverQueryAsLiveInput = false for a retained coding-agent CLI; want live delivery. body=%s", rr.Body.String())
+	}
+	if got := len(store.GetAllEventsRaw(sessionID)); got != 1 {
+		t.Fatalf("retained CLI delivery recorded %d events, want 1", got)
+	}
+}
+
+func TestTryDeliverQueryAsLiveInputRetainedCodingAgentWithoutLiveTmuxFallsThrough(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	defer store.Stop()
+
+	sessionID := "retained-coding-no-tmux-session"
 	runningAgent := &mcpagent.Agent{ModelID: "claude-sonnet-4-6"}
 	runningAgent.SetProvider(llm.ProviderClaudeCode)
 	api := &StreamingAPI{
@@ -382,11 +412,11 @@ func TestTryDeliverQueryAsLiveInputRetainedCodingAgentDoesNotRequireBusyTurn(t *
 
 	req := httptest.NewRequest(http.MethodPost, "/api/query", nil)
 	rr := httptest.NewRecorder()
-	if !api.tryDeliverQueryAsLiveInput(rr, req, sessionID, "next message", "query_test_retained") {
-		t.Fatalf("tryDeliverQueryAsLiveInput = false for a retained coding-agent CLI; want live delivery. body=%s", rr.Body.String())
+	if api.tryDeliverQueryAsLiveInput(rr, req, sessionID, "next message", "query_test_retained_no_tmx") {
+		t.Fatal("tryDeliverQueryAsLiveInput = true without an active foreground turn or live tmux; want normal /api/query path")
 	}
-	if got := len(store.GetAllEventsRaw(sessionID)); got != 1 {
-		t.Fatalf("retained CLI delivery recorded %d events, want 1", got)
+	if got := len(store.GetAllEventsRaw(sessionID)); got != 0 {
+		t.Fatalf("stale retained CLI fall-through recorded %d events, want 0", got)
 	}
 }
 
@@ -458,6 +488,38 @@ func TestRequestLLMConfigOverridesManifestOnlyForScheduledSources(t *testing.T) 
 	req.LLMConfigSource = "manual"
 	if requestLLMConfigOverridesManifest(req) {
 		t.Fatal("manual request LLM config should keep workflow manifest as source of truth")
+	}
+}
+
+func TestSessionInputLaneSerializesRapidInteractiveSubmits(t *testing.T) {
+	sessionID := "rapid-submit-session"
+	api := &StreamingAPI{
+		sessionInputLanes: make(map[string]*sync.Mutex),
+	}
+
+	releaseFirst := api.lockSessionInputLane(sessionID)
+	attemptingSecond := make(chan struct{})
+	acquiredSecond := make(chan struct{})
+
+	go func() {
+		close(attemptingSecond)
+		releaseSecond := api.lockSessionInputLane(sessionID)
+		defer releaseSecond()
+		close(acquiredSecond)
+	}()
+
+	<-attemptingSecond
+	select {
+	case <-acquiredSecond:
+		t.Fatal("second submit acquired the same session input lane before the first released it")
+	case <-time.After(75 * time.Millisecond):
+	}
+
+	releaseFirst()
+	select {
+	case <-acquiredSecond:
+	case <-time.After(time.Second):
+		t.Fatal("second submit did not acquire the input lane after the first released it")
 	}
 }
 

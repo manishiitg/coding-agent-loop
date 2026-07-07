@@ -98,8 +98,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		readPaths = append(readPaths, globalLearningsPath)
 		// Unlike regular steps (which write learnings in a dedicated post-step turn),
 		// the orchestrator writes its stores directly via the folder guard — same as it
-		// does for knowledgebase/notes below. Grant learnings write when access is read-write.
-		if learningsAccessForGuard == LearningsAccessReadWrite {
+		// does for knowledgebase/notes below. Grant learnings write when access is read-write
+		// and lock_learnings is not protecting existing _global content.
+		if learningsAccessForGuard == LearningsAccessReadWrite && !hcpo.shouldSkipDirectLearningsDueToLock(ctx, skillStepConfig, stepIndex) {
 			writePaths = append(writePaths, globalLearningsPath)
 		}
 	}
@@ -457,6 +458,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskContributionTurns(ctx cont
 		if msg == "" {
 			return
 		}
+		if label == "learnings" {
+			restoreDirectLearningTurn := hcpo.prepareDirectLearningTurn(agent, []string{filepath.Join(hcpo.GetWorkspacePath(), LearningsFolderName, GlobalLearningID)})
+			defer restoreDirectLearningTurn()
+		}
 		hcpo.GetLogger().Info(fmt.Sprintf("📝 Todo task %s contribution turn for step %d", label, stepIndex+1))
 		_, updated, err := ba.Execute(ctx, msg, *conversationHistory, "", false)
 		if err != nil {
@@ -472,8 +477,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskContributionTurns(ctx cont
 		*conversationHistory = updated
 	}
 
-	if shouldDirectWriteLearnings(cfg, step, hcpo.isEvaluationMode) {
-		runTurn("learnings", BuildLearningsContributionTurn(step.GetID(), step.GetDescription(), strings.TrimSpace(cfg.LearningObjective), false))
+	if shouldDirectWriteLearnings(cfg, step, hcpo.isEvaluationMode) && !hcpo.shouldSkipDirectLearningsDueToLock(ctx, cfg, stepIndex) {
+		runTurn("learnings", hcpo.buildLearningsContributionTurn(step.GetID(), step.GetDescription(), strings.TrimSpace(cfg.LearningObjective), false))
 	}
 
 	if contribution := strings.TrimSpace(kbContributionForPrompt(cfg)); contribution != "" && kbAccessAllowsWrite(cfg.KnowledgebaseAccess) {
@@ -742,7 +747,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 		"KbWriteMethod":             kbWriteMethod,
 		"LearningsAccess":           learningsAccess,
 		"KnowledgebaseContribution": kbContributionForPrompt(stepConfig),
-		"KBGuidanceBlock":           BuildStepKBGuidance(kbAccess, kbWriteMethod, kbContributionForPrompt(stepConfig)),
+		"KBGuidanceBlock":           BuildStepKBGuidanceWithTarget(kbAccess, kbWriteMethod, kbContributionForPrompt(stepConfig), filepath.Join(docsRoot, fgKnowledgebasePath, KBNotesFolderName)),
 		// Workspace paths and folder guard (consistent with execution agent)
 		"FolderGuardReadPaths":  strings.Join(toAbsPaths(docsRoot, fgReadPaths), ", "),
 		"FolderGuardWritePaths": strings.Join(toAbsPaths(docsRoot, fgWritePaths), ", "),

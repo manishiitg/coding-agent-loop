@@ -1,8 +1,12 @@
 package step_based_workflow
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
+
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 )
 
 // Validates sequence-unification Stage 3: a todo_task's `messages` (old
@@ -53,7 +57,7 @@ func TestTodoTaskMessagesDeserializeToUnifiedItem(t *testing.T) {
 // so it honors step-level learning_objective / knowledgebase_contribution like a
 // regular step instead of silently skipping the post-step learnings/KB phase.
 func TestMessageSequenceClosingItems(t *testing.T) {
-	hcpo := &StepBasedWorkflowOrchestrator{}
+	hcpo := newMessageSequenceClosingTestOrchestrator(t)
 
 	// Configured for BOTH learnings and KB writes -> both items appended, in order.
 	both := &MessageSequencePlanStep{
@@ -66,7 +70,7 @@ func TestMessageSequenceClosingItems(t *testing.T) {
 			KnowledgebaseContribution: "Record portal-specific selectors and quirks",
 		},
 	}
-	items := hcpo.messageSequenceClosingItems(both)
+	items := hcpo.messageSequenceClosingItems(context.Background(), both, 0)
 	if len(items) != 2 {
 		t.Fatalf("expected 2 closing items (learning + kb), got %d", len(items))
 	}
@@ -81,7 +85,7 @@ func TestMessageSequenceClosingItems(t *testing.T) {
 	}
 
 	// No agent configs -> no synthetic items.
-	if got := hcpo.messageSequenceClosingItems(&MessageSequencePlanStep{CommonStepFields: CommonStepFields{ID: "x"}}); len(got) != 0 {
+	if got := hcpo.messageSequenceClosingItems(context.Background(), &MessageSequencePlanStep{CommonStepFields: CommonStepFields{ID: "x"}}, 0); len(got) != 0 {
 		t.Errorf("expected no closing items without agent configs, got %d", len(got))
 	}
 
@@ -90,7 +94,7 @@ func TestMessageSequenceClosingItems(t *testing.T) {
 		CommonStepFields: CommonStepFields{ID: "y", Description: "d"},
 		AgentConfigs:     &AgentConfigs{LearningsAccess: LearningsAccessReadWrite},
 	}
-	if got := hcpo.messageSequenceClosingItems(noObj); len(got) != 0 {
+	if got := hcpo.messageSequenceClosingItems(context.Background(), noObj, 0); len(got) != 0 {
 		t.Errorf("expected no items when learning objective empty, got %d", len(got))
 	}
 
@@ -99,7 +103,43 @@ func TestMessageSequenceClosingItems(t *testing.T) {
 		CommonStepFields: CommonStepFields{ID: "z", Description: "d"},
 		AgentConfigs:     &AgentConfigs{KnowledgebaseAccess: "read", KnowledgebaseContribution: "note something"},
 	}
-	if got := hcpo.messageSequenceClosingItems(kbReadOnly); len(got) != 0 {
+	if got := hcpo.messageSequenceClosingItems(context.Background(), kbReadOnly, 0); len(got) != 0 {
 		t.Errorf("expected no KB item when access is read-only, got %d", len(got))
 	}
+}
+
+func TestMessageSequenceClosingItemsHonorLockLearnings(t *testing.T) {
+	hcpo := newMessageSequenceClosingTestOrchestrator(t)
+	previousCheck := directLearningsGlobalEmptyForLock
+	directLearningsGlobalEmptyForLock = func(_ *StepBasedWorkflowOrchestrator, _ context.Context) (bool, error) {
+		return false, nil
+	}
+	defer func() { directLearningsGlobalEmptyForLock = previousCheck }()
+
+	locked := true
+	step := &MessageSequencePlanStep{
+		CommonStepFields: CommonStepFields{ID: "seq", Description: "do work"},
+		AgentConfigs: &AgentConfigs{
+			LearningsAccess:   LearningsAccessReadWrite,
+			LearningObjective: "capture durable execution patterns",
+			LockLearnings:     &locked,
+		},
+	}
+
+	if got := hcpo.messageSequenceClosingItems(context.Background(), step, 0); len(got) != 0 {
+		t.Fatalf("locked existing _global should suppress synthetic learning item, got %+v", got)
+	}
+}
+
+func newMessageSequenceClosingTestOrchestrator(t *testing.T) *StepBasedWorkflowOrchestrator {
+	t.Helper()
+	base, err := orchestrator.NewBaseOrchestrator(
+		loggerv2.NewNoop(), nil, orchestrator.OrchestratorTypeWorkflow, "", 0, "",
+		[]string{"test-server"}, nil, false, &orchestrator.LLMConfig{}, 1, nil, nil, nil,
+	)
+	if err != nil {
+		t.Fatalf("NewBaseOrchestrator: %v", err)
+	}
+	base.SetWorkspacePath("Workflow/test-flow")
+	return &StepBasedWorkflowOrchestrator{BaseOrchestrator: base}
 }

@@ -279,6 +279,17 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 		toolCategories[name] = "human_tools"
 	}
 
+	if workflowMode {
+		reportHumanInputTools, reportHumanInputExecutors, reportHumanInputCategories := createReportHumanInputTools()
+		allTools = append(allTools, reportHumanInputTools...)
+		for name, executor := range reportHumanInputExecutors {
+			allExecutors[name] = executor
+		}
+		for name, category := range reportHumanInputCategories {
+			toolCategories[name] = category
+		}
+	}
+
 	// Note: Todo tools (create_todo, complete_todo, etc.) have been removed.
 	// The todo task orchestrator manages tasks directly via shell commands.
 	//

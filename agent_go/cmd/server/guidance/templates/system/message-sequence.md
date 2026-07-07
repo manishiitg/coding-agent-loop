@@ -132,7 +132,7 @@ Items are usually fixed at design time. A **`foreach`** item instead generates t
 ```jsonc
 { "type": "foreach",
   "source_sql": "SELECT id, desc FROM tasks WHERE status='pending'",  // read-only query against db/db.sqlite
-  "message": "Process task {{"{{"}}.id{{"}}"}}: {{"{{"}}.desc{{"}}"}}. Upsert the result into the results table: sqlite3 db/db.sqlite \"INSERT INTO results(id, ...) VALUES(...) ON CONFLICT(id) DO UPDATE SET ...\".",
+  "message": "Process task {{"{{"}}.id{{"}}"}}: {{"{{"}}.desc{{"}}"}}. Upsert the result into the results table using sqlite3 \"$DB_PATH\" \"INSERT INTO results(id, ...) VALUES(...) ON CONFLICT(id) DO UPDATE SET ...\".",
   "max_iterations": 0             // optional cap; 0 = all rows (capping is logged, never silent)
 }
 ```

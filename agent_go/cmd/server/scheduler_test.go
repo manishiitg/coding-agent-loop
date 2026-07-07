@@ -107,6 +107,66 @@ func TestWorkflowScheduleShouldResumePreviousIsOptIn(t *testing.T) {
 	}
 }
 
+func TestWorkflowScheduleListExposesWorkshopMode(t *testing.T) {
+	workspacePath := "Workflow/social-media"
+	manifest := &WorkflowManifest{
+		SchemaVersion: WorkflowManifestSchemaVersion,
+		ID:            "social-media",
+		Label:         "Social Media",
+		Schedules: []WorkflowSchedule{
+			{
+				ID:             "run-schedule",
+				Name:           "Daily publish",
+				CronExpression: "0 9 * * *",
+				Timezone:       "Asia/Kolkata",
+				Enabled:        true,
+				GroupNames:     []string{"group-1"},
+				Mode:           "workshop",
+				WorkshopMode:   "run",
+			},
+			{
+				ID:             "optimizer-schedule",
+				Name:           "Auto Improve",
+				CronExpression: "0 23 * * 1,4",
+				Timezone:       "Asia/Kolkata",
+				Enabled:        true,
+				GroupNames:     []string{"group-1"},
+				Mode:           "workshop",
+				WorkshopMode:   "optimizer",
+			},
+		},
+	}
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	workspace := httptest.NewServer(&mockWorkspaceAPI{files: map[string]string{
+		workspacePath + "/workflow.json": string(manifestJSON),
+	}})
+	defer workspace.Close()
+	t.Setenv("WORKSPACE_API_URL", workspace.URL)
+
+	callbacks := (&StreamingAPI{}).buildSchedulerCallbacks()
+	out, err := callbacks.ListSchedules(context.Background(), workspacePath)
+	if err != nil {
+		t.Fatalf("ListSchedules() error = %v", err)
+	}
+	for _, want := range []string{
+		"## Schedules (2 found)",
+		"### Daily publish",
+		"- **Mode**: `workshop`",
+		"- **Workshop Mode**: `run`",
+		"### Auto Improve",
+		"- **Workshop Mode**: `optimizer`",
+		"- **Type**: cron",
+		"- **Cron**: `0 23 * * 1,4`",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("schedule list missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestShouldUpdateChiefTaskReport(t *testing.T) {
 	tests := []struct {
 		name string
@@ -336,6 +396,14 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 			t.Fatalf("triage step missing Chief of Staff handoff text %q:\n%s", want, triage)
 		}
 	}
+	for _, want := range []string{
+		"plain-language Pulse cards",
+		"takeaway first",
+	} {
+		if !strings.Contains(triage, want) {
+			t.Fatalf("triage step missing readable Pulse HTML guidance %q:\n%s", want, triage)
+		}
+	}
 	if !strings.Contains(fix, "FIX / HARDEN") {
 		t.Fatalf("fix step should be the harden step:\n%s", fix)
 	}
@@ -396,9 +464,9 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 		"data-axis='health'",
 		"final post-Pulse health",
 		"dashboard summary, not the email narrative",
-		"Human input requested",
-		"data-kind='input'",
-		"data-question-id",
+		"create_human_input_request",
+		"report_human_inputs",
+		"Runloop is where the user answers",
 		"data-field='state'",
 		"data-field='input'",
 		"data-field='fix'",
@@ -737,7 +805,7 @@ func TestWorkflowHasPendingPlanChangelogArtifactReview(t *testing.T) {
 func TestOptimizerScheduleMessagesIgnoresStoredMessagesAndInjectsCanonicalTurns(t *testing.T) {
 	stored := []string{`Do not ask for confirmation. Call get_workflow_command_guidance(kind="improve-workflow", focus="scheduled improve fire").`}
 
-	got := optimizerScheduleMessages(stored, []string{"prod"})
+	got := optimizerScheduleMessages(context.Background(), "Workflow/test", stored, []string{"prod"})
 	if len(got) != 5 {
 		t.Fatalf("optimizerScheduleMessages() length = %d, want 5", len(got))
 	}
@@ -782,7 +850,7 @@ func TestOptimizerScheduleMessagesIgnoresStoredMessagesAndInjectsCanonicalTurns(
 }
 
 func TestOptimizerScheduleMessagesDefaultsToImproveWhenNoStoredMessage(t *testing.T) {
-	got := optimizerScheduleMessages(nil, []string{"group-a"})
+	got := optimizerScheduleMessages(context.Background(), "Workflow/test", nil, []string{"group-a"})
 	if len(got) != 5 {
 		t.Fatalf("optimizerScheduleMessages(nil) length = %d, want 5", len(got))
 	}
@@ -814,7 +882,7 @@ func TestOptimizerScheduleMessagesReplacesLegacyExplicitQueue(t *testing.T) {
 		"STEP 5/5 — NOTIFY",
 	}
 
-	got := optimizerScheduleMessages(legacy, nil)
+	got := optimizerScheduleMessages(context.Background(), "Workflow/test", legacy, nil)
 	if len(got) != 5 {
 		t.Fatalf("optimizerScheduleMessages() length = %d, want 5", len(got))
 	}

@@ -1476,29 +1476,30 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				hcpo.UnlockWorkspaceEnv()
 			}
 		}
+		kbNotesPathForPrompt := toAbsPath(filepath.Join(getKnowledgebasePath(hcpo.GetWorkspacePath()), KBNotesFolderName))
 
 		templateVars := map[string]string{
 			"StepTitle":                 stepTitleForPrompt,
 			"StepDescription":           stepDescriptionForPrompt,
 			"StepSuccessCriteria":       "",
 			"StepContextOutput":         ResolveVariables(step.GetContextOutput().String(), hcpo.variableValues),
-			"WorkspacePath":             toAbsPath(executionWorkspacePath),                                                   // Absolute execution folder path (e.g., "/app/workspace-docs/Workflow/HRMS/runs/...")
-			"LearningsPath":             toAbsPath(learningsPath),                                                            // Absolute learnings folder path
-			"KnowledgebasePath":         toAbsPath(knowledgebasePath),                                                        // Absolute knowledgebase folder path
-			"DBPath":                    toAbsPath(getDBPath(hcpo.GetWorkspacePath())),                                       // Absolute db folder path (always enabled)
-			"UseKnowledgebase":          fmt.Sprintf("%v", useKnowledgebase),                                                 // Whether knowledgebase is enabled (deprecated, retained for backward compat)
-			"KbAccess":                  kbAccess,                                                                            // KB access mode: "read" | "write" | "read-write" | "none"
-			"KbAccessLabel":             kbAccessLabel(kbAccess),                                                             // Human-readable label for prompt display
-			"KbWriteMethod":             kbWriteMethod,                                                                       // "agent" | "direct" — who writes KB
-			"KnowledgebaseContribution": kbContributionForPrompt(agentConfigs),                                               // Author's contribution instruction (direct mode surfaces it to the step)
-			"KBGuidanceBlock":           BuildStepKBGuidance(kbAccess, kbWriteMethod, kbContributionForPrompt(agentConfigs)), // Direct-mode-only KB contribution guidance
-			"IsCodeExecutionMode":       fmt.Sprintf("%v", isCodeExecutionMode),                                              // Code execution mode flag (step-specific or preset)
-			"StepNumber":                stepPath,                                                                            // Step identifier (e.g., "step-8" or "step-3-if-true-0")
-			"StepExecutionPath":         toAbsPath(stepExecutionPath),                                                        // Absolute step execution folder path
-			"FolderGuardReadPaths":      strings.Join(toAbsPathSlice(folderGuardReadPaths), ", "),                            // Absolute folder guard read paths
-			"FolderGuardWritePaths":     strings.Join(toAbsPathSlice(folderGuardWritePaths), ", "),                           // Absolute folder guard write paths
-			"IsEvaluationMode":          fmt.Sprintf("%v", hcpo.isEvaluationMode),                                            // Evaluation mode flag for eval-specific prompt guidance
-			"WorkflowRoot":              toAbsPath(workflowRoot),                                                             // Absolute workflow root path (e.g., "/app/workspace-docs/Workflow/HRMS")
+			"WorkspacePath":             toAbsPath(executionWorkspacePath),                                                                                   // Absolute execution folder path (e.g., "/app/workspace-docs/Workflow/HRMS/runs/...")
+			"LearningsPath":             toAbsPath(learningsPath),                                                                                            // Absolute learnings folder path
+			"KnowledgebasePath":         toAbsPath(knowledgebasePath),                                                                                        // Absolute knowledgebase folder path
+			"DBPath":                    toAbsPath(getDBPath(hcpo.GetWorkspacePath())),                                                                       // Absolute db folder path (always enabled)
+			"UseKnowledgebase":          fmt.Sprintf("%v", useKnowledgebase),                                                                                 // Whether knowledgebase is enabled (deprecated, retained for backward compat)
+			"KbAccess":                  kbAccess,                                                                                                            // KB access mode: "read" | "write" | "read-write" | "none"
+			"KbAccessLabel":             kbAccessLabel(kbAccess),                                                                                             // Human-readable label for prompt display
+			"KbWriteMethod":             kbWriteMethod,                                                                                                       // "agent" | "direct" — who writes KB
+			"KnowledgebaseContribution": kbContributionForPrompt(agentConfigs),                                                                               // Author's contribution instruction (direct mode surfaces it to the step)
+			"KBGuidanceBlock":           BuildStepKBGuidanceWithTarget(kbAccess, kbWriteMethod, kbContributionForPrompt(agentConfigs), kbNotesPathForPrompt), // Direct-mode-only KB contribution guidance
+			"IsCodeExecutionMode":       fmt.Sprintf("%v", isCodeExecutionMode),                                                                              // Code execution mode flag (step-specific or preset)
+			"StepNumber":                stepPath,                                                                                                            // Step identifier (e.g., "step-8" or "step-3-if-true-0")
+			"StepExecutionPath":         toAbsPath(stepExecutionPath),                                                                                        // Absolute step execution folder path
+			"FolderGuardReadPaths":      strings.Join(toAbsPathSlice(folderGuardReadPaths), ", "),                                                            // Absolute folder guard read paths
+			"FolderGuardWritePaths":     strings.Join(toAbsPathSlice(folderGuardWritePaths), ", "),                                                           // Absolute folder guard write paths
+			"IsEvaluationMode":          fmt.Sprintf("%v", hcpo.isEvaluationMode),                                                                            // Evaluation mode flag for eval-specific prompt guidance
+			"WorkflowRoot":              toAbsPath(workflowRoot),                                                                                             // Absolute workflow root path (e.g., "/app/workspace-docs/Workflow/HRMS")
 			"IsScriptedMode":            fmt.Sprintf("%v", isScriptedMode),
 			"IsScriptedLocked":          fmt.Sprintf("%v", isScriptedMode && getAgentConfigs(step) != nil && getAgentConfigs(step).LockCode != nil && *getAgentConfigs(step).LockCode),
 			"IsRelearnMode":             fmt.Sprintf("%v", isScriptedMode && learnCodePriorScript != ""),
@@ -2383,10 +2384,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					// calls (if any) land via the normal notes-write pipeline.
 					if !kbReviewPerformed && executionAgent != nil {
 						stepCfgForReview := getAgentConfigs(step)
-						reviewMsg := BuildKBContributionReviewMessage(
+						reviewMsg := BuildKBContributionReviewMessageWithTarget(
 							resolveKnowledgebaseAccess(stepCfgForReview, hcpo.UseKnowledgebase()),
 							resolveKnowledgebaseWriteMethod(stepCfgForReview),
 							kbContributionForPrompt(stepCfgForReview),
+							filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), KnowledgebaseFolderName, KBNotesFolderName),
 						)
 						if reviewMsg != "" {
 							kbReviewPerformed = true
@@ -2408,8 +2410,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					}
 
 					// Direct-learnings turn (fires after KB review, if any). Runs only when
-					// learnings_write_method is "direct" AND the access/objective/lock gates
-					// agree (see shouldDirectWriteLearnings). Writes target learnings/_global/
+					// learnings_write_method is "direct" AND the access/objective gates
+					// agree (see shouldDirectWriteLearnings). lock_learnings is honored
+					// below. Writes target learnings/_global/
 					// (shared across steps), with learnings/<stepID>/ opened only in scripted
 					// mode for the main.py copy. Folder guard is widened here for the turn only —
 					// the main-step execution did NOT have write access to either path. The
@@ -2419,24 +2422,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					if !learningsDirectPerformed && executionAgent != nil {
 						stepCfgForLearn := getAgentConfigs(step)
 						if shouldDirectWriteLearnings(stepCfgForLearn, step, hcpo.isEvaluationMode) {
-							// Lock + empty-folder override (mirrors agent-mode logic at ~line 2434):
-							// lock_learnings is honored only when _global/ actually has content to
-							// protect. An empty _global/ folder allows the first direct-mode write
-							// to bootstrap initial learnings, even with lock_learnings: true. This
-							// keeps lock semantics consistent across agent and direct methods.
-							skipDueToLock := false
-							if stepCfgForLearn != nil && stepCfgForLearn.LockLearnings != nil && *stepCfgForLearn.LockLearnings {
-								globalEmpty, emptyErr := hcpo.isStepLearningsFolderEmpty(ctx, GlobalLearningID, 0, "")
-								if emptyErr != nil {
-									// Can't check — assume empty to allow bootstrap (conservative for first runs).
-									hcpo.GetLogger().Info(fmt.Sprintf("🔒 lock_learnings=true on step %d but _global/ check failed (%v) — allowing direct-learnings turn to bootstrap", stepIndex+1, emptyErr))
-								} else if globalEmpty {
-									hcpo.GetLogger().Info(fmt.Sprintf("🔒 lock_learnings=true on step %d but _global/ is empty — allowing direct-learnings turn to bootstrap initial skill", stepIndex+1))
-								} else {
-									hcpo.GetLogger().Info(fmt.Sprintf("🔒 lock_learnings=true on step %d with existing _global/ content — skipping direct-learnings turn", stepIndex+1))
-									skipDueToLock = true
-								}
-							}
+							// Lock + empty-folder override: lock_learnings is honored only when
+							// _global/ already has content to protect. An empty _global/ folder
+							// allows the first direct-mode write to bootstrap initial learnings.
+							skipDueToLock := hcpo.shouldSkipDirectLearningsDueToLock(ctx, stepCfgForLearn, stepIndex)
 
 							learnObjective := ""
 							if stepCfgForLearn != nil {
@@ -2444,7 +2433,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							}
 							learningsTurnMsg := ""
 							if !skipDueToLock {
-								learningsTurnMsg = BuildLearningsContributionTurn(step.GetID(), templateVars["StepDescription"], learnObjective, isScriptedMode)
+								learningsTurnMsg = hcpo.buildLearningsContributionTurn(step.GetID(), templateVars["StepDescription"], learnObjective, isScriptedMode)
 							} else {
 								hcpo.recordWorkflowContinuationPhase(ctx, artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseDirectLearning, workflowContinuationStatusSkipped, "lock_learnings=true with existing _global content", executionAgent)
 							}
@@ -2460,83 +2449,60 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 								// keep the guard tight.
 								addedPaths := []string{globalLearningsPath}
 
-								// Widen the sub-agent session shell guard for this turn. The step
-								// agent runs shell commands under its own per-step sub-session (created
-								// by setupSubAgentSessionGuard in createExecutionOnlyAgent at
-								// controller_agent_factory.go:1281) — NOT the parent workflow session.
-								// hcpo.GetMCPSessionID() would return the parent; we need the sub-
-								// session id from the agent's config.
-								// Appending to existing paths preserves the step-scoped narrow that
-								// executeSingleStep set up at step start.
-								subSessionID := ""
-								if cfg := executionAgent.GetConfig(); cfg != nil {
-									subSessionID = strings.TrimSpace(cfg.MCPSessionID)
-								}
-								if subSessionID != "" {
-									if prevCfg := common.GetSessionShellConfig(subSessionID); prevCfg != nil {
-										widenedRead := append([]string{}, prevCfg.ReadPaths...)
-										widenedWrite := append([]string{}, prevCfg.WritePaths...)
-										widenedRead = append(widenedRead, addedPaths...)
-										widenedWrite = append(widenedWrite, addedPaths...)
-										common.SetSessionFolderGuard(subSessionID, widenedRead, widenedWrite)
-										hcpo.grantSessionCDPHostDownloadsReadOnly(subSessionID)
-										hcpo.GetLogger().Info(fmt.Sprintf("🔓 [LEARN_DIRECT] Widened sub-agent session %s for learnings turn on step %s: +%v", subSessionID, step.GetID(), addedPaths))
-									} else {
-										hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [LEARN_DIRECT] No existing shell config for sub-agent session %s — learnings writes may fail", subSessionID))
-									}
-								} else {
-									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [LEARN_DIRECT] Execution agent has no MCPSessionID on config — learnings writes may fail for step %d", stepIndex+1))
-								}
-								// Also widen the per-agent folder guard config so tools registered on
-								// the agent (e.g. diff_patch_workspace_file) see the new write paths.
-								if cfg := executionAgent.GetConfig(); cfg != nil {
-									cfg.FolderGuardReadPaths = append(cfg.FolderGuardReadPaths, addedPaths...)
-									cfg.FolderGuardWritePaths = append(cfg.FolderGuardWritePaths, addedPaths...)
-								}
-
 								// Serialize against parallel direct-learnings turns. Each step has its
 								// own MCP session so folder guards don't collide, but _global/SKILL.md
 								// is a shared file — parallel diff_patches would race without this.
 								hcpo.recordWorkflowContinuationPhase(ctx, artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseDirectLearning, workflowContinuationStatusWaitingForLock, "", executionAgent)
-								learningsGlobalFileMutex.Lock()
-								hcpo.GetLogger().Info(fmt.Sprintf("🧠 Direct-learnings: firing one-shot continuation for step %d (objective length=%d)", stepIndex+1, len(learnObjective)))
-								hcpo.recordWorkflowContinuationPhase(ctx, artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseDirectLearning, workflowContinuationStatusRunning, "", executionAgent)
-								if ba := executionAgent.GetBaseAgent(); ba != nil {
-									learnResult, learnHistory, learnErr := ba.Execute(ctx, learningsTurnMsg, executionConversationHistory, "", false)
-									if learnErr != nil {
-										hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Direct-learnings continuation failed for step %d: %v (accepting step anyway)", stepIndex+1, learnErr))
-										hcpo.recordWorkflowContinuationPhase(context.Background(), artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseDirectLearning, workflowContinuationStatusFailed, learnErr.Error(), executionAgent)
-									} else {
-										directLearningsSummary = summarizeExecutionResultForNotification(learnResult)
-										executionConversationHistory = learnHistory
-										hcpo.GetLogger().Info(fmt.Sprintf("🧠 Direct-learnings completed for step %d (history=%d turns)", stepIndex+1, len(executionConversationHistory)))
-										hcpo.recordWorkflowContinuationPhase(context.Background(), artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseDirectLearning, workflowContinuationStatusCompleted, "", executionAgent)
+								func() {
+									restoreDirectLearningTurn := hcpo.prepareDirectLearningTurn(executionAgent, addedPaths)
+									defer restoreDirectLearningTurn()
 
-										// Direct-mode learnings are the only runtime write path, so
-										// metadata bookkeeping happens here. Runtime execution never
-										// auto-locks learnings; builder/user decisions own lock_learnings.
-										directLearningPathIdentifier := getEffectiveLearningPathIdentifier(step.GetID(), stepPath, stepCfgForLearn)
-										hasNewLearning, directLearningReasoning, directLearningConfidence := inferHasNewLearningFromResult(learnResult)
-										directLearningLLM := executionLLM
-										if metadataErr := hcpo.updateLearningMetadataWithTurnCount(
-											ctx,
-											stepIndex,
-											stepPath,
-											directLearningPathIdentifier,
-											hasNewLearning,
-											directLearningReasoning,
-											directLearningConfidence,
-											turnCount,
-											step,
-											true, // pre-validation already passed
-											executionLLM,
-											directLearningLLM,
-										); metadataErr != nil {
-											hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update direct-learnings metadata for step %s: %v", step.GetID(), metadataErr))
+									if cfg := executionAgent.GetConfig(); cfg != nil && strings.TrimSpace(cfg.MCPSessionID) != "" {
+										hcpo.GetLogger().Info(fmt.Sprintf("🔓 [LEARN_DIRECT] Widened sub-agent session %s for learnings turn on step %s: +%v", strings.TrimSpace(cfg.MCPSessionID), step.GetID(), addedPaths))
+									} else {
+										hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [LEARN_DIRECT] Execution agent has no MCPSessionID on config — learnings writes may fail for step %d", stepIndex+1))
+									}
+
+									learningsGlobalFileMutex.Lock()
+									defer learningsGlobalFileMutex.Unlock()
+									hcpo.GetLogger().Info(fmt.Sprintf("🧠 Direct-learnings: firing one-shot continuation for step %d (objective length=%d)", stepIndex+1, len(learnObjective)))
+									hcpo.recordWorkflowContinuationPhase(ctx, artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseDirectLearning, workflowContinuationStatusRunning, "", executionAgent)
+									if ba := executionAgent.GetBaseAgent(); ba != nil {
+										learnResult, learnHistory, learnErr := ba.Execute(ctx, learningsTurnMsg, executionConversationHistory, "", false)
+										if learnErr != nil {
+											hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Direct-learnings continuation failed for step %d: %v (accepting step anyway)", stepIndex+1, learnErr))
+											hcpo.recordWorkflowContinuationPhase(context.Background(), artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseDirectLearning, workflowContinuationStatusFailed, learnErr.Error(), executionAgent)
+										} else {
+											directLearningsSummary = summarizeExecutionResultForNotification(learnResult)
+											executionConversationHistory = learnHistory
+											hcpo.GetLogger().Info(fmt.Sprintf("🧠 Direct-learnings completed for step %d (history=%d turns)", stepIndex+1, len(executionConversationHistory)))
+											hcpo.recordWorkflowContinuationPhase(context.Background(), artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseDirectLearning, workflowContinuationStatusCompleted, "", executionAgent)
+
+											// Direct-mode learnings are the only runtime write path, so
+											// metadata bookkeeping happens here. Runtime execution never
+											// auto-locks learnings; builder/user decisions own lock_learnings.
+											directLearningPathIdentifier := getEffectiveLearningPathIdentifier(step.GetID(), stepPath, stepCfgForLearn)
+											hasNewLearning, directLearningReasoning, directLearningConfidence := inferHasNewLearningFromResult(learnResult)
+											directLearningLLM := executionLLM
+											if metadataErr := hcpo.updateLearningMetadataWithTurnCount(
+												ctx,
+												stepIndex,
+												stepPath,
+												directLearningPathIdentifier,
+												hasNewLearning,
+												directLearningReasoning,
+												directLearningConfidence,
+												turnCount,
+												step,
+												true, // pre-validation already passed
+												executionLLM,
+												directLearningLLM,
+											); metadataErr != nil {
+												hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update direct-learnings metadata for step %s: %v", step.GetID(), metadataErr))
+											}
 										}
 									}
-								}
-								learningsGlobalFileMutex.Unlock()
+								}()
 							}
 						}
 					}

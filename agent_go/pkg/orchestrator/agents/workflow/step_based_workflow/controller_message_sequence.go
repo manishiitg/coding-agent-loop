@@ -77,7 +77,7 @@ type messageSequenceCallOptions struct {
 // runs (a message_sequence otherwise skips the learning/KB phase entirely). Each
 // is a user_message turn carrying the matching write access; the item machinery
 // already grants learnings/_global or notes/ from kind + write_access.
-func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceClosingItems(seq *MessageSequencePlanStep) []MessageSequenceItem {
+func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceClosingItems(ctx context.Context, seq *MessageSequencePlanStep, stepIndex int) []MessageSequenceItem {
 	cfg := seq.AgentConfigs
 	if cfg == nil {
 		return nil
@@ -89,8 +89,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceClosingItems(seq *Mess
 	// Learnings: same gate the regular-step path uses (learnings_access write +
 	// a non-empty learning_objective; BuildLearningsContributionTurn returns ""
 	// when the objective is empty, so this is double-gated).
-	if shouldDirectWriteLearnings(cfg, seq, hcpo.isEvaluationMode) {
-		if msg := BuildLearningsContributionTurn(stepID, desc, strings.TrimSpace(cfg.LearningObjective), false); msg != "" {
+	if shouldDirectWriteLearnings(cfg, seq, hcpo.isEvaluationMode) && !hcpo.shouldSkipDirectLearningsDueToLock(ctx, cfg, stepIndex) {
+		if msg := hcpo.buildLearningsContributionTurn(stepID, desc, strings.TrimSpace(cfg.LearningObjective), false); msg != "" {
 			items = append(items, MessageSequenceItem{
 				ID:          fmt.Sprintf("%s-learnings-contribution", stepID),
 				Type:        "user_message",
@@ -280,7 +280,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceStep(
 		// learning_objective / knowledgebase_contribution — the same post-step
 		// learnings/KB a regular step runs. (Copy first so we never mutate the plan's
 		// Items slice.)
-		plannedItems = append(append([]MessageSequenceItem{}, sequenceStep.Items...), hcpo.messageSequenceClosingItems(sequenceStep)...)
+		plannedItems = append(append([]MessageSequenceItem{}, sequenceStep.Items...), hcpo.messageSequenceClosingItems(ctx, sequenceStep, stepIndex)...)
 		// description = turn 0 (consistent across all sequence-like steps): the step
 		// description is the opening instruction and leads the first conversational
 		// turn — it is prepended to items[0] in executeMessageSequenceUserMessage.
@@ -647,17 +647,24 @@ func formatMessageSequencePrevalidationFeedback(itemID string, results *Workspac
 
 func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceUserMessage(ctx context.Context, step *MessageSequencePlanStep, item MessageSequenceItem, stepIndex int, stepPath string, session *messageSequenceSession) (string, error) {
 	writeAccess := resolveMessageSequenceItemWriteAccess(item)
+	if writeAccess.Learnings && hcpo.shouldSkipDirectLearningsDueToLock(ctx, step.AgentConfigs, stepIndex) {
+		writeAccess.Learnings = false
+	}
 	readPaths, writePaths := hcpo.setupMessageSequenceFolderGuard(stepPath, step.GetID(), writeAccess)
 	runtime, agentCtx, err := hcpo.getMessageSequenceRuntime(ctx, step, stepPath, session, readPaths, writePaths)
 	if err != nil {
 		return "", err
+	}
+	if writeAccess.Learnings {
+		restoreDirectLearningTurn := hcpo.prepareDirectLearningTurn(runtime.Agent, []string{filepath.Join(hcpo.GetWorkspacePath(), LearningsFolderName, GlobalLearningID)})
+		defer restoreDirectLearningTurn()
 	}
 
 	message := strings.TrimSpace(item.Message)
 	if session.LastRuntimeContext != "" {
 		message = session.LastRuntimeContext + "\n\n## Next instruction\n" + message
 	}
-	templateVars := hcpo.buildMessageSequenceTemplateVars(step, item, stepIndex, stepPath, message, readPaths, writePaths)
+	templateVars := hcpo.buildMessageSequenceTemplateVars(step, item, stepIndex, stepPath, message, readPaths, writePaths, writeAccess)
 	result, history, err := runtime.Agent.Execute(agentCtx, templateVars, session.ConversationHistory)
 	if err != nil {
 		return "", err
@@ -803,7 +810,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceCodeRepair(ctx 
 		return err
 	}
 	message := failureContext + "\n\nRepair the working copy at " + hcpo.messageSequenceAbsPath(filepath.Join(codeRel, "main.py")) + ". Keep the fix narrowly scoped. Do not announce success; the runtime will rerun the script after your edit."
-	templateVars := hcpo.buildMessageSequenceTemplateVars(step, item, 0, stepPath, message, override.ReadPaths, override.WritePaths)
+	templateVars := hcpo.buildMessageSequenceTemplateVars(step, item, 0, stepPath, message, override.ReadPaths, override.WritePaths, writeAccess)
 	_, history, err := runtime.Agent.Execute(agentCtx, templateVars, session.ConversationHistory)
 	if err != nil {
 		return err
@@ -1008,10 +1015,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupMessageSequenceFolderGuard(stepP
 	return common.DeduplicateStrings(readPaths), common.DeduplicateStrings(writePaths)
 }
 
-func (hcpo *StepBasedWorkflowOrchestrator) buildMessageSequenceTemplateVars(step *MessageSequencePlanStep, item MessageSequenceItem, stepIndex int, stepPath string, message string, readPaths []string, writePaths []string) map[string]string {
+func (hcpo *StepBasedWorkflowOrchestrator) buildMessageSequenceTemplateVars(step *MessageSequencePlanStep, item MessageSequenceItem, stepIndex int, stepPath string, message string, readPaths []string, writePaths []string, writeAccess MessageSequenceWriteAccess) map[string]string {
 	stepExecRel := hcpo.messageSequenceExecutionRelPath(stepPath, step.GetID())
 	docsRoot := GetPromptDocsRoot()
-	writeAccess := resolveMessageSequenceItemWriteAccess(item)
 	kbAccess := KBAccessRead
 	if writeAccess.Knowledgebase {
 		kbAccess = KBAccessReadWrite
@@ -1044,7 +1050,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildMessageSequenceTemplateVars(step
 		"KbAccess":                  kbAccess,
 		"KbAccessLabel":             kbAccessLabel(kbAccess),
 		"KbWriteMethod":             KBWriteMethodDirect,
-		"KBGuidanceBlock":           BuildStepKBGuidance(kbAccess, KBWriteMethodDirect, ""),
+		"KBGuidanceBlock":           BuildStepKBGuidanceWithTarget(kbAccess, KBWriteMethodDirect, "", hcpo.messageSequenceAbsPath(filepath.Join(KnowledgebaseFolderName, KBNotesFolderName))),
 		"MessageSequenceAccessNote": buildMessageSequenceAccessNote(writeAccess),
 		"HasLearnings":              "false",
 		"CurrentDate":               time.Now().Format("2006-01-02"),

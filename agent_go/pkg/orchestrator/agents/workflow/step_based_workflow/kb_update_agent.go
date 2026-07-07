@@ -117,10 +117,10 @@ For each touched topic, update or insert:
 - `+"`"+`size_bytes`+"`"+` = new file size (`+"`"+`wc -c`+"`"+`), `+"`"+`section_count`+"`"+` = `+"`"+`grep -c '^## ' <file>`+"`"+`
 
 ## Tools
-- **execute_shell_command** — for reads (`+"`"+`cat`+"`"+`, `+"`"+`jq`+"`"+`, `+"`"+`ls`+"`"+`, `+"`"+`wc -c`+"`"+`, `+"`"+`grep -c`+"`"+`) and for creating new files via `+"`"+`cat > file <<EOF ... EOF`+"`"+` heredoc.
-- **diff_patch_workspace_file** — for targeted edits to existing notes files or `+"`"+`_index.json`+"`"+` when you don't need a full rewrite.
+- **execute_shell_command** — read-only inspection (`+"`"+`cat`+"`"+`, `+"`"+`jq`+"`"+`, `+"`"+`ls`+"`"+`, `+"`"+`wc -c`+"`"+`, `+"`"+`grep -c`+"`"+`, `+"`"+`find`+"`"+`). Use it to calculate values, not to write KB content.
+- **diff_patch_workspace_file** — for every content write under `+"`"+`{{.NotesFolderPath}}/`+"`"+`, including new topic files, section appends, compaction rewrites, and `+"`"+`_index.json`+"`"+` updates.
 
-Prefer `+"`"+`diff_patch_workspace_file`+"`"+` for small appends/updates (one section into a notes file). Use heredoc rewrite only when creating a new file or compacting.
+Do not use shell redirection, heredocs, tee, Python, or built-in file-edit tools to create or edit KB note files or the registry.
 
 ## Failure behavior
 If the contribution instruction asks for observations you cannot find in the step output, skip them — do NOT fabricate narrative. Partial output is fine; hallucinated output is not.
@@ -280,8 +280,8 @@ Notes operations the user may ask for:
 - **Do NOT touch `+"`"+`knowledgebase/context/`+"`"+`** — that folder holds user-supplied runtime business context captured via the `+"`"+`capture_context`+"`"+` tool. It is a sub-section of the knowledgebase but is excluded from this reorganize pass and from any consolidate pass. The contents are user-owned and must never be rewritten by the optimizer. Restrict every read and every write to `+"`"+`knowledgebase/notes/`+"`"+` only.
 
 ## Tools
-- **execute_shell_command** — `+"`"+`cat`+"`"+`, `+"`"+`jq`+"`"+`, `+"`"+`mv`+"`"+`, `+"`"+`rm`+"`"+`, and full rewrites via `+"`"+`cat > file <<EOF ... EOF`+"`"+`. Prefer `+"`"+`jq`+"`"+` transformations for `+"`"+`_index.json`+"`"+` followed by a single atomic overwrite for large changes.
-- **diff_patch_workspace_file** — for small targeted edits inside a topic file.
+- **execute_shell_command** — read-only inspection (`+"`"+`cat`+"`"+`, `+"`"+`jq`+"`"+`, `+"`"+`wc`+"`"+`, `+"`"+`grep`+"`"+`, `+"`"+`find`+"`"+`) plus explicit file operations only when the requested transformation needs them (`+"`"+`mv`+"`"+` for rename, `+"`"+`rm`+"`"+` for drop). Do not use shell redirection/heredocs/tee/Python to write note content or the registry.
+- **diff_patch_workspace_file** — for every content write inside topic files and `+"`"+`_index.json`+"`"+`, including compaction rewrites and new canonical topic files.
 
 ## Final action
 Print exactly one summary line:
@@ -411,8 +411,8 @@ You own reads and writes to the per-topic narrative files under `+"`"+`{{.NotesF
 **Objective (from user):** the consolidation goal for this invocation. Scope your work to it — do not opportunistically do other consolidation.
 
 ## Tools
-- `+"`"+`execute_shell_command`+"`"+` — read/jq files, write back via redirect. All paths are absolute and pre-approved by folder guard.
-- `+"`"+`diff_patch_workspace_file`+"`"+` — surgical edits for big notes files. Pass workspace-relative file paths or absolute paths under the workspace docs root.
+- `+"`"+`execute_shell_command`+"`"+` — read/jq files and calculate values. Do not write KB content with shell redirection/heredocs/tee/Python.
+- `+"`"+`diff_patch_workspace_file`+"`"+` — every content write for topic files and `+"`"+`_index.json`+"`"+`, including new files, section appends, merges, and compaction rewrites. Pass workspace-relative file paths or absolute paths under the workspace docs root.
 
 ## Safety rails
 - Apply changes incrementally. If the objective calls for three consolidation actions, do them as three reads + three writes, not one megabatch.

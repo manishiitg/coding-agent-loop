@@ -302,9 +302,11 @@ func GetHumanToolCategory() string {
 // human_feedback is intentionally excluded: the builder is already in a chat and
 // asks the user directly rather than blocking. notify_user is the non-blocking
 // outbound push (Slack/WhatsApp/Gmail); submit_human_answer resolves human_input
-// steps from launched workflows.
+// steps from launched workflows. create_human_input_request and
+// mark_human_input_consumed are non-blocking Pulse/report questions stored in
+// the workflow-local db/db.sqlite.
 func WorkshopHumanToolNames() []string {
-	return []string{"notify_user", "submit_human_answer"}
+	return []string{"notify_user", "submit_human_answer", "create_human_input_request", "mark_human_input_consumed"}
 }
 
 // CreateHumanToolExecutors creates the execution functions for human tools

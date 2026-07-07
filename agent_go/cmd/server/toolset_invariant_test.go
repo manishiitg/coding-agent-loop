@@ -19,7 +19,7 @@ func TestToolSetInvariants(t *testing.T) {
 			pool[tl.Function.Name] = true
 		}
 	}
-	for _, n := range []string{"human_feedback", "notify_user", "submit_human_answer"} {
+	for _, n := range []string{"human_feedback", "notify_user", "submit_human_answer", "create_human_input_request", "mark_human_input_consumed"} {
 		if !pool[n] || cats[n] != "human_tools" {
 			t.Fatalf("workflow pool missing human tool %q (in_pool=%v cat=%q)", n, pool[n], cats[n])
 		}
@@ -46,8 +46,11 @@ func TestToolSetInvariants(t *testing.T) {
 			}
 		}
 
-		// 3. notify_user + submit_human_answer must be usable in both modes.
-		for _, n := range []string{"notify_user", "submit_human_answer"} {
+		// 3. Non-blocking human/report tools must be usable in both modes.
+		for _, n := range virtualtools.WorkshopHumanToolNames() {
+			if !pool[n] || cats[n] != "human_tools" {
+				t.Fatalf("workflow pool missing workshop human tool %q (in_pool=%v cat=%q)", n, pool[n], cats[n])
+			}
 			if !allowSet[n] {
 				t.Fatalf("mode=%s: expected %q in allow-list", mode, n)
 			}
@@ -68,6 +71,7 @@ func TestToolSetInvariants(t *testing.T) {
 		"update_regular_step", "delete_plan_steps",
 		"execute_step", "harden_workflow", "replan_workflow_from_results",
 		"update_workflow_config", "update_step_config", "get_report_plan",
+		"list_schedules", "update_schedule", "get_schedule_runs",
 		"execute_shell_command", "diff_patch_workspace_file",
 	} {
 		if !workshop[n] {

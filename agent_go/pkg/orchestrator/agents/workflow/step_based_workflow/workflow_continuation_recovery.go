@@ -11,7 +11,6 @@ import (
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	"mcp-agent-builder-go/agent_go/pkg/common"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	orchestratorevents "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 )
@@ -297,10 +296,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) queueRecoveredDirectKBReview(state *W
 		return
 	}
 	stepCfg := getAgentConfigs(runtime.Step)
-	reviewMsg := BuildKBContributionReviewMessage(
+	reviewMsg := BuildKBContributionReviewMessageWithTarget(
 		resolveKnowledgebaseAccess(stepCfg, hcpo.UseKnowledgebase()),
 		resolveKnowledgebaseWriteMethod(stepCfg),
 		kbContributionForPrompt(stepCfg),
+		filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), KnowledgebaseFolderName, KBNotesFolderName),
 	)
 	if strings.TrimSpace(reviewMsg) == "" {
 		hcpo.recordWorkflowContinuationPhaseForRunFolder(context.Background(), state.RunFolder, state.StepID, state.StepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseKBReview, workflowContinuationStatusSkipped, "no direct KB review message", nil)
@@ -330,11 +330,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) queueRecoveredDirectLearning(state *W
 		hcpo.recordWorkflowContinuationPhaseForRunFolder(context.Background(), state.RunFolder, state.StepID, state.StepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseDirectLearning, workflowContinuationStatusSkipped, "direct learning gates disabled", nil)
 		return
 	}
+	if hcpo.shouldSkipDirectLearningsDueToLock(context.Background(), stepCfg, runtime.StepIndex) {
+		hcpo.recordWorkflowContinuationPhaseForRunFolder(context.Background(), state.RunFolder, state.StepID, state.StepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseDirectLearning, workflowContinuationStatusSkipped, "lock_learnings=true with existing _global content", nil)
+		return
+	}
 	learnObjective := ""
 	if stepCfg != nil {
 		learnObjective = stepCfg.LearningObjective
 	}
-	learnMsg := BuildLearningsContributionTurn(runtime.Step.GetID(), runtime.Step.GetDescription(), learnObjective, isScriptedExecutionModeConfig(stepCfg))
+	learnMsg := hcpo.buildLearningsContributionTurn(runtime.Step.GetID(), runtime.Step.GetDescription(), learnObjective, isScriptedExecutionModeConfig(stepCfg))
 	if strings.TrimSpace(learnMsg) == "" {
 		hcpo.recordWorkflowContinuationPhaseForRunFolder(context.Background(), state.RunFolder, state.StepID, state.StepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseDirectLearning, workflowContinuationStatusSkipped, "no direct learning message", nil)
 		return
@@ -347,16 +351,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) queueRecoveredDirectLearning(state *W
 		}
 		if cfg := agent.GetConfig(); cfg != nil {
 			globalLearningsPath := fmt.Sprintf("%s/learnings/%s", hcpo.GetWorkspacePath(), GlobalLearningID)
-			cfg.FolderGuardReadPaths = append(cfg.FolderGuardReadPaths, globalLearningsPath)
-			cfg.FolderGuardWritePaths = append(cfg.FolderGuardWritePaths, globalLearningsPath)
-			if strings.TrimSpace(cfg.MCPSessionID) != "" {
-				if prevCfg := common.GetSessionShellConfig(cfg.MCPSessionID); prevCfg != nil {
-					readPaths := append(append([]string{}, prevCfg.ReadPaths...), globalLearningsPath)
-					writePaths := append(append([]string{}, prevCfg.WritePaths...), globalLearningsPath)
-					common.SetSessionFolderGuard(cfg.MCPSessionID, readPaths, writePaths)
-					hcpo.grantSessionCDPHostDownloadsReadOnly(cfg.MCPSessionID)
-				}
-			}
+			restoreDirectLearningTurn := hcpo.prepareDirectLearningTurn(agent, []string{globalLearningsPath})
+			defer restoreDirectLearningTurn()
 		}
 		base := agent.GetBaseAgent()
 		if base == nil {

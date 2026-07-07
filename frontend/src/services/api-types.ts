@@ -321,6 +321,49 @@ export interface HumanFeedbackResponse {
   message?: string
 }
 
+export interface ReportHumanInputOption {
+  id: string
+  title: string
+  description?: string
+}
+
+export interface ReportHumanInput {
+  id: string
+  workspace_path: string
+  source: 'pulse' | 'auto_improve' | 'chief_of_staff' | string
+  priority: 'low' | 'medium' | 'high' | string
+  question: string
+  context?: string
+  options: ReportHumanInputOption[]
+  allow_free_text: boolean
+  status: 'pending' | 'answered' | 'consumed' | 'dismissed' | string
+  selected_option_id?: string
+  note?: string
+  run_id?: string
+  evidence?: string
+  created_by?: string
+  answered_by?: string
+  consumed_by?: string
+  outcome_summary?: string
+  created_at: string
+  updated_at: string
+  answered_at?: string
+  consumed_at?: string
+  dismissed_at?: string
+}
+
+export interface ReportHumanInputsResponse {
+  success: boolean
+  inputs: ReportHumanInput[]
+  error?: string
+}
+
+export interface ReportHumanInputResponse {
+  success: boolean
+  input: ReportHumanInput
+  error?: string
+}
+
 // Context Summarization types
 export interface SummarizeConversationRequest {
   keep_last_messages?: number // Optional: number of recent messages to keep (default: 8)

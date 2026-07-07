@@ -8,13 +8,15 @@ A run just finished. First look at what actually happened, decide whether the wo
 
 You read the deterministic evidence and write to `builder/improve.html` — the single source of truth. Be precise: every number comes from a file — never invent a value or a trend.
 
+Write the visible Pulse HTML for the user, not for another agent. Every card you add or refresh must start with a plain-language takeaway, then short labelled detail for what happened, why it matters, next action, and evidence. Put raw paths, run ids, SQL names, model ids, and hashes at the end under Evidence or Details. Avoid long semicolon chains and compressed internal labels; if the user cannot understand the card in 10 seconds, rewrite it before saving.
+
 ### 1. Read the evidence
 
 - **The run itself** — `runs/<run_folder>/…` outputs, the run status passed to you, and any error. Did every expected step actually execute and produce a real, non-trivial artifact? Watch for the silent-failure smells: a step that wrote `{"status":"skipped"}`, an empty/zero-byte output, a missing file a later step needed, a journey that vanished from the results.
 - **Which path ran** — if the workflow has routing or runs per-group, a single run usually exercises only **one** path. Read `route_selection.json` (`select_route`) and the run's group/variables to see *which route(s)/group this run actually took*, so you judge the run only against what that path was supposed to do.
 - **What changed** — `planning/changelog/changelog-*.json`. Recent plan/config/prompt edits (with the `reason` the author gave). This is how you explain a regression: correlate "what got worse this run" against "what we changed in the last few runs."
 - **The goal evidence** — eval reports under `scores/evaluation/` or `evaluation/runs/`, plus the run outputs needed to verify the success criteria in `soul/soul.md`. While you have `soul.md` open, also note its optional `## Notifications` section — the user's preference for *when and what* to push (it drives the notification turn).
-- **The log so far** — read `builder/improve.html`: the current verdicts, the goal card, open findings, open **Human input requested** cards (`data-kind="input"` / `data-status="open"`), pending **Chief of Staff recommendation** cards (`.cos-rec` / `data-cos-rec-id` with `data-status="proposed"`, `accepted`, `queued_auto_improve`, `needs_evidence`, or `blocked`), any **unconfirmed Decision** (a harden/replan card with no `.outcome` stamp yet — this run may be the one that confirms it), and recent entries, so you continue its style, don't duplicate a finding or question, and can tell a *transition* (healthy↔broken) from a steady state.
+- **The log so far** — read `builder/improve.html`: the current verdicts, the goal card, open findings, visible **Human input requested** display cards (source of truth is `db/db.sqlite` table `report_human_inputs`), pending **Chief of Staff recommendation** cards (`.cos-rec` / `data-cos-rec-id` with `data-status="proposed"`, `accepted`, `queued_auto_improve`, `needs_evidence`, or `blocked`), any **unconfirmed Decision** (a harden/replan card with no `.outcome` stamp yet — this run may be the one that confirms it), and recent entries, so you continue its style, don't duplicate a finding or question, and can tell a *transition* (healthy↔broken) from a steady state.
 
 ### 2. Form two verdicts
 
@@ -25,7 +27,7 @@ You read the deterministic evidence and write to `builder/improve.html` — the 
 
 ### 3. Update `builder/improve.html`
 
-Format per `get_reference_doc(kind="review-improve-log")` (single log, newest-on-top). **First check the file's format** against that reference doc's full "old-format log" checklist: if the Pulse HTML is missing the current mobile-first shell (viewport meta, stacked status/run/entry layout, `overflow-wrap:anywhere`, `.etitle` flex sizing, or `.ehead > .when` stacked metadata), lacks the richer widget-first shell (What matters now cards, color-coded signal tiles, non-table recent runs), or has legacy ledger/script/id/ad-hoc CSS structure, do NOT append into that stale shell — do the one-time **rewrite to the Starter HTML skeleton** first, carrying existing unresolved findings/decisions forward as cards. Upgrading the log format is part of your job, not a "fix" to the workflow. Then, every run, even a clean one:
+Format per `get_reference_doc(kind="review-improve-log")` (single log, newest-on-top). Use its **Plain-language card contract**: takeaway first, short What happened / Why it matters / Next / Evidence phrasing after, raw technical detail last. **First check the file's format** against that reference doc's full "old-format log" checklist: if the Pulse HTML is missing the current mobile-first shell (viewport meta, stacked status/run/entry layout, `overflow-wrap:anywhere`, `.etitle` flex sizing, or `.ehead > .when` stacked metadata), lacks the richer widget-first shell (What matters now cards, color-coded signal tiles, non-table recent runs), or has legacy ledger/script/id/ad-hoc CSS structure, do NOT append into that stale shell — load `get_reference_doc(kind="review-improve-log-skeleton")` and do the one-time **rewrite to the Starter HTML skeleton** first, carrying existing unresolved findings/decisions forward as cards. Upgrading the log format is part of your job, not a "fix" to the workflow. Then, every run, even a clean one:
 
 - **Set both verdict pills** in the header (Bug, Goal), each stamped with the run it's as-of (`run #N`).
 - **Write the status headline** — the one `.status` banner: a single plain sentence (the same text as your `headline` below), class `ok|warn|bad` tracking the worse verdict, `.when` = run + age. Healthy run → say so plainly; never manufacture concern.
@@ -37,7 +39,7 @@ Format per `get_reference_doc(kind="review-improve-log")` (single log, newest-on
 - **Reply to Chief of Staff recommendations.** For each pending `.cos-rec`, verify its cited evidence against this run. If it is a Bug/eval/report issue, leave it for the fix turn and say so in your triage summary. If it is a strategic Goal/plan change, mark it `queued_auto_improve` with `mark_cos_recommendation_status` and record/refresh the Goal finding for the scheduled improve loop. If evidence is insufficient, mark `needs_evidence`; if this run proves it is already handled, mark `done`; if it is wrong or no longer relevant, mark `dismissed`. Do not duplicate the recommendation as a new finding; update the existing lifecycle status.
 
 Then, **only if something is wrong, changed, or worth the user's attention**, prepend a **Monitor** entry tagged `Bug` or `Goal`:
-- one or two plain sentences: what you observed and, for a regression, the most likely cause correlated to a specific changelog entry ("login-flow has returned skipped for 2 runs; the maker-reviewer gate was tightened on run #39 — likely cause");
+- start with one plain-language takeaway sentence, then one or two short detail sentences: what you observed and, for a regression, the most likely cause correlated to a specific changelog entry ("login-flow has returned skipped for 2 runs; the maker-reviewer gate was tightened on run #39 — likely cause");
 - name the fix path — `Bug` → the next turn calls `harden_workflow` with this finding as focus; `Goal` → you record the finding + its evidence for the scheduled auto-improve loop, which applies the replan when evidence is strong;
 - if it's a new problem, make it an **Open finding** (tagged Bug or Goal) with a short anchor id so the fix can close it out; if it continues an existing open finding, don't duplicate it.
 - if the entry points to a likely work type, add the action label too (for example `Bug` + `Bug fix` for a runtime break, `Bug` + `Report fix` for a broken dashboard, `Goal` + `Improvement` for a success-criteria gap).
@@ -193,7 +195,7 @@ workflow's improvement urgency. This is cron-only: do **not** add fields to `wor
 not edit JSON by hand, and do not create duplicate schedules. Use `list_schedules`,
 `get_schedule_runs`, and `update_schedule(job_id, cron_expression=...)`.
 
-First find exactly one enabled optimizer schedule (`workshop_mode="optimizer"`). If there is no
+First find exactly one enabled cron optimizer schedule (`workshop_mode="optimizer"`). If there is no
 optimizer schedule, multiple optimizer schedules, a calendar optimizer schedule, or unclear
 ownership, write a `Decision - Auto-improve cadence` note explaining why you skipped and stop.
 
@@ -255,13 +257,13 @@ the Org page answer state, what changed, what was fixed, what remains, evidence 
 backup/publish status, and cost/time without reading the full Pulse log. Keep detailed prose in
 `builder/improve.html` and email.
 
-If this run needs user input, or the notify/email would ask the user a question, write or refresh a
-structured **Human input requested** entry in `builder/improve.html` before sending `notify_user`.
-The question must not exist only in email/chat. Use `data-kind="input"`,
-`data-question-id="<stable id>"`, `data-status="open"`, and visible fields for **Question**,
-**Why it matters**, **Options / expected answer**, **Default if no answer**, **Evidence**, and
-**Asked at**. Reuse and update a prior matching open question instead of duplicating it; mark it
-`answered`, `dismissed`, or `expired` once the answer or default action resolves it.
+If this run needs user input, or the notify/email would ask the user a question, call
+`create_human_input_request(workspace_path="<current workflow>", source="pulse", ...)` before
+sending `notify_user`. The question must not exist only in email/chat, and the source of truth is
+the workflow-local `db/db.sqlite` table `report_human_inputs`. Also make `builder/improve.html`
+display the current question in simple language, but do not hand-edit request status in HTML. The
+Runloop report panel is where the user answers. When a later Pulse pass uses an answered request,
+call `mark_human_input_consumed` with the input id and outcome summary.
 
 Use the final post-Pulse status (`healthy`, `bug`, or `critical`) and preserve the base fields
 for backward compatibility:

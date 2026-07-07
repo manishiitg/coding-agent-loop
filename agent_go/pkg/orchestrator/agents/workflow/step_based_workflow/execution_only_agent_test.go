@@ -23,7 +23,7 @@ func TestExecutionOnlyPromptIncludesCodeExecutionInstructions(t *testing.T) {
 		"FolderGuardWritePaths": "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution/step-sample",
 		"IsEvaluationMode":      "false",
 		"IsCodeExecutionMode":   "true",
-		"IsScriptedMode":       "false",
+		"IsScriptedMode":        "false",
 	})
 
 	requiredSnippets := []string{
@@ -34,6 +34,40 @@ func TestExecutionOnlyPromptIncludesCodeExecutionInstructions(t *testing.T) {
 		if !strings.Contains(prompt, snippet) {
 			t.Fatalf("expected prompt to contain %q\n\nPrompt:\n%s", snippet, prompt)
 		}
+	}
+}
+
+func TestExecutionOnlyPromptUsesAbsoluteDBPathEnv(t *testing.T) {
+	agent := &WorkflowExecutionOnlyAgent{}
+
+	prompt := agent.executionOnlySystemPromptProcessor(map[string]string{
+		"WorkspacePath":         "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution",
+		"WorkflowRoot":          "/app/workspace-docs/Workflow/test",
+		"StepExecutionPath":     "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution/step-sample",
+		"StepContextOutput":     "",
+		"LearningHistory":       "",
+		"StepNumber":            "step-sample",
+		"KnowledgebasePath":     "/app/workspace-docs/Workflow/test/knowledgebase",
+		"FolderGuardReadPaths":  "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution, /app/workspace-docs/Workflow/test/db",
+		"FolderGuardWritePaths": "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution/step-sample, /app/workspace-docs/Workflow/test/db",
+		"IsEvaluationMode":      "false",
+		"IsCodeExecutionMode":   "false",
+		"IsScriptedMode":        "false",
+	})
+
+	requiredSnippets := []string{
+		"Always use the absolute `$DB_PATH` env var",
+		"sqlite3 \"$DB_PATH\" \"SELECT ...\"",
+		"NEVER use relative `db/db.sqlite` from step code or shell",
+		"persist your results to the workflow database via the absolute `$DB_PATH`",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(prompt, snippet) {
+			t.Fatalf("expected prompt to contain %q\n\nPrompt:\n%s", snippet, prompt)
+		}
+	}
+	if strings.Contains(prompt, "sqlite3 db/db.sqlite") {
+		t.Fatalf("execution prompt still teaches relative sqlite path\n\nPrompt:\n%s", prompt)
 	}
 }
 
@@ -48,7 +82,7 @@ func TestExecutionOnlyUserPromptIncludesWorkshopHumanInput(t *testing.T) {
 		"WorkspacePath":           "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution",
 		"StepExecutionPath":       "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution/step-writeback",
 		"IsCodeExecutionMode":     "true",
-		"IsScriptedMode":         "false",
+		"IsScriptedMode":          "false",
 		"WorkshopHumanInput":      "post RCA q-20260509T124321-rslat as wiki page",
 	})
 
@@ -79,7 +113,7 @@ func TestExecutionOnlyPromptsTreatSkillAsAdvisory(t *testing.T) {
 		"FolderGuardWritePaths": "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution/step-sample",
 		"IsEvaluationMode":      "false",
 		"IsCodeExecutionMode":   "false",
-		"IsScriptedMode":       "false",
+		"IsScriptedMode":        "false",
 	})
 	systemSnippets := []string{
 		"Treat learnings/skill content as advisory guidance from previous runs",
@@ -98,7 +132,7 @@ func TestExecutionOnlyPromptsTreatSkillAsAdvisory(t *testing.T) {
 		"StepContextOutput":   "output.json",
 		"StepExecutionPath":   "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution/step-fetch",
 		"IsCodeExecutionMode": "false",
-		"IsScriptedMode":     "false",
+		"IsScriptedMode":      "false",
 		"LearningHistory":     "Use the legacy selector.",
 	})
 	if !strings.Contains(userPrompt, "Read **Skill files** as guidance only") ||

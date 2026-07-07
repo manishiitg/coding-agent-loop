@@ -678,19 +678,6 @@ func normalizeEmailList(values []string) []string {
 	return out
 }
 
-func (g *GmailService) isBlockedRecipient(email string) bool {
-	email = strings.ToLower(strings.TrimSpace(email))
-	if email == "" {
-		return true
-	}
-	for _, candidate := range g.blockedRecipients() {
-		if candidate == email {
-			return true
-		}
-	}
-	return false
-}
-
 func (g *GmailService) blockedRecipients() []string {
 	g.mu.RLock()
 	cfg := g.config

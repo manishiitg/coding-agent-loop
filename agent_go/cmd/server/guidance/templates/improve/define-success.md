@@ -53,7 +53,7 @@ Then map the confirmed type/traits onto the internal axes:
 Show your inference, reasoning, and alternatives considered. Ask the user to confirm.
 
 STEP 2 - SEED builder/improve.html
-If `builder/improve.html` does not exist yet, create it from the Starter HTML skeleton in `get_reference_doc(kind="review-improve-log")` using `diff_patch_workspace_file`. If the file already exists, edit the goal card/profile in place; do not overwrite the timeline.
+If `builder/improve.html` does not exist yet, create it from the Starter HTML skeleton in `get_reference_doc(kind="review-improve-log-skeleton")` using `diff_patch_workspace_file`. If the file already exists, edit the goal card/profile in place; do not overwrite the timeline.
 
 Fill the skeleton:
 - Header: workflow name, type/oversight chips, and verdict pills. With no runs yet, set Bug = "Bug-free" and Goal = "Not yet measured" (warn).

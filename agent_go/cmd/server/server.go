@@ -1568,6 +1568,11 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Human Feedback API
 	apiRouter.HandleFunc("/human-feedback/submit", api.handleSubmitHumanFeedback).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/report-human-inputs", api.handleListReportHumanInputs).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/report-human-inputs", api.handleCreateReportHumanInput).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/report-human-inputs/{input_id}/answer", api.handleAnswerReportHumanInput).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/report-human-inputs/{input_id}/dismiss", api.handleDismissReportHumanInput).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/report-human-inputs/{input_id}/consume", api.handleConsumeReportHumanInput).Methods("POST", "OPTIONS")
 
 	// Workflow running-session API (decoupled from chat session storage).
 	apiRouter.HandleFunc("/workflow/running", api.handleListRunningWorkflows).Methods("GET")
@@ -7547,9 +7552,22 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				if sched.Enabled {
 					status = "enabled"
 				}
+				scheduleType := scheduleTypeOrDefault(sched.ScheduleType)
+				mode := scheduleModeOrDefault(sched.Mode)
+				workshopMode := strings.TrimSpace(sched.WorkshopMode)
+				if workshopMode == "" {
+					workshopMode = "run"
+				}
 				sb.WriteString(fmt.Sprintf("### %s\n", sched.Name))
 				sb.WriteString(fmt.Sprintf("- **ID**: `%s`\n", sched.ID))
-				sb.WriteString(fmt.Sprintf("- **Cron**: `%s`\n", sched.CronExpression))
+				sb.WriteString(fmt.Sprintf("- **Type**: %s\n", scheduleType))
+				sb.WriteString(fmt.Sprintf("- **Mode**: `%s`\n", mode))
+				sb.WriteString(fmt.Sprintf("- **Workshop Mode**: `%s`\n", workshopMode))
+				if scheduleType == "calendar" {
+					sb.WriteString(fmt.Sprintf("- **Calendar Items**: %d\n", len(sched.CalendarItems)))
+				} else {
+					sb.WriteString(fmt.Sprintf("- **Cron**: `%s`\n", sched.CronExpression))
+				}
 				sb.WriteString(fmt.Sprintf("- **Timezone**: %s\n", sched.Timezone))
 				sb.WriteString(fmt.Sprintf("- **Status**: %s\n", status))
 				if api.scheduler != nil {

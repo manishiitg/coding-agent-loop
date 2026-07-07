@@ -336,6 +336,12 @@ Decision-worthy changes — a workflow broke or recovered, a goal started drifti
 problem appeared, or a high-value suggestion needs attention — affect severity and ordering,
 not whether you send the digest.
 
+If a recommendation needs a user decision for a specific workflow, do not leave that question only
+in email/chat. Call `create_human_input_request(workspace_path="<workflow path>", source="chief_of_staff", ...)`
+so the request is stored in that workflow's `db/db.sqlite` table `report_human_inputs`. The
+workflow's Pulse/report panel is where the user answers; when a later Chief of Staff or workflow
+pass uses the answer, it must call `mark_human_input_consumed`.
+
 - `message_for_user`: one terse line for chat channels, formatted as
   `<emoji> Org Pulse — daily digest · <workflow health> · <goal metric> · <top decision or all healthy> · <url>`.
   Use `⚠️` when something broke/drifted, `✅` when recovered/on-track/all healthy, and `🔎`

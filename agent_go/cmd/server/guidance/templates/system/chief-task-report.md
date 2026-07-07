@@ -26,6 +26,11 @@ similar scheduled work.
 - Design it as a **task dashboard**, not a transcript. Prefer status tiles, action lanes,
   key-finding widgets, evidence chips, and compact cards over paragraphs. Each task entry should
   be skimmable in 10 seconds.
+- If the task needs a user decision for a specific workflow, call
+  `create_human_input_request(workspace_path="<workflow path>", source="chief_of_staff", ...)`
+  and mention the request id in `pulse/task.html`. Do not store answers in this HTML page; the
+  source of truth is that workflow's `db/db.sqlite` table `report_human_inputs`, and the user
+  answers in the Runloop report/Pulse panel.
 
 ### What Each Entry Must Capture
 

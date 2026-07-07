@@ -78,6 +78,8 @@ import type {
   WorkflowCapabilities,
   WorkflowBackupInfoResponse,
   WorkflowPublishSecretResponse,
+  ReportHumanInputResponse,
+  ReportHumanInputsResponse,
 } from './api-types'
 import type { PlanStep, AgentConfigs } from '../utils/stepConfigMatching'
 
@@ -1430,6 +1432,33 @@ export const agentApi = {
         }>
       }
     }
+  },
+
+  listReportHumanInputs: async (workspacePath: string, status?: string) => {
+    const response = await api.get('/api/report-human-inputs', {
+      params: { workspace_path: workspacePath, ...(status ? { status } : {}) },
+    })
+    return response.data as ReportHumanInputsResponse
+  },
+
+  answerReportHumanInput: async (
+    workspacePath: string,
+    inputId: string,
+    body: { selected_option_id?: string; note?: string },
+  ) => {
+    const response = await api.post(`/api/report-human-inputs/${encodeURIComponent(inputId)}/answer`, {
+      workspace_path: workspacePath,
+      selected_option_id: body.selected_option_id || '',
+      note: body.note || '',
+    })
+    return response.data as ReportHumanInputResponse
+  },
+
+  dismissReportHumanInput: async (workspacePath: string, inputId: string) => {
+    const response = await api.post(`/api/report-human-inputs/${encodeURIComponent(inputId)}/dismiss`, {
+      workspace_path: workspacePath,
+    })
+    return response.data as ReportHumanInputResponse
   },
 
   updatePlannerFile: async (filepath: string, content: string, commitMessage?: string) => {

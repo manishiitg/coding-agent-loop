@@ -35,7 +35,7 @@ returns the live JSON schema for the tool.
 ## Read-Only Info
 
 - **`get_step_prompts(step_id, attempt?, iteration?)`** — System prompt and user message for a step.
-- **`get_workflow_config`** — Inspect the workflow's current MCP servers, selected skills, available secrets, and LLM config. Use this instead of `cat workflow.json`. For the global installed skill catalog, use `list_skills`.
+- **`get_workflow_config`** — Inspect the workflow's current MCP servers, selected skills, available secrets, LLM config, and schedules. Use this instead of `cat workflow.json` when you need the full workflow config. For the global installed skill catalog, use `list_skills`.
 - **`get_llm_config`** — Per-step LLM overrides.
 - **`get_workflow_command_guidance(kind="review-artifact-drift", focus?)`** *(Workshop only)* — Canonical artifact drift audit after material plan/config changes. Checks unreviewed `planning/changelog/` entries against learnings, saved `main.py`, KB, db, reports, and eval wiring. In Pulse it runs as its own report-only Artifact Review item, separate from `harden_workflow`. Writes its cursor/report in `builder/improve.html` and uses `mark_changelog_artifact_reviewed` to stamp inspected entries with `artifact_review.done=true`; do not edit/delete changelog files directly or create a new state file.
 
@@ -69,8 +69,8 @@ For the operational cheat sheet on creating / editing / deleting schedules
 multi-agent-only schedule cron flow, see
 `get_reference_doc(kind="schedule-management")` instead.
 
-- **Tools**: `create_schedule`, `create_calendar_schedule`, `update_schedule`, `delete_schedule`, `trigger_schedule`, `get_schedule_runs`.
-- To view existing schedules, read `workflow.json` via `execute_shell_command` — schedules live under the `schedules` key.
+- **Tools**: `list_schedules`, `create_schedule`, `create_calendar_schedule`, `update_schedule`, `delete_schedule`, `trigger_schedule`, `get_schedule_runs`.
+- To view existing schedules, call `list_schedules`; it includes schedule IDs, type, mode, workshop mode, cron/calendar shape, timezone, enabled state, groups, and recent runtime state. `get_workflow_config` also includes a Schedules section when you are already inspecting broader workflow settings.
 - **Entry shape**:
   ```
   { "id": "...", "name": "...", "description": "...",
@@ -80,7 +80,7 @@ multi-agent-only schedule cron flow, see
     "mode": "workshop", "workshop_mode": "run" }
   ```
   Fields: `id` (auto-assigned), `name` (display label), `description` (optional), `cron_expression` (standard 5-field cron), `timezone` (IANA tz e.g. `America/New_York`), `enabled` (bool), `trigger_payload` (arbitrary JSON passed to the run), `group_names` (required array of one or more explicit group names from `variables/variables.json`), `mode` (`workshop` for workflow schedules), `workshop_mode` (`run` or `optimizer`).
-- Schedule management is available in **builder and optimizer modes**. If the user asks in another mode, tell them to switch.
+- Schedule management is available in **Workshop mode**. If the user asks in Run mode, tell them to switch.
 
 ### Two schedule types: cron vs calendar
 
@@ -174,6 +174,8 @@ For active workflows, choose a bounded Auto Improve cron cadence rather than inv
   - `ls runs/`
   - `cat variables/variables.json`
 - **`human_feedback`** — Ask the user a question during a run.
+- **`create_human_input_request`** — Non-blocking Pulse/Auto Improve/Chief of Staff question stored in the workflow's `db/db.sqlite` table `report_human_inputs`; the user answers in the Runloop Pulse/report panel.
+- **`mark_human_input_consumed`** — Mark an answered report question consumed after using it and recording the outcome.
 
 ## Skills
 

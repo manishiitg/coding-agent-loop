@@ -559,7 +559,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	// + global learnings (if mode grants read) + knowledgebase folder (if mode grants read)
 	// WRITE: only the specific step folder (execution/step-{X}/ or execution/step-{X}-{branch}/) + execution/Downloads folder to prevent writing to other steps
 	// NOTE: under kbWriteMethod=direct we add knowledgebase/notes/ to writePaths so the
-	// step can write per-topic markdown via shell + diff_patch_workspace_file. Under
+	// step can write per-topic markdown with diff_patch_workspace_file. Under
 	// kbWriteMethod=agent we add nothing — notes/ is only writable by the post-step KB
 	// update agent (setupKBUpdateFolderGuard, triggered by a non-empty knowledgebase_contribution).
 	// Use getExecutionFolderPath to support both regular and branch steps
@@ -595,7 +595,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 
 	// Add knowledgebase folder to READ paths when the mode grants read. Under
 	// kbWriteMethod=direct, also add knowledgebase/notes/ to WRITE paths so the step
-	// can author per-topic markdown via shell + diff_patch_workspace_file.
+	// can author per-topic markdown with diff_patch_workspace_file.
 	if kbAccess != KBAccessNone && kbAccessAllowsRead(kbAccess) {
 		knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
 		readPaths = append(readPaths, knowledgebasePath)

@@ -1113,7 +1113,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 
 	// Schedule tools
 	schedule := []string{
-		"create_schedule", "create_calendar_schedule", "update_schedule",
+		"list_schedules", "create_schedule", "create_calendar_schedule", "update_schedule",
 		"delete_schedule", "trigger_schedule", "get_schedule_runs",
 	}
 
@@ -2161,7 +2161,7 @@ This is the one-line-per-category map. For full signatures, parameters, when-to-
 {{if eq .WorkshopMode "workshop"}}
 - **Plan modification**: `+"`create_plan`"+`, `+"`add_<type>_step`"+`, `+"`update_<type>_step`"+`, `+"`delete_plan_steps`"+`, `+"`cleanup_orphan_step_configs`"+`, todo-task route tools, `+"`update_validation_schema`"+`.
 - **Variables & config**: `+"`update_variable`"+`, `+"`add_group`"+`/`+"`update_group`"+`/`+"`delete_group`"+`, `+"`update_workflow_config`"+`. Use `+"`update_workflow_config`"+` for workflow MCP servers, workflow-level MCP tool allowlists, selected skills, selected secrets, browser_mode, KB lock, run retention, and the per-run monitor (`+"`post_run_monitor`"+`). Do NOT edit `+"`workflow.json`"+` manually.
-- **Schedule management**: `+"`create_schedule`"+`, `+"`create_calendar_schedule`"+`, `+"`update_schedule`"+`, `+"`delete_schedule`"+`, `+"`trigger_schedule`"+`, `+"`get_schedule_runs`"+`. Cron / message-authoring rules, workshop run vs optimizer scheduling, the `+"`/auto-improve`"+` exception, infinite-loop prevention rules, and unattended-message discipline — all live in the `+"`workflow-tools`"+` ref doc. Workflow schedules always use the workshop path; do not create direct `+"`mode=\"workflow\"`"+` schedules. **Whenever you create a recurring schedule, also pair it with a backup** so unattended runs persist their state off-box — see `+"`get_reference_doc(kind=\"backup-strategy\")`"+`.
+- **Schedule management**: `+"`list_schedules`"+`, `+"`create_schedule`"+`, `+"`create_calendar_schedule`"+`, `+"`update_schedule`"+`, `+"`delete_schedule`"+`, `+"`trigger_schedule`"+`, `+"`get_schedule_runs`"+`. Cron / message-authoring rules, workshop run vs optimizer scheduling, the `+"`/auto-improve`"+` exception, infinite-loop prevention rules, and unattended-message discipline — all live in the `+"`workflow-tools`"+` ref doc. Workflow schedules always use the workshop path; do not create direct `+"`mode=\"workflow\"`"+` schedules. **Whenever you create a recurring schedule, also pair it with a backup** so unattended runs persist their state off-box — see `+"`get_reference_doc(kind=\"backup-strategy\")`"+`.
 {{end}}
 - **Shell & discovery**: `+"`execute_shell_command`"+`, `+"`diff_patch_workspace_file`"+`, `+"`read_image`"+`, `+"`generate_text_llm`"+`, `+"`search_web_llm`"+`.
 - **Notify the user**: `+"`notify_user`"+` sends a non-blocking message to the user's connected channels (Slack / WhatsApp / email) — use it for FYIs, progress, alerts, or completion notices when you do not need a reply. If you need an answer in builder chat, ask in your normal response; workflow runtime steps can use configured human-input tools during execution. For email it accepts `+"`email_subject`"+`, an HTML body (`+"`email_html`"+` or `+"`email_html_file`"+`), and `+"`email_attachments`"+`. It returns per-channel delivery status — report failures honestly. Workflow STEPS can also message the user this way: keep `+"`human_tools`"+` in the step's `+"`enabled_custom_tools`"+` (it's in the default set) and have the step call `+"`notify_user`"+`.
@@ -3678,7 +3678,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"knowledgebase_access": map[string]interface{}{
 					"type":        "string",
 					"enum":        []string{"read", "write", "read-write", "none"},
-					"description": "Access mode for this step against knowledgebase/ (per-topic notes/ + notes/_index.json registry). Defaults to 'none' — KB is opt-in per step. 'read' — may consume existing narrative (read notes via index-first then selective cat); 'write' / 'read-write' — may contribute (writer is decided by knowledgebase_write_method: direct = normal path where the step agent writes notes/ via shell + diff_patch_workspace_file inline, agent = separate post-step KB writer only when the user explicitly asks); 'none' — no access. Omit to keep the default.",
+					"description": "Access mode for this step against knowledgebase/ (per-topic notes/ + notes/_index.json registry). Defaults to 'none' — KB is opt-in per step. 'read' — may consume existing narrative (read notes via index-first then selective cat); 'write' / 'read-write' — may contribute (writer is decided by knowledgebase_write_method: direct = normal path where the step agent writes notes/ inline with diff_patch_workspace_file, agent = separate post-step KB writer only when the user explicitly asks); 'none' — no access. Omit to keep the default.",
 				},
 				"learnings_access": map[string]interface{}{
 					"type":        "string",
@@ -3697,7 +3697,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"knowledgebase_write_method": map[string]interface{}{
 					"type":        "string",
 					"enum":        []string{"agent", "direct"},
-					"description": "How KB writes happen when knowledgebase_access permits them. Set 'direct' explicitly for new KB-writing steps: the step agent writes notes/ itself via shell + diff_patch_workspace_file during execution, with an automatic post-completion self-review turn that enumerates contributions against the contract. Choose 'agent' only when the user explicitly asks for a separate post-step KB writer/reviewer. Do not choose agent merely because the output is long, messy, or analytical. If omitted, runtime fallback may be agent, so do not omit this field when enabling KB writes.",
+					"description": "How KB writes happen when knowledgebase_access permits them. Set 'direct' explicitly for new KB-writing steps: the step agent writes notes/ itself with diff_patch_workspace_file during execution, with an automatic post-completion self-review turn that enumerates contributions against the contract. Choose 'agent' only when the user explicitly asks for a separate post-step KB writer/reviewer. Do not choose agent merely because the output is long, messy, or analytical. If omitted, runtime fallback may be agent, so do not omit this field when enabling KB writes.",
 				},
 				"learnings_write_method": map[string]interface{}{
 					"type":        "string",
@@ -6644,7 +6644,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: get_workflow_config — read-only view of workflow-level settings (MCP servers, skills, secrets, LLM config)
 	if err := mcpAgent.RegisterCustomTool(
 		"get_workflow_config",
-		"Show current workflow configuration: selected workflow MCP servers, selected workflow skills, secrets (names only, no values), run retention, and LLM config (tiered allocation with fallbacks, preset defaults).",
+		"Show current workflow configuration: selected workflow MCP servers, selected workflow skills, secrets (names only, no values), run retention, LLM config (tiered allocation with fallbacks, preset defaults), and schedules.",
 		map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -7457,6 +7457,28 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	}
 
 	// === Schedule management tools ===
+
+	// Tool: list_schedules — List schedules for this workflow
+	if err := mcpAgent.RegisterCustomTool(
+		"list_schedules",
+		"List all schedules for this workflow from workflow.json, including IDs, type, cron/calendar shape, timezone, enabled state, mode, workshop_mode, groups, and recent runtime state. Use this before update_schedule/delete_schedule/trigger_schedule/get_schedule_runs.",
+		map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			if iwm.schedulerFuncs == nil {
+				return "Schedule management not available in this session.", nil
+			}
+			if iwm.schedulerWorkspacePath == "" {
+				return "No workspace path associated with this workflow session.", nil
+			}
+			return iwm.schedulerFuncs.ListSchedules(ctx, iwm.schedulerWorkspacePath)
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register list_schedules tool: %v", err))
+	}
 
 	// Tool: create_schedule — Create a new cron schedule
 	if err := mcpAgent.RegisterCustomTool(

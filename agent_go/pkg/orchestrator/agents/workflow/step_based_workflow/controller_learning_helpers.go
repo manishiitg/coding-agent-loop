@@ -102,32 +102,29 @@ func shouldDirectWriteLearnings(agentConfigs *AgentConfigs, step PlanStepInterfa
 	return canWriteLearnings(agentConfigs, step, isEvalMode)
 }
 
-// findStepInPlan recursively finds a step by ID in the plan structure
-func (hcpo *StepBasedWorkflowOrchestrator) findStepInPlan(steps []PlanStepInterface, targetID string) PlanStepInterface {
-	for _, step := range steps {
-		if step.GetID() == targetID {
-			return step
-		}
-
-		// Handle nested steps
-		switch s := step.(type) {
-		case *TodoTaskPlanStep:
-			// Check sub-agents in routes
-			for _, route := range s.PredefinedRoutes {
-				if route.SubAgentStep != nil {
-					if route.SubAgentStep.GetID() == targetID {
-						return route.SubAgentStep
-					}
-					if found := hcpo.findStepInPlan([]PlanStepInterface{route.SubAgentStep}, targetID); found != nil {
-						return found
-					}
-				}
-			}
-		}
-	}
-	return nil
+var directLearningsGlobalEmptyForLock = func(hcpo *StepBasedWorkflowOrchestrator, ctx context.Context) (bool, error) {
+	return hcpo.isStepLearningsFolderEmpty(ctx, GlobalLearningID, 0, "")
 }
 
+func (hcpo *StepBasedWorkflowOrchestrator) shouldSkipDirectLearningsDueToLock(ctx context.Context, agentConfigs *AgentConfigs, stepIndex int) bool {
+	if agentConfigs == nil || agentConfigs.LockLearnings == nil || !*agentConfigs.LockLearnings {
+		return false
+	}
+	globalEmpty, emptyErr := directLearningsGlobalEmptyForLock(hcpo, ctx)
+	if emptyErr != nil {
+		// Can't check — assume empty to allow first-run bootstrap.
+		hcpo.GetLogger().Info(fmt.Sprintf("🔒 lock_learnings=true on step %d but _global/ check failed (%v) — allowing direct-learnings turn to bootstrap", stepIndex+1, emptyErr))
+		return false
+	}
+	if globalEmpty {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔒 lock_learnings=true on step %d but _global/ is empty — allowing direct-learnings turn to bootstrap initial skill", stepIndex+1))
+		return false
+	}
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 lock_learnings=true on step %d with existing _global/ content — skipping direct-learnings turn", stepIndex+1))
+	return true
+}
+
+// findStepInPlan recursively finds a step by ID in the plan structure
 // LoadGlobalLearningHistory loads and formats the global workflow-level learning history.
 // Returns empty string if no global learnings found or on error.
 func (hcpo *StepBasedWorkflowOrchestrator) LoadGlobalLearningHistory(

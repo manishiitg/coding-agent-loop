@@ -139,7 +139,7 @@ func TestMessageSequenceTemplateVarsReflectItemWriteAccess(t *testing.T) {
 		WriteAccess: MessageSequenceWriteAccess{DB: true, Knowledgebase: true, Learnings: true},
 	}
 	readPaths, writePaths := hcpo.setupMessageSequenceFolderGuard("step-1", step.GetID(), item.WriteAccess)
-	vars := hcpo.buildMessageSequenceTemplateVars(step, item, 0, "step-1", "write the durable notes", readPaths, writePaths)
+	vars := hcpo.buildMessageSequenceTemplateVars(step, item, 0, "step-1", "write the durable notes", readPaths, writePaths, item.WriteAccess)
 
 	if got := vars["KbAccess"]; got != KBAccessReadWrite {
 		t.Fatalf("KbAccess = %q, want %q", got, KBAccessReadWrite)
@@ -149,6 +149,42 @@ func TestMessageSequenceTemplateVarsReflectItemWriteAccess(t *testing.T) {
 	}
 	if got := vars["KBGuidanceBlock"]; !strings.Contains(got, "Knowledgebase contribution") {
 		t.Fatalf("KBGuidanceBlock missing direct-write guidance: %q", got)
+	}
+	wantNotesPath := filepath.ToSlash(filepath.Join(docsRoot, "Workflow/test-flow/knowledgebase/notes")) + "/"
+	if got := vars["KBGuidanceBlock"]; !strings.Contains(got, wantNotesPath) ||
+		!strings.Contains(got, "Do not use shell redirection, heredocs, tee, Python") {
+		t.Fatalf("KBGuidanceBlock should use absolute notes path and patch-only writes: %q", got)
+	}
+}
+
+func TestMessageSequenceTemplateVarsUseEffectiveWriteAccess(t *testing.T) {
+	docsRoot := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", docsRoot)
+
+	base, err := orchestrator.NewBaseOrchestrator(
+		loggerv2.NewNoop(), nil, orchestrator.OrchestratorTypeWorkflow, "", 0, "",
+		[]string{"test-server"}, nil, false, &orchestrator.LLMConfig{}, 1, nil, nil, nil,
+	)
+	if err != nil {
+		t.Fatalf("NewBaseOrchestrator: %v", err)
+	}
+	base.SetWorkspacePath("Workflow/test-flow")
+	hcpo := &StepBasedWorkflowOrchestrator{BaseOrchestrator: base, selectedRunFolder: "iteration-0"}
+	step := msgSeqStep(MessageSequenceItem{ID: "capture", Type: "user_message"})
+	item := MessageSequenceItem{
+		ID:          "capture",
+		Type:        "user_message",
+		WriteAccess: MessageSequenceWriteAccess{Learnings: true},
+	}
+	effectiveAccess := MessageSequenceWriteAccess{}
+	readPaths, writePaths := hcpo.setupMessageSequenceFolderGuard("step-1", step.GetID(), effectiveAccess)
+	vars := hcpo.buildMessageSequenceTemplateVars(step, item, 0, "step-1", "write the durable notes", readPaths, writePaths, effectiveAccess)
+
+	if note := vars["MessageSequenceAccessNote"]; strings.Contains(strings.TrimPrefix(note, "Reads are available for execution outputs, soul, builder logs, db/, knowledgebase/, and learnings/_global/. "), "learnings/_global/") {
+		t.Fatalf("write access note should reflect effective grants, not raw item grants: %q", note)
+	}
+	if writes := vars["FolderGuardWritePaths"]; strings.Contains(writes, "learnings/_global") {
+		t.Fatalf("folder guard write paths should not include stripped learnings grant: %q", writes)
 	}
 }
 
@@ -188,4 +224,3 @@ func TestMessageSequenceItemReportedFailure(t *testing.T) {
 		})
 	}
 }
-

@@ -52,6 +52,9 @@ func TestToolSetInvariants(t *testing.T) {
 				t.Fatalf("mode=%s: expected %q in allow-list", mode, n)
 			}
 		}
+		if allowSet["human_feedback"] {
+			t.Fatalf("mode=%s: blocking human_feedback must not be exposed to the workflow builder; ask in chat or use workflow runtime human-input steps instead", mode)
+		}
 	}
 
 	// 4. The workshop allow-list must still expose the plan/workflow tools

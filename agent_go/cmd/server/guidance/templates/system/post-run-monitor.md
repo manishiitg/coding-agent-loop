@@ -14,7 +14,7 @@ You read the deterministic evidence and write to `builder/improve.html` — the 
 - **Which path ran** — if the workflow has routing or runs per-group, a single run usually exercises only **one** path. Read `route_selection.json` (`select_route`) and the run's group/variables to see *which route(s)/group this run actually took*, so you judge the run only against what that path was supposed to do.
 - **What changed** — `planning/changelog/changelog-*.json`. Recent plan/config/prompt edits (with the `reason` the author gave). This is how you explain a regression: correlate "what got worse this run" against "what we changed in the last few runs."
 - **The goal evidence** — eval reports under `scores/evaluation/` or `evaluation/runs/`, plus the run outputs needed to verify the success criteria in `soul/soul.md`. While you have `soul.md` open, also note its optional `## Notifications` section — the user's preference for *when and what* to push (it drives the notification turn).
-- **The log so far** — read `builder/improve.html`: the current verdicts, the goal card, open findings, pending **Chief of Staff recommendation** cards (`.cos-rec` / `data-cos-rec-id` with `data-status="proposed"`, `accepted`, `queued_auto_improve`, `needs_evidence`, or `blocked`), any **unconfirmed Decision** (a harden/replan card with no `.outcome` stamp yet — this run may be the one that confirms it), and recent entries, so you continue its style, don't duplicate a finding, and can tell a *transition* (healthy↔broken) from a steady state.
+- **The log so far** — read `builder/improve.html`: the current verdicts, the goal card, open findings, open **Human input requested** cards (`data-kind="input"` / `data-status="open"`), pending **Chief of Staff recommendation** cards (`.cos-rec` / `data-cos-rec-id` with `data-status="proposed"`, `accepted`, `queued_auto_improve`, `needs_evidence`, or `blocked`), any **unconfirmed Decision** (a harden/replan card with no `.outcome` stamp yet — this run may be the one that confirms it), and recent entries, so you continue its style, don't duplicate a finding or question, and can tell a *transition* (healthy↔broken) from a steady state.
 
 ### 2. Form two verdicts
 
@@ -246,6 +246,48 @@ You own the notification.
 
 Apply the preference within the same constraints: still **one** `notify_user` call per run at most, and the notification preference can change *what/when you notify*, never make you fix, replan, or change model tiers beyond the Pulse steps above. If the preference is silent on a case the default covers, fall back to the default for that case. If the preference explicitly says not to notify, skip the call and say you skipped it.
 
+Before deciding whether to call `notify_user`, overwrite `builder/card.health.html`. The health
+card is the org dashboard's state surface, not a user alert, so it must update every Pulse run
+even when notifications are disabled. Write it in the final notify/summary step because this is
+the first point where triage, harden, artifact review, cost/time, backup, and publish outcomes are
+all known. Treat the card as a compact dashboard summary, not the email narrative: it should let
+the Org page answer state, what changed, what was fixed, what remains, evidence paths,
+backup/publish status, and cost/time without reading the full Pulse log. Keep detailed prose in
+`builder/improve.html` and email.
+
+If this run needs user input, or the notify/email would ask the user a question, write or refresh a
+structured **Human input requested** entry in `builder/improve.html` before sending `notify_user`.
+The question must not exist only in email/chat. Use `data-kind="input"`,
+`data-question-id="<stable id>"`, `data-status="open"`, and visible fields for **Question**,
+**Why it matters**, **Options / expected answer**, **Default if no answer**, **Evidence**, and
+**Asked at**. Reuse and update a prior matching open question instead of duplicating it; mark it
+`answered`, `dismissed`, or `expired` once the answer or default action resolves it.
+
+Use the final post-Pulse status (`healthy`, `bug`, or `critical`) and preserve the base fields
+for backward compatibility:
+
+```html
+<article class='pulse-card' data-axis='health' data-workflow='workflow-name' data-goal='3-6 word goal' data-status='healthy|bug|critical' data-updated='ISO8601 UTC'>
+  <h4>workflow-name</h4>
+  <p data-field='headline'>one final outcome line</p>
+  <p data-field='metric'>Bug/Goal state · cost/time metric · backup/publish state</p>
+  <p data-field='detail'>concise evidence paths or unresolved next owner</p>
+  <p data-field='state'>bug clean|fixed|broken · goal on-target|drifting|not measured</p>
+  <p data-field='input'>0 open or N open — shortest open question title</p>
+  <p data-field='fix'>none needed|applied|blocked|not safe</p>
+  <p data-field='harden'>skipped|changed|blocked plus execution_id/result when useful</p>
+  <p data-field='artifact'>reviewed|not needed|drift found plus count/owner</p>
+  <p data-field='backup'>backed up|unchanged|blocked plus status path/commit when useful</p>
+  <p data-field='publish'>published|disabled|skipped|blocked plus URL when available</p>
+  <p data-field='cost'>STEP 4 headline or missing telemetry reason</p>
+  <p data-field='evidence'>shortest useful paths, not prose dump</p>
+  <p data-field='next'>No action needed or the single next owner/action</p>
+</article>
+```
+
+Always include `headline`, `metric`, `detail`, `state`, `input`, `fix`, and `next`. Omit only optional
+named fields that are genuinely unknown.
+
 **Default policy (when soul.md has no `## Notifications` section): send one compact run summary every run.** Decide the severity from the **state change**, which you read from the durable Pulse log (`builder/improve.html`) — its prior verdicts/status vs the verdict you just formed. These cases should be marked as important:
 
 - **broke** — Bug went `bug-free` → `broken`, or Goal slipped from `on-target` to `short`/`drifting`;
@@ -261,8 +303,8 @@ Always call `notify_user` **once** for the run summary unless the user's prefere
 - `email_subject`: a clean inbox subject — `<workflow> — run summary` for steady runs, or `<workflow> — broke` / `— recovered` / `— new issue` for important transitions.
 - **`email_html`:** a small, designed HTML email with a consistent skeleton — a status header (`<emoji> <workflow> — <run summary|broke|recovered|new finding>`), the headline sentence, a `Bug: <state> · Goal: <state>` line, compact cost/time, a **Dashboard** link/button when publish is on, and a footer pointing to the Pulse log. Keep it compact, **inline-styled** (email clients strip `<style>`/external CSS) and dark-text-on-light so it renders everywhere.
 - Include compact cost/time whenever evidence is available, and always when it is material, requested by `## Notifications`, useful context for the transition, or the latest `builder/card.cost.html` status is `elevated`/`missing`: total cost/time plus top step/agent or missing evidence. Keep the detailed table in the Pulse log unless the user explicitly asked for email detail.
-- `email_to`: optional replacement To recipient(s) only when the user's `## Notifications` preference asks to send email somewhere other than the configured default; every address must be configured as an allowed Gmail recipient.
-- `email_cc`: optional CC recipients only when the user's `## Notifications` preference asks for CC; every address must be configured as an allowed Gmail recipient.
+- `email_to`: optional replacement To recipient(s) only when the user's `## Notifications` preference asks to send email somewhere other than the configured default; Gmail rejects addresses configured as blocked recipients.
+- `email_cc`: optional CC recipients only when the user's `## Notifications` preference asks for CC; Gmail rejects addresses configured as blocked recipients.
 - **`email_body` (plain-text fallback):** the same content as plain text for clients that don't render HTML — your headline, then `Bug: <state> · Goal: <state>`, then `See the Pulse log for detail.` Set it alongside `email_html`; never put HTML in `email_body`.
 
 One call per run, rendered terse on chat and fuller in email.

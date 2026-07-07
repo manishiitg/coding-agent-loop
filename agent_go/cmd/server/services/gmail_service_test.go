@@ -177,7 +177,7 @@ func TestGmailPickRecipient(t *testing.T) {
 		defaultTo: "fallback@example.com",
 		config: &GmailConfig{
 			DefaultTo:         "fallback@example.com",
-			AllowedRecipients: []string{"fallback@example.com", "hint@example.com", "ops@example.com"},
+			BlockedRecipients: []string{"blocked@example.com"},
 		},
 	}
 
@@ -187,14 +187,14 @@ func TestGmailPickRecipient(t *testing.T) {
 		t.Fatalf("explicit hint = %q, err=%v, want hint@example.com", got, err)
 	}
 
-	// explicit To override may contain more than one allowed recipient
+	// explicit To override may contain more than one recipient
 	if got, err := g.pickRecipient(&NotificationDestination{Gmail: &GmailDest{Email: "Hint@Example.com, ops@example.com"}}); err != nil || got != "hint@example.com, ops@example.com" {
-		t.Fatalf("multi-recipient explicit hint = %q, err=%v, want two allowed recipients", got, err)
+		t.Fatalf("multi-recipient explicit hint = %q, err=%v, want two recipients", got, err)
 	}
 
-	// explicit hint outside the allowlist is blocked before any send happens
-	if got, err := g.pickRecipient(&NotificationDestination{Gmail: &GmailDest{Email: "outside@example.com"}}); err == nil || got != "" {
-		t.Fatalf("outside hint = %q, err=%v, want blocked recipient error", got, err)
+	// explicit blocked hint is blocked before any send happens
+	if got, err := g.pickRecipient(&NotificationDestination{Gmail: &GmailDest{Email: "blocked@example.com"}}); err == nil || got != "" {
+		t.Fatalf("blocked hint = %q, err=%v, want blocked recipient error", got, err)
 	}
 
 	// no hint, no user -> workspace default
@@ -213,7 +213,7 @@ func TestGmailValidateCCRecipients(t *testing.T) {
 		defaultTo: "fallback@example.com",
 		config: &GmailConfig{
 			DefaultTo:         "fallback@example.com",
-			AllowedRecipients: []string{"fallback@example.com", "cc@example.com", "other@example.com"},
+			BlockedRecipients: []string{"blocked@example.com"},
 		},
 	}
 
@@ -226,34 +226,53 @@ func TestGmailValidateCCRecipients(t *testing.T) {
 		t.Fatalf("validateCCRecipients = %#v, want %#v", got, want)
 	}
 
-	if got, err := g.validateCCRecipients([]string{"outside@example.com"}); err == nil || len(got) != 0 {
-		t.Fatalf("outside cc = %#v, err=%v, want blocked recipient error", got, err)
+	if got, err := g.validateCCRecipients([]string{"blocked@example.com"}); err == nil || len(got) != 0 {
+		t.Fatalf("blocked cc = %#v, err=%v, want blocked recipient error", got, err)
 	}
 }
 
-func TestNormalizeGmailConfigIncludesDefaultAndDedupes(t *testing.T) {
+func TestValidateRecipientsAgainstBlockedList(t *testing.T) {
+	got, err := validateRecipientsAgainstList(
+		[]string{"User@Example.com, ops@example.com"},
+		"to",
+		[]string{"blocked@example.com"},
+	)
+	if err != nil {
+		t.Fatalf("validateRecipientsAgainstList returned error: %v", err)
+	}
+	want := []string{"user@example.com", "ops@example.com"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("validateRecipientsAgainstList = %#v, want %#v", got, want)
+	}
+
+	if got, err := validateRecipientsAgainstList([]string{"blocked@example.com"}, "to", []string{"BLOCKED@example.com"}); err == nil || len(got) != 0 {
+		t.Fatalf("blocked recipient = %#v, err=%v, want blocked recipient error", got, err)
+	}
+}
+
+func TestNormalizeGmailConfigDedupesBlockedRecipients(t *testing.T) {
 	cfg := normalizeGmailConfig(&GmailConfig{
 		DefaultTo:         " Owner@Example.COM ",
-		AllowedRecipients: []string{"other@example.com", "owner@example.com", "a@b.com, C@D.com", "other@example.com"},
+		BlockedRecipients: []string{"other@example.com", "owner@example.com", "a@b.com, C@D.com", "other@example.com"},
 	})
 
-	wantAllowed := []string{"owner@example.com", "other@example.com", "a@b.com", "c@d.com"}
+	wantBlocked := []string{"other@example.com", "owner@example.com", "a@b.com", "c@d.com"}
 	if cfg.DefaultTo != "Owner@Example.COM" {
 		t.Fatalf("DefaultTo = %q, want trimmed original case", cfg.DefaultTo)
 	}
-	if !reflect.DeepEqual(cfg.AllowedRecipients, wantAllowed) {
-		t.Fatalf("AllowedRecipients = %#v, want %#v", cfg.AllowedRecipients, wantAllowed)
+	if !reflect.DeepEqual(cfg.BlockedRecipients, wantBlocked) {
+		t.Fatalf("BlockedRecipients = %#v, want %#v", cfg.BlockedRecipients, wantBlocked)
 	}
 }
 
-func TestGmailAllowlistDefaultsToDefaultRecipient(t *testing.T) {
+func TestGmailDenylistAllowsRecipientsByDefault(t *testing.T) {
 	g := &GmailService{defaultTo: "fallback@example.com"}
 
 	if got, err := g.pickRecipient(nil); err != nil || got != "fallback@example.com" {
 		t.Fatalf("default = %q, err=%v, want fallback@example.com", got, err)
 	}
 
-	if got, err := g.pickRecipient(&NotificationDestination{Gmail: &GmailDest{Email: "hint@example.com"}}); err == nil || got != "" {
-		t.Fatalf("outside hint = %q, err=%v, want blocked recipient error", got, err)
+	if got, err := g.pickRecipient(&NotificationDestination{Gmail: &GmailDest{Email: "hint@example.com"}}); err != nil || got != "hint@example.com" {
+		t.Fatalf("hint = %q, err=%v, want hint@example.com", got, err)
 	}
 }

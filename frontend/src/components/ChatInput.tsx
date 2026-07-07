@@ -3905,80 +3905,101 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 {/* Browser Access Configuration Popup */}
                 {showCdpPopup && (
                   <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => { setShowCdpPopup(false); setWorkspaceMinimized(false) }}>
-                    <div className="bg-gray-900 rounded-xl shadow-2xl border border-gray-700 w-[900px] max-w-[95vw]" onClick={(e) => e.stopPropagation()}>
+                    <div className="w-full max-w-3xl overflow-hidden rounded-xl border border-border bg-background text-foreground shadow-2xl" onClick={(e) => e.stopPropagation()}>
                       {/* Header */}
-                      <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700">
-                        <div className="flex items-center gap-2">
-                          <Globe className="w-5 h-5 text-green-400" />
-                          <h3 className="text-base font-semibold text-white">Browser Access</h3>
+                      <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+                        <div className="flex items-start gap-3">
+                          <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-primary/20 bg-primary/10 text-primary">
+                            <Globe className="h-4 w-4" />
+                          </div>
+                          <div>
+                            <h3 className="text-base font-semibold">Browser Access</h3>
+                            <p className="mt-0.5 text-xs text-muted-foreground">Choose how this chat can drive websites.</p>
+                          </div>
                         </div>
-                        <button onClick={() => { setShowCdpPopup(false); setWorkspaceMinimized(false) }} className="text-gray-400 hover:text-gray-200 transition-colors">
+                        <button onClick={() => { setShowCdpPopup(false); setWorkspaceMinimized(false) }} className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
                           <X className="w-5 h-5" />
                         </button>
                       </div>
 
-                      {/* Content: 2-column layout */}
-                      <div className="px-5 py-4 flex gap-4 items-stretch">
+                      {/* Content */}
+                      <div className="space-y-4 px-5 py-4">
 
-                        {/* Left: mode options */}
-                        <div className="flex-1 space-y-2">
+                        {/* Mode options */}
+                        <div className="grid gap-3 md:grid-cols-3">
                           {/* Headless */}
-                          <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                          <label className={`flex min-h-[132px] cursor-pointer flex-col gap-3 rounded-lg border p-3 transition-colors ${
                             browserMode === 'headless'
-                              ? 'border-blue-500 bg-blue-950/40'
-                              : 'border-gray-700 hover:bg-gray-800'
+                              ? 'border-primary bg-primary/10 ring-1 ring-primary/20'
+                              : 'border-border bg-card/40 hover:bg-muted/50'
                           }`}>
                             <input
                               type="radio"
                               name="browserMode"
                               checked={browserMode === 'headless'}
                               onChange={() => setBrowserMode('headless')}
-                              className="mt-0.5 w-4 h-4 text-blue-500 accent-blue-500"
+                              className="sr-only"
                             />
-                            <div>
-                              <div className="text-sm font-medium text-gray-100">Headless Browser</div>
-                              <div className="text-xs text-gray-400 mt-0.5">
-                                Uses{' '}
-                                <a
-                                  href="https://github.com/vercel/agent-browser"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-blue-400 hover:underline"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  agent-browser
-                                </a>
-                                {' '}by Vercel running inside a Docker container. No visible window.
-                              </div>
+                            <div className="flex items-center gap-2">
+                              <span className={`h-3 w-3 rounded-full border ${browserMode === 'headless' ? 'border-primary bg-primary ring-4 ring-primary/20' : 'border-muted-foreground/50'}`} />
+                              <div className="text-sm font-medium">Headless</div>
+                            </div>
+                            <div className="text-xs leading-5 text-muted-foreground">
+                              Background Chromium via{' '}
+                              <a
+                                href="https://github.com/vercel/agent-browser"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-primary hover:underline"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                agent-browser
+                              </a>
+                              . No visible window.
                             </div>
                           </label>
 
                           {/* CDP */}
-                          <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                          <label className={`flex min-h-[132px] cursor-pointer flex-col gap-3 rounded-lg border p-3 transition-colors ${
                             browserMode === 'cdp'
-                              ? 'border-green-500 bg-green-950/40'
-                              : 'border-gray-700 hover:bg-gray-800'
+                              ? 'border-emerald-500 bg-emerald-500/10 ring-1 ring-emerald-500/20'
+                              : 'border-border bg-card/40 hover:bg-muted/50'
                           }`}>
                             <input
                               type="radio"
                               name="browserMode"
                               checked={browserMode === 'cdp'}
                               onChange={() => setBrowserMode('cdp')}
-                              className="mt-0.5 w-4 h-4 text-green-500 accent-green-500"
+                              className="sr-only"
                             />
-                            <div>
-                              <div className="text-sm font-medium text-gray-100">Local Chrome (CDP)</div>
-                              <div className="text-xs text-gray-400 mt-0.5">Connects to your real Chrome browser and may bring Chrome to the foreground.</div>
+                            <div className="flex items-center gap-2">
+                              <span className={`h-3 w-3 rounded-full border ${browserMode === 'cdp' ? 'border-emerald-400 bg-emerald-400 ring-4 ring-emerald-400/20' : 'border-muted-foreground/50'}`} />
+                              <div className="text-sm font-medium">Local Chrome</div>
                             </div>
+                            <div className="text-xs leading-5 text-muted-foreground">
+                              Connects to your real Chrome browser through CDP. Useful when login state matters.
+                            </div>
+                            {browserMode === 'cdp' && (
+                              <div className={`mt-auto inline-flex w-fit items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                                cdpChecking || cdpConnected === null
+                                  ? 'bg-amber-500/10 text-amber-300'
+                                  : cdpConnected
+                                    ? 'bg-emerald-500/10 text-emerald-300'
+                                    : 'bg-red-500/10 text-red-300'
+                              }`}>
+                                <span className={`h-1.5 w-1.5 rounded-full ${cdpConnected ? 'bg-emerald-400' : cdpChecking || cdpConnected === null ? 'bg-amber-400' : 'bg-red-400'}`} />
+                                {cdpChecking || cdpConnected === null ? 'Needs check' : cdpConnected ? 'Connected' : 'Not reachable'}
+                              </div>
+                            )}
                           </label>
 
                           {/* Playwright */}
-                          <label className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
+                          <label className={`flex min-h-[132px] flex-col gap-3 rounded-lg border p-3 transition-colors ${
                             playwrightServerStatus === 'not_found'
-                              ? 'border-gray-700 opacity-50 cursor-not-allowed'
+                              ? 'cursor-not-allowed border-border bg-card/30 opacity-55'
                               : browserMode === 'playwright'
-                                ? 'border-purple-500 bg-purple-950/40 cursor-pointer'
-                                : 'border-gray-700 hover:bg-gray-800 cursor-pointer'
+                                ? 'cursor-pointer border-violet-500 bg-violet-500/10 ring-1 ring-violet-500/20'
+                                : 'cursor-pointer border-border bg-card/40 hover:bg-muted/50'
                           }`}>
                             <input
                               type="radio"
@@ -3986,168 +4007,165 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                               checked={browserMode === 'playwright'}
                               onChange={() => setBrowserMode('playwright')}
                               disabled={playwrightServerStatus === 'not_found'}
-                              className="mt-0.5 w-4 h-4 text-purple-500 accent-purple-500"
+                              className="sr-only"
                             />
-                            <div className="flex-1">
-                              <div className="text-sm font-medium text-gray-100">Playwright MCP</div>
-                              <div className="text-xs text-gray-400 mt-0.5">Opens a visible browser window via MCP server.</div>
-                              {playwrightServerStatus === 'not_found' && (
-                                <div className="text-xs text-red-400 mt-1 flex items-center gap-1">
-                                  <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
-                                  Server not found &mdash; add in MCP Settings
-                                </div>
-                              )}
-                              {playwrightServerStatus === 'loading' && (
-                                <div className="text-xs text-yellow-400 mt-1 flex items-center gap-1">
-                                  <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
-                                  Discovering...
-                                </div>
-                              )}
-                              {playwrightServerStatus === 'error' && (
-                                <div className="text-xs text-amber-400 mt-1 flex items-center gap-1">
-                                  <span className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
-                                  Server has errors &mdash; check MCP Settings
-                                </div>
-                              )}
+                            <div className="flex items-center gap-2">
+                              <span className={`h-3 w-3 rounded-full border ${browserMode === 'playwright' ? 'border-violet-400 bg-violet-400 ring-4 ring-violet-400/20' : 'border-muted-foreground/50'}`} />
+                              <div className="text-sm font-medium">Playwright MCP</div>
                             </div>
+                            <div className="text-xs leading-5 text-muted-foreground">Opens a visible browser window through the Playwright MCP server.</div>
+                            {playwrightServerStatus === 'not_found' && (
+                              <div className="mt-auto inline-flex w-fit items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 text-[11px] font-medium text-red-300">
+                                <span className="h-1.5 w-1.5 rounded-full bg-red-400" />
+                                Server missing
+                              </div>
+                            )}
+                            {playwrightServerStatus === 'loading' && (
+                              <div className="mt-auto inline-flex w-fit items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-300">
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                Discovering
+                              </div>
+                            )}
+                            {playwrightServerStatus === 'error' && (
+                              <div className="mt-auto inline-flex w-fit items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-300">
+                                <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                                Check settings
+                              </div>
+                            )}
                           </label>
 
                         </div>
 
-                        {/* Right: context panel */}
-                        <div className="w-80 flex-shrink-0 rounded-lg bg-gray-800/60 border border-gray-700 p-3 flex flex-col gap-3">
-                          {browserMode === 'cdp' && (<>
-                            <div className="rounded-md border border-amber-700/60 bg-amber-950/30 px-2.5 py-2 text-xs text-amber-200">
-                              CDP drives visible Chrome. It can steal focus while you type. Use headless mode for background runs, or use a dedicated automation Chrome/profile/port for schedules.
-                            </div>
-                            <div className="space-y-2">
-                              <div className="flex items-center gap-2">
-                                <label className="text-xs text-gray-400 whitespace-nowrap">Port:</label>
-                                <input
-                                  type="number"
-                                  value={cdpPort}
-                                  onChange={(e) => setCdpPort(parseInt(e.target.value) || 9222)}
-                                  className="w-20 px-2 py-1 text-sm border border-gray-600 rounded-md bg-gray-800 text-white focus:border-green-500 focus:outline-none"
-                                  min={1}
-                                  max={65535}
-                                />
+                        {/* Context panel */}
+                        <div className="rounded-lg border border-border bg-muted/25 p-4">
+                          {browserMode === 'cdp' && (
+                            <div className="space-y-4">
+                              <div className="flex flex-wrap items-center justify-between gap-3">
+                                <div>
+                                  <p className="text-sm font-medium">Local Chrome connection</p>
+                                  <p className="mt-0.5 text-xs text-muted-foreground">CDP drives visible Chrome and can bring it to the foreground.</p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <label className="text-xs text-muted-foreground">Port</label>
+                                  <input
+                                    type="number"
+                                    value={cdpPort}
+                                    onChange={(e) => setCdpPort(parseInt(e.target.value) || 9222)}
+                                    className="h-8 w-20 rounded-md border border-border bg-background px-2 text-sm text-foreground outline-none focus:border-primary"
+                                    min={1}
+                                    max={65535}
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => checkCdpConnection(cdpPort)}
+                                    disabled={cdpChecking}
+                                    className="h-8 rounded-md border border-border bg-background px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+                                  >
+                                    {cdpChecking ? 'Checking...' : 'Check'}
+                                  </button>
+                                </div>
                               </div>
-                              <button
-                                type="button"
-                                onClick={() => checkCdpConnection(cdpPort)}
-                                disabled={cdpChecking}
-                                className="w-full px-3 py-1.5 text-xs font-medium bg-gray-700 hover:bg-gray-600 rounded-md text-gray-200 disabled:opacity-50 transition-colors"
-                              >
-                                {cdpChecking ? 'Checking...' : 'Check Connection'}
-                              </button>
-                              <div className="flex items-start gap-1.5">
+
+                              <div className="flex items-start gap-2 rounded-md border border-border bg-background/70 px-3 py-2">
                                 {cdpChecking ? (
                                   <>
-                                    <div className="w-2.5 h-2.5 rounded-full bg-yellow-400 animate-pulse mt-0.5 flex-shrink-0" />
-                                    <span className="text-xs text-yellow-400">Checking port {cdpPort}...</span>
+                                    <div className="mt-1 h-2 w-2 shrink-0 rounded-full bg-amber-400 animate-pulse" />
+                                    <span className="text-xs text-amber-300">Checking port {cdpPort}...</span>
                                   </>
                                 ) : cdpConnected === true ? (
                                   <>
-                                    <div className="w-2.5 h-2.5 rounded-full bg-green-500 mt-0.5 flex-shrink-0" />
-                                    <span className="text-xs text-green-400">Connected on port {cdpPort}.</span>
+                                    <div className="mt-1 h-2 w-2 shrink-0 rounded-full bg-emerald-400" />
+                                    <span className="text-xs text-emerald-300">Connected on port {cdpPort}.</span>
                                   </>
                                 ) : cdpConnected === false ? (
                                   <>
-                                    <div className="w-2.5 h-2.5 rounded-full bg-red-500 mt-0.5 flex-shrink-0" />
-                                    <span className="text-xs text-red-400">
+                                    <div className="mt-1 h-2 w-2 shrink-0 rounded-full bg-red-400" />
+                                    <span className="text-xs text-red-300">
                                       Not reachable on port {cdpPort}.{cdpError ? ` ${cdpError}` : ''}
                                     </span>
                                   </>
                                 ) : (
-                                  <span className="text-xs text-gray-500">Click Check Connection to verify.</span>
+                                  <span className="text-xs text-muted-foreground">Check the connection before saving CDP mode.</span>
                                 )}
                               </div>
-                            </div>
-                            <div className="border-t border-gray-700 pt-3 space-y-1.5">
-                              <p className="text-xs font-medium text-gray-300">Launch Chrome with CDP</p>
-                              {navigator.platform?.includes('Mac') && (
-                                <div className="space-y-1">
-                                  <a
-                                    href={`${getApiBaseUrl()}/api/downloads/chrome-cdp-macOS.zip`}
-                                    download="Chrome-CDP-macOS.zip"
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    onClick={(e) => e.stopPropagation()}
-                                    className="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium bg-green-700 hover:bg-green-600 text-white rounded-md transition-colors"
-                                  >
-                                    <Download className="w-3 h-3" />
-                                    Download Chrome CDP.app (macOS)
-                                  </a>
-                                  <ol className="text-xs text-gray-500 list-decimal list-inside space-y-0.5">
-                                    <li>Double-click the zip to unzip.</li>
-                                    <li>Drag <strong className="text-gray-300">Chrome CDP.app</strong> to your <strong className="text-gray-300">Applications</strong> folder.</li>
-                                    <li>Open it from Spotlight (⌘+Space) or Launchpad.</li>
-                                  </ol>
-                                  <p className="text-xs text-gray-500">If macOS says &quot;damaged&quot;, run in Terminal:</p>
-                                  <code className="block bg-gray-950 px-2 py-1 rounded text-[10px] font-mono text-amber-400 border border-gray-700">
-                                    xattr -c /Applications/Chrome\ CDP.app
+
+                              <div className="grid gap-3 md:grid-cols-2">
+                                {navigator.platform?.includes('Mac') && (
+                                  <div className="rounded-md border border-border bg-background/70 p-3">
+                                    <p className="text-xs font-medium">macOS launcher</p>
+                                    <p className="mt-1 text-xs text-muted-foreground">Install a dedicated Chrome CDP app profile.</p>
+                                    <a
+                                      href={`${getApiBaseUrl()}/api/downloads/chrome-cdp-macOS.zip`}
+                                      download="Chrome-CDP-macOS.zip"
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-500"
+                                    >
+                                      <Download className="h-3.5 w-3.5" />
+                                      Download app
+                                    </a>
+                                  </div>
+                                )}
+                                <div className="rounded-md border border-border bg-background/70 p-3">
+                                  <p className="text-xs font-medium">Terminal launch</p>
+                                  <code className="mt-2 block rounded-md border border-border bg-black/30 px-2 py-1.5 text-[10px] text-emerald-300 break-all">
+                                    {chromeCdpLaunchCommand(cdpPort, navigator.platform)}
                                   </code>
-                                  <p className="text-xs text-gray-600">then open it again, or right-click → Open.</p>
+                                  <p className="mt-2 text-xs font-medium">Verify</p>
+                                  <code className="mt-1 block rounded-md border border-border bg-black/30 px-2 py-1.5 text-[10px] text-sky-300 break-all">
+                                    {chromeCdpVerifyCommand(cdpPort)}
+                                  </code>
                                 </div>
-                              )}
-                              <p className="text-xs text-gray-500">Or run in Terminal with a separate Chrome profile:</p>
-                              <code className="block bg-gray-950 px-2 py-1.5 rounded text-[10px] font-mono break-all text-green-400 border border-gray-700">
-                                {chromeCdpLaunchCommand(cdpPort, navigator.platform)}
-                              </code>
-                              <p className="text-xs text-gray-500">Verify Chrome is exposing CDP:</p>
-                              <code className="block bg-gray-950 px-2 py-1.5 rounded text-[10px] font-mono break-all text-blue-300 border border-gray-700">
-                                {chromeCdpVerifyCommand(cdpPort)}
-                              </code>
+                              </div>
                             </div>
-                          </>)}
+                          )}
 
                           {browserMode === 'headless' && (
                             <div className="space-y-2">
-                              <p className="text-xs font-medium text-gray-300">Headless Browser</p>
-                              <p className="text-xs text-gray-400">
+                              <p className="text-sm font-medium">Headless browser</p>
+                              <p className="text-xs leading-5 text-muted-foreground">
                                 Powered by{' '}
                                 <a
                                   href="https://github.com/vercel/agent-browser"
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="text-blue-400 hover:underline"
+                                  className="text-primary hover:underline"
                                 >
                                   agent-browser
                                 </a>
-                                {' '}by Vercel, running inside a Docker container.
+                                {' '}by Vercel, running inside a Docker container. The agent navigates Chromium in the background with no visible browser window.
                               </p>
-                              <p className="text-xs text-gray-500">No visible window — the agent navigates Chromium in the background.</p>
                             </div>
                           )}
 
                           {browserMode === 'playwright' && (
                             <div className="space-y-2">
-                              <p className="text-xs font-medium text-gray-300">Playwright MCP</p>
-                              <p className="text-xs text-gray-400">
+                              <p className="text-sm font-medium">Playwright MCP</p>
+                              <p className="text-xs leading-5 text-muted-foreground">
                                 Uses the official{' '}
                                 <a
                                   href="https://github.com/microsoft/playwright-mcp"
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="text-purple-400 hover:underline"
+                                  className="text-violet-300 hover:underline"
                                 >
                                   microsoft/playwright-mcp
                                 </a>
-                                {' '}server.
+                                {' '}server. Each session opens a new Chrome instance; existing browser windows are not reused.
                               </p>
-                              <p className="text-xs text-gray-500">Each session opens a <strong className="text-gray-300">new Chrome instance</strong> — existing browser windows are not reused.</p>
-                              <p className="text-xs text-gray-500">Requires the <code className="bg-gray-950 px-1 rounded text-[10px]">playwright</code> MCP server to be configured in MCP Settings.</p>
+                              <p className="text-xs text-muted-foreground">Requires the <code className="rounded bg-black/30 px-1 text-[10px]">playwright</code> MCP server to be configured in MCP Settings.</p>
                             </div>
                           )}
 
                           {browserMode === 'none' && (
-                            <p className="text-xs text-gray-500">Select a mode to see configuration options.</p>
+                            <p className="text-xs text-muted-foreground">Select a mode to see configuration options.</p>
                           )}
                         </div>
                       </div>
 
                       {/* Footer */}
-                      <div className="flex justify-end gap-2 px-5 py-3 border-t border-gray-700">
+                      <div className="flex items-center justify-between gap-3 border-t border-border bg-muted/20 px-5 py-3">
                         <button
                           type="button"
                           onClick={() => {
@@ -4155,7 +4173,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             setShowCdpPopup(false)
                             setWorkspaceMinimized(false)
                           }}
-                          className="px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 rounded-md transition-colors"
+                          className="rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                         >
                           Disable Browser
                         </button>
@@ -4163,7 +4181,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           type="button"
                           onClick={() => { setShowCdpPopup(false); setWorkspaceMinimized(false) }}
                           disabled={browserMode === 'cdp' && cdpConnected !== true}
-                          className="px-4 py-2 text-sm font-medium bg-green-600 hover:bg-green-500 text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           {browserMode === 'cdp' && cdpConnected !== true ? (cdpChecking ? 'Checking...' : 'Connect Chrome First') : 'Done'}
                         </button>

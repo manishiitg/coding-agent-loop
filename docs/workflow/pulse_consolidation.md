@@ -24,9 +24,10 @@ After a run there are **four disconnected mechanisms**, with different triggers,
 gating, and reliability:
 
 1. **Post-run monitor** (`runPostRunMonitor`, `scheduler.go:1164`) — opt-in
-   (`post_run_monitor`), a dedicated read-only agent pass that writes the Pulse log
-   (`builder/improve.html` verdict pills + goal card) and the `builder/card.health.html`
-   dashboard card. Auto-improve **cadence #1**.
+   (`post_run_monitor`), a dedicated agent pass that writes the Pulse log
+   (`builder/improve.html` verdict pills + goal card). Its final notify/summary step
+   writes the `builder/card.health.html` dashboard card after harden, artifact review,
+   cost/time, backup, and publish are known. Auto-improve **cadence #1**.
 2. **Scheduled harden** — auto-improve **cadence #2**, applies low-risk Bug fixes on
    its own schedule.
 3. **Scheduled replan-proposal** — auto-improve **cadence #3**, proposes Goal changes.

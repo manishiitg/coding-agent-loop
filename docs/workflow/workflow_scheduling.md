@@ -10,6 +10,13 @@ The current system is fully file-backed:
 
 There is no DB-backed workflow scheduler architecture anymore.
 
+Remote workspace note: in the planned Remote Workspace Gateway model, the
+schedule files still live with the workflow on the server, but the server does
+not run the coding agent. An online local runner reads the schedule, claims a
+server-side job lease, executes the scheduled workshop messages locally, and
+writes run history/Pulse/report artifacts back through the gateway. See
+[Remote Workspace Gateway + Local Runner Plan](/Users/mipl/ai-work/mcp-agent-builder-go/docs/core/remote_workspace_server_plan.md).
+
 ## Source Of Truth
 
 Each workflow manifest can define zero or more schedules:
@@ -251,6 +258,9 @@ Use this mental model:
 - `schedule-runs.json` records what actually happened
 - scheduler runtime state is mostly in memory
 - scheduled execution still runs through the same workflow or workshop engines as manual execution
+- in remote workspace mode, the scheduler engine is on the online local runner;
+  the server gateway stores files and leases, but does not execute LLM/coding
+  agents itself
 
 Related docs:
 

@@ -70,12 +70,12 @@ func CreateHumanTools() []llmtypes.Tool {
 		notifyProps["email_to"] = map[string]interface{}{
 			"type":        "array",
 			"items":       map[string]interface{}{"type": "string"},
-			"description": "Optional Gmail To recipients that replace the configured default To recipient for this notification. Use only when the user's notification preference explicitly asks to send the email to different primary recipient(s). Every address must be in Gmail's allowed recipients list. Other channels ignore this.",
+			"description": "Optional Gmail To recipients that replace the configured default To recipient for this notification. Use only when the user's notification preference explicitly asks to send the email to different primary recipient(s). Addresses in Gmail's blocked recipients list are rejected. Other channels ignore this.",
 		}
 		notifyProps["email_cc"] = map[string]interface{}{
 			"type":        "array",
 			"items":       map[string]interface{}{"type": "string"},
-			"description": "Optional Gmail CC recipients. Every address must be in Gmail's allowed recipients list. Other channels ignore this.",
+			"description": "Optional Gmail CC recipients. Addresses in Gmail's blocked recipients list are rejected. Other channels ignore this.",
 		}
 		notifyProps["email_attachments"] = map[string]interface{}{
 			"type":        "array",

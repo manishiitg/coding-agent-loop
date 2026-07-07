@@ -1,10 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
-import { WandSparkles, Loader2, AlertCircle, Plus, RefreshCw, Lightbulb } from 'lucide-react'
+import { WandSparkles, Loader2, AlertCircle, Plus, RefreshCw } from 'lucide-react'
 import { skillsApi } from '../../api/skills'
 import type { Skill } from '../../types/skills'
 import SkillCard from './SkillCard'
 import SkillImportDialog from './SkillImportDialog'
-import { useChatStore } from '../../stores'
 
 export default function SkillsSection() {
   const [skills, setSkills] = useState<Skill[]>([])
@@ -12,9 +11,6 @@ export default function SkillsSection() {
   const [error, setError] = useState<string | null>(null)
   const [showDetails, setShowDetails] = useState(false)
   const [showImportDialog, setShowImportDialog] = useState(false)
-  
-  const getActiveTab = useChatStore(state => state.getActiveTab)
-  const setTabConfig = useChatStore(state => state.setTabConfig)
 
   const loadSkills = useCallback(async () => {
     setIsLoading(true)
@@ -59,21 +55,6 @@ export default function SkillsSection() {
   const handleImportSuccess = () => {
     setShowImportDialog(false)
     loadSkills()
-  }
-  
-  const handleOpenSkillBuilder = () => {
-    const activeTab = getActiveTab()
-    if (activeTab) {
-      const currentSkills = activeTab.config.selectedSkills || []
-      const updatedSkills = currentSkills.includes('skill-creator')
-        ? currentSkills
-        : [...currentSkills, 'skill-creator']
-      setTabConfig(activeTab.tabId, {
-        selectedSkills: updatedSkills,
-        inputText: '/build-skill ',
-      })
-    }
-    setShowDetails(false)
   }
 
   return (
@@ -141,13 +122,6 @@ export default function SkillsSection() {
                       <RefreshCw className="w-4 h-4" />
                     </button>
                     <button
-                      onClick={handleOpenSkillBuilder}
-                      className="px-3 py-1.5 text-sm font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 rounded-md transition-colors flex items-center gap-2"
-                    >
-                      <Lightbulb className="w-4 h-4" />
-                      Build Skill
-                    </button>
-                    <button
                       onClick={() => setShowImportDialog(true)}
                       className="px-3 py-1.5 text-sm font-medium text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/30 hover:bg-purple-100 dark:hover:bg-purple-900/50 rounded-md transition-colors flex items-center gap-2"
                     >
@@ -172,13 +146,6 @@ export default function SkillsSection() {
                         Import skills to extend your agent's capabilities
                       </p>
                       <div className="flex gap-2">
-                        <button
-                          onClick={handleOpenSkillBuilder}
-                          className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-md transition-colors flex items-center gap-2"
-                        >
-                          <Lightbulb className="w-4 h-4" />
-                          Build Skill
-                        </button>
                         <button
                           onClick={() => setShowImportDialog(true)}
                           className="px-4 py-2 text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 rounded-md transition-colors flex items-center gap-2"

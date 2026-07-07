@@ -75,12 +75,13 @@ newest-first. It *is* the loop's memory:
   `ok` (cite before→after), `bad` (regressed → reopen a finding), or `flat` (path not hit →
   stays pending). So "I fixed X last run → re-check X" is built in.
 - **Open findings** — anchored ids that persist across runs until a fix closes them.
+- **Human input requests** — structured question cards with status, options/default, and evidence; notifications may point to them, but email is not the source of truth.
 
 See `review-improve-log.md` for the log's structure and the confirm-Decision rules.
 
 Each loop also writes a compact **dashboard card** in the workflow's own workspace, every
 run (overwrite), via the existing `update_workspace_file`:
-- Pulse → `builder/card.health.html` (🩺 status + headline, `data-*` attributes)
+- Pulse final notify/summary step → `builder/card.health.html` (🩺 final post-Pulse status + compact named fields for state/fix/evidence/next, not the full email narrative)
 - Pulse report step → `builder/card.cost.html` (💵 cost/time status + headline/metric)
 - Auto-improve → `builder/card.progress.html` (🎯 status + goal + headline)
 

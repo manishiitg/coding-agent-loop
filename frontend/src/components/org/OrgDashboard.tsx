@@ -28,6 +28,7 @@ interface CardData {
   title: string
   metric: string
   detail: string
+  fields: Record<string, string>
 }
 
 interface WorkflowDashEntry {
@@ -57,11 +58,16 @@ function parseCard(content: string | undefined | null): CardData | null {
     const goal = (el.getAttribute('data-goal') || '').trim()
     const updated = (el.getAttribute('data-updated') || '').trim()
     const title = (doc.querySelector('h1,h2,h3,h4')?.textContent || '').trim()
-    const headlineEl = doc.querySelector('[data-field="headline"]')
-    const headline = (headlineEl?.textContent || '').trim()
-    const metric = (doc.querySelector('[data-field="metric"]')?.textContent || '').trim()
-    const detail = (doc.querySelector('[data-field="detail"]')?.textContent || '').trim()
-    return { status, headline, goal, updated, title, metric, detail }
+    const fields: Record<string, string> = {}
+    doc.querySelectorAll('[data-field]').forEach((node) => {
+      const key = node.getAttribute('data-field')?.trim()
+      const value = (node.textContent || '').trim()
+      if (key && value && !fields[key]) fields[key] = value
+    })
+    const headline = fields.headline || ''
+    const metric = fields.metric || ''
+    const detail = fields.detail || ''
+    return { status, headline, goal, updated, title, metric, detail, fields }
   } catch {
     return null
   }
@@ -80,6 +86,18 @@ function progressStatus(card: CardData | null): ProgressStatus {
 function costStatus(card: CardData | null): CostStatus {
   if (card && COST_VALUES.has(card.status)) return card.status as CostStatus
   return 'idle'
+}
+
+function openInputCount(card: CardData | null): number {
+  const value = card?.fields.input?.trim()
+  if (!value) return 0
+  if (/^(0\b|none\b|no\b|no open|no input|no questions)/i.test(value)) return 0
+  const match = value.match(/\b(\d+)\b/)
+  if (match) {
+    const count = Number.parseInt(match[1], 10)
+    return count > 0 ? count : 0
+  }
+  return 1
 }
 
 function latestUpdated(...cards: Array<CardData | null>): string {
@@ -123,6 +141,19 @@ const COST_PILL: Record<CostStatus, { className: string; label: string; Icon: Re
   missing: { className: 'border-red-500/25 bg-red-500/10 text-red-600 dark:text-red-300', label: 'Cost missing', Icon: CircleAlert },
   idle: { className: 'border-border bg-muted/70 text-muted-foreground', label: 'No cost', Icon: DollarSign },
 }
+
+const HEALTH_DETAIL_FIELDS: Array<readonly [key: string, label: string]> = [
+  ['state', 'State'],
+  ['input', 'Needs input'],
+  ['fix', 'Fix'],
+  ['harden', 'Harden'],
+  ['artifact', 'Artifact review'],
+  ['backup', 'Backup'],
+  ['publish', 'Publish'],
+  ['cost', 'Cost/time'],
+  ['evidence', 'Evidence'],
+  ['next', 'Next'],
+]
 
 function relativeTime(iso: string): string {
   if (!iso) return ''
@@ -189,7 +220,8 @@ const StatusDetail: React.FC<{
   card: CardData | null
   status: HealthStatus | ProgressStatus | CostStatus
   pill: { className: string; label: string; Icon: React.ComponentType<{ className?: string }> }
-}> = ({ title, card, status, pill }) => (
+  extraFields?: Array<readonly [key: string, label: string]>
+}> = ({ title, card, status, pill, extraFields }) => (
   <section className="rounded-lg border border-border bg-card/95 p-3">
     <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
       <div className="flex items-center gap-2">
@@ -205,6 +237,9 @@ const StatusDetail: React.FC<{
         <DetailRow label="Headline" value={card.headline} />
         <DetailRow label="Metric" value={card.metric} />
         <DetailRow label="Detail" value={card.detail} />
+        {extraFields?.map(([key, label]) => (
+          <DetailRow key={key} label={label} value={card.fields[key]} />
+        ))}
         <DetailRow label="Goal" value={card.goal} />
         <DetailRow label="Updated" value={absoluteTime(card.updated)} />
       </div>
@@ -267,7 +302,7 @@ const WorkflowDetailModal: React.FC<{
               <DetailRow label="Latest update" value={updated ? `${absoluteTime(updated)} (${relativeTime(updated).replace(/^updated /, '')})` : ''} />
             </div>
             <div className="grid gap-3">
-              <StatusDetail title="Health" card={entry.health} status={h} pill={HEALTH_PILL[h]} />
+              <StatusDetail title="Health" card={entry.health} status={h} pill={HEALTH_PILL[h]} extraFields={HEALTH_DETAIL_FIELDS} />
               <StatusDetail title="Goal alignment" card={entry.progress} status={p} pill={PROGRESS_PILL[p]} />
               <StatusDetail title="Cost and time" card={entry.cost} status={c} pill={COST_PILL[c]} />
             </div>
@@ -342,6 +377,7 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
     let critical = 0, bug = 0, healthy = 0
     let offGoal = 0, atRisk = 0, onTrack = 0
     let costElevated = 0, costMissing = 0, costNormal = 0
+    let inputOpen = 0
     for (const e of entries) {
       const h = healthStatus(e.health)
       if (h === 'critical') critical++
@@ -355,9 +391,10 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
       if (c === 'elevated') costElevated++
       else if (c === 'missing') costMissing++
       else if (c === 'normal') costNormal++
+      inputOpen += openInputCount(e.health)
     }
-    const needAttention = critical + bug + offGoal + atRisk + costElevated + costMissing
-    return { critical, bug, healthy, offGoal, atRisk, onTrack, costElevated, costMissing, costNormal, needAttention }
+    const needAttention = critical + bug + offGoal + atRisk + costElevated + costMissing + inputOpen
+    return { critical, bug, healthy, offGoal, atRisk, onTrack, costElevated, costMissing, costNormal, inputOpen, needAttention }
   }, [entries])
 
   const groups = useMemo(() => {
@@ -368,7 +405,7 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
       const h = healthStatus(e.health)
       const p = progressStatus(e.progress)
       const c = costStatus(e.cost)
-      const needsAttention = h === 'critical' || h === 'bug' || p === 'off-goal' || p === 'at-risk' || c === 'elevated' || c === 'missing'
+      const needsAttention = h === 'critical' || h === 'bug' || p === 'off-goal' || p === 'at-risk' || c === 'elevated' || c === 'missing' || openInputCount(e.health) > 0
       const group = needsAttention ? ATTENTION_GROUP : OK_GROUP
       const bucket = map.get(group)
       if (bucket) bucket.push(e)
@@ -477,6 +514,8 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
         <TriageMetric label="Cost watch" value={triage.costElevated} Icon={AlertTriangle} className="border-amber-500/20 bg-background/60 text-muted-foreground" />
         <TriageMetric label="Cost missing" value={triage.costMissing} Icon={CircleAlert} className="border-red-500/20 bg-background/60 text-muted-foreground" />
         <TriageMetric label="Cost ok" value={triage.costNormal} Icon={DollarSign} className="border-sky-500/20 bg-background/60 text-muted-foreground" />
+        <span className="hidden h-5 w-px bg-border sm:block" />
+        <TriageMetric label="Input" value={triage.inputOpen} Icon={CircleHelp} className="border-violet-500/20 bg-background/60 text-muted-foreground" />
       </div>
 
       {/* Status groups */}
@@ -502,6 +541,9 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
                 const updated = latestUpdated(entry.health, entry.progress, entry.cost)
                 const rel = relativeTime(updated)
                 const goalLabel = entry.health?.goal?.trim() || entry.progress?.goal?.trim() || entry.cost?.goal?.trim() || ''
+                const inputOpen = openInputCount(entry.health)
+                const healthSecondary = entry.health?.fields.next || entry.health?.fields.fix || entry.health?.detail
+                const healthSecondaryLabel = entry.health?.fields.next ? 'Next' : entry.health?.fields.fix ? 'Fix' : 'Detail'
                 return (
                   <div
                     key={entry.workspacePath}
@@ -533,12 +575,21 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
                       <Pill Icon={HEALTH_PILL[h].Icon} className={HEALTH_PILL[h].className} label={HEALTH_PILL[h].label} />
                       <Pill Icon={PROGRESS_PILL[p].Icon} className={PROGRESS_PILL[p].className} label={PROGRESS_PILL[p].label} />
                       <Pill Icon={COST_PILL[c].Icon} className={COST_PILL[c].className} label={COST_PILL[c].label} />
+                      {inputOpen > 0 && (
+                        <Pill Icon={CircleHelp} className="border-violet-500/25 bg-violet-500/10 text-violet-600 dark:text-violet-300" label="Needs input" />
+                      )}
                     </div>
                     <div className="mt-2 space-y-1.5 text-xs leading-5 text-muted-foreground">
                       {entry.health?.headline && (
                         <p className="line-clamp-2">
                           <span className="font-runloop-mono mr-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/70">Health</span>
                           {entry.health.headline}
+                        </p>
+                      )}
+                      {healthSecondary && (
+                        <p className="line-clamp-1">
+                          <span className="font-runloop-mono mr-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/70">{healthSecondaryLabel}</span>
+                          {healthSecondary}
                         </p>
                       )}
                       {entry.progress?.headline && (

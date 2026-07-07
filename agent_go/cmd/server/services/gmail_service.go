@@ -49,11 +49,10 @@ type GmailConfig struct {
 	// destination hint and the target user has no Gmail preference set.
 	DefaultTo string `json:"default_to"`
 
-	// AllowedRecipients is a hard allowlist for outbound Gmail recipients. The
-	// default recipient is always added during normalization. Explicit
-	// destination hints and per-user Gmail preferences outside this list are
-	// rejected instead of being sent.
-	AllowedRecipients []string `json:"allowed_recipients,omitempty"`
+	// BlockedRecipients is a denylist for outbound Gmail recipients. Explicit
+	// destination hints, per-user Gmail preferences, To overrides, and CC
+	// recipients matching this list are rejected instead of being sent.
+	BlockedRecipients []string `json:"blocked_recipients,omitempty"`
 
 	// GwsPath is the path to the gws binary. Empty means "gws" on $PATH.
 	GwsPath string `json:"gws_path,omitempty"`
@@ -160,7 +159,7 @@ func (g *GmailService) ReloadConfig(ctx context.Context) error {
 		log.Printf("[GMAIL] Service disabled: enabled=%v, hasDefaultTo=%v, gwsFound=%v",
 			cfg.Enabled, g.defaultTo != "", binaryOK)
 	} else if g.enabled {
-		log.Printf("[GMAIL] Service enabled: default_to=%s, allowed_recipients=%d, gws=%s", g.defaultTo, len(cfg.AllowedRecipients), g.gwsPath)
+		log.Printf("[GMAIL] Service enabled: default_to=%s, blocked_recipients=%d, gws=%s", g.defaultTo, len(cfg.BlockedRecipients), g.gwsPath)
 	}
 	return nil
 }
@@ -173,7 +172,7 @@ func (g *GmailService) GetConfig() *GmailConfig {
 		return &GmailConfig{}
 	}
 	c := *g.config
-	c.AllowedRecipients = append([]string(nil), g.config.AllowedRecipients...)
+	c.BlockedRecipients = append([]string(nil), g.config.BlockedRecipients...)
 	return &c
 }
 
@@ -307,10 +306,18 @@ func (g *GmailService) validateCCRecipients(cc []string) ([]string, error) {
 }
 
 func (g *GmailService) validateRecipients(recipients []string, label string) ([]string, error) {
+	return validateRecipientsAgainstList(recipients, label, g.blockedRecipients())
+}
+
+func validateRecipientsAgainstList(recipients []string, label string, blockedRecipients []string) ([]string, error) {
 	recipients = normalizeEmailList(recipients)
+	blocked := map[string]bool{}
+	for _, recipient := range normalizeEmailList(blockedRecipients) {
+		blocked[recipient] = true
+	}
 	for _, recipient := range recipients {
-		if !g.isAllowedRecipient(recipient) {
-			return nil, fmt.Errorf("gmail %s recipient %q is not in the allowed recipients list", label, recipient)
+		if blocked[recipient] {
+			return nil, fmt.Errorf("gmail %s recipient %q is in the blocked recipients list", label, recipient)
 		}
 	}
 	return recipients, nil
@@ -606,6 +613,17 @@ func writeBase64Wrapped(w io.Writer, data []byte) error {
 // "test connection" button works before the channel is saved/enabled. It still
 // requires gws to be installed and authenticated.
 func (g *GmailService) SendTest(ctx context.Context, to string) (string, error) {
+	return g.sendTest(ctx, to, nil, false)
+}
+
+// SendTestWithBlockedRecipients sends a one-off test email while validating
+// against the caller's draft denylist. The settings UI uses this before saving
+// so the test reflects what is currently typed in the form.
+func (g *GmailService) SendTestWithBlockedRecipients(ctx context.Context, to string, blockedRecipients []string) (string, error) {
+	return g.sendTest(ctx, to, blockedRecipients, true)
+}
+
+func (g *GmailService) sendTest(ctx context.Context, to string, blockedRecipients []string, hasBlockedOverride bool) (string, error) {
 	to = strings.TrimSpace(to)
 	if to == "" {
 		to = g.GetConfig().DefaultTo
@@ -613,6 +631,20 @@ func (g *GmailService) SendTest(ctx context.Context, to string) (string, error) 
 	if to == "" {
 		return "", fmt.Errorf("no recipient: set a default address first")
 	}
+	var recipients []string
+	var err error
+	if hasBlockedOverride {
+		recipients, err = validateRecipientsAgainstList([]string{to}, "test", blockedRecipients)
+	} else {
+		recipients, err = g.validateRecipients([]string{to}, "test")
+	}
+	if err != nil {
+		return "", err
+	}
+	if len(recipients) == 0 {
+		return "", fmt.Errorf("no recipient: set a default address first")
+	}
+	to = strings.Join(recipients, ", ")
 	return g.send(ctx, to,
 		"[Agent] Gmail test message",
 		"This is a test from your agent's Gmail channel. If you received it, outbound Gmail is configured correctly.")
@@ -624,7 +656,7 @@ func normalizeGmailConfig(cfg *GmailConfig) *GmailConfig {
 	}
 	out := *cfg
 	out.DefaultTo = strings.TrimSpace(out.DefaultTo)
-	out.AllowedRecipients = normalizeEmailList(append([]string{out.DefaultTo}, out.AllowedRecipients...))
+	out.BlockedRecipients = normalizeEmailList(out.BlockedRecipients)
 	return &out
 }
 
@@ -646,29 +678,27 @@ func normalizeEmailList(values []string) []string {
 	return out
 }
 
-func (g *GmailService) isAllowedRecipient(email string) bool {
+func (g *GmailService) isBlockedRecipient(email string) bool {
 	email = strings.ToLower(strings.TrimSpace(email))
 	if email == "" {
-		return false
+		return true
 	}
-	g.mu.RLock()
-	cfg := g.config
-	defaultTo := g.defaultTo
-	g.mu.RUnlock()
-
-	allowed := []string{}
-	if cfg != nil {
-		allowed = cfg.AllowedRecipients
-	}
-	if len(allowed) == 0 && strings.TrimSpace(defaultTo) != "" {
-		allowed = []string{defaultTo}
-	}
-	for _, candidate := range normalizeEmailList(allowed) {
+	for _, candidate := range g.blockedRecipients() {
 		if candidate == email {
 			return true
 		}
 	}
 	return false
+}
+
+func (g *GmailService) blockedRecipients() []string {
+	g.mu.RLock()
+	cfg := g.config
+	g.mu.RUnlock()
+	if cfg == nil {
+		return nil
+	}
+	return normalizeEmailList(append([]string(nil), cfg.BlockedRecipients...))
 }
 
 // gmailChildEnv builds the environment for the gws child process, layering the

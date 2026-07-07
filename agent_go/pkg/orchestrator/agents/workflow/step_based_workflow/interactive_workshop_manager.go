@@ -1032,7 +1032,7 @@ func (iwm *InteractiveWorkshopManager) SetToolCallQuery(mainSessionID string, qu
 // restrict tools per-turn as the user switches modes from the frontend.
 //
 // Tools are grouped into categories:
-//   - System tools: always included (shell, workspace, human feedback, virtual tools)
+//   - System tools: always included (shell, workspace, non-blocking human notification, virtual tools)
 //   - Workshop execution tools: execute_step, query_step, stop, list, run_in_background
 //   - Step config/tools: update_step_config, harden_workflow, improve_learnings
 //   - Plan modification tools: add/update/delete steps, branches, routes
@@ -1042,7 +1042,7 @@ func (iwm *InteractiveWorkshopManager) SetToolCallQuery(mainSessionID string, qu
 //   - Eval tools: validate_evaluation_plan, run_full_evaluation
 func GetToolsForWorkshopMode(mode string) []string {
 	// System tools — always available regardless of mode.
-	// Includes workspace, shell, virtual tools, and human feedback.
+	// Includes workspace, shell, virtual tools, and non-blocking human notification.
 	system := []string{
 		// Workspace basic tools
 		"list_workspace_files", "read_workspace_file", "update_workspace_file",
@@ -2163,8 +2163,8 @@ This is the one-line-per-category map. For full signatures, parameters, when-to-
 - **Variables & config**: `+"`update_variable`"+`, `+"`add_group`"+`/`+"`update_group`"+`/`+"`delete_group`"+`, `+"`update_workflow_config`"+`. Use `+"`update_workflow_config`"+` for workflow MCP servers, workflow-level MCP tool allowlists, selected skills, selected secrets, browser_mode, KB lock, run retention, and the per-run monitor (`+"`post_run_monitor`"+`). Do NOT edit `+"`workflow.json`"+` manually.
 - **Schedule management**: `+"`create_schedule`"+`, `+"`create_calendar_schedule`"+`, `+"`update_schedule`"+`, `+"`delete_schedule`"+`, `+"`trigger_schedule`"+`, `+"`get_schedule_runs`"+`. Cron / message-authoring rules, workshop run vs optimizer scheduling, the `+"`/auto-improve`"+` exception, infinite-loop prevention rules, and unattended-message discipline — all live in the `+"`workflow-tools`"+` ref doc. Workflow schedules always use the workshop path; do not create direct `+"`mode=\"workflow\"`"+` schedules. **Whenever you create a recurring schedule, also pair it with a backup** so unattended runs persist their state off-box — see `+"`get_reference_doc(kind=\"backup-strategy\")`"+`.
 {{end}}
-- **Shell & discovery**: `+"`execute_shell_command`"+`, `+"`human_feedback`"+`.
-- **Notify the user**: `+"`notify_user`"+` sends a non-blocking message to the user's connected channels (Slack / WhatsApp / email) — use it for FYIs, progress, alerts, or completion notices when you don't need a reply (use `+"`human_feedback`"+` when you do). For email it accepts `+"`email_subject`"+`, an HTML body (`+"`email_html`"+` or `+"`email_html_file`"+`), and `+"`email_attachments`"+`. It returns per-channel delivery status — report failures honestly. Workflow STEPS can also message the user this way: keep `+"`human_tools`"+` in the step's `+"`enabled_custom_tools`"+` (it's in the default set) and have the step call `+"`notify_user`"+`.
+- **Shell & discovery**: `+"`execute_shell_command`"+`, `+"`diff_patch_workspace_file`"+`, `+"`read_image`"+`, `+"`generate_text_llm`"+`, `+"`search_web_llm`"+`.
+- **Notify the user**: `+"`notify_user`"+` sends a non-blocking message to the user's connected channels (Slack / WhatsApp / email) — use it for FYIs, progress, alerts, or completion notices when you do not need a reply. If you need an answer in builder chat, ask in your normal response; workflow runtime steps can use configured human-input tools during execution. For email it accepts `+"`email_subject`"+`, an HTML body (`+"`email_html`"+` or `+"`email_html_file`"+`), and `+"`email_attachments`"+`. It returns per-channel delivery status — report failures honestly. Workflow STEPS can also message the user this way: keep `+"`human_tools`"+` in the step's `+"`enabled_custom_tools`"+` (it's in the default set) and have the step call `+"`notify_user`"+`.
 - **Skills**: `+"`list_skills`"+`, `+"`search_skills`"+`, `+"`install_skill`"+`, `+"`import_skill`"+`, `+"`uninstall_skill`"+`. Skills live at `+"`{{.AbsDocsRoot}}/skills/{folder}/SKILL.md`"+` (workspace root, shared across workflows). `+"`update_workflow_config(add_skills=[...])`"+` selects skills for workshop/builder discovery; step execution requires explicit `+"`update_step_config(step_id, enabled_skills=[...])`"+`. Shared workflow-specific HOW belongs in `+"`learnings/_global/SKILL.md`"+`.
 - **Secrets**: `+"`set_workflow_secret`"+`, `+"`set_user_secret`"+`, `+"`list_secrets`"+`, `+"`delete_workflow_secret`"+`, `+"`delete_user_secret`"+`. Setting a secret **auto-attaches** it to the active workflow and injects `+"`$SECRET_<NAME>`"+` into the live shell — usable immediately, no separate `+"`update_workflow_config(add_secrets=[...])`"+` call needed (that's only for attaching an already-stored secret, e.g. a global or a reusable user secret you didn't just set). Three buckets (workflow / user / global). Values never appear in prompts or logs; step agents read them via `+"`$SECRET_<NAME>`"+` env vars only.
 

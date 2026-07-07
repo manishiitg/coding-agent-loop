@@ -20,9 +20,9 @@ They are orthogonal — a run can be Bug-broken while Goal-on-target, or Bug-cle
 ## Files
 
 - `soul/soul.md`: objective and success criteria. The north star (Markdown — parsed for objective/success-criteria; there is no `soul.html`).
-- `builder/improve.html`: the **Pulse** — the single, self-contained, human-readable HTML log and the user's primary window into the workflow. Holds the two verdicts, a status headline, the goal card, signal tiles, the recent-runs strip, and a newest-first timeline of monitor observations, decisions, open findings, user rules, and notes. Read it before every improve pass. See `get_reference_doc(kind="review-improve-log")` for the format.
+- `builder/improve.html`: the **Pulse** — the single, self-contained, human-readable HTML log and the user's primary window into the workflow. Holds the two verdicts, a status headline, the goal card, signal tiles, the recent-runs strip, and a newest-first timeline of monitor observations, decisions, open findings, human input requests, user rules, and notes. Read it before every improve pass. See `get_reference_doc(kind="review-improve-log")` for the format.
 - `builder/improve-archive/YYYY-MM.html`: monthly archive files for old resolved findings and routine entries. Read only the archive files referenced by the active log's archive index or an unresolved id.
-- `builder/card.health.html`: the compact per-run dashboard card the monitor overwrites each run (status + headline in `data-*` attributes). The Bug/Goal verdicts themselves live in the Pulse log's pills + goal card — there is no separate verdict file.
+- `builder/card.health.html`: the compact per-run dashboard card the monitor's final notify/summary step overwrites each run (final post-Pulse status + headline/detail in `data-*` attributes). The Bug/Goal verdicts themselves live in the Pulse log's pills + goal card — there is no separate verdict file.
 - `route_selection.json`: which route a run took (so the monitor judges only that path).
 - `runs/iteration-0`: current optimizer evidence target.
 
@@ -62,6 +62,7 @@ Each improve pass should perform at most one primary action unless the user expl
 ## Audit Discipline
 
 - **Open findings** carry a short anchor id only so a later fix can close them; closing a finding edits its card in place to add a `Resolved …` line — never delete it, never open a duplicate.
+- **Human input requests are durable.** If Pulse or Auto Improve asks the user a question in email/chat, it first writes or refreshes a `Human input requested` card in `builder/improve.html` with question, why it matters, options, default if no answer, evidence, and status. Email is a delivery channel, not the source of truth.
 - **Decisions are confirmed, not assumed.** A harden/replan decision states the effect it expects when written, and stays **unconfirmed** until a later run measures it — at which point the monitor stamps the decision card once: confirmed (cite before → after), no-effect/regressed (reopen a finding), or inconclusive (the run didn't exercise the changed path). A change that quietly failed is worse than no change, so it is never hidden.
 - Eval-score movement is evidence, not proof. Do not claim an improvement worked until run/eval evidence supports it, and call out confounds such as small sample size, source-data drift, rubric changes, or multiple decisions in the same window. Rubric changes are the loop's biggest confound — they change what scores mean, so they go through a deliberate eval-plan-improvement pass with a major Decision card, never bundled with a harden/replan.
 

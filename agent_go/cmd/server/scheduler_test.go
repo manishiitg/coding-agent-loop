@@ -320,6 +320,9 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 	if strings.Contains(triage, "LLM/COST/TIME REPORT") || strings.Contains(triage, "costs/execution") {
 		t.Fatalf("triage step should not include report-only LLM/cost/time audit:\n%s", triage)
 	}
+	if strings.Contains(triage, "builder/card.health.html") {
+		t.Fatalf("triage step should not write the org dashboard health card; final notify step owns it:\n%s", triage)
+	}
 	if !strings.Contains(triage, "Triage is diagnosis/verdict only") {
 		t.Fatalf("triage step should clarify that hardening is separate:\n%s", triage)
 	}
@@ -389,6 +392,18 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 		"steady healthy",
 		"Bug/Goal state",
 		"cost card is elevated/missing",
+		"builder/card.health.html",
+		"data-axis='health'",
+		"final post-Pulse health",
+		"dashboard summary, not the email narrative",
+		"Human input requested",
+		"data-kind='input'",
+		"data-question-id",
+		"data-field='state'",
+		"data-field='input'",
+		"data-field='fix'",
+		"data-field='next'",
+		"dashboard write happens every run even when soul/soul.md says not to notify",
 		"builder/card.cost.html",
 	} {
 		if !strings.Contains(notify, want) {

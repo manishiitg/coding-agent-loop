@@ -354,9 +354,9 @@ not whether you send the digest.
   or follow-ups; and buttons/links for Goals and Pulse when published.
 - `email_to`: optional replacement To recipient(s) only when the user's org
   notification preference asks to send email somewhere other than the configured
-  default; every address must be configured as an allowed Gmail recipient.
+  default; do not use any address the workspace has blocked for Gmail notify.
 - `email_cc`: optional CC recipients only when the user's org notification
-  preference asks for CC; every address must be configured as an allowed Gmail recipient.
+  preference asks for CC; do not use any address the workspace has blocked for Gmail notify.
 - `email_body`: plain-text fallback with the same facts; never put HTML here. It should
   still be useful without HTML: headline, workflow health counts, goal scorecard,
   cost/model highlight, top recommendations, and links.

@@ -333,10 +333,6 @@ export const ModePresetBar: React.FC = () => {
 
   const workflowCountLabel =`${workflowScheduleSummary.scheduledWorkflows} automation${workflowScheduleSummary.scheduledWorkflows !== 1 ? 's' : ''}`
   const scheduleCountLabel = `${workflowScheduleSummary.totalSchedules} schedule${workflowScheduleSummary.totalSchedules !== 1 ? 's' : ''}`
-  const workflowScheduleHeaderLabel = workflowScheduleSummary.runningWorkflows > 0
-    ? `${workflowScheduleSummary.runningWorkflows}/${workflowScheduleSummary.scheduledWorkflows} automations · ${workflowScheduleSummary.runningSchedules}/${workflowScheduleSummary.totalSchedules} schedules`
-    : `${workflowCountLabel} · ${scheduleCountLabel}`
-
   const workflowScheduleTooltip = workflowScheduleSummary.runningWorkflows > 0
     ? `${workflowScheduleSummary.runningWorkflows} of ${workflowScheduleSummary.scheduledWorkflows} scheduled automations running now; ${workflowScheduleSummary.runningSchedules} of ${workflowScheduleSummary.totalSchedules} schedules running`
     : `${workflowCountLabel} scheduled; ${scheduleCountLabel} total`
@@ -610,9 +606,9 @@ export const ModePresetBar: React.FC = () => {
   return (
     <>
       <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           {/* Left: App logo + Mode Indicator */}
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 items-center gap-3">
             {/* App logo (relocated from the former left sidebar header) */}
             <RunloopLockup className="mr-1 shrink-0" version={appVersion} />
 
@@ -620,7 +616,7 @@ export const ModePresetBar: React.FC = () => {
             <div
               data-tour="top-mode-switcher"
               data-testid="tour-top-mode-switcher"
-              className="flex items-center bg-gray-100 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-lg p-0.5"
+              className="flex shrink-0 items-center bg-gray-100 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-lg p-0.5"
               role="tablist"
               aria-label="Select mode"
             >
@@ -634,13 +630,13 @@ export const ModePresetBar: React.FC = () => {
                     aria-selected={isActive}
                     aria-label={`Switch to ${mode.label} mode`}
                     onClick={() => handleModePillClick(mode.key)}
-                    className={`relative flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all duration-150 cursor-pointer ${
+                    className={`relative flex items-center gap-1.5 whitespace-nowrap px-3 py-1 rounded-md text-xs font-medium transition-all duration-150 cursor-pointer ${
                       isActive ? mode.activeClasses : mode.inactiveClasses
                     }`}
                     type="button"
                   >
                     <Icon className="w-3 h-3" />
-                    <span>{mode.label}</span>
+                    <span className="whitespace-nowrap">{mode.label}</span>
                   </button>
                 )
               })}
@@ -649,7 +645,7 @@ export const ModePresetBar: React.FC = () => {
                 aria-selected={showWorkflowsOverview}
                 aria-label="Switch to Organization view"
                 onClick={() => setShowWorkflowsOverview(!showWorkflowsOverview)}
-                className={`relative flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all duration-150 cursor-pointer ${
+                className={`relative flex items-center gap-1.5 whitespace-nowrap px-3 py-1 rounded-md text-xs font-medium transition-all duration-150 cursor-pointer ${
                   showWorkflowsOverview
                     ? 'bg-slate-50 text-slate-700 shadow-sm ring-1 ring-slate-200 dark:bg-slate-700/70 dark:text-slate-100 dark:ring-slate-500/50'
                     : 'text-gray-500 dark:text-gray-400'
@@ -662,7 +658,7 @@ export const ModePresetBar: React.FC = () => {
             </div>
 
             {/* Center: Preset Information */}
-            <div className="flex items-center gap-3">
+            <div className="flex min-w-0 items-center gap-3">
               {/* Preset Information - Show ONLY for workflow mode */}
               {(() => {
                 // For workflow mode only, always show preset selector
@@ -677,19 +673,19 @@ export const ModePresetBar: React.FC = () => {
                       >
                         <button
                           onClick={handlePresetDropdownToggle}
-                          className="flex items-center gap-2 px-3 py-1 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors"
+                          className="flex min-w-0 items-center gap-2 px-3 py-1 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors"
                         >
                           {activePreset ? (
                             <>
                               <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                              <span className="block max-w-[190px] truncate whitespace-nowrap text-sm font-medium text-gray-700 dark:text-gray-300">
                                 {activePreset.label}
                               </span>
                             </>
                           ) : (
                             <>
                               <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
-                              <span className="text-sm font-medium text-gray-500 dark:text-gray-400">
+                              <span className="block max-w-[190px] truncate whitespace-nowrap text-sm font-medium text-gray-500 dark:text-gray-400">
                                 Select Automation
                               </span>
                             </>
@@ -817,7 +813,7 @@ export const ModePresetBar: React.FC = () => {
 
           {/* Right: icons */}
           <TooltipProvider delayDuration={400}>
-            <div className="flex items-center gap-3">
+            <div className="flex shrink-0 items-center gap-2">
               <GlobalActivityMonitor />
 
               <Tooltip>
@@ -851,12 +847,14 @@ export const ModePresetBar: React.FC = () => {
               {shouldShowBotConnector && (
                 <Tooltip>
                   <TooltipTrigger asChild>
-                  <button
-                    onClick={openBotConnector}
-                    data-tour="bot-connector"
-                    data-testid="tour-bot-connector"
-                    className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-                  >
+                    <button
+                      onClick={openBotConnector}
+                      data-tour="bot-connector"
+                      data-testid="tour-bot-connector"
+                      aria-label="Bot Connector"
+                      title="Bot Connector"
+                      className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                    >
                       <Bot className="w-4 h-4" />
                     </button>
                   </TooltipTrigger>
@@ -872,16 +870,14 @@ export const ModePresetBar: React.FC = () => {
                         onClick={() => setShowRunsPanel(true)}
                         data-tour="workflow-schedules"
                         data-testid="tour-workflow-schedules"
-                        className={`relative flex items-center gap-2 px-2 py-1 rounded-md transition-colors ${
+                        aria-label="Workflow schedules"
+                        className={`relative flex items-center gap-2 rounded-md p-1 transition-colors ${
                           workflowScheduleSummary.runningWorkflows > 0
                             ? 'text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/30'
                             : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200'
                         }`}
                       >
                         <Workflow className="w-4 h-4 flex-shrink-0" />
-                        <span className="text-xs font-medium whitespace-nowrap">
-                          {workflowScheduleHeaderLabel}
-                        </span>
                         {workflowScheduleSummary.runningWorkflows > 0 && (
                           <>
                             <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-green-500 border border-white dark:border-gray-800" />
@@ -1022,10 +1018,12 @@ export const ModePresetBar: React.FC = () => {
         onDeleteWorkflow={handleDeleteWorkflow}
       />
 
-      <BotConnectorModal
-        isOpen={showBotConnector}
-        onClose={closeBotConnector}
-      />
+      {showBotConnector && (
+        <BotConnectorModal
+          isOpen={showBotConnector}
+          onClose={closeBotConnector}
+        />
+      )}
 
       {/* Scheduled Workflow Runs Panel */}
       {showRunsPanel && (

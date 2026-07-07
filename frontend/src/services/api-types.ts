@@ -416,13 +416,13 @@ export interface GmailAuthStatus {
 export interface GmailConfigRequest {
   enabled: boolean
   default_to: string
-  allowed_recipients?: string[]
+  blocked_recipients?: string[]
 }
 
 export interface GmailConfigResponse {
   enabled: boolean
   default_to?: string
-  allowed_recipients?: string[]
+  blocked_recipients?: string[]
   auth: GmailAuthStatus
   ready: boolean  // enabled + recipient + authenticated + gmail scope
 }

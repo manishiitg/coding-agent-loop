@@ -19,7 +19,7 @@ import (
 type GmailConfigRequest struct {
 	Enabled           bool     `json:"enabled"`
 	DefaultTo         string   `json:"default_to"`
-	AllowedRecipients []string `json:"allowed_recipients,omitempty"`
+	BlockedRecipients []string `json:"blocked_recipients,omitempty"`
 	GwsPath           string   `json:"gws_path,omitempty"`
 	ConfigHome        string   `json:"config_home,omitempty"`
 	CredentialsFile   string   `json:"credentials_file,omitempty"`
@@ -32,7 +32,7 @@ type GmailConfigRequest struct {
 type GmailConfigResponse struct {
 	Enabled           bool                     `json:"enabled"`
 	DefaultTo         string                   `json:"default_to,omitempty"`
-	AllowedRecipients []string                 `json:"allowed_recipients,omitempty"`
+	BlockedRecipients []string                 `json:"blocked_recipients,omitempty"`
 	Auth              services.GmailAuthStatus `json:"auth"`
 	// Ready is the bottom-line "this channel will actually send" signal:
 	// enabled + a default recipient + gws installed/authenticated with a Gmail scope.
@@ -66,7 +66,7 @@ func buildGmailConfigResponse(svc *services.GmailService, cfg *services.GmailCon
 	return GmailConfigResponse{
 		Enabled:           cfg.Enabled,
 		DefaultTo:         cfg.DefaultTo,
-		AllowedRecipients: cfg.AllowedRecipients,
+		BlockedRecipients: cfg.BlockedRecipients,
 		Auth:              auth,
 		Ready:             cfg.Enabled && cfg.DefaultTo != "" && auth.Authenticated && auth.HasGmailScope,
 	}
@@ -122,7 +122,7 @@ func updateGmailConfigHandler(api *StreamingAPI) http.HandlerFunc {
 		cfg := &services.GmailConfig{
 			Enabled:           req.Enabled,
 			DefaultTo:         req.DefaultTo,
-			AllowedRecipients: req.AllowedRecipients,
+			BlockedRecipients: req.BlockedRecipients,
 			GwsPath:           req.GwsPath,
 			ConfigHome:        req.ConfigHome,
 			CredentialsFile:   req.CredentialsFile,
@@ -166,14 +166,23 @@ func testGmailConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 
 		// Optional override recipient (test before saving). Falls back to default_to.
 		to := ""
+		var blockedRecipients []string
+		hasDraftConfig := false
 		if r.ContentLength > 0 {
 			var req GmailConfigRequest
 			if json.NewDecoder(r.Body).Decode(&req) == nil {
 				to = req.DefaultTo
+				blockedRecipients = req.BlockedRecipients
+				hasDraftConfig = true
 			}
 		}
 
-		msgID, err := svc.SendTest(r.Context(), to)
+		var msgID string
+		if hasDraftConfig {
+			msgID, err = svc.SendTestWithBlockedRecipients(r.Context(), to, blockedRecipients)
+		} else {
+			msgID, err = svc.SendTest(r.Context(), to)
+		}
 		if err != nil {
 			log.Printf("[GMAIL] test send failed: %v", err)
 			writeGmailTest(w, false, fmt.Sprintf("Test failed: %v", err))

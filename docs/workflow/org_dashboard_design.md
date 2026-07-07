@@ -149,10 +149,12 @@ model (as wired):
   cross-workspace writes.
 - **No new tool.** The loops already have `update_workspace_file` (they write
   `improve.html` with it). The card contract is inlined in the loop step prompts in
-  `cmd/server/scheduler.go`: Pulse `postRunMonitorSteps()` STEP 1 (triage) writes
-  `card.health.html`; Pulse STEP 4 (LLM/cost/time report) writes `card.cost.html`;
-  Auto-improve `wrapOptimizerImproveMessage()` STEP 2 writes `card.progress.html`. The
-  owning step OVERWRITES its card so the dashboard stays live.
+  `cmd/server/scheduler.go`: Pulse `postRunMonitorSteps()` STEP 8 (notify/final
+  summary) writes `card.health.html` after triage, harden, artifact review,
+  cost/time, backup, and publish are known; Pulse STEP 4 (LLM/cost/time report)
+  writes `card.cost.html`; Auto-improve `wrapOptimizerImproveMessage()` STEP 2
+  writes `card.progress.html`. The owning step OVERWRITES its card so the dashboard
+  stays live.
 - **Dashboard assembly (frontend, to build):** enumerate workflows via the existing
   `getWorkflowsOverview(workspacePaths[])` path, then per workflow read
   `getBuilderDoc(workspacePath, doc, filePath='builder/card.health.html')` +
@@ -163,4 +165,9 @@ model (as wired):
   `<article class='pulse-card' data-axis='health|progress|cost' data-workflow='…'
   data-status='healthy|bug|critical (health) | on-track|at-risk|off-goal (progress) | normal|elevated|missing (cost)'
   data-goal='…' data-updated='ISO8601'><h4>name</h4><p data-field='headline'>…</p></article>`
+  Health cards should also use named `data-field` rows when known:
+  `metric`, `detail`, `state`, `input`, `fix`, `harden`, `artifact`, `backup`, `publish`,
+  `cost`, `evidence`, and `next`. The org dashboard treats these as compact state,
+  not the full email narrative. `input` summarizes open `Human input requested`
+  cards in `builder/improve.html`, for example `0 open` or `1 open — approve cadence change`.
 - **v1 scope:** current-status cards. Rolling trend deferred to v2.

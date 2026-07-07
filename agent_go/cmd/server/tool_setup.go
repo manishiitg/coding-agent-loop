@@ -218,7 +218,7 @@ func normalizeAgentMode(agentMode string) string {
 // createCustomTools creates workspace and human tools for orchestrator/workflow agents
 // workflowMode: if true, includes advanced + human + todo tools for workflow mode
 //
-//	if false, workspace_advanced + human tools for chat mode (shell, image, web fetch, PDF, feedback/notify)
+//	if false, workspace_advanced + chat-safe human tools (shell, image, web fetch, PDF, notify/submit answer)
 //
 // Returns: tools, executors, and a map of tool names to their categories
 // Workspace registry tools get category "workspace_advanced"

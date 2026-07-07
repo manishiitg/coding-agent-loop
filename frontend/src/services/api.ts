@@ -1134,7 +1134,7 @@ export const agentApi = {
   // Slack Feedback Configuration
   // Get Slack configuration
   getSlackFeedbackConfig: async (): Promise<SlackConfigResponse> => {
-    const apiResponse = await api.get('/api/human-feedback/slack/config')
+    const apiResponse = await api.get('/api/human-feedback/slack/config', { timeout: 10000 })
     return apiResponse.data
   },
 
@@ -1188,7 +1188,7 @@ export const agentApi = {
   // --- Gmail (outbound-only) feedback channel ---
 
   getGmailFeedbackConfig: async (): Promise<GmailConfigResponse> => {
-    const apiResponse = await api.get('/api/human-feedback/gmail/config')
+    const apiResponse = await api.get('/api/human-feedback/gmail/config', { timeout: 10000 })
     return apiResponse.data
   },
 

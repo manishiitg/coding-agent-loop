@@ -637,8 +637,13 @@ export const agentApi = {
     return agentApi.getSessionEvents(sessionId, 0)
   },
 
-  listTerminals: async (sessionId?: string, content: 'none' | 'tail' | 'full' = 'tail'): Promise<ListTerminalsResponse> => {
-    const params = sessionId ? { session_id: sessionId, content } : { content }
+  listTerminals: async (
+    sessionId?: string,
+    content: 'none' | 'tail' | 'full' = 'tail',
+    options?: { activeOnly?: boolean },
+  ): Promise<ListTerminalsResponse> => {
+    const params: Record<string, string | number | boolean> = sessionId ? { session_id: sessionId, content } : { content }
+    if (options?.activeOnly) params.active_only = 1
     const response = await api.get('/api/terminals', { params, timeout: 15000 })
     return response.data
   },

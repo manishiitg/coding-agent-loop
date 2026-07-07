@@ -422,7 +422,7 @@ export const GlobalActivityMonitor: React.FC = () => {
       const [activeResult, runningResult, terminalsResult] = await Promise.allSettled([
         getActiveSessions(true),
         agentApi.listRunningWorkflows(),
-        agentApi.listTerminals(undefined, 'none'),
+        agentApi.listTerminals(undefined, 'none', { activeOnly: true }),
       ])
       const active = activeResult.status === 'fulfilled' ? activeResult.value : []
       const running = runningResult.status === 'fulfilled' ? (runningResult.value.running || []) : []
@@ -550,12 +550,26 @@ export const GlobalActivityMonitor: React.FC = () => {
   }, [activeTabId, chatTabs, selectedModeCategory, showWorkflowsOverview])
   const visibleSessions = useMemo(() => {
     const filtered = activeSessions.filter(session => session.session_id !== currentSessionId)
+    const terminalBackedSessionIds = new Set(terminalBackedSessions.map(session => session.session_id))
 
     // De-duplicate by workflow: if multiple sessions share the same workflow name/path,
-    // keep only the most active one (running > completed-with-bg-agents > idle).
+    // keep the one that will open the best live surface. Terminal-backed sessions
+    // win because they can render the tmux pane; plain running registry rows may
+    // only restore a read-only Schedule tab with no terminal attached.
     const workflowKey = (s: ActiveSessionInfo) => s.workflow_name || s.workflow_label || s.workspace_path || ''
     const byWorkflow = new Map<string, ActiveSessionInfo>()
     const nonWorkflow: ActiveSessionInfo[] = []
+    const rank = (s: ActiveSessionInfo) => {
+      const st = normalizedStatus(s.status)
+      let score = 0
+      if (st === 'running' || st === 'active' || st === 'in_progress') score += 30
+      if (hasLiveBackgroundAgents(s)) score += 20
+      if (s.needs_user_input) score += 15
+      if (s.has_retained_tmux_session || terminalBackedSessionIds.has(s.session_id)) score += 50
+      return score
+    }
+    const timestamp = (s: ActiveSessionInfo) =>
+      Date.parse(s.last_activity || s.created_at || '') || 0
 
     for (const session of filtered) {
       const key = isWorkflowSession(session) ? workflowKey(session) : ''
@@ -568,18 +582,14 @@ export const GlobalActivityMonitor: React.FC = () => {
         byWorkflow.set(key, session)
         continue
       }
-      // Prefer running over completed; prefer more recent background-agent activity
-      const rank = (s: ActiveSessionInfo) => {
-        const st = normalizedStatus(s.status)
-        if (st === 'running') return 3
-        if (hasLiveBackgroundAgents(s)) return 2
-        return 1
+      const rankDelta = rank(session) - rank(existing)
+      if (rankDelta > 0 || (rankDelta === 0 && timestamp(session) > timestamp(existing))) {
+        byWorkflow.set(key, session)
       }
-      if (rank(session) > rank(existing)) byWorkflow.set(key, session)
     }
 
     return [...byWorkflow.values(), ...nonWorkflow]
-  }, [activeSessions, currentSessionId])
+  }, [activeSessions, currentSessionId, terminalBackedSessions])
 
   const visibleActivityKeys = useMemo(() => {
     const keys = new Set<string>()

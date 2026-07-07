@@ -32,6 +32,52 @@ const TAB_STATUS_DOT: Record<'busy' | 'idle' | 'stopped', { cls: string; label: 
   stopped: { cls: 'bg-muted-foreground/60', label: 'Stopped' },
 }
 
+async function hydrateWorkflowTreeEvents(tabId: string): Promise<void> {
+  const store = useChatStore.getState()
+  const tab = store.chatTabs[tabId]
+  const sessionId = tab?.sessionId
+  if (!sessionId) return
+
+  try {
+    const existingEvents = store.getTabEvents(sessionId)
+    const response = existingEvents.length === 0
+      ? await agentApi.getRecentSessionEvents(sessionId)
+      : await agentApi.getSessionEvents(sessionId, store.getTabLastEventIndex(sessionId))
+
+    const latestStore = useChatStore.getState()
+    const latestEvents = latestStore.getTabEvents(sessionId)
+    if (response.events.length > 0) {
+      if (latestEvents.length === 0) {
+        latestStore.setTabEvents(sessionId, response.events)
+      } else {
+        latestStore.addTabEvents(sessionId, response.events)
+      }
+    }
+    if (response.last_processed_index !== undefined) {
+      latestStore.setTabLastEventIndex(sessionId, response.last_processed_index)
+    }
+    if (response.has_more !== undefined) {
+      latestStore.setTabHasMoreOlderEvents(sessionId, response.has_more)
+    }
+
+    const latestTab = latestStore.chatTabs[tabId]
+    if (latestTab && response.session_status) {
+      const hasBgAgents = !!response.has_running_background_agents
+      const isSyntheticTurn = !!response.is_synthetic_turn
+      const canSteer = !!response.can_steer
+      const isDone = response.session_status === 'completed' || response.session_status === 'stopped'
+      const isError = response.session_status === 'error'
+      latestStore.setTabCompleted(tabId, (isDone || isError) && !hasBgAgents)
+      latestStore.setTabStreaming(tabId, response.session_status === 'running' && !isSyntheticTurn && (!hasBgAgents || canSteer))
+      latestStore.setTabHasRunningBgAgents(tabId, hasBgAgents)
+      latestStore.setTabSyntheticTurn(tabId, isSyntheticTurn)
+      latestStore.setTabCanSteer(tabId, canSteer)
+    }
+  } catch (error) {
+    console.warn('[WorkflowChatTabs] Failed to hydrate workflow tree events:', error)
+  }
+}
+
 const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
   tab,
   isActive,
@@ -47,7 +93,10 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
 
   // Pull this tab's own backend status (only polls while busy). Combine with the
   // local streaming flags so "busy" shows immediately, before the tree catches up.
-  const { data: execTree } = useSessionExecutionTree(tab.sessionId, !!tab.sessionId)
+  const { data: execTree } = useSessionExecutionTree(
+    tab.sessionId,
+    !!tab.sessionId && isActive && normalizeEventViewMode(tab.viewMode) === 'tree',
+  )
   const treeStatus = execTree?.summary.display_status
   const status: 'busy' | 'idle' | 'stopped' =
     tab.isStreaming || tab.hasRunningBgAgents || treeStatus === 'busy'
@@ -175,20 +224,29 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat, e
   })
   const rawActiveViewMode = useChatStore(state => activeTabId ? state.chatTabs[activeTabId]?.viewMode : undefined)
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
+  const openTreeView = useCallback((tabId: string) => {
+    setTabViewMode(tabId, 'tree')
+    void hydrateWorkflowTreeEvents(tabId)
+  }, [setTabViewMode])
+
   const requestViewMode = useCallback((tabId: string, mode: 'tree' | 'terminal') => {
     if (mode === 'tree' && activeViewMode !== 'tree' && shouldShowTreeViewAlphaWarning()) {
       setPendingTreeViewTabId(tabId)
       return
     }
+    if (mode === 'tree') {
+      openTreeView(tabId)
+      return
+    }
     setTabViewMode(tabId, mode)
-  }, [activeViewMode, setTabViewMode])
+  }, [activeViewMode, openTreeView, setTabViewMode])
 
   const confirmTreeView = useCallback(() => {
     if (pendingTreeViewTabId) {
-      setTabViewMode(pendingTreeViewTabId, 'tree')
+      openTreeView(pendingTreeViewTabId)
     }
     setPendingTreeViewTabId(null)
-  }, [pendingTreeViewTabId, setTabViewMode])
+  }, [openTreeView, pendingTreeViewTabId])
 
   // Filter to workflow tabs for the active preset, but always keep the active
   // workflow tab visible. Scheduled-run restores can briefly lack a preset match

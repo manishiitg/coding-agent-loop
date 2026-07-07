@@ -221,6 +221,39 @@ func TestListTerminalsExposesStatusLineCreatedLiveTerminal(t *testing.T) {
 	}
 }
 
+func TestListTerminalsActiveOnlyFiltersStaleMetadataList(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	liveSessionID := "session-terminal-active-only-live"
+	staleSessionID := "session-terminal-active-only-stale"
+
+	store.HandleEvent(liveSessionID, terminalRouteChunkEvent(liveSessionID, "main:"+liveSessionID, "tmux-live-active-only", "live pane", 1))
+	store.HandleEvent(staleSessionID, terminalRouteChunkEvent(staleSessionID, "main:"+staleSessionID, "tmux-stale-active-only", "stale pane", 1))
+	if _, ok := store.MarkStale(staleSessionID + ":main:" + staleSessionID); !ok {
+		t.Fatal("failed to mark stale terminal")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/terminals?content=none&active_only=1", nil)
+	rec := httptest.NewRecorder()
+	api.handleListTerminals(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	var response listTerminalsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if len(response.Terminals) != 1 {
+		t.Fatalf("terminal count = %d, want 1: %+v", len(response.Terminals), response.Terminals)
+	}
+	if response.Terminals[0].SessionID != liveSessionID {
+		t.Fatalf("session_id = %q, want %q", response.Terminals[0].SessionID, liveSessionID)
+	}
+	if response.Terminals[0].Content != "" || len(response.Terminals[0].Rows) != 0 {
+		t.Fatalf("active-only metadata response leaked content/rows: content=%q rows=%d", response.Terminals[0].Content, len(response.Terminals[0].Rows))
+	}
+}
+
 func TestTerminalRoutesCloseAndDismissMismatchedOwnerTerminal(t *testing.T) {
 	store := terminals.NewStore()
 	api := &StreamingAPI{terminalStore: store}

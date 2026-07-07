@@ -389,6 +389,10 @@ const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasPr
     useWorkflowStore(state => state.focusedPane === 'chat' && reportPreviewDevice === 'mobile')
       ? 'mobile'
       : undefined
+  const documentPreviewShellClassName =
+    reportPreviewDevice === 'mobile'
+      ? `${previewDeviceShellClass('mobile')} h-full overflow-hidden`
+      : 'h-full w-full'
   const planData = usePlanData(workspacePath)
   const plan = planData.plan
   const loadPlanRefresh = planData.refresh
@@ -458,9 +462,9 @@ const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasPr
           <div className="h-full min-h-0 relative">
             <PreviewPaneControls hasPlan={Boolean(plan?.steps?.length)} scopeId={workspacePath} />
             {workspacePath && (paneMode === 'log'
-              ? <LogViewer workspacePath={workspacePath} />
+              ? <div className={documentPreviewShellClassName}><LogViewer workspacePath={workspacePath} /></div>
               : paneMode === 'soul'
-                ? <SoulViewer workspacePath={workspacePath} />
+                ? <div className={documentPreviewShellClassName}><SoulViewer workspacePath={workspacePath} /></div>
                 : <ReportView workspacePath={workspacePath} focusTier={reportFocusTier} reserveTopControlsSpace />)}
           </div>
         )}
@@ -562,6 +566,7 @@ const WorkflowFilesCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasPro
               <Workspace
                 minimized={false}
                 onToggleMinimize={handleCloseFiles}
+                hideMinimizeControl
               />
             </div>
           </div>

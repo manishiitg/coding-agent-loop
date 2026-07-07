@@ -9,6 +9,7 @@ import { useModeStore } from '../stores/useModeStore'
 import { useRunningWorkflowsStore } from '../stores/useRunningWorkflowsStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
+import { liveWorkflowTerminalSessionForPreset } from './workflowTerminalActivity'
 
 type RestoreWorkflowSessionOptions = {
   preset?: CustomPreset | PredefinedPreset
@@ -16,8 +17,17 @@ type RestoreWorkflowSessionOptions = {
   scrollToBottom?: boolean
 }
 
+type OpenWorkflowPresetPageOptions = {
+  activeSession?: ActiveSessionInfo
+  runningWorkflow?: RunningWorkflowInfo
+  title?: string
+  source?: string
+  scrollToBottom?: boolean
+}
+
 const REPORT_PREVIEW_PREFERENCE_KEY = 'workflow_report_preview_preference'
 const REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT = 'workflow-report-preview-preference-changed'
+const WORKFLOW_TERMINAL_LOOKUP_TIMEOUT_MS = 1500
 
 function normalizeWorkspacePath(path?: string): string {
   return (path || '').replace(/\/+$/, '')
@@ -45,6 +55,174 @@ function isActiveWorkflowSession(session: ActiveSessionInfo): boolean {
 
 function findTabForSession(tabs: Record<string, ChatTab>, sessionId: string): ChatTab | undefined {
   return Object.values(tabs).find(tab => tab.sessionId === sessionId)
+}
+
+function isVisibleActiveSession(session: ActiveSessionInfo): boolean {
+  const status = (session.status || '').toLowerCase()
+  return status === 'running' ||
+    status === 'active' ||
+    status === 'in_progress' ||
+    status === 'paused' ||
+    status === 'waiting' ||
+    status === 'waiting_feedback' ||
+    status === 'idle' ||
+    !!session.needs_user_input ||
+    session.has_running_background_agents === true ||
+    (session.running_background_agent_count ?? 0) > 0
+}
+
+function isWorkflowSession(session: ActiveSessionInfo): boolean {
+  return session.agent_mode === 'workflow' ||
+    session.agent_mode === 'workflow_phase' ||
+    !!session.workflow_name ||
+    !!session.workflow_label ||
+    !!session.workspace_path ||
+    !!session.preset_query_id
+}
+
+function workflowSessionMatchesPreset(
+  session: ActiveSessionInfo,
+  preset: CustomPreset | PredefinedPreset,
+  tabs: Record<string, ChatTab>,
+): boolean {
+  if (!isWorkflowSession(session)) return false
+  if (session.preset_query_id === preset.id) return true
+  if (
+    normalizeWorkspacePath(session.workspace_path) &&
+    normalizeWorkspacePath(session.workspace_path) === normalizeWorkspacePath(preset.selectedFolder?.filepath)
+  ) return true
+  const tab = findTabForSession(tabs, session.session_id)
+  return tab?.metadata?.presetQueryId === preset.id
+}
+
+function workflowSessionPriority(session: ActiveSessionInfo): number {
+  const status = (session.status || '').toLowerCase()
+  let score = 0
+  if (isScheduledWorkflowSession(session) || isBotWorkflowSession(session)) score += 100
+  // A retained/live tmux session is the only thing that can actually render the
+  // terminal pane. Prefer it over a plain running-session registry row so global
+  // workflow switches don't land on an empty Schedule tab.
+  if (session.has_retained_tmux_session) score -= 25
+  if (session.needs_user_input) score -= 30
+  if (session.has_running_background_agents || (session.running_background_agent_count ?? 0) > 0) score -= 20
+  if (status === 'running' || status === 'active' || status === 'in_progress') score -= 10
+  return score
+}
+
+export function pickWorkflowActiveSession(
+  sessions: ActiveSessionInfo[],
+  preset: CustomPreset | PredefinedPreset,
+  tabs: Record<string, ChatTab>,
+): ActiveSessionInfo | undefined {
+  return sessions
+    .filter(isVisibleActiveSession)
+    .filter(session => workflowSessionMatchesPreset(session, preset, tabs))
+    .sort((a, b) => {
+      const priorityDelta = workflowSessionPriority(a) - workflowSessionPriority(b)
+      if (priorityDelta !== 0) return priorityDelta
+      return Date.parse(b.last_activity || b.created_at || '') - Date.parse(a.last_activity || a.created_at || '')
+    })[0]
+}
+
+function runningWorkflowFallbackName(workflow: RunningWorkflowInfo): string {
+  return workflow.preset_name ||
+    workflow.title ||
+    workflow.workspace_path?.split('/').filter(Boolean).pop() ||
+    workflow.query ||
+    'Automation'
+}
+
+function sessionFromRunningWorkflow(workflow: RunningWorkflowInfo): ActiveSessionInfo {
+  const timestamp = workflow.started_at || new Date().toISOString()
+  const label = runningWorkflowFallbackName(workflow)
+  return {
+    session_id: workflow.session_id,
+    observer_id: '',
+    agent_mode: 'workflow',
+    status: workflow.status || 'running',
+    last_activity: timestamp,
+    created_at: timestamp,
+    query: workflow.query || label,
+    title: workflow.title || label,
+    workflow_name: label,
+    workflow_label: label,
+    workspace_path: workflow.workspace_path,
+    preset_name: workflow.preset_name,
+    preset_query_id: workflow.preset_query_id,
+    triggered_by: workflow.triggered_by,
+    current_execution_name: workflow.current_step_title || workflow.phase_name || workflow.title,
+    needs_user_input: workflow.needs_user_input,
+    waiting_message: workflow.waiting_message,
+    waiting_since: workflow.waiting_since,
+  }
+}
+
+function isRunningWorkflowEntry(entry: RunningWorkflowInfo): boolean {
+  const status = (entry.status || '').toLowerCase()
+  return status === 'running' ||
+    status === 'active' ||
+    status === 'in_progress' ||
+    status === 'paused' ||
+    status === 'waiting' ||
+    status === 'waiting_for_input' ||
+    status === 'waiting_feedback' ||
+    !!entry.needs_user_input
+}
+
+function runningWorkflowMatchesPreset(
+  workflow: RunningWorkflowInfo,
+  preset: CustomPreset | PredefinedPreset,
+): boolean {
+  if (workflow.preset_query_id && workflow.preset_query_id === preset.id) return true
+  const workflowPath = normalizeWorkspacePath(workflow.workspace_path)
+  const presetPath = normalizeWorkspacePath(preset.selectedFolder?.filepath)
+  return !!workflowPath && !!presetPath && workflowPath === presetPath
+}
+
+async function findRunningWorkflowForPreset(
+  preset: CustomPreset | PredefinedPreset,
+): Promise<RunningWorkflowInfo | undefined> {
+  try {
+    const response = await agentApi.listRunningWorkflows()
+    return (response.running || [])
+      .filter(workflow => workflow.session_id && isRunningWorkflowEntry(workflow))
+      .filter(workflow => runningWorkflowMatchesPreset(workflow, preset))
+      .sort((a, b) => new Date(b.started_at || 0).getTime() - new Date(a.started_at || 0).getTime())[0]
+  } catch {
+    return undefined
+  }
+}
+
+async function findLiveWorkflowTerminalSession(
+  preset: CustomPreset | PredefinedPreset,
+  title: string,
+): Promise<ActiveSessionInfo | undefined> {
+  try {
+    const response = await Promise.race([
+      agentApi.listTerminals(undefined, 'none', { activeOnly: true }),
+      new Promise<undefined>(resolve => setTimeout(() => resolve(undefined), WORKFLOW_TERMINAL_LOOKUP_TIMEOUT_MS)),
+    ])
+    if (!response) return undefined
+    return liveWorkflowTerminalSessionForPreset(response.terminals || [], preset, title)
+  } catch {
+    return undefined
+  }
+}
+
+function tabSortTimestamp(tab: ChatTab): number {
+  return tab.lastAccessedAt ?? tab.createdAt ?? 0
+}
+
+function isEmptyWorkflowBuilderTab(tab: ChatTab, presetId: string): boolean {
+  const chatStore = useChatStore.getState()
+  return tab.metadata?.mode === 'workflow' &&
+    tab.metadata?.phaseId === 'workflow-builder' &&
+    tab.metadata?.isViewOnly !== true &&
+    tab.metadata?.presetQueryId === presetId &&
+    !tab.isStreaming &&
+    !chatStore.getTabStreamingStatus(tab.tabId) &&
+    !tab.config?.restoredConversationPath &&
+    (!tab.sessionId || chatStore.getTabEvents(tab.sessionId).length === 0)
 }
 
 function findReadOnlyRunTabForSession(
@@ -219,35 +397,14 @@ export async function restoreWorkflowSessionChat(
       return tabId
     }
 
-    // Reveal the terminal/chat IMMEDIATELY — don't block on the history fetch.
-    // The terminal pane loads its own content from the terminal API; the event
-    // history only feeds the error banners + routing badges. So flip the pane
-    // on now (optimistic streaming flags) and load the history in the
-    // BACKGROUND, populating those overlays when it arrives.
+    // Reveal the terminal/chat IMMEDIATELY. Event history is intentionally not
+    // hydrated here; workflow switches default to terminal/report surfaces, and
+    // the tree/debug view lazy-loads events only when the user opens it.
     latestChatStore.setTabStreaming(tabId, isActive)
     latestChatStore.setTabCompleted(tabId, !isActive)
     activateTab(tabId)
     revealWorkflowTerminal(tabId, workspacePath)
     if (options.scrollToBottom !== false) requestChatScrollToBottom()
-
-    void agentApi.getRecentSessionEvents(session.session_id)
-      .then(response => {
-        const store = useChatStore.getState()
-        const restoredEvents = response.events || []
-        // Don't clobber events the live stream may already have backfilled
-        // (a running session's SSE connects from index -1 the moment we reveal).
-        if (store.getTabEvents(session.session_id).length === 0) {
-          store.setTabEvents(session.session_id, restoredEvents)
-          store.setTabLastEventIndex(
-            session.session_id,
-            response.last_processed_index ?? (restoredEvents.length ? restoredEvents.length - 1 : -1),
-          )
-        }
-        store.setTabStreaming(tabId, isActive || response.session_status === 'running')
-        store.setTabCompleted(tabId, !isActive && response.session_status !== 'running')
-        if (options.scrollToBottom !== false) requestChatScrollToBottom()
-      })
-      .catch(() => { /* optimistic streaming flags already applied above */ })
 
     return tabId
   } finally {
@@ -292,6 +449,76 @@ export async function restoreBotWorkflowRunChat(
       botPlatform: platform,
     },
   })
+}
+
+export async function openWorkflowPresetPage(
+  preset: CustomPreset | PredefinedPreset,
+  options: OpenWorkflowPresetPageOptions = {},
+): Promise<void> {
+  useAppStore.getState().setShowWorkflowsOverview(false)
+  useModeStore.getState().setModeCategory('workflow')
+  useGlobalPresetStore.getState().applyPreset(preset, 'workflow')
+  useWorkflowStore.getState().setShowChatArea(true)
+
+  const title = options.title || preset.label || 'Automation'
+  const chatStore = useChatStore.getState()
+  if (options.activeSession) {
+    await openActiveSession(options.activeSession, {
+      preset,
+      runningWorkflow: options.runningWorkflow,
+      title,
+      source: options.source,
+    })
+    return
+  }
+
+  const terminalBackedSession = await findLiveWorkflowTerminalSession(preset, title)
+  if (terminalBackedSession) {
+    await openActiveSession(terminalBackedSession, {
+      preset,
+      title,
+      source: options.source || 'workflow-terminal',
+    })
+    return
+  }
+
+  const activeSession = pickWorkflowActiveSession(await chatStore.getActiveSessions(), preset, useChatStore.getState().chatTabs)
+
+  if (activeSession) {
+    await openActiveSession(activeSession, {
+      preset,
+      runningWorkflow: options.runningWorkflow,
+      title,
+      source: options.source,
+    })
+    return
+  }
+
+  const runningWorkflow = options.runningWorkflow || await findRunningWorkflowForPreset(preset)
+  if (runningWorkflow?.session_id) {
+    await openActiveSession(sessionFromRunningWorkflow(runningWorkflow), {
+      preset,
+      runningWorkflow,
+      title,
+      source: options.source,
+    })
+    return
+  }
+
+  const latestStore = useChatStore.getState()
+  const builderTab = Object.values(latestStore.chatTabs)
+    .filter(tab => isEmptyWorkflowBuilderTab(tab, preset.id))
+    .sort((a, b) => tabSortTimestamp(b) - tabSortTimestamp(a))[0]
+  const tabId = builderTab?.tabId ?? await latestStore.createChatTab('Automation Builder', {
+    mode: 'workflow',
+    phaseId: 'workflow-builder',
+    phaseName: 'Automation Builder',
+    presetQueryId: preset.id,
+  })
+
+  activateTab(tabId)
+  useWorkflowStore.getState().setShowChatArea(true)
+  if (options.scrollToBottom !== false) requestChatScrollToBottom()
 }
 
 type ReadOnlyWorkflowRunOptions = RestoreWorkflowSessionOptions & {
@@ -370,43 +597,20 @@ async function restoreReadOnlyWorkflowRunChat(
     })
   }
 
-  try {
-    const existingEvents = chatStore.getTabEvents(session.session_id)
-    const response = existingEvents.length === 0
-      ? await agentApi.getRecentSessionEvents(session.session_id)
-      : await agentApi.getSessionEvents(session.session_id, chatStore.getTabLastEventIndex(session.session_id))
-
-    if (response.events.length > 0) {
-      if (existingEvents.length === 0) {
-        chatStore.setTabEvents(session.session_id, response.events)
-      } else {
-        chatStore.addTabEvents(session.session_id, response.events)
-      }
-    }
-    if (response.last_processed_index !== undefined) {
-      chatStore.setTabLastEventIndex(session.session_id, response.last_processed_index)
-    }
-    if (response.has_more !== undefined) {
-      chatStore.setTabHasMoreOlderEvents(session.session_id, response.has_more)
-    }
-    const isDone = response.session_status === 'completed' || response.session_status === 'stopped'
-    const isError = response.session_status === 'error'
-    chatStore.setTabCompleted(tabId, isDone)
-    chatStore.setTabStreaming(tabId, !isDone && !isError && response.session_status === 'running')
-    chatStore.setTabHasRunningBgAgents(tabId, !!response.has_running_background_agents)
-    chatStore.setTabSyntheticTurn(tabId, !!response.is_synthetic_turn)
-    chatStore.setTabCanSteer(tabId, !!response.can_steer)
-  } catch {
-    chatStore.setTabStreaming(tabId, isActiveWorkflowSession(session))
-    chatStore.setTabCompleted(tabId, !isActiveWorkflowSession(session))
-  }
-
+  // Do not hydrate event history on workflow switch. Scheduled/bot workflow runs
+  // can have large histories, and opening them from the header activity monitor
+  // should focus terminal/report/previous-chats immediately. Tree/debug view
+  // lazy-loads events when explicitly opened.
+  const isActive = isActiveWorkflowSession(session)
+  chatStore.setTabStreaming(tabId, isActive)
+  chatStore.setTabCompleted(tabId, !isActive)
   activateTab(tabId)
   revealWorkflowTerminal(tabId, workspacePath)
   window.dispatchEvent(new CustomEvent('workflow-readonly-run-restored', {
     detail: { presetId, tabId, workspacePath }
   }))
   if (options.scrollToBottom !== false) requestChatScrollToBottom()
+
   return tabId
   } finally {
     useRunningWorkflowsStore.getState().setIsRestoringWorkflow(false)

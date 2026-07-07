@@ -1,7 +1,6 @@
 import React, { useMemo, useCallback, useRef, useEffect, forwardRef, useState } from 'react'
 import { PanelRightOpen } from 'lucide-react'
 import { WorkflowCanvas, type WorkflowCanvasRef } from './canvas'
-import { usePreviewDevice } from './canvas/WorkflowCanvas'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { useModeStore } from '../../stores/useModeStore'
 import { normalizeEventViewMode, useChatStore, waitForChatStoreHydration, type ChatTab } from '../../stores/useChatStore'
@@ -117,6 +116,7 @@ import { hydrateTabEvents } from '../../utils/sessionRestore'
 const EMPTY_WORKFLOW_EVENTS: PollingEvent[] = []
 const WORKFLOW_RESTORE_TIMEOUT_MS = 8000
 const WORKFLOW_KILL_AND_START_STOP_TIMEOUT_MS = 30_000
+const WORKFLOW_NEW_CHAT_TERMINAL_LOOKUP_TIMEOUT_MS = 1500
 const WORKFLOW_CHAT_CONTENT_EVENT_TYPES = new Set(['user_message', 'conversation_end', 'unified_completion'])
 // Window during which a freshly-opened read-only Schedule/Bot run tab is
 // protected from auto tab-switching (reconnect/reconcile). Mirrors App.tsx's
@@ -941,10 +941,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       !chatStore.getTabStreamingStatus(tab.tabId)
     )
 
-    for (const tab of oldTabs) {
-      await chatStore.closeTab(tab.tabId, false)
-    }
-
     const tabId = await chatStore.createChatTab('Automation Builder', {
       mode: 'workflow',
       phaseId: 'workflow-builder',
@@ -959,6 +955,16 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
     chatStore.switchTab(tabId)
     setShowChatArea(true)
+
+    if (oldTabs.length > 0) {
+      void Promise.allSettled(
+        oldTabs
+          .filter(tab => tab.tabId !== tabId)
+          .map(tab => chatStore.closeTab(tab.tabId, false))
+      ).catch(error => {
+        logger.warn('WorkflowLayout', 'Failed to clean up old workflow builder tabs after starting new chat:', error)
+      })
+    }
   }, [forceMobilePreview, setFocusedPane, setShowChatArea, setShowWorkspacePane, setWorkflowWorkspaceView])
 
   useEffect(() => {
@@ -992,12 +998,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   //
   //   mobile  → preview/files 480px column, chat takes the rest (review-style)
   //   laptop  → chat is hidden, report fills the full width
-  //   default → 50/50 split (no preview pref, or running in non-report views)
+  //   default → 50/50 split (no preview pref, or running in non-preview views)
   const isPreviewableWorkspaceCanvas =
     !isFilesWorkspace &&
     showChatArea &&
     workspacePaneVisible &&
-    (canvasViewMode === 'report' || canvasViewMode === 'flow')
+    (canvasViewMode === 'report' || canvasViewMode === 'flow' || canvasViewMode === 'log' || canvasViewMode === 'soul')
   const previewPaneTier: 'mobile' | 'laptop' | null = isPreviewableWorkspaceCanvas
     ? reportPreviewPreference === 'mobile'
       ? 'mobile'
@@ -1010,24 +1016,23 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const shouldUseMobileReportPane = previewPaneTier === 'mobile'
   const isWorkspaceViewActive =
     workflowWorkspaceView === 'flow' ||
-    workflowWorkspaceView === 'report'
+    workflowWorkspaceView === 'report' ||
+    workflowWorkspaceView === 'log' ||
+    workflowWorkspaceView === 'soul'
   const chatPaneVisibilityClass =
     workspacePaneVisible && isWorkspaceViewActive
       ? 'hidden md:flex'
       : 'flex'
-  // The device selection (mobile/laptop) drives the outer pane width:
+  // The report preview preference drives the outer pane width:
   //   mobile/files → right pane 480px, chat fills the rest (chat is col 1, pane col 2)
-  //   laptop → chat is hidden; the report fills the full width (see laptopHidesChat)
-  const previewDevice = usePreviewDevice(workspacePath)
-  const effectiveTier: 'mobile' | 'laptop' =
-    previewDevice === 'mobile' ? 'mobile' : 'laptop'
-  // Laptop ('desktop' device) hides the chat pane entirely for both report and
-  // plan — the workspace canvas takes the full width.
-  const laptopHidesChat = !isFilesWorkspace && previewDevice === 'desktop' && showChatArea && workspacePaneVisible
+  //   laptop → chat is hidden, report/flow fills the full width
+  //   default → normal split pane
+  const laptopHidesChat = previewPaneTier === 'laptop'
   const splitGridCols = isFilesWorkspace
     ? 'md:grid-cols-[minmax(0,1fr)_480px]'
-    : effectiveTier === 'mobile' ? 'md:grid-cols-[minmax(0,1fr)_480px]'
-    : 'md:grid-cols-[minmax(0,1fr)]'
+    : previewPaneTier === 'mobile' ? 'md:grid-cols-[minmax(0,1fr)_480px]'
+    : previewPaneTier === 'laptop' ? 'md:grid-cols-[minmax(0,1fr)]'
+    : 'md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]'
   // Animate the GRID TRACK widths on the container so the chat↔report resize
   // glides — the panes just follow their grid column instead of fighting it with
   // per-tier explicit widths. (grid-template-columns animation is supported by
@@ -1558,11 +1563,17 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         const newSessions = sessionsToRestore.filter(s => !existingTabsBySession.has(s.sessionId))
         const existingWorkflowTabs = getExistingWorkflowTabsForPreset()
         const interactiveExistingWorkflowTabs = existingWorkflowTabs.filter(tab => !tab.metadata?.isViewOnly)
+        const chatStoreForViewMode = useChatStore.getState()
+        const activeWorkflowViewMode = normalizeEventViewMode(
+          (chatStoreForViewMode.activeTabId ? chatStoreForViewMode.chatTabs[chatStoreForViewMode.activeTabId]?.viewMode : undefined) ||
+          chatStoreForViewMode.eventViewModePreference
+        )
+        const shouldHydrateWorkflowEvents = activeWorkflowViewMode === 'tree'
 
         // Only restore sessions that don't have tabs yet
         const sessionsToActuallyRestore = newSessions
 
-        const needsTabHydration = interactiveExistingWorkflowTabs.some(tab =>
+        const needsTabHydration = shouldHydrateWorkflowEvents && interactiveExistingWorkflowTabs.some(tab =>
           tab.sessionId && getTabEvents(tab.sessionId).length === 0
         )
 
@@ -1628,9 +1639,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             botPlatform: isBot ? session.botPlatform : undefined,
           }, session.sessionId)
 
-          // Load events from in-memory EventStore (workflow events are NOT stored in DB)
-          // restoreWorkflowStateFromEvents fetches from the polling API which reads EventStore
-          if (session.preloadedEvents && session.preloadedEvents.length > 0) {
+          // Workflow switches default to terminal/report surfaces. Event history
+          // is only hydrated for the tree/debug view.
+          if (shouldHydrateWorkflowEvents && session.preloadedEvents && session.preloadedEvents.length > 0) {
             useChatStore.getState().setTabEvents(session.sessionId, session.preloadedEvents)
             useChatStore.getState().setTabLastEventIndex(
               session.sessionId,
@@ -1638,7 +1649,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             )
             setTabStreaming(tabId, session.isActive)
             useChatStore.getState().setTabCompleted(tabId, !session.isActive)
-          } else {
+          } else if (shouldHydrateWorkflowEvents) {
             try {
               await restoreWorkflowStateFromEvents(session.sessionId)
               if (session.isActive || session.status === 'running') {
@@ -1647,6 +1658,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             } catch (err) {
               console.warn('[WorkflowReconnect] Failed to load events for', session.sessionId, err)
             }
+          } else {
+            setTabStreaming(tabId, session.isActive || session.status === 'running')
+            useChatStore.getState().setTabCompleted(tabId, !(session.isActive || session.status === 'running'))
           }
 
           lastTabId = tabId
@@ -1805,7 +1819,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           chatStore.setTabCompleted(tabId, false)
           chatStore.setTabViewMode(tabId, activeViewMode)
 
-          if (chatStore.getTabEvents(running.session_id).length === 0) {
+          if (activeViewMode === 'tree' && chatStore.getTabEvents(running.session_id).length === 0) {
             try {
               const eventsResponse = await agentApi.getRecentSessionEvents(running.session_id)
               if (!cancelled && eventsResponse.events.length > 0) {
@@ -1816,7 +1830,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
                 )
               }
             } catch {
-              /* Terminal mode can still render from /api/terminals if event hydration misses. */
+              /* Tree view can keep polling if event hydration misses. */
             }
           }
         }
@@ -1914,7 +1928,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           setShowChatArea(true)
         }
 
-        const needsHydration = interactiveTabs.some(tab =>
+        const targetViewMode = normalizeEventViewMode(targetTab.viewMode || chatStore.eventViewModePreference)
+        const needsHydration = targetViewMode === 'tree' && interactiveTabs.some(tab =>
           tab.sessionId && chatStore.getTabEvents(tab.sessionId).length === 0
         )
         if (needsHydration) {
@@ -2081,11 +2096,22 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
   const handleWorkflowNewChat = useCallback(async () => {
     if (activePresetId) {
+      forceMobilePreview()
+      setWorkflowWorkspaceView('builder')
+      setShowWorkspacePane(true)
+      setFocusedPane('chat')
+      setShowChatArea(true)
+
       const [sessionsResult, terminalsResult] = await Promise.allSettled([
         useChatStore.getState().getActiveSessions(true),
-        agentApi.listTerminals(undefined, 'none'),
+        Promise.race([
+          agentApi.listTerminals(undefined, 'none', { activeOnly: true }),
+          new Promise<undefined>(resolve => {
+            window.setTimeout(() => resolve(undefined), WORKFLOW_NEW_CHAT_TERMINAL_LOOKUP_TIMEOUT_MS)
+          }),
+        ]),
       ])
-      const terminalSnapshots = terminalsResult.status === 'fulfilled'
+      const terminalSnapshots = terminalsResult.status === 'fulfilled' && terminalsResult.value
         ? (terminalsResult.value.terminals || [])
         : undefined
 
@@ -2103,7 +2129,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         logger.warn('WorkflowLayout', 'Failed to check active sessions before starting new workflow chat:', sessionsResult.reason)
       }
 
-      if (terminalsResult.status === 'fulfilled') {
+      if (terminalsResult.status === 'fulfilled' && terminalsResult.value) {
         const runningTerminal = terminalsResult.value.terminals?.find(terminal =>
           terminal.session_id !== activeSessionId &&
           isLiveWorkflowTerminalForPath(terminal, workspacePath)
@@ -2114,7 +2140,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             ? `${blockingSessionLabel} and terminal`
             : 'terminal session'
         }
-      } else {
+      } else if (terminalsResult.status === 'rejected') {
         logger.warn('WorkflowLayout', 'Failed to check active terminals before starting new workflow chat:', terminalsResult.reason)
       }
 
@@ -2280,7 +2306,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
                 hideHeader
                 compact
                 suppressTerminalPane={showWorkflowPreviousChatsAsPrimary}
-                workflowPreviousChatsPanel={showWorkflowPreviousChatsAsPrimary && workspacePath ? (
+                workflowPreviousChatsPanel={workspacePath ? (
                   <WorkflowPreviousChatsPanel
                     primary
                     workspacePath={workspacePath}

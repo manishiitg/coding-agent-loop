@@ -39,6 +39,7 @@ interface PlannerFileListProps {
   selectedFiles?: Set<string>
   onToggleFileSelection?: (file: PlannerFile) => void
   onSelectFileAndEnterSelectionMode?: (file: PlannerFile) => void
+  forceExpandFolders?: boolean
 }
 
 export default function PlannerFileList({
@@ -74,14 +75,15 @@ export default function PlannerFileList({
   isSelectionMode = false,
   selectedFiles = new Set(),
   onToggleFileSelection,
-  onSelectFileAndEnterSelectionMode
+  onSelectFileAndEnterSelectionMode,
+  forceExpandFolders = false
 }: PlannerFileListProps) {
   const { scrollToFile } = useWorkspaceStore()
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
 
   // Render a single item (file or folder) with proper hierarchy
   const renderFileItem = (file: PlannerFile, depth: number = 0) => {
-    const isExpanded = expandedFolders.has(file.filepath)
+    const isExpanded = forceExpandFolders || expandedFolders.has(file.filepath)
     const isLoadingChildren = loadingChildren.has(file.filepath)
     const isClickable = true // backend determines if content is viewable; binary files show error after fetch
     const fileName = file.filepath.split('/').pop() || file.filepath

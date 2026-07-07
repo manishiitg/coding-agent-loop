@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef, useMemo, useState } from 'react'
-import { Plus, Upload, FolderPlus, ChevronDown, Filter, CheckSquare, X, Trash2, PanelRightClose } from 'lucide-react'
+import { Plus, Upload, FolderPlus, ChevronDown, CheckSquare, X, Trash2, PanelRightClose } from 'lucide-react'
 import { agentApi, workspaceApi } from '../services/api'
 import type { PlannerFile } from '../services/api-types'
 import PlannerFileList from './workspace/PlannerFileList'
@@ -32,11 +32,13 @@ import { useIterationExpansion } from './workspace/useIterationExpansion'
 interface WorkspaceProps {
   minimized: boolean
   onToggleMinimize: () => void
+  hideMinimizeControl?: boolean
 }
 
 export default function Workspace({
   minimized,
-  onToggleMinimize
+  onToggleMinimize,
+  hideMinimizeControl = false
 }: WorkspaceProps) {
   // Get mode-specific file context and handlers
   const { selectedModeCategory } = useModeStore()
@@ -458,17 +460,13 @@ export default function Workspace({
     return filterRecursive(files)
   }
   
-  // Iteration display filter — which iteration to show in the workspace
-  // Gets selectedRunFolder from workflow store early (also used at line ~569 via hook)
+  // Iteration display filter - Files defaults to iteration-0 for stable workflow views.
+  // selectedRunFolder is still used by useIterationExpansion for execution context.
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
-  const setSelectedRunFolder = useWorkflowStore(state => state.setSelectedRunFolder)
   const runFolders = useWorkflowStore(state => state.runFolders)
-  const workflowWorkspaceView = useWorkflowStore(state => state.workflowWorkspaceView)
-  const [workspaceDisplayedIteration, setWorkspaceDisplayedIteration] = useState<string | null>(null)
-  const [showIterationDropdown, setShowIterationDropdown] = useState(false)
 
-  // Reset workspace iteration choice when switching workflows so a stale selection
-  // from the previous workflow doesn't trigger a fetch for a non-existent iteration.
+  // Reset loaded iteration cache when switching workflows so a stale folder fetch
+  // from the previous workflow does not affect the next workflow.
   const prevActiveFolderForIterRef = useRef<string | undefined>(undefined)
   useEffect(() => {
     if (prevActiveFolderForIterRef.current === activeFolder) return
@@ -482,9 +480,6 @@ export default function Workspace({
     if (activeFolder) {
       loadedIterationsRef.current.delete(activeFolder)
     }
-
-    setWorkspaceDisplayedIteration(null)
-    setShowIterationDropdown(false)
   }, [activeFolder])
 
   // Compute available iterations from the raw file tree (populated even from shallow fetch)
@@ -521,28 +516,7 @@ export default function Workspace({
     return availableIterations.includes('iteration-0') ? 'iteration-0' : latestIteration
   }, [selectedModeCategory, availableIterations, latestIteration])
 
-  // Effective iteration to display: explicit workspace choice → workflow default.
-  // Keep this independent from selectedRunFolder so the right workspace bar does not
-  // jump away from iteration-0 just because execution selected a different run folder.
-  const effectiveDisplayedIteration = useMemo(() => {
-    if (workspaceDisplayedIteration) return workspaceDisplayedIteration
-    return defaultWorkflowIteration
-  }, [workspaceDisplayedIteration, defaultWorkflowIteration])
-
-  useEffect(() => {
-    if (!workspaceDisplayedIteration || availableIterations.length === 0) return
-    if (!availableIterations.includes(workspaceDisplayedIteration)) {
-      setWorkspaceDisplayedIteration(null)
-    }
-  }, [workspaceDisplayedIteration, availableIterations])
-
-  useEffect(() => {
-    if (workflowWorkspaceView === 'builder') {
-      setShowIterationDropdown(false)
-    }
-  }, [workflowWorkspaceView])
-
-  const canSelectIterationInWorkspace = selectedModeCategory === 'workflow'
+  const effectiveDisplayedIteration = defaultWorkflowIteration
 
   // Get filtered files - first filter to workflow folder if preset is active, then apply search
   const filteredFiles = useMemo(() => {
@@ -739,14 +713,9 @@ export default function Workspace({
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (showActionsDropdown) {
-        const target = event.target as Element
-        if (!target.closest('.actions-dropdown')) {
-          setShowActionsDropdown(false)
-        }
-        if (!target.closest('.iteration-filter-dropdown')) {
-          setShowIterationDropdown(false)
-        }
+      const target = event.target as Element
+      if (showActionsDropdown && !target.closest('.actions-dropdown')) {
+        setShowActionsDropdown(false)
       }
     }
 
@@ -754,7 +723,7 @@ export default function Workspace({
     return () => {
       document.removeEventListener('mousedown', handleClickOutside)
     }
-  }, [showActionsDropdown, setShowActionsDropdown, showIterationDropdown])
+  }, [showActionsDropdown, setShowActionsDropdown])
 
   // Load files on component mount and re-fetch when active folder changes.
   // Optimization: skip the fetch when workspace panel is minimized to avoid wasting bandwidth
@@ -2021,7 +1990,7 @@ export default function Workspace({
               )}
 
               {/* Minimize button - Hidden in selection mode */}
-              {!isSelectionMode && (
+              {!isSelectionMode && !hideMinimizeControl && (
                 <div className="flex items-center gap-1">
                   <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">⌘6</span>
                   <Tooltip>
@@ -2045,25 +2014,6 @@ export default function Workspace({
           </div>
         )}
         
-        {/* Workflow Filter Banner - Only show in workflow mode */}
-        {!minimized && selectedModeCategory === 'workflow' && effectiveWorkflowFolderPath && (
-          <div className="mb-2 px-2.5 py-1.5 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                <Filter className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 flex-shrink-0" />
-                <span className="text-xs text-blue-900 dark:text-blue-100 truncate">
-                  Filters workspace as per automation
-                </span>
-                {activeWorkflowPreset?.label && (
-                  <span className="text-xs text-blue-700 dark:text-blue-300 flex-shrink-0">
-                    ({activeWorkflowPreset.label})
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Search/Filter Input */}
         {!minimized && (
           <div className="relative">
@@ -2123,49 +2073,6 @@ export default function Workspace({
               </button>
             </div>
           )}
-          {/* Iteration filter badge — shown in workflow mode when iterations exist */}
-          {selectedModeCategory === 'workflow' && availableIterations.length > 0 && (
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-500/5 border-b border-blue-500/20 text-xs">
-              <span className="text-blue-600 dark:text-blue-400 font-medium shrink-0">Filters workspace as per automation</span>
-              <div className="relative ml-auto iteration-filter-dropdown">
-                <button
-                  onClick={() => {
-                    if (!canSelectIterationInWorkspace) return
-                    setShowIterationDropdown(prev => !prev)
-                  }}
-                  disabled={!canSelectIterationInWorkspace}
-                  className={`flex items-center gap-1 px-2 py-0.5 rounded text-blue-700 dark:text-blue-300 font-medium ${
-                    canSelectIterationInWorkspace
-                      ? 'bg-blue-500/10 hover:bg-blue-500/20'
-                      : 'bg-blue-500/5 opacity-80 cursor-default'
-                  }`}
-                >
-                  {effectiveDisplayedIteration ?? 'Select iteration'}
-                  {canSelectIterationInWorkspace && <ChevronDown className="w-3 h-3" />}
-                </button>
-                {canSelectIterationInWorkspace && showIterationDropdown && (
-                  <div className="absolute right-0 top-full mt-1 z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded shadow-lg min-w-[140px] max-h-48 overflow-y-auto">
-                    {availableIterations.map(iter => (
-                      <button
-                        key={iter}
-                        onClick={() => {
-                          setWorkspaceDisplayedIteration(iter)
-                          setSelectedRunFolder(iter)
-                          setShowIterationDropdown(false)
-                        }}
-                        className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 ${
-                          iter === effectiveDisplayedIteration ? 'font-semibold text-blue-600 dark:text-blue-400' : 'text-gray-700 dark:text-gray-300'
-                        }`}
-                      >
-                        {iter}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
           {/* Folder Structure - Full Width */}
           <div ref={workspaceScrollRef} className="h-full overflow-y-auto">
             <div className="p-4">
@@ -2205,6 +2112,7 @@ export default function Workspace({
                 selectedFiles={selectedFiles}
                 onToggleFileSelection={toggleFileSelection}
                 onSelectFileAndEnterSelectionMode={selectFileAndEnterSelectionMode}
+                forceExpandFolders={!!searchQuery.trim()}
               />
 
               {/* Refresh from server when local search finds nothing */}

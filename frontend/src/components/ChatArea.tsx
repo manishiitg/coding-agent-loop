@@ -720,7 +720,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     )
   }, [displayEvents])
 
-  const { data: sessionExecutionTree } = useSessionExecutionTree(activeSessionId, !!activeSessionId)
+  const shouldFetchSessionExecutionTree =
+    !!activeSessionId &&
+    activeEventViewMode === 'tree'
+  const { data: sessionExecutionTree } = useSessionExecutionTree(activeSessionId, shouldFetchSessionExecutionTree)
 
   // --- Render tracking (filter by [Render] in console) ---
   useRenderLogger('ChatArea', {
@@ -793,6 +796,13 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     activeSessionId,
     shouldProbeSessionTerminals,
   )
+  // Subscribe to active sessions cache updates. Keep this near the terminal
+  // surface derivations so pending/running terminal flags are initialized before
+  // later restore/surface effects read them.
+  const activeSessionsCache = useChatStore((state) => state.activeSessionsCache)
+  const activeSessionIds = useMemo(() => {
+    return new Set(activeSessionsCache.map(s => s.session_id))
+  }, [activeSessionsCache])
   const restoredSessionTerminals = sessionTerminals?.terminals || []
   const restoredSessionHasTerminal =
     activeTabHasRestoredConversation && restoredSessionTerminals.length > 0
@@ -803,6 +813,29 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // lingers true after New Chat from a running conversation (a cross-tab signal,
   // not session-scoped) and would wrongly force 'active'.
   const activeTabStreaming = !!activeTab?.isStreaming
+  const activeTabHasRunningBackendSession = !!activeTab?.sessionId && activeSessionsCache.some(session => {
+    if (session.session_id !== activeTab.sessionId) return false
+    const status = (session.status || '').toLowerCase()
+    return status === 'running' || status === 'paused'
+  })
+  const hasLiveWorkflowTerminal = selectedModeCategory === 'workflow' && restoredSessionTerminals.some(isLiveWorkflowTerminal)
+  const terminalProbeSettledEmpty =
+    shouldProbeSessionTerminals &&
+    sessionTerminalsFetched &&
+    restoredSessionTerminals.length === 0
+  const terminalActivityStillPlausible =
+    !terminalProbeSettledEmpty ||
+    activeTab?.metadata?.isViewOnly !== true
+  // The terminal empty-state copy is narrower still: "Starting terminal / Your
+  // message was sent" is only true for a live submitted/running turn, not merely
+  // because an opened/restored workflow tab has historical conversation events.
+  // Read-only Schedule/Bot runs can stay "running" in the backend after their
+  // terminal pane is gone; once the terminal probe has settled empty, do not keep
+  // forcing a dead "Starting terminal" surface.
+  const hasPendingTerminalActivity = !suppressTerminalPane && (
+    (activeTabStreaming && terminalActivityStillPlausible) ||
+    (activeTabHasRunningBackendSession && terminalActivityStillPlausible)
+  )
   // Resume give-up TIMER only. A resume that never produces a terminal/content may
   // eventually fall to 'landing'; resumeGaveUp flips true after RESUME_SETTLE_MS so
   // a genuinely-dead resume isn't stuck on a spinner forever. This is purely a
@@ -1300,13 +1333,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // Get active sessions from cache (shared across all components)
   const startActiveSessionsPolling = useChatStore(state => state.startActiveSessionsPolling)
   
-  // Subscribe to active sessions cache updates
-  // Get the array first, then memoize the Set to avoid infinite loops
-  const activeSessionsCache = useChatStore((state) => state.activeSessionsCache)
-  const activeSessionIds = useMemo(() => {
-    return new Set(activeSessionsCache.map(s => s.session_id))
-  }, [activeSessionsCache])
-
   // Track recently notified workshop agent names to prevent duplicate notifications
   // (retries emit multiple orchestrator_agent_end events with the same agent name)
   const notifiedWorkshopAgentsRef = useRef<Set<string>>(new Set())
@@ -2081,20 +2107,18 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         return false
       }
       
-      // Workflow tabs: always keep SSE alive for the active preset.
-      // For background presets, keep SSE alive ONLY if still running (streaming or bg agents).
-      // Why: When the user runs two workflows and switches between them, disconnecting SSE
-      // for the background workflow would cause events to be lost — the frontend wouldn't
-      // receive tool calls, completions, or progress updates that happen while viewing
-      // the other workflow. Idle/completed background workflows disconnect to save resources.
+      // Workflow tabs stay lightweight in terminal mode: historical event/tree
+      // hydration is only needed when Tree is open. Keep live connections for
+      // active terminal turns because some providers build their terminal pane
+      // from streaming events instead of tmux snapshots.
       if (tab.metadata?.mode === 'workflow') {
         const activeWfPreset = useGlobalPresetStore.getState().activePresetIds.workflow
         const isActivePreset = tab.metadata?.presetQueryId === activeWfPreset
-        if (isActivePreset) return true
-        // Background preset: keep SSE alive only while actively running
         const bgTab = chatStore.getTab(tab.tabId)
         const bgStreaming = bgTab?.isStreaming ?? tab.isStreaming
         const bgRunning = bgTab?.hasRunningBgAgents ?? false
+        const viewMode = normalizeEventViewMode(bgTab?.viewMode ?? tab.viewMode)
+        if (isActivePreset && viewMode === 'tree') return true
         return bgStreaming || bgRunning
       }
 
@@ -2964,18 +2988,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // sessionId + clears the per-tab flag but does not reset the global one), which
   // wrongly kept a fresh New-Chat tab on 'active' (empty terminal) instead of
   // 'landing'. Reading the per-tab flag scopes "is streaming" to THIS session.
-  const activeTabHasRunningBackendSession = !!activeTab?.sessionId && activeSessionsCache.some(session => {
-    if (session.session_id !== activeTab.sessionId) return false
-    const status = (session.status || '').toLowerCase()
-    return status === 'running' || status === 'paused'
-  })
-  const hasLiveWorkflowTerminal = selectedModeCategory === 'workflow' && restoredSessionTerminals.some(isLiveWorkflowTerminal)
-  // The terminal empty-state copy is narrower still: "Starting terminal / Your
-  // message was sent" is only true for a live submitted/running turn, not merely
-  // because an opened/restored workflow tab has historical conversation events.
-  const hasPendingTerminalActivity = !suppressTerminalPane && (
-    activeTabStreaming || activeTabHasRunningBackendSession
-  )
   useEffect(() => {
     if (!activeSessionId || !sessionTerminalsFetched) return
     if (activeEventViewMode !== 'terminal') return
@@ -3090,7 +3102,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // fresh automation chat should show the previous-chats list. When present we
   // make it the primary surface (mirrors the multi-agent landing panel) and
   // suppress the workflow empty states / terminal / event display below it.
-  const showWorkflowPreviousChatsPanel = selectedModeCategory === 'workflow' && !!workflowPreviousChatsPanel
+  const showWorkflowPreviousChatsPanel =
+    selectedModeCategory === 'workflow' &&
+    visibleWorkflowSurface === 'landing' &&
+    !!workflowPreviousChatsPanel
   // Layout: the terminal pane is full-height unless the multi-agent landing list
   // is covering it; the two landing panels are also full-height. (Preserves the
   // original shouldRenderTerminalPane / shouldUseFullHeightContent formulas.)

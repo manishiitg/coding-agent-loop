@@ -15,7 +15,11 @@ import {
 } from './CleanupOldChatsDropdown'
 
 const PAGE_SIZE = 5
-const FETCH_LIMIT = 100
+// Keep the first paint cheap. Workflow builder conversations can be large, and
+// the backend has to parse each returned file to build previews. The panel only
+// renders five rows at a time, so loading 100 upfront makes the spinner feel
+// stuck on workflows with months of schedule/pulse history.
+const FETCH_LIMIT = 25
 const EXPANDED_MESSAGE_LIMIT = 6
 
 type PreviousChatKind = 'chat' | 'schedule' | 'bot'
@@ -539,9 +543,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
             </div>
           )}
 
-          {isLoading ? (
-            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
-          ) : (
+          {!isLoading && (
             <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
               <div className="flex max-w-full items-center gap-0.5 overflow-x-auto rounded-md border border-border bg-muted/30 p-0.5">
                 {filterItems.map(({ filter, label, icon: Icon }) => {

@@ -121,6 +121,7 @@ func (api *StreamingAPI) handleListTerminals(w http.ResponseWriter, r *http.Requ
 
 	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
 	contentMode := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("content")))
+	activeOnly := parseTerminalActiveOnly(r.URL.Query().Get("active_only"))
 	var snapshots []terminals.Snapshot
 	if isMetadataOnlyTerminalList(contentMode) {
 		snapshots = api.terminalStore.ListMetadata(sessionID)
@@ -131,6 +132,9 @@ func (api *StreamingAPI) handleListTerminals(w http.ResponseWriter, r *http.Requ
 	filtered := make([]terminals.Snapshot, 0, len(snapshots))
 	for _, snapshot := range snapshots {
 		if snapshot.SessionID == "" {
+			continue
+		}
+		if activeOnly && !terminalSnapshotIsActiveForList(snapshot) {
 			continue
 		}
 		if api.canAccessTerminalSession(r, snapshot.SessionID) {
@@ -1506,6 +1510,31 @@ func compactTerminalSnapshotForList(snapshot terminals.Snapshot, contentMode str
 
 func isMetadataOnlyTerminalList(contentMode string) bool {
 	return contentMode == "none" || contentMode == "metadata"
+}
+
+func parseTerminalActiveOnly(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "active", "live":
+		return true
+	default:
+		return false
+	}
+}
+
+func terminalSnapshotIsActiveForList(snapshot terminals.Snapshot) bool {
+	state := strings.ToLower(strings.TrimSpace(snapshot.State))
+	if strings.TrimSpace(snapshot.TmuxSession) != "" {
+		return state != "stale" && state != "failed"
+	}
+	if snapshot.Active {
+		return true
+	}
+	switch state {
+	case "running", "active", "in_progress", "paused", "waiting", "waiting_feedback", "idle":
+		return true
+	default:
+		return false
+	}
 }
 
 func compactTerminalStatusForList(status terminals.Status) terminals.Status {

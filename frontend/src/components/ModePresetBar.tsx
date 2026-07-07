@@ -29,6 +29,7 @@ import {
   getLLMDiscoveryOnboardingState,
   isWorkflowWalkthroughDismissed,
 } from '../utils/onboarding'
+import { openWorkflowPresetPage } from '../utils/workflowSessionRestore'
 
 const getModeIcon = (category: string) => {
   switch (category) {
@@ -388,12 +389,19 @@ export const ModePresetBar: React.FC = () => {
     // Determine the mode category based on the preset's agentMode
     const presetModeCategory = preset.agentMode === 'workflow' ? 'workflow' : 'multi-agent'
 
-    // If preset is for workflow mode, ensure we're in workflow mode
-    if (presetModeCategory === 'workflow' && selectedModeCategory !== 'workflow') {
-      setModeCategory('workflow')
+    if (presetModeCategory === 'workflow') {
+      setShowPresetDropdown(false)
+      void openWorkflowPresetPage(preset, {
+        title: preset.label,
+        source: 'workflow-dropdown',
+      }).catch(error => {
+        console.error('Failed to open automation:', error)
+      })
+      return
     }
+
     // If preset is for simple mode, route to multi-agent category
-    else if (presetModeCategory === 'multi-agent' && selectedModeCategory !== 'multi-agent') {
+    if (presetModeCategory === 'multi-agent' && selectedModeCategory !== 'multi-agent') {
       setModeCategory('multi-agent')
     }
 

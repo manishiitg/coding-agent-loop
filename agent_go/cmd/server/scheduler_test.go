@@ -1203,6 +1203,58 @@ func TestWaitForWorkshopIdleRequiresTwoFreshIdleTmuxChecks(t *testing.T) {
 	}
 }
 
+func TestWaitForWorkshopIdleTimesOutWhenSessionStaysBusy(t *testing.T) {
+	oldInterval := schedulerWorkshopIdlePollInterval
+	oldMaxWait := schedulerWorkshopIdleMaxWait
+	schedulerWorkshopIdlePollInterval = time.Millisecond
+	schedulerWorkshopIdleMaxWait = 5 * time.Millisecond
+	defer func() {
+		schedulerWorkshopIdlePollInterval = oldInterval
+		schedulerWorkshopIdleMaxWait = oldMaxWait
+	}()
+
+	sessionID := "session-scheduler-busy-timeout"
+	api := &StreamingAPI{terminalStore: terminals.NewStore()}
+	api.setSessionBusy(sessionID, true)
+	svc := &SchedulerService{api: api}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err := svc.waitForWorkshopIdle(ctx, sessionID)
+	if err == nil {
+		t.Fatal("waitForWorkshopIdle returned nil, want timeout")
+	}
+	if !strings.Contains(err.Error(), "workshop idle wait timed out") {
+		t.Fatalf("error = %v, want timeout", err)
+	}
+}
+
+func TestRunningWorkflowScheduleInSetLockedFindsOtherRunningSchedule(t *testing.T) {
+	states := map[string]*ScheduleRuntimeState{
+		"daily":     {LastStatus: "running", LastSessionID: "session-daily"},
+		"optimizer": {LastStatus: "success", LastSessionID: "session-optimizer"},
+	}
+
+	id, sessionID := runningWorkflowScheduleInSetLocked(states, []string{"current", "daily", "optimizer"}, "current")
+	if id != "daily" {
+		t.Fatalf("running schedule id = %q, want daily", id)
+	}
+	if sessionID != "session-daily" {
+		t.Fatalf("running schedule session = %q, want session-daily", sessionID)
+	}
+}
+
+func TestRunningWorkflowScheduleInSetLockedIgnoresCurrentSchedule(t *testing.T) {
+	states := map[string]*ScheduleRuntimeState{
+		"current": {LastStatus: "running", LastSessionID: "session-current"},
+	}
+
+	id, sessionID := runningWorkflowScheduleInSetLocked(states, []string{"current"}, "current")
+	if id != "" || sessionID != "" {
+		t.Fatalf("running schedule = (%q, %q), want empty", id, sessionID)
+	}
+}
+
 func TestWaitForLiveInputTurnCompleteRequiresBusyBeforeIdle(t *testing.T) {
 	oldInterval := liveInputTurnPollInterval
 	oldStableAfter := liveInputTurnNoBusyStableAfter

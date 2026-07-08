@@ -83,7 +83,11 @@ Every run row needs the top-level total, and the latest timeline entry or a comp
 
 Use this shape:
 
-- **Total:** cost, tokens, wall time, LLM time, tool time, and evidence path.
+- **Run total:** execution + evaluation cost, tokens, wall time, LLM time, tool time, and evidence path.
+- **Builder/Pulse overhead:** builder/workshop/Pulse phase cost and tokens from `costs/phase/token_usage.json`, with phase names when available. Keep this visibly separate from run total, and show combined operating cost only when both buckets are labeled.
+- **Missing cost evidence:** if execution, evaluation, or builder/Pulse overhead telemetry cannot be
+  read, show that bucket as missing and where you looked. Keep known bucket values visible; never
+  drop the cost/time section just because one ledger is absent.
 - **By plan step:** step id/title, configured tier/model, observed provider/model, cost/tokens,
   wall/LLM/tool time, LLM calls, tool calls.
 - **By agent/sub-agent when available:** parent step, agent/sub-agent id/name, model, cost/tokens,

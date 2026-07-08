@@ -95,10 +95,17 @@ Read:
   do not edit it in Pulse.
 - **The cost evidence** — call `get_cost_summary(run_folder="<run_folder>")` when available, then
   read the persisted ledgers under `costs/execution/`, `costs/evaluation/`, and
-  `costs/phase/token_usage.json`. Prefer `by_step_and_model` for per-plan-step breakdowns,
-  `by_model` for total model mix, and `by_tool` / `by_step_and_tool` for paid media/tool costs. If
-  a file is absent or a CLI/provider has no USD pricing, say `missing evidence` or
-  `unpriced provider`, not a guessed value.
+  `costs/phase/token_usage.json`. Treat these as **three separate buckets**:
+  **workflow execution**, **evaluation**, and **builder/Pulse overhead**. Execution/evaluation are
+  the run cost; `costs/phase/token_usage.json` is builder/workshop/Pulse planning, harden, report,
+  notify, learning, and setup overhead. Report all three; do not hide overhead and do not mix it into
+  the run total without labeling it. Prefer `by_step_and_model` for per-plan-step breakdowns,
+  `by_model` for total model mix, `by_phase_and_model` for builder/Pulse overhead, and `by_tool` /
+  `by_step_and_tool` for paid media/tool costs. If a file is absent or a CLI/provider has no USD
+  pricing, say `missing evidence` or `unpriced provider`, not a guessed value. If any expected bucket
+  is missing, still report the buckets you found and add a visible missing-bucket line such as
+  `execution: missing evidence`, `evaluation: missing evidence`, or `builder/Pulse overhead: missing
+  evidence`.
 - **The timing evidence** — run metadata plus timing summaries under
   `runs/<run_folder>/logs/<step-id>/execution/` when present. Prefer wall time, LLM time, tool time,
   LLM call count, and tool call count. When nested `todo_task` / sub-agent timing exists, group it
@@ -106,8 +113,17 @@ Read:
 
 Produce a compact breakdown with:
 
-- **Run total:** wall time, LLM time, tool time, total tokens, total USD cost when priced,
-  unpriced/missing-cost note when not priced, and the evidence path(s).
+- **Run total:** execution + evaluation wall time, LLM time, tool time, total tokens, total USD cost
+  when priced, unpriced/missing-cost note when not priced, and the evidence path(s).
+- **Builder/Pulse overhead:** total phase tokens/cost from `costs/phase/token_usage.json`, separated
+  by phase when possible (builder chat, planning, harden, Pulse triage/fix/artifact/report/cadence/
+  backup/publish/notify, learning/setup). This is part of the workflow's operating cost, but it is
+  not a plan-step run cost. A Pulse turn cannot see the cost of the same turn until it finishes, so
+  report overhead through the latest persisted phase data and say `current Pulse turn not yet
+  persisted` when that matters.
+- **Missing cost evidence:** if execution, evaluation, or builder/Pulse overhead cost cannot be read,
+  say exactly which bucket is missing and where you looked. Do not silently omit a bucket just because
+  another bucket has data.
 - **By plan step:** step id/title, configured tier or explicit model, observed provider/model,
   tokens, USD cost, wall/LLM/tool time, LLM calls, tool calls, and retries/handoffs when visible.
 - **By agent/sub-agent when possible:** parent step, agent/sub-agent name or id, observed model,
@@ -121,7 +137,8 @@ Use this hierarchy of evidence:
 1. `get_cost_summary(run_folder="<run_folder>")` if the tool is available in this mode;
 2. `costs/execution/<group>/<date>.json` and `costs/evaluation/<group>/<date>.json`
    (`run_folders[run_folder].by_step_and_model`, `by_model`, `by_tool`, `by_step_and_tool`);
-3. `costs/phase/token_usage.json` for phase/workshop context when the run-level file is missing;
+3. `costs/phase/token_usage.json` (`by_phase_and_model`, `by_model`) for builder/workshop/Pulse
+   overhead; this is required overhead reporting, not only a fallback;
 4. `runs/<run_folder>/logs/<step-id>/execution/` timing summaries for wall/LLM/tool time;
 5. run metadata / scheduler duration as the fallback for run wall time only.
 
@@ -131,10 +148,12 @@ tier, expensive model, slow sub-agent, retry loop, or missing telemetry is impor
 a report-only note or an Open finding for the user/builder to decide later. Do not harden because
 of this report-only step.
 
-Update the cost/time tiles and the latest Run row in `builder/improve.html` with total cost/tokens,
-wall time, LLM time, tool time, top-cost step/agent, top-time step/agent, configured tier/model vs
-observed model, and missing telemetry if relevant. Add or refresh a compact report-only Note/Pulse
-detail when material. Use the `Cost/time` action label on any cost/time note or finding. Use a small table or bullets that wrap on mobile; never paste raw JSON.
+Update the cost/time tiles and the latest Run row in `builder/improve.html` with run cost/tokens,
+builder/Pulse overhead cost/tokens, combined operating cost when both are priced, wall time, LLM time,
+tool time, top-cost step/agent, top-time step/agent, configured tier/model vs observed model, and
+missing telemetry if relevant. Add or refresh a compact report-only Note/Pulse detail when material.
+Use the `Cost/time` action label on any cost/time note or finding. Use a small table or bullets that
+wrap on mobile; never paste raw JSON.
 
 Also overwrite `builder/card.cost.html` every run so the org dashboard can show spend health next
 to health and goal progress:
@@ -144,16 +163,18 @@ to health and goal progress:
   data-goal='<same 3-6 word goal label used by card.health.html>'
   data-status='<normal|elevated|missing>' data-updated='<ISO8601 UTC>'>
   <h4><workflow name></h4>
-  <p data-field='headline'>Cost normal - $0.12 / 18k tokens</p>
-  <p data-field='metric'>$0.12 · 18k tokens · 11m wall</p>
-  <p data-field='detail'>Top spend: step-2 reviewer · costs/execution/default/2026-07-02.json</p>
+  <p data-field='headline'>Cost normal - run $0.12 + overhead $0.03</p>
+  <p data-field='metric'>run $0.12 · overhead $0.03 · total $0.15 · 18k tokens · 11m wall</p>
+  <p data-field='detail'>Top spend: step-2 reviewer; overhead: Pulse report · costs/execution/default/2026-07-02.json · costs/phase/token_usage.json</p>
 </article>
 ```
 
-Use `normal` when telemetry exists and there is no material concern, `elevated` for a cost/time
-outlier, high spend, runaway retries, or an expensive/slow step worth watching, and `missing` when
-there is no reliable cost/time telemetry. If USD is unavailable, make the metric honest
-(`unpriced provider · 18k tokens · 11m wall`) instead of guessing.
+Use `normal` when all expected telemetry exists and there is no material concern, `elevated` for a
+cost/time outlier, high spend, runaway retries, expensive/slow step, or high builder/Pulse overhead
+worth watching, and `missing` when any expected cost bucket cannot be read reliably. If only one
+bucket is missing, keep the known bucket values in the card and name the missing bucket in
+`data-field='detail'`. If USD is unavailable, make the metric honest (`run unpriced · overhead 18k
+tokens · 11m wall`) instead of guessing.
 
 If a report dashboard exists, call `get_reference_doc(kind="report-plan")` and make cost/time
 visible there too using existing live sources such as `window.report.get('costs/phase/token_usage.json')`,
@@ -304,7 +325,7 @@ Always call `notify_user` **once** for the run summary unless the user's prefere
 
 - `email_subject`: a clean inbox subject — `<workflow> — run summary` for steady runs, or `<workflow> — broke` / `— recovered` / `— new issue` for important transitions.
 - **`email_html`:** a small, designed HTML email with a consistent skeleton — a status header (`<emoji> <workflow> — <run summary|broke|recovered|new finding>`), the headline sentence, a `Bug: <state> · Goal: <state>` line, compact cost/time, a **Dashboard** link/button when publish is on, and a footer pointing to the Pulse log. Keep it compact, **inline-styled** (email clients strip `<style>`/external CSS) and dark-text-on-light so it renders everywhere.
-- Include compact cost/time whenever evidence is available, and always when it is material, requested by `## Notifications`, useful context for the transition, or the latest `builder/card.cost.html` status is `elevated`/`missing`: total cost/time plus top step/agent or missing evidence. Keep the detailed table in the Pulse log unless the user explicitly asked for email detail.
+- Include compact cost/time whenever evidence is available **or any expected cost bucket is missing**, and always when it is material, requested by `## Notifications`, useful context for the transition, or the latest `builder/card.cost.html` status is `elevated`/`missing`: run cost/time, builder/Pulse overhead, combined total when priced, top step/agent, top overhead phase, or the missing-bucket reason. Keep the detailed table in the Pulse log unless the user explicitly asked for email detail.
 - `email_to`: optional replacement To recipient(s) only when the user's `## Notifications` preference asks to send email somewhere other than the configured default; Gmail rejects addresses configured as blocked recipients.
 - `email_cc`: optional CC recipients only when the user's `## Notifications` preference asks for CC; Gmail rejects addresses configured as blocked recipients.
 - **`email_body` (plain-text fallback):** the same content as plain text for clients that don't render HTML — your headline, then `Bug: <state> · Goal: <state>`, then `See the Pulse log for detail.` Set it alongside `email_html`; never put HTML in `email_body`.

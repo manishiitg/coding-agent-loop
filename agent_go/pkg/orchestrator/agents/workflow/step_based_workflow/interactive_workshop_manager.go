@@ -2424,7 +2424,7 @@ func resolveWorkshopStepConfigTarget(ctx context.Context, controller *StepBasedW
 func registerGetCostSummaryTool(iwm *InteractiveWorkshopManager, mcpAgent *mcpagent.Agent, logger loggerv2.Logger) {
 	if err := mcpAgent.RegisterCustomTool(
 		"get_cost_summary",
-		"Show token usage and cost breakdown for the current run. Displays per-step and per-model totals with USD costs.",
+		"Show token usage and cost breakdown for the current run plus builder/Pulse overhead. Displays per-step, per-model, and phase-level totals with USD costs when priced.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -2445,22 +2445,27 @@ func registerGetCostSummaryTool(iwm *InteractiveWorkshopManager, mcpAgent *mcpag
 			}
 
 			var tokenFile *orchestrator.TokenUsageFile
+			runMissingReason := ""
 			if strings.TrimSpace(runFolder) == strings.TrimSpace(iwm.controller.selectedRunFolder) {
 				tokenFile = iwm.controller.GetCurrentRunTokenUsageFile()
 			} else {
 				tokenPath := filepath.ToSlash(filepath.Join("runs", runFolder, "token_usage.json"))
 				tokenContent, err := iwm.controller.ReadWorkspaceFile(ctx, tokenPath)
 				if err != nil {
-					return fmt.Sprintf("No token usage data found at %s", tokenPath), nil
+					runMissingReason = fmt.Sprintf("missing evidence: no run token usage data found at %s", tokenPath)
+				} else {
+					var parsed orchestrator.TokenUsageFile
+					if err := json.Unmarshal([]byte(tokenContent), &parsed); err != nil {
+						runMissingReason = fmt.Sprintf("missing evidence: failed to parse %s: %v", tokenPath, err)
+					} else {
+						tokenFile = &parsed
+					}
 				}
-				var parsed orchestrator.TokenUsageFile
-				if err := json.Unmarshal([]byte(tokenContent), &parsed); err != nil {
-					return fmt.Sprintf("Failed to parse %s: %v", tokenPath, err), nil
-				}
-				tokenFile = &parsed
 			}
 			if tokenFile == nil || len(tokenFile.ByModel) == 0 && len(tokenFile.ByStepAndModel) == 0 {
-				return fmt.Sprintf("No token usage data found for %s in costs/", runFolder), nil
+				if runMissingReason == "" {
+					runMissingReason = fmt.Sprintf("missing evidence: no run token usage data found for %s", runFolder)
+				}
 			}
 
 			tok := func(s string) string {
@@ -2473,7 +2478,13 @@ func registerGetCostSummaryTool(iwm *InteractiveWorkshopManager, mcpAgent *mcpag
 			var result strings.Builder
 			result.WriteString(fmt.Sprintf("## Cost Summary — %s\n\n", runFolder))
 
-			if len(tokenFile.ByStepAndModel) > 0 {
+			if runMissingReason != "" {
+				result.WriteString("### Run Cost\n\n")
+				result.WriteString(runMissingReason)
+				result.WriteString("\n\n")
+			}
+
+			if tokenFile != nil && len(tokenFile.ByStepAndModel) > 0 {
 				result.WriteString("### Per-Step Breakdown\n\n")
 				result.WriteString("| Step | Model | Input | Output | Cache | Cost |\n")
 				result.WriteString("|------|-------|-------|--------|-------|------|\n")
@@ -2505,7 +2516,7 @@ func registerGetCostSummaryTool(iwm *InteractiveWorkshopManager, mcpAgent *mcpag
 				result.WriteString(fmt.Sprintf("\n**Grand total: $%.4f**\n\n", grandTotalCost))
 			}
 
-			if len(tokenFile.ByModel) > 0 {
+			if tokenFile != nil && len(tokenFile.ByModel) > 0 {
 				result.WriteString("### Per-Model Totals\n\n")
 				result.WriteString("| Model | Input | Output | Cache R/W | Reasoning | Calls | Cost |\n")
 				result.WriteString("|-------|-------|--------|-----------|-----------|-------|------|\n")
@@ -2533,10 +2544,19 @@ func registerGetCostSummaryTool(iwm *InteractiveWorkshopManager, mcpAgent *mcpag
 
 			phaseTokenPath := orchestrator.ResolvePhaseTokenUsagePath("")
 			phaseContent, phaseErr := iwm.controller.ReadWorkspaceFile(ctx, phaseTokenPath)
-			if phaseErr == nil {
+			if phaseErr != nil {
+				result.WriteString("\n### Builder/Pulse Overhead (phase-level costs)\n\n")
+				result.WriteString(fmt.Sprintf("missing evidence: no phase token usage data found at %s\n", phaseTokenPath))
+			} else {
 				var phaseFile orchestrator.PhaseTokenUsageFile
-				if err := json.Unmarshal([]byte(phaseContent), &phaseFile); err == nil && len(phaseFile.ByPhaseAndModel) > 0 {
-					result.WriteString("\n### Phase-Level Costs (planning, learning, etc.)\n\n")
+				if err := json.Unmarshal([]byte(phaseContent), &phaseFile); err != nil {
+					result.WriteString("\n### Builder/Pulse Overhead (phase-level costs)\n\n")
+					result.WriteString(fmt.Sprintf("missing evidence: failed to parse %s: %v\n", phaseTokenPath, err))
+				} else if len(phaseFile.ByPhaseAndModel) == 0 {
+					result.WriteString("\n### Builder/Pulse Overhead (phase-level costs)\n\n")
+					result.WriteString(fmt.Sprintf("missing evidence: no by_phase_and_model entries in %s\n", phaseTokenPath))
+				} else {
+					result.WriteString("\n### Builder/Pulse Overhead (phase-level costs)\n\n")
 					result.WriteString("| Phase | Model | Input | Output | Cost |\n")
 					result.WriteString("|-------|-------|-------|--------|------|\n")
 

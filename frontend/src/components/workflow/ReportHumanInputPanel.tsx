@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Loader2, MessageSquareText, RefreshCw, Send, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, Loader2, MessageSquareText, RefreshCw, Send, X } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { ReportHumanInput } from '../../services/api-types'
 import { useChatStore } from '../../stores/useChatStore'
@@ -37,12 +37,19 @@ function priorityTone(priority: string): string {
   return 'border-amber-500/35 bg-amber-500/10 text-amber-200'
 }
 
+function selectedOptionTitle(input: ReportHumanInput): string {
+  if (!input.selected_option_id) return ''
+  return input.options.find(option => option.id === input.selected_option_id)?.title || input.selected_option_id
+}
+
 export function ReportHumanInputPanel({ workspacePath, className = '' }: { workspacePath: string; className?: string }) {
   const [inputs, setInputs] = useState<ReportHumanInput[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [drafts, setDrafts] = useState<Record<string, ReportHumanInputDraft>>({})
   const [refreshNonce, setRefreshNonce] = useState(0)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [expandedHistoryIds, setExpandedHistoryIds] = useState<Record<string, boolean>>({})
   const [panelRef, sizeTier] = useContainerSizeTier(560, 900)
   const compactOptions = sizeTier === 'phone'
 
@@ -72,6 +79,8 @@ export function ReportHumanInputPanel({ workspacePath, className = '' }: { works
 
   useEffect(() => {
     setDrafts({})
+    setHistoryOpen(false)
+    setExpandedHistoryIds({})
   }, [workspacePath])
 
   const pending = inputs.filter(input => input.status === 'pending')
@@ -104,6 +113,7 @@ export function ReportHumanInputPanel({ workspacePath, className = '' }: { works
         note,
       })
       useChatStore.getState().addToast('Answer saved for the next Pulse pass.', 'success')
+      setHistoryOpen(false)
       setRefreshNonce(prev => prev + 1)
     } catch (err) {
       useChatStore.getState().addToast(err instanceof Error ? err.message : 'Failed to save answer.', 'error')
@@ -117,12 +127,103 @@ export function ReportHumanInputPanel({ workspacePath, className = '' }: { works
     try {
       await agentApi.dismissReportHumanInput(workspacePath, input.id)
       useChatStore.getState().addToast('Question dismissed.', 'success')
+      setHistoryOpen(false)
       setRefreshNonce(prev => prev + 1)
     } catch (err) {
       useChatStore.getState().addToast(err instanceof Error ? err.message : 'Failed to dismiss question.', 'error')
     } finally {
       updateDraft(input.id, { submitting: false })
     }
+  }
+
+  const renderHistoryRows = () => (
+    <div className="grid gap-1.5">
+      {history.map(input => {
+        const expanded = Boolean(expandedHistoryIds[input.id])
+        const answer = selectedOptionTitle(input)
+        return (
+          <div key={input.id} className="rounded-md bg-background/50 text-xs">
+            <button
+              type="button"
+              onClick={() => setExpandedHistoryIds(prev => ({ ...prev, [input.id]: !expanded }))}
+              aria-expanded={expanded}
+              className="flex w-full min-w-0 items-center gap-2 px-2 py-1.5 text-left hover:bg-muted/40"
+            >
+              {expanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+              <span className="shrink-0 font-medium text-foreground">{inputStatusLabel(input)}</span>
+              <span className="shrink-0 text-muted-foreground">{inputTime(input.answered_at || input.dismissed_at || input.updated_at)}</span>
+              <span className="min-w-0 flex-1 truncate text-muted-foreground">{input.question}</span>
+            </button>
+            {expanded && (
+              <div className="space-y-1.5 border-t border-border/50 px-3 py-2 text-muted-foreground">
+                {answer && (
+                  <div>
+                    <span className="font-medium text-foreground">Answer: </span>
+                    <span>{answer}</span>
+                  </div>
+                )}
+                {input.note && (
+                  <div>
+                    <span className="font-medium text-foreground">Note: </span>
+                    <span>{input.note}</span>
+                  </div>
+                )}
+                {input.outcome_summary && (
+                  <div>
+                    <span className="font-medium text-foreground">Outcome: </span>
+                    <span>{input.outcome_summary}</span>
+                  </div>
+                )}
+                {!answer && !input.note && !input.outcome_summary && <div>No saved answer details.</div>}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+
+  if (pending.length === 0 && history.length > 0 && !historyOpen) {
+    const latest = history[0]
+    return (
+      <section ref={panelRef} className={`rounded-lg border border-cyan-500/20 bg-cyan-500/[0.045] px-3 py-2 shadow-sm ${className}`}>
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => setHistoryOpen(true)}
+            className="flex min-w-0 flex-1 items-center gap-2 text-left"
+            aria-expanded={false}
+          >
+            <MessageSquareText className="h-4 w-4 shrink-0 text-cyan-200" />
+            <span className="min-w-0">
+              <span className="block text-xs font-semibold text-foreground">Recent answers</span>
+              <span className="block truncate text-[11px] text-muted-foreground">
+                {history.length} saved{latest ? ` · ${inputStatusLabel(latest)} · ${latest.question}` : ''}
+              </span>
+            </span>
+          </button>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setRefreshNonce(prev => prev + 1)}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground"
+              aria-label="Refresh questions"
+            >
+              {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            </button>
+            <button
+              type="button"
+              onClick={() => setHistoryOpen(true)}
+              className="inline-flex h-7 items-center gap-1 rounded-md border border-border bg-background px-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+              aria-expanded={false}
+            >
+              Show
+              <ChevronDown className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      </section>
+    )
   }
 
   return (
@@ -227,17 +328,16 @@ export function ReportHumanInputPanel({ workspacePath, className = '' }: { works
       </div>
       {history.length > 0 && (
         <div className="mt-3 border-t border-border/60 pt-2">
-          <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Recent answers</div>
-          <div className="grid gap-1.5">
-            {history.map(input => (
-              <div key={input.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md bg-background/50 px-2 py-1.5 text-xs">
-                <span className="font-medium text-foreground">{inputStatusLabel(input)}</span>
-                <span className="text-muted-foreground">{input.question}</span>
-                {input.selected_option_id && <span className="rounded bg-muted px-1 text-muted-foreground">{input.selected_option_id}</span>}
-                {input.outcome_summary && <span className="text-muted-foreground">Outcome: {input.outcome_summary}</span>}
-              </div>
-            ))}
-          </div>
+          <button
+            type="button"
+            onClick={() => setHistoryOpen(prev => !prev)}
+            className="mb-1 flex w-full items-center justify-between gap-2 text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground hover:text-foreground"
+            aria-expanded={historyOpen}
+          >
+            <span>Recent answers</span>
+            {historyOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+          </button>
+          {historyOpen && renderHistoryRows()}
         </div>
       )}
     </section>

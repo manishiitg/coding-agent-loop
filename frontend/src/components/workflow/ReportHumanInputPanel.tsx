@@ -3,6 +3,7 @@ import { Loader2, MessageSquareText, RefreshCw, Send, X } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { ReportHumanInput } from '../../services/api-types'
 import { useChatStore } from '../../stores/useChatStore'
+import { useContainerSizeTier } from './reportWidgets/tableHelpers'
 
 type ReportHumanInputDraft = {
   selectedOptionId: string
@@ -42,6 +43,8 @@ export function ReportHumanInputPanel({ workspacePath, className = '' }: { works
   const [error, setError] = useState<string | null>(null)
   const [drafts, setDrafts] = useState<Record<string, ReportHumanInputDraft>>({})
   const [refreshNonce, setRefreshNonce] = useState(0)
+  const [panelRef, sizeTier] = useContainerSizeTier(560, 900)
+  const compactOptions = sizeTier === 'phone'
 
   const loadInputs = useCallback(async (cancelled?: () => boolean) => {
     if (!workspacePath) return
@@ -123,7 +126,7 @@ export function ReportHumanInputPanel({ workspacePath, className = '' }: { works
   }
 
   return (
-    <section className={`rounded-lg border border-cyan-500/25 bg-cyan-500/[0.06] p-3 shadow-sm ${className}`}>
+    <section ref={panelRef} className={`rounded-lg border border-cyan-500/25 bg-cyan-500/[0.06] p-3 shadow-sm ${className}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-cyan-400/30 bg-cyan-400/10 text-cyan-200">
@@ -162,23 +165,28 @@ export function ReportHumanInputPanel({ workspacePath, className = '' }: { works
               <h4 className="mt-2 text-sm font-semibold leading-snug text-foreground">{input.question}</h4>
               {input.context && <p className="mt-1 text-xs leading-5 text-muted-foreground">{input.context}</p>}
               {input.options.length > 0 && (
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <div className={compactOptions ? 'mt-3 overflow-hidden rounded-md border border-border/70 bg-background/45' : 'mt-3 grid grid-cols-2 gap-2'}>
                   {input.options.map(option => {
                     const checked = draft.selectedOptionId === option.id
                     return (
                       <label
                         key={option.id}
-                        className={`cursor-pointer rounded-md border p-2 transition-colors ${checked ? 'border-cyan-400 bg-cyan-400/10' : 'border-border bg-card/50 hover:border-cyan-400/50'}`}
+                        className={compactOptions
+                          ? `flex cursor-pointer items-start gap-2 border-b border-border/60 p-2.5 last:border-b-0 transition-colors ${checked ? 'bg-cyan-400/10' : 'hover:bg-muted/40'}`
+                          : `cursor-pointer rounded-md border p-2 transition-colors ${checked ? 'border-cyan-400 bg-cyan-400/10' : 'border-border bg-card/50 hover:border-cyan-400/50'}`
+                        }
                       >
                         <input
                           type="radio"
                           name={`report-human-input-${input.id}`}
-                          className="sr-only"
+                          className={compactOptions ? 'mt-0.5 h-3.5 w-3.5 shrink-0 accent-cyan-400' : 'sr-only'}
                           checked={checked}
                           onChange={() => updateDraft(input.id, { selectedOptionId: option.id })}
                         />
-                        <span className="block text-xs font-semibold text-foreground">{option.title}</span>
-                        {option.description && <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">{option.description}</span>}
+                        <span className="min-w-0">
+                          <span className="block break-words text-xs font-semibold text-foreground">{option.title}</span>
+                          {option.description && <span className="mt-0.5 block break-words text-xs leading-5 text-muted-foreground">{option.description}</span>}
+                        </span>
                       </label>
                     )
                   })}

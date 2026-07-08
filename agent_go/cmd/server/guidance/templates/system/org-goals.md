@@ -92,7 +92,7 @@ When the next action is workflow-specific improvement or missing measurement, pa
 workflow builder by adding a Chief of Staff recommendation card to that workflow's
 `builder/improve.html`. Include the goal/KPI target, alignment verdict, evidence path, gap,
 priority, suggested builder action, expected KPI/success-criteria impact, stable `data-cos-rec-id`,
-and lifecycle `data-status`. Workflow Pulse and Auto Improve reply through
+and lifecycle `data-status`. Workflow Pulse and Goal Advisor reply through
 `mark_cos_recommendation_status`; Chief of Staff should read those statuses before creating another
 recommendation for the same goal/gap. Do not edit the workflow plan/config directly from Chief of
 Staff chat.

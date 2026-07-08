@@ -253,13 +253,13 @@ nothing here is auto-applied. Each recommendation card carries:
 
 - stable `data-rec-id`
 - the goal it serves in `data-goal-id` (matching a goal card's `data-goal-id`)
-- `data-status` — `proposed` (default), `accepted`, `in_progress`, `needs_evidence`, `done`, `dismissed`, or `blocked`
+- `data-status` — `proposed` (default), `accepted`, `queued_goal_advisor`, `in_progress`, `needs_evidence`, `done`, `dismissed`, or `blocked`
 - `data-impact` and `data-effort` (e.g. `high`/`medium`/`low`)
 - a short title, the evidence it rests on, the proposed move, and the expected goal movement
 
 Update an existing recommendation in place (flip `data-status`) instead of duplicating it; keep
 accepted/done/dismissed ones for history rather than deleting them. Open statuses are `proposed`,
-`accepted`, `in_progress`, `needs_evidence`, and `blocked`; Org Pulse should call out stale open
+`accepted`, `queued_goal_advisor`, `in_progress`, `needs_evidence`, and `blocked`; Org Pulse should call out stale open
 recommendations before creating new ones for the same goal/gap.
 
 Starter body:

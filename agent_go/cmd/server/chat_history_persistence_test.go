@@ -1660,7 +1660,7 @@ func TestSeedCodingAgentRuntimeFromRestoredConversationAppliesAgentSessionHandle
 			SessionID: "old-chat-session",
 			Provider: llmtypes.CodingProviderSessionHandle{
 				Provider:        "codex-cli",
-				Transport:       llmtypes.CodingProviderTransportStructured,
+				Transport:       llmtypes.CodingProviderTransportTmux,
 				NativeSessionID: "codex-thread-from-handle",
 				WorkingDir:      "/workspace",
 				ProjectDirID:    "Workflow/example",

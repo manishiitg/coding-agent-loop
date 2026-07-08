@@ -57,12 +57,12 @@ func TestBuiltinOrgPulseSequenceIncludesReadOnlyLLMCostAudit(t *testing.T) {
 		}
 	}
 	for _, forbidden := range []string{
-			"If nothing has changed, write nothing and stop",
-			"STOP the whole pass",
-			"Org idle since last pulse",
-			"harvest what's worth keeping into your memory",
-			"Harvest what's worth keeping into your shared memory",
-		} {
+		"If nothing has changed, write nothing and stop",
+		"STOP the whole pass",
+		"Org idle since last pulse",
+		"harvest what's worth keeping into your memory",
+		"Harvest what's worth keeping into your shared memory",
+	} {
 		if strings.Contains(builtinOrgPulseQuery, forbidden) {
 			t.Fatalf("single-turn Org Pulse fallback should not include skip/no-op gate %q:\n%s", forbidden, builtinOrgPulseQuery)
 		}
@@ -88,7 +88,7 @@ func TestBuiltinOrgPulseRecommendationLifecycleHandoff(t *testing.T) {
 		"First read existing org-level recommendation cards",
 		"workflow-level Chief of Staff cards",
 		"data-cos-rec-id",
-		"queued_auto_improve",
+		"queued_goal_advisor",
 		"update/follow up instead of duplicating",
 		`data-status="proposed"`,
 		"stale open decisions",

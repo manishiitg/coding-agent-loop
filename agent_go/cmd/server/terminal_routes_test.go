@@ -606,10 +606,10 @@ func TestTerminalRoutesDeriveMissingStepTypeFromWorkflowPlan(t *testing.T) {
 	}
 }
 
-func TestTerminalRoutesStructuredWorkflowSnapshotIncludesToolEvents(t *testing.T) {
+func TestTerminalRoutesSyntheticWorkflowSnapshotIncludesToolEvents(t *testing.T) {
 	store := terminals.NewStore()
 	api := &StreamingAPI{terminalStore: store}
-	sessionID := "session-terminal-structured"
+	sessionID := "session-terminal-synthetic"
 	ownerID := "workflow-step:workflow-full-1:check-cdp"
 	metadata := map[string]interface{}{
 		"kind":               "terminal",
@@ -622,14 +622,14 @@ func TestTerminalRoutesStructuredWorkflowSnapshotIncludesToolEvents(t *testing.T
 		"step_name":          "Check CDP connection",
 		"step_index":         1,
 		"step_total":         28,
-		"step_transport":     "structured",
+		"step_transport":     "api",
 		"provider":           "gemini-cli",
 	}
 
-	store.HandleEvent(sessionID, terminalRouteStructuredChunkEvent(
+	store.HandleEvent(sessionID, terminalRouteSyntheticChunkEvent(
 		sessionID,
 		ownerID,
-		"$ gemini --output-format stream-json model=auto msgs=2\n> user: Verify CDP",
+		"$ gemini model=auto msgs=2\n> user: Verify CDP",
 		1,
 		metadata,
 	))
@@ -649,10 +649,10 @@ func TestTerminalRoutesStructuredWorkflowSnapshotIncludesToolEvents(t *testing.T
 		`{"stdout":"MCP_API_TOKEN=secret-token\nMCP_AUTH=Authorization: Bearer secret-token\nCDP status check successful. Version: Chrome/148.0.7778.169"}`,
 		metadata,
 	))
-	store.HandleEvent(sessionID, terminalRouteStructuredChunkEvent(
+	store.HandleEvent(sessionID, terminalRouteSyntheticChunkEvent(
 		sessionID,
 		ownerID,
-		"$ gemini --output-format stream-json model=auto msgs=2\n> user: Verify CDP\n[done · 29.9s · 83242 in · 1240 out]",
+		"$ gemini model=auto msgs=2\n> user: Verify CDP\n[done · 29.9s · 83242 in · 1240 out]",
 		2,
 		metadata,
 	))
@@ -674,13 +674,13 @@ func TestTerminalRoutesStructuredWorkflowSnapshotIncludesToolEvents(t *testing.T
 	if terminal.TerminalID != sessionID+":"+ownerID {
 		t.Fatalf("terminal id = %q, want %q", terminal.TerminalID, sessionID+":"+ownerID)
 	}
-	if terminal.StepTransport != "structured" {
-		t.Fatalf("step transport = %q, want structured", terminal.StepTransport)
+	if terminal.StepTransport != "api" {
+		t.Fatalf("step transport = %q, want api", terminal.StepTransport)
 	}
 	if terminal.Status.ProviderLabel != "Gemini CLI" {
 		t.Fatalf("provider label = %q, want Gemini CLI", terminal.Status.ProviderLabel)
 	}
-	if !strings.Contains(terminal.Content, "$ gemini --output-format stream-json") {
+	if !strings.Contains(terminal.Content, "$ gemini model=auto") {
 		t.Fatalf("terminal content missing Gemini command:\n%s", terminal.Content)
 	}
 	if !strings.Contains(terminal.Content, "→ tool: mcp_api-bridge_execute_shell_command") {
@@ -728,16 +728,16 @@ func TestTerminalRoutesMetadataListReturnsMandatoryEmptyRows(t *testing.T) {
 	store := terminals.NewStore()
 	api := &StreamingAPI{terminalStore: store}
 	sessionID := "session-terminal-metadata"
-	store.HandleEvent(sessionID, terminalRouteStructuredChunkEvent(
+	store.HandleEvent(sessionID, terminalRouteSyntheticChunkEvent(
 		sessionID,
 		"workflow-step:check",
-		"$ gemini --output-format stream-json model=auto msgs=1\n> user: hello",
+		"$ gemini model=auto msgs=1\n> user: hello",
 		1,
 		map[string]interface{}{
 			"kind":               "terminal",
 			"execution_owner_id": "workflow-step:check",
 			"execution_kind":     "workflow_step",
-			"step_transport":     "structured",
+			"step_transport":     "api",
 		},
 	))
 
@@ -1354,8 +1354,70 @@ func TestTerminalRoutesSendInputUsesTmuxPasteAndOptionalEnter(t *testing.T) {
 	if calls[1].args[0] != "paste-buffer" || !containsString(calls[1].args, tmuxSession) {
 		t.Fatalf("second tmux call = %#v, want paste-buffer into session", calls[1])
 	}
+	if !containsString(calls[1].args, "-p") {
+		t.Fatalf("second tmux call = %#v, want bracketed paste for non-Cursor terminal", calls[1])
+	}
 	if got := strings.Join(calls[2].args, " "); got != "send-keys -t "+tmuxSession+" Enter" {
 		t.Fatalf("third tmux call = %q, want enter", got)
+	}
+}
+
+func TestTerminalRoutesSendInputAvoidsBracketedPasteForCursor(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-cursor-input"
+	terminalID := sessionID + ":workflow-step:review-plan"
+	tmuxSession := "mlp-cursor-cli-int-test"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, "Cursor Agent\n→ Add a follow-up", 2))
+
+	type call struct {
+		stdin string
+		args  []string
+	}
+	var calls []call
+	oldRun := runTerminalTmuxCommand
+	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
+		calls = append(calls, call{stdin: stdin, args: append([]string(nil), args...)})
+		return nil
+	}
+	defer func() { runTerminalTmuxCommand = oldRun }()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/terminals/"+terminalID+"/input", strings.NewReader(`{"text":"line one\nline two"}`))
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
+	rec := httptest.NewRecorder()
+	api.handleSendTerminalInput(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("send input status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	if len(calls) != 2 {
+		t.Fatalf("tmux call count = %d, want 2: %#v", len(calls), calls)
+	}
+	if calls[1].args[0] != "paste-buffer" || !containsString(calls[1].args, "-r") || !containsString(calls[1].args, tmuxSession) {
+		t.Fatalf("second tmux call = %#v, want raw paste into Cursor session", calls[1])
+	}
+	if containsString(calls[1].args, "-p") {
+		t.Fatalf("second tmux call = %#v, must not use bracketed paste for Cursor", calls[1])
+	}
+}
+
+func TestPasteTerminalTextAvoidsBracketedPasteForCursorTmuxName(t *testing.T) {
+	tmuxSession := "mlp-cursor-cli-int-direct"
+	var calls [][]string
+	oldRun := runTerminalTmuxCommand
+	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
+		calls = append(calls, append([]string(nil), args...))
+		return nil
+	}
+	defer func() { runTerminalTmuxCommand = oldRun }()
+
+	if err := pasteTerminalText(context.Background(), tmuxSession, "direct paste"); err != nil {
+		t.Fatalf("pasteTerminalText: %v", err)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("tmux call count = %d, want 2: %#v", len(calls), calls)
+	}
+	if calls[1][0] != "paste-buffer" || containsString(calls[1], "-p") {
+		t.Fatalf("paste args = %#v, want non-bracketed paste for Cursor tmux name", calls[1])
 	}
 }
 
@@ -1526,7 +1588,7 @@ func terminalRouteEndEvent(sessionID, executionID, tmuxSession string, retention
 	}
 }
 
-func terminalRouteStructuredChunkEvent(sessionID, executionID, content string, chunkIndex int, metadata map[string]interface{}) storeevents.Event {
+func terminalRouteSyntheticChunkEvent(sessionID, executionID, content string, chunkIndex int, metadata map[string]interface{}) storeevents.Event {
 	return storeevents.Event{
 		Type:          "streaming_chunk",
 		Timestamp:     time.Now(),

@@ -55,20 +55,20 @@ func TestRestoredRuntimeUsesLaunchableTransportFromRuntime(t *testing.T) {
 	}
 }
 
-func TestRestoredRuntimeTmuxSessionRejectsStructuredTransport(t *testing.T) {
+func TestRestoredRuntimeTmuxSessionRejectsNonTmuxTransport(t *testing.T) {
 	runtime := &ChatHistoryAgentRuntime{
 		Kind:     "coding_agent",
 		Provider: "future-cli",
 		AgentSessionHandle: &mcpagent.AgentSessionHandle{
 			Provider: llmtypes.CodingProviderSessionHandle{
 				Provider:  "future-cli",
-				Transport: llmtypes.CodingProviderTransportStructured,
+				Transport: "api",
 			},
 		},
 	}
 
 	if restoredRuntimeUsesLaunchableTerminalTransport(runtime) {
-		t.Fatalf("structured transport should not start tmux")
+		t.Fatalf("non-tmux transport should not start tmux")
 	}
 	if _, ok, reason := restoredRuntimeTmuxSession(runtime); ok || reason != "not_tmux_transport" {
 		t.Fatalf("restoredRuntimeTmuxSession ok=%v reason=%q, want not_tmux_transport", ok, reason)

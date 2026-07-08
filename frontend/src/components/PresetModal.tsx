@@ -661,7 +661,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                         <WorkflowLLMTierPreview selectedLLM={selectedWorkflowLLMOption} providerManifest={providerManifest} />
                         <div className="text-xs text-gray-500 mt-2">
                           Coding agents save high, medium, and low automation tiers. Workshop work uses high.
-                          Auto Improve uses the provider default when available unless an advanced override is set.
+                          Goal Advisor uses the provider default when Pulse Gate selects it unless an advanced override is set.
                           Pulse uses the provider Pulse default when available unless an advanced override is set.
                         </div>
                         <button
@@ -790,12 +790,12 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                             Used for planning, evaluation design, anonymization, plan improvement, and debugging. Defaults to Tier 1 if not set.
                           </div>
                         </div>
-                        {/* Auto Improve LLM */}
+                        {/* Goal Advisor LLM */}
                         <div>
                           <div className="flex items-center justify-between gap-2 mb-2">
                             <div className="flex items-center gap-1.5">
                               <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
-                                Auto Improve LLM
+                                Goal Advisor LLM
                               </label>
                               <TooltipProvider>
                                 <Tooltip>
@@ -803,7 +803,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                                     <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
                                   </TooltipTrigger>
                                   <TooltipContent className="max-w-xs">
-                                    <p className="text-xs">Optional override used only by scheduled Auto Improve. Leave empty to use the provider default when available.</p>
+                                    <p className="text-xs">Optional override used by the Goal Advisor strategy module. Leave empty to use the provider default when available.</p>
                                   </TooltipContent>
                                 </Tooltip>
                               </TooltipProvider>
@@ -832,7 +832,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                             {formatAgentLLMConfig(effectiveAutoImproveLLM)}
                           </div>
                           <div className="text-xs text-gray-500 mt-1">
-                            Used only for scheduled optimizer runs. Normal schedules and manual workflow runs use the workflow model.
+                            Used by Pulse when the Goal Advisor strategy module runs. Normal schedules and routine Pulse modules use their own workflow/Pulse models.
                           </div>
                         </div>
                         {/* Pulse LLM */}
@@ -887,7 +887,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           <div>Learning: Tier 2 → Tier 3 (after 2+ runs)</div>
                           <div>Validation: Always Tier 3</div>
                           <div>Workshop LLM: Independent — always uses the configured Workshop LLM above</div>
-                          <div>Auto Improve LLM: Optional scheduled optimizer override; empty uses the provider default when available</div>
+                          <div>Goal Advisor LLM: Optional strategy-module override; empty uses the provider default when available</div>
                           <div>Pulse LLM: Optional post-run QA override; empty uses the provider Pulse default when available</div>
                         </div>
                       </>

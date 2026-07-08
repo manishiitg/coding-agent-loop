@@ -23,7 +23,7 @@ export const MODE_INFO: Record<Exclude<ModeCategory, null>, ModeInfo> = {
       'Pulse view — one agent-curated log of every run, with two verdicts: Bug (did it run right) and Goal (is it hitting its success criteria)',
       'Soul view — the automation\'s objective and success criteria (its source of truth)',
       'Monitor — a per-run review that catches silent breakage and goal drift, and can notify you on Slack/WhatsApp',
-      'Auto-improve — Pulse hardens each run; a scheduled pass refreshes aging learnings/KB and applies evidence-backed plan changes',
+      'Goal Advisor — Pulse-selected strategy review that challenges the plan when goals are not moving',
       'Requires a Workflow/ folder for organization'
     ],
     examples: [],

@@ -194,11 +194,10 @@ func (api *StreamingAPI) captureChatHistoryTerminalSnapshots(sessionID string, r
 		stored := api.terminalStore.List(sessionID)
 		// Prefer tmux-backed panes (workflow coding-agent steps run over a tmux
 		// transport, so their snapshots are recapturable on restore). When no
-		// tmux pane exists — e.g. a multi-agent / Chief-of-Staff chat whose
-		// coding agent streams over a non-tmux transport (stream-json), so the
-		// terminal events carry no tmux_session — fall back to any terminal
-		// pane. Without this fallback the last capture is dropped at save time
-		// and the restored terminal pane comes up empty after a server restart.
+		// tmux pane exists — e.g. older non-tmux terminal records or API-backed
+		// panes with no tmux_session — fall back to any terminal pane. Without
+		// this fallback the last capture is dropped at save time and the
+		// restored terminal pane comes up empty after a server restart.
 		candidates = collectChatHistoryTerminalSnapshots(stored, true)
 		if len(candidates) == 0 {
 			candidates = collectChatHistoryTerminalSnapshots(stored, false)

@@ -260,7 +260,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 - ` + "`builder/improve.html`" + ` — the workflow's single durable log and the user's primary window into it. Read on every improvement turn. One self-contained, human-readable HTML document, newest-on-top: current health, the Workflow Profile, a recent-run strip, an Archive Index, and a timeline of applied/proposed changes, review findings, monitor notes, Chief of Staff recommendations, and user rules. Chief of Staff recommendation cards are external findings: verify the cited evidence, then decide whether to harden, replan/refine, or mark no-action. Older detail moves to referenced ` + "`builder/improve-archive/YYYY-MM.html`" + ` files. Format: see the **Workflow log conventions**.
 - ` + "`planning/changelog/changelog-YYYY-MM-DD-HH-MM-SS.json`" + ` — per-session log of every plan-mod tool call (` + "`update_*_step`" + `, ` + "`add_*_step`" + `, ` + "`delete_plan_steps`" + `, ` + "`*_todo_task_route`" + `, ` + "`update_validation_schema`" + `, ` + "`update_step_config`" + `). Each entry carries timestamp, tool, the mandatory ` + "`reason`" + ` you supplied at invocation, affected step ids, per-field old/new values, and full JSON of added/deleted steps for revert; Artifact Review later stamps inspected entries with ` + "`artifact_review.done=true`" + ` through ` + "`mark_changelog_artifact_reviewed`" + `. **Read this** before proposing plan edits to see what's already been tried this session and why; complements workflow-level history in ` + "`builder/improve.html`" + ` with per-session, per-mutation detail. Files rotate hourly. Read-only via shell — entries are written automatically by the plan-mod tools, never edit them by hand.
 
-**Auto-improvement framework files (opt-in per workflow):**
+**Pulse / Goal Advisor framework files (opt-in per workflow):**
 - ` + "`knowledgebase/context/context.md`" + ` and ` + "`knowledgebase/context/examples/`" + ` — user-supplied runtime business context: rules, preferences, constraints, assumptions, examples. Agents append captured context through the ` + "`capture_context`" + ` tool when the user confirms capture (see "Proactive business-context capture" below for the flow). **Excluded** from ` + "`reorganize_knowledgebase`" + ` and ` + "`consolidate_knowledgebase`" + ` passes — user-supplied content is never silently rewritten by the optimizer. Steps with ` + "`knowledgebase_access: read`" + ` (or ` + "`read-write`" + `) automatically have read access — context lives as a sub-section of the knowledgebase. Each capture is also recorded as a **User rule (authoritative)** entry in ` + "`builder/improve.html`" + ` so it's visible in the workflow log.
 
 **Workflow profile and oversight:**
@@ -311,9 +311,9 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 - **Inspect recent runs**: ` + "`runs/iteration-0/`" + ` always holds the most recent execution. Older ` + "`runs/iteration-{N}/`" + ` folders are retained history; use them for trends, regressions, and before/after comparisons against builder/improve.html timestamps.
 - **Use task and Pulse context**: recurring Chief of Staff task findings live in ` + "`pulse/task.html`" + `; org-wide decisions and recommendations live in ` + "`pulse/org-pulse.html`" + ` and ` + "`pulse/goals.html`" + `.
 
-## Auto-Improvement Framework — When to Use the Tools
+## Pulse and Goal Advisor — When to Use the Tools
 
-In ` + "`optimizer`" + ` workshop mode, the auto-improvement framework reads eval reports, run outputs, and logs to choose between two workflow actions: ` + "`harden_workflow`" + ` or ` + "`replan_workflow_from_results`" + `.
+In ` + "`optimizer`" + ` workshop mode, scheduled Goal Advisor reads eval reports, run outputs, ` + "`soul.md`" + `, and the Pulse log to decide whether the current workflow strategy is capped and whether an evidence-backed ` + "`replan_workflow_from_results`" + ` or proposal is warranted. Pulse handles per-run QA and ` + "`harden_workflow`" + ` for Bugs.
 
 **Two-layer mental model — internalize this before reasoning about any /improve-* flow:**
 
@@ -323,8 +323,8 @@ In ` + "`optimizer`" + ` workshop mode, the auto-improvement framework reads eva
 Said simply: **plan defines the work and goal; eval plus run evidence shows where harden or replan is needed.**
 
 **Decision model:**
-- Use ` + "`harden_workflow(group_name?, focus?)`" + ` when the workflow path is basically right but prompts/config/validation/learnings/KB/db/report/eval wiring need repair.
-- Use ` + "`replan_workflow_from_results(group_name?, focus?)`" + ` when run/eval evidence shows the workflow path is not aligned with ` + "`soul.md`" + ` success criteria.
+- Pulse uses ` + "`harden_workflow(group_name?, focus?)`" + ` when the workflow path is basically right but prompts/config/validation/learnings/KB/db/report/eval wiring need repair.
+- Goal Advisor uses ` + "`replan_workflow_from_results(group_name?, focus?)`" + ` only when cross-run evidence shows the workflow path is not aligned with ` + "`soul.md`" + ` success criteria. If the evidence is useful but not strong enough, it records a proposal or asks the user through ` + "`create_human_input_request`" + `.
 
 ### Setup precondition: ` + "`/define-success`" + `
 
@@ -333,7 +333,7 @@ Before recurring improvement can do useful work, the workflow should have its **
 1. Classifies the workflow through conversation as one primary type plus optional secondary traits, then maps that to plan stability, runtime mode, business-context accumulation, and improvement cadence. Writes a "## Workflow Profile" section into ` + "`builder/improve.html`" + `. Sets ` + "`oversight_mode`" + ` in ` + "`workflow.json`" + ` (the one hard gate that stays structured).
 2. For workflows that accumulate business context, scaffolds ` + "`knowledgebase/context/context.md`" + ` with clear user-owned sections.
 
-When a user runs ` + "`/improve-evaluation`" + `, ` + "`/improve-workflow`" + `, or ` + "`/auto-improve`" + ` on a workflow that has not been set up yet (no Workflow Profile in improve.html), **stop and redirect them to ` + "`/define-success`" + ` first.** Do NOT bootstrap inline — setup is a meaningful conversation, and conflating it with improvement work bloats every improvement turn.
+When a user runs ` + "`/improve-evaluation`" + `, ` + "`/improve-workflow`" + `, or ` + "`/goal-advisor`" + ` on a workflow that has not been set up yet (no Workflow Profile in improve.html), **stop and redirect them to ` + "`/define-success`" + ` first.** Do NOT bootstrap inline — setup is a meaningful conversation, and conflating it with improvement work bloats every improvement turn.
 
 ### Tool: ` + "`get_workflow_command_guidance`" + `
 
@@ -341,7 +341,7 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
 
   1. The user invokes a slash command (` + "`/improve-workflow`" + `, ` + "`/review-plan`" + `, etc.). The slash command's submitted message names the kind to pass; you call this tool with that kind. Do NOT improvise the flow yourself.
   2. The user describes the same intent in plain chat ("help me improve this workflow", "review whether the goal is being met", "improve the eval plan"). Recognize the intent, pick the matching kind, and call the tool. The user gets the same canonical flow whether they typed the slash or asked in chat.
-  3. You're running on a schedule (e.g. ` + "`/auto-improve`" + `'s scheduled improve message). The schedule message names the kind to call.
+  3. You're running on a schedule (e.g. the scheduled Goal Advisor message). The schedule message names the kind to call.
 
 **Kinds — match to intent:**
 
@@ -357,9 +357,10 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
 
   Improvements:
     - define-success           → one-time framework bootstrap
-    - improve-workflow         → unified plan + report + KB + learnings + db improvement
+    - improve-workflow         → manual unified plan + report + KB + learnings + db maintenance
     - improve-evaluation       → evaluation_plan changes
-    - auto-improve             → set up cron schedules
+    - goal-advisor-setup       → set up recurring run + Goal Advisor schedules
+    - goal-advisor             → scheduled expert strategy review / evidence-backed replan or proposal
     - improve-report           → report accuracy/live-data/layout improvements
 
 **Optional parameters:**
@@ -371,9 +372,9 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
 
 The returned text is your instructions for this turn — do not paraphrase or skip steps.
 
-### How ` + "`/improve-*`" + ` commands evolve
+### How improvement commands are split
 
-The existing ` + "`/improve-evaluation`" + `, ` + "`/improve-workflow`" + `, ` + "`/auto-improve`" + ` continue to work. ` + "`/improve-workflow`" + ` subsumes the per-domain commands when the user wants a unified pass — its discovery covers plan, reports, knowledgebase, learnings, db, eval, and run logs as one surface. The optimizer chooses ` + "`harden_workflow`" + ` for local reliability/artifact fixes, ` + "`replan_workflow_from_results`" + ` for success-criteria alignment redesign, report-plan/HTML edits for report accuracy and live-data wiring, and ` + "`improve_kb`" + ` / ` + "`improve_learnings`" + ` / ` + "`improve_db`" + ` for persistent-store hygiene (KB notes, global learnings, db/data contracts — db stays compatible with the plan and reports).
+` + "`/improve-workflow`" + ` is manual maintenance when the user explicitly asks for a broad improvement pass. Pulse is the default daily/per-run steward and owns routine hardening, artifact review, KB/learnings/db/report hygiene when evidence points there. ` + "`/goal-advisor`" + ` sets up the recurring expert strategy loop; the scheduled ` + "`goal-advisor`" + ` pass thinks beyond the current plan and applies or proposes structural changes only when Goal evidence supports it.
 
 ### Resolution discipline
 

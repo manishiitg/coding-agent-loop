@@ -69,12 +69,12 @@ type PresetLLMConfig struct {
 	// Agent-specific defaults — take priority over the legacy single-model form.
 	PhaseLLM *AgentLLMConfig `json:"phase_llm,omitempty"`
 
-	// Optional scheduled Auto Improve override. When omitted, coding-agent
-	// providers may supply a provider-owned Auto Improve default.
+	// Optional Goal Advisor strategy-module override. When omitted,
+	// coding-agent providers may supply a provider-owned Goal Advisor default.
 	AutoImproveLLM *AgentLLMConfig `json:"auto_improve_llm,omitempty"`
 
-	// Optional scheduled Pulse override. When omitted, coding-agent providers may
-	// supply a provider-owned Pulse default.
+	// Optional Pulse Gate/routine post-run QA override. When omitted,
+	// coding-agent providers may supply a provider-owned Pulse default.
 	PulseLLM *AgentLLMConfig `json:"pulse_llm,omitempty"`
 
 	// Optional scheduled Chief of Staff override. When omitted, coding-agent

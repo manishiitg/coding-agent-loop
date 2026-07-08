@@ -35,10 +35,9 @@ The builder must prove these user-facing flows end to end:
 2. Every coding-agent call that uses MCP must receive the correct per-session
    MCP bridge URL/token and must not accidentally use a different session.
 3. Workflow steps, workflow-runtime sub-agents (execution, learning, KB,
-   conditional, todo orchestrator), and background agents default to bounded tmux
-   lifecycle when the provider contract is tmux. Gemini CLI uses
-   structured transport. Chat defaults to persistent tmux lifecycle only for
-   tmux-contract providers.
+   conditional, todo orchestrator), and background agents use bounded tmux
+   lifecycle for coding-agent providers. Chat defaults to persistent tmux
+   lifecycle for coding-agent providers.
 4. Bounded tmux terminals must remain viewable for the configured retention
    window, expose `closes_at`, then be cleaned up.
 5. Completed terminal snapshots must remain selectable in the UI. Active
@@ -97,7 +96,7 @@ P1 cases block release for any coding-provider or terminal-runtime change:
 | Terminal owner reconciliation | Start/chunk/end event owner IDs may differ. Backend tests must prove terminal state closes by `tmux_session` or step metadata instead of creating or leaving stale active panels. |
 | Cancellation | Client cancel, API stop, and server shutdown must interrupt/close bounded provider sessions and must not reuse poisoned panes. |
 | Workflow step cwd/MCP | A real code-exec step must run in the workflow execution directory and call the session-scoped MCP bridge. |
-| Gemini CLI step transport | Gemini CLI workflow-runtime agents must force structured stream-json transport, even when a step config says `transport: "tmux"`. Gemini CLI chat follows the same structured contract. |
+| Gemini CLI step transport | Gemini CLI workflow-runtime agents must use tmux, including when stale step config still says `transport: "structured"` or `transport: "json"`. |
 | Parallel agents | Parallel todo sub-agents must have unique execution ids, terminals, MCP sessions, and output directories, with no terminal duplication for one tmux pane. |
 
 P2 cases are required before broad rollout or when touching related UI/runtime
@@ -120,7 +119,7 @@ environment supports. At minimum:
 - Codex CLI tmux transport.
 - Antigravity CLI tmux transport in explicit local/contract runs; it remains
   hidden from default published provider lists until rollout is approved.
-- Gemini CLI structured stream-json transport.
+- Gemini CLI tmux transport.
 - Cursor CLI tmux transport when installed.
 - Pi CLI tmux transport when installed.
 

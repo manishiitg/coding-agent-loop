@@ -176,15 +176,15 @@ export const builtinCommands: CommandDefinition[] = [
     }
   },
   {
-    command: 'auto-improve',
-    description: 'Set up recurring automation runs and lightweight optimizer checks',
+    command: 'goal-advisor',
+    description: 'Set up recurring runs with Pulse Gate and the Goal Advisor module',
     icon: <Bot className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
     requiredWorkshopMode: 'workshop',
     source: 'builtin',
     execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'auto-improve')
+      submitGuidedWorkflowCommand(ctx, 'goal-advisor-setup')
     }
   },
   {

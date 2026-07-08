@@ -16,7 +16,7 @@ Focus on: {{.Focus}}.{{end}}
 
 PASS 0 - FRAMEWORK PRECHECK
 1. Read `builder/improve.html`: Workflow Profile, recent timeline entries, open findings, and archive rows. If it is short, read it in full. If an archive row references an older eval semantic change that affects a step you may edit, read that archive file.
-2. If there is no Workflow Profile block, stop and redirect: "Run /auto-improve first - it establishes the Workflow Profile + success."
+2. If there is no Workflow Profile block, stop and redirect: "Run /goal-advisor first - it establishes the Workflow Profile + success."
 3. Read `soul/soul.md` and extract the objective and success criteria. These are the standard eval should measure against.
 
 PASS 1 - VALIDATION

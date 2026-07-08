@@ -19,7 +19,7 @@ var workflowVersionUpgrades = []workflowVersionUpgrade{
 		label: "upgrade-1.0.1",
 		query: `WORKFLOW VERSION UPGRADE v1.0.0 -> v1.0.1.
 
-This is a product-managed Pulse pre-step. Do ONLY this upgrade check, then stop and wait for the normal Pulse triage step.
+This is a product-managed Pulse pre-step. Do ONLY this upgrade check, then stop and wait for the normal Pulse Gate step.
 
 1. Read workflow.json and builder/improve.html. Treat a missing workflow.json "version" as "1.0.0".
 2. Call get_reference_doc(kind="review-improve-log") and get_reference_doc(kind="post-run-monitor"). If builder/improve.html uses the old narrow Pulse layout, update it to the current responsive workflow Pulse contract: viewport meta, no horizontal overflow, mobile-first/wide-safe cards, metadata under titles on narrow widths, overflow-wrap for long run notes, and compact latest-run/cost/time sections.
@@ -35,7 +35,7 @@ Report the files changed and any intentional no-op decisions, then stop.`,
 		label: "upgrade-1.0.2",
 		query: `WORKFLOW VERSION UPGRADE v1.0.1 -> v1.0.2.
 
-This is a product-managed Pulse pre-step. Do ONLY this upgrade check, then stop and wait for the normal Pulse triage step.
+This is a product-managed Pulse pre-step. Do ONLY this upgrade check, then stop and wait for the normal Pulse Gate step.
 
 1. Read workflow.json, publish/status.json if it exists, and builder/improve.html.
 2. If workflow.json.publish or publish/status.json shows private/password/passphrase/secret_name/password-protected publishing, call get_reference_doc(kind="publish-strategy") and refresh the workflow's publish instructions/config notes to the current Runloop dark password-gate contract: named secret only, never plaintext, encrypt baked HTML with StatiCrypt after staging, use one shared salt/remember flow so the viewer unlocks once, apply the Runloop dark password-gate styling instead of the default green/white StatiCrypt page, and record only visibility + secret_name/status. Do not change the destination URL, do not expose the password, and do not do the deploy in this upgrade step; the normal verified publish turn will republish with the new gate.
@@ -51,7 +51,7 @@ Report the files changed and any intentional no-op decisions, then stop.`,
 		label: "upgrade-1.0.3",
 		query: `WORKFLOW VERSION UPGRADE v1.0.2 -> v1.0.3.
 
-This is a product-managed Pulse pre-step. Do ONLY this report-dashboard upgrade check, then stop and wait for the normal Pulse triage step.
+This is a product-managed Pulse pre-step. Do ONLY this report-dashboard upgrade check, then stop and wait for the normal Pulse Gate step.
 
 Goal: move old report dashboards to the current HTML-only contract. The React report viewer should only receive a lightweight navigation plan; report intelligence, layout, tables, charts, summaries, and recommendations belong in HTML documents under db/reports/.
 
@@ -73,7 +73,7 @@ Goal: move old report dashboards to the current HTML-only contract. The React re
 		label: "upgrade-1.0.4",
 		query: `WORKFLOW VERSION UPGRADE v1.0.3 -> v1.0.4.
 
-This is a product-managed Pulse pre-step. Do ONLY this Pulse report readability upgrade, then stop and wait for the normal Pulse triage step.
+This is a product-managed Pulse pre-step. Do ONLY this Pulse report readability upgrade, then stop and wait for the normal Pulse Gate step.
 
 Goal: refresh workflow Pulse logs so builder/improve.html reads like a concise human/operator dashboard first, with the detailed evidence log below. This upgrade is for layout, readability, and stale-count cleanup only; do not change workflow behavior.
 
@@ -96,9 +96,9 @@ Goal: refresh workflow Pulse logs so builder/improve.html reads like a concise h
 		label: "upgrade-1.0.5",
 		query: `WORKFLOW VERSION UPGRADE v1.0.4 -> v1.0.5.
 
-This is a product-managed Pulse pre-step. Do ONLY this filterability upgrade, then stop and wait for the normal Pulse triage step.
+This is a product-managed Pulse pre-step. Do ONLY this filterability upgrade, then stop and wait for the normal Pulse Gate step.
 
-Goal: make builder/improve.html searchable by exact date, activity kind, and text so the user can inspect all Pulse / Auto Improve / Chief of Staff actions and notes for a specific day.
+Goal: make builder/improve.html searchable by exact date, activity kind, and text so the user can inspect all Pulse / Goal Advisor / Chief of Staff actions and notes for a specific day.
 
 1. Read workflow.json and builder/improve.html. Treat a missing workflow.json "version" as "1.0.0".
 2. Call get_reference_doc(kind="review-improve-log") and update builder/improve.html to the current filterable Pulse skeleton where needed:
@@ -115,11 +115,11 @@ Report the files changed, filter metadata added, skipped unknown-date items if a
 	},
 	{
 		from:  "1.0.5",
-		to:    WorkflowContractCurrentVersion,
+		to:    "1.0.6",
 		label: "upgrade-1.0.6",
 		query: `WORKFLOW VERSION UPGRADE v1.0.5 -> v1.0.6.
 
-This is a product-managed Pulse pre-step. Do ONLY this richer Pulse dashboard upgrade, then stop and wait for the normal Pulse triage step.
+This is a product-managed Pulse pre-step. Do ONLY this richer Pulse dashboard upgrade, then stop and wait for the normal Pulse Gate step.
 
 Goal: make builder/improve.html more colorful, less text-heavy, and more widget-oriented so the user can understand workflow state quickly in the right panel.
 
@@ -136,6 +136,29 @@ Goal: make builder/improve.html more colorful, less text-heavy, and more widget-
 6. Only after the applicable checks/updates are complete, update workflow.json "version" to "1.0.6". Do not change schema_version. Do not run the workflow, do not alter schedules, and do not call notify_user in this step.
 
 Report the files changed, widget sections refreshed, evidence preserved, and any intentional no-op decisions, then stop.`,
+	},
+	{
+		from:  "1.0.6",
+		to:    WorkflowContractCurrentVersion,
+		label: "upgrade-1.0.7",
+		query: `WORKFLOW VERSION UPGRADE v1.0.6 -> v1.0.7.
+
+This is a product-managed Pulse pre-step. Do ONLY this legacy Auto Improve schedule cleanup, then stop and wait for the normal Pulse Gate step.
+
+Goal: remove old separate Auto Improve / Goal Advisor optimizer schedules because Goal Advisor now runs as a Pulse-selected module after normal scheduled workflow runs.
+
+1. Read workflow.json and builder/improve.html if it exists. Treat a missing workflow.json "version" as "1.0.0".
+2. Inspect workflow.json "schedules". Identify legacy product Auto Improve / Goal Advisor schedules ONLY when:
+   - workshop_mode is "optimizer"; AND
+   - messages is missing/empty OR the messages match the old fixed product queue shape, such as STEP 1/5 PRE-BACKUP, STEP 2/5 IMPROVE or GOAL ADVISOR, later backup/publish/notify steps.
+   Schedule name text such as "Auto Improve" or "Goal Advisor" is supporting evidence only. Do not remove a schedule by name alone.
+3. Preserve explicit custom optimizer jobs: if workshop_mode="optimizer" has a real user-authored custom message with specific scope, evidence window, stop conditions, or non-product task intent, keep it unchanged.
+4. For each legacy product optimizer schedule, remove it from workflow.json schedules. Do not delete or rewrite schedule-runs.json history; old run history stays as evidence.
+5. If any legacy optimizer schedule was removed, set workflow.json post_run_monitor=true so the normal scheduled run can run Pulse Gate and select Goal Advisor when due. Do not create a new schedule here.
+6. Append one concise Pulse entry to builder/improve.html, if that file exists, that says this workflow was upgraded from v1.0.6 to v1.0.7, lists removed legacy optimizer schedule ids/names, and lists preserved custom optimizer schedule ids/names if any.
+7. Only after the applicable checks/updates are complete, update workflow.json "version" to "1.0.7". Do not change schema_version. Do not run the workflow, do not call notify_user, and do not publish in this step.
+
+Report the files changed, legacy optimizer schedules removed, custom optimizer schedules preserved, post_run_monitor state, and any intentional no-op decisions, then stop.`,
 	},
 }
 
@@ -180,13 +203,18 @@ func workflowVersionUpgradePlan(manifest *WorkflowManifest) []workflowVersionUpg
 }
 
 func postRunMonitorStepsForManifest(manifest *WorkflowManifest) []postRunMonitorStep {
+	steps := postRunMonitorUpgradeStepsForManifest(manifest)
+	steps = append(steps, postRunMonitorSteps()...)
+	return steps
+}
+
+func postRunMonitorUpgradeStepsForManifest(manifest *WorkflowManifest) []postRunMonitorStep {
 	upgrades := workflowVersionUpgradePlan(manifest)
-	base := postRunMonitorSteps()
 	if len(upgrades) == 0 {
-		return base
+		return nil
 	}
 
-	steps := make([]postRunMonitorStep, 0, len(upgrades)+len(base))
+	steps := make([]postRunMonitorStep, 0, len(upgrades))
 	for _, upgrade := range upgrades {
 		steps = append(steps, postRunMonitorStep{
 			label: upgrade.label,
@@ -198,6 +226,5 @@ func postRunMonitorStepsForManifest(manifest *WorkflowManifest) []postRunMonitor
 			),
 		})
 	}
-	steps = append(steps, base...)
 	return steps
 }

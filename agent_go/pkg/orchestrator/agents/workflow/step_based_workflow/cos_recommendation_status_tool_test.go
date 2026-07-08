@@ -15,7 +15,7 @@ func TestUpdateChiefOfStaffRecommendationStatusHTML(t *testing.T) {
 	got, changed := updateChiefOfStaffRecommendationStatusHTML(
 		input,
 		"cos-2026-07-03-test",
-		"queued_auto_improve",
+		"queued_goal_advisor",
 		"Accepted as strategy work.",
 		"builder/improve.html#decision-1",
 		"2026-07-03T12:00:00Z",
@@ -25,7 +25,7 @@ func TestUpdateChiefOfStaffRecommendationStatusHTML(t *testing.T) {
 		t.Fatal("updateChiefOfStaffRecommendationStatusHTML changed = false")
 	}
 	for _, want := range []string{
-		`data-status="queued_auto_improve"`,
+		`data-status="queued_goal_advisor"`,
 		`data-status-updated-at="2026-07-03T12:00:00Z"`,
 		`data-status-updated-by="workflow-pulse"`,
 		`data-status-note="Accepted as strategy work."`,

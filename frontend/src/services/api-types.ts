@@ -330,7 +330,7 @@ export interface ReportHumanInputOption {
 export interface ReportHumanInput {
   id: string
   workspace_path: string
-  source: 'pulse' | 'auto_improve' | 'chief_of_staff' | string
+  source: 'pulse' | 'goal_advisor' | 'chief_of_staff' | string
   priority: 'low' | 'medium' | 'high' | string
   question: string
   context?: string
@@ -1158,7 +1158,7 @@ export interface PresetLLMConfig {
 
   // Agent-specific defaults.
   phase_llm?: AgentLLMConfig            // Default for all phase agents (planning, anonymization, plan improvement, etc.)
-  auto_improve_llm?: AgentLLMConfig     // Optional scheduled Auto Improve override
+  auto_improve_llm?: AgentLLMConfig     // Optional Goal Advisor strategy-module override
   pulse_llm?: AgentLLMConfig            // Optional scheduled Pulse override
   chief_of_staff_llm?: AgentLLMConfig   // Optional scheduled Chief of Staff override
 

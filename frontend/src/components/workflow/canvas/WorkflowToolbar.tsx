@@ -185,9 +185,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // Costs popup state
   const [showCostsPopup, setShowCostsPopup] = useState(false)
 
-  // Post-run monitor opt-in (workflow.json::post_run_monitor). When on, a cheap
-  // read-only triage pass runs after each scheduled run and records Bug + Goal
-  // verdicts into the workflow log.
+  // Post-run monitor opt-in (workflow.json::post_run_monitor). When on, Pulse
+  // Gate runs after each scheduled run, records Bug + Goal verdicts, and selects
+  // any deeper maintenance/Goal Advisor modules that are due.
   const monitorOn = useWorkflowManifestStore((s) => {
     const wf = s.workflows.find((w) => w.workspace_path === workspacePath)
     return !!wf?.manifest.post_run_monitor
@@ -214,11 +214,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     () => workflowSchedules.filter(isAutoImproveSchedule),
     [workflowSchedules]
   )
-  const enabledAutoImproveSchedules = useMemo(
-    () => autoImproveSchedules.filter((schedule) => schedule.enabled),
-    [autoImproveSchedules]
-  )
-  const autoImproveOn = enabledAutoImproveSchedules.length > 0
   const [showAutoImproveHelp, setShowAutoImproveHelp] = useState(false)
 
   // Backup popup state
@@ -496,8 +491,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       {/* Right side - View controls */}
       <div data-tour="workflow-tools" data-testid="tour-workflow-tools" className="ml-auto flex shrink-0 items-center gap-1">
         <TooltipProvider delayDuration={150}>
-          {/* Pulse — opens the Pulse popup (explains it, lets the user enable it,
-              and points to /auto-improve for scheduling). */}
+          {/* Pulse — opens the Pulse popup. Goal Advisor is now a Pulse-selected
+              module, so keep it in the same compact control. */}
           {workspacePath && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -509,26 +504,15 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   <Activity className={`w-3.5 h-3.5 ${monitorOn ? 'text-primary' : ''}`} />
                   <span className={monitorOn ? 'text-foreground' : ''}>Pulse</span>
                   <span className={`text-[10px] font-semibold tracking-wide ${monitorOn ? 'text-primary' : 'text-muted-foreground/60'}`}>{monitorOn ? 'ON' : 'OFF'}</span>
+                  <span className="mx-0.5 h-3.5 w-px bg-border" />
+                  <Sparkles className={`w-3.5 h-3.5 ${monitorOn ? 'text-primary' : ''}`} />
+                  <span className="hidden sm:inline">Advisor</span>
+                  <span className={`text-[10px] font-semibold tracking-wide ${monitorOn ? 'text-primary' : 'text-muted-foreground/60'}`}>
+                    {monitorOn ? 'GATED' : 'OFF'}
+                  </span>
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="bottom"><p>Pulse — click to learn more &amp; turn {monitorOn ? 'off' : 'on'}</p></TooltipContent>
-            </Tooltip>
-          )}
-
-          {workspacePath && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => setShowAutoImproveHelp(true)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background/90 px-2 py-1 text-[11px] font-medium text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted"
-                >
-                  <Sparkles className={`w-3.5 h-3.5 ${autoImproveOn ? 'text-primary' : ''}`} />
-                  <span className={autoImproveOn ? 'text-foreground' : ''}>Auto Improve</span>
-                  <span className={`text-[10px] font-semibold tracking-wide ${autoImproveOn ? 'text-primary' : 'text-muted-foreground/60'}`}>{autoImproveOn ? 'ON' : 'OFF'}</span>
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom"><p>Auto Improve — view status and setup command</p></TooltipContent>
+              <TooltipContent side="bottom"><p>Pulse — includes Goal Advisor when Pulse Gate decides strategy review is due</p></TooltipContent>
             </Tooltip>
           )}
 
@@ -791,9 +775,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 <li><span className="font-medium text-foreground">Backs up</span> — saves the workflow first, so any change is reversible.</li>
                 <li><span className="font-medium text-foreground">Reviews</span> — <span className="font-medium text-red-600 dark:text-red-400">Bug</span> (did it run correctly?) and <span className="font-medium text-purple-600 dark:text-purple-400">Goal</span> (is it hitting its success criteria?).</li>
                 <li><span className="font-medium text-foreground">Fixes the small stuff</span> — applies low-risk repairs for Bugs; flags bigger plan changes as proposals.</li>
-                <li><span className="font-medium text-foreground">Notifies</span> — only when something changes (broke, recovered, or a new finding).</li>
+                <li><span className="font-medium text-foreground">Notifies</span> — sends a compact run summary, with stronger wording when something broke or recovered.</li>
               </ul>
-              <p>If Publish is set up, it also re-publishes your report so the shared link stays current. Bigger changes (replan) stay with the scheduled <code className="rounded bg-muted px-1 text-foreground">/auto-improve</code> loop.</p>
+              <p>If Publish is set up, it also re-publishes your report so the shared link stays current. Bigger strategy questions are handled by the Goal Advisor module when Pulse Gate decides enough evidence exists.</p>
             </div>
             {/* enable / disable */}
             <div className="flex items-center justify-between border-t px-5 py-3.5">
@@ -816,7 +800,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             {/* scheduling note */}
             <div className="border-t px-5 py-4">
               <p className="rounded-md bg-muted/60 px-3 py-2.5 text-xs text-muted-foreground">
-                <span className="font-medium text-foreground">To run on a schedule:</span> Pulse reviews and hardens after each run. Set up <code className="rounded bg-background px-1 py-0.5 font-medium text-foreground">/auto-improve</code> to schedule recurring runs plus a periodic pass that refreshes aging learnings/KB and applies plan changes when evidence is strong.
+                <span className="font-medium text-foreground">To run on a schedule:</span> Use <code className="rounded bg-background px-1 py-0.5 font-medium text-foreground">/goal-advisor</code> to enable Pulse and set the recurring run schedule. Pulse Gate decides which deeper modules run after each run.
               </p>
             </div>
           </div>
@@ -824,7 +808,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       </ModalPortal>
     )}
 
-    {/* Auto Improve help */}
+    {/* Goal Advisor help */}
     {showAutoImproveHelp && (
       <ModalPortal>
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowAutoImproveHelp(false)}>
@@ -832,40 +816,38 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             <div className="flex items-center justify-between border-b px-5 py-3.5">
               <div className="flex items-center gap-2">
                 <Sparkles className="h-4 w-4 text-primary" />
-                <h2 className="text-sm font-semibold">Auto Improve</h2>
+                <h2 className="text-sm font-semibold">Goal Advisor</h2>
               </div>
               <button onClick={() => setShowAutoImproveHelp(false)} className="rounded-md p-1 hover:bg-accent" aria-label="Close">
                 <X className="h-4 w-4" />
               </button>
             </div>
             <div className="space-y-3 px-5 py-4 text-sm text-muted-foreground">
-              <p>Auto Improve is the recurring maintenance loop for this workflow. It runs on the cadence you set, reviews real run evidence, and keeps the workflow aligned with its goals.</p>
-              <p className="text-foreground font-medium">Each scheduled run can:</p>
+              <p>Goal Advisor is the strategic review module inside Pulse. Pulse Gate runs it when real run/eval evidence suggests the goal is not moving, even when the workflow itself runs cleanly.</p>
+              <p className="text-foreground font-medium">When selected, it can:</p>
               <ul className="space-y-1.5 pl-1">
-                <li><span className="font-medium text-foreground">Run selected groups</span> and collect fresh logs, outputs, costs, timing, and quality signals.</li>
-                <li><span className="font-medium text-foreground">Review performance</span> against goals, success criteria, reports, learnings, KB, and DB contracts.</li>
-                <li><span className="font-medium text-foreground">Improve safely</span> by refreshing stale evidence and applying low-risk fixes; bigger plan changes require strong evidence.</li>
-                <li><span className="font-medium text-foreground">Back up, publish, and notify</span> so the workflow has a checkpoint, current shared reports, and a concise summary when something meaningful changes.</li>
+                <li><span className="font-medium text-foreground">Challenge strategy</span> — compare the current plan against the workflow's success criteria.</li>
+                <li><span className="font-medium text-foreground">Find blind spots</span> — propose out-of-plan ideas an expert operator would consider.</li>
+                <li><span className="font-medium text-foreground">Apply only when proven</span> — replan only with strong cross-run evidence; otherwise log proposals or ask you.</li>
+                <li><span className="font-medium text-foreground">Publish the decision</span> — update the Pulse log and org progress card, then let Pulse backup/publish/notify run as separate turns.</li>
               </ul>
             </div>
             <div className="flex items-center justify-between border-t px-5 py-3.5">
               <div>
-                <div className="text-sm font-medium text-foreground">Auto Improve</div>
+                <div className="text-sm font-medium text-foreground">Goal Advisor</div>
                 <div className="text-xs text-muted-foreground">
-                  {autoImproveOn
-                    ? 'On — optimizer schedule active'
-                    : autoImproveSchedules.length > 0
-                      ? 'Off — optimizer schedule paused'
-                      : 'Not set up — no optimizer schedule found'}
+                  {monitorOn
+                    ? 'Pulse Gate will run it when strategy review is due'
+                    : 'Off — enable Pulse to use the Goal Advisor module'}
                 </div>
               </div>
-              <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide ${autoImproveOn ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>
-                {autoImproveOn ? 'ENABLED' : 'DISABLED'}
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide ${monitorOn ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>
+                {monitorOn ? 'GATED' : 'OFF'}
               </span>
             </div>
             {autoImproveSchedules.length > 0 && (
               <div className="border-t px-5 py-4 text-xs text-muted-foreground">
-                <div className="mb-2 font-medium text-foreground">Detected optimizer schedule{autoImproveSchedules.length === 1 ? '' : 's'}</div>
+                <div className="mb-2 font-medium text-foreground">Legacy optimizer schedule{autoImproveSchedules.length === 1 ? '' : 's'}</div>
                 <ul className="space-y-1">
                   {autoImproveSchedules.slice(0, 3).map((schedule) => (
                     <li key={schedule.id} className="flex items-center justify-between gap-3">
@@ -881,7 +863,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             )}
             <div className="border-t px-5 py-4">
               <p className="rounded-md bg-muted/60 px-3 py-2.5 text-xs text-muted-foreground">
-                This popup only shows whether an optimizer schedule exists. Use <code className="rounded bg-background px-1 py-0.5 font-medium text-foreground">/auto-improve</code> in workflow chat to set up, tune, enable, disable, or change cadence.
+                Goal Advisor now runs as a Pulse-selected module. Use <code className="rounded bg-background px-1 py-0.5 font-medium text-foreground">/goal-advisor</code> in workflow chat to enable Pulse and set the recurring run schedule.
               </p>
             </div>
           </div>

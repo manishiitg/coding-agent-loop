@@ -10,6 +10,7 @@ The workflow keeps a **single durable log** — `builder/improve.html` — the w
 - **review findings** (what `/review-*` flagged — recommendations, REVIEW = recommend, do NOT apply),
 - **run notes and the recent-run log** (what happened on recent runs),
 - **monitor observations** (post-run regressions / drift the monitor caught),
+- **Maintenance Radar** (Pulse depth, hygiene watchpoints, and why optional maintenance ran or was skipped),
 - **Artifact Review reports** (plan-change artifact drift cursor, clean/no-pending result, or drift findings),
 - **human input requests** (questions or choices the user must answer, with status and fallback),
 - **user rules** (authoritative constraints the user stated).
@@ -34,7 +35,7 @@ A verdict, a goal-criterion status, or a tile can silently go stale if no recent
 
 ### What matters now
 
-Directly below the chips, include one `.brief` section with 2-4 short cells. Use it to explain the current operating picture in human terms: latest result, main risk, next useful action, and evidence confidence. Keep each cell to one or two sentences. This is not another timeline; it is the executive/operator summary that tells the user what to pay attention to before they scroll. Prefer widget cells and chips over paragraphs; if a cell needs more than two short sentences, split it into another tile or move the detail to the timeline.
+Directly below the chips, include one `.brief` section with 2-4 short cells. Use it to explain the current operating picture in human terms: latest result, main risk, next useful action, and evidence confidence. One cell should summarize the **Maintenance Radar** when Pulse has an active watchpoint or a high-frequency schedule: `Pulse depth: minimal|normal|deep`, why, and what would trigger a deeper check. Keep each cell to one or two sentences. This is not another timeline; it is the executive/operator summary that tells the user what to pay attention to before they scroll. Prefer widget cells and chips over paragraphs; if a cell needs more than two short sentences, split it into another tile or move the detail to the timeline.
 
 ### Plain-language card contract
 
@@ -52,7 +53,7 @@ The user reads this page to understand what happened without opening raw logs. E
 Every recent-run row and every timeline entry must be filterable. Add:
 
 - `data-date="YYYY-MM-DD"` — the actual event/run date in local workflow time when known; if only a run folder date exists, use that date.
-- `data-kind="run|monitor|artifact|decision|advisor|cos|input|open|user|note"` — the primary activity type.
+- `data-kind="run|monitor|maintenance|artifact|decision|advisor|cos|input|open|user|note"` — the primary activity type.
 
 The built-in filter bar searches both recent runs and timeline cards by exact date, kind, and free text. Do not remove the static filter script from the skeleton. It is UI behavior, not a legacy JSON data block.
 
@@ -65,11 +66,11 @@ Every workflow is judged on two independent axes, and the header shows **both** 
 
 They are orthogonal: a run can be **Bug: broken** (a step silently skipped) while **Goal: on-target**, or **Bug: clean** while **Goal: short** (it runs perfectly but produces output that misses the point). You need both lenses: operational monitoring catches run failures, while eval and output review catch goal gaps. **Health gates goal:** a run that wasn't operationally clean produces no trustworthy goal signal, so never judge the goal on a broken run.
 
-Tag each **Monitor**, **Open finding**, **Artifact Review**, and **Decision** entry with the axis it belongs to — a small **Bug** or **Goal** chip when applicable — so the timeline is filterable and the fix path is obvious (Bug → harden, Goal → refine/replan). Also add an action label chip when work was done, proposed, or a user answer is needed (`Bug fix`, `Improvement`, `Advisor idea`, `Artifact drift`, `Report fix`, `Eval fix`, `Cost/time`, `Backup/publish`, `Needs input`, `Manual`). Auto-improve decisions must be visually distinct from Pulse harden notes: use the dedicated Decision card classes below, not a generic Note or Agent card.
+Tag each **Monitor**, **Open finding**, **Artifact Review**, and **Decision** entry with the axis it belongs to — a small **Bug** or **Goal** chip when applicable — so the timeline is filterable and the fix path is obvious (Bug → harden, Goal → refine/replan). Also add an action label chip when work was done, proposed, or a user answer is needed (`Bug fix`, `Improvement`, `Advisor idea`, `Artifact drift`, `Report fix`, `Eval fix`, `Cost/time`, `Backup/publish`, `Needs input`, `Manual`). Goal Advisor decisions must be visually distinct from Pulse harden notes: use the dedicated Decision card classes below, not a generic Note or Agent card.
 
 ### The goal card
 
-Directly under the verdicts, show **what the workflow is for**: the one-line objective plus the success criteria from `soul.md`, each with a live status — **Met / Short / At risk** — and the eval/run evidence behind that status. This is what the **Goal** verdict is measured against; without it the verdict is opaque. Keep it current as criteria are met or slip. (The `/auto-improve` setup seeds this from `soul.md` when it bootstraps the goal.)
+Directly under the verdicts, show **what the workflow is for**: the one-line objective plus the success criteria from `soul.md`, each with a live status — **Met / Short / At risk** — and the eval/run evidence behind that status. This is what the **Goal** verdict is measured against; without it the verdict is opaque. Keep it current as criteria are met or slip. (The `/goal-advisor` setup seeds this from `soul.md` when it bootstraps the goal.)
 
 The goal card **reads from `soul.md`** — it does not replace it. `soul.md` stays Markdown (it's parsed for objective/success-criteria); **do not create a `soul.html`** or convert it. This Pulse log is the only HTML document; soul.md is its Markdown source.
 
@@ -106,11 +107,12 @@ Each entry is a small card: a date, a kind tag, optional classification chips, a
 
 - **Run** — a one-line row in the recent-runs strip: run id, status, key numbers (tests, eval, cost/tokens, wall time), the **backup result** (`backed up ✓ <commit/ref>`, `unchanged — already backed up`, or `backup ✗ <reason>`), and a short note only when something stands out. Routine runs stay terse; flag a run only when it regressed, the backup failed, cost/time evidence is missing, or one step/agent dominates spend/time.
 - **Monitor** — a post-run observation: what changed in the output and the most likely cause, correlated against the plan changelog ("output regressed at run N; you tightened step X two runs earlier — likely cause").
+- **Maintenance Radar** — a compact Pulse entry explaining how deep this run's post-run stewardship went (`minimal`, `normal`, or `deep`), which hygiene lanes were checked or intentionally skipped, and what concrete evidence should trigger deeper work next time. This is for learnings, KB, DB/report contracts, report dashboard usefulness, publish/backup/notify setup, model/tier hygiene, and human-input questions. It is not a hidden scheduler; it is an explainable watchlist the next Pulse pass reads before deciding whether to act.
 - **Artifact Review** — a report-only Pulse/review entry: changelog range inspected, Artifact Sync Cursor before/after, steps inspected, clean/no-pending result or drift findings, and the recommended next owner. Do not present this entry as a fix that already happened; Pulse does not call harden/replan from this item.
-- **Decision** — a change applied or proposed, with the one-line rationale and the file(s) touched. If it fixes an open finding, close that finding out (below). Auto-improve decisions use `<div class="entry decision">` with tag text `Decision - Auto-improve - Applied` or `Decision - Auto-improve - Proposed`; use `<div class="entry decision major">` for material replans, report/eval changes that alter user-facing success measurement, cadence/scope changes, or any change the user should notice.
-- **Advisor opportunity** — a proposal-only Auto Improve entry for an out-of-plan idea the current workflow has not considered but an expert operator would raise because it could materially advance the goal. It should be grounded in `soul.md`, run/eval/report evidence, market/process reasoning, or a clearly stated assumption; never present speculation as fact. Record it as `Decision - Auto-improve - Proposed` with the `Goal` chip and `Advisor idea` work label, and include why it is outside the current plan, what evidence/assumption supports it, the expected upside, and the risk/next decision. Do not auto-apply it from the advisor scan alone.
+- **Decision** — a change applied or proposed, with the one-line rationale and the file(s) touched. If it fixes an open finding, close that finding out (below). Goal Advisor decisions use `<div class="entry decision">` with tag text `Decision - Goal Advisor - Applied` or `Decision - Goal Advisor - Proposed`; use `<div class="entry decision major">` for material replans, report/eval changes that alter user-facing success measurement, cadence/scope changes, or any change the user should notice.
+- **Advisor opportunity** — a proposal-only Goal Advisor entry for an out-of-plan idea the current workflow has not considered but an expert operator would raise because it could materially advance the goal. It should be grounded in `soul.md`, run/eval/report evidence, market/process reasoning, or a clearly stated assumption; never present speculation as fact. Record it as `Decision - Goal Advisor - Proposed` with the `Goal` chip and `Advisor idea` work label, and include why it is outside the current plan, what evidence/assumption supports it, the expected upside, and the risk/next decision. Do not auto-apply it from the advisor scan alone.
 - **Chief of Staff recommendation** — an org-level recommendation written by Chief of Staff / Org Pulse after reading workflow evidence against org goals. It should name the org goal/KPI target or `supporting/no explicit goal`, give an alignment verdict (`aligned`, `supporting`, `unaligned`, or `unknown-measurement`), cite evidence, state the gap, suggest a builder action, and describe the expected KPI/success-criteria impact. Treat it like an external **Open finding**: verify the cited evidence, then choose the normal builder path (Bug → `harden_workflow`, Goal/strategy → `replan_workflow_from_results` or a targeted builder edit, measurement gap → eval/report fix, cost/ops → review/apply if safe). Do not assume it is correct or already applied; close it only after the builder decision is made.
-- **Human input requested** — a durable question whenever Pulse, Auto Improve, or Chief of Staff needs the user to decide, clarify, approve, provide credentials, or choose between options. Do not ask only in email/chat. Create or refresh the request with `create_human_input_request`; it is stored in this workflow's `db/db.sqlite` table `report_human_inputs`. The visible `builder/improve.html` card may display the question, why it matters, options, evidence, and answer status, but it must not be the source of truth. When a later pass uses the answer, call `mark_human_input_consumed` with the outcome summary instead of editing the SQLite row directly.
+- **Human input requested** — a durable question whenever Pulse, Goal Advisor, or Chief of Staff needs the user to decide, clarify, approve, provide credentials, or choose between options. Do not ask only in email/chat. Create or refresh the request with `create_human_input_request`; it is stored in this workflow's `db/db.sqlite` table `report_human_inputs`. The visible `builder/improve.html` card may display the question, why it matters, options, evidence, and answer status, but it must not be the source of truth. When a later pass uses the answer, call `mark_human_input_consumed` with the outcome summary instead of editing the SQLite row directly.
 - **User rule** — a constraint the user stated. Mark it clearly as authoritative ("USER RULE — authoritative") so future agents treat it as a hard constraint, never silently override it. This replaces the old `source: "user"` field — say it in words.
 - **Note** — a freeform observation or watchpoint that explains weird runs ("staging UI is mid-redesign, expect selector churn through ~June 20 — not a workflow bug").
 - **Open finding** — something wrong that is not yet fixed. Give it a short stable anchor id (e.g. `id="of-2026-06-07-screenshots"`) **only so a later Decision can mark it resolved** — that is the one place an id earns its keep. No other entry kind needs an id.
@@ -124,21 +126,21 @@ Chief of Staff / Org Pulse and workflow Pulse communicate through structured car
 - `data-goal-id="<org goal id or supporting>"`
 - `data-status="<status>"`
 - `data-priority="high|medium|low"`
-- `data-suggested-action="harden_workflow|replan_workflow_from_results|eval_report_measurement_fix|manual_review|no_action_watchpoint|queued_auto_improve"`
+- `data-suggested-action="harden_workflow|replan_workflow_from_results|eval_report_measurement_fix|manual_review|no_action_watchpoint|queued_goal_advisor"`
 - optional `data-impact`, `data-effort`, and `data-status-*` attributes written by the marker tool
 
 Lifecycle statuses:
 
 - `proposed` — Org Pulse suggested it; workflow Pulse has not triaged it yet.
 - `accepted` — workflow Pulse agrees the recommendation is valid but has not routed it yet.
-- `queued_auto_improve` — strategic/Goal work that scheduled Auto Improve should consider.
-- `in_progress` — a builder/auto-improve action is currently addressing it.
+- `queued_goal_advisor` — strategic/Goal work that the Pulse-selected Goal Advisor module should consider.
+- `in_progress` — a builder/goal-advisor action is currently addressing it.
 - `needs_evidence` — the recommendation may be right but lacks enough evidence or measurement.
-- `done` — workflow Pulse or Auto Improve handled it and cited the confirming evidence.
+- `done` — workflow Pulse or Goal Advisor handled it and cited the confirming evidence.
 - `dismissed` — workflow Pulse rejected it with a reason.
 - `blocked` — valid, but waiting on user input, credentials, external data, or another dependency.
 
-Workflow Pulse and Auto Improve must use `mark_cos_recommendation_status` to change these statuses instead of hand-editing lifecycle attributes. They may still add a visible Decision/Monitor entry that explains the action, but the status marker is the machine-readable reply that Org Pulse reads next time.
+Workflow Pulse and Goal Advisor must use `mark_cos_recommendation_status` to change these statuses instead of hand-editing lifecycle attributes. They may still add a visible Decision/Monitor entry that explains the action, but the status marker is the machine-readable reply that Org Pulse reads next time.
 
 Example:
 
@@ -174,12 +176,13 @@ Use two different chip families so the user can scan what happened:
 Canonical action labels:
 
 - `worklabel bugfix` → `Bug fix`: Pulse/harden changed prompts/config/guards/validation/code shape to make the workflow run correctly.
-- `worklabel improvement` → `Improvement`: Auto Improve or a builder change improved strategy, plan quality, success criteria alignment, cadence, or user-facing usefulness.
-- `worklabel advisor` → `Advisor idea`: Auto Improve proposed an out-of-plan expert recommendation or unconventional opportunity that could help the goal but needs user choice or stronger evidence before changing the plan.
+- `worklabel improvement` → `Improvement`: Goal Advisor or a builder change improved strategy, plan quality, success criteria alignment, cadence, or user-facing usefulness.
+- `worklabel advisor` → `Advisor idea`: Goal Advisor proposed an out-of-plan expert recommendation or unconventional opportunity that could help the goal but needs user choice or stronger evidence before changing the plan.
 - `worklabel artifact` → `Artifact drift`: Artifact Review found or resolved plan-change drift in reports, evals, KB/learnings, saved code, db wiring, or generated HTML.
 - `worklabel report` → `Report fix`: report dashboard/query/HTML/data-binding repair.
 - `worklabel eval` → `Eval fix`: evaluation rubric, eval wiring, route scoping, or score evidence repair.
 - `worklabel cost` → `Cost/time`: LLM/model/cost/time telemetry observation or repair.
+- `worklabel maintenance` → `Maintenance`: Pulse hygiene/radar decision, especially when it intentionally skipped optional work on high-frequency schedules or escalated to a deeper check.
 - `worklabel backup` → `Backup/publish`: backup or publish repair/status issue.
 - `worklabel input` → `Needs input`: the workflow is waiting for a user answer or decision.
 - `worklabel manual` → `Manual`: user-requested/manual builder action.
@@ -200,10 +203,10 @@ Reference the finding by its anchor id (or, if it has none, by its date + title)
 
 A Decision card is the visual proof that an agent took or proposed an action. It should never read like a routine note. Use:
 
-- `<div class="entry decision">` for normal applied/proposed auto-improve decisions.
+- `<div class="entry decision">` for normal applied/proposed Goal Advisor decisions.
 - `<div class="entry decision major">` when the decision changes plan strategy, report/eval measurement, workflow cadence/scope, user-facing dashboard interpretation, or materially affects cost/quality/risk.
-- `.tag.decision` with one of these exact labels: `Decision - Auto-improve - Applied`, `Decision - Auto-improve - Proposed`, `Decision - Pulse harden`, or `Decision - Manual`.
-- A verdict chip plus an action label chip. Examples: Pulse harden uses `<span class="kind bug">Bug</span><span class="worklabel bugfix">Bug fix</span>`; an auto-improve replan uses `<span class="kind goal">Goal</span><span class="worklabel improvement">Improvement</span>`; an out-of-plan advisor proposal uses `<span class="kind goal">Goal</span><span class="worklabel advisor">Advisor idea</span>`; a report dashboard repair uses `<span class="kind bug">Bug</span><span class="worklabel report">Report fix</span>`.
+- `.tag.decision` with one of these exact labels: `Decision - Goal Advisor - Applied`, `Decision - Goal Advisor - Proposed`, `Decision - Pulse harden`, or `Decision - Manual`.
+- A verdict chip plus an action label chip. Examples: Pulse harden uses `<span class="kind bug">Bug</span><span class="worklabel bugfix">Bug fix</span>`; a Goal Advisor replan uses `<span class="kind goal">Goal</span><span class="worklabel improvement">Improvement</span>`; an out-of-plan advisor proposal uses `<span class="kind goal">Goal</span><span class="worklabel advisor">Advisor idea</span>`; a report dashboard repair uses `<span class="kind bug">Bug</span><span class="worklabel report">Report fix</span>`.
 - A `<p class="takeaway">...</p>` before the grid that says the decision in one user-readable sentence.
 - `.decisiongrid` rows for the fixed fields: **Why now**, **Evidence**, **Change**, **Expected impact**, **Files touched**, and **Risk / gap**. Omit a row only when it truly does not apply; do not bury these fields in prose. Each field should be one short sentence; if a field needs raw technical detail, put the human meaning first and the raw path/id second.
 
@@ -212,11 +215,11 @@ Example:
 ```html
 <div class="entry decision major">
   <div class="ehead">
-    <span class="tag decision">Decision - Auto-improve - Applied</span>
+    <span class="tag decision">Decision - Goal Advisor - Applied</span>
     <span class="kind goal">Goal</span>
     <span class="worklabel improvement">Improvement</span>
     <span class="etitle">Replanned lead-scoring around verified replies</span>
-    <span class="when">2026-07-02 · scheduled improve</span>
+    <span class="when">2026-07-02 · Goal Advisor</span>
   </div>
   <p class="takeaway">We changed the plan because verified replies stayed below target for three clean runs.</p>
   <div class="decisiongrid">

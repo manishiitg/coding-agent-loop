@@ -22,11 +22,9 @@ import (
 // TestInspectorHTTPCapturesRealCursorEvents is the cursor-cli
 // counterpart to TestInspectorHTTPCapturesRealAnthropicEvents.
 //
-// Cursor-cli runs through the structured-CLI transport (cursor-agent
-// --print --output-format stream-json). The adapter routes through
-// WithObservability (cursorcli_adapter.go:50) so the inspector sink
-// receives request + completion events the same shape the API
-// adapters produce. This test proves the chain:
+// Cursor CLI runs through the tmux coding-agent transport. The adapter routes
+// through WithObservability so the inspector sink receives request + completion
+// events the same shape the API adapters produce. This test proves the chain:
 //
 //	real cursor-agent run
 //	  → cursor-cli adapter emits InspectorEvents at every phase

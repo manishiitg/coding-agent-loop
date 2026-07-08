@@ -54,7 +54,7 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 			Type: "function",
 			Function: &llmtypes.FunctionDefinition{
 				Name:        "create_workflow_schedule",
-				Description: "Create a new cron schedule on a workflow. Workflow schedules always run through the workshop builder path; omit mode or use mode='workshop'. Messages are optional for normal run schedules; when omitted, the scheduler asks the workshop to run the full workflow. Use workshop_mode='optimizer' only for scheduled improvement/hardening loops.",
+				Description: "Create a new cron schedule on a workflow. Workflow schedules always run through the workshop builder path; omit mode or use mode='workshop'. Messages are optional for normal run schedules; when omitted, the scheduler asks the workshop to run the full workflow. Do not create optimizer schedules for Goal Advisor; Pulse Gate now selects Goal Advisor after normal runs. Use workshop_mode='optimizer' only for explicitly-authored custom optimizer jobs.",
 				Parameters: &llmtypes.Parameters{
 					Type: "object",
 					Properties: map[string]interface{}{
@@ -87,11 +87,11 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 						"messages": map[string]interface{}{
 							"type":        "array",
 							"items":       map[string]interface{}{"type": "string"},
-							"description": "Optional predefined messages sent one-by-one to the workshop LLM. Omit for the default full-workflow run message. For workshop_mode='optimizer' auto-improve schedules, omit messages; persisted optimizer messages are ignored and the scheduler supplies the canonical improve prompt plus backup/publish/notify runtime turns. Example: ['Run the full workflow using run_full_workflow(group_name=\"group-1\")'].",
+							"description": "Optional predefined messages sent one-by-one to the workshop LLM. Omit for the default full-workflow run message. Do not create optimizer messages for Goal Advisor; Pulse Gate owns that module. Example: ['Run the full workflow using run_full_workflow(group_name=\"group-1\")'].",
 						},
 						"workshop_mode": map[string]interface{}{
 							"type":        "string",
-							"description": "Defaults to 'run'. Use 'optimizer' for scheduled improvement/hardening loops that also generate learnings.",
+							"description": "Defaults to 'run'. Use 'optimizer' only for explicitly-authored custom optimizer jobs; Goal Advisor is a Pulse module, not a separate schedule.",
 							"enum":        []string{"run", "optimizer"},
 						},
 						"resume_previous": map[string]interface{}{
@@ -144,7 +144,7 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 						"messages": map[string]interface{}{
 							"type":        "array",
 							"items":       map[string]interface{}{"type": "string"},
-							"description": "Replace the workshop-mode messages. For workshop_mode='optimizer' auto-improve schedules, clear/omit messages; persisted optimizer messages are ignored and the scheduler supplies the canonical improve prompt plus backup/publish/notify runtime turns.",
+							"description": "Replace the workshop-mode messages. Do not use optimizer messages for Goal Advisor; Pulse Gate owns that module.",
 						},
 						"workshop_mode": map[string]interface{}{
 							"type":        "string",
@@ -188,7 +188,7 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 									"date":        map[string]interface{}{"type": "string", "description": "Date as YYYY-MM-DD in the schedule timezone."},
 									"time":        map[string]interface{}{"type": "string", "description": "Time as HH:MM in the schedule timezone."},
 									"description": map[string]interface{}{"type": "string", "description": "Optional note for this calendar item."},
-									"messages":    map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Optional per-item workshop messages. For optimizer auto-improve items, omit messages; persisted optimizer messages are ignored and the scheduler supplies the canonical improve prompt plus backup/publish/notify runtime turns."},
+									"messages":    map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Optional per-item workshop messages. Do not create optimizer Goal Advisor items; Pulse Gate owns that module."},
 								},
 								"required": []string{"date", "time"},
 							},
@@ -207,7 +207,7 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 						"messages": map[string]interface{}{
 							"type":        "array",
 							"items":       map[string]interface{}{"type": "string"},
-							"description": "Optional default workshop messages for all items. Omit for the default full-workflow run message. For optimizer auto-improve schedules, omit messages; persisted optimizer messages are ignored and the scheduler supplies the canonical improve prompt plus backup/publish/notify runtime turns.",
+							"description": "Optional default workshop messages for all items. Omit for the default full-workflow run message. Do not use optimizer schedules for Goal Advisor; Pulse Gate owns that module.",
 						},
 						"workshop_mode": map[string]interface{}{
 							"type":        "string",

@@ -482,7 +482,7 @@ func TestRequestLLMConfigOverridesManifestOnlyForScheduledSources(t *testing.T) 
 
 	req.LLMConfigSource = llmConfigSourceScheduledAutoImprove
 	if !requestLLMConfigOverridesManifest(req) {
-		t.Fatal("scheduled Auto Improve LLM config should override workflow manifest phase LLM")
+		t.Fatal("scheduled Goal Advisor LLM config should override workflow manifest phase LLM")
 	}
 
 	req.LLMConfigSource = "manual"

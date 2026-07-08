@@ -20,8 +20,8 @@ import (
 
 // TestCostSummaryHTTPCapturesRealGeminiCLITurn is the HTTP cost e2e
 // for Gemini CLI, mirroring cost_http_e2e_codex_real_test.go. Drives a real
-// gemini turn through the structured transport, then asserts tokens surface on
-// /api/cost/summary.
+// gemini turn through the coding-agent transport, then asserts tokens surface
+// on /api/cost/summary.
 //
 // Why this exists: gemini's TokenUsageSource is "transcript-file"
 // (see coding_agent_contract.go) — the adapter parses tokens from

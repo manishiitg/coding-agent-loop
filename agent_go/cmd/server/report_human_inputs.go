@@ -477,13 +477,13 @@ func createReportHumanInputTools() ([]llmtypes.Tool, map[string]interface{}, map
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "create_human_input_request",
-			Description: "Create or refresh a structured non-blocking question for the user in this workflow's db/db.sqlite. Use this only from Pulse, Auto Improve, or Chief of Staff when a decision/clarification would help the workflow. The user answers inside Runloop's Pulse/report panel; published static reports should only show the question and tell the user to open Runloop to answer.",
+			Description: "Create or refresh a structured non-blocking question for the user in this workflow's db/db.sqlite. Use this only from Pulse, Goal Advisor, or Chief of Staff when a decision/clarification would help the workflow. The user answers inside Runloop's Pulse/report panel; published static reports should only show the question and tell the user to open Runloop to answer.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"workspace_path": map[string]interface{}{"type": "string", "description": "Workflow-relative path, for example Workflow/social-media. Required; requests are stored in that workflow's db/db.sqlite."},
 					"input_id":       map[string]interface{}{"type": "string", "description": "Optional stable id. Reuse this for the same still-open question so Pulse refreshes it instead of duplicating it."},
-					"source":         map[string]interface{}{"type": "string", "enum": []string{"pulse", "auto_improve", "chief_of_staff"}, "description": "Who is asking. Defaults to pulse."},
+					"source":         map[string]interface{}{"type": "string", "enum": []string{"pulse", "goal_advisor", "chief_of_staff"}, "description": "Who is asking. Defaults to pulse."},
 					"priority":       map[string]interface{}{"type": "string", "enum": []string{"low", "medium", "high"}, "description": "How important the answer is. Defaults to medium."},
 					"question":       map[string]interface{}{"type": "string", "description": "The exact user-facing question in simple language."},
 					"context":        map[string]interface{}{"type": "string", "description": "Short explanation of why this matters and what will happen next."},
@@ -512,7 +512,7 @@ func createReportHumanInputTools() ([]llmtypes.Tool, map[string]interface{}, map
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "mark_human_input_consumed",
-			Description: "Mark an answered report human input as consumed after Pulse/Auto Improve/Chief of Staff has used the answer and recorded the outcome. This keeps history but removes it from the pending-for-agent queue.",
+			Description: "Mark an answered report human input as consumed after Pulse/Goal Advisor/Chief of Staff has used the answer and recorded the outcome. This keeps history but removes it from the pending-for-agent queue.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -736,8 +736,8 @@ func formatAnsweredReportHumanInputsForAgent(ctx context.Context, workspacePath 
 
 func normalizeReportHumanInputSource(source string) string {
 	switch strings.ToLower(strings.TrimSpace(source)) {
-	case "auto_improve", "auto-improve", "optimizer", "improve":
-		return "auto_improve"
+	case "goal_advisor", "goal-advisor", "goal advisor":
+		return "goal_advisor"
 	case "chief_of_staff", "chief-of-staff", "chief", "org_pulse", "org-pulse":
 		return "chief_of_staff"
 	default:

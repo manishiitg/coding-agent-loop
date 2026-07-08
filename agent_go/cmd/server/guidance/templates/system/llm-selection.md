@@ -10,8 +10,8 @@ A workflow runs in **tiered mode**: instead of hardcoding a model per step, you 
 - **tier_2 — medium**: execution once learnings exist, and learning refinement.
 - **tier_3 — low**: fast/cheap, for deterministic or file-shape work.
 - **phase_llm**: the model used for planning, eval design, and debugging phases (not step execution).
-- **auto_improve_llm**: optional model used only by scheduled Auto Improve optimizer runs. Leave unset to use the provider Auto Improve default when available (Claude Code defaults to `claude-opus-4-8` with high reasoning).
-- **pulse_llm**: optional model used only by scheduled Pulse/post-run QA. Leave unset to use the provider Pulse default when available (Claude Code defaults to `claude-sonnet-5` with high reasoning).
+- **auto_improve_llm**: optional model used by the Goal Advisor strategy module, whether Pulse Gate selected it or the user invoked it manually. Leave unset to use the provider Goal Advisor default when available (Claude Code defaults to `claude-opus-4-8` with high reasoning).
+- **pulse_llm**: optional model used by Pulse Gate and routine scheduled Pulse/post-run QA modules. Leave unset to use the provider Pulse default when available (Claude Code defaults to `claude-sonnet-5` with high reasoning).
 
 Each tier takes a `provider` + `model_id` (both required to set a tier) and an optional ordered `fallbacks` list (tried if the primary fails).
 

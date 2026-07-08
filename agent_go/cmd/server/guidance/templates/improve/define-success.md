@@ -2,7 +2,7 @@ Define what success means for this workflow before optimization.
 
 Write to `builder/improve.html` - the single durable log. For the log/HTML format, one-time migration from legacy review files, and close-out rules, follow `get_reference_doc(kind="review-improve-log")` and `get_reference_doc(kind="html-output")`.
 
-Either bootstrap the auto-improvement framework (Workflow Profile + confirmed success criteria) or, if it already exists, audit the setup and surface issues.{{if .Focus}}
+Either bootstrap the Pulse/Goal Advisor framework (Workflow Profile + confirmed success criteria) or, if it already exists, audit the setup and surface issues.{{if .Focus}}
 
 Focus / hints from user: {{.Focus}}{{end}}
 
@@ -19,7 +19,7 @@ STEP 0 - DETECT SETUP STATE
 - REVIEW EXISTING: `builder/improve.html` already has a Workflow Profile block. Skip to STEP 5.
 
 STEP 0.5 - CONFIRM THE GOAL WITH THE USER
-The auto-improve loop optimizes toward this goal, so a vague or stale goal makes the loop aimless. Establish a real, user-confirmed goal before classifying or scheduling anything.
+The Goal Advisor loop evaluates strategy against this goal, so a vague or stale goal makes the loop aimless. Establish a real, user-confirmed goal before classifying or scheduling anything.
 
 - Show the user the objective and each success criterion read from `soul.md`.
 - Ask: "Is this still what success means here? Anything to change, add, or drop?"

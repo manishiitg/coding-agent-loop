@@ -340,7 +340,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
                     <p><span className="font-medium">Tier 2</span> — execution once learnings exist + refinement</p>
                     <p><span className="font-medium">Tier 3</span> — validation (always) + mature refinement (2+ runs)</p>
                     <p><span className="font-medium">Workshop LLM</span> — planning, eval design, debugging, anonymization. Independent of tier assignment.</p>
-                    <p><span className="font-medium">Auto Improve LLM</span> — optional scheduled optimizer override. Empty uses the provider default when available.</p>
+                    <p><span className="font-medium">Goal Advisor LLM</span> — optional strategy-module override. Empty uses the provider default when available.</p>
                     <p><span className="font-medium">Pulse LLM</span> — optional post-run QA/harden override. Empty uses the provider Pulse default when available.</p>
                   </div>
                 </>
@@ -351,7 +351,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
                     <p>Pick one coding agent or model for this automation.</p>
                     <p>Coding agents save high, medium, and low tiers automatically.</p>
                     <p>Workshop work uses the high tier.</p>
-                    <p>Auto Improve uses the provider default when available unless an advanced override is set.</p>
+                    <p>Goal Advisor uses the provider default when Pulse Gate selects it unless an advanced override is set.</p>
                     <p>Pulse uses the provider Pulse default when available unless an advanced override is set.</p>
                   </div>
                 </>
@@ -499,14 +499,14 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
               </div>
             </div>
 
-            {/* Auto Improve LLM */}
+            {/* Goal Advisor LLM */}
             <div className="border border-gray-200 dark:border-slate-600 rounded-lg p-3">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
                   <RefreshCw className="w-4 h-4 text-cyan-500" />
                   <div>
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Auto Improve LLM</span>
-                    <span className="text-xs text-gray-400 dark:text-gray-500 ml-1.5">scheduled optimizer only</span>
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Goal Advisor LLM</span>
+                    <span className="text-xs text-gray-400 dark:text-gray-500 ml-1.5">strategy module</span>
                   </div>
                 </div>
                 {autoImproveLLM && (

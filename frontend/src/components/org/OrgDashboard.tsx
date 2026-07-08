@@ -477,7 +477,7 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
           <p className="text-sm font-medium text-foreground">Org dashboard is warming up</p>
           <p className="max-w-md text-xs">
             Org dashboard is warming up — status cards appear here after your workflows run their
-            Pulse (health/cost) and Auto-improve (goal) loops.
+            Pulse (health/cost) and Goal Advisor (goal) loops.
           </p>
         </div>
       </div>

@@ -28,9 +28,9 @@ func TestReportHumanInputsUseWorkflowLocalDB(t *testing.T) {
 
 	created, err := createReportHumanInput(ctx, workspacePath, ReportHumanInputCreateRequest{
 		InputID:       "choose-cadence",
-		Source:        "auto_improve",
+		Source:        "goal_advisor",
 		Priority:      "high",
-		Question:      "Should Auto Improve run daily until recovery?",
+		Question:      "Should Goal Advisor run daily until recovery?",
 		Context:       "The workflow missed the goal three times.",
 		Evidence:      "builder/improve.html#latest",
 		CreatedBy:     "test",
@@ -43,7 +43,7 @@ func TestReportHumanInputsUseWorkflowLocalDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if created.WorkspacePath != workspacePath || created.Source != "auto_improve" || created.Status != "pending" {
+	if created.WorkspacePath != workspacePath || created.Source != "goal_advisor" || created.Status != "pending" {
 		t.Fatalf("created input mismatch: %+v", created)
 	}
 	if _, err := os.Stat(dbPath); err != nil {
@@ -76,7 +76,7 @@ func TestReportHumanInputsUseWorkflowLocalDB(t *testing.T) {
 	}
 
 	consumed, err := consumeReportHumanInput(ctx, workspacePath, "choose-cadence", ReportHumanInputConsumeRequest{
-		OutcomeSummary: "Auto Improve cadence kept daily until recovery.",
+		OutcomeSummary: "Goal Advisor cadence kept daily until recovery.",
 		ConsumedBy:     "pulse",
 	})
 	if err != nil {

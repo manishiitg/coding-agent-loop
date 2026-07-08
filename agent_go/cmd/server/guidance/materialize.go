@@ -65,7 +65,7 @@ func referenceSkillSpecForMode(mode string) referenceSkillSpec {
 // MaterializeGuidanceSkill bundles every mode-allowed entry in allKinds into
 // ONE skill named "workflow-commands". Same Anthropic pattern: SKILL.md is
 // the TOC, references/<kind>.md is the procedural flow for each slash
-// command (improve-workflow, review-plan, define-success, auto-improve, …).
+// command (improve-workflow, review-plan, define-success, goal-advisor, ...).
 //
 // Procedural flows benefit from Focus/Iteration context when invoked via
 // get_workflow_command_guidance — the materialized version is the no-context
@@ -78,7 +78,7 @@ func MaterializeGuidanceSkill(mode string) *llmtypes.Skill {
 		Name:     "workflow-commands",
 		Description: "Workflow workshop slash-command flows — canonical procedural guidance for improve-workflow, review-plan, " +
 			"review-speed/cost/code/artifact-drift, define-success, improve-evaluation, improve-knowledge, improve-learnings, " +
-			"improve-database, improve-report, auto-improve, design-plan. Match this skill when the user " +
+			"improve-database, improve-report, goal-advisor, design-plan. Match this skill when the user " +
 			"invokes one of those slash commands or describes the same intent in chat, then read the matching file under " +
 			"references/.",
 		Intro:  "This skill bundles the workshop's canonical slash-command procedures. Match it when the user invokes one of these commands (e.g. `/improve-workflow`, `/review-plan`) or describes the same intent in plain chat. Read the single matching file under `references/` — the prose there is your instructions for the turn, follow it verbatim.",

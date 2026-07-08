@@ -73,7 +73,7 @@ A report answers questions and drives action — it is not a mirror of the datab
 For workflow dashboards, the report should help the user measure and track the workflow's goal, not just browse outputs. When evidence exists, make the first screen answer:
 - **Goal status:** whether the latest evidence is on track against `soul.md` success criteria.
 - **Tracked success signals:** for each important success criterion, show the current value/state, target or baseline, trend/delta vs prior run/window, last updated, and status. If a criterion cannot be measured yet, say exactly what evidence is missing.
-- **Current plan/strategy:** the current workflow strategy or active plan draft/replan proposal in plain language, especially after Auto Improve changed direction.
+- **Current plan/strategy:** the current workflow strategy or active plan draft/replan proposal in plain language, especially after Goal Advisor changed direction.
 - **Issues and blockers:** broken steps, missing/stale data, eval failures, Pulse open findings, operational blockers, and material cost/time outliers.
 - **What changed since last run:** trend/delta or a short latest-run note so the user can see movement without opening logs.
 - **Evidence path:** the database/eval/Pulse source behind the claim, linked or summarized without exposing internal file noise to nontechnical users.

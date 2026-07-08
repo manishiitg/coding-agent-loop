@@ -2161,7 +2161,7 @@ This is the one-line-per-category map. For full signatures, parameters, when-to-
 {{if eq .WorkshopMode "workshop"}}
 - **Plan modification**: `+"`create_plan`"+`, `+"`add_<type>_step`"+`, `+"`update_<type>_step`"+`, `+"`delete_plan_steps`"+`, `+"`cleanup_orphan_step_configs`"+`, todo-task route tools, `+"`update_validation_schema`"+`.
 - **Variables & config**: `+"`update_variable`"+`, `+"`add_group`"+`/`+"`update_group`"+`/`+"`delete_group`"+`, `+"`update_workflow_config`"+`. Use `+"`update_workflow_config`"+` for workflow MCP servers, workflow-level MCP tool allowlists, selected skills, selected secrets, browser_mode, KB lock, run retention, and the per-run monitor (`+"`post_run_monitor`"+`). Do NOT edit `+"`workflow.json`"+` manually.
-- **Schedule management**: `+"`list_schedules`"+`, `+"`create_schedule`"+`, `+"`create_calendar_schedule`"+`, `+"`update_schedule`"+`, `+"`delete_schedule`"+`, `+"`trigger_schedule`"+`, `+"`get_schedule_runs`"+`. Cron / message-authoring rules, workshop run vs optimizer scheduling, the `+"`/auto-improve`"+` exception, infinite-loop prevention rules, and unattended-message discipline — all live in the `+"`workflow-tools`"+` ref doc. Workflow schedules always use the workshop path; do not create direct `+"`mode=\"workflow\"`"+` schedules. **Whenever you create a recurring schedule, also pair it with a backup** so unattended runs persist their state off-box — see `+"`get_reference_doc(kind=\"backup-strategy\")`"+`.
+- **Schedule management**: `+"`list_schedules`"+`, `+"`create_schedule`"+`, `+"`create_calendar_schedule`"+`, `+"`update_schedule`"+`, `+"`delete_schedule`"+`, `+"`trigger_schedule`"+`, `+"`get_schedule_runs`"+`. Cron / message-authoring rules, workshop run vs optimizer scheduling, the `+"`/goal-advisor`"+` setup path, infinite-loop prevention rules, and unattended-message discipline — all live in the `+"`workflow-tools`"+` ref doc. Workflow schedules always use the workshop path; do not create direct `+"`mode=\"workflow\"`"+` schedules. **Whenever you create a recurring schedule, also pair it with a backup** so unattended runs persist their state off-box — see `+"`get_reference_doc(kind=\"backup-strategy\")`"+`.
 {{end}}
 - **Shell & discovery**: `+"`execute_shell_command`"+`, `+"`diff_patch_workspace_file`"+`, `+"`read_image`"+`, `+"`generate_text_llm`"+`, `+"`search_web_llm`"+`.
 - **Notify the user**: `+"`notify_user`"+` sends a non-blocking message to the user's connected channels (Slack / WhatsApp / email) — use it for FYIs, progress, alerts, or completion notices when you do not need a reply. If you need an answer in builder chat, ask in your normal response; workflow runtime steps can use configured human-input tools during execution. For email it accepts `+"`email_subject`"+`, an HTML body (`+"`email_html`"+` or `+"`email_html_file`"+`), and `+"`email_attachments`"+`. It returns per-channel delivery status — report failures honestly. Workflow STEPS can also message the user this way: keep `+"`human_tools`"+` in the step's `+"`enabled_custom_tools`"+` (it's in the default set) and have the step call `+"`notify_user`"+`.
@@ -6913,7 +6913,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"post_run_monitor": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Enable the per-run monitor (Pulse): after each scheduled run a focused pass records Bug + Goal findings, runs a separate report-only Artifact Review item, and writes LLM/cost/time into builder/improve.html for harden/replan/org consumers. Set true for workflows where a silent failure matters (scheduled QA, production); default off. /auto-improve turns this on as part of setup.",
+					"description": "Enable the per-run monitor (Pulse): after each scheduled run a focused pass records Bug + Goal findings, runs a separate report-only Artifact Review item, and writes LLM/cost/time into builder/improve.html for harden/replan/org consumers. Set true for workflows where a silent failure matters (scheduled QA, production); default off. /goal-advisor turns this on as part of setup.",
 				},
 			},
 		},
@@ -7503,7 +7503,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: create_schedule — Create a new cron schedule
 	if err := mcpAgent.RegisterCustomTool(
 		"create_schedule",
-		"Create a new cron schedule for this workflow. Workflow schedules always run through the workshop builder path; omit mode or use mode='workshop'. Messages are optional for normal run schedules; when omitted, the scheduler asks the workshop to run the full workflow. For /auto-improve, BOTH schedules must be workshop schedules: the run schedule uses workshop_mode='run' with a message that calls run_full_workflow(group_name=...), and the improve schedule uses workshop_mode='optimizer'. For optimizer schedules (workshop_mode='optimizer'), the message MUST include exact group scope, retained-run evidence window selection, eval/log review, and bounded stop conditions so unattended runs cannot loop indefinitely. For active workflows, prefer continuous-improvement checks after every run or every two runs, approximated with frequent lightweight cron if run-completion triggers are unavailable. Weekly cadence fits workflows that run weekly or are explicitly low-touch.",
+		"Create a new cron schedule for this workflow. Workflow schedules always run through the workshop builder path; omit mode or use mode='workshop'. Messages are optional for normal run schedules; when omitted, the scheduler asks the workshop to run the full workflow. For /goal-advisor, BOTH schedules must be workshop schedules: the run schedule uses workshop_mode='run' with a message that calls run_full_workflow(group_name=...), and the advisor schedule uses workshop_mode='optimizer'. For optimizer schedules (workshop_mode='optimizer'), the message MUST include exact group scope, retained-run evidence window selection, eval/log review, and bounded stop conditions so unattended runs cannot loop indefinitely. For active workflows, prefer strategy checks after every run or every two runs, approximated with frequent lightweight cron if run-completion triggers are unavailable. Weekly cadence fits workflows that run weekly or are explicitly low-touch.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -8228,7 +8228,7 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagen
 	// set_workflow_llm_config — saves tiered LLM config directly to workflow.json
 	if err := mcpAgent.RegisterCustomTool(
 		"set_workflow_llm_config",
-		"Save the workflow's tiered LLM configuration to workflow.json capabilities.llm_config. Requires get_reference_doc(kind=\"llm-selection\") to be loaded first. Use list_published_llms to see available models first. Each tier accepts provider and model_id (both required if setting a tier), plus optional published_llm_id and options copied from the published entry. Fallbacks are optional ordered lists. phase_llm is the model used for planning, eval design, and debugging phases. auto_improve_llm is the optional scheduled optimizer override. pulse_llm is the optional scheduled Pulse/post-run QA override.",
+		"Save the workflow's tiered LLM configuration to workflow.json capabilities.llm_config. Requires get_reference_doc(kind=\"llm-selection\") to be loaded first. Use list_published_llms to see available models first. Each tier accepts provider and model_id (both required if setting a tier), plus optional published_llm_id and options copied from the published entry. Fallbacks are optional ordered lists. phase_llm is the model used for planning, eval design, and debugging phases. auto_improve_llm is the optional Goal Advisor strategy-module override. pulse_llm is the optional Pulse Gate/routine post-run QA override.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -8236,8 +8236,8 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagen
 				"tier_2":           llmEntrySchema("Medium-reasoning tier: execution with learnings and learning refinement.", "Ordered fallback models tried if the primary fails."),
 				"tier_3":           llmEntrySchema("Low-reasoning tier: validation (always) and mature learning refinement (2+ runs).", "Ordered fallback models tried if the primary fails."),
 				"phase_llm":        llmEntrySchema("LLM for planning, eval design, debugging, and anonymization phases. Defaults to tier_1 if not set.", "Ordered fallback models tried if the phase LLM fails."),
-				"auto_improve_llm": llmEntrySchema("Optional LLM used only by scheduled Auto Improve optimizer runs. Defaults to the provider Auto Improve default when available.", "Ordered fallback models tried if the Auto Improve LLM fails."),
-				"pulse_llm":        llmEntrySchema("Optional LLM used only by scheduled Pulse/post-run QA. Defaults to the provider Pulse default when available if not set.", "Ordered fallback models tried if the Pulse LLM fails."),
+				"auto_improve_llm": llmEntrySchema("Optional LLM used by the Goal Advisor strategy module. Defaults to the provider Goal Advisor default when available.", "Ordered fallback models tried if the Goal Advisor LLM fails."),
+				"pulse_llm":        llmEntrySchema("Optional LLM used by Pulse Gate and routine post-run QA modules. Defaults to the provider Pulse default when available if not set.", "Ordered fallback models tried if the Pulse LLM fails."),
 			},
 		},
 		guidance.WithDocPrecondition([]string{"llm-selection"}, guidance.DefaultTracker(), func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -8667,7 +8667,7 @@ Do not flag artifacts that you inspected and found aligned. Include clean checks
 
 Use `+"`diff_patch_workspace_file`"+` to update `+"`builder/improve.html`"+`. Preserve existing findings and resolved markers.
 
-Append a report-only Artifact Review card using the current Pulse log structure. It must include an `+"`Artifact drift`"+` action label chip (`+"`<span class=\"worklabel artifact\">Artifact drift</span>`"+`) so the user can distinguish plan-change drift review from Bug hardening and Auto Improve decisions. If a finding is report-specific, eval-specific, or strategy-side, you may add one secondary work label (`+"`Report fix`"+`, `+"`Eval fix`"+`, or `+"`Improvement`"+`) to show the recommended owner/fix type, but do not present the review itself as a fix.
+Append a report-only Artifact Review card using the current Pulse log structure. It must include an `+"`Artifact drift`"+` action label chip (`+"`<span class=\"worklabel artifact\">Artifact drift</span>`"+`) so the user can distinguish plan-change drift review from Bug hardening and Goal Advisor decisions. If a finding is report-specific, eval-specific, or strategy-side, you may add one secondary work label (`+"`Report fix`"+`, `+"`Eval fix`"+`, or `+"`Improvement`"+`) to show the recommended owner/fix type, but do not present the review itself as a fix.
 
 Append:
 

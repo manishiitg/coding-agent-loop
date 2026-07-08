@@ -288,6 +288,15 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 		for name, category := range reportHumanInputCategories {
 			toolCategories[name] = category
 		}
+
+		pulseWorklistTools, pulseWorklistExecutors, pulseWorklistCategories := createPulseWorklistTools()
+		allTools = append(allTools, pulseWorklistTools...)
+		for name, executor := range pulseWorklistExecutors {
+			allExecutors[name] = executor
+		}
+		for name, category := range pulseWorklistCategories {
+			toolCategories[name] = category
+		}
 	}
 
 	// Note: Todo tools (create_todo, complete_todo, etc.) have been removed.

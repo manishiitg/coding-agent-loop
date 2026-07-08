@@ -8,7 +8,7 @@ Pulse (the per-run monitor) already triages every run for operational breakage: 
 
 - Do NOT write eval steps for operational checks ("file exists", "step ran", "output non-empty", "JSON parses"). They duplicate Pulse/pre-validation, and because they pass on every clean run they inflate the score and mask real goal shortfall.
 - **Anchor every eval step to a success criterion.** One eval step per criterion (route-scoped where routes apply), and say in the description which criterion it measures. Pulse maps eval verdicts onto the per-criterion goal card in `builder/improve.html` — an eval step tied to no criterion has no consumer, and a criterion with no eval step is unmeasured.
-- **Evals are the ruler for both improve loops.** Pulse confirms harden Decisions and the scheduled improve loop judges replans by comparing eval reports across runs. Keep the instrument stable — same steps, same scale, same rubric — so score movement means the workflow changed, not the measurement.
+- **Evals are the ruler for both loops.** Pulse confirms harden Decisions and Goal Advisor judges replans by comparing eval reports across runs. Keep the instrument stable — same steps, same scale, same rubric — so score movement means the workflow changed, not the measurement.
 
 ### Cost discipline — eval is a per-run tax
 

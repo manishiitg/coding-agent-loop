@@ -679,7 +679,7 @@ type ReportHumanInputDraft = {
 }
 
 function sourceLabel(source: string): string {
-  if (source === 'auto_improve') return 'Auto Improve'
+  if (source === 'goal_advisor') return 'Goal Advisor'
   if (source === 'chief_of_staff') return 'Chief of Staff'
   return 'Pulse'
 }

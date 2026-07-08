@@ -65,7 +65,7 @@ returns the live JSON schema for the tool.
 ## Schedule Management (Workshop mode)
 
 For the operational cheat sheet on creating / editing / deleting schedules
-(cron syntax, workshop run/optimizer payload shape), see this section. For the
+(cron syntax and workshop run payload shape), see this section. For the
 multi-agent-only schedule cron flow, see
 `get_reference_doc(kind="schedule-management")` instead.
 
@@ -79,7 +79,7 @@ multi-agent-only schedule cron flow, see
     "group_names": ["confida-prod"],
     "mode": "workshop", "workshop_mode": "run" }
   ```
-  Fields: `id` (auto-assigned), `name` (display label), `description` (optional), `cron_expression` (standard 5-field cron), `timezone` (IANA tz e.g. `America/New_York`), `enabled` (bool), `trigger_payload` (arbitrary JSON passed to the run), `group_names` (required array of one or more explicit group names from `variables/variables.json`), `mode` (`workshop` for workflow schedules), `workshop_mode` (`run` or `optimizer`).
+  Fields: `id` (auto-assigned), `name` (display label), `description` (optional), `cron_expression` (standard 5-field cron), `timezone` (IANA tz e.g. `America/New_York`), `enabled` (bool), `trigger_payload` (arbitrary JSON passed to the run), `group_names` (required array of one or more explicit group names from `variables/variables.json`), `mode` (`workshop` for workflow schedules), `workshop_mode` (`run` for normal recurring workflow runs).
 - Schedule management is available in **Workshop mode**. If the user asks in Run mode, tell them to switch.
 
 ### Two schedule types: cron vs calendar
@@ -114,11 +114,11 @@ Every schedule in `workflow.json` has a `schedule_type` — `"cron"` (default) o
 Workflow schedules always use the workshop builder execution path. Do not create direct `mode="workflow"` schedules; legacy manifests with that value are normalized to workshop execution.
 
 - **Run** (`mode=workshop`, `workshop_mode=run`) — LLM-driven execution with per-step notifications. `messages` is optional; if omitted, the scheduler sends a default full-workflow run instruction. Prefer an explicit message when you need group-specific wording, backup instructions, or strict unattended behavior.
-- **Optimize** (`mode=workshop`, `workshop_mode=optimizer`) — LLM-driven optimizer run. Provide a `messages` array with exact group scope, `runs/iteration-0` evidence scope, eval/log review, and bounded stop conditions.
+- **Optimize** (`mode=workshop`, `workshop_mode=optimizer`) — legacy/custom optimizer job. Do not create this for Goal Advisor; Pulse Gate now selects the Goal Advisor module after normal runs. Use optimizer schedules only for an explicitly requested bespoke scheduled analysis job with bounded stop conditions.
 
 **Default mode rule:** create workflow schedules with `mode="workshop"`. New schedules should never use `mode="workflow"`.
 
-**`/auto-improve` rule**: When setting up continuous improvement, BOTH schedules must be workshop schedules. The recurring execution schedule uses `mode="workshop", workshop_mode="run"` and a message that calls `run_full_workflow(group_name="...")` for each configured group. The recurring improvement schedule uses `mode="workshop", workshop_mode="optimizer"` and normally omits `messages`; the scheduler supplies the canonical improve prompt and automatically injects pre-backup, final-backup, publish, and notify turns at runtime. Do not use direct `mode="workflow"` for this command.
+**`/goal-advisor` rule**: When setting up continuous improvement, create or update the recurring execution schedule only: `mode="workshop", workshop_mode="run"` with a message that calls `run_full_workflow(group_name="...")` for each configured group, and enable Pulse with `update_workflow_config(post_run_monitor=true)`. Do not create a separate optimizer Goal Advisor schedule; Pulse Gate decides when the Goal Advisor module is due.
 
 ### Back up scheduled workflows
 
@@ -137,7 +137,7 @@ Confirm with the user before skipping backup on a recurring schedule.
 
 - Write each message as a plain instruction, like you would type in chat: `"Run the full workflow"`, `"Generate the final report"`.
 - **Run mode** (`workshop_mode="run"`): typically one message with exact groups, e.g. `"Do not ask for confirmation. Run the full workflow for group-1 using run_full_workflow(group_name=\"group-1\")."`
-- **Optimize mode**: usually one message with stop conditions (see optimizer best practices below). For `/auto-improve`, omit `messages`; the scheduler ignores persisted optimizer messages and runs the canonical improve prompt plus backup, publish, and notify as separate runtime turns.
+- **Optimize mode**: legacy/custom only. For `/goal-advisor`, do not create optimizer schedules; Pulse Gate runs Goal Advisor as a module when evidence warrants it.
 - Use multiple messages to break work into sequential phases, e.g. `["Run the workflow", "Generate the final report"]`.
 - Read `variables/variables.json` for available group names and include them explicitly in the message if needed.
 
@@ -150,18 +150,18 @@ Confirm with the user before skipping backup on a recurring schedule.
 - **Bad**: `"Run the workflow and ask me which steps to optimize"`.
 - **Good**: `"Review runs/iteration-0 for group-1, read eval/log evidence, then choose harden_workflow or replan_workflow_from_results using the scheduled decision model. Log no action if nothing is ready."`
 
-### Workshop optimizer-style schedules
+### Legacy/custom optimizer schedules
 
-When creating a schedule with `workshop_mode="optimizer"`, craft the message around the exact recurring job for general optimizer schedules. For `/auto-improve`, do not store custom `messages`; scheduler-owned turns supply the canonical improve prompt and wrap it at runtime with pre-backup, final backup, publish, and notify. Older persisted Auto Improve messages are ignored at runtime.
+When creating a schedule with `workshop_mode="optimizer"`, craft the message around the exact recurring custom job. Do not use this for Goal Advisor; use `/goal-advisor` setup to enable Pulse and a normal run schedule.
 
-For non-Auto-Improve optimizer messages:
+For custom optimizer messages:
 - Name the configured `group_names`.
 - Use only `runs/iteration-0` evidence for those groups.
 - Inspect run outputs plus execution/tool logs for failures, retries, wrong tool arguments, timeouts, validation errors, and stuck steps.
 - Read `builder/improve.html` (the single durable log), recent `planning/changelog/` entries, and current run/eval evidence.
 - Handle report accuracy/live-data/layout work with report-plan tools only when the recurring job explicitly includes report quality or an unresolved review/improve item queues it.
 
-For active workflows, choose a bounded Auto Improve cron cadence rather than inventing a bespoke rhythm: weekly (`<minute> <hour> * * 1`), twice-weekly (`<minute> <hour> * * 1,4`), daily-until-recovered (`<minute> <hour> * * *`), or biweekly-over-time (`<minute> <hour> 1,15 * *`, a twice-monthly cron approximation because standard cron cannot express exact every-14-days without extra scheduler state). Use weekly for stable workflows, twice-weekly for active/new workflows with useful evidence, daily-until-recovered after material plan/config changes or regressions until one or two post-change runs have been reviewed, and biweekly-over-time only after sustained clean/on-target history. Pulse may tune this later with `update_schedule(cron_expression=...)`; do not add schedule JSON fields.
+Pulse module cadence is not encoded in schedule JSON. Pulse Gate stores module state in `db/db.sqlite` and decides which modules are due after each normal run.
 
 **Infinite loop prevention**: Scheduled optimizer runs are unattended — they MUST have built-in stop conditions. The message should instruct the agent to: (1) use bounded evidence review, (2) apply at most one primary harden/replan action per fire, (3) avoid fresh workflow reruns unless verification is explicitly needed, (4) stop after recording what was applied or deferred.
 
@@ -174,7 +174,7 @@ For active workflows, choose a bounded Auto Improve cron cadence rather than inv
   - `ls runs/`
   - `cat variables/variables.json`
 - **`human_feedback`** — Ask the user a question during a run.
-- **`create_human_input_request`** — Non-blocking Pulse/Auto Improve/Chief of Staff question stored in the workflow's `db/db.sqlite` table `report_human_inputs`; the user answers in the Runloop Pulse/report panel.
+- **`create_human_input_request`** — Non-blocking Pulse/goal-advisor/Chief of Staff question stored in the workflow's `db/db.sqlite` table `report_human_inputs`; the user answers in the Runloop Pulse/report panel.
 - **`mark_human_input_consumed`** — Mark an answered report question consumed after using it and recording the outcome.
 
 ## Skills

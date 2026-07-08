@@ -12,7 +12,7 @@ const tierRows = [
   { key: 'tier2', label: 'Medium', usage: 'execution with learnings' },
   { key: 'tier3', label: 'Low', usage: 'validation, mature learnings' },
   { key: 'phase', label: 'Workshop', usage: 'planning, eval, debugging' },
-  { key: 'autoImprove', label: 'Auto Improve', usage: 'scheduled optimizer' },
+  { key: 'autoImprove', label: 'Goal Advisor', usage: 'Pulse strategy module' },
   { key: 'pulse', label: 'Pulse', usage: 'post-run QA and harden loop' },
 ] as const
 

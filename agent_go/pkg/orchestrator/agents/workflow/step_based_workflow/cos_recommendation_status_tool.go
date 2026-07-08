@@ -17,7 +17,7 @@ const chiefOfStaffRecommendationStatusToolName = "mark_cos_recommendation_status
 var validChiefOfStaffRecommendationStatuses = map[string]bool{
 	"proposed":            true,
 	"accepted":            true,
-	"queued_auto_improve": true,
+	"queued_goal_advisor": true,
 	"in_progress":         true,
 	"needs_evidence":      true,
 	"done":                true,
@@ -39,7 +39,7 @@ func RegisterChiefOfStaffRecommendationStatusTool(
 	}
 	return mcpAgent.RegisterCustomTool(
 		chiefOfStaffRecommendationStatusToolName,
-		"Mark a Chief of Staff / Org Pulse recommendation card in builder/improve.html with workflow-side status. Use this instead of hand-editing data-status attributes after Workflow Pulse or Auto Improve accepts, queues, completes, dismisses, blocks, or requests more evidence for a recommendation.",
+		"Mark a Chief of Staff / Org Pulse recommendation card in builder/improve.html with workflow-side status. Use this instead of hand-editing data-status attributes after Workflow Pulse or Goal Advisor accepts, queues, completes, dismisses, blocks, or requests more evidence for a recommendation.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -52,7 +52,7 @@ func RegisterChiefOfStaffRecommendationStatusTool(
 					"enum": []interface{}{
 						"proposed",
 						"accepted",
-						"queued_auto_improve",
+						"queued_goal_advisor",
 						"in_progress",
 						"needs_evidence",
 						"done",
@@ -101,7 +101,7 @@ func markChiefOfStaffRecommendationStatus(
 	}
 	status := strings.TrimSpace(asString(args["status"]))
 	if !validChiefOfStaffRecommendationStatuses[status] {
-		return `status must be one of "proposed", "accepted", "queued_auto_improve", "in_progress", "needs_evidence", "done", "dismissed", or "blocked"`, nil
+		return `status must be one of "proposed", "accepted", "queued_goal_advisor", "in_progress", "needs_evidence", "done", "dismissed", or "blocked"`, nil
 	}
 	note := strings.TrimSpace(asString(args["note"]))
 	if note == "" {

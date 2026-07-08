@@ -19,7 +19,7 @@ var workflowVersionUpgrades = []workflowVersionUpgrade{
 		label: "upgrade-1.0.1",
 		query: `WORKFLOW VERSION UPGRADE v1.0.0 -> v1.0.1.
 
-This is a product-managed Pulse pre-step. Do ONLY this upgrade check, then stop and wait for the normal Pulse triage step.
+This is a product-managed Pulse pre-step. Do ONLY this upgrade check, then stop and wait for the normal Pulse Gate step.
 
 1. Read workflow.json and builder/improve.html. Treat a missing workflow.json "version" as "1.0.0".
 2. Call get_reference_doc(kind="review-improve-log") and get_reference_doc(kind="post-run-monitor"). If builder/improve.html uses the old narrow Pulse layout, update it to the current responsive workflow Pulse contract: viewport meta, no horizontal overflow, mobile-first/wide-safe cards, metadata under titles on narrow widths, overflow-wrap for long run notes, and compact latest-run/cost/time sections.
@@ -35,7 +35,7 @@ Report the files changed and any intentional no-op decisions, then stop.`,
 		label: "upgrade-1.0.2",
 		query: `WORKFLOW VERSION UPGRADE v1.0.1 -> v1.0.2.
 
-This is a product-managed Pulse pre-step. Do ONLY this upgrade check, then stop and wait for the normal Pulse triage step.
+This is a product-managed Pulse pre-step. Do ONLY this upgrade check, then stop and wait for the normal Pulse Gate step.
 
 1. Read workflow.json, publish/status.json if it exists, and builder/improve.html.
 2. If workflow.json.publish or publish/status.json shows private/password/passphrase/secret_name/password-protected publishing, call get_reference_doc(kind="publish-strategy") and refresh the workflow's publish instructions/config notes to the current Runloop dark password-gate contract: named secret only, never plaintext, encrypt baked HTML with StatiCrypt after staging, use one shared salt/remember flow so the viewer unlocks once, apply the Runloop dark password-gate styling instead of the default green/white StatiCrypt page, and record only visibility + secret_name/status. Do not change the destination URL, do not expose the password, and do not do the deploy in this upgrade step; the normal verified publish turn will republish with the new gate.
@@ -51,7 +51,7 @@ Report the files changed and any intentional no-op decisions, then stop.`,
 		label: "upgrade-1.0.3",
 		query: `WORKFLOW VERSION UPGRADE v1.0.2 -> v1.0.3.
 
-This is a product-managed Pulse pre-step. Do ONLY this report-dashboard upgrade check, then stop and wait for the normal Pulse triage step.
+This is a product-managed Pulse pre-step. Do ONLY this report-dashboard upgrade check, then stop and wait for the normal Pulse Gate step.
 
 Goal: move old report dashboards to the current HTML-only contract. The React report viewer should only receive a lightweight navigation plan; report intelligence, layout, tables, charts, summaries, and recommendations belong in HTML documents under db/reports/.
 
@@ -73,7 +73,7 @@ Goal: move old report dashboards to the current HTML-only contract. The React re
 		label: "upgrade-1.0.4",
 		query: `WORKFLOW VERSION UPGRADE v1.0.3 -> v1.0.4.
 
-This is a product-managed Pulse pre-step. Do ONLY this Pulse report readability upgrade, then stop and wait for the normal Pulse triage step.
+This is a product-managed Pulse pre-step. Do ONLY this Pulse report readability upgrade, then stop and wait for the normal Pulse Gate step.
 
 Goal: refresh workflow Pulse logs so builder/improve.html reads like a concise human/operator dashboard first, with the detailed evidence log below. This upgrade is for layout, readability, and stale-count cleanup only; do not change workflow behavior.
 
@@ -96,9 +96,9 @@ Goal: refresh workflow Pulse logs so builder/improve.html reads like a concise h
 		label: "upgrade-1.0.5",
 		query: `WORKFLOW VERSION UPGRADE v1.0.4 -> v1.0.5.
 
-This is a product-managed Pulse pre-step. Do ONLY this filterability upgrade, then stop and wait for the normal Pulse triage step.
+This is a product-managed Pulse pre-step. Do ONLY this filterability upgrade, then stop and wait for the normal Pulse Gate step.
 
-Goal: make builder/improve.html searchable by exact date, activity kind, and text so the user can inspect all Pulse / Auto Improve / Chief of Staff actions and notes for a specific day.
+Goal: make builder/improve.html searchable by exact date, activity kind, and text so the user can inspect all Pulse / Goal Advisor / Chief of Staff actions and notes for a specific day.
 
 1. Read workflow.json and builder/improve.html. Treat a missing workflow.json "version" as "1.0.0".
 2. Call get_reference_doc(kind="review-improve-log") and update builder/improve.html to the current filterable Pulse skeleton where needed:
@@ -119,7 +119,7 @@ Report the files changed, filter metadata added, skipped unknown-date items if a
 		label: "upgrade-1.0.6",
 		query: `WORKFLOW VERSION UPGRADE v1.0.5 -> v1.0.6.
 
-This is a product-managed Pulse pre-step. Do ONLY this richer Pulse dashboard upgrade, then stop and wait for the normal Pulse triage step.
+This is a product-managed Pulse pre-step. Do ONLY this richer Pulse dashboard upgrade, then stop and wait for the normal Pulse Gate step.
 
 Goal: make builder/improve.html more colorful, less text-heavy, and more widget-oriented so the user can understand workflow state quickly in the right panel.
 
@@ -180,13 +180,18 @@ func workflowVersionUpgradePlan(manifest *WorkflowManifest) []workflowVersionUpg
 }
 
 func postRunMonitorStepsForManifest(manifest *WorkflowManifest) []postRunMonitorStep {
+	steps := postRunMonitorUpgradeStepsForManifest(manifest)
+	steps = append(steps, postRunMonitorSteps()...)
+	return steps
+}
+
+func postRunMonitorUpgradeStepsForManifest(manifest *WorkflowManifest) []postRunMonitorStep {
 	upgrades := workflowVersionUpgradePlan(manifest)
-	base := postRunMonitorSteps()
 	if len(upgrades) == 0 {
-		return base
+		return nil
 	}
 
-	steps := make([]postRunMonitorStep, 0, len(upgrades)+len(base))
+	steps := make([]postRunMonitorStep, 0, len(upgrades))
 	for _, upgrade := range upgrades {
 		steps = append(steps, postRunMonitorStep{
 			label: upgrade.label,
@@ -198,6 +203,5 @@ func postRunMonitorStepsForManifest(manifest *WorkflowManifest) []postRunMonitor
 			),
 		})
 	}
-	steps = append(steps, base...)
 	return steps
 }

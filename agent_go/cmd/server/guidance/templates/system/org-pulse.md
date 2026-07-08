@@ -160,7 +160,7 @@ For each workflow, identify:
 
 - whether `workflow.json` defines a complete high / medium / low tier setup under
   `capabilities.llm_config`, and which provider/model each tier resolves to;
-- the tier or explicit model actually selected by execution defaults, schedules, Pulse/auto-improve
+- the tier or explicit model actually selected by execution defaults, schedules, Pulse/Goal Advisor
   settings, and any schedule override;
 - the recent observed provider/model from cost/status evidence when available;
 - recent cost/tokens from `costs/`, run folders, report metadata, or Pulse/run evidence;
@@ -171,8 +171,8 @@ provider-default tier setup even when `tiered_config`, `pulse_llm`, or `auto_imp
 written into `workflow.json`. Resolve it as the current coding-agent provider defaults before
 classifying it: Claude Code uses high=`claude-opus-4-8`, medium=`claude-sonnet-5`,
 low=`claude-haiku-4-5-20251001`, phase=`claude-opus-4-8`, Pulse=`claude-sonnet-5`, and
-Auto Improve / Chief of Staff=`claude-opus-4-8`; Codex uses high=`gpt-5.5` xhigh,
-Pulse=`gpt-5.5` high, medium=`gpt-5.4`, low=`gpt-5.3-codex-spark`, and Auto Improve / Chief of Staff=`gpt-5.5` xhigh
+Goal Advisor / Chief of Staff=`claude-opus-4-8`; Codex uses high=`gpt-5.5` xhigh,
+Pulse=`gpt-5.5` high, medium=`gpt-5.4`, low=`gpt-5.3-codex-spark`, and Goal Advisor / Chief of Staff=`gpt-5.5` xhigh
 with xhigh reasoning. For Pi, Cursor, Gemini, and other coding-agent providers, treat their
 provider default tier map as complete; if the provider exposes only one effective model, report
 that the tiers collapse to the same model rather than calling the setup missing.
@@ -214,7 +214,7 @@ Every recommendation must be:
   evidence, no recommendation — never invent a metric or a need.
 - **Checked against prior recommendations.** Before writing a new recommendation, scan existing
   org-level cards in `pulse/goals.html` and workflow-level `.cos-rec` cards in `builder/improve.html`.
-  If the same goal/gap already has an open recommendation (`proposed`, `accepted`, `queued_auto_improve`,
+  If the same goal/gap already has an open recommendation (`proposed`, `accepted`, `queued_goal_advisor`,
   `in_progress`, `needs_evidence`, or `blocked`), update/follow up on that card instead of duplicating it.
   If it is stale and important, surface it as a stale open decision in `pulse/org-pulse.html`.
 - **Ranked by impact / effort.** State the expected goal movement (impact) and the rough cost
@@ -245,7 +245,7 @@ Write recommendations to the **right surface**, never both:
   goal/KPI, alignment verdict, evidence, gap, priority, suggested builder action, and expected
   impact (the card fields from step 3), plus `class="entry cos-rec"`, stable `data-cos-rec-id`,
   `data-status`, `data-priority`, and `data-suggested-action`. It is a recommendation for the
-  builder to verify later, not an applied fix. Workflow Pulse / Auto Improve replies by calling
+  builder to verify later, not an applied fix. Workflow Pulse / Goal Advisor replies by calling
   `mark_cos_recommendation_status`; do not rewrite those workflow-side lifecycle attributes yourself
   unless you are creating the initial card.
 - **Org-level recommendation → the Recommendations section of `pulse/goals.html`.** When the move

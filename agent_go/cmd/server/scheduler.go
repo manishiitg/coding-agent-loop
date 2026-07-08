@@ -1156,11 +1156,11 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 			s.sessionLogf(sctx, sessionID, "[SCHEDULER] Failed to update run entry for %s: %v", schedID, err)
 		}
 
-		// Pulse: the post-run steward. When enabled it triages the run (Bug + Goal
-		// verdicts into the Pulse log), applies the full plan-step harden for Bug
-		// findings, runs a separate report-only artifact drift review, records the
-		// report-only LLM/cost/time readout, backs up the final state, publishes, and
-		// sends a run summary notification — see runPostRunMonitor.
+		// Pulse: the post-run steward. When enabled it runs a Gate turn that reads
+		// run evidence and records a module worklist in db/db.sqlite, then executes
+		// only the selected modules (harden, artifact/report/learning/KB/DB health,
+		// cost/time, or Goal Advisor), backs up the final state, publishes, and sends
+		// a run summary notification — see runPostRunMonitor.
 		// Opt-in per workflow (post_run_monitor in workflow.json) — runs only when
 		// the user / builder enabled Pulse. Only after an actual workflow RUN, not an
 		// optimizer/improvement pass (there's no fresh run output to triage there).
@@ -1315,8 +1315,8 @@ Scheduled task:
 // reads the run evidence, plan changelog, and eval files to form a Bug
 // verdict and a Goal verdict (recorded into builder/improve.html — the Pulse
 // log, the single source of truth), applies the full plan-step harden for Bug
-// findings (recording the Goal finding + evidence for the scheduled improve
-// loop, which applies the replan), runs a separate report-only artifact drift
+// findings (recording the Goal finding + evidence for the scheduled Goal
+// Advisor loop, which applies evidence-backed replans), runs a separate report-only artifact drift
 // review, records the report-only LLM/cost/time readout, backs up the final state
 // before publish, and notifies on a transition. It
 // never changes the run's recorded status — failures here are logged and
@@ -1337,14 +1337,11 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 	if sessionID == "" {
 		sessionID = s.newScheduleSessionID(sctx)
 	}
-	reqMap := s.buildWorkshopRequest(ctx, sctx)
-	s.applyPulseLLMToReqMap(reqMap, sctx, sessionID)
+	baseReqMap := s.buildWorkshopRequest(ctx, sctx)
 
-	// Run Pulse as a SEQUENCE of smaller turns — one step per message — rather than
-	// one giant prompt that asks the agent to juggle triage→fix→artifact→report→backup→publish→notify
-	// in a single reply. Each turn does one focused job and builds on the prior turns'
-	// context in the same resumed session, the way a message_sequence works, and the
-	// user watches it progress step by step.
+	// Run Pulse as a SEQUENCE of smaller turns: Gate first, then only the modules
+	// Gate selected, then final backup/publish/notify. Each turn does one focused
+	// job and builds on the prior turns' context in the same resumed session.
 	answeredHumanInputs := formatAnsweredReportHumanInputsForAgent(ctx, sctx.WorkspacePath)
 	humanInputNote := ""
 	if answeredHumanInputs != "" {
@@ -1357,34 +1354,50 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 			"We'll go one step at a time — do ONLY the step in each message, finish it, then stop and wait for the next.%s",
 		sctx.WorkspacePath, runStatus, runFolder, sctx.WorkspacePath, humanInputNote)
 
-	steps := postRunMonitorStepsForManifest(manifest)
-
-	s.sessionLogf(sctx, sessionID, "[PULSE] starting pulse for %s (run_folder=%s status=%s) across %d steps", sctx.Schedule.ID, runFolder, runStatus, len(steps))
-	for i, st := range steps {
-		if st.label == "artifact" {
-			pendingArtifactReview, err := workflowHasPendingPlanChangelogArtifactReview(ctx, sctx.WorkspacePath)
-			if err != nil {
-				s.sessionLogf(sctx, sessionID, "[PULSE] artifact review changelog check failed; running artifact review to avoid missing drift: %v", err)
-			} else if !pendingArtifactReview {
-				s.sessionLogf(sctx, sessionID, "[PULSE] skipping artifact review for %s: no unreviewed planning/changelog entries", sctx.Schedule.ID)
-				continue
-			}
+	upgradeSteps := postRunMonitorUpgradeStepsForManifest(manifest)
+	s.sessionLogf(sctx, sessionID, "[PULSE] starting pulse for %s (run_folder=%s status=%s, upgrades=%d)", sctx.Schedule.ID, runFolder, runStatus, len(upgradeSteps))
+	introSent := false
+	runStep := func(st postRunMonitorStep) bool {
+		reqMap := cloneStringInterfaceMap(baseReqMap)
+		if st.label == "goal-advisor" {
+			s.applyGoalAdvisorLLMToReqMap(reqMap, sctx, sessionID)
+		} else {
+			s.applyPulseLLMToReqMap(reqMap, sctx, sessionID)
 		}
-
 		query := st.query
-		if i == 0 {
+		if !introSent {
 			query = intro + "\n\n" + query
+			introSent = true
 		}
 		reqMap["query"] = query
 		if err := s.api.startSessionInternal(ctx, reqMap, sessionID, "", nil); err != nil {
 			s.sessionLogf(sctx, sessionID, "[PULSE] step %q failed to start: %v", st.label, err)
-			return
+			return false
 		}
 		if err := s.waitForWorkshopIdle(ctx, sessionID); err != nil {
 			s.sessionLogf(sctx, sessionID, "[PULSE] step %q idle wait failed: %v", st.label, err)
-			return
+			return false
 		}
 		s.sessionLogf(sctx, sessionID, "[PULSE] step %q done for %s", st.label, sctx.Schedule.ID)
+		return true
+	}
+
+	for _, st := range upgradeSteps {
+		if !runStep(st) {
+			return
+		}
+	}
+
+	if !runStep(postRunMonitorGateStep(sessionID, runFolder, runStatus)) {
+		return
+	}
+
+	steps := s.selectedPostRunMonitorModuleSteps(ctx, sctx, sessionID)
+	s.sessionLogf(sctx, sessionID, "[PULSE] selected %d post-gate steps for %s", len(steps), sctx.Schedule.ID)
+	for _, st := range steps {
+		if !runStep(st) {
+			return
+		}
 	}
 	s.sessionLogf(sctx, sessionID, "[PULSE] pulse completed for %s", sctx.Schedule.ID)
 	// Pulse owns its own notification: per its reference doc it calls notify_user
@@ -1445,43 +1458,131 @@ func workflowHasPendingPlanChangelogArtifactReview(ctx context.Context, workspac
 }
 
 func postRunMonitorSteps() []postRunMonitorStep {
-	return []postRunMonitorStep{
-		{"triage", "STEP 1 — TRIAGE. Read the run evidence, the plan changelog, eval files, and pending Chief of Staff recommendation cards in builder/improve.html (`.cos-rec` / `data-cos-rec-id` with open data-status). Form a Bug verdict and a Goal verdict. Triage is diagnosis/verdict only — hardening happens in the next step. ALSO sanity-check the two layers that silently break and poison the verdict: the EVAL (did it run; does it produce usable evidence?) and the REPORT dashboard (does it render; do its window.report.query SQLs work; is it non-empty?). A broken eval or report is a Bug. Update builder/improve.html (verdict pills, goal card, Bug/Goal signal tiles, and one latest run row with status; leave backup, org-dashboard card writes, notification, and LLM/cost/time fields for later steps). Use plain-language Pulse cards: takeaway first, short What happened / Why it matters / Next / Evidence phrasing, and raw paths/ids/hashes last. For each pending Chief of Staff recommendation: verify the cited evidence; if it is strategic Goal work, call mark_cos_recommendation_status(status=\"queued_auto_improve\") and record it for the scheduled improve loop; if it lacks evidence, mark needs_evidence; if this run proves it handled, mark done; if wrong/stale, mark dismissed; if it is a real Bug/eval/report issue, leave it for STEP 2 and name the rec_id in the Bug focus. For any Monitor/Open finding card, include the verdict chip (`Bug` or `Goal`) plus the action label chip from get_reference_doc(kind=\"review-improve-log\") such as `Bug fix`, `Report fix`, `Eval fix`, or `Improvement` so the user can scan the work type. Report the two verdicts, CoS rec_ids processed, and any broken eval/report, then stop."},
-		{"fix", "STEP 2 — FIX / HARDEN. This turn does not improvise manual workflow edits. If triage found a real Bug, first call get_reference_doc(kind=\"optimize-playbook\"), then call harden_workflow(focus=\"<concise Bug finding + evidence paths from triage, including Chief of Staff rec_id when applicable>\") as the canonical repair path; include group_name only when the completed run was scoped to a single group. harden_workflow owns the full plan-step harden: guards, retries, selector/prompt tightening, missing-field defaults, validation, artifact-shape fixes, KB/db/report/eval contract repair, learning hygiene, stale-description cleanup, and small evidence-backed structural fixes. When harden changes anything, record/refresh a `Decision - Pulse harden` card in builder/improve.html with the `Bug` verdict chip and a work label: `Bug fix` by default, or `Report fix` / `Eval fix` when that was the concrete repair. If harden acted on a Chief of Staff recommendation, call mark_cos_recommendation_status after the result: done with the Decision/evidence path when fixed, blocked when harden could not proceed, or needs_evidence when the recommendation lacked proof. If triage found only a Goal finding, do NOT call harden_workflow; record the Goal finding / replan proposal for the scheduled improve loop with the `Improvement` label. If the run was clean, do nothing. Never harden because a report-only LLM/cost/time observation exists. Report the harden_workflow execution_id/result, CoS rec status updates, or the no-fix reason, then stop."},
-		{"artifact", "STEP 3 — ARTIFACT REVIEW (report-only, after fix/harden). This is a separate Pulse item, not part of harden, and the scheduler only sends this turn when planning/changelog contains entries not yet marked artifact_review.done=true. Read planning/changelog/ and the Artifact Sync Cursor in builder/improve.html. If there are material unreviewed changelog entries, or no cursor exists, call get_workflow_command_guidance(kind=\"review-artifact-drift\", focus=\"Pulse artifact review after this run; report-only; do not fix\") and follow it: call review_artifact_sync(focus=\"Pulse artifact review after this run; report-only; do not fix\"), then wait with query_step(execution_id) until it completes. review_artifact_sync must append/update the report-only Artifact Review item in builder/improve.html with the `Artifact drift` action label and call mark_changelog_artifact_reviewed to mark every fully inspected changelog entry with artifact_review.done=true metadata; do not edit or delete changelog files directly. If drift is found, record it as an Artifact Review finding with the recommended next owner, but do NOT call harden_workflow, replan_workflow_from_results, plan-modification tools, or hand-patch artifacts from this step. Report cursor before/after, entries inspected, findings count, and changelog entries marked reviewed, then stop."},
-		{"report", "STEP 4 — LLM/COST/TIME REPORT (report-only, after artifact review). This is separate from triage and must not drive Bug hardening by itself. Read workflow.json capabilities.llm_config / step execution tiers, get_cost_summary(run_folder) when available, costs/execution + costs/evaluation + costs/phase/token_usage.json, and timing summaries under runs/<run_folder>/logs/<step-id>/execution. Create a compact telemetry report with three labeled buckets: workflow execution cost, evaluation cost, and builder/Pulse overhead from costs/phase/token_usage.json. Include combined operating cost only when the buckets are labeled; do not hide builder/Pulse overhead and do not mix it into plan-step run cost. Break down run cost by plan step and by agent/sub-agent when evidence supports it, and break down overhead by phase/model when available. A Pulse turn cannot see the cost of the same turn until it finishes, so report overhead through the latest persisted phase data and say when the current Pulse turn is not yet persisted. Call missing telemetry \"missing evidence\" instead of estimating; if execution, evaluation, or builder/Pulse overhead cannot be read, name the missing bucket and where you looked instead of silently omitting it. This is reporting only: do NOT change model tiers, LLM config, prompts, schedules, or agent allocation. Update builder/improve.html cost/time tiles, the latest run row, and a compact report-only Note/Pulse detail with the `Cost/time` action label when material. ALSO overwrite builder/card.cost.html with one compact org-dashboard card fragment (inline content only, single-quoted attributes), every run so the dashboard shows spend health: <article class='pulse-card' data-axis='cost' data-workflow='<workflow name>' data-goal='<same 3-6 word goal label used by card.health.html>' data-status='<normal|elevated|missing>' data-updated='<ISO8601 UTC>'><h4><workflow name></h4><p data-field='headline'><one short line, e.g. 'Cost normal — run $0.12 + overhead $0.03' or 'Missing cost telemetry — execution ledger absent'></p><p data-field='metric'><run USD or unpriced · overhead USD/tokens · combined total · wall time></p><p data-field='detail'><top-cost step/agent + top overhead phase, or missing bucket/evidence path></p></article> (normal=all expected telemetry present and no material concern; elevated=cost/time outlier, high spend, runaway retries, slow/expensive step, or high builder/Pulse overhead worth watching; missing=any expected cost bucket cannot be read reliably; keep known bucket values and name the missing bucket). If a report dashboard exists, use get_reference_doc(kind=\"report-plan\") and add/update a bounded live cost/time strip using existing live sources such as window.report.get('costs/phase/token_usage.json'), window.report.get('costs/execution/...'), workflow.json, eval summaries, and builder/improve.html; if this patches the dashboard, label the entry `Report fix` + `Cost/time`; do not bake stale static numbers into the report, and if the report shape cannot be safely patched, record that reporting cost coverage is missing in builder/improve.html instead. Report the LLM/cost/time summary and evidence paths, then stop."},
-		{"cadence", "STEP 5 — AUTO-IMPROVE CADENCE (cron-only, before backup). This step may update ONLY the existing optimizer schedule's cron_expression via list_schedules/get_schedule_runs/update_schedule; never edit workflow.json directly and never add a new schedule field. Read builder/improve.html recent Bug/Goal verdicts, open findings, the latest run row, recent schedule runs, and planning/changelog. Find exactly one enabled cron schedule with workshop_mode=\"optimizer\"; if none or multiple, record a `Decision - Auto-improve cadence` note with the reason and do not guess. Preserve the existing minute/hour/timezone when changing cadence. Use only these cron cadences: weekly = '<minute> <hour> * * 1'; twice-weekly = '<minute> <hour> * * 1,4'; daily-until-recovered = '<minute> <hour> * * *'; biweekly-over-time = '<minute> <hour> 1,15 * *' (cron-only twice-monthly approximation; do not add custom scheduler state). Policy: daily-until-recovered for severe Goal drift, repeated failures, fresh material plan/config changes, or repeated harden/report/eval failures; twice-weekly for active workflows with mild repeated drift or unresolved high-value findings; weekly for stable active workflows; biweekly-over-time only after sustained clean/on-target history and no open material findings. Do not change cadence more than once per day unless escalating to daily-until-recovered for a fresh break. If you update cron, record `Decision - Auto-improve cadence` in builder/improve.html with the `Improvement` label, old cron, new cron, evidence, and recovery condition. Report updated/skipped and why, then stop."},
-		{"backup", "STEP 6 — BACK UP FINAL STATE (always, before publish). Read workflow.json.backup and back up per get_reference_doc(kind=\"backup-strategy\"). The triage, fix/harden, Artifact Review, LLM/cost/time report, and any auto-improve cadence update are already written; snapshot the updated workflow artifacts now so publish has a backed-up source. If backup is disabled, set it up with the zero-config local-git default and back up. Skip the actual push only when backup/status.json shows the current source is already backed up (unchanged). Always write backup/status.json and update the latest run row with the backup result. Report the backup result, then stop."},
-		{"publish", "STEP 7 — PUBLISH (only if publish is on). If workflow.json.publish is enabled, re-publish the updated HTML per get_reference_doc(kind=\"publish-strategy\") — but ONLY when the destination is already VERIFIED (publish/status.json shows a prior successful publish). Every run changes the published artifacts — new db data plus a fresh Pulse entry in builder/improve.html — so there is no \"unchanged\" run to skip; always re-publish to a verified destination. Never do the first/verifying publish here unattended — that is the user's manual set-up step. Always write publish/status.json. Report the result, then stop."},
-		{"notify", "STEP 8 — NOTIFY a compact run summary once per Pulse run per the post-run-monitor doc's notification step. " +
-			"First, before deciding whether to call notify_user, overwrite builder/card.health.html with one compact org-dashboard card fragment (inline content only, single-quoted attributes). " +
-			"This dashboard write happens every run even when soul/soul.md says not to notify, because the org dashboard is state, not a user alert. " +
-			"Use the final post-Pulse health after triage, harden, artifact review, LLM/cost/time report, backup, and publish are known: healthy=clean, fixed, or recovered with no unresolved blocking bug; bug=unresolved fixable issue remains; critical=unresolved broken/blocking issue remains. " +
-			"If this run needs user input, or the notify/email would ask the user a question, call create_human_input_request(workspace_path=\"<current workflow>\", source=\"pulse\", ...) before sending notify_user; do not leave the question only in email/chat and do not hand-edit request state in HTML. Make builder/improve.html display the current question in simple language, but the source of truth is the workflow-local db/db.sqlite report_human_inputs table and Runloop is where the user answers. " +
-			"Treat builder/card.health.html as the dashboard summary, not the email narrative: it should answer state, what changed, what was fixed, what remains, evidence paths, backup/publish status, and cost/time in compact fields. Keep detailed prose in builder/improve.html and email. " +
-			"Write exactly this shape, preserving headline/metric/detail for backward compatibility and adding named fields when known: <article class='pulse-card' data-axis='health' data-workflow='<workflow name>' data-goal='<workflow goal distilled to 3-6 words from planning/plan.json success_criteria, e.g. Grow LinkedIn reach or Cut infra spend — never the full criteria text, empty only if no success_criteria exists>' data-status='<healthy|bug|critical>' data-updated='<ISO8601 UTC>'><h4><workflow name></h4><p data-field='headline'><one final outcome line, e.g. Healthy — report SQL fixed and backup published or Bug — eval still missing usable evidence></p><p data-field='metric'><Bug/Goal state · cost/time metric · backup/publish state when available></p><p data-field='detail'><concise evidence paths or unresolved next owner></p><p data-field='state'><bug clean|fixed|broken · goal on-target|drifting|not measured></p><p data-field='input'><0 open or N open — shortest open question title></p><p data-field='fix'><none needed|applied|blocked|not safe, with the concrete fix if any></p><p data-field='harden'><skipped|changed|blocked plus execution_id/result when useful></p><p data-field='artifact'><reviewed|not needed|drift found plus count/owner></p><p data-field='backup'><backed up|unchanged|blocked plus status path/commit when useful></p><p data-field='publish'><published|disabled|skipped|blocked plus URL when available></p><p data-field='cost'><STEP 4 headline or missing telemetry reason></p><p data-field='evidence'><shortest useful paths, not prose dump></p><p data-field='next'><No action needed or the single next owner/action></p></article>. Omit only optional named fields that are genuinely unknown; always include headline, metric, detail, state, input, fix, and next. " +
-			"Then honor a user `## Notifications` preference in soul/soul.md; if it explicitly says not to notify, skip notify_user and report that the dashboard card was still updated. " +
-			"Otherwise call notify_user once every run, using the state transition from builder/improve.html only to choose severity and wording: broke/recovered/new-finding should read urgent; a steady healthy or steady still-bad run should read as a concise run summary, not an alert. " +
-			"When publish is on, include the public dashboard URL from publish/status.json (the `url`, only when its state is `published`) in the message so the user can open the live report in one tap. " +
-			"Include the compact cost/time headline from STEP 4 whenever evidence is available or any cost bucket is missing, including run cost and builder/Pulse overhead as separate buckets plus the missing-bucket reason; include cadence changes from STEP 5 when cadence changed; always include cost/time when requested by `## Notifications` or the cost card is elevated/missing; keep detailed breakdowns in builder/improve.html, builder/card.health.html, and builder/card.cost.html. " +
-			"Use the doc's standard one-line format (emoji · workflow · headline · Bug/Goal state · cost/time metric · dashboard URL). " +
-			"When Gmail/email fields are available, email is the default rich rendering: set email_subject, email_html, and plain email_body on the same notify_user call unless the user's Notifications preference explicitly says not to email; set email_to only when the preference asks to replace the default To recipient; set email_cc only when the preference asks for CC recipients. " +
-			"Stay scoped: never rewrite the plan wholesale or dispatch a full improvement run here."},
+	steps := []postRunMonitorStep{postRunMonitorGateStep("<pulse_run_id>", "<run_folder>", "<run_status>")}
+	for _, moduleStep := range postRunMonitorModuleSteps("<pulse_run_id>") {
+		steps = append(steps, moduleStep.step)
+	}
+	steps = append(steps, postRunMonitorFinalSteps("<pulse_run_id>")...)
+	return steps
+}
+
+func postRunMonitorGateStep(pulseRunID, runFolder, runStatus string) postRunMonitorStep {
+	return postRunMonitorStep{
+		label: "gate",
+		query: fmt.Sprintf("STEP 1 — PULSE GATE / WORKLIST. This is the only mandatory intelligence step for this Pulse run. pulse_run_id=%q, run_folder=%q, run_status=%q.\n\n"+
+			"Read the latest run evidence, builder/improve.html, planning/changelog, evaluation files, report_plan + db/reports HTML, db/README + db schema hints, knowledgebase notes/context, learnings/_global and per-step learning metadata, open/answered report_human_inputs, and pending Chief of Staff recommendation cards. Call get_pulse_module_state(workspace_path=\"<current workflow>\") before deciding.\n\n"+
+			"Update builder/improve.html first with a simple user-facing Gate card: Bug verdict, Goal verdict, Maintenance Radar, and a Pulse Worklist summary with ran/skipped/due modules and plain reasons. Then call record_pulse_worklist exactly once with one decision for each module: harden, artifact_review, report_health, learning_health, knowledgebase_health, db_health, cost_llm_time, goal_advisor.\n\n"+
+			"Be agentic: decide what is due from workflow evidence, not a hardcoded cadence. You may skip expensive modules when the state and evidence justify it, but every skip needs a reason, evidence, and next_check_at / cooldown_runs / next_check_after_run_id when useful. Evidence can override cooldown. cost_llm_time normally runs every Pulse unless there is genuinely no telemetry to read; notify/final backup/publish happen later outside the worklist.\n\n"+
+			"Module meanings:\n"+
+			"- harden: due for real Bug findings, broken eval/report contracts that block truth, failed steps, stale guards, selector/API/runtime breakage, or CoS recs that are operational bugs.\n"+
+			"- artifact_review: due when planning/changelog has unreviewed material plan/config changes, or when a plan/config change may have drifted learnings, KB, DB, report, eval, or step configs.\n"+
+			"- report_health: due when report HTML, report_plan, SQL/window.report usage, dashboard tabs, goal visibility, or published/report claims are stale, broken, misleading, or not aligned with plan/eval/db.\n"+
+			"- learning_health: due when plan/step behavior changed, learning locks look stale, learning_objective no longer matches, reusable execution HOW was discovered, stale selectors/API quirks may exist, or learnings need lock/unlock decisions. If a plan change makes locked learnings stale, mark this due and name the step ids.\n"+
+			"- knowledgebase_health: due when KB notes/context are missing, stale, contradictory, duplicated, in the wrong place, or step KB config no longer matches the plan. Do not rewrite knowledgebase/context; it is user-owned.\n"+
+			"- db_health: due when DB schema/contracts/assets/upsert rules do not match current writers, reports, evals, or plan outputs.\n"+
+			"- cost_llm_time: report run cost/eval cost/builder+Pulse overhead, missing cost buckets, timing, model/tier evidence; report-only unless a real config bug belongs to another module.\n"+
+			"- goal_advisor: due when Goal drift persists, current strategy seems capped even if execution is clean, user answered a strategy question, CoS rec is strategic, or enough new evidence exists for an expert out-of-plan critique. Goal Advisor does not do routine harden/KB/learnings/db cleanup.\n\n"+
+			"Do not call harden_workflow, improve_learnings, improve_kb, improve_db, replan_workflow_from_results, publish, backup, or notify in this Gate step. Only update the log/card and record_pulse_worklist. Then stop.",
+			pulseRunID, runFolder, runStatus),
 	}
 }
 
-func optimizerScheduleMessages(ctx context.Context, workspacePath string, _ []string, groupNames []string) []string {
-	mainMessage := defaultOptimizerImproveMessage(groupNames)
-	if answeredHumanInputs := formatAnsweredReportHumanInputsForAgent(ctx, workspacePath); answeredHumanInputs != "" {
-		mainMessage = answeredHumanInputs + "\n\n" + mainMessage
+type postRunMonitorModuleStep struct {
+	module string
+	step   postRunMonitorStep
+}
+
+func postRunMonitorModuleSteps(pulseRunID string) []postRunMonitorModuleStep {
+	return []postRunMonitorModuleStep{
+		{pulseModuleHarden, postRunMonitorStep{"harden", fmt.Sprintf("PULSE MODULE — HARDEN. pulse_run_id=%q. Run only the harden module selected by Pulse Gate. Read the Gate card/worklist in builder/improve.html and the evidence named for module harden. If there is a real Bug, call get_reference_doc(kind=\"optimize-playbook\"), then call harden_workflow(focus=\"<concise Bug finding + evidence paths from Pulse Gate>\") as the canonical repair path; include group_name only when the completed run was scoped to a single group. Wait with query_step(execution_id) until harden completes. Record/refresh a `Decision - Pulse harden` card with the `Bug` verdict chip and work label (`Bug fix`, `Report fix`, or `Eval fix` as appropriate). If no Bug remains after re-reading evidence, record why no harden was needed. Finish by calling mark_pulse_module_result(workspace_path=\"<current workflow>\", pulse_run_id=%q, module=\"harden\", result=\"done|changed|blocked|failed|skipped\", reason=\"...\", evidence=[...]). Then stop.", pulseRunID, pulseRunID)}},
+		{pulseModuleArtifactReview, postRunMonitorStep{"artifact", fmt.Sprintf("PULSE MODULE — ARTIFACT REVIEW. pulse_run_id=%q. Run only the artifact drift module selected by Pulse Gate. This is not part of harden and is report-only. Read planning/changelog/ and the Artifact Sync Cursor in builder/improve.html. Call get_workflow_command_guidance(kind=\"review-artifact-drift\", focus=\"Pulse artifact review after this run; report-only; do not fix\") and follow it: call review_artifact_sync(focus=\"Pulse artifact review after this run; report-only; do not fix\"), then wait with query_step(execution_id) until it completes. review_artifact_sync must append/update the report-only Artifact Review item in builder/improve.html with the `Artifact drift` action label and call mark_changelog_artifact_reviewed for entries fully inspected. Do not fix artifacts here. Finish by calling mark_pulse_module_result(workspace_path=\"<current workflow>\", pulse_run_id=%q, module=\"artifact_review\", result=\"done|changed|blocked|failed|skipped\", reason=\"...\", evidence=[...]). Then stop.", pulseRunID, pulseRunID)}},
+		{pulseModuleReportHealth, postRunMonitorStep{"report-health", fmt.Sprintf("PULSE MODULE — REPORT HEALTH. pulse_run_id=%q. Run only the report/dashboard health module selected by Pulse Gate. Read reports/report_plan.json, db/reports/*.html, builder/improve.html, current plan/eval/db evidence, and latest run outputs. If the report is stale, broken, misleading, too text-heavy, missing goal/progress visibility, using dead SQL/window.report paths, or not aligned with DB/eval/plan, call get_workflow_command_guidance(kind=\"improve-report\", focus=\"Pulse report health repair from Gate evidence\") and follow it. Prefer bounded HTML/report_plan fixes; do not replan the workflow. Record a `Report fix` entry in builder/improve.html when you change report artifacts. Finish by calling mark_pulse_module_result(workspace_path=\"<current workflow>\", pulse_run_id=%q, module=\"report_health\", result=\"done|changed|blocked|failed|skipped\", reason=\"...\", evidence=[...]). Then stop.", pulseRunID, pulseRunID)}},
+		{pulseModuleLearningHealth, postRunMonitorStep{"learning-health", fmt.Sprintf("PULSE MODULE — LEARNING HEALTH. pulse_run_id=%q. Run only the learning health module selected by Pulse Gate. Load get_reference_doc(kind=\"optimize-playbook\") and get_reference_doc(kind=\"step-config\"). Read planning/plan.json, planning/step_config.json, planning/changelog, learnings/_global/SKILL.md, per-step .learning_metadata.json, and latest run evidence. If a plan/step behavior change makes locked learnings stale, use update_step_config on the specific step ids to clear stale lock_learnings/description_reviewed with review_notes. If mature stable learnings should be frozen, set lock_learnings=true only with a concrete review_notes rationale and evidence. If learning content itself needs cleanup/consolidation, call improve_learnings(mode=\"auto\", instruction=\"<specific evidence-backed instruction>\", focus=\"<step ids or topic>\") and wait with query_step(execution_id) until complete. Finish by calling mark_pulse_module_result(workspace_path=\"<current workflow>\", pulse_run_id=%q, module=\"learning_health\", result=\"done|changed|blocked|failed|skipped\", reason=\"...\", evidence=[...]). Then stop.", pulseRunID, pulseRunID)}},
+		{pulseModuleKnowledgebaseHealth, postRunMonitorStep{"knowledgebase-health", fmt.Sprintf("PULSE MODULE — KNOWLEDGEBASE HEALTH. pulse_run_id=%q. Run only the KB health module selected by Pulse Gate. Read get_reference_doc(kind=\"stores\") and, when changing step config, get_reference_doc(kind=\"step-config\"). Inspect knowledgebase/notes, knowledgebase/context only as read-only user-owned context, planning/step_config KB access/contribution settings, latest run evidence, and report/eval consumers. If notes are stale/duplicated/missing/contradictory or step KB config no longer matches the plan, call improve_kb(mode=\"auto\", instruction=\"<specific KB cleanup/consolidation instruction>\", focus=\"<topic/step/evidence>\") and wait with query_step(execution_id) until complete; use update_step_config only for concrete KB access/contribution fixes. Never rewrite knowledgebase/context. Finish by calling mark_pulse_module_result(workspace_path=\"<current workflow>\", pulse_run_id=%q, module=\"knowledgebase_health\", result=\"done|changed|blocked|failed|skipped\", reason=\"...\", evidence=[...]). Then stop.", pulseRunID, pulseRunID)}},
+		{pulseModuleDBHealth, postRunMonitorStep{"db-health", fmt.Sprintf("PULSE MODULE — DB HEALTH. pulse_run_id=%q. Run only the DB health module selected by Pulse Gate. Load get_reference_doc(kind=\"stores\"). Read db/db.sqlite schema/table contracts, db/README.md, db/assets, current plan writer steps, report SQL/window.report consumers, eval consumers, and latest run evidence. If schema/contracts/assets/upserts are stale, missing, undocumented, or incompatible with reports/evals/steps, call improve_db(mode=\"auto\", instruction=\"<specific DB contract/schema/report-compatibility instruction>\", focus=\"<table/report/step>\") and wait with query_step(execution_id) until complete. Do not do speculative row migrations. Finish by calling mark_pulse_module_result(workspace_path=\"<current workflow>\", pulse_run_id=%q, module=\"db_health\", result=\"done|changed|blocked|failed|skipped\", reason=\"...\", evidence=[...]). Then stop.", pulseRunID, pulseRunID)}},
+		{pulseModuleCostLLMTime, postRunMonitorStep{"cost-llm-time", fmt.Sprintf("PULSE MODULE — COST / LLM / TIME. pulse_run_id=%q. This is report-only. Read workflow.json capabilities.llm_config / step execution tiers, get_cost_summary(run_folder) when available, costs/execution + costs/evaluation + costs/phase/token_usage.json, and timing summaries under runs/<run_folder>/logs/<step-id>/execution. Create a compact telemetry report with labeled buckets: workflow execution cost, evaluation cost, and builder/Pulse overhead. Name missing evidence instead of estimating. Update builder/improve.html cost/time tiles and overwrite builder/card.cost.html with a compact org-dashboard cost card. do NOT change model tiers, LLM config, prompts, schedules, or agent allocation. Finish by calling mark_pulse_module_result(workspace_path=\"<current workflow>\", pulse_run_id=%q, module=\"cost_llm_time\", result=\"done|changed|blocked|failed|skipped\", reason=\"...\", evidence=[...]). Then stop.", pulseRunID, pulseRunID)}},
+		{pulseModuleGoalAdvisor, postRunMonitorStep{"goal-advisor", fmt.Sprintf("PULSE MODULE — GOAL ADVISOR. pulse_run_id=%q. Run only the strategy advisor module selected by Pulse Gate. Read builder/improve.html including the Gate card, soul/soul.md, latest run/eval evidence, planning/changelog, report/dashboard evidence, answered human inputs, and queued Chief of Staff recommendations (`.cos-rec`, especially data-status=\"queued_goal_advisor\"). Call get_workflow_command_guidance(kind=\"goal-advisor\", focus=\"Pulse-selected Goal Advisor module; expert strategy advisor, not routine hardening\") and follow it. Do not call harden_workflow, improve_kb, improve_learnings, or improve_db. Apply structural replan only on strong cross-run Goal/strategy evidence; otherwise log proposal-only Advisor ideas or create_human_input_request(source=\"goal_advisor\"). Overwrite builder/card.progress.html with the compact progress card when useful. Finish by calling mark_pulse_module_result(workspace_path=\"<current workflow>\", pulse_run_id=%q, module=\"goal_advisor\", result=\"done|changed|blocked|failed|skipped\", reason=\"...\", evidence=[...]). Then stop.", pulseRunID, pulseRunID)}},
+	}
+}
+
+func postRunMonitorPreBackupStep(pulseRunID string) postRunMonitorStep {
+	return postRunMonitorStep{"pre-backup", fmt.Sprintf("PULSE PRE-CHANGE BACKUP. pulse_run_id=%q. The Gate selected one or more mutating/reporting modules. Do not ask for confirmation. Read workflow.json.backup and call get_reference_doc(kind=\"backup-strategy\"). Ensure there is a checkpoint before selected Pulse modules mutate workflow artifacts. If backup is disabled, set up the zero-config local-git default and write workflow.json.backup plus backup/status.json. If backup/status.json says the current source hash is already backed up, record that and skip the actual push. Report the backup result, then stop.", pulseRunID)}
+}
+
+func postRunMonitorFinalSteps(pulseRunID string) []postRunMonitorStep {
+	return []postRunMonitorStep{
+		{"backup", fmt.Sprintf("PULSE FINAL BACKUP. pulse_run_id=%q. Read workflow.json.backup and back up per get_reference_doc(kind=\"backup-strategy\"). Back up the final state produced by Gate + selected Pulse modules, including builder/improve.html, db/db.sqlite pulse_module_state, report/KB/learnings/db changes, backup/status.json, and publish/status.json when changed. If backup is disabled, set it up with the zero-config local-git default and back up. Skip actual push only when backup/status.json shows the current source is already backed up. Always write backup/status.json and update the latest run row with the backup result. Report the backup result, then stop.", pulseRunID)},
+		{"publish", "PULSE PUBLISH. If workflow.json.publish is enabled, re-publish the updated HTML per get_reference_doc(kind=\"publish-strategy\") — but ONLY when the destination is already VERIFIED (publish/status.json shows a prior successful publish). Every run changes published artifacts — new db data plus a fresh Pulse entry in builder/improve.html — so always re-publish to a verified destination. Never do the first/verifying publish here unattended. Always write publish/status.json. Report the result, then stop."},
+		{"notify", "PULSE NOTIFY / ORG CARD. First overwrite builder/card.health.html with one compact org-dashboard card fragment (inline content only, single-quoted attributes). This dashboard write happens every run even if notifications are disabled. Summarize the final post-Pulse health and final post-Pulse state: selected modules ran/skipped, Bug/Goal state, user input requests, harden/artifact/report/learning/KB/DB/cost/Goal Advisor outcomes, backup/publish status, and next action. If this run needs user input or the email would ask a question, call create_human_input_request(workspace_path=\"<current workflow>\", source=\"pulse\", ...) before notify_user. Honor soul/soul.md ## Notifications; otherwise call notify_user once every run with a compact summary. When Gmail/email fields are available, email is the default rich rendering: set email_subject, email_html, and plain email_body on the same notify_user call unless the preference explicitly says not to email; set email_to/email_cc only when the preference asks. Then stop."},
+	}
+}
+
+func (s *SchedulerService) selectedPostRunMonitorModuleSteps(ctx context.Context, sctx *ScheduleContext, pulseRunID string) []postRunMonitorStep {
+	worklist, ok, err := getPulseWorklistForRun(ctx, sctx.WorkspacePath, pulseRunID)
+	if err != nil {
+		s.sessionLogf(sctx, pulseRunID, "[PULSE] worklist read failed; using conservative fallback: %v", err)
+	}
+	var selected []postRunMonitorStep
+	if !ok || err != nil {
+		selected = s.fallbackPostRunMonitorModuleSteps(ctx, sctx, pulseRunID)
+	} else {
+		for _, moduleStep := range postRunMonitorModuleSteps(pulseRunID) {
+			state, exists := worklist[moduleStep.module]
+			if !exists || strings.TrimSpace(strings.ToLower(state.LastDecision)) != "due" {
+				continue
+			}
+			selected = append(selected, moduleStep.step)
+		}
+	}
+	if len(selected) > 0 {
+		selected = append([]postRunMonitorStep{postRunMonitorPreBackupStep(pulseRunID)}, selected...)
+	}
+	selected = append(selected, postRunMonitorFinalSteps(pulseRunID)...)
+	return selected
+}
+
+func (s *SchedulerService) fallbackPostRunMonitorModuleSteps(ctx context.Context, sctx *ScheduleContext, pulseRunID string) []postRunMonitorStep {
+	wanted := map[string]bool{
+		pulseModuleHarden:       true,
+		pulseModuleReportHealth: true,
+		pulseModuleCostLLMTime:  true,
+	}
+	pendingArtifactReview, err := workflowHasPendingPlanChangelogArtifactReview(ctx, sctx.WorkspacePath)
+	if err != nil {
+		s.sessionLogf(sctx, pulseRunID, "[PULSE] fallback artifact changelog check failed; including artifact review: %v", err)
+		pendingArtifactReview = true
+	}
+	if pendingArtifactReview {
+		wanted[pulseModuleArtifactReview] = true
+	}
+	var selected []postRunMonitorStep
+	for _, moduleStep := range postRunMonitorModuleSteps(pulseRunID) {
+		if wanted[moduleStep.module] {
+			selected = append(selected, moduleStep.step)
+		}
+	}
+	return selected
+}
+
+func optimizerScheduleMessages(_ context.Context, _ string, stored []string, _ []string) []string {
+	messages := compactScheduleMessages(stored)
+	if len(messages) > 0 && !isLegacyGoalAdvisorMessageQueue(messages) {
+		return messages
 	}
 	return []string{
-		optimizerPreBackupMessage(),
-		wrapOptimizerImproveMessage(mainMessage, workspacePath, groupNames),
-		optimizerFinalBackupMessage(),
-		optimizerPublishMessage(),
-		optimizerNotifyMessage(),
+		"Do not ask for confirmation. This optimizer schedule is no longer the product Goal Advisor loop. Goal Advisor now runs as a Pulse-selected module after normal scheduled workflow runs. Do not modify workflow files. Report that this legacy optimizer schedule should be disabled or converted to an explicit custom optimizer job.",
 	}
+}
+
+func isLegacyGoalAdvisorMessageQueue(messages []string) bool {
+	joined := strings.ToLower(strings.Join(messages, "\n"))
+	return strings.Contains(joined, "goal advisor") ||
+		strings.Contains(joined, "auto improve") ||
+		strings.Contains(joined, "auto-improve") ||
+		strings.Contains(joined, "step 1/5 - pre-backup") ||
+		strings.Contains(joined, "step 1/5 — pre-backup") ||
+		strings.Contains(joined, "step 2/5 - goal advisor") ||
+		strings.Contains(joined, "step 2/5 — improve")
 }
 
 func compactScheduleMessages(messages []string) []string {
@@ -1493,62 +1594,6 @@ func compactScheduleMessages(messages []string) []string {
 		out = append(out, msg)
 	}
 	return out
-}
-
-func defaultOptimizerImproveMessage(groupNames []string) string {
-	groupScope := optimizerGroupScope(groupNames)
-	return fmt.Sprintf(
-		"Do not ask for confirmation. This is a scheduled IMPROVE fire for group_names=%s. "+
-			"Read builder/improve.html, including pending Chief of Staff recommendation cards (`.cos-rec`, especially data-status=\"queued_auto_improve\"), soul/soul.md, "+
-			"latest run/eval evidence for the configured group_names, and planning/changelog/. Then call "+
-			"get_workflow_command_guidance(kind=\"improve-workflow\", focus=\"scheduled improve fire; group_names=%s; "+
-			"run a critical evidence review for hallucinations, unsupported claims, bugs, misreporting, and report/dashboard misstatements; "+
-			"run an expert-advisor scan for out-of-plan opportunities the current plan misses; log credible proposal-only ideas with the Advisor idea label; consume queued Chief of Staff recommendations as advisory inputs and call mark_cos_recommendation_status(done|dismissed|blocked|needs_evidence) after your decision; "+
-			"apply structural replan only on strong cross-run Goal/strategy evidence; apply evidence-chain freshness cleanup "+
-			"for stale reports/learnings/KB/db; keep the report dashboard in best possible shape to measure and track the workflow goal: success-criteria status, tracked signals, trend/delta, current plan/strategy, blockers, and issues; do NOT call harden_workflow; do NOT call notify_user because backup/publish/notify "+
-			"are split into later scheduler turns; record notification-worthy decisions in builder/improve.html\"). "+
-			"Follow the returned guidance exactly. Stop after the improve decision and any cadence update are logged.",
-		groupScope, groupScope)
-}
-
-func wrapOptimizerImproveMessage(message, workspacePath string, groupNames []string) string {
-	return fmt.Sprintf(
-		"STEP 2/5 - IMPROVE. Do not ask for confirmation. SCHEDULER NOTE: This is the main scheduled IMPROVE turn for workspace_path=%q and group_names=%s. "+
-			"The scheduler already ran STEP 1/5 pre-backup and will run STEP 3/5 final backup, STEP 4/5 publish, and STEP 5/5 notify after this turn. "+
-			"Treat the completed STEP 1/5 pre-backup as the required pre-change checkpoint; if it did not clearly complete, stop and record the blocker instead of mutating files. "+
-			"Do not call notify_user, publish, or perform final backup in this turn. Do not call harden_workflow for immediate per-run Bugs; Pulse owns those. "+
-			"Record any notification-worthy decision in builder/improve.html for STEP 5/5. If you need user input, call create_human_input_request(workspace_path=%q, source=\"auto_improve\", ...) instead of hand-editing request state in HTML. When you record an auto-improve action, use the dedicated Decision card design from get_reference_doc(kind=\"review-improve-log\"): tag it `Decision - Auto-improve - Applied` or `Decision - Auto-improve - Proposed`, use `entry decision major` for replans/report/eval/cadence/user-facing dashboard changes and high-leverage out-of-plan advisor proposals, include the `Goal` verdict chip when it addresses success criteria, and add the right action label chip (`Improvement` by default, `Advisor idea` for out-of-plan expert proposals, `Report fix` for dashboard/report repairs, `Eval fix` for eval repairs, `Artifact drift` when resolving an Artifact Review finding, `Cost/time` for telemetry fixes). Include Why now, Evidence, Change, Expected impact, Files touched, and Risk / gap. If the decision accepts, applies, blocks, rejects, or needs more evidence for a Chief of Staff recommendation, call mark_cos_recommendation_status with the rec_id and cite the Decision/evidence path. After the improve decision is logged, OVERWRITE builder/card.progress.html with one compact org-dashboard card fragment (inline content only, single-quoted attributes), every improve fire so the dashboard stays live: <article class='pulse-card' data-axis='progress' data-workflow='<workflow name>' data-goal='<the workflow's own goal distilled to 3-6 words, same short form as card.health.html — e.g. 'Grow LinkedIn reach', not the full success_criteria text>' data-status='<on-track|at-risk|off-goal>' data-updated='<ISO8601 UTC>'><h4><workflow name></h4><p data-field='headline'><one short line: goal progress + the active improvement, e.g. 'Off-goal — open-rate flat; testing subject-line variants'></p></article>. If you call get_workflow_command_guidance(kind=\"improve-workflow\"), "+
-			"include that backup/publish/notify are split into later turns.\n\nCANONICAL AUTO IMPROVE MESSAGE:\n%s",
-		workspacePath, optimizerGroupScope(groupNames), workspacePath, strings.TrimSpace(message))
-}
-
-func optimizerGroupScope(groupNames []string) string {
-	cleaned := make([]string, 0, len(groupNames))
-	for _, group := range groupNames {
-		if strings.TrimSpace(group) != "" {
-			cleaned = append(cleaned, strings.TrimSpace(group))
-		}
-	}
-	if len(cleaned) == 0 {
-		return "configured group_names"
-	}
-	return strings.Join(cleaned, ", ")
-}
-
-func optimizerPreBackupMessage() string {
-	return "STEP 1/5 - PRE-BACKUP. Do not ask for confirmation. Read workflow.json.backup and call get_reference_doc(kind=\"backup-strategy\"). Ensure there is a pre-improvement checkpoint before applying scheduled improve changes. If backup is disabled, set up the zero-config local-git default and write workflow.json.backup plus backup/status.json. If backup/status.json says the current source hash is already backed up, record that and skip the actual push. Report the backup result, then stop."
-}
-
-func optimizerFinalBackupMessage() string {
-	return "STEP 3/5 - BACKUP FINAL STATE. Do not ask for confirmation. Read workflow.json.backup and get_reference_doc(kind=\"backup-strategy\"). Back up the final state produced by the improve turn, including builder/improve.html, planning/eval/report/KB/learnings/db changes, schedule changes, and status files. If nothing changed since STEP 1, update backup/status.json with a skipped/already-backed-up result. Report the final backup result, then stop."
-}
-
-func optimizerPublishMessage() string {
-	return "STEP 4/5 - PUBLISH. Do not ask for confirmation. If workflow.json.publish is enabled and publish/status.json shows a prior verified successful publish, call get_reference_doc(kind=\"publish-strategy\") and re-publish the workflow dashboard plus builder/improve.html/Pulse log from the final backed-up state. Update publish/status.json with the URL, state, and source hash. If publish is not configured or is configured_not_verified, skip; never do first/verifying publish unattended and never expose new data scope. Report the publish result, then stop."
-}
-
-func optimizerNotifyMessage() string {
-	return "STEP 5/5 - NOTIFY. Do not ask for confirmation. Read soul/soul.md ## Notifications if present, builder/improve.html entries from this improve fire, backup/status.json, and publish/status.json. Notify once with notify_user only for a decision-worthy improve change/proposal/blocker, or when the Notifications preference explicitly asks: applied replan, user-facing report/eval update, material KB/learnings/db cleanup, material cadence/scope change, high-impact proposal held for oversight/evidence, or blocked improvement needing human action. Stay silent on no-action/steady fires. Include the published dashboard URL only when publish/status.json.state is published. When Gmail/email fields are available, email is the default rich rendering: set email_subject, email_html, and plain email_body on the same notify_user call unless the Notifications preference explicitly says not to email; set email_to only when the preference asks to replace the default To recipient; set email_cc only when the preference asks for CC recipients. Report whether notification was sent/skipped and why, then stop."
 }
 
 // executeJob builds a session request from the manifest and runs it.
@@ -2057,6 +2102,14 @@ func applyPrimaryLLMConfigToReqMap(reqMap map[string]interface{}, cfg *workflowt
 	return true
 }
 
+func cloneStringInterfaceMap(in map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
 func (s *SchedulerService) applyPulseLLMToReqMap(reqMap map[string]interface{}, sctx *ScheduleContext, sessionID string) {
 	if sctx == nil || sctx.Capabilities.LLMConfig == nil {
 		return
@@ -2072,6 +2125,23 @@ func (s *SchedulerService) applyPulseLLMToReqMap(reqMap map[string]interface{}, 
 	}
 	reqMap["llm_config_source"] = llmConfigSourceScheduledPulse
 	s.sessionLogf(sctx, sessionID, "[PULSE] using configured pulse LLM %s/%s", strings.TrimSpace(pulseLLM.Provider), strings.TrimSpace(pulseLLM.ModelID))
+}
+
+func (s *SchedulerService) applyGoalAdvisorLLMToReqMap(reqMap map[string]interface{}, sctx *ScheduleContext, sessionID string) {
+	if sctx == nil || sctx.Capabilities.LLMConfig == nil {
+		return
+	}
+	goalAdvisorLLM := sctx.Capabilities.LLMConfig.AutoImproveLLM
+	if goalAdvisorLLM == nil {
+		if resolved, ok := workflowtypes.ResolveCodingAgentAutoImproveConfig(sctx.Capabilities.LLMConfig); ok {
+			goalAdvisorLLM = resolved
+		}
+	}
+	if !applyPrimaryLLMConfigToReqMap(reqMap, goalAdvisorLLM) {
+		return
+	}
+	reqMap["llm_config_source"] = llmConfigSourceScheduledAutoImprove
+	s.sessionLogf(sctx, sessionID, "[PULSE] using configured Goal Advisor LLM %s/%s", strings.TrimSpace(goalAdvisorLLM.Provider), strings.TrimSpace(goalAdvisorLLM.ModelID))
 }
 
 func (s *SchedulerService) applyChiefOfStaffLLMToReqMap(ctx context.Context, reqMap map[string]interface{}, sctx *ScheduleContext, sessionID string) {

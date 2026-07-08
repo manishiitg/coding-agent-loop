@@ -152,7 +152,7 @@ func TestWorkshopModeIsMergedSuperset(t *testing.T) {
 	// pointer to optimize-playbook.
 	mustContain := []string{
 		"harden_workflow",
-		"replan_workflow_from_results",
+		"create_human_input_request",
 		`get_reference_doc(kind="optimize-playbook")`,
 	}
 	for _, s := range mustContain {

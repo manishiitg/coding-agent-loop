@@ -1,10 +1,10 @@
-Improve this workflow using actual retained run evidence. This is a manual improvement pass, not routine Pulse. Pulse owns per-run QA, bugs, and small hardening by default; the Goal Advisor module owns strategy review when Pulse Gate or the user selects it. Your job here is to decide whether the workflow is pursuing the right strategy for `soul.md`, whether the user is missing an important opportunity or assumption, and whether the next evidence-backed action is `harden_workflow`, `replan_workflow_from_results`, eval-plan improvement, report/dashboard improvement, skill scoping cleanup, KB cleanup (`improve_kb`), learning cleanup (`improve_learnings`), DB cleanup (`improve_db`), an advisor proposal, or no action. Use `builder/improve.html` as the shared improvement ledger entry point: read it first if it exists, create it if it does not, read referenced archive files only when they matter, and update the ledger before finishing.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+Improve this workflow using actual retained run evidence. This is a manual improvement pass, not routine Pulse. Pulse owns per-run QA, bugs, and small hardening by default; the Goal Advisor module owns strategy review when Pulse Gate or the user selects it. Your job here is to decide whether the workflow is pursuing the right strategy for `soul.md`, whether the user is missing an important opportunity or assumption, and whether the next evidence-backed action is `harden_workflow`, an approved plan/config/eval/report edit, eval-plan improvement, report/dashboard improvement, skill scoping cleanup, KB cleanup (`improve_kb`), learning cleanup (`improve_learnings`), DB cleanup (`improve_db`), an advisor proposal, or no action. Use `builder/improve.html` as the shared improvement ledger entry point: read it first if it exists, create it if it does not, read referenced archive files only when they matter, and update the ledger before finishing.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 MENTAL MODEL
 Think like a sharp business analyst and expert operator auditing the workflow's actual outputs against `soul.md` success criteria. These are business-process workflows, not software systems. The important question is: "If the workflow runs correctly but still misses the goal, what is the strategic reason?" Also ask: "What would an experienced advisor in this domain suggest that the current plan does not even consider, but could materially advance the goal?" Small prompt/selector/report bugs are Pulse territory; Goal Advisor should challenge assumptions, propose experiments, improve measurement, and apply structural changes only when evidence is strong.
 
 SOURCE-OF-TRUTH HIERARCHY
-Use this hierarchy when deciding harden vs replan:
+Use this hierarchy when deciding harden vs strategy change:
 1. `soul/soul.md` is the truth: objective and success criteria define what the workflow must achieve.
 2. `runs/iteration-{N}/<group>/...` proves runtime reality: actual outputs, tool/execution logs, validation results, and eval reports show what the workflow really did. `iteration-0` is the latest/current run; older retained iterations are supporting evidence for trends, regressions, and whether a prior improve.html action helped.
 3. `evaluation/evaluation_plan.json` explains measurement: use it to understand scores, but if eval conflicts with `soul.md`, fix eval instead of optimizing to a bad rubric.
@@ -26,7 +26,7 @@ SETUP
 7. Build an evidence window from retained runs:
    - Always include `runs/iteration-0` and paired `evaluation/runs/iteration-0`.
    - Read `builder/improve.html`, `planning/changelog/`, and run/eval `run_metadata.json` timestamps to decide which older `iteration-{N}` folders matter.
-   - Include older iterations since the last relevant harden/replan/eval change, plus 1-2 runs immediately before that change when you need a before/after comparison.
+   - Include older iterations since the last relevant harden/plan/eval change, plus 1-2 runs immediately before that change when you need a before/after comparison.
    - Ignore older iterations when they predate a material plan/config/eval change and no longer represent the current workflow, except as regression context.
 
 PHASE 1 - OUTPUT + EVIDENCE REVIEW
@@ -53,7 +53,7 @@ Run this scan when this pass is acting as Goal Advisor after the evidence review
 
 1. Look beyond `planning/plan.json`: what adjacent channel, data source, user touchpoint, offer, validation loop, pricing/cost lever, risk control, reporting angle, or new automation would help the `soul.md` goal but is absent from the plan?
 2. Separate evidence from hypothesis. A valid advisor idea may be partly speculative, but it must cite at least one of: success criterion gap, run/eval trend, report/dashboard blind spot, user-stated objective, org/Chief-of-Staff recommendation, Pulse Maintenance Radar watchpoint, known business-process pattern, or a clear assumption that needs validation.
-3. Do NOT auto-apply out-of-plan ideas from this scan alone. If the idea is already strongly supported by cross-run evidence and is the best next action, classify it normally as `replan` in PHASE 2. Otherwise, log it proposal-only or ask the user through `create_human_input_request` when business judgment is required.
+3. Do NOT auto-apply out-of-plan ideas from this scan alone. If the idea is already strongly supported by cross-run evidence and the user is actively asking for a manual workshop change, classify it as an approved plan/config/eval/report edit in PHASE 2. Otherwise, log it proposal-only or ask the user through `create_human_input_request` when business judgment is required.
 4. Keep the proposal list tight: 0-3 ideas. Prefer one high-leverage idea over a brainstorm dump. Skip the scan entry when there is truly no credible upside beyond the current plan.
 5. Log each credible idea in `builder/improve.html` as `Decision - Goal Advisor - Proposed`, usually `entry decision major`, with `<span class="kind goal">Goal</span><span class="worklabel advisor">Advisor idea</span>`. The card must state:
    - why this matters now
@@ -73,23 +73,24 @@ Treat the report dashboard as a first-class user artifact, not just a rendering 
 - Does it explain the latest run/trend in plain language before detailed tables?
 - Is the layout polished, responsive, and readable enough that the user can find the answer without opening files or logs?
 
-If the answer is no and the needed data already exists in `db/`, `evaluation/`, `costs/`, `workflow.json`, `soul.md`, or `builder/improve.html`, choose a bounded `report_update`: load `get_reference_doc(kind="report-plan")`, update the HTML/report plan, validate, and preview. If the report needs new durable data that the workflow does not write yet, classify that as harden/replan/DB work instead of faking it in the dashboard. Do not introduce a separate metrics system; use the workflow's persisted evidence and `soul.md` success criteria.
+If the answer is no and the needed data already exists in `db/`, `evaluation/`, `costs/`, `workflow.json`, `soul.md`, or `builder/improve.html`, choose a bounded `report_update`: load `get_reference_doc(kind="report-plan")`, update the HTML/report plan, validate, and preview. If the report needs new durable data that the workflow does not write yet, classify that as harden/approved plan change/DB work instead of faking it in the dashboard. Do not introduce a separate metrics system; use the workflow's persisted evidence and `soul.md` success criteria.
 
 PHASE 2 - CLASSIFY
 The core question is always the same: would executing the current plan perfectly satisfy the success criteria?
 - Yes, but it is buggy, sloppy, or mis-wired -> harden.
-- No, even clean execution is structurally capped -> replan.
+- No, even clean execution is structurally capped -> approved plan change or advisor proposal.
 
-Harden and replan have the same plan tools; the difference is intent, not capability. Harden is the cheaper bet: try it when the strategy is right and execution quality is weak. Replan is the escalation: reach for it when the approach is structurally wrong for the goal or repeated clean evidence shows the current strategy cannot satisfy `soul.md`.
+Harden and strategy change can use the same plan tools; the difference is intent, not capability. Harden is the cheaper bet: try it when the strategy is right and execution quality is weak. Strategy change is the escalation: use it when the approach is structurally wrong for the goal or repeated clean evidence shows the current strategy cannot satisfy `soul.md`. In scheduled Pulse/Goal Advisor, new strategy changes must be approval cards first. In an active manual workshop pass, apply a bounded plan change only when the user asked for improvement and the evidence is strong enough.
 For Goal Advisor, do not spend the module run on small hardening that Pulse already owns. If the only evidence is a per-run Bug, record that Pulse should handle it or leave it to the next Pulse pass. Goal Advisor should act when the issue is strategy, measurement, report usefulness, evidence chain, or a high-leverage advisor opportunity.
 
 1. Harden - refine the current strategy.
    Examples: bad tool args, prompt ambiguity, missing validation, missing/mis-scoped step skill, hallucination-prone output with weak grounding, stale agentic `main.py`, invalid lock state, missing learning objective, KB/db/report contract mismatch, hardcoded user-specific values, broken eval wiring.
    Action: call `harden_workflow(group_name?, focus?)`.
 
-2. Replan - explore a different strategy for better success.
+2. Approved plan change - explore a different strategy for better success.
    Examples: the workflow collects the wrong evidence, lacks a capability, produces the wrong artifact, orders work incorrectly, or cannot satisfy a success criterion even when the current steps run cleanly.
-   Action: call `replan_workflow_from_results(group_name?, focus?)`. If the replan keeps or converts any step to `agentic`, ensure stale `learnings/<step-id>/main.py` is removed.
+   Action in manual workshop: apply the smallest evidence-backed change with normal plan modification/config/eval/report tools. If the change keeps or converts any step to `agentic`, ensure stale `learnings/<step-id>/main.py` is removed.
+   Action in Pulse/Goal Advisor: create or refresh a `create_human_input_request(source="goal_advisor", input_id="plan-proposal-...", options=[approve,reject,defer], context="<proposal + exact edits + rationale + impact + risk + evidence>")` card and wait for approval before changing the plan.
 
 3. Eval-plan improvement - the workflow behavior may be fine or unknown, but the measurement layer is weak or too expensive.
    Examples: success criterion has no eval coverage, eval rationale contradicts visible output, scoring is too lenient/strict, eval step lacks a validation schema, eval passes hallucinated/unsupported output, eval reports give false confidence, eval steps duplicate Pulse/pre-validation operational checks or map to no criterion, or eval cost is out of proportion to run cost (too many steps, too-high tiers, judgment where scripted extraction would do).
@@ -112,7 +113,7 @@ For Goal Advisor, do not spend the module run on small hardening that Pulse alre
 
 9. Advisor opportunity - an out-of-plan idea could materially help the goal, but evidence is not yet strong enough to rewrite the workflow unattended, or the idea needs user/business judgment.
    Examples: add a new acquisition channel the workflow does not touch, measure a leading indicator before optimizing the current output, create a sibling workflow for follow-up, change the offer/positioning instead of only improving copy, add a human approval checkpoint for a high-risk decision, or track a new external signal that the plan currently ignores.
-   Action: log proposal-only in `builder/improve.html` as `Decision - Goal Advisor - Proposed` with the `Advisor idea` label. Do not call `replan_workflow_from_results` unless PHASE 2 evidence already clears the normal replan bar.
+   Action: log proposal-only in `builder/improve.html` as `Decision - Goal Advisor - Proposed` with the `Advisor idea` label. If a decision is needed, create the approval card through `create_human_input_request`; do not change the plan from a speculative advisor idea.
 
 10. No action - there is no new evidence since the last improvement pass, an unresolved dependency blocks action, or the current issue needs human input. Log that explicitly in `builder/improve.html`.
 
@@ -124,12 +125,12 @@ For each enabled group with meaningful evidence in the selected run window:
 2. If the issue is group-specific, pass `group_name="{group}"`. If shared across groups, omit `group_name`.
 3. Call exactly one primary action for the group:
    - `harden_workflow(group_name="{group}", focus="<brief>")`, or
-   - `replan_workflow_from_results(group_name="{group}", focus="<brief>")`, or
+   - a bounded approved plan/config/eval/report edit with normal tools, or
    - eval-plan edits plus validation, or
    - skill scoping/config changes, or
    - report-plan/HTML edits plus validation/preview, or
    - `improve_kb(...)` / `improve_learnings(...)` / `improve_db(...)`.
-4. Do not loop. At most one replan per command run.
+4. Do not loop. At most one material plan-change application or one material plan-change proposal per command run.
 
 PHASE 4 - OPTIONAL VERIFICATION
 If a direct fix was applied and one targeted verification would materially reduce uncertainty, run one pass on the highest-value group:
@@ -144,9 +145,9 @@ After each applied change:
    ```
    Resolved YYYY-MM-DD - <one-line how it was fixed>.
    ```
-2. Ensure the action is recorded as a readable Decision entry in `builder/improve.html` using the dedicated Decision card contract from `get_reference_doc(kind="review-improve-log")`: `<div class="entry decision">` for normal actions, `<div class="entry decision major">` for replans, report/eval measurement changes, cadence/scope changes, or user-facing dashboard interpretation changes.
+2. Ensure the action is recorded as a readable Decision entry in `builder/improve.html` using the dedicated Decision card contract from `get_reference_doc(kind="review-improve-log")`: `<div class="entry decision">` for normal actions, `<div class="entry decision major">` for material plan changes, report/eval measurement changes, cadence/scope changes, or user-facing dashboard interpretation changes.
 3. The Decision card tag must clearly say whether this was applied or only proposed: `Decision - Goal Advisor - Applied` or `Decision - Goal Advisor - Proposed`. Start with `<p class="takeaway">...</p>` in simple user-facing language, then include the fixed fields **Why now**, **Evidence**, **Change**, **Expected impact**, **Files touched**, and **Risk / gap** so the user can see why a big decision happened without reading raw files. Keep raw paths, ids, and hashes in Evidence / Files touched; avoid long semicolon chains and compressed internal labels.
-4. Use action types: `harden`, `replan`, `eval_update`, `skill_update`, `report_update`, `kb_update`, `learning_update`, `db_update`, `advisor_proposal`, or `no_action`.
+4. Use action types: `harden`, `plan_change`, `eval_update`, `skill_update`, `report_update`, `kb_update`, `learning_update`, `db_update`, `advisor_proposal`, or `no_action`.
 5. If the log is too long, compact older resolved/no-action/repeated detailed entries into `builder/improve-archive/YYYY-MM.html`. Do not archive open findings, current hypotheses, current eval gaps, or the latest semantic plan/eval change.
 
 NOTIFICATION

@@ -54,18 +54,18 @@ Run this even if the current plan is technically healthy.
    - Chief of Staff recommendation
    - known domain/process pattern
    - explicit assumption that needs validation
-3. Do not auto-apply speculative ideas. Log them as `Decision - Goal Advisor - Proposed` with `Advisor idea` unless cross-run evidence already clears the replan bar.
+3. Do not auto-apply speculative ideas. Log them as `Decision - Goal Advisor - Proposed` with `Advisor idea` and create a `source="goal_advisor"` human-input proposal when the user should decide.
 4. Keep it tight. One strong idea beats a brainstorm dump. If there is no credible new idea, say why in the log instead of inventing one.
 
 PHASE 3 - CHOOSE ONE OUTCOME
 Choose exactly one primary outcome for this module run.
 
-1. `replan`
-Use when clean execution of the current plan is structurally capped or misaligned with `soul.md`, and cross-run evidence is strong.
+1. `approved_plan_change`
+Use only when the scheduler-provided answered human inputs include an approved Goal Advisor proposal (`input_id` prefixed with `plan-proposal-`, answer option `approve`) whose context names the exact plan/config/eval/report edits to apply.
 Action:
-- call `get_reference_doc(kind="optimize-playbook")`
-- call `replan_workflow_from_results(group_name?, focus?)`
-- focus must name the success criterion, cross-run evidence, why the current strategy is capped, and expected impact
+- apply the approved change with the normal plan/config/eval/report tools; never patch `planning/plan.json` directly
+- keep the scope to what the user approved unless new evidence reveals the proposal is unsafe or stale
+- call `mark_human_input_consumed` with the concrete outcome after applying, rejecting as stale, or deferring
 
 2. `eval_update`
 Use when the strategy cannot be judged because evaluation is missing, misleading, too lenient, or optimizing the wrong thing.
@@ -85,7 +85,8 @@ Action:
 Use when an expert idea is high leverage but needs user/business judgment or stronger evidence before changing the plan.
 Action:
 - log proposal-only as `Decision - Goal Advisor - Proposed`
-- if a decision is needed, call `create_human_input_request(workspace_path="<current workflow>", source="goal_advisor", ...)`
+- if a decision is needed, call `create_human_input_request(workspace_path="<current workflow>", source="goal_advisor", input_id="plan-proposal-<stable-slug>", options=[approve,reject,defer], context="<proposal + exact intended edits + rationale + expected impact + risk + evidence>")`
+- do not change the plan until a later Pulse run sees the approved answer
 
 5. `no_action`
 Use when there is no new evidence, Pulse already owns the finding, or a blocker/human input prevents responsible action.
@@ -93,7 +94,8 @@ Action:
 - log a short no-action Goal Advisor note with the reason and what evidence would change the decision
 
 PHASE 4 - APPLY BOUNDS
-- At most one replan per module run.
+- At most one approved plan-change application per module run.
+- Do not create multiple strategy approval cards unless they are genuinely separate decisions; prefer the single highest-leverage proposal.
 - Do not run the whole workflow just to create evidence for yourself.
 - Do not fix per-run Bugs; point Pulse/manual maintenance at the evidence.
 - Do not notify directly; Pulse has a dedicated notify turn after selected modules.

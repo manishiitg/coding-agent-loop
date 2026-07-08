@@ -69,7 +69,7 @@ func TestToolSetInvariants(t *testing.T) {
 	for _, n := range []string{
 		"create_plan", "add_regular_step", "add_routing_step", "add_human_input_step",
 		"update_regular_step", "delete_plan_steps",
-		"execute_step", "harden_workflow", "replan_workflow_from_results",
+		"execute_step", "harden_workflow", "create_human_input_request",
 		"update_workflow_config", "update_step_config", "get_report_plan",
 		"list_schedules", "update_schedule", "get_schedule_runs",
 		"execute_shell_command", "diff_patch_workspace_file",

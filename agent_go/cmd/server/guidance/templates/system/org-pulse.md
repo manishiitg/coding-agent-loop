@@ -102,7 +102,7 @@ so it must be goal-aligned and actionable:
 - **Evidence:** concrete paths/tables/reports/runs that prove the status or gap.
 - **Gap:** what is blocking goal movement, measurement, or confidence.
 - **Priority:** high/medium/low, based on goal impact and urgency.
-- **Suggested builder action:** `harden_workflow`, `replan_workflow_from_results`,
+- **Suggested builder action:** `harden_workflow`, Goal Advisor plan-change proposal,
   eval/report measurement fix, manual review, or no-action watchpoint.
 - **Expected impact:** the KPI or workflow success criterion that should move if the builder
   accepts the recommendation.

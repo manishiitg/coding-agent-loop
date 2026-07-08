@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -477,7 +478,7 @@ func createReportHumanInputTools() ([]llmtypes.Tool, map[string]interface{}, map
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "create_human_input_request",
-			Description: "Create or refresh a structured non-blocking question for the user in this workflow's db/db.sqlite. Use this only from Pulse, Goal Advisor, or Chief of Staff when a decision/clarification would help the workflow. The user answers inside Runloop's Pulse/report panel; published static reports should only show the question and tell the user to open Runloop to answer.",
+			Description: "Create or refresh a structured non-blocking question for the user in this workflow's db/db.sqlite. Use this only from Pulse, Goal Advisor, or Chief of Staff when a decision/clarification would help the workflow. The user answers inside Runloop's Pulse/report panel; published static reports should only show the question and tell the user to open Runloop to answer. For Goal Advisor plan-change proposals, use source=\"goal_advisor\", a stable input_id prefixed with \"plan-proposal-\", options approve/reject/defer, and put the exact proposed plan changes, rationale, expected impact, risk, and evidence in context so a later Pulse pass can apply an approved proposal with normal plan tools.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -486,7 +487,7 @@ func createReportHumanInputTools() ([]llmtypes.Tool, map[string]interface{}, map
 					"source":         map[string]interface{}{"type": "string", "enum": []string{"pulse", "goal_advisor", "chief_of_staff"}, "description": "Who is asking. Defaults to pulse."},
 					"priority":       map[string]interface{}{"type": "string", "enum": []string{"low", "medium", "high"}, "description": "How important the answer is. Defaults to medium."},
 					"question":       map[string]interface{}{"type": "string", "description": "The exact user-facing question in simple language."},
-					"context":        map[string]interface{}{"type": "string", "description": "Short explanation of why this matters and what will happen next."},
+					"context":        map[string]interface{}{"type": "string", "description": "Short explanation of why this matters and what will happen next. For plan-change proposals, include a compact structured summary: proposal, exact plan edits, rationale, expected impact, risk, and evidence paths."},
 					"options": map[string]interface{}{
 						"type": "array",
 						"items": map[string]interface{}{
@@ -727,10 +728,14 @@ func formatAnsweredReportHumanInputsForAgent(ctx context.Context, workspacePath 
 				answer += "; note=" + input.Note
 			}
 		}
-		b.WriteString(fmt.Sprintf("- input_id=%s source=%s priority=%s question=%q answer=%q answered_at=%s evidence=%q\n",
-			input.ID, input.Source, input.Priority, input.Question, answer, input.AnsweredAt, input.Evidence))
+		context := strings.TrimSpace(input.Context)
+		if context != "" {
+			context = " context=" + strconv.Quote(context)
+		}
+		b.WriteString(fmt.Sprintf("- input_id=%s source=%s priority=%s question=%q answer=%q answered_at=%s evidence=%q%s\n",
+			input.ID, input.Source, input.Priority, input.Question, answer, input.AnsweredAt, input.Evidence, context))
 	}
-	b.WriteString("After you use an answer, call mark_human_input_consumed with workspace_path, input_id, and a one-sentence outcome_summary. Do not edit the SQLite table directly.\n")
+	b.WriteString("If an answered Goal Advisor plan proposal is approved, apply it only with normal plan modification/config/eval/report tools, then call mark_human_input_consumed with the concrete outcome. If it is rejected or deferred, record that outcome and consume it. Do not edit the SQLite table directly.\n")
 	return strings.TrimSpace(b.String())
 }
 

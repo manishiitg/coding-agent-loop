@@ -589,7 +589,7 @@ func (api *StreamingAPI) handleSendTerminalInput(w http.ResponseWriter, r *http.
 	ctx, cancel := context.WithTimeout(r.Context(), terminalTmuxActionTimeout)
 	defer cancel()
 	if req.Text != "" {
-		if err := pasteTerminalText(ctx, snapshot.TmuxSession, req.Text); err != nil {
+		if err := pasteTerminalTextForSnapshot(ctx, snapshot, req.Text); err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
@@ -840,7 +840,15 @@ func (api *StreamingAPI) requireAccessibleTerminal(w http.ResponseWriter, r *htt
 	return snapshot, true
 }
 
+func pasteTerminalTextForSnapshot(ctx context.Context, snapshot terminals.Snapshot, text string) error {
+	return pasteTerminalTextWithReadableMode(ctx, snapshot.TmuxSession, text, terminalSnapshotPrefersReadablePaste(snapshot))
+}
+
 func pasteTerminalText(ctx context.Context, tmuxSession, text string) error {
+	return pasteTerminalTextWithReadableMode(ctx, tmuxSession, text, terminalTmuxSessionLooksCursor(tmuxSession))
+}
+
+func pasteTerminalTextWithReadableMode(ctx context.Context, tmuxSession, text string, readable bool) error {
 	tmuxSession = strings.TrimSpace(tmuxSession)
 	if tmuxSession == "" {
 		return fmt.Errorf("tmux session is required")
@@ -849,10 +857,29 @@ func pasteTerminalText(ctx context.Context, tmuxSession, text string) error {
 	if err := runTerminalTmuxCommand(ctx, text, "load-buffer", "-b", bufferName, "-"); err != nil {
 		return fmt.Errorf("failed to load terminal input into tmux buffer: %w", err)
 	}
-	if err := runTerminalTmuxCommand(ctx, "", "paste-buffer", "-d", "-p", "-r", "-b", bufferName, "-t", tmuxSession); err != nil {
+	args := []string{"paste-buffer", "-d"}
+	if !readable {
+		args = append(args, "-p")
+	}
+	args = append(args, "-r", "-b", bufferName, "-t", tmuxSession)
+	if err := runTerminalTmuxCommand(ctx, "", args...); err != nil {
 		return fmt.Errorf("failed to paste terminal input into tmux session: %w", err)
 	}
 	return nil
+}
+
+func terminalSnapshotPrefersReadablePaste(snapshot terminals.Snapshot) bool {
+	if terminalTmuxSessionLooksCursor(snapshot.TmuxSession) {
+		return true
+	}
+	if strings.Contains(strings.ToLower(snapshot.Status.ProviderLabel), "cursor") {
+		return true
+	}
+	return strings.Contains(strings.ToLower(snapshot.Content), "cursor agent")
+}
+
+func terminalTmuxSessionLooksCursor(tmuxSession string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(tmuxSession)), "cursor")
 }
 
 func captureTerminalPane(ctx context.Context, tmuxSession string) (string, error) {

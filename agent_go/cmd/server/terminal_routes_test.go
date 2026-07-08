@@ -1354,8 +1354,70 @@ func TestTerminalRoutesSendInputUsesTmuxPasteAndOptionalEnter(t *testing.T) {
 	if calls[1].args[0] != "paste-buffer" || !containsString(calls[1].args, tmuxSession) {
 		t.Fatalf("second tmux call = %#v, want paste-buffer into session", calls[1])
 	}
+	if !containsString(calls[1].args, "-p") {
+		t.Fatalf("second tmux call = %#v, want bracketed paste for non-Cursor terminal", calls[1])
+	}
 	if got := strings.Join(calls[2].args, " "); got != "send-keys -t "+tmuxSession+" Enter" {
 		t.Fatalf("third tmux call = %q, want enter", got)
+	}
+}
+
+func TestTerminalRoutesSendInputAvoidsBracketedPasteForCursor(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-cursor-input"
+	terminalID := sessionID + ":workflow-step:review-plan"
+	tmuxSession := "mlp-cursor-cli-int-test"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, "Cursor Agent\n→ Add a follow-up", 2))
+
+	type call struct {
+		stdin string
+		args  []string
+	}
+	var calls []call
+	oldRun := runTerminalTmuxCommand
+	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
+		calls = append(calls, call{stdin: stdin, args: append([]string(nil), args...)})
+		return nil
+	}
+	defer func() { runTerminalTmuxCommand = oldRun }()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/terminals/"+terminalID+"/input", strings.NewReader(`{"text":"line one\nline two"}`))
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
+	rec := httptest.NewRecorder()
+	api.handleSendTerminalInput(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("send input status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	if len(calls) != 2 {
+		t.Fatalf("tmux call count = %d, want 2: %#v", len(calls), calls)
+	}
+	if calls[1].args[0] != "paste-buffer" || !containsString(calls[1].args, "-r") || !containsString(calls[1].args, tmuxSession) {
+		t.Fatalf("second tmux call = %#v, want raw paste into Cursor session", calls[1])
+	}
+	if containsString(calls[1].args, "-p") {
+		t.Fatalf("second tmux call = %#v, must not use bracketed paste for Cursor", calls[1])
+	}
+}
+
+func TestPasteTerminalTextAvoidsBracketedPasteForCursorTmuxName(t *testing.T) {
+	tmuxSession := "mlp-cursor-cli-int-direct"
+	var calls [][]string
+	oldRun := runTerminalTmuxCommand
+	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
+		calls = append(calls, append([]string(nil), args...))
+		return nil
+	}
+	defer func() { runTerminalTmuxCommand = oldRun }()
+
+	if err := pasteTerminalText(context.Background(), tmuxSession, "direct paste"); err != nil {
+		t.Fatalf("pasteTerminalText: %v", err)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("tmux call count = %d, want 2: %#v", len(calls), calls)
+	}
+	if calls[1][0] != "paste-buffer" || containsString(calls[1], "-p") {
+		t.Fatalf("paste args = %#v, want non-bracketed paste for Cursor tmux name", calls[1])
 	}
 }
 

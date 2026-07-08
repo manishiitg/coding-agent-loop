@@ -84,7 +84,7 @@ export function ReportHumanInputPanel({ workspacePath, className = '' }: { works
   }, [workspacePath])
 
   const pending = inputs.filter(input => input.status === 'pending')
-  const history = inputs.filter(input => input.status !== 'pending').slice(0, 4)
+  const history = inputs.filter(input => input.status !== 'pending' && input.status !== 'consumed').slice(0, 4)
   if (!loading && !error && pending.length === 0 && history.length === 0) return null
 
   const updateDraft = (id: string, patch: Partial<ReportHumanInputDraft>) => {

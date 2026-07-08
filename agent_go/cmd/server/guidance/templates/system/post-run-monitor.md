@@ -155,9 +155,9 @@ For Goal Advisor plan-change proposals, use the existing interaction shape inste
 - options: `approve`, `reject`, and `defer`, each with a short title and description
 - `context`: proposal, exact intended plan/config/eval/report edits, rationale, expected impact, risk, and evidence paths
 
-On a later Pulse run, an approved proposal may be applied with normal plan/config/eval/report tools and then marked consumed with `mark_human_input_consumed`. Rejected or deferred proposals should be recorded and consumed, not silently retried.
+On a later Pulse run, an approved proposal may be applied with normal plan/config/eval/report tools and then marked consumed with `mark_human_input_consumed`. Rejected or deferred proposals should be recorded and consumed, not silently retried. After consuming an answer, remove the matching visible question card from `builder/improve.html` or replace it with a short outcome Decision/Note; do not leave a consumed answer displayed as an active question.
 
-Do not ask only in email or raw chat. Show the request in `builder/improve.html`, but treat `db/db.sqlite` as the source of truth. When a later pass uses an answer, call `mark_human_input_consumed`.
+Do not ask only in email or raw chat. Show the request in `builder/improve.html`, but treat `db/db.sqlite` as the source of truth. When a later pass uses an answer, call `mark_human_input_consumed` and clear the visible question from the Pulse HTML.
 
 ## Notifications
 

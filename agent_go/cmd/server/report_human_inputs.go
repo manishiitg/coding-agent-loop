@@ -735,7 +735,7 @@ func formatAnsweredReportHumanInputsForAgent(ctx context.Context, workspacePath 
 		b.WriteString(fmt.Sprintf("- input_id=%s source=%s priority=%s question=%q answer=%q answered_at=%s evidence=%q%s\n",
 			input.ID, input.Source, input.Priority, input.Question, answer, input.AnsweredAt, input.Evidence, context))
 	}
-	b.WriteString("If an answered Goal Advisor plan proposal is approved, apply it only with normal plan modification/config/eval/report tools, then call mark_human_input_consumed with the concrete outcome. If it is rejected or deferred, record that outcome and consume it. Do not edit the SQLite table directly.\n")
+	b.WriteString("If an answered Goal Advisor plan proposal is approved, apply it only with normal plan modification/config/eval/report tools, then call mark_human_input_consumed with the concrete outcome. If it is rejected or deferred, record that outcome and consume it. After consuming any answer, remove or replace the matching visible Human input requested card in builder/improve.html so Pulse no longer shows it as an active question; keep only a short outcome Decision/Note when useful. Do not edit the SQLite table directly.\n")
 	return strings.TrimSpace(b.String())
 }
 

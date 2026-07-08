@@ -19,7 +19,7 @@ SOURCE-OF-TRUTH HIERARCHY
 OPENING
 1. Read `soul/soul.md` and extract objective + success criteria.
 2. Read `builder/improve.html`: current goal card, Maintenance Radar, recent Bug/Goal verdicts, open findings, prior Goal Advisor decisions, human-input cards, and queued Chief of Staff recommendations (`.cos-rec`, especially `data-status="queued_goal_advisor"`).
-3. Read answered human input from the scheduler-provided preface when present. After using an answer, call `mark_human_input_consumed`.
+3. Read answered human input from the scheduler-provided preface when present. After using an answer, call `mark_human_input_consumed` and remove or replace the matching visible question card in `builder/improve.html` so it no longer appears as an active ask.
 4. Read `planning/plan.json`, `planning/changelog/`, and `evaluation/evaluation_plan.json`.
 5. Read `variables/variables.json` and scope evidence to the configured group names when provided.
 6. Build a bounded evidence window from retained runs:
@@ -66,6 +66,7 @@ Action:
 - apply the approved change with the normal plan/config/eval/report tools; never patch `planning/plan.json` directly
 - keep the scope to what the user approved unless new evidence reveals the proposal is unsafe or stale
 - call `mark_human_input_consumed` with the concrete outcome after applying, rejecting as stale, or deferring
+- remove or replace the matching visible question card in `builder/improve.html` with a short outcome so the Pulse HTML no longer shows it as active
 
 2. `eval_update`
 Use when the strategy cannot be judged because evaluation is missing, misleading, too lenient, or optimizing the wrong thing.

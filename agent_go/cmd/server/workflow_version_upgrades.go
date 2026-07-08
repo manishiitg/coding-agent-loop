@@ -115,7 +115,7 @@ Report the files changed, filter metadata added, skipped unknown-date items if a
 	},
 	{
 		from:  "1.0.5",
-		to:    WorkflowContractCurrentVersion,
+		to:    "1.0.6",
 		label: "upgrade-1.0.6",
 		query: `WORKFLOW VERSION UPGRADE v1.0.5 -> v1.0.6.
 
@@ -136,6 +136,29 @@ Goal: make builder/improve.html more colorful, less text-heavy, and more widget-
 6. Only after the applicable checks/updates are complete, update workflow.json "version" to "1.0.6". Do not change schema_version. Do not run the workflow, do not alter schedules, and do not call notify_user in this step.
 
 Report the files changed, widget sections refreshed, evidence preserved, and any intentional no-op decisions, then stop.`,
+	},
+	{
+		from:  "1.0.6",
+		to:    WorkflowContractCurrentVersion,
+		label: "upgrade-1.0.7",
+		query: `WORKFLOW VERSION UPGRADE v1.0.6 -> v1.0.7.
+
+This is a product-managed Pulse pre-step. Do ONLY this legacy Auto Improve schedule cleanup, then stop and wait for the normal Pulse Gate step.
+
+Goal: remove old separate Auto Improve / Goal Advisor optimizer schedules because Goal Advisor now runs as a Pulse-selected module after normal scheduled workflow runs.
+
+1. Read workflow.json and builder/improve.html if it exists. Treat a missing workflow.json "version" as "1.0.0".
+2. Inspect workflow.json "schedules". Identify legacy product Auto Improve / Goal Advisor schedules ONLY when:
+   - workshop_mode is "optimizer"; AND
+   - messages is missing/empty OR the messages match the old fixed product queue shape, such as STEP 1/5 PRE-BACKUP, STEP 2/5 IMPROVE or GOAL ADVISOR, later backup/publish/notify steps.
+   Schedule name text such as "Auto Improve" or "Goal Advisor" is supporting evidence only. Do not remove a schedule by name alone.
+3. Preserve explicit custom optimizer jobs: if workshop_mode="optimizer" has a real user-authored custom message with specific scope, evidence window, stop conditions, or non-product task intent, keep it unchanged.
+4. For each legacy product optimizer schedule, remove it from workflow.json schedules. Do not delete or rewrite schedule-runs.json history; old run history stays as evidence.
+5. If any legacy optimizer schedule was removed, set workflow.json post_run_monitor=true so the normal scheduled run can run Pulse Gate and select Goal Advisor when due. Do not create a new schedule here.
+6. Append one concise Pulse entry to builder/improve.html, if that file exists, that says this workflow was upgraded from v1.0.6 to v1.0.7, lists removed legacy optimizer schedule ids/names, and lists preserved custom optimizer schedule ids/names if any.
+7. Only after the applicable checks/updates are complete, update workflow.json "version" to "1.0.7". Do not change schema_version. Do not run the workflow, do not call notify_user, and do not publish in this step.
+
+Report the files changed, legacy optimizer schedules removed, custom optimizer schedules preserved, post_run_monitor state, and any intentional no-op decisions, then stop.`,
 	},
 }
 

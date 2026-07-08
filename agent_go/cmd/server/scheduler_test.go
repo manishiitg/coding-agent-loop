@@ -551,8 +551,8 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 
 func TestPostRunMonitorPrependsWorkflowVersionUpgradeForOldManifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.0"})
-	if got := len(steps); got != 18 {
-		t.Fatalf("postRunMonitorStepsForManifest(old) length = %d, want 18", got)
+	if got := len(steps); got != 19 {
+		t.Fatalf("postRunMonitorStepsForManifest(old) length = %d, want 19", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.1" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.1", got)
@@ -586,15 +586,18 @@ func TestPostRunMonitorPrependsWorkflowVersionUpgradeForOldManifest(t *testing.T
 	if got := steps[5].label; got != "upgrade-1.0.6" {
 		t.Fatalf("sixth step label = %q, want upgrade-1.0.6", got)
 	}
-	if got := steps[6].label; got != "gate" {
-		t.Fatalf("seventh step label = %q, want gate", got)
+	if got := steps[6].label; got != "upgrade-1.0.7" {
+		t.Fatalf("seventh step label = %q, want upgrade-1.0.7", got)
+	}
+	if got := steps[7].label; got != "gate" {
+		t.Fatalf("eighth step label = %q, want gate", got)
 	}
 }
 
 func TestPostRunMonitorPrependsWorkflowVersionUpgradeForMissingVersion(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{})
-	if got := len(steps); got != 18 {
-		t.Fatalf("postRunMonitorStepsForManifest(missing version) length = %d, want 18", got)
+	if got := len(steps); got != 19 {
+		t.Fatalf("postRunMonitorStepsForManifest(missing version) length = %d, want 19", got)
 	}
 	if !strings.Contains(steps[0].query, `Current workflow.json version seen by scheduler: "1.0.0"`) {
 		t.Fatalf("missing version should be treated as 1.0.0:\n%s", steps[0].query)
@@ -603,8 +606,8 @@ func TestPostRunMonitorPrependsWorkflowVersionUpgradeForMissingVersion(t *testin
 
 func TestPostRunMonitorPrependsPublishGateUpgradeForVersion101Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.1"})
-	if got := len(steps); got != 17 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.1) length = %d, want 17", got)
+	if got := len(steps); got != 18 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.1) length = %d, want 18", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.2" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.2", got)
@@ -633,15 +636,18 @@ func TestPostRunMonitorPrependsPublishGateUpgradeForVersion101Manifest(t *testin
 	if got := steps[4].label; got != "upgrade-1.0.6" {
 		t.Fatalf("fifth step label = %q, want upgrade-1.0.6", got)
 	}
-	if got := steps[5].label; got != "gate" {
-		t.Fatalf("sixth step label = %q, want gate", got)
+	if got := steps[5].label; got != "upgrade-1.0.7" {
+		t.Fatalf("sixth step label = %q, want upgrade-1.0.7", got)
+	}
+	if got := steps[6].label; got != "gate" {
+		t.Fatalf("seventh step label = %q, want gate", got)
 	}
 }
 
 func TestPostRunMonitorPrependsHTMLReportUpgradeForVersion102Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.2"})
-	if got := len(steps); got != 16 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.2) length = %d, want 16", got)
+	if got := len(steps); got != 17 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.2) length = %d, want 17", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.3" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.3", got)
@@ -669,15 +675,18 @@ func TestPostRunMonitorPrependsHTMLReportUpgradeForVersion102Manifest(t *testing
 	if got := steps[3].label; got != "upgrade-1.0.6" {
 		t.Fatalf("fourth step label = %q, want upgrade-1.0.6", got)
 	}
-	if got := steps[4].label; got != "gate" {
-		t.Fatalf("fifth step label = %q, want gate", got)
+	if got := steps[4].label; got != "upgrade-1.0.7" {
+		t.Fatalf("fifth step label = %q, want upgrade-1.0.7", got)
+	}
+	if got := steps[5].label; got != "gate" {
+		t.Fatalf("sixth step label = %q, want gate", got)
 	}
 }
 
 func TestPostRunMonitorPrependsPulseReadabilityUpgradeForVersion103Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.3"})
-	if got := len(steps); got != 15 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.3) length = %d, want 15", got)
+	if got := len(steps); got != 16 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.3) length = %d, want 16", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.4" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.4", got)
@@ -702,15 +711,18 @@ func TestPostRunMonitorPrependsPulseReadabilityUpgradeForVersion103Manifest(t *t
 	if got := steps[2].label; got != "upgrade-1.0.6" {
 		t.Fatalf("third step label = %q, want upgrade-1.0.6", got)
 	}
-	if got := steps[3].label; got != "gate" {
-		t.Fatalf("fourth step label = %q, want gate", got)
+	if got := steps[3].label; got != "upgrade-1.0.7" {
+		t.Fatalf("fourth step label = %q, want upgrade-1.0.7", got)
+	}
+	if got := steps[4].label; got != "gate" {
+		t.Fatalf("fifth step label = %q, want gate", got)
 	}
 }
 
 func TestPostRunMonitorPrependsPulseFilterUpgradeForVersion104Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.4"})
-	if got := len(steps); got != 14 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.4) length = %d, want 14", got)
+	if got := len(steps); got != 15 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.4) length = %d, want 15", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.5" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.5", got)
@@ -732,15 +744,18 @@ func TestPostRunMonitorPrependsPulseFilterUpgradeForVersion104Manifest(t *testin
 	if got := steps[1].label; got != "upgrade-1.0.6" {
 		t.Fatalf("second step label = %q, want upgrade-1.0.6", got)
 	}
-	if got := steps[2].label; got != "gate" {
-		t.Fatalf("third step label = %q, want gate", got)
+	if got := steps[2].label; got != "upgrade-1.0.7" {
+		t.Fatalf("third step label = %q, want upgrade-1.0.7", got)
+	}
+	if got := steps[3].label; got != "gate" {
+		t.Fatalf("fourth step label = %q, want gate", got)
 	}
 }
 
 func TestPostRunMonitorPrependsRichPulseWidgetUpgradeForVersion105Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.5"})
-	if got := len(steps); got != 13 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.5) length = %d, want 13", got)
+	if got := len(steps); got != 14 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.5) length = %d, want 14", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.6" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.6", got)
@@ -757,6 +772,40 @@ func TestPostRunMonitorPrependsRichPulseWidgetUpgradeForVersion105Manifest(t *te
 	} {
 		if !strings.Contains(steps[0].query, want) {
 			t.Fatalf("rich pulse widget upgrade step missing %q:\n%s", want, steps[0].query)
+		}
+	}
+	if got := steps[1].label; got != "upgrade-1.0.7" {
+		t.Fatalf("second step label = %q, want upgrade-1.0.7", got)
+	}
+	if got := steps[2].label; got != "gate" {
+		t.Fatalf("third step label = %q, want gate", got)
+	}
+}
+
+func TestPostRunMonitorPrependsLegacyOptimizerCleanupUpgradeForVersion106Manifest(t *testing.T) {
+	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.6"})
+	if got := len(steps); got != 13 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.6) length = %d, want 13", got)
+	}
+	if got := steps[0].label; got != "upgrade-1.0.7" {
+		t.Fatalf("first step label = %q, want upgrade-1.0.7", got)
+	}
+	for _, want := range []string{
+		"WORKFLOW VERSION UPGRADE v1.0.6 -> v1.0.7",
+		"remove old separate Auto Improve / Goal Advisor optimizer schedules",
+		`workshop_mode is "optimizer"`,
+		"messages is missing/empty",
+		"STEP 1/5 PRE-BACKUP",
+		"Do not remove a schedule by name alone",
+		"Preserve explicit custom optimizer jobs",
+		"remove it from workflow.json schedules",
+		"schedule-runs.json history",
+		"post_run_monitor=true",
+		`workflow.json "version" to "1.0.7"`,
+		"do not publish",
+	} {
+		if !strings.Contains(steps[0].query, want) {
+			t.Fatalf("legacy optimizer cleanup step missing %q:\n%s", want, steps[0].query)
 		}
 	}
 	if got := steps[1].label; got != "gate" {

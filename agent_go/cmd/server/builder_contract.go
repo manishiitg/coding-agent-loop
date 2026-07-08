@@ -212,7 +212,7 @@ var builderInvariantCertifications = map[BuilderInvariantID]BuilderInvariantCert
 		TestFile:    "agent_go/pkg/orchestrator/terminal_pane_e2e_real_test.go",
 		TestName:    "TestTerminalPaneCrossTransportReal",
 		Env:         []string{"RUN_ANTHROPIC_REAL_E2E=1"},
-		Description: "Drives a full streaming-chunk → streaming-end terminal lifecycle across api/structured-cli transports. Asserts /api/terminals transitions active→inactive/closing without leaking terminals or duplicating panes across transport flips.",
+		Description: "Drives a full streaming-chunk → streaming-end terminal lifecycle across API and tmux-backed coding-agent transports. Asserts /api/terminals transitions active→inactive/closing without leaking terminals or duplicating panes across transport flips.",
 		RealE2E:     true,
 	},
 	InvWorkflowStepCwdMCP: {

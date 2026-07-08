@@ -149,9 +149,9 @@ type AgentSessionHandle struct {
 
 type CodingProviderSessionHandle struct {
     Provider        string // claude-code, codex-cli, gemini-cli, cursor-cli, etc.
-    Transport       string // tmux | structured | api
+    Transport       string // tmux | api
     NativeSessionID string // Claude resume id, Codex thread id, Gemini session id
-    TmuxSession     string // empty for structured and api transports
+    TmuxSession     string // empty for api transports
     WorkingDir      string
     ProjectDirID    string // Gemini-style project/session isolation
     Model           string
@@ -498,11 +498,10 @@ Deliverables:
   - typed errors
   - latest-message-only resume behavior
   - tmux-loss recovery behavior
-- Add a small capability flag for providers, covering all three transport types:
+- Add a small capability flag for providers, covering the supported transport types:
   - supports tmux continuation (transport = tmux)
-  - supports structured continuation (transport = structured)
   - is API-only / no provider-native continuation (transport = api)
-  - supports native resume (within tmux or structured)
+  - supports native resume within tmux
   - requires stable working directory
 
 Acceptance criteria:

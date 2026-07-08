@@ -35,7 +35,7 @@ type Snapshot struct {
 	ParentStepID      string     `json:"parent_step_id,omitempty"`
 	StepAttempt       int        `json:"step_attempt,omitempty"`
 	StepExecutionMode string     `json:"step_execution_mode,omitempty"` // "scripted" | "agentic" (legacy: "learn_code" | "code_exec")
-	StepTransport     string     `json:"step_transport,omitempty"`      // "tmux" | "structured"
+	StepTransport     string     `json:"step_transport,omitempty"`      // "tmux" | "api" | legacy labels
 	StepTriggeredBy   string     `json:"step_triggered_by,omitempty"`   // e.g., "workflow_executor", "parent_step:X"
 	AgentName         string     `json:"agent_name,omitempty"`
 	DisplayTitle      string     `json:"display_title,omitempty"`
@@ -166,7 +166,7 @@ func (s *Store) HandleEvent(sessionID string, event storeevents.Event) {
 		s.markInactive(sessionID, terminalOwnerID(sessionID, event, metadata), metadata)
 	case string(agentevents.ToolCallStart), string(agentevents.ToolCallEnd), string(agentevents.ToolCallError):
 		metadata := metadataForEvent(event)
-		if !isStructuredWorkflowTerminalMetadata(metadata) {
+		if !isNonTmuxWorkflowTerminalMetadata(metadata) {
 			return
 		}
 		s.upsertToolLine(sessionID, event, metadata)
@@ -1683,8 +1683,8 @@ func isTerminalMetadata(metadata map[string]interface{}) bool {
 	return kind == "terminal" || kind == "tmux" || kind == "tui"
 }
 
-func isStructuredWorkflowTerminalMetadata(metadata map[string]interface{}) bool {
-	if strings.ToLower(strings.TrimSpace(stringValue(metadata, "step_transport"))) != "structured" {
+func isNonTmuxWorkflowTerminalMetadata(metadata map[string]interface{}) bool {
+	if strings.ToLower(strings.TrimSpace(stringValue(metadata, "step_transport"))) == "tmux" {
 		return false
 	}
 	return firstNonEmpty(

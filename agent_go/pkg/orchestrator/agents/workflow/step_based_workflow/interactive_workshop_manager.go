@@ -3733,11 +3733,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"enum":        []interface{}{"close_on_completion", "keep_alive"},
 					"description": "Lifecycle for tmux-backed coding providers on this step. Default/omit is close_on_completion: the step/sub-agent gets a bounded terminal that is closed when its turn completes. Use keep_alive only when a step intentionally needs its native coding-CLI session to survive after completion for later live steering or debugging; this can leave more tmux sessions open.",
 				},
-				"transport": map[string]interface{}{
-					"type":        "string",
-					"enum":        []interface{}{"tmux", "structured"},
-					"description": "Transport for coding-agent CLI providers (claude-code, codex-cli, cursor-cli, gemini-cli, pi-cli) on this step.\n\n- \"tmux\" (default for Claude/Codex/Cursor/Pi): interactive tmux session with a live TUI. Best for steps where you want the user to watch progress live or for long-running iterative work. The terminal pane in the UI shows the running TUI.\n- \"structured\": one-shot --print/--exec/stream-json invocation per turn. Faster startup (no tmux acquisition delay), no tmux TUI pane to manage. Best for steps that just need a single deterministic answer (math/text/format conversions, fast probes).\n\nGemini CLI workflow steps always use structured stream-json; \"tmux\" is ignored there. Gemini CLI chat can still use the persistent tmux TUI. Non-coding-agent providers (anthropic, openai, vertex, ...) ignore this field. Switching transport per step lets you mix fast structured steps with watch-the-screen tmux steps in the same workflow.",
-				},
 				"use_code_execution_mode": map[string]interface{}{
 					"type":        "boolean",
 					"description": "If true, enable code execution mode — the agent writes and executes Python/shell code via mcpbridge to interact with MCP tools, rather than calling them directly. Useful for complex data processing or programmatic control over MCP tools. If false, explicitly disables code execution. Omit to inherit the preset default.",
@@ -3982,14 +3977,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						lifecycle = normalized
 					}
 					targetConfig.AgentConfigs.CodingAgentTmuxLifecycle = lifecycle
-				}
-			}
-			if val, ok := args["transport"]; ok && val != nil {
-				if s, ok := val.(string); ok {
-					// Accept the raw value here; validation happens
-					// below in the post-assignment errors block (same
-					// pattern as coding_agent_tmux_lifecycle).
-					targetConfig.AgentConfigs.Transport = strings.ToLower(strings.TrimSpace(s))
 				}
 			}
 			if val, ok := args["use_code_execution_mode"]; ok && val != nil {
@@ -4256,15 +4243,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					errors = append(errors, fmt.Sprintf("coding_agent_tmux_lifecycle %q is not recognized. Valid values: \"close_on_completion\", \"keep_alive\".", rawLifecycle))
 				}
 			}
-			if rawTransport := strings.TrimSpace(targetConfig.AgentConfigs.Transport); rawTransport != "" {
-				switch strings.ToLower(rawTransport) {
-				case "tmux", "structured":
-					// valid
-				default:
-					errors = append(errors, fmt.Sprintf("transport %q is not recognized. Valid values: \"tmux\", \"structured\".", rawTransport))
-				}
-			}
-
 			// 7. Validate KB access ↔ contribution consistency.
 			// When knowledgebase_access grants write, knowledgebase_contribution MUST be
 			// non-empty — otherwise the post-step KB update agent is silently skipped

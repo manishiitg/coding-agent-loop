@@ -53,7 +53,7 @@ export interface ProviderManifestEntry {
   models: ModelMetadata[]
   capabilities: string[]
   coding_agent?: {
-    transport: 'tmux' | 'structured' | string
+    transport: 'tmux' | string
     supports_live_input: boolean
     supports_interrupt: boolean
     supports_status_line?: boolean

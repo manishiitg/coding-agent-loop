@@ -311,7 +311,7 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 			}
 			tmux := strings.TrimSpace(snap.TmuxSession)
 			if tmux == "" {
-				continue // structured transport: no tmux pane; context cancel above handles it
+				continue // non-tmux pane; context cancel above handles it
 			}
 			// Primary: run the provider's own graceful exit + cleanup, resolved
 			// by tmux name so it works even though the sub-agent registered its

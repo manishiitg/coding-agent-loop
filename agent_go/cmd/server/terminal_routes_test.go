@@ -606,10 +606,10 @@ func TestTerminalRoutesDeriveMissingStepTypeFromWorkflowPlan(t *testing.T) {
 	}
 }
 
-func TestTerminalRoutesStructuredWorkflowSnapshotIncludesToolEvents(t *testing.T) {
+func TestTerminalRoutesSyntheticWorkflowSnapshotIncludesToolEvents(t *testing.T) {
 	store := terminals.NewStore()
 	api := &StreamingAPI{terminalStore: store}
-	sessionID := "session-terminal-structured"
+	sessionID := "session-terminal-synthetic"
 	ownerID := "workflow-step:workflow-full-1:check-cdp"
 	metadata := map[string]interface{}{
 		"kind":               "terminal",
@@ -622,14 +622,14 @@ func TestTerminalRoutesStructuredWorkflowSnapshotIncludesToolEvents(t *testing.T
 		"step_name":          "Check CDP connection",
 		"step_index":         1,
 		"step_total":         28,
-		"step_transport":     "structured",
+		"step_transport":     "api",
 		"provider":           "gemini-cli",
 	}
 
-	store.HandleEvent(sessionID, terminalRouteStructuredChunkEvent(
+	store.HandleEvent(sessionID, terminalRouteSyntheticChunkEvent(
 		sessionID,
 		ownerID,
-		"$ gemini --output-format stream-json model=auto msgs=2\n> user: Verify CDP",
+		"$ gemini model=auto msgs=2\n> user: Verify CDP",
 		1,
 		metadata,
 	))
@@ -649,10 +649,10 @@ func TestTerminalRoutesStructuredWorkflowSnapshotIncludesToolEvents(t *testing.T
 		`{"stdout":"MCP_API_TOKEN=secret-token\nMCP_AUTH=Authorization: Bearer secret-token\nCDP status check successful. Version: Chrome/148.0.7778.169"}`,
 		metadata,
 	))
-	store.HandleEvent(sessionID, terminalRouteStructuredChunkEvent(
+	store.HandleEvent(sessionID, terminalRouteSyntheticChunkEvent(
 		sessionID,
 		ownerID,
-		"$ gemini --output-format stream-json model=auto msgs=2\n> user: Verify CDP\n[done · 29.9s · 83242 in · 1240 out]",
+		"$ gemini model=auto msgs=2\n> user: Verify CDP\n[done · 29.9s · 83242 in · 1240 out]",
 		2,
 		metadata,
 	))
@@ -674,13 +674,13 @@ func TestTerminalRoutesStructuredWorkflowSnapshotIncludesToolEvents(t *testing.T
 	if terminal.TerminalID != sessionID+":"+ownerID {
 		t.Fatalf("terminal id = %q, want %q", terminal.TerminalID, sessionID+":"+ownerID)
 	}
-	if terminal.StepTransport != "structured" {
-		t.Fatalf("step transport = %q, want structured", terminal.StepTransport)
+	if terminal.StepTransport != "api" {
+		t.Fatalf("step transport = %q, want api", terminal.StepTransport)
 	}
 	if terminal.Status.ProviderLabel != "Gemini CLI" {
 		t.Fatalf("provider label = %q, want Gemini CLI", terminal.Status.ProviderLabel)
 	}
-	if !strings.Contains(terminal.Content, "$ gemini --output-format stream-json") {
+	if !strings.Contains(terminal.Content, "$ gemini model=auto") {
 		t.Fatalf("terminal content missing Gemini command:\n%s", terminal.Content)
 	}
 	if !strings.Contains(terminal.Content, "→ tool: mcp_api-bridge_execute_shell_command") {
@@ -728,16 +728,16 @@ func TestTerminalRoutesMetadataListReturnsMandatoryEmptyRows(t *testing.T) {
 	store := terminals.NewStore()
 	api := &StreamingAPI{terminalStore: store}
 	sessionID := "session-terminal-metadata"
-	store.HandleEvent(sessionID, terminalRouteStructuredChunkEvent(
+	store.HandleEvent(sessionID, terminalRouteSyntheticChunkEvent(
 		sessionID,
 		"workflow-step:check",
-		"$ gemini --output-format stream-json model=auto msgs=1\n> user: hello",
+		"$ gemini model=auto msgs=1\n> user: hello",
 		1,
 		map[string]interface{}{
 			"kind":               "terminal",
 			"execution_owner_id": "workflow-step:check",
 			"execution_kind":     "workflow_step",
-			"step_transport":     "structured",
+			"step_transport":     "api",
 		},
 	))
 
@@ -1588,7 +1588,7 @@ func terminalRouteEndEvent(sessionID, executionID, tmuxSession string, retention
 	}
 }
 
-func terminalRouteStructuredChunkEvent(sessionID, executionID, content string, chunkIndex int, metadata map[string]interface{}) storeevents.Event {
+func terminalRouteSyntheticChunkEvent(sessionID, executionID, content string, chunkIndex int, metadata map[string]interface{}) storeevents.Event {
 	return storeevents.Event{
 		Type:          "streaming_chunk",
 		Timestamp:     time.Now(),

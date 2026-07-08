@@ -3,7 +3,7 @@ package terminals
 import "testing"
 
 func TestParseRowsKeepsMultilineAutoNotificationTogether(t *testing.T) {
-	content := "$ gemini --output-format stream-json model=auto msgs=1\n" +
+	content := "$ gemini model=auto msgs=1\n" +
 		"> user: [AUTO-NOTIFICATION] Agent 'full-workflow' completed.\n" +
 		"  Result: Todo planning complete.\n" +
 		"  ### Final Run Summary\n" +
@@ -27,7 +27,7 @@ func TestParseRowsKeepsMultilineAutoNotificationTogether(t *testing.T) {
 }
 
 func TestParseRowsSplitsAutoNotificationAssistantReply(t *testing.T) {
-	content := "$ gemini --output-format stream-json model=auto msgs=1\n" +
+	content := "$ gemini model=auto msgs=1\n" +
 		"> user: [AUTO-NOTIFICATION] Background agent 'full-workflow' started.\n" +
 		"  Ack briefly; completion will arrive as a separate AUTO-NOTIFICATION. Do NOT call tools.\n" +
 		"  ⚠️ Gemini model is experiencing high demand (503). Retrying automatically, please wait...\n" +

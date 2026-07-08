@@ -731,8 +731,8 @@ func TestMultiTurnChatE2E_Gemini(t *testing.T) {
 		// transcript reader populates them. Falls back to choice.Content
 		// otherwise.
 		if intermediate, ok := llmtypes.ExtractCodingProviderIntermediateMessages(gi); ok && len(intermediate.Messages) > 0 {
-			if intermediate.Transport != llmtypes.CodingProviderTransportStructured {
-				t.Errorf("turn %d: intermediate.Transport=%q, want %q", turn, intermediate.Transport, llmtypes.CodingProviderTransportStructured)
+			if intermediate.Transport != llmtypes.CodingProviderTransportTmux {
+				t.Errorf("turn %d: intermediate.Transport=%q, want %q", turn, intermediate.Transport, llmtypes.CodingProviderTransportTmux)
 			}
 			t.Logf("   ✓ turn %d intermediate.Messages=%d (provider=%s)", turn, len(intermediate.Messages), intermediate.Provider)
 			history = append(history, intermediate.Messages...)

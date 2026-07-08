@@ -40,9 +40,9 @@ func normalizeServerNames(servers []string) []string {
 }
 
 // forceWorkflowClaudeCodeInteractiveTransport sets the tmux baseline for Claude
-// Code workflow agents. tmux is the default (99% path). When a step explicitly
-// opts into the structured/json transport, applyWorkflowTransportToAgentConfig
-// overrides this to the print adapter afterwards.
+// Code workflow agents. Claude Code no longer supports the old print/stream-json
+// transport, so workflow execution must stay on tmux even when old step configs
+// still contain transport="structured".
 func forceWorkflowClaudeCodeInteractiveTransport(config *agents.OrchestratorAgentConfig) {
 	if workflowAgentConfigUsesClaudeCode(config) {
 		config.ClaudeCodeTransport = mcpllm.ClaudeCodeTransportTmux
@@ -57,17 +57,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyWorkflowTransportToAgentConfig(c
 	config.ForceStructuredCodingAgent = false
 	effectiveTransport := ""
 
-	// All CLI providers (claude-code, codex, cursor, agy, gemini-cli) default
-	// to tmux and opt into structured/json per-step below. Gemini used to be
-	// pinned to structured here; it now follows the same path as every other
-	// CLI.
+	// Workflow execution uses tmux for every CLI provider. The app repo no
+	// longer selects structured/print transports for workflow steps.
 	if common.IsCLIProvider(provider) {
 		effectiveTransport = "tmux"
 	}
 
 	if stepConfig != nil {
-		// "json" is accepted as a synonym for "structured" — same stream-json
-		// transport, just the name operators tend to use.
 		switch strings.ToLower(strings.TrimSpace(stepConfig.Transport)) {
 		case "":
 			// inherit the default computed above
@@ -82,31 +78,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyWorkflowTransportToAgentConfig(c
 			}
 		case "structured", "json":
 			if common.IsCLIProvider(provider) {
-				config.ForceStructuredCodingAgent = true
-				config.CodingAgentKeepAlive = false
-				effectiveTransport = "structured"
-				hcpo.GetLogger().Info(fmt.Sprintf("🔧 %s transport override: structured JSON for CLI provider '%s'", agentKind, provider))
+				config.ForceStructuredCodingAgent = false
+				effectiveTransport = "tmux"
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ %s legacy transport=%s ignored for CLI provider '%s'; using tmux", agentKind, stepConfig.Transport, provider))
 			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("🔧 %s transport=structured ignored for non-CLI provider '%s'", agentKind, provider))
+				hcpo.GetLogger().Info(fmt.Sprintf("🔧 %s legacy transport=%s ignored for non-CLI provider '%s'", agentKind, stepConfig.Transport, provider))
 				effectiveTransport = ""
 			}
 		default:
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Unknown %s transport=%q (allowed: 'tmux' | 'structured'/'json'); inheriting default", agentKind, stepConfig.Transport))
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Unknown %s transport=%q (allowed: 'tmux'); inheriting default", agentKind, stepConfig.Transport))
 		}
 	}
 
-	// Claude Code uses a dedicated adapter per transport — unlike the other CLIs
-	// (which have one adapter with a structured branch), its tmux adapter has no
-	// structured fallback, and the structured/json path is the separate `claude
-	// -p` print adapter. Select that print adapter ONLY when this step explicitly
-	// opted into structured; every other Claude Code step stays on tmux (the
-	// default). This is the single place the tmux→print decision is made.
+	// Claude Code uses tmux only. Keep this as a final safety net for old saved
+	// step configs and fallbacks so no workflow path can request the removed
+	// print/stream-json adapter.
 	if workflowAgentConfigUsesClaudeCode(config) {
-		if config.ForceStructuredCodingAgent {
-			config.ClaudeCodeTransport = mcpllm.ClaudeCodeTransportPrint
-		} else {
-			config.ClaudeCodeTransport = mcpllm.ClaudeCodeTransportTmux
-		}
+		config.ForceStructuredCodingAgent = false
+		config.ClaudeCodeTransport = mcpllm.ClaudeCodeTransportTmux
 	}
 
 	return effectiveTransport

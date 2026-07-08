@@ -219,12 +219,12 @@ func TestStorePrefersWorkflowStepOwnerOverStaleCurrentStepMetadata(t *testing.T)
 	}
 }
 
-func TestStoreMergesStructuredWorkflowToolCallsIntoTerminalContent(t *testing.T) {
+func TestStoreMergesNonTmuxWorkflowToolCallsIntoTerminalContent(t *testing.T) {
 	store := NewStore()
 	ownerID := "workflow-step:workflow-full-1:check-cdp"
 	metadata := map[string]interface{}{
 		"execution_owner_id": ownerID,
-		"step_transport":     "structured",
+		"step_transport":     "api",
 		"current_step_id":    "check-cdp",
 		"execution_kind":     "workflow_step",
 		"scope":              "workflow_step",
@@ -233,7 +233,7 @@ func TestStoreMergesStructuredWorkflowToolCallsIntoTerminalContent(t *testing.T)
 
 	store.HandleEvent("session-1", terminalEventWithMetadata(
 		ownerID,
-		"$ gemini --output-format stream-json model=auto msgs=2\n> user: prompt",
+		"$ gemini model=auto msgs=2\n> user: prompt",
 		1,
 		metadata,
 		time.Now(),
@@ -242,7 +242,7 @@ func TestStoreMergesStructuredWorkflowToolCallsIntoTerminalContent(t *testing.T)
 	store.HandleEvent("session-1", toolEndEvent(ownerID, "call-1", "mcp_api-bridge_execute_shell_command", `{"stdout":"MCP_API_TOKEN=secret-token\nMCP_AUTH=Authorization: Bearer secret-token\nok"}`, metadata))
 	store.HandleEvent("session-1", terminalEventWithMetadata(
 		ownerID,
-		"$ gemini --output-format stream-json model=auto msgs=2\n> user: prompt\n[done · 1s · 10 in · 2 out]",
+		"$ gemini model=auto msgs=2\n> user: prompt\n[done · 1s · 10 in · 2 out]",
 		2,
 		metadata,
 		time.Now().Add(time.Second),
@@ -480,7 +480,7 @@ func TestStoreArchivesActiveTerminalWhenChunkIndexResetsForFastFollowUp(t *testi
 func TestStoreDoesNotArchiveSameTurnWhenLowerChunkExtendsContent(t *testing.T) {
 	store := NewStore()
 	now := time.Now()
-	partial := "$ gemini --output-format stream-json model=auto msgs=1\n" +
+	partial := "$ gemini model=auto msgs=1\n" +
 		"> user: run again\n" +
 		"→ tool: mcp_api-bridge_execute_shell_command({\"command\":\"curl ...\"})\n" +
 		"✓ result mcp_api-bridge_execute_shell_command: workflow started"
@@ -1222,7 +1222,7 @@ func TestStoreTerminalOwnerPrefersMetadataExecutionOwnerOverEventExecutionID(t *
 			"execution_owner_id": stepOwnerID,
 			"execution_kind":     "workflow_step",
 			"current_step_id":    "prepare-fixtures",
-			"step_transport":     "structured",
+			"step_transport":     "api",
 			"provider":           "vertex",
 		},
 		time.Now(),
@@ -1469,21 +1469,21 @@ func TestStoreTerminalOwnerSynthesizesWorkflowStepWhenOnlyWorkflowRunIDIsPresent
 	}
 }
 
-func TestStorePreservesStructuredTerminalRowsFromMetadata(t *testing.T) {
+func TestStorePreservesSyntheticTerminalRowsFromMetadata(t *testing.T) {
 	store := NewStore()
 	rows := []interface{}{
-		map[string]interface{}{"kind": "banner", "text": "gemini --output-format stream-json model=auto msgs=1"},
+		map[string]interface{}{"kind": "banner", "text": "gemini model=auto msgs=1"},
 		map[string]interface{}{"kind": "user", "text": "[AUTO-NOTIFICATION] Background agent started.\nAck briefly; do not call tools."},
 		map[string]interface{}{"kind": "asst", "text": "Acknowledged. I will wait for completion."},
 	}
 
 	store.HandleEvent("session-1", terminalEventWithMetadata(
 		"main:session-1",
-		"$ gemini --output-format stream-json model=auto msgs=1\n> user: [AUTO-NOTIFICATION] Background agent started.\n  Ack briefly; do not call tools.\n  Acknowledged. I will wait for completion.",
+		"$ gemini model=auto msgs=1\n> user: [AUTO-NOTIFICATION] Background agent started.\n  Ack briefly; do not call tools.\n  Acknowledged. I will wait for completion.",
 		1,
 		map[string]interface{}{
 			"execution_kind": "main_agent",
-			"step_transport": "structured",
+			"step_transport": "api",
 			"provider":       "gemini-cli",
 			"rows":           rows,
 		},
@@ -1545,7 +1545,7 @@ func TestStoreMarksUnchangedBoundedTerminalCompletedAfterTwoMinutes(t *testing.T
 	}
 }
 
-func TestStoreDoesNotIdleTimeoutStructuredWorkflowTerminal(t *testing.T) {
+func TestStoreDoesNotIdleTimeoutNonTmuxWorkflowTerminal(t *testing.T) {
 	store := NewStore()
 	terminalID := "session-1:workflow-step:exec-step-old:step-old"
 	oldUpdate := time.Now().Add(-(terminalInactiveAfter + time.Minute))
@@ -1557,7 +1557,7 @@ func TestStoreDoesNotIdleTimeoutStructuredWorkflowTerminal(t *testing.T) {
 		ExecutionID:   "workflow-step:exec-step-old:step-old",
 		ExecutionKind: "workflow_step",
 		Scope:         "workflow_step",
-		StepTransport: "structured",
+		StepTransport: "api",
 		Content:       "Working...\nNo provider idle prompt was ever observed.",
 		Active:        true,
 		State:         "running",
@@ -1572,7 +1572,7 @@ func TestStoreDoesNotIdleTimeoutStructuredWorkflowTerminal(t *testing.T) {
 		t.Fatalf("expected terminal snapshot")
 	}
 	if !snapshot.Active {
-		t.Fatalf("structured terminal should not be completed by idle timeout")
+		t.Fatalf("non-tmux terminal should not be completed by idle timeout")
 	}
 	if snapshot.State != "running" {
 		t.Fatalf("state = %q, want running", snapshot.State)

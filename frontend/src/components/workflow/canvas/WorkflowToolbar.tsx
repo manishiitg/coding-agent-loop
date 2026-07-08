@@ -491,8 +491,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       {/* Right side - View controls */}
       <div data-tour="workflow-tools" data-testid="tour-workflow-tools" className="ml-auto flex shrink-0 items-center gap-1">
         <TooltipProvider delayDuration={150}>
-          {/* Pulse — opens the Pulse popup (explains it, lets the user enable it,
-              and points to /goal-advisor for run scheduling). */}
+          {/* Pulse — opens the Pulse popup. Goal Advisor is now a Pulse-selected
+              module, so keep it in the same compact control. */}
           {workspacePath && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -504,26 +504,15 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   <Activity className={`w-3.5 h-3.5 ${monitorOn ? 'text-primary' : ''}`} />
                   <span className={monitorOn ? 'text-foreground' : ''}>Pulse</span>
                   <span className={`text-[10px] font-semibold tracking-wide ${monitorOn ? 'text-primary' : 'text-muted-foreground/60'}`}>{monitorOn ? 'ON' : 'OFF'}</span>
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom"><p>Pulse — click to learn more &amp; turn {monitorOn ? 'off' : 'on'}</p></TooltipContent>
-            </Tooltip>
-          )}
-
-          {workspacePath && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => setShowAutoImproveHelp(true)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background/90 px-2 py-1 text-[11px] font-medium text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted"
-                >
+                  <span className="mx-0.5 h-3.5 w-px bg-border" />
                   <Sparkles className={`w-3.5 h-3.5 ${monitorOn ? 'text-primary' : ''}`} />
-                  <span className={monitorOn ? 'text-foreground' : ''}>Goal Advisor</span>
-                  <span className={`text-[10px] font-semibold tracking-wide ${monitorOn ? 'text-primary' : 'text-muted-foreground/60'}`}>{monitorOn ? 'GATED' : 'OFF'}</span>
+                  <span className="hidden sm:inline">Advisor</span>
+                  <span className={`text-[10px] font-semibold tracking-wide ${monitorOn ? 'text-primary' : 'text-muted-foreground/60'}`}>
+                    {monitorOn ? 'GATED' : 'OFF'}
+                  </span>
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="bottom"><p>Goal Advisor — Pulse Gate runs this when strategy review is due</p></TooltipContent>
+              <TooltipContent side="bottom"><p>Pulse — includes Goal Advisor when Pulse Gate decides strategy review is due</p></TooltipContent>
             </Tooltip>
           )}
 

@@ -1574,15 +1574,33 @@ func optimizerScheduleMessages(_ context.Context, _ string, stored []string, _ [
 	}
 }
 
+func isLegacyOrEmptyOptimizerSchedule(messages []string) bool {
+	messages = compactScheduleMessages(messages)
+	return len(messages) == 0 || isLegacyGoalAdvisorMessageQueue(messages)
+}
+
 func isLegacyGoalAdvisorMessageQueue(messages []string) bool {
-	joined := strings.ToLower(strings.Join(messages, "\n"))
-	return strings.Contains(joined, "goal advisor") ||
-		strings.Contains(joined, "auto improve") ||
-		strings.Contains(joined, "auto-improve") ||
-		strings.Contains(joined, "step 1/5 - pre-backup") ||
-		strings.Contains(joined, "step 1/5 — pre-backup") ||
-		strings.Contains(joined, "step 2/5 - goal advisor") ||
-		strings.Contains(joined, "step 2/5 — improve")
+	joined := normalizeLegacyScheduleText(strings.Join(messages, "\n"))
+	if !strings.Contains(joined, "step 1/5") || !strings.Contains(joined, "pre backup") {
+		return false
+	}
+	if !strings.Contains(joined, "step 2/5") {
+		return false
+	}
+	return strings.Contains(joined, "goal advisor") || strings.Contains(joined, "improve")
+}
+
+func normalizeLegacyScheduleText(text string) string {
+	text = strings.ToLower(text)
+	replacer := strings.NewReplacer(
+		"—", " ",
+		"–", " ",
+		"-", " ",
+		"_", " ",
+		"\n", " ",
+		"\t", " ",
+	)
+	return strings.Join(strings.Fields(replacer.Replace(text)), " ")
 }
 
 func compactScheduleMessages(messages []string) []string {
@@ -1614,11 +1632,21 @@ func (s *SchedulerService) executeJob(ctx context.Context, sctx *ScheduleContext
 // executeWorkshopJob runs a workflow via the workshop builder path (workflow_phase mode).
 func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *ScheduleContext, runID string) (string, string, error) {
 	messages := compactScheduleMessages(sctx.Schedule.Messages)
-	if len(messages) == 0 {
+	isOptimizer := strings.EqualFold(strings.TrimSpace(sctx.Schedule.WorkshopMode), "optimizer")
+	if isOptimizer {
+		if isLegacyOrEmptyOptimizerSchedule(messages) {
+			runFolder := "iteration-0"
+			sessionID := s.newScheduleSessionID(sctx)
+			if runID != "" {
+				_ = UpdateScheduleRun(ctx, sctx.WorkspacePath, runID, "running", "", nil, runFolder, sessionID)
+			}
+			if err := s.disableLegacyOptimizerSchedule(ctx, sctx, sessionID); err != nil {
+				return sessionID, runFolder, err
+			}
+			return sessionID, runFolder, nil
+		}
+	} else if len(messages) == 0 {
 		messages = []string{"Run the full workflow using run_full_workflow tool."}
-	}
-	if strings.EqualFold(strings.TrimSpace(sctx.Schedule.WorkshopMode), "optimizer") {
-		messages = optimizerScheduleMessages(ctx, sctx.WorkspacePath, sctx.Schedule.Messages, sctx.Schedule.GroupNames)
 	}
 	runFolder := "iteration-0"
 
@@ -1684,6 +1712,42 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 
 	s.sessionLogf(sctx, sessionID, "[SCHEDULER] ✅ Workshop execution completed for %s, session=%s, folder=%s", sctx.Schedule.ID, sessionID, runFolder)
 	return sessionID, runFolder, nil
+}
+
+func (s *SchedulerService) disableLegacyOptimizerSchedule(ctx context.Context, sctx *ScheduleContext, sessionID string) error {
+	if sctx == nil {
+		return nil
+	}
+	if sctx.SourceType != "" && sctx.SourceType != "workflow" {
+		s.sessionLogf(sctx, sessionID, "[SCHEDULER] legacy optimizer schedule %s is non-workflow source %q; skipping manifest disable", sctx.Schedule.ID, sctx.SourceType)
+		return nil
+	}
+	manifest, found, err := ReadWorkflowManifest(ctx, sctx.WorkspacePath)
+	if err != nil {
+		return fmt.Errorf("disable legacy optimizer schedule: %w", err)
+	}
+	if !found {
+		return fmt.Errorf("disable legacy optimizer schedule: workflow manifest not found at %s", sctx.WorkspacePath)
+	}
+	for i := range manifest.Schedules {
+		if manifest.Schedules[i].ID != sctx.Schedule.ID {
+			continue
+		}
+		if !manifest.Schedules[i].Enabled {
+			s.sessionLogf(sctx, sessionID, "[SCHEDULER] legacy optimizer schedule %s already disabled; no LLM session started", sctx.Schedule.ID)
+			return nil
+		}
+		manifest.Schedules[i].Enabled = false
+		if err := WriteWorkflowManifest(ctx, sctx.WorkspacePath, manifest); err != nil {
+			return fmt.Errorf("disable legacy optimizer schedule: write workflow.json: %w", err)
+		}
+		if err := s.ReloadSchedule(ctx, sctx.WorkspacePath, sctx.Schedule.ID); err != nil {
+			s.sessionLogf(sctx, sessionID, "[SCHEDULER] legacy optimizer schedule %s disabled but reload failed: %v", sctx.Schedule.ID, err)
+		}
+		s.sessionLogf(sctx, sessionID, "[SCHEDULER] legacy optimizer schedule %s disabled without starting an LLM session; Goal Advisor now runs inside Pulse", sctx.Schedule.ID)
+		return nil
+	}
+	return fmt.Errorf("disable legacy optimizer schedule: schedule %s not found in %s", sctx.Schedule.ID, sctx.WorkspacePath)
 }
 
 // executeMultiAgentJob runs a multi-agent chat session with the configured query.

@@ -412,11 +412,7 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 		"PULSE GATE / WORKLIST",
 		"get_pulse_module_state",
 		"record_pulse_worklist exactly once",
-		"hard_with",
 	} {
-		if want == "hard_with" {
-			continue
-		}
 		if !strings.Contains(gate, want) {
 			t.Fatalf("gate step missing %q:\n%s", want, gate)
 		}
@@ -855,8 +851,64 @@ func TestWorkflowHasPendingPlanChangelogArtifactReview(t *testing.T) {
 	}
 }
 
+func TestSelectedPostRunMonitorModuleStepsUsesGateWorklist(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+	workspacePath := "Workflow/demo"
+	pulseRunID := "pulse-run-1"
+
+	if _, err := recordPulseWorklist(ctx, workspacePath, pulseRunID, []PulseWorklistDecision{
+		{Module: pulseModuleHarden, Due: true, Reason: "A step failed.", Evidence: []string{"runs/latest"}},
+		{Module: pulseModuleArtifactReview, Due: false, Reason: "No unreviewed changelog entries."},
+		{Module: pulseModuleReportHealth, Due: false, Reason: "Report is fresh."},
+		{Module: pulseModuleLearningHealth, Due: false, Reason: "No plan changes."},
+		{Module: pulseModuleKnowledgebaseHealth, Due: false, Reason: "KB is current."},
+		{Module: pulseModuleDBHealth, Due: false, Reason: "DB contracts match."},
+		{Module: pulseModuleCostLLMTime, Due: true, Reason: "Cost summary is required every run."},
+		{Module: pulseModuleGoalAdvisor, Due: true, Reason: "Goal drift persisted across runs."},
+	}); err != nil {
+		t.Fatalf("record worklist: %v", err)
+	}
+
+	s := NewSchedulerService(nil)
+	steps := s.selectedPostRunMonitorModuleSteps(ctx, &ScheduleContext{WorkspacePath: workspacePath}, pulseRunID)
+	got := postRunStepLabels(steps)
+	want := []string{"pre-backup", "harden", "cost-llm-time", "goal-advisor", "backup", "publish", "notify"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("selected labels = %#v, want %#v", got, want)
+	}
+}
+
+func TestSelectedPostRunMonitorModuleStepsFallsBackConservatively(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+	workspacePath := "Workflow/demo"
+	pulseRunID := "pulse-run-missing-worklist"
+	workspace := httptest.NewServer(&mockWorkspaceAPI{files: map[string]string{}})
+	defer workspace.Close()
+	t.Setenv("WORKSPACE_API_URL", workspace.URL)
+
+	s := NewSchedulerService(nil)
+	steps := s.selectedPostRunMonitorModuleSteps(ctx, &ScheduleContext{WorkspacePath: workspacePath}, pulseRunID)
+	got := postRunStepLabels(steps)
+	want := []string{"pre-backup", "harden", "report-health", "cost-llm-time", "backup", "publish", "notify"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("fallback labels = %#v, want %#v", got, want)
+	}
+}
+
+func postRunStepLabels(steps []postRunMonitorStep) []string {
+	labels := make([]string, 0, len(steps))
+	for _, step := range steps {
+		labels = append(labels, step.label)
+	}
+	return labels
+}
+
 func TestOptimizerScheduleMessagesKeepsCustomMessages(t *testing.T) {
-	stored := []string{`Do not ask for confirmation. Run this custom optimizer audit and stop.`}
+	stored := []string{`Do not ask for confirmation. Run this custom optimizer audit and stop. Compare with any Auto Improve history already logged.`}
 
 	got := optimizerScheduleMessages(context.Background(), "Workflow/test", stored, []string{"prod"})
 	if len(got) != 1 {
@@ -864,6 +916,13 @@ func TestOptimizerScheduleMessagesKeepsCustomMessages(t *testing.T) {
 	}
 	if got[0] != stored[0] {
 		t.Fatalf("optimizerScheduleMessages() = %#v, want stored custom message", got)
+	}
+}
+
+func TestLegacyGoalAdvisorMessageQueueIgnoresCustomTopicMentions(t *testing.T) {
+	stored := []string{`Run a custom optimizer audit for this workflow. Compare the result with Goal Advisor and Auto Improve history, then stop.`}
+	if isLegacyGoalAdvisorMessageQueue(stored) {
+		t.Fatalf("custom optimizer prompt was incorrectly classified as legacy: %q", stored[0])
 	}
 }
 
@@ -880,6 +939,59 @@ func TestOptimizerScheduleMessagesNoopsWhenNoStoredMessage(t *testing.T) {
 		if !strings.Contains(got[0], want) {
 			t.Fatalf("optimizer no-op message missing %q:\n%s", want, got[0])
 		}
+	}
+}
+
+func TestExecuteWorkshopJobDisablesLegacyOptimizerBeforeStartingSession(t *testing.T) {
+	ctx := context.Background()
+	workspacePath := "Workflow/demo"
+	manifest := &WorkflowManifest{
+		SchemaVersion: WorkflowManifestSchemaVersion,
+		ID:            "demo",
+		Label:         "Demo",
+		Schedules: []WorkflowSchedule{
+			{
+				ID:             "legacy-optimizer",
+				Name:           "Goal Advisor",
+				CronExpression: "0 23 * * *",
+				Timezone:       "UTC",
+				Enabled:        true,
+				GroupNames:     []string{"group-1"},
+				Mode:           "workshop",
+				WorkshopMode:   "optimizer",
+				Messages: []string{
+					"STEP 1/5 — PRE-BACKUP",
+					"STEP 2/5 — IMPROVE",
+				},
+			},
+		},
+	}
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	workspace := httptest.NewServer(&mockWorkspaceAPI{files: map[string]string{
+		workspacePath + "/workflow.json": string(manifestJSON),
+	}})
+	defer workspace.Close()
+	t.Setenv("WORKSPACE_API_URL", workspace.URL)
+
+	s := NewSchedulerService(nil)
+	_, _, err = s.executeWorkshopJob(ctx, &ScheduleContext{
+		WorkspacePath: workspacePath,
+		Schedule:      manifest.Schedules[0],
+		SourceType:    "workflow",
+	}, "")
+	if err != nil {
+		t.Fatalf("executeWorkshopJob() error = %v", err)
+	}
+
+	updated, found, err := ReadWorkflowManifest(ctx, workspacePath)
+	if err != nil || !found {
+		t.Fatalf("read updated manifest: found=%v err=%v", found, err)
+	}
+	if len(updated.Schedules) != 1 || updated.Schedules[0].Enabled {
+		t.Fatalf("legacy optimizer schedule was not disabled: %+v", updated.Schedules)
 	}
 }
 

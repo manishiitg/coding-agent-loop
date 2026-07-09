@@ -1143,6 +1143,9 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                                 <code className="block bg-gray-200 dark:bg-gray-950 px-2 py-1 rounded text-[10px] font-mono text-green-700 dark:text-green-400 border border-gray-300 dark:border-gray-700 break-all">
                                   {chromeCdpInstallCommand()}
                                 </code>
+                                <p className="rounded-md border border-amber-400/30 bg-amber-400/10 px-2 py-1.5 text-xs leading-snug text-amber-700 dark:text-amber-300">
+                                  The installer clears quarantine, signs locally, opens the app, and checks port {cdpPort}. If macOS still blocks first launch, allow Chrome CDP in Privacy &amp; Security and open it again.
+                                </p>
                                 <a
                                   href={chromeCdpZipUrl}
                                   download="Chrome-CDP-macOS.zip"
@@ -1159,7 +1162,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                                   <li>Drag <strong className="text-gray-700 dark:text-gray-300">Chrome CDP.app</strong> to <strong className="text-gray-700 dark:text-gray-300">Applications</strong>.</li>
                                   <li>Open from Spotlight (⌘+Space) or Launchpad.</li>
                                 </ol>
-                                <p className="text-xs text-gray-500 dark:text-gray-400">If macOS says &quot;damaged&quot;, run in Terminal:</p>
+                                <p className="text-xs text-gray-500 dark:text-gray-400">For manual downloads, if macOS says &quot;damaged&quot;, run in Terminal:</p>
                                 <code className="block bg-gray-200 dark:bg-gray-950 px-2 py-1 rounded text-[10px] font-mono text-amber-600 dark:text-amber-400 border border-gray-300 dark:border-gray-700">
                                   xattr -c /Applications/Chrome\ CDP.app
                                 </code>

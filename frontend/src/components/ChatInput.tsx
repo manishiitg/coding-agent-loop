@@ -4097,6 +4097,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                                     <code className="mt-2 block rounded-md border border-border bg-black/30 px-2 py-1.5 text-[10px] text-emerald-300 break-all">
                                       {chromeCdpInstallCommand()}
                                     </code>
+                                    <p className="mt-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-1.5 text-[11px] leading-snug text-amber-200">
+                                      The installer clears quarantine, signs locally, opens the app, and checks port {cdpPort}. If macOS still blocks first launch, allow Chrome CDP in Privacy &amp; Security and open it again.
+                                    </p>
                                     <a
                                       href={chromeCdpZipUrl}
                                       download="Chrome-CDP-macOS.zip"

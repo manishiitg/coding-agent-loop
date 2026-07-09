@@ -377,6 +377,22 @@ cd agent_go && go test ./...
 ./scripts/scan-secrets.sh
 ```
 
+## Chrome CDP macOS Helper
+
+If you use Local Chrome (CDP) on macOS, install the dedicated launcher from the public GitHub script:
+
+```bash
+curl -fsSL 'https://raw.githubusercontent.com/manishiitg/mcp-agent-builder-go/main/scripts/install-chrome-cdp-macOS.sh' | bash
+```
+
+The installer downloads `Chrome CDP.app`, installs it into `/Applications`, clears quarantine attributes, applies a local ad-hoc signature when possible, opens the app, and checks that CDP is reachable on port `9222`.
+
+macOS may still ask for approval on first launch. If it blocks the app, open **System Settings → Privacy & Security**, allow `Chrome CDP`, then run:
+
+```bash
+open -a 'Chrome CDP'
+```
+
 ## 📄 License & Architecture Foundations
 
 Licensed under the MIT License.

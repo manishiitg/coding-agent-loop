@@ -8,10 +8,11 @@ PROCEDURE
    - If the focus is clearly a single step id, call `review_artifact_sync(step_id="<step-id>", focus="{{.Focus}}")`.
    - Do not call `harden_workflow` or plan-modification tools from this slash command unless the user explicitly asks to fix findings after the review.
 2. Capture the returned `execution_id`.
-3. Wait for completion before summarizing the result.
-   - Capture the returned `execution_id` and use `query_step(step_id="review-artifact-sync", execution_id="<returned execution_id>")` to inspect status/results when needed.
+3. Do not babysit the review with `sleep`, repeated `list_executions`, or repeated `query_step` calls.
+   - Use `query_step(step_id="review-artifact-sync", execution_id="<returned execution_id>")` at most once for an immediate status/result check.
+   - If it is still running, stop and rely on `[AUTO-NOTIFICATION]` to resume when the review completes.
    - Do not treat the immediate start response as the review output.
-4. When the background review completes, summarize:
+4. When the background review completes via `[AUTO-NOTIFICATION]` or a one-off result check, summarize:
    - changelog file/entry range inspected
    - steps inspected
    - findings count by severity

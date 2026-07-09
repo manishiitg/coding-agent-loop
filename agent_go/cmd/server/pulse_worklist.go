@@ -16,6 +16,7 @@ const (
 	pulseModuleHarden              = "harden"
 	pulseModuleArtifactReview      = "artifact_review"
 	pulseModuleReportHealth        = "report_health"
+	pulseModuleEvalHealth          = "eval_health"
 	pulseModuleLearningHealth      = "learning_health"
 	pulseModuleKnowledgebaseHealth = "knowledgebase_health"
 	pulseModuleDBHealth            = "db_health"
@@ -27,6 +28,7 @@ var pulseModuleOrder = []string{
 	pulseModuleHarden,
 	pulseModuleArtifactReview,
 	pulseModuleReportHealth,
+	pulseModuleEvalHealth,
 	pulseModuleLearningHealth,
 	pulseModuleKnowledgebaseHealth,
 	pulseModuleDBHealth,
@@ -38,6 +40,7 @@ var validPulseModules = map[string]bool{
 	pulseModuleHarden:              true,
 	pulseModuleArtifactReview:      true,
 	pulseModuleReportHealth:        true,
+	pulseModuleEvalHealth:          true,
 	pulseModuleLearningHealth:      true,
 	pulseModuleKnowledgebaseHealth: true,
 	pulseModuleDBHealth:            true,
@@ -527,6 +530,7 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 		pulseModuleHarden,
 		pulseModuleArtifactReview,
 		pulseModuleReportHealth,
+		pulseModuleEvalHealth,
 		pulseModuleLearningHealth,
 		pulseModuleKnowledgebaseHealth,
 		pulseModuleDBHealth,
@@ -537,7 +541,7 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "record_pulse_worklist",
-			Description: "Record the dynamic Pulse worklist for this run in the workflow's db/db.sqlite. Pulse Gate must call this exactly once after deciding which modules are due or skipped. The decisions array must contain exactly one entry for each Pulse module: harden, artifact_review, report_health, learning_health, knowledgebase_health, db_health, cost_llm_time, and goal_advisor. The scheduler reads this table and only sends prompts for due modules.",
+			Description: "Record the dynamic Pulse worklist for this run in the workflow's db/db.sqlite. Pulse Gate must call this exactly once after deciding which modules are due or skipped. The decisions array must contain exactly one entry for each Pulse module: harden, artifact_review, report_health, eval_health, learning_health, knowledgebase_health, db_health, cost_llm_time, and goal_advisor. The scheduler reads this table and only sends prompts for due modules.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -700,6 +704,8 @@ func normalizePulseModule(module string) string {
 		return pulseModuleArtifactReview
 	case "report", "reporting", "report_repair":
 		return pulseModuleReportHealth
+	case "eval", "evaluation", "evaluation_health", "eval_repair":
+		return pulseModuleEvalHealth
 	case "learnings", "learning", "learning_policy":
 		return pulseModuleLearningHealth
 	case "kb", "knowledgebase":

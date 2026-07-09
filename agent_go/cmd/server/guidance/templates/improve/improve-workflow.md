@@ -117,7 +117,7 @@ For Goal Advisor, do not spend the module run on small hardening that Pulse alre
 
 10. No action - there is no new evidence since the last improvement pass, an unresolved dependency blocks action, or the current issue needs human input. Log that explicitly in `builder/improve.html`.
 
-If unclear, call `review_plan({{if .Focus}}focus="{{.Focus}}"{{end}})` first, wait/query until it completes, then classify. Review is diagnosis only; it does not apply changes.
+If unclear, call `review_plan({{if .Focus}}focus="{{.Focus}}"{{end}})` first. Do not babysit it with sleep/query loops; use at most one immediate `query_step` status check, then rely on `[AUTO-NOTIFICATION]` to resume when the review completes. Review is diagnosis only; it does not apply changes.
 
 PHASE 3 - APPLY ONE BOUNDED ACTION PER GROUP
 For each enabled group with meaningful evidence in the selected run window:

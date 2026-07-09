@@ -31,7 +31,7 @@ says so ("run all groups", "run in parallel", "all at once", etc.).
 1. Read variables/variables.json → list of enabled group names.
 2. for each group in groups:
      run_full_workflow(group_name="{group}")
-     wait for completion (use list_executions / query_step to monitor if needed)
+     wait for completion via the system's [AUTO-NOTIFICATION] completion message; use list_executions / query_step only for one-off ambiguity checks, never as a sleep/poll loop
      if user asked for hardening or optimization, switch to Workshop mode
 3. After all groups: summarize.
 ```

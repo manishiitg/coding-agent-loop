@@ -7,7 +7,7 @@ The audit has four phases. Run each in order. Skip Phase 3's orchestrator/router
 PHASE 1 — STRUCTURAL ANALYSIS
 
 1. Call review_plan() — the server-side review tool. It analyzes plan structure: step boundaries, step types, execution modes, context flow integrity, validation coverage, portability, and whether choices are justified by the objective + success_criteria from soul.md.
-2. review_plan runs in the background and returns an execution_id. Capture that id and wait for completion before continuing. Use `query_step(step_id="review-plan", execution_id="<returned execution_id>")` to inspect status/results when needed; do not start Phase 2 or write the review log until Phase 1 has completed and you have the review_plan output.
+2. review_plan runs in the background and returns an execution_id. Capture that id. Do not babysit it with `sleep`, repeated `list_executions`, or repeated `query_step` calls. Use `query_step(step_id="review-plan", execution_id="<returned execution_id>")` at most once for an immediate status/result check. If it is still running, stop and rely on `[AUTO-NOTIFICATION]` to resume when Phase 1 completes; do not start Phase 2 or write the review log until Phase 1 has completed and you have the review_plan output.
 3. Read its output carefully. Group findings by severity: CRITICAL (broken structure, missing required fields, contradictions vs soul.md), WARNING (questionable choices that need defense), INFO (style/minor).
 4. Compare against soul.md's objective + success_criteria explicitly: for each weak structural choice, name which criterion it fails or under-serves.
 

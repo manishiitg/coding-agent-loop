@@ -51,6 +51,7 @@ Use these module names exactly:
 - `harden`
 - `artifact_review`
 - `report_health`
+- `eval_health`
 - `learning_health`
 - `knowledgebase_health`
 - `db_health`
@@ -97,6 +98,18 @@ Good report-health work makes the report easier for the user to understand:
 - compact visual cards before long text
 - accurate tabs/sections and responsive layout
 
+### eval_health
+
+Mark due when evaluation evidence cannot be trusted or does not measure the workflow's stated success criteria:
+
+- `evaluation/evaluation_plan.json` is missing, stale, too lenient, or not mapped to `soul.md`
+- eval runs are missing, scoped to the wrong run/group, or using a stale `TARGET_RUN_PATH`
+- rubric/thresholds can be gamed or mostly duplicate operational completion checks
+- eval reports make misleading claims or cannot be reconciled with DB/report evidence
+- plan, DB, report, or output contracts changed and eval coverage did not follow
+
+The module calls `get_workflow_command_guidance(kind="improve-evaluation")` for bounded eval-plan/config repair. Prefer targeted evaluation changes, validate the plan when the validation tool is available, and only run a targeted eval when it materially helps verify the fix. Record changed eval artifacts as an `Eval fix` in `builder/improve.html`.
+
 ### learning_health
 
 Mark due when workflow behavior changed or learning state may be stale:
@@ -141,7 +154,7 @@ Mark due when strategic judgment is needed:
 - enough new cross-run evidence exists for an expert out-of-plan critique
 - the workflow may need an eval/report measurement change to judge success correctly
 
-Goal Advisor is now a Pulse-selected module, not a separate recurring schedule. Pulse should not do the expensive strategic review inline. When the Gate selects Goal Advisor, the parent Pulse turn should call `run_goal_advisor_review(...)`, capture the returned `execution_id`, wait with `query_step(step_id="goal-advisor", execution_id="<returned execution_id>")`, then record the module result.
+Goal Advisor is now a Pulse-selected module, not a separate recurring schedule. Pulse should not do the expensive strategic review inline. When the Gate selects Goal Advisor, the parent Pulse turn should call `run_goal_advisor_review(...)`, capture the returned `execution_id`, optionally call `query_step(step_id="goal-advisor", execution_id="<returned execution_id>")` once for immediate status, then stop if it is still running and rely on `[AUTO-NOTIFICATION]` to resume result recording. Do not use `sleep`, `list_executions`, or repeated `query_step` calls as a polling loop.
 
 The background Goal Advisor thinks like an experienced operator. It may apply a structural plan change only when the user already approved a Goal Advisor proposal in `report_human_inputs`. New strategic changes must be logged as proposal-only Advisor ideas and, when a decision is needed, created with `create_human_input_request`.
 

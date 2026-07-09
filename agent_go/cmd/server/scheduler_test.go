@@ -317,10 +317,10 @@ func TestWithChiefTaskRunContextSkipsOrgPulse(t *testing.T) {
 
 func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 	steps := postRunMonitorSteps()
-	if got := len(steps); got != 13 {
-		t.Fatalf("postRunMonitorSteps() length = %d, want 13", got)
+	if got := len(steps); got != 14 {
+		t.Fatalf("postRunMonitorSteps() length = %d, want 14", got)
 	}
-	for i, want := range []string{"gate", "harden", "artifact", "report-health", "learning-health", "knowledgebase-health", "db-health", "cost-llm-time", "goal-advisor", "dashboard", "backup", "publish", "notify"} {
+	for i, want := range []string{"gate", "harden", "artifact", "report-health", "eval-health", "learning-health", "knowledgebase-health", "db-health", "cost-llm-time", "goal-advisor", "dashboard", "backup", "publish", "notify"} {
 		if got := steps[i].label; got != want {
 			t.Fatalf("postRunMonitorSteps()[%d].label = %q, want %q", i, got, want)
 		}
@@ -330,6 +330,7 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 	var harden string
 	var artifact string
 	var reportHealth string
+	var evalHealth string
 	var learningHealth string
 	var kbHealth string
 	var dbHealth string
@@ -350,6 +351,9 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 		}
 		if step.label == "report-health" {
 			reportHealth = step.query
+		}
+		if step.label == "eval-health" {
+			evalHealth = step.query
 		}
 		if step.label == "learning-health" {
 			learningHealth = step.query
@@ -387,6 +391,9 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 	}
 	if reportHealth == "" {
 		t.Fatal("report-health step not found")
+	}
+	if evalHealth == "" {
+		t.Fatal("eval-health step not found")
 	}
 	if learningHealth == "" {
 		t.Fatal("learning-health step not found")
@@ -428,6 +435,7 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 		"harden",
 		"artifact_review",
 		"report_health",
+		"eval_health",
 		"learning_health",
 		"knowledgebase_health",
 		"db_health",
@@ -476,6 +484,17 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 	} {
 		if !strings.Contains(reportHealth, want) {
 			t.Fatalf("report health step missing %q:\n%s", want, reportHealth)
+		}
+	}
+	for _, want := range []string{
+		"PULSE MODULE — EVAL HEALTH",
+		`get_workflow_command_guidance(kind="improve-evaluation"`,
+		"TARGET_RUN_PATH",
+		"Eval fix",
+		"mark_pulse_module_result",
+	} {
+		if !strings.Contains(evalHealth, want) {
+			t.Fatalf("eval health step missing %q:\n%s", want, evalHealth)
 		}
 	}
 	for _, want := range []string{
@@ -567,10 +586,34 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 	}
 }
 
+func TestPostRunMonitorModuleStepsDiscouragePollingLoops(t *testing.T) {
+	steps := postRunMonitorModuleSteps("pulse-test")
+	for _, step := range steps {
+		query := step.step.query
+		for _, forbidden := range []string{
+			"wait with query_step",
+			"until complete",
+			"until it completes",
+			"sleep 30",
+		} {
+			if strings.Contains(query, forbidden) {
+				t.Fatalf("%s step should not encourage polling loop phrase %q:\n%s", step.step.label, forbidden, query)
+			}
+		}
+		if strings.Contains(query, "query_step") && !strings.Contains(query, "at most once") {
+			t.Fatalf("%s step uses query_step without one-off limit:\n%s", step.step.label, query)
+		}
+	}
+	if !strings.Contains(scheduledBackgroundNoPollingInstruction, "do not babysit") ||
+		!strings.Contains(scheduledBackgroundNoPollingInstruction, "[AUTO-NOTIFICATION]") {
+		t.Fatalf("scheduled no-polling instruction should explain yielding to auto-notification: %q", scheduledBackgroundNoPollingInstruction)
+	}
+}
+
 func TestPostRunMonitorPrependsWorkflowVersionUpgradeForOldManifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.0"})
-	if got := len(steps); got != 20 {
-		t.Fatalf("postRunMonitorStepsForManifest(old) length = %d, want 20", got)
+	if got := len(steps); got != 21 {
+		t.Fatalf("postRunMonitorStepsForManifest(old) length = %d, want 21", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.1" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.1", got)
@@ -614,8 +657,8 @@ func TestPostRunMonitorPrependsWorkflowVersionUpgradeForOldManifest(t *testing.T
 
 func TestPostRunMonitorPrependsWorkflowVersionUpgradeForMissingVersion(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{})
-	if got := len(steps); got != 20 {
-		t.Fatalf("postRunMonitorStepsForManifest(missing version) length = %d, want 20", got)
+	if got := len(steps); got != 21 {
+		t.Fatalf("postRunMonitorStepsForManifest(missing version) length = %d, want 21", got)
 	}
 	if !strings.Contains(steps[0].query, `Current workflow.json version seen by scheduler: "1.0.0"`) {
 		t.Fatalf("missing version should be treated as 1.0.0:\n%s", steps[0].query)
@@ -624,8 +667,8 @@ func TestPostRunMonitorPrependsWorkflowVersionUpgradeForMissingVersion(t *testin
 
 func TestPostRunMonitorPrependsPublishGateUpgradeForVersion101Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.1"})
-	if got := len(steps); got != 19 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.1) length = %d, want 19", got)
+	if got := len(steps); got != 20 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.1) length = %d, want 20", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.2" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.2", got)
@@ -664,8 +707,8 @@ func TestPostRunMonitorPrependsPublishGateUpgradeForVersion101Manifest(t *testin
 
 func TestPostRunMonitorPrependsHTMLReportUpgradeForVersion102Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.2"})
-	if got := len(steps); got != 18 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.2) length = %d, want 18", got)
+	if got := len(steps); got != 19 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.2) length = %d, want 19", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.3" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.3", got)
@@ -703,8 +746,8 @@ func TestPostRunMonitorPrependsHTMLReportUpgradeForVersion102Manifest(t *testing
 
 func TestPostRunMonitorPrependsPulseReadabilityUpgradeForVersion103Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.3"})
-	if got := len(steps); got != 17 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.3) length = %d, want 17", got)
+	if got := len(steps); got != 18 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.3) length = %d, want 18", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.4" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.4", got)
@@ -739,8 +782,8 @@ func TestPostRunMonitorPrependsPulseReadabilityUpgradeForVersion103Manifest(t *t
 
 func TestPostRunMonitorPrependsPulseFilterUpgradeForVersion104Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.4"})
-	if got := len(steps); got != 16 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.4) length = %d, want 16", got)
+	if got := len(steps); got != 17 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.4) length = %d, want 17", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.5" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.5", got)
@@ -772,8 +815,8 @@ func TestPostRunMonitorPrependsPulseFilterUpgradeForVersion104Manifest(t *testin
 
 func TestPostRunMonitorPrependsRichPulseWidgetUpgradeForVersion105Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.5"})
-	if got := len(steps); got != 15 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.5) length = %d, want 15", got)
+	if got := len(steps); got != 16 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.5) length = %d, want 16", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.6" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.6", got)
@@ -802,8 +845,8 @@ func TestPostRunMonitorPrependsRichPulseWidgetUpgradeForVersion105Manifest(t *te
 
 func TestPostRunMonitorPrependsLegacyOptimizerCleanupUpgradeForVersion106Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.6"})
-	if got := len(steps); got != 14 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.6) length = %d, want 14", got)
+	if got := len(steps); got != 15 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.6) length = %d, want 15", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.7" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.7", got)
@@ -833,8 +876,8 @@ func TestPostRunMonitorPrependsLegacyOptimizerCleanupUpgradeForVersion106Manifes
 
 func TestPostRunMonitorDoesNotPrependWorkflowVersionUpgradeForCurrentManifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: WorkflowContractCurrentVersion})
-	if got := len(steps); got != 13 {
-		t.Fatalf("postRunMonitorStepsForManifest(current) length = %d, want 13", got)
+	if got := len(steps); got != 14 {
+		t.Fatalf("postRunMonitorStepsForManifest(current) length = %d, want 14", got)
 	}
 	if got := steps[0].label; got != "gate" {
 		t.Fatalf("first step label = %q, want gate", got)
@@ -929,6 +972,7 @@ func TestSelectedPostRunMonitorModuleStepsUsesGateWorklist(t *testing.T) {
 		{Module: pulseModuleHarden, Due: true, Reason: "A step failed.", Evidence: []string{"runs/latest"}},
 		{Module: pulseModuleArtifactReview, Due: false, Reason: "No unreviewed changelog entries."},
 		{Module: pulseModuleReportHealth, Due: false, Reason: "Report is fresh."},
+		{Module: pulseModuleEvalHealth, Due: false, Reason: "Eval plan is fresh."},
 		{Module: pulseModuleLearningHealth, Due: false, Reason: "No plan changes."},
 		{Module: pulseModuleKnowledgebaseHealth, Due: false, Reason: "KB is current."},
 		{Module: pulseModuleDBHealth, Due: false, Reason: "DB contracts match."},
@@ -960,7 +1004,7 @@ func TestSelectedPostRunMonitorModuleStepsFallsBackConservatively(t *testing.T) 
 	s := NewSchedulerService(nil)
 	steps := s.selectedPostRunMonitorModuleSteps(ctx, &ScheduleContext{WorkspacePath: workspacePath}, pulseRunID)
 	got := postRunStepLabels(steps)
-	want := []string{"pre-backup", "harden", "report-health", "cost-llm-time", "dashboard", "backup", "publish", "notify"}
+	want := []string{"pre-backup", "harden", "report-health", "eval-health", "cost-llm-time", "dashboard", "backup", "publish", "notify"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("fallback labels = %#v, want %#v", got, want)
 	}
@@ -992,7 +1036,7 @@ func TestSelectedPostRunMonitorModuleStepsFallsBackForPartialWorklist(t *testing
 	s := NewSchedulerService(nil)
 	steps := s.selectedPostRunMonitorModuleSteps(ctx, &ScheduleContext{WorkspacePath: workspacePath}, pulseRunID)
 	got := postRunStepLabels(steps)
-	want := []string{"pre-backup", "harden", "report-health", "cost-llm-time", "dashboard", "backup", "publish", "notify"}
+	want := []string{"pre-backup", "harden", "report-health", "eval-health", "cost-llm-time", "dashboard", "backup", "publish", "notify"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("partial-worklist fallback labels = %#v, want %#v", got, want)
 	}
@@ -1024,7 +1068,7 @@ func TestSelectedPostRunMonitorModuleStepsPartialWorklistKeepsDueGoalAdvisor(t *
 	s := NewSchedulerService(nil)
 	steps := s.selectedPostRunMonitorModuleSteps(ctx, &ScheduleContext{WorkspacePath: workspacePath}, pulseRunID)
 	got := postRunStepLabels(steps)
-	want := []string{"pre-backup", "harden", "report-health", "cost-llm-time", "goal-advisor", "dashboard", "backup", "publish", "notify"}
+	want := []string{"pre-backup", "harden", "report-health", "eval-health", "cost-llm-time", "goal-advisor", "dashboard", "backup", "publish", "notify"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("partial-worklist fallback labels = %#v, want %#v", got, want)
 	}

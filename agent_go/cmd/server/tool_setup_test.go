@@ -271,14 +271,14 @@ func TestChatModeFolderGuardBlockedWrite(t *testing.T) {
 		},
 		{
 			name:     "read of blocked prefix is allowed (blockedWrite does not affect reads)",
-			tool:     "read_workspace_file",
+			tool:     "read_image",
 			filepath: workflowRoot + "/planning/plan.json",
 		},
 	}
 
 	executors := map[string]func(ctx context.Context, args map[string]interface{}) (string, error){
 		"diff_patch_workspace_file": noop,
-		"read_workspace_file":       noop,
+		"read_image":                noop,
 	}
 
 	// Grant writes to the whole workflow root; block writes to planning/ subtree.

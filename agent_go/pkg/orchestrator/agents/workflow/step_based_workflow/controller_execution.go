@@ -556,9 +556,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) findApprovedPlanProducerCandidates(
 //
 // Reason: The Workspace API ensures consistency between:
 // - Folder/file creation
-// - list_workspace_files tool (used by LLM agents)
-// - read_workspace_file tool (used by LLM agents)
-// - update_workspace_file tool (used by LLM agents)
+// - workspace bridge/shell views used by LLM agents
+// - report/file panels that read from the workspace API
 //
 // Using os.* directly can cause "folder does not exist" errors because the
 // Workspace API may have a different root path than the Go agent's filesystem.
@@ -744,7 +743,7 @@ func deleteFolderViaAPI(ctx context.Context, folderPath string) error {
 
 // ensureStepExecutionFolderExists ensures the step execution folder exists by creating it if needed.
 // This is called when a step starts running to ensure the folder exists even if it was previously deleted.
-// Creates folder via Workspace API only (ensures consistency with list_workspace_files).
+// Creates folder via Workspace API only (ensures consistency with workspace listings).
 //
 // The stepExecutionPath can be in any format - the function normalizes it internally using
 // the orchestrator's workspace path.

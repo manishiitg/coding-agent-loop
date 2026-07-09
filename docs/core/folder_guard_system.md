@@ -5,7 +5,7 @@
 The Folder Guard system is a **fine-grained access control mechanism** that restricts agent file operations to specific directories. It is a critical security boundary that isolates user data, prevents cross-workflow interference, and protects system files.
 
 It provides security boundaries for:
-1.  **Simple Mode**: Runtime validation of tool parameters (e.g., intercepting `update_workspace_file`).
+1.  **Simple Mode**: Runtime validation of tool parameters (e.g., intercepting `diff_patch_workspace_file`).
 2.  **Code Execution Mode**: AST-level validation + runtime path checking compiled into generated Go code.
 3.  **Shell Execution**: Environment sanitization and OS-level filesystem namespace isolation.
 
@@ -22,7 +22,7 @@ It provides security boundaries for:
 
 The folder guard system provides **multiple layers of security** (Defense in Depth):
 
-1. **Prompt Injection (Tool Description Enhancement)**: The LLM sees clear restrictions in the descriptions of tools like `read_workspace_file` or `execute_shell_command`.
+1. **Prompt Injection (Tool Description Enhancement)**: The LLM sees clear restrictions in the descriptions of tools like `execute_shell_command` or `diff_patch_workspace_file`.
 2. **Context Injection (`context.Context`)**: Allowed paths (`FolderGuardReadPathsKey`, `FolderGuardWritePathsKey`) are injected into the Go context before the agent executes.
 3. **Runtime Validation Wrapper**: A middleware (`WrapWorkspaceToolsWithFolderGuard`) intercepts all file tool calls and validates the `filepath` against the allowed lists.
 4. **AST Validation (Code Exec)**: Code execution mode parses the agent's generated code to block direct OS calls.
@@ -38,7 +38,7 @@ The Folder Guard behaves differently depending on the active execution mode:
 ### 1. Chat Mode
 In standard Chat Mode, the agent operates in a shared workspace but is heavily restricted.
 - **Write Restrictions**: The agent is usually restricted to writing to the `Chats/` directory or a specific user's chat folder.
-- **Read-Only Folders**: The `Workflow/` directory is strictly **read-only**. The agent can use `list_workspace_files` or `read_workspace_file` on `Workflow/` but cannot update or delete files there.
+- **Read-Only Folders**: The `Workflow/` directory is strictly **read-only** in chat mode. Current workflow agents inspect it through the shell/read side of the workspace bridge; legacy basic file tools are not exposed in normal workflow-builder sessions.
 - **Blocked Folders**: The `_users/` directory (which contains authentication data, OAuth tokens, and session history) is **strictly blocked** from all read and write access.
 
 ### 2. Multi-Agent Chat
@@ -60,8 +60,8 @@ Workflow mode dynamically configures the folder guard for **each individual step
 #### Tool Classification & Rules
 | Tool Type | Allowed Paths | Blocked Paths |
 | :--- | :--- | :--- |
-| **Read Tools** (`read_workspace_file`, `list_workspace_files`) | `readPaths` + `writePaths` (combined) | `blockedPaths` (denied) |
-| **Write Tools** (`update_workspace_file`, `delete_workspace_file`) | `writePaths` only | `blockedPaths` (denied) |
+| **Read Tools** (`execute_shell_command`, `read_image`; legacy basic read tools when explicitly registered by library users) | `readPaths` + `writePaths` (combined) | `blockedPaths` (denied) |
+| **Write Tools** (`diff_patch_workspace_file`; legacy basic write tools when explicitly registered by library users) | `writePaths` only | `blockedPaths` (denied) |
 | **Shell Tools** (`execute_shell_command`) | Environment sanitized + Filesystem isolated | `blockedPaths` references |
 
 #### Execution Rules

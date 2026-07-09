@@ -234,7 +234,7 @@ type AgentConfigs struct {
 	LockCode                     *bool           `json:"lock_code,omitempty"`                       // lock code (main.py) - prevents LLM-rewritten main.py from being saved back to learnings, skips fix loop (nil = not set/unlocked, true = locked, false = explicitly unlocked)
 	SelectedServers              []string        `json:"selected_servers,omitempty"`                // step-level MCP server selection (subset of preset servers)
 	SelectedTools                []string        `json:"selected_tools,omitempty"`                  // step-level tool selection (format: "server:tool" or "server:*" for all tools)
-	EnabledCustomTools           []string        `json:"enabled_custom_tools,omitempty"`            // e.g., ["read_workspace_file", "human_feedback"] - enables specific tools (overrides categories if both specified)
+	EnabledCustomTools           []string        `json:"enabled_custom_tools,omitempty"`            // e.g., ["workspace_advanced:execute_shell_command", "human_tools:notify_user"] - enables specific tools (overrides categories if both specified)
 	EnableContextOffloading      *bool           `json:"enable_context_offloading,omitempty"`       // Enable/disable context offloading (default: true if nil)
 	UseCodeExecutionMode         *bool           `json:"use_code_execution_mode,omitempty"`         // Step-level code execution mode override (nil = use preset default, true/false = override)
 	EnabledSkills                []string        `json:"enabled_skills,omitempty"`                  // Step-level skill selection (skill folder names, overrides preset if specified)

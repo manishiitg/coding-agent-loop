@@ -536,11 +536,7 @@ func wrapExecutorsWithFolderGuard(executors map[string]func(ctx context.Context,
 
 	// Write tools that should be restricted
 	writeTools := map[string]bool{
-		"update_workspace_file":     true,
-		"delete_workspace_file":     true,
-		"move_workspace_file":       true,
 		"diff_patch_workspace_file": true,
-		"write_workspace_file":      true,
 	}
 
 	// Path parameters to check for all tools (both read and write)
@@ -706,11 +702,7 @@ func wrapExecutorsWithPlanFolderGuard(executors map[string]func(ctx context.Cont
 	copy(shellAllowedFolders, allowedWriteFolders)
 
 	writeTools := map[string]bool{
-		"update_workspace_file":     true,
-		"delete_workspace_file":     true,
-		"move_workspace_file":       true,
 		"diff_patch_workspace_file": true,
-		"write_workspace_file":      true,
 	}
 
 	allPathParams := []string{"filepath", "source_filepath", "destination_filepath", "folder", "pattern"}

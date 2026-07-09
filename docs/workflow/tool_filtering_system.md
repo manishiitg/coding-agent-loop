@@ -87,7 +87,7 @@ if len(config.SelectedServers) > 0 {
       "github:list_issues"
     ],
     "enabled_custom_tools": [
-      "workspace_basic:*",
+      "workspace_advanced:*",
       "workspace_advanced:execute_shell_command",
       "human_tools:*"
     ]
@@ -104,9 +104,9 @@ if len(config.SelectedServers) > 0 {
 | `enabled_custom_tools` | `string[]` | `[]` | Granular internal tools. Format: `category:tool` or `category:*`. |
 
 **Internal Category Names:**
-- `workspace_tools`: All workspace tools (backward compatible - includes basic + advanced)
-- `workspace_basic`: Basic file/folder operations (list, read, update, diff_patch, regex_search, semantic_search, glob_discover, delete, move)
-- `workspace_advanced`: Advanced workspace tools (`execute_shell_command`, `diff_patch_workspace_file`, `read_image`, `read_video`, `read_pdf`, `generate_text_llm`, `search_web_llm`, plus the media generators `image_gen` / `image_edit` / `generate_video` / `text_to_speech` / `speech_to_text` / `generate_music`)
+- `workspace_tools`: Backward-compatible alias for the current workspace registry.
+- `workspace_advanced`: Current workspace tools (`execute_shell_command`, `diff_patch_workspace_file`, `read_image`, `generate_text_llm`, `search_web_llm`, plus the media generators `image_gen` / `image_edit` / `generate_video` / `text_to_speech` / `speech_to_text` / `generate_music`)
+- Legacy basic file tools such as `list_workspace_files`, `read_workspace_file`, `update_workspace_file`, `delete_workspace_file`, and `move_workspace_file` are not part of the current workflow-builder registry. Use shell and diff tools instead.
 - `human_tools`: `human_feedback` (blocking ask-the-user), `notify_user` (non-blocking outbound push to Slack/WhatsApp/Gmail), `submit_human_answer` (resolves a launched workflow's human_input step)
 - `workspace_browser`: `agent_browser`
 

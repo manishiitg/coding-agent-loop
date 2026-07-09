@@ -90,7 +90,7 @@ The same synthetic-turn infrastructure is shared with the workshop/builder (see 
 Every sub-agent runs with `UseCodeExecutionMode: true`. This means the worker:
 - Gets `get_api_spec` (virtual tool) + `execute_shell_command` (direct tool)
 - MCP tools are accessed via HTTP API (`POST /tools/mcp/{server}/{tool}`) instead of as direct function calls
-- Custom tools (workspace_advanced, workspace_basic, etc.) remain as direct tools
+- Current custom tools (`workspace_advanced`, `human_tools`, and other registered built-ins) remain as direct tools
 - `MCP_API_URL` and `MCP_API_TOKEN` env vars are available in the shell environment
 
 ### Inherited from Parent

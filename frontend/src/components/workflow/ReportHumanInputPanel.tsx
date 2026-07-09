@@ -20,7 +20,6 @@ function sourceLabel(source: string): string {
 
 function inputStatusLabel(input: ReportHumanInput): string {
   if (input.status === 'answered') return 'Answered'
-  if (input.status === 'consumed') return 'Used by agent'
   if (input.status === 'dismissed') return 'Dismissed'
   return 'Needs answer'
 }

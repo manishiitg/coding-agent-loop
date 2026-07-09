@@ -528,11 +528,11 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 	}
 	for _, want := range []string{
 		"PULSE MODULE — GOAL ADVISOR",
-		`get_workflow_command_guidance(kind="goal-advisor"`,
+		"Do not perform the strategic review inline",
+		"run_goal_advisor_review",
+		"query_step",
 		"expert strategy advisor",
-		"Do not call harden_workflow, improve_kb, improve_learnings, or improve_db",
-		"create_human_input_request",
-		"builder/card.progress.html",
+		"Do not call harden_workflow, improve_kb, improve_learnings, or improve_db from this parent Pulse turn",
 		"mark_pulse_module_result",
 	} {
 		if !strings.Contains(goalAdvisor, want) {

@@ -1152,6 +1152,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 	// confirmation.
 	autoImprovement := []string{
 		"capture_context",
+		"run_goal_advisor_review",
 		"mark_cos_recommendation_status",
 		"get_workflow_command_guidance", // canonical slash-command prose; see guidance package.
 		"get_reference_doc",             // reference docs (system/*.md) loaded on demand; see guidance package.
@@ -2155,7 +2156,7 @@ This is the one-line-per-category map. For full signatures, parameters, when-to-
 {{if or (eq .WorkshopMode "workshop") (eq .WorkshopMode "run")}}
 - **Step execution & inspection**: `+"`execute_step`"+`, `+"`query_step`"+`, `+"`debug_step`"+`, `+"`list_executions`"+`, `+"`stop_step`"+`, `+"`stop_all_executions`"+`, `+"`run_in_background`"+`, `+"`run_full_workflow`"+`. {{if eq .WorkshopMode "workshop"}}Workshop also exposes `+"`execute_step(..., fast_path_only=true)`"+` for scripted main.py fast-path testing.{{end}}
 {{end}}{{if eq .WorkshopMode "workshop"}}
-- **Step config & analysis**: `+"`update_step_config`"+`, `+"`harden_workflow`"+`, `+"`review_workflow_results`"+`, `+"`review_workflow_timing`"+`, `+"`review_workflow_costs`"+`, `+"`get_cost_summary`"+`. Objective + success criteria live in `+"`soul/soul.md`"+` — edit via shell, no dedicated tool. `+"`harden_workflow`"+` requires `+"`get_reference_doc(kind=\"optimize-playbook\")`"+` first. Strategy changes use normal plan tools only after user approval or during an explicit manual workshop improvement request.
+- **Step config & analysis**: `+"`update_step_config`"+`, `+"`harden_workflow`"+`, `+"`run_goal_advisor_review`"+`, `+"`review_workflow_results`"+`, `+"`review_workflow_timing`"+`, `+"`review_workflow_costs`"+`, `+"`get_cost_summary`"+`. Objective + success criteria live in `+"`soul/soul.md`"+` — edit via shell, no dedicated tool. `+"`harden_workflow`"+` requires `+"`get_reference_doc(kind=\"optimize-playbook\")`"+` first. Scheduled Pulse should call `+"`run_goal_advisor_review`"+` for strategic review instead of doing that expensive work inline. Strategy changes use normal plan tools only after user approval or during an explicit manual workshop improvement request.
 {{end}}
 - **Read-only info**: `+"`get_step_prompts`"+`, `+"`get_workflow_config`"+`, `+"`get_llm_config`"+`{{if eq .WorkshopMode "workshop"}}, `+"`get_workflow_command_guidance(kind=\"review-artifact-drift\")`"+`{{else}}. Artifact drift reviews belong in Workshop — switch modes and run `+"`/review-artifact-drift`"+` if needed{{end}}.
 {{if eq .WorkshopMode "workshop"}}
@@ -3131,6 +3132,133 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		"workflow",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register run_in_background tool: %v", err))
+	}
+
+	// Tool: run_goal_advisor_review — dedicated strategic review background pipeline.
+	if err := mcpAgent.RegisterCustomTool(
+		"run_goal_advisor_review",
+		"Start the dedicated background Goal Advisor pipeline. Use this for Pulse-selected strategic review: goal drift, capped strategy, out-of-plan ideas, approved proposal application, and Chief of Staff strategic recommendations. The pipeline runs advisor -> critic -> finalizer in separate background agents. The parent Pulse turn should wait with query_step(execution_id) and then record mark_pulse_module_result.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"pulse_run_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional Pulse run id from the current Pulse Gate/worklist.",
+				},
+				"focus": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional focus from the Pulse Gate evidence or user request.",
+				},
+			},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			pulseRunID := ""
+			if val, ok := args["pulse_run_id"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					pulseRunID = strings.TrimSpace(s)
+				}
+			}
+			focus := ""
+			if val, ok := args["focus"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					focus = strings.TrimSpace(s)
+				}
+			}
+
+			name := "Goal Advisor Review"
+			execID := fmt.Sprintf("goal-advisor-%05d", time.Now().UnixNano()%100000)
+			execCtx, cancel, ctxErr := iwm.newExecContext()
+			if ctxErr != nil {
+				return "Session was stopped — execution skipped", nil
+			}
+
+			agentSessionID := fmt.Sprintf("workshop-goal-advisor-%d", time.Now().UnixNano())
+			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
+
+			exec := &WorkshopStepExecution{
+				ID:             execID,
+				StepID:         "goal-advisor",
+				AgentSessionID: agentSessionID,
+				Status:         WorkshopStepRunning,
+				cancel:         cancel,
+			}
+			iwm.stepRegistry.Register(exec)
+
+			if iwm.executionNotifier != nil {
+				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
+					ID:                execID,
+					ParentExecutionID: currentWorkshopParentExecutionID(execCtx),
+					Name:              name,
+					Cancel:            cancel,
+				})
+			}
+			execCtx = virtualtools.WithBackgroundAgentID(execCtx, execID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.ParentExecutionIDKey, execID)
+
+			go func() {
+				var result string
+				var execErr error
+				eventBridge := iwm.controller.GetContextAwareBridge()
+				defer func() {
+					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					if eventBridge != nil {
+						isCancelled := skipNotify || execCtx.Err() != nil
+						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+							AgentType:     "workshop-goal-advisor-review",
+							AgentName:     name,
+							Success:       execErr == nil,
+						}
+						if execErr != nil {
+							if isCancelled {
+								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
+							} else {
+								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
+							}
+						} else {
+							endEvent.Result = result
+						}
+						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+							Type:          orchestrator_events.OrchestratorAgentEnd,
+							Timestamp:     time.Now(),
+							Data:          endEvent,
+							CorrelationID: agentSessionID,
+						})
+					}
+					if !skipNotify && iwm.executionNotifier != nil {
+						iwm.executionNotifier.OnExecutionComplete(execID, name, result, nil, execErr)
+					}
+				}()
+
+				if eventBridge != nil {
+					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
+						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+						AgentType:     "workshop-goal-advisor-review",
+						AgentName:     name,
+					}
+					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+						Type:          orchestrator_events.OrchestratorAgentStart,
+						Timestamp:     time.Now(),
+						Data:          startEvent,
+						CorrelationID: agentSessionID,
+					})
+				}
+
+				result, execErr = iwm.runGoalAdvisorReviewPipeline(execCtx, pulseRunID, focus)
+			}()
+
+			focusInfo := ""
+			if focus != "" {
+				focusInfo = fmt.Sprintf("\nFocus: %s", focus)
+			}
+			logger.Info(fmt.Sprintf("✨ Workshop: goal advisor review started in background, execution_id=%q, pulse_run_id=%q", execID, pulseRunID))
+			return fmt.Sprintf("Goal Advisor review started in background.\nexecution_id: %q%s\nYou will be automatically notified when it completes.", execID, focusInfo), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register run_goal_advisor_review tool: %v", err))
 	}
 
 	// Tool 2: query_step — execution status + structured MCP tool call visibility
@@ -5149,7 +5277,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				// the terminal/agent label, and the folder/lookup identity is carried
 				// separately by the stepID (GlobalLearningID), not this name.
 				agentName := "Organize Global Learnings"
-				phaseLLM := iwm.controller.selectPhaseLLM("organize global learnings agent")
+				phaseLLM := iwm.controller.selectMaintenanceLLM("organize global learnings agent")
 				if phaseLLM == nil {
 					execErr = fmt.Errorf("no valid LLM configuration found for organize global learnings agent")
 					return
@@ -6661,6 +6789,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 			// Only show preset learning LLM when tiered mode is not active (tiered mode overrides it)
 			writeLLMDefault("Phase LLM", ctrl.presetPhaseLLM)
+			writeLLMDefault("Maintenance / Goal Advisor LLM", ctrl.presetMaintenanceLLM)
 
 			// --- Schedules ---
 			if iwm.schedulerFuncs != nil && iwm.schedulerWorkspacePath != "" {
@@ -8081,16 +8210,16 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagen
 	// set_workflow_llm_config — saves tiered LLM config directly to workflow.json
 	if err := mcpAgent.RegisterCustomTool(
 		"set_workflow_llm_config",
-		"Save the workflow's tiered LLM configuration to workflow.json capabilities.llm_config. Requires get_reference_doc(kind=\"llm-selection\") to be loaded first. Use list_published_llms to see available models first. Each tier accepts provider and model_id (both required if setting a tier), plus optional published_llm_id and options copied from the published entry. Fallbacks are optional ordered lists. phase_llm is the model used for planning, eval design, and debugging phases. auto_improve_llm is the optional Goal Advisor strategy-module override. pulse_llm is the optional Pulse Gate/routine post-run QA override.",
+		"Save the workflow's tiered LLM configuration to workflow.json capabilities.llm_config. Requires get_reference_doc(kind=\"llm-selection\") to be loaded first. Use list_published_llms to see available models first. Each tier accepts provider and model_id (both required if setting a tier), plus optional published_llm_id and options copied from the published entry. Fallbacks are optional ordered lists. phase_llm is the model used for planning, eval design, debugging, and normal builder helpers. auto_improve_llm is the optional expensive maintenance/advisor model used by Goal Advisor and background maintenance agents. pulse_llm is the optional Pulse coordinator/routine post-run QA override.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"tier_1":           llmEntrySchema("High-reasoning tier: first-time execution and initial learning extraction.", "Ordered fallback models tried if the primary fails."),
 				"tier_2":           llmEntrySchema("Medium-reasoning tier: execution with learnings and learning refinement.", "Ordered fallback models tried if the primary fails."),
 				"tier_3":           llmEntrySchema("Low-reasoning tier: validation (always) and mature learning refinement (2+ runs).", "Ordered fallback models tried if the primary fails."),
-				"phase_llm":        llmEntrySchema("LLM for planning, eval design, debugging, and anonymization phases. Defaults to tier_1 if not set.", "Ordered fallback models tried if the phase LLM fails."),
-				"auto_improve_llm": llmEntrySchema("Optional LLM used by the Goal Advisor strategy module. Defaults to the provider Goal Advisor default when available.", "Ordered fallback models tried if the Goal Advisor LLM fails."),
-				"pulse_llm":        llmEntrySchema("Optional LLM used by Pulse Gate and routine post-run QA modules. Defaults to the provider Pulse default when available if not set.", "Ordered fallback models tried if the Pulse LLM fails."),
+				"phase_llm":        llmEntrySchema("LLM for planning, eval design, debugging, and normal builder helpers. Defaults to tier_1 if not set.", "Ordered fallback models tried if the phase LLM fails."),
+				"auto_improve_llm": llmEntrySchema("Optional LLM used by expensive background maintenance/advisor agents: Goal Advisor, harden/review agents, KB consolidation/reorganization, and DB improvement. Defaults to the provider maintenance/advisor default when available.", "Ordered fallback models tried if the maintenance/advisor LLM fails."),
+				"pulse_llm":        llmEntrySchema("Optional LLM used by lightweight Pulse coordinator turns and routine post-run QA messages. Defaults to the provider Pulse default when available if not set.", "Ordered fallback models tried if the Pulse LLM fails."),
 			},
 		},
 		guidance.WithDocPrecondition([]string{"llm-selection"}, guidance.DefaultTracker(), func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -9619,7 +9748,7 @@ func (iwm *InteractiveWorkshopManager) runImproveDBAgent(ctx context.Context, mo
 	}
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 
-	phaseLLM := iwm.controller.selectPhaseLLM("improve db agent")
+	phaseLLM := iwm.controller.selectMaintenanceLLM("improve db agent")
 	if phaseLLM == nil {
 		return "", fmt.Errorf("no valid LLM configuration found for improve db agent")
 	}
@@ -9746,10 +9875,10 @@ func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, t
 	}
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, []string{})
 
-	if iwm.controller.presetPhaseLLM == nil || iwm.controller.presetPhaseLLM.Provider == "" {
+	llmConfigToUse := iwm.controller.selectMaintenanceLLM("review_plan agent")
+	if llmConfigToUse == nil {
 		return "", fmt.Errorf("no valid LLM configuration for review_plan agent")
 	}
-	llmConfigToUse := workflowAgentLLMConfig(iwm.controller.presetPhaseLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-plan-agent", 50, agents.OutputFormatStructured, llmConfigToUse)
 	// Isolate in a fresh tmp dir; don't project CLAUDE.md/.claude into the
@@ -9864,10 +9993,10 @@ func (iwm *InteractiveWorkshopManager) runReviewArtifactSyncAgent(ctx context.Co
 	}
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 
-	if iwm.controller.presetPhaseLLM == nil || iwm.controller.presetPhaseLLM.Provider == "" {
+	llmConfigToUse := iwm.controller.selectMaintenanceLLM("review_artifact_sync agent")
+	if llmConfigToUse == nil {
 		return "", fmt.Errorf("no valid LLM configuration for review_artifact_sync agent")
 	}
-	llmConfigToUse := workflowAgentLLMConfig(iwm.controller.presetPhaseLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-artifact-sync-agent", 120, agents.OutputFormatStructured, llmConfigToUse)
 	// Isolate in a fresh tmp dir; don't project CLAUDE.md/.claude into the
@@ -9972,10 +10101,10 @@ func (iwm *InteractiveWorkshopManager) runReviewWorkflowResultsAgent(ctx context
 	}
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, []string{})
 
-	if iwm.controller.presetPhaseLLM == nil || iwm.controller.presetPhaseLLM.Provider == "" {
+	llmConfigToUse := iwm.controller.selectMaintenanceLLM("review_workflow_results agent")
+	if llmConfigToUse == nil {
 		return "", fmt.Errorf("no valid LLM configuration for review_workflow_results agent")
 	}
-	llmConfigToUse := workflowAgentLLMConfig(iwm.controller.presetPhaseLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-workflow-results-agent", 60, agents.OutputFormatStructured, llmConfigToUse)
 	// Isolate in a fresh tmp dir; don't project CLAUDE.md/.claude into the
@@ -10071,10 +10200,10 @@ func (iwm *InteractiveWorkshopManager) runReviewWorkflowTimingAgent(ctx context.
 	}
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, []string{})
 
-	if iwm.controller.presetPhaseLLM == nil || iwm.controller.presetPhaseLLM.Provider == "" {
+	llmConfigToUse := iwm.controller.selectMaintenanceLLM("review_workflow_timing agent")
+	if llmConfigToUse == nil {
 		return "", fmt.Errorf("no valid LLM configuration for review_workflow_timing agent")
 	}
-	llmConfigToUse := workflowAgentLLMConfig(iwm.controller.presetPhaseLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-workflow-timing-agent", 60, agents.OutputFormatStructured, llmConfigToUse)
 	// Isolate in a fresh tmp dir; don't project CLAUDE.md/.claude into the
@@ -10171,10 +10300,10 @@ func (iwm *InteractiveWorkshopManager) runReviewWorkflowCostsAgent(ctx context.C
 	}
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, []string{})
 
-	if iwm.controller.presetPhaseLLM == nil || iwm.controller.presetPhaseLLM.Provider == "" {
+	llmConfigToUse := iwm.controller.selectMaintenanceLLM("review_workflow_costs agent")
+	if llmConfigToUse == nil {
 		return "", fmt.Errorf("no valid LLM configuration for review_workflow_costs agent")
 	}
-	llmConfigToUse := workflowAgentLLMConfig(iwm.controller.presetPhaseLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-workflow-costs-agent", 60, agents.OutputFormatStructured, llmConfigToUse)
 	// Isolate in a fresh tmp dir; don't project CLAUDE.md/.claude into the
@@ -10340,10 +10469,10 @@ func (iwm *InteractiveWorkshopManager) runReviewStepCodeAgent(ctx context.Contex
 	}
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, []string{})
 
-	if iwm.controller.presetPhaseLLM == nil || iwm.controller.presetPhaseLLM.Provider == "" {
+	llmConfigToUse := iwm.controller.selectMaintenanceLLM("review_step_code agent")
+	if llmConfigToUse == nil {
 		return "", fmt.Errorf("no valid LLM configuration for review_step_code agent")
 	}
-	llmConfigToUse := workflowAgentLLMConfig(iwm.controller.presetPhaseLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-step-code-agent", 50, agents.OutputFormatStructured, llmConfigToUse)
 	// Isolate in a fresh tmp dir; don't project CLAUDE.md/.claude into the
@@ -10458,10 +10587,10 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 	writePaths := workshopWritePaths(workspacePath)
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 
-	if iwm.controller.presetPhaseLLM == nil || iwm.controller.presetPhaseLLM.Provider == "" {
+	llmConfigToUse := iwm.controller.selectMaintenanceLLM("harden_workflow agent")
+	if llmConfigToUse == nil {
 		return "", fmt.Errorf("no valid LLM configuration for harden_workflow agent")
 	}
-	llmConfigToUse := workflowAgentLLMConfig(iwm.controller.presetPhaseLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("harden-workflow-agent", 120, agents.OutputFormatStructured, llmConfigToUse)
 	// Isolate in a fresh tmp dir; don't project CLAUDE.md/.claude into the
@@ -10539,6 +10668,161 @@ When you finish, summarize what you did and any important findings.
 `)
 
 var backgroundTaskAgentUserTemplate = MustRegisterTemplate("backgroundTaskAgentUser", `{{.Instruction}}`)
+
+func buildGoalAdvisorStageHeader(pulseRunID, focus string) string {
+	var sb strings.Builder
+	if strings.TrimSpace(pulseRunID) != "" {
+		sb.WriteString("Pulse run id: ")
+		sb.WriteString(strings.TrimSpace(pulseRunID))
+		sb.WriteString("\n")
+	}
+	if strings.TrimSpace(focus) != "" {
+		sb.WriteString("Focus from Pulse Gate: ")
+		sb.WriteString(strings.TrimSpace(focus))
+		sb.WriteString("\n")
+	}
+	return strings.TrimSpace(sb.String())
+}
+
+func buildGoalAdvisorAdvisorInstruction(pulseRunID, focus string) string {
+	var sb strings.Builder
+	sb.WriteString("Goal Advisor pipeline stage 1/3: ADVISOR DRAFT.\n\n")
+	if header := buildGoalAdvisorStageHeader(pulseRunID, focus); header != "" {
+		sb.WriteString(header)
+		sb.WriteString("\n\n")
+	}
+	sb.WriteString(`
+Use ` + "`get_workflow_command_guidance(kind=\"goal-advisor\", focus=\"Pulse-selected Goal Advisor module; expert strategy advisor, not routine hardening\")`" + ` as the strategy playbook, but this stage is read-only.
+
+Read the workflow evidence yourself: builder/improve.html including the Pulse Gate/worklist, soul/soul.md, latest run/eval evidence, planning/changelog, report/dashboard evidence, answered human inputs in db/db.sqlite/report_human_inputs, and queued Chief of Staff recommendations (.cos-rec, especially data-status="queued_goal_advisor").
+
+Strict boundaries for this Advisor stage:
+- Do NOT call harden_workflow, improve_kb, improve_learnings, improve_db, mark_human_input_consumed, create_human_input_request, notify_user, backup, publish, or mark_pulse_module_result.
+- Do NOT modify plan/config/eval/report/HTML files.
+- Produce an evidence-backed draft only. The Critic and Finalizer stages decide what survives.
+
+Think like an expert operator in the workflow's domain: look for why goals are not moving, strategy assumptions the user missed, better measurement, new channels/approaches, or places where the plan is capped even when execution is clean.
+
+Return a concise structured draft with these sections:
+- Verdict: no_action | apply_approved_answer | propose_user_decision | log_advisor_idea | blocked.
+- Plain-language takeaway.
+- Goal alignment: cite the exact success criterion or objective.
+- Evidence used: concrete paths/run ids/report widgets/HTML cards.
+- Advisor hypothesis: what the current plan may be missing.
+- Recommended move: exact intended plan/config/eval/report edits if any.
+- Expected impact.
+- Risks, assumptions, and what could falsify this idea.
+- User decision needed: yes/no; if yes, proposed options approve/reject/defer with short descriptions.
+- Routine-maintenance deferrals: any bug/KB/DB/learning/report issue that should go to Pulse modules instead.
+`)
+	return strings.TrimSpace(sb.String())
+}
+
+func buildGoalAdvisorCriticInstruction(pulseRunID, focus, advisorOutput string) string {
+	var sb strings.Builder
+	sb.WriteString("Goal Advisor pipeline stage 2/3: INDEPENDENT CRITIC.\n\n")
+	if header := buildGoalAdvisorStageHeader(pulseRunID, focus); header != "" {
+		sb.WriteString(header)
+		sb.WriteString("\n\n")
+	}
+	sb.WriteString("Advisor draft to critique:\n\n")
+	sb.WriteString(advisorOutput)
+	sb.WriteString(`
+
+Your job is to challenge the Advisor draft before anything is logged, proposed, or applied.
+
+Strict boundaries for this Critic stage:
+- Read evidence yourself when needed; do not rely only on the Advisor's wording.
+- Do NOT call harden_workflow, improve_kb, improve_learnings, improve_db, mark_human_input_consumed, create_human_input_request, notify_user, backup, publish, or mark_pulse_module_result.
+- Do NOT modify plan/config/eval/report/HTML files.
+
+Critique against these checks:
+- Is the proposal aligned with soul/soul.md objective and success criteria?
+- Is every important claim backed by concrete run/eval/report/HTML/db evidence?
+- Is this really strategy/measurement work, or should routine Pulse harden/KB/DB/learning/report modules handle it?
+- Does it hallucinate unavailable data, user intent, external facts, costs, or success?
+- Are the intended edits specific enough to be applied safely later?
+- Does it introduce unacceptable risk, scope creep, or cost?
+- Does it need user approval, or is it only an observation?
+
+Return a structured critic verdict:
+- Verdict: approve | revise | reject | needs_user | no_action.
+- Critical objections.
+- Missing evidence.
+- What to remove or downgrade.
+- What the Finalizer is allowed to do.
+- What the Finalizer must not do.
+- If user approval is needed, the exact question/options that are safe to present.
+`)
+	return strings.TrimSpace(sb.String())
+}
+
+func buildGoalAdvisorFinalizerInstruction(pulseRunID, focus, advisorOutput, criticOutput string) string {
+	var sb strings.Builder
+	sb.WriteString("Goal Advisor pipeline stage 3/3: FINALIZER.\n\n")
+	if header := buildGoalAdvisorStageHeader(pulseRunID, focus); header != "" {
+		sb.WriteString(header)
+		sb.WriteString("\n\n")
+	}
+	sb.WriteString("Advisor draft:\n\n")
+	sb.WriteString(advisorOutput)
+	sb.WriteString("\n\nCritic verdict:\n\n")
+	sb.WriteString(criticOutput)
+	sb.WriteString(`
+
+You are the only stage allowed to make durable changes, and only within the critic-approved bounds.
+
+Follow this decision policy:
+- If the Critic verdict is reject or no_action: do not change the workflow. Add at most a short skipped/rejected note to builder/improve.html if useful.
+- If the Critic verdict is revise and the safe revision is obvious: log/propose only the narrowed version. Do not start a new advisor loop.
+- If an answered Goal Advisor proposal was already approved by the user and the Critic allows applying it: apply the approved change only with normal plan/config/eval/report tools, call mark_human_input_consumed with the concrete outcome, and remove or replace the matching visible question card in builder/improve.html with a short outcome.
+- If the proposal is new and material: do not change the plan. Create or refresh a create_human_input_request(source="goal_advisor", input_id="plan-proposal-...", options approve/reject/defer) with exact intended edits, rationale, expected impact, risk, and evidence.
+- If the idea is useful but not ready for a user decision: log it as a proposal-only Advisor idea in builder/improve.html with evidence and risk.
+
+Do not call harden_workflow, improve_kb, improve_learnings, or improve_db. Those are separate Pulse modules.
+Do not call mark_pulse_module_result; the parent Pulse turn records the module result after reading your completion.
+
+When writing builder/improve.html, show both:
+- Advisor proposal/takeaway.
+- Critic verdict/objections.
+
+Overwrite builder/card.progress.html with a compact progress card when useful.
+
+Finish with a concise summary: changed/applied/proposed/skipped/blocked, critic verdict, evidence paths, files touched, and any human input request ids created or consumed.
+`)
+	return strings.TrimSpace(sb.String())
+}
+
+func truncateGoalAdvisorStageOutput(value string) string {
+	const maxChars = 20_000
+	value = strings.TrimSpace(value)
+	if len(value) <= maxChars {
+		return value
+	}
+	half := maxChars / 2
+	return strings.TrimSpace(value[:half] + "\n\n... [Goal Advisor stage output truncated for next-stage review] ...\n\n" + value[len(value)-half:])
+}
+
+func (iwm *InteractiveWorkshopManager) runGoalAdvisorReviewPipeline(ctx context.Context, pulseRunID, focus string) (string, error) {
+	advisorResult, err := iwm.runBackgroundTaskAgent(ctx, "Goal Advisor - Advisor", buildGoalAdvisorAdvisorInstruction(pulseRunID, focus))
+	if err != nil {
+		return fmt.Sprintf("Goal Advisor advisor stage failed: %v", err), err
+	}
+
+	advisorForNextStage := truncateGoalAdvisorStageOutput(advisorResult)
+	criticResult, err := iwm.runBackgroundTaskAgent(ctx, "Goal Advisor - Critic", buildGoalAdvisorCriticInstruction(pulseRunID, focus, advisorForNextStage))
+	if err != nil {
+		return fmt.Sprintf("Goal Advisor critic stage failed: %v\n\nAdvisor draft:\n%s", err, advisorForNextStage), err
+	}
+
+	criticForNextStage := truncateGoalAdvisorStageOutput(criticResult)
+	finalizerResult, err := iwm.runBackgroundTaskAgent(ctx, "Goal Advisor - Finalizer", buildGoalAdvisorFinalizerInstruction(pulseRunID, focus, advisorForNextStage, criticForNextStage))
+	if err != nil {
+		return fmt.Sprintf("Goal Advisor finalizer stage failed: %v\n\nAdvisor draft:\n%s\n\nCritic verdict:\n%s", err, advisorForNextStage, criticForNextStage), err
+	}
+
+	return strings.TrimSpace(fmt.Sprintf("Goal Advisor pipeline complete.\n\n## Advisor draft\n%s\n\n## Critic verdict\n%s\n\n## Finalizer result\n%s", advisorResult, criticResult, finalizerResult)), nil
+}
 
 // WorkflowBackgroundTaskAgent is a standalone agent spawned by run_in_background
 type WorkflowBackgroundTaskAgent struct {
@@ -10664,14 +10948,12 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgent(ctx context.Contex
 	writePaths := workshopWritePaths(workspacePath)
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 
-	// --- LLM: use phase LLM (same tier as planning/analysis agents) ---
-	var llmConfigToUse *orchestrator.LLMConfig
-	if iwm.controller.presetPhaseLLM != nil && iwm.controller.presetPhaseLLM.Provider != "" && iwm.controller.presetPhaseLLM.ModelID != "" {
-		llmConfigToUse = workflowAgentLLMConfig(iwm.controller.presetPhaseLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
-	} else if iwm.presetLLM != nil && iwm.presetLLM.Provider != "" && iwm.presetLLM.ModelID != "" {
-		// Fallback to workshop builder LLM
+	// --- LLM: use the dedicated maintenance/advisor model when configured.
+	llmConfigToUse := iwm.controller.selectMaintenanceLLM("background task agent")
+	if llmConfigToUse == nil && iwm.presetLLM != nil && iwm.presetLLM.Provider != "" && iwm.presetLLM.ModelID != "" {
 		llmConfigToUse = workflowAgentLLMConfig(iwm.presetLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
-	} else {
+	}
+	if llmConfigToUse == nil {
 		return "", fmt.Errorf("no valid LLM configuration found for background task agent")
 	}
 

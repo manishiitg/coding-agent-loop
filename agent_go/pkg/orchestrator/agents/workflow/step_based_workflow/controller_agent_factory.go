@@ -1126,6 +1126,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectPhaseLLM(agentPurpose string) *
 	}
 }
 
+func (hcpo *StepBasedWorkflowOrchestrator) selectMaintenanceLLM(agentPurpose string) *orchestrator.LLMConfig {
+	if hcpo.presetMaintenanceLLM == nil || hcpo.presetMaintenanceLLM.Provider == "" || hcpo.presetMaintenanceLLM.ModelID == "" {
+		return hcpo.selectPhaseLLM(agentPurpose)
+	}
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using maintenance LLM for %s: %s/%s",
+		agentPurpose, hcpo.presetMaintenanceLLM.Provider, hcpo.presetMaintenanceLLM.ModelID))
+	return &orchestrator.LLMConfig{
+		Primary: orchestrator.LLMModel{
+			Provider: hcpo.presetMaintenanceLLM.Provider,
+			ModelID:  hcpo.presetMaintenanceLLM.ModelID,
+			Options:  hcpo.presetMaintenanceLLM.Options,
+		},
+		Fallbacks: convertAgentFallbacks(hcpo.presetMaintenanceLLM.Fallbacks),
+		APIKeys:   hcpo.GetAPIKeys(),
+	}
+}
+
 // createKBConsolidateAgent builds the one-shot KB consolidate agent. Same folder-guard
 // shape as KB update/reorganize: read execution folder + KB, write KB only. The read
 // path on executionWorkspacePath is what gives it access to ALL step output folders
@@ -1140,7 +1157,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createKBConsolidateAgent(ctx context.
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for KB consolidate agent - Read: %v, Write: %v", readPaths, writePaths))
 
-	llmConfig := hcpo.selectPhaseLLM("KB consolidate agent")
+	llmConfig := hcpo.selectMaintenanceLLM("KB consolidate agent")
 	if llmConfig == nil {
 		return nil, fmt.Errorf("no valid LLM configuration found for KB consolidate agent")
 	}
@@ -1199,7 +1216,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createKBReorganizeAgent(ctx context.C
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for KB reorganize agent - Read: %v, Write: %v", readPaths, writePaths))
 
-	llmConfig := hcpo.selectPhaseLLM("KB reorganize agent")
+	llmConfig := hcpo.selectMaintenanceLLM("KB reorganize agent")
 	if llmConfig == nil {
 		return nil, fmt.Errorf("no valid LLM configuration found for KB reorganize agent")
 	}

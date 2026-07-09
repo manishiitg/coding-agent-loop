@@ -463,6 +463,7 @@ type WorkshopConfig struct {
 	ToolCategories       map[string]string
 	LLMConfig            *orchestrator.LLMConfig
 	PresetPhaseLLM       *AgentLLMConfig
+	PresetMaintenanceLLM *AgentLLMConfig
 	UseKnowledgebase     bool
 	LockKnowledgebase    bool
 	LLMAllocationMode    string
@@ -522,6 +523,9 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 	if cfg.PresetPhaseLLM != nil {
 		logger.Info(fmt.Sprintf("[WORKSHOP] presetPhaseLLM=%s/%s", cfg.PresetPhaseLLM.Provider, cfg.PresetPhaseLLM.ModelID))
 	}
+	if cfg.PresetMaintenanceLLM != nil {
+		logger.Info(fmt.Sprintf("[WORKSHOP] presetMaintenanceLLM=%s/%s", cfg.PresetMaintenanceLLM.Provider, cfg.PresetMaintenanceLLM.ModelID))
+	}
 	if cfg.TieredConfig != nil {
 		logger.Info(fmt.Sprintf("[WORKSHOP] tiered: T1=%s T2=%s T3=%s",
 			formatTierAgentLLM(cfg.TieredConfig.Tier1),
@@ -558,6 +562,7 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 		cfg.CustomToolExecutors,
 		cfg.ToolCategories,
 		cfg.PresetPhaseLLM,
+		cfg.PresetMaintenanceLLM,
 		cfg.UseKnowledgebase,
 		cfg.TieredConfig,
 	)
@@ -705,10 +710,12 @@ func formatTierAgentLLM(cfg *AgentLLMConfig) string {
 // UpdatePresetLLMConfigs refreshes the controller's preset LLM configs.
 // Called when reusing a cached workshop session to pick up any LLM config changes
 // the user made in the workflow editor since the session was first created.
-func (s *WorkshopChatSession) UpdatePresetLLMConfigs(phaseLLM *AgentLLMConfig) {
+func (s *WorkshopChatSession) UpdatePresetLLMConfigs(phaseLLM *AgentLLMConfig, maintenanceLLM *AgentLLMConfig) {
 	s.controller.presetPhaseLLM = phaseLLM
+	s.controller.presetMaintenanceLLM = maintenanceLLM
 	if s.config != nil {
 		s.config.PresetPhaseLLM = phaseLLM
+		s.config.PresetMaintenanceLLM = maintenanceLLM
 	}
 }
 
@@ -1376,6 +1383,7 @@ func RegisterRunFullEvaluationTool(
 					cfg.CustomToolExecutors,
 					cfg.ToolCategories,
 					cfg.PresetPhaseLLM,
+					cfg.PresetMaintenanceLLM,
 					cfg.UseKnowledgebase,
 					cfg.TieredConfig,
 				)
@@ -1987,6 +1995,7 @@ func RegisterRunFullWorkflowTool(
 					cfg.CustomToolExecutors,
 					cfg.ToolCategories,
 					cfg.PresetPhaseLLM,
+					cfg.PresetMaintenanceLLM,
 					cfg.UseKnowledgebase,
 					cfg.TieredConfig,
 				)

@@ -537,7 +537,7 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "record_pulse_worklist",
-			Description: "Record the dynamic Pulse worklist for this run in the workflow's db/db.sqlite. Pulse Gate must call this exactly once after deciding which modules are due or skipped. The scheduler reads this table and only sends prompts for due modules.",
+			Description: "Record the dynamic Pulse worklist for this run in the workflow's db/db.sqlite. Pulse Gate must call this exactly once after deciding which modules are due or skipped. The decisions array must contain exactly one entry for each Pulse module: harden, artifact_review, report_health, learning_health, knowledgebase_health, db_health, cost_llm_time, and goal_advisor. The scheduler reads this table and only sends prompts for due modules.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

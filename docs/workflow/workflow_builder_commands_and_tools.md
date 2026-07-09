@@ -13,7 +13,7 @@ Workflow improvement has three layers:
 Optimizer actions are deliberately small in number:
 
 - `harden_workflow(group_name?, focus?)`: use when the workflow path is basically right, but prompts, config, validation, KB, learnings, db/report wiring, or eval coverage need repair. It should delete stale `learnings/{step-id}/main.py` for `code_exec` steps and only patch `main.py` for `learn_code`.
-- `replan_workflow_from_results(group_name?, focus?)`: use when run/eval evidence shows the workflow path is not aligned with `soul.md` success criteria. If replan keeps or converts a step to `code_exec`, it should remove stale `learnings/{step-id}/main.py` and clear `lock_code`.
+- Goal Advisor proposals: use when run/eval evidence shows the workflow path is not aligned with `soul.md` success criteria or the current strategy is capped. Scheduled Pulse starts this through `run_goal_advisor_review(...)`; material plan changes are proposed through `create_human_input_request(source="goal_advisor", ...)` and later applied with normal plan/config/eval/report tools only after approval.
 - Eval-plan improvement: use when eval coverage, scoring, structured output, or validation schema is weak enough that measurement cannot be trusted, or eval cost is out of proportion to run cost.
 
 ## Workshop Modes
@@ -80,7 +80,7 @@ improve-report
 | Execution | `execute_step`, `query_step`, `stop_step`, `stop_all_executions`, `list_executions`, `run_full_workflow`, `debug_step` |
 | Plan/config | `add_regular_step`, `add_routing_step`, `add_human_input_step`, `add_todo_task_step`, `update_*_step`, `delete_plan_steps`, `cleanup_orphan_step_configs`, `update_step_config`, `update_validation_schema` |
 | Review | `review_plan`, `review_artifact_sync`, `review_workflow_results`, `review_workflow_timing`, `review_workflow_costs` |
-| Optimizer | `harden_workflow`, `replan_workflow_from_results` |
+| Optimizer | `harden_workflow`, `run_goal_advisor_review`, Goal Advisor proposal cards |
 | Eval | `validate_evaluation_plan`, `run_full_evaluation` |
 | Reports | `get_report_plan`, `upsert_report_widget`, `move_report_widget`, `toggle_report_widget`, `remove_report_widget`, `set_report_theme`, `set_section_layout`, `validate_report_plan`, `preview_report_render` |
 | Schedules | `create_schedule`, `create_calendar_schedule`, `update_schedule`, `delete_schedule`, `trigger_schedule`, `get_schedule_runs` |

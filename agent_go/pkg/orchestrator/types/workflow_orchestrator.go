@@ -115,7 +115,8 @@ type WorkflowOrchestrator struct {
 	*orchestrator.BaseOrchestrator
 
 	// Preset-level agent defaults
-	presetPhaseLLM *step_based_workflow.AgentLLMConfig // Default for all phase agents
+	presetPhaseLLM       *step_based_workflow.AgentLLMConfig // Default for lightweight phase agents.
+	presetMaintenanceLLM *step_based_workflow.AgentLLMConfig // Default for expensive background maintenance/advisor agents.
 
 	// Preset-level feature toggles
 	useKnowledgebase  bool   // Whether to create and reference knowledgebase folder (default: true)
@@ -318,21 +319,33 @@ func NewWorkflowOrchestrator(
 
 	// Extract phase LLM from preset config
 	var presetPhaseLLM *step_based_workflow.AgentLLMConfig
+	var presetMaintenanceLLM *step_based_workflow.AgentLLMConfig
 	var resolvedCodingAgentTiered *workflowtypes.TieredLLMConfig
 	if presetLLMConfig != nil {
 		if phase, tiered, ok := workflowtypes.ResolveCodingAgentConfig(presetLLMConfig); ok {
 			presetPhaseLLM = convertDBAgentLLMConfig(phase)
 			resolvedCodingAgentTiered = tiered
+			if maintenance, ok := workflowtypes.ResolveCodingAgentAutoImproveConfig(presetLLMConfig); ok {
+				presetMaintenanceLLM = convertDBAgentLLMConfig(maintenance)
+			}
 			log.Printf("[CODING_AGENT_LLM] Resolved coding agent %s/%s dynamically", presetLLMConfig.Provider, presetLLMConfig.ModelID)
-		} else if presetLLMConfig.PhaseLLM != nil && presetLLMConfig.PhaseLLM.Provider != "" && presetLLMConfig.PhaseLLM.ModelID != "" {
-			presetPhaseLLM = convertDBAgentLLMConfig(presetLLMConfig.PhaseLLM)
-		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
-			// Fall back to legacy single default for phase agents
-			presetPhaseLLM = &step_based_workflow.AgentLLMConfig{
-				Provider: presetLLMConfig.Provider,
-				ModelID:  presetLLMConfig.ModelID,
+		} else {
+			if presetLLMConfig.AutoImproveLLM != nil && presetLLMConfig.AutoImproveLLM.Provider != "" && presetLLMConfig.AutoImproveLLM.ModelID != "" {
+				presetMaintenanceLLM = convertDBAgentLLMConfig(presetLLMConfig.AutoImproveLLM)
+			}
+			if presetLLMConfig.PhaseLLM != nil && presetLLMConfig.PhaseLLM.Provider != "" && presetLLMConfig.PhaseLLM.ModelID != "" {
+				presetPhaseLLM = convertDBAgentLLMConfig(presetLLMConfig.PhaseLLM)
+			} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
+				// Fall back to legacy single default for phase agents
+				presetPhaseLLM = &step_based_workflow.AgentLLMConfig{
+					Provider: presetLLMConfig.Provider,
+					ModelID:  presetLLMConfig.ModelID,
+				}
 			}
 		}
+	}
+	if presetMaintenanceLLM == nil {
+		presetMaintenanceLLM = presetPhaseLLM
 	}
 
 	// Extract tiered LLM allocation config
@@ -385,12 +398,13 @@ func NewWorkflowOrchestrator(
 
 	// Create workflow orchestrator instance
 	wo := &WorkflowOrchestrator{
-		BaseOrchestrator:  baseOrchestrator,
-		presetPhaseLLM:    presetPhaseLLM,
-		useKnowledgebase:  useKnowledgebase,
-		lockKnowledgebase: lockKnowledgebase,
-		kbShape:           kbShape,
-		tieredConfig:      tieredConfig,
+		BaseOrchestrator:     baseOrchestrator,
+		presetPhaseLLM:       presetPhaseLLM,
+		presetMaintenanceLLM: presetMaintenanceLLM,
+		useKnowledgebase:     useKnowledgebase,
+		lockKnowledgebase:    lockKnowledgebase,
+		kbShape:              kbShape,
+		tieredConfig:         tieredConfig,
 	}
 
 	return wo, nil
@@ -493,6 +507,7 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 		wo.WorkspaceToolExecutors,
 		wo.ToolCategories,
 		wo.presetPhaseLLM,
+		wo.presetMaintenanceLLM,
 		wo.useKnowledgebase, // Feature toggle for knowledgebase
 		wo.tieredConfig,     // Tiered LLM config
 	)
@@ -603,6 +618,7 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		wo.WorkspaceToolExecutors,
 		wo.ToolCategories,
 		wo.presetPhaseLLM,
+		wo.presetMaintenanceLLM,
 		wo.useKnowledgebase,
 		wo.tieredConfig,
 	)

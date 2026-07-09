@@ -428,6 +428,7 @@ func BuildSystemToolsSkill(mode string) *llmtypes.Skill {
 - ` + "`get_api_spec(server_name, tool_name)`" + ` — when you do not know an MCP tool's parameters or response shape, call this first.
 - ` + "`get_reference_doc(kind, focus?)`" + ` — system reference docs. Load the matching doc before any deep action (e.g. read ` + "`optimize-playbook`" + ` before ` + "`harden_workflow`" + `; read ` + "`code-authoring`" + ` before authoring ` + "`main.py`" + `; read ` + "`llm-selection`" + ` before ` + "`set_workflow_llm_config`" + `). Some tools refuse to run until their precondition doc has been loaded — the error will name the kind.
 - ` + "`get_workflow_command_guidance(kind, focus?)`" + ` — canonical procedural flows (improve-workflow, review-plan, goal-advisor, define-success, etc.). The returned text is your instructions for that turn; follow it verbatim.
+- ` + "`run_goal_advisor_review(pulse_run_id?, focus?)`" + ` — when available, spawn Goal Advisor as a dedicated background agent instead of doing expensive strategic review inline in the parent Pulse/workshop turn.
 
 ## Configuration access
 

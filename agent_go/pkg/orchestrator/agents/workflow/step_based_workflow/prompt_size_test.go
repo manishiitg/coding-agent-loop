@@ -147,12 +147,13 @@ func TestWorkshopModeIsMergedSuperset(t *testing.T) {
 		t.Errorf("workshop mode prompt should include the phase-detection directive")
 	}
 
-	// Should expose the optimizer-flavor tooling (harden/replan/eval). These
+	// Should expose the optimizer-flavor tooling (harden/advisor/eval). These
 	// are mentioned in the inline optimizer cheat sheet and through the
 	// pointer to optimize-playbook.
 	mustContain := []string{
 		"harden_workflow",
 		"create_human_input_request",
+		"run_goal_advisor_review",
 		`get_reference_doc(kind="optimize-playbook")`,
 	}
 	for _, s := range mustContain {

@@ -7375,6 +7375,7 @@ func (api *StreamingAPI) buildWorkshopConfig(
 				log.Printf("[WORKSHOP] LLMConfig details: allocationMode=%q tieredConfig=%v provider=%q modelID=%q",
 					llmCfg.LLMAllocationMode, llmCfg.TieredConfig != nil, llmCfg.Provider, llmCfg.ModelID)
 				cfg.PresetPhaseLLM, cfg.TieredConfig = workshopResolveLLMConfig(llmCfg)
+				cfg.PresetMaintenanceLLM = workshopResolveMaintenanceLLMConfig(llmCfg)
 
 				if llmCfg.UseKnowledgebase != nil {
 					cfg.UseKnowledgebase = *llmCfg.UseKnowledgebase
@@ -7408,8 +7409,8 @@ func (api *StreamingAPI) buildWorkshopConfig(
 					log.Printf("[WORKSHOP] Updated image tool executors (provider=%s model=%s)", imgCfg.Provider, imgCfg.ModelID)
 				}
 
-				log.Printf("[WORKSHOP] LLM config loaded: phase=%v tiered=%v kb=%v kbLock=%v",
-					cfg.PresetPhaseLLM != nil, cfg.TieredConfig != nil, cfg.UseKnowledgebase, cfg.LockKnowledgebase)
+				log.Printf("[WORKSHOP] LLM config loaded: phase=%v maintenance=%v tiered=%v kb=%v kbLock=%v",
+					cfg.PresetPhaseLLM != nil, cfg.PresetMaintenanceLLM != nil, cfg.TieredConfig != nil, cfg.UseKnowledgebase, cfg.LockKnowledgebase)
 			}
 		}
 	}
@@ -8955,6 +8956,19 @@ func workshopResolveLLMConfig(config *workflowtypes.PresetLLMConfig) (*todo_crea
 		tiered = workshopConvertTieredLLMConfig(config.TieredConfig)
 	}
 	return phase, tiered
+}
+
+func workshopResolveMaintenanceLLMConfig(config *workflowtypes.PresetLLMConfig) *todo_creation_human.AgentLLMConfig {
+	if config == nil {
+		return nil
+	}
+	if resolved, ok := workflowtypes.ResolveCodingAgentAutoImproveConfig(config); ok {
+		return workshopConvertAgentLLMConfig(resolved)
+	}
+	if config.AutoImproveLLM != nil && config.AutoImproveLLM.Provider != "" && config.AutoImproveLLM.ModelID != "" {
+		return workshopConvertAgentLLMConfig(config.AutoImproveLLM)
+	}
+	return nil
 }
 
 func workshopFormatAgentLLM(config *todo_creation_human.AgentLLMConfig) string {

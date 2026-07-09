@@ -82,7 +82,7 @@ interface RunCosts {
       evaluation: number
       knowledgebase: number   // kb_update / kb_reorganize / kb_consolidate
       routing: number         // conditional_evaluation / todo_task orchestration
-      workshop: number        // harden_workflow / review_step_code / replan_workflow_from_results
+      workshop: number        // harden_workflow / review_step_code / other workshop agents
       other: number
     }
     stepCosts: Array<{
@@ -219,7 +219,7 @@ const getRunFolderDisplayName = (runFolder: string) => {
 //   execution_only, success_learning, failure_learning,
 //   conditional_evaluation, todo_task, kb_update, kb_reorganize,
 //   kb_consolidate, harden_workflow, review_step_code,
-//   replan_workflow_from_results, evaluation_scoring.
+//   Goal Advisor proposal/application work, evaluation_scoring.
 type StageBucket = 'execution' | 'learning' | 'evaluation' | 'knowledgebase' | 'routing' | 'workshop' | 'other'
 const classifyPhase = (phase: string): StageBucket => {
   if (phase === 'execution_only') return 'execution'
@@ -227,7 +227,7 @@ const classifyPhase = (phase: string): StageBucket => {
   if (phase === 'evaluation_scoring' || phase.startsWith('evaluation')) return 'evaluation'
   if (phase.startsWith('kb_')) return 'knowledgebase'
   if (phase === 'conditional_evaluation' || phase === 'todo_task' || phase === 'routing' || phase.includes('routing')) return 'routing'
-  if (phase === 'harden_workflow' || phase === 'review_step_code' || phase === 'replan_workflow_from_results') return 'workshop'
+  if (phase === 'harden_workflow' || phase === 'review_step_code' || phase === 'goal_advisor' || phase === 'plan_change' || phase === 'replan_workflow_from_results') return 'workshop'
   return 'other'
 }
 
@@ -466,7 +466,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
         // (success_learning/failure_learning), controller_conditional.go (conditional_evaluation),
         // controller_todo_task.go (todo_task), controller_kb_update.go (kb_*),
         // interactive_workshop_manager.go (harden_workflow / review_step_code /
-        // replan_workflow_from_results), evaluation_scoring agents.
+        // Goal Advisor proposal/application work), evaluation_scoring agents.
         const stageBucket = classifyPhase(phase)
         stageCosts[stageBucket] += cost
 
@@ -1972,7 +1972,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                                                 else if (phase.includes('learning')) { phaseLabel = 'Learning' }
                                                 else if (phase.startsWith('kb_')) { phaseLabel = 'Knowledgebase' }
                                                 else if (phase === 'conditional_evaluation' || phase === 'todo_task') { phaseLabel = 'Routing' }
-                                                else if (phase === 'harden_workflow' || phase === 'review_step_code' || phase === 'replan_workflow_from_results') { phaseLabel = 'Workshop' }
+                                                else if (phase === 'harden_workflow' || phase === 'review_step_code' || phase === 'goal_advisor' || phase === 'plan_change' || phase === 'replan_workflow_from_results') { phaseLabel = 'Workshop' }
                                                 else if (phase === 'evaluation_scoring' || phase.startsWith('evaluation')) { phaseLabel = 'Evaluation' }
                                                 else { phaseLabel = phase }
 

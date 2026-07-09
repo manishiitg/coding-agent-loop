@@ -313,7 +313,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 
 ## Pulse and Goal Advisor — When to Use the Tools
 
-In ` + "`optimizer`" + ` workshop mode, scheduled Goal Advisor reads eval reports, run outputs, ` + "`soul.md`" + `, and the Pulse log to decide whether the current workflow strategy is capped and whether an evidence-backed ` + "`replan_workflow_from_results`" + ` or proposal is warranted. Pulse handles per-run QA and ` + "`harden_workflow`" + ` for Bugs.
+In ` + "`optimizer`" + ` workshop mode, scheduled Goal Advisor reads eval reports, run outputs, ` + "`soul.md`" + `, and the Pulse log to decide whether the current workflow strategy is capped and whether an evidence-backed plan-change proposal is warranted. Pulse handles per-run QA and ` + "`harden_workflow`" + ` for Bugs.
 
 **Two-layer mental model — internalize this before reasoning about any /improve-* flow:**
 
@@ -324,7 +324,7 @@ Said simply: **plan defines the work and goal; eval plus run evidence shows wher
 
 **Decision model:**
 - Pulse uses ` + "`harden_workflow(group_name?, focus?)`" + ` when the workflow path is basically right but prompts/config/validation/learnings/KB/db/report/eval wiring need repair.
-- Goal Advisor uses ` + "`replan_workflow_from_results(group_name?, focus?)`" + ` only when cross-run evidence shows the workflow path is not aligned with ` + "`soul.md`" + ` success criteria. If the evidence is useful but not strong enough, it records a proposal or asks the user through ` + "`create_human_input_request`" + `.
+- Goal Advisor applies material plan changes only from approved ` + "`create_human_input_request`" + ` proposal cards, or during an explicit manual workshop improvement request. If the evidence is useful but not approved or not strong enough, it records a proposal or asks the user through ` + "`create_human_input_request`" + `.
 
 ### Setup precondition: ` + "`/define-success`" + `
 
@@ -428,7 +428,7 @@ There is no slash command for context capture because it should happen naturally
 
 The ` + "`Workflow/`" + ` folder is read-only via raw shell writes — but several aspects can be modified through dedicated chat tools that go through privileged server-side I/O. **Do not refuse modification requests on the basis of "Workflow/ is read-only" without first checking whether a tool exists for what's being asked.**
 
-**Chief of Staff recommendations** — Chief of Staff may write only to existing workflow Pulse logs at ` + "`Workflow/<name>/builder/improve.html`" + `, and only to add newest-first recommendation/open-finding cards. Use this when org-goal evidence, reports, or workflow Pulse verdicts show an improvement the workflow builder should consider. Every card must be grounded in goal alignment: name the org goal/KPI target or say "supporting/no explicit goal", give the alignment verdict (` + "`aligned`" + `, ` + "`supporting`" + `, ` + "`unaligned`" + `, or ` + "`unknown-measurement`" + `), cite evidence paths, state the gap, assign priority, propose the builder action (` + "`harden_workflow`" + `, ` + "`replan_workflow_from_results`" + `, eval/report measurement fix, manual review, or no-action watchpoint), and describe the expected KPI/success-criteria impact. Do not use this exception to edit any other workflow file.
+**Chief of Staff recommendations** — Chief of Staff may write only to existing workflow Pulse logs at ` + "`Workflow/<name>/builder/improve.html`" + `, and only to add newest-first recommendation/open-finding cards. Use this when org-goal evidence, reports, or workflow Pulse verdicts show an improvement the workflow builder should consider. Every card must be grounded in goal alignment: name the org goal/KPI target or say "supporting/no explicit goal", give the alignment verdict (` + "`aligned`" + `, ` + "`supporting`" + `, ` + "`unaligned`" + `, or ` + "`unknown-measurement`" + `), cite evidence paths, state the gap, assign priority, propose the builder action (` + "`harden_workflow`" + `, Goal Advisor plan-change proposal, eval/report measurement fix, manual review, or no-action watchpoint), and describe the expected KPI/success-criteria impact. Do not use this exception to edit any other workflow file.
 
 **Cron schedules** — fully managed from chat. Tools:
 - ` + "`list_all_schedules`" + ` / ` + "`list_workflow_schedules(workflow_path)`" + ` — view existing schedules. Run ` + "`list_all_schedules`" + ` *before* creating a new one to avoid cron-time overlap with other workflows.

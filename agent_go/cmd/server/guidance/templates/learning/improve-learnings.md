@@ -49,6 +49,6 @@ ACTION
 
 `improve_learnings(mode="auto", instruction="<specific learning improvement instruction>", focus="<optional focus>")`
 
-3. The tool runs in the background and returns an `execution_id`. If you need the result before answering, use `query_step(execution_id="<id>")` until it completes.
+3. The tool runs in the background and returns an `execution_id`. If you need the result before answering, use `query_step(step_id="Skill Update", execution_id="<returned execution_id>")` until it completes.
 4. When complete, summarize files changed under `learnings/_global/`, duplicate/stale HOW knowledge removed, reference files created or reorganized, declared learning objectives that still lack matching content, and any follow-up review/harden work needed.
 5. If the improvement resolves an existing open finding in `builder/improve.html`, edit that finding's entry in place to add a `Resolved YYYY-MM-DD — <how>` line. If it is part of an optimizer/improvement pass, add a short entry to `builder/improve.html`; otherwise report in chat only.

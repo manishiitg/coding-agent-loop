@@ -4,7 +4,8 @@ Pulse runs after a scheduled workflow run. It is not a fixed checklist. It is a 
 
 1. **Gate / Worklist** — read the evidence, update `builder/improve.html`, and call `record_pulse_worklist`.
 2. **Selected modules only** — the scheduler runs the modules Gate marked `due`.
-3. **Final backup / publish / notify** — always run after Gate and any selected modules.
+3. **Dashboard / questions** — write org cards and durable human-input requests before backup/publish.
+4. **Final backup / publish / notify** — back up and publish the final artifacts, then send the summary.
 
 The durable state for module cadence lives in the workflow's `db/db.sqlite` table `pulse_module_state`. The visible user-facing state lives in `builder/improve.html`.
 
@@ -37,7 +38,9 @@ Gate writes a clear **Pulse Gate / Worklist** card in `builder/improve.html`:
 - Maintenance Radar: which lanes are quiet, watching, or due?
 - Module worklist: each module `due` or `skipped`, with a short plain-language reason and evidence.
 
-Gate does not call repair tools. It does not call `harden_workflow`, `improve_learnings`, `improve_kb`, `improve_db`, `replan_workflow_from_results`, backup, publish, or notify.
+Gate does not call repair tools. It does not call `harden_workflow`, `improve_learnings`, `improve_kb`, `improve_db`, plan modification tools, backup, publish, or notify.
+
+Gate must record exactly one decision for each module. A partial worklist is invalid because omitted modules would otherwise disappear silently.
 
 ## Module Decisions
 
@@ -138,7 +141,9 @@ Mark due when strategic judgment is needed:
 - enough new cross-run evidence exists for an expert out-of-plan critique
 - the workflow may need an eval/report measurement change to judge success correctly
 
-Goal Advisor is now a Pulse-selected module, not a separate recurring schedule. It thinks like an experienced operator. It may apply structural replan only on strong evidence; otherwise it logs proposal-only Advisor ideas or creates a human input request.
+Goal Advisor is now a Pulse-selected module, not a separate recurring schedule. Pulse should not do the expensive strategic review inline. When the Gate selects Goal Advisor, the parent Pulse turn should call `run_goal_advisor_review(...)`, capture the returned `execution_id`, wait with `query_step(step_id="goal-advisor", execution_id="<returned execution_id>")`, then record the module result.
+
+The background Goal Advisor thinks like an experienced operator. It may apply a structural plan change only when the user already approved a Goal Advisor proposal in `report_human_inputs`. New strategic changes must be logged as proposal-only Advisor ideas and, when a decision is needed, created with `create_human_input_request`.
 
 Goal Advisor does not do routine hardening, learning cleanup, KB cleanup, DB cleanup, or normal report repair. Those are separate Pulse modules.
 
@@ -148,11 +153,22 @@ If Pulse, Goal Advisor, or a module needs the user to decide something, create a
 
 `create_human_input_request(workspace_path="<current workflow>", source="pulse|goal_advisor", ...)`
 
-Do not ask only in email or raw chat. Show the request in `builder/improve.html`, but treat `db/db.sqlite` as the source of truth. When a later pass uses an answer, call `mark_human_input_consumed`.
+For Goal Advisor plan-change proposals, use the existing interaction shape instead of a separate tool or file:
+
+- `source="goal_advisor"`
+- `input_id="plan-proposal-<stable-slug>"`
+- options: `approve`, `reject`, and `defer`, each with a short title and description
+- `context`: proposal, exact intended plan/config/eval/report edits, rationale, expected impact, risk, and evidence paths
+
+On a later Pulse run, an approved proposal may be applied with normal plan/config/eval/report tools and then marked consumed with `mark_human_input_consumed`. Rejected or deferred proposals should be recorded and consumed, not silently retried. After consuming an answer, remove the matching visible question card from `builder/improve.html` or replace it with a short outcome Decision/Note; do not leave a consumed answer displayed as an active question.
+
+Do not ask only in email or raw chat. Show the request in `builder/improve.html`, but treat `db/db.sqlite` as the source of truth. When a later pass uses an answer, call `mark_human_input_consumed` and clear the visible question from the Pulse HTML.
 
 ## Notifications
 
 Pulse sends one summary every run unless the user's `soul/soul.md ## Notifications` section explicitly says not to notify.
+
+The dashboard/questions turn runs before backup and publish. It writes `builder/card.health.html`, creates any needed `report_human_inputs` rows, and keeps `builder/improve.html` aligned with those asks. The notify turn runs after publish and should mainly deliver the already-recorded state.
 
 The notify turn should include:
 

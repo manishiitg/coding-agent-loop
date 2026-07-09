@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -21,6 +22,17 @@ const (
 	pulseModuleCostLLMTime         = "cost_llm_time"
 	pulseModuleGoalAdvisor         = "goal_advisor"
 )
+
+var pulseModuleOrder = []string{
+	pulseModuleHarden,
+	pulseModuleArtifactReview,
+	pulseModuleReportHealth,
+	pulseModuleLearningHealth,
+	pulseModuleKnowledgebaseHealth,
+	pulseModuleDBHealth,
+	pulseModuleCostLLMTime,
+	pulseModuleGoalAdvisor,
+}
 
 var validPulseModules = map[string]bool{
 	pulseModuleHarden:              true,
@@ -41,6 +53,9 @@ const pulseModuleStateSchema = `CREATE TABLE IF NOT EXISTS pulse_module_state (
 	last_ran_at TEXT NOT NULL DEFAULT '',
 	last_decision TEXT NOT NULL DEFAULT '',
 	last_reason TEXT NOT NULL DEFAULT '',
+	last_gate_decision TEXT NOT NULL DEFAULT '',
+	last_result TEXT NOT NULL DEFAULT '',
+	last_result_reason TEXT NOT NULL DEFAULT '',
 	next_check_at TEXT NOT NULL DEFAULT '',
 	next_check_after_run_id TEXT NOT NULL DEFAULT '',
 	cooldown_runs INTEGER NOT NULL DEFAULT 0,
@@ -57,6 +72,9 @@ type PulseModuleState struct {
 	LastRanAt           string   `json:"last_ran_at,omitempty"`
 	LastDecision        string   `json:"last_decision,omitempty"`
 	LastReason          string   `json:"last_reason,omitempty"`
+	LastGateDecision    string   `json:"last_gate_decision,omitempty"`
+	LastResult          string   `json:"last_result,omitempty"`
+	LastResultReason    string   `json:"last_result_reason,omitempty"`
 	NextCheckAt         string   `json:"next_check_at,omitempty"`
 	NextCheckAfterRunID string   `json:"next_check_after_run_id,omitempty"`
 	CooldownRuns        int      `json:"cooldown_runs,omitempty"`
@@ -80,6 +98,16 @@ func ensurePulseModuleStateSchema(ctx context.Context, db *sql.DB) error {
 	}
 	stmts := []string{
 		pulseModuleStateSchema,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	if err := ensurePulseModuleStateColumns(ctx, db); err != nil {
+		return err
+	}
+	stmts = []string{
 		`CREATE INDEX IF NOT EXISTS idx_pulse_module_state_run ON pulse_module_state(last_pulse_run_id, last_decision)`,
 	}
 	for _, stmt := range stmts {
@@ -142,11 +170,15 @@ func migratePulseModuleStateSchema(ctx context.Context, db *sql.DB) error {
 	}
 	insert := fmt.Sprintf(`INSERT OR REPLACE INTO pulse_module_state (
 			workspace_path, module, last_pulse_run_id, last_checked_at, last_ran_at,
-			last_decision, last_reason, next_check_at, next_check_after_run_id,
-			cooldown_runs, evidence_json, updated_at
+			last_decision, last_reason, last_gate_decision, last_result, last_result_reason,
+			next_check_at, next_check_after_run_id, cooldown_runs, evidence_json, updated_at
 		)
 		SELECT workspace_path, module, last_pulse_run_id, last_checked_at, last_ran_at,
-			last_decision, last_reason, next_check_at, next_check_after_run_id,
+			last_decision, last_reason,
+			CASE WHEN last_decision IN ('due', 'skipped') THEN last_decision ELSE '' END,
+			CASE WHEN last_decision IN ('done', 'changed', 'blocked', 'failed') THEN last_decision ELSE '' END,
+			CASE WHEN last_decision IN ('done', 'changed', 'blocked', 'failed') THEN last_reason ELSE '' END,
+			next_check_at, next_check_after_run_id,
 			cooldown_runs, evidence_json, updated_at
 		FROM %s`, legacyTable)
 	if _, err := tx.ExecContext(ctx, insert); err != nil {
@@ -156,6 +188,36 @@ func migratePulseModuleStateSchema(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func ensurePulseModuleStateColumns(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx, `PRAGMA table_info(pulse_module_state)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	cols := map[string]bool{}
+	for rows.Next() {
+		var cid, notNull, pkIndex int
+		var name, colType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &defaultValue, &pkIndex); err != nil {
+			return err
+		}
+		cols[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, col := range []string{"last_gate_decision", "last_result", "last_result_reason"} {
+		if cols[col] {
+			continue
+		}
+		if _, err := db.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE pulse_module_state ADD COLUMN %s TEXT NOT NULL DEFAULT ''`, col)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func openPulseModuleStateDB(ctx context.Context, workspacePath string, create bool) (string, *sql.DB, error) {
@@ -177,8 +239,8 @@ func recordPulseWorklist(ctx context.Context, workspacePath, pulseRunID string, 
 	if pulseRunID == "" {
 		return nil, fmt.Errorf("pulse_run_id is required")
 	}
-	if len(decisions) == 0 {
-		return nil, fmt.Errorf("decisions are required")
+	if err := validatePulseWorklistDecisions(decisions); err != nil {
+		return nil, err
 	}
 	normalized, db, err := openPulseModuleStateDB(ctx, workspacePath, true)
 	if err != nil {
@@ -210,6 +272,7 @@ func recordPulseWorklist(ctx context.Context, workspacePath, pulseRunID string, 
 			LastCheckedAt:       now,
 			LastDecision:        lastDecision,
 			LastReason:          reason,
+			LastGateDecision:    lastDecision,
 			NextCheckAt:         strings.TrimSpace(decision.NextCheckAt),
 			NextCheckAfterRunID: strings.TrimSpace(decision.NextCheckAfterRunID),
 			CooldownRuns:        decision.CooldownRuns,
@@ -218,20 +281,25 @@ func recordPulseWorklist(ctx context.Context, workspacePath, pulseRunID string, 
 		}
 		_, err := db.ExecContext(ctx, `INSERT INTO pulse_module_state (
 				module, workspace_path, last_pulse_run_id, last_checked_at, last_decision,
-				last_reason, next_check_at, next_check_after_run_id, cooldown_runs,
+				last_reason, last_gate_decision, last_result, last_result_reason,
+				next_check_at, next_check_after_run_id, cooldown_runs,
 				evidence_json, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?)
 			ON CONFLICT(workspace_path, module) DO UPDATE SET
 				last_pulse_run_id=excluded.last_pulse_run_id,
 				last_checked_at=excluded.last_checked_at,
 				last_decision=excluded.last_decision,
 				last_reason=excluded.last_reason,
+				last_gate_decision=excluded.last_gate_decision,
+				last_result='',
+				last_result_reason='',
 				next_check_at=excluded.next_check_at,
 				next_check_after_run_id=excluded.next_check_after_run_id,
 				cooldown_runs=excluded.cooldown_runs,
 				evidence_json=excluded.evidence_json,
 				updated_at=excluded.updated_at`,
 			module, normalized, pulseRunID, now, lastDecision, reason,
+			lastDecision,
 			state.NextCheckAt, state.NextCheckAfterRunID, state.CooldownRuns,
 			string(evidenceJSON), now,
 		)
@@ -241,6 +309,47 @@ func recordPulseWorklist(ctx context.Context, workspacePath, pulseRunID string, 
 		states = append(states, state)
 	}
 	return states, nil
+}
+
+func validatePulseWorklistDecisions(decisions []PulseWorklistDecision) error {
+	if len(decisions) == 0 {
+		return fmt.Errorf("decisions are required")
+	}
+	if len(decisions) != len(pulseModuleOrder) {
+		return fmt.Errorf("decisions must include exactly one entry for each Pulse module; got %d want %d", len(decisions), len(pulseModuleOrder))
+	}
+	seen := map[string]bool{}
+	for _, decision := range decisions {
+		module := normalizePulseModule(decision.Module)
+		if !validPulseModules[module] {
+			return fmt.Errorf("module %q is not valid", decision.Module)
+		}
+		if seen[module] {
+			return fmt.Errorf("module %q appears more than once", module)
+		}
+		seen[module] = true
+		if strings.TrimSpace(decision.Reason) == "" {
+			return fmt.Errorf("reason is required for module %q", module)
+		}
+	}
+	for _, module := range pulseModuleOrder {
+		if !seen[module] {
+			return fmt.Errorf("decisions missing required module %q", module)
+		}
+	}
+	return nil
+}
+
+func pulseWorklistIsComplete(worklist map[string]PulseModuleState) bool {
+	if len(worklist) != len(pulseModuleOrder) {
+		return false
+	}
+	for _, module := range pulseModuleOrder {
+		if _, ok := worklist[module]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func markPulseModuleResult(ctx context.Context, workspacePath, module, pulseRunID, result, reason string, evidence []string) (*PulseModuleState, error) {
@@ -277,13 +386,13 @@ func markPulseModuleResult(ctx context.Context, workspacePath, module, pulseRunI
 	evidenceJSON, _ := json.Marshal(evidence)
 	_, err = db.ExecContext(ctx, `INSERT INTO pulse_module_state (
 			module, workspace_path, last_pulse_run_id, last_checked_at, last_ran_at,
-			last_decision, last_reason, evidence_json, updated_at
+			last_result, last_result_reason, evidence_json, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(workspace_path, module) DO UPDATE SET
 			last_pulse_run_id=excluded.last_pulse_run_id,
 			last_ran_at=excluded.last_ran_at,
-			last_decision=excluded.last_decision,
-			last_reason=excluded.last_reason,
+			last_result=excluded.last_result,
+			last_result_reason=excluded.last_result_reason,
 			evidence_json=excluded.evidence_json,
 			updated_at=excluded.updated_at`,
 		module, normalized, pulseRunID, now, now, result, reason, string(evidenceJSON), now,
@@ -311,7 +420,8 @@ func getPulseModuleStates(ctx context.Context, workspacePath string) ([]PulseMod
 		return nil, err
 	}
 	rows, err := db.QueryContext(ctx, `SELECT module, workspace_path, last_pulse_run_id, last_checked_at, last_ran_at,
-		last_decision, last_reason, next_check_at, next_check_after_run_id, cooldown_runs, evidence_json, updated_at
+		last_decision, last_reason, last_gate_decision, last_result, last_result_reason,
+		next_check_at, next_check_after_run_id, cooldown_runs, evidence_json, updated_at
 		FROM pulse_module_state WHERE workspace_path = ? ORDER BY module`, normalized)
 	if err != nil {
 		return nil, err
@@ -328,6 +438,23 @@ func getPulseModuleStates(ctx context.Context, workspacePath string) ([]PulseMod
 	return states, rows.Err()
 }
 
+func (api *StreamingAPI) handleGetPulseModuleState(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	states, err := getPulseModuleStates(r.Context(), r.URL.Query().Get("workspace_path"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"modules": states,
+	})
+}
+
 func getPulseWorklistForRun(ctx context.Context, workspacePath, pulseRunID string) (map[string]PulseModuleState, bool, error) {
 	normalized, db, err := openPulseModuleStateDB(ctx, workspacePath, false)
 	if err != nil {
@@ -341,7 +468,8 @@ func getPulseWorklistForRun(ctx context.Context, workspacePath, pulseRunID strin
 		return nil, false, err
 	}
 	rows, err := db.QueryContext(ctx, `SELECT module, workspace_path, last_pulse_run_id, last_checked_at, last_ran_at,
-		last_decision, last_reason, next_check_at, next_check_after_run_id, cooldown_runs, evidence_json, updated_at
+		last_decision, last_reason, last_gate_decision, last_result, last_result_reason,
+		next_check_at, next_check_after_run_id, cooldown_runs, evidence_json, updated_at
 		FROM pulse_module_state WHERE workspace_path = ? AND last_pulse_run_id = ?`, normalized, strings.TrimSpace(pulseRunID))
 	if err != nil {
 		return nil, false, err
@@ -367,7 +495,8 @@ type pulseModuleScanner interface {
 
 func getPulseModuleStateByModule(ctx context.Context, db *sql.DB, workspacePath, module string) (*PulseModuleState, error) {
 	row := db.QueryRowContext(ctx, `SELECT module, workspace_path, last_pulse_run_id, last_checked_at, last_ran_at,
-		last_decision, last_reason, next_check_at, next_check_after_run_id, cooldown_runs, evidence_json, updated_at
+		last_decision, last_reason, last_gate_decision, last_result, last_result_reason,
+		next_check_at, next_check_after_run_id, cooldown_runs, evidence_json, updated_at
 		FROM pulse_module_state WHERE workspace_path = ? AND module = ?`, workspacePath, module)
 	return scanPulseModuleState(row)
 }
@@ -376,9 +505,13 @@ func scanPulseModuleState(row pulseModuleScanner) (*PulseModuleState, error) {
 	var state PulseModuleState
 	var evidenceJSON string
 	if err := row.Scan(&state.Module, &state.WorkspacePath, &state.LastPulseRunID, &state.LastCheckedAt, &state.LastRanAt,
-		&state.LastDecision, &state.LastReason, &state.NextCheckAt, &state.NextCheckAfterRunID, &state.CooldownRuns,
+		&state.LastDecision, &state.LastReason, &state.LastGateDecision, &state.LastResult, &state.LastResultReason,
+		&state.NextCheckAt, &state.NextCheckAfterRunID, &state.CooldownRuns,
 		&evidenceJSON, &state.UpdatedAt); err != nil {
 		return nil, err
+	}
+	if state.LastGateDecision == "" {
+		state.LastGateDecision = state.LastDecision
 	}
 	if strings.TrimSpace(evidenceJSON) != "" {
 		_ = json.Unmarshal([]byte(evidenceJSON), &state.Evidence)
@@ -404,7 +537,7 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "record_pulse_worklist",
-			Description: "Record the dynamic Pulse worklist for this run in the workflow's db/db.sqlite. Pulse Gate must call this exactly once after deciding which modules are due or skipped. The scheduler reads this table and only sends prompts for due modules.",
+			Description: "Record the dynamic Pulse worklist for this run in the workflow's db/db.sqlite. Pulse Gate must call this exactly once after deciding which modules are due or skipped. The decisions array must contain exactly one entry for each Pulse module: harden, artifact_review, report_health, learning_health, knowledgebase_health, db_health, cost_llm_time, and goal_advisor. The scheduler reads this table and only sends prompts for due modules.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

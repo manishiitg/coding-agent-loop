@@ -804,8 +804,16 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     return new Set(activeSessionsCache.map(s => s.session_id))
   }, [activeSessionsCache])
   const restoredSessionTerminals = sessionTerminals?.terminals || []
+  // A tab observing a specific scheduled/bot run is a read-only view of THAT
+  // run, never a fresh chat. The chat-surface resolver keeps such tabs in
+  // restoring (while events load) or active (once present) and never lets them
+  // bounce to the previous-chats landing panel (the "schedule-bounce" fix).
+  const isReadOnlyRunView =
+    !!activeTab?.metadata?.isScheduledRun || !!activeTab?.metadata?.isBotRun
+  const readOnlyRunHasTerminal =
+    isReadOnlyRunView && selectedModeCategory === 'workflow' && restoredSessionTerminals.length > 0
   const restoredSessionHasTerminal =
-    activeTabHasRestoredConversation && restoredSessionTerminals.length > 0
+    (activeTabHasRestoredConversation || readOnlyRunHasTerminal) && restoredSessionTerminals.length > 0
   // Any recognized "this resumed tab is live" signal: execution-tree activity OR
   // a live terminal pane. Feeds the resolver's active-over-landing decision.
   const hasRestoredLiveContent = restoredSessionHasExecutionContent || restoredSessionHasTerminal
@@ -864,13 +872,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     !hasConversationContent &&
     !activeTabStreaming &&
     !resumeGaveUp
-  // A tab observing a specific scheduled/bot run is a read-only view of THAT
-  // run, never a fresh chat. The chat-surface resolver keeps such tabs in
-  // restoring (while events load) or active (once present) and never lets them
-  // bounce to the previous-chats landing panel (the "schedule-bounce" fix).
-  const isReadOnlyRunView =
-    !!activeTab?.metadata?.isScheduledRun || !!activeTab?.metadata?.isBotRun
-
   // Resume a previous chat from the landing "Previous chats" panel. The same
   // resume path is used anywhere else that needs to restore a multi-agent chat.
   const handleResumePreviousChat = useResumePreviousChat()

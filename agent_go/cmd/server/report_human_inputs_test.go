@@ -71,7 +71,7 @@ func TestReportHumanInputsUseWorkflowLocalDB(t *testing.T) {
 	}
 
 	contextBlock := formatAnsweredReportHumanInputsForAgent(ctx, workspacePath)
-	if !strings.Contains(contextBlock, "choose-cadence") || !strings.Contains(contextBlock, "option=daily") {
+	if !strings.Contains(contextBlock, "choose-cadence") || !strings.Contains(contextBlock, "option=daily") || !strings.Contains(contextBlock, "The workflow missed the goal three times.") {
 		t.Fatalf("answered context missing answer details:\n%s", contextBlock)
 	}
 
@@ -87,6 +87,51 @@ func TestReportHumanInputsUseWorkflowLocalDB(t *testing.T) {
 	}
 	if block := formatAnsweredReportHumanInputsForAgent(ctx, workspacePath); block != "" {
 		t.Fatalf("consumed answer should not be re-injected, got:\n%s", block)
+	}
+}
+
+func TestAnsweredGoalAdvisorPlanProposalCarriesContext(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+	workspacePath := "Workflow/proposal"
+	proposalContext := "Proposal: add a validation step before delivery. Exact edits: add regular step validate-offer after draft-offer; update delivery dependency. Rationale: two clean runs still sent weak offers. Expected impact: fewer off-goal deliveries. Risk: extra runtime. Evidence: runs/iteration-0/group-1/evaluation_report.json"
+
+	_, err := createReportHumanInput(ctx, workspacePath, ReportHumanInputCreateRequest{
+		InputID:  "plan-proposal-validate-offer",
+		Source:   "goal_advisor",
+		Priority: "high",
+		Question: "Approve adding an offer-validation step?",
+		Context:  proposalContext,
+		Evidence: "runs/iteration-0/group-1/evaluation_report.json",
+		Options: []ReportHumanInputOption{
+			{ID: "approve", Title: "Approve", Description: "Apply this plan change in the next Pulse pass."},
+			{ID: "reject", Title: "Reject", Description: "Keep the current plan."},
+			{ID: "defer", Title: "Defer", Description: "Wait for more evidence."},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create proposal: %v", err)
+	}
+	_, err = answerReportHumanInput(ctx, workspacePath, "plan-proposal-validate-offer", ReportHumanInputAnswerRequest{
+		SelectedOptionID: "approve",
+		AnsweredBy:       "user",
+	})
+	if err != nil {
+		t.Fatalf("answer proposal: %v", err)
+	}
+
+	contextBlock := formatAnsweredReportHumanInputsForAgent(ctx, workspacePath)
+	for _, want := range []string{
+		"plan-proposal-validate-offer",
+		"option=approve",
+		"add regular step validate-offer",
+		"apply it only with normal plan modification/config/eval/report tools",
+		"mark_human_input_consumed",
+	} {
+		if !strings.Contains(contextBlock, want) {
+			t.Fatalf("answered proposal context missing %q:\n%s", want, contextBlock)
+		}
 	}
 }
 

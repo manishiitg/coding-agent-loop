@@ -30,7 +30,9 @@ similar scheduled work.
   `create_human_input_request(workspace_path="<workflow path>", source="chief_of_staff", ...)`
   and mention the request id in `pulse/task.html`. Do not store answers in this HTML page; the
   source of truth is that workflow's `db/db.sqlite` table `report_human_inputs`, and the user
-  answers in the Runloop report/Pulse panel.
+  answers in the Runloop report/Pulse panel. When a later pass uses the answer, it must call
+  `mark_human_input_consumed` and remove or replace the matching visible question card in the
+  workflow's Pulse HTML with a short outcome.
 
 ### What Each Entry Must Capture
 

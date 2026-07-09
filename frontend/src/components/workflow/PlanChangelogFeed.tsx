@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { Loader2, GitCommitVertical, RefreshCw, Trash2 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { PlanChangelogEntry, PlanChangelogFieldChange } from '../../services/api-types'
-import { WORKFLOW_LOG_REFRESH_EVENT } from './LogViewer'
+import { WORKFLOW_LOG_REFRESH_EVENT } from './workflowEvents'
 
 interface PlanChangelogFeedProps {
   workspacePath: string

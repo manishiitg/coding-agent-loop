@@ -56,7 +56,7 @@ A good eval catches a bad run — including one that *looks* successful. Design 
 - **Route-gate** with `applies_to_routes` so an eval only runs for the path the target run actually took.
 - **Cheap checks first.** Presence / format / SQL gates before any expensive model judgment.
 - **Independence.** Don't reuse the same reasoning that produced the data to also judge it.
-- **Actionable failure.** Emit *why* it failed and *what's missing*, so `harden_workflow` / `replan_workflow_from_results` can act — not just a number.
+- **Actionable failure.** Emit *why* it failed and *what's missing*, so `harden_workflow`, report/eval repair, or a Goal Advisor plan-change proposal can act — not just a number.
 
 ### When to write/update evaluation/evaluation_plan.json
 

@@ -147,8 +147,8 @@ model (as wired):
   `builder/card.health.html` (Pulse loop) + `builder/card.cost.html` (Pulse report step) +
   `builder/card.progress.html` (Auto-improve loop). Perfect ownership, no shared dir, no
   cross-workspace writes.
-- **No new tool.** The loops already have `update_workspace_file` (they write
-  `improve.html` with it). The card contract is inlined in the loop step prompts in
+- **No new tool.** The loops already have workspace write access through
+  `diff_patch_workspace_file` / shell-backed writes. The card contract is inlined in the loop step prompts in
   `cmd/server/scheduler.go`: Pulse `postRunMonitorSteps()` STEP 8 (notify/final
   summary) writes `card.health.html` after triage, harden, artifact review,
   cost/time, backup, and publish are known; Pulse STEP 4 (LLM/cost/time report)

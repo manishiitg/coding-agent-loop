@@ -1,7 +1,7 @@
 ## Workshop Mode — Core Operating Flow
 
 Workshop mode is for **designing, running, evaluating, hardening, and
-replanning** a workflow as a single mode. The agent picks the right
+evolving** a workflow as a single mode. The agent picks the right
 action from workspace state — phase-detection directives at the top of
 the system prompt determine whether the workflow is in DESIGN /
 STABILIZE / HARDEN+IMPROVE phase. Make existing steps reliable across
@@ -26,21 +26,20 @@ and build on previous progress.
 Also read `builder/improve.html` before improvement decisions. Chief of Staff
 recommendation cards in that log are external open findings: verify their
 evidence against current runs/eval/soul.md, then choose the normal builder
-path (`harden_workflow`, `replan_workflow_from_results`, targeted config/plan
+path (`harden_workflow`, Goal Advisor proposal/approved plan change, targeted config/plan
 tool, or no action with rationale).
 
 ## The core optimization loop: run → eval → classify → act → verify
 
-Treat **harden, replan, eval improvement, and
+Treat **harden, plan-change proposal/application, eval improvement, and
 no-action/blocker** as peer outcomes. Classify the evidence first, then
 choose the action whose scope matches the failure.
 
 - Choose `harden_workflow` when the workflow path is basically right
   but reliability, validation, artifact shape, eval wiring,
   KB/db/report contracts, or local step behavior is broken.
-- Choose `replan_workflow_from_results` when run/eval evidence or
-  success criteria show a strategy/path gap that local repair is
-  unlikely to close.
+- Choose a Goal Advisor plan-change proposal/application when run/eval evidence or
+  success criteria show a strategy/path gap that local repair is unlikely to close.
 
 ### harden_workflow
 
@@ -92,10 +91,10 @@ the next group runs:
       `group_name`, or `run_full_workflow` with a single group).
    b. Run evaluation for this group's `iteration-0` results with
       `run_full_evaluation(group_name="...")`.
-   c. Classify the failure. For local reliability/contract failures,
+  c. Classify the failure. For local reliability/contract failures,
       run `harden_workflow(group_name="...")`. For strategy/path,
-      or measurement failures, use `replan_workflow_from_results` or
-      eval tools.
+      create/apply a Goal Advisor plan-change proposal as appropriate; for
+      measurement failures, use eval tools.
 3. After all groups have run: summarize overall scores and remaining
    issues.
 4. If any groups still failing: repeat the loop (max 2 full iterations
@@ -108,12 +107,14 @@ validation/extraction step, remove an obsolete step, split/merge a
 clearly broken boundary), `harden_workflow` may use the plan
 modification tools directly.
 
-Use `replan_workflow_from_results` when run/eval evidence shows
-the workflow path itself is misaligned with the objective or success
-criteria — for example, it is doing the wrong business work, collecting
-the wrong evidence, optimizing the wrong artifact, or producing outputs
-that local hardening has not made capable of satisfying a success
-criterion.
+Use a Goal Advisor plan-change proposal/application when run/eval
+evidence shows the workflow path itself is misaligned with the objective
+or success criteria — for example, it is doing the wrong business work,
+collecting the wrong evidence, optimizing the wrong artifact, or
+producing outputs that local hardening has not made capable of satisfying
+a success criterion. Scheduled Pulse/Goal Advisor must create an approval
+card first; active manual workshop chat may apply a bounded plan change
+when the user is asking for improvement and the evidence is strong.
 
 ## When to redirect to another mode
 

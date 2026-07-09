@@ -36,8 +36,8 @@ func getToolNamesByCategory(category string) map[string]bool {
 }
 
 // ConvertOldFormatToNewFormat converts old format (categories + tools) to new unified format
-// Old: enabledCategories=["workspace_tools"], enabledTools=["read_workspace_file"]
-// New: ["workspace_tools:*", "workspace_tools:read_workspace_file"]
+// Old: enabledCategories=["workspace_tools"], enabledTools=["execute_shell_command"]
+// New: ["workspace_tools:*", "workspace_tools:execute_shell_command"]
 //
 // If enabledTools already contains entries with ":" (new format), returns them as-is
 func ConvertOldFormatToNewFormat(enabledCategories []string, enabledTools []string) []string {
@@ -83,7 +83,7 @@ func ConvertOldFormatToNewFormat(enabledCategories []string, enabledTools []stri
 // FilterCustomToolsByCategory filters custom tools and executors based on enabled tools
 // Format: single array with entries like "category:tool" or "category:*"
 //   - "workspace_tools:*" → all tools from CreateWorkspaceToolExecutors()
-//   - "workspace_tools:read_workspace_file" → specific tool
+//   - "workspace_tools:execute_shell_command" → specific tool
 //   - "human_tools:*" → all tools from CreateHumanToolExecutors()
 //   - "human_tools:human_feedback" → specific blocking tool
 //   - "human_tools:notify_user" → specific non-blocking bot notification tool

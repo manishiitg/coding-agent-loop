@@ -4,9 +4,8 @@ import { agentApi } from '../../services/api'
 import { HtmlRenderer } from '../ui/HtmlRenderer'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 import { useTheme } from '../../hooks/useTheme'
-
-// Fired by the preview-pane controls' refresh button when the Log view is active.
-export const WORKFLOW_LOG_REFRESH_EVENT = 'workflow-log-refresh'
+import { ReportHumanInputPanel } from './ReportHumanInputPanel'
+import { WORKFLOW_LOG_REFRESH_EVENT } from './workflowEvents'
 
 // The log renders in an isolated iframe, so it can't inherit the app's theme.
 // We push the app's light/dark choice into the log content: a full <!doctype>
@@ -154,14 +153,17 @@ export function LogViewer({ workspacePath }: LogViewerProps) {
 
   if (exists === false || !content.trim()) {
     return (
-      <div className="flex h-full items-center justify-center p-6 text-center">
-        <div className="max-w-md text-sm text-muted-foreground">
-          No Pulse log yet. Run <code className="rounded bg-muted px-1">/goal-advisor</code> to set
-          up recurring runs + Goal Advisor — scheduled runs, Pulse, and advisor decisions record
-          entries here, and it seeds the success criteria along the way. (The post-run monitor also
-          records here after any scheduled run;{' '}
-          <code className="rounded bg-muted px-1">/define-success</code> just seeds the criteria on
-          its own.)
+      <div className="flex h-full w-full flex-col overflow-hidden bg-muted/30 dark:bg-black/20">
+        <ReportHumanInputPanel workspacePath={workspacePath} className="m-3 mb-2 flex-shrink-0" />
+        <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-center">
+          <div className="max-w-md text-sm text-muted-foreground">
+            No Pulse log yet. Run <code className="rounded bg-muted px-1">/goal-advisor</code> to set
+            up recurring runs + Goal Advisor — scheduled runs, Pulse, and advisor decisions record
+            entries here, and it seeds the success criteria along the way. (The post-run monitor also
+            records here after any scheduled run;{' '}
+            <code className="rounded bg-muted px-1">/define-success</code> just seeds the criteria on
+            its own.)
+          </div>
         </div>
       </div>
     )
@@ -171,8 +173,9 @@ export function LogViewer({ workspacePath }: LogViewerProps) {
   // already controls laptop/mobile layout; adding another max-width here makes
   // full-screen Pulse look artificially narrow.
   return (
-    <div className="h-full w-full overflow-hidden bg-muted/30 dark:bg-black/20">
-      <div className="h-full w-full">
+    <div className="flex h-full w-full flex-col overflow-hidden bg-muted/30 dark:bg-black/20">
+      <ReportHumanInputPanel workspacePath={workspacePath} className="m-3 mb-2 flex-shrink-0" />
+      <div className="min-h-0 flex-1">
         {isHtml ? (
           <HtmlRenderer content={themedContent} />
         ) : (

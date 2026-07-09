@@ -248,7 +248,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) listRunFolders(ctx context.Context, r
 }
 
 // createRunFolderStructure creates the basic structure for a run folder.
-// Creates folders via Workspace API only (ensures consistency with list_workspace_files).
+// Creates folders via Workspace API only (ensures consistency with workspace listings).
 //
 // The runPath can be in any format - it will be normalized by createFolderViaAPI.
 // Typically runPath is already relative to workspace-docs root (e.g., "Workflow/ICICI.../runs/...").

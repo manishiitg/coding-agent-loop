@@ -27,11 +27,7 @@ func shouldFilterWriteToolWithPaths(readPaths, writePaths []string, toolName str
 	}
 
 	writeTools := map[string]bool{
-		"update_workspace_file":     true,
 		"diff_patch_workspace_file": true,
-		"delete_workspace_file":     true,
-		"write_workspace_file":      true,
-		"move_workspace_file":       true,
 	}
 
 	if writeTools[toolName] && len(writePaths) == 0 {
@@ -67,18 +63,12 @@ func (bo *BaseOrchestrator) EnhanceToolDescriptionWithFolderGuard(toolName, orig
 
 	// Tool classification (same as in WrapWorkspaceToolsWithFolderGuard)
 	readOnlyTools := map[string]bool{
-		"read_workspace_file":   true,
-		"list_workspace_files":  true,
 		"execute_shell_command": true,
 		"read_image":            true,
 	}
 
 	writeTools := map[string]bool{
-		"update_workspace_file":     true,
 		"diff_patch_workspace_file": true,
-		"delete_workspace_file":     true,
-		"write_workspace_file":      true,
-		"move_workspace_file":       true,
 	}
 
 	// Determine tool type
@@ -188,18 +178,12 @@ func (bo *BaseOrchestrator) wrapWorkspaceToolsWithPaths(snapshotReadPaths, snaps
 	// Tools that need path validation with their parameter names
 	// Classify as read-only or write operations
 	readOnlyTools := map[string][]string{
-		"read_workspace_file":   {"filepath"},
-		"list_workspace_files":  {"folder"},
 		"execute_shell_command": {},
 		"read_image":            {"filepath"},
 	}
 
 	writeTools := map[string][]string{
-		"update_workspace_file":     {"filepath"},
 		"diff_patch_workspace_file": {"filepath"},
-		"delete_workspace_file":     {"filepath"},
-		"write_workspace_file":      {"filepath"},
-		"move_workspace_file":       {"source_filepath", "destination_filepath"}, // Both use writePaths
 	}
 
 	// Combine all tools for iteration
@@ -338,7 +322,7 @@ func (bo *BaseOrchestrator) wrapWorkspaceToolsWithPaths(snapshotReadPaths, snaps
 			// Block write tools from modifying system-managed planning files.
 			// plan.json, step_config.json, and workflow_layout.json must only be modified
 			// via dedicated tools (update_regular_step, update_step_config, etc.) that
-			// serialize the full struct to JSON. Raw file writes (diff_patch, update_workspace_file)
+			// serialize the full struct to JSON. Raw file writes (diff_patch)
 			// can corrupt these files — e.g. when diff hunks fail to match and the
 			// fallback appends fragments, producing invalid JSON.
 			if isWriteCopy {

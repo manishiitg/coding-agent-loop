@@ -80,7 +80,7 @@ newest-first. It *is* the loop's memory:
 See `review-improve-log.md` for the log's structure and the confirm-Decision rules.
 
 Each loop also writes a compact **dashboard card** in the workflow's own workspace, every
-run (overwrite), via the existing `update_workspace_file`:
+run (overwrite), via current workspace write paths such as `diff_patch_workspace_file`:
 - Pulse final notify/summary step → `builder/card.health.html` (🩺 final post-Pulse status + compact named fields for state/fix/evidence/next, not the full email narrative)
 - Pulse report step → `builder/card.cost.html` (💵 cost/time status + headline/metric)
 - Auto-improve → `builder/card.progress.html` (🎯 status + goal + headline)

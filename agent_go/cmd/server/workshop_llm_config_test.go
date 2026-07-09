@@ -77,13 +77,14 @@ func TestWorkshopResolveLLMConfigExpandsCodingAgentMode(t *testing.T) {
 	if !ok {
 		t.Fatal("expected Claude Code coding-agent defaults")
 	}
-	if defaults.Main.ModelID != "claude-code" ||
+	if defaults.Main.ModelID != "claude-sonnet-5" ||
+		defaults.Phase.ModelID != "claude-sonnet-5" ||
 		defaults.High.ModelID == "claude-fable-5" ||
 		defaults.Medium.ModelID == "claude-fable-5" ||
 		defaults.Low.ModelID == "claude-fable-5" ||
 		defaults.AutoImprove.ModelID != "claude-opus-4-8" ||
 		defaults.Pulse.ModelID != "claude-sonnet-5" {
-		t.Fatalf("opus 4.8 should be Goal Advisor default and sonnet 5 should be pulse default, got defaults: %+v", defaults)
+		t.Fatalf("sonnet 5 should be builder/phase/pulse default and opus 4.8 should be maintenance/advisor default, got defaults: %+v", defaults)
 	}
 
 	phase, tiered := workshopResolveLLMConfig(&workflowtypes.PresetLLMConfig{
@@ -97,6 +98,17 @@ func TestWorkshopResolveLLMConfigExpandsCodingAgentMode(t *testing.T) {
 	}
 	if phase.Provider != defaults.Phase.Provider || phase.ModelID != defaults.Phase.ModelID {
 		t.Fatalf("unexpected phase config: %+v", phase)
+	}
+	maintenance := workshopResolveMaintenanceLLMConfig(&workflowtypes.PresetLLMConfig{
+		Provider:          "claude-code",
+		ModelID:           "claude-code",
+		LLMAllocationMode: workflowtypes.LLMAllocationModeCodingAgent,
+	})
+	if maintenance == nil {
+		t.Fatal("expected coding agent maintenance/advisor LLM")
+	}
+	if maintenance.Provider != defaults.AutoImprove.Provider || maintenance.ModelID != defaults.AutoImprove.ModelID {
+		t.Fatalf("unexpected maintenance config: %+v", maintenance)
 	}
 	if tiered == nil || tiered.Tier1 == nil || tiered.Tier2 == nil || tiered.Tier3 == nil {
 		t.Fatalf("expected full tiered config, got %+v", tiered)

@@ -102,7 +102,7 @@ so it must be goal-aligned and actionable:
 - **Evidence:** concrete paths/tables/reports/runs that prove the status or gap.
 - **Gap:** what is blocking goal movement, measurement, or confidence.
 - **Priority:** high/medium/low, based on goal impact and urgency.
-- **Suggested builder action:** `harden_workflow`, `replan_workflow_from_results`,
+- **Suggested builder action:** `harden_workflow`, Goal Advisor plan-change proposal,
   eval/report measurement fix, manual review, or no-action watchpoint.
 - **Expected impact:** the KPI or workflow success criterion that should move if the builder
   accepts the recommendation.
@@ -340,7 +340,8 @@ If a recommendation needs a user decision for a specific workflow, do not leave 
 in email/chat. Call `create_human_input_request(workspace_path="<workflow path>", source="chief_of_staff", ...)`
 so the request is stored in that workflow's `db/db.sqlite` table `report_human_inputs`. The
 workflow's Pulse/report panel is where the user answers; when a later Chief of Staff or workflow
-pass uses the answer, it must call `mark_human_input_consumed`.
+pass uses the answer, it must call `mark_human_input_consumed` and remove or replace the matching
+visible question card in that workflow's Pulse HTML with a short outcome.
 
 - `message_for_user`: one terse line for chat channels, formatted as
   `<emoji> Org Pulse — daily digest · <workflow health> · <goal metric> · <top decision or all healthy> · <url>`.

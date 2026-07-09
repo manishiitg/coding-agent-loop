@@ -8,10 +8,10 @@ model — use it to investigate.
 
 1. Pick the action that matches the failure: if the workflow path is
    sound but reliability is broken, run `harden_workflow(group_name?)`.
-   If eval verdicts or the goal card show a success-criteria gap, run
-   `replan_workflow_from_results(group_name?)`. For local fixes
-   (description, `validation_schema`, context wiring, step config),
-   apply them directly with the matching update tool.
+   If eval verdicts or the goal card show a success-criteria strategy
+   gap, create/apply a Goal Advisor plan-change proposal as appropriate.
+   For local fixes (description, `validation_schema`, context wiring,
+   step config), apply them directly with the matching update tool.
 2. For background actions, continue other work while they run — you'll
    be auto-notified.
 3. Review the summary of changes; re-run the affected scope to verify.
@@ -74,7 +74,7 @@ The fix should be one of:
 - Fix context dependencies.
 - Edit/delete learnings.
 - Run `harden_workflow`.
-- Replan from evidence.
+- Create/apply a Goal Advisor plan-change proposal.
 
 **Critical: act, don't just analyze.** `harden_workflow` applies fixes
 directly. For manual fixes, use the same tools — update step

@@ -26,7 +26,8 @@ import {
   reportPreviewPreferenceKey,
   ReportView,
 } from '../ReportViewer'
-import { LogViewer, WORKFLOW_LOG_REFRESH_EVENT } from '../LogViewer'
+import { LogViewer } from '../LogViewer'
+import { WORKFLOW_LOG_REFRESH_EVENT } from '../workflowEvents'
 import { SoulViewer, WORKFLOW_SOUL_REFRESH_EVENT } from '../SoulViewer'
 import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
 import { useEvaluationPlanData } from '../hooks/useEvaluationPlanData'

@@ -14,6 +14,45 @@ func assertGoalAdvisorPromptContains(t *testing.T, prompt string, snippets ...st
 	}
 }
 
+func assertToolListContains(t *testing.T, tools []string, tool string) {
+	t.Helper()
+	for _, candidate := range tools {
+		if candidate == tool {
+			return
+		}
+	}
+	t.Fatalf("tool list missing %q in %v", tool, tools)
+}
+
+func assertToolListDoesNotContain(t *testing.T, tools []string, tool string) {
+	t.Helper()
+	for _, candidate := range tools {
+		if candidate == tool {
+			t.Fatalf("tool list should not contain %q in %v", tool, tools)
+		}
+	}
+}
+
+func TestGoalAdvisorToolAllowlistsSeparateReadOnlyAndFinalizerActions(t *testing.T) {
+	readOnly := goalAdvisorReadOnlyToolAgentAllowedToolNames()
+	mutable := goalAdvisorToolAgentAllowedToolNames()
+
+	for _, tool := range []string{"get_workflow_command_guidance", "get_reference_doc", "execute_shell_command"} {
+		assertToolListContains(t, readOnly, tool)
+		assertToolListContains(t, mutable, tool)
+	}
+
+	for _, tool := range []string{"diff_patch_workspace_file", "create_human_input_request", "mark_human_input_consumed", "update_regular_step", "upsert_report_widget"} {
+		assertToolListDoesNotContain(t, readOnly, tool)
+		assertToolListContains(t, mutable, tool)
+	}
+
+	for _, tool := range []string{"harden_workflow", "improve_kb", "improve_learnings", "improve_db", "mark_pulse_module_result", "notify_user"} {
+		assertToolListDoesNotContain(t, readOnly, tool)
+		assertToolListDoesNotContain(t, mutable, tool)
+	}
+}
+
 func TestGoalAdvisorAdvisorInstructionIsReadOnlyDraft(t *testing.T) {
 	prompt := buildGoalAdvisorAdvisorInstruction("pulse-123", "goals are flat")
 

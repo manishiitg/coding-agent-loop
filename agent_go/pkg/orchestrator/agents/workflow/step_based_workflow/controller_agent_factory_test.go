@@ -140,8 +140,9 @@ func TestApplyStepConfigToAgentConfigEnablesWorkspaceIsolation(t *testing.T) {
 // of CodingAgentWorkingDir. These factories live in two files:
 //   - controller_agent_factory.go (2): regular-step path (applyStepConfigToAgentConfig)
 //     and the todo-task orchestrator (createTodoTaskOrchestratorAgent).
-//   - interactive_workshop_manager.go (9): the workshop background agents — the
-//     `run_in_background` task agent plus the improve-db / review-plan /
+//   - interactive_workshop_manager.go (10): the workshop background agents — the
+//     `run_in_background` task agent plus the Goal Advisor stage runner and
+//     the improve-db / review-plan /
 //     review-artifact-sync / review-results / review-timing / review-costs /
 //     review-step-code / harden agents — each spawns a coding-CLI
 //     session for a workflow task and must isolate its workspace.
@@ -159,8 +160,8 @@ func TestAllWorkflowAgentFactoriesEnableWorkspaceIsolation(t *testing.T) {
 		path string
 		want int
 	}{
-		{path: "controller_agent_factory.go", want: 2},     // regular + todo-task orchestrator
-		{path: "interactive_workshop_manager.go", want: 9}, // run_in_background + improve/review/harden/db workshop agents
+		{path: "controller_agent_factory.go", want: 2},      // regular + todo-task orchestrator
+		{path: "interactive_workshop_manager.go", want: 10}, // run_in_background + goal-advisor + improve/review/harden/db workshop agents
 	}
 	const needle = "config.IsolateCodingAgentWorkspace = true"
 	for _, tc := range cases {

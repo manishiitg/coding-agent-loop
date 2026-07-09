@@ -1305,6 +1305,55 @@ func optimizerToolAgentAllowedToolNames() []string {
 	}
 }
 
+func goalAdvisorToolAgentAllowedToolNames() []string {
+	return []string{
+		// Workspace/file tools for evidence and bounded HTML/report updates.
+		"execute_shell_command", "diff_patch_workspace_file",
+		"read_image", "generate_text_llm", "search_web_llm",
+
+		// Guidance/reference docs are mandatory for the advisor playbook.
+		"get_workflow_command_guidance", "get_reference_doc",
+
+		// Read-only workflow state.
+		"get_step_prompts", "get_workflow_config", "get_llm_config", "get_cost_summary",
+		"list_skills", "search_skills", "list_published_llms", "list_provider_models",
+
+		// Strategic plan/config/eval changes, only when approved by the user
+		// or explicitly narrowed by the critic/finalizer prompt contract.
+		"create_plan",
+		"add_regular_step", "add_message_sequence_step", "add_routing_step",
+		"add_human_input_step", "add_todo_task_step", "add_todo_task_route",
+		"update_regular_step", "update_message_sequence_step", "update_routing_step",
+		"update_human_input_step", "update_todo_task_step", "update_todo_task_route",
+		"delete_todo_task_route", "delete_plan_steps", "cleanup_orphan_step_configs",
+		"update_validation_schema", "validate_evaluation_plan",
+		"update_variable", "add_group", "update_group", "delete_group",
+		"update_workflow_config", "test_llm", "set_workflow_llm_config",
+		"mark_cos_recommendation_status",
+
+		// Report/dashboard shape plus the durable Pulse question flow.
+		"get_report_plan", "upsert_report_widget", "remove_report_widget",
+		"move_report_widget", "toggle_report_widget", "set_report_theme",
+		"set_section_layout", "validate_report_plan", "preview_report_render",
+		"create_human_input_request", "mark_human_input_consumed",
+	}
+}
+
+func goalAdvisorReadOnlyToolAgentAllowedToolNames() []string {
+	return []string{
+		// Evidence gathering only; FolderGuard is also configured read-only.
+		"execute_shell_command", "read_image", "generate_text_llm", "search_web_llm",
+
+		// Guidance/reference docs are mandatory for the advisor and critic playbooks.
+		"get_workflow_command_guidance", "get_reference_doc",
+
+		// Read-only workflow state and report inspection.
+		"get_step_prompts", "get_workflow_config", "get_llm_config", "get_cost_summary",
+		"list_skills", "search_skills", "list_published_llms", "list_provider_models",
+		"get_report_plan", "validate_report_plan", "preview_report_render",
+	}
+}
+
 func (iwm *InteractiveWorkshopManager) registerWorkshopMutationToolsForToolAgent(agent agents.OrchestratorAgent, workspacePath, agentName string, allowedToolNames []string, logger loggerv2.Logger) {
 	if agent == nil || agent.GetBaseAgent() == nil || agent.GetBaseAgent().Agent() == nil {
 		logger.Warn(fmt.Sprintf("⚠️ %s: cannot register workshop mutation tools; base agent unavailable", agentName))
@@ -1323,6 +1372,8 @@ func (iwm *InteractiveWorkshopManager) registerWorkshopMutationToolsForToolAgent
 		logger.Warn(fmt.Sprintf("⚠️ %s: failed to register plan modification tools: %v", agentName, err))
 	}
 	registerInteractiveWorkshopTools(iwm, mcpAgentRef, logger)
+	guidance.RegisterGuidanceTool(mcpAgentRef, "workshop", logger)
+	guidance.RegisterReferenceDocTool(mcpAgentRef, "workshop", logger)
 	if err := RegisterChiefOfStaffRecommendationStatusTool(
 		mcpAgentRef,
 		workspacePath,
@@ -3207,7 +3258,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						isCancelled := skipNotify || execCtx.Err() != nil
 						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-							AgentType:     "workshop-goal-advisor-review",
+							AgentType:     "workshop-background-task",
 							AgentName:     name,
 							Success:       execErr == nil,
 						}
@@ -3235,7 +3286,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				if eventBridge != nil {
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-goal-advisor-review",
+						AgentType:     "workshop-background-task",
 						AgentName:     name,
 					}
 					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
@@ -10803,20 +10854,101 @@ func truncateGoalAdvisorStageOutput(value string) string {
 	return strings.TrimSpace(value[:half] + "\n\n... [Goal Advisor stage output truncated for next-stage review] ...\n\n" + value[len(value)-half:])
 }
 
+func (iwm *InteractiveWorkshopManager) runGoalAdvisorStageAgent(ctx context.Context, name string, instruction string, allowMutations bool) (string, error) {
+	logger := iwm.controller.GetLogger()
+	workspacePath := iwm.controller.GetWorkspacePath()
+	knowledgebasePath := getKnowledgebasePath(workspacePath)
+	readPaths := []string{
+		workspacePath,
+		fmt.Sprintf("%s/runs", workspacePath),
+		fmt.Sprintf("%s/learnings", workspacePath),
+		fmt.Sprintf("%s/planning", workspacePath),
+		fmt.Sprintf("%s/evaluation", workspacePath),
+		knowledgebasePath,
+		"Chats",
+	}
+	writePaths := []string{}
+	allowedToolNames := goalAdvisorReadOnlyToolAgentAllowedToolNames()
+	if allowMutations {
+		writePaths = workshopWritePaths(workspacePath)
+		allowedToolNames = goalAdvisorToolAgentAllowedToolNames()
+	}
+	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, writePaths)
+
+	llmConfigToUse := iwm.controller.selectMaintenanceLLM(name)
+	if llmConfigToUse == nil {
+		return "", fmt.Errorf("no valid LLM configuration found for %s", name)
+	}
+
+	config := iwm.controller.CreateStandardAgentConfigWithLLM(fmt.Sprintf("Background: %s", name), 100, agents.OutputFormatStructured, llmConfigToUse)
+	config.IsolateCodingAgentWorkspace = true
+	config.UseCodeExecutionMode = false
+	config.EnableParallelToolExecution = true
+	config.ServerNames = []string{mcpclient.NoServers}
+	defer iwm.configureWorkshopToolAgentSession(config, "goal-advisor", readPaths, writePaths)()
+
+	toolsToRegister, executorsToUse := filterWorkspaceToolsByName(iwm.controller.WorkspaceTools, iwm.controller.WorkspaceToolExecutors, allowedToolNames)
+	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, log loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+		return newWorkflowBackgroundTaskAgent(cfg, log, tracer, eventBridge)
+	}
+
+	if cab, ok := iwm.controller.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
+		cab.PushContext("goal-advisor", 0, "goal-advisor", fmt.Sprintf("Background: %s", name))
+	}
+	agent, err := iwm.controller.CreateAndSetupStandardAgentWithConfig(
+		ctx,
+		config,
+		"goal-advisor",
+		0, 0,
+		"goal-advisor",
+		createAgentFunc,
+		toolsToRegister,
+		executorsToUse,
+		true,
+	)
+	if cab, ok := iwm.controller.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
+		cab.PopContext()
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to create %s agent: %w", name, err)
+	}
+
+	iwm.registerWorkshopMutationToolsForToolAgent(agent, workspacePath, "goal-advisor", allowedToolNames, logger)
+	if err := iwm.controller.applyPostSetupToAgent(agent, "goal-advisor-agent", false); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Post-setup configuration failed for goal-advisor-agent: %v", err))
+	}
+
+	templateVars := map[string]string{
+		"WorkspacePath":    workspacePath,
+		"AbsWorkspacePath": absPromptWorkspacePath(workspacePath),
+		"Instruction":      instruction,
+		"SkillPrompt":      "",
+		"SecretPrompt":     "",
+		"BrowserPrompt":    "",
+	}
+
+	logger.Info(fmt.Sprintf("✨ Running Goal Advisor stage agent: %q (mutations=%v)", name, allowMutations))
+	result, _, err := agent.Execute(ctx, templateVars, nil)
+	if err != nil {
+		return "", fmt.Errorf("%s agent failed: %w", name, err)
+	}
+	return result, nil
+}
+
 func (iwm *InteractiveWorkshopManager) runGoalAdvisorReviewPipeline(ctx context.Context, pulseRunID, focus string) (string, error) {
-	advisorResult, err := iwm.runBackgroundTaskAgent(ctx, "Goal Advisor - Advisor", buildGoalAdvisorAdvisorInstruction(pulseRunID, focus))
+	advisorResult, err := iwm.runGoalAdvisorStageAgent(ctx, "Goal Advisor - Advisor", buildGoalAdvisorAdvisorInstruction(pulseRunID, focus), false)
 	if err != nil {
 		return fmt.Sprintf("Goal Advisor advisor stage failed: %v", err), err
 	}
 
 	advisorForNextStage := truncateGoalAdvisorStageOutput(advisorResult)
-	criticResult, err := iwm.runBackgroundTaskAgent(ctx, "Goal Advisor - Critic", buildGoalAdvisorCriticInstruction(pulseRunID, focus, advisorForNextStage))
+	criticResult, err := iwm.runGoalAdvisorStageAgent(ctx, "Goal Advisor - Critic", buildGoalAdvisorCriticInstruction(pulseRunID, focus, advisorForNextStage), false)
 	if err != nil {
 		return fmt.Sprintf("Goal Advisor critic stage failed: %v\n\nAdvisor draft:\n%s", err, advisorForNextStage), err
 	}
 
 	criticForNextStage := truncateGoalAdvisorStageOutput(criticResult)
-	finalizerResult, err := iwm.runBackgroundTaskAgent(ctx, "Goal Advisor - Finalizer", buildGoalAdvisorFinalizerInstruction(pulseRunID, focus, advisorForNextStage, criticForNextStage))
+	finalizerResult, err := iwm.runGoalAdvisorStageAgent(ctx, "Goal Advisor - Finalizer", buildGoalAdvisorFinalizerInstruction(pulseRunID, focus, advisorForNextStage, criticForNextStage), true)
 	if err != nil {
 		return fmt.Sprintf("Goal Advisor finalizer stage failed: %v\n\nAdvisor draft:\n%s\n\nCritic verdict:\n%s", err, advisorForNextStage, criticForNextStage), err
 	}
@@ -10948,8 +11080,10 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgent(ctx context.Contex
 	writePaths := workshopWritePaths(workspacePath)
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 
-	// --- LLM: use the dedicated maintenance/advisor model when configured.
-	llmConfigToUse := iwm.controller.selectMaintenanceLLM("background task agent")
+	// --- LLM: generic run_in_background follows the normal workshop/phase model.
+	// Maintenance-heavy agents (Goal Advisor, harden, KB/DB/report review) use
+	// their own dedicated runners and selectMaintenanceLLM instead.
+	llmConfigToUse := iwm.controller.selectPhaseLLM("background task agent")
 	if llmConfigToUse == nil && iwm.presetLLM != nil && iwm.presetLLM.Provider != "" && iwm.presetLLM.ModelID != "" {
 		llmConfigToUse = workflowAgentLLMConfig(iwm.presetLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 	}

@@ -1158,6 +1158,15 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"get_reference_doc",             // reference docs (system/*.md) loaded on demand; see guidance package.
 	}
 
+	// Pulse state tools are only for scheduled/manual Pulse maintenance in
+	// workshop mode. Run mode can inspect outcomes, but should not mutate the
+	// dynamic Pulse worklist/result state.
+	pulseState := []string{
+		"get_pulse_module_state",
+		"record_pulse_worklist",
+		"mark_pulse_module_result",
+	}
+
 	var tools []string
 	tools = append(tools, system...)
 	tools = append(tools, readOnly...)
@@ -1202,6 +1211,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, kb...)
 		tools = append(tools, db...)
 		tools = append(tools, autoImprovement...)
+		tools = append(tools, pulseState...)
 		tools = append(tools, "get_reference_doc")
 
 	case "run":

@@ -60,7 +60,17 @@ func TestToolSetInvariants(t *testing.T) {
 		}
 	}
 
-	// 4. The workshop allow-list must still expose the plan/workflow tools
+	// 4. Pulse worklist tools are registered in the workflow tool pool and must
+	//    be visible in workshop mode, otherwise scheduled Pulse turns can ask
+	//    for mark_pulse_module_result/get_pulse_module_state and then fail at
+	//    runtime with "not callable in this chat session".
+	for _, n := range []string{"get_pulse_module_state", "record_pulse_worklist", "mark_pulse_module_result"} {
+		if !pool[n] || cats[n] != "workflow" {
+			t.Fatalf("workflow pool missing Pulse state tool %q (in_pool=%v cat=%q)", n, pool[n], cats[n])
+		}
+	}
+
+	// 5. The workshop allow-list must still expose the plan/workflow tools
 	//    (guards against accidental loss during refactors).
 	workshop := map[string]bool{}
 	for _, n := range todo_creation_human.GetToolsForWorkshopMode("workshop") {
@@ -73,9 +83,20 @@ func TestToolSetInvariants(t *testing.T) {
 		"update_workflow_config", "update_step_config", "get_report_plan",
 		"list_schedules", "update_schedule", "get_schedule_runs",
 		"execute_shell_command", "diff_patch_workspace_file",
+		"get_pulse_module_state", "record_pulse_worklist", "mark_pulse_module_result",
 	} {
 		if !workshop[n] {
 			t.Fatalf("workshop allow-list missing expected tool %q", n)
+		}
+	}
+
+	run := map[string]bool{}
+	for _, n := range todo_creation_human.GetToolsForWorkshopMode("run") {
+		run[n] = true
+	}
+	for _, n := range []string{"record_pulse_worklist", "mark_pulse_module_result"} {
+		if run[n] {
+			t.Fatalf("run allow-list must not expose Pulse mutation tool %q", n)
 		}
 	}
 }

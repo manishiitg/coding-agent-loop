@@ -6,6 +6,9 @@ INSTALL_DIR="${CHROME_CDP_INSTALL_DIR:-/Applications}"
 APP_PATH="${INSTALL_DIR}/${APP_NAME}"
 DEFAULT_ZIP_URL="https://raw.githubusercontent.com/manishiitg/mcp-agent-builder-go/main/agent_go/cmd/server/embed_downloads/Chrome-CDP-macOS.zip"
 ZIP_URL="${CHROME_CDP_ZIP_URL:-${DEFAULT_ZIP_URL}}"
+CDP_PORT="${CHROME_CDP_PORT:-9222}"
+OPEN_AFTER_INSTALL="${CHROME_CDP_OPEN_AFTER_INSTALL:-1}"
+ADHOC_SIGN="${CHROME_CDP_ADHOC_SIGN:-1}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "Chrome CDP.app installer is only for macOS." >&2
@@ -64,5 +67,33 @@ if command -v xattr >/dev/null 2>&1; then
   "${sudo_cmd[@]}" xattr -c "${APP_PATH}" 2>/dev/null || true
 fi
 
+if [[ "${ADHOC_SIGN}" != "0" ]] && command -v codesign >/dev/null 2>&1; then
+  echo "Applying a local ad-hoc signature"
+  if ! "${sudo_cmd[@]}" codesign --force --deep --sign - "${APP_PATH}" >/dev/null 2>&1; then
+    echo "Ad-hoc signing was skipped; macOS may ask you to approve the app on first launch." >&2
+  fi
+fi
+
 echo "Installed ${APP_PATH}"
+
+if [[ "${OPEN_AFTER_INSTALL}" != "0" ]]; then
+  echo "Opening ${APP_NAME}"
+  if ! open "${APP_PATH}"; then
+    echo "macOS blocked the first launch. Open System Settings > Privacy & Security and allow Chrome CDP, then run: open -a 'Chrome CDP'" >&2
+    exit 1
+  fi
+
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if curl -fsS "http://127.0.0.1:${CDP_PORT}/json/version" >/dev/null 2>&1; then
+      echo "Chrome CDP is reachable on http://127.0.0.1:${CDP_PORT}"
+      exit 0
+    fi
+    sleep 1
+  done
+
+  echo "Chrome CDP was opened, but port ${CDP_PORT} is not reachable yet." >&2
+  echo "If macOS showed a prompt, approve it and open Chrome CDP again from Spotlight/Launchpad." >&2
+  exit 1
+fi
+
 echo "Open it from Spotlight/Launchpad, or run: open -a 'Chrome CDP'"

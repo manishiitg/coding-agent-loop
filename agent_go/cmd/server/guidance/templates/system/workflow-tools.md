@@ -18,7 +18,7 @@ returns the live JSON schema for the tool.
 - **`list_executions(status_filter?)`** — List all background executions.
 - **`stop_step(execution_id)` / `stop_all_executions()`** — Cancel running steps.
 - **`run_in_background(name, instruction)`** — Spawn an independent background agent with the same tools.
-- **`run_goal_advisor_review(pulse_run_id?, focus?)`** — Spawn the dedicated Goal Advisor background agent. Use this when Pulse Gate selects the strategic advisor module; the parent Pulse turn should wait with `query_step(execution_id)`, then record `mark_pulse_module_result`. Do not do the expensive strategy review inline in the parent Pulse turn.
+- **`run_goal_advisor_review(pulse_run_id?, focus?)`** — Spawn the dedicated Goal Advisor background agent. Use this when Pulse Gate selects the strategic advisor module; the parent Pulse turn should capture the returned `execution_id`, wait with `query_step(step_id="goal-advisor", execution_id="<returned execution_id>")`, then record `mark_pulse_module_result`. Do not do the expensive strategy review inline in the parent Pulse turn.
 - **`run_full_workflow(group_name, human_inputs?, route_selections?, disable_eval?)`** — Execute the complete workflow (all steps) for a single variable group in background. Always uses `iteration-0` and starts from the beginning. If the selected path has `human_input` steps, provide `human_inputs` (object mapping step_id to response string). For deterministic routers, pass `route_selections` keyed by routing step ID, with each value as a `route_id` or unique `next_step_id`. Pass `disable_eval=true` only when the user explicitly wants to skip the automatic evaluation pass. Returns `execution_id`.
 
 ## Step Config & Analysis (Workshop mode)

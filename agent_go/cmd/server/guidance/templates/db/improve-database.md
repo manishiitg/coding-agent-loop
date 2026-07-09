@@ -51,6 +51,6 @@ ACTION
 
 `improve_db(mode="auto", instruction="<specific DB improvement instruction>", focus="<optional focus>")`
 
-3. The tool runs in the background and returns an `execution_id`. If you need the result before answering, use `query_step(execution_id="<id>")` until it completes.
+3. The tool runs in the background and returns an `execution_id`. If you need the result before answering, use `query_step(step_id="improve-db", execution_id="<returned execution_id>")` until it completes.
 4. When complete, summarize tables/schema changed in `db/db.sqlite`, `db/README.md` contract improvements, report compatibility changes, any row/data migrations performed, and remaining follow-up work.
 5. If this is part of an optimizer/improvement pass, append a short note to `builder/improve.html` after the tool completes; otherwise report in chat only.

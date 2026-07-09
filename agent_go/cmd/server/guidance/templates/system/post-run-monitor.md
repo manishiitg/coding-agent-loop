@@ -141,7 +141,7 @@ Mark due when strategic judgment is needed:
 - enough new cross-run evidence exists for an expert out-of-plan critique
 - the workflow may need an eval/report measurement change to judge success correctly
 
-Goal Advisor is now a Pulse-selected module, not a separate recurring schedule. Pulse should not do the expensive strategic review inline. When the Gate selects Goal Advisor, the parent Pulse turn should call `run_goal_advisor_review(...)`, wait with `query_step(execution_id)`, then record the module result.
+Goal Advisor is now a Pulse-selected module, not a separate recurring schedule. Pulse should not do the expensive strategic review inline. When the Gate selects Goal Advisor, the parent Pulse turn should call `run_goal_advisor_review(...)`, capture the returned `execution_id`, wait with `query_step(step_id="goal-advisor", execution_id="<returned execution_id>")`, then record the module result.
 
 The background Goal Advisor thinks like an experienced operator. It may apply a structural plan change only when the user already approved a Goal Advisor proposal in `report_human_inputs`. New strategic changes must be logged as proposal-only Advisor ideas and, when a decision is needed, created with `create_human_input_request`.
 

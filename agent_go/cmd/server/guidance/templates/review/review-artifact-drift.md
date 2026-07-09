@@ -9,7 +9,7 @@ PROCEDURE
    - Do not call `harden_workflow` or plan-modification tools from this slash command unless the user explicitly asks to fix findings after the review.
 2. Capture the returned `execution_id`.
 3. Wait for completion before summarizing the result.
-   - Use `query_step(execution_id)` to inspect status/results when needed.
+   - Capture the returned `execution_id` and use `query_step(step_id="review-artifact-sync", execution_id="<returned execution_id>")` to inspect status/results when needed.
    - Do not treat the immediate start response as the review output.
 4. When the background review completes, summarize:
    - changelog file/entry range inspected

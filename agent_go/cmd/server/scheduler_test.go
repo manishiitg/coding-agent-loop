@@ -998,6 +998,38 @@ func TestSelectedPostRunMonitorModuleStepsFallsBackForPartialWorklist(t *testing
 	}
 }
 
+func TestSelectedPostRunMonitorModuleStepsPartialWorklistKeepsDueGoalAdvisor(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+	workspacePath := "Workflow/demo"
+	pulseRunID := "pulse-run-partial-goal-advisor"
+	workspace := httptest.NewServer(&mockWorkspaceAPI{files: map[string]string{}})
+	defer workspace.Close()
+	t.Setenv("WORKSPACE_API_URL", workspace.URL)
+
+	normalized, db, err := openPulseModuleStateDB(ctx, workspacePath, true)
+	if err != nil {
+		t.Fatalf("open pulse db: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.ExecContext(ctx, `INSERT INTO pulse_module_state (
+			module, workspace_path, last_pulse_run_id, last_checked_at,
+			last_decision, last_reason, last_gate_decision, updated_at
+		) VALUES (?, ?, ?, 'now', 'due', 'Goal drift persisted.', 'due', 'now')`,
+		pulseModuleGoalAdvisor, normalized, pulseRunID); err != nil {
+		t.Fatalf("insert partial worklist: %v", err)
+	}
+
+	s := NewSchedulerService(nil)
+	steps := s.selectedPostRunMonitorModuleSteps(ctx, &ScheduleContext{WorkspacePath: workspacePath}, pulseRunID)
+	got := postRunStepLabels(steps)
+	want := []string{"pre-backup", "harden", "report-health", "cost-llm-time", "goal-advisor", "dashboard", "backup", "publish", "notify"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("partial-worklist fallback labels = %#v, want %#v", got, want)
+	}
+}
+
 func postRunStepLabels(steps []postRunMonitorStep) []string {
 	labels := make([]string, 0, len(steps))
 	for _, step := range steps {
@@ -1492,6 +1524,24 @@ func TestWaitForWorkshopIdleTimesOutWhenSessionStaysBusy(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "workshop idle wait timed out") {
 		t.Fatalf("error = %v, want timeout", err)
+	}
+}
+
+func TestPostRunMonitorStepIdleMaxWaitUsesLongerGoalAdvisorCap(t *testing.T) {
+	oldNormal := schedulerWorkshopIdleMaxWait
+	oldAdvisor := schedulerGoalAdvisorIdleMaxWait
+	schedulerWorkshopIdleMaxWait = 10 * time.Minute
+	schedulerGoalAdvisorIdleMaxWait = 30 * time.Minute
+	defer func() {
+		schedulerWorkshopIdleMaxWait = oldNormal
+		schedulerGoalAdvisorIdleMaxWait = oldAdvisor
+	}()
+
+	if got := (postRunMonitorStep{label: "harden"}).idleMaxWait(); got != 10*time.Minute {
+		t.Fatalf("harden idle max wait = %s, want 10m", got)
+	}
+	if got := (postRunMonitorStep{label: "goal-advisor"}).idleMaxWait(); got != 30*time.Minute {
+		t.Fatalf("goal-advisor idle max wait = %s, want 30m", got)
 	}
 }
 

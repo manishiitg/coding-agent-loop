@@ -3,10 +3,12 @@ package step_based_workflow
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -23,6 +25,7 @@ import (
 	"mcp-agent-builder-go/agent_go/cmd/server/guidance"
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/common"
+	"mcp-agent-builder-go/agent_go/pkg/fsutil"
 	"mcp-agent-builder-go/agent_go/pkg/instructions"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
@@ -31,6 +34,7 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	_ "modernc.org/sqlite"
 )
 
 // knownWorkspaceToolNames lists workspace/system tool names that are NOT from MCP servers.
@@ -1313,7 +1317,15 @@ func optimizerToolAgentAllowedToolNames() []string {
 	}
 }
 
-func goalAdvisorToolAgentAllowedToolNames() []string {
+type goalAdvisorStageAccess int
+
+const (
+	goalAdvisorStageReadOnly goalAdvisorStageAccess = iota
+	goalAdvisorStageFinalizerProposal
+	goalAdvisorStageFinalizerApprovedMutation
+)
+
+func goalAdvisorCommonMutationToolAgentAllowedToolNames() []string {
 	return []string{
 		// Workspace/file tools for evidence and bounded HTML/report updates.
 		"execute_shell_command", "diff_patch_workspace_file",
@@ -1326,25 +1338,38 @@ func goalAdvisorToolAgentAllowedToolNames() []string {
 		"get_step_prompts", "get_workflow_config", "get_llm_config", "get_cost_summary",
 		"list_skills", "search_skills", "list_published_llms", "list_provider_models",
 
-		// Strategic plan/config/eval changes, only when approved by the user
-		// or explicitly narrowed by the critic/finalizer prompt contract.
-		"create_plan",
-		"add_regular_step", "add_message_sequence_step", "add_routing_step",
-		"add_human_input_step", "add_todo_task_step", "add_todo_task_route",
-		"update_regular_step", "update_message_sequence_step", "update_routing_step",
-		"update_human_input_step", "update_todo_task_step", "update_todo_task_route",
-		"delete_todo_task_route", "delete_plan_steps", "cleanup_orphan_step_configs",
-		"update_validation_schema", "validate_evaluation_plan",
-		"update_variable", "add_group", "update_group", "delete_group",
-		"update_workflow_config", "test_llm", "set_workflow_llm_config",
+		// Non-plan workflow-facing state.
 		"mark_cos_recommendation_status",
 
 		// Report/dashboard shape plus the durable Pulse question flow.
 		"get_report_plan", "upsert_report_widget", "remove_report_widget",
 		"move_report_widget", "toggle_report_widget", "set_report_theme",
 		"set_section_layout", "validate_report_plan", "preview_report_render",
-		"create_human_input_request", "mark_human_input_consumed",
+		"create_human_input_request",
 	}
+}
+
+func goalAdvisorFinalizerProposalToolAgentAllowedToolNames() []string {
+	return goalAdvisorCommonMutationToolAgentAllowedToolNames()
+}
+
+func goalAdvisorFinalizerApprovedToolAgentAllowedToolNames() []string {
+	tools := append([]string{}, goalAdvisorCommonMutationToolAgentAllowedToolNames()...)
+	tools = append(tools,
+		// Strategic plan/config/eval changes are only available when code has
+		// verified an approved plan-proposal answer and a critic approve verdict.
+		"create_plan",
+		"add_regular_step", "add_message_sequence_step", "add_routing_step",
+		"add_human_input_step", "add_todo_task_step", "add_todo_task_route",
+		"update_regular_step", "update_message_sequence_step", "update_routing_step",
+		"update_human_input_step", "update_todo_task_step", "update_todo_task_route",
+		"delete_todo_task_route", "delete_plan_steps", "cleanup_orphan_step_configs",
+		"update_step_config", "update_validation_schema", "validate_evaluation_plan",
+		"update_variable", "add_group", "update_group", "delete_group",
+		"update_workflow_config", "test_llm", "set_workflow_llm_config",
+		"mark_human_input_consumed",
+	)
+	return tools
 }
 
 func goalAdvisorReadOnlyToolAgentAllowedToolNames() []string {
@@ -3196,7 +3221,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: run_goal_advisor_review — dedicated strategic review background pipeline.
 	if err := mcpAgent.RegisterCustomTool(
 		"run_goal_advisor_review",
-		"Start the dedicated background Goal Advisor pipeline. Use this for Pulse-selected strategic review: goal drift, capped strategy, out-of-plan ideas, approved proposal application, and Chief of Staff strategic recommendations. The pipeline runs advisor -> critic -> finalizer in separate background agents. The parent Pulse turn should wait with query_step(execution_id) and then record mark_pulse_module_result.",
+		"Start the dedicated background Goal Advisor pipeline. Use this for Pulse-selected strategic review: goal drift, capped strategy, out-of-plan ideas, approved proposal application, and Chief of Staff strategic recommendations. The pipeline runs advisor -> critic -> finalizer in separate background agents. The parent Pulse turn should capture the returned execution_id, wait with query_step(step_id=\"goal-advisor\", execution_id=\"<returned execution_id>\"), and then record mark_pulse_module_result.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -10816,7 +10841,42 @@ Return a structured critic verdict:
 	return strings.TrimSpace(sb.String())
 }
 
-func buildGoalAdvisorFinalizerInstruction(pulseRunID, focus, advisorOutput, criticOutput string) string {
+type goalAdvisorApprovedPlanProposal struct {
+	ID               string
+	Context          string
+	Evidence         string
+	SelectedOptionID string
+	Note             string
+}
+
+func formatGoalAdvisorApprovedPlanProposals(proposals []goalAdvisorApprovedPlanProposal) string {
+	if len(proposals) == 0 {
+		return "- none verified in db/db.sqlite/report_human_inputs"
+	}
+	var sb strings.Builder
+	for _, proposal := range proposals {
+		sb.WriteString("- input_id: ")
+		sb.WriteString(proposal.ID)
+		sb.WriteString("\n  selected_option_id: ")
+		sb.WriteString(proposal.SelectedOptionID)
+		if strings.TrimSpace(proposal.Context) != "" {
+			sb.WriteString("\n  context: ")
+			sb.WriteString(proposal.Context)
+		}
+		if strings.TrimSpace(proposal.Note) != "" {
+			sb.WriteString("\n  user_note: ")
+			sb.WriteString(proposal.Note)
+		}
+		if strings.TrimSpace(proposal.Evidence) != "" {
+			sb.WriteString("\n  evidence: ")
+			sb.WriteString(proposal.Evidence)
+		}
+		sb.WriteString("\n")
+	}
+	return strings.TrimSpace(sb.String())
+}
+
+func buildGoalAdvisorFinalizerInstruction(pulseRunID, focus, advisorOutput, criticOutput string, approvedProposals []goalAdvisorApprovedPlanProposal, planMutationToolsEnabled bool) string {
 	var sb strings.Builder
 	sb.WriteString("Goal Advisor pipeline stage 3/3: FINALIZER.\n\n")
 	if header := buildGoalAdvisorStageHeader(pulseRunID, focus); header != "" {
@@ -10827,6 +10887,16 @@ func buildGoalAdvisorFinalizerInstruction(pulseRunID, focus, advisorOutput, crit
 	sb.WriteString(advisorOutput)
 	sb.WriteString("\n\nCritic verdict:\n\n")
 	sb.WriteString(criticOutput)
+	sb.WriteString("\n\nCode-enforced mutation gate:\n")
+	if planMutationToolsEnabled {
+		sb.WriteString("- plan/config/eval mutation tools: ENABLED because code verified at least one answered goal_advisor plan-proposal-* request with selected_option_id=approve and the Critic verdict starts with approve.\n")
+		sb.WriteString("- mark_human_input_consumed: ENABLED for the approved proposal ids listed below.\n")
+	} else {
+		sb.WriteString("- plan/config/eval mutation tools: DISABLED. You do not have create/update/delete plan/config/eval tools in this stage.\n")
+		sb.WriteString("- mark_human_input_consumed: DISABLED. Do not claim to consume or apply an answer.\n")
+	}
+	sb.WriteString("Verified approved plan proposals:\n")
+	sb.WriteString(formatGoalAdvisorApprovedPlanProposals(approvedProposals))
 	sb.WriteString(`
 
 You are the only stage allowed to make durable changes, and only within the critic-approved bounds.
@@ -10834,7 +10904,8 @@ You are the only stage allowed to make durable changes, and only within the crit
 Follow this decision policy:
 - If the Critic verdict is reject or no_action: do not change the workflow. Add at most a short skipped/rejected note to builder/improve.html if useful.
 - If the Critic verdict is revise and the safe revision is obvious: log/propose only the narrowed version. Do not start a new advisor loop.
-- If an answered Goal Advisor proposal was already approved by the user and the Critic allows applying it: apply the approved change only with normal plan/config/eval/report tools, call mark_human_input_consumed with the concrete outcome, and remove or replace the matching visible question card in builder/improve.html with a short outcome.
+- If plan/config/eval mutation tools are ENABLED: apply only the verified approved plan-proposal ids listed above, only within the Critic-approved bounds, call mark_human_input_consumed with the concrete outcome for each applied id, and remove or replace the matching visible question card in builder/improve.html with a short outcome.
+- If plan/config/eval mutation tools are DISABLED: do not apply plan/config/eval changes; write only report/proposal updates or create/refine human-input requests.
 - If the proposal is new and material: do not change the plan. Create or refresh a create_human_input_request(source="goal_advisor", input_id="plan-proposal-...", options approve/reject/defer) with exact intended edits, rationale, expected impact, risk, and evidence.
 - If the idea is useful but not ready for a user decision: log it as a proposal-only Advisor idea in builder/improve.html with evidence and risk.
 
@@ -10852,6 +10923,90 @@ Finish with a concise summary: changed/applied/proposed/skipped/blocked, critic 
 	return strings.TrimSpace(sb.String())
 }
 
+func goalAdvisorCriticApprovesPlanMutation(criticOutput string) bool {
+	for _, line := range strings.Split(criticOutput, "\n") {
+		trimmed := strings.TrimSpace(strings.TrimLeft(line, "-*• \t"))
+		lower := strings.ToLower(trimmed)
+		if !strings.HasPrefix(lower, "verdict:") {
+			continue
+		}
+		verdict := strings.TrimSpace(strings.TrimPrefix(lower, "verdict:"))
+		return strings.HasPrefix(verdict, "approve")
+	}
+	return false
+}
+
+func normalizeGoalAdvisorWorkspacePath(workspacePath string) (string, error) {
+	cleaned := strings.Trim(filepath.ToSlash(strings.TrimSpace(workspacePath)), "/")
+	if cleaned == "" {
+		return "", fmt.Errorf("workspace path is required")
+	}
+	if filepath.IsAbs(workspacePath) || strings.Contains(cleaned, "\x00") {
+		return "", fmt.Errorf("invalid workspace path %q", workspacePath)
+	}
+	for _, part := range strings.Split(cleaned, "/") {
+		if part == "" || part == "." || part == ".." {
+			return "", fmt.Errorf("invalid workspace path %q", workspacePath)
+		}
+	}
+	return cleaned, nil
+}
+
+func isGoalAdvisorHumanInputsMissingTable(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "no such table: report_human_inputs")
+}
+
+func (iwm *InteractiveWorkshopManager) approvedGoalAdvisorPlanProposals(ctx context.Context, workspacePath string) ([]goalAdvisorApprovedPlanProposal, error) {
+	normalized, err := normalizeGoalAdvisorWorkspacePath(workspacePath)
+	if err != nil {
+		return nil, err
+	}
+	dbPath := filepath.Join(fsutil.WorkspaceDocsRoot(), filepath.FromSlash(normalized), "db", "db.sqlite")
+	if _, err := os.Stat(dbPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	if _, err := db.ExecContext(ctx, "PRAGMA busy_timeout = 5000"); err != nil {
+		return nil, err
+	}
+
+	rows, err := db.QueryContext(ctx, `SELECT id, context, evidence, selected_option_id, note
+		FROM report_human_inputs
+		WHERE workspace_path = ?
+			AND source = 'goal_advisor'
+			AND status = 'answered'
+			AND id LIKE 'plan-proposal-%'
+		ORDER BY answered_at DESC, updated_at DESC`, normalized)
+	if err != nil {
+		if isGoalAdvisorHumanInputsMissingTable(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer rows.Close()
+
+	var proposals []goalAdvisorApprovedPlanProposal
+	for rows.Next() {
+		var proposal goalAdvisorApprovedPlanProposal
+		if err := rows.Scan(&proposal.ID, &proposal.Context, &proposal.Evidence, &proposal.SelectedOptionID, &proposal.Note); err != nil {
+			return nil, err
+		}
+		selected := strings.ToLower(strings.TrimSpace(proposal.SelectedOptionID))
+		if selected != "approve" && selected != "approved" {
+			continue
+		}
+		proposals = append(proposals, proposal)
+	}
+	return proposals, rows.Err()
+}
+
 func truncateGoalAdvisorStageOutput(value string) string {
 	const maxChars = 20_000
 	value = strings.TrimSpace(value)
@@ -10862,7 +11017,7 @@ func truncateGoalAdvisorStageOutput(value string) string {
 	return strings.TrimSpace(value[:half] + "\n\n... [Goal Advisor stage output truncated for next-stage review] ...\n\n" + value[len(value)-half:])
 }
 
-func (iwm *InteractiveWorkshopManager) runGoalAdvisorStageAgent(ctx context.Context, name string, instruction string, allowMutations bool) (string, error) {
+func (iwm *InteractiveWorkshopManager) runGoalAdvisorStageAgent(ctx context.Context, name string, instruction string, access goalAdvisorStageAccess) (string, error) {
 	logger := iwm.controller.GetLogger()
 	workspacePath := iwm.controller.GetWorkspacePath()
 	knowledgebasePath := getKnowledgebasePath(workspacePath)
@@ -10877,11 +11032,20 @@ func (iwm *InteractiveWorkshopManager) runGoalAdvisorStageAgent(ctx context.Cont
 	}
 	writePaths := []string{}
 	allowedToolNames := goalAdvisorReadOnlyToolAgentAllowedToolNames()
-	if allowMutations {
+	switch access {
+	case goalAdvisorStageFinalizerProposal:
 		writePaths = workshopWritePaths(workspacePath)
-		allowedToolNames = goalAdvisorToolAgentAllowedToolNames()
+		allowedToolNames = goalAdvisorFinalizerProposalToolAgentAllowedToolNames()
+	case goalAdvisorStageFinalizerApprovedMutation:
+		writePaths = workshopWritePaths(workspacePath)
+		allowedToolNames = goalAdvisorFinalizerApprovedToolAgentAllowedToolNames()
 	}
+
+	prevReadPaths, prevWritePaths := iwm.controller.GetFolderGuardPaths()
+	prevReadPaths = append([]string(nil), prevReadPaths...)
+	prevWritePaths = append([]string(nil), prevWritePaths...)
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, writePaths)
+	defer iwm.controller.SetWorkspacePathForFolderGuard(prevReadPaths, prevWritePaths)
 
 	llmConfigToUse := iwm.controller.selectMaintenanceLLM(name)
 	if llmConfigToUse == nil {
@@ -10935,7 +11099,7 @@ func (iwm *InteractiveWorkshopManager) runGoalAdvisorStageAgent(ctx context.Cont
 		"BrowserPrompt":    "",
 	}
 
-	logger.Info(fmt.Sprintf("✨ Running Goal Advisor stage agent: %q (mutations=%v)", name, allowMutations))
+	logger.Info(fmt.Sprintf("✨ Running Goal Advisor stage agent: %q (access=%d)", name, access))
 	result, _, err := agent.Execute(ctx, templateVars, nil)
 	if err != nil {
 		return "", fmt.Errorf("%s agent failed: %w", name, err)
@@ -10944,19 +11108,30 @@ func (iwm *InteractiveWorkshopManager) runGoalAdvisorStageAgent(ctx context.Cont
 }
 
 func (iwm *InteractiveWorkshopManager) runGoalAdvisorReviewPipeline(ctx context.Context, pulseRunID, focus string) (string, error) {
-	advisorResult, err := iwm.runGoalAdvisorStageAgent(ctx, "Goal Advisor - Advisor", buildGoalAdvisorAdvisorInstruction(pulseRunID, focus), false)
+	advisorResult, err := iwm.runGoalAdvisorStageAgent(ctx, "Goal Advisor - Advisor", buildGoalAdvisorAdvisorInstruction(pulseRunID, focus), goalAdvisorStageReadOnly)
 	if err != nil {
 		return fmt.Sprintf("Goal Advisor advisor stage failed: %v", err), err
 	}
 
 	advisorForNextStage := truncateGoalAdvisorStageOutput(advisorResult)
-	criticResult, err := iwm.runGoalAdvisorStageAgent(ctx, "Goal Advisor - Critic", buildGoalAdvisorCriticInstruction(pulseRunID, focus, advisorForNextStage), false)
+	criticResult, err := iwm.runGoalAdvisorStageAgent(ctx, "Goal Advisor - Critic", buildGoalAdvisorCriticInstruction(pulseRunID, focus, advisorForNextStage), goalAdvisorStageReadOnly)
 	if err != nil {
 		return fmt.Sprintf("Goal Advisor critic stage failed: %v\n\nAdvisor draft:\n%s", err, advisorForNextStage), err
 	}
 
 	criticForNextStage := truncateGoalAdvisorStageOutput(criticResult)
-	finalizerResult, err := iwm.runGoalAdvisorStageAgent(ctx, "Goal Advisor - Finalizer", buildGoalAdvisorFinalizerInstruction(pulseRunID, focus, advisorForNextStage, criticForNextStage), true)
+	approvedProposals, proposalErr := iwm.approvedGoalAdvisorPlanProposals(ctx, iwm.controller.GetWorkspacePath())
+	if proposalErr != nil {
+		iwm.controller.GetLogger().Warn(fmt.Sprintf("⚠️ Goal Advisor: failed to read approved plan proposals; finalizer plan tools disabled: %v", proposalErr))
+		approvedProposals = nil
+	}
+	enablePlanMutationTools := len(approvedProposals) > 0 && goalAdvisorCriticApprovesPlanMutation(criticForNextStage)
+	finalizerAccess := goalAdvisorStageFinalizerProposal
+	if enablePlanMutationTools {
+		finalizerAccess = goalAdvisorStageFinalizerApprovedMutation
+	}
+	finalizerPrompt := buildGoalAdvisorFinalizerInstruction(pulseRunID, focus, advisorForNextStage, criticForNextStage, approvedProposals, enablePlanMutationTools)
+	finalizerResult, err := iwm.runGoalAdvisorStageAgent(ctx, "Goal Advisor - Finalizer", finalizerPrompt, finalizerAccess)
 	if err != nil {
 		return fmt.Sprintf("Goal Advisor finalizer stage failed: %v\n\nAdvisor draft:\n%s\n\nCritic verdict:\n%s", err, advisorForNextStage, criticForNextStage), err
 	}

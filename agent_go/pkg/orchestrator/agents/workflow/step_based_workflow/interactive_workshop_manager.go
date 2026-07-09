@@ -1044,10 +1044,8 @@ func GetToolsForWorkshopMode(mode string) []string {
 	// System tools — always available regardless of mode.
 	// Includes workspace, shell, virtual tools, and non-blocking human notification.
 	system := []string{
-		// Workspace basic tools
-		"list_workspace_files", "read_workspace_file", "update_workspace_file",
-		"delete_workspace_file", "move_workspace_file",
-		// Workspace advanced tools
+		// Workspace advanced tools. Basic workspace file tools are intentionally
+		// not in the central workspace registry; use shell/diff/image/media tools.
 		"execute_shell_command", "diff_patch_workspace_file",
 		"read_image", "generate_text_llm", "search_web_llm",
 		"image_gen", "image_edit", "generate_video", "text_to_speech", "speech_to_text", "generate_music",

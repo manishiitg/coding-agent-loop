@@ -80,6 +80,7 @@ import type {
   WorkflowPublishSecretResponse,
   ReportHumanInputResponse,
   ReportHumanInputsResponse,
+  PulseModuleStateResponse,
 } from './api-types'
 import type { PlanStep, AgentConfigs } from '../utils/stepConfigMatching'
 
@@ -1439,6 +1440,13 @@ export const agentApi = {
       params: { workspace_path: workspacePath, ...(status ? { status } : {}) },
     })
     return response.data as ReportHumanInputsResponse
+  },
+
+  getPulseModuleState: async (workspacePath: string) => {
+    const response = await api.get('/api/workflow/pulse-module-state', {
+      params: { workspace_path: workspacePath },
+    })
+    return response.data as PulseModuleStateResponse
   },
 
   answerReportHumanInput: async (

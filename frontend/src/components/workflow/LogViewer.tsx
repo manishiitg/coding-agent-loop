@@ -5,9 +5,7 @@ import { HtmlRenderer } from '../ui/HtmlRenderer'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 import { useTheme } from '../../hooks/useTheme'
 import { ReportHumanInputPanel } from './ReportHumanInputPanel'
-
-// Fired by the preview-pane controls' refresh button when the Log view is active.
-export const WORKFLOW_LOG_REFRESH_EVENT = 'workflow-log-refresh'
+import { WORKFLOW_LOG_REFRESH_EVENT } from './workflowEvents'
 
 // The log renders in an isolated iframe, so it can't inherit the app's theme.
 // We push the app's light/dark choice into the log content: a full <!doctype>

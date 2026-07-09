@@ -364,6 +364,30 @@ export interface ReportHumanInputResponse {
   error?: string
 }
 
+export interface PulseModuleState {
+  workspace_path: string
+  module: string
+  last_pulse_run_id?: string
+  last_checked_at?: string
+  last_ran_at?: string
+  last_decision?: string
+  last_reason?: string
+  last_gate_decision?: string
+  last_result?: string
+  last_result_reason?: string
+  next_check_at?: string
+  next_check_after_run_id?: string
+  cooldown_runs?: number
+  evidence?: string[]
+  updated_at?: string
+}
+
+export interface PulseModuleStateResponse {
+  success: boolean
+  modules: PulseModuleState[]
+  error?: string
+}
+
 // Context Summarization types
 export interface SummarizeConversationRequest {
   keep_last_messages?: number // Optional: number of recent messages to keep (default: 8)

@@ -4,6 +4,7 @@ import { agentApi } from '../../services/api'
 import type { ReportHumanInput } from '../../services/api-types'
 import { useChatStore } from '../../stores/useChatStore'
 import { useContainerSizeTier } from './reportWidgets/tableHelpers'
+import { WORKFLOW_LOG_REFRESH_EVENT } from './workflowEvents'
 
 type ReportHumanInputDraft = {
   selectedOptionId: string
@@ -76,6 +77,12 @@ export function ReportHumanInputPanel({ workspacePath, className = '' }: { works
     void loadInputs(() => cancelled)
     return () => { cancelled = true }
   }, [loadInputs, refreshNonce])
+
+  useEffect(() => {
+    const onRefresh = () => { void loadInputs() }
+    window.addEventListener(WORKFLOW_LOG_REFRESH_EVENT, onRefresh)
+    return () => window.removeEventListener(WORKFLOW_LOG_REFRESH_EVENT, onRefresh)
+  }, [loadInputs])
 
   useEffect(() => {
     setDrafts({})

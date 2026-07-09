@@ -14,6 +14,7 @@ import {
   CalendarClock,
   Sparkles,
   GitCommitVertical,
+  RefreshCw,
   X,
 } from 'lucide-react'
 import ModalPortal from '../../ui/ModalPortal'
@@ -22,7 +23,7 @@ import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowSto
 import { useWorkflowManifestStore } from '../../../stores/useWorkflowManifestStore'
 import { useChatStore } from '../../../stores/useChatStore'
 import { useAuthStore } from '../../../stores/useAuthStore'
-import type { VariablesManifest, WorkflowScheduleEntry } from '../../../services/api-types'
+import type { PulseModuleState, VariablesManifest, WorkflowScheduleEntry } from '../../../services/api-types'
 import type { PlanningResponse } from '../../../utils/stepConfigMatching'
 import type { WorkflowExecutionStatus } from '../hooks/useWorkflowExecution'
 import type { ExecutionOptions } from '../../../services/api-types'
@@ -83,6 +84,80 @@ function isAutoImproveSchedule(schedule: WorkflowScheduleEntry): boolean {
   if (nameAndDescription.includes('retired') || nameAndDescription.includes('duplicate')) return false
   if (/\bharden\b/.test(nameAndDescription) && !/\bimprove\b/.test(nameAndDescription)) return false
   return true
+}
+
+const PULSE_MODULE_COMMANDS: Array<{ id: string; label: string; description: string }> = [
+  { id: 'harden', label: 'Harden', description: 'Bug checks and low-risk fixes' },
+  { id: 'artifact_review', label: 'Artifact review', description: 'Plan-change artifact drift' },
+  { id: 'report_health', label: 'Report health', description: 'Dashboard/report accuracy' },
+  { id: 'learning_health', label: 'Learning health', description: 'Learning freshness and quality' },
+  { id: 'knowledgebase_health', label: 'Knowledge base', description: 'KB freshness and contradictions' },
+  { id: 'db_health', label: 'Database health', description: 'DB/schema/data quality checks' },
+  { id: 'cost_llm_time', label: 'Cost + LLM + time', description: 'Cost, model, and runtime review' },
+  { id: 'goal_advisor', label: 'Goal Advisor', description: 'Strategic review when goal evidence is weak' },
+]
+
+const PULSE_FIXED_COMMANDS: Array<{ id: string; label: string; description: string; status: string }> = [
+  { id: 'dashboard', label: 'Dashboard + questions', description: 'Updates Pulse UI and asks for input if needed', status: 'FINAL' },
+  { id: 'backup', label: 'Backup', description: 'Saves current workflow artifacts', status: 'FINAL' },
+  { id: 'publish', label: 'Publish', description: 'Refreshes public report when publishing is configured', status: 'IF SET' },
+  { id: 'notify', label: 'Notify', description: 'Sends the run summary after report updates', status: 'FINAL' },
+]
+
+function pulseStatusToneClass(status: string): string {
+  const normalized = status.toLowerCase()
+  if (normalized === 'failed' || normalized === 'blocked') {
+    return 'border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-300'
+  }
+  if (normalized === 'changed' || normalized === 'due') {
+    return 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+  }
+  if (normalized === 'done') {
+    return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+  }
+  if (normalized === 'skipped' || normalized === 'no data' || normalized === 'waiting' || normalized === 'if set') {
+    return 'border-border bg-muted text-muted-foreground'
+  }
+  return 'border-primary/20 bg-primary/10 text-primary'
+}
+
+function formatPulseTimestamp(value?: string): string {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function getPulseModuleStatus(state?: PulseModuleState): { label: string; detail: string; time: string } {
+  if (!state) {
+    return { label: 'NO DATA', detail: 'No Pulse run recorded yet', time: '' }
+  }
+  const result = (state.last_result || '').trim()
+  if (result) {
+    return {
+      label: result.toUpperCase(),
+      detail: state.last_result_reason || state.last_reason || 'Completed in the latest recorded Pulse run',
+      time: formatPulseTimestamp(state.last_ran_at || state.updated_at),
+    }
+  }
+  const decision = (state.last_gate_decision || state.last_decision || '').trim()
+  if (decision) {
+    return {
+      label: decision.toUpperCase(),
+      detail: state.last_reason || 'Gate decision recorded',
+      time: formatPulseTimestamp(state.last_checked_at || state.updated_at),
+    }
+  }
+  return {
+    label: 'WAITING',
+    detail: 'State exists, but no decision has been recorded yet',
+    time: formatPulseTimestamp(state.updated_at),
+  }
 }
 
 interface WorkflowToolbarProps {
@@ -210,6 +285,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     }
   }, [workspacePath, monitorOn, monitorSaving, updateWorkflowManifest])
   const [showMonitorHelp, setShowMonitorHelp] = useState(false)
+  const [pulseModuleStates, setPulseModuleStates] = useState<PulseModuleState[]>([])
+  const [pulseStatusLoading, setPulseStatusLoading] = useState(false)
+  const [pulseStatusError, setPulseStatusError] = useState<string | null>(null)
   const autoImproveSchedules = useMemo(
     () => workflowSchedules.filter(isAutoImproveSchedule),
     [workflowSchedules]
@@ -230,6 +308,37 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     () => formatWorkflowNameFromPath(workspacePath),
     [workspacePath]
   )
+
+  const refreshPulseModuleStates = useCallback(async () => {
+    if (!workspacePath) {
+      setPulseModuleStates([])
+      setPulseStatusError(null)
+      return
+    }
+    setPulseStatusLoading(true)
+    setPulseStatusError(null)
+    try {
+      const resp = await agentApi.getPulseModuleState(workspacePath)
+      if (!resp.success) {
+        throw new Error(resp.error || 'Failed to load Pulse status')
+      }
+      setPulseModuleStates(resp.modules || [])
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load Pulse status'
+      setPulseStatusError(message)
+    } finally {
+      setPulseStatusLoading(false)
+    }
+  }, [workspacePath])
+
+  useEffect(() => {
+    if (!showMonitorHelp || !monitorOn) return
+    refreshPulseModuleStates()
+  }, [showMonitorHelp, monitorOn, refreshPulseModuleStates])
+
+  const pulseModuleStateByModule = useMemo(() => {
+    return new Map(pulseModuleStates.map(state => [state.module, state]))
+  }, [pulseModuleStates])
 
   const refreshWorkflowScheduleStats = useCallback(async () => {
     if (!workspacePath && !presetQueryId) {
@@ -758,7 +867,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     {showMonitorHelp && (
       <ModalPortal>
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowMonitorHelp(false)}>
-          <div className="w-full max-w-md rounded-lg border bg-background shadow-xl" onClick={(e) => e.stopPropagation()}>
+          <div className="max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto rounded-lg border bg-background shadow-xl" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b px-5 py-3.5">
               <div className="flex items-center gap-2">
                 <Activity className="h-4 w-4 text-primary" />
@@ -779,6 +888,77 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               </ul>
               <p>If Publish is set up, it also re-publishes your report so the shared link stays current. Bigger strategy questions are handled by the Goal Advisor module when Pulse Gate decides enough evidence exists.</p>
             </div>
+            {monitorOn && (
+              <div className="border-t px-5 py-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-foreground">Command status</div>
+                    <div className="text-xs text-muted-foreground">
+                      Latest Pulse Gate state from this workflow&apos;s <code className="rounded bg-muted px-1 py-0.5">db/db.sqlite</code>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { void refreshPulseModuleStates() }}
+                    disabled={pulseStatusLoading}
+                    className="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-muted disabled:opacity-60"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${pulseStatusLoading ? 'animate-spin' : ''}`} />
+                    Refresh
+                  </button>
+                </div>
+                {pulseStatusError && (
+                  <div className="mb-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-300">
+                    {pulseStatusError}
+                  </div>
+                )}
+                <div className="max-h-[320px] overflow-y-auto rounded-lg border bg-muted/20">
+                  {PULSE_MODULE_COMMANDS.map((command) => {
+                    const state = pulseModuleStateByModule.get(command.id)
+                    const status = getPulseModuleStatus(state)
+                    return (
+                      <div key={command.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-b px-3 py-2.5 last:border-b-0">
+                        <div className="min-w-0">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="truncate text-sm font-medium text-foreground">{command.label}</span>
+                            {state?.last_pulse_run_id && (
+                              <span className="shrink-0 rounded bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                {state.last_pulse_run_id}
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                            {status.detail || command.description}
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 flex-col items-end gap-1">
+                          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-wide ${pulseStatusToneClass(status.label)}`}>
+                            {status.label}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">{status.time}</span>
+                        </div>
+                      </div>
+                    )
+                  })}
+                  <div className="border-t bg-background/40 px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Final commands
+                  </div>
+                  {PULSE_FIXED_COMMANDS.map((command) => (
+                    <div key={command.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-t px-3 py-2.5 first:border-t-0">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium text-foreground">{command.label}</div>
+                        <div className="mt-0.5 truncate text-xs text-muted-foreground">{command.description}</div>
+                      </div>
+                      <div className="flex shrink-0 items-start">
+                        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-wide ${pulseStatusToneClass(command.status)}`}>
+                          {command.status}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {/* enable / disable */}
             <div className="flex items-center justify-between border-t px-5 py-3.5">
               <div>

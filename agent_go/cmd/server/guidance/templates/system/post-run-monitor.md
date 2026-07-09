@@ -4,7 +4,8 @@ Pulse runs after a scheduled workflow run. It is not a fixed checklist. It is a 
 
 1. **Gate / Worklist** — read the evidence, update `builder/improve.html`, and call `record_pulse_worklist`.
 2. **Selected modules only** — the scheduler runs the modules Gate marked `due`.
-3. **Final backup / publish / notify** — always run after Gate and any selected modules.
+3. **Dashboard / questions** — write org cards and durable human-input requests before backup/publish.
+4. **Final backup / publish / notify** — back up and publish the final artifacts, then send the summary.
 
 The durable state for module cadence lives in the workflow's `db/db.sqlite` table `pulse_module_state`. The visible user-facing state lives in `builder/improve.html`.
 
@@ -38,6 +39,8 @@ Gate writes a clear **Pulse Gate / Worklist** card in `builder/improve.html`:
 - Module worklist: each module `due` or `skipped`, with a short plain-language reason and evidence.
 
 Gate does not call repair tools. It does not call `harden_workflow`, `improve_learnings`, `improve_kb`, `improve_db`, plan modification tools, backup, publish, or notify.
+
+Gate must record exactly one decision for each module. A partial worklist is invalid because omitted modules would otherwise disappear silently.
 
 ## Module Decisions
 
@@ -162,6 +165,8 @@ Do not ask only in email or raw chat. Show the request in `builder/improve.html`
 ## Notifications
 
 Pulse sends one summary every run unless the user's `soul/soul.md ## Notifications` section explicitly says not to notify.
+
+The dashboard/questions turn runs before backup and publish. It writes `builder/card.health.html`, creates any needed `report_human_inputs` rows, and keeps `builder/improve.html` aligned with those asks. The notify turn runs after publish and should mainly deliver the already-recorded state.
 
 The notify turn should include:
 

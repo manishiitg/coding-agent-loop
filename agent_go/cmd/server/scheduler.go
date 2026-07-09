@@ -1512,9 +1512,10 @@ func postRunMonitorPreBackupStep(pulseRunID string) postRunMonitorStep {
 
 func postRunMonitorFinalSteps(pulseRunID string) []postRunMonitorStep {
 	return []postRunMonitorStep{
-		{"backup", fmt.Sprintf("PULSE FINAL BACKUP. pulse_run_id=%q. Read workflow.json.backup and back up per get_reference_doc(kind=\"backup-strategy\"). Back up the final state produced by Gate + selected Pulse modules, including builder/improve.html, db/db.sqlite pulse_module_state, report/KB/learnings/db changes, backup/status.json, and publish/status.json when changed. If backup is disabled, set it up with the zero-config local-git default and back up. Skip actual push only when backup/status.json shows the current source is already backed up. Always write backup/status.json and update the latest run row with the backup result. Report the backup result, then stop.", pulseRunID)},
+		{"dashboard", "PULSE DASHBOARD / QUESTIONS. Prepare the final user-facing Pulse/org state before backup and publish. Overwrite builder/card.health.html with one compact org-dashboard card fragment (inline content only, single-quoted attributes). This dashboard write happens every run even if notifications are disabled. Summarize the final post-Pulse health and final post-Pulse state: selected modules ran/skipped, Bug/Goal state, user input requests, harden/artifact/report/learning/KB/DB/cost/Goal Advisor outcomes, backup/publish intent, and next action. If this run needs user input or the later notification would ask a question, call create_human_input_request(workspace_path=\"<current workflow>\", source=\"pulse\", ...) now and show the request in builder/improve.html. Do not call notify_user, backup, or publish in this step. Then stop."},
+		{"backup", fmt.Sprintf("PULSE FINAL BACKUP. pulse_run_id=%q. Read workflow.json.backup and back up per get_reference_doc(kind=\"backup-strategy\"). Back up the final state produced by Gate + selected Pulse modules + dashboard/questions, including builder/improve.html, builder/card.*.html, db/db.sqlite pulse_module_state/report_human_inputs, report/KB/learnings/db changes, backup/status.json, and publish/status.json when changed. If backup is disabled, set it up with the zero-config local-git default and back up. Skip actual push only when backup/status.json shows the current source is already backed up. Always write backup/status.json and update the latest run row with the backup result. Report the backup result, then stop.", pulseRunID)},
 		{"publish", "PULSE PUBLISH. If workflow.json.publish is enabled, re-publish the updated HTML per get_reference_doc(kind=\"publish-strategy\") — but ONLY when the destination is already VERIFIED (publish/status.json shows a prior successful publish). Every run changes published artifacts — new db data plus a fresh Pulse entry in builder/improve.html — so always re-publish to a verified destination. Never do the first/verifying publish here unattended. Always write publish/status.json. Report the result, then stop."},
-		{"notify", "PULSE NOTIFY / ORG CARD. First overwrite builder/card.health.html with one compact org-dashboard card fragment (inline content only, single-quoted attributes). This dashboard write happens every run even if notifications are disabled. Summarize the final post-Pulse health and final post-Pulse state: selected modules ran/skipped, Bug/Goal state, user input requests, harden/artifact/report/learning/KB/DB/cost/Goal Advisor outcomes, backup/publish status, and next action. If this run needs user input or the email would ask a question, call create_human_input_request(workspace_path=\"<current workflow>\", source=\"pulse\", ...) before notify_user. Honor soul/soul.md ## Notifications; otherwise call notify_user once every run with a compact summary. When Gmail/email fields are available, email is the default rich rendering: set email_subject, email_html, and plain email_body on the same notify_user call unless the preference explicitly says not to email; set email_to/email_cc only when the preference asks. Then stop."},
+		{"notify", "PULSE NOTIFY. Read builder/improve.html, builder/card.health.html, db/db.sqlite report_human_inputs, backup/status.json, and publish/status.json. Do not create new user-input requests here unless the dashboard step clearly failed to record an already-needed request; this step is primarily delivery. Honor soul/soul.md ## Notifications; otherwise call notify_user once every run with a compact summary. Include selected modules ran/skipped, Bug/Goal state, user input requests, harden/artifact/report/learning/KB/DB/cost/Goal Advisor outcomes, backup/publish status, dashboard URL when live, and next action. When Gmail/email fields are available, email is the default rich rendering: set email_subject, email_html, and plain email_body on the same notify_user call unless the preference explicitly says not to email; set email_to/email_cc only when the preference asks. Then stop."},
 	}
 }
 
@@ -1525,6 +1526,9 @@ func (s *SchedulerService) selectedPostRunMonitorModuleSteps(ctx context.Context
 	}
 	var selected []postRunMonitorStep
 	if !ok || err != nil {
+		selected = s.fallbackPostRunMonitorModuleSteps(ctx, sctx, pulseRunID)
+	} else if !pulseWorklistIsComplete(worklist) {
+		s.sessionLogf(sctx, pulseRunID, "[PULSE] worklist incomplete (%d/%d modules); using conservative fallback", len(worklist), len(pulseModuleOrder))
 		selected = s.fallbackPostRunMonitorModuleSteps(ctx, sctx, pulseRunID)
 	} else {
 		for _, moduleStep := range postRunMonitorModuleSteps(pulseRunID) {
@@ -1739,13 +1743,15 @@ func (s *SchedulerService) disableLegacyOptimizerSchedule(ctx context.Context, s
 			return nil
 		}
 		manifest.Schedules[i].Enabled = false
+		enabled := true
+		manifest.PostRunMonitor = &enabled
 		if err := WriteWorkflowManifest(ctx, sctx.WorkspacePath, manifest); err != nil {
 			return fmt.Errorf("disable legacy optimizer schedule: write workflow.json: %w", err)
 		}
 		if err := s.ReloadSchedule(ctx, sctx.WorkspacePath, sctx.Schedule.ID); err != nil {
 			s.sessionLogf(sctx, sessionID, "[SCHEDULER] legacy optimizer schedule %s disabled but reload failed: %v", sctx.Schedule.ID, err)
 		}
-		s.sessionLogf(sctx, sessionID, "[SCHEDULER] legacy optimizer schedule %s disabled without starting an LLM session; Goal Advisor now runs inside Pulse", sctx.Schedule.ID)
+		s.sessionLogf(sctx, sessionID, "[SCHEDULER] legacy optimizer schedule %s disabled without starting an LLM session; post_run_monitor enabled so Goal Advisor can run inside Pulse", sctx.Schedule.ID)
 		return nil
 	}
 	return fmt.Errorf("disable legacy optimizer schedule: schedule %s not found in %s", sctx.Schedule.ID, sctx.WorkspacePath)

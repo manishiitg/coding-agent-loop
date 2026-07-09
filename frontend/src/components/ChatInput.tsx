@@ -28,7 +28,7 @@ import { hasWorkflowWriteAccess } from '../utils/workflowPermissions'
 import { requestTerminalRefreshBurst } from '../utils/terminalRefresh'
 import { isMainAgentTerminal, terminalDisplayLabel, keyEventToTerminalAction } from '../utils/terminals'
 import { startRestoredTransportTerminal } from '../utils/restoredTerminal'
-import { chromeCdpLaunchCommand, chromeCdpVerifyCommand } from '../utils/cdpSetup'
+import { chromeCdpInstallCommand, chromeCdpLaunchCommand, chromeCdpVerifyCommand, chromeCdpZipUrl } from '../utils/cdpSetup'
 import { CHAT_TOOL_COMMAND_EVENT, chatToolCommandFromEvent } from '../utils/chatToolEvents'
 
 // Visible workshop modes in the UI. The merged "workshop" mode replaced
@@ -260,7 +260,7 @@ import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 import { usePresetApplication, useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
-import { agentApi, getApiBaseUrl } from '../services/api'
+import { agentApi } from '../services/api'
 import { skillsApi } from '../api/skills'
 import type { Skill } from '../types/skills'
 import { chatHistorySupportsNativeResume, chatHistoryUsesTerminalRestore } from './PreviousChatHistoryPanel'
@@ -4094,13 +4094,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                                   <div className="rounded-md border border-border bg-background/70 p-3">
                                     <p className="text-xs font-medium">macOS launcher</p>
                                     <p className="mt-1 text-xs text-muted-foreground">Install a dedicated Chrome CDP app profile.</p>
+                                    <code className="mt-2 block rounded-md border border-border bg-black/30 px-2 py-1.5 text-[10px] text-emerald-300 break-all">
+                                      {chromeCdpInstallCommand()}
+                                    </code>
                                     <a
-                                      href={`${getApiBaseUrl()}/api/downloads/chrome-cdp-macOS.zip`}
+                                      href={chromeCdpZipUrl}
                                       download="Chrome-CDP-macOS.zip"
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       onClick={(e) => e.stopPropagation()}
-                                      className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-500"
+                                      className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-500"
                                     >
                                       <Download className="h-3.5 w-3.5" />
                                       Download app

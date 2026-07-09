@@ -1480,15 +1480,30 @@ else
     echo "✅ No leftover agent-browser daemons"
 fi
 
-# Kill orphaned Chrome for Testing processes (children of killed daemons that survived).
-# These consume hundreds of MB each and cause OOM kills on new Chrome launches.
-CHROME_COUNT=$(pgrep -f 'Google Chrome for Testing' 2>/dev/null | wc -l | tr -d ' ')
+# Kill only orphaned agent-browser-owned Chrome processes. Do not match plain
+# "Google Chrome for Testing": users may run their own Chrome-for-Testing outside
+# Runloop, and startup must not close those windows.
+ORPHAN_AGENT_CHROME_PIDS=""
+while IFS= read -r chrome_pid; do
+    [ -n "$chrome_pid" ] || continue
+    chrome_ppid="$(ps -p "$chrome_pid" -o ppid= 2>/dev/null | tr -d '[:space:]')"
+    if [ "$chrome_ppid" = "1" ]; then
+        ORPHAN_AGENT_CHROME_PIDS="${ORPHAN_AGENT_CHROME_PIDS}${chrome_pid}
+"
+    fi
+done < <(pgrep -f 'agent-browser-chrome-' 2>/dev/null || true)
+CHROME_COUNT=$(printf "%s" "$ORPHAN_AGENT_CHROME_PIDS" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')
 if [ "$CHROME_COUNT" -gt 0 ]; then
-    echo "🧹 Killing $CHROME_COUNT orphaned Chrome for Testing process(es)..."
-    pkill -9 -f 'Google Chrome for Testing' 2>/dev/null || true
-    echo "✅ Chrome for Testing processes cleared"
+    echo "🧹 Killing $CHROME_COUNT orphaned agent-browser Chrome process(es)..."
+    while IFS= read -r chrome_pid; do
+        [ -n "$chrome_pid" ] || continue
+        kill -9 "$chrome_pid" 2>/dev/null || true
+    done <<EOF
+$ORPHAN_AGENT_CHROME_PIDS
+EOF
+    echo "✅ Orphaned agent-browser Chrome processes cleared"
 else
-    echo "✅ No orphaned Chrome for Testing processes"
+    echo "✅ No orphaned agent-browser Chrome processes"
 fi
 
 # Clean up stale agent-browser runtime state (dead PID/socket files)

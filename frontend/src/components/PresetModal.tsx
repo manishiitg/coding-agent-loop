@@ -15,13 +15,13 @@ import type { PlannerFile, PresetLLMConfig, AgentLLMConfig, AgentLLMFallback, LL
 import { useLLMStore } from '../stores/useLLMStore';
 import { useModeStore } from '../stores/useModeStore';
 import { useMCPStore } from '../stores/useMCPStore';
-import { agentApi, getApiBaseUrl } from '../services/api';
+import { agentApi } from '../services/api';
 import LLMSelectionDropdown from './LLMSelectionDropdown';
 import WorkflowLLMTierPreview from './WorkflowLLMTierPreview';
 import type { LLMOption } from '../types/llm';
 import ModalPortal from './ui/ModalPortal';
 import { agentLLMToPresetBase, getWorkflowLLMOptions, getWorkflowLLMTierDefaults, hasWorkflowLLMTierDefaults } from '../utils/workflowLLMTierDefaults';
-import { chromeCdpLaunchCommand, chromeCdpVerifyCommand } from '../utils/cdpSetup';
+import { chromeCdpInstallCommand, chromeCdpLaunchCommand, chromeCdpVerifyCommand, chromeCdpZipUrl } from '../utils/cdpSetup';
 
 interface PresetModalProps {
   isOpen: boolean;
@@ -1139,8 +1139,12 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                             <p className="text-xs font-medium text-gray-700 dark:text-gray-300">Launch Chrome with CDP</p>
                             {typeof navigator !== 'undefined' && navigator.platform?.includes('Mac') && (
                               <div className="space-y-1">
+                                <p className="text-xs text-gray-500 dark:text-gray-400">Install/update with one command:</p>
+                                <code className="block bg-gray-200 dark:bg-gray-950 px-2 py-1 rounded text-[10px] font-mono text-green-700 dark:text-green-400 border border-gray-300 dark:border-gray-700 break-all">
+                                  {chromeCdpInstallCommand()}
+                                </code>
                                 <a
-                                  href={`${getApiBaseUrl()}/api/downloads/chrome-cdp-macOS.zip`}
+                                  href={chromeCdpZipUrl}
                                   download="Chrome-CDP-macOS.zip"
                                   target="_blank"
                                   rel="noopener noreferrer"

@@ -34,7 +34,7 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 		"not measured this run · last measured",
 		"Every skipped module must set at least one concrete next-check condition",
 		"what new evidence caused the override",
-		"progressive evidence triage",
+		"progressive evidence scan",
 		"one ordered finalizer turn",
 		"mark_pulse_final_command_result",
 		"not automatically due every Pulse",

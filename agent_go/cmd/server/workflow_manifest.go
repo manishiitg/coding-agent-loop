@@ -54,8 +54,8 @@ type WorkflowManifest struct {
 	// captures nuance that enums can't.
 	OversightMode OversightMode `json:"oversight_mode,omitempty"`
 
-	// PostRunMonitor opts this workflow into the post-run monitor: a cheap
-	// read-only triage pass that runs after each scheduled run and records Bug +
+	// PostRunMonitor opts this workflow into the post-run monitor: a compact
+	// evidence scan that runs after each scheduled run and records Bug +
 	// Goal verdicts (and any silent-failure / drift finding) into the workflow
 	// log. It is a deliberate choice — the user or the builder agent enables it
 	// for workflows where silent breakage matters (QA, production, monitoring,

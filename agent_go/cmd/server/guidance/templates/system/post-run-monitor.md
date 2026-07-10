@@ -21,7 +21,7 @@ Gate decides what the next Pulse modules should do. Read `builder/improve.html` 
 - `get_pulse_module_state(workspace_path="<current workflow>")` before deciding.
 - `record_pulse_worklist(workspace_path="<current workflow>", pulse_run_id="<pulse session id>", decisions=[...])` exactly once before stopping.
 
-Gate uses **progressive evidence triage**. Start with compact state and metadata:
+Gate uses a **progressive evidence scan**. Start with compact state and metadata:
 
 - latest run metadata/summary and run status, not every long log
 - `builder/improve.html` current dashboard, open items, recent timeline, and cadence
@@ -36,7 +36,7 @@ Gate uses **progressive evidence triage**. Start with compact state and metadata
 - Chief of Staff recommendation cards in `builder/improve.html`
 - compact cost/timing availability and change signals when present
 
-Do not load full report HTML, full KB/learnings, broad DB rows, every cost file, or long run logs merely to decide cadence. Open large evidence only when a compact signal makes that module plausibly due or one targeted fact is needed to justify a decision. The selected module performs the deep inspection later; Gate is triage.
+Do not load full report HTML, full KB/learnings, broad DB rows, every cost file, or long run logs merely to decide cadence. Open large evidence only when a compact signal makes that module plausibly due or one targeted fact is needed to justify a decision. The selected module performs the deep inspection later; Gate only selects the evidence-backed worklist. When Gate sees a plausible bug signal, mark Harden due so Harden can investigate, fix, and verify it.
 
 Gate writes a compact **Pulse Gate / Worklist** entry in the Pulse log/timeline area of `builder/improve.html`. Do not put full Gate details in the first-screen/top dashboard; the top dashboard should stay focused on latest outcome, goal health, and next useful action.
 

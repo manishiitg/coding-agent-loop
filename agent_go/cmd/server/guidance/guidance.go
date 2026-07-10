@@ -68,7 +68,7 @@ var allKinds = map[string]kindMeta{
 	"review-cost":           {Group: "review", Description: "Cost analysis with safe-reduction recommendations", Modes: []string{"workshop"}},
 	"review-code":           {Group: "review", Description: "Saved main.py vs current step descriptions drift check", Modes: []string{"workshop"}},
 	"review-artifact-drift": {Group: "review", Description: "Audit plan changelog entries against dependent artifacts: learnings, main.py, KB, db, reports, and eval wiring", Modes: []string{"workshop"}},
-	"monitor":               {Group: "review", Description: "Post-run monitor: read the latest run + changelog + eval evidence, record Bug + Goal verdicts (and any silent-failure/drift finding) into the workflow log. Read-only triage.", Modes: []string{"workshop", "run"}},
+	"monitor":               {Group: "review", Description: "Post-run monitor: read the latest run + changelog + eval evidence, record Bug + Goal verdicts (and any silent-failure/drift finding) into the workflow log. Read-only evidence scan; Harden owns bug fixes.", Modes: []string{"workshop", "run"}},
 
 	// Knowledgebase maintenance — applies targeted or cross-step KB cleanup
 	"improve-knowledge": {Group: "kb", Description: "Improve knowledgebase/notes with targeted cleanup or cross-step consolidation", Modes: []string{"workshop"}},

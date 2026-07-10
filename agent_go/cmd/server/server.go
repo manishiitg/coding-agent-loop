@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -48,6 +47,7 @@ import (
 	"github.com/manishiitg/mcpagent/toolcalllog"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/tmuxcapture"
 
 	"mcp-agent-builder-go/agent_go/pkg/browser"
 	"mcp-agent-builder-go/agent_go/pkg/common"
@@ -8696,26 +8696,6 @@ type queryToolCallSummary struct {
 	SessionID  string
 }
 
-// queryStepTmuxCaptureLines bounds how many lines of the live tmux pane query_step
-// inlines. Enough to see what the coding agent is doing now without flooding the
-// response; deeper history is available via the capture-pane command it also emits.
-const queryStepTmuxCaptureLines = 80
-
-// agentTerminalANSIPattern strips terminal escape sequences before inlining pane
-// content into an LLM-facing response (mirrors terminals.ansiEscapePattern).
-var agentTerminalANSIPattern = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
-
-// cleanTerminalTailForAgent strips ANSI escapes, trims trailing blank padding that
-// capture-pane adds, and byte-bounds the result for inclusion in a query_step reply.
-func cleanTerminalTailForAgent(content string) string {
-	stripped := agentTerminalANSIPattern.ReplaceAllString(content, "")
-	lines := strings.Split(stripped, "\n")
-	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
-		lines = lines[:len(lines)-1]
-	}
-	return terminalContentTail(strings.Join(lines, "\n"), 4000)
-}
-
 // makeStepTmuxLookup returns a TmuxLookupFunc that resolves the live tmux session
 // for a workshop step running a coding-CLI provider (tmux transport) and captures a
 // fresh tail of its pane. It scans the terminal store for a tmux-backed snapshot
@@ -8724,6 +8704,9 @@ func cleanTerminalTailForAgent(content string) string {
 // Content is only refreshed when the UI views the pane, so it can be stale for a
 // headless builder. The capture result is also written back to keep the store warm.
 func makeStepTmuxLookup(api *StreamingAPI) todo_creation_human.TmuxLookupFunc {
+	capturer := tmuxcapture.Capturer{Run: func(ctx context.Context, args ...string) (string, error) {
+		return runTerminalTmuxOutputCommand(ctx, args...)
+	}}
 	return func(ctx context.Context, mainSessionID, stepID string) (string, string, bool) {
 		if api == nil || api.terminalStore == nil {
 			return "", "", false
@@ -8741,11 +8724,11 @@ func makeStepTmuxLookup(api *StreamingAPI) todo_creation_human.TmuxLookupFunc {
 			}
 			var tail string
 			cctx, cancel := context.WithTimeout(ctx, terminalTmuxActionTimeout)
-			content, err := captureTerminalPaneLines(cctx, ts, queryStepTmuxCaptureLines)
+			capture, err := capturer.CaptureAgentTail(cctx, ts, tmuxcapture.Options{})
 			cancel()
-			if err == nil && strings.TrimSpace(content) != "" {
-				api.terminalStore.RefreshContent(snap.TerminalID, content)
-				tail = cleanTerminalTailForAgent(content)
+			if err == nil && strings.TrimSpace(capture.PaneContent) != "" {
+				api.terminalStore.RefreshContent(snap.TerminalID, capture.PaneContent)
+				tail = capture.Text
 			}
 			return ts, tail, true
 		}

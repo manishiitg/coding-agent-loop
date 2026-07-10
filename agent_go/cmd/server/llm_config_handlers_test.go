@@ -184,7 +184,7 @@ func TestProviderManifestMarksDeprecatedCodingAgents(t *testing.T) {
 			for _, model := range provider.Models {
 				modelIDs[model.ModelID] = true
 			}
-			for _, modelID := range []string{"zai/glm-5.2", "kimi-coding/k2p7"} {
+			for _, modelID := range []string{"zai/glm-5.2", "moonshotai/kimi-k2.7-code"} {
 				if !modelIDs[modelID] {
 					t.Fatalf("pi-cli models = %v, want %s", modelIDs, modelID)
 				}

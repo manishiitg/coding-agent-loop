@@ -408,6 +408,44 @@ func TestTerminalCollapseBlankRunsKeepsPromptBoxTrailer(t *testing.T) {
 	}
 }
 
+func TestQueryStepTmuxLookupUsesSharedBoundedCapture(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-query-step-shared-capture"
+	tmuxSession := "mlp-cursor-query-step"
+	store.HandleEvent(sessionID, terminalRouteSyntheticChunkEvent(
+		sessionID,
+		"workflow-step:review-plan",
+		"old pane content",
+		1,
+		map[string]interface{}{
+			"kind":            "terminal",
+			"tmux_session":    tmuxSession,
+			"current_step_id": "review-plan",
+			"step_transport":  "tmux",
+			"scope":           "workflow_step",
+		},
+	))
+
+	oldRunOutput := runTerminalTmuxOutputCommand
+	runTerminalTmuxOutputCommand = func(_ context.Context, args ...string) (string, error) {
+		if got := strings.Join(args, " "); got != "capture-pane -p -e -J -t "+tmuxSession+" -S -80" {
+			t.Fatalf("shared capture args = %q", got)
+		}
+		return "\x1b[32mcurrent pane output\x1b[0m\n\n", nil
+	}
+	defer func() { runTerminalTmuxOutputCommand = oldRunOutput }()
+
+	gotSession, tail, ok := makeStepTmuxLookup(api)(context.Background(), sessionID, "review-plan")
+	if !ok || gotSession != tmuxSession || tail != "current pane output" {
+		t.Fatalf("lookup session=%q tail=%q ok=%t", gotSession, tail, ok)
+	}
+	snapshots := store.List(sessionID)
+	if len(snapshots) != 1 || !strings.Contains(snapshots[0].Content, "\x1b[32mcurrent pane output\x1b[0m") {
+		t.Fatalf("refreshed snapshots = %#v", snapshots)
+	}
+}
+
 func TestTerminalRoutesListCanReturnMetadataOnly(t *testing.T) {
 	store := terminals.NewStore()
 	api := &StreamingAPI{terminalStore: store}

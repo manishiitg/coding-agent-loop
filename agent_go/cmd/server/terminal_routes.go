@@ -16,6 +16,7 @@ import (
 
 	"github.com/gorilla/mux"
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/tmuxcapture"
 
 	"mcp-agent-builder-go/agent_go/internal/terminals"
 )
@@ -1051,170 +1052,10 @@ func terminalDebugSource(r *http.Request) string {
 	return source
 }
 
-// terminalMaxConsecutiveBlankLines caps how many blank rows survive a collapse.
-// Agy and other CLIs use cursor positioning to repaint loading spinners
-// ("Generating...") in place; with `capture-pane -e`, every frame leaves its
-// current pane state in scrollback — typically the spinner row followed by ~25
-// empty rows of pane area — so the runs must be capped or the snapshot becomes
-// a near-empty scroll. But the TUIs deliberately separate sections with 2–3
-// blank rows; capping at 1 stacked those sections directly together and made
-// the re-captured (inactive/suspended) pane hard to read. Keeping up to 2
-// preserves that separation while still squashing the spinner gaps. Must match
-// paneview.CollapseBlankRuns so the active stream and the re-captured snapshot
-// render with identical spacing.
-const terminalMaxConsecutiveBlankLines = 2
-
-// collapseBlankRuns squeezes any run of blank/whitespace-only lines down to at
-// most terminalMaxConsecutiveBlankLines and trims trailing whitespace from each
-// line. It also deduplicates consecutive Braille-spinner lines (⠀–⣿), keeping
-// only the last frame so the animated "Generating…" indicator doesn't stack up
-// as dozens of separate lines in the captured scrollback.
+// collapseBlankRuns keeps the existing server call sites while sharing the
+// capture cleanup used by query_step and the standalone delegation MCP.
 func collapseBlankRuns(s string) string {
-	if s == "" {
-		return s
-	}
-	lines := strings.Split(s, "\n")
-	lines = pruneTerminalSpinnerWordFragments(lines)
-	out := make([]string, 0, len(lines))
-	blankRun := 0
-	for i, line := range lines {
-		trimmed := strings.TrimRight(line, " \t\r")
-		if strings.TrimSpace(trimmed) == "" {
-			blankRun++
-			if blankRun <= terminalMaxConsecutiveBlankLines {
-				out = append(out, "")
-			}
-			continue
-		}
-		blankRun = 0
-		// Skip Braille-spinner lines that are immediately followed by another
-		// Braille-spinner line — only the last frame in a run is kept.
-		if isTerminalSpinnerLine(trimmed) {
-			next := i + 1
-			for next < len(lines) && strings.TrimSpace(lines[next]) == "" {
-				next++
-			}
-			if next < len(lines) && isTerminalSpinnerLine(strings.TrimRight(lines[next], " \t\r")) {
-				continue // earlier frame — skip
-			}
-		}
-		out = append(out, trimmed)
-	}
-	return strings.Join(out, "\n")
-}
-
-// isTerminalSpinnerLine returns true when a line begins with a Braille block
-// character (U+2800–U+28FF), which CLIs like agy use for spinner animations.
-func isTerminalSpinnerLine(line string) bool {
-	r, _ := utf8.DecodeRuneInString(line)
-	return r >= 0x2800 && r <= 0x28FF
-}
-
-// terminalSpinnerStatusWords mirrors paneview.spinnerStatusWords: the words CLI
-// agents animate in their in-place spinner. When tmux flattens that animation,
-// the leading Braille glyph can land on a different column than the text,
-// leaving bare staggered fragments ("oading", "king..", "enerat", "worki").
-var terminalSpinnerStatusWords = []string{
-	"loading", "working", "generating", "thinking", "analyzing", "exploring",
-	"reviewing", "confirming", "refining", "investigating", "searching",
-	"reading", "writing", "calling", "running", "navigating", "examining",
-	"identifying", "saving", "extracting", "discovering", "processing",
-	"waiting", "fetching", "building", "planning", "composing", "retrieving",
-	"downloading", "uploading", "connecting", "preparing", "finalizing",
-}
-
-// terminalSpinnerFragmentKind classifies a line as a spinner-word frame:
-// "strong" (multi-char status-word piece), "weak" (dots-only or single letter),
-// or "" (real content). Mirrors paneview.spinnerFragmentKind.
-func terminalSpinnerFragmentKind(line string) string {
-	t := strings.TrimSpace(line)
-	if t != "" {
-		r := []rune(t)
-		if r[0] >= 0x2800 && r[0] <= 0x28FF {
-			t = strings.TrimSpace(string(r[1:]))
-		}
-	}
-	if t == "" {
-		return ""
-	}
-	core := strings.Trim(t, ". ")
-	if core == "" {
-		return "weak"
-	}
-	if len(core) > 14 {
-		return ""
-	}
-	lower := strings.ToLower(core)
-	for _, r := range lower {
-		if r < 'a' || r > 'z' {
-			return ""
-		}
-	}
-	matched := false
-	for _, w := range terminalSpinnerStatusWords {
-		if strings.Contains(w, lower) {
-			matched = true
-			break
-		}
-	}
-	if !matched {
-		return ""
-	}
-	if len(core) == 1 {
-		return "weak"
-	}
-	return "strong"
-}
-
-// pruneTerminalSpinnerWordFragments drops runs of flattened spinner-word
-// fragments. A region with 2+ strong fragments (blanks allowed between) is
-// spinner noise; its strong and weak fragments are removed. Isolated short words
-// are kept so real content is never eaten. Mirrors paneview.pruneSpinnerWordFragments.
-func pruneTerminalSpinnerWordFragments(lines []string) []string {
-	n := len(lines)
-	kind := make([]string, n)
-	for i, l := range lines {
-		kind[i] = terminalSpinnerFragmentKind(l)
-	}
-	drop := make([]bool, n)
-	i := 0
-	for i < n {
-		if kind[i] == "" {
-			i++
-			continue
-		}
-		j := i
-		strongCount := 0
-		last := i
-		for j < n {
-			if kind[j] != "" {
-				if kind[j] == "strong" {
-					strongCount++
-				}
-				last = j
-				j++
-			} else if strings.TrimSpace(lines[j]) == "" {
-				j++
-			} else {
-				break
-			}
-		}
-		if strongCount >= 2 {
-			for k := i; k <= last; k++ {
-				if kind[k] != "" {
-					drop[k] = true
-				}
-			}
-		}
-		i = j
-	}
-	out := make([]string, 0, n)
-	for i, l := range lines {
-		if !drop[i] {
-			out = append(out, l)
-		}
-	}
-	return out
+	return tmuxcapture.CollapseBlankRuns(s)
 }
 
 func wantsDeepTerminalContent(r *http.Request) bool {

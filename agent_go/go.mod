@@ -1,6 +1,6 @@
 module mcp-agent-builder-go/agent_go
 
-go 1.25.0
+go 1.25.8
 
 require (
 	github.com/PaesslerAG/jsonpath v0.1.1
@@ -16,7 +16,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/manishiitg/mcp-agent-builder-go/workspace v0.0.0
 	github.com/manishiitg/mcpagent v1.7.10
-	github.com/manishiitg/multi-llm-provider-go v0.5.20
+	github.com/manishiitg/multi-llm-provider-go v0.5.21-0.20260710161557-9b9236843d0a
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/openai/openai-go/v3 v3.36.0
 	github.com/pkoukk/tiktoken-go v0.1.8

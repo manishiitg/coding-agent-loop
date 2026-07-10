@@ -766,36 +766,32 @@ func (n *workshopExecutionBgNotifier) OnExecutionComplete(execID, name, result s
 		return
 	}
 
-	// Context-canceled / deadline-exceeded means the execution was cut short
-	// (idle/inactivity timeout, parent-context cancel, etc.) rather than finishing.
-	// Emit a terminated notification so a waiting main agent learns it died — even
-	// when the agent is already marked canceled. This branch runs BEFORE the
-	// already-canceled skip below so a non-user cancel (e.g. a timeout) is not
-	// silently swallowed. MarkTerminalNotified dedups against an explicit stop that
-	// already emitted via OnExecutionTerminated, so we never double-notify.
-	if err != nil && (strings.Contains(err.Error(), "context canceled") || strings.Contains(err.Error(), "context deadline exceeded")) {
-		agent.SetCanceled()
-		n.api.completeTrackedExecution(execID, trackedExecutionStatusCanceled, err.Error(), meta)
-		if agent.MarkTerminalNotified() {
-			log.Printf("[BG AGENT] OnExecutionComplete emitting terminated for context-canceled agent %s", execID)
-			n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_terminated", map[string]interface{}{
-				"agent_id": execID,
-				"name":     name,
-			})
-			// Drive the auto-notification (synthetic turn / live steer) so the main
-			// agent is actually told, not just the UI pill — matches OnExecutionTerminated.
-			n.api.bgAgentRegistry.NotifyCompletion(n.sessionID, execID)
-		} else {
-			log.Printf("[BG AGENT] OnExecutionComplete skipped duplicate terminated for agent %s", execID)
-		}
+	// An agent already marked canceled was explicitly stopped by stop_step,
+	// stop_all, or session shutdown. That path owns the terminal event and must not
+	// be converted into a failure when the worker later unwinds with context.Canceled.
+	if agent.GetStatus() == BGAgentCanceled {
+		log.Printf("[BG AGENT] OnExecutionComplete skipped for already-canceled agent %s", execID)
 		return
 	}
 
-	// Already canceled with no context-cancel error — an explicit stop
-	// (OnExecutionTerminated / CancelAll) set the flag and already emitted the
-	// terminal event. Don't emit completion events or re-notify.
-	if agent.GetStatus() == BGAgentCanceled {
-		log.Printf("[BG AGENT] OnExecutionComplete skipped for already-canceled agent %s", execID)
+	// Context-canceled / deadline-exceeded while the registry still says running
+	// is a runtime timeout or unexpected parent-context loss, not an explicit user
+	// cancellation. Treat it as failed and notify the waiting main agent. Marking
+	// it canceled would make processBackgroundAgentCompletion deliberately suppress
+	// the synthetic turn, which strands Pulse after a timed-out maintenance agent.
+	if err != nil && (strings.Contains(err.Error(), "context canceled") || strings.Contains(err.Error(), "context deadline exceeded")) {
+		agent.SetError(err.Error())
+		n.api.completeTrackedExecution(execID, trackedExecutionStatusFailed, err.Error(), meta)
+		duration := time.Since(agent.CreatedAt)
+		n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_completed", map[string]interface{}{
+			"agent_id": execID,
+			"name":     name,
+			"status":   "failed",
+			"error":    err.Error(),
+			"duration": duration.Truncate(time.Second).String(),
+		})
+		log.Printf("[BG AGENT] Background execution %s ended from context loss while still running; notifying parent as failed: %v", execID, err)
+		n.api.bgAgentRegistry.NotifyCompletion(n.sessionID, execID)
 		return
 	}
 

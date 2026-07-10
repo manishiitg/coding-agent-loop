@@ -1419,7 +1419,7 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 			}
 			return postRunMonitorStepRunResult{outcome: postRunMonitorStepStartFailed, err: err}
 		}
-		if err := s.waitForWorkshopIdleWithMaxWait(ctx, sessionID, st.idleMaxWait()); err != nil {
+		if err := s.waitForWorkshopIdleWithInactivityTimeout(ctx, sessionID, st.idleMaxInactivity()); err != nil {
 			s.sessionLogf(sctx, sessionID, "[PULSE] step %q idle wait failed: %v", st.label, err)
 			outcome := postRunMonitorStepWaitFailed
 			if errors.Is(err, errWorkshopIdleWaitTimeout) {
@@ -1448,7 +1448,7 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 		failureLabel := "failed"
 		if result.outcome == postRunMonitorStepTimedOut {
 			resultName = "timed_out"
-			failureLabel = fmt.Sprintf("timed out after %s", st.idleMaxWait())
+			failureLabel = fmt.Sprintf("made no observable progress for %s", st.idleMaxInactivity())
 		}
 		reason := fmt.Sprintf("Pulse step %s %s", st.label, failureLabel)
 		if result.err != nil && result.outcome != postRunMonitorStepTimedOut {
@@ -1590,11 +1590,11 @@ func isPostRunMonitorFinalStep(label string) bool {
 	return label == "finalize"
 }
 
-func (st postRunMonitorStep) idleMaxWait() time.Duration {
+func (st postRunMonitorStep) idleMaxInactivity() time.Duration {
 	if st.label == "goal-advisor" {
-		return schedulerGoalAdvisorIdleMaxWait
+		return schedulerGoalAdvisorMaxInactivity
 	}
-	return schedulerWorkshopIdleMaxWait
+	return schedulerWorkshopMaxInactivity
 }
 
 func workflowHasPendingPlanChangelogArtifactReview(ctx context.Context, workspacePath string) (bool, error) {
@@ -2574,47 +2574,53 @@ func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *Sched
 }
 
 var schedulerWorkshopIdlePollInterval = 3 * time.Second
-var schedulerWorkshopIdleMaxWait = 10 * time.Minute
-var schedulerGoalAdvisorIdleMaxWait = 30 * time.Minute
+var schedulerWorkshopMaxInactivity = 10 * time.Minute
+var schedulerGoalAdvisorMaxInactivity = 30 * time.Minute
 var errWorkshopIdleWaitTimeout = errors.New("workshop idle wait timed out")
 
 const schedulerWorkshopIdleConsecutiveChecks = 2
-const schedulerWorkshopIdleMaxRefreshErrors = 3
 
 // waitForWorkshopIdle polls until all background agents, tracked executions, and
 // tmux-backed turns have completed.
 func (s *SchedulerService) waitForWorkshopIdle(ctx context.Context, sessionID string) error {
-	return s.waitForWorkshopIdleWithMaxWait(ctx, sessionID, schedulerWorkshopIdleMaxWait)
+	return s.waitForWorkshopIdleWithInactivityTimeout(ctx, sessionID, schedulerWorkshopMaxInactivity)
 }
 
-func (s *SchedulerService) waitForWorkshopIdleWithMaxWait(ctx context.Context, sessionID string, maxWait time.Duration) error {
+func (s *SchedulerService) waitForWorkshopIdleWithInactivityTimeout(ctx context.Context, sessionID string, maxInactivity time.Duration) error {
 	ticker := time.NewTicker(schedulerWorkshopIdlePollInterval)
 	defer ticker.Stop()
-	var timeout <-chan time.Time
-	if maxWait > 0 {
-		timer := time.NewTimer(maxWait)
-		defer timer.Stop()
-		timeout = timer.C
-	}
 
 	consecutiveIdleChecks := 0
-	consecutiveRefreshErrors := 0
+	lastObservedProgress := s.workshopLastProgressAt(sessionID)
+	lastProgressAt := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-timeout:
-			return fmt.Errorf("%w after %s for session %s", errWorkshopIdleWaitTimeout, maxWait, sessionID)
 		case <-ticker.C:
-			if err := s.refreshSessionTmuxSnapshotsForIdleCheck(ctx, sessionID); err != nil {
+			refreshErr := s.refreshSessionTmuxSnapshotsForIdleCheck(ctx, sessionID)
+			now := time.Now()
+			if observedProgress := s.workshopLastProgressAt(sessionID); observedProgress.After(lastObservedProgress) {
+				lastObservedProgress = observedProgress
+				lastProgressAt = now
+			}
+			// A transient tmux capture failure is not proof that the agent failed.
+			// Keep observing other progress signals and only cancel after the same
+			// inactivity window has elapsed. Do not count a failed refresh as an
+			// idle-completion check because the pane state is not fresh.
+			if refreshErr != nil {
 				consecutiveIdleChecks = 0
-				consecutiveRefreshErrors++
-				if consecutiveRefreshErrors >= schedulerWorkshopIdleMaxRefreshErrors {
-					return err
+				if maxInactivity > 0 && now.Sub(lastProgressAt) >= maxInactivity {
+					return fmt.Errorf(
+						"%w: no tmux, tool, execution, or session progress for %s in session %s; last tmux refresh error: %w",
+						errWorkshopIdleWaitTimeout,
+						maxInactivity,
+						sessionID,
+						refreshErr,
+					)
 				}
 				continue
 			}
-			consecutiveRefreshErrors = 0
 			// Consolidated status — same busy/idle/stopped the UI sees, so the
 			// scheduler doesn't fire the next message while the (possibly tmux-
 			// backed) agent is still working.
@@ -2626,8 +2632,78 @@ func (s *SchedulerService) waitForWorkshopIdleWithMaxWait(ctx context.Context, s
 				continue
 			}
 			consecutiveIdleChecks = 0
+			if maxInactivity > 0 && now.Sub(lastProgressAt) >= maxInactivity {
+				return fmt.Errorf(
+					"%w: no tmux, tool, execution, or session progress for %s in session %s",
+					errWorkshopIdleWaitTimeout,
+					maxInactivity,
+					sessionID,
+				)
+			}
 		}
 	}
+}
+
+// workshopLastProgressAt returns the latest observable activity timestamp for a
+// scheduled workshop turn. The inactivity timeout is deliberately sliding: a
+// long-running maintenance agent remains healthy while its tmux pane, tool calls,
+// tracked execution, or parent session continues to advance.
+func (s *SchedulerService) workshopLastProgressAt(sessionID string) time.Time {
+	if s == nil || s.api == nil || strings.TrimSpace(sessionID) == "" {
+		return time.Time{}
+	}
+	api := s.api
+	latest := time.Time{}
+	record := func(candidate time.Time) {
+		if candidate.After(latest) {
+			latest = candidate
+		}
+	}
+
+	api.activeSessionsMux.RLock()
+	if session := api.activeSessions[sessionID]; session != nil {
+		record(session.CreatedAt)
+		record(session.LastActivity)
+	}
+	api.activeSessionsMux.RUnlock()
+
+	if api.terminalStore != nil {
+		for _, snapshot := range api.terminalStore.ListMetadata(sessionID) {
+			record(snapshot.CreatedAt)
+			record(snapshot.UpdatedAt)
+		}
+	}
+
+	if api.bgAgentRegistry != nil {
+		for _, agent := range api.bgAgentRegistry.GetAll(sessionID) {
+			if agent == nil {
+				continue
+			}
+			snapshot := agent.GetSnapshot()
+			record(snapshot.CreatedAt)
+			if snapshot.CompletedAt != nil {
+				record(*snapshot.CompletedAt)
+			}
+			for _, call := range agent.GetRecentToolCalls(1) {
+				record(call.StartedAt)
+				if call.Duration > 0 {
+					record(call.StartedAt.Add(call.Duration))
+				}
+			}
+		}
+	}
+
+	for _, execution := range api.trackedExecutionsForSession(sessionID) {
+		if execution == nil {
+			continue
+		}
+		record(execution.StartedAt)
+		if execution.CompletedAt != nil {
+			record(*execution.CompletedAt)
+		}
+	}
+
+	return latest
 }
 
 func (s *SchedulerService) refreshSessionTmuxSnapshotsForIdleCheck(ctx context.Context, sessionID string) error {

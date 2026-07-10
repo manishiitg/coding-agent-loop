@@ -99,8 +99,8 @@ func TestResolveProviderProfileMaintenanceConfigPreservesProviderOptions(t *test
 	if !ok || got.Provider != "codex-cli" || got.ModelID != "gpt-5.6-sol" {
 		t.Fatalf("ResolveProviderProfileMaintenanceConfig() = %+v, %v", got, ok)
 	}
-	if got.Options["reasoning_effort"] != "max" {
-		t.Fatalf("reasoning_effort = %#v, want max", got.Options["reasoning_effort"])
+	if got.Options["reasoning_effort"] != "xhigh" {
+		t.Fatalf("reasoning_effort = %#v, want xhigh", got.Options["reasoning_effort"])
 	}
 }
 

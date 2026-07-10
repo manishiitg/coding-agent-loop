@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -1311,8 +1312,8 @@ func TestApplyLLMAndSecretsToReqMapPreservesAutoImproveDefaultOptions(t *testing
 	if !ok {
 		t.Fatalf("options missing or wrong type: %#v", primary["options"])
 	}
-	if got := options["reasoning_effort"]; got != "max" {
-		t.Fatalf("reasoning_effort = %#v, want max", got)
+	if got := options["reasoning_effort"]; got != "xhigh" {
+		t.Fatalf("reasoning_effort = %#v, want xhigh", got)
 	}
 	if got := reqMap["llm_config_source"]; got != llmConfigSourceScheduledAutoImprove {
 		t.Fatalf("llm_config_source = %#v, want %q", got, llmConfigSourceScheduledAutoImprove)
@@ -1532,12 +1533,12 @@ func TestWaitForWorkshopIdleRequiresTwoFreshIdleTmuxChecks(t *testing.T) {
 
 func TestWaitForWorkshopIdleTimesOutWhenSessionStaysBusy(t *testing.T) {
 	oldInterval := schedulerWorkshopIdlePollInterval
-	oldMaxWait := schedulerWorkshopIdleMaxWait
+	oldMaxInactivity := schedulerWorkshopMaxInactivity
 	schedulerWorkshopIdlePollInterval = time.Millisecond
-	schedulerWorkshopIdleMaxWait = 5 * time.Millisecond
+	schedulerWorkshopMaxInactivity = 5 * time.Millisecond
 	defer func() {
 		schedulerWorkshopIdlePollInterval = oldInterval
-		schedulerWorkshopIdleMaxWait = oldMaxWait
+		schedulerWorkshopMaxInactivity = oldMaxInactivity
 	}()
 
 	sessionID := "session-scheduler-busy-timeout"
@@ -1557,23 +1558,103 @@ func TestWaitForWorkshopIdleTimesOutWhenSessionStaysBusy(t *testing.T) {
 	if !errors.Is(err, errWorkshopIdleWaitTimeout) {
 		t.Fatalf("error = %v, want errWorkshopIdleWaitTimeout", err)
 	}
+	if !strings.Contains(err.Error(), "no tmux, tool, execution, or session progress") {
+		t.Fatalf("error = %v, want inactivity reason", err)
+	}
 }
 
-func TestPostRunMonitorStepIdleMaxWaitUsesLongerGoalAdvisorCap(t *testing.T) {
-	oldNormal := schedulerWorkshopIdleMaxWait
-	oldAdvisor := schedulerGoalAdvisorIdleMaxWait
-	schedulerWorkshopIdleMaxWait = 10 * time.Minute
-	schedulerGoalAdvisorIdleMaxWait = 30 * time.Minute
+func TestWaitForWorkshopIdleTreatsTmuxRefreshFailureAsInactivity(t *testing.T) {
+	oldInterval := schedulerWorkshopIdlePollInterval
+	schedulerWorkshopIdlePollInterval = time.Millisecond
+	defer func() { schedulerWorkshopIdlePollInterval = oldInterval }()
+
+	store := terminals.NewStore()
+	sessionID := "session-scheduler-refresh-failure"
+	tmuxSession := "tmux-scheduler-refresh-failure"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:harden", tmuxSession, "starting", 1))
+
+	api := &StreamingAPI{terminalStore: store}
+	api.setSessionBusy(sessionID, true)
+	svc := &SchedulerService{api: api}
+
+	oldRunOutput := runTerminalTmuxOutputCommand
+	defer func() { runTerminalTmuxOutputCommand = oldRunOutput }()
+	runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
+		return "", errors.New("tmux capture unavailable")
+	}
+
+	maxInactivity := 20 * time.Millisecond
+	startedAt := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err := svc.waitForWorkshopIdleWithInactivityTimeout(ctx, sessionID, maxInactivity)
+	if !errors.Is(err, errWorkshopIdleWaitTimeout) {
+		t.Fatalf("error = %v, want errWorkshopIdleWaitTimeout", err)
+	}
+	if elapsed := time.Since(startedAt); elapsed < maxInactivity {
+		t.Fatalf("wait failed after %s, want full inactivity window %s", elapsed, maxInactivity)
+	}
+	if !strings.Contains(err.Error(), "last tmux refresh error:") || !strings.Contains(err.Error(), "tmux capture unavailable") {
+		t.Fatalf("error = %v, want tmux refresh context", err)
+	}
+}
+
+func TestWaitForWorkshopIdleAllowsLongRunningTmuxWithProgress(t *testing.T) {
+	oldInterval := schedulerWorkshopIdlePollInterval
+	schedulerWorkshopIdlePollInterval = time.Millisecond
+	defer func() { schedulerWorkshopIdlePollInterval = oldInterval }()
+
+	store := terminals.NewStore()
+	sessionID := "session-scheduler-progress"
+	tmuxSession := "tmux-scheduler-progress"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:harden", tmuxSession, "starting", 1))
+
+	api := &StreamingAPI{terminalStore: store}
+	api.setSessionBusy(sessionID, true)
+	svc := &SchedulerService{api: api}
+
+	oldRunOutput := runTerminalTmuxOutputCommand
+	defer func() { runTerminalTmuxOutputCommand = oldRunOutput }()
+	calls := 0
+	runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
+		calls++
+		if calls >= 130 {
+			api.setSessionBusy(sessionID, false)
+			return "done\n❯", nil
+		}
+		return fmt.Sprintf("harden progress %d", calls), nil
+	}
+
+	maxInactivity := 100 * time.Millisecond
+	startedAt := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := svc.waitForWorkshopIdleWithInactivityTimeout(ctx, sessionID, maxInactivity); err != nil {
+		t.Fatalf("waitForWorkshopIdleWithInactivityTimeout returned error: %v", err)
+	}
+	if elapsed := time.Since(startedAt); elapsed <= maxInactivity {
+		t.Fatalf("wait completed in %s, want total run longer than inactivity limit %s", elapsed, maxInactivity)
+	}
+	if calls < 130 {
+		t.Fatalf("tmux captures = %d, want at least 130", calls)
+	}
+}
+
+func TestPostRunMonitorStepMaxInactivityUsesLongerGoalAdvisorCap(t *testing.T) {
+	oldNormal := schedulerWorkshopMaxInactivity
+	oldAdvisor := schedulerGoalAdvisorMaxInactivity
+	schedulerWorkshopMaxInactivity = 10 * time.Minute
+	schedulerGoalAdvisorMaxInactivity = 30 * time.Minute
 	defer func() {
-		schedulerWorkshopIdleMaxWait = oldNormal
-		schedulerGoalAdvisorIdleMaxWait = oldAdvisor
+		schedulerWorkshopMaxInactivity = oldNormal
+		schedulerGoalAdvisorMaxInactivity = oldAdvisor
 	}()
 
-	if got := (postRunMonitorStep{label: "harden"}).idleMaxWait(); got != 10*time.Minute {
-		t.Fatalf("harden idle max wait = %s, want 10m", got)
+	if got := (postRunMonitorStep{label: "harden"}).idleMaxInactivity(); got != 10*time.Minute {
+		t.Fatalf("harden max inactivity = %s, want 10m", got)
 	}
-	if got := (postRunMonitorStep{label: "goal-advisor"}).idleMaxWait(); got != 30*time.Minute {
-		t.Fatalf("goal-advisor idle max wait = %s, want 30m", got)
+	if got := (postRunMonitorStep{label: "goal-advisor"}).idleMaxInactivity(); got != 30*time.Minute {
+		t.Fatalf("goal-advisor max inactivity = %s, want 30m", got)
 	}
 }
 

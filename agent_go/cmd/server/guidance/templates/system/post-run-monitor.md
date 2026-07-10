@@ -12,7 +12,7 @@ When updating `builder/improve.html`, keep the first screen short. It may show t
 
 ## Timeout Recovery
 
-The scheduler waits at most 10 minutes for a normal Pulse step and 30 minutes for Goal Advisor. When a step exceeds that limit, the scheduler records the selected module as `timed_out`, cancels work owned by the old Pulse session, and skips the remaining optional maintenance modules so concurrent repairs cannot race. It then resumes the single ordered finalizer in a fresh recovery session. If the finalizer itself times out, any final command that did not record an outcome is marked `timed_out`. Recovery turns must report the partial outcome plainly and must not claim that timed-out or skipped work succeeded.
+The scheduler uses a sliding inactivity timeout: 10 minutes without observable progress for a normal Pulse step and 30 minutes without progress for Goal Advisor. Tmux output, tool calls, tracked execution changes, and session activity reset that timer, so healthy long-running work is not canceled merely because its total duration exceeds 10 or 30 minutes. When a step makes no progress for its full inactivity window, the scheduler records the selected module as `timed_out`, cancels work owned by the old Pulse session, and skips the remaining optional maintenance modules so concurrent repairs cannot race. It then resumes the single ordered finalizer in a fresh recovery session. If the finalizer itself times out, any final command that did not record an outcome is marked `timed_out`. Recovery turns must report the partial outcome plainly and must not claim that timed-out or skipped work succeeded.
 
 ## Gate Contract
 

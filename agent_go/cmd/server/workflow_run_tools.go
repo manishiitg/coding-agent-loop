@@ -8,6 +8,7 @@ import (
 	"time"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -287,12 +288,20 @@ func runWorkflowInternal(ctx context.Context, api *StreamingAPI, workflowPath, g
 	}
 
 	// Add LLM config if present
-	if caps.LLMConfig != nil && caps.LLMConfig.Provider != "" && caps.LLMConfig.ModelID != "" {
-		reqMap["llm_config"] = map[string]interface{}{
-			"primary": map[string]interface{}{
-				"provider": caps.LLMConfig.Provider,
-				"model_id": caps.LLMConfig.ModelID,
-			},
+	if caps.LLMConfig != nil {
+		builderLLM := caps.LLMConfig.BuilderLLM
+		if builderLLM == nil {
+			if resolved, _, ok := workflowtypes.ResolveProviderProfileConfig(caps.LLMConfig); ok {
+				builderLLM = resolved
+			}
+		}
+		if builderLLM != nil && builderLLM.Provider != "" && builderLLM.ModelID != "" {
+			reqMap["llm_config"] = map[string]interface{}{
+				"primary": map[string]interface{}{
+					"provider": builderLLM.Provider,
+					"model_id": builderLLM.ModelID,
+				},
+			}
 		}
 	}
 

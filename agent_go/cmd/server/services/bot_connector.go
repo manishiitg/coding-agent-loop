@@ -97,7 +97,7 @@ func multiAgentChatPrimaryLLM(preset *workflowtypes.PresetLLMConfig) *workflowty
 		return nil
 	}
 	for _, candidate := range []*workflowtypes.AgentLLMConfig{
-		preset.PhaseLLM,
+		preset.BuilderLLM,
 	} {
 		if candidate != nil && strings.TrimSpace(candidate.Provider) != "" && strings.TrimSpace(candidate.ModelID) != "" {
 			return candidate
@@ -114,11 +114,8 @@ func multiAgentChatPrimaryLLM(preset *workflowtypes.PresetLLMConfig) *workflowty
 			}
 		}
 	}
-	if strings.TrimSpace(preset.Provider) != "" && strings.TrimSpace(preset.ModelID) != "" {
-		return &workflowtypes.AgentLLMConfig{
-			Provider: preset.Provider,
-			ModelID:  preset.ModelID,
-		}
+	if builder, _, ok := workflowtypes.ResolveProviderProfileConfig(preset); ok {
+		return builder
 	}
 	return nil
 }

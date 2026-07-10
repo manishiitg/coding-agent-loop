@@ -233,7 +233,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
           bedrock: llmState.bedrockConfig, azure: llmState.azureConfig,
         }
         const providerKeys: Record<string, string> = {}
-        const tierCfg = delegationTierConfig as Record<string, { provider?: string }>
+        const tierCfg = delegationTierConfig as unknown as Record<string, { provider?: string }>
         for (const tier of ['high', 'medium', 'low']) {
           const provider = tierCfg[tier]?.provider
           if (provider && providerConfigs[provider]?.api_key && !providerKeys[provider]) {
@@ -250,7 +250,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
           }
         }
         await agentApi.saveDelegationTierConfig(
-          delegationTierConfig as Record<string, unknown>,
+          delegationTierConfig as unknown as Record<string, unknown>,
           Object.keys(providerKeys).length > 0 ? providerKeys : undefined
         ).catch(() => {})
       }

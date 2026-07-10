@@ -42,7 +42,7 @@
 <body>
   <h2 id="title">Set workspace encryption secret</h2>
   <p id="desc">
-    Runloop encrypts your provider API keys (OpenAI, Gemini, Anthropic, …) at rest using an
+    AgentWorks encrypts your provider API keys (OpenAI, Gemini, Anthropic, …) at rest using an
     <strong>AUTH_SECRET</strong>. Pick a strong value and keep it safe — you'll need the same secret
     on every machine that opens this workspace.
     Leave blank to continue without saving provider API keys yet.
@@ -59,7 +59,7 @@
     if (location.hash === '#unlock') {
       document.getElementById('title').textContent = 'Unlock workspace provider keys';
       document.getElementById('desc').innerHTML = 'Your workspace contains an encrypted <code>provider-api-keys.json</code> file. ' +
-        'Enter the <strong>AUTH_SECRET</strong> that was used to encrypt it so Runloop can decrypt your provider API keys. ' +
+        'Enter the <strong>AUTH_SECRET</strong> that was used to encrypt it so AgentWorks can decrypt your provider API keys. ' +
         'Leave blank to skip and re-enter keys from scratch.';
       document.getElementById('submitBtn').textContent = 'Unlock';
     }

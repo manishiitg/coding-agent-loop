@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, Loader2, MessageSquareText, RefreshCw, Send,
 import { agentApi } from '../../services/api'
 import type { ReportHumanInput } from '../../services/api-types'
 import { useChatStore } from '../../stores/useChatStore'
+import { parseReportHumanInputContext } from '../../utils/reportHumanInputFormatting'
 import { useContainerSizeTier } from './reportWidgets/tableHelpers'
 import { WORKFLOW_LOG_REFRESH_EVENT } from './workflowEvents'
 
@@ -40,6 +41,29 @@ function priorityTone(priority: string): string {
 function selectedOptionTitle(input: ReportHumanInput): string {
   if (!input.selected_option_id) return ''
   return input.options.find(option => option.id === input.selected_option_id)?.title || input.selected_option_id
+}
+
+function HumanInputContext({ value }: { value: string }) {
+  const sections = parseReportHumanInputContext(value)
+  if (sections.length === 0) return null
+
+  return (
+    <div className="mt-3 space-y-3 border-l border-cyan-400/20 pl-3 text-xs leading-5 text-muted-foreground">
+      {sections.map((section, index) => (
+        <div key={`${section.label || 'context'}-${index}`}>
+          {section.label && (
+            <div className="mb-0.5 font-semibold text-foreground">{section.label}</div>
+          )}
+          {section.body && <p className="whitespace-pre-line">{section.body}</p>}
+          {section.items.length > 0 && (
+            <ol className="mt-1.5 list-decimal space-y-1.5 pl-4 marker:font-semibold marker:text-cyan-300">
+              {section.items.map((item, itemIndex) => <li key={itemIndex} className="pl-1">{item}</li>)}
+            </ol>
+          )}
+        </div>
+      ))}
+    </div>
+  )
 }
 
 export function ReportHumanInputPanel({ workspacePath, className = '' }: { workspacePath: string; className?: string }) {
@@ -270,7 +294,7 @@ export function ReportHumanInputPanel({ workspacePath, className = '' }: { works
                 <span className="text-muted-foreground">{inputTime(input.created_at)}</span>
               </div>
               <h4 className="mt-2 text-sm font-semibold leading-snug text-foreground">{input.question}</h4>
-              {input.context && <p className="mt-1 text-xs leading-5 text-muted-foreground">{input.context}</p>}
+              {input.context && <HumanInputContext value={input.context} />}
               {input.options.length > 0 && (
                 <div className={compactOptions ? 'mt-3 overflow-hidden rounded-md border border-border/70 bg-background/45' : 'mt-3 grid grid-cols-2 gap-2'}>
                   {input.options.map(option => {

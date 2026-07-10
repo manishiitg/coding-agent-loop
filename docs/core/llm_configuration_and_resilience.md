@@ -10,11 +10,13 @@ This document outlines the system for managing LLM configurations, user-driven f
 
 ### 📋 Overview
 
-The user-controlled LLM configuration system allows the **Primary LLM to be selected from Published LLMs**. Each Published LLM carries provider, model, and model-specific options such as `reasoning_effort`. Provider authentication is stored separately in workspace provider-key config.
+The Model Library combines provider discovery, setup status, available models, and reusable saved configurations. Workflows and Chief of Staff select models directly; saved configurations are shortcuts, not a required publishing layer. Provider authentication is stored separately in workspace provider-key config.
 
 **Key Principles:**
-- **Primary LLM**: Selected from Published LLMs (not configured directly).
-- **Separate Auth**: Published LLM metadata does not store secrets; provider auth is managed separately.
+- **Simple mode**: Stores a coding-agent provider profile. Current role defaults resolve from `multi-llm-provider-go` after every app update.
+- **Advanced mode**: Stores direct provider/model/options/fallback selections for each role.
+- **Saved configurations**: Optional reusable provider/model/options combinations.
+- **Separate Auth**: Model metadata does not store secrets; provider auth is managed separately.
 - **Backend Defaults**: Backend uses ambient credentials (AWS Bedrock) for internal operations only.
 - **Fallback Chain**: Simple ordered fallback array configured by the user.
 
@@ -23,7 +25,7 @@ The user-controlled LLM configuration system allows the **Primary LLM to be sele
 | Component | File | Key Functions |
 |-----------|------|---------------|
 | **LLM Store** | `frontend/src/stores/useLLMStore.ts` | `savedLLMs`, `refreshAvailableLLMs()`, `getCurrentLLMOption()` |
-| **Published LLM Tab** | `frontend/src/components/llm/LibraryTab.tsx` | Publish/delete/select LLMs |
+| **Model Library** | `frontend/src/components/llm/LibraryTab.tsx` | Provider readiness and saved configurations |
 | **Fallbacks Tab** | `frontend/src/components/llm/FallbacksTab.tsx` | Primary selection, fallback chain |
 | **LLM Dropdown** | `frontend/src/components/LLMSelectionDropdown.tsx` | Rich metadata display |
 | **LLM Types** | `frontend/src/types/llm.ts` | `LLMOption` interface |
@@ -33,15 +35,15 @@ The user-controlled LLM configuration system allows the **Primary LLM to be sele
 ### 🔄 Workflow
 
 ```
-User configures LLM in Provider Tab (OpenRouter, Bedrock, etc.)
+User opens the unified Model Library
     ↓
-Publishes to "Published LLM" list (saves provider, model, and options)
+Configures provider authentication when required
     ↓
-Selects Published LLM as Primary (from Fallbacks or Published LLM tab)
+Simple: selects a provider profile; Advanced: selects models directly
     ↓
-LLM Dropdown shows all Published LLMs with metadata
+Optional: saves a provider/model/options combination for reuse
     ↓
-Agent execution uses Published LLM config plus provider auth
+Agent execution resolves the role config plus provider auth
 ```
 
 ### 🏗️ Architecture
@@ -51,14 +53,14 @@ Agent execution uses Published LLM config plus provider auth
 | Step | Frontend | Backend |
 |------|----------|---------|
 | 1. Configure | Provider tabs (OpenRouter, Bedrock, etc.) | - |
-| 2. Publish | `saveLLM()` → `savedLLMs[]` | - |
-| 3. Select Primary | `handleLibrarySelect()` → `agentConfig.primary` | - |
+| 2. Select | Provider profile or explicit role config | Validates supported provider/models |
+| 3. Reuse | Optional `saveLLM()` → `savedLLMs[]` | - |
 | 4. Execute | Sends `LLMConfig` with API key | Uses provided credentials |
 
 #### Types
 
 ```typescript
-// Published LLM (stored in frontend)
+// Optional saved configuration
 interface SavedLLM extends LLMModel {
   id: string
   name: string
@@ -67,7 +69,7 @@ interface SavedLLM extends LLMModel {
 
 // Agent configuration sent to backend
 interface AgentLLMConfiguration {
-  primary: LLMModel     // Selected from savedLLMs
+  primary: LLMModel     // Selected directly or resolved from a provider profile
   fallbacks: LLMModel[] // Ordered fallback chain
 }
 ```
@@ -82,14 +84,14 @@ interface AgentLLMConfiguration {
 | `DEEP_SEARCH_MAIN_LLM_MODEL` | `global.anthropic.claude-sonnet-4-5-*` | Default model |
 | `AGENT_PROVIDER` | `bedrock` | Internal operations only |
 
-**Note:** Backend no longer creates an `internalLLM` at startup. All agent execution uses Published LLM configs from frontend.
+**Note:** Backend no longer creates an `internalLLM` at startup. Agent execution uses the selected workflow or Chief of Staff role config.
 
 ### 🛠️ UI Components
 
 | Component | Purpose | Key Features |
 |-----------|---------|--------------|
-| **Published LLM Tab** | Manage saved configs | Publish current, set as primary, delete, show API key last 4 digits |
-| **Fallbacks Tab** | Configure fallback chain | Change Primary button, add from Published LLM or custom |
+| **Model Library** | Providers plus saved configs | Readiness, models, tier defaults, reusable configurations |
+| **Fallbacks Tab** | Configure fallback chain | Add a direct model or reusable saved configuration |
 | **LLM Dropdown** | Select LLM for execution | Rich metadata (cost, context, reasoning options) |
 
 #### LLM Dropdown Display
@@ -112,22 +114,20 @@ interface AgentLLMConfiguration {
 ### 🔍 For LLMs: Quick Reference
 
 **Constraints:**
-- ✅ Primary LLM must be selected from Published LLMs
-- ✅ Each Published LLM stores its own API key
+- ✅ Workflows can select provider/model/options directly
+- ✅ Simple profiles receive new provider defaults after an app update
+- ✅ Saved configurations are optional reusable shortcuts
 - ✅ Backend uses Bedrock (AWS credentials) for internal ops
 - ❌ No hardcoded API keys in backend
 - ❌ No `internalLLM` created at startup
 
 **Key Store Actions:**
 ```typescript
-// Publish current config
+// Save current config for reuse
 saveLLM(llm, name, modelName, authMethod)
 
-// Select as primary (from FallbacksTab or LibraryTab)
-handleLibrarySelect(savedLLM) → updates agentConfig.primary
-
-// Refresh dropdown options
-refreshAvailableLLMs() → builds from savedLLMs with metadata
+// Provider/profile data comes from the backend manifest
+loadProviderManifest()
 ```
 
 **Auto-refresh triggers:**

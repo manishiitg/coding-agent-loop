@@ -5,8 +5,10 @@ import { useLLMStore } from '../stores'
 import type { DelegationTierConfig, TierModel, CustomTierModel } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
+import LLMRoleSelector from './LLMRoleSelector'
 import ModalPortal from './ui/ModalPortal'
-import { getWorkflowLLMOptions, getWorkflowLLMTierDefaults } from '../utils/workflowLLMTierDefaults'
+import { formatLLMOptions, formatLLMRef, formatLLMRefWithOptions, llmOptionMatchesRef } from '../utils/llmConfigDisplay'
+import { getWorkflowLLMOptions, getWorkflowLLMTierDefaults, getWorkflowProviderOptions } from '../utils/workflowLLMTierDefaults'
 
 // Generate a slug from the first 4 words of a description, guarding against reserved names
 const descToSlug = (desc: string): string => {
@@ -28,7 +30,7 @@ const descToSlug = (desc: string): string => {
 // Check if config has any values (built-in or custom)
 const hasAnyConfig = (config: DelegationTierConfig | null): boolean => {
   if (!config) return false
-  return !!(config.main || config.chief_of_staff || config.high || config.medium || config.low ||
+  return !!(config.provider || config.main || config.chief_of_staff || config.high || config.medium || config.low ||
     (config.custom && Object.keys(config.custom).length > 0))
 }
 
@@ -59,7 +61,8 @@ const tierKey = (tier?: TierModel): string | null => {
 }
 
 const hasAdvancedTierConfig = (config: DelegationTierConfig | null): boolean => {
-  if (!config) return false
+  if (!config || config.mode === 'provider_profile') return false
+  if (config.mode === 'explicit') return true
   if (config.custom && Object.keys(config.custom).length > 0) return true
   if (BUILT_IN_TIERS.some(key => (config[key]?.fallbacks || []).length > 0)) return true
   const configuredModels = new Set(BUILT_IN_TIERS.map(key => tierKey(config[key])).filter(Boolean))
@@ -82,6 +85,10 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
   const delegationLLMOptions = useMemo(
     () => getWorkflowLLMOptions(availableLLMs, providerManifest),
     [availableLLMs, providerManifest]
+  )
+  const providerProfileOptions = useMemo(
+    () => getWorkflowProviderOptions(providerManifest),
+    [providerManifest]
   )
 
   useEffect(() => {
@@ -107,12 +114,13 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
     setDelegationTierConfig(next)
   }
 
+  const selectedProviderOption = providerProfileOptions.find(option => option.provider === delegationTierConfig?.provider) ?? null
+  const profileDefaults = selectedProviderOption ? getWorkflowLLMTierDefaults(selectedProviderOption, providerManifest) : null
   const sharedTierModel = delegationTierConfig?.main || delegationTierConfig?.high || delegationTierConfig?.medium || delegationTierConfig?.low
   const findOptionForTier = (tier?: TierModel, fallbackDescription = 'delegation tier model'): LLMOption | null => {
     if (!tier?.provider || !tier?.model_id) return null
-    const matched = delegationLLMOptions.find(
-      llm => llm.provider === tier.provider && llm.model === tier.model_id
-    )
+    const matched = delegationLLMOptions.find(llm => llmOptionMatchesRef(llm, tier))
+      || delegationLLMOptions.find(llm => llm.provider === tier.provider && llm.model === tier.model_id)
     if (matched) return matched
     return {
       provider: tier.provider,
@@ -122,37 +130,33 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
     }
   }
 
-  const toTierModel = (config: { provider: string; model_id: string }, fallbacks?: TierModel['fallbacks']): TierModel => ({
+  const toTierModel = (config: { provider: string; model_id: string; options?: Record<string, unknown> }, fallbacks?: TierModel['fallbacks']): TierModel => ({
     provider: config.provider,
     model_id: config.model_id,
+    ...(config.options ? { options: config.options } : {}),
     ...(fallbacks && fallbacks.length > 0 ? { fallbacks } : {}),
   })
 
-  const tierModelForOption = (llm: LLMOption, key: BuiltInTierKey, fallbacks?: TierModel['fallbacks']): TierModel => {
-    const defaults = getWorkflowLLMTierDefaults(llm, providerManifest)
-    const config =
-      key === 'main' ? defaults.base :
-        key === 'high' ? defaults.tier1 :
-          key === 'medium' ? defaults.tier2 :
-            defaults.tier3
-    return toTierModel(config, fallbacks)
+  const tierModelForOption = (llm: LLMOption, _key: BuiltInTierKey, fallbacks?: TierModel['fallbacks']): TierModel => {
+    return toTierModel({
+      provider: llm.provider,
+      model_id: llm.model,
+      options: llm.options,
+    }, fallbacks)
   }
 
-  const sharedSelectedLLM = findOptionForTier(sharedTierModel, 'model for all agents')
+  const sharedSelectedLLM = selectedProviderOption || findOptionForTier(sharedTierModel, 'model for all agents')
 
   const handleSharedLLMSelect = (llm: LLMOption) => {
     updateConfig({
-      main: tierModelForOption(llm, 'main'),
-      ...(delegationTierConfig?.chief_of_staff ? { chief_of_staff: delegationTierConfig.chief_of_staff } : {}),
-      high: tierModelForOption(llm, 'high'),
-      medium: tierModelForOption(llm, 'medium'),
-      low: tierModelForOption(llm, 'low'),
+      schema_version: 2,
+      mode: 'provider_profile',
+      provider: llm.provider,
     })
   }
 
   const chiefOfStaffTierModelForOption = (llm: LLMOption): TierModel => {
-    const defaults = getWorkflowLLMTierDefaults(llm, providerManifest)
-    return toTierModel(defaults.chiefOfStaff)
+    return toTierModel({ provider: llm.provider, model_id: llm.model, options: llm.options })
   }
 
   const defaultChiefOfStaffTierModel = (() => {
@@ -163,10 +167,52 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
     return chiefOfStaffTierModelForOption(sourceOption)
   })()
 
-  const effectiveChiefOfStaffTierModel = delegationTierConfig?.chief_of_staff || defaultChiefOfStaffTierModel
+  const effectiveChiefOfStaffTierModel = delegationTierConfig?.chief_of_staff
+    || (profileDefaults ? toTierModel(profileDefaults.chiefOfStaff) : defaultChiefOfStaffTierModel)
+
+  const enterAdvancedMode = () => {
+    const defaults = profileDefaults
+    updateConfig({
+      schema_version: 2,
+      mode: 'explicit',
+      main: delegationTierConfig?.main || (defaults ? toTierModel(defaults.builder) : undefined),
+      chief_of_staff: delegationTierConfig?.chief_of_staff || (defaults ? toTierModel(defaults.chiefOfStaff) : undefined),
+      high: delegationTierConfig?.high || (defaults ? toTierModel(defaults.tier1) : undefined),
+      medium: delegationTierConfig?.medium || (defaults ? toTierModel(defaults.tier2) : undefined),
+      low: delegationTierConfig?.low || (defaults ? toTierModel(defaults.tier3) : undefined),
+      custom: delegationTierConfig?.custom,
+    })
+    setShowAdvanced(true)
+  }
+
+  const useSimpleMode = () => {
+    const provider = delegationTierConfig?.provider || delegationTierConfig?.main?.provider
+    if (provider) {
+      updateConfig({ schema_version: 2, mode: 'provider_profile', provider })
+    }
+    setShowAdvanced(false)
+  }
+
+  const ResolvedTierLine = ({ value, inherited }: { value?: TierModel | CustomTierModel; inherited?: boolean }) => {
+    if (!value?.provider || !value?.model_id) return null
+    const label = inherited ? 'Resolved default' : 'Resolved model'
+    const resolved = formatLLMRef(value)
+    const options = formatLLMOptions('options' in value ? value.options : undefined)
+    return (
+      <div className="mt-2 rounded-md border border-gray-100 bg-gray-50 px-2.5 py-2 dark:border-slate-700 dark:bg-slate-900/50">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+          {label}
+        </div>
+        <div className="truncate font-mono text-[12px] text-gray-900 dark:text-gray-100" title={formatLLMRefWithOptions(value)}>
+          {resolved}
+        </div>
+        {options && <div className="truncate text-[11px] text-primary/75">{options}</div>}
+      </div>
+    )
+  }
 
   const updateChiefOfStaffTier = (tier?: TierModel) => {
-    const nextConfig: DelegationTierConfig = { ...(delegationTierConfig ?? {}) }
+    const nextConfig: DelegationTierConfig = { ...(delegationTierConfig ?? {}), schema_version: 2, mode: 'explicit', provider: undefined }
     if (tier) {
       nextConfig.chief_of_staff = tier
     } else {
@@ -187,7 +233,7 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
   const updateBuiltInTier = (key: BuiltInTierKey, updater: (current?: TierModel) => TierModel | undefined) => {
     const current = delegationTierConfig?.[key]
     const nextTier = updater(current)
-    const nextConfig: DelegationTierConfig = { ...(delegationTierConfig ?? {}) }
+    const nextConfig: DelegationTierConfig = { ...(delegationTierConfig ?? {}), schema_version: 2, mode: 'explicit', provider: undefined }
     if (!nextTier) {
       delete nextConfig[key]
     } else {
@@ -221,6 +267,9 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
     }
     const newConfig: DelegationTierConfig = {
       ...delegationTierConfig,
+      schema_version: 2,
+      mode: 'explicit',
+      provider: undefined,
       custom: { ...customTiers, [slug]: newCustom },
     }
     updateConfig(newConfig)
@@ -231,6 +280,9 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
     delete newCustom[slug]
     const newConfig: DelegationTierConfig = {
       ...delegationTierConfig,
+      schema_version: 2,
+      mode: 'explicit',
+      provider: undefined,
       custom: Object.keys(newCustom).length > 0 ? newCustom : undefined,
     }
     const finalConfig = hasAnyConfig(newConfig) ? newConfig : null
@@ -244,6 +296,9 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
     const newCustom = { ...customTiers, [slug]: updatedTier }
     const newConfig: DelegationTierConfig = {
       ...delegationTierConfig,
+      schema_version: 2,
+      mode: 'explicit',
+      provider: undefined,
       custom: newCustom,
     }
     updateConfig(newConfig)
@@ -263,6 +318,9 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
 
     const newConfig: DelegationTierConfig = {
       ...delegationTierConfig,
+      schema_version: 2,
+      mode: 'explicit',
+      provider: undefined,
       custom: newCustom,
     }
     updateConfig(newConfig)
@@ -275,6 +333,9 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
     const updatedTier: CustomTierModel = { ...tier, provider: selected.provider, model_id: selected.model_id }
     const newConfig: DelegationTierConfig = {
       ...delegationTierConfig,
+      schema_version: 2,
+      mode: 'explicit',
+      provider: undefined,
       custom: { ...customTiers, [slug]: updatedTier },
     }
     updateConfig(newConfig)
@@ -347,67 +408,45 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
             {!showAdvanced && (
               <div className="space-y-5">
                 <div>
-                  <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Choose one model</h3>
+                  <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Choose one coding agent</h3>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-                    This model will be used for planning, orchestration, and all delegated agent work.
+                    The provider manages Main, scheduled Chief of Staff, and reasoning-tier defaults.
                   </p>
                   <div className="border border-gray-200 dark:border-slate-600 rounded-lg p-4">
                     <LLMSelectionDropdown
-                      availableLLMs={delegationLLMOptions}
-                      selectedLLM={sharedSelectedLLM}
+                      availableLLMs={providerProfileOptions}
+                      selectedLLM={selectedProviderOption}
                       onLLMSelect={handleSharedLLMSelect}
                       inModal={true}
                       openDirection="down"
-                      title="Select model for all agents"
+                      title="Select coding agent profile"
                     />
-                    {sharedTierModel && (
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-3">
-                        Coding-agent selections fill Main, High, Medium, and Low from that provider's defaults. Published models use the same model everywhere.
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Scheduled Chief of Staff LLM</h3>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-                    Used by scheduled Chief of Staff work such as Org Pulse. Empty uses the provider default when available.
-                  </p>
-                  <div className="border border-gray-200 dark:border-slate-600 rounded-lg p-4">
-                    <div className="flex items-center justify-between gap-2 mb-2">
-                      <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
-                        {delegationTierConfig?.chief_of_staff ? 'Custom override' : 'Provider default'}
-                      </span>
-                      {delegationTierConfig?.chief_of_staff && (
-                        <button
-                          type="button"
-                          onClick={() => updateChiefOfStaffTier(undefined)}
-                          className="text-xs text-red-400 hover:text-red-600"
-                        >
-                          Clear
-                        </button>
-                      )}
-                    </div>
-                    <LLMSelectionDropdown
-                      availableLLMs={delegationLLMOptions}
-                      selectedLLM={findOptionForTier(effectiveChiefOfStaffTierModel, 'scheduled Chief of Staff model')}
-                      onLLMSelect={(llm: LLMOption) => updateChiefOfStaffTier(chiefOfStaffTierModelForOption(llm))}
-                      inModal={true}
-                      openDirection="down"
-                      title="Select scheduled Chief of Staff model"
-                      placeholder={effectiveChiefOfStaffTierModel ? `Defaults to ${effectiveChiefOfStaffTierModel.model_id}` : 'Defaults to provider default'}
-                    />
-                    {effectiveChiefOfStaffTierModel && (
-                      <p className="mt-2 font-mono text-[11px] text-gray-600 dark:text-gray-300">
-                        {effectiveChiefOfStaffTierModel.provider}/{effectiveChiefOfStaffTierModel.model_id}
-                      </p>
+                    {profileDefaults && (
+                      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        {([
+                          [profileDefaults.builder, 'Main'],
+                          [profileDefaults.chiefOfStaff, 'Scheduled'],
+                          [profileDefaults.tier1, 'High'],
+                          [profileDefaults.tier2, 'Medium'],
+                          [profileDefaults.tier3, 'Low'],
+                        ] as const).map(([value, label]) => {
+                          return (
+                            <div key={label} className="rounded-md border border-gray-100 bg-gray-50 px-2.5 py-2 dark:border-slate-700 dark:bg-slate-900/50">
+                              <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{label}</div>
+                              <div className="truncate font-mono text-[12px] text-gray-900 dark:text-gray-100" title={formatLLMRef(value)}>
+                                {formatLLMRef(value)}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
                     )}
                   </div>
                 </div>
 
                 <button
                   type="button"
-                  onClick={() => setShowAdvanced(true)}
+                  onClick={enterAdvancedMode}
                   className="inline-flex items-center gap-2 text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
                 >
                   <SlidersHorizontal className="w-4 h-4" />
@@ -422,7 +461,7 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
             <div className="flex justify-end mb-4">
               <button
                 type="button"
-                onClick={() => setShowAdvanced(false)}
+                onClick={useSimpleMode}
                 className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
               >
                 Use simple setup
@@ -445,7 +484,7 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
                 {delegationTierConfig?.main && (
                   <button
                     onClick={() => {
-                      const newConfig: DelegationTierConfig = { ...delegationTierConfig }
+                      const newConfig: DelegationTierConfig = { ...delegationTierConfig, schema_version: 2, mode: 'explicit', provider: undefined }
                       delete newConfig.main
                       const finalConfig = hasAnyConfig(newConfig) ? newConfig : null
                       updateConfig(finalConfig)
@@ -456,18 +495,16 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
                   </button>
                 )}
               </div>
-              <LLMSelectionDropdown
+              <LLMRoleSelector
                 availableLLMs={delegationLLMOptions}
-                selectedLLM={findOptionForTier(delegationTierConfig?.main, 'main agent model')}
+                value={delegationTierConfig?.main ?? null}
                 onLLMSelect={(llm: LLMOption) => {
                   const newTier = tierModelForOption(llm, 'main')
-                  const newConfig: DelegationTierConfig = { ...delegationTierConfig, main: newTier }
+                  const newConfig: DelegationTierConfig = { ...delegationTierConfig, schema_version: 2, mode: 'explicit', provider: undefined, main: newTier }
                   updateConfig(newConfig)
                 }}
-                inModal={true}
-                openDirection="down"
-                title="Select main agent model"
               />
+              <ResolvedTierLine value={delegationTierConfig?.main} />
               {delegationTierConfig?.main && (
                 <div className="mt-2">
                   <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Fallbacks</div>
@@ -497,7 +534,7 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
                     onLLMSelect={(llm: LLMOption) => updateBuiltInTier('main', (current) => {
                       if (!current) return current
                       const fallback = tierModelForOption(llm, 'main')
-                      const nextFallbacks = [...(current.fallbacks || []), { provider: fallback.provider, model_id: fallback.model_id }]
+                      const nextFallbacks = [...(current.fallbacks || []), { provider: fallback.provider, model_id: fallback.model_id, options: fallback.options }]
                       return { ...current, fallbacks: nextFallbacks }
                     })}
                     inModal={true}
@@ -533,20 +570,12 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
                   </button>
                 )}
               </div>
-              <LLMSelectionDropdown
+              <LLMRoleSelector
                 availableLLMs={delegationLLMOptions}
-                selectedLLM={findOptionForTier(effectiveChiefOfStaffTierModel, 'scheduled Chief of Staff model')}
+                value={effectiveChiefOfStaffTierModel ?? null}
                 onLLMSelect={(llm: LLMOption) => updateChiefOfStaffTier(chiefOfStaffTierModelForOption(llm))}
-                inModal={true}
-                openDirection="down"
-                title="Select scheduled Chief of Staff model"
-                placeholder={effectiveChiefOfStaffTierModel ? `Defaults to ${effectiveChiefOfStaffTierModel.model_id}` : 'Defaults to provider default'}
               />
-              {effectiveChiefOfStaffTierModel && (
-                <p className="mt-2 font-mono text-[11px] text-gray-600 dark:text-gray-300">
-                  {effectiveChiefOfStaffTierModel.provider}/{effectiveChiefOfStaffTierModel.model_id}
-                </p>
-              )}
+              <ResolvedTierLine value={effectiveChiefOfStaffTierModel} inherited={!delegationTierConfig?.chief_of_staff} />
             </div>
 
             <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Sub-Agent Models</h3>
@@ -558,7 +587,6 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
             <div className="space-y-3">
               {TIERS.map(({ key, label, desc, icon: Icon, color }) => {
                 const tierModel = delegationTierConfig?.[key]
-                const selectedLLM = findOptionForTier(tierModel, `${key} reasoning tier`)
 
                 return (
                   <div key={key} className="border border-gray-200 dark:border-slate-600 rounded-lg p-3">
@@ -581,17 +609,15 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
                         </button>
                       )}
                     </div>
-                    <LLMSelectionDropdown
+                    <LLMRoleSelector
                       availableLLMs={delegationLLMOptions}
-                      selectedLLM={selectedLLM}
+                      value={tierModel ?? null}
                       onLLMSelect={(llm: LLMOption) => {
                         const newTier = tierModelForOption(llm, key, tierModel?.fallbacks)
                         updateBuiltInTier(key, () => newTier)
                       }}
-                      inModal={true}
-                      openDirection="down"
-                      title={`Select ${key} tier model`}
                     />
+                    <ResolvedTierLine value={tierModel} />
                     {tierModel && (
                       <div className="mt-2">
                         <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Fallbacks</div>
@@ -621,7 +647,7 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
                           onLLMSelect={(llm: LLMOption) => updateBuiltInTier(key, (current) => {
                             if (!current) return current
                             const fallback = tierModelForOption(llm, key)
-                            const nextFallbacks = [...(current.fallbacks || []), { provider: fallback.provider, model_id: fallback.model_id }]
+                            const nextFallbacks = [...(current.fallbacks || []), { provider: fallback.provider, model_id: fallback.model_id, options: fallback.options }]
                             return { ...current, fallbacks: nextFallbacks }
                           })}
                           inModal={true}
@@ -698,6 +724,7 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
                         openDirection="up"
                         title={`Select model for ${slug}`}
                       />
+                      <ResolvedTierLine value={tier} />
                     </div>
                   )
                 })}

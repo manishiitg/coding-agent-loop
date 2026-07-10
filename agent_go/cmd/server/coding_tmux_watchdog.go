@@ -25,6 +25,8 @@ const (
 	codingWatchdogConfirmChecks = 2
 )
 
+var captureTmuxPanePlainForWatchdog = captureTmuxPanePlain
+
 func (api *StreamingAPI) startCodingTmuxRateLimitWatchdog() {
 	if api == nil || api.terminalStore == nil {
 		return
@@ -42,7 +44,9 @@ func (api *StreamingAPI) startCodingTmuxRateLimitWatchdog() {
 }
 
 func (api *StreamingAPI) reapRateLimitedCodingSessionsOnce(streak map[string]int) {
-	snapshots := api.terminalStore.List("")
+	// Metadata listing deliberately avoids Store's content reconciliation. Actual
+	// tmux pane state below is authoritative for whether a terminal is still live.
+	snapshots := api.terminalStore.ListMetadata("")
 	stillLimited := make(map[string]bool)
 
 	for _, snap := range snapshots {
@@ -51,7 +55,22 @@ func (api *StreamingAPI) reapRateLimitedCodingSessionsOnce(streak map[string]int
 		if tmux == "" || sessionID == "" {
 			continue
 		}
-		captured := captureTmuxPanePlain(tmux)
+		switch inspectCodingTmuxPaneState(tmux) {
+		case codingTmuxPaneMissing:
+			api.terminalStore.MarkStale(snap.TerminalID)
+			delete(streak, sessionID)
+			continue
+		case codingTmuxPaneDead:
+			if snap.Active || !strings.EqualFold(strings.TrimSpace(snap.State), "completed") {
+				api.terminalStore.MarkCompleted(snap.TerminalID)
+			}
+			delete(streak, sessionID)
+			continue
+		case codingTmuxPaneUnknown:
+			// A transient tmux command failure is not evidence of completion.
+			continue
+		}
+		captured := captureTmuxPanePlainForWatchdog(tmux)
 		if !terminals.DetectRateLimit(captured) {
 			continue
 		}
@@ -79,6 +98,39 @@ func (api *StreamingAPI) reapRateLimitedCodingSessionsOnce(streak map[string]int
 		if !stillLimited[sessionID] {
 			delete(streak, sessionID)
 		}
+	}
+}
+
+type codingTmuxPaneState int
+
+const (
+	codingTmuxPaneUnknown codingTmuxPaneState = iota
+	codingTmuxPaneAlive
+	codingTmuxPaneDead
+	codingTmuxPaneMissing
+)
+
+func inspectCodingTmuxPaneState(tmuxSession string) codingTmuxPaneState {
+	tmuxSession = strings.TrimSpace(tmuxSession)
+	if tmuxSession == "" {
+		return codingTmuxPaneMissing
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), terminalTmuxActionTimeout)
+	defer cancel()
+	out, err := runTerminalTmuxOutputCommand(ctx, "display-message", "-p", "-t", tmuxSession, "#{pane_dead}")
+	if err != nil {
+		if isMissingTmuxTargetError(err) {
+			return codingTmuxPaneMissing
+		}
+		return codingTmuxPaneUnknown
+	}
+	switch strings.TrimSpace(out) {
+	case "0":
+		return codingTmuxPaneAlive
+	case "1":
+		return codingTmuxPaneDead
+	default:
+		return codingTmuxPaneUnknown
 	}
 }
 

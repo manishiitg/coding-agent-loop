@@ -73,14 +73,18 @@ export interface ProviderTierModelRef {
 }
 
 export interface ProviderDefaultTierModels {
-  main: ProviderTierModelRef
+  builder?: ProviderTierModelRef
   high: ProviderTierModelRef
   medium: ProviderTierModelRef
   low: ProviderTierModelRef
-  phase: ProviderTierModelRef
-  auto_improve?: ProviderTierModelRef
+  maintenance?: ProviderTierModelRef
   pulse?: ProviderTierModelRef
   chief_of_staff?: ProviderTierModelRef
+  // Read-only compatibility for a backend that is still restarting during a
+  // desktop update. New provider manifests never emit these fields.
+  main?: ProviderTierModelRef
+  phase?: ProviderTierModelRef
+  auto_improve?: ProviderTierModelRef
 }
 
 export interface IntegrationKindInfo {

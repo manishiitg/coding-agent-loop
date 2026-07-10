@@ -1,14 +1,17 @@
 import type { AgentLLMConfig, LLMProvider } from '../services/api-types'
-import type { ProviderManifestEntry, ProviderTierModelRef } from '../services/llm-config-api'
+import type {
+  ProviderDefaultTierModels,
+  ProviderManifestEntry,
+  ProviderTierModelRef,
+} from '../services/llm-config-api'
 import type { LLMOption } from '../types/llm'
 
 type WorkflowTierDefaults = {
-  base: AgentLLMConfig
+  builder: AgentLLMConfig
   tier1: AgentLLMConfig
   tier2: AgentLLMConfig
   tier3: AgentLLMConfig
-  phase: AgentLLMConfig
-  autoImprove: AgentLLMConfig
+  maintenance: AgentLLMConfig
   pulse: AgentLLMConfig
   chiefOfStaff: AgentLLMConfig
   usesTierDefaults: boolean
@@ -39,22 +42,37 @@ function toAgentLLMConfigFromRef(
 }
 
 function sameModelDefaults(option: LLMOption): WorkflowTierDefaults {
-  const base = toAgentLLMConfig(option, option.model)
+  const builder = toAgentLLMConfig(option, option.model)
   return {
-    base,
-    tier1: base,
-    tier2: base,
-    tier3: base,
-    phase: base,
-    autoImprove: base,
-    pulse: base,
-    chiefOfStaff: base,
+    builder,
+    tier1: builder,
+    tier2: builder,
+    tier3: builder,
+    maintenance: builder,
+    pulse: builder,
+    chiefOfStaff: builder,
     usesTierDefaults: false,
   }
 }
 
 function findManifestDefaults(provider: string, providerManifest: ProviderManifestEntry[] = []) {
   return providerManifest.find(entry => entry.id === provider && !entry.deprecated)?.default_tier_models
+}
+
+function resolveManifestDefaults(defaults?: ProviderDefaultTierModels) {
+  if (!defaults) return null
+  const builder = defaults.builder ?? defaults.main ?? defaults.high
+  const maintenance = defaults.maintenance ?? defaults.auto_improve ?? defaults.phase ?? defaults.high
+  if (!builder || !defaults.high || !defaults.medium || !defaults.low || !maintenance) return null
+  return {
+    builder,
+    high: defaults.high,
+    medium: defaults.medium,
+    low: defaults.low,
+    maintenance,
+    pulse: defaults.pulse ?? defaults.high,
+    chiefOfStaff: defaults.chief_of_staff ?? maintenance,
+  }
 }
 
 export function hasWorkflowLLMTierDefaults(provider: string, providerManifest: ProviderManifestEntry[] = []) {
@@ -71,29 +89,78 @@ export function getWorkflowLLMTierDefaults(
 ): WorkflowTierDefaults {
   if (option.section === 'published_model') return sameModelDefaults(option)
 
-  const defaults = getTierDefaults(option, providerManifest)
+  const defaults = resolveManifestDefaults(getTierDefaults(option, providerManifest))
   if (!defaults) return sameModelDefaults(option)
 
   return {
-    base: toAgentLLMConfigFromRef(option, defaults.main),
+    builder: toAgentLLMConfigFromRef(option, defaults.builder),
     tier1: toAgentLLMConfigFromRef(option, defaults.high),
     tier2: toAgentLLMConfigFromRef(option, defaults.medium),
     tier3: toAgentLLMConfigFromRef(option, defaults.low),
-    phase: toAgentLLMConfigFromRef(option, defaults.phase),
-    autoImprove: toAgentLLMConfigFromRef(option, defaults.auto_improve ?? defaults.high),
-    pulse: toAgentLLMConfigFromRef(option, defaults.pulse ?? defaults.high),
-    chiefOfStaff: toAgentLLMConfigFromRef(option, defaults.chief_of_staff ?? defaults.auto_improve ?? defaults.pulse ?? defaults.high),
+    maintenance: toAgentLLMConfigFromRef(option, defaults.maintenance),
+    pulse: toAgentLLMConfigFromRef(option, defaults.pulse),
+    chiefOfStaff: toAgentLLMConfigFromRef(option, defaults.chiefOfStaff),
     usesTierDefaults: true,
   }
 }
 
-export function agentLLMToPresetBase(config: AgentLLMConfig) {
-  return {
-    ...(config.published_llm_id ? { published_llm_id: config.published_llm_id } : {}),
-    provider: config.provider,
-    model_id: config.model_id,
-    ...(hasOptions(config.options) ? { options: config.options } : {}),
-  }
+export function getWorkflowProviderOptions(
+  providerManifest: ProviderManifestEntry[] = [],
+): LLMOption[] {
+  const options: LLMOption[] = []
+
+  providerManifest.forEach(entry => {
+    if (entry.deprecated) return
+    if (entry.integration_kind !== 'coding_agent') return
+    const defaults = resolveManifestDefaults(entry.default_tier_models)
+    if (!defaults) return
+
+    const builder = defaults.builder
+    options.push({
+      provider: builder.provider,
+      model: builder.model_id,
+      label: entry.display_name,
+      description: entry.usable
+        ? entry.description
+        : entry.setup_hint || entry.description,
+      section: 'coding_agent',
+      ...(hasOptions(builder.options) ? { options: builder.options } : {}),
+    })
+  })
+
+  return options
+}
+
+function providerModelOptions(entry: ProviderManifestEntry): LLMOption[] {
+  const options: LLMOption[] = []
+  entry.models.forEach(model => {
+    const base = {
+      provider: entry.id,
+      model: model.model_id,
+      description: entry.description,
+      section: entry.integration_kind === 'coding_agent' ? 'coding_agent' as const : 'published_model' as const,
+    }
+    const reasoningLevels = model.reasoning_effort_levels ?? []
+    const thinkingLevels = model.thinking_levels ?? []
+    if (reasoningLevels.length > 0) {
+      reasoningLevels.forEach(level => options.push({
+        ...base,
+        label: `${model.model_name || model.model_id} · ${level}`,
+        options: { reasoning_effort: level },
+      }))
+      return
+    }
+    if (thinkingLevels.length > 0) {
+      thinkingLevels.forEach(level => options.push({
+        ...base,
+        label: `${model.model_name || model.model_id} · ${level}`,
+        options: { thinking_level: level },
+      }))
+      return
+    }
+    options.push({ ...base, label: model.model_name || model.model_id })
+  })
+  return options
 }
 
 export function getWorkflowLLMOptions(
@@ -101,30 +168,22 @@ export function getWorkflowLLMOptions(
   providerManifest: ProviderManifestEntry[] = [],
 ): LLMOption[] {
   const options: LLMOption[] = []
-  const seenCodingAgents = new Set<string>()
+  const seen = new Set<string>()
 
   providerManifest.forEach(entry => {
-    if (entry.deprecated) return
-    if (entry.integration_kind !== 'coding_agent') return
-    if (!entry.default_tier_models) return
-
-    const main = entry.default_tier_models.main
-    const key = `${main.provider}/${main.model_id}`
-    if (seenCodingAgents.has(key)) return
-    seenCodingAgents.add(key)
-    options.push({
-      provider: main.provider,
-      model: main.model_id,
-      label: entry.display_name,
-      description: entry.usable
-        ? entry.description
-        : entry.setup_hint || entry.description,
-      section: 'coding_agent',
-      ...(hasOptions(main.options) ? { options: main.options } : {}),
+    if (entry.deprecated || entry.integration_kind === 'audio_provider') return
+    providerModelOptions(entry).forEach(option => {
+      const key = `${option.provider}/${option.model}/${JSON.stringify(option.options ?? {})}`
+      if (seen.has(key)) return
+      seen.add(key)
+      options.push(option)
     })
   })
 
   availableLLMs.forEach(option => {
+    const key = `${option.provider}/${option.model}/${JSON.stringify(option.options ?? {})}`
+    if (seen.has(key)) return
+    seen.add(key)
     options.push({
       ...option,
       section: 'published_model',
@@ -147,7 +206,7 @@ export function getWorkflowLLMOptions(
         displayName: entry.display_name,
         usable: entry.usable,
         hasDefaultTierModels: Boolean(entry.default_tier_models),
-        main: entry.default_tier_models?.main,
+        builder: entry.default_tier_models?.builder,
       })),
   })
 

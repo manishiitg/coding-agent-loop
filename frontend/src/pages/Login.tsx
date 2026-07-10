@@ -187,7 +187,7 @@ export function Login() {
           </div>
           <CardTitle className="text-2xl">Welcome Back</CardTitle>
           <CardDescription className="text-base">
-            Sign in to continue to Runloop
+            Sign in to continue to AgentWorks
             {providers.length > 0 && (
               <span className="block text-xs text-muted-foreground/70 mt-1">
                 via {providers.map(p => (providerConfig[p.name]?.displayName || p.name)).join(', ')}

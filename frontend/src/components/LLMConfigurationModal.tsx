@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { X, Settings, Lock, WandSparkles } from 'lucide-react'
+import { X, Settings, Lock } from 'lucide-react'
 import { Button } from './ui/Button'
 import { TooltipProvider } from './ui/tooltip'
 import { useLLMStore, useAppStore } from '../stores'
@@ -15,7 +15,6 @@ import ModalPortal from './ui/ModalPortal'
 interface LLMConfigurationModalProps {
   isOpen: boolean
   onClose: () => void
-  onOpenDiscovery?: () => void
 }
 
 // Providers that use API keys in this modal (excludes local CLIs and hidden legacy chat providers)
@@ -75,7 +74,7 @@ const FALLBACK_AUDIO_PROVIDER_ITEMS: Array<{
   },
 ]
 
-export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery }: LLMConfigurationModalProps) {
+export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurationModalProps) {
   // Get current mode from app store
   const agentMode = useAppStore(state => state.agentMode)
   // Map 'simple' to 'multi-agent' for our mode-specific configs
@@ -311,6 +310,14 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
 
   const [activeTab, setActiveTab] = useState<TabType>('library')
 
+  const openProvider = useCallback((provider: ProviderManifestEntry) => {
+    if (provider.integration_kind === 'audio_provider' && provider.id === 'minimax') {
+      setActiveTab('audio-minimax')
+      return
+    }
+    setActiveTab(provider.id as TabType)
+  }, [])
+
   // Load defaults and manifest when modal opens
   useEffect(() => {
     if (isOpen && !defaultsLoaded) {
@@ -444,20 +451,6 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
               </span>
             </div>
             <div className="flex items-center gap-2">
-              {onOpenDiscovery && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    onClose()
-                    onOpenDiscovery()
-                  }}
-                  className="dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 dark:hover:text-white"
-                >
-                  <WandSparkles className="w-4 h-4 mr-2" />
-                  Discover setup
-                </Button>
-              )}
               <Button variant="ghost" size="sm" onClick={onClose} className="h-8 w-8 p-0 hover:bg-secondary">
                 <X className="w-4 h-4" />
               </Button>
@@ -478,8 +471,8 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
                   }`}
                 >
                   <div className="flex-1">
-                    <div className="font-medium">Published LLM</div>
-                    <div className="text-xs opacity-75">Saved configurations</div>
+                    <div className="font-medium">Library</div>
+                    <div className="text-xs opacity-75">Providers + saved</div>
                   </div>
                   <Settings className="w-4 h-4" />
                 </button>
@@ -563,7 +556,11 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
             {/* Right Content */}
             <div className="flex-1 p-3 sm:p-6 overflow-y-auto min-h-0">
               {activeTab === 'library' && (
-                <LibraryTab />
+                <LibraryTab
+                  providers={manifestProviderEntries}
+                  onSelectProvider={openProvider}
+                  isProviderLocked={isProviderLocked}
+                />
               )}
 
               {/* Locked provider read-only banner */}

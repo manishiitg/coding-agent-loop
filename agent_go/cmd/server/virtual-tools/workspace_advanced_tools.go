@@ -12,6 +12,7 @@ import (
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/llm"
+	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent-builder-go/agent_go/cmd/server/services"
 	"mcp-agent-builder-go/agent_go/pkg/common"
@@ -657,6 +658,19 @@ func loadWorkspaceTierConfig(ctx context.Context, workspaceURL string) *Delegati
 		log.Printf("[GENERATE_TEXT_LLM] Failed to parse workspace tier config: %v", err)
 		return cfg
 	}
+	if workspaceCfg.Mode == "provider_profile" && strings.TrimSpace(workspaceCfg.Provider) != "" {
+		if defaults, ok := llmproviders.GetCodingAgentDefaultTierModels(llmproviders.Provider(strings.TrimSpace(workspaceCfg.Provider))); ok {
+			toTier := func(ref llmproviders.CodingAgentTierModelRef) *TierModel {
+				if ref.Provider == "" || ref.ModelID == "" {
+					return nil
+				}
+				return &TierModel{Provider: ref.Provider, ModelID: ref.ModelID, Options: ref.Options}
+			}
+			workspaceCfg.High = toTier(defaults.High)
+			workspaceCfg.Medium = toTier(defaults.Medium)
+			workspaceCfg.Low = toTier(defaults.Low)
+		}
+	}
 
 	if sanitized := sanitizeTierModelLocal(workspaceCfg.High); sanitized != nil {
 		cfg.High = sanitized
@@ -697,6 +711,7 @@ func sanitizeTierModelLocal(model *TierModel) *TierModel {
 	sanitized := &TierModel{
 		Provider:  provider,
 		ModelID:   modelID,
+		Options:   model.Options,
 		Fallbacks: nil,
 	}
 
@@ -708,6 +723,7 @@ func sanitizeTierModelLocal(model *TierModel) *TierModel {
 		sanitized.Fallbacks = append(sanitized.Fallbacks, TierModelFallback{
 			Provider: strings.TrimSpace(fb.Provider),
 			ModelID:  fallbackModelID,
+			Options:  fb.Options,
 		})
 	}
 

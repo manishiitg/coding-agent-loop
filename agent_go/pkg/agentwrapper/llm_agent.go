@@ -176,6 +176,7 @@ type LLMAgentConfig struct {
 	ConfigPath         string
 	Provider           llm.Provider // LLM provider (bedrock, openai, anthropic, openrouter)
 	ModelID            string
+	Options            map[string]interface{}
 	Temperature        float64
 	ToolChoice         string
 	MaxTurns           int
@@ -242,8 +243,9 @@ type LLMAgentConfig struct {
 // FallbackModel represents a fallback model configuration
 // If Provider is empty, it uses the same provider as the primary model
 type FallbackModel struct {
-	Provider string `json:"provider,omitempty"` // Optional: override provider for cross-provider fallback
-	ModelID  string `json:"model_id"`
+	Provider string                 `json:"provider,omitempty"` // Optional: override provider for cross-provider fallback
+	ModelID  string                 `json:"model_id"`
+	Options  map[string]interface{} `json:"options,omitempty"`
 }
 
 // agentMetricsImpl is the concrete implementation of AgentMetrics interface
@@ -370,6 +372,7 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 		Primary: mcpagent.LLMModel{
 			Provider: string(config.Provider),
 			ModelID:  config.ModelID,
+			Options:  config.Options,
 		},
 		Fallbacks: make([]mcpagent.LLMModel, 0, len(config.Fallbacks)),
 	}
@@ -385,6 +388,7 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 		mcpLLMConfig.Fallbacks = append(mcpLLMConfig.Fallbacks, mcpagent.LLMModel{
 			Provider: fallbackProvider,
 			ModelID:  fallbackModelID,
+			Options:  fb.Options,
 		})
 	}
 	agentOptions = append(agentOptions, mcpagent.WithLLMConfig(mcpLLMConfig))

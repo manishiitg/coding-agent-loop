@@ -103,7 +103,7 @@ export function DesktopConnectButton({ variant = 'full' }: DesktopConnectButtonP
         </div>
 
         <p className="mb-3 text-xs leading-relaxed text-gray-600 dark:text-gray-300">
-          First install and open Runloop for Mac. In the app, use the bottom-left workspace switcher: click Local, choose Add workspace, paste this URL into Server URL, then Save.
+          First install and open AgentWorks for Mac. In the app, use the bottom-left workspace switcher: click Local, choose Add workspace, paste this URL into Server URL, then Save.
         </p>
 
         <div className="mb-3 grid gap-2 text-xs text-gray-600 sm:grid-cols-2 dark:text-gray-300">
@@ -212,7 +212,7 @@ export function DesktopConnectButton({ variant = 'full' }: DesktopConnectButtonP
             1. Download and open the Mac app
           </div>
           <p className="mb-3 text-xs leading-5 text-gray-500 dark:text-gray-400">
-            Install Runloop for Mac, open the app, then keep it running while you connect this workspace.
+            Install AgentWorks for Mac, open the app, then keep it running while you connect this workspace.
           </p>
           <div className="mb-3 rounded-md border border-gray-200 bg-gray-50 p-2 dark:border-slate-700 dark:bg-slate-950">
             <code className="block break-all text-[11px] leading-relaxed text-gray-700 dark:text-gray-200">{DMG_INSTALL_COMMAND}</code>

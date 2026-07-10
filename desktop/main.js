@@ -131,7 +131,7 @@ function trimLogFileToTail(filePath, maxBytes = MANAGED_LOG_MAX_BYTES, keepBytes
   if (stat.size <= maxBytes && stat.size <= targetKeepBytes) return stat.size;
 
   const header = Buffer.from(
-    `[${new Date().toISOString()}] Log truncated by Runloop to stay under ${maxBytes} bytes; kept the tail of a ${stat.size} byte file.\n`
+    `[${new Date().toISOString()}] Log truncated by AgentWorks to stay under ${maxBytes} bytes; kept the tail of a ${stat.size} byte file.\n`
   );
   const readBytes = Math.min(targetKeepBytes, Math.max(0, maxBytes - header.length), stat.size);
   let tail = Buffer.alloc(0);
@@ -163,7 +163,7 @@ function createBoundedLogWriter(filePath, maxBytes = MANAGED_LOG_MAX_BYTES) {
       try {
         if (maxBytes > 0 && buffer.length >= maxBytes) {
           const header = Buffer.from(
-            `[${new Date().toISOString()}] Oversized log chunk truncated by Runloop; kept the final bytes of a ${buffer.length} byte write.\n`
+            `[${new Date().toISOString()}] Oversized log chunk truncated by AgentWorks; kept the final bytes of a ${buffer.length} byte write.\n`
           );
           const tailBudget = Math.max(0, maxBytes - header.length);
           const tail = buffer.subarray(Math.max(0, buffer.length - tailBudget));
@@ -275,8 +275,8 @@ function migrateLegacyUserData() {
     return;
   }
 
-  const hasRunloopData = fs.existsSync(userDataPath) && fs.readdirSync(userDataPath).length > 0;
-  if (hasRunloopData) {
+  const hasCurrentData = fs.existsSync(userDataPath) && fs.readdirSync(userDataPath).length > 0;
+  if (hasCurrentData) {
     return;
   }
 
@@ -285,7 +285,7 @@ function migrateLegacyUserData() {
     fs.cpSync(legacyUserDataPath, userDataPath, { recursive: true, errorOnExist: false });
     console.log(`[main] Migrated legacy user data from ${legacyUserDataPath} to ${userDataPath}`);
   } catch (error) {
-    console.warn('[main] Failed to migrate legacy Runloop user data:', error);
+    console.warn('[main] Failed to migrate legacy AgentWorks user data:', error);
   }
 }
 
@@ -343,8 +343,8 @@ async function resolveDocsDir() {
   const choice = await dialog.showMessageBox({
     type: 'question',
     title: 'Choose workspace folder',
-    message: 'Where should Runloop store your workspace documents?',
-    detail: 'Pick an existing folder to use, or let Runloop create a default one in your application data directory.',
+    message: 'Where should AgentWorks store your workspace documents?',
+    detail: 'Pick an existing folder to use, or let AgentWorks create a default one in your application data directory.',
     buttons: ['Choose folder…', 'Use default'],
     defaultId: 0,
     cancelId: 1,
@@ -1071,11 +1071,11 @@ function createTray() {
   const trayIcon = icon.resize({ width: 18, height: 18 });
 
   tray = new Tray(trayIcon);
-  tray.setToolTip('Runloop');
+  tray.setToolTip('AgentWorks');
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: 'Open Runloop', click: openMainWindow },
+    { label: 'Open AgentWorks', click: openMainWindow },
     { type: 'separator' },
-    { label: 'Quit Runloop (Stop Servers)', click: () => app.quit() },
+    { label: 'Quit AgentWorks (Stop Servers)', click: () => app.quit() },
   ]));
   tray.on('click', openMainWindow);
 }
@@ -1371,9 +1371,9 @@ function waitForHealth(agentUrl, workspaceUrl) {
 //
 // Instead: poll GitHub Releases on startup; if a newer tag exists, prompt
 // the user. On "Update" we spawn install.sh in a *detached* shell (nohup so
-// it survives Runloop quitting) and quit ourselves. install.sh kills any
-// leftover Runloop processes, downloads the new dmg, replaces
-// /Applications/Runloop.app, strips quarantine, and relaunches.
+// it survives AgentWorks quitting) and quit ourselves. install.sh kills any
+// leftover AgentWorks processes, downloads the new dmg, replaces
+// the app bundle, strips quarantine, and relaunches.
 function checkForUpdates(manual = false) {
   if (!app.isPackaged) {
     console.log('[update] Skipping check — not packaged');
@@ -1392,7 +1392,7 @@ function checkForUpdates(manual = false) {
     hostname: 'api.github.com',
     path: '/repos/manishiitg/mcp-agent-builder-go/releases/latest',
     method: 'GET',
-    headers: { 'User-Agent': 'Runloop' }
+    headers: { 'User-Agent': 'AgentWorks' }
   };
 
   const req = https.request(options, (res) => {
@@ -1418,7 +1418,7 @@ function checkForUpdates(manual = false) {
           dialog.showMessageBox({
             type: 'info',
             title: "You're up to date",
-            message: `Runloop ${currentVersion} is the latest version.`,
+            message: `AgentWorks ${currentVersion} is the latest version.`,
             buttons: ['OK'],
           });
         }
@@ -1429,7 +1429,7 @@ function checkForUpdates(manual = false) {
         // start a second one. Re-surface the ready prompt if it's done.
         if (updateState.dmgPath) promptInstallReady(latestVersion);
         else if (manual) {
-          dialog.showMessageBox({ type: 'info', title: 'Downloading update', message: `Runloop ${latestVersion} is downloading…`, buttons: ['OK'] });
+          dialog.showMessageBox({ type: 'info', title: 'Downloading update', message: `AgentWorks ${latestVersion} is downloading…`, buttons: ['OK'] });
         }
         return;
       }
@@ -1437,11 +1437,11 @@ function checkForUpdates(manual = false) {
       const choice = await dialog.showMessageBox({
         type: 'info',
         title: 'Update Available',
-        message: `Runloop ${latestVersion} is available.`,
+        message: `AgentWorks ${latestVersion} is available.`,
         detail:
           `You're on ${currentVersion}.\n\n` +
           (notes ? `What's new in ${latestVersion}:\n${notes}\n\n` : '') +
-          `Runloop will download the new version (~150 MB) in the background — you can keep working. When it's ready you'll be asked to restart to install (a few seconds).`,
+          `AgentWorks will download the new version (~150 MB) in the background — you can keep working. When it's ready you'll be asked to restart to install (a few seconds).`,
         buttons: ['Download', 'Full Notes…', 'Later'],
         defaultId: 0,
         cancelId: 2,
@@ -1524,7 +1524,7 @@ function sendUpdateProgress(payload) {
 // reporting (transferred, total) bytes as the body streams in.
 function downloadFileWithProgress(url, destPath, onProgress, redirectsLeft = 6) {
   return new Promise((resolve, reject) => {
-    const req = https.get(url, { headers: { 'User-Agent': 'Runloop' } }, (res) => {
+    const req = https.get(url, { headers: { 'User-Agent': 'AgentWorks' } }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         res.resume();
         if (redirectsLeft <= 0) { reject(new Error('Too many redirects')); return; }
@@ -1570,7 +1570,7 @@ async function downloadAndPrepareUpdate(targetVersion) {
 
   console.log('[update] downloading v' + versionNoV + ' in background → ' + destPath);
   sendUpdateProgress({ status: 'downloading', version: versionNoV, percent: 0, transferred: 0, total: 0 });
-  if (tray) { try { tray.setToolTip(`Runloop — downloading v${versionNoV}…`); } catch (_) {} }
+  if (tray) { try { tray.setToolTip(`AgentWorks — downloading v${versionNoV}…`); } catch (_) {} }
 
   let lastEmit = 0;
   try {
@@ -1586,17 +1586,17 @@ async function downloadAndPrepareUpdate(targetVersion) {
   } catch (err) {
     updateState.downloading = false;
     try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setProgressBar(-1); } catch (_) {}
-    if (tray) { try { tray.setToolTip('Runloop'); } catch (_) {} }
+    if (tray) { try { tray.setToolTip('AgentWorks'); } catch (_) {} }
     console.error('[update] download failed:', err?.message || err);
     sendUpdateProgress({ status: 'error', version: versionNoV, message: String(err?.message || err) });
-    dialog.showErrorBox('Update download failed', `Could not download Runloop ${versionNoV}.\n\n${String(err?.message || err)}`);
+    dialog.showErrorBox('Update download failed', `Could not download AgentWorks ${versionNoV}.\n\n${String(err?.message || err)}`);
     return;
   }
 
   updateState.downloading = false;
   updateState.dmgPath = destPath;
   try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setProgressBar(-1); } catch (_) {}
-  if (tray) { try { tray.setToolTip(`Runloop — v${versionNoV} ready to install`); } catch (_) {} }
+  if (tray) { try { tray.setToolTip(`AgentWorks — v${versionNoV} ready to install`); } catch (_) {} }
   sendUpdateProgress({ status: 'ready', version: versionNoV, percent: 1 });
 
   promptInstallReady(versionNoV);
@@ -1608,7 +1608,7 @@ async function promptInstallReady(versionNoV) {
   const choice = await dialog.showMessageBox({
     type: 'info',
     title: 'Update Ready',
-    message: `Runloop ${versionNoV} is downloaded and ready to install.`,
+    message: `AgentWorks ${versionNoV} is downloaded and ready to install.`,
     detail: 'Installing takes a few seconds and relaunches the app. Any in-progress chats or workflow runs will be interrupted.',
     buttons: ['Restart & Install', 'Later'],
     defaultId: 0,
@@ -1640,13 +1640,13 @@ function installDownloadedUpdate() {
     const { Notification } = require('electron');
     if (Notification.isSupported()) {
       new Notification({
-        title: 'Installing Runloop…',
+        title: 'Installing AgentWorks…',
         body: `Installing v${updateState.version}. The app will reopen automatically in a few seconds.`,
         silent: false,
       }).show();
     }
   } catch (_) {}
-  if (tray) { try { tray.setToolTip(`Runloop — installing v${updateState.version}…`); } catch (_) {} }
+  if (tray) { try { tray.setToolTip(`AgentWorks — installing v${updateState.version}…`); } catch (_) {} }
 
   // Brief delay so the installer forks before our pkill-prone quit.
   setTimeout(() => app.quit(), 1000);
@@ -1679,7 +1679,7 @@ function killChildren() {
 function showErrorAndExit(message) {
   dialog.showMessageBoxSync({
     type: 'error',
-    title: 'Runloop',
+    title: 'AgentWorks',
     message: 'Startup failed',
     detail: message,
   });

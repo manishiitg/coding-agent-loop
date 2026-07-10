@@ -405,13 +405,14 @@ func ReadWorkflowManifest(ctx context.Context, workspacePath string) (*WorkflowM
 
 	// Apply defaults for missing fields from older schema versions
 	applyManifestDefaults(&m)
+	llmConfigMigrated := workflowtypes.NormalizePresetLLMConfig(m.Capabilities.LLMConfig)
 
 	// Persist auto-assigned schedule IDs so subsequent lookups find the same UUID.
 	// Skip the write-back when we had to drop a malformed config block on read —
 	// rewriting now would silently erase the user's backup/publish config from disk.
-	if hadEmptyScheduleID && len(m.MalformedConfig) == 0 {
+	if (hadEmptyScheduleID || llmConfigMigrated) && len(m.MalformedConfig) == 0 {
 		if err := WriteWorkflowManifest(ctx, workspacePath, &m); err != nil {
-			log.Printf("[WARN] ReadWorkflowManifest: failed to persist auto-assigned schedule IDs for %s: %v", workspacePath, err)
+			log.Printf("[WARN] ReadWorkflowManifest: failed to persist manifest migrations for %s: %v", workspacePath, err)
 		}
 	}
 	return &m, true, nil
@@ -446,6 +447,7 @@ func stripOptionalConfigBlocks(content []byte) ([]byte, []string) {
 
 // WriteWorkflowManifest validates and writes workflow.json to a workspace.
 func WriteWorkflowManifest(ctx context.Context, workspacePath string, m *WorkflowManifest) error {
+	workflowtypes.NormalizePresetLLMConfig(m.Capabilities.LLMConfig)
 	// Ensure nil slices become empty arrays in JSON
 	ensureManifestSlices(m)
 

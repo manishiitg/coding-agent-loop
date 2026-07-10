@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -864,6 +865,26 @@ func (s *SchedulerService) StopRunningJob(scheduleID string) {
 	}
 
 	scheduleLogf("[SCHEDULER] Stopping running job %s (session: %s)", scheduleID, sessionID)
+	s.cancelScheduledSessionWork(sessionID, "scheduled job stopped by user")
+
+	// Update runtime state
+	s.runtimeStatesMu.Lock()
+	if st, ok := s.runtimeStates[scheduleID]; ok {
+		st.LastStatus = "stopped"
+	}
+	s.runtimeStatesMu.Unlock()
+
+	scheduleLogf("[SCHEDULER] Stopped job %s (session: %s)", scheduleID, sessionID)
+}
+
+// cancelScheduledSessionWork stops agent, workflow, background, and tmux work
+// owned by a scheduled session without changing the schedule's recorded run
+// result. Pulse timeout recovery uses this before continuing finalization in a
+// fresh session.
+func (s *SchedulerService) cancelScheduledSessionWork(sessionID, closeReason string) {
+	if s == nil || s.api == nil || strings.TrimSpace(sessionID) == "" {
+		return
+	}
 
 	// Cancel agent execution context
 	s.api.agentCancelMux.Lock()
@@ -891,7 +912,23 @@ func (s *SchedulerService) StopRunningJob(scheduleID string) {
 	}
 
 	// Cancel background agents
-	s.api.bgAgentRegistry.CancelAll(sessionID)
+	if s.api.bgAgentRegistry != nil {
+		s.api.bgAgentRegistry.CancelAll(sessionID)
+	}
+	s.api.cancelTrackedExecutionsForSession(sessionID)
+	s.api.setSyntheticTurn(sessionID, false)
+	s.api.setSessionBusy(sessionID, false)
+	s.api.pendingMu.Lock()
+	delete(s.api.pendingCompletions, sessionID)
+	delete(s.api.completionRetryScheduled, sessionID)
+	s.api.pendingMu.Unlock()
+	s.api.pendingStartMu.Lock()
+	delete(s.api.pendingStartNotifications, sessionID)
+	delete(s.api.startNotificationRetryScheduled, sessionID)
+	s.api.pendingStartMu.Unlock()
+	s.api.lastQueryMu.Lock()
+	delete(s.api.lastQueryRequests, sessionID)
+	s.api.lastQueryMu.Unlock()
 
 	// Close tmux-backed coding-CLI sessions. Canceling the Go contexts above tears
 	// down the streaming/orchestration server-side, but the CLI processes inside
@@ -901,7 +938,6 @@ func (s *SchedulerService) StopRunningJob(scheduleID string) {
 	// gracefully close the main-agent session by owner, then enumerate this
 	// session's terminals and tear down each sub-agent pane by name (a scheduled
 	// stop is a hard, full stop — always cancel sub-agents).
-	const closeReason = "scheduled job stopped by user"
 	closeAllCodingCLIInteractiveSessionsForOwner(sessionID, closeReason)
 	if s.api.terminalStore != nil {
 		mainOwner := "main:" + sessionID
@@ -924,14 +960,6 @@ func (s *SchedulerService) StopRunningJob(scheduleID string) {
 		}
 	}
 
-	// Update runtime state
-	s.runtimeStatesMu.Lock()
-	if st, ok := s.runtimeStates[scheduleID]; ok {
-		st.LastStatus = "stopped"
-	}
-	s.runtimeStatesMu.Unlock()
-
-	scheduleLogf("[SCHEDULER] Stopped job %s (session: %s)", scheduleID, sessionID)
 }
 
 // triggerSchedule is called by the tick loop when a schedule is due.
@@ -1339,11 +1367,16 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 	if sessionID == "" {
 		sessionID = s.newScheduleSessionID(sctx)
 	}
+	pulseRunID := sessionID
 	baseReqMap := s.buildWorkshopRequest(ctx, sctx)
+	if err := initializePulseFinalCommandStates(ctx, sctx.WorkspacePath, pulseRunID); err != nil {
+		s.sessionLogf(sctx, sessionID, "[PULSE] failed to initialize final command state: %v", err)
+	}
 
-	// Run Pulse as a SEQUENCE of smaller turns: Gate first, then only the modules
-	// Gate selected, then final backup/publish/notify. Each turn does one focused
-	// job and builds on the prior turns' context in the same resumed session.
+	// Run Pulse as a sequence: lightweight Gate first, then only the modules Gate
+	// selected, then one ordered dashboard/backup/publish/notify finalizer. Each
+	// expensive maintenance turn stays focused while fixed final work reuses one
+	// context instead of paying for four repeated context loads.
 	answeredHumanInputs := formatAnsweredReportHumanInputsForAgent(ctx, sctx.WorkspacePath)
 	humanInputNote := ""
 	if answeredHumanInputs != "" {
@@ -1351,7 +1384,7 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 	}
 	intro := fmt.Sprintf(
 		"You are Pulse, the post-run steward. A scheduled run of this workflow just finished: workspace_path=%q, status=%q, run_folder=%q. "+
-			"Call get_reference_doc(kind=\"post-run-monitor\") and follow it. Write builder/improve.html in simple user-facing language: takeaway first, short labeled detail after, raw evidence paths last. "+
+			"Call get_reference_doc(kind=\"post-run-monitor\") and follow it. Write builder/improve.html in simple user-facing language: compact first screen, no duplicated latest-run narrative, takeaway first, short labeled detail after, raw evidence paths last. "+
 			"If you need user input, call create_human_input_request(workspace_path=%q, source=\"pulse\", ...) instead of hand-editing request state in HTML. "+
 			"For strategic plan-change approval, Goal Advisor must use that same existing report interaction flow: create_human_input_request(source=\"goal_advisor\", input_id=\"plan-proposal-...\", options approve/reject/defer, context=\"proposal + exact plan edits + evidence\"). "+
 			"We'll go one step at a time — do ONLY the step in each message, finish it, then stop and wait for the next.%s",
@@ -1360,45 +1393,150 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 	upgradeSteps := postRunMonitorUpgradeStepsForManifest(manifest)
 	s.sessionLogf(sctx, sessionID, "[PULSE] starting pulse for %s (run_folder=%s status=%s, upgrades=%d)", sctx.Schedule.ID, runFolder, runStatus, len(upgradeSteps))
 	introSent := false
-	runStep := func(st postRunMonitorStep) bool {
+	recoveryNotes := []string{}
+	runStep := func(st postRunMonitorStep) postRunMonitorStepRunResult {
+		if st.label == "finalize" {
+			if _, err := markPulseFinalCommandState(ctx, sctx.WorkspacePath, pulseFinalCommandDashboard, pulseRunID, "running", "Preparing the Pulse dashboard and user questions"); err != nil {
+				s.sessionLogf(sctx, sessionID, "[PULSE] failed to mark dashboard running: %v", err)
+			}
+		}
 		reqMap := cloneStringInterfaceMap(baseReqMap)
 		s.applyPulseLLMToReqMap(reqMap, sctx, sessionID)
 		query := st.query
 		if !introSent {
-			query = intro + "\n\n" + query
+			recoveryContext := ""
+			if len(recoveryNotes) > 0 {
+				recoveryContext = "\n\nPULSE RECOVERY CONTEXT. Earlier Pulse work did not finish cleanly. Do not rerun timed-out maintenance in this recovery session. Continue the requested finalization step, preserve partial/failed status honestly, and do not claim skipped work succeeded:\n- " + strings.Join(recoveryNotes, "\n- ")
+			}
+			query = intro + recoveryContext + "\n\n" + query
 			introSent = true
 		}
 		reqMap["query"] = query
 		if err := s.api.startSessionInternal(ctx, reqMap, sessionID, "", nil); err != nil {
 			s.sessionLogf(sctx, sessionID, "[PULSE] step %q failed to start: %v", st.label, err)
-			return false
+			if st.label == "finalize" {
+				_ = finalizeUnresolvedPulseFinalCommands(ctx, sctx.WorkspacePath, pulseRunID, "failed", "Pulse finalizer failed to start")
+			}
+			return postRunMonitorStepRunResult{outcome: postRunMonitorStepStartFailed, err: err}
 		}
 		if err := s.waitForWorkshopIdleWithMaxWait(ctx, sessionID, st.idleMaxWait()); err != nil {
 			s.sessionLogf(sctx, sessionID, "[PULSE] step %q idle wait failed: %v", st.label, err)
-			return false
+			outcome := postRunMonitorStepWaitFailed
+			if errors.Is(err, errWorkshopIdleWaitTimeout) {
+				outcome = postRunMonitorStepTimedOut
+			}
+			if st.label == "finalize" {
+				status := "failed"
+				if outcome == postRunMonitorStepTimedOut {
+					status = "timed_out"
+				}
+				_ = finalizeUnresolvedPulseFinalCommands(ctx, sctx.WorkspacePath, pulseRunID, status, "Pulse finalizer did not finish cleanly")
+			}
+			return postRunMonitorStepRunResult{outcome: outcome, err: err}
+		}
+		if st.label == "finalize" {
+			if err := finalizeUnresolvedPulseFinalCommands(ctx, sctx.WorkspacePath, pulseRunID, "failed", "Finalizer ended without recording this command's outcome"); err != nil {
+				s.sessionLogf(sctx, sessionID, "[PULSE] failed to reconcile final command state: %v", err)
+			}
 		}
 		s.sessionLogf(sctx, sessionID, "[PULSE] step %q done for %s", st.label, sctx.Schedule.ID)
-		return true
+		return postRunMonitorStepRunResult{outcome: postRunMonitorStepCompleted}
+	}
+	handleStepFailure := func(st postRunMonitorStep, result postRunMonitorStepRunResult, needsFollowup bool) string {
+		oldSessionID := sessionID
+		resultName := "failed"
+		failureLabel := "failed"
+		if result.outcome == postRunMonitorStepTimedOut {
+			resultName = "timed_out"
+			failureLabel = fmt.Sprintf("timed out after %s", st.idleMaxWait())
+		}
+		reason := fmt.Sprintf("Pulse step %s %s", st.label, failureLabel)
+		if result.err != nil && result.outcome != postRunMonitorStepTimedOut {
+			reason += ": " + result.err.Error()
+		}
+		if module := pulseModuleForPostRunMonitorStep(st.label); module != "" {
+			if _, err := markPulseModuleResult(ctx, sctx.WorkspacePath, module, pulseRunID, resultName, reason, []string{"scheduler timeout/failure handling"}); err != nil {
+				s.sessionLogf(sctx, oldSessionID, "[PULSE] failed to record %s result for module %s: %v", resultName, module, err)
+			}
+		}
+		if result.outcome != postRunMonitorStepStartFailed {
+			s.cancelScheduledSessionWork(oldSessionID, reason)
+		}
+		recoveryNotes = append(recoveryNotes, reason)
+		if needsFollowup {
+			sessionID = s.newScheduleSessionID(sctx)
+			introSent = false
+			s.sessionLogf(sctx, sessionID, "[PULSE] continuing finalization in recovery session after %s", reason)
+		}
+		return reason
 	}
 
+	gateReady := true
 	for _, st := range upgradeSteps {
-		if !runStep(st) {
-			return
+		result := runStep(st)
+		if result.outcome != postRunMonitorStepCompleted {
+			handleStepFailure(st, result, true)
+			gateReady = false
+			break
 		}
 	}
 
-	if !runStep(postRunMonitorGateStep(sessionID, runFolder, runStatus)) {
-		return
-	}
-
-	steps := s.selectedPostRunMonitorModuleSteps(ctx, sctx, sessionID)
-	s.sessionLogf(sctx, sessionID, "[PULSE] selected %d post-gate steps for %s", len(steps), sctx.Schedule.ID)
-	for _, st := range steps {
-		if !runStep(st) {
-			return
+	// Archive is a conditional preflight, not a mandatory Pulse module. The
+	// scheduler only detects that the active HTML crossed a size/card threshold;
+	// the agent owns the semantic choice of which resolved history is safe to
+	// move. Archive failure is fail-open so Gate and final reporting still run.
+	if gateReady {
+		assessment, err := pulseImproveArchiveAssessmentForWorkspace(ctx, sctx.WorkspacePath)
+		if err != nil {
+			s.sessionLogf(sctx, sessionID, "[PULSE] could not assess improve.html archive threshold: %v", err)
+		} else if assessment.Due {
+			s.sessionLogf(sctx, sessionID, "[PULSE] improve.html archive due: %s", assessment.triggerSummary())
+			archiveStep := postRunMonitorArchiveStep(assessment)
+			if result := runStep(archiveStep); result.outcome != postRunMonitorStepCompleted {
+				handleStepFailure(archiveStep, result, true)
+			}
 		}
 	}
-	s.sessionLogf(sctx, sessionID, "[PULSE] pulse completed for %s", sctx.Schedule.ID)
+
+	var steps []postRunMonitorStep
+	if gateReady {
+		gateStep := postRunMonitorGateStep(pulseRunID, runFolder, runStatus)
+		result := runStep(gateStep)
+		if result.outcome == postRunMonitorStepCompleted {
+			steps = s.selectedPostRunMonitorModuleSteps(ctx, sctx, pulseRunID)
+			s.sessionLogf(sctx, sessionID, "[PULSE] selected %d post-gate steps for %s", len(steps), sctx.Schedule.ID)
+		} else {
+			handleStepFailure(gateStep, result, true)
+			steps = postRunMonitorFinalSteps(pulseRunID)
+		}
+	} else {
+		steps = postRunMonitorFinalSteps(pulseRunID)
+	}
+
+	skipMaintenanceReason := ""
+	for i, st := range steps {
+		if skipMaintenanceReason != "" && !isPostRunMonitorFinalStep(st.label) {
+			if module := pulseModuleForPostRunMonitorStep(st.label); module != "" {
+				reason := "Not run because earlier Pulse maintenance did not finish safely: " + skipMaintenanceReason
+				if _, err := markPulseModuleResult(ctx, sctx.WorkspacePath, module, pulseRunID, "skipped", reason, []string{"scheduler timeout/failure handling"}); err != nil {
+					s.sessionLogf(sctx, sessionID, "[PULSE] failed to record skipped result for module %s: %v", module, err)
+				}
+			}
+			continue
+		}
+		result := runStep(st)
+		if result.outcome != postRunMonitorStepCompleted {
+			reason := handleStepFailure(st, result, i < len(steps)-1)
+			if !isPostRunMonitorFinalStep(st.label) {
+				skipMaintenanceReason = reason
+			}
+		}
+	}
+	if len(recoveryNotes) > 0 {
+		s.sessionLogf(sctx, sessionID, "[PULSE] pulse finalized partially for %s after %d failed/timed-out step(s)", sctx.Schedule.ID, len(recoveryNotes))
+	} else {
+		s.sessionLogf(sctx, sessionID, "[PULSE] pulse completed for %s", sctx.Schedule.ID)
+	}
 	// Pulse owns its own notification: per its reference doc it calls notify_user
 	// once with a compact run summary, highlighting state transitions it reads from
 	// the durable Pulse log. The scheduler no longer pushes a templated message —
@@ -1408,6 +1546,49 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 }
 
 type postRunMonitorStep struct{ label, query string }
+
+type postRunMonitorStepOutcome string
+
+const (
+	postRunMonitorStepCompleted   postRunMonitorStepOutcome = "completed"
+	postRunMonitorStepStartFailed postRunMonitorStepOutcome = "start_failed"
+	postRunMonitorStepWaitFailed  postRunMonitorStepOutcome = "wait_failed"
+	postRunMonitorStepTimedOut    postRunMonitorStepOutcome = "timed_out"
+)
+
+type postRunMonitorStepRunResult struct {
+	outcome postRunMonitorStepOutcome
+	err     error
+}
+
+func pulseModuleForPostRunMonitorStep(label string) string {
+	switch label {
+	case "harden":
+		return pulseModuleHarden
+	case "artifact":
+		return pulseModuleArtifactReview
+	case "report-health":
+		return pulseModuleReportHealth
+	case "eval-health":
+		return pulseModuleEvalHealth
+	case "learning-health":
+		return pulseModuleLearningHealth
+	case "knowledgebase-health":
+		return pulseModuleKnowledgebaseHealth
+	case "db-health":
+		return pulseModuleDBHealth
+	case "cost-llm-time":
+		return pulseModuleCostLLMTime
+	case "goal-advisor":
+		return pulseModuleGoalAdvisor
+	default:
+		return ""
+	}
+}
+
+func isPostRunMonitorFinalStep(label string) bool {
+	return label == "finalize"
+}
 
 func (st postRunMonitorStep) idleMaxWait() time.Duration {
 	if st.label == "goal-advisor" {
@@ -1476,9 +1657,9 @@ func postRunMonitorGateStep(pulseRunID, runFolder, runStatus string) postRunMoni
 	return postRunMonitorStep{
 		label: "gate",
 		query: fmt.Sprintf("STEP 1 — PULSE GATE / WORKLIST. This is the only mandatory intelligence step for this Pulse run. pulse_run_id=%q, run_folder=%q, run_status=%q.\n\n"+
-			"Read the latest run evidence, builder/improve.html, planning/changelog, evaluation files, report_plan + db/reports HTML, db/README + db schema hints, knowledgebase notes/context, learnings/_global and per-step learning metadata, open/answered report_human_inputs, and pending Chief of Staff recommendation cards. Call get_pulse_module_state(workspace_path=\"<current workflow>\") before deciding.\n\n"+
-			"Update builder/improve.html first with a simple user-facing Gate card: Bug verdict, Goal verdict, Maintenance Radar, and a Pulse Worklist summary with ran/skipped/due modules and plain reasons. Then call record_pulse_worklist exactly once with one decision for each module: harden, artifact_review, report_health, eval_health, learning_health, knowledgebase_health, db_health, cost_llm_time, goal_advisor.\n\n"+
-			"Be agentic: decide what is due from workflow evidence, not a hardcoded cadence. You may skip expensive modules when the state and evidence justify it, but every skip needs a reason, evidence, and next_check_at / cooldown_runs / next_check_after_run_id when useful. Evidence can override cooldown. cost_llm_time normally runs every Pulse unless there is genuinely no telemetry to read; notify/final backup/publish happen later outside the worklist.\n\n"+
+			"Use progressive evidence triage, not a full audit. First read builder/improve.html (authoritative history/current cadence), get_pulse_module_state(workspace_path=\"<current workflow>\"), latest run metadata/summary, changelog filenames and review flags, existence/freshness metadata for plan/eval/report artifacts, db/README or a compact schema summary, per-step learning metadata, a compact KB note index, open/answered report_human_inputs, and pending Chief of Staff recommendation cards. Do not load full report HTML, full KB/learnings, broad DB rows, long logs, or every cost file unless a compact signal makes that module plausibly due or you need one targeted fact to justify its decision. The selected module performs the deep audit later; Gate only chooses evidence-backed cadence. Do not treat the SQLite module cache as historical truth.\n\n"+
+			"Update builder/improve.html first with a compact Pulse Gate / Worklist entry in the Pulse log or timeline area. Do not place the full Gate details in the first-screen/top dashboard; keep the top dashboard focused on latest outcome, goal health, and next useful action. The Gate entry should be plain English: what is healthy, what needs attention, which modules are due/skipped, and why. Update #pulse-bug-verdict and #pulse-goal-verdict in place; if either is missing from an otherwise current-format page, insert the standard two-element verdict block beside the workflow title without rewriting history, and never create a duplicate verdict block. Keep older trustworthy metrics when the latest route did not measure them, but visibly label every verdict, goal criterion, brief metric, and important tile with `as of run/date` or `not measured this run · last measured run/date`. Then call record_pulse_worklist exactly once with one decision for each module: harden, artifact_review, report_health, eval_health, learning_health, knowledgebase_health, db_health, cost_llm_time, goal_advisor.\n\n"+
+			"Be agentic: decide what is due from workflow evidence, not a hardcoded cadence. Every skipped module must include a reason, evidence, and at least one concrete next-check condition: next_check_at, a positive cooldown_runs, or next_check_after_run_id. Write that next check visibly in the Gate/Worklist entry so the user can understand it; SQLite only mirrors it for scheduler/popup state. Evidence can override an earlier cooldown, but if you check a module earlier than previously planned, state what new evidence caused the override. High-frequency workflows should normally roll up cost/time checks across several runs instead of running cost_llm_time every time; mark it due immediately for missing/unpriced telemetry, a material cost or latency change, a model/tier change, or when its planned next check arrives. Final dashboard, backup, publish, and notify happen later in one ordered finalizer turn.\n\n"+
 			"Module meanings:\n"+
 			"- harden: due for real Bug findings, broken eval/report contracts that block truth, failed steps, stale guards, selector/API/runtime breakage, or CoS recs that are operational bugs.\n"+
 			"- artifact_review: due when planning/changelog has unreviewed material plan/config changes, or when a plan/config change may have drifted learnings, KB, DB, report, eval, or step configs.\n"+
@@ -1489,7 +1670,7 @@ func postRunMonitorGateStep(pulseRunID, runFolder, runStatus string) postRunMoni
 			"- db_health: due when DB schema/contracts/assets/upsert rules do not match current writers, reports, evals, or plan outputs.\n"+
 			"- cost_llm_time: report run cost/eval cost/builder+Pulse overhead, missing cost buckets, timing, model/tier evidence; report-only unless a real config bug belongs to another module.\n"+
 			"- goal_advisor: due when Goal drift persists, current strategy seems capped even if execution is clean, user answered a strategy question, CoS rec is strategic, or enough new evidence exists for an expert out-of-plan critique. Goal Advisor does not do routine harden/KB/learnings/db cleanup.\n\n"+
-			"Do not call harden_workflow, improve_learnings, improve_kb, improve_db, plan modification tools, publish, backup, or notify in this Gate step. Only update the log/card and record_pulse_worklist. Then stop.",
+			"Do not call harden_workflow, improve_learnings, improve_kb, improve_db, plan modification tools, publish, backup, or notify in this Gate step. Only update the compact log entry and record_pulse_worklist. Then stop.",
 			pulseRunID, runFolder, runStatus),
 	}
 }
@@ -1500,8 +1681,8 @@ type postRunMonitorModuleStep struct {
 }
 
 func postRunMonitorModuleSteps(pulseRunID string) []postRunMonitorModuleStep {
-	return []postRunMonitorModuleStep{
-		{pulseModuleHarden, postRunMonitorStep{"harden", fmt.Sprintf("PULSE MODULE — HARDEN. pulse_run_id=%q. Run only the harden module selected by Pulse Gate. Read the Gate card/worklist in builder/improve.html and the evidence named for module harden. If there is a real Bug, call get_reference_doc(kind=\"optimize-playbook\"), then call harden_workflow(focus=\"<concise Bug finding + evidence paths from Pulse Gate>\") as the canonical repair path; include group_name only when the completed run was scoped to a single group. Capture the returned execution_id. Do not wait by polling: no sleep loops, no repeated list_executions, and no repeated query_step. Use query_step(step_id=\"harden-workflow\", execution_id=\"<returned execution_id>\") at most once for an immediate status/result check; if still running, stop and rely on [AUTO-NOTIFICATION] to resume when harden completes. When the result is available, record/refresh a `Decision - Pulse harden` card with the `Bug` verdict chip and work label (`Bug fix`, `Report fix`, or `Eval fix` as appropriate). If no Bug remains after re-reading evidence, record why no harden was needed. Finish by calling mark_pulse_module_result(workspace_path=\"<current workflow>\", pulse_run_id=%q, module=\"harden\", result=\"done|changed|blocked|failed|skipped\", reason=\"...\", evidence=[...]). Then stop.", pulseRunID, pulseRunID)}},
+	steps := []postRunMonitorModuleStep{
+		{pulseModuleHarden, postRunMonitorStep{"harden", fmt.Sprintf("PULSE MODULE — HARDEN. pulse_run_id=%q. Run only the harden module selected by Pulse Gate. Read the compact Gate worklist entry in builder/improve.html and the evidence named for module harden. If there is a real Bug, call get_reference_doc(kind=\"optimize-playbook\"), then call harden_workflow(focus=\"<concise Bug finding + evidence paths from Pulse Gate>\") as the canonical repair path; include group_name only when the completed run was scoped to a single group. Capture the returned execution_id. Do not wait by polling: no sleep loops, no repeated list_executions, and no repeated query_step. Use query_step(step_id=\"harden-workflow\", execution_id=\"<returned execution_id>\") at most once for an immediate status/result check; if still running, stop and rely on [AUTO-NOTIFICATION] to resume when harden completes. When the result is available, record/refresh a compact `Decision - Pulse harden` log entry with the `Bug` verdict chip and work label (`Bug fix`, `Report fix`, or `Eval fix` as appropriate). If no Bug remains after re-reading evidence, record why no harden was needed. Finish by calling mark_pulse_module_result(workspace_path=\"<current workflow>\", pulse_run_id=%q, module=\"harden\", result=\"done|changed|blocked|failed|skipped\", reason=\"...\", evidence=[...]). Then stop.", pulseRunID, pulseRunID)}},
 		{pulseModuleArtifactReview, postRunMonitorStep{"artifact", fmt.Sprintf("PULSE MODULE — ARTIFACT REVIEW. pulse_run_id=%q. Run only the artifact drift module selected by Pulse Gate. This is not part of harden and is report-only. Read planning/changelog/ and the Artifact Sync Cursor in builder/improve.html. Call get_workflow_command_guidance(kind=\"review-artifact-drift\", focus=\"Pulse artifact review after this run; report-only; do not fix\") and follow it: call review_artifact_sync(focus=\"Pulse artifact review after this run; report-only; do not fix\"), capture the returned execution_id. Do not wait by polling: no sleep loops, no repeated list_executions, and no repeated query_step. Use query_step(step_id=\"review-artifact-sync\", execution_id=\"<returned execution_id>\") at most once for an immediate status/result check; if still running, stop and rely on [AUTO-NOTIFICATION] to resume when it completes. review_artifact_sync must append/update the report-only Artifact Review item in builder/improve.html with the `Artifact drift` action label and call mark_changelog_artifact_reviewed for entries fully inspected. Do not fix artifacts here. Finish by calling mark_pulse_module_result(workspace_path=\"<current workflow>\", pulse_run_id=%q, module=\"artifact_review\", result=\"done|changed|blocked|failed|skipped\", reason=\"...\", evidence=[...]). Then stop.", pulseRunID, pulseRunID)}},
 		{pulseModuleReportHealth, postRunMonitorStep{"report-health", fmt.Sprintf("PULSE MODULE — REPORT HEALTH. pulse_run_id=%q. Run only the report/dashboard health module selected by Pulse Gate. Read reports/report_plan.json, db/reports/*.html, builder/improve.html, current plan/eval/db evidence, and latest run outputs. If the report is stale, broken, misleading, too text-heavy, missing goal/progress visibility, using dead SQL/window.report paths, or not aligned with DB/eval/plan, call get_workflow_command_guidance(kind=\"improve-report\", focus=\"Pulse report health repair from Gate evidence\") and follow it. Prefer bounded HTML/report_plan fixes; do not replan the workflow. Record a `Report fix` entry in builder/improve.html when you change report artifacts. Finish by calling mark_pulse_module_result(workspace_path=\"<current workflow>\", pulse_run_id=%q, module=\"report_health\", result=\"done|changed|blocked|failed|skipped\", reason=\"...\", evidence=[...]). Then stop.", pulseRunID, pulseRunID)}},
 		{pulseModuleEvalHealth, postRunMonitorStep{"eval-health", fmt.Sprintf("PULSE MODULE — EVAL HEALTH. pulse_run_id=%q. Run only the evaluation health module selected by Pulse Gate. Read evaluation/evaluation_plan.json, evaluation/runs or scores/evaluation outputs, soul/soul.md success criteria, planning/plan.json, planning/step_config.json, report/db consumers, and latest run evidence. If evals are missing, stale, too lenient, gamed, scoped to the wrong run/group, not mapped to success criteria, duplicating operational checks, broken by TARGET_RUN_PATH wiring, or producing misleading reports, call get_workflow_command_guidance(kind=\"improve-evaluation\", focus=\"Pulse eval health repair from Gate evidence\") and follow it. Prefer bounded evaluation_plan/eval config fixes; do not replan the workflow. Validate the evaluation plan when the validation tool is available and run a targeted eval only when materially useful. Record an `Eval fix` entry in builder/improve.html when you change eval artifacts. Finish by calling mark_pulse_module_result(workspace_path=\"<current workflow>\", pulse_run_id=%q, module=\"eval_health\", result=\"done|changed|blocked|failed|skipped\", reason=\"...\", evidence=[...]). Then stop.", pulseRunID, pulseRunID)}},
@@ -1511,6 +1692,17 @@ func postRunMonitorModuleSteps(pulseRunID string) []postRunMonitorModuleStep {
 		{pulseModuleCostLLMTime, postRunMonitorStep{"cost-llm-time", fmt.Sprintf("PULSE MODULE — COST / LLM / TIME. pulse_run_id=%q. This is report-only. Read workflow.json capabilities.llm_config / step execution tiers, get_cost_summary(run_folder) when available, costs/execution + costs/evaluation + costs/phase/token_usage.json, and timing summaries under runs/<run_folder>/logs/<step-id>/execution. Create a compact telemetry report with labeled buckets: workflow execution cost, evaluation cost, and builder/Pulse overhead. Name missing evidence instead of estimating. Update builder/improve.html cost/time tiles and overwrite builder/card.cost.html with a compact org-dashboard cost card. do NOT change model tiers, LLM config, prompts, schedules, or agent allocation. Finish by calling mark_pulse_module_result(workspace_path=\"<current workflow>\", pulse_run_id=%q, module=\"cost_llm_time\", result=\"done|changed|blocked|failed|skipped\", reason=\"...\", evidence=[...]). Then stop.", pulseRunID, pulseRunID)}},
 		{pulseModuleGoalAdvisor, postRunMonitorStep{"goal-advisor", fmt.Sprintf("PULSE MODULE — GOAL ADVISOR. pulse_run_id=%q. Run only the strategy advisor module selected by Pulse Gate. Do not perform the strategic review inline. Read only the Gate/worklist enough to pass a concise focus, then call run_goal_advisor_review(pulse_run_id=%q, focus=\"Pulse-selected Goal Advisor module; use Gate evidence; expert strategy advisor, not routine hardening\"). Capture the returned execution_id. Do not wait by polling: no sleep loops, no repeated list_executions, and no repeated query_step. Use query_step(step_id=\"goal-advisor\", execution_id=\"<returned execution_id>\") at most once for an immediate status/result check; if still running, stop and rely on [AUTO-NOTIFICATION] to resume when the background Goal Advisor completes. Do not call harden_workflow, improve_kb, improve_learnings, or improve_db from this parent Pulse turn. When the result is available from [AUTO-NOTIFICATION] or a one-off query_step, update/confirm the visible Goal Advisor outcome in builder/improve.html if needed and finish by calling mark_pulse_module_result(workspace_path=\"<current workflow>\", pulse_run_id=%q, module=\"goal_advisor\", result=\"done|changed|blocked|failed|skipped\", reason=\"...\", evidence=[...]). Then stop.", pulseRunID, pulseRunID, pulseRunID)}},
 	}
+	byModule := make(map[string]postRunMonitorModuleStep, len(steps))
+	for _, step := range steps {
+		byModule[step.module] = step
+	}
+	ordered := make([]postRunMonitorModuleStep, 0, len(steps))
+	for _, module := range pulseModuleOrder {
+		if step, ok := byModule[module]; ok {
+			ordered = append(ordered, step)
+		}
+	}
+	return ordered
 }
 
 func postRunMonitorPreBackupStep(pulseRunID string) postRunMonitorStep {
@@ -1519,10 +1711,11 @@ func postRunMonitorPreBackupStep(pulseRunID string) postRunMonitorStep {
 
 func postRunMonitorFinalSteps(pulseRunID string) []postRunMonitorStep {
 	return []postRunMonitorStep{
-		{"dashboard", "PULSE DASHBOARD / QUESTIONS. Prepare the final user-facing Pulse/org state before backup and publish. Overwrite builder/card.health.html with one compact org-dashboard card fragment (inline content only, single-quoted attributes). This dashboard write happens every run even if notifications are disabled. Summarize the final post-Pulse health and final post-Pulse state: selected modules ran/skipped, Bug/Goal state, user input requests, harden/artifact/report/eval/learning/KB/DB/cost/Goal Advisor outcomes, backup/publish intent, and next action. If this run needs user input or the later notification would ask a question, call create_human_input_request(workspace_path=\"<current workflow>\", source=\"pulse\", ...) now and show the request in builder/improve.html. Do not call notify_user, backup, or publish in this step. Then stop."},
-		{"backup", fmt.Sprintf("PULSE FINAL BACKUP. pulse_run_id=%q. Read workflow.json.backup and back up per get_reference_doc(kind=\"backup-strategy\"). Back up the final state produced by Gate + selected Pulse modules + dashboard/questions, including builder/improve.html, builder/card.*.html, db/db.sqlite pulse_module_state/report_human_inputs, report/eval/KB/learnings/db changes, backup/status.json, and publish/status.json when changed. If backup is disabled, set it up with the zero-config local-git default and back up. Skip actual push only when backup/status.json shows the current source is already backed up. Always write backup/status.json and update the latest run row with the backup result. Report the backup result, then stop.", pulseRunID)},
-		{"publish", "PULSE PUBLISH. If workflow.json.publish is enabled, re-publish the updated HTML per get_reference_doc(kind=\"publish-strategy\") — but ONLY when the destination is already VERIFIED (publish/status.json shows a prior successful publish). Every run changes published artifacts — new db data plus a fresh Pulse entry in builder/improve.html — so always re-publish to a verified destination. Never do the first/verifying publish here unattended. Always write publish/status.json. Report the result, then stop."},
-		{"notify", "PULSE NOTIFY. Read builder/improve.html, builder/card.health.html, db/db.sqlite report_human_inputs, backup/status.json, and publish/status.json. Do not create new user-input requests here unless the dashboard step clearly failed to record an already-needed request; this step is primarily delivery. Honor soul/soul.md ## Notifications; otherwise call notify_user once every run with a compact summary. Include selected modules ran/skipped, Bug/Goal state, user input requests, harden/artifact/report/eval/learning/KB/DB/cost/Goal Advisor outcomes, backup/publish status, dashboard URL when live, and next action. When Gmail/email fields are available, email is the default rich rendering: set email_subject, email_html, and plain email_body on the same notify_user call unless the preference explicitly says not to email; set email_to/email_cc only when the preference asks. Then stop."},
+		{"finalize", fmt.Sprintf("PULSE FINALIZER. pulse_run_id=%q. Complete the four final commands below in order in this ONE turn. Do not split them into more chat turns. Before each command call mark_pulse_final_command_result(workspace_path=\"<current workflow>\", pulse_run_id=%q, command=\"dashboard|backup|publish|notify\", status=\"running\", reason=\"...\"); immediately after it finishes call the same tool with done, skipped, blocked, or failed and a factual one-sentence reason. Use the actual single command name, not the pipe-separated example. Continue to Notify even when an earlier command fails, and report the failure honestly.\n\n"+
+			"1. DASHBOARD + QUESTIONS. Prepare the final user-facing Pulse/org state. Overwrite builder/card.health.html with one compact org-dashboard card fragment (inline content only, single-quoted attributes). Summarize selected modules ran/skipped, Bug/Goal state, user input requests, module outcomes, backup/publish intent, and next action. If user input is needed, call create_human_input_request(workspace_path=\"<current workflow>\", source=\"pulse\", ...) and show it in builder/improve.html. Mark dashboard done or failed.\n\n"+
+			"2. BACKUP. Mark backup running. Read workflow.json.backup, backup/status.json, and get_reference_doc(kind=\"backup-strategy\"). Back up the final Gate + selected-module + dashboard state. If backup is disabled, set up the zero-config local-git default. Skip the actual backup only when the status/source-hash check proves this exact current state is already backed up; mark skipped with that reason. Otherwise perform it, always update backup/status.json, update the latest run row with the result, and mark done or failed.\n\n"+
+			"3. PUBLISH. Mark publish running. Read workflow.json.publish and publish/status.json. Mark skipped without deploying when publishing is disabled, has never been verified, or the current publish source hash matches last_source_hash. Only re-publish a verified destination when the source is stale, following get_reference_doc(kind=\"publish-strategy\"). Never perform the first/verifying publish unattended. If backup failed, do not publish unbacked changes; mark publish blocked. Always keep publish/status.json truthful, then mark done, skipped, blocked, or failed.\n\n"+
+			"4. NOTIFY. Mark notify running. Read builder/improve.html, builder/card.health.html, db/db.sqlite report_human_inputs, backup/status.json, and publish/status.json. Honor soul/soul.md ## Notifications; otherwise call notify_user once every run with the in-depth run summary. Include modules ran/skipped, Bug/Goal state, user requests, important outcomes, backup/publish status, dashboard URL when live, cost/time evidence or its planned next check, and next action. Gmail/email remains the default rich rendering when available. Mark notify done, skipped only when notifications are explicitly disabled, or failed. Then stop.", pulseRunID, pulseRunID)},
 	}
 }
 
@@ -1554,12 +1747,10 @@ func (s *SchedulerService) selectedPostRunMonitorModuleSteps(ctx context.Context
 }
 
 func (s *SchedulerService) fallbackPostRunMonitorModuleSteps(ctx context.Context, sctx *ScheduleContext, pulseRunID string, worklist map[string]PulseModuleState) []postRunMonitorStep {
-	wanted := map[string]bool{
-		pulseModuleHarden:       true,
-		pulseModuleReportHealth: true,
-		pulseModuleEvalHealth:   true,
-		pulseModuleCostLLMTime:  true,
-	}
+	// An incomplete worklist is not permission to spend on every expensive
+	// maintenance lane. Preserve only decisions Gate actually recorded as due,
+	// plus the deterministic changelog review below.
+	wanted := map[string]bool{}
 	for _, module := range pulseModuleOrder {
 		if pulseWorklistModuleWasDue(worklist, module) {
 			wanted[module] = true
@@ -1830,8 +2021,18 @@ func (s *SchedulerService) maybeResumeLatestMultiAgentThread(ctx context.Context
 
 func (s *SchedulerService) maybeResumeLatestScheduledThread(sctx *ScheduleContext, reqMap map[string]interface{}, currentSessionID string, runs []ScheduleRunEntry, workspacePath string) string {
 	currentProvider := ""
-	if sctx.Capabilities.LLMConfig != nil {
-		currentProvider = strings.TrimSpace(sctx.Capabilities.LLMConfig.Provider)
+	if llmConfig := sctx.Capabilities.LLMConfig; llmConfig != nil {
+		if llmConfig.BuilderLLM != nil {
+			currentProvider = strings.TrimSpace(llmConfig.BuilderLLM.Provider)
+		}
+		if currentProvider == "" {
+			currentProvider = strings.TrimSpace(llmConfig.Provider)
+		}
+		if currentProvider == "" {
+			if builder, _, ok := workflowtypes.ResolveProviderProfileConfig(llmConfig); ok && builder != nil {
+				currentProvider = strings.TrimSpace(builder.Provider)
+			}
+		}
 	}
 	if currentProvider == "" {
 		return ""
@@ -2130,24 +2331,35 @@ func (s *SchedulerService) applyLLMAndSecretsToReqMap(ctx context.Context, reqMa
 
 	if sctx.Capabilities.LLMConfig != nil {
 		llmCfg := sctx.Capabilities.LLMConfig
-		provider := strings.TrimSpace(llmCfg.Provider)
-		modelID := strings.TrimSpace(llmCfg.ModelID)
+		builderLLM := llmCfg.BuilderLLM
+		if builderLLM == nil {
+			if resolved, _, ok := workflowtypes.ResolveProviderProfileConfig(llmCfg); ok {
+				builderLLM = resolved
+			}
+		}
+		provider := ""
+		modelID := ""
 		var options map[string]interface{}
+		if builderLLM != nil {
+			provider = strings.TrimSpace(builderLLM.Provider)
+			modelID = strings.TrimSpace(builderLLM.ModelID)
+			options = builderLLM.Options
+		}
 		llmConfigSource := ""
 		if strings.EqualFold(strings.TrimSpace(sctx.Schedule.WorkshopMode), "optimizer") {
-			autoImproveLLM := llmCfg.AutoImproveLLM
-			if autoImproveLLM == nil {
-				if resolved, ok := workflowtypes.ResolveCodingAgentAutoImproveConfig(llmCfg); ok {
-					autoImproveLLM = resolved
+			maintenanceLLM := llmCfg.MaintenanceLLM
+			if maintenanceLLM == nil {
+				if resolved, ok := workflowtypes.ResolveProviderProfileMaintenanceConfig(llmCfg); ok {
+					maintenanceLLM = resolved
 				}
 			}
-			if autoImproveLLM != nil {
-				autoImproveProvider := strings.TrimSpace(autoImproveLLM.Provider)
-				autoImproveModelID := strings.TrimSpace(autoImproveLLM.ModelID)
-				if autoImproveProvider != "" && autoImproveModelID != "" {
-					provider = autoImproveProvider
-					modelID = autoImproveModelID
-					options = autoImproveLLM.Options
+			if maintenanceLLM != nil {
+				maintenanceProvider := strings.TrimSpace(maintenanceLLM.Provider)
+				maintenanceModelID := strings.TrimSpace(maintenanceLLM.ModelID)
+				if maintenanceProvider != "" && maintenanceModelID != "" {
+					provider = maintenanceProvider
+					modelID = maintenanceModelID
+					options = maintenanceLLM.Options
 					llmConfigSource = llmConfigSourceScheduledAutoImprove
 				}
 			}
@@ -2218,7 +2430,7 @@ func (s *SchedulerService) applyPulseLLMToReqMap(reqMap map[string]interface{}, 
 	}
 	pulseLLM := sctx.Capabilities.LLMConfig.PulseLLM
 	if pulseLLM == nil {
-		if resolved, ok := workflowtypes.ResolveCodingAgentPulseConfig(sctx.Capabilities.LLMConfig); ok {
+		if resolved, ok := workflowtypes.ResolveProviderProfilePulseConfig(sctx.Capabilities.LLMConfig); ok {
 			pulseLLM = resolved
 		}
 	}
@@ -2233,9 +2445,9 @@ func (s *SchedulerService) applyGoalAdvisorLLMToReqMap(reqMap map[string]interfa
 	if sctx == nil || sctx.Capabilities.LLMConfig == nil {
 		return
 	}
-	goalAdvisorLLM := sctx.Capabilities.LLMConfig.AutoImproveLLM
+	goalAdvisorLLM := sctx.Capabilities.LLMConfig.MaintenanceLLM
 	if goalAdvisorLLM == nil {
-		if resolved, ok := workflowtypes.ResolveCodingAgentAutoImproveConfig(sctx.Capabilities.LLMConfig); ok {
+		if resolved, ok := workflowtypes.ResolveProviderProfileMaintenanceConfig(sctx.Capabilities.LLMConfig); ok {
 			goalAdvisorLLM = resolved
 		}
 	}
@@ -2266,16 +2478,13 @@ func resolveChiefOfStaffLLMForSchedule(ctx context.Context, sctx *ScheduleContex
 		if llmCfg.ChiefOfStaffLLM != nil {
 			return llmCfg.ChiefOfStaffLLM
 		}
-		if resolved, ok := workflowtypes.ResolveCodingAgentChiefOfStaffConfig(llmCfg); ok {
+		if resolved, ok := workflowtypes.ResolveProviderProfileChiefOfStaffConfig(llmCfg); ok {
 			return resolved
 		}
 		return nil
 	}
 
-	tierConfig, err := LoadDelegationTierConfig(ctx)
-	if err != nil {
-		return nil
-	}
+	tierConfig := LoadAndResolveTierConfig(ctx, nil)
 	return resolveChiefOfStaffLLMFromDelegationConfig(tierConfig)
 }
 
@@ -2288,7 +2497,11 @@ func resolveChiefOfStaffLLMFromDelegationConfig(tierConfig *virtualtools.Delegat
 	}
 	for _, candidate := range []*virtualtools.TierModel{tierConfig.Main, tierConfig.High} {
 		if cfg := agentLLMConfigFromTierModel(candidate); cfg != nil {
-			if resolved, ok := workflowtypes.ResolveCodingAgentChiefOfStaffConfig(&workflowtypes.PresetLLMConfig{Provider: cfg.Provider}); ok {
+			if resolved, ok := workflowtypes.ResolveProviderProfileChiefOfStaffConfig(&workflowtypes.PresetLLMConfig{
+				SchemaVersion: workflowtypes.LLMConfigSchemaVersion,
+				Mode:          workflowtypes.LLMConfigModeProviderProfile,
+				Provider:      cfg.Provider,
+			}); ok {
 				return resolved
 			}
 			return cfg
@@ -2304,6 +2517,7 @@ func agentLLMConfigFromTierModel(tier *virtualtools.TierModel) *workflowtypes.Ag
 	cfg := &workflowtypes.AgentLLMConfig{
 		Provider: strings.TrimSpace(tier.Provider),
 		ModelID:  strings.TrimSpace(tier.ModelID),
+		Options:  tier.Options,
 	}
 	if len(tier.Fallbacks) > 0 {
 		cfg.Fallbacks = make([]workflowtypes.AgentLLMFallback, 0, len(tier.Fallbacks))
@@ -2316,6 +2530,7 @@ func agentLLMConfigFromTierModel(tier *virtualtools.TierModel) *workflowtypes.Ag
 			cfg.Fallbacks = append(cfg.Fallbacks, workflowtypes.AgentLLMFallback{
 				Provider: provider,
 				ModelID:  modelID,
+				Options:  fallback.Options,
 			})
 		}
 	}
@@ -2361,6 +2576,7 @@ func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *Sched
 var schedulerWorkshopIdlePollInterval = 3 * time.Second
 var schedulerWorkshopIdleMaxWait = 10 * time.Minute
 var schedulerGoalAdvisorIdleMaxWait = 30 * time.Minute
+var errWorkshopIdleWaitTimeout = errors.New("workshop idle wait timed out")
 
 const schedulerWorkshopIdleConsecutiveChecks = 2
 const schedulerWorkshopIdleMaxRefreshErrors = 3
@@ -2388,7 +2604,7 @@ func (s *SchedulerService) waitForWorkshopIdleWithMaxWait(ctx context.Context, s
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-timeout:
-			return fmt.Errorf("workshop idle wait timed out after %s for session %s", maxWait, sessionID)
+			return fmt.Errorf("%w after %s for session %s", errWorkshopIdleWaitTimeout, maxWait, sessionID)
 		case <-ticker.C:
 			if err := s.refreshSessionTmuxSnapshotsForIdleCheck(ctx, sessionID); err != nil {
 				consecutiveIdleChecks = 0

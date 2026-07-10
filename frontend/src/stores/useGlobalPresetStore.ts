@@ -36,17 +36,7 @@ function buildWorkflowPresetsFromManifests(): CustomPreset[] {
       selectedGlobalSecretNames: caps?.selected_global_secret_names ?? null,
       browserMode: (caps?.browser_mode || 'none') as CustomPreset['browserMode'],
       useCodeExecutionMode: caps?.use_code_execution_mode || false,
-      llmConfig: caps?.llm_config ? {
-        provider: caps.llm_config.provider,
-        model_id: caps.llm_config.model_id,
-        phase_llm: caps.llm_config.phase_llm,
-        auto_improve_llm: caps.llm_config.auto_improve_llm,
-        pulse_llm: caps.llm_config.pulse_llm,
-        chief_of_staff_llm: caps.llm_config.chief_of_staff_llm,
-        use_knowledgebase: caps.llm_config.use_knowledgebase,
-        llm_allocation_mode: caps.llm_config.llm_allocation_mode,
-        tiered_config: caps.llm_config.tiered_config,
-      } : undefined,
+      llmConfig: caps?.llm_config ? { ...caps.llm_config } : undefined,
     }
   })
 }
@@ -548,10 +538,15 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             const modeConfig = getConfigForMode(mode)
             const currentPrimaryConfig = modeConfig.primaryConfig
 
+            const profileBuilder = preset.llmConfig.mode === 'provider_profile' && preset.llmConfig.provider
+              ? llmState.providerManifest.find(provider => provider.id === preset.llmConfig?.provider)?.default_tier_models?.builder
+              : undefined
+            const selectedBuilder = preset.llmConfig.builder_llm || profileBuilder
             const updatedConfig = {
               ...currentPrimaryConfig, // Preserve existing mode-specific configuration
-              provider: preset.llmConfig.provider || currentPrimaryConfig.provider,
-              model_id: preset.llmConfig.model_id || currentPrimaryConfig.model_id
+              provider: (selectedBuilder?.provider || currentPrimaryConfig.provider) as typeof currentPrimaryConfig.provider,
+              model_id: selectedBuilder?.model_id || currentPrimaryConfig.model_id,
+              options: selectedBuilder?.options || currentPrimaryConfig.options,
             }
 
             // Update mode-specific config

@@ -4,34 +4,45 @@ Pulse runs after a scheduled workflow run. It is not a fixed checklist. It is a 
 
 1. **Gate / Worklist** — read the evidence, update `builder/improve.html`, and call `record_pulse_worklist`.
 2. **Selected modules only** — the scheduler runs the modules Gate marked `due`.
-3. **Dashboard / questions** — write org cards and durable human-input requests before backup/publish.
-4. **Final backup / publish / notify** — back up and publish the final artifacts, then send the summary.
+3. **One ordered finalizer turn** — dashboard/questions, backup, conditional publish, then notify. Each command records its own live/final status in `pulse_final_command_state`.
 
-The durable state for module cadence lives in the workflow's `db/db.sqlite` table `pulse_module_state`. The visible user-facing state lives in `builder/improve.html`.
+`builder/improve.html` is the authoritative durable source for Pulse history, prior fixes, findings, cadence reasoning, and decisions. The workflow's `db/db.sqlite` table `pulse_module_state` is only the current machine-readable Gate/worklist/result cache used by the scheduler and Pulse popup; it must not replace or contradict the HTML history. Every Gate decision, cadence reason, and module outcome that matters later must also be recorded visibly in `builder/improve.html`.
+
+When updating `builder/improve.html`, keep the first screen short. It may show the workflow name, one compact status headline, current goal/health widgets, and the next useful action. Do not duplicate the full latest-run Bug/Goal narrative at the top if the same details already appear in Recent runs or the timeline.
+
+## Timeout Recovery
+
+The scheduler waits at most 10 minutes for a normal Pulse step and 30 minutes for Goal Advisor. When a step exceeds that limit, the scheduler records the selected module as `timed_out`, cancels work owned by the old Pulse session, and skips the remaining optional maintenance modules so concurrent repairs cannot race. It then resumes the single ordered finalizer in a fresh recovery session. If the finalizer itself times out, any final command that did not record an outcome is marked `timed_out`. Recovery turns must report the partial outcome plainly and must not claim that timed-out or skipped work succeeded.
 
 ## Gate Contract
 
-Gate decides what the next Pulse modules should do. It must call:
+Gate decides what the next Pulse modules should do. Read `builder/improve.html` as the primary historical source before using the SQLite cache for current scheduler state. It must call:
 
 - `get_pulse_module_state(workspace_path="<current workflow>")` before deciding.
 - `record_pulse_worklist(workspace_path="<current workflow>", pulse_run_id="<pulse session id>", decisions=[...])` exactly once before stopping.
 
-Gate reads:
+Gate uses **progressive evidence triage**. Start with compact state and metadata:
 
-- latest run folder and run status
-- `builder/improve.html`
+- latest run metadata/summary and run status, not every long log
+- `builder/improve.html` current dashboard, open items, recent timeline, and cadence
 - `soul/soul.md`
 - `planning/plan.json`, `planning/step_config.json`, and `planning/changelog/`
-- evaluation reports and `evaluation/evaluation_plan.json`
-- `reports/report_plan.json` and `db/reports/*.html`
-- `db/db.sqlite`, `db/README.md`, and DB assets/contracts
-- `knowledgebase/notes` plus `knowledgebase/context` as read-only user context
-- `learnings/_global/SKILL.md` and per-step learning metadata
+- existence/freshness of evaluation reports and `evaluation/evaluation_plan.json`
+- existence/freshness of `reports/report_plan.json` and report HTML
+- `db/README.md` and a compact DB schema summary
+- a compact KB note index; `knowledgebase/context` remains read-only user context
+- per-step learning metadata and whether global learnings changed
 - open and answered report human inputs in `db/db.sqlite`
 - Chief of Staff recommendation cards in `builder/improve.html`
-- cost and timing artifacts when present
+- compact cost/timing availability and change signals when present
 
-Gate writes a clear **Pulse Gate / Worklist** card in `builder/improve.html`:
+Do not load full report HTML, full KB/learnings, broad DB rows, every cost file, or long run logs merely to decide cadence. Open large evidence only when a compact signal makes that module plausibly due or one targeted fact is needed to justify a decision. The selected module performs the deep inspection later; Gate is triage.
+
+Gate writes a compact **Pulse Gate / Worklist** entry in the Pulse log/timeline area of `builder/improve.html`. Do not put full Gate details in the first-screen/top dashboard; the top dashboard should stay focused on latest outcome, goal health, and next useful action.
+
+The first screen may legitimately combine evidence measured by different routes or runs, but freshness must be explicit. The overall status reflects the latest run. Every carried-forward verdict, goal criterion, brief cell, and important signal/cost tile must visibly say `as of run <id/date>` or `last measured <id/date>`; never leave an older value looking current. If the latest run did not measure a signal, retain the last trustworthy value and label it `not measured this run · last measured ...`.
+
+Update the stable header elements `#pulse-bug-verdict` and `#pulse-goal-verdict` in place. If either is missing from an otherwise current-format page, insert the standard two-element `.verdicts` block beside the workflow title without rewriting the timeline. Never create a duplicate verdict block.
 
 - Bug verdict: did the workflow run correctly?
 - Goal verdict: is the workflow moving toward `soul.md` success criteria?
@@ -44,7 +55,9 @@ Gate must record exactly one decision for each module. A partial worklist is inv
 
 ## Module Decisions
 
-Every decision needs a reason and evidence. Skips are useful only when they explain why work is not worth doing yet. Evidence can override any cooldown.
+Every decision needs a reason and evidence. Skips are useful only when they explain why work is not worth doing yet. Every skipped module must set at least one concrete next-check condition: `next_check_at`, `next_check_after_run_id`, or a positive `cooldown_runs`. Write that planned next check visibly in the Gate/Worklist entry in `builder/improve.html`; SQLite only mirrors it for the scheduler and popup.
+
+Cadence remains agentic. New evidence can override any earlier cooldown or next-check suggestion, but when Gate checks a module earlier than previously planned, its reason and the visible Gate entry must say what new evidence caused the override. Do not silently ignore the prior cadence.
 
 Use these module names exactly:
 
@@ -137,7 +150,7 @@ Use `improve_db` for concrete DB contract/schema/report compatibility work. Do n
 
 ### cost_llm_time
 
-Usually mark due every Pulse run. It is report-only.
+This is report-only, but it is not automatically due every Pulse. High-frequency workflows should normally roll up several runs and use `cooldown_runs` or a concrete next-check date. Mark it due immediately when telemetry is missing/unpriced, cost or latency changes materially, model/tier configuration changes, a prior cost finding needs follow-up, or its planned next check arrives.
 
 Read workflow execution cost, evaluation cost, builder/Pulse overhead, token usage, model/tier evidence, missing cost buckets, and timing summaries. If any bucket is missing or unpriced, say that plainly instead of estimating.
 
@@ -177,11 +190,13 @@ On a later Pulse run, an approved proposal may be applied with normal plan/confi
 
 Do not ask only in email or raw chat. Show the request in `builder/improve.html`, but treat `db/db.sqlite` as the source of truth. When a later pass uses an answer, call `mark_human_input_consumed` and clear the visible question from the Pulse HTML.
 
-## Notifications
+## Finalizer And Notifications
 
 Pulse sends one summary every run unless the user's `soul/soul.md ## Notifications` section explicitly says not to notify.
 
-The dashboard/questions turn runs before backup and publish. It writes `builder/card.health.html`, creates any needed `report_human_inputs` rows, and keeps `builder/improve.html` aligned with those asks. The notify turn runs after publish and should mainly deliver the already-recorded state.
+Dashboard/questions, backup, publish, and notify run in one ordered finalizer turn to avoid four repeated context loads. Before and after each command, call `mark_pulse_final_command_result` so the Pulse popup shows `waiting`, `running`, `done`, `skipped`, `blocked`, `failed`, or scheduler-recorded `timed_out` instead of static labels. The scheduler treats any command left waiting/running after the turn as failed rather than pretending it completed.
+
+The dashboard command writes `builder/card.health.html`, creates any needed `report_human_inputs` rows, and keeps `builder/improve.html` aligned with those asks. Backup skips its actual operation only when its source-hash check proves the exact current state is already backed up. Publish skips when disabled, unverified, or already current; it never performs a first/verifying publish unattended. Notify runs last and mainly delivers the already-recorded state, even when an earlier final command failed.
 
 The notify turn should include:
 

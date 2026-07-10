@@ -1,5 +1,4 @@
 import LLMConfigurationModal from '../LLMConfigurationModal'
-import LLMDiscoveryOnboardingModal from '../LLMDiscoveryOnboardingModal'
 import DelegationTierConfigModal from '../DelegationTierConfigModal'
 import { useLlmOnboarding } from './useLlmOnboarding'
 
@@ -15,11 +14,7 @@ import { useLlmOnboarding } from './useLlmOnboarding'
 export default function LlmModalHost() {
   const {
     showLLMModal,
-    showLLMDiscoveryModal,
     showTierModal,
-    openLLMDiscoveryModal,
-    closeLLMDiscoveryModal,
-    openAdvancedSetupFromDiscovery,
     closeLLMConfigurationModal,
     closeTierModal,
   } = useLlmOnboarding()
@@ -29,12 +24,6 @@ export default function LlmModalHost() {
       <LLMConfigurationModal
         isOpen={showLLMModal}
         onClose={closeLLMConfigurationModal}
-        onOpenDiscovery={openLLMDiscoveryModal}
-      />
-      <LLMDiscoveryOnboardingModal
-        isOpen={showLLMDiscoveryModal}
-        onClose={closeLLMDiscoveryModal}
-        onAdvancedSetup={openAdvancedSetupFromDiscovery}
       />
       <DelegationTierConfigModal isOpen={showTierModal} onClose={closeTierModal} />
     </>

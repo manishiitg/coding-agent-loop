@@ -3,12 +3,14 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/manishiitg/mcp-agent-builder-go/workspace/models"
 	"github.com/manishiitg/mcp-agent-builder-go/workspace/utils"
@@ -20,6 +22,7 @@ import (
 
 // DiffPatchDocument handles PATCH /api/documents/*filepath/diff
 func DiffPatchDocument(c *gin.Context) {
+	started := time.Now()
 	filePathParam := c.Param("filepath")
 	var req models.DiffPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -35,6 +38,7 @@ func DiffPatchDocument(c *gin.Context) {
 
 	// Sanitize input path to ensure it's relative
 	filePathParam = utils.SanitizeInputPath(filePathParam, docsDir)
+	log.Printf("[DIFF_PATCH] start path=%s diff_bytes=%d", filePathParam, len(req.Diff))
 
 	filePath := filepath.Join(docsDir, filePathParam)
 
@@ -49,6 +53,7 @@ func DiffPatchDocument(c *gin.Context) {
 	}
 
 	// Create parent directories and seed empty file if it doesn't exist yet
+	createdNewFile := false
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		if mkErr := os.MkdirAll(filepath.Dir(filePath), 0755); mkErr != nil {
 			c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
@@ -66,6 +71,7 @@ func DiffPatchDocument(c *gin.Context) {
 			})
 			return
 		}
+		createdNewFile = true
 	}
 
 	// Read current file content
@@ -84,10 +90,12 @@ func DiffPatchDocument(c *gin.Context) {
 	if err != nil {
 		// Provide comprehensive error details with suggestions
 		errorDetails := map[string]interface{}{
-			"error":         err.Error(),
-			"filepath":      filePathParam,
-			"diff_provided": req.Diff,
+			"error":        err.Error(),
+			"filepath":     filePathParam,
+			"diff_bytes":   len(req.Diff),
+			"diff_preview": diffPatchErrorPreview(req.Diff),
 		}
+		log.Printf("[DIFF_PATCH] apply failed path=%s diff_bytes=%d current_bytes=%d duration=%s error=%v", filePathParam, len(req.Diff), len(currentContent), time.Since(started), err)
 
 		// Add helpful suggestions based on common errors
 		var suggestions []string
@@ -157,6 +165,7 @@ func DiffPatchDocument(c *gin.Context) {
 		})
 		return
 	}
+	log.Printf("[DIFF_PATCH] success path=%s created_new=%t diff_bytes=%d current_bytes=%d new_bytes=%d duration=%s", filePathParam, createdNewFile, len(req.Diff), len(currentContent), len(newContent), time.Since(started))
 
 	// Return simple success response
 	c.JSON(http.StatusOK, models.APIResponse[models.DiffPatchResponse]{
@@ -164,6 +173,14 @@ func DiffPatchDocument(c *gin.Context) {
 		Message: "Document diff-patched successfully",
 		Data:    models.DiffPatchResponse{Applied: true},
 	})
+}
+
+func diffPatchErrorPreview(diff string) string {
+	const maxPreviewBytes = 4000
+	if len(diff) <= maxPreviewBytes {
+		return diff
+	}
+	return diff[:maxPreviewBytes] + fmt.Sprintf("\n... truncated %d bytes ...", len(diff)-maxPreviewBytes)
 }
 
 // normalizeLineEndings converts all line endings to LF for consistent patch processing

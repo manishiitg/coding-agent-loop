@@ -115,7 +115,7 @@ type WorkflowOrchestrator struct {
 	*orchestrator.BaseOrchestrator
 
 	// Preset-level agent defaults
-	presetPhaseLLM       *step_based_workflow.AgentLLMConfig // Default for lightweight phase agents.
+	presetBuilderLLM     *step_based_workflow.AgentLLMConfig // Default for workflow-builder agents.
 	presetMaintenanceLLM *step_based_workflow.AgentLLMConfig // Default for expensive background maintenance/advisor agents.
 
 	// Preset-level feature toggles
@@ -317,35 +317,29 @@ func NewWorkflowOrchestrator(
 		return nil, fmt.Errorf("failed to create base orchestrator: %w", err)
 	}
 
-	// Extract phase LLM from preset config
-	var presetPhaseLLM *step_based_workflow.AgentLLMConfig
+	// Resolve the workflow Builder model and maintenance model.
+	var presetBuilderLLM *step_based_workflow.AgentLLMConfig
 	var presetMaintenanceLLM *step_based_workflow.AgentLLMConfig
 	var resolvedCodingAgentTiered *workflowtypes.TieredLLMConfig
 	if presetLLMConfig != nil {
-		if phase, tiered, ok := workflowtypes.ResolveCodingAgentConfig(presetLLMConfig); ok {
-			presetPhaseLLM = convertDBAgentLLMConfig(phase)
+		if builder, tiered, ok := workflowtypes.ResolveProviderProfileConfig(presetLLMConfig); ok {
+			presetBuilderLLM = convertDBAgentLLMConfig(builder)
 			resolvedCodingAgentTiered = tiered
-			if maintenance, ok := workflowtypes.ResolveCodingAgentAutoImproveConfig(presetLLMConfig); ok {
+			if maintenance, ok := workflowtypes.ResolveProviderProfileMaintenanceConfig(presetLLMConfig); ok {
 				presetMaintenanceLLM = convertDBAgentLLMConfig(maintenance)
 			}
-			log.Printf("[CODING_AGENT_LLM] Resolved coding agent %s/%s dynamically", presetLLMConfig.Provider, presetLLMConfig.ModelID)
+			log.Printf("[CODING_AGENT_LLM] Resolved provider profile %s dynamically", presetLLMConfig.Provider)
 		} else {
-			if presetLLMConfig.AutoImproveLLM != nil && presetLLMConfig.AutoImproveLLM.Provider != "" && presetLLMConfig.AutoImproveLLM.ModelID != "" {
-				presetMaintenanceLLM = convertDBAgentLLMConfig(presetLLMConfig.AutoImproveLLM)
+			if presetLLMConfig.MaintenanceLLM != nil && presetLLMConfig.MaintenanceLLM.Provider != "" && presetLLMConfig.MaintenanceLLM.ModelID != "" {
+				presetMaintenanceLLM = convertDBAgentLLMConfig(presetLLMConfig.MaintenanceLLM)
 			}
-			if presetLLMConfig.PhaseLLM != nil && presetLLMConfig.PhaseLLM.Provider != "" && presetLLMConfig.PhaseLLM.ModelID != "" {
-				presetPhaseLLM = convertDBAgentLLMConfig(presetLLMConfig.PhaseLLM)
-			} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
-				// Fall back to legacy single default for phase agents
-				presetPhaseLLM = &step_based_workflow.AgentLLMConfig{
-					Provider: presetLLMConfig.Provider,
-					ModelID:  presetLLMConfig.ModelID,
-				}
+			if presetLLMConfig.BuilderLLM != nil && presetLLMConfig.BuilderLLM.Provider != "" && presetLLMConfig.BuilderLLM.ModelID != "" {
+				presetBuilderLLM = convertDBAgentLLMConfig(presetLLMConfig.BuilderLLM)
 			}
 		}
 	}
 	if presetMaintenanceLLM == nil {
-		presetMaintenanceLLM = presetPhaseLLM
+		presetMaintenanceLLM = presetBuilderLLM
 	}
 
 	// Extract tiered LLM allocation config
@@ -363,12 +357,11 @@ func NewWorkflowOrchestrator(
 			Tier2: tier2,
 			Tier3: tier3,
 		}
-		// Phase LLM is independent of tiered mode - it's always configured separately
-		// The frontend saves phase_llm with Tier1 as default when user hasn't explicitly set one
-		if presetPhaseLLM != nil {
-			log.Printf("[TIERED_LLM] Phase LLM (independent): %s/%s", presetPhaseLLM.Provider, presetPhaseLLM.ModelID)
+		// The Builder model is independent of the execution tiers.
+		if presetBuilderLLM != nil {
+			log.Printf("[TIERED_LLM] Builder model: %s/%s", presetBuilderLLM.Provider, presetBuilderLLM.ModelID)
 		} else {
-			log.Printf("[TIERED_LLM] WARNING: No Phase LLM configured - phase agents will fail")
+			log.Printf("[TIERED_LLM] WARNING: No Builder model configured - builder agents will fail")
 		}
 		log.Printf("[TIERED_LLM] Tiered mode enabled - Tier1: %s/%s (fallbacks: %d), Tier2: %s/%s (fallbacks: %d), Tier3: %s/%s (fallbacks: %d)",
 			tieredConfig.Tier1.Provider, tieredConfig.Tier1.ModelID, len(tieredConfig.Tier1.Fallbacks),
@@ -399,7 +392,7 @@ func NewWorkflowOrchestrator(
 	// Create workflow orchestrator instance
 	wo := &WorkflowOrchestrator{
 		BaseOrchestrator:     baseOrchestrator,
-		presetPhaseLLM:       presetPhaseLLM,
+		presetBuilderLLM:     presetBuilderLLM,
 		presetMaintenanceLLM: presetMaintenanceLLM,
 		useKnowledgebase:     useKnowledgebase,
 		lockKnowledgebase:    lockKnowledgebase,
@@ -506,7 +499,7 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 		wo.WorkspaceTools,
 		wo.WorkspaceToolExecutors,
 		wo.ToolCategories,
-		wo.presetPhaseLLM,
+		wo.presetBuilderLLM,
 		wo.presetMaintenanceLLM,
 		wo.useKnowledgebase, // Feature toggle for knowledgebase
 		wo.tieredConfig,     // Tiered LLM config
@@ -617,7 +610,7 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		wo.WorkspaceTools,
 		wo.WorkspaceToolExecutors,
 		wo.ToolCategories,
-		wo.presetPhaseLLM,
+		wo.presetBuilderLLM,
 		wo.presetMaintenanceLLM,
 		wo.useKnowledgebase,
 		wo.tieredConfig,

@@ -7,7 +7,7 @@ type RunloopMarkProps = ComponentPropsWithoutRef<'svg'> & {
 
 export function RunloopMark({
   className,
-  title = 'Runloop',
+  title = 'AgentWorks',
   ...props
 }: RunloopMarkProps) {
   const id = useId().replace(/:/g, '')
@@ -103,7 +103,7 @@ export function RunloopLockup({
       </div>
       <div className="min-w-0">
         <div className="truncate text-sm font-semibold tracking-tight text-slate-900 dark:text-slate-100">
-          Runloop
+          AgentWorks
         </div>
         {version ? (
           <div className="truncate text-[10px] leading-tight text-slate-400 dark:text-slate-500">

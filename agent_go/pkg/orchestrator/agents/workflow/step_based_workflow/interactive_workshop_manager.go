@@ -1167,6 +1167,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"get_pulse_module_state",
 		"record_pulse_worklist",
 		"mark_pulse_module_result",
+		"mark_pulse_final_command_result",
 	}
 
 	var tools []string
@@ -6871,9 +6872,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					sb.WriteString(fmt.Sprintf("- **%s**: (not set — uses LLM config default)\n", label))
 				}
 			}
-			// Only show preset learning LLM when tiered mode is not active (tiered mode overrides it)
-			writeLLMDefault("Phase LLM", ctrl.presetPhaseLLM)
-			writeLLMDefault("Maintenance / Goal Advisor LLM", ctrl.presetMaintenanceLLM)
+			writeLLMDefault("Builder", ctrl.presetPhaseLLM)
+			writeLLMDefault("Maintenance", ctrl.presetMaintenanceLLM)
 
 			// --- Schedules ---
 			if iwm.schedulerFuncs != nil && iwm.schedulerWorkspacePath != "" {
@@ -8175,8 +8175,8 @@ func workshopLLMOptionsSchema(description string) map[string]interface{} {
 	}
 }
 
-// registerWorkshopLLMTools registers list_published_llms, list_provider_models,
-// test_llm, and set_workflow_llm_config on the workshop agent.
+// registerWorkshopLLMTools registers saved model-library, provider discovery,
+// validation, and workflow role configuration tools on the workshop agent.
 func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagent.Agent, logger loggerv2.Logger) {
 	cb := iwm.llmToolsFuncs
 
@@ -8291,20 +8291,28 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagen
 		}
 	}
 
-	// set_workflow_llm_config — saves tiered LLM config directly to workflow.json
+	// set_workflow_llm_config saves either a provider profile or fully explicit
+	// workflow role configuration directly to workflow.json.
 	if err := mcpAgent.RegisterCustomTool(
 		"set_workflow_llm_config",
-		"Save the workflow's tiered LLM configuration to workflow.json capabilities.llm_config. Requires get_reference_doc(kind=\"llm-selection\") to be loaded first. Use list_published_llms to see available models first. Each tier accepts provider and model_id (both required if setting a tier), plus optional published_llm_id and options copied from the published entry. Fallbacks are optional ordered lists. phase_llm is the model used for planning, eval design, debugging, and normal builder helpers. auto_improve_llm is the optional expensive maintenance/advisor model used by Goal Advisor and background maintenance agents. pulse_llm is the optional Pulse coordinator/routine post-run QA override.",
+		"Save the workflow's LLM configuration to workflow.json capabilities.llm_config. Requires get_reference_doc(kind=\"llm-selection\") first. In provider_profile mode, provide one coding-agent provider and its current Builder, execution-tier, Maintenance, and Pulse defaults resolve at runtime. In explicit mode, provide builder_llm, maintenance_llm, pulse_llm, and all three execution tiers; each entry directly pins provider, model_id, options, and optional fallbacks. Saved model-library entries are optional reusable shortcuts, not a prerequisite.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"tier_1":           llmEntrySchema("High-reasoning tier: first-time execution and initial learning extraction.", "Ordered fallback models tried if the primary fails."),
-				"tier_2":           llmEntrySchema("Medium-reasoning tier: execution with learnings and learning refinement.", "Ordered fallback models tried if the primary fails."),
-				"tier_3":           llmEntrySchema("Low-reasoning tier: validation (always) and mature learning refinement (2+ runs).", "Ordered fallback models tried if the primary fails."),
-				"phase_llm":        llmEntrySchema("LLM for planning, eval design, debugging, and normal builder helpers. Defaults to tier_1 if not set.", "Ordered fallback models tried if the phase LLM fails."),
-				"auto_improve_llm": llmEntrySchema("Optional LLM used by expensive background maintenance/advisor agents: Goal Advisor, harden/review agents, KB consolidation/reorganization, and DB improvement. Defaults to the provider maintenance/advisor default when available.", "Ordered fallback models tried if the maintenance/advisor LLM fails."),
-				"pulse_llm":        llmEntrySchema("Optional LLM used by lightweight Pulse coordinator turns and routine post-run QA messages. Defaults to the provider Pulse default when available if not set.", "Ordered fallback models tried if the Pulse LLM fails."),
+				"mode": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{workflowtypes.LLMConfigModeProviderProfile, workflowtypes.LLMConfigModeExplicit},
+					"description": "provider_profile follows the coding-agent provider defaults; explicit pins every workflow role.",
+				},
+				"provider":        map[string]interface{}{"type": "string", "description": "Coding-agent provider id. Required only in provider_profile mode."},
+				"builder_llm":     llmEntrySchema("Builder model for planning, eval design, debugging, and normal workflow-builder chat.", "Ordered fallback models tried if the Builder model fails."),
+				"tier_1":          llmEntrySchema("High-reasoning execution tier: first-time or difficult work.", "Ordered fallback models tried if the primary fails."),
+				"tier_2":          llmEntrySchema("Medium-reasoning execution tier: established work with useful context.", "Ordered fallback models tried if the primary fails."),
+				"tier_3":          llmEntrySchema("Low-reasoning execution tier: validation and mature routine work.", "Ordered fallback models tried if the primary fails."),
+				"maintenance_llm": llmEntrySchema("Maintenance model for expensive Pulse modules such as Goal Advisor, hardening, report/eval improvement, KB health, and DB health.", "Ordered fallback models tried if the Maintenance model fails."),
+				"pulse_llm":       llmEntrySchema("Pulse coordinator model for gate, worklist, reporting, and notification turns.", "Ordered fallback models tried if the Pulse model fails."),
 			},
+			"required": []string{"mode"},
 		},
 		guidance.WithDocPrecondition([]string{"llm-selection"}, guidance.DefaultTracker(), func(ctx context.Context, args map[string]interface{}) (string, error) {
 			wsPath := iwm.controller.GetWorkspacePath()
@@ -8326,9 +8334,18 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagen
 			if caps == nil {
 				caps = make(map[string]interface{})
 			}
-			llmCfg, _ := caps["llm_config"].(map[string]interface{})
-			if llmCfg == nil {
-				llmCfg = make(map[string]interface{})
+			existingLLMCfg, _ := caps["llm_config"].(map[string]interface{})
+			llmCfg := map[string]interface{}{
+				"schema_version": workflowtypes.LLMConfigSchemaVersion,
+			}
+			for _, key := range []string{
+				"use_knowledgebase", "lock_knowledgebase", "kb_shape",
+				"enable_context_summarization", "enable_context_editing",
+				"enable_image_generation", "image_gen_provider", "image_gen_model_id",
+			} {
+				if value, ok := existingLLMCfg[key]; ok {
+					llmCfg[key] = value
+				}
 			}
 
 			updated := []string{}
@@ -8378,37 +8395,47 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagen
 				return entry
 			}
 
-			tieredConfig := map[string]interface{}{}
-			for _, key := range []string{"tier_1", "tier_2", "tier_3"} {
-				if raw, ok := args[key]; ok {
-					if entry := buildTierEntry(raw); entry != nil {
-						tieredConfig[key] = entry
-						updated = append(updated, fmt.Sprintf("%s=%v/%v", key, entry["provider"], entry["model_id"]))
-					}
+			mode := strings.TrimSpace(fmt.Sprintf("%v", args["mode"]))
+			switch mode {
+			case workflowtypes.LLMConfigModeProviderProfile:
+				provider := strings.TrimSpace(fmt.Sprintf("%v", args["provider"]))
+				if provider == "" || provider == "<nil>" {
+					return "provider is required in provider_profile mode. Use list_provider_models to inspect available coding-agent providers.", nil
 				}
-			}
-			if len(tieredConfig) > 0 {
-				llmCfg["llm_allocation_mode"] = "tiered"
+				llmCfg["mode"] = workflowtypes.LLMConfigModeProviderProfile
+				llmCfg["provider"] = provider
+				updated = append(updated, fmt.Sprintf("provider_profile=%s", provider))
+
+			case workflowtypes.LLMConfigModeExplicit:
+				llmCfg["mode"] = workflowtypes.LLMConfigModeExplicit
+				missing := []string{}
+				for _, key := range []string{"builder_llm", "maintenance_llm", "pulse_llm"} {
+					entry := buildTierEntry(args[key])
+					if entry == nil {
+						missing = append(missing, key)
+						continue
+					}
+					llmCfg[key] = entry
+					updated = append(updated, fmt.Sprintf("%s=%v/%v", key, entry["provider"], entry["model_id"]))
+				}
+
+				tieredConfig := map[string]interface{}{}
+				for _, key := range []string{"tier_1", "tier_2", "tier_3"} {
+					entry := buildTierEntry(args[key])
+					if entry == nil {
+						missing = append(missing, key)
+						continue
+					}
+					tieredConfig[key] = entry
+					updated = append(updated, fmt.Sprintf("%s=%v/%v", key, entry["provider"], entry["model_id"]))
+				}
+				if len(missing) > 0 {
+					return fmt.Sprintf("Explicit mode requires complete role configuration. Missing or invalid: %s.", strings.Join(missing, ", ")), nil
+				}
 				llmCfg["tiered_config"] = tieredConfig
-			}
 
-			if raw, ok := args["phase_llm"]; ok {
-				if entry := buildTierEntry(raw); entry != nil {
-					llmCfg["phase_llm"] = entry
-					updated = append(updated, fmt.Sprintf("phase_llm=%v/%v", entry["provider"], entry["model_id"]))
-				}
-			}
-			for _, key := range []string{"auto_improve_llm", "pulse_llm"} {
-				if raw, ok := args[key]; ok {
-					if entry := buildTierEntry(raw); entry != nil {
-						llmCfg[key] = entry
-						updated = append(updated, fmt.Sprintf("%s=%v/%v", key, entry["provider"], entry["model_id"]))
-					}
-				}
-			}
-
-			if len(updated) == 0 {
-				return "No valid tier, phase_llm, auto_improve_llm, or pulse_llm values provided. Use list_published_llms to see available models.", nil
+			default:
+				return fmt.Sprintf("mode must be %q or %q.", workflowtypes.LLMConfigModeProviderProfile, workflowtypes.LLMConfigModeExplicit), nil
 			}
 
 			caps["llm_config"] = llmCfg

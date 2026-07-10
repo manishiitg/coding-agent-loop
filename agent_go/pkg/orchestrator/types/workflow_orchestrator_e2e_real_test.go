@@ -227,9 +227,11 @@ func TestWorkflowE2ESingleRegularStepPiCLI(t *testing.T) {
 		ModelID:  model,
 	}
 	presetCfg := &workflowtypes.PresetLLMConfig{
-		Provider: string(llm.ProviderPiCLI),
-		ModelID:  model,
-		PhaseLLM: agentLLM,
+		SchemaVersion:  workflowtypes.LLMConfigSchemaVersion,
+		Mode:           workflowtypes.LLMConfigModeExplicit,
+		BuilderLLM:     agentLLM,
+		MaintenanceLLM: agentLLM,
+		PulseLLM:       agentLLM,
 		TieredConfig: &workflowtypes.TieredLLMConfig{
 			Tier1: agentLLM,
 			Tier2: agentLLM,
@@ -366,10 +368,12 @@ func TestWorkflowE2EMessageSequencePiCLI(t *testing.T) {
 	}
 	agentLLM := &workflowtypes.AgentLLMConfig{Provider: string(llm.ProviderPiCLI), ModelID: model}
 	presetCfg := &workflowtypes.PresetLLMConfig{
-		Provider:     string(llm.ProviderPiCLI),
-		ModelID:      model,
-		PhaseLLM:     agentLLM,
-		TieredConfig: &workflowtypes.TieredLLMConfig{Tier1: agentLLM, Tier2: agentLLM, Tier3: agentLLM},
+		SchemaVersion:  workflowtypes.LLMConfigSchemaVersion,
+		Mode:           workflowtypes.LLMConfigModeExplicit,
+		BuilderLLM:     agentLLM,
+		MaintenanceLLM: agentLLM,
+		PulseLLM:       agentLLM,
+		TieredConfig:   &workflowtypes.TieredLLMConfig{Tier1: agentLLM, Tier2: agentLLM, Tier3: agentLLM},
 	}
 
 	wo, err := NewWorkflowOrchestrator("", 0.7, "workflow", loggerv2.NewNoop(), nil, nil, []string{}, []string{}, false, nil, map[string]interface{}{}, llmCfg, 10, map[string]string{}, presetCfg)

@@ -27,11 +27,11 @@ const (
 var pulseModuleOrder = []string{
 	pulseModuleHarden,
 	pulseModuleArtifactReview,
-	pulseModuleReportHealth,
-	pulseModuleEvalHealth,
 	pulseModuleLearningHealth,
 	pulseModuleKnowledgebaseHealth,
 	pulseModuleDBHealth,
+	pulseModuleEvalHealth,
+	pulseModuleReportHealth,
 	pulseModuleCostLLMTime,
 	pulseModuleGoalAdvisor,
 }
@@ -101,6 +101,7 @@ func ensurePulseModuleStateSchema(ctx context.Context, db *sql.DB) error {
 	}
 	stmts := []string{
 		pulseModuleStateSchema,
+		pulseFinalCommandStateSchema,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
@@ -334,6 +335,20 @@ func validatePulseWorklistDecisions(decisions []PulseWorklistDecision) error {
 		if strings.TrimSpace(decision.Reason) == "" {
 			return fmt.Errorf("reason is required for module %q", module)
 		}
+		if decision.CooldownRuns < 0 {
+			return fmt.Errorf("cooldown_runs must be non-negative for module %q", module)
+		}
+		nextCheckAt := strings.TrimSpace(decision.NextCheckAt)
+		if nextCheckAt != "" {
+			if _, err := time.Parse(time.RFC3339Nano, nextCheckAt); err != nil {
+				if _, dateErr := time.Parse("2006-01-02", nextCheckAt); dateErr != nil {
+					return fmt.Errorf("next_check_at must be RFC3339 or YYYY-MM-DD for module %q", module)
+				}
+			}
+		}
+		if !decision.Due && nextCheckAt == "" && strings.TrimSpace(decision.NextCheckAfterRunID) == "" && decision.CooldownRuns == 0 {
+			return fmt.Errorf("skipped module %q must include next_check_at, next_check_after_run_id, or cooldown_runs", module)
+		}
 	}
 	for _, module := range pulseModuleOrder {
 		if !seen[module] {
@@ -369,9 +384,9 @@ func markPulseModuleResult(ctx context.Context, workspacePath, module, pulseRunI
 		result = "done"
 	}
 	switch result {
-	case "done", "changed", "blocked", "failed", "skipped":
+	case "done", "changed", "blocked", "failed", "skipped", "timed_out":
 	default:
-		return nil, fmt.Errorf("result must be one of done, changed, blocked, failed, skipped")
+		return nil, fmt.Errorf("result must be one of done, changed, blocked, failed, skipped, timed_out")
 	}
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
@@ -451,10 +466,16 @@ func (api *StreamingAPI) handleGetPulseModuleState(w http.ResponseWriter, r *htt
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	commands, err := getPulseFinalCommandStates(r.Context(), r.URL.Query().Get("workspace_path"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"modules": states,
+		"success":  true,
+		"modules":  states,
+		"commands": commands,
 	})
 }
 
@@ -526,22 +547,12 @@ func scanPulseModuleState(row pulseModuleScanner) (*PulseModuleState, error) {
 }
 
 func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[string]string) {
-	moduleEnum := []string{
-		pulseModuleHarden,
-		pulseModuleArtifactReview,
-		pulseModuleReportHealth,
-		pulseModuleEvalHealth,
-		pulseModuleLearningHealth,
-		pulseModuleKnowledgebaseHealth,
-		pulseModuleDBHealth,
-		pulseModuleCostLLMTime,
-		pulseModuleGoalAdvisor,
-	}
+	moduleEnum := append([]string(nil), pulseModuleOrder...)
 	recordTool := llmtypes.Tool{
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "record_pulse_worklist",
-			Description: "Record the dynamic Pulse worklist for this run in the workflow's db/db.sqlite. Pulse Gate must call this exactly once after deciding which modules are due or skipped. The decisions array must contain exactly one entry for each Pulse module: harden, artifact_review, report_health, eval_health, learning_health, knowledgebase_health, db_health, cost_llm_time, and goal_advisor. The scheduler reads this table and only sends prompts for due modules.",
+			Description: "Record the dynamic Pulse worklist for this run in the workflow's db/db.sqlite. Pulse Gate must call this exactly once after deciding which modules are due or skipped. The decisions array must contain exactly one entry for each Pulse module: harden, artifact_review, learning_health, knowledgebase_health, db_health, eval_health, report_health, cost_llm_time, and goal_advisor. Every skipped module must include next_check_at, next_check_after_run_id, or a positive cooldown_runs value. The scheduler reads this table and only sends prompts for due modules.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -556,9 +567,9 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 								"due":                     map[string]interface{}{"type": "boolean"},
 								"reason":                  map[string]interface{}{"type": "string", "description": "Plain-language reason with the evidence basis."},
 								"evidence":                map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
-								"next_check_at":           map[string]interface{}{"type": "string", "description": "Optional RFC3339/ISO time for the next normal check."},
+								"next_check_at":           map[string]interface{}{"type": "string", "description": "Optional RFC3339 timestamp or YYYY-MM-DD date for the next normal check."},
 								"next_check_after_run_id": map[string]interface{}{"type": "string", "description": "Optional run id/folder after which to check again."},
-								"cooldown_runs":           map[string]interface{}{"type": "integer", "description": "Optional number of future runs to skip unless new evidence overrides it."},
+								"cooldown_runs":           map[string]interface{}{"type": "integer", "minimum": 0, "description": "Optional number of future runs to skip unless new evidence overrides it."},
 							},
 							"required": []string{"module", "due", "reason"},
 						},
@@ -586,18 +597,36 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "mark_pulse_module_result",
-			Description: "Mark a selected Pulse module as done, changed, blocked, failed, or skipped after the module prompt has completed its work.",
+			Description: "Mark a selected Pulse module as done, changed, blocked, failed, skipped, or timed_out after the module prompt has completed or the scheduler's maximum wait has elapsed.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"workspace_path": map[string]interface{}{"type": "string", "description": "Workflow-relative path, e.g. Workflow/social-media."},
 					"pulse_run_id":   map[string]interface{}{"type": "string", "description": "Scheduler-provided Pulse run id."},
 					"module":         map[string]interface{}{"type": "string", "enum": moduleEnum},
-					"result":         map[string]interface{}{"type": "string", "enum": []string{"done", "changed", "blocked", "failed", "skipped"}},
+					"result":         map[string]interface{}{"type": "string", "enum": []string{"done", "changed", "blocked", "failed", "skipped", "timed_out"}},
 					"reason":         map[string]interface{}{"type": "string", "description": "One-sentence result summary."},
 					"evidence":       map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
 				},
 				"required": []string{"workspace_path", "pulse_run_id", "module", "result", "reason"},
+			}),
+		},
+	}
+	finalCommandTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "mark_pulse_final_command_result",
+			Description: "Record the live or final status of one Pulse final command in the workflow-local db/db.sqlite. The combined Pulse finalizer must mark each command running before work and then done, skipped, blocked, or failed immediately after the command finishes.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"workspace_path": map[string]interface{}{"type": "string", "description": "Workflow-relative path, e.g. Workflow/social-media."},
+					"pulse_run_id":   map[string]interface{}{"type": "string", "description": "Scheduler-provided Pulse run id."},
+					"command":        map[string]interface{}{"type": "string", "enum": pulseFinalCommandOrder},
+					"status":         map[string]interface{}{"type": "string", "enum": []string{"running", "done", "skipped", "blocked", "failed"}},
+					"reason":         map[string]interface{}{"type": "string", "description": "Short factual status or outcome."},
+				},
+				"required": []string{"workspace_path", "pulse_run_id", "command", "status", "reason"},
 			}),
 		},
 	}
@@ -636,13 +665,27 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 			payload, _ := json.Marshal(map[string]interface{}{"status": "updated", "module": state})
 			return string(payload), nil
 		},
+		"mark_pulse_final_command_result": func(ctx context.Context, args map[string]interface{}) (string, error) {
+			workspacePath, _ := args["workspace_path"].(string)
+			pulseRunID, _ := args["pulse_run_id"].(string)
+			command, _ := args["command"].(string)
+			status, _ := args["status"].(string)
+			reason, _ := args["reason"].(string)
+			state, err := markPulseFinalCommandState(ctx, workspacePath, command, pulseRunID, status, reason)
+			if err != nil {
+				return "", err
+			}
+			payload, _ := json.Marshal(map[string]interface{}{"status": "updated", "command": state})
+			return string(payload), nil
+		},
 	}
 	categories := map[string]string{
-		"record_pulse_worklist":    "workflow",
-		"get_pulse_module_state":   "workflow",
-		"mark_pulse_module_result": "workflow",
+		"record_pulse_worklist":           "workflow",
+		"get_pulse_module_state":          "workflow",
+		"mark_pulse_module_result":        "workflow",
+		"mark_pulse_final_command_result": "workflow",
 	}
-	return []llmtypes.Tool{recordTool, stateTool, resultTool}, executors, categories
+	return []llmtypes.Tool{recordTool, stateTool, resultTool, finalCommandTool}, executors, categories
 }
 
 func pulseWorklistDecisionsFromArgs(raw interface{}) []PulseWorklistDecision {

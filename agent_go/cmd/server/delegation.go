@@ -123,6 +123,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		log.Printf("[DELEGATION] Using template default reasoning_level: %s", reasoningLevel)
 	}
 	var tierFallbacks []agent.FallbackModel
+	var tierOptions map[string]interface{}
 	if reasoningLevel != "" {
 		// Load fresh from workspace file at delegation time so LLM-written tier changes take effect immediately
 		tierConfig := LoadAndResolveTierConfig(ctx, parentReq.DelegationTierConfig)
@@ -146,6 +147,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			if tierModel != nil && tierModel.Provider != "" && tierModel.ModelID != "" {
 				provider = llm.Provider(tierModel.Provider)
 				modelID = tierModel.ModelID
+				tierOptions = tierModel.Options
 				tierFallbacks = convertTierFallbacksToAgentFallbacks(tierModel.Fallbacks, tierModel.Provider)
 				log.Printf("[DELEGATION] Using tier %s model: %s/%s", reasoningLevel, tierModel.Provider, tierModel.ModelID)
 			}
@@ -211,6 +213,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		ConfigPath: api.mcpConfigPath,
 		Provider:   provider,
 		ModelID:    modelID,
+		Options:    tierOptions,
 		Temperature: func() float64 {
 			if parentReq.Temperature > 0 {
 				return parentReq.Temperature

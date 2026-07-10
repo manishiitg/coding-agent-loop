@@ -650,13 +650,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   })
   const isWorkflowPhaseChat = !!workflowPhaseId
   const workflowPhasePreset = useGlobalPresetStore(state => state.getActivePreset('workflow'))
-  // Read phase LLM from workflow manifest (source of truth), not the global preset.
+  // Read Builder LLM from workflow manifest (source of truth), not the global preset.
   // Subscribe to the manifest store so the provider/model badge updates without reopening the chat.
   const workflowPhaseWorkspacePath = isWorkflowPhaseChat ? workflowPhasePreset?.selectedFolder?.filepath : undefined
-  const manifestPhaseLLM = useWorkflowManifestStore(state => {
+  const manifestBuilderLLM = useWorkflowManifestStore(state => {
     if (!workflowPhaseWorkspacePath) return null
     const wf = state.workflows.find(item => item.workspace_path === workflowPhaseWorkspacePath)
-    return wf?.manifest?.capabilities?.llm_config?.phase_llm ?? null
+    return wf?.manifest?.capabilities?.llm_config?.builder_llm ?? null
   })
   // Hide extras (servers, skills, agent mode, etc.) in workflow mode but show in multi-agent
   const hideExtras = isWorkflowMode
@@ -756,8 +756,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   const effectiveProviderForSteer = useMemo(() => {
     if (isWorkflowPhaseChat) {
-      return manifestPhaseLLM?.provider
-        || workflowPhasePreset?.llmConfig?.phase_llm?.provider
+      return manifestBuilderLLM?.provider
+        || workflowPhasePreset?.llmConfig?.builder_llm?.provider
         || workflowPhasePreset?.llmConfig?.provider
         || tabConfig?.llmConfig?.provider
         || null
@@ -766,10 +766,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return tabConfig?.llmConfig?.provider ?? null
   }, [
     isWorkflowPhaseChat,
-    manifestPhaseLLM?.provider,
+    manifestBuilderLLM?.provider,
     multiAgentEffectiveLLMConfig?.provider,
     tabConfig?.llmConfig?.provider,
-    workflowPhasePreset?.llmConfig?.phase_llm?.provider,
+    workflowPhasePreset?.llmConfig?.builder_llm?.provider,
     workflowPhasePreset?.llmConfig?.provider,
   ])
   const {
@@ -1333,47 +1333,40 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Computed values - get LLM option from tab config
   const primaryLLM = useMemo(() => {
     if (isWorkflowPhaseChat) {
-      // Show the phase_llm from workflow manifest (source of truth for backend)
-      const phaseLLM = manifestPhaseLLM
-      if (phaseLLM?.provider && phaseLLM?.model_id) {
+      // Show the Builder model from workflow manifest (source of truth for backend).
+      const manifestConfig = useWorkflowManifestStore.getState().getWorkflowByPath(workflowPhaseWorkspacePath || '')?.manifest?.capabilities?.llm_config
+      const builderLLM = manifestBuilderLLM ?? (() => {
+        if (manifestConfig?.mode !== 'provider_profile' || !manifestConfig.provider) return null
+        return providerManifest.find(provider => provider.id === manifestConfig.provider)?.default_tier_models?.builder ?? null
+      })()
+      if (builderLLM?.provider && builderLLM?.model_id) {
         const found = availableLLMs.find(llm =>
-          llm.provider === phaseLLM.provider && llm.model === phaseLLM.model_id
+          llm.provider === builderLLM.provider && llm.model === builderLLM.model_id
         )
         if (found) return found
         return {
-          provider: phaseLLM.provider,
-          model: phaseLLM.model_id,
-          label: `${phaseLLM.provider} - ${phaseLLM.model_id}`,
-          description: 'Phase LLM'
+          provider: builderLLM.provider,
+          model: builderLLM.model_id,
+          label: `${builderLLM.provider} - ${builderLLM.model_id}`,
+          description: 'Builder LLM'
         }
       }
       // Fallback to preset
       const preset = workflowPhasePreset
-      const presetPhaseLLM = preset?.llmConfig?.phase_llm
-      if (presetPhaseLLM?.provider && presetPhaseLLM?.model_id) {
+      const presetBuilderLLM = preset?.llmConfig?.builder_llm ?? (() => {
+        const profileProvider = preset?.llmConfig?.mode === 'provider_profile' ? preset.llmConfig.provider : undefined
+        return providerManifest.find(provider => provider.id === profileProvider)?.default_tier_models?.builder ?? null
+      })()
+      if (presetBuilderLLM?.provider && presetBuilderLLM?.model_id) {
         const found = availableLLMs.find(llm =>
-          llm.provider === presetPhaseLLM.provider && llm.model === presetPhaseLLM.model_id
+          llm.provider === presetBuilderLLM.provider && llm.model === presetBuilderLLM.model_id
         )
         if (found) return found
         return {
-          provider: presetPhaseLLM.provider,
-          model: presetPhaseLLM.model_id,
-          label: `${presetPhaseLLM.provider} - ${presetPhaseLLM.model_id}`,
-          description: 'Phase LLM'
-        }
-      }
-      // Fallback to preset primary LLM
-      const presetLLM = preset?.llmConfig
-      if (presetLLM?.provider && presetLLM?.model_id) {
-        const found = availableLLMs.find(llm =>
-          llm.provider === presetLLM.provider && llm.model === presetLLM.model_id
-        )
-        if (found) return found
-        return {
-          provider: presetLLM.provider,
-          model: presetLLM.model_id,
-          label: `${presetLLM.provider} - ${presetLLM.model_id}`,
-          description: 'Automation preset LLM'
+          provider: presetBuilderLLM.provider,
+          model: presetBuilderLLM.model_id,
+          label: `${presetBuilderLLM.provider} - ${presetBuilderLLM.model_id}`,
+          description: 'Builder LLM'
         }
       }
     }
@@ -1426,12 +1419,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     multiAgentEffectiveLLMConfig?.provider,
     activeSessionRuntime?.provider,
     workflowPrimaryConfig,
-    manifestPhaseLLM?.provider,
-    manifestPhaseLLM?.model_id,
-    workflowPhasePreset?.llmConfig?.phase_llm?.provider,
-    workflowPhasePreset?.llmConfig?.phase_llm?.model_id,
+    manifestBuilderLLM?.provider,
+    manifestBuilderLLM?.model_id,
+    workflowPhasePreset?.llmConfig?.builder_llm?.provider,
+    workflowPhasePreset?.llmConfig?.builder_llm?.model_id,
     workflowPhasePreset?.llmConfig?.provider,
-    workflowPhasePreset?.llmConfig?.model_id,
+    workflowPhasePreset?.llmConfig?.mode,
+    providerManifest,
+    workflowPhaseWorkspacePath,
   ])
 
   const activeLLMLabel = useMemo(() => {

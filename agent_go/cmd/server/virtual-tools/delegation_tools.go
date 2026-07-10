@@ -75,25 +75,30 @@ func GetChatsFolder(ctx context.Context) string {
 
 // DelegationTierConfig holds provider/model for each reasoning tier
 type DelegationTierConfig struct {
-	Main         *TierModel                  `json:"main,omitempty"` // orchestrator/main agent model
-	ChiefOfStaff *TierModel                  `json:"chief_of_staff,omitempty"`
-	High         *TierModel                  `json:"high,omitempty"`
-	Medium       *TierModel                  `json:"medium,omitempty"`
-	Low          *TierModel                  `json:"low,omitempty"`
-	Custom       map[string]*CustomTierModel `json:"custom,omitempty"`
+	SchemaVersion int                         `json:"schema_version"`
+	Mode          string                      `json:"mode"`
+	Provider      string                      `json:"provider,omitempty"`
+	Main          *TierModel                  `json:"main,omitempty"` // orchestrator/main agent model
+	ChiefOfStaff  *TierModel                  `json:"chief_of_staff,omitempty"`
+	High          *TierModel                  `json:"high,omitempty"`
+	Medium        *TierModel                  `json:"medium,omitempty"`
+	Low           *TierModel                  `json:"low,omitempty"`
+	Custom        map[string]*CustomTierModel `json:"custom,omitempty"`
 }
 
 // TierModel represents a specific provider+model for a tier
 type TierModel struct {
-	Provider  string              `json:"provider"`
-	ModelID   string              `json:"model_id"`
-	Fallbacks []TierModelFallback `json:"fallbacks,omitempty"`
+	Provider  string                 `json:"provider"`
+	ModelID   string                 `json:"model_id"`
+	Options   map[string]interface{} `json:"options,omitempty"`
+	Fallbacks []TierModelFallback    `json:"fallbacks,omitempty"`
 }
 
 // TierModelFallback represents an ordered fallback model for a delegation tier
 type TierModelFallback struct {
-	Provider string `json:"provider,omitempty"`
-	ModelID  string `json:"model_id"`
+	Provider string                 `json:"provider,omitempty"`
+	ModelID  string                 `json:"model_id"`
+	Options  map[string]interface{} `json:"options,omitempty"`
 }
 
 // CustomTierModel represents a user-defined reasoning tier with description and model

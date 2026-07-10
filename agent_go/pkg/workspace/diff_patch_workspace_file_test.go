@@ -49,3 +49,11 @@ func TestStripWorkspacePrefixDiscoversSiblingWorkspaceDocs(t *testing.T) {
 		t.Fatalf("stripWorkspacePrefix() = %q, want %q", got, want)
 	}
 }
+
+func TestEncodeWorkspaceDocumentPath(t *testing.T) {
+	got := encodeWorkspaceDocumentPath("Workflow/my flow/learnings/file #1.md")
+	want := "Workflow/my%20flow/learnings/file%20%231.md"
+	if got != want {
+		t.Fatalf("encoded path = %q, want %q", got, want)
+	}
+}

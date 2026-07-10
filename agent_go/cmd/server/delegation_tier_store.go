@@ -10,14 +10,37 @@ import (
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 )
 
-const delegationTierConfigFilePath = "config/delegation-tier-config.json"
+const (
+	delegationTierConfigFilePath      = "config/delegation-tier-config.json"
+	delegationTierConfigSchemaVersion = 2
+)
 
 func sanitizeDelegationTierConfig(config *virtualtools.DelegationTierConfig) *virtualtools.DelegationTierConfig {
 	if config == nil {
 		return nil
 	}
 
-	result := &virtualtools.DelegationTierConfig{}
+	mode := strings.TrimSpace(config.Mode)
+	provider := strings.TrimSpace(config.Provider)
+	if mode == "" {
+		if provider != "" && config.Main == nil && config.High == nil && config.Medium == nil && config.Low == nil {
+			mode = "provider_profile"
+		} else {
+			mode = "explicit"
+		}
+	}
+	if mode == "provider_profile" && provider != "" {
+		return &virtualtools.DelegationTierConfig{
+			SchemaVersion: delegationTierConfigSchemaVersion,
+			Mode:          "provider_profile",
+			Provider:      provider,
+		}
+	}
+
+	result := &virtualtools.DelegationTierConfig{
+		SchemaVersion: delegationTierConfigSchemaVersion,
+		Mode:          "explicit",
+	}
 	hasAny := false
 
 	if main := sanitizeTierModel(config.Main); main != nil {
@@ -86,11 +109,13 @@ func mergeDelegationTierConfig(base, override *virtualtools.DelegationTierConfig
 	}
 
 	result := &virtualtools.DelegationTierConfig{
-		Main:         base.Main,
-		ChiefOfStaff: base.ChiefOfStaff,
-		High:         base.High,
-		Medium:       base.Medium,
-		Low:          base.Low,
+		SchemaVersion: delegationTierConfigSchemaVersion,
+		Mode:          "explicit",
+		Main:          base.Main,
+		ChiefOfStaff:  base.ChiefOfStaff,
+		High:          base.High,
+		Medium:        base.Medium,
+		Low:           base.Low,
 	}
 
 	if len(base.Custom) > 0 {
@@ -99,6 +124,12 @@ func mergeDelegationTierConfig(base, override *virtualtools.DelegationTierConfig
 			tierCopy := *tier
 			result.Custom[slug] = &tierCopy
 		}
+	}
+	if override.Mode == "provider_profile" {
+		return override
+	}
+	if base.Mode == "provider_profile" {
+		return override
 	}
 
 	if override.Main != nil {
@@ -160,7 +191,13 @@ func LoadDelegationTierConfig(ctx context.Context) (*virtualtools.DelegationTier
 	if err := json.Unmarshal([]byte(content), &cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal tier config: %w", err)
 	}
-	return sanitizeDelegationTierConfig(&cfg), nil
+	sanitized := sanitizeDelegationTierConfig(&cfg)
+	if sanitized != nil && (cfg.SchemaVersion != delegationTierConfigSchemaVersion || strings.TrimSpace(cfg.Mode) == "") {
+		if err := SaveDelegationTierConfig(ctx, sanitized); err != nil {
+			return nil, fmt.Errorf("failed to persist tier config migration: %w", err)
+		}
+	}
+	return sanitized, nil
 }
 
 // LoadAndResolveTierConfig loads tier config from the workspace file and merges with a request-level

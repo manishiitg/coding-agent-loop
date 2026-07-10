@@ -151,8 +151,8 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 					refreshedLockKnowledgebase := false
 					log.Printf("[WORKFLOW_PHASE] Refresh LLMConfig: isNil=%v", caps.LLMConfig == nil)
 					if caps.LLMConfig != nil {
-						log.Printf("[WORKFLOW_PHASE] Refresh LLMConfig details: allocationMode=%q tieredConfig=%v",
-							caps.LLMConfig.LLMAllocationMode, caps.LLMConfig.TieredConfig != nil)
+						log.Printf("[WORKFLOW_PHASE] Refresh LLMConfig details: mode=%q tieredConfig=%v",
+							caps.LLMConfig.Mode, caps.LLMConfig.TieredConfig != nil)
 						phaseLLM, refreshedTiered := workshopResolveLLMConfig(caps.LLMConfig)
 						maintenanceLLM := workshopResolveMaintenanceLLMConfig(caps.LLMConfig)
 						workshopSession.UpdatePresetLLMConfigs(phaseLLM, maintenanceLLM)

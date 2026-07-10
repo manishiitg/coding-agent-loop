@@ -1,6 +1,6 @@
-# 🚀 Runloop
+# 🚀 AgentWorks
 
-**Runloop** is an AI operations platform for running many autonomous workflows like an organization. Define goals, build workflow agents, run them on schedules, and let Pulse, Auto-improve, Chief of Staff, and the dashboard help you manage by exception instead of watching logs.
+**AgentWorks** is an AI operations platform for running many autonomous workflows like an organization. Define goals, build workflow agents, run them on schedules, and let Pulse, Auto-improve, Chief of Staff, and the dashboard help you manage by exception instead of watching logs.
 
 [![Latest Release](https://img.shields.io/github/v/release/manishiitg/mcp-agent-builder-go?label=release)](https://github.com/manishiitg/mcp-agent-builder-go/releases/latest)
 ![macOS Apple Silicon](https://img.shields.io/badge/macOS-Apple%20Silicon-000000?logo=apple)
@@ -9,7 +9,7 @@
 
 ## The Goal
 
-Runloop is built for teams that want to scale from a few manually checked automations to **100+ goal-driven workflow agents**. The product is an operating system for an AI-run organization:
+AgentWorks is built for teams that want to scale from a few manually checked automations to **100+ goal-driven workflow agents**. The product is an operating system for an AI-run organization:
 
 - **Workflows do the work**: reusable agents execute research, coding, reporting, browser tasks, back-office operations, and channel conversations.
 - **Pulse keeps each workflow reliable**: after runs, it checks whether the workflow actually worked, records Bug/Goal verdicts, hardens operational issues, reports cost/time, backs up, publishes, and notifies only on meaningful transitions.
@@ -23,35 +23,37 @@ The high-level loop is documented in [Workflow self-improvement & reporting](doc
 
 **Workflow automation: plan, run, report, and supervise**
 
-![Runloop workflow automation walkthrough](docs/assets/github/workflow-automation-demo.gif)
+![AgentWorks workflow automation walkthrough](docs/assets/github/workflow-automation-demo.gif)
 
 **Operating loop: Pulse, Auto Improve, Chief of Staff, and org goals**
 
-![Runloop operating loop walkthrough](docs/assets/github/operating-loop-demo.gif)
+![AgentWorks operating loop walkthrough](docs/assets/github/operating-loop-demo.gif)
 
 **Multi-CLI coding agents: Claude Code, Codex CLI, Cursor CLI, and Pi.dev**
 
-![Runloop multi-CLI coding agent management](docs/assets/github/multi-cli-management-demo.gif)
+![AgentWorks multi-CLI coding agent management](docs/assets/github/multi-cli-management-demo.gif)
 
 **Workflow automation workspace**
 
-![Runloop automation workspace](docs/assets/github/01-automation-workspace.png)
+![AgentWorks automation workspace](docs/assets/github/01-automation-workspace.png)
 
 **Chief of Staff and Org Pulse**
 
-![Runloop Chief of Staff](docs/assets/github/02-chief-of-staff.png)
+![AgentWorks Chief of Staff](docs/assets/github/02-chief-of-staff.png)
 
 **Goal-driven operations**
 
-![Runloop org goals](docs/assets/github/03-org-goals.png)
+![AgentWorks org goals](docs/assets/github/03-org-goals.png)
 
 **Daily operating pulse**
 
-![Runloop org pulse](docs/assets/github/04-org-pulse.png)
+![AgentWorks org pulse](docs/assets/github/04-org-pulse.png)
 
 ## 💻 Desktop App (macOS)
 
 A standalone macOS app is available — no Docker, no manual server setup. Each release is published at [Releases](https://github.com/manishiitg/mcp-agent-builder-go/releases/latest).
+
+Rename note: the public product name is moving to **AgentWorks**. During the transition, the GitHub repo and some release assets still use the historical `mcp-agent-builder-go` / `Runloop` names so existing installs and update checks remain compatible.
 
 ### Install (one-liner — recommended)
 
@@ -59,14 +61,14 @@ A standalone macOS app is available — no Docker, no manual server setup. Each 
 curl -fsSL https://raw.githubusercontent.com/manishiitg/mcp-agent-builder-go/main/install.sh | bash
 ```
 
-Downloads the latest dmg, installs `Runloop.app` to `/Applications`, ensures the MCP bridge used by Claude Code/Codex/Gemini CLI tool access is installed to `~/go/bin`, strips the macOS quarantine flag (no "damaged" warning), and launches the app. If Go is missing, the installer installs Go through Homebrew when available; otherwise it asks you to install Go and rerun the same curl command. Pin a specific version with `RUNLOOP_VERSION=v1.25.6 curl -fsSL … | bash`.
+Downloads the latest dmg, installs the Mac app to `/Applications`, ensures the MCP bridge used by Claude Code/Codex/Gemini CLI tool access is installed to `~/go/bin`, strips the macOS quarantine flag (no "damaged" warning), and launches the app. If Go is missing, the installer installs Go through Homebrew when available; otherwise it asks you to install Go and rerun the same curl command. Pin a specific version with `RUNLOOP_VERSION=v1.25.6 curl -fsSL … | bash`.
 
 ### Install manually
 
-1. Download `Runloop-<version>-arm64.dmg` from the latest release.
-2. Open the dmg, drag **Runloop** to Applications.
+1. Download the macOS dmg from the latest release. During the rename transition, the file may still be named `Runloop-<version>-arm64.dmg`.
+2. Open the dmg, drag the app to Applications.
 
-### First-launch error: *"Runloop is damaged and can't be opened"*
+### First-launch error: *"AgentWorks is damaged and can't be opened"*
 
 The current build is **unsigned and not notarized**, so macOS Gatekeeper flags it on download. The app itself is fine — you just need to clear the quarantine flag macOS automatically attaches to downloaded files.
 
@@ -74,7 +76,11 @@ The current build is **unsigned and not notarized**, so macOS Gatekeeper flags i
 ```bash
 xattr -cr /Applications/Runloop.app
 ```
-Then double-click Runloop. If macOS still complains, also strip the dmg you downloaded:
+If your installed app is already named AgentWorks, use:
+```bash
+xattr -cr /Applications/AgentWorks.app
+```
+Then double-click the app. If macOS still complains, also strip the dmg you downloaded:
 ```bash
 xattr -cr ~/Downloads/Runloop-*.dmg
 ```
@@ -83,7 +89,7 @@ xattr -cr ~/Downloads/Runloop-*.dmg
 **System Settings (sometimes works, depends on macOS version):**
 For "damaged" verdicts on Sequoia/Tahoe, macOS often hides the "Open Anyway" button entirely, so this path frequently doesn't appear. If it does:
 1. Open **System Settings → Privacy & Security**.
-2. Scroll to the Security section. If you see *"Runloop was blocked from use…"* with an **Open Anyway** button, click it.
+2. Scroll to the Security section. If you see *"AgentWorks was blocked from use…"* with an **Open Anyway** button, click it.
 3. Confirm in the dialog. macOS remembers the decision.
 
 If the button isn't there, fall back to the `xattr` command above.
@@ -104,7 +110,7 @@ Code signing + Apple notarization requires an Apple Developer ID ($99/yr) and is
 
 Run **Claude Code, Codex, Gemini CLI, and open models** in one system. Build visual workflows, launch complex orchestrators, schedule recurring jobs, route agent conversations through **Slack, WhatsApp, and the web**, and roll their progress up against org goals.
 
-Runloop is built for teams that want more than a chat box:
+AgentWorks is built for teams that want more than a chat box:
 - Build visual agent workflows and long-running orchestrators
 - Mix and match the best coding and reasoning models for each step
 - Schedule automations, recurring jobs, and background runs
@@ -113,14 +119,14 @@ Runloop is built for teams that want more than a chat box:
 - Keep humans in the loop with approvals, feedback, and escalation paths
 - Connect agents to Slack, WhatsApp, browsers, and MCP tools
 
-## Why Runloop
+## Why AgentWorks
 
 - **Goal-driven operations**: Tie workflows to measurable goals, then let Pulse, Auto-improve, and Org Pulse keep the evidence and recommendations current.
 - **Multi-model by default**: Use Claude Code, Codex, Gemini CLI, OpenAI, Anthropic, Bedrock, Azure, MiniMax, OpenRouter, and open models in the same platform.
 - **Visual workflows plus real execution**: Design workflows on a canvas, then run them with tools, browser automation, memory, and evaluation built in.
 - **Manage by exception**: The dashboard surfaces broken, off-goal, expensive, or decision-worthy work so operators do not need to inspect every run.
 - **Built for operations, not demos**: Add scheduling, observability, validation, approvals, and secure workspace isolation from day one.
-- **Protocol-agnostic in practice**: MCP is supported, but Runloop is broader than any single protocol, provider, or model vendor.
+- **Protocol-agnostic in practice**: MCP is supported, but AgentWorks is broader than any single protocol, provider, or model vendor.
 
 ## What You Can Build
 
@@ -165,7 +171,7 @@ See the [public roadmap](ROADMAP.md) for upcoming work on onboarding, memory-awa
 
 ## ⚡ Platform Overview
 
-At the core of Runloop is the **[workflow system](docs/workflow/README.md)**, a directed step-based workflow runtime managed through the visual workflow builder and supervised by the self-improvement/reporting layer.
+At the core of AgentWorks is the **[workflow system](docs/workflow/README.md)**, a directed step-based workflow runtime managed through the visual workflow builder and supervised by the self-improvement/reporting layer.
 
 Design complex workflows visually, refine them through the interactive builder, run them with step-level configuration, tiered LLM selection, deterministic pre-validation, evaluation runs, scheduling, cost tracking, and persistent run data, then let Pulse, Auto-improve, Org Pulse, and the dashboard keep the system aligned with goals.
 
@@ -212,7 +218,7 @@ Keep operators involved when workflows need approval, intervention, or additiona
 
 ### 🧩 LLM Configuration and Providers
 
-Runloop is provider-agnostic. Users configure published LLMs in the UI, then assign them to chat sessions, workflow phases, and workflow tiers.
+AgentWorks is provider-agnostic. Users configure published LLMs in the UI, then assign them to chat sessions, workflow phases, and workflow tiers.
 
 - **[LLM Configuration & Resilience](docs/core/llm_configuration_and_resilience.md):** Published LLMs carry provider, model, and model-specific options; provider authentication is stored separately.
 - **[Tiered LLM Allocation](docs/workflow/tiered_llm_allocation.md):** Workflow steps can use tiered model selection, with separate phase LLM configuration for planning, builder, evaluation, and debugging-style phase work.

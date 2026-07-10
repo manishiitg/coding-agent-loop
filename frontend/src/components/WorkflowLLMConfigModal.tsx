@@ -5,12 +5,14 @@ import { useLLMStore, useChatStore } from '../stores'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useWorkflowManifestStore } from '../stores/useWorkflowManifestStore'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
+import LLMRoleSelector from './LLMRoleSelector'
 import WorkflowLLMTierPreview from './WorkflowLLMTierPreview'
 import ModalPortal from './ui/ModalPortal'
 import type { AgentLLMConfig, AgentLLMFallback, PresetLLMConfig } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
+import { formatLLMOptions, formatLLMRef, formatLLMRefWithOptions, llmOptionsKey } from '../utils/llmConfigDisplay'
 import type { CustomPreset } from '../types/preset'
-import { agentLLMToPresetBase, getWorkflowLLMOptions, getWorkflowLLMTierDefaults, hasWorkflowLLMTierDefaults } from '../utils/workflowLLMTierDefaults'
+import { getWorkflowLLMOptions, getWorkflowLLMTierDefaults, getWorkflowProviderOptions } from '../utils/workflowLLMTierDefaults'
 
 interface WorkflowLLMConfigModalProps {
   isOpen: boolean
@@ -18,24 +20,7 @@ interface WorkflowLLMConfigModalProps {
 }
 
 function hasAdvancedWorkflowLLMConfig(config?: PresetLLMConfig | null): boolean {
-  if (!config) return false
-  if (config.auto_improve_llm) return true
-  if (config.pulse_llm) return true
-  if (config.llm_allocation_mode === 'tiered') return true
-  if (config.llm_allocation_mode === 'coding_agent' || config.llm_allocation_mode === 'coding_plan') {
-    return false
-  }
-
-  const t1 = config.tiered_config?.tier_1
-  const t2 = config.tiered_config?.tier_2
-  const t3 = config.tiered_config?.tier_3
-  const phase = config.phase_llm
-  const configured = [t1, t2, t3, phase].filter(Boolean)
-  const key = (cfg?: AgentLLMConfig | null) => cfg?.provider && cfg?.model_id ? `${cfg.provider}/${cfg.model_id}` : ''
-
-  if (config.llm_allocation_mode === 'manual' && configured.length > 0) return true
-  if (configured.some(cfg => (cfg?.fallbacks ?? []).length > 0)) return true
-  return new Set(configured.map(key).filter(Boolean)).size > 1
+  return config?.mode === 'explicit'
 }
 
 // Inner component mounts fresh each open, so state always reflects the current preset
@@ -51,6 +36,10 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
     () => getWorkflowLLMOptions(availableLLMs, providerManifest),
     [availableLLMs, providerManifest]
   )
+  const providerProfileOptions = useMemo(
+    () => getWorkflowProviderOptions(providerManifest),
+    [providerManifest]
+  )
 
   useEffect(() => {
     if (!providerManifestLoaded) {
@@ -65,23 +54,17 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
     return useWorkflowManifestStore.getState().getWorkflowByPath(workspacePath)?.manifest?.capabilities?.llm_config ?? null
   })()
 
-  const initialCodingAgentLLM = (() => {
+  const initialProvider = (() => {
     const config = manifestLLM ?? existing
-    if (!config?.provider || !config?.model_id) return null
-    return {
-      ...(config.published_llm_id ? { published_llm_id: config.published_llm_id } : {}),
-      provider: config.provider,
-      model_id: config.model_id,
-      ...(hasOptions(config.options) ? { options: config.options } : {}),
-    } as AgentLLMConfig
+    return config?.mode === 'provider_profile' ? config.provider ?? null : config?.builder_llm?.provider ?? null
   })()
 
-  const [selectedCodingAgentLLM, setSelectedCodingAgentLLM] = useState<AgentLLMConfig | null>(initialCodingAgentLLM)
+  const [selectedProvider, setSelectedProvider] = useState<string | null>(initialProvider)
   const [tier1, setTier1] = useState<AgentLLMConfig | null>(manifestLLM?.tiered_config?.tier_1 ?? existing?.tiered_config?.tier_1 ?? null)
   const [tier2, setTier2] = useState<AgentLLMConfig | null>(manifestLLM?.tiered_config?.tier_2 ?? existing?.tiered_config?.tier_2 ?? null)
   const [tier3, setTier3] = useState<AgentLLMConfig | null>(manifestLLM?.tiered_config?.tier_3 ?? existing?.tiered_config?.tier_3 ?? null)
-  const [phaseLLM, setPhaseLLM] = useState<AgentLLMConfig | null>(manifestLLM?.phase_llm ?? existing?.phase_llm ?? null)
-  const [autoImproveLLM, setAutoImproveLLM] = useState<AgentLLMConfig | null>(manifestLLM?.auto_improve_llm ?? existing?.auto_improve_llm ?? null)
+  const [builderLLM, setBuilderLLM] = useState<AgentLLMConfig | null>(manifestLLM?.builder_llm ?? existing?.builder_llm ?? null)
+  const [maintenanceLLM, setMaintenanceLLM] = useState<AgentLLMConfig | null>(manifestLLM?.maintenance_llm ?? existing?.maintenance_llm ?? null)
   const [pulseLLM, setPulseLLM] = useState<AgentLLMConfig | null>(manifestLLM?.pulse_llm ?? existing?.pulse_llm ?? null)
   const [showAdvanced, setShowAdvanced] = useState(() => hasAdvancedWorkflowLLMConfig(manifestLLM ?? existing))
 
@@ -90,36 +73,39 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
   function hasOptions(options?: Record<string, unknown>) {
     return Boolean(options && Object.keys(options).length > 0)
   }
-  const llmKey = (llm: { provider?: string; model_id?: string; published_llm_id?: string }) =>
-    llm.published_llm_id ? `id:${llm.published_llm_id}` : `model:${llm.provider}/${llm.model_id}`
+  const llmKey = (llm: { provider?: string; model_id?: string; published_llm_id?: string; options?: Record<string, unknown> }) =>
+    llm.published_llm_id ? `id:${llm.published_llm_id}` : `model:${llm.provider}/${llm.model_id}/${llmOptionsKey(llm.options)}`
   const optionKey = (opt: LLMOption) =>
-    opt.id ? `id:${opt.id}` : `model:${opt.provider}/${opt.model}`
+    opt.id ? `id:${opt.id}` : `model:${opt.provider}/${opt.model}/${llmOptionsKey(opt.options)}`
 
-  const findOption = (cfg: AgentLLMConfig | null): LLMOption | null => {
-    if (!cfg) return null
-    if (cfg.published_llm_id) {
-      const byID = workflowLLMOptions.find(o => o.id === cfg.published_llm_id)
-      if (byID) return byID
-    }
-    return workflowLLMOptions.find(o => o.provider === cfg.provider && o.model === cfg.model_id) ?? null
-  }
-
+  const selectedProviderOption = providerProfileOptions.find(option => option.provider === selectedProvider) ?? null
   const defaultTierLLMs = (() => {
-    const selected = findOption(selectedCodingAgentLLM)
+    const selected = selectedProviderOption
     return selected ? getWorkflowLLMTierDefaults(selected, providerManifest) : null
   })()
 
   const effectiveTier1 = tier1 ?? defaultTierLLMs?.tier1 ?? null
   const effectiveTier2 = tier2 ?? defaultTierLLMs?.tier2 ?? null
   const effectiveTier3 = tier3 ?? defaultTierLLMs?.tier3 ?? null
-  const effectivePhaseLLM = phaseLLM ?? defaultTierLLMs?.phase ?? effectiveTier1
-  const effectiveAutoImproveLLM = autoImproveLLM ?? defaultTierLLMs?.autoImprove ?? selectedCodingAgentLLM
-  const effectivePulseLLM = pulseLLM ?? defaultTierLLMs?.pulse ?? selectedCodingAgentLLM
+  const effectiveBuilderLLM = builderLLM ?? defaultTierLLMs?.builder ?? effectiveTier1
+  const effectiveMaintenanceLLM = maintenanceLLM ?? defaultTierLLMs?.maintenance ?? effectiveTier1
+  const effectivePulseLLM = pulseLLM ?? defaultTierLLMs?.pulse ?? effectiveTier1
 
-  const formatAgentLLMConfig = (cfg?: AgentLLMConfig | null) => {
-    if (!cfg?.provider || !cfg?.model_id) return 'Not resolved'
-    return `${cfg.provider}/${cfg.model_id}`
-  }
+  const ResolvedModelLine = ({ value, inherited }: { value: AgentLLMConfig | null; inherited?: boolean }) => (
+    <div className="mt-2 rounded-md border border-gray-100 bg-gray-50 px-2.5 py-2 dark:border-slate-700 dark:bg-slate-900/50">
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+        {inherited ? 'Resolved default' : 'Resolved model'}
+      </div>
+      <div className="truncate font-mono text-[12px] text-gray-900 dark:text-gray-100" title={formatLLMRefWithOptions(value)}>
+        {formatLLMRef(value)}
+      </div>
+      {formatLLMOptions(value?.options) && (
+        <div className="truncate text-[11px] text-primary/75" title={formatLLMOptions(value?.options)}>
+          {formatLLMOptions(value?.options)}
+        </div>
+      )}
+    </div>
+  )
 
   const getFallbackOptions = (primary: AgentLLMConfig | null): LLMOption[] => {
     if (!primary) return workflowLLMOptions
@@ -138,16 +124,17 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
     ...(fallbacks && fallbacks.length > 0 ? { fallbacks } : {}),
   })
 
-  const sharedWorkflowLLM = selectedCodingAgentLLM ?? effectivePhaseLLM ?? effectiveTier1 ?? effectiveTier2 ?? effectiveTier3
-  const sharedSelectedLLM = findOption(sharedWorkflowLLM)
+  const sharedWorkflowLLM = effectiveBuilderLLM ?? effectiveTier1 ?? effectiveTier2 ?? effectiveTier3
 
   const handleSharedWorkflowLLMSelect = (opt: LLMOption) => {
     const defaults = getWorkflowLLMTierDefaults(opt, providerManifest)
-    setSelectedCodingAgentLLM(defaults.base)
+    setSelectedProvider(opt.provider)
+    setBuilderLLM(defaults.builder)
     setTier1(defaults.tier1)
     setTier2(defaults.tier2)
     setTier3(defaults.tier3)
-    setPhaseLLM(defaults.phase)
+    setMaintenanceLLM(defaults.maintenance)
+    setPulseLLM(defaults.pulse)
   }
 
   const addFallback = (setter: React.Dispatch<React.SetStateAction<AgentLLMConfig | null>>, opt: LLMOption) => {
@@ -184,19 +171,12 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
       if (workspacePath) {
         const refreshed = useWorkflowManifestStore.getState().getWorkflowByPath(workspacePath)?.manifest?.capabilities?.llm_config
         if (refreshed) {
-          if (refreshed.provider && refreshed.model_id) {
-            setSelectedCodingAgentLLM({
-              ...(refreshed.published_llm_id ? { published_llm_id: refreshed.published_llm_id } : {}),
-              provider: refreshed.provider,
-              model_id: refreshed.model_id,
-              ...(hasOptions(refreshed.options) ? { options: refreshed.options } : {}),
-            } as AgentLLMConfig)
-          }
+          setSelectedProvider(refreshed.mode === 'provider_profile' ? refreshed.provider ?? null : refreshed.builder_llm?.provider ?? null)
           if (refreshed.tiered_config?.tier_1) setTier1(refreshed.tiered_config.tier_1)
           if (refreshed.tiered_config?.tier_2) setTier2(refreshed.tiered_config.tier_2)
           if (refreshed.tiered_config?.tier_3) setTier3(refreshed.tiered_config.tier_3)
-          if (refreshed.phase_llm) setPhaseLLM(refreshed.phase_llm)
-          setAutoImproveLLM(refreshed.auto_improve_llm ?? null)
+          setBuilderLLM(refreshed.builder_llm ?? null)
+          setMaintenanceLLM(refreshed.maintenance_llm ?? null)
           setPulseLLM(refreshed.pulse_llm ?? null)
           setShowAdvanced(hasAdvancedWorkflowLLMConfig(refreshed))
         }
@@ -215,33 +195,33 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
       const existingWithoutExecution = { ...((existing ?? {}) as PresetLLMConfig & { execution_llm?: unknown; learning_llm?: unknown }) }
       delete existingWithoutExecution.execution_llm
       delete existingWithoutExecution.learning_llm
-      const nextBaseLLMConfig = {
-        ...existingWithoutExecution,
-        ...(selectedCodingAgentLLM ? agentLLMToPresetBase(selectedCodingAgentLLM) : {}),
-      }
-      if (!showAdvanced) {
-        delete nextBaseLLMConfig.auto_improve_llm
-        delete nextBaseLLMConfig.pulse_llm
-      }
-
       let newLLMConfig: PresetLLMConfig
-      if (!showAdvanced && !nextBaseLLMConfig.published_llm_id && nextBaseLLMConfig.provider && hasWorkflowLLMTierDefaults(nextBaseLLMConfig.provider, providerManifest)) {
-        delete nextBaseLLMConfig.phase_llm
-        delete nextBaseLLMConfig.tiered_config
-        delete nextBaseLLMConfig.auto_improve_llm
-        delete nextBaseLLMConfig.pulse_llm
+      if (!showAdvanced) {
+        if (!selectedProvider) throw new Error('Choose a coding agent provider')
         newLLMConfig = {
-          ...nextBaseLLMConfig,
-          llm_allocation_mode: 'coding_agent',
+          ...existingWithoutExecution,
+          schema_version: 2,
+          mode: 'provider_profile',
+          provider: selectedProvider as PresetLLMConfig['provider'],
+          builder_llm: undefined,
+          maintenance_llm: undefined,
+          pulse_llm: undefined,
+          chief_of_staff_llm: undefined,
+          tiered_config: undefined,
         }
       } else {
+        if (!effectiveBuilderLLM || !effectiveMaintenanceLLM || !effectivePulseLLM || !tieredConfig) {
+          throw new Error('Builder, Maintenance, Pulse, and all three execution tiers are required')
+        }
         newLLMConfig = {
-          ...nextBaseLLMConfig,
-          phase_llm: effectivePhaseLLM ?? undefined,
-          auto_improve_llm: showAdvanced ? (autoImproveLLM ?? undefined) : undefined,
-          pulse_llm: showAdvanced ? (pulseLLM ?? undefined) : undefined,
-          llm_allocation_mode: tieredConfig ? 'tiered' : 'manual',
-          ...(tieredConfig ? { tiered_config: tieredConfig } : {}),
+          ...existingWithoutExecution,
+          schema_version: 2,
+          mode: 'explicit',
+          provider: undefined,
+          builder_llm: effectiveBuilderLLM,
+          maintenance_llm: effectiveMaintenanceLLM,
+          pulse_llm: effectivePulseLLM,
+          tiered_config: tieredConfig,
         }
       }
 
@@ -339,9 +319,9 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
                     <p><span className="font-medium">Tier 1</span> — first execution (no learnings yet) + initial extraction</p>
                     <p><span className="font-medium">Tier 2</span> — execution once learnings exist + refinement</p>
                     <p><span className="font-medium">Tier 3</span> — validation (always) + mature refinement (2+ runs)</p>
-                    <p><span className="font-medium">Workshop LLM</span> — planning, eval design, debugging, anonymization. Independent of tier assignment.</p>
-                    <p><span className="font-medium">Goal Advisor LLM</span> — optional strategy-module override. Empty uses the provider default when available.</p>
-                    <p><span className="font-medium">Pulse LLM</span> — optional post-run QA/harden override. Empty uses the provider Pulse default when available.</p>
+                    <p><span className="font-medium">Builder</span> — chat, planning, eval design, and workflow coordination.</p>
+                    <p><span className="font-medium">Maintenance</span> — Harden, Goal Advisor, and deeper report/eval/KB/DB reviews.</p>
+                    <p><span className="font-medium">Pulse</span> — routine Pulse Gate and daily QA coordination.</p>
                   </div>
                 </>
               ) : (
@@ -350,9 +330,8 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
                   <div className="text-sm text-gray-600 dark:text-gray-300 space-y-1.5">
                     <p>Pick one coding agent or model for this automation.</p>
                     <p>Coding agents save high, medium, and low tiers automatically.</p>
-                    <p>Workshop work uses the high tier.</p>
-                    <p>Goal Advisor uses the provider default when Pulse Gate selects it unless an advanced override is set.</p>
-                    <p>Pulse uses the provider Pulse default when available unless an advanced override is set.</p>
+                    <p>The provider supplies Builder, Maintenance, Pulse, and execution-tier defaults.</p>
+                    <p>Provider defaults update with the app when new models are introduced.</p>
                   </div>
                 </>
               )}
@@ -370,23 +349,24 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
             {!showAdvanced && (
               <div className="space-y-5">
                 <div>
-                  <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Choose one automation model</h3>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-                    Coding agents expand into high, medium, and low defaults. Workshop work uses high.
+                  <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Choose one automation provider</h3>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                    Choose a coding agent profile. Its current role defaults stay managed by the app.
                   </p>
                   <div className="border border-gray-200 dark:border-slate-600 rounded-lg p-4">
                     <LLMSelectionDropdown
-                      availableLLMs={workflowLLMOptions}
-                      selectedLLM={sharedSelectedLLM}
+                      availableLLMs={providerProfileOptions}
+                      selectedLLM={selectedProviderOption}
                       onLLMSelect={handleSharedWorkflowLLMSelect}
                       inModal={true}
                       openDirection="down"
-                      title="Select model for automation"
+                      title="Select automation provider"
+                      placeholder="Select a coding agent"
                     />
-                    <WorkflowLLMTierPreview selectedLLM={sharedSelectedLLM} providerManifest={providerManifest} />
+                    <WorkflowLLMTierPreview selectedLLM={selectedProviderOption} providerManifest={providerManifest} />
                     {sharedWorkflowLLM && (
                       <p className="text-xs text-gray-500 dark:text-gray-400 mt-3">
-                        Saved as automation tier defaults.
+                        The provider profile is saved; its current role defaults resolve at runtime.
                       </p>
                     )}
                   </div>
@@ -411,7 +391,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
                   type="button"
                   onClick={() => {
                     setShowAdvanced(false)
-                    setAutoImproveLLM(null)
+                    setMaintenanceLLM(null)
                     setPulseLLM(null)
                   }}
                   className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
@@ -433,16 +413,12 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
                     <button onClick={() => setter(null)} className="text-xs text-red-400 hover:text-red-600">Clear</button>
                   )}
                 </div>
-                <LLMSelectionDropdown
+                <LLMRoleSelector
                   availableLLMs={workflowLLMOptions}
-                  selectedLLM={findOption(value)}
+                  value={value}
                   onLLMSelect={opt => setter(toAgentLLM(opt, value?.fallbacks))}
-                  inModal={true}
-                  openDirection="down"
                 />
-                <div className="mt-1 font-mono text-[11px] text-gray-700 dark:text-gray-300" title={formatAgentLLMConfig(value)}>
-                  {formatAgentLLMConfig(value)}
-                </div>
+                <ResolvedModelLine value={value} inherited={!canClear} />
                 {value && (
                   <div className="mt-2">
                     <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Fallbacks</div>
@@ -472,58 +448,48 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
               </div>
             ))}
 
-            {/* Workshop LLM */}
+            {/* Builder LLM */}
             <div className="border border-gray-200 dark:border-slate-600 rounded-lg p-3">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
                   <Cpu className="w-4 h-4 text-orange-500" />
                   <div>
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Workshop LLM</span>
-                    <span className="text-xs text-gray-400 dark:text-gray-500 ml-1.5">planning, eval, debugging</span>
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Builder LLM</span>
+                    <span className="text-xs text-gray-400 dark:text-gray-500 ml-1.5">chat, planning, coordination</span>
                   </div>
                 </div>
-                {phaseLLM && (
-                  <button onClick={() => setPhaseLLM(null)} className="text-xs text-red-400 hover:text-red-600">Clear</button>
+                {builderLLM && (
+                  <button onClick={() => setBuilderLLM(null)} className="text-xs text-red-400 hover:text-red-600">Clear</button>
                 )}
               </div>
-              <LLMSelectionDropdown
+              <LLMRoleSelector
                 availableLLMs={workflowLLMOptions}
-                selectedLLM={findOption(effectivePhaseLLM)}
-                onLLMSelect={opt => setPhaseLLM(toAgentLLM(opt))}
-                inModal={true}
-                openDirection="down"
-                placeholder={effectiveTier1 ? `Defaults to Tier 1 (${effectiveTier1.model_id})` : 'Select workshop LLM'}
+                value={effectiveBuilderLLM}
+                onLLMSelect={opt => setBuilderLLM(toAgentLLM(opt))}
               />
-              <div className="mt-1 font-mono text-[11px] text-gray-700 dark:text-gray-300" title={formatAgentLLMConfig(effectivePhaseLLM)}>
-                {formatAgentLLMConfig(effectivePhaseLLM)}
-              </div>
+              <ResolvedModelLine value={effectiveBuilderLLM} inherited={!builderLLM} />
             </div>
 
-            {/* Goal Advisor LLM */}
+            {/* Maintenance LLM */}
             <div className="border border-gray-200 dark:border-slate-600 rounded-lg p-3">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
                   <RefreshCw className="w-4 h-4 text-cyan-500" />
                   <div>
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Goal Advisor LLM</span>
-                    <span className="text-xs text-gray-400 dark:text-gray-500 ml-1.5">strategy module</span>
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Maintenance LLM</span>
+                    <span className="text-xs text-gray-400 dark:text-gray-500 ml-1.5">Harden, Goal Advisor, report and eval review</span>
                   </div>
                 </div>
-                {autoImproveLLM && (
-                  <button onClick={() => setAutoImproveLLM(null)} className="text-xs text-red-400 hover:text-red-600">Clear</button>
+                {maintenanceLLM && (
+                  <button onClick={() => setMaintenanceLLM(null)} className="text-xs text-red-400 hover:text-red-600">Clear</button>
                 )}
               </div>
-              <LLMSelectionDropdown
+              <LLMRoleSelector
                 availableLLMs={workflowLLMOptions}
-                selectedLLM={findOption(effectiveAutoImproveLLM)}
-                onLLMSelect={opt => setAutoImproveLLM(toAgentLLM(opt))}
-                inModal={true}
-                openDirection="down"
-                placeholder={effectiveAutoImproveLLM ? `Defaults to ${effectiveAutoImproveLLM.model_id}` : 'Defaults to provider default'}
+                value={effectiveMaintenanceLLM}
+                onLLMSelect={opt => setMaintenanceLLM(toAgentLLM(opt))}
               />
-              <div className="mt-1 font-mono text-[11px] text-gray-700 dark:text-gray-300" title={formatAgentLLMConfig(effectiveAutoImproveLLM)}>
-                {formatAgentLLMConfig(effectiveAutoImproveLLM)}
-              </div>
+              <ResolvedModelLine value={effectiveMaintenanceLLM} inherited={!maintenanceLLM} />
             </div>
 
             {/* Pulse LLM */}
@@ -540,17 +506,12 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
                   <button onClick={() => setPulseLLM(null)} className="text-xs text-red-400 hover:text-red-600">Clear</button>
                 )}
               </div>
-              <LLMSelectionDropdown
+              <LLMRoleSelector
                 availableLLMs={workflowLLMOptions}
-                selectedLLM={findOption(effectivePulseLLM)}
+                value={effectivePulseLLM}
                 onLLMSelect={opt => setPulseLLM(toAgentLLM(opt))}
-                inModal={true}
-                openDirection="down"
-                placeholder={effectivePulseLLM ? `Defaults to ${effectivePulseLLM.model_id}` : 'Defaults to provider pulse default'}
               />
-              <div className="mt-1 font-mono text-[11px] text-gray-700 dark:text-gray-300" title={formatAgentLLMConfig(effectivePulseLLM)}>
-                {formatAgentLLMConfig(effectivePulseLLM)}
-              </div>
+              <ResolvedModelLine value={effectivePulseLLM} inherited={!pulseLLM} />
             </div>
               </>
             )}

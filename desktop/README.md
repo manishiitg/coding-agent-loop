@@ -1,4 +1,4 @@
-# Runloop — Desktop
+# AgentWorks — Desktop
 
 Electron shell for the standalone Mac app. It bundles the `agent-server` and `workspace-server` binaries, managing their lifecycle automatically.
 
@@ -53,7 +53,7 @@ CSC_IDENTITY_AUTO_DISCOVERY=false \
   npx electron-builder --mac dmg --publish never
 ```
 
-Artifacts go to `desktop/dist/Runloop-<version>-arm64.dmg`. Install: `open desktop/dist/Runloop-*.dmg` → drag to Applications. First launch: right-click → Open to bypass Gatekeeper.
+Artifacts currently keep the legacy `Runloop-<version>-arm64.dmg` filename for updater compatibility during the AgentWorks rename. Install: `open desktop/dist/Runloop-*.dmg` → drag the app to Applications. First launch: right-click → Open to bypass Gatekeeper.
 
 ### Cutting a release via CI (publishes to GitHub Releases)
 
@@ -131,9 +131,9 @@ gh release edit v1.25.7-test1 --prerelease --draft=false
 
 ### Window and Server Lifecycle
 
-On macOS, closing the Runloop window keeps the app process and bundled servers running in the background so scheduled jobs can continue. Click the Dock icon or the Runloop menu bar icon to reopen the UI.
+On macOS, closing the AgentWorks window keeps the app process and bundled servers running in the background so scheduled jobs can continue. Click the Dock icon or the AgentWorks menu bar icon to reopen the UI.
 
-Right-click the menu bar icon and choose **Quit Runloop (Stop Servers)**, or use **Quit Runloop** / `Cmd+Q`, to fully exit the app. Quitting stops both bundled servers.
+Right-click the menu bar icon and choose **Quit AgentWorks (Stop Servers)**, or use **Quit AgentWorks** / `Cmd+Q`, to fully exit the app. Quitting stops both bundled servers.
 
 ### Ports
 - **45678**: Agent server (API + static frontend)
@@ -142,6 +142,8 @@ Right-click the menu bar icon and choose **Quit Runloop (Stop Servers)**, or use
 ### Data & Logs
 The app stores data in the system's Application Support directory:
 `~/Library/Application Support/Runloop/`
+
+The data path is still legacy-compatible while the rename is in progress. Do not rename it blindly without a migration.
 
 - **Logs:** `logs/agent.log`, `logs/workspace.log`
 - **Database:** `chat_history.db`

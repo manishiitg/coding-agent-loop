@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,7 +34,7 @@ func (c *Client) DiffPatchWorkspaceFile(ctx context.Context, params DiffPatchWor
 	params.Filepath = stripWorkspacePrefix(params.Filepath)
 
 	// Build API URL for diff patching
-	apiURL := c.BaseURL + "/api/documents/" + params.Filepath + "/diff"
+	apiURL := c.BaseURL + "/api/documents/" + encodeWorkspaceDocumentPath(params.Filepath) + "/diff"
 
 	// Prepare request body
 	requestBody := map[string]interface{}{
@@ -74,6 +75,15 @@ func (c *Client) DiffPatchWorkspaceFile(ctx context.Context, params DiffPatchWor
 	return DiffPatchResult{
 		Data: apiResp.Data,
 	}, nil
+}
+
+func encodeWorkspaceDocumentPath(path string) string {
+	pathSegments := strings.Split(path, "/")
+	encodedSegments := make([]string, len(pathSegments))
+	for i, segment := range pathSegments {
+		encodedSegments[i] = url.PathEscape(segment)
+	}
+	return strings.Join(encodedSegments, "/")
 }
 
 // stripWorkspacePrefix converts absolute workspace paths to relative.

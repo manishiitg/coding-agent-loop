@@ -683,7 +683,7 @@ export const useLLMStore = create<LLMState>()(
               bedrock: state.bedrockConfig,
               azure: state.azureConfig,
             }
-            const tierConfig = config as Record<string, { provider?: string }>
+            const tierConfig = config as unknown as Record<string, { provider?: string }>
             for (const tier of ['main', 'chief_of_staff', 'high', 'medium', 'low']) {
               const provider = tierConfig[tier]?.provider
               if (provider && providerConfigs[provider]?.api_key && !providerKeys[provider]) {
@@ -700,7 +700,7 @@ export const useLLMStore = create<LLMState>()(
               }
             }
             agentApi.saveDelegationTierConfig(
-              config as Record<string, unknown>,
+              config as unknown as Record<string, unknown>,
               Object.keys(providerKeys).length > 0 ? providerKeys : undefined
             ).catch(() => {})
           }
@@ -711,10 +711,10 @@ export const useLLMStore = create<LLMState>()(
             // Try to load saved config from workspace file first
             try {
               const saved = await agentApi.getDelegationTierConfig()
-              const hasSaved = saved && (saved.main || saved.chief_of_staff || saved.high || saved.medium || saved.low ||
+              const hasSaved = saved && (saved.provider || saved.main || saved.chief_of_staff || saved.high || saved.medium || saved.low ||
                 (saved.custom && Object.keys(saved.custom as object).length > 0))
               if (hasSaved) {
-                set({ delegationTierConfig: saved as DelegationTierConfig })
+                set({ delegationTierConfig: saved as unknown as DelegationTierConfig })
                 return
               }
             } catch {

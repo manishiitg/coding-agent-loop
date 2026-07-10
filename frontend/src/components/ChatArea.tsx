@@ -2603,8 +2603,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       const phaseChatPreset = isWorkflowPhaseChat
         ? (presetStore.getActivePreset('workflow'))
         : null
-      const presetLLMConfig = phaseChatPreset?.llmConfig?.provider && phaseChatPreset?.llmConfig?.model_id
-        ? phaseChatPreset.llmConfig
+      const presetBuilderLLM = phaseChatPreset?.llmConfig?.builder_llm
+      const presetLLMConfig = presetBuilderLLM?.provider && presetBuilderLLM?.model_id
+        ? { provider: presetBuilderLLM.provider, model_id: presetBuilderLLM.model_id, options: presetBuilderLLM.options }
         : null
       const baseLLMConfig = isWorkflowPhaseChat
         ? (currentTab?.config?.llmConfig || presetLLMConfig || llmStore.primaryConfig)

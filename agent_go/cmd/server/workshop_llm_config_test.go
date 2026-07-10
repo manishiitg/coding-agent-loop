@@ -77,37 +77,36 @@ func TestWorkshopResolveLLMConfigExpandsCodingAgentMode(t *testing.T) {
 	if !ok {
 		t.Fatal("expected Claude Code coding-agent defaults")
 	}
-	if defaults.Main.ModelID != "claude-sonnet-5" ||
-		defaults.Phase.ModelID != "claude-sonnet-5" ||
+	if defaults.Builder.ModelID != "claude-sonnet-5" ||
 		defaults.High.ModelID == "claude-fable-5" ||
 		defaults.Medium.ModelID == "claude-fable-5" ||
 		defaults.Low.ModelID == "claude-fable-5" ||
-		defaults.AutoImprove.ModelID != "claude-opus-4-8" ||
+		defaults.Maintenance.ModelID != "claude-opus-4-8" ||
 		defaults.Pulse.ModelID != "claude-sonnet-5" {
 		t.Fatalf("sonnet 5 should be builder/phase/pulse default and opus 4.8 should be maintenance/advisor default, got defaults: %+v", defaults)
 	}
 
-	phase, tiered := workshopResolveLLMConfig(&workflowtypes.PresetLLMConfig{
-		Provider:          "claude-code",
-		ModelID:           "claude-code",
-		LLMAllocationMode: workflowtypes.LLMAllocationModeCodingAgent,
+	builder, tiered := workshopResolveLLMConfig(&workflowtypes.PresetLLMConfig{
+		SchemaVersion: workflowtypes.LLMConfigSchemaVersion,
+		Mode:          workflowtypes.LLMConfigModeProviderProfile,
+		Provider:      "claude-code",
 	})
 
-	if phase == nil {
-		t.Fatal("expected coding agent phase/workshop LLM")
+	if builder == nil {
+		t.Fatal("expected provider profile builder LLM")
 	}
-	if phase.Provider != defaults.Phase.Provider || phase.ModelID != defaults.Phase.ModelID {
-		t.Fatalf("unexpected phase config: %+v", phase)
+	if builder.Provider != defaults.Builder.Provider || builder.ModelID != defaults.Builder.ModelID {
+		t.Fatalf("unexpected builder config: %+v", builder)
 	}
 	maintenance := workshopResolveMaintenanceLLMConfig(&workflowtypes.PresetLLMConfig{
-		Provider:          "claude-code",
-		ModelID:           "claude-code",
-		LLMAllocationMode: workflowtypes.LLMAllocationModeCodingAgent,
+		SchemaVersion: workflowtypes.LLMConfigSchemaVersion,
+		Mode:          workflowtypes.LLMConfigModeProviderProfile,
+		Provider:      "claude-code",
 	})
 	if maintenance == nil {
 		t.Fatal("expected coding agent maintenance/advisor LLM")
 	}
-	if maintenance.Provider != defaults.AutoImprove.Provider || maintenance.ModelID != defaults.AutoImprove.ModelID {
+	if maintenance.Provider != defaults.Maintenance.Provider || maintenance.ModelID != defaults.Maintenance.ModelID {
 		t.Fatalf("unexpected maintenance config: %+v", maintenance)
 	}
 	if tiered == nil || tiered.Tier1 == nil || tiered.Tier2 == nil || tiered.Tier3 == nil {

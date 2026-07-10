@@ -42,11 +42,20 @@ The backend struct lives in [workflow_manifest.go](/Users/mipl/ai-work/mcp-agent
     "browser_mode": "none",
     "use_code_execution_mode": false,
     "llm_config": {
-      "phase_llm": {
+      "schema_version": 2,
+      "mode": "explicit",
+      "builder_llm": {
         "provider": "openai",
         "model_id": "gpt-4.1"
       },
-      "llm_allocation_mode": "tiered",
+      "maintenance_llm": {
+        "provider": "anthropic",
+        "model_id": "claude-opus-4-8"
+      },
+      "pulse_llm": {
+        "provider": "anthropic",
+        "model_id": "claude-sonnet-5"
+      },
       "tiered_config": {
         "tier_1": {
           "provider": "openai",
@@ -108,8 +117,10 @@ Workflow-wide execution defaults:
 
 Notes:
 
-- `llm_config` reuses the existing `PresetLLMConfig` shape
-- in tiered mode, manifest cleaning strips legacy top-level execution/learning model noise and keeps the tier config plus `phase_llm`
+- `llm_config.schema_version` is `2`
+- `mode="provider_profile"` stores only a coding-agent `provider`; Builder, Maintenance, Pulse, Chief of Staff, and execution tiers resolve from current provider defaults
+- `mode="explicit"` stores `builder_llm`, `maintenance_llm`, `pulse_llm`, and all three entries in `tiered_config`
+- old `phase_llm`, `auto_improve_llm`, and `llm_allocation_mode` fields are migrated once when the manifest is read and are not written again
 - tool search fields are not part of current workflow manifest capabilities
 
 ### `execution_defaults`

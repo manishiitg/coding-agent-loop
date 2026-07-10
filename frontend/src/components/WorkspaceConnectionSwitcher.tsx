@@ -366,7 +366,7 @@ export function WorkspaceConnectionSwitcher({ placement = 'sidebar' }: Workspace
                   <Input
                     value={apiBaseUrl}
                     onChange={event => handleApiUrlChange(event.target.value)}
-                    placeholder="https://runloop.example.com"
+                    placeholder="https://agentworks.example.com"
                   />
                 </div>
                 {message && (

@@ -166,16 +166,12 @@ For each workflow, identify:
 - recent cost/tokens from `costs/`, run folders, report metadata, or Pulse/run evidence;
 - whether cost/model evidence is present, stale, or missing.
 
-Important: `llm_allocation_mode: "coding_agent"` (and legacy `"coding_plan"`) is a complete
-provider-default tier setup even when `tiered_config`, `pulse_llm`, or `auto_improve_llm` are not
-written into `workflow.json`. Resolve it as the current coding-agent provider defaults before
-classifying it: Claude Code uses high=`claude-opus-4-8`, medium=`claude-sonnet-5`,
-low=`claude-haiku-4-5-20251001`, phase=`claude-opus-4-8`, Pulse=`claude-sonnet-5`, and
-Goal Advisor / Chief of Staff=`claude-opus-4-8`; Codex uses high=`gpt-5.5` xhigh,
-Pulse=`gpt-5.5` high, medium=`gpt-5.4`, low=`gpt-5.3-codex-spark`, and Goal Advisor / Chief of Staff=`gpt-5.5` xhigh
-with xhigh reasoning. For Pi, Cursor, Gemini, and other coding-agent providers, treat their
-provider default tier map as complete; if the provider exposes only one effective model, report
-that the tiers collapse to the same model rather than calling the setup missing.
+Important: `mode: "provider_profile"` is a complete role setup even though exact role models are
+not written into `workflow.json`. Resolve it using the current coding-agent provider defaults
+before classifying it. `mode: "explicit"` must include Builder, Maintenance, Pulse, and complete
+high / medium / low execution tiers. For Pi, Cursor, Gemini, and other coding-agent providers,
+treat their current provider profile as complete; if the provider exposes only one effective
+model, report that the roles collapse to the same model rather than calling the setup missing.
 
 Classify each workflow's tier setup as:
 

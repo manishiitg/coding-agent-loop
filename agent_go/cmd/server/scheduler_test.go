@@ -315,12 +315,12 @@ func TestWithChiefTaskRunContextSkipsOrgPulse(t *testing.T) {
 	}
 }
 
-func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
+func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 	steps := postRunMonitorSteps()
-	if got := len(steps); got != 14 {
-		t.Fatalf("postRunMonitorSteps() length = %d, want 14", got)
+	if got := len(steps); got != 11 {
+		t.Fatalf("postRunMonitorSteps() length = %d, want 11", got)
 	}
-	for i, want := range []string{"gate", "harden", "artifact", "report-health", "eval-health", "learning-health", "knowledgebase-health", "db-health", "cost-llm-time", "goal-advisor", "dashboard", "backup", "publish", "notify"} {
+	for i, want := range []string{"gate", "harden", "artifact", "learning-health", "knowledgebase-health", "db-health", "eval-health", "report-health", "cost-llm-time", "goal-advisor", "finalize"} {
 		if got := steps[i].label; got != want {
 			t.Fatalf("postRunMonitorSteps()[%d].label = %q, want %q", i, got, want)
 		}
@@ -336,9 +336,7 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 	var dbHealth string
 	var cost string
 	var goalAdvisor string
-	var dashboard string
-	var backup string
-	var notify string
+	var finalizer string
 	for _, step := range steps {
 		if step.label == "gate" {
 			gate = step.query
@@ -370,14 +368,8 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 		if step.label == "goal-advisor" {
 			goalAdvisor = step.query
 		}
-		if step.label == "dashboard" {
-			dashboard = step.query
-		}
-		if step.label == "backup" {
-			backup = step.query
-		}
-		if step.label == "notify" {
-			notify = step.query
+		if step.label == "finalize" {
+			finalizer = step.query
 		}
 	}
 	if gate == "" {
@@ -410,14 +402,8 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 	if goalAdvisor == "" {
 		t.Fatal("goal-advisor step not found")
 	}
-	if dashboard == "" {
-		t.Fatal("dashboard step not found")
-	}
-	if backup == "" {
-		t.Fatal("backup step not found")
-	}
-	if notify == "" {
-		t.Fatal("notify step not found")
+	if finalizer == "" {
+		t.Fatal("finalizer step not found")
 	}
 	if strings.Contains(gate, "call harden_workflow(") || strings.Contains(gate, "call improve_learnings(") {
 		t.Fatalf("gate step should not run selected modules directly:\n%s", gate)
@@ -426,6 +412,7 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 		"PULSE GATE / WORKLIST",
 		"get_pulse_module_state",
 		"record_pulse_worklist exactly once",
+		"High-frequency workflows should normally roll up cost/time checks",
 	} {
 		if !strings.Contains(gate, want) {
 			t.Fatalf("gate step missing %q:\n%s", want, gate)
@@ -559,30 +546,25 @@ func TestPostRunMonitorUsesSeparateLLMCostTimeReportStep(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"PULSE DASHBOARD / QUESTIONS",
-		"Bug/Goal state",
+		"PULSE FINALIZER",
+		"ONE turn",
+		"mark_pulse_final_command_result",
+		"DASHBOARD + QUESTIONS",
 		"builder/card.health.html",
-		"final post-Pulse health",
 		"create_human_input_request",
-		"selected modules ran/skipped",
-	} {
-		if !strings.Contains(dashboard, want) {
-			t.Fatalf("dashboard step missing %q:\n%s", want, dashboard)
-		}
-	}
-	for _, want := range []string{
+		"BACKUP",
+		"PUBLISH",
+		"source hash matches last_source_hash",
+		"NOTIFY",
 		"once every run",
 		"Bug/Goal state",
 		"backup/publish status",
 		"dashboard URL when live",
 		"notify_user",
 	} {
-		if !strings.Contains(notify, want) {
-			t.Fatalf("notify step missing %q:\n%s", want, notify)
+		if !strings.Contains(finalizer, want) {
+			t.Fatalf("finalizer step missing %q:\n%s", want, finalizer)
 		}
-	}
-	if !strings.Contains(backup, "PULSE FINAL BACKUP") || !strings.Contains(backup, "db/db.sqlite pulse_module_state") {
-		t.Fatalf("backup step should snapshot final Pulse state:\n%s", backup)
 	}
 }
 
@@ -612,8 +594,8 @@ func TestPostRunMonitorModuleStepsDiscouragePollingLoops(t *testing.T) {
 
 func TestPostRunMonitorPrependsWorkflowVersionUpgradeForOldManifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.0"})
-	if got := len(steps); got != 21 {
-		t.Fatalf("postRunMonitorStepsForManifest(old) length = %d, want 21", got)
+	if got := len(steps); got != 18 {
+		t.Fatalf("postRunMonitorStepsForManifest(old) length = %d, want 18", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.1" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.1", got)
@@ -657,8 +639,8 @@ func TestPostRunMonitorPrependsWorkflowVersionUpgradeForOldManifest(t *testing.T
 
 func TestPostRunMonitorPrependsWorkflowVersionUpgradeForMissingVersion(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{})
-	if got := len(steps); got != 21 {
-		t.Fatalf("postRunMonitorStepsForManifest(missing version) length = %d, want 21", got)
+	if got := len(steps); got != 18 {
+		t.Fatalf("postRunMonitorStepsForManifest(missing version) length = %d, want 18", got)
 	}
 	if !strings.Contains(steps[0].query, `Current workflow.json version seen by scheduler: "1.0.0"`) {
 		t.Fatalf("missing version should be treated as 1.0.0:\n%s", steps[0].query)
@@ -667,8 +649,8 @@ func TestPostRunMonitorPrependsWorkflowVersionUpgradeForMissingVersion(t *testin
 
 func TestPostRunMonitorPrependsPublishGateUpgradeForVersion101Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.1"})
-	if got := len(steps); got != 20 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.1) length = %d, want 20", got)
+	if got := len(steps); got != 17 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.1) length = %d, want 17", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.2" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.2", got)
@@ -707,8 +689,8 @@ func TestPostRunMonitorPrependsPublishGateUpgradeForVersion101Manifest(t *testin
 
 func TestPostRunMonitorPrependsHTMLReportUpgradeForVersion102Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.2"})
-	if got := len(steps); got != 19 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.2) length = %d, want 19", got)
+	if got := len(steps); got != 16 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.2) length = %d, want 16", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.3" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.3", got)
@@ -746,8 +728,8 @@ func TestPostRunMonitorPrependsHTMLReportUpgradeForVersion102Manifest(t *testing
 
 func TestPostRunMonitorPrependsPulseReadabilityUpgradeForVersion103Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.3"})
-	if got := len(steps); got != 18 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.3) length = %d, want 18", got)
+	if got := len(steps); got != 15 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.3) length = %d, want 15", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.4" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.4", got)
@@ -782,8 +764,8 @@ func TestPostRunMonitorPrependsPulseReadabilityUpgradeForVersion103Manifest(t *t
 
 func TestPostRunMonitorPrependsPulseFilterUpgradeForVersion104Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.4"})
-	if got := len(steps); got != 17 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.4) length = %d, want 17", got)
+	if got := len(steps); got != 14 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.4) length = %d, want 14", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.5" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.5", got)
@@ -815,8 +797,8 @@ func TestPostRunMonitorPrependsPulseFilterUpgradeForVersion104Manifest(t *testin
 
 func TestPostRunMonitorPrependsRichPulseWidgetUpgradeForVersion105Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.5"})
-	if got := len(steps); got != 16 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.5) length = %d, want 16", got)
+	if got := len(steps); got != 13 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.5) length = %d, want 13", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.6" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.6", got)
@@ -845,8 +827,8 @@ func TestPostRunMonitorPrependsRichPulseWidgetUpgradeForVersion105Manifest(t *te
 
 func TestPostRunMonitorPrependsLegacyOptimizerCleanupUpgradeForVersion106Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.6"})
-	if got := len(steps); got != 15 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.6) length = %d, want 15", got)
+	if got := len(steps); got != 12 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.6) length = %d, want 12", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.7" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.7", got)
@@ -876,8 +858,8 @@ func TestPostRunMonitorPrependsLegacyOptimizerCleanupUpgradeForVersion106Manifes
 
 func TestPostRunMonitorDoesNotPrependWorkflowVersionUpgradeForCurrentManifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: WorkflowContractCurrentVersion})
-	if got := len(steps); got != 14 {
-		t.Fatalf("postRunMonitorStepsForManifest(current) length = %d, want 14", got)
+	if got := len(steps); got != 11 {
+		t.Fatalf("postRunMonitorStepsForManifest(current) length = %d, want 11", got)
 	}
 	if got := steps[0].label; got != "gate" {
 		t.Fatalf("first step label = %q, want gate", got)
@@ -968,24 +950,18 @@ func TestSelectedPostRunMonitorModuleStepsUsesGateWorklist(t *testing.T) {
 	workspacePath := "Workflow/demo"
 	pulseRunID := "pulse-run-1"
 
-	if _, err := recordPulseWorklist(ctx, workspacePath, pulseRunID, []PulseWorklistDecision{
-		{Module: pulseModuleHarden, Due: true, Reason: "A step failed.", Evidence: []string{"runs/latest"}},
-		{Module: pulseModuleArtifactReview, Due: false, Reason: "No unreviewed changelog entries."},
-		{Module: pulseModuleReportHealth, Due: false, Reason: "Report is fresh."},
-		{Module: pulseModuleEvalHealth, Due: false, Reason: "Eval plan is fresh."},
-		{Module: pulseModuleLearningHealth, Due: false, Reason: "No plan changes."},
-		{Module: pulseModuleKnowledgebaseHealth, Due: false, Reason: "KB is current."},
-		{Module: pulseModuleDBHealth, Due: false, Reason: "DB contracts match."},
-		{Module: pulseModuleCostLLMTime, Due: true, Reason: "Cost summary is required every run."},
-		{Module: pulseModuleGoalAdvisor, Due: true, Reason: "Goal drift persisted across runs."},
-	}); err != nil {
+	if _, err := recordPulseWorklist(ctx, workspacePath, pulseRunID, completePulseWorklistDecisions(map[string]PulseWorklistDecision{
+		pulseModuleHarden:      {Module: pulseModuleHarden, Due: true, Reason: "A step failed.", Evidence: []string{"runs/latest"}},
+		pulseModuleCostLLMTime: {Module: pulseModuleCostLLMTime, Due: true, Reason: "The planned cost rollup is due."},
+		pulseModuleGoalAdvisor: {Module: pulseModuleGoalAdvisor, Due: true, Reason: "Goal drift persisted across runs."},
+	})); err != nil {
 		t.Fatalf("record worklist: %v", err)
 	}
 
 	s := NewSchedulerService(nil)
 	steps := s.selectedPostRunMonitorModuleSteps(ctx, &ScheduleContext{WorkspacePath: workspacePath}, pulseRunID)
 	got := postRunStepLabels(steps)
-	want := []string{"pre-backup", "harden", "cost-llm-time", "goal-advisor", "dashboard", "backup", "publish", "notify"}
+	want := []string{"pre-backup", "harden", "cost-llm-time", "goal-advisor", "finalize"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("selected labels = %#v, want %#v", got, want)
 	}
@@ -1004,7 +980,7 @@ func TestSelectedPostRunMonitorModuleStepsFallsBackConservatively(t *testing.T) 
 	s := NewSchedulerService(nil)
 	steps := s.selectedPostRunMonitorModuleSteps(ctx, &ScheduleContext{WorkspacePath: workspacePath}, pulseRunID)
 	got := postRunStepLabels(steps)
-	want := []string{"pre-backup", "harden", "report-health", "eval-health", "cost-llm-time", "dashboard", "backup", "publish", "notify"}
+	want := []string{"finalize"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("fallback labels = %#v, want %#v", got, want)
 	}
@@ -1036,7 +1012,7 @@ func TestSelectedPostRunMonitorModuleStepsFallsBackForPartialWorklist(t *testing
 	s := NewSchedulerService(nil)
 	steps := s.selectedPostRunMonitorModuleSteps(ctx, &ScheduleContext{WorkspacePath: workspacePath}, pulseRunID)
 	got := postRunStepLabels(steps)
-	want := []string{"pre-backup", "harden", "report-health", "eval-health", "cost-llm-time", "dashboard", "backup", "publish", "notify"}
+	want := []string{"pre-backup", "harden", "finalize"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("partial-worklist fallback labels = %#v, want %#v", got, want)
 	}
@@ -1068,7 +1044,7 @@ func TestSelectedPostRunMonitorModuleStepsPartialWorklistKeepsDueGoalAdvisor(t *
 	s := NewSchedulerService(nil)
 	steps := s.selectedPostRunMonitorModuleSteps(ctx, &ScheduleContext{WorkspacePath: workspacePath}, pulseRunID)
 	got := postRunStepLabels(steps)
-	want := []string{"pre-backup", "harden", "report-health", "eval-health", "cost-llm-time", "goal-advisor", "dashboard", "backup", "publish", "notify"}
+	want := []string{"pre-backup", "goal-advisor", "finalize"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("partial-worklist fallback labels = %#v, want %#v", got, want)
 	}
@@ -1200,13 +1176,15 @@ func TestOptimizerScheduleMessagesReplacesLegacyGoalAdvisorQueue(t *testing.T) {
 }
 
 func TestApplyLLMAndSecretsToReqMapUsesAutoImproveOverrideOnlyForOptimizer(t *testing.T) {
+	builder := &workflowtypes.AgentLLMConfig{Provider: "claude-code", ModelID: "claude-opus-4-6"}
+	maintenance := &workflowtypes.AgentLLMConfig{Provider: "gemini-cli", ModelID: "gemini-2.5-pro"}
 	baseConfig := &workflowtypes.PresetLLMConfig{
-		Provider: "claude-code",
-		ModelID:  "claude-opus-4-6",
-		AutoImproveLLM: &workflowtypes.AgentLLMConfig{
-			Provider: "gemini-cli",
-			ModelID:  "gemini-2.5-pro",
-		},
+		SchemaVersion:  workflowtypes.LLMConfigSchemaVersion,
+		Mode:           workflowtypes.LLMConfigModeExplicit,
+		BuilderLLM:     builder,
+		MaintenanceLLM: maintenance,
+		PulseLLM:       builder,
+		TieredConfig:   &workflowtypes.TieredLLMConfig{Tier1: maintenance, Tier2: builder, Tier3: builder},
 	}
 
 	tests := []struct {
@@ -1276,9 +1254,9 @@ func TestApplyLLMAndSecretsToReqMapUsesCodingAgentAutoImproveDefaultForOptimizer
 		Schedule: WorkflowSchedule{WorkshopMode: "optimizer"},
 		Capabilities: WorkflowCapabilities{
 			LLMConfig: &workflowtypes.PresetLLMConfig{
-				Provider:          "claude-code",
-				ModelID:           "claude-code",
-				LLMAllocationMode: workflowtypes.LLMAllocationModeCodingAgent,
+				SchemaVersion: workflowtypes.LLMConfigSchemaVersion,
+				Mode:          workflowtypes.LLMConfigModeProviderProfile,
+				Provider:      "claude-code",
 			},
 		},
 	})
@@ -1308,9 +1286,9 @@ func TestApplyLLMAndSecretsToReqMapPreservesAutoImproveDefaultOptions(t *testing
 		Schedule: WorkflowSchedule{WorkshopMode: "optimizer"},
 		Capabilities: WorkflowCapabilities{
 			LLMConfig: &workflowtypes.PresetLLMConfig{
-				Provider:          "codex-cli",
-				ModelID:           "codex-cli",
-				LLMAllocationMode: workflowtypes.LLMAllocationModeCodingAgent,
+				SchemaVersion: workflowtypes.LLMConfigSchemaVersion,
+				Mode:          workflowtypes.LLMConfigModeProviderProfile,
+				Provider:      "codex-cli",
 			},
 		},
 	})
@@ -1326,15 +1304,15 @@ func TestApplyLLMAndSecretsToReqMapPreservesAutoImproveDefaultOptions(t *testing
 	if got := primary["provider"]; got != "codex-cli" {
 		t.Fatalf("provider = %#v, want codex-cli", got)
 	}
-	if got := primary["model_id"]; got != "gpt-5.5" {
-		t.Fatalf("model_id = %#v, want gpt-5.5", got)
+	if got := primary["model_id"]; got != "gpt-5.6-sol" {
+		t.Fatalf("model_id = %#v, want gpt-5.6-sol", got)
 	}
 	options, ok := primary["options"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("options missing or wrong type: %#v", primary["options"])
 	}
-	if got := options["reasoning_effort"]; got != "xhigh" {
-		t.Fatalf("reasoning_effort = %#v, want xhigh", got)
+	if got := options["reasoning_effort"]; got != "max" {
+		t.Fatalf("reasoning_effort = %#v, want max", got)
 	}
 	if got := reqMap["llm_config_source"]; got != llmConfigSourceScheduledAutoImprove {
 		t.Fatalf("llm_config_source = %#v, want %q", got, llmConfigSourceScheduledAutoImprove)
@@ -1343,12 +1321,16 @@ func TestApplyLLMAndSecretsToReqMapPreservesAutoImproveDefaultOptions(t *testing
 
 func TestApplyPulseLLMToReqMapUsesPulseOverrideWhenConfigured(t *testing.T) {
 	reqMap := map[string]interface{}{}
+	builder := &workflowtypes.AgentLLMConfig{Provider: "claude-code", ModelID: "claude-opus-4-6"}
 	sctx := &ScheduleContext{
 		Schedule: WorkflowSchedule{WorkshopMode: "run"},
 		Capabilities: WorkflowCapabilities{
 			LLMConfig: &workflowtypes.PresetLLMConfig{
-				Provider: "claude-code",
-				ModelID:  "claude-opus-4-6",
+				SchemaVersion:  workflowtypes.LLMConfigSchemaVersion,
+				Mode:           workflowtypes.LLMConfigModeExplicit,
+				BuilderLLM:     builder,
+				MaintenanceLLM: builder,
+				TieredConfig:   &workflowtypes.TieredLLMConfig{Tier1: builder, Tier2: builder, Tier3: builder},
 				PulseLLM: &workflowtypes.AgentLLMConfig{
 					Provider: "codex-cli",
 					ModelID:  "gpt-5.5",
@@ -1393,13 +1375,15 @@ func TestApplyPulseLLMToReqMapUsesPulseOverrideWhenConfigured(t *testing.T) {
 
 func TestApplyGoalAdvisorLLMToReqMapUsesAdvisorOverrideWhenConfigured(t *testing.T) {
 	reqMap := map[string]interface{}{}
+	builder := &workflowtypes.AgentLLMConfig{Provider: "claude-code", ModelID: "claude-sonnet-5"}
 	sctx := &ScheduleContext{
 		Schedule: WorkflowSchedule{WorkshopMode: "run"},
 		Capabilities: WorkflowCapabilities{
 			LLMConfig: &workflowtypes.PresetLLMConfig{
-				Provider: "claude-code",
-				ModelID:  "claude-sonnet-5",
-				AutoImproveLLM: &workflowtypes.AgentLLMConfig{
+				SchemaVersion: workflowtypes.LLMConfigSchemaVersion,
+				Mode:          workflowtypes.LLMConfigModeExplicit,
+				BuilderLLM:    builder,
+				MaintenanceLLM: &workflowtypes.AgentLLMConfig{
 					Provider: "claude-code",
 					ModelID:  "claude-opus-4-8",
 					Options:  map[string]interface{}{"reasoning_effort": "high"},
@@ -1409,6 +1393,7 @@ func TestApplyGoalAdvisorLLMToReqMapUsesAdvisorOverrideWhenConfigured(t *testing
 					ModelID:  "claude-sonnet-5",
 					Options:  map[string]interface{}{"reasoning_effort": "high"},
 				},
+				TieredConfig: &workflowtypes.TieredLLMConfig{Tier1: builder, Tier2: builder, Tier3: builder},
 			},
 		},
 	}
@@ -1569,6 +1554,9 @@ func TestWaitForWorkshopIdleTimesOutWhenSessionStaysBusy(t *testing.T) {
 	if !strings.Contains(err.Error(), "workshop idle wait timed out") {
 		t.Fatalf("error = %v, want timeout", err)
 	}
+	if !errors.Is(err, errWorkshopIdleWaitTimeout) {
+		t.Fatalf("error = %v, want errWorkshopIdleWaitTimeout", err)
+	}
 }
 
 func TestPostRunMonitorStepIdleMaxWaitUsesLongerGoalAdvisorCap(t *testing.T) {
@@ -1586,6 +1574,27 @@ func TestPostRunMonitorStepIdleMaxWaitUsesLongerGoalAdvisorCap(t *testing.T) {
 	}
 	if got := (postRunMonitorStep{label: "goal-advisor"}).idleMaxWait(); got != 30*time.Minute {
 		t.Fatalf("goal-advisor idle max wait = %s, want 30m", got)
+	}
+}
+
+func TestPostRunMonitorStepClassificationSupportsTimeoutRecovery(t *testing.T) {
+	tests := []struct {
+		label     string
+		module    string
+		finalStep bool
+	}{
+		{label: "harden", module: pulseModuleHarden},
+		{label: "eval-health", module: pulseModuleEvalHealth},
+		{label: "goal-advisor", module: pulseModuleGoalAdvisor},
+		{label: "finalize", finalStep: true},
+	}
+	for _, test := range tests {
+		if got := pulseModuleForPostRunMonitorStep(test.label); got != test.module {
+			t.Fatalf("module for %q = %q, want %q", test.label, got, test.module)
+		}
+		if got := isPostRunMonitorFinalStep(test.label); got != test.finalStep {
+			t.Fatalf("final-step classification for %q = %v, want %v", test.label, got, test.finalStep)
+		}
 	}
 }
 
@@ -1665,9 +1674,9 @@ func TestApplyPulseLLMToReqMapUsesCodingAgentPulseDefaultWhenUnset(t *testing.T)
 		Schedule: WorkflowSchedule{WorkshopMode: "run"},
 		Capabilities: WorkflowCapabilities{
 			LLMConfig: &workflowtypes.PresetLLMConfig{
-				Provider:          "claude-code",
-				ModelID:           "claude-code",
-				LLMAllocationMode: workflowtypes.LLMAllocationModeCodingAgent,
+				SchemaVersion: workflowtypes.LLMConfigSchemaVersion,
+				Mode:          workflowtypes.LLMConfigModeProviderProfile,
+				Provider:      "claude-code",
 			},
 		},
 	}
@@ -1701,12 +1710,17 @@ func TestApplyPulseLLMToReqMapUsesCodingAgentPulseDefaultWhenUnset(t *testing.T)
 
 func TestApplyPulseLLMToReqMapKeepsWorkflowModelWhenNoProviderDefault(t *testing.T) {
 	reqMap := map[string]interface{}{}
+	builder := &workflowtypes.AgentLLMConfig{Provider: "openai", ModelID: "gpt-5.4"}
 	sctx := &ScheduleContext{
 		Schedule: WorkflowSchedule{WorkshopMode: "run"},
 		Capabilities: WorkflowCapabilities{
 			LLMConfig: &workflowtypes.PresetLLMConfig{
-				Provider: "openai",
-				ModelID:  "gpt-5.4",
+				SchemaVersion:  workflowtypes.LLMConfigSchemaVersion,
+				Mode:           workflowtypes.LLMConfigModeExplicit,
+				BuilderLLM:     builder,
+				MaintenanceLLM: builder,
+				PulseLLM:       builder,
+				TieredConfig:   &workflowtypes.TieredLLMConfig{Tier1: builder, Tier2: builder, Tier3: builder},
 			},
 		},
 	}
@@ -1736,8 +1750,9 @@ func TestResolveChiefOfStaffLLMForScheduleUsesExplicitOverride(t *testing.T) {
 		SourceType: "multi-agent",
 		Capabilities: WorkflowCapabilities{
 			LLMConfig: &workflowtypes.PresetLLMConfig{
-				Provider: "claude-code",
-				ModelID:  "claude-code",
+				SchemaVersion: workflowtypes.LLMConfigSchemaVersion,
+				Mode:          workflowtypes.LLMConfigModeProviderProfile,
+				Provider:      "claude-code",
 				ChiefOfStaffLLM: &workflowtypes.AgentLLMConfig{
 					Provider: "codex-cli",
 					ModelID:  "gpt-5.5",
@@ -1764,9 +1779,9 @@ func TestResolveChiefOfStaffLLMForScheduleUsesCodingAgentDefault(t *testing.T) {
 		SourceType: "multi-agent",
 		Capabilities: WorkflowCapabilities{
 			LLMConfig: &workflowtypes.PresetLLMConfig{
-				Provider:          "claude-code",
-				ModelID:           "claude-code",
-				LLMAllocationMode: workflowtypes.LLMAllocationModeCodingAgent,
+				SchemaVersion: workflowtypes.LLMConfigSchemaVersion,
+				Mode:          workflowtypes.LLMConfigModeProviderProfile,
+				Provider:      "claude-code",
 			},
 		},
 	}
@@ -1943,6 +1958,7 @@ func TestMaybeResumeLatestMultiAgentThreadIgnoresNormalUserChat(t *testing.T) {
 
 func resumeTestScheduleContext(workspacePath, scheduleID string) *ScheduleContext {
 	resumePrevious := true
+	builder := &workflowtypes.AgentLLMConfig{Provider: "claude-code", ModelID: "claude-opus-4-6"}
 	return &ScheduleContext{
 		WorkspacePath: workspacePath,
 		UserID:        "default",
@@ -1952,8 +1968,12 @@ func resumeTestScheduleContext(workspacePath, scheduleID string) *ScheduleContex
 		},
 		Capabilities: WorkflowCapabilities{
 			LLMConfig: &workflowtypes.PresetLLMConfig{
-				Provider: "claude-code",
-				ModelID:  "claude-opus-4-6",
+				SchemaVersion:  workflowtypes.LLMConfigSchemaVersion,
+				Mode:           workflowtypes.LLMConfigModeExplicit,
+				BuilderLLM:     builder,
+				MaintenanceLLM: builder,
+				PulseLLM:       builder,
+				TieredConfig:   &workflowtypes.TieredLLMConfig{Tier1: builder, Tier2: builder, Tier3: builder},
 			},
 		},
 	}
@@ -1961,6 +1981,7 @@ func resumeTestScheduleContext(workspacePath, scheduleID string) *ScheduleContex
 
 func resumeTestMultiAgentScheduleContext(userID, scheduleID string) *ScheduleContext {
 	resumePrevious := true
+	builder := &workflowtypes.AgentLLMConfig{Provider: "claude-code", ModelID: "claude-opus-4-6"}
 	return &ScheduleContext{
 		UserID:     userID,
 		SourceType: "multi-agent",
@@ -1970,8 +1991,12 @@ func resumeTestMultiAgentScheduleContext(userID, scheduleID string) *ScheduleCon
 		},
 		Capabilities: WorkflowCapabilities{
 			LLMConfig: &workflowtypes.PresetLLMConfig{
-				Provider: "claude-code",
-				ModelID:  "claude-opus-4-6",
+				SchemaVersion:  workflowtypes.LLMConfigSchemaVersion,
+				Mode:           workflowtypes.LLMConfigModeExplicit,
+				BuilderLLM:     builder,
+				MaintenanceLLM: builder,
+				PulseLLM:       builder,
+				TieredConfig:   &workflowtypes.TieredLLMConfig{Tier1: builder, Tier2: builder, Tier3: builder},
 			},
 		},
 	}

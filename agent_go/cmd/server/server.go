@@ -819,7 +819,7 @@ func presetPrimaryLLMForChat(preset *workflowtypes.PresetLLMConfig) *workflowtyp
 		return nil
 	}
 	for _, candidate := range []*workflowtypes.AgentLLMConfig{
-		preset.PhaseLLM,
+		preset.BuilderLLM,
 	} {
 		if candidate != nil && strings.TrimSpace(candidate.Provider) != "" && strings.TrimSpace(candidate.ModelID) != "" {
 			return candidate
@@ -836,11 +836,8 @@ func presetPrimaryLLMForChat(preset *workflowtypes.PresetLLMConfig) *workflowtyp
 			}
 		}
 	}
-	if strings.TrimSpace(preset.Provider) != "" && strings.TrimSpace(preset.ModelID) != "" {
-		return &workflowtypes.AgentLLMConfig{
-			Provider: preset.Provider,
-			ModelID:  preset.ModelID,
-		}
+	if builder, _, ok := workflowtypes.ResolveProviderProfileConfig(preset); ok {
+		return builder
 	}
 	return nil
 }
@@ -2445,7 +2442,13 @@ func requestLogPath(r *http.Request) string {
 	if r.URL.RawQuery == "" {
 		return r.URL.Path
 	}
-	return r.URL.Path + "?" + r.URL.RawQuery
+	query := r.URL.Query()
+	for _, key := range []string{"token", "access_token", "auth_token"} {
+		if query.Has(key) {
+			query.Set(key, "[REDACTED]")
+		}
+	}
+	return r.URL.Path + "?" + query.Encode()
 }
 
 // Query endpoint - handles POST requests to start agent streaming.
@@ -3470,9 +3473,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					if existingMeta, err := readRunMetadata(workflowCtx, metaPath); err == nil && existingMeta != nil {
 						models := &RunMetadataModels{}
 						if presetLLMConfig != nil {
-							models.AllocationMode = presetLLMConfig.LLMAllocationMode
-							if presetLLMConfig.PhaseLLM != nil {
-								models.PhaseLLM = &RunMetadataLLM{Provider: presetLLMConfig.PhaseLLM.Provider, ModelID: presetLLMConfig.PhaseLLM.ModelID}
+							models.AllocationMode = presetLLMConfig.Mode
+							if presetLLMConfig.BuilderLLM != nil {
+								models.BuilderLLM = &RunMetadataLLM{Provider: presetLLMConfig.BuilderLLM.Provider, ModelID: presetLLMConfig.BuilderLLM.ModelID}
 							}
 							if presetLLMConfig.TieredConfig != nil {
 								if presetLLMConfig.TieredConfig.Tier1 != nil {
@@ -3831,10 +3834,21 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// only when the request did not choose a primary chat model. The chat UI's provider
 		// selector must win over saved/env tier defaults; delegated sub-agents still resolve tiers
 		// at spawn time in executeDelegatedTask.
+		var resolvedPrimaryOptions map[string]interface{}
+		if req.LLMConfig != nil {
+			resolvedPrimaryOptions = req.LLMConfig.Primary.Options
+		}
 		if !isWorkflowPhase {
 			var appliedTier bool
 			finalProvider, finalModelID, fallbacks, appliedTier = applyTopLevelTierModelIfNoExplicitLLM(streamCtx, req, finalProvider, finalModelID, fallbacks)
 			if appliedTier {
+				if tierConfig := LoadAndResolveTierConfig(streamCtx, req.DelegationTierConfig); tierConfig != nil {
+					if tierConfig.Main != nil {
+						resolvedPrimaryOptions = tierConfig.Main.Options
+					} else if tierConfig.High != nil {
+						resolvedPrimaryOptions = tierConfig.High.Options
+					}
+				}
 				log.Printf("[DELEGATION] Orchestrator using tier model: %s/%s", finalProvider, finalModelID)
 			}
 		}
@@ -3866,6 +3880,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			ConfigPath:         api.mcpConfigPath,
 			Provider:           llm.Provider(finalProvider),
 			ModelID:            finalModelID,
+			Options:            resolvedPrimaryOptions,
 			Temperature:        req.Temperature,
 			MaxTurns:           req.MaxTurns,
 			ToolChoice:         "auto",
@@ -6342,6 +6357,7 @@ func sanitizeTierModel(model *virtualtools.TierModel) *virtualtools.TierModel {
 	sanitized := &virtualtools.TierModel{
 		Provider:  strings.TrimSpace(model.Provider),
 		ModelID:   strings.TrimSpace(model.ModelID),
+		Options:   model.Options,
 		Fallbacks: nil,
 	}
 	if len(model.Fallbacks) > 0 {
@@ -6353,6 +6369,7 @@ func sanitizeTierModel(model *virtualtools.TierModel) *virtualtools.TierModel {
 			sanitized.Fallbacks = append(sanitized.Fallbacks, virtualtools.TierModelFallback{
 				Provider: strings.TrimSpace(fb.Provider),
 				ModelID:  modelID,
+				Options:  fb.Options,
 			})
 		}
 		if len(sanitized.Fallbacks) == 0 {
@@ -6379,6 +6396,7 @@ func convertTierFallbacksToAgentFallbacks(fallbacks []virtualtools.TierModelFall
 		out = append(out, agent.FallbackModel{
 			Provider: provider,
 			ModelID:  modelID,
+			Options:  fb.Options,
 		})
 	}
 	if len(out) == 0 {
@@ -6418,7 +6436,29 @@ func applyTopLevelTierModelIfNoExplicitLLM(ctx context.Context, req QueryRequest
 // 2. Environment variables (DELEGATION_TIER_*) - fallback
 // Returns nil if no tier config is available at all
 func resolveDelegationTierConfig(frontendConfig *virtualtools.DelegationTierConfig) *virtualtools.DelegationTierConfig {
-	result := &virtualtools.DelegationTierConfig{}
+	if frontendConfig != nil && frontendConfig.Mode == "provider_profile" && strings.TrimSpace(frontendConfig.Provider) != "" {
+		defaults, ok := llmproviders.GetCodingAgentDefaultTierModels(llmproviders.Provider(strings.TrimSpace(frontendConfig.Provider)))
+		if ok {
+			toTierModel := func(ref llmproviders.CodingAgentTierModelRef) *virtualtools.TierModel {
+				if strings.TrimSpace(ref.Provider) == "" || strings.TrimSpace(ref.ModelID) == "" {
+					return nil
+				}
+				return &virtualtools.TierModel{Provider: ref.Provider, ModelID: ref.ModelID, Options: ref.Options}
+			}
+			return &virtualtools.DelegationTierConfig{
+				SchemaVersion: delegationTierConfigSchemaVersion,
+				Mode:          "provider_profile",
+				Provider:      strings.TrimSpace(frontendConfig.Provider),
+				Main:          toTierModel(defaults.Builder),
+				ChiefOfStaff:  toTierModel(defaults.ChiefOfStaff),
+				High:          toTierModel(defaults.High),
+				Medium:        toTierModel(defaults.Medium),
+				Low:           toTierModel(defaults.Low),
+			}
+		}
+	}
+
+	result := &virtualtools.DelegationTierConfig{SchemaVersion: delegationTierConfigSchemaVersion, Mode: "explicit"}
 	hasAny := false
 
 	// Start with env var defaults
@@ -7372,8 +7412,8 @@ func (api *StreamingAPI) buildWorkshopConfig(
 			log.Printf("[WORKSHOP] LLMConfig from manifest: isNil=%v", caps.LLMConfig == nil)
 			if caps.LLMConfig != nil {
 				llmCfg := caps.LLMConfig
-				log.Printf("[WORKSHOP] LLMConfig details: allocationMode=%q tieredConfig=%v provider=%q modelID=%q",
-					llmCfg.LLMAllocationMode, llmCfg.TieredConfig != nil, llmCfg.Provider, llmCfg.ModelID)
+				log.Printf("[WORKSHOP] LLMConfig details: mode=%q tieredConfig=%v providerProfile=%q",
+					llmCfg.Mode, llmCfg.TieredConfig != nil, llmCfg.Provider)
 				cfg.PresetPhaseLLM, cfg.TieredConfig = workshopResolveLLMConfig(llmCfg)
 				cfg.PresetMaintenanceLLM = workshopResolveMaintenanceLLMConfig(llmCfg)
 
@@ -8889,27 +8929,6 @@ func collectQueryToolCallSummaries(api *StreamingAPI, mainSessID, correlationID,
 	return summaries
 }
 
-// workshopExtractLLM extracts an AgentLLMConfig from preset config, with legacy fallback.
-// Returns nil if neither specific nor legacy values are set.
-func workshopExtractLLM(specific *workflowtypes.AgentLLMConfig, legacyProvider, legacyModelID string) *todo_creation_human.AgentLLMConfig {
-	if specific != nil && specific.Provider != "" && specific.ModelID != "" {
-		return &todo_creation_human.AgentLLMConfig{
-			PublishedLLMID: specific.PublishedLLMID,
-			Provider:       specific.Provider,
-			ModelID:        specific.ModelID,
-			Options:        specific.Options,
-			Fallbacks:      workshopConvertFallbacks(specific.Fallbacks),
-		}
-	}
-	if legacyProvider != "" && legacyModelID != "" {
-		return &todo_creation_human.AgentLLMConfig{
-			Provider: legacyProvider,
-			ModelID:  legacyModelID,
-		}
-	}
-	return nil
-}
-
 func workshopConvertAgentLLMConfig(config *workflowtypes.AgentLLMConfig) *todo_creation_human.AgentLLMConfig {
 	if config == nil {
 		return nil
@@ -8946,27 +8965,27 @@ func workshopResolveLLMConfig(config *workflowtypes.PresetLLMConfig) (*todo_crea
 	if config == nil {
 		return nil, nil
 	}
-	if phase, tiered, ok := workflowtypes.ResolveCodingAgentConfig(config); ok {
-		return workshopConvertAgentLLMConfig(phase), workshopConvertTieredLLMConfig(tiered)
+	if builder, tiered, ok := workflowtypes.ResolveProviderProfileConfig(config); ok {
+		return workshopConvertAgentLLMConfig(builder), workshopConvertTieredLLMConfig(tiered)
 	}
 
-	phase := workshopExtractLLM(config.PhaseLLM, config.Provider, config.ModelID)
+	builder := workshopConvertAgentLLMConfig(config.BuilderLLM)
 	var tiered *todo_creation_human.TieredLLMConfig
-	if config.LLMAllocationMode == workflowtypes.LLMAllocationModeTiered && config.TieredConfig != nil {
+	if config.Mode == workflowtypes.LLMConfigModeExplicit && config.TieredConfig != nil {
 		tiered = workshopConvertTieredLLMConfig(config.TieredConfig)
 	}
-	return phase, tiered
+	return builder, tiered
 }
 
 func workshopResolveMaintenanceLLMConfig(config *workflowtypes.PresetLLMConfig) *todo_creation_human.AgentLLMConfig {
 	if config == nil {
 		return nil
 	}
-	if resolved, ok := workflowtypes.ResolveCodingAgentAutoImproveConfig(config); ok {
+	if resolved, ok := workflowtypes.ResolveProviderProfileMaintenanceConfig(config); ok {
 		return workshopConvertAgentLLMConfig(resolved)
 	}
-	if config.AutoImproveLLM != nil && config.AutoImproveLLM.Provider != "" && config.AutoImproveLLM.ModelID != "" {
-		return workshopConvertAgentLLMConfig(config.AutoImproveLLM)
+	if config.MaintenanceLLM != nil && config.MaintenanceLLM.Provider != "" && config.MaintenanceLLM.ModelID != "" {
+		return workshopConvertAgentLLMConfig(config.MaintenanceLLM)
 	}
 	return nil
 }

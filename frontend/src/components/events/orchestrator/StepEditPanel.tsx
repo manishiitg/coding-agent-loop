@@ -306,16 +306,10 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     }
     let config: AgentLLMConfig | undefined;
     if (agentType === 'execution') {
-      config = presetLLMConfig.provider && presetLLMConfig.model_id ? {
-        provider: presetLLMConfig.provider,
-        model_id: presetLLMConfig.model_id
-      } : undefined;
+      config = presetLLMConfig.tiered_config?.tier_1 || presetLLMConfig.builder_llm;
     } else if (agentType === 'conditional') {
       // Conditional LLM uses the same default as the workflow preset default.
-      config = presetLLMConfig.provider && presetLLMConfig.model_id ? {
-        provider: presetLLMConfig.provider,
-        model_id: presetLLMConfig.model_id
-      } : undefined;
+      config = presetLLMConfig.builder_llm || presetLLMConfig.tiered_config?.tier_1;
     }
     if (config) {
       return llmConfigToOption(config);
@@ -1221,7 +1215,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
 	                  </select>
 	                </div>
 	              </div>
-	              {presetLLMConfig?.llm_allocation_mode === 'tiered' && (
+	              {presetLLMConfig?.mode === 'explicit' && (
 	                <div>
 	                  <label className="text-xs text-gray-600 dark:text-gray-400">Execution Tier</label>
 	                  <p className="text-[10px] text-gray-500 dark:text-gray-500 mb-1">
@@ -1254,7 +1248,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
 	            </div>
 
             {/* Todo Task Tier Controls (only in tiered mode for todo_task steps) */}
-            {isTodoTask && presetLLMConfig?.llm_allocation_mode === 'tiered' && (
+            {isTodoTask && presetLLMConfig?.mode === 'explicit' && (
               <>
                 <div className="border-t border-gray-200 dark:border-gray-700"></div>
                 <div className="space-y-3">

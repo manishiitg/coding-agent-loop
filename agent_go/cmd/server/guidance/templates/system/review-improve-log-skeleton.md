@@ -88,7 +88,7 @@ Use this document only when creating a new `builder/improve.html` or doing the r
   .tile.goal{border-color:color-mix(in srgb,var(--goal) 24%,var(--line-2));background:linear-gradient(180deg,color-mix(in srgb,var(--goal-bg) 42%,var(--surface)),var(--surface))}
   .tile.cost{border-color:color-mix(in srgb,var(--amber) 24%,var(--line-2));background:linear-gradient(180deg,color-mix(in srgb,var(--amber-bg) 38%,var(--surface)),var(--surface))}
   .tile .k{font:600 10.5px/1 var(--mono);letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3)}
-  .tile .v{font-size:25px;font-weight:680;letter-spacing:-.02em;margin-top:10px;line-height:1} .tile .d{font:540 12px/1.3 var(--sans);margin-top:7px;color:var(--ink-2)}
+  .tile .v{font-size:25px;font-weight:680;letter-spacing:-.02em;margin-top:10px;line-height:1} .tile .d{font:540 12px/1.3 var(--sans);margin-top:7px;color:var(--ink-2)} .tile .asof{font:540 10.5px/1.35 var(--mono);margin-top:8px;color:var(--ink-3)}
   .up{color:var(--ok)} .down{color:var(--bad)} .flat{color:var(--warn)}
   .runs{border:1px solid var(--line-2);border-radius:12px;overflow:hidden;background:var(--surface);box-shadow:var(--shadow)}
   .run{display:grid;grid-template-columns:1fr;gap:7px 10px;align-items:start;padding:12px 14px;border-top:1px solid var(--line);font:540 12px/1.35 var(--mono);color:var(--ink-2)}
@@ -145,20 +145,25 @@ Use this document only when creating a new `builder/improve.html` or doing the r
 
   <div class="top">
     <div><div class="eyebrow">workflow · pulse</div><h1><!-- WORKFLOW NAME --></h1></div>
-    <!-- TWO VERDICTS. Bug: did it run right (ok|warn|bad). Goal: is it hitting success criteria (ok|warn|bad). -->
     <div class="verdicts">
-      <!-- Each pill carries the run it's as-of so a stale verdict can't read as current truth. -->
-      <div class="pill ok"><span class="lbl">Bug</span><span class="dot"></span>Bug-free<span class="as">run #—</span></div>
-      <div class="pill warn"><span class="lbl">Goal</span><span class="dot"></span>Not yet measured</div>
+      <div id="pulse-bug-verdict" class="pill warn"><span class="lbl">Bug</span><span class="dot"></span>Not measured<span class="as">no run yet</span></div>
+      <div id="pulse-goal-verdict" class="pill warn"><span class="lbl">Goal</span><span class="dot"></span>Not measured<span class="as">no run yet</span></div>
     </div>
   </div>
 
-  <!-- STATUS HEADLINE — the 1-second read. ONE plain sentence, the workflow's verdict headline (the
-       source of truth — there is no separate file). Class ok|warn|bad tracks the worse of the two verdicts.
-       On a clean, on-target run say so plainly; don't manufacture concern. -->
+  <!-- VERDICTS — Gate updates these two stable elements in place on every Pulse.
+       Bug: Clean | Warning | Broken. Goal: On target | Short | At risk | Not measured.
+       Keep the .as freshness text visible as "run/date" or "not measured this run · last measured run/date".
+       Use pill class ok|warn|bad. Never add a second verdict block elsewhere on the first screen. -->
+
+  <!-- STATUS HEADLINE — the 1-second read. ONE compact plain-language sentence.
+       Do not duplicate the full Bug/Goal verdict or latest run narrative here;
+       detailed evidence belongs in Recent runs and timeline entries. Class ok|warn|bad
+       tracks the current overall state. On a clean, on-target run say so plainly;
+       don't manufacture concern. -->
   <div class="status ok">
     <span class="ic"></span>
-    <span class="txt"><!-- e.g. Healthy and on-target. --></span>
+    <span class="txt"><!-- e.g. Healthy and on-target. Latest clean run delivered; main open risk is exit geometry. --></span>
     <span class="when"><!-- run #— · — ago --></span>
   </div>
 
@@ -168,7 +173,9 @@ Use this document only when creating a new `builder/improve.html` or doing the r
     <span class="chip">Last run <b>—</b></span>
   </div>
 
-  <!-- WHAT MATTERS NOW — 2-4 short operator-summary cells. Keep this brief; details belong in Recent runs/timeline. -->
+  <!-- WHAT MATTERS NOW — 2-4 short operator-summary cells. Keep this brief; details belong in Recent runs/timeline.
+       The heading says which run/date this summary reflects. If a cell carries an older metric, end its sentence with
+       "not measured this run · last measured run/date" instead of making the older value look current. -->
   <div class="brief">
     <div class="brief-h">What matters now <b><!-- as of run #— --></b></div>
     <div class="briefgrid">
@@ -191,19 +198,21 @@ Use this document only when creating a new `builder/improve.html` or doing the r
   </div>
 
   <!-- SIGNAL TILES grouped by verdict. Read every number from eval reports,
-       run outputs/logs, costs/, and timing summaries. Never invent. -->
+       run outputs/logs, costs/, and timing summaries. Never invent. Every important tile needs a visible .asof line.
+       When the latest route did not measure the signal, retain the last trustworthy value and write:
+       <div class="asof">not measured this run · last measured run #— · YYYY-MM-DD</div> -->
   <div class="grouplbl">Bug · operational health</div>
   <div class="tiles">
-    <div class="tile ok"><div class="k">Run status</div><div class="v">—</div><div class="d">no runs yet</div></div>
+    <div class="tile ok"><div class="k">Run status</div><div class="v">—</div><div class="d">no runs yet</div><div class="asof">as of run — · YYYY-MM-DD</div></div>
   </div>
   <div class="grouplbl">Goal · success criteria</div>
   <div class="tiles">
-    <div class="tile goal"><div class="k">Goal signal</div><div class="v">—</div><div class="d">no runs yet</div></div>
+    <div class="tile goal"><div class="k">Goal signal</div><div class="v">—</div><div class="d">no runs yet</div><div class="asof">last measured run — · YYYY-MM-DD</div></div>
   </div>
   <div class="grouplbl">Cost + time · latest run</div>
   <div class="tiles">
-    <div class="tile cost"><div class="k">Cost</div><div class="v">—</div><div class="d">missing cost evidence</div></div>
-    <div class="tile info"><div class="k">Time</div><div class="v">—</div><div class="d">missing timing evidence</div></div>
+    <div class="tile cost"><div class="k">Cost</div><div class="v">—</div><div class="d">missing cost evidence</div><div class="asof">as of run — · YYYY-MM-DD</div></div>
+    <div class="tile info"><div class="k">Time</div><div class="v">—</div><div class="d">missing timing evidence</div><div class="asof">as of run — · YYYY-MM-DD</div></div>
     <!-- Keep this section compact. Good tile examples:
          Cost: "$0.27" / "1.2M tokens · top: score-companies $0.18"
          Time: "4m12s" / "LLM 2m08s · tools 51s · slowest: browser-agent 1m22s"
@@ -267,7 +276,9 @@ Use this document only when creating a new `builder/improve.html` or doing the r
        <p class="outcome flat">Inconclusive — run #44 didn't exercise the changed path; still pending. -->
 
   <div class="seclabel">Archive</div>
-  <div class="archive"><!-- one .arow per monthly archive file once you start rolling entries off --></div>
+  <div class="archive"><!-- one link per monthly archive file once history rolls off:
+    <a class="arow" href="improve-archive/YYYY-MM.html"><b>YYYY-MM</b><span class="n">date range · N items</span></a>
+    Keep one row per month; the Runloop Pulse viewer opens these links through the workspace archive endpoint. --></div>
 
   <footer>generated by the workflow agent · newest first · bug + goal verdicts · maintenance radar · archived monthly</footer>
 

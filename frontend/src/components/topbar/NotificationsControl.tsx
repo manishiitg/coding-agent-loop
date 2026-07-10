@@ -44,7 +44,7 @@ export default function NotificationsControl() {
 
     if (Notification.permission === 'granted') {
       new Notification('Test Notification', {
-        body: 'This is a test notification from Runloop',
+        body: 'This is a test notification from AgentWorks',
         icon: '/logo.svg'
       })
     } else if (Notification.permission === 'default') {
@@ -52,7 +52,7 @@ export default function NotificationsControl() {
         setOsPermission(permission)
         if (permission === 'granted') {
           new Notification('Test Notification', {
-            body: 'This is a test notification from Runloop',
+            body: 'This is a test notification from AgentWorks',
             icon: '/logo.svg'
           })
         }
@@ -62,7 +62,7 @@ export default function NotificationsControl() {
 
   const handleNotificationClick = () => {
     if (osPermission === 'denied') {
-      alert('Notifications are blocked by your system settings. Please enable them in System Settings > Notifications > Runloop.')
+      alert('Notifications are blocked by your system settings. Please enable them in System Settings > Notifications > AgentWorks.')
       return
     }
 

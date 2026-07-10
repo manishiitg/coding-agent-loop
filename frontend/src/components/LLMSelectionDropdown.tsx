@@ -48,7 +48,7 @@ const SECTION_INFO: Record<NonNullable<LLMOption['section']>, {
     icon: Terminal,
   },
   published_model: {
-    label: 'Published Models',
+    label: 'Saved Models',
     toneClass: 'text-blue-700 dark:text-blue-300',
     icon: KeyRound,
   },

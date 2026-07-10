@@ -10,6 +10,7 @@ import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { normalizeEventViewMode, useChatStore } from '../stores/useChatStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { TERMINAL_REFRESH_REQUEST_EVENT } from '../utils/terminalRefresh'
+import { terminalReconnectDelayMs, terminalSnapshotCanReconnect } from '../utils/terminalReconnect'
 import { useTheme } from '../hooks/useTheme'
 import type { Theme } from '../contexts/ThemeContext'
 import { normalizeAnsiForEmbeddedXterm } from '../utils/ansiSanitize'
@@ -109,6 +110,8 @@ const TERMINAL_FAST_POLL_INTERVAL_MS = 750
 const TERMINAL_FAST_POLL_DURATION_MS = 5000
 const LIVE_ATTACH_RESEED_DEBOUNCE_MS = 150
 const LIVE_ATTACH_RESEED_MIN_INTERVAL_MS = 2500
+const LIVE_ATTACH_SEED_TIMEOUT_MS = 5000
+const LIVE_ATTACH_SNAPSHOT_LINES = 200
 
 type TerminalColorScheme = 'neon' | 'mono' | 'homebrew' | 'catppuccin' | 'nord' | 'gruvbox' | 'solarized' | 'tokyo'
 type TerminalDebugKey = 'enter' | 'esc' | 'ctrl-c' | 'ctrl-o' | 'tab' | 'up' | 'down'
@@ -1848,6 +1851,7 @@ const LiveAttachXtermPaneInner: React.FC<{
   onScrollToBottomReady?: (handler: (() => void) | null) => void
   onOutputText?: (text: string) => void
 }> = ({ terminalId, tmuxSession, sessionId, className, contentRef, xtermTheme, authoritativeContent, authoritativeVersion, reconnectOnClose, onViewportStickChange, onScrollToBottomReady, onOutputText }) => {
+  const [connectionState, setConnectionState] = useState<'connecting' | 'connected' | 'reconnecting' | 'snapshot' | 'settled'>('connecting')
   const mountRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<XTerm | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
@@ -1927,18 +1931,91 @@ const LiveAttachXtermPaneInner: React.FC<{
     let closed = false
     let reconnectTimer: number | undefined
     let hasConnected = false
+    let failedAttempts = 0
+    let snapshotInFlight = false
+    let seedTimer: number | undefined
+
+    const clearSeedTimer = () => {
+      if (seedTimer !== undefined) {
+        window.clearTimeout(seedTimer)
+        seedTimer = undefined
+      }
+    }
+
+    const showDisconnectedSnapshot = async (): Promise<boolean> => {
+      if (closed || snapshotInFlight) return reconnectOnCloseRef.current
+      snapshotInFlight = true
+      try {
+        const snapshot = await agentApi.getTerminal(terminalId, {
+          content: 'screen',
+          lines: LIVE_ATTACH_SNAPSHOT_LINES,
+          debugSource: 'live-attach-reconnect',
+        })
+        if (closed) return false
+
+        const canReconnect = terminalSnapshotCanReconnect(snapshot)
+        const snapshotContent = snapshot.content || ''
+        if (snapshotContent.trim()) {
+          clearXtermSelection(term)
+          term.write(buildVisibleScreenReseed(snapshotContent), () => {
+            term.scrollToBottom()
+            onViewportStickChangeRef.current?.(true)
+          })
+          onOutputTextRef.current?.(snapshotContent)
+          setConnectionState(canReconnect ? 'snapshot' : 'settled')
+        } else {
+          setConnectionState(canReconnect ? 'reconnecting' : 'settled')
+        }
+        return canReconnect
+      } catch {
+        if (!closed) setConnectionState('reconnecting')
+        return reconnectOnCloseRef.current
+      } finally {
+        snapshotInFlight = false
+      }
+    }
+
+    const scheduleReconnect = () => {
+      if (closed || !reconnectOnCloseRef.current) {
+        if (!closed) setConnectionState('settled')
+        return
+      }
+      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer)
+      const delay = terminalReconnectDelayMs(failedAttempts)
+      failedAttempts += 1
+      reconnectTimer = window.setTimeout(connect, delay)
+    }
+
+    const recoverAfterDisconnect = async () => {
+      if (closed || !reconnectOnCloseRef.current) return
+      setConnectionState('reconnecting')
+      const canReconnect = await showDisconnectedSnapshot()
+      if (canReconnect) scheduleReconnect()
+    }
+
     const connect = () => {
       if (closed) return
+      reconnectTimer = undefined
+      if (!reconnectOnCloseRef.current && hasConnected) {
+        setConnectionState('settled')
+        return
+      }
       if (!hasUsableGrid()) {
         // The pane can be transiently hidden/collapsed when a reconnect fires.
         // Retry instead of bailing: returning here used to strand the stream
         // permanently (hasConnected stayed true, so nothing called connect again).
-        reconnectTimer = window.setTimeout(connect, 500)
+        reconnectTimer = window.setTimeout(connect, terminalReconnectDelayMs(failedAttempts))
         return
       }
       hasConnected = true
       const url = agentApi.getTerminalStreamUrl(terminalId, term.cols, term.rows, tmuxSession, sessionId)
-      const ws = new WebSocket(url)
+      let ws: WebSocket
+      try {
+        ws = new WebSocket(url)
+      } catch {
+        void recoverAfterDisconnect()
+        return
+      }
       ws.binaryType = 'arraybuffer'
       wsRef.current = ws
       // Per-connection decoder: a partial multibyte sequence from a dropped
@@ -1954,11 +2031,18 @@ const LiveAttachXtermPaneInner: React.FC<{
       ws.onopen = () => {
         // Correct the backend's seed geometry to the real fitted grid immediately.
         sendResize()
+        clearSeedTimer()
+        seedTimer = window.setTimeout(() => {
+          if (wsRef.current === ws && seedPending) ws.close()
+        }, LIVE_ATTACH_SEED_TIMEOUT_MS)
       }
       ws.onmessage = ev => {
         const data = ev.data
         if (seedPending) {
           seedPending = false
+          clearSeedTimer()
+          failedAttempts = 0
+          setConnectionState('connected')
           const text = data instanceof ArrayBuffer
             ? decoder.decode(new Uint8Array(data))
             : String(data)
@@ -1979,10 +2063,11 @@ const LiveAttachXtermPaneInner: React.FC<{
         }
       }
       ws.onclose = () => {
+        clearSeedTimer()
         if (wsRef.current === ws) wsRef.current = null
         if (closed) return
         if (!reconnectOnCloseRef.current) return
-        reconnectTimer = window.setTimeout(connect, 1000)
+        void recoverAfterDisconnect()
       }
       ws.onerror = () => {
         try {
@@ -2024,6 +2109,7 @@ const LiveAttachXtermPaneInner: React.FC<{
       resizeObserver.disconnect()
       if (fitTimer !== undefined) window.clearTimeout(fitTimer)
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer)
+      clearSeedTimer()
       const ws = wsRef.current
       wsRef.current = null
       if (ws) {
@@ -2102,9 +2188,20 @@ const LiveAttachXtermPaneInner: React.FC<{
   return (
     <div
       ref={contentRef}
-      className={className}
+      className={`relative ${className || ''}`}
       style={{ backgroundColor: xtermTheme.background }}
     >
+      {connectionState !== 'connected' && (
+        <div className="pointer-events-none absolute right-2 top-2 z-10 inline-flex items-center gap-1.5 rounded border border-neutral-700/80 bg-neutral-950/90 px-2 py-1 font-mono text-[10px] text-neutral-300 shadow-sm">
+          {(connectionState === 'connecting' || connectionState === 'reconnecting') && <RefreshCw className="h-3 w-3 animate-spin" />}
+          <span>
+            {connectionState === 'connecting' && 'Connecting terminal...'}
+            {connectionState === 'reconnecting' && 'Reconnecting terminal...'}
+            {connectionState === 'snapshot' && 'Showing latest snapshot · reconnecting'}
+            {connectionState === 'settled' && 'Terminal session ended'}
+          </span>
+        </div>
+      )}
       <div
         ref={mountRef}
         className="runloop-raw-xterm h-full w-full p-1.5 [&_.xterm]:h-full"

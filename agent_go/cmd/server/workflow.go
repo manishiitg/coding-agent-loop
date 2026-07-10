@@ -668,9 +668,9 @@ type RunMetadataLLM struct {
 
 // RunMetadataModels captures the LLM configuration used for the run
 type RunMetadataModels struct {
-	AllocationMode string          `json:"allocation_mode,omitempty"` // "manual" or "tiered"
+	AllocationMode string          `json:"allocation_mode,omitempty"`
 	ExecutionLLM   *RunMetadataLLM `json:"execution_llm,omitempty"`
-	PhaseLLM       *RunMetadataLLM `json:"phase_llm,omitempty"`
+	BuilderLLM     *RunMetadataLLM `json:"builder_llm,omitempty"`
 	Tier1          *RunMetadataLLM `json:"tier_1,omitempty"`
 	Tier2          *RunMetadataLLM `json:"tier_2,omitempty"`
 	Tier3          *RunMetadataLLM `json:"tier_3,omitempty"`

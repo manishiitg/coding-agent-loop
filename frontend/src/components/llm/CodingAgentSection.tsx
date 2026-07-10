@@ -410,7 +410,7 @@ export function CodingAgentSection({ provider, onPublished }: CodingAgentSection
               </div>
             </div>
             <p className="text-xs leading-relaxed text-muted-foreground">
-              {piAuthSpec.help} Test Connection and Publish both save this key encrypted for runtime, then export it to Pi as {piAuthSpec.envNames.join(' / ')}.
+              {piAuthSpec.help} Testing or saving this configuration stores the key encrypted for runtime, then exports it to Pi as {piAuthSpec.envNames.join(' / ')}.
             </p>
             {piAuthStatus === 'saved' && (
               <div className="flex items-start gap-2 text-sm text-green-600 dark:text-green-400">
@@ -488,21 +488,21 @@ export function CodingAgentSection({ provider, onPublished }: CodingAgentSection
         </div>
       </Card>
 
-      {/* Publish to library */}
+      {/* Save reusable configuration */}
       <Card className="p-4">
-        <h4 className="font-medium text-foreground mb-3">Publish to Library</h4>
+        <h4 className="font-medium text-foreground mb-3">Save Configuration</h4>
 
         {alreadyPublished && !isPublishing && (
           <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400 mb-3">
             <CheckCircle className="w-4 h-4" />
-            {provider.display_name} is already published in your library.
+            This provider and model combination is already saved.
           </div>
         )}
 
         {publishStatus === 'success' && !isPublishing && (
           <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400 mb-3">
             <CheckCircle className="w-4 h-4" />
-            Published successfully!
+            Configuration saved.
           </div>
         )}
 
@@ -522,7 +522,7 @@ export function CodingAgentSection({ provider, onPublished }: CodingAgentSection
             }}
             size="sm"
           >
-            Publish to Library
+            Save to Library
           </Button>
         ) : (
           <div className="space-y-3">
@@ -544,9 +544,9 @@ export function CodingAgentSection({ provider, onPublished }: CodingAgentSection
                 size="sm"
               >
                 {isSubmitting ? (
-                  <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Publishing...</>
+                  <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Saving...</>
                 ) : (
-                  'Publish'
+                  'Save'
                 )}
               </Button>
               <Button

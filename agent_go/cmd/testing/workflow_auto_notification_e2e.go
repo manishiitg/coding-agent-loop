@@ -162,6 +162,10 @@ func createWorkflowAutoNotificationFixture(workspaceDocs string, keep bool, prov
 
 	noGlobalSecrets := []string{}
 	now := time.Now().UTC().Format(time.RFC3339)
+	fixtureModel := map[string]interface{}{
+		"provider": provider,
+		"model_id": model,
+	}
 	manifest := map[string]interface{}{
 		"schema_version": 1,
 		"id":             "wf_auto_notification_" + shortID,
@@ -176,9 +180,16 @@ func createWorkflowAutoNotificationFixture(workspaceDocs string, keep bool, prov
 			"browser_mode":                 "none",
 			"use_code_execution_mode":      false,
 			"llm_config": map[string]interface{}{
-				"provider":            provider,
-				"model_id":            model,
-				"llm_allocation_mode": "coding_agent",
+				"schema_version":  2,
+				"mode":            "explicit",
+				"builder_llm":     fixtureModel,
+				"maintenance_llm": fixtureModel,
+				"pulse_llm":       fixtureModel,
+				"tiered_config": map[string]interface{}{
+					"tier_1": fixtureModel,
+					"tier_2": fixtureModel,
+					"tier_3": fixtureModel,
+				},
 			},
 		},
 		"execution_defaults": map[string]interface{}{

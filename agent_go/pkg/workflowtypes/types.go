@@ -20,10 +20,9 @@ const (
 )
 
 const (
-	LLMAllocationModeManual           = "manual"
-	LLMAllocationModeTiered           = "tiered"
-	LLMAllocationModeCodingAgent      = "coding_agent"
-	LLMAllocationModeCodingPlanLegacy = "coding_plan"
+	LLMConfigSchemaVersion       = 2
+	LLMConfigModeProviderProfile = "provider_profile"
+	LLMConfigModeExplicit        = "explicit"
 )
 
 // Knowledgebase shape — only one shape supported: notes-only (per-topic
@@ -62,16 +61,17 @@ func ResolveKBShape(s string) string {
 
 // PresetLLMConfig represents LLM configuration stored with workflow presets.
 type PresetLLMConfig struct {
-	// Legacy single-model form (backward compat).
+	SchemaVersion int    `json:"schema_version"`
+	Mode          string `json:"mode"`
+
+	// Provider is stored only in provider_profile mode. The provider package
+	// owns the Builder, execution-tier, Maintenance, Pulse, and Chief of Staff
+	// defaults and can evolve them when the application is updated.
 	Provider string `json:"provider,omitempty"`
-	ModelID  string `json:"model_id,omitempty"`
 
-	// Agent-specific defaults — take priority over the legacy single-model form.
-	PhaseLLM *AgentLLMConfig `json:"phase_llm,omitempty"`
-
-	// Optional Goal Advisor strategy-module override. When omitted,
-	// coding-agent providers may supply a provider-owned Goal Advisor default.
-	AutoImproveLLM *AgentLLMConfig `json:"auto_improve_llm,omitempty"`
+	// Explicit mode pins each workflow role directly.
+	BuilderLLM     *AgentLLMConfig `json:"builder_llm,omitempty"`
+	MaintenanceLLM *AgentLLMConfig `json:"maintenance_llm,omitempty"`
 
 	// Optional Pulse Gate/routine post-run QA override. When omitted,
 	// coding-agent providers may supply a provider-owned Pulse default.
@@ -93,13 +93,14 @@ type PresetLLMConfig struct {
 	ImageGenProvider      string `json:"image_gen_provider,omitempty"`
 	ImageGenModelID       string `json:"image_gen_model_id,omitempty"`
 
-	// Tiered LLM allocation.
-	// Supported values:
-	//   - "manual" (default): use explicitly stored provider/model defaults
-	//   - "tiered": use explicitly stored tiered_config
-	//   - "coding_agent": resolve provider/model_id dynamically through multi-llm-provider-go
-	LLMAllocationMode string           `json:"llm_allocation_mode,omitempty"`
-	TieredConfig      *TieredLLMConfig `json:"tiered_config,omitempty"`
+	TieredConfig *TieredLLMConfig `json:"tiered_config,omitempty"`
+
+	// Migration-only fields. NormalizePresetLLMConfig consumes and clears these
+	// when an older workflow is loaded, so they are never written again.
+	LegacyModelID           string          `json:"model_id,omitempty"`
+	LegacyPhaseLLM          *AgentLLMConfig `json:"phase_llm,omitempty"`
+	LegacyAutoImproveLLM    *AgentLLMConfig `json:"auto_improve_llm,omitempty"`
+	LegacyLLMAllocationMode string          `json:"llm_allocation_mode,omitempty"`
 }
 
 // TieredLLMConfig represents the 3-tier LLM configuration for tiered allocation mode.
@@ -137,14 +138,116 @@ func agentLLMConfigFromCodingAgentRef(ref llmproviders.CodingAgentTierModelRef) 
 	}
 }
 
-func isCodingAgentAllocationMode(mode string) bool {
-	return mode == LLMAllocationModeCodingAgent || mode == LLMAllocationModeCodingPlanLegacy
+// NormalizePresetLLMConfig converts the retired workflow LLM shapes once and
+// returns true when the caller should persist the normalized config.
+func NormalizePresetLLMConfig(config *PresetLLMConfig) bool {
+	if config == nil {
+		return false
+	}
+
+	changed := false
+	legacyMode := config.LegacyLLMAllocationMode
+	if config.Mode == "" {
+		legacyHasOverrides := config.LegacyPhaseLLM != nil || config.LegacyAutoImproveLLM != nil || config.PulseLLM != nil || config.TieredConfig != nil
+		if (legacyMode == "coding_agent" || legacyMode == "coding_plan") && config.Provider != "" && !legacyHasOverrides {
+			config.Mode = LLMConfigModeProviderProfile
+		} else {
+			config.Mode = LLMConfigModeExplicit
+		}
+		changed = true
+	}
+
+	if config.Mode == LLMConfigModeExplicit {
+		var providerDefaults *llmproviders.CodingAgentDefaultTierModels
+		if config.Provider != "" {
+			providerDefaults, _ = llmproviders.GetCodingAgentDefaultTierModels(llmproviders.Provider(config.Provider))
+		}
+		if config.BuilderLLM == nil {
+			switch {
+			case config.LegacyPhaseLLM != nil:
+				config.BuilderLLM = config.LegacyPhaseLLM
+			case config.Provider != "" && config.LegacyModelID != "":
+				config.BuilderLLM = &AgentLLMConfig{Provider: config.Provider, ModelID: config.LegacyModelID}
+			case providerDefaults != nil:
+				config.BuilderLLM = agentLLMConfigFromCodingAgentRef(providerDefaults.Builder)
+			}
+			if config.BuilderLLM != nil {
+				changed = true
+			}
+		}
+		if config.TieredConfig == nil && config.BuilderLLM != nil {
+			if providerDefaults != nil {
+				config.TieredConfig = &TieredLLMConfig{
+					Tier1: agentLLMConfigFromCodingAgentRef(providerDefaults.High),
+					Tier2: agentLLMConfigFromCodingAgentRef(providerDefaults.Medium),
+					Tier3: agentLLMConfigFromCodingAgentRef(providerDefaults.Low),
+				}
+			} else {
+				config.TieredConfig = &TieredLLMConfig{
+					Tier1: config.BuilderLLM,
+					Tier2: config.BuilderLLM,
+					Tier3: config.BuilderLLM,
+				}
+			}
+			changed = true
+		}
+		defaultMaintenance := config.BuilderLLM
+		if config.TieredConfig != nil && config.TieredConfig.Tier1 != nil {
+			defaultMaintenance = config.TieredConfig.Tier1
+		}
+		if config.MaintenanceLLM == nil {
+			if config.LegacyAutoImproveLLM != nil {
+				config.MaintenanceLLM = config.LegacyAutoImproveLLM
+			} else if providerDefaults != nil {
+				config.MaintenanceLLM = agentLLMConfigFromCodingAgentRef(providerDefaults.Maintenance)
+			} else {
+				config.MaintenanceLLM = defaultMaintenance
+			}
+			if config.MaintenanceLLM != nil {
+				changed = true
+			}
+		}
+		if config.PulseLLM == nil && defaultMaintenance != nil {
+			if providerDefaults != nil {
+				config.PulseLLM = agentLLMConfigFromCodingAgentRef(providerDefaults.Pulse)
+			} else {
+				config.PulseLLM = defaultMaintenance
+			}
+			changed = true
+		}
+		if config.Provider != "" {
+			config.Provider = ""
+			changed = true
+		}
+	} else if config.Mode == LLMConfigModeProviderProfile {
+		if config.BuilderLLM != nil || config.MaintenanceLLM != nil || config.PulseLLM != nil || config.ChiefOfStaffLLM != nil || config.TieredConfig != nil {
+			config.BuilderLLM = nil
+			config.MaintenanceLLM = nil
+			config.PulseLLM = nil
+			config.ChiefOfStaffLLM = nil
+			config.TieredConfig = nil
+			changed = true
+		}
+	}
+
+	if config.SchemaVersion != LLMConfigSchemaVersion {
+		config.SchemaVersion = LLMConfigSchemaVersion
+		changed = true
+	}
+	if config.LegacyModelID != "" || config.LegacyPhaseLLM != nil || config.LegacyAutoImproveLLM != nil || config.LegacyLLMAllocationMode != "" {
+		config.LegacyModelID = ""
+		config.LegacyPhaseLLM = nil
+		config.LegacyAutoImproveLLM = nil
+		config.LegacyLLMAllocationMode = ""
+		changed = true
+	}
+	return changed
 }
 
-// ResolveCodingAgentConfig expands a coding-agent preset into current provider
-// package defaults. It intentionally does not persist the resolved models.
-func ResolveCodingAgentConfig(config *PresetLLMConfig) (*AgentLLMConfig, *TieredLLMConfig, bool) {
-	if config == nil || !isCodingAgentAllocationMode(config.LLMAllocationMode) || config.Provider == "" {
+// ResolveProviderProfileConfig expands a provider profile into current package
+// defaults. It intentionally does not persist the resolved models.
+func ResolveProviderProfileConfig(config *PresetLLMConfig) (*AgentLLMConfig, *TieredLLMConfig, bool) {
+	if config == nil || config.Mode != LLMConfigModeProviderProfile || config.Provider == "" {
 		return nil, nil, false
 	}
 
@@ -153,7 +256,7 @@ func ResolveCodingAgentConfig(config *PresetLLMConfig) (*AgentLLMConfig, *Tiered
 		return nil, nil, false
 	}
 
-	phase := agentLLMConfigFromCodingAgentRef(defaults.Phase)
+	builder := agentLLMConfigFromCodingAgentRef(defaults.Builder)
 	tiered := &TieredLLMConfig{
 		Tier1: agentLLMConfigFromCodingAgentRef(defaults.High),
 		Tier2: agentLLMConfigFromCodingAgentRef(defaults.Medium),
@@ -161,12 +264,12 @@ func ResolveCodingAgentConfig(config *PresetLLMConfig) (*AgentLLMConfig, *Tiered
 	}
 
 	if tiered.Tier1 == nil || tiered.Tier2 == nil || tiered.Tier3 == nil {
-		return phase, nil, true
+		return builder, nil, true
 	}
-	return phase, tiered, true
+	return builder, tiered, true
 }
 
-func ResolveCodingAgentAutoImproveConfig(config *PresetLLMConfig) (*AgentLLMConfig, bool) {
+func ResolveProviderProfileMaintenanceConfig(config *PresetLLMConfig) (*AgentLLMConfig, bool) {
 	if config == nil || config.Provider == "" {
 		return nil, false
 	}
@@ -175,17 +278,17 @@ func ResolveCodingAgentAutoImproveConfig(config *PresetLLMConfig) (*AgentLLMConf
 	if !ok {
 		return nil, false
 	}
-	autoImprove := agentLLMConfigFromCodingAgentRef(defaults.AutoImprove)
-	if autoImprove == nil {
-		autoImprove = agentLLMConfigFromCodingAgentRef(defaults.High)
+	maintenance := agentLLMConfigFromCodingAgentRef(defaults.Maintenance)
+	if maintenance == nil {
+		maintenance = agentLLMConfigFromCodingAgentRef(defaults.High)
 	}
-	if autoImprove == nil {
+	if maintenance == nil {
 		return nil, false
 	}
-	return autoImprove, true
+	return maintenance, true
 }
 
-func ResolveCodingAgentPulseConfig(config *PresetLLMConfig) (*AgentLLMConfig, bool) {
+func ResolveProviderProfilePulseConfig(config *PresetLLMConfig) (*AgentLLMConfig, bool) {
 	if config == nil || config.Provider == "" {
 		return nil, false
 	}
@@ -208,10 +311,10 @@ func ResolveCodingAgentPulseConfig(config *PresetLLMConfig) (*AgentLLMConfig, bo
 // enrichment. Memory follows the Pulse default because it is frequent,
 // report-free background maintenance rather than strategic Chief of Staff work.
 func ResolveCodingAgentMemoryConfig(config *PresetLLMConfig) (*AgentLLMConfig, bool) {
-	return ResolveCodingAgentPulseConfig(config)
+	return ResolveProviderProfilePulseConfig(config)
 }
 
-func ResolveCodingAgentChiefOfStaffConfig(config *PresetLLMConfig) (*AgentLLMConfig, bool) {
+func ResolveProviderProfileChiefOfStaffConfig(config *PresetLLMConfig) (*AgentLLMConfig, bool) {
 	if config == nil || config.Provider == "" {
 		return nil, false
 	}
@@ -222,7 +325,7 @@ func ResolveCodingAgentChiefOfStaffConfig(config *PresetLLMConfig) (*AgentLLMCon
 	}
 	chiefOfStaff := agentLLMConfigFromCodingAgentRef(defaults.ChiefOfStaff)
 	if chiefOfStaff == nil {
-		chiefOfStaff = agentLLMConfigFromCodingAgentRef(defaults.AutoImprove)
+		chiefOfStaff = agentLLMConfigFromCodingAgentRef(defaults.Maintenance)
 	}
 	if chiefOfStaff == nil {
 		chiefOfStaff = agentLLMConfigFromCodingAgentRef(defaults.Pulse)
@@ -234,11 +337,6 @@ func ResolveCodingAgentChiefOfStaffConfig(config *PresetLLMConfig) (*AgentLLMCon
 		return nil, false
 	}
 	return chiefOfStaff, true
-}
-
-// ResolveCodingPlanConfig is kept for legacy call sites and old saved configs.
-func ResolveCodingPlanConfig(config *PresetLLMConfig) (*AgentLLMConfig, *TieredLLMConfig, bool) {
-	return ResolveCodingAgentConfig(config)
 }
 
 // WorkflowSelectedOption represents a selected option for a workflow phase.
@@ -256,29 +354,27 @@ type WorkflowSelectedOptions struct {
 	Selections []WorkflowSelectedOption `json:"selections"`
 }
 
-// ValidatePresetLLMConfigPublic accepts either legacy Provider+ModelID or at
-// least one non-nil AgentLLMConfig with valid provider and model_id.
 func ValidatePresetLLMConfigPublic(config *PresetLLMConfig) error {
-	if isCodingAgentAllocationMode(config.LLMAllocationMode) {
+	NormalizePresetLLMConfig(config)
+	if config.Mode == LLMConfigModeProviderProfile {
 		if config.Provider == "" {
-			return fmt.Errorf("provider is required for coding_agent llm_config")
+			return fmt.Errorf("provider is required for provider_profile llm_config")
 		}
 		if _, ok := llmproviders.GetCodingAgentDefaultTierModels(llmproviders.Provider(config.Provider)); !ok {
 			return fmt.Errorf("provider %q does not expose coding agent tier defaults", config.Provider)
 		}
-		if err := validatePresetAgentLLMConfig(config.AutoImproveLLM, "auto_improve_llm"); err != nil {
-			return err
-		}
-		if err := validatePresetAgentLLMConfig(config.PulseLLM, "pulse_llm"); err != nil {
-			return err
-		}
-		if err := validatePresetAgentLLMConfig(config.ChiefOfStaffLLM, "chief_of_staff_llm"); err != nil {
-			return err
-		}
 		return nil
 	}
-
-	if config.TieredConfig != nil {
+	if config.Mode != LLMConfigModeExplicit {
+		return fmt.Errorf("llm_config mode must be %q or %q", LLMConfigModeProviderProfile, LLMConfigModeExplicit)
+	}
+	if err := validateRequiredPresetAgentLLMConfig(config.BuilderLLM, "builder_llm"); err != nil {
+		return err
+	}
+	if config.TieredConfig == nil {
+		return fmt.Errorf("tiered_config is required in explicit mode")
+	}
+	{
 		tierConfigs := []struct {
 			config *AgentLLMConfig
 			name   string
@@ -301,53 +397,24 @@ func ValidatePresetLLMConfigPublic(config *PresetLLMConfig) error {
 				return fmt.Errorf("invalid provider for %s: %w", tierConfig.name, err)
 			}
 		}
-		if err := validatePresetAgentLLMConfig(config.AutoImproveLLM, "auto_improve_llm"); err != nil {
-			return err
-		}
-		if err := validatePresetAgentLLMConfig(config.PulseLLM, "pulse_llm"); err != nil {
-			return err
-		}
-		if err := validatePresetAgentLLMConfig(config.ChiefOfStaffLLM, "chief_of_staff_llm"); err != nil {
-			return err
-		}
-		return nil
 	}
-
-	hasLegacyConfig := config.Provider != "" && config.ModelID != ""
-	if hasLegacyConfig {
-		if _, err := llmproviders.ValidateProvider(config.Provider); err != nil {
-			return fmt.Errorf("invalid provider: %w", err)
-		}
-	}
-
-	agentConfigs := []struct {
-		config *AgentLLMConfig
-		name   string
-	}{
-		{config.PhaseLLM, "phase_llm"},
-	}
-	hasValidAgentConfig := false
-	for _, agentConfig := range agentConfigs {
-		if agentConfig.config != nil {
-			if err := validatePresetAgentLLMConfig(agentConfig.config, agentConfig.name); err != nil {
-				return err
-			}
-			hasValidAgentConfig = true
-		}
-	}
-	if err := validatePresetAgentLLMConfig(config.AutoImproveLLM, "auto_improve_llm"); err != nil {
+	if err := validateRequiredPresetAgentLLMConfig(config.MaintenanceLLM, "maintenance_llm"); err != nil {
 		return err
 	}
-	if err := validatePresetAgentLLMConfig(config.PulseLLM, "pulse_llm"); err != nil {
+	if err := validateRequiredPresetAgentLLMConfig(config.PulseLLM, "pulse_llm"); err != nil {
 		return err
 	}
 	if err := validatePresetAgentLLMConfig(config.ChiefOfStaffLLM, "chief_of_staff_llm"); err != nil {
 		return err
 	}
-	if !hasLegacyConfig && !hasValidAgentConfig {
-		return fmt.Errorf("llm_config must have either legacy provider+model_id or at least one non-nil agent-specific config with valid provider and model_id")
-	}
 	return nil
+}
+
+func validateRequiredPresetAgentLLMConfig(config *AgentLLMConfig, name string) error {
+	if config == nil {
+		return fmt.Errorf("%s is required", name)
+	}
+	return validatePresetAgentLLMConfig(config, name)
 }
 
 func validatePresetAgentLLMConfig(config *AgentLLMConfig, name string) error {

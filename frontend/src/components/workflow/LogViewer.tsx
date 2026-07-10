@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { Loader2 } from 'lucide-react'
+import { ArrowLeft, Loader2 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import { HtmlRenderer } from '../ui/HtmlRenderer'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
@@ -93,15 +93,17 @@ export function LogViewer({ workspacePath }: LogViewerProps) {
   const [exists, setExists] = useState<boolean | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [archivePath, setArchivePath] = useState<string | null>(null)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (filePath?: string) => {
     if (!workspacePath) return
     setLoading(true)
     setError(null)
     try {
-      const res = await agentApi.getBuilderDoc(workspacePath, 'improve')
+      const res = await agentApi.getBuilderDoc(workspacePath, 'improve', filePath)
       setExists(!!res.exists)
       setContent(res.content || '')
+      setArchivePath(filePath || null)
       if (!res.success && res.error) setError(res.error)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -115,10 +117,29 @@ export function LogViewer({ workspacePath }: LogViewerProps) {
   // Refresh when the workflow finishes a run (the log just gained entries) and
   // when the user hits the pane's refresh control.
   useEffect(() => {
-    const onRefresh = () => { void load() }
+    const onRefresh = () => { void load(archivePath || undefined) }
     window.addEventListener(WORKFLOW_LOG_REFRESH_EVENT, onRefresh)
     return () => window.removeEventListener(WORKFLOW_LOG_REFRESH_EVENT, onRefresh)
-  }, [load])
+  }, [archivePath, load])
+
+  const handleLogLink = useCallback((href: string) => {
+    const cleanHref = href.trim().split(/[?#]/, 1)[0]
+    let nextArchivePath = ''
+    if (/^improve-archive\/[^/]+\.(html|md)$/i.test(cleanHref)) {
+      nextArchivePath = `builder/${cleanHref}`
+    } else if (/^builder\/improve-archive\/[^/]+\.(html|md)$/i.test(cleanHref)) {
+      nextArchivePath = cleanHref
+    }
+    if (nextArchivePath) {
+      void load(nextArchivePath)
+      return true
+    }
+    if (archivePath && /^(\.\.\/)?improve\.html$/i.test(cleanHref)) {
+      void load()
+      return true
+    }
+    return false
+  }, [archivePath, load])
 
   // The log is HTML by convention — a full <!doctype> document or (legacy) bare
   // fragments like <div class="improvement-entry">. Either renders in the iframe;
@@ -153,9 +174,9 @@ export function LogViewer({ workspacePath }: LogViewerProps) {
 
   if (exists === false || !content.trim()) {
     return (
-      <div className="flex h-full w-full flex-col overflow-hidden bg-muted/30 dark:bg-black/20">
-        <ReportHumanInputPanel workspacePath={workspacePath} className="m-3 mb-2 flex-shrink-0" />
-        <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-center">
+      <div className="h-full w-full overflow-y-auto overscroll-y-contain bg-muted/30 [scrollbar-gutter:stable] dark:bg-black/20">
+        <ReportHumanInputPanel workspacePath={workspacePath} className="m-3 mb-2" />
+        <div className="flex min-h-full items-center justify-center p-6 text-center">
           <div className="max-w-md text-sm text-muted-foreground">
             No Pulse log yet. Run <code className="rounded bg-muted px-1">/goal-advisor</code> to set
             up recurring runs + Goal Advisor — scheduled runs, Pulse, and advisor decisions record
@@ -173,13 +194,28 @@ export function LogViewer({ workspacePath }: LogViewerProps) {
   // already controls laptop/mobile layout; adding another max-width here makes
   // full-screen Pulse look artificially narrow.
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-muted/30 dark:bg-black/20">
-      <ReportHumanInputPanel workspacePath={workspacePath} className="m-3 mb-2 flex-shrink-0" />
-      <div className="min-h-0 flex-1">
+    <div className="h-full w-full overflow-y-auto overscroll-y-contain bg-muted/30 [scrollbar-gutter:stable] dark:bg-black/20">
+      <ReportHumanInputPanel workspacePath={workspacePath} className="m-3 mb-2" />
+      {archivePath && (
+        <div className="flex h-10 items-center gap-2 border-b border-border px-3 text-xs text-muted-foreground">
+          <button
+            type="button"
+            onClick={() => { void load() }}
+            className="inline-flex items-center gap-1.5 text-foreground hover:text-primary"
+            title="Return to the current Pulse log"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" /> Current Pulse
+          </button>
+          <span aria-hidden="true">/</span>
+          <span className="truncate">Archive {archivePath.split('/').pop()?.replace(/\.(html|md)$/i, '')}</span>
+          {loading && <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin" />}
+        </div>
+      )}
+      <div className="min-w-0">
         {isHtml ? (
-          <HtmlRenderer content={themedContent} />
+          <HtmlRenderer content={themedContent} onLinkClick={handleLogLink} autoHeight />
         ) : (
-          <div className="h-full overflow-y-auto p-4">
+          <div className="p-4">
             <MarkdownRenderer content={content} disablePathLinking />
           </div>
         )}

@@ -106,8 +106,6 @@ type Store struct {
 	toolLines      map[string]*terminalToolLines
 }
 
-const terminalInactiveAfter = 2 * time.Minute
-const terminalPromptCompletionInactiveAfter = time.Minute
 const terminalToolTextMaxRunes = 2400
 
 var (
@@ -611,7 +609,7 @@ func (s *Store) refreshContent(terminalID, content, contentSource string) (Snaps
 }
 
 func terminalCanCompleteFromCapturedIdle(snapshot Snapshot) bool {
-	if !terminalUsesIdleTimeout(snapshot) || !boundedTerminalCanSelfComplete(snapshot) {
+	if !terminalUsesIdleTimeout(snapshot) {
 		return false
 	}
 	if snapshot.ExecutionKind == "main_agent" || strings.HasPrefix(snapshot.OwnerID, "main:") {
@@ -767,13 +765,6 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	if currentTerminalIsMainAgent(current) {
 		s.removeCurrentMainAgentAliasesLocked(sessionID, terminalID)
 	}
-}
-
-func boundedTerminalCanSelfComplete(snapshot Snapshot) bool {
-	return snapshot.ExecutionKind != "" ||
-		snapshot.Scope != "" ||
-		strings.HasPrefix(snapshot.OwnerID, "main:") ||
-		strings.HasPrefix(snapshot.OwnerID, "workflow-step:")
 }
 
 func terminalUsesIdleTimeout(snapshot Snapshot) bool {
@@ -1021,52 +1012,15 @@ func cloneTerminalRows(rows []Row) []Row {
 	return out
 }
 
-func (s *Store) reconcileTerminalStateLocked(terminalID string, now time.Time) (Snapshot, bool) {
+func (s *Store) reconcileTerminalStateLocked(terminalID string, _ time.Time) (Snapshot, bool) {
 	snapshot, ok := s.byID[terminalID]
 	if !ok {
 		return Snapshot{}, false
 	}
-	if snapshot.Active &&
-		terminalUsesIdleTimeout(snapshot) &&
-		boundedTerminalCanSelfComplete(snapshot) &&
-		terminalHasPromptCompletionFallback(snapshot.Content) &&
-		terminalLooksInactiveAfter(snapshot, now, terminalPromptCompletionInactiveAfter) {
-		snapshot.Active = false
-		snapshot.State = "completed"
-		snapshot.ClosesAt = nil
-		snapshot.RetentionSeconds = 0
-		s.byID[terminalID] = snapshot
-		return snapshot, true
-	}
-	if snapshot.Active &&
-		terminalUsesIdleTimeout(snapshot) &&
-		boundedTerminalCanSelfComplete(snapshot) &&
-		terminalLooksInactive(snapshot, now) {
-		snapshot.Active = false
-		snapshot.State = "completed"
-		snapshot.ClosesAt = nil
-		snapshot.RetentionSeconds = 0
-		s.byID[terminalID] = snapshot
-	}
+	// Do not infer completion from elapsed time. A coding CLI can sit at a stable
+	// prompt for hours while its tmux pane remains alive and ready for input. The
+	// server's tmux watchdog owns liveness reconciliation using the real pane state.
 	return snapshot, true
-}
-
-func terminalLooksInactive(snapshot Snapshot, now time.Time) bool {
-	return terminalLooksInactiveAfter(snapshot, now, terminalInactiveAfter)
-}
-
-func terminalLooksInactiveAfter(snapshot Snapshot, now time.Time, threshold time.Duration) bool {
-	if now.IsZero() {
-		now = time.Now()
-	}
-	lastUpdate := snapshot.UpdatedAt
-	if lastUpdate.IsZero() {
-		lastUpdate = snapshot.CreatedAt
-	}
-	if lastUpdate.IsZero() {
-		return false
-	}
-	return now.Sub(lastUpdate) >= threshold
 }
 
 func (s *Store) removeTmuxAliasesLocked(sessionID, terminalID, tmuxSession string) {

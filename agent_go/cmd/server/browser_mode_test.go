@@ -55,7 +55,9 @@ func TestApplyMultiAgentCapabilitiesToRequestOverridesRequestCapabilities(t *tes
 		BrowserMode:               "CDP",
 		UseCodeExecutionMode:      true,
 		LLMConfig: &workflowtypes.PresetLLMConfig{
-			PhaseLLM: &workflowtypes.AgentLLMConfig{
+			SchemaVersion: workflowtypes.LLMConfigSchemaVersion,
+			Mode:          workflowtypes.LLMConfigModeExplicit,
+			BuilderLLM: &workflowtypes.AgentLLMConfig{
 				Provider: "openai",
 				ModelID:  "gpt-test",
 				Fallbacks: []workflowtypes.AgentLLMFallback{{

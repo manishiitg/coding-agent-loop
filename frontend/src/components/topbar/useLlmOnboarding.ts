@@ -37,8 +37,7 @@ export function useLlmOnboarding() {
   const showDelegationTiersDialog = useCommandDialogStore(state => state.showDelegationTiers)
   const closeDialog = useCommandDialogStore(state => state.closeDialog)
 
-  const [showLLMDiscoveryModal, setShowLLMDiscoveryModal] = useState(false)
-  const [releaseWalkthroughAfterLLMModalClose, setReleaseWalkthroughAfterLLMModalClose] = useState(false)
+  const [llmOnboardingActive, setLLMOnboardingActive] = useState(false)
 
   const llmCount = savedLLMs.length
 
@@ -49,31 +48,20 @@ export function useLlmOnboarding() {
 
   const openLLMConfigModal = useCallback(() => setShowLLMModal(true), [setShowLLMModal])
 
-  const openLLMDiscoveryModal = useCallback(() => {
+  const openLLMOnboarding = useCallback(() => {
     markLLMDiscoveryOnboardingOpen()
-    setShowLLMDiscoveryModal(true)
-  }, [])
-
-  const closeLLMDiscoveryModal = useCallback(() => {
-    dismissLLMDiscoveryOnboarding()
-    setShowLLMDiscoveryModal(false)
-    markLLMDiscoveryOnboardingCleared()
-  }, [])
-
-  const openAdvancedSetupFromDiscovery = useCallback(() => {
-    dismissLLMDiscoveryOnboarding()
-    setShowLLMDiscoveryModal(false)
-    setReleaseWalkthroughAfterLLMModalClose(true)
+    setLLMOnboardingActive(true)
     setShowLLMModal(true)
   }, [setShowLLMModal])
 
   const closeLLMConfigurationModal = useCallback(() => {
     setShowLLMModal(false)
-    if (releaseWalkthroughAfterLLMModalClose) {
-      setReleaseWalkthroughAfterLLMModalClose(false)
+    if (llmOnboardingActive) {
+      dismissLLMDiscoveryOnboarding()
+      setLLMOnboardingActive(false)
       markLLMDiscoveryOnboardingCleared()
     }
-  }, [releaseWalkthroughAfterLLMModalClose, setShowLLMModal])
+  }, [llmOnboardingActive, setShowLLMModal])
 
   const closeTierModal = useCallback(() => setShowTierModal(false), [setShowTierModal])
 
@@ -85,11 +73,10 @@ export function useLlmOnboarding() {
     }
   }, [showDelegationTiersDialog, selectedModeCategory, closeDialog, setShowTierModal])
 
-  // First-run LLM setup: if no model is configured yet, prefer discovery over
-  // the advanced tier configuration modal.
+  // First-run LLM setup opens the same unified Model Library used later.
   useEffect(() => {
     if (FORCE_LLM_DISCOVERY_ONBOARDING_FOR_TESTING) {
-      openLLMDiscoveryModal()
+      openLLMOnboarding()
       return
     }
     if (!defaultsLoaded || hasConfiguredLLM) return
@@ -97,8 +84,8 @@ export function useLlmOnboarding() {
       markLLMDiscoveryOnboardingCleared()
       return
     }
-    openLLMDiscoveryModal()
-  }, [defaultsLoaded, hasConfiguredLLM, openLLMDiscoveryModal])
+    openLLMOnboarding()
+  }, [defaultsLoaded, hasConfiguredLLM, openLLMOnboarding])
 
   useEffect(() => {
     if (!defaultsLoaded) return
@@ -110,13 +97,13 @@ export function useLlmOnboarding() {
   // Auto-show tier config modal when entering multi-agent mode without tiers configured
   useEffect(() => {
     if (FORCE_LLM_DISCOVERY_ONBOARDING_FOR_TESTING) {
-      openLLMDiscoveryModal()
+      openLLMOnboarding()
       return
     }
     if (selectedModeCategory !== 'multi-agent') return
     if (!hasConfiguredLLM) {
       if (!isLLMDiscoveryOnboardingDismissed()) {
-        openLLMDiscoveryModal()
+        openLLMOnboarding()
       }
       return
     }
@@ -124,17 +111,13 @@ export function useLlmOnboarding() {
     if (!hasTiers) {
       setShowTierModal(true)
     }
-  }, [selectedModeCategory, delegationTierConfig, hasConfiguredLLM, openLLMDiscoveryModal, setShowTierModal])
+  }, [selectedModeCategory, delegationTierConfig, hasConfiguredLLM, openLLMOnboarding, setShowTierModal])
 
   return {
     llmCount,
     showLLMModal,
-    showLLMDiscoveryModal,
     showTierModal,
     openLLMConfigModal,
-    openLLMDiscoveryModal,
-    closeLLMDiscoveryModal,
-    openAdvancedSetupFromDiscovery,
     closeLLMConfigurationModal,
     closeTierModal,
   }

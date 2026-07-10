@@ -63,7 +63,7 @@ export default function PushToGistDialog({
           'Accept': 'application/vnd.github.v3+json'
         },
         body: JSON.stringify({
-          description: `Uploaded from Runloop: ${fileName}`,
+          description: `Uploaded from AgentWorks: ${fileName}`,
           public: isPublic,
           files: {
             [fileName]: {

@@ -487,7 +487,7 @@ func createReportHumanInputTools() ([]llmtypes.Tool, map[string]interface{}, map
 					"source":         map[string]interface{}{"type": "string", "enum": []string{"pulse", "goal_advisor", "chief_of_staff"}, "description": "Who is asking. Defaults to pulse."},
 					"priority":       map[string]interface{}{"type": "string", "enum": []string{"low", "medium", "high"}, "description": "How important the answer is. Defaults to medium."},
 					"question":       map[string]interface{}{"type": "string", "description": "The exact user-facing question in simple language."},
-					"context":        map[string]interface{}{"type": "string", "description": "Short explanation of why this matters and what will happen next. For plan-change proposals, include a compact structured summary: proposal, exact plan edits, rationale, expected impact, risk, and evidence paths."},
+					"context":        map[string]interface{}{"type": "string", "description": "Short explanation of why this matters and what will happen next. For plan-change proposals, use newline-separated labeled sections exactly like: Proposal:\n...\nExact intended edits if approved:\n(1) ...\n(2) ...\nRationale:\n...\nExpected impact:\n...\nRisk:\n... . Keep evidence paths in the separate evidence field."},
 					"options": map[string]interface{}{
 						"type": "array",
 						"items": map[string]interface{}{

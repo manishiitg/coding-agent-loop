@@ -123,10 +123,12 @@ func TestWorkflowE2ESingleRegularStepGeminiCLI(t *testing.T) {
 	}
 	agentLLM := &workflowtypes.AgentLLMConfig{Provider: "gemini-cli", ModelID: model}
 	presetCfg := &workflowtypes.PresetLLMConfig{
-		Provider:     "gemini-cli",
-		ModelID:      model,
-		PhaseLLM:     agentLLM,
-		TieredConfig: &workflowtypes.TieredLLMConfig{Tier1: agentLLM, Tier2: agentLLM, Tier3: agentLLM},
+		SchemaVersion:  workflowtypes.LLMConfigSchemaVersion,
+		Mode:           workflowtypes.LLMConfigModeExplicit,
+		BuilderLLM:     agentLLM,
+		MaintenanceLLM: agentLLM,
+		PulseLLM:       agentLLM,
+		TieredConfig:   &workflowtypes.TieredLLMConfig{Tier1: agentLLM, Tier2: agentLLM, Tier3: agentLLM},
 	}
 
 	wo, err := NewWorkflowOrchestrator(
@@ -301,7 +303,8 @@ func TestWorkflowE2ESiblingConvergenceGeminiCLI(t *testing.T) {
 	}
 	agentLLM := &workflowtypes.AgentLLMConfig{Provider: "gemini-cli", ModelID: model}
 	presetCfg := &workflowtypes.PresetLLMConfig{
-		Provider: "gemini-cli", ModelID: model, PhaseLLM: agentLLM,
+		SchemaVersion: workflowtypes.LLMConfigSchemaVersion, Mode: workflowtypes.LLMConfigModeExplicit,
+		BuilderLLM: agentLLM, MaintenanceLLM: agentLLM, PulseLLM: agentLLM,
 		TieredConfig: &workflowtypes.TieredLLMConfig{Tier1: agentLLM, Tier2: agentLLM, Tier3: agentLLM},
 	}
 	wo, err := NewWorkflowOrchestrator("", 0.7, "workflow", loggerv2.NewNoop(), nil, nil,

@@ -139,7 +139,7 @@ func TestToolSetInvariants(t *testing.T) {
 	//    be visible in workshop mode, otherwise scheduled Pulse turns can ask
 	//    for mark_pulse_module_result/get_pulse_module_state and then fail at
 	//    runtime with "not callable in this chat session".
-	for _, n := range []string{"get_pulse_module_state", "record_pulse_worklist", "mark_pulse_module_result"} {
+	for _, n := range []string{"get_pulse_module_state", "record_pulse_worklist", "mark_pulse_module_result", "mark_pulse_final_command_result"} {
 		if !pool[n] || cats[n] != "workflow" {
 			t.Fatalf("workflow pool missing Pulse state tool %q (in_pool=%v cat=%q)", n, pool[n], cats[n])
 		}
@@ -158,7 +158,7 @@ func TestToolSetInvariants(t *testing.T) {
 		"update_workflow_config", "update_step_config", "get_report_plan",
 		"list_schedules", "update_schedule", "get_schedule_runs",
 		"execute_shell_command", "diff_patch_workspace_file",
-		"get_pulse_module_state", "record_pulse_worklist", "mark_pulse_module_result",
+		"get_pulse_module_state", "record_pulse_worklist", "mark_pulse_module_result", "mark_pulse_final_command_result",
 	} {
 		if !workshop[n] {
 			t.Fatalf("workshop allow-list missing expected tool %q", n)
@@ -169,7 +169,7 @@ func TestToolSetInvariants(t *testing.T) {
 	for _, n := range todo_creation_human.GetToolsForWorkshopMode("run") {
 		run[n] = true
 	}
-	for _, n := range []string{"record_pulse_worklist", "mark_pulse_module_result"} {
+	for _, n := range []string{"record_pulse_worklist", "mark_pulse_module_result", "mark_pulse_final_command_result"} {
 		if run[n] {
 			t.Fatalf("run allow-list must not expose Pulse mutation tool %q", n)
 		}

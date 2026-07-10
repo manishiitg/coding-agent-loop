@@ -12,7 +12,6 @@ import {
   ShieldCheck,
   Activity,
   CalendarClock,
-  Sparkles,
   GitCommitVertical,
   RefreshCw,
   X,
@@ -23,7 +22,7 @@ import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowSto
 import { useWorkflowManifestStore } from '../../../stores/useWorkflowManifestStore'
 import { useChatStore } from '../../../stores/useChatStore'
 import { useAuthStore } from '../../../stores/useAuthStore'
-import type { PulseModuleState, VariablesManifest, WorkflowScheduleEntry } from '../../../services/api-types'
+import type { PulseFinalCommandState, PulseModuleState, VariablesManifest } from '../../../services/api-types'
 import type { PlanningResponse } from '../../../utils/stepConfigMatching'
 import type { WorkflowExecutionStatus } from '../hooks/useWorkflowExecution'
 import type { ExecutionOptions } from '../../../services/api-types'
@@ -78,35 +77,28 @@ function formatWorkflowNameFromPath(path?: string | null): string {
   return name || 'Workflow'
 }
 
-function isAutoImproveSchedule(schedule: WorkflowScheduleEntry): boolean {
-  if ((schedule.workshop_mode || '').toLowerCase() !== 'optimizer') return false
-  const nameAndDescription = `${schedule.name || ''} ${schedule.description || ''}`.toLowerCase()
-  if (nameAndDescription.includes('retired') || nameAndDescription.includes('duplicate')) return false
-  if (/\bharden\b/.test(nameAndDescription) && !/\bimprove\b/.test(nameAndDescription)) return false
-  return true
-}
-
 const PULSE_MODULE_COMMANDS: Array<{ id: string; label: string; description: string }> = [
   { id: 'harden', label: 'Harden', description: 'Bug checks and low-risk fixes' },
   { id: 'artifact_review', label: 'Artifact review', description: 'Plan-change artifact drift' },
-  { id: 'report_health', label: 'Report health', description: 'Dashboard/report accuracy' },
   { id: 'learning_health', label: 'Learning health', description: 'Learning freshness and quality' },
   { id: 'knowledgebase_health', label: 'Knowledge base', description: 'KB freshness and contradictions' },
   { id: 'db_health', label: 'Database health', description: 'DB/schema/data quality checks' },
+  { id: 'eval_health', label: 'Eval health', description: 'Rubric and eval wiring quality' },
+  { id: 'report_health', label: 'Report health', description: 'Dashboard/report accuracy' },
   { id: 'cost_llm_time', label: 'Cost + LLM + time', description: 'Cost, model, and runtime review' },
   { id: 'goal_advisor', label: 'Goal Advisor', description: 'Strategic review when goal evidence is weak' },
 ]
 
-const PULSE_FIXED_COMMANDS: Array<{ id: string; label: string; description: string; status: string }> = [
-  { id: 'dashboard', label: 'Dashboard + questions', description: 'Updates Pulse UI and asks for input if needed', status: 'FINAL' },
-  { id: 'backup', label: 'Backup', description: 'Saves current workflow artifacts', status: 'FINAL' },
-  { id: 'publish', label: 'Publish', description: 'Refreshes public report when publishing is configured', status: 'IF SET' },
-  { id: 'notify', label: 'Notify', description: 'Sends the run summary after report updates', status: 'FINAL' },
+const PULSE_FIXED_COMMANDS: Array<{ id: string; label: string; description: string }> = [
+  { id: 'dashboard', label: 'Dashboard + questions', description: 'Updates Pulse UI and asks for input if needed' },
+  { id: 'backup', label: 'Backup', description: 'Saves current workflow artifacts when changed' },
+  { id: 'publish', label: 'Publish', description: 'Refreshes a verified public report when stale' },
+  { id: 'notify', label: 'Notify', description: 'Sends the run summary after finalization' },
 ]
 
 function pulseStatusToneClass(status: string): string {
   const normalized = status.toLowerCase()
-  if (normalized === 'failed' || normalized === 'blocked') {
+  if (normalized === 'failed' || normalized === 'blocked' || normalized === 'timed_out' || normalized === 'timed out') {
     return 'border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-300'
   }
   if (normalized === 'changed' || normalized === 'due') {
@@ -133,6 +125,34 @@ function formatPulseTimestamp(value?: string): string {
   })
 }
 
+function formatPulseNextCheck(state?: PulseModuleState): string {
+  if (!state) return ''
+  const hints: string[] = []
+  const nextCheckAt = (state.next_check_at || '').trim()
+  if (nextCheckAt) {
+    let date: Date
+    if (/^\d{4}-\d{2}-\d{2}$/.test(nextCheckAt)) {
+      const [year, month, day] = nextCheckAt.split('-').map(Number)
+      date = new Date(year, month - 1, day)
+    } else {
+      date = new Date(nextCheckAt)
+    }
+    if (!Number.isNaN(date.getTime())) {
+      const includesTime = nextCheckAt.includes('T')
+      hints.push(date.toLocaleString(undefined, includesTime
+        ? { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }
+        : { month: 'short', day: 'numeric' }))
+    } else {
+      hints.push(nextCheckAt)
+    }
+  }
+  const afterRun = (state.next_check_after_run_id || '').trim()
+  if (afterRun) hints.push(`after run ${afterRun}`)
+  const cooldownRuns = state.cooldown_runs || 0
+  if (cooldownRuns > 0) hints.push(`after ${cooldownRuns} workflow run${cooldownRuns === 1 ? '' : 's'}`)
+  return hints.length > 0 ? `Next check: ${hints.join(' · ')}` : ''
+}
+
 function getPulseModuleStatus(state?: PulseModuleState): { label: string; detail: string; time: string } {
   if (!state) {
     return { label: 'NO DATA', detail: 'No Pulse run recorded yet', time: '' }
@@ -140,7 +160,7 @@ function getPulseModuleStatus(state?: PulseModuleState): { label: string; detail
   const result = (state.last_result || '').trim()
   if (result) {
     return {
-      label: result.toUpperCase(),
+      label: result === 'timed_out' ? 'TIMED OUT' : result.toUpperCase(),
       detail: state.last_result_reason || state.last_reason || 'Completed in the latest recorded Pulse run',
       time: formatPulseTimestamp(state.last_ran_at || state.updated_at),
     }
@@ -157,6 +177,18 @@ function getPulseModuleStatus(state?: PulseModuleState): { label: string; detail
     label: 'WAITING',
     detail: 'State exists, but no decision has been recorded yet',
     time: formatPulseTimestamp(state.updated_at),
+  }
+}
+
+function getPulseFinalCommandStatus(state?: PulseFinalCommandState): { label: string; detail: string; time: string } {
+  if (!state) {
+    return { label: 'NO DATA', detail: 'No Pulse finalizer recorded yet', time: '' }
+  }
+  const status = (state.status || '').trim()
+  return {
+    label: status === 'timed_out' ? 'TIMED OUT' : (status || 'WAITING').toUpperCase(),
+    detail: state.reason || 'No command outcome recorded',
+    time: formatPulseTimestamp(state.finished_at || state.started_at || state.updated_at),
   }
 }
 
@@ -267,10 +299,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     const wf = s.workflows.find((w) => w.workspace_path === workspacePath)
     return !!wf?.manifest.post_run_monitor
   })
-  const workflowSchedules = useWorkflowManifestStore((s) => {
-    const wf = s.workflows.find((w) => w.workspace_path === workspacePath)
-    return wf?.manifest.schedules || []
-  })
   const updateWorkflowManifest = useWorkflowManifestStore((s) => s.updateWorkflow)
   const [monitorSaving, setMonitorSaving] = useState(false)
   const toggleMonitor = useCallback(async () => {
@@ -286,14 +314,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   }, [workspacePath, monitorOn, monitorSaving, updateWorkflowManifest])
   const [showMonitorHelp, setShowMonitorHelp] = useState(false)
   const [pulseModuleStates, setPulseModuleStates] = useState<PulseModuleState[]>([])
+  const [pulseFinalCommandStates, setPulseFinalCommandStates] = useState<PulseFinalCommandState[]>([])
   const [pulseStatusLoading, setPulseStatusLoading] = useState(false)
   const [pulseStatusError, setPulseStatusError] = useState<string | null>(null)
-  const autoImproveSchedules = useMemo(
-    () => workflowSchedules.filter(isAutoImproveSchedule),
-    [workflowSchedules]
-  )
-  const [showAutoImproveHelp, setShowAutoImproveHelp] = useState(false)
-
   // Backup popup state
   const [showBackupPopup, setShowBackupPopup] = useState(false)
   const [backupState, setBackupState] = useState<string>('not_configured')
@@ -309,13 +332,14 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     [workspacePath]
   )
 
-  const refreshPulseModuleStates = useCallback(async () => {
+  const refreshPulseModuleStates = useCallback(async (showLoading = true) => {
     if (!workspacePath) {
       setPulseModuleStates([])
+      setPulseFinalCommandStates([])
       setPulseStatusError(null)
       return
     }
-    setPulseStatusLoading(true)
+    if (showLoading) setPulseStatusLoading(true)
     setPulseStatusError(null)
     try {
       const resp = await agentApi.getPulseModuleState(workspacePath)
@@ -323,22 +347,29 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         throw new Error(resp.error || 'Failed to load Pulse status')
       }
       setPulseModuleStates(resp.modules || [])
+      setPulseFinalCommandStates(resp.commands || [])
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load Pulse status'
       setPulseStatusError(message)
     } finally {
-      setPulseStatusLoading(false)
+      if (showLoading) setPulseStatusLoading(false)
     }
   }, [workspacePath])
 
   useEffect(() => {
     if (!showMonitorHelp || !monitorOn) return
-    refreshPulseModuleStates()
+    void refreshPulseModuleStates()
+    const timer = window.setInterval(() => { void refreshPulseModuleStates(false) }, 5_000)
+    return () => window.clearInterval(timer)
   }, [showMonitorHelp, monitorOn, refreshPulseModuleStates])
 
   const pulseModuleStateByModule = useMemo(() => {
     return new Map(pulseModuleStates.map(state => [state.module, state]))
   }, [pulseModuleStates])
+
+  const pulseFinalCommandStateByCommand = useMemo(() => {
+    return new Map(pulseFinalCommandStates.map(state => [state.command, state]))
+  }, [pulseFinalCommandStates])
 
   const refreshWorkflowScheduleStats = useCallback(async () => {
     if (!workspacePath && !presetQueryId) {
@@ -420,7 +451,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     setShowPlanEditsPopup(false)
     setShowWorkflowSchedulesPanel(false)
     setShowMonitorHelp(false)
-    setShowAutoImproveHelp(false)
   }, [])
   
   // Close popups only when switching between two concrete workflows.
@@ -600,8 +630,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       {/* Right side - View controls */}
       <div data-tour="workflow-tools" data-testid="tour-workflow-tools" className="ml-auto flex shrink-0 items-center gap-1">
         <TooltipProvider delayDuration={150}>
-          {/* Pulse — opens the Pulse popup. Goal Advisor is now a Pulse-selected
-              module, so keep it in the same compact control. */}
+          {/* Pulse opens the Pulse popup. Goal Advisor appears inside the module
+              status list when Gate selects or skips it. */}
           {workspacePath && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -613,12 +643,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   <Activity className={`w-3.5 h-3.5 ${monitorOn ? 'text-primary' : ''}`} />
                   <span className={monitorOn ? 'text-foreground' : ''}>Pulse</span>
                   <span className={`text-[10px] font-semibold tracking-wide ${monitorOn ? 'text-primary' : 'text-muted-foreground/60'}`}>{monitorOn ? 'ON' : 'OFF'}</span>
-                  <span className="mx-0.5 h-3.5 w-px bg-border" />
-                  <Sparkles className={`w-3.5 h-3.5 ${monitorOn ? 'text-primary' : ''}`} />
-                  <span className="hidden sm:inline">Advisor</span>
-                  <span className={`text-[10px] font-semibold tracking-wide ${monitorOn ? 'text-primary' : 'text-muted-foreground/60'}`}>
-                    {monitorOn ? 'GATED' : 'OFF'}
-                  </span>
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom"><p>Pulse — includes Goal Advisor when Pulse Gate decides strategy review is due</p></TooltipContent>
@@ -916,6 +940,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   {PULSE_MODULE_COMMANDS.map((command) => {
                     const state = pulseModuleStateByModule.get(command.id)
                     const status = getPulseModuleStatus(state)
+                    const nextCheck = formatPulseNextCheck(state)
                     return (
                       <div key={command.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-b px-3 py-2.5 last:border-b-0">
                         <div className="min-w-0">
@@ -930,6 +955,11 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                           <div className="mt-0.5 truncate text-xs text-muted-foreground">
                             {status.detail || command.description}
                           </div>
+                          {nextCheck && (
+                            <div className="mt-1 truncate text-[11px] font-medium text-primary/80" title={nextCheck}>
+                              {nextCheck}
+                            </div>
+                          )}
                         </div>
                         <div className="flex shrink-0 flex-col items-end gap-1">
                           <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-wide ${pulseStatusToneClass(status.label)}`}>
@@ -943,19 +973,33 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   <div className="border-t bg-background/40 px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                     Final commands
                   </div>
-                  {PULSE_FIXED_COMMANDS.map((command) => (
-                    <div key={command.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-t px-3 py-2.5 first:border-t-0">
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium text-foreground">{command.label}</div>
-                        <div className="mt-0.5 truncate text-xs text-muted-foreground">{command.description}</div>
+                  {PULSE_FIXED_COMMANDS.map((command) => {
+                    const state = pulseFinalCommandStateByCommand.get(command.id)
+                    const status = getPulseFinalCommandStatus(state)
+                    return (
+                      <div key={command.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-t px-3 py-2.5 first:border-t-0">
+                        <div className="min-w-0">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="truncate text-sm font-medium text-foreground">{command.label}</span>
+                            {state?.pulse_run_id && (
+                              <span className="shrink-0 rounded bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                {state.pulse_run_id}
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-0.5 truncate text-xs text-muted-foreground" title={status.detail}>
+                            {status.detail || command.description}
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 flex-col items-end gap-1">
+                          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-wide ${pulseStatusToneClass(status.label)}`}>
+                            {status.label}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">{status.time}</span>
+                        </div>
                       </div>
-                      <div className="flex shrink-0 items-start">
-                        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-wide ${pulseStatusToneClass(command.status)}`}>
-                          {command.status}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
             )}
@@ -981,69 +1025,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             <div className="border-t px-5 py-4">
               <p className="rounded-md bg-muted/60 px-3 py-2.5 text-xs text-muted-foreground">
                 <span className="font-medium text-foreground">To run on a schedule:</span> Use <code className="rounded bg-background px-1 py-0.5 font-medium text-foreground">/goal-advisor</code> to enable Pulse and set the recurring run schedule. Pulse Gate decides which deeper modules run after each run.
-              </p>
-            </div>
-          </div>
-        </div>
-      </ModalPortal>
-    )}
-
-    {/* Goal Advisor help */}
-    {showAutoImproveHelp && (
-      <ModalPortal>
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowAutoImproveHelp(false)}>
-          <div className="w-full max-w-md rounded-lg border bg-background shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between border-b px-5 py-3.5">
-              <div className="flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-primary" />
-                <h2 className="text-sm font-semibold">Goal Advisor</h2>
-              </div>
-              <button onClick={() => setShowAutoImproveHelp(false)} className="rounded-md p-1 hover:bg-accent" aria-label="Close">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="space-y-3 px-5 py-4 text-sm text-muted-foreground">
-              <p>Goal Advisor is the strategic review module inside Pulse. Pulse Gate runs it when real run/eval evidence suggests the goal is not moving, even when the workflow itself runs cleanly.</p>
-              <p className="text-foreground font-medium">When selected, it can:</p>
-              <ul className="space-y-1.5 pl-1">
-                <li><span className="font-medium text-foreground">Challenge strategy</span> — compare the current plan against the workflow's success criteria.</li>
-                <li><span className="font-medium text-foreground">Find blind spots</span> — propose out-of-plan ideas an expert operator would consider.</li>
-                <li><span className="font-medium text-foreground">Apply only when proven</span> — replan only with strong cross-run evidence; otherwise log proposals or ask you.</li>
-                <li><span className="font-medium text-foreground">Publish the decision</span> — update the Pulse log and org progress card, then let Pulse backup/publish/notify run as separate turns.</li>
-              </ul>
-            </div>
-            <div className="flex items-center justify-between border-t px-5 py-3.5">
-              <div>
-                <div className="text-sm font-medium text-foreground">Goal Advisor</div>
-                <div className="text-xs text-muted-foreground">
-                  {monitorOn
-                    ? 'Pulse Gate will run it when strategy review is due'
-                    : 'Off — enable Pulse to use the Goal Advisor module'}
-                </div>
-              </div>
-              <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide ${monitorOn ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>
-                {monitorOn ? 'GATED' : 'OFF'}
-              </span>
-            </div>
-            {autoImproveSchedules.length > 0 && (
-              <div className="border-t px-5 py-4 text-xs text-muted-foreground">
-                <div className="mb-2 font-medium text-foreground">Legacy optimizer schedule{autoImproveSchedules.length === 1 ? '' : 's'}</div>
-                <ul className="space-y-1">
-                  {autoImproveSchedules.slice(0, 3).map((schedule) => (
-                    <li key={schedule.id} className="flex items-center justify-between gap-3">
-                      <span className="truncate">{schedule.name || 'Unnamed schedule'}</span>
-                      <span className={schedule.enabled ? 'text-primary' : 'text-muted-foreground'}>{schedule.enabled ? 'enabled' : 'paused'}</span>
-                    </li>
-                  ))}
-                </ul>
-                {autoImproveSchedules.length > 3 && (
-                  <div className="mt-1 text-muted-foreground/80">+{autoImproveSchedules.length - 3} more</div>
-                )}
-              </div>
-            )}
-            <div className="border-t px-5 py-4">
-              <p className="rounded-md bg-muted/60 px-3 py-2.5 text-xs text-muted-foreground">
-                Goal Advisor now runs as a Pulse-selected module. Use <code className="rounded bg-background px-1 py-0.5 font-medium text-foreground">/goal-advisor</code> in workflow chat to enable Pulse and set the recurring run schedule.
               </p>
             </div>
           </div>

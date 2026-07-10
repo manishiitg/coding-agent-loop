@@ -170,6 +170,9 @@ export interface AgentQueryRequest {
 
 // Delegation tier configuration for multi-LLM support
 export interface DelegationTierConfig {
+  schema_version: 2
+  mode: 'provider_profile' | 'explicit'
+  provider?: string
   main?: TierModel    // orchestrator/main agent model
   chief_of_staff?: TierModel // scheduled Chief of Staff / Org Pulse model
   high?: TierModel
@@ -181,6 +184,7 @@ export interface DelegationTierConfig {
 export interface TierModel {
   provider: string
   model_id: string
+  options?: Record<string, unknown>
   fallbacks?: AgentLLMFallback[]
 }
 
@@ -382,9 +386,21 @@ export interface PulseModuleState {
   updated_at?: string
 }
 
+export interface PulseFinalCommandState {
+  workspace_path: string
+  command: string
+  pulse_run_id?: string
+  status?: string
+  reason?: string
+  started_at?: string
+  finished_at?: string
+  updated_at?: string
+}
+
 export interface PulseModuleStateResponse {
   success: boolean
   modules: PulseModuleState[]
+  commands: PulseFinalCommandState[]
   error?: string
 }
 
@@ -1173,17 +1189,16 @@ export interface AgentLLMConfig {
 }
 
 export interface PresetLLMConfig {
-  published_llm_id?: string
+  schema_version: 2
+  mode: 'provider_profile' | 'explicit'
 
-  // Legacy: Single default model (for backward compatibility)
+  // Simple mode: resolve the provider's current role defaults at runtime.
   provider?: LLMProvider
-  model_id?: string
-  options?: Record<string, unknown>
 
-  // Agent-specific defaults.
-  phase_llm?: AgentLLMConfig            // Default for all phase agents (planning, anonymization, plan improvement, etc.)
-  auto_improve_llm?: AgentLLMConfig     // Optional Goal Advisor strategy-module override
-  pulse_llm?: AgentLLMConfig            // Optional scheduled Pulse override
+  // Advanced mode: pin every workflow role directly.
+  builder_llm?: AgentLLMConfig
+  maintenance_llm?: AgentLLMConfig
+  pulse_llm?: AgentLLMConfig
   chief_of_staff_llm?: AgentLLMConfig   // Optional scheduled Chief of Staff override
 
   // Feature toggles
@@ -1191,8 +1206,6 @@ export interface PresetLLMConfig {
   enable_context_summarization?: boolean // nil/true = enabled (default), false = disabled
   enable_context_editing?: boolean       // nil/false = disabled (default), true = enabled
 
-  // Tiered LLM allocation mode
-  llm_allocation_mode?: 'manual' | 'tiered' | 'coding_agent' | 'coding_plan'
   tiered_config?: {
     tier_1: AgentLLMConfig
     tier_2: AgentLLMConfig
@@ -1840,7 +1853,7 @@ export interface RunMetadataLLM {
 export interface RunMetadataModels {
   allocation_mode?: string; // "manual" or "tiered"
   execution_llm?: RunMetadataLLM;
-  phase_llm?: RunMetadataLLM;
+  builder_llm?: RunMetadataLLM;
   tier_1?: RunMetadataLLM;
   tier_2?: RunMetadataLLM;
   tier_3?: RunMetadataLLM;

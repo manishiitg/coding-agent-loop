@@ -974,10 +974,10 @@ The provider has not yet returned to an idle prompt.`
 	}
 }
 
-func TestStoreSelfCompletesBoundedTerminalFromStalePromptStatus(t *testing.T) {
+func TestStoreDoesNotCompleteLiveTmuxTerminalFromStalePromptStatus(t *testing.T) {
 	store := NewStore()
 	terminalID := "session-1:workflow-step:exec-step-check-reddit-1:step-check-reddit"
-	oldUpdate := time.Now().Add(-(terminalPromptCompletionInactiveAfter + time.Second))
+	oldUpdate := time.Now().Add(-time.Hour)
 	store.mu.Lock()
 	store.byID[terminalID] = Snapshot{
 		TerminalID:    terminalID,
@@ -1000,11 +1000,11 @@ func TestStoreSelfCompletesBoundedTerminalFromStalePromptStatus(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected terminal snapshot")
 	}
-	if snapshot.Active {
-		t.Fatalf("stale workflow prompt status should close bounded terminal")
+	if !snapshot.Active {
+		t.Fatalf("elapsed time alone should not close a live tmux terminal")
 	}
-	if snapshot.State != "completed" {
-		t.Fatalf("state = %q, want completed", snapshot.State)
+	if snapshot.State != "running" {
+		t.Fatalf("state = %q, want running", snapshot.State)
 	}
 }
 
@@ -1508,10 +1508,10 @@ func TestStorePreservesSyntheticTerminalRowsFromMetadata(t *testing.T) {
 	}
 }
 
-func TestStoreMarksUnchangedBoundedTerminalCompletedAfterTwoMinutes(t *testing.T) {
+func TestStoreKeepsUnchangedTmuxTerminalActiveUntilLivenessIsKnown(t *testing.T) {
 	store := NewStore()
 	terminalID := "session-1:workflow-step:exec-step-old:step-old"
-	oldUpdate := time.Now().Add(-(terminalInactiveAfter + time.Minute))
+	oldUpdate := time.Now().Add(-time.Hour)
 	store.mu.Lock()
 	store.byID[terminalID] = Snapshot{
 		TerminalID:    terminalID,
@@ -1534,11 +1534,11 @@ func TestStoreMarksUnchangedBoundedTerminalCompletedAfterTwoMinutes(t *testing.T
 	if !ok {
 		t.Fatalf("expected terminal snapshot")
 	}
-	if snapshot.Active {
-		t.Fatalf("unchanged bounded terminal should be inactive")
+	if !snapshot.Active {
+		t.Fatalf("unchanged tmux terminal should remain active until the server checks pane liveness")
 	}
-	if snapshot.State != "completed" {
-		t.Fatalf("state = %q, want completed", snapshot.State)
+	if snapshot.State != "running" {
+		t.Fatalf("state = %q, want running", snapshot.State)
 	}
 	if !snapshot.UpdatedAt.Equal(oldUpdate) {
 		t.Fatalf("inactive reconciliation should preserve last update time")
@@ -1548,7 +1548,7 @@ func TestStoreMarksUnchangedBoundedTerminalCompletedAfterTwoMinutes(t *testing.T
 func TestStoreDoesNotIdleTimeoutNonTmuxWorkflowTerminal(t *testing.T) {
 	store := NewStore()
 	terminalID := "session-1:workflow-step:exec-step-old:step-old"
-	oldUpdate := time.Now().Add(-(terminalInactiveAfter + time.Minute))
+	oldUpdate := time.Now().Add(-time.Hour)
 	store.mu.Lock()
 	store.byID[terminalID] = Snapshot{
 		TerminalID:    terminalID,
@@ -1613,10 +1613,10 @@ func TestStoreDoesNotMarkRecentBoundedTerminalInactive(t *testing.T) {
 	}
 }
 
-func TestStoreMarksUnchangedMainAgentTerminalInactive(t *testing.T) {
+func TestStoreKeepsUnchangedMainAgentTerminalActive(t *testing.T) {
 	store := NewStore()
 	terminalID := "session-1:main:session-1"
-	oldUpdate := time.Now().Add(-(terminalInactiveAfter + time.Minute))
+	oldUpdate := time.Now().Add(-time.Hour)
 	store.mu.Lock()
 	store.byID[terminalID] = Snapshot{
 		TerminalID:    terminalID,
@@ -1639,11 +1639,11 @@ func TestStoreMarksUnchangedMainAgentTerminalInactive(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected terminal snapshot")
 	}
-	if snapshot.Active {
-		t.Fatalf("main-agent terminal should be marked inactive after no screen changes")
+	if !snapshot.Active {
+		t.Fatalf("main-agent terminal should remain active while its real tmux pane is live")
 	}
-	if snapshot.State != "completed" {
-		t.Fatalf("state = %q, want completed", snapshot.State)
+	if snapshot.State != "running" {
+		t.Fatalf("state = %q, want running", snapshot.State)
 	}
 }
 
@@ -1664,7 +1664,7 @@ func TestStoreIdenticalTerminalChunksDoNotRefreshUpdatedAt(t *testing.T) {
 
 func TestStoreRefreshContentDoesNotRefreshUpdatedAtWhenPaneUnchanged(t *testing.T) {
 	store := NewStore()
-	oldUpdate := time.Now().Add(-(terminalInactiveAfter + time.Second))
+	oldUpdate := time.Now().Add(-time.Hour)
 	metadata := map[string]interface{}{"execution_kind": "workflow_step", "scope": "workflow_step", "tmux_session": "mlp-codex-cli-int-test"}
 	store.HandleEvent("session-1", terminalEventWithMetadata("exec-1", "same pane", 10, metadata, oldUpdate))
 
@@ -1680,11 +1680,11 @@ func TestStoreRefreshContentDoesNotRefreshUpdatedAtWhenPaneUnchanged(t *testing.
 	if !ok {
 		t.Fatalf("expected terminal snapshot")
 	}
-	if snapshot.Active {
-		t.Fatalf("unchanged refreshed pane should become inactive after idle threshold")
+	if !snapshot.Active {
+		t.Fatalf("unchanged refreshed pane should stay active until tmux liveness is checked")
 	}
-	if snapshot.State != "completed" {
-		t.Fatalf("state = %q, want completed", snapshot.State)
+	if snapshot.State != "running" {
+		t.Fatalf("state = %q, want running", snapshot.State)
 	}
 }
 
@@ -1844,9 +1844,9 @@ func TestStoreRefreshContentDoesNotCompleteCapturedIdleMainAgent(t *testing.T) {
 	}
 }
 
-func TestStoreRepeatedIdenticalChunksBecomeCompletedAfterFiveMinutes(t *testing.T) {
+func TestStoreRepeatedIdenticalChunksRemainActiveWithoutLifecycleEvidence(t *testing.T) {
 	store := NewStore()
-	oldUpdate := time.Now().Add(-(terminalInactiveAfter + time.Second))
+	oldUpdate := time.Now().Add(-time.Hour)
 	now := time.Now()
 	metadata := map[string]interface{}{"execution_kind": "workflow_step", "scope": "workflow_step", "tmux_session": "mlp-codex-cli-int-test"}
 	store.HandleEvent("session-1", terminalEventWithMetadata("exec-1", "same pane", 10, metadata, oldUpdate))
@@ -1856,11 +1856,11 @@ func TestStoreRepeatedIdenticalChunksBecomeCompletedAfterFiveMinutes(t *testing.
 	if !ok {
 		t.Fatalf("expected terminal snapshot")
 	}
-	if snapshot.Active {
-		t.Fatalf("repeated unchanged pane should be inactive after two minutes")
+	if !snapshot.Active {
+		t.Fatalf("repeated unchanged pane should stay active without real completion evidence")
 	}
-	if snapshot.State != "completed" {
-		t.Fatalf("state = %q, want completed", snapshot.State)
+	if snapshot.State != "running" {
+		t.Fatalf("state = %q, want running", snapshot.State)
 	}
 }
 

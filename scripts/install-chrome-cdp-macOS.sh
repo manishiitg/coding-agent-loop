@@ -48,28 +48,30 @@ if [[ ! -d "${tmp_dir}/${APP_NAME}" ]]; then
   exit 1
 fi
 
-sudo_cmd=()
-if [[ ! -w "${INSTALL_DIR}" ]]; then
-  sudo_cmd=(sudo)
-fi
+run_install_command() {
+  if [[ -w "${INSTALL_DIR}" ]]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
 
 echo "Installing ${APP_NAME} to ${INSTALL_DIR}"
 if [[ -e "${APP_PATH}" ]]; then
-  "${sudo_cmd[@]}" rm -rf "${APP_PATH}"
+  run_install_command rm -rf "${APP_PATH}"
 fi
-"${sudo_cmd[@]}" ditto "${tmp_dir}/${APP_NAME}" "${APP_PATH}"
-"${sudo_cmd[@]}" chmod +x "${APP_PATH}/Contents/MacOS/Chrome CDP"
+run_install_command ditto "${tmp_dir}/${APP_NAME}" "${APP_PATH}"
+run_install_command chmod +x "${APP_PATH}/Contents/MacOS/Chrome CDP"
 
 # Clear quarantine/extended attributes so macOS does not show the misleading
 # "damaged" warning for this locally installed helper app.
 if command -v xattr >/dev/null 2>&1; then
-  "${sudo_cmd[@]}" xattr -dr com.apple.quarantine "${APP_PATH}" 2>/dev/null || true
-  "${sudo_cmd[@]}" xattr -c "${APP_PATH}" 2>/dev/null || true
+  run_install_command find "${APP_PATH}" -exec xattr -c {} + >/dev/null 2>&1 || true
 fi
 
 if [[ "${ADHOC_SIGN}" != "0" ]] && command -v codesign >/dev/null 2>&1; then
   echo "Applying a local ad-hoc signature"
-  if ! "${sudo_cmd[@]}" codesign --force --deep --sign - "${APP_PATH}" >/dev/null 2>&1; then
+  if ! run_install_command codesign --force --deep --sign - "${APP_PATH}" >/dev/null 2>&1; then
     echo "Ad-hoc signing was skipped; macOS may ask you to approve the app on first launch." >&2
   fi
 fi

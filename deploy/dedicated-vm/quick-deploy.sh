@@ -152,8 +152,8 @@ if [[ "$TARGET" == "all" || "$TARGET" == "agent" ]]; then
     apt-get update >/dev/null
     apt-get install -y --no-install-recommends tmux >/dev/null
   fi
-  echo "    Updating bare-metal CLI tools (agent-browser, claude, gemini)..."
-  npm install -g agent-browser@latest @anthropic-ai/claude-code@latest @google/gemini-cli@latest @earendil-works/pi-coding-agent@latest 2>&1 | tail -3
+  echo "    Updating bare-metal CLI tools (agent-browser, claude, pi)..."
+  npm install -g agent-browser@latest @anthropic-ai/claude-code@latest @earendil-works/pi-coding-agent@latest 2>&1 | tail -3
 
   # Fix go.mod replace directives
   cd $REMOTE/src/agent_go

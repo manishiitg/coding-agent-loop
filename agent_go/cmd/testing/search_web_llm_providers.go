@@ -64,7 +64,7 @@ func runSearchWebLLMProvidersTest(cmd *cobra.Command, args []string) error {
 	modelOverrides := parseProviderModelOverrides(viper.GetString("search-web-llm-providers.models"))
 	providers := parseCSVList(viper.GetString("search-web-llm-providers.providers"))
 	if len(providers) == 0 {
-		providers = []string{"gemini-cli", "codex-cli", "cursor-cli", "claude-code", "vertex"}
+		providers = []string{"codex-cli", "cursor-cli", "claude-code", "vertex"}
 	}
 
 	published, exists, err := services.LoadPublishedLLMs(context.Background(), workspaceURL)
@@ -192,13 +192,6 @@ func searchWebProviderSkipReason(provider, modelID string, published []services.
 	}
 
 	switch provider {
-	case "gemini-cli":
-		if _, err := exec.LookPath("gemini"); err != nil {
-			return "gemini CLI is not installed or not on PATH"
-		}
-		if strings.TrimSpace(keys["gemini_cli"]) == "" {
-			return "no gemini_cli auth found in workspace provider keys"
-		}
 	case "codex-cli":
 		if _, err := exec.LookPath("codex"); err != nil {
 			return "codex CLI is not installed or not on PATH"
@@ -242,7 +235,7 @@ func hasPublishedSearchProvider(provider, modelID string, published []services.P
 
 func isPublishedSearchCapable(provider, modelID string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "claude-code", "codex-cli", "cursor-cli", "gemini-cli":
+	case "claude-code", "codex-cli", "cursor-cli":
 		return true
 	case "vertex":
 		return strings.HasPrefix(strings.ToLower(strings.TrimSpace(modelID)), "gemini")
@@ -262,7 +255,7 @@ func init() {
 	searchWebLLMProvidersTestCmd.Flags().String("workspace-url", "", "Workspace API URL (default: WORKSPACE_API_URL or http://127.0.0.1:8081)")
 	searchWebLLMProvidersTestCmd.Flags().String("query", "", "Web search query to run")
 	searchWebLLMProvidersTestCmd.Flags().String("expect-any", "", "Comma-separated response markers; at least one must appear. Defaults to example")
-	searchWebLLMProvidersTestCmd.Flags().String("providers", "", "Comma-separated providers to test (default: gemini-cli,codex-cli,cursor-cli,claude-code,vertex)")
+	searchWebLLMProvidersTestCmd.Flags().String("providers", "", "Comma-separated providers to test (default: codex-cli,cursor-cli,claude-code,vertex)")
 	searchWebLLMProvidersTestCmd.Flags().String("models", "", "Comma-separated provider=model overrides, e.g. codex-cli=gpt-5.3-codex-spark,vertex=gemini-3-flash-preview")
 	searchWebLLMProvidersTestCmd.Flags().String("provider-timeout", "2m", "Timeout per provider")
 	searchWebLLMProvidersTestCmd.Flags().Bool("include-unconfigured", false, "Attempt providers even when auth/runtime/published preflight is missing")

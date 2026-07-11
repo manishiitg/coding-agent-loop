@@ -50,7 +50,7 @@ func (o *costObserver) HandleEvent(_ context.Context, event *unifiedevents.Agent
 
 	// Provider-blessed cost wins over the adapter-side estimate; the
 	// estimate only fills in for CLIs whose JSON doesn't ship USD
-	// (codex / cursor / gemini-cli) or for tmux paths.
+	// (codex / cursor) or for tmux paths.
 	totalCostUSD := tu.TotalCost
 	costSource := ""
 	if totalCostUSD > 0 {

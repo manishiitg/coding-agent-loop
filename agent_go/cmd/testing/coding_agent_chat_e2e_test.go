@@ -9,7 +9,6 @@ import (
 
 func TestDefaultCodingAgentE2EModelIncludesCodingCLIProviders(st *stdtesting.T) {
 	tests := map[string]string{
-		"gemini-cli":  "gemini-3.1-flash-lite",
 		"codex-cli":   "gpt-5.3-codex-spark",
 		"cursor-cli":  "cursor-cli",
 		"agy-cli":     "agy-cli",
@@ -31,7 +30,7 @@ func TestProviderSupportsTmuxLossResumeE2EIncludesNativeResumeProviders(st *stdt
 		"codex-cli":   true,
 		"agy-cli":     true,
 		"cursor-cli":  false,
-		"gemini-cli":  false,
+		"pi-cli":      false,
 	}
 
 	for provider, want := range cases {
@@ -101,14 +100,14 @@ func TestEventsProveProviderRequiresTypedProviderEvent(st *stdtesting.T) {
 				"data": map[string]interface{}{
 					"metadata": map[string]interface{}{
 						"coding_provider_session_handle": map[string]interface{}{
-							"provider": "gemini-cli",
+							"provider": "pi-cli",
 						},
 					},
 				},
 			},
 		},
 	}
-	if !eventsProveProvider(events, "gemini-cli") {
+	if !eventsProveProvider(events, "pi-cli") {
 		st.Fatalf("provider proof rejected typed coding provider session handle")
 	}
 }

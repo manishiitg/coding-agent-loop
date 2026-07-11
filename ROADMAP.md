@@ -15,7 +15,7 @@ This roadmap describes the main product directions for Runloop. It is not a rele
 Runloop should feel usable immediately after install.
 
 Planned work:
-- Detect installed coding-agent CLIs such as Claude Code, Codex, Gemini CLI, Pi CLI, and Antigravity CLI.
+- Detect installed coding-agent CLIs such as Claude Code, Codex, Pi CLI, and Antigravity CLI.
 - Create sensible default LLM configuration when one usable CLI is found.
 - Show setup diagnostics for required runtime pieces such as `mcpbridge`, Go, `tmux`, provider auth, and workspace configuration.
 - Let users start a chat or build a workflow without manually wiring every provider first.
@@ -55,7 +55,7 @@ Planned work:
 Pi CLI should become the preferred multi-model coding-agent runtime with dependable tmux behavior and model coverage.
 
 Planned work:
-- Improve Pi terminal, resume, and workspace behavior to match the expectations set by Claude Code, Codex, and Gemini CLI integrations.
+- Improve Pi terminal, resume, and workspace behavior to match the expectations set by Claude Code and Codex integrations.
 - Add and certify support for Google/Pi-routed models and other cost-effective coding models.
 - Provide low-cost default plans for users who want useful workflows without frontier-model pricing.
 - Document which providers support tool access, resume, streaming, and long-running workflow execution.

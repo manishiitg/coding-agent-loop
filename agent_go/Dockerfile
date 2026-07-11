@@ -58,7 +58,7 @@ RUN cd /app/agent_go && \
 # node and the default (NumCPU) compile fan-out OOM-killed the build. Slower but survivable.
 RUN cd /app && CGO_ENABLED=1 GOOS=linux GOMEMLIMIT=3GiB go build -p=2 -ldflags="-w -s" -o /app/agent_go/mcp-agent ./agent_go
 
-# Build mcpbridge binary (Gemini CLI MCP bridge - proxies tool calls to our API)
+# Build mcpbridge binary, which proxies coding-agent tool calls to our API.
 RUN cd /app && CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /app/agent_go/mcpbridge github.com/manishiitg/mcpagent/cmd/mcpbridge
 
 # Runtime stage - Debian bookworm-slim (glibc, good package availability)
@@ -130,16 +130,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends unzip && \
 RUN curl -fsSL "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" -o /usr/local/bin/kubectl && \
     chmod +x /usr/local/bin/kubectl && \
     kubectl version --client
-
-# Optionally install Gemini CLI (@google/gemini-cli). Enabled only by deploy targets
-# that need the `gemini-cli` LLM provider adapter (see multi-llm-provider-go/pkg/adapters/geminicli).
-# Opt-in via build arg to keep non-k8s images (azure, dedicated-vm) lean.
-ARG INSTALL_GEMINI_CLI=false
-RUN if [ "$INSTALL_GEMINI_CLI" = "true" ]; then \
-        npm install -g @google/gemini-cli && which gemini && gemini --version; \
-    else \
-        echo "Skipping @google/gemini-cli install (INSTALL_GEMINI_CLI=$INSTALL_GEMINI_CLI)"; \
-    fi
 
 # Optionally install Pi CLI. The adapter can fall back to npx, but installing
 # the binary avoids first-run network latency in tmux-backed coding-agent runs.

@@ -24,7 +24,6 @@ import (
 	claudecodeadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 	codexcliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	cursorcliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
-	geminicliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/geminicli"
 	minimaxadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/minimax"
 	openaiadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai"
 	vertexadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/vertex"
@@ -107,21 +106,9 @@ func TestTerminalPaneCrossTransportReal(t *testing.T) {
 		},
 		{
 			class:    "structured_cli",
-			provider: "gemini-cli",
-			gate:     "RUN_GEMINI_CLI_REAL_E2E",
-			build:    buildGeminiCLITerminalAdapter,
-		},
-		{
-			class:    "structured_cli",
 			provider: "cursor-cli",
 			gate:     "RUN_CURSOR_CLI_REAL_E2E",
 			build:    buildCursorCLITerminalAdapter,
-		},
-		{
-			class:    "tmux",
-			provider: "gemini-cli",
-			gate:     "RUN_GEMINI_CLI_INTERACTIVE_E2E",
-			build:    buildGeminiCLITmuxTerminalAdapter,
 		},
 		{
 			class:    "tmux",
@@ -403,18 +390,6 @@ func buildMinimaxTerminalAdapter(t *testing.T) (llmtypes.Model, []llmtypes.CallO
 	return minimaxadapter.NewMiniMaxAdapter(apiKey, model, silentLogger{}), nil, ""
 }
 
-func buildGeminiCLITerminalAdapter(t *testing.T) (llmtypes.Model, []llmtypes.CallOption, string) {
-	t.Helper()
-	if _, err := exec.LookPath("gemini"); err != nil {
-		return nil, nil, "gemini CLI not in PATH"
-	}
-	model := strings.TrimSpace(os.Getenv("GEMINI_CLI_REAL_E2E_MODEL"))
-	if model == "" {
-		model = "gemini-3.1-flash-lite-preview"
-	}
-	return geminicliadapter.NewGeminiCLIAdapter("", model, silentLogger{}), nil, ""
-}
-
 func buildCursorCLITerminalAdapter(t *testing.T) (llmtypes.Model, []llmtypes.CallOption, string) {
 	t.Helper()
 	if _, err := exec.LookPath("cursor-agent"); err != nil {
@@ -425,27 +400,6 @@ func buildCursorCLITerminalAdapter(t *testing.T) (llmtypes.Model, []llmtypes.Cal
 		model = "cursor-cli"
 	}
 	return cursorcliadapter.NewCursorCLIAdapter("", model, silentLogger{}), nil, ""
-}
-
-func buildGeminiCLITmuxTerminalAdapter(t *testing.T) (llmtypes.Model, []llmtypes.CallOption, string) {
-	t.Helper()
-	for _, bin := range []string{"gemini", "tmux", "node"} {
-		if _, err := exec.LookPath(bin); err != nil {
-			return nil, nil, "tmux interactive requires " + bin + " in PATH"
-		}
-	}
-	model := strings.TrimSpace(os.Getenv("GEMINI_CLI_REAL_E2E_MODEL"))
-	if model == "" {
-		model = "gemini-3.1-flash-lite-preview"
-	}
-	t.Cleanup(func() {
-		_ = geminicliadapter.CleanupGeminiCLIInteractiveSessions(context.Background())
-	})
-	owner := "gemini-tmux-terminal-pane-" + strings.ToLower(strings.ReplaceAll(time.Now().Format("150405.000"), ".", ""))
-	return geminicliadapter.NewGeminiCLIAdapter("", model, silentLogger{}), []llmtypes.CallOption{
-		geminicliadapter.WithInteractiveSessionID(owner),
-		geminicliadapter.WithPersistentInteractiveSession(true),
-	}, ""
 }
 
 func buildCursorCLITmuxTerminalAdapter(t *testing.T) (llmtypes.Model, []llmtypes.CallOption, string) {

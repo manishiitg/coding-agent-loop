@@ -188,7 +188,7 @@ Published LLM metadata and provider authentication are workspace-backed configur
   - ` + "`\"fallback\"`" + ` = backup search provider
 - Use ` + "`search_priority`" + ` to order providers within the same role. Lower numbers win.
 - If the tool call passes a specific ` + "`provider`" + `, that override wins over ` + "`search_role`" + ` / ` + "`search_priority`" + `.
-- Example: ` + "`{\"id\":\"gemini-search\",\"name\":\"Gemini Search\",\"provider\":\"gemini-cli\",\"model_id\":\"gemini-2.5-pro\",\"search_role\":\"primary\",\"search_priority\":1}`" + `
+- Example: ` + "`{\"id\":\"vertex-search\",\"name\":\"Gemini Search\",\"provider\":\"vertex\",\"model_id\":\"gemini-3.5-flash\",\"search_role\":\"primary\",\"search_priority\":1}`" + `
 
 ## Image Generation Defaults
 Image generation defaults are workspace-backed configuration. Provider authentication is managed separately through ` + "`set_provider_auth`" + `.

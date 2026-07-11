@@ -312,7 +312,7 @@ func TestTerminalRoutesListCapsContentButGetKeepsFullContent(t *testing.T) {
 	api := &StreamingAPI{terminalStore: store}
 	sessionID := "session-terminal-large"
 	terminalID := sessionID + ":workflow-step:review-plan"
-	tmuxSession := "mlp-gemini-cli-int-test"
+	tmuxSession := "mlp-codex-cli-int-test"
 	tailMarker := "latest terminal tail marker"
 	fullContent := strings.Repeat("old terminal output line\n", 5000) + tailMarker
 
@@ -661,7 +661,7 @@ func TestTerminalRoutesSyntheticWorkflowSnapshotIncludesToolEvents(t *testing.T)
 		"step_index":         1,
 		"step_total":         28,
 		"step_transport":     "api",
-		"provider":           "gemini-cli",
+		"provider":           "codex-cli",
 	}
 
 	store.HandleEvent(sessionID, terminalRouteSyntheticChunkEvent(
@@ -715,8 +715,8 @@ func TestTerminalRoutesSyntheticWorkflowSnapshotIncludesToolEvents(t *testing.T)
 	if terminal.StepTransport != "api" {
 		t.Fatalf("step transport = %q, want api", terminal.StepTransport)
 	}
-	if terminal.Status.ProviderLabel != "Gemini CLI" {
-		t.Fatalf("provider label = %q, want Gemini CLI", terminal.Status.ProviderLabel)
+	if terminal.Status.ProviderLabel != "Codex CLI" {
+		t.Fatalf("provider label = %q, want Codex CLI", terminal.Status.ProviderLabel)
 	}
 	if !strings.Contains(terminal.Content, "$ gemini model=auto") {
 		t.Fatalf("terminal content missing Gemini command:\n%s", terminal.Content)
@@ -1361,7 +1361,7 @@ func TestTerminalRoutesSendInputUsesTmuxPasteAndOptionalEnter(t *testing.T) {
 	api := &StreamingAPI{terminalStore: store}
 	sessionID := "session-terminal-input"
 	terminalID := sessionID + ":workflow-step:review-plan"
-	tmuxSession := "mlp-gemini-cli-int-test"
+	tmuxSession := "mlp-codex-cli-int-test"
 	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, "pane", 2))
 
 	type call struct {

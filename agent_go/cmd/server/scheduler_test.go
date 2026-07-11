@@ -1362,7 +1362,7 @@ func TestOptimizerScheduleMessagesReplacesLegacyGoalAdvisorQueue(t *testing.T) {
 
 func TestApplyLLMAndSecretsToReqMapUsesAutoImproveOverrideOnlyForOptimizer(t *testing.T) {
 	builder := &workflowtypes.AgentLLMConfig{Provider: "claude-code", ModelID: "claude-opus-4-6"}
-	maintenance := &workflowtypes.AgentLLMConfig{Provider: "gemini-cli", ModelID: "gemini-2.5-pro"}
+	maintenance := &workflowtypes.AgentLLMConfig{Provider: "vertex", ModelID: "gemini-2.5-pro"}
 	baseConfig := &workflowtypes.PresetLLMConfig{
 		SchemaVersion:  workflowtypes.LLMConfigSchemaVersion,
 		Mode:           workflowtypes.LLMConfigModeExplicit,
@@ -1387,13 +1387,13 @@ func TestApplyLLMAndSecretsToReqMapUsesAutoImproveOverrideOnlyForOptimizer(t *te
 		{
 			name:         "optimizer schedule uses Goal Advisor override",
 			workshopMode: "optimizer",
-			wantProvider: "gemini-cli",
+			wantProvider: "vertex",
 			wantModelID:  "gemini-2.5-pro",
 		},
 		{
 			name:         "optimizer mode is case insensitive",
 			workshopMode: " OPTIMIZER ",
-			wantProvider: "gemini-cli",
+			wantProvider: "vertex",
 			wantModelID:  "gemini-2.5-pro",
 		},
 	}

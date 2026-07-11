@@ -46,7 +46,7 @@ does not echo the requested sentinel/marker in its final answer.
 Example:
   mcp-agent test agent-browse-stress-e2e \
     --server-url http://127.0.0.1:18743 \
-    --provider gemini-cli \
+	--provider codex-cli \
     --model gemini-3.1-flash-lite \
     --cdp-port 9222 \
     --workers 5`,
@@ -60,7 +60,7 @@ Example:
 
 		provider := strings.TrimSpace(agentBrowseStressE2EFlags.provider)
 		if provider == "" {
-			provider = "gemini-cli"
+			provider = "codex-cli"
 		}
 		model := strings.TrimSpace(agentBrowseStressE2EFlags.model)
 		if model == "" {
@@ -132,7 +132,7 @@ Example:
 
 func init() {
 	agentBrowseStressE2ECmd.Flags().StringVar(&agentBrowseStressE2EFlags.serverURL, "server-url", "http://127.0.0.1:18743", "mcp-agent-builder-go server URL")
-	agentBrowseStressE2ECmd.Flags().StringVar(&agentBrowseStressE2EFlags.provider, "provider", "gemini-cli", "coding CLI provider; defaults to gemini-cli")
+	agentBrowseStressE2ECmd.Flags().StringVar(&agentBrowseStressE2EFlags.provider, "provider", "codex-cli", "coding CLI provider; defaults to codex-cli")
 	agentBrowseStressE2ECmd.Flags().StringVar(&agentBrowseStressE2EFlags.model, "model", "", "model ID; defaults to the provider-specific Builder coding-agent E2E model")
 	agentBrowseStressE2ECmd.Flags().StringVar(&agentBrowseStressE2EFlags.selectedFolder, "selected-folder", "_users/default/Chats", "workspace-relative folder for the chat sessions")
 	agentBrowseStressE2ECmd.Flags().StringVar(&agentBrowseStressE2EFlags.sessionPrefix, "session-prefix", "", "session ID prefix; generated when omitted")

@@ -1330,7 +1330,7 @@ func requiresCodeExecutionForProvider(config *AgentLLMConfig) bool {
 }
 
 // isCliProviderForPrompt checks if the given provider is a CLI runtime
-// (claude-code, gemini-cli, codex-cli, pi-cli, kimi). CLI providers have their own
+// (claude-code, codex-cli, pi-cli, kimi). CLI providers have their own
 // tool-calling capabilities and use a different prompt template than the
 // generic code-execution one, even though every agent now runs in
 // code-execution mode for HTTP-bridge tool routing.

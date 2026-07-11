@@ -25,7 +25,7 @@ func TestBuildCLIToolEnvironmentPromptUsesProviderSpecificBridgeToolNames(t *tes
 			forbid:   "mcp__api-bridge__execute_shell_command",
 		},
 		{
-			provider: "gemini-cli",
+			provider: "codex-cli",
 			want:     "mcp_api-bridge_execute_shell_command",
 			forbid:   "mcp__api-bridge__execute_shell_command",
 		},

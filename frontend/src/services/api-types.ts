@@ -13,7 +13,6 @@ export type LLMProvider =
   | 'z-ai'
   | 'kimi'
   | 'claude-code'
-  | 'gemini-cli'
   | 'codex-cli'
   | 'cursor-cli'
   | 'agy-cli'
@@ -69,7 +68,7 @@ export interface LLMConfiguration {
   options?: Record<string, unknown>
   fallback_models: string[]
   cross_provider_fallback?: {
-    provider: 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli' | 'cursor-cli' | 'agy-cli' | 'pi-cli'
+    provider: 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'codex-cli' | 'cursor-cli' | 'agy-cli' | 'pi-cli'
     models: string[]
   }
   // API keys for each provider

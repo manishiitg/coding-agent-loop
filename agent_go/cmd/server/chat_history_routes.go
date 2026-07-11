@@ -496,7 +496,7 @@ func (api *StreamingAPI) startRestoredTerminalFromNewAgent(ctx context.Context, 
 		common.SetSessionBrowserMode(sessionID, restoredBrowserMode)
 	}
 
-	claudeCodePersistent, codexPersistent, geminiPersistent, cursorPersistent, agyPersistent, piPersistent := codingAgentPersistentInteractiveFlags(provider)
+	claudeCodePersistent, codexPersistent, cursorPersistent, agyPersistent, piPersistent := codingAgentPersistentInteractiveFlags(provider)
 	if piPersistent {
 		if closed := api.cleanupConflictingPiCLIInteractiveSessions(sessionID, workingDir, "restoring chat terminal"); closed > 0 {
 			api.logRestoredTerminalInfof("restore session=%s closed %d conflicting Pi CLI session(s) in %s", sessionID, closed, workingDir)
@@ -514,7 +514,6 @@ func (api *StreamingAPI) startRestoredTerminalFromNewAgent(ctx context.Context, 
 		UseCodeExecutionMode:                   true,
 		ClaudeCodePersistentInteractiveSession: claudeCodePersistent,
 		CodexPersistentInteractiveSession:      codexPersistent,
-		GeminiPersistentInteractiveSession:     geminiPersistent,
 		CursorPersistentInteractiveSession:     cursorPersistent,
 		AgyPersistentInteractiveSession:        agyPersistent,
 		CursorBridgeToolsMode:                  cursorPersistent,

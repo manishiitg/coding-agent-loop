@@ -232,13 +232,11 @@ func TestHandleStopSessionCancelsActiveWorkAndPreventsPaneReuse(t *testing.T) {
 func TestCleanupCodingAgentInteractiveSessionsCallsEveryProvider(t *testing.T) {
 	oldClaude := cleanupClaudeCodeProviderSessions
 	oldCodex := cleanupCodexCLIProviderSessions
-	oldGemini := cleanupGeminiCLIProviderSessions
 	oldCursor := cleanupCursorCLIProviderSessions
 	oldPi := cleanupPiCLIProviderSessions
 	t.Cleanup(func() {
 		cleanupClaudeCodeProviderSessions = oldClaude
 		cleanupCodexCLIProviderSessions = oldCodex
-		cleanupGeminiCLIProviderSessions = oldGemini
 		cleanupCursorCLIProviderSessions = oldCursor
 		cleanupPiCLIProviderSessions = oldPi
 	})
@@ -252,10 +250,6 @@ func TestCleanupCodingAgentInteractiveSessionsCallsEveryProvider(t *testing.T) {
 		called["codex"] = true
 		return nil
 	}
-	cleanupGeminiCLIProviderSessions = func(context.Context) error {
-		called["gemini"] = true
-		return nil
-	}
 	cleanupCursorCLIProviderSessions = func(context.Context) error {
 		called["cursor"] = true
 		return nil
@@ -267,7 +261,7 @@ func TestCleanupCodingAgentInteractiveSessionsCallsEveryProvider(t *testing.T) {
 
 	cleanupCodingAgentInteractiveSessions("test")
 
-	for _, provider := range []string{"claude", "codex", "gemini", "cursor", "pi"} {
+	for _, provider := range []string{"claude", "codex", "cursor", "pi"} {
 		if !called[provider] {
 			t.Fatalf("cleanup for %s was not called", provider)
 		}

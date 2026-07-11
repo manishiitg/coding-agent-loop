@@ -22,7 +22,7 @@ Tools need stable session-scoped state for things like:
 - folder guard restrictions
 - browser reuse
 - MCP server connection reuse
-- Claude Code / Gemini CLI resume
+- Coding-agent native resume
 
 The current architecture binds different parts of tool state to different session IDs depending on what is being shared.
 
@@ -39,7 +39,7 @@ It is the primary session identity for:
 - stop / clear session APIs
 - session-scoped shell config in `common.sessionShellConfigs`
 - workflow stop cleanup via `mcpagent.CloseHTTPSession`
-- Claude Code and Gemini CLI resume caches
+- Coding-agent resume caches
 
 Relevant code:
 
@@ -256,8 +256,6 @@ Within the same running server process, reusing the same HTTP session can preser
 - event history
 - stored agent instance in some modes
 - Claude Code CLI resume ID
-- Gemini CLI resume ID
-- Gemini project dir ID
 - session shell config
 
 That is why later turns in the same session can continue using the same chat context and provider CLI resume state.

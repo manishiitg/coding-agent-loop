@@ -103,19 +103,6 @@ func resolvePricingProviderAndModel(provider, modelID string) (string, string) {
 			return "cursor-cli", "cursor-cli"
 		}
 		return "cursor-cli", normalizedModelID
-	case "gemini-cli":
-		switch normalizedModelLower {
-		case "", "auto", "gemini-cli":
-			return "vertex", vertex.ModelGemini31ProPreview
-		case "pro":
-			return "vertex", vertex.ModelGemini31ProPreview
-		case "flash":
-			return "vertex", vertex.ModelGemini3FlashPreview
-		case "flash-lite":
-			return "vertex", vertex.ModelGemini31FlashLitePreview
-		default:
-			return "vertex", normalizedModelID
-		}
 	case "pi-cli":
 		if normalizedModelLower == "" || normalizedModelLower == "auto" || normalizedModelLower == "pi-cli" {
 			return "pi-cli", "google/gemini-3.5-flash"

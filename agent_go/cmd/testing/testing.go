@@ -88,7 +88,6 @@ func initTestingCommands() {
 	TestingCmd.AddCommand(structuredOutputTestCmd)
 	TestingCmd.AddCommand(claudeExperimentalTestCmd)
 	TestingCmd.AddCommand(claudeResumeAfterCancelTestCmd)
-	TestingCmd.AddCommand(geminiResumeAfterCancelTestCmd)
 	TestingCmd.AddCommand(codexResumeAfterCancelTestCmd)
 	TestingCmd.AddCommand(codexMCPToolCallTestCmd)
 	TestingCmd.AddCommand(codingAgentChatE2ECmd)

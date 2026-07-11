@@ -329,7 +329,7 @@ func createSearchWebLLMExecutor(workspaceURL string) func(ctx context.Context, a
 
 func isSearchCapableProvider(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case string(llm.ProviderClaudeCode), string(llm.ProviderCodexCLI), string(llm.ProviderCursorCLI), string(llm.ProviderPiCLI), string(llm.ProviderGeminiCLI), string(llm.ProviderVertex):
+	case string(llm.ProviderClaudeCode), string(llm.ProviderCodexCLI), string(llm.ProviderCursorCLI), string(llm.ProviderPiCLI), string(llm.ProviderVertex):
 		return true
 	default:
 		return false
@@ -357,8 +357,6 @@ func hasSearchProviderAuth(provider string, apiKeys *llm.ProviderAPIKeys) bool {
 		return true
 	case string(llm.ProviderPiCLI):
 		return apiKeys != nil && apiKeys.PiCLI != nil && strings.TrimSpace(*apiKeys.PiCLI) != ""
-	case string(llm.ProviderGeminiCLI):
-		return apiKeys != nil && apiKeys.GeminiCLI != nil && strings.TrimSpace(*apiKeys.GeminiCLI) != ""
 	case string(llm.ProviderVertex):
 		return apiKeys != nil && apiKeys.Vertex != nil && strings.TrimSpace(*apiKeys.Vertex) != ""
 	default:
@@ -368,9 +366,6 @@ func hasSearchProviderAuth(provider string, apiKeys *llm.ProviderAPIKeys) bool {
 
 func isSearchProviderAvailable(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case string(llm.ProviderGeminiCLI):
-		_, err := exec.LookPath("gemini")
-		return err == nil
 	case string(llm.ProviderClaudeCode):
 		_, err := exec.LookPath("claude")
 		return err == nil
@@ -473,10 +468,6 @@ func preferredSearchModelRank(provider, modelID string) int {
 		case "sonnet-4":
 			return 3
 		}
-	case string(llm.ProviderGeminiCLI):
-		if modelID == "auto" {
-			return 0
-		}
 	}
 	return 100
 }
@@ -490,8 +481,6 @@ func searchModelAlias(provider, modelID string) string {
 			return "gpt-5.4-mini"
 		case string(llm.ProviderCursorCLI):
 			return "cursor-cli"
-		case string(llm.ProviderGeminiCLI):
-			return "auto"
 		}
 	}
 	return modelID
@@ -769,10 +758,6 @@ func loadWorkspaceProviderAPIKeys(ctx context.Context, workspaceURL string) *llm
 		v := value
 		keys.Vertex = &v
 	}
-	if value, ok := rawKeys["gemini_cli"].(string); ok && strings.TrimSpace(value) != "" {
-		v := value
-		keys.GeminiCLI = &v
-	}
 	if value, ok := rawKeys["codex_cli"].(string); ok && strings.TrimSpace(value) != "" {
 		v := value
 		keys.CodexCLI = &v
@@ -859,10 +844,6 @@ func createPublishedSearchLLM(ctx context.Context, workspaceURL string, requeste
 
 	provider := llm.Provider(strings.ToLower(strings.TrimSpace(publishedLLM.Provider)))
 	switch provider {
-	case llm.ProviderGeminiCLI:
-		if apiKeys == nil || apiKeys.GeminiCLI == nil || strings.TrimSpace(*apiKeys.GeminiCLI) == "" {
-			return nil, fmt.Errorf("search_web_llm requires Gemini CLI workspace auth for the published provider. Use set_provider_auth")
-		}
 	case llm.ProviderCodexCLI:
 		// Codex CLI can use workspace auth, CODEX_API_KEY, or its own stored login state.
 	case llm.ProviderCursorCLI:
@@ -1310,8 +1291,6 @@ func createLLMFromConfig(ctx context.Context, config mcpagent.LLMModel) (llmtype
 			apiKeys.ZAI = config.APIKey
 		case llm.ProviderVertex:
 			apiKeys.Vertex = config.APIKey
-		case llm.ProviderGeminiCLI:
-			apiKeys.GeminiCLI = config.APIKey
 		case llm.ProviderCodexCLI:
 			apiKeys.CodexCLI = config.APIKey
 		case llm.ProviderCursorCLI:

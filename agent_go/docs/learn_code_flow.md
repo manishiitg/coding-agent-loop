@@ -122,7 +122,7 @@ Additional behavior:
 
 - Step config overrides workflow default.
 - Workflow default no longer auto-enables code execution globally.
-- Provider-specific auto-enable is handled per agent for CLI providers such as `claude-code`, `gemini-cli`, and `codex-cli`.
+- Provider-specific auto-enable is handled per agent for CLI providers such as `claude-code`, `pi-cli`, and `codex-cli`.
 
 ## `learn_code` Flow
 

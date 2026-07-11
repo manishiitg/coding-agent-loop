@@ -22,6 +22,7 @@ import WorkflowWalkthrough from './workflow/WorkflowWalkthrough'
 import { RunloopLockup } from './branding/RunloopLogo'
 import WorkspaceTopBarControls from './WorkspaceTopBarControls'
 import { useAppVersion } from './topbar/useAppVersion'
+import ConfirmationDialog from './ui/ConfirmationDialog'
 import {
   LLM_DISCOVERY_ONBOARDING_CLEARED_EVENT,
   LLM_DISCOVERY_ONBOARDING_OPENED_EVENT,
@@ -203,6 +204,8 @@ export const ModePresetBar: React.FC = () => {
   const [showWorkflowsPopup, setShowWorkflowsPopup] = useState(false)
   const [showWorkflowWalkthrough, setShowWorkflowWalkthrough] = useState(false)
   const [workflowWalkthroughOpenToken, setWorkflowWalkthroughOpenToken] = useState(0)
+  const [pendingDuplicatePreset, setPendingDuplicatePreset] = useState<{ id: string; label: string } | null>(null)
+  const [duplicatingPreset, setDuplicatingPreset] = useState(false)
   const pendingAutoWalkthroughAfterLLMDiscoveryRef = useRef(false)
   const evaluatedAutoWalkthroughRef = useRef(false)
   const showWorkflowsOverview = useAppStore(s => s.showWorkflowsOverview)
@@ -533,19 +536,29 @@ export const ModePresetBar: React.FC = () => {
     }
   }, [clearActivePreset, refreshPresets, setSelectedFile, setShowFileContent])
 
-  const handleDuplicatePreset = useCallback(async (presetId: string, e: React.MouseEvent) => {
+  const requestDuplicatePreset = useCallback((preset: CustomPreset | PredefinedPreset, e: React.MouseEvent) => {
     e.stopPropagation()
+    setShowPresetDropdown(false)
+    setPendingDuplicatePreset({ id: preset.id, label: preset.label })
+  }, [])
+
+  const handleDuplicatePresetConfirm = useCallback(async () => {
+    if (!pendingDuplicatePreset || duplicatingPreset) return
+
+    setDuplicatingPreset(true)
     try {
-      const duplicatedPreset = await duplicatePreset(presetId)
+      const duplicatedPreset = await duplicatePreset(pendingDuplicatePreset.id)
       if (duplicatedPreset) {
-        setShowPresetDropdown(false)
+        setPendingDuplicatePreset(null)
         handlePresetClick(duplicatedPreset)
       }
     } catch (error) {
       console.error('Failed to duplicate preset:', error)
-      alert('Failed to duplicate automation. Please try again.')
+      useChatStore.getState().addToast('Failed to duplicate automation. Please try again.', 'error')
+    } finally {
+      setDuplicatingPreset(false)
     }
-  }, [duplicatePreset, handlePresetClick])
+  }, [duplicatePreset, duplicatingPreset, handlePresetClick, pendingDuplicatePreset])
 
   // Refresh presets when switching to workflow mode
   useEffect(() => {
@@ -788,7 +801,7 @@ export const ModePresetBar: React.FC = () => {
                                         </button>
                                       )}
                                       <button
-                                        onClick={(e) => handleDuplicatePreset(preset.id, e)}
+                                        onClick={(e) => requestDuplicatePreset(preset, e)}
                                         className="p-1 rounded hover:bg-blue-100 dark:hover:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
                                         title="Duplicate automation"
                                       >
@@ -1038,6 +1051,20 @@ export const ModePresetBar: React.FC = () => {
         isOpen={showWorkflowWalkthrough}
         onClose={closeWorkflowWalkthrough}
         openToken={workflowWalkthroughOpenToken}
+      />
+
+      <ConfirmationDialog
+        isOpen={pendingDuplicatePreset !== null}
+        onClose={() => {
+          if (!duplicatingPreset) setPendingDuplicatePreset(null)
+        }}
+        onConfirm={handleDuplicatePresetConfirm}
+        title="Duplicate automation?"
+        message={`Create a copy of "${pendingDuplicatePreset?.label || 'this automation'}"? The copy will include its workflow files and configuration.`}
+        confirmText="Duplicate"
+        type="info"
+        isLoading={duplicatingPreset}
+        loadingText="Duplicating..."
       />
 
     </>

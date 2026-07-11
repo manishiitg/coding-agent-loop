@@ -337,18 +337,20 @@ func answerReportHumanInput(ctx context.Context, workspacePath, inputID string, 
 
 	selected := strings.TrimSpace(req.SelectedOptionID)
 	note := strings.TrimSpace(req.Note)
-	if len(input.Options) > 0 {
-		if selected == "" {
-			return nil, fmt.Errorf("selected_option_id is required")
-		}
-		if !reportHumanInputOptionExists(input.Options, selected) {
-			return nil, fmt.Errorf("selected_option_id %q is not valid for input_id %q", selected, inputID)
-		}
-	} else if note == "" {
-		return nil, fmt.Errorf("note is required for free-text input")
+	if selected != "" && !reportHumanInputOptionExists(input.Options, selected) {
+		return nil, fmt.Errorf("selected_option_id %q is not valid for input_id %q", selected, inputID)
 	}
 	if !input.AllowFreeText && len(input.Options) > 0 {
 		note = ""
+	}
+	if selected == "" && note == "" {
+		if len(input.Options) > 0 {
+			if input.AllowFreeText {
+				return nil, fmt.Errorf("select an option or provide a note")
+			}
+			return nil, fmt.Errorf("selected_option_id is required")
+		}
+		return nil, fmt.Errorf("note is required for free-text input")
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -501,7 +503,7 @@ func createReportHumanInputTools() ([]llmtypes.Tool, map[string]interface{}, map
 						},
 						"description": "Optional choice list. Each option needs an id, title, and ideally a short description.",
 					},
-					"allow_free_text": map[string]interface{}{"type": "boolean", "description": "Allow an optional note. If no options are provided, free text is automatically allowed."},
+					"allow_free_text": map[string]interface{}{"type": "boolean", "description": "Allow the user to write a custom answer instead of selecting an option, or add a note alongside an option. If no options are provided, free text is automatically allowed."},
 					"run_id":          map[string]interface{}{"type": "string", "description": "Optional schedule/run id connected to the request."},
 					"evidence":        map[string]interface{}{"type": "string", "description": "Evidence paths/ids that justify the question."},
 				},

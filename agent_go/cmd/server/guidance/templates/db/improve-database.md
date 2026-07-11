@@ -2,6 +2,8 @@ Improve the workflow database so `db/db.sqlite` supports the current plan, downs
 
 Write to `builder/improve.html`. For the log format, the one-time migration, and how entries are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
 
+Load `get_reference_doc(kind="assumption-audit")` and apply its DB lens within this command's boundaries. Check whether schemas, enums, keys, or cardinality unnecessarily hardcode one source, channel, entity type, group, or current tactic. Improve safe contracts, but do not perform speculative row migrations; surface a consequential strategy/schema choice under Pulse's Assumptions challenged when business judgment is required.
+
 BOUNDARIES
 
 1. The applied tool is `improve_db`; call it once with a concrete `instruction` string and optional `focus`.

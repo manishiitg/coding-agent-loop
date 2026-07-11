@@ -98,11 +98,11 @@ Goal: refresh workflow Pulse logs so builder/improve.html reads like a concise h
 
 This is a product-managed Pulse pre-step. Do ONLY this filterability upgrade, then stop and wait for the normal Pulse Gate step.
 
-Goal: make builder/improve.html searchable by exact date, activity kind, and text so the user can inspect all Pulse / Goal Advisor / Chief of Staff actions and notes for a specific day.
+Goal: make builder/improve.html searchable by activity kind and text so the user can inspect Pulse / Goal Advisor / Chief of Staff actions and notes without a separate date picker. Visible dates remain searchable as text.
 
 1. Read workflow.json and builder/improve.html. Treat a missing workflow.json "version" as "1.0.0".
 2. Call get_reference_doc(kind="review-improve-log") and update builder/improve.html to the current filterable Pulse skeleton where needed:
-   - add the .filters bar with Date, Kind, Search, Reset, and match count controls;
+   - add the .filters bar with Kind, Search, Reset, and match count controls; do not add a date picker;
    - add the static filter script from the reference doc; this UI script is allowed and is not a legacy JSON data block;
    - add data-date="YYYY-MM-DD" and data-kind="run|monitor|artifact|decision|advisor|cos|open|user|note" to every recent-run row and timeline entry;
    - preserve exactly one <!-- LOG ENTRIES: newest first --> anchor before the newest-first timeline cards.
@@ -128,7 +128,7 @@ Goal: make builder/improve.html more colorful, less text-heavy, and more widget-
    - first screen has two Bug/Goal verdict pills, a one-sentence status banner, What matters now widget cards, a goal card, color-coded signal tiles, and cost/time tiles;
    - use .tile.ok, .tile.warn, .tile.bad, .tile.info, .tile.goal, and .tile.cost classes where the status is known;
    - replace dense first-screen prose/tables with compact widgets, chips, and card sections;
-   - preserve the Date/Kind/Search filter bar, data-date/data-kind attributes, and exactly one ` + "`<!-- LOG ENTRIES: newest first -->`" + ` anchor;
+   - preserve the Kind/Search filter bar, data-date/data-kind attributes, and exactly one ` + "`<!-- LOG ENTRIES: newest first -->`" + ` anchor; do not add a date picker;
    - keep recent runs as readable mobile-first cards/rows with metadata first and long notes on a full-width second row.
 3. Preserve all existing unresolved findings, decisions, user rules, Chief of Staff recommendations, Artifact Review entries, recent-run evidence, archive links, and filter metadata. Do not delete evidence just because you are redesigning the shell.
 4. If builder/improve.html is already on the current rich widget layout, make this a no-op except for appending the concise upgrade entry.
@@ -139,7 +139,7 @@ Report the files changed, widget sections refreshed, evidence preserved, and any
 	},
 	{
 		from:  "1.0.6",
-		to:    WorkflowContractCurrentVersion,
+		to:    "1.0.7",
 		label: "upgrade-1.0.7",
 		query: `WORKFLOW VERSION UPGRADE v1.0.6 -> v1.0.7.
 
@@ -159,6 +159,61 @@ Goal: remove old separate Auto Improve / Goal Advisor optimizer schedules becaus
 7. Only after the applicable checks/updates are complete, update workflow.json "version" to "1.0.7". Do not change schema_version. Do not run the workflow, do not call notify_user, and do not publish in this step.
 
 Report the files changed, legacy optimizer schedules removed, custom optimizer schedules preserved, post_run_monitor state, and any intentional no-op decisions, then stop.`,
+	},
+	{
+		from:  "1.0.7",
+		to:    "1.0.8",
+		label: "upgrade-1.0.8",
+		query: `WORKFLOW VERSION UPGRADE v1.0.7 -> v1.0.8.
+
+This is a product-managed Pulse pre-step. Do ONLY this Pulse filter cleanup, then stop and wait for the normal Pulse Gate step.
+
+Goal: remove the date picker from builder/improve.html while retaining useful activity filtering.
+
+1. Read workflow.json and builder/improve.html if it exists.
+2. Call get_reference_doc(kind="review-improve-log") and update builder/improve.html where needed:
+   - remove the Date label and input (including id="filter-date") from the .filters bar;
+   - remove dateInput and exact-date filtering logic from the static filter script;
+   - keep Kind, Search, Reset, and match count controls working;
+   - keep visible dates and data-date attributes as event metadata so dates remain readable and searchable through Search;
+   - preserve data-kind attributes and exactly one <!-- LOG ENTRIES: newest first --> anchor.
+3. Preserve all existing unresolved findings, decisions, user rules, human-input cards, recent-run evidence, timeline entries, and archive links. Do not rewrite or delete report history for this UI cleanup.
+4. If builder/improve.html is missing, do not create it solely for this upgrade. If it already has no date picker, make this a no-op.
+5. Only after the applicable check/update is complete, update workflow.json "version" to "1.0.8". Do not change schema_version. Do not run the workflow, alter schedules, notify the user, or publish in this step.
+
+Report whether the date picker was removed or already absent, then stop.`,
+	},
+	{
+		from:  "1.0.8",
+		to:    WorkflowContractCurrentVersion,
+		label: "upgrade-1.0.9",
+		query: `WORKFLOW VERSION UPGRADE v1.0.8 -> v1.0.9.
+
+This is a product-managed Pulse pre-step. Do ONLY this stable-soul and human-first Pulse upgrade, then stop and wait for the normal Pulse Gate step.
+
+Goals:
+- keep soul/soul.md limited to stable intent so old architecture and agent assumptions cannot freeze workflow evolution;
+- make builder/improve.html readable in priority order: Needs your decision, Assumptions challenged, Today's outcome, goal progress, recent activity, then technical detail.
+
+1. Read workflow.json, soul/soul.md, builder/improve.html if it exists, planning/plan.json, planning/step_config.json, and only the targeted changelog/user-rule evidence needed to distinguish explicit user-approved constraints from agent-inferred choices.
+2. Normalize soul/soul.md:
+   - keep ## Objective and ## Success Criteria;
+   - keep ## Notifications when present;
+   - keep an optional ## Constraints section only for boundaries explicitly stated or approved by the user;
+   - remove architecture, step design, provider/tool/model choices, implementation details, historical decision logs, references, and agent-inferred assumptions from soul.md;
+   - do not lose material context: when removed architecture is already represented by plan/config, cite those artifacts in the upgrade entry; when a consequential restriction is not clearly user-approved, preserve it as an active Assumptions challenged item in builder/improve.html with its source, evidence, and validation/retirement condition. Create a human-input request only when deciding whether it is a durable user constraint would materially change workflow behavior.
+3. Call get_reference_doc(kind="review-improve-log") and get_reference_doc(kind="review-improve-log-skeleton"). Upgrade builder/improve.html in place when it exists:
+   - replace the vague What matters now brief with Today's outcome cells: Outcome, Goal progress, Issues & fixes, Next Pulse;
+   - add the optional Assumptions challenged block near the top, with at most three active consequential assumptions and no empty-state block;
+   - wrap signal, cost/time, Maintenance Radar, cadence, and raw technical details in a closed-by-default <details class="technical"> section;
+   - add one closed-by-default Agent log at the bottom with #pulse-agent-handoff for current module/cadence state, cursors, unresolved/pending ids, and evidence pointers; it must update in place and must not repeat the user-facing report;
+   - preserve verdicts, goal criteria, pending/answered human-input history, unresolved findings, decisions, user rules, Chief of Staff recommendations, recent runs, timeline entries, filters, archive links, and exactly one <!-- LOG ENTRIES: newest first --> anchor;
+   - do not duplicate the full pending question in the timeline; Runloop renders report_human_inputs first as Needs your decision.
+4. If builder/improve.html is missing, do not create it solely for this upgrade. The next normal Pulse creates it with the current skeleton.
+5. Add one concise upgrade timeline entry only when builder/improve.html exists. State what was removed from soul, which items remained explicit constraints, which assumptions were surfaced, and which Pulse sections changed. Do not expose secret values.
+6. Only after the applicable checks/updates are complete, update workflow.json "version" to "1.0.9". Do not change schema_version. Do not run the workflow, alter schedules, notify the user, publish, or apply a strategy/plan change in this step.
+
+Report the files changed, soul sections retained/removed, challenged assumptions surfaced, Pulse sections upgraded, and any intentional no-op decisions, then stop.`,
 	},
 }
 

@@ -1359,7 +1359,7 @@ Implement on a dedicated branch/worktree:
 
 ```text
 branch: message-sequence-step-design
-worktree: /Users/mipl/ai-work/mcp-agent-builder-go-message-sequence-step-design
+worktree: <workspace>/mcp-agent-builder-go-message-sequence-step-design
 ```
 
 Scope for v1:

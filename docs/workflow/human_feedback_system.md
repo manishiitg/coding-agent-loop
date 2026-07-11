@@ -24,7 +24,6 @@ The human feedback system is an interactive virtual tool that pauses LLM executi
 | **API Endpoint** | [`server.go`](../../agent_go/cmd/server/server.go) | `handleSubmitHumanFeedback()` (POST `/api/human-feedback/submit`) |
 | **Slack Service** | [`slack_service.go`](../../agent_go/cmd/server/services/slack_service.go) | `SendFeedbackNotification()`, `GetUniqueIDFromThread()`, `TestConnection()` |
 | **Slack API Routes** | [`slack_feedback_routes.go`](../../agent_go/cmd/server/slack_feedback_routes.go) | Configuration and test endpoints |
-| **Database Migration** | [`010_add_slack_feedback_config.sql`](../../agent_go/pkg/database/migrations/010_add_slack_feedback_config.sql) | Slack config and message mapping tables |
 | **Frontend UI** | [`HumanFeedbackToolCallDisplay.tsx`](../../frontend/src/components/events/tools/ToolCallSpecialRender/HumanFeedbackToolCallDisplay.tsx) | `HumanFeedbackToolCallDisplay` component |
 | **Slack Config UI** | [`SlackFeedbackConfig.tsx`](../../frontend/src/components/settings/SlackFeedbackConfig.tsx) | Configuration component |
 | **API Service** | [`api.ts`](../../frontend/src/services/api.ts) | `submitHumanFeedback()`, `getSlackFeedbackConfig()`, `updateSlackFeedbackConfig()`, `testSlackConnection()` |
@@ -486,7 +485,7 @@ type HumanFeedbackStore struct {
 
 ## 📖 Related Documentation
 
-- [Running Workflows](running_workflows.md) - Uses human feedback for approvals
+- [Workflow Monitoring](workflow_monitoring.md) - Reviews runs that may require human approval
 - [Todo Task Step Type](todo-task-step-type.md) - Uses human feedback for plan approval and variable confirmation
 - Virtual tools - See the backend tool handlers referenced above
 - [Event System](../core/event_system.md) - How events coordinate frontend/backend

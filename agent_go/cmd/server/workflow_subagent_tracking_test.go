@@ -183,6 +183,70 @@ func TestWorkflowStartAutoNotificationPayloadAndDrain(t *testing.T) {
 	}
 }
 
+func TestScheduledRunSuppressesRedundantStartSyntheticTurn(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	defer store.Stop()
+
+	const sessionID = "schedule-cron--abc123_100"
+	const agentID = "workflow-step-1"
+	api := &StreamingAPI{
+		bgAgentRegistry:           NewBackgroundAgentRegistry(),
+		eventStore:                store,
+		sessionBusy:               map[string]bool{sessionID: true},
+		pendingStartNotifications: make(map[string][]string),
+	}
+	api.bgAgentRegistry.Register(sessionID, &BackgroundAgent{
+		ID:        agentID,
+		Name:      "Step -> collect",
+		SessionID: sessionID,
+		Kind:      "workflow_step",
+		Status:    BGAgentRunning,
+		CreatedAt: time.Now(),
+	})
+
+	api.notifyBackgroundAgentStarted(sessionID, agentID)
+
+	if pending := api.drainPendingStartNotifications(sessionID); len(pending) != 0 {
+		t.Fatalf("scheduled start notification should not be queued, got %#v", pending)
+	}
+	if events := store.GetAllEventsRaw(sessionID); len(events) != 0 {
+		t.Fatalf("scheduled start should not emit a synthetic turn event, got %d", len(events))
+	}
+	agent := api.bgAgentRegistry.Get(sessionID, agentID)
+	agent.mu.RLock()
+	startNotified := agent.startNotified
+	agent.mu.RUnlock()
+	if !startNotified {
+		t.Fatal("scheduled start should be marked handled so it cannot be requeued")
+	}
+}
+
+func TestScheduledAutoNotificationBoundsCompletionResult(t *testing.T) {
+	snap := BackgroundAgentSnapshot{
+		ID:     "workflow-step-long",
+		Name:   "Step -> long result",
+		Status: BGAgentCompleted,
+		Result: strings.Repeat("x", scheduledAutoNotificationResultMaxRunes+500),
+		Metadata: map[string]string{
+			"step_id": "long-result",
+		},
+	}
+
+	scheduled := (&StreamingAPI{}).buildAutoNotificationMessage("schedule-cron--abc123_100", snap)
+	for _, want := range []string{
+		"scheduled auto-notification result truncated",
+		`query_step(step_id="long-result", execution_id="workflow-step-long")`,
+	} {
+		if !strings.Contains(scheduled, want) {
+			t.Fatalf("scheduled completion missing %q:\n%s", want, scheduled)
+		}
+	}
+	interactive := (&StreamingAPI{}).buildAutoNotificationMessage("interactive-session", snap)
+	if !strings.Contains(interactive, strings.Repeat("x", scheduledAutoNotificationResultMaxRunes+500)) {
+		t.Fatal("interactive completion result should remain unchanged")
+	}
+}
+
 func TestWorkflowStartAutoNotificationClearsStaleBusyWithoutActiveTurn(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	defer store.Stop()

@@ -15,7 +15,7 @@ schedule files still live with the workflow on the server, but the server does
 not run the coding agent. An online local runner reads the schedule, claims a
 server-side job lease, executes the scheduled workshop messages locally, and
 writes run history/Pulse/report artifacts back through the gateway. See
-[Remote Workspace Gateway + Local Runner Plan](/Users/mipl/ai-work/mcp-agent-builder-go/docs/core/remote_workspace_server_plan.md).
+[Remote Workspace Gateway + Local Runner Plan](../core/remote_workspace_server_plan.md).
 
 ## Source Of Truth
 
@@ -23,7 +23,7 @@ Each workflow manifest can define zero or more schedules:
 
 - `Workflow/<name>/workflow.json`
 
-Current manifest schedule fields are defined in [workflow_manifest.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/workflow_manifest.go):
+Current manifest schedule fields are defined in [workflow_manifest.go](../../agent_go/cmd/server/workflow_manifest.go):
 
 - `id`
 - `name`
@@ -62,7 +62,7 @@ Global scheduler pause and execution flags are persisted in:
 
 - `config/scheduler.json`
 
-Current fields are defined in [scheduler_config_store.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/scheduler_config_store.go):
+Current fields are defined in [scheduler_config_store.go](../../agent_go/cmd/server/scheduler_config_store.go):
 
 - `globally_paused`
 - `paused_at`
@@ -83,29 +83,13 @@ Important distinction:
 
 If `SCHEDULER_ENABLED=false`, automatic cron execution is disabled on that server, but manual trigger still works.
 
-#### Per-workflow env filter
-
-When the same workspace is shared across multiple machines, you can choose which workflows have their crons run on each machine via these env vars in `agent_go/.env`:
-
-- `SCHEDULER_ALLOWED_WORKFLOWS=label-or-id-1,label-or-id-2` — allowlist; if set, ONLY these workflows run cron on this machine
-- `SCHEDULER_BLOCKED_WORKFLOWS=label-or-id-3` — denylist; these workflows never run cron on this machine
-
-Matching is case-insensitive against the workflow's manifest ID, manifest label, or workspace folder name (whichever the user enters). When both env vars are set, the allowlist wins. Manual `Trigger Now` still works for filtered-out workflows. Logic lives in [scheduler_env_filter.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/scheduler_env_filter.go) and is enforced inside `LoadSchedule`, so the filter applies both at startup and when a schedule is reloaded after an edit.
-
-The equivalent vars for multi-agent schedules under `_users/{userID}/multiagent-schedules.json` are:
-
-- `SCHEDULER_ALLOWED_USERS=alice,bob`
-- `SCHEDULER_BLOCKED_USERS=carol`
-
-These match against the userID directory name. The rescan loop also honors the user filter so filtered-out users don't reload every 60s.
-
 ### Per-workflow run history
 
 Schedule run history is persisted per workflow in:
 
 - `Workflow/<name>/schedule-runs.json`
 
-Entries are defined in [schedule_runs.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/schedule_runs.go):
+Entries are defined in [schedule_runs.go](../../agent_go/cmd/server/schedule_runs.go):
 
 - `id`
 - `schedule_id`
@@ -122,7 +106,7 @@ The file keeps the newest entries first and is capped at 200 runs.
 
 ## Runtime Model
 
-The scheduler service is implemented in [scheduler.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/scheduler.go).
+The scheduler service is implemented in [scheduler.go](../../agent_go/cmd/server/scheduler.go).
 
 On startup it:
 
@@ -184,7 +168,7 @@ Current implications:
 
 There is helper logic for resolving a group-scoped workshop run folder, but the standard workshop scheduler request still starts from `iteration-0`.
 
-That means scheduled runs follow the same broader run-folder model documented in [iteration_run_folder_architecture.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/iteration_run_folder_architecture.md).
+That means scheduled runs follow the same broader run-folder model documented in [iteration_run_folder_architecture.md](./iteration_run_folder_architecture.md).
 
 ## Auto Report Generation
 
@@ -198,7 +182,7 @@ If:
 
 then the scheduler tries to auto-generate the final report after the workshop message sequence completes.
 
-That flow lives in [scheduler.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/scheduler.go#L684).
+That flow lives in [scheduler.go](../../agent_go/cmd/server/scheduler.go#L684).
 
 One nuance in current code:
 
@@ -209,7 +193,7 @@ So report auto-generation for workshop schedules is coupled to the resolved run-
 
 ## APIs
 
-Scheduler APIs are registered in [scheduler_routes.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/scheduler_routes.go):
+Scheduler APIs are registered in [scheduler_routes.go](../../agent_go/cmd/server/scheduler_routes.go):
 
 - `GET /api/scheduler/config`
 - `PUT /api/scheduler/config`
@@ -234,9 +218,9 @@ The API response shape is a compatibility wrapper around:
 
 The current frontend scheduling surfaces are:
 
-- [SchedulePresetPopup.tsx](/Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/components/SchedulePresetPopup.tsx)
-- [WorkflowScheduleRunsPanel.tsx](/Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/components/scheduler/WorkflowScheduleRunsPanel.tsx)
-- [scheduler.ts](/Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/api/scheduler.ts)
+- [SchedulePresetPopup.tsx](../../frontend/src/components/SchedulePresetPopup.tsx)
+- [WorkflowScheduleRunsPanel.tsx](../../frontend/src/components/scheduler/WorkflowScheduleRunsPanel.tsx)
+- [scheduler.ts](../../frontend/src/api/scheduler.ts)
 
 The UI supports:
 
@@ -264,8 +248,8 @@ Use this mental model:
 
 Related docs:
 
-- [workflow_manifest_architecture.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/workflow_manifest_architecture.md)
-- [iteration_run_folder_architecture.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/iteration_run_folder_architecture.md)
-- [workflow_builder_interactive.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/workflow_builder_interactive.md)
-- [workflow_monitoring.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/workflow_monitoring.md)
-- [cost_and_log_measurement.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/cost_and_log_measurement.md)
+- [workflow_manifest_architecture.md](./workflow_manifest_architecture.md)
+- [iteration_run_folder_architecture.md](./iteration_run_folder_architecture.md)
+- [workflow_builder_interactive.md](./workflow_builder_interactive.md)
+- [workflow_monitoring.md](./workflow_monitoring.md)
+- [cost_and_log_measurement.md](./cost_and_log_measurement.md)

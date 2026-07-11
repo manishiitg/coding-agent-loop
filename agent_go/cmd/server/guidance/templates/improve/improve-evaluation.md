@@ -2,6 +2,8 @@ Review and improve `evaluation/evaluation_plan.json`.
 
 Write to `builder/improve.html` - the single durable log. For the log/HTML format, one-time migration from legacy review files, and close-out rules, follow `get_reference_doc(kind="review-improve-log")` and `get_reference_doc(kind="html-output")`.
 
+Load `get_reference_doc(kind="assumption-audit")` and apply its eval lens. An eval must measure `soul.md` success, not reward compliance with the current architecture, channel, step sequence, provider, artifact shape, or proxy unless the user explicitly made that part of success. Correct bounded measurement assumptions automatically when semantics stay unchanged; surface material goal/rubric choices under Pulse's Assumptions challenged and require user approval when business meaning changes.
+
 Eval is the framework's goal-measurement layer: does a run satisfy the success criteria in `soul.md`? Operational quality — errored/skipped steps, empty or malformed artifacts, tool misuse, hallucinated successes — is owned by the per-run Pulse triage and by `pre_validation`, not by eval steps. An eval step that would pass on any operationally clean run duplicates Pulse and inflates the score; treat such steps as retirement candidates.
 
 The eval plan's completeness test is the two-way coverage matrix:
@@ -56,8 +58,23 @@ Then route what you find:
 - If the behavior IS a success criterion (e.g. "posts to the external site correctly", "every claim is sourced"), propose a dedicated eval step for it — scripted extraction of log-parsable facts, LLM judgment only for the genuinely semantic part.
 - Otherwise record the gap as an open finding tagged Bug for the monitor/harden side. Do NOT add an eval step that duplicates Pulse triage.
 
-PASS 3 - IMPROVEMENT SUGGESTIONS
-Propose improvements in these categories. Tag each suggestion as OPERATIONAL or GOAL:
+PASS 3 - CLASSIFY AND IMPROVE
+Classify every candidate change before acting. The classification controls whether user approval is needed.
+
+**CORRECTNESS REPAIR — apply automatically; do not ask the user.** A repair is correctness-preserving when the intended success criterion and score semantics stay unchanged and the edit only makes the existing check tell the truth. This includes:
+- binding evidence to the current run/group instead of accepting an older receipt, report, DB row, or artifact
+- fixing `TARGET_RUN_PATH`, route scoping, file paths, parsing, or validation-schema wiring
+- making missing, null, empty, stale, malformed, or provider-unconfirmed evidence fail closed
+- correcting deterministic extraction so the existing rubric receives the right facts
+- fixing an eval/report mismatch that is unambiguously contradicted by the current plan/output contract
+
+For a correctness repair, show the before/after in the resulting `Eval fix` log entry, edit the eval artifacts, validate them, and run a targeted eval when materially useful. Never create a human-input request merely to ask whether stale evidence should fail, whether the current run should be used, or whether a declared provider failure should remain a failure. Those are engineering truths, not business choices.
+
+**SEMANTIC CHANGE — require user/business approval unless an already-approved Goal Advisor proposal names the exact change.** A change is semantic when it changes what success means or how it is scored. This includes changing a success criterion, threshold, weight, rubric interpretation, score scale, pass/fail policy, or adding/removing coverage in a way that changes the aggregate meaning.
+
+For a semantic change, show the before/after, explain the score discontinuity, and ask whether to apply all, some, or none. Do not edit until approval. In scheduled Pulse, keep the request to one concrete decision and do not disguise an operational repair as a semantic proposal.
+
+Review these categories, tagging findings as CORRECTNESS REPAIR, OPERATIONAL, or GOAL/SEMANTIC:
 1. Goal coverage: does each important success criterion from `soul.md` have a clear eval step?
 2. Pulse redundancy: which eval steps duplicate Pulse triage or `pre_validation` (existence/format/step-ran/tool-behavior checks)? Propose retiring them — operational coverage is the monitor's job.
 3. Directness: is the eval checking the actual desired outcome, or only a proxy?
@@ -70,12 +87,7 @@ Propose improvements in these categories. Tag each suggestion as OPERATIONAL or 
 10. Cost/tier/execution-mode fit: for each eval step, read `evaluation/step_config.json` and match `execution_tier` and `declared_execution_mode` to the eval's actual nature. Scripting an objective, contract-anchored check is allowed anytime (no gate); the explicit-user-request + scenario-coverage bar applies only to locking/freezing a saved script. Flag scripted evals coupled to incidental artifact shapes — replans change those; scripts should anchor to stable contracts (`db/README.md` schemas, the report contract). Compare `costs/evaluation/` to `costs/execution/`: eval spend rivaling execution spend means the plan needs fewer/cheaper steps (retire redundant steps, demote tiers, script the extraction).
 11. Fail-closed robustness: missing input files, null/empty fields, stale artifacts, and parse errors must all produce a failing score with the failure named in `reasoning`.
 
-For every proposed eval change:
-- show the before/after snippets per eval step before editing
-- call out whether the change affects score semantics
-- ask whether to apply all, some, or none
-
-Do not edit `evaluation/evaluation_plan.json` until the user confirms.
+For every eval change, show the before/after snippets per eval step and state explicitly whether score semantics changed. Apply correctness repairs immediately. Wait for user confirmation only for semantic changes.
 
 PASS 4 - RECORD THE CHANGE
 After applying any change to `evaluation/evaluation_plan.json`, record a readable Decision entry at the top of `builder/improve.html`'s timeline. State what changed and why, which file(s) were touched, whether the score/rubric semantics changed, and what future runs should verify.

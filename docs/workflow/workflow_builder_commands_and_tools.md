@@ -6,15 +6,17 @@ This document is a compact reference for the current workflow-builder surface. T
 
 Workflow improvement has three layers:
 
-- **Plan**: `planning/plan.json` plus `soul/soul.md`. This defines what the workflow does and what "done" means.
+- **Intent + plan**: `soul/soul.md` defines stable objective/success criteria and explicit user constraints; `planning/plan.json` defines the current, revisable implementation attempt.
 - **Eval**: `evaluation/evaluation_plan.json` plus per-run reports. This measures success-criteria achievement (operational quality is Pulse triage's per-run job).
 - **Goal card**: the per-criterion Met/Short/At-risk card in `builder/improve.html`, maintained agentically by Pulse from eval reports + `soul.md`. It is the durable goal signal over runs; there is no separate numeric metrics layer.
 
 Optimizer actions are deliberately small in number:
 
 - `harden_workflow(group_name?, focus?)`: use when the workflow path is basically right, but prompts, config, validation, KB, learnings, db/report wiring, or eval coverage need repair. It should delete stale `learnings/{step-id}/main.py` for `code_exec` steps and only patch `main.py` for `learn_code`.
-- Goal Advisor proposals: use when run/eval evidence shows the workflow path is not aligned with `soul.md` success criteria or the current strategy is capped. Scheduled Pulse starts this through `run_goal_advisor_review(...)`; material plan changes are proposed through `create_human_input_request(source="goal_advisor", ...)` and later applied with normal plan/config/eval/report tools only after approval.
+- Goal Advisor proposals and experiments: use for Goal recovery, a capped strategy, or periodic healthy 10x/headroom review. Scheduled Pulse starts this through `run_goal_advisor_review(...)`; material plan changes are proposed through `create_human_input_request(source="goal_advisor", ...)` and later applied with normal plan/config/eval/report tools only after approval. `builder/improve.html` holds at most one active `.advisor-experiment` card, which preserves the current baseline and advances through proposal, approval, running, measurement, and a terminal adopted/rejected/retired outcome. Pulse schedules the next meaningful checkpoint instead of generating bold ideas every run.
 - Eval-plan improvement: use when eval coverage, scoring, structured output, or validation schema is weak enough that measurement cannot be trusted, or eval cost is out of proportion to run cost.
+
+All plan/design reviews and KB/learnings/DB/eval/report/workflow improvement commands load the shared `assumption-audit` reference. It prevents repeated agent-written choices from becoming accidental constraints: explicit user constraints and verified external facts are preserved; current design choices remain revisable; unsupported assumptions are corrected within command boundaries or surfaced once under Pulse's **Assumptions challenged** for Goal Advisor/user judgment.
 
 ## Workshop Modes
 

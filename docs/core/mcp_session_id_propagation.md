@@ -11,7 +11,7 @@ For the current end-to-end model of:
 - provider CLI resume state
 - stop / clear / restart behavior
 
-see [session_and_tool_binding.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/core/session_and_tool_binding.md).
+see [session_and_tool_binding.md](./session_and_tool_binding.md).
 
 ## Problem
 

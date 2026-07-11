@@ -65,6 +65,15 @@ Use this document only when creating a new `builder/improve.html` or doing the r
   .briefitem.ok{border-color:color-mix(in srgb,var(--ok) 18%,var(--line));background:color-mix(in srgb,var(--ok-bg) 22%,var(--surface))}
   .briefitem.warn{border-color:color-mix(in srgb,var(--warn) 20%,var(--line));background:color-mix(in srgb,var(--warn-bg) 26%,var(--surface))}
   .briefitem.bad{border-color:color-mix(in srgb,var(--bad) 20%,var(--line));background:color-mix(in srgb,var(--bad-bg) 24%,var(--surface))}
+  .assumptions{margin-top:16px;border:1px solid color-mix(in srgb,var(--major) 28%,var(--line-2));border-radius:var(--r);background:linear-gradient(180deg,color-mix(in srgb,var(--major-bg) 40%,var(--surface)),var(--surface));box-shadow:var(--shadow);overflow:hidden}
+  .assumptions .ah{padding:12px 14px;border-bottom:1px solid color-mix(in srgb,var(--major) 16%,var(--line));font:700 10.5px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--major)}
+  .assumption{padding:12px 14px;border-top:1px solid var(--line)}.assumption:first-of-type{border-top:0}.assumption b{display:block;font-size:13.5px;line-height:1.4}.assumption p{margin:5px 0 0;color:var(--ink-2);font-size:12.5px;line-height:1.5}.assumption .source{font:540 10.5px/1.4 var(--mono);color:var(--ink-3)}
+  .technical{margin-top:24px;border:1px solid var(--line-2);border-radius:var(--r);background:var(--surface);box-shadow:var(--shadow);overflow:hidden}
+  .technical>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;list-style:none;padding:13px 15px;font-weight:650;color:var(--ink)}.technical>summary::-webkit-details-marker{display:none}.technical>summary::after{content:"+";font:700 16px/1 var(--mono);color:var(--ink-3)}.technical[open]>summary::after{content:"−"}.technical>summary span{margin-left:auto;font:540 11px/1.35 var(--mono);color:var(--ink-3)}
+  .technical .techbody{padding:0 14px 16px;border-top:1px solid var(--line)}.technical .grouplbl{margin-top:22px}
+  .agentlog{margin-top:34px;border:1px solid var(--line-2);border-radius:12px;background:var(--surface-2);overflow:hidden}
+  .agentlog>summary{display:flex;align-items:center;gap:10px;cursor:pointer;list-style:none;padding:12px 14px;font:650 12px/1.3 var(--mono);color:var(--ink-2)}.agentlog>summary::-webkit-details-marker{display:none}.agentlog>summary::after{content:"+";margin-left:auto;font:700 15px/1 var(--mono);color:var(--ink-3)}.agentlog[open]>summary::after{content:"−"}.agentlog>summary span{font:520 10.5px/1.35 var(--mono);color:var(--ink-3)}
+  .agentbody{padding:10px 14px 13px;border-top:1px solid var(--line);display:grid;gap:8px}.agentrow{display:grid;gap:3px;font:520 11px/1.45 var(--mono);color:var(--ink-3)}.agentrow b{color:var(--ink-2);font-weight:650}.agentrow code{white-space:pre-wrap;overflow-wrap:anywhere;color:var(--ink-3)}
   .filters{display:grid;grid-template-columns:1fr;gap:9px;margin:28px 0 0;padding:12px;border:1px solid var(--line-2);border-radius:12px;background:var(--surface);box-shadow:var(--shadow)}
   .filters label{display:grid;gap:6px;font:700 9.5px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
   .filters input,.filters select{width:100%;min-height:34px;border:1px solid var(--line-2);border-radius:9px;background:var(--surface-2);color:var(--ink);font:540 13px/1.2 var(--sans);padding:7px 9px}
@@ -131,7 +140,7 @@ Use this document only when creating a new `builder/improve.html` or doing the r
     .verdicts{margin-top:0}.pill{font-size:13px;padding:9px 14px 9px 12px}
     .status{align-items:center;gap:12px;margin-top:22px;padding:15px 19px;font-size:15.5px}.status .txt{flex:1 1 auto}.status .when{margin-left:auto;flex-basis:auto;white-space:nowrap;font-size:12px}
     .brief{padding:16px}.briefgrid{grid-template-columns:repeat(2,minmax(0,1fr))}
-    .filters{grid-template-columns:160px 150px minmax(160px,1fr) auto auto;align-items:end;padding:13px 14px}.filtercount{justify-self:end;white-space:nowrap}
+    .filters{grid-template-columns:150px minmax(160px,1fr) auto auto;align-items:end;padding:13px 14px}.filtercount{justify-self:end;white-space:nowrap}
     .goalcard .obj{padding:18px 22px 17px;font-size:16px}.crit{display:flex;gap:13px;align-items:baseline;padding:12px 22px;font-size:14px}.crit .cs{flex:none;width:78px;margin-bottom:0}
     .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.tile{padding:15px 16px}
     .run{display:grid;grid-template-columns:auto auto auto minmax(0,1fr) auto;gap:8px 14px;align-items:center;padding:12px 16px;font-size:13px;line-height:1.25}.run .id{grid-column:1;grid-row:1;min-width:44px}.run .st{grid-column:2;grid-row:1}.run .col{grid-row:1;min-width:78px}.run .note{grid-column:1/-1;grid-row:2;margin-top:4px;font-size:13px;line-height:1.45}.run .ago{grid-column:5;grid-row:1;justify-self:end;margin-left:0}
@@ -173,16 +182,24 @@ Use this document only when creating a new `builder/improve.html` or doing the r
     <span class="chip">Last run <b>—</b></span>
   </div>
 
-  <!-- WHAT MATTERS NOW — 2-4 short operator-summary cells. Keep this brief; details belong in Recent runs/timeline.
+  <!-- ACTIVE ASSUMPTIONS CHALLENGED — render this block ONLY when a consequential assumption is actively limiting the workflow.
+       Keep at most 3. An assumption is not an explicit user constraint. Remove resolved items from the top and record the outcome in the timeline.
+  <div class="assumptions">
+    <div class="ah">Assumptions challenged</div>
+    <div class="assumption"><b>Assumption stated in plain language</b><p>Evidence for/against it and how it will be validated or retired.</p><p class="source">Came from: plan/step/eval/KB/learnings/report · not user-confirmed</p></div>
+  </div>
+  -->
+
+  <!-- TODAY'S OUTCOME — four short operator-summary cells. Keep this brief; details belong in Recent runs/timeline.
        The heading says which run/date this summary reflects. If a cell carries an older metric, end its sentence with
        "not measured this run · last measured run/date" instead of making the older value look current. -->
   <div class="brief">
-    <div class="brief-h">What matters now <b><!-- as of run #— --></b></div>
+    <div class="brief-h">Today's outcome <b><!-- as of run #— --></b></div>
     <div class="briefgrid">
-      <div class="briefitem ok"><div class="k">Latest result</div><p><!-- one short sentence --></p></div>
-      <div class="briefitem warn"><div class="k">Main risk</div><p><!-- one short sentence --></p></div>
-      <div class="briefitem"><div class="k">Next useful action</div><p><!-- one short sentence --></p></div>
-      <div class="briefitem"><div class="k">Evidence confidence</div><p><!-- one short sentence --></p></div>
+      <div class="briefitem ok"><div class="k">Outcome</div><p><!-- what the workflow actually delivered --></p></div>
+      <div class="briefitem"><div class="k">Goal progress</div><p><!-- movement against success criteria --></p></div>
+      <div class="briefitem warn"><div class="k">Issues &amp; fixes</div><p><!-- important issue/fix, or "No important issue" --></p></div>
+      <div class="briefitem"><div class="k">Next Pulse</div><p><!-- what will be checked next and why --></p></div>
     </div>
   </div>
 
@@ -196,6 +213,10 @@ Use this document only when creating a new `builder/improve.html` or doing the r
          <span class="m">eval 0.81 ▶ 0.90 target · run #41</span>. A criterion whose route this run
          didn't exercise is "not run this route" (cs short, neutral), never Short/At-risk. -->
   </div>
+
+  <details class="technical">
+    <summary>Technical details <span>signals · cost · maintenance</span></summary>
+    <div class="techbody">
 
   <!-- SIGNAL TILES grouped by verdict. Read every number from eval reports,
        run outputs/logs, costs/, and timing summaries. Never invent. Every important tile needs a visible .asof line.
@@ -229,8 +250,10 @@ Use this document only when creating a new `builder/improve.html` or doing the r
          Hygiene watch: "report dashboard" / "cost strip missing overhead; deep check next run" -->
   </div>
 
+    </div>
+  </details>
+
   <div class="filters" aria-label="Activity filters">
-    <label>Date <input id="filter-date" type="date"></label>
     <label>Kind <select id="filter-kind">
       <option value="all">All</option>
       <option value="run">Run</option>
@@ -275,6 +298,18 @@ Use this document only when creating a new `builder/improve.html` or doing the r
        <p class="outcome bad">No effect by run #44 — reopened as <span class="kind goal">Goal</span> finding of-YYYY-MM-DD-slug.</p>
        <p class="outcome flat">Inconclusive — run #44 didn't exercise the changed path; still pending. -->
 
+  <!-- AGENT LOG — current structured handoff only; update in place, never append copies or repeat report prose above. -->
+  <details class="agentlog">
+    <summary>Agent log <span>handoff state · evidence pointers · cadence</span></summary>
+    <div id="pulse-agent-handoff" class="agentbody" data-pulse-run-id="" data-workflow-version="">
+      <div class="agentrow" data-agent-key="state"><b>Current state</b><code>latest_run=— · pulse_run=—</code></div>
+      <!-- One compact row per module; use data attributes for scheduler-relevant continuity:
+      <div class="agentrow" data-module="report_health" data-result="skipped" data-next-check-after-run-id="run-43"><b>report_health</b><code>evidence: builder/improve.html#of-report-gap</code></div>
+      -->
+      <div class="agentrow" data-agent-key="cursors"><b>Cursors and open ids</b><code>artifact=— · findings=— · inputs=— · cos=—</code></div>
+    </div>
+  </details>
+
   <div class="seclabel">Archive</div>
   <div class="archive"><!-- one link per monthly archive file once history rolls off:
     <a class="arow" href="improve-archive/YYYY-MM.html"><b>YYYY-MM</b><span class="n">date range · N items</span></a>
@@ -284,7 +319,6 @@ Use this document only when creating a new `builder/improve.html` or doing the r
 
 <script>
 (function(){
-  var dateInput = document.getElementById('filter-date');
   var kindInput = document.getElementById('filter-kind');
   var searchInput = document.getElementById('filter-search');
   var clearButton = document.getElementById('filter-clear');
@@ -292,25 +326,22 @@ Use this document only when creating a new `builder/improve.html` or doing the r
   function norm(value){ return (value || '').toString().trim().toLowerCase(); }
   function items(){ return Array.prototype.slice.call(document.querySelectorAll('.run[data-date], .entry[data-date]')); }
   function apply(){
-    var date = dateInput ? dateInput.value : '';
     var kind = kindInput ? kindInput.value : 'all';
     var query = norm(searchInput ? searchInput.value : '');
     var total = 0;
     var shown = 0;
     items().forEach(function(el){
       total += 1;
-      var okDate = !date || el.getAttribute('data-date') === date;
       var okKind = kind === 'all' || el.getAttribute('data-kind') === kind;
       var okText = !query || norm(el.textContent).indexOf(query) !== -1;
-      var ok = okDate && okKind && okText;
+      var ok = okKind && okText;
       el.hidden = !ok;
       if (ok) shown += 1;
     });
-    if (count) count.textContent = (date || kind !== 'all' || query) ? (shown + ' / ' + total + ' shown') : (total + ' items');
+    if (count) count.textContent = (kind !== 'all' || query) ? (shown + ' / ' + total + ' shown') : (total + ' items');
   }
-  [dateInput, kindInput, searchInput].forEach(function(el){ if (el) el.addEventListener('input', apply); });
+  [kindInput, searchInput].forEach(function(el){ if (el) el.addEventListener('input', apply); });
   if (clearButton) clearButton.addEventListener('click', function(){
-    if (dateInput) dateInput.value = '';
     if (kindInput) kindInput.value = 'all';
     if (searchInput) searchInput.value = '';
     apply();

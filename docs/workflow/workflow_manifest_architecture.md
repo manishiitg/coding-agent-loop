@@ -22,7 +22,7 @@ Each workflow workspace has a top-level manifest:
 
 - `Workflow/<name>/workflow.json`
 
-The backend struct lives in [workflow_manifest.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/workflow_manifest.go).
+The backend struct lives in [workflow_manifest.go](../../agent_go/cmd/server/workflow_manifest.go).
 
 ## Current Manifest Shape
 
@@ -162,7 +162,7 @@ Current schedule fields include:
 - `messages`
 - `workshop_mode`
 
-For current runtime behavior, APIs, run history, and workshop-vs-workflow execution paths, see [workflow_scheduling.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/workflow_scheduling.md).
+For current runtime behavior, APIs, run history, and workshop-vs-workflow execution paths, see [workflow_scheduling.md](./workflow_scheduling.md).
 
 ### Auto-improvement framework fields
 
@@ -175,7 +175,7 @@ Two optional top-level fields configure hard behavioral gates the auto-improveme
 
 **The workflow's profile** — typology (deterministic / exploratory / contextual), plan stability, runtime mode (single / dual explore-exploit), and whether it accumulates business context — lives as **prose in `builder/improve.md`** under a `## Workflow Profile` section. The agent reads improve.md on every improvement turn and adjusts behavior accordingly. Real workflows mix axes a single enum can't express (e.g. social-media is exploratory + dual-mode + accumulating-context all at once); prose captures the nuance, and the framework no longer hard-gates on a workflow_type value.
 
-For the design rationale and worked examples, see [auto_improvement_framework.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/auto_improvement_framework.md).
+For the design rationale and worked examples, see [auto_improvement_framework.md](./auto_improvement_framework.md).
 
 ## What Does Not Belong In The Manifest
 
@@ -205,7 +205,7 @@ These still live alongside it:
 - `planning/output_plan.json`
 - `variables/variables.json`
 - `evaluation/evaluation_plan.json`
-- `builder/improve.html` — the Pulse log: single source-of-truth entry point for auto-improvement narrative, verdict pills, the per-criterion goal card (the workflow's goal signal — the former `planning/metrics.json` numeric layer was removed 2026-07-01), open findings, decision cards, and links to older monthly `builder/improve-archive/YYYY-MM.html` details. See [auto_improvement_framework.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/auto_improvement_framework.md).
+- `builder/improve.html` — the Pulse log: single source-of-truth entry point for auto-improvement narrative, verdict pills, the per-criterion goal card (the workflow's goal signal — the former `planning/metrics.json` numeric layer was removed 2026-07-01), open findings, decision cards, and links to older monthly `builder/improve-archive/YYYY-MM.html` details. See [auto_improvement_framework.md](./auto_improvement_framework.md).
 - `knowledgebase/rules/rules.md` and `knowledgebase/rules/examples/` — Type 3 business-rule store. User-supplied rules are captured through chat-intent rule capture. Excluded from `reorganize_knowledgebase` and `consolidate_knowledgebase` passes — never silently rewritten by the optimizer. Audit trail folded into structured `builder/improve.md` entries (filter to `source: user` + `trigger: capture-context`).
 
 `workflow.json` is the workflow-level definition file.
@@ -215,11 +215,11 @@ The planning files are still the step graph and execution-plan files.
 
 ### Discovery
 
-Backend discovery uses [DiscoverWorkflowManifests](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/workflow_manifest.go#L344), which scans workspace folders and reads `workflow.json`.
+Backend discovery uses [DiscoverWorkflowManifests](../../agent_go/cmd/server/workflow_manifest.go#L344), which scans workspace folders and reads `workflow.json`.
 
 ### CRUD APIs
 
-Manifest routes are registered in [server.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/server.go#L1164):
+Manifest routes are registered in [server.go](../../agent_go/cmd/server/server.go#L1164):
 
 - `GET /api/workflows/manifests`
 - `GET /api/workflows/manifest`
@@ -232,18 +232,18 @@ Manifest routes are registered in [server.go](/Users/mipl/ai-work/mcp-agent-buil
 
 Workflow execution loads manifest capabilities before running:
 
-- [server.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/server.go#L2375)
-- [workflow_manifest_routes.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/workflow_manifest_routes.go#L373)
+- [server.go](../../agent_go/cmd/server/server.go#L2375)
+- [workflow_manifest_routes.go](../../agent_go/cmd/server/workflow_manifest_routes.go#L373)
 
 Workshop phase sessions also load manifest config directly:
 
-- [server.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/server.go#L9762)
+- [server.go](../../agent_go/cmd/server/server.go#L9762)
 
 ### Scheduling
 
 The scheduler is manifest-based:
 
-- [scheduler.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/scheduler.go#L42)
+- [scheduler.go](../../agent_go/cmd/server/scheduler.go#L42)
 
 It scans workflow manifests, loads enabled schedules, and executes them without DB workflow dependency.
 
@@ -251,11 +251,11 @@ It scans workflow manifests, loads enabled schedules, and executes them without 
 
 The frontend has a dedicated manifest store:
 
-- [useWorkflowManifestStore.ts](/Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/stores/useWorkflowManifestStore.ts)
+- [useWorkflowManifestStore.ts](../../frontend/src/stores/useWorkflowManifestStore.ts)
 
 The old "workflow preset" view is now a compatibility layer built from manifests:
 
-- [useGlobalPresetStore.ts](/Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/stores/useGlobalPresetStore.ts#L14)
+- [useGlobalPresetStore.ts](../../frontend/src/stores/useGlobalPresetStore.ts#L14)
 
 ## Current Compatibility Leftovers
 
@@ -270,9 +270,9 @@ These are compatibility remnants, not the main design.
 
 ## Key Files
 
-- [workflow_manifest.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/workflow_manifest.go)
-- [workflow_manifest_routes.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/workflow_manifest_routes.go)
-- [server.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/server.go)
-- [scheduler.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/scheduler.go)
-- [useWorkflowManifestStore.ts](/Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/stores/useWorkflowManifestStore.ts)
-- [useGlobalPresetStore.ts](/Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/stores/useGlobalPresetStore.ts)
+- [workflow_manifest.go](../../agent_go/cmd/server/workflow_manifest.go)
+- [workflow_manifest_routes.go](../../agent_go/cmd/server/workflow_manifest_routes.go)
+- [server.go](../../agent_go/cmd/server/server.go)
+- [scheduler.go](../../agent_go/cmd/server/scheduler.go)
+- [useWorkflowManifestStore.ts](../../frontend/src/stores/useWorkflowManifestStore.ts)
+- [useGlobalPresetStore.ts](../../frontend/src/stores/useGlobalPresetStore.ts)

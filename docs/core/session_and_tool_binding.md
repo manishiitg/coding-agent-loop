@@ -43,9 +43,9 @@ It is the primary session identity for:
 
 Relevant code:
 
-- [server.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/server.go#L926)
-- [server.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/server.go#L2681)
-- [types.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/common/types.go#L67)
+- [server.go](../../agent_go/cmd/server/server.go#L926)
+- [server.go](../../agent_go/cmd/server/server.go#L2681)
+- [types.go](../../agent_go/pkg/common/types.go#L67)
 
 ### 2. MCP session ID
 
@@ -59,10 +59,10 @@ Its job is:
 
 Relevant code:
 
-- [base_orchestrator.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/base_orchestrator.go#L282)
-- [workflow_orchestrator.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/types/workflow_orchestrator.go#L733)
-- [base_orchestrator_agent_factory.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/base_orchestrator_agent_factory.go#L165)
-- [llm_agent.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/agentwrapper/llm_agent.go#L274)
+- [base_orchestrator.go](../../agent_go/pkg/orchestrator/base_orchestrator.go#L282)
+- [workflow_orchestrator.go](../../agent_go/pkg/orchestrator/types/workflow_orchestrator.go#L733)
+- [base_orchestrator_agent_factory.go](../../agent_go/pkg/orchestrator/base_orchestrator_agent_factory.go#L165)
+- [llm_agent.go](../../agent_go/pkg/agentwrapper/llm_agent.go#L274)
 
 ### 3. Browser session ID
 
@@ -78,9 +78,9 @@ The browser layer can remap `"default"` to a deterministic shared browser sessio
 
 Relevant code:
 
-- [types.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/common/types.go#L127)
-- [executor.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/browser/executor.go#L82)
-- [controller.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller.go#L283)
+- [types.go](../../agent_go/pkg/common/types.go#L127)
+- [executor.go](../../agent_go/pkg/browser/executor.go#L82)
+- [controller.go](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller.go#L283)
 
 ### 4. Provider CLI resume IDs
 
@@ -96,8 +96,8 @@ They are used to resume CLI-based providers on later turns of the same HTTP sess
 
 Relevant code:
 
-- [server.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/server.go#L5289)
-- [server.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/server.go#L5545)
+- [server.go](../../agent_go/cmd/server/server.go#L5289)
+- [server.go](../../agent_go/cmd/server/server.go#L5545)
 
 ## Shell Tools
 
@@ -114,8 +114,8 @@ It uses that key to look up `SessionShellConfig`, which currently stores:
 
 Relevant code:
 
-- [types.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/common/types.go#L55)
-- [execute_shell_command.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/workspace/execute_shell_command.go#L80)
+- [types.go](../../agent_go/pkg/common/types.go#L55)
+- [execute_shell_command.go](../../agent_go/pkg/workspace/execute_shell_command.go#L80)
 
 That means shell behavior is effectively bound to the session currently attached to `ChatSessionIDKey`.
 
@@ -142,8 +142,8 @@ With browser isolation:
 
 Relevant code:
 
-- [workspace_browser_tools.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/virtual-tools/workspace_browser_tools.go#L39)
-- [executor.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/browser/executor.go#L67)
+- [workspace_browser_tools.go](../../agent_go/cmd/server/virtual-tools/workspace_browser_tools.go#L39)
+- [executor.go](../../agent_go/pkg/browser/executor.go#L67)
 
 ## HTTP Tool Calls From Code Execution Mode
 
@@ -168,8 +168,8 @@ without manually threading `session_id` through every request body.
 
 Relevant code:
 
-- [server.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/server.go#L926)
-- [workspace_advanced_tools.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/virtual-tools/workspace_advanced_tools.go#L112)
+- [server.go](../../agent_go/cmd/server/server.go#L926)
+- [workspace_advanced_tools.go](../../agent_go/cmd/server/virtual-tools/workspace_advanced_tools.go#L112)
 
 ## MCP Connection Reuse
 
@@ -188,8 +188,8 @@ The core rule is:
 
 Relevant code:
 
-- [base_orchestrator.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/base_orchestrator.go#L282)
-- [llm_agent.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/agentwrapper/llm_agent.go#L274)
+- [base_orchestrator.go](../../agent_go/pkg/orchestrator/base_orchestrator.go#L282)
+- [llm_agent.go](../../agent_go/pkg/agentwrapper/llm_agent.go#L274)
 
 ## Workflow And Workshop Behavior
 
@@ -201,8 +201,8 @@ The parent HTTP session is tracked separately so a stop action can close all der
 
 Relevant code:
 
-- [controller.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller.go#L217)
-- [workflow_orchestrator.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/types/workflow_orchestrator.go#L740)
+- [controller.go](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller.go#L217)
+- [workflow_orchestrator.go](../../agent_go/pkg/orchestrator/types/workflow_orchestrator.go#L740)
 
 ### Workshop group switching
 
@@ -216,7 +216,7 @@ When that happens, the code also:
 
 Relevant code:
 
-- [controller.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller.go#L303)
+- [controller.go](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller.go#L303)
 
 ### Browser binding for workshop groups
 
@@ -231,7 +231,7 @@ This lets tool calls using `"default"` converge onto one stable group browser.
 
 Relevant code:
 
-- [controller.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller.go#L283)
+- [controller.go](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller.go#L283)
 
 ## Sub-Agents And `share_browser`
 
@@ -245,8 +245,8 @@ If `share_browser=false`, the runtime creates an isolated sub-agent session ID:
 
 Relevant code:
 
-- [server.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/server.go#L7543)
-- [workspace_browser_tools.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/virtual-tools/workspace_browser_tools.go#L42)
+- [server.go](../../agent_go/cmd/server/server.go#L7543)
+- [workspace_browser_tools.go](../../agent_go/cmd/server/virtual-tools/workspace_browser_tools.go#L42)
 
 ## What Survives A New Turn
 
@@ -275,7 +275,7 @@ That is why later turns in the same session can continue using the same chat con
 
 Relevant code:
 
-- [server.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/server.go#L5645)
+- [server.go](../../agent_go/cmd/server/server.go#L5645)
 
 Important current behavior:
 
@@ -298,7 +298,7 @@ So stop is a runtime cancel/cleanup operation, not a full state reset.
 
 Relevant code:
 
-- [server.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/server.go#L5855)
+- [server.go](../../agent_go/cmd/server/server.go#L5855)
 
 Important current behavior:
 
@@ -358,9 +358,9 @@ And:
 
 ## Related Docs
 
-- [mcp_bridge_layer.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/core/mcp_bridge_layer.md)
-- [mcp_session_id_propagation.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/core/mcp_session_id_propagation.md)
-- [folder_guard_system.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/core/folder_guard_system.md)
-- [browser.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/core/browser.md)
-- [workflow_builder_interactive.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/workflow_builder_interactive.md)
-- [workflow_shell_working_directory.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/workflow_shell_working_directory.md)
+- [mcp_bridge_layer.md](./mcp_bridge_layer.md)
+- [mcp_session_id_propagation.md](./mcp_session_id_propagation.md)
+- [folder_guard_system.md](./folder_guard_system.md)
+- [browser.md](./browser.md)
+- [workflow_builder_interactive.md](../workflow/workflow_builder_interactive.md)
+- [workflow_shell_working_directory.md](../workflow/workflow_shell_working_directory.md)

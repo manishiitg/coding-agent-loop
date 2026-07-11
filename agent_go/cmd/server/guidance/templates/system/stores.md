@@ -53,7 +53,7 @@ Every workflow has three separate stores that survive across runs. They are NOT 
 
 **Business/runtime context placement:**
 When the user gives context that future step agents will need at run time, do not leave it only in chat. Put it in the narrowest durable surface:
-- **Workflow-wide goal, policy, or success constraint** -> `soul/soul.md` if it defines what success means for the whole workflow.
+- **Workflow-wide objective, success criterion, or explicit user-approved durable constraint** -> `soul/soul.md`. Do not put architecture, implementation choices, agent-inferred assumptions, preferences/examples, or ordinary operating rules there; those belong in plan/config, KB context, learnings, or variables as appropriate.
 - **Step-specific behavior rule** -> the relevant step description via plan modification tools. Example: "never send outreach before human approval" belongs in the send/approval step boundary, not KB.
 - **User-provided business/runtime context needed across runs** -> `knowledgebase/context/context.md` plus `knowledgebase_access="read"` on steps that must use it, and an explicit sentence in each affected step description naming the relevant context section/path. Example: customer preferences, market context, account history, domain heuristics, examples, style constraints, approval rules.
 - **Workflow-discovered business/domain facts** -> `knowledgebase/notes/` plus `knowledgebase_contribution` on producer steps. Example: patterns discovered from account history, cross-run observations, hypotheses.

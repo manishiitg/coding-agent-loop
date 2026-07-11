@@ -2018,7 +2018,7 @@ The person you talk to is almost always a **business owner / operator, not a dev
 - **Ask simple questions.** When you need a decision, ask one plain question with the trade-off in business terms; don't surface technical options.
 - Keep the detail and precision **in the artifacts you build** (step descriptions, code, schemas) — that's where rigor belongs. The chat stays simple. Go technical in chat only when the user does, or when you must confirm a concrete change before applying it.
 
-**Before doing anything else, read `+"`soul/soul.md`"+`.** This is the canonical source of truth for the workflow's objective and success criteria. Ground every decision — design, run, debug, harden, or report — in what that file says. If it is missing or empty, ask the user what the workflow is for before proceeding.
+**Before doing anything else, read `+"`soul/soul.md`"+`.** This is the canonical source of truth for stable intent: objective, success criteria, and only explicit user-approved durable constraints. Ground every decision — design, run, debug, harden, or report — in that intent. Architecture, current step design, provider/tool/model choices, historical decisions, references, and agent-inferred assumptions are revisable and must not be written into soul.md. If the file is missing or empty, ask the user what the workflow is for before proceeding.
 
 ## CURRENT MODE: {{if eq .WorkshopMode "workshop"}}WORKSHOP{{else}}RUN{{end}}
 
@@ -2106,7 +2106,7 @@ Each workflow has three separate stores that survive across runs: `+"`learnings/
 {{if eq .WorkshopMode "workshop"}}
 **WORKSHOP MODE** — Design, run, evaluate, harden, and evolve the plan as a single mode. The agent decides the right action from workspace state (see the phase-detection directive near the top of this prompt). Make existing steps reliable across all groups and runs; build new steps when the plan needs extending.
 
-**Foundation check:** verify `+"`soul/soul.md`"+` has both `+"`## Objective`"+` and `+"`## Success Criteria`"+` sections. If either is missing, ask the user and write via shell. `+"`planning/plan.json`"+` no longer stores root objective/success fields.
+**Foundation check:** verify `+"`soul/soul.md`"+` has both `+"`## Objective`"+` and `+"`## Success Criteria`"+` sections. If either is missing, ask the user and write via shell. Keep soul.md limited to stable intent; the current architecture and implementation belong in plan/config and remain open to improvement. `+"`planning/plan.json`"+` no longer stores root objective/success fields.
 
 **Read previous builder conversations** from `+"`builder/`"+` folder (`+"`ls -t builder/*.json | head -3`"+`) to avoid repeating failed approaches.
 
@@ -3222,7 +3222,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: run_goal_advisor_review — dedicated strategic review background pipeline.
 	if err := mcpAgent.RegisterCustomTool(
 		"run_goal_advisor_review",
-		"Start the dedicated background Goal Advisor pipeline. Use this for Pulse-selected strategic review: goal drift, capped strategy, out-of-plan ideas, approved proposal application, and Chief of Staff strategic recommendations. The pipeline runs advisor -> critic -> finalizer in separate background agents. The parent Pulse turn should capture the returned execution_id, wait with query_step(step_id=\"goal-advisor\", execution_id=\"<returned execution_id>\"), and then record mark_pulse_module_result.",
+		"Start the dedicated background Goal Advisor pipeline. Use this for Pulse-selected strategic review: goal recovery, healthy 10x/headroom exploration, advancing or measuring the one active advisor experiment, approved proposal application, and Chief of Staff strategic recommendations. The pipeline runs advisor -> critic -> finalizer in separate background agents. The durable experiment lifecycle lives in builder/improve.html; the parent Pulse turn should capture the returned execution_id, wait with query_step(step_id=\"goal-advisor\", execution_id=\"<returned execution_id>\"), and then record mark_pulse_module_result.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -9344,7 +9344,7 @@ Every evaluation failure should leave behind a **structural artifact** — a pre
 
 ## SOURCE-OF-TRUTH HIERARCHY
 Use this hierarchy before fixing:
-1. `+"`soul/soul.md`"+` is the truth: objective and success criteria define what the workflow must achieve.
+1. `+"`soul/soul.md`"+` is the truth for stable intent: objective, success criteria, and only explicit user-approved constraints define what the workflow must achieve. Architecture and agent-inferred assumptions remain revisable even if older soul text contains them.
 2. `+"`runs/iteration-{N}/<group>/...`"+` proves runtime reality: actual outputs, tool/execution logs, validation results, and eval reports show what the workflow really did. `+"`iteration-0`"+` is latest/current; older retained iterations are supporting evidence for trends, regressions, and whether previous improve.html actions helped.
 3. `+"`evaluation/evaluation_plan.json`"+` explains measurement: use it to understand scores, but if eval conflicts with `+"`soul.md`"+`, fix eval instead of optimizing to a bad rubric.
 4. `+"`planning/plan.json`"+` is only the current implementation attempt. Judge it against `+"`soul.md`"+` and retained run evidence; do not treat the current plan as proof that the workflow is correct.
@@ -10812,15 +10812,21 @@ Strict boundaries for this Advisor stage:
 - Do NOT modify plan/config/eval/report/HTML files.
 - Produce an evidence-backed draft only. The Critic and Finalizer stages decide what survives.
 
-Think like an expert operator in the workflow's domain: look for why goals are not moving, strategy assumptions the user missed, better measurement, new channels/approaches, or places where the plan is capped even when execution is clean.
+Think like an expert operator in the workflow's domain: look for why goals are not moving, strategy assumptions the user missed, better measurement, new channels/approaches, or places where the plan is capped even when execution is clean. Also apply a 10x counterfactual when this is a healthy-headroom review: estimate the current strategy ceiling and ask what materially different approach could change the order of magnitude. Treat 10x as a thinking lens, not a promise.
+
+Before drafting, inspect builder/improve.html for .advisor-experiment cards. Exactly one experiment may be active. Active statuses are proposed, deferred, approved, running, measuring, and blocked; terminal statuses are adopted, rejected, and retired. If one is active, advance or measure that same experiment instead of inventing another. If none is active, at most one new thesis may survive this draft.
 
 Return a concise structured draft with these sections:
+- Review mode: recovery | headroom | active_experiment | approved_answer.
+- Active experiment: stable id + status, or none.
 - Verdict: no_action | apply_approved_answer | propose_user_decision | log_advisor_idea | blocked.
 - Plain-language takeaway.
 - Goal alignment: cite the exact success criterion or objective.
 - Evidence used: concrete paths/run ids/report widgets/HTML cards.
+- Current baseline and current strategy ceiling.
+- 10x thesis: the one highest-leverage materially different approach, or none with reason.
 - Advisor hypothesis: what the current plan may be missing.
-- Recommended move: exact intended plan/config/eval/report edits if any.
+- Bounded experiment: exact intended plan/config/eval/report edits if any, primary success metric, guardrails, review checkpoint, and rollback condition.
 - Expected impact.
 - Risks, assumptions, and what could falsify this idea.
 - User decision needed: yes/no; if yes, proposed options approve/reject/defer with short descriptions.
@@ -10852,6 +10858,9 @@ Critique against these checks:
 - Is every important claim backed by concrete run/eval/report/HTML/db evidence?
 - Is this really strategy/measurement work, or should routine Pulse harden/KB/DB/learning/report modules handle it?
 - Does it hallucinate unavailable data, user intent, external facts, costs, or success?
+- Is the 10x thesis materially different from incremental tuning, while still being grounded enough to test? Treat 10x as a thinking lens, not a promised result.
+- Did the Advisor preserve the current successful baseline and define a primary metric, guardrails, review checkpoint, and rollback condition?
+- Does builder/improve.html already contain an active .advisor-experiment? If yes, reject any second active proposal and require the existing stable id to be advanced or closed.
 - Are the intended edits specific enough to be applied safely later?
 - Does it introduce unacceptable risk, scope creep, or cost?
 - Does it need user approval, or is it only an observation?
@@ -10935,6 +10944,15 @@ Follow this decision policy:
 - If plan/config/eval mutation tools are DISABLED: do not apply plan/config/eval changes; write only report/proposal updates or create/refine human-input requests.
 - If the proposal is new and material: do not change the plan. Create or refresh a create_human_input_request(source="goal_advisor", input_id="plan-proposal-...", options approve/reject/defer) with exact intended edits, rationale, expected impact, risk, and evidence.
 - If the idea is useful but not ready for a user decision: log it as a proposal-only Advisor idea in builder/improve.html with evidence and risk.
+
+Experiment lifecycle contract:
+- Read builder/improve.html before writing. It is the durable experiment source of truth.
+- Never leave more than one active .advisor-experiment. Active statuses: proposed, deferred, approved, running, measuring, blocked. Terminal statuses: adopted, rejected, retired.
+- Use one stable card for its full lifecycle:
+  <div class="entry decision major advisor-experiment" data-advisor-experiment-id="advisor-exp-<stable-slug>" data-input-id="plan-proposal-<stable-slug>" data-status="<status>" data-review-after="<ISO date/time, run id, or outcome milestone>">.
+- The visible card must include Current baseline, Current strategy ceiling, 10x thesis, Bounded experiment, Primary success metric, Guardrails, Review checkpoint, Rollback condition, Evidence, and Outcome when measuring/terminal.
+- A new material thesis becomes proposed and uses the matching stable plan-proposal slug. Approved edits move that same card to running. At the checkpoint move it to measuring; then adopt only with metric improvement and intact guardrails, reject on user rejection, retire when disproved/stale/rolled back, or block with a concrete unblock condition.
+- Update the existing card in place. Do not append lifecycle duplicates. A deferred answer keeps the same experiment active with a future review checkpoint.
 
 Do not call harden_workflow, improve_kb, improve_learnings, or improve_db. Those are separate Pulse modules.
 Do not call mark_pulse_module_result; the parent Pulse turn records the module result after reading your completion.

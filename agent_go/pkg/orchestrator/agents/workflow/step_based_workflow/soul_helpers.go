@@ -20,14 +20,16 @@ import (
 //	## Success Criteria
 //	<bullet list or paragraph describing when the workflow is "done right">
 //
-//	## Why  (optional — narrative context)
-//	## Decisions & Constraints  (optional — decision log)
-//	## Key References  (optional — links to related workflows/docs)
+//	## Constraints  (optional — only explicit user-approved boundaries)
+//	## Notifications  (optional — user preference for Pulse notifications)
 //
-// Extra H2 sections are allowed and ignored by the extractor. Section order is
-// not significant, but `## Objective` and `## Success Criteria` MUST exist for
-// the workflow to be considered "ready to optimize" — see the ready-to-optimize
-// slash command for the readiness check.
+// Architecture, implementation choices, agent-inferred assumptions, historical
+// decisions, and references do not belong in soul.md. They are revisable and
+// should live in planning/plan.json, step descriptions, changelog, learnings, or
+// knowledgebase as appropriate. Extra H2 sections are allowed and ignored by the
+// extractor. Section order is not significant, but `## Objective` and
+// `## Success Criteria` MUST exist for the workflow to be considered ready to
+// optimize.
 
 const (
 	soulObjectiveSection        = "Objective"
@@ -39,15 +41,6 @@ const (
 
 ## Success Criteria
 <TODO: bullet list or paragraph describing when the workflow is "done right".>
-
-## Why
-<TODO: narrative context — who asked for this, what problem prompted it, what business outcome it supports.>
-
-## Decisions & Constraints
-<TODO: decision log — what was considered, what was chosen, what was ruled out and why.>
-
-## Key References
-<TODO: links to related workflows, docs, Slack threads, Linear tickets.>
 `
 )
 

@@ -79,6 +79,11 @@ func TestGoalAdvisorAdvisorInstructionIsReadOnlyDraft(t *testing.T) {
 		"Do NOT modify plan/config/eval/report/HTML files",
 		"Evidence used",
 		"Advisor hypothesis",
+		"Review mode: recovery | headroom | active_experiment | approved_answer",
+		"Exactly one experiment may be active",
+		"10x counterfactual",
+		"Current baseline and current strategy ceiling",
+		"primary success metric, guardrails, review checkpoint, and rollback condition",
 		"Routine-maintenance deferrals",
 	)
 }
@@ -93,6 +98,9 @@ func TestGoalAdvisorCriticInstructionChallengesAdvisorWithoutMutating(t *testing
 		"Do NOT modify plan/config/eval/report/HTML files",
 		"Is every important claim backed by concrete run/eval/report/HTML/db evidence?",
 		"Does it hallucinate unavailable data",
+		"Is the 10x thesis materially different from incremental tuning",
+		"preserve the current successful baseline",
+		"reject any second active proposal",
 		"Verdict: approve | revise | reject | needs_user | no_action",
 		"What the Finalizer is allowed to do",
 	)
@@ -115,6 +123,10 @@ func TestGoalAdvisorFinalizerInstructionOwnsDurableActions(t *testing.T) {
 		"Do not call mark_pulse_module_result",
 		"Advisor proposal/takeaway",
 		"Critic verdict/objections",
+		"Never leave more than one active .advisor-experiment",
+		`data-advisor-experiment-id="advisor-exp-<stable-slug>"`,
+		"Current baseline, Current strategy ceiling, 10x thesis",
+		"Update the existing card in place",
 	)
 }
 

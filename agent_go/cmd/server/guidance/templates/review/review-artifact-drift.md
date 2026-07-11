@@ -2,6 +2,8 @@ Run the artifact drift review through the dedicated background tool. This comman
 
 Write findings into `builder/improve.html` as "Artifact Review" / "Open finding" timeline entries with the `Artifact drift` action label. For the log format, one-time old Markdown migration, classification chips, and how open findings are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
 
+Load `get_reference_doc(kind="assumption-audit")`. While tracing changed plan/config surfaces, check whether dependent learnings, KB, DB, report, eval, or code preserved an old architecture/tactic assumption after the plan evolved. Report that drift explicitly and keep a consequential unresolved restriction under Pulse's Assumptions challenged.
+
 PROCEDURE
 
 1. Call `review_artifact_sync(focus="{{.Focus}}")`.

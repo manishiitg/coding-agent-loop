@@ -234,8 +234,8 @@ Note: Full response text is shown without truncation. Meta stats (turns/duration
 
 The event filter automatically converts workspace file paths in outgoing messages to clickable shareable URLs. This works in two passes:
 
-1. **Markdown links**: `[Report](Chats/xxx/report.md)` → `[Report](https://app.example.com/file?path=<base64>&uid=default)`
-2. **Bare paths**: `Chats/xxx/report.md` → `[Chats/xxx/report.md](https://app.example.com/file?path=<base64>&uid=default)`
+1. **Markdown links**: a relative report link is converted to `https://app.example.com/file?path=<base64>&uid=default`.
+2. **Bare paths**: `Chats/xxx/report.md` is converted to a shareable link with the same file endpoint.
 
 Matches paths starting with `Chats/` or `Downloads/` that contain at least one subfolder and a file extension.
 

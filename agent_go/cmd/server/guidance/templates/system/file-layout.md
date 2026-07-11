@@ -15,7 +15,7 @@ All paths below are relative to the workspace root (prepend the absolute root wh
 | planning/step_config.json | Step-level config overrides (LLM, execution mode, learnings, etc.) |
 | variables/variables.json | Runtime variables and groups |
 | reports/report_plan.json | Registers live report HTML document(s) under db/reports/ (see persistent-stores design) |
-| soul/soul.md | Canonical workflow north star: objective, success criteria, and an optional `## Notifications` section (user's preference for when/what the post-run monitor alerts on) |
+| soul/soul.md | Stable workflow intent only: objective, success criteria, optional explicit user-approved constraints, and optional `## Notifications`. Never store architecture, implementation choices, or agent-inferred assumptions here. |
 
 ### Execution Outputs (per run, per group)
 | Path | Contents |

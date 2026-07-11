@@ -26,6 +26,8 @@ The Goal Advisor loop evaluates strategy against this goal, so a vague or stale 
 - Push for checkable criteria: a threshold, observable outcome, required artifact, or explicit quality bar.
 - If `soul.md` has no success criteria, or they are vague/placeholder, stop and ask directly: "What does success look like for this workflow - what checkable outcomes tell you it is working?"
 - Write the confirmed objective and success criteria back to `soul.md`. It is the single source of truth that the goal card and Goal verdict read from.
+- Keep only stable intent in `soul.md`: objective, checkable success criteria, and any constraint the user explicitly confirms as non-negotiable. Do not copy architecture, step design, provider/tool choices, implementation details, references, historical decisions, or agent-inferred assumptions into it. Those belong in the plan/config/changelog/learnings/knowledgebase and remain open to improvement.
+- If existing `soul.md` contains architecture or an agent-made assumption, do not silently treat it as authoritative. Surface the ambiguity as an assumption to challenge; preserve the current implementation in its proper artifact and ask only when deciding whether it is a genuine user constraint.
 
 Only once the goal is confirmed, continue.
 

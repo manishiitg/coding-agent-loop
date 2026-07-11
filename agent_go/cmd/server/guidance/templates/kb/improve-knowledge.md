@@ -2,6 +2,8 @@ Improve the workflow knowledgebase notes so they support the current plan and ob
 
 Write to `builder/improve.html`. For the log format, the one-time migration, and how entries are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
 
+Load `get_reference_doc(kind="assumption-audit")` and apply its KB-notes lens within this command's boundaries. A note that merely repeats the current plan's tactic, architecture, fixed source/channel, or unverified belief is not durable domain knowledge. Keep user-owned `knowledgebase/context/` untouched; surface a consequential unresolved restriction under Pulse's Assumptions challenged instead of copying it into more notes.
+
 BOUNDARIES
 
 1. Work only on `knowledgebase/notes/` and `knowledgebase/notes/_index.json`.

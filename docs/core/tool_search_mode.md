@@ -43,16 +43,16 @@ For workflows today:
 
 One concrete indicator of this shift:
 
-- [StepEditPanel.tsx](/Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/components/events/orchestrator/StepEditPanel.tsx#L619) deletes legacy `use_tool_search_mode` and `pre_discovered_tools` before saving step config
+- [StepEditPanel.tsx](../../frontend/src/components/events/orchestrator/StepEditPanel.tsx#L619) deletes legacy `use_tool_search_mode` and `pre_discovered_tools` before saving step config
 
 ## Where It Still Shows Up In Code
 
-- [server.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/server.go#L2369) still loads tool-search-related preset/runtime context for workflow agents
-- [server.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/server.go#L4571) still uses the code-exec vs tool-search distinction for workshop prompt setup
-- [controller_execution.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go#L1183) still has prompt behavior that differs in tool search mode
-- [controller_agent_factory.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go#L1294) explicitly says learning agents do not use code execution mode or tool search mode
-- [prompt_sections.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/prompt_sections.go#L16) still treats code-exec/tool-search instructions as a shared prompt concern
-- [data.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/events/data.go#L68) still carries `use_tool_search_mode` in event data
+- [server.go](../../agent_go/cmd/server/server.go#L2369) still loads tool-search-related preset/runtime context for workflow agents
+- [server.go](../../agent_go/cmd/server/server.go#L4571) still uses the code-exec vs tool-search distinction for workshop prompt setup
+- [controller_execution.go](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go#L1183) still has prompt behavior that differs in tool search mode
+- [controller_agent_factory.go](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go#L1294) explicitly says learning agents do not use code execution mode or tool search mode
+- [prompt_sections.go](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/prompt_sections.go#L16) still treats code-exec/tool-search instructions as a shared prompt concern
+- [data.go](../../agent_go/pkg/orchestrator/events/data.go#L68) still carries `use_tool_search_mode` in event data
 
 ## Documentation Guidance
 

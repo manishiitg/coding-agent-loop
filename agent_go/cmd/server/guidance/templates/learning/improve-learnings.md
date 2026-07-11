@@ -2,6 +2,8 @@ Improve the workflow learnings so `learnings/_global/` supports the current plan
 
 Write to `builder/improve.html`. For the log format, the one-time migration, and how entries are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
 
+Load `get_reference_doc(kind="assumption-audit")` and apply its learnings/skills lens within this command's boundaries. Reusable HOW belongs here; business policy, fixed strategy, architecture preferences, and unverified limitations do not become true because they were written into a skill. Remove or qualify stale assumptions and surface consequential unresolved ones under Pulse's Assumptions challenged.
+
 This command maintains reusable HOW-to-run knowledge such as selectors, tool/API patterns, auth quirks, timing/wait strategies, file-format pitfalls, reusable recovery steps, and common failure signatures.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 BOUNDARIES

@@ -61,7 +61,7 @@ Eval steps can be scoped to the route or artifact they apply to:
 
 When this field is present, the runtime checks the target run's `routing-evaluation.json` before launching the eval step. Non-applicable checks are skipped and recorded in the final report with `max_score: 0`, so a run is not penalized for route paths it did not take.
 
-Current frontend behavior is implemented in [useEvaluationPlanData.ts](/Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/components/workflow/hooks/useEvaluationPlanData.ts).
+Current frontend behavior is implemented in [useEvaluationPlanData.ts](../../frontend/src/components/workflow/hooks/useEvaluationPlanData.ts).
 
 ## Eval Mode In The UI
 
@@ -89,7 +89,7 @@ Current behavior:
 - runs the evaluation steps
 - runs a final scoring phase
 
-This is implemented in [evaluation_execution.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/evaluation_execution.go).
+This is implemented in [evaluation_execution.go](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/evaluation_execution.go).
 
 ## Internal Eval Sandbox
 
@@ -158,8 +158,8 @@ Current behavior:
 - evaluation failures do not fail the original group execution
 
 This behavior is implemented in:
-- [controller_batch_execution.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_batch_execution.go)
-- [evaluation_execution.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/evaluation_execution.go)
+- [controller_batch_execution.go](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_batch_execution.go)
+- [evaluation_execution.go](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/evaluation_execution.go)
 
 ## Evaluation Costs
 
@@ -174,7 +174,7 @@ So:
 - execution costs -> `costs/execution/...`
 - evaluation costs -> `costs/evaluation/...`
 
-For the full cost architecture, see [cost_and_log_measurement.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/cost_and_log_measurement.md).
+For the full cost architecture, see [cost_and_log_measurement.md](./cost_and_log_measurement.md).
 
 ## Evaluation Reports API
 
@@ -187,7 +187,7 @@ Current behavior:
 - returns aggregate statistics across reports
 - can filter to a specific run folder
 
-This is implemented in [workflow.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/workflow.go).
+This is implemented in [workflow.go](../../agent_go/cmd/server/workflow.go).
 
 ## Learnings And Step Config In Eval Mode
 
@@ -211,7 +211,7 @@ Current validation checks include:
 - required title and description
 - validation of `pre_validation` regex and JSONPath rules where present
 
-This is implemented in [evaluation_helpers.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/evaluation_helpers.go).
+This is implemented in [evaluation_helpers.go](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/evaluation_helpers.go).
 
 ## What Changed From Older Docs
 
@@ -239,7 +239,7 @@ Use this mental model:
 
 ## Related Docs
 
-- [cost_and_log_measurement.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/cost_and_log_measurement.md)
-- [iteration_run_folder_architecture.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/iteration_run_folder_architecture.md)
-- [workflow_builder_interactive.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/workflow_builder_interactive.md)
-- [workflow_monitoring.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/workflow_monitoring.md)
+- [cost_and_log_measurement.md](./cost_and_log_measurement.md)
+- [iteration_run_folder_architecture.md](./iteration_run_folder_architecture.md)
+- [workflow_builder_interactive.md](./workflow_builder_interactive.md)
+- [workflow_monitoring.md](./workflow_monitoring.md)

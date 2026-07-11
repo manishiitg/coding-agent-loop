@@ -18,6 +18,12 @@ all groups and runs; build new steps when the plan needs extending.
 3. If the objective is missing, check `soul/soul.md` for an
    `## Objective` section. If absent, ask the user what the workflow is
    for, then write the section via shell.
+4. Keep `soul.md` limited to stable intent. Architecture, current step shape,
+   provider/tool choices, implementation details, agent-inferred assumptions,
+   and historical decisions are revisable and must not be promoted into the
+   north star. Put the current "how" in the plan/config and challenge it when
+   evidence suggests a better approach. Only keep a constraint in `soul.md`
+   when the user explicitly approved it as a durable boundary.
 
 **Read previous builder conversations** from `builder/` folder
 (`ls -t builder/*.json | head -3`) to avoid repeating failed approaches

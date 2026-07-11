@@ -896,6 +896,19 @@ func (api *StreamingAPI) notifyBackgroundAgentStarted(sessionID, agentID string)
 		return
 	}
 
+	// A scheduled run already owns the background work it just started. Sending
+	// a second synthetic "Started ... Ack only" turn into its retained coding-CLI
+	// pane adds no orchestration information and leaves long runs with dozens of
+	// internal prompts. Keep the background_agent_started event for monitoring,
+	// but reserve start synthetic turns for interactive and bot sessions.
+	if isScheduledSession(sessionID) {
+		if agent := api.bgAgentRegistry.Get(sessionID, agentID); agent != nil {
+			agent.MarkStartNotified()
+		}
+		log.Printf("[BG AGENT] Suppressed redundant scheduled-run start synthetic turn for agent %s in session %s", agentID, sessionID)
+		return
+	}
+
 	api.autoNotificationMu.Lock()
 	defer api.autoNotificationMu.Unlock()
 	if api.isSessionBusyForAutoNotification(sessionID) {
@@ -1410,9 +1423,9 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 
 		var resultText string
 		if snap.Status == BGAgentCompleted {
-			resultText = snap.Result // Full result — no truncation in auto-notification
+			resultText = compactScheduledAutoNotificationResult(sessionID, snap, snap.Result)
 		} else if snap.Status == BGAgentFailed {
-			resultText = fmt.Sprintf("Error: %s", snap.Error)
+			resultText = "Error: " + compactScheduledAutoNotificationResult(sessionID, snap, snap.Error)
 		} else {
 			resultText = fmt.Sprintf("Status: %s", snap.Status)
 		}
@@ -1655,9 +1668,9 @@ func workflowRunCompletionDirective(snap BackgroundAgentSnapshot) string {
 func (api *StreamingAPI) buildAutoNotificationMessage(sessionID string, snap BackgroundAgentSnapshot) string {
 	var resultText string
 	if snap.Status == BGAgentCompleted {
-		resultText = snap.Result // Full result — no truncation in auto-notification
+		resultText = compactScheduledAutoNotificationResult(sessionID, snap, snap.Result)
 	} else if snap.Status == BGAgentFailed {
-		resultText = fmt.Sprintf("Error: %s", snap.Error)
+		resultText = "Error: " + compactScheduledAutoNotificationResult(sessionID, snap, snap.Error)
 	} else {
 		resultText = fmt.Sprintf("Status: %s", snap.Status)
 	}
@@ -1704,6 +1717,28 @@ func (api *StreamingAPI) buildAutoNotificationMessage(sessionID string, snap Bac
 	}
 
 	return syntheticMsg
+}
+
+const scheduledAutoNotificationResultMaxRunes = 4000
+
+func compactScheduledAutoNotificationResult(sessionID string, snap BackgroundAgentSnapshot, result string) string {
+	if !isScheduledSession(sessionID) {
+		return result
+	}
+	runes := []rune(result)
+	if len(runes) <= scheduledAutoNotificationResultMaxRunes {
+		return result
+	}
+
+	stepID := ""
+	if snap.Metadata != nil {
+		stepID = strings.TrimSpace(snap.Metadata["step_id"])
+	}
+	inspectHint := fmt.Sprintf("Inspect execution %q or its persisted run artifacts for the complete result.", snap.ID)
+	if stepID != "" {
+		inspectHint = fmt.Sprintf("Use query_step(step_id=%q, execution_id=%q) or inspect its persisted run artifacts for the complete result.", stepID, snap.ID)
+	}
+	return string(runes[:scheduledAutoNotificationResultMaxRunes]) + "\n... [scheduled auto-notification result truncated] " + inspectHint
 }
 
 func autoNotificationInlineContext(meta map[string]string) string {

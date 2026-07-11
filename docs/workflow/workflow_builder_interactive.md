@@ -13,9 +13,9 @@ The interactive builder is not the same thing as normal workflow execution.
 - the builder gets a phase-specific system prompt, a restricted tool set, and builder-specific run-folder behavior
 
 The main code paths are:
-- [interactive_workshop_manager.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/interactive_workshop_manager.go)
-- [server.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/server.go)
-- [chatSubmitHelpers.ts](/Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/utils/chatSubmitHelpers.ts)
+- [interactive_workshop_manager.go](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/interactive_workshop_manager.go)
+- [server.go](../../agent_go/cmd/server/server.go)
+- [chatSubmitHelpers.ts](../../frontend/src/utils/chatSubmitHelpers.ts)
 
 ## Request Shape
 
@@ -33,7 +33,7 @@ The server then:
 - registers builder/workshop tools
 - applies a per-turn tool allow list based on workshop mode
 
-This is handled in [server.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/server.go).
+This is handled in [server.go](../../agent_go/cmd/server/server.go).
 
 ## Core Mental Model
 
@@ -103,7 +103,7 @@ Current rule:
 - default -> `builder`
 - `optimizer`, `run`, and reporting mode are explicit frontend/user choices or bot-route settings
 
-This logic lives in [interactive_workshop_manager.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/interactive_workshop_manager.go).
+This logic lives in [interactive_workshop_manager.go](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/interactive_workshop_manager.go).
 
 Frontend override still wins when provided.
 
@@ -122,7 +122,7 @@ This is how the product enforces boundaries like:
 - run mode can read KB/learnings/db/run artifacts, but cannot freely redesign the workflow
 - debugger is read-heavy
 
-The tool allow-list logic is in [interactive_workshop_manager.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/interactive_workshop_manager.go).
+The tool allow-list logic is in [interactive_workshop_manager.go](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/interactive_workshop_manager.go).
 
 ## Main Builder Tools
 
@@ -186,7 +186,7 @@ Current rule:
 
 This is why the builder always feels attached to the latest mutable run.
 
-For the broader run-folder model, see [iteration_run_folder_architecture.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/iteration_run_folder_architecture.md).
+For the broader run-folder model, see [iteration_run_folder_architecture.md](./iteration_run_folder_architecture.md).
 
 ## Session Behavior
 
@@ -248,7 +248,7 @@ Use this mental model:
 
 ## Related Docs
 
-- [iteration_run_folder_architecture.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/iteration_run_folder_architecture.md)
-- [cost_and_log_measurement.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/cost_and_log_measurement.md)
-- [workflow_shell_working_directory.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/workflow_shell_working_directory.md)
-- [workflow_manifest_architecture.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/workflow_manifest_architecture.md)
+- [iteration_run_folder_architecture.md](./iteration_run_folder_architecture.md)
+- [cost_and_log_measurement.md](./cost_and_log_measurement.md)
+- [workflow_shell_working_directory.md](./workflow_shell_working_directory.md)
+- [workflow_manifest_architecture.md](./workflow_manifest_architecture.md)

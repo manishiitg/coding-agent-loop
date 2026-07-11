@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState, type ForwardedRef } from 'react'
 import { useRenderLogger, useMemoLogger } from '../utils/renderLogger'
+import { isInternalAutoNotificationEvent } from '../utils/internalChatEvents'
 import { useShallow } from 'zustand/react/shallow'
 import { agentApi, resetSessionId, getSessionId } from '../services/api'
 import type { PollingEvent, ExtendedLLMConfiguration, SSEEventMessage, SSEStatusMessage, ExecutionOptions } from '../services/api-types'
@@ -670,6 +671,13 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   const displayEvents = useMemo(() => {
     const filtered = tabEvents.filter(event => {
       if (event.type === 'workspace_file_operation') return false
+
+      // Synthetic auto-notifications are orchestration input for the agent, not
+      // human chat. Keep them in the session/event store for sequencing and
+      // history, but do not replay dozens of internal prompts when a read-only
+      // scheduled run is converted to an interactive chat. Background-agent
+      // start/completion events remain visible as the user-facing status UI.
+      if (isInternalAutoNotificationEvent(event)) return false
 
       // Hide Total Token Usage and Context Offloading events
       if (event.type === 'token_usage') {
@@ -1459,8 +1467,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       const isSubAgentEvent = !isForegroundSession || runtimeScope.kind !== 'session'
 
       // Skip backend user_message events when we already have a frontend-created one
-      // (avoids duplicate user message bubbles in the chat)
-      // Exception: [AUTO-NOTIFICATION] synthetic turn messages must always pass through.
+      // (avoids duplicate user message bubbles in the chat). Internal
+      // [AUTO-NOTIFICATION] messages still enter the event store, but the
+      // displayEvents filter keeps them out of the human timeline.
       if (event.type === 'user_message' && hasFrontendUserMessage && !event.id?.startsWith('user-message-')) {
         const msgContent = getDisplaySafeUserMessageContent(getUserMessageContent(event))
         if (
@@ -1475,8 +1484,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         handleLiveStreamingEvent(event, actualSessionId, chatStore)
         continue
       }
-      // Allow backend user_message events through when there's no frontend-created one
-      // (this renders synthetic turn messages like [AUTO-NOTIFICATION] in the chat)
+      // Allow distinct backend user_message events through when there's no
+      // matching frontend-created message. Internal auto-notifications are
+      // retained here for orchestration and filtered only at display time.
       if (event.type === 'user_message' && hasFrontendUserMessage) {
         const msgContent = getDisplaySafeUserMessageContent(getUserMessageContent(event))
         if (
@@ -1535,8 +1545,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
       // Auto-notifications for workshop step completions are now handled entirely by the backend
       // via processBackgroundAgentCompletion → executeSyntheticTurn. The backend injects a
-      // [AUTO-NOTIFICATION] user_message event which the frontend renders (see user_message
-      // passthrough above). No frontend queuing needed.
+      // [AUTO-NOTIFICATION] user_message event which the frontend retains for
+      // orchestration but does not show as human chat. No frontend queuing needed.
       //
       // Legacy: orchestrator_agent_end events were previously queued as auto-notifications here.
       // That code has been removed. The backend bgAgentRegistry handles all workshop execution

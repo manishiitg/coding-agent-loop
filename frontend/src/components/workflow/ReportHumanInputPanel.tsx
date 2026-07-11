@@ -128,12 +128,11 @@ export function ReportHumanInputPanel({ workspacePath, className = '' }: { works
     const draft = drafts[input.id] || { selectedOptionId: '', note: '' }
     const selectedOptionId = draft.selectedOptionId || ''
     const note = draft.note.trim()
-    if (input.options.length > 0 && !selectedOptionId) {
-      useChatStore.getState().addToast('Choose an option before answering.', 'error')
-      return
-    }
-    if (input.options.length === 0 && !note) {
-      useChatStore.getState().addToast('Write an answer before submitting.', 'error')
+    if (!selectedOptionId && !note) {
+      const message = input.options.length > 0
+        ? (input.allow_free_text ? 'Choose an option or write your own answer.' : 'Choose an option before answering.')
+        : 'Write an answer before submitting.'
+      useChatStore.getState().addToast(message, 'error')
       return
     }
     updateDraft(input.id, { submitting: true })
@@ -264,9 +263,11 @@ export function ReportHumanInputPanel({ workspacePath, className = '' }: { works
             <MessageSquareText className="h-4 w-4" />
           </div>
           <div className="min-w-0">
-            <div className="text-sm font-semibold text-foreground">Questions for you</div>
+            <div className="text-sm font-semibold text-foreground">
+              {pending.length > 0 ? 'Needs your decision' : 'Recent answers'}
+            </div>
             <div className="text-xs text-muted-foreground">
-              Answers are saved in this workflow's <code className="rounded bg-background/70 px-1">db/db.sqlite</code>.
+              {pending.length > 0 ? 'Your answer will be used by the next Pulse run.' : 'Previous decisions and outcomes.'}
             </div>
           </div>
         </div>
@@ -327,7 +328,7 @@ export function ReportHumanInputPanel({ workspacePath, className = '' }: { works
                 <textarea
                   value={draft.note}
                   onChange={event => updateDraft(input.id, { note: event.target.value })}
-                  placeholder={input.options.length > 0 ? 'Optional note' : 'Write your answer'}
+                  placeholder={input.options.length > 0 ? 'Write a different answer or add a note' : 'Write your answer'}
                   className="mt-3 min-h-20 w-full resize-y rounded-md border border-border bg-background px-2.5 py-2 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-cyan-400"
                 />
               )}

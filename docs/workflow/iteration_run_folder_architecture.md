@@ -22,7 +22,7 @@ So in practice:
 - `iteration-0` = latest working run
 - `iteration-N` = preserved history
 
-This is implemented in [controller_run_manager.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_run_manager.go).
+This is implemented in [controller_run_manager.go](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_run_manager.go).
 
 ## Why It Works This Way
 
@@ -42,7 +42,7 @@ Normal full workflow execution uses this flow:
 3. Create a fresh `runs/iteration-0`.
 4. Execute the workflow there.
 
-The main orchestration path does this in [controller.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller.go) and [controller_run_manager.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_run_manager.go).
+The main orchestration path does this in [controller.go](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller.go) and [controller_run_manager.go](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_run_manager.go).
 
 The base run folder structure currently creates:
 - `runs/iteration-0/`
@@ -63,7 +63,7 @@ Current behavior:
 - the folder name uses sanitized `display_name` when available
 - otherwise it falls back to `group_id`
 
-This logic lives in [controller_batch_execution.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_batch_execution.go).
+This logic lives in [controller_batch_execution.go](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_batch_execution.go).
 
 Examples:
 - `iteration-0/production`
@@ -80,7 +80,7 @@ If the user runs only a subset of enabled groups:
 - this preserves outputs for the other groups already present in the current latest run
 - cleanup happens per-group instead of rotating the whole iteration
 
-This behavior is handled in [controller.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller.go).
+This behavior is handled in [controller.go](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller.go).
 
 This is the main exception to the simple “old `iteration-0` becomes `iteration-N`” rule.
 
@@ -99,7 +99,7 @@ So the UI often works with:
 instead of just:
 - `iteration-8`
 
-This behavior comes from [workflow.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/workflow.go).
+This behavior comes from [workflow.go](../../agent_go/cmd/server/workflow.go).
 
 ## Builder Mode
 
@@ -109,7 +109,7 @@ That means:
 - any incoming builder selection is normalized to `iteration-0` or `iteration-0/<group>`
 - the builder should be thought of as operating on the latest mutable run, not on archived iterations
 
-This behavior lives in [interactive_workshop_manager.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/interactive_workshop_manager.go) and is reflected in the canvas logic in [WorkflowCanvas.tsx](/Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/components/workflow/canvas/WorkflowCanvas.tsx).
+This behavior lives in [interactive_workshop_manager.go](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/interactive_workshop_manager.go) and is reflected in the canvas logic in [WorkflowCanvas.tsx](../../frontend/src/components/workflow/canvas/WorkflowCanvas.tsx).
 
 ## Scheduler Behavior
 
@@ -121,7 +121,7 @@ The scheduler request path sets:
 
 Then the controller applies the same backup-and-refresh logic for full runs.
 
-This behavior lives in [scheduler.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/scheduler.go).
+This behavior lives in [scheduler.go](../../agent_go/cmd/server/scheduler.go).
 
 ## Evaluation And Report Generation
 
@@ -136,8 +136,7 @@ Instead:
 So `iteration-0` is also the internal scratch space for non-primary execution modes.
 
 See:
-- [evaluation_execution.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/evaluation_execution.go)
-- [final_output.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/final_output.go)
+- [evaluation_execution.go](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/evaluation_execution.go)
 
 ## Selected Run Folder Semantics
 
@@ -161,6 +160,6 @@ Use this mental model:
 
 ## Related Docs
 
-- [workflow_manifest_architecture.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/workflow_manifest_architecture.md)
-- [workflow_monitoring.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/workflow_monitoring.md)
-- [workflow_shell_working_directory.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/workflow_shell_working_directory.md)
+- [workflow_manifest_architecture.md](./workflow_manifest_architecture.md)
+- [workflow_monitoring.md](./workflow_monitoring.md)
+- [workflow_shell_working_directory.md](./workflow_shell_working_directory.md)

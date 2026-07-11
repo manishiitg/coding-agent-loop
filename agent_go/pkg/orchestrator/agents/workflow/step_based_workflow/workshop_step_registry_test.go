@@ -74,8 +74,7 @@ func TestFinalizeExecStatus_Timeout(t *testing.T) {
 		StepID: "step-1",
 		Status: WorkshopStepRunning,
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
-	time.Sleep(2 * time.Millisecond) // Ensure it times out
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()
 
 	result := ""
@@ -107,4 +106,3 @@ func TestFinalizeExecStatus_Timeout(t *testing.T) {
 		t.Fatalf("expected status to be WorkshopStepCancelled, got %v", exec2.Status)
 	}
 }
-

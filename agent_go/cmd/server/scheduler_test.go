@@ -414,6 +414,16 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		"get_pulse_module_state",
 		"record_pulse_worklist exactly once",
 		"High-frequency workflows should normally roll up cost/time checks",
+		"A correct abstention or green eval is execution evidence, not goal progress",
+		"mark both harden and goal_advisor due when appropriate",
+		"Do not use 'wait for a clean run' as an indefinite strategy cooldown",
+		"retained cross-run goal evidence",
+		"Meeting a target is not a permanent skip",
+		"optimization-headroom review",
+		"meaningful outcome-bearing runs",
+		"Once that headroom checkpoint arrives",
+		"Never allow more than one active advisor experiment",
+		"data-review-after",
 	} {
 		if !strings.Contains(gate, want) {
 			t.Fatalf("gate step missing %q:\n%s", want, gate)
@@ -478,6 +488,10 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		"PULSE MODULE — EVAL HEALTH",
 		`get_workflow_command_guidance(kind="improve-evaluation"`,
 		"TARGET_RUN_PATH",
+		"Correctness-preserving repairs are automatic",
+		"stale receipt/artifact rejection",
+		"do not create a human-input question",
+		"Ask only when changing goal meaning, thresholds, weights, rubric semantics, or business policy",
 		"Eval fix",
 		"mark_pulse_module_result",
 	} {
@@ -538,7 +552,11 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		"Do not perform the strategic review inline",
 		"run_goal_advisor_review",
 		"query_step",
+		"healthy 10x/headroom",
+		"one active advisor experiment",
+		"10x counterfactual as a thinking lens",
 		"expert strategy advisor",
+		"Never propose/ask about stale receipts",
 		"Do not call harden_workflow, improve_kb, improve_learnings, or improve_db from this parent Pulse turn",
 		"mark_pulse_module_result",
 	} {
@@ -569,6 +587,45 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 	}
 }
 
+func TestPulseEvalGuidanceSeparatesCorrectnessRepairsFromSemanticApproval(t *testing.T) {
+	repoRoot := findRepoRoot(t)
+	read := func(rel string) string {
+		t.Helper()
+		raw, err := os.ReadFile(filepath.Join(repoRoot, rel))
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		return string(raw)
+	}
+
+	evalGuidance := read("agent_go/cmd/server/guidance/templates/improve/improve-evaluation.md")
+	for _, want := range []string{
+		"CORRECTNESS REPAIR — apply automatically; do not ask the user",
+		"binding evidence to the current run/group instead of accepting an older receipt",
+		"making missing, null, empty, stale, malformed, or provider-unconfirmed evidence fail closed",
+		"SEMANTIC CHANGE — require user/business approval",
+		"changing a success criterion, threshold, weight, rubric interpretation",
+	} {
+		if !strings.Contains(evalGuidance, want) {
+			t.Fatalf("improve-evaluation guidance missing %q", want)
+		}
+	}
+	if strings.Contains(evalGuidance, "Do not edit `evaluation/evaluation_plan.json` until the user confirms.") {
+		t.Fatal("improve-evaluation guidance still contains blanket approval gate")
+	}
+
+	advisorGuidance := read("agent_go/cmd/server/guidance/templates/improve/goal-advisor.md")
+	for _, want := range []string{
+		"older receipt/artifact for the current run",
+		"never turn it into a Goal Advisor proposal or human-input question",
+		"Operational correctness and deterministic eval wiring are never advisor proposals",
+	} {
+		if !strings.Contains(advisorGuidance, want) {
+			t.Fatalf("goal-advisor guidance missing %q", want)
+		}
+	}
+}
+
 func TestPostRunMonitorModuleStepsDiscouragePollingLoops(t *testing.T) {
 	steps := postRunMonitorModuleSteps("pulse-test")
 	for _, step := range steps {
@@ -593,10 +650,36 @@ func TestPostRunMonitorModuleStepsDiscouragePollingLoops(t *testing.T) {
 	}
 }
 
+func TestPulseStoreHealthModulesLoadAssumptionAudit(t *testing.T) {
+	steps := postRunMonitorModuleSteps("pulse-test")
+	wantModules := map[string]bool{
+		pulseModuleLearningHealth:      false,
+		pulseModuleKnowledgebaseHealth: false,
+		pulseModuleDBHealth:            false,
+	}
+	for _, step := range steps {
+		if _, ok := wantModules[step.module]; !ok {
+			continue
+		}
+		if !strings.Contains(step.step.query, `get_reference_doc(kind="assumption-audit")`) {
+			t.Fatalf("%s module does not load assumption-audit:\n%s", step.module, step.step.query)
+		}
+		if !strings.Contains(step.step.query, "Assumptions challenged") {
+			t.Fatalf("%s module does not preserve unresolved assumption handoff", step.module)
+		}
+		wantModules[step.module] = true
+	}
+	for module, found := range wantModules {
+		if !found {
+			t.Fatalf("did not inspect expected module %s", module)
+		}
+	}
+}
+
 func TestPostRunMonitorPrependsWorkflowVersionUpgradeForOldManifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.0"})
-	if got := len(steps); got != 18 {
-		t.Fatalf("postRunMonitorStepsForManifest(old) length = %d, want 18", got)
+	if got := len(steps); got != 20 {
+		t.Fatalf("postRunMonitorStepsForManifest(old) length = %d, want 20", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.1" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.1", got)
@@ -633,15 +716,21 @@ func TestPostRunMonitorPrependsWorkflowVersionUpgradeForOldManifest(t *testing.T
 	if got := steps[6].label; got != "upgrade-1.0.7" {
 		t.Fatalf("seventh step label = %q, want upgrade-1.0.7", got)
 	}
-	if got := steps[7].label; got != "gate" {
-		t.Fatalf("eighth step label = %q, want gate", got)
+	if got := steps[7].label; got != "upgrade-1.0.8" {
+		t.Fatalf("eighth step label = %q, want upgrade-1.0.8", got)
+	}
+	if got := steps[8].label; got != "upgrade-1.0.9" {
+		t.Fatalf("ninth step label = %q, want upgrade-1.0.9", got)
+	}
+	if got := steps[9].label; got != "gate" {
+		t.Fatalf("tenth step label = %q, want gate", got)
 	}
 }
 
 func TestPostRunMonitorPrependsWorkflowVersionUpgradeForMissingVersion(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{})
-	if got := len(steps); got != 18 {
-		t.Fatalf("postRunMonitorStepsForManifest(missing version) length = %d, want 18", got)
+	if got := len(steps); got != 20 {
+		t.Fatalf("postRunMonitorStepsForManifest(missing version) length = %d, want 20", got)
 	}
 	if !strings.Contains(steps[0].query, `Current workflow.json version seen by scheduler: "1.0.0"`) {
 		t.Fatalf("missing version should be treated as 1.0.0:\n%s", steps[0].query)
@@ -650,8 +739,8 @@ func TestPostRunMonitorPrependsWorkflowVersionUpgradeForMissingVersion(t *testin
 
 func TestPostRunMonitorPrependsPublishGateUpgradeForVersion101Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.1"})
-	if got := len(steps); got != 17 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.1) length = %d, want 17", got)
+	if got := len(steps); got != 19 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.1) length = %d, want 19", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.2" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.2", got)
@@ -683,15 +772,21 @@ func TestPostRunMonitorPrependsPublishGateUpgradeForVersion101Manifest(t *testin
 	if got := steps[5].label; got != "upgrade-1.0.7" {
 		t.Fatalf("sixth step label = %q, want upgrade-1.0.7", got)
 	}
-	if got := steps[6].label; got != "gate" {
-		t.Fatalf("seventh step label = %q, want gate", got)
+	if got := steps[6].label; got != "upgrade-1.0.8" {
+		t.Fatalf("seventh step label = %q, want upgrade-1.0.8", got)
+	}
+	if got := steps[7].label; got != "upgrade-1.0.9" {
+		t.Fatalf("eighth step label = %q, want upgrade-1.0.9", got)
+	}
+	if got := steps[8].label; got != "gate" {
+		t.Fatalf("ninth step label = %q, want gate", got)
 	}
 }
 
 func TestPostRunMonitorPrependsHTMLReportUpgradeForVersion102Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.2"})
-	if got := len(steps); got != 16 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.2) length = %d, want 16", got)
+	if got := len(steps); got != 18 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.2) length = %d, want 18", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.3" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.3", got)
@@ -722,15 +817,21 @@ func TestPostRunMonitorPrependsHTMLReportUpgradeForVersion102Manifest(t *testing
 	if got := steps[4].label; got != "upgrade-1.0.7" {
 		t.Fatalf("fifth step label = %q, want upgrade-1.0.7", got)
 	}
-	if got := steps[5].label; got != "gate" {
-		t.Fatalf("sixth step label = %q, want gate", got)
+	if got := steps[5].label; got != "upgrade-1.0.8" {
+		t.Fatalf("sixth step label = %q, want upgrade-1.0.8", got)
+	}
+	if got := steps[6].label; got != "upgrade-1.0.9" {
+		t.Fatalf("seventh step label = %q, want upgrade-1.0.9", got)
+	}
+	if got := steps[7].label; got != "gate" {
+		t.Fatalf("eighth step label = %q, want gate", got)
 	}
 }
 
 func TestPostRunMonitorPrependsPulseReadabilityUpgradeForVersion103Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.3"})
-	if got := len(steps); got != 15 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.3) length = %d, want 15", got)
+	if got := len(steps); got != 17 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.3) length = %d, want 17", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.4" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.4", got)
@@ -758,15 +859,21 @@ func TestPostRunMonitorPrependsPulseReadabilityUpgradeForVersion103Manifest(t *t
 	if got := steps[3].label; got != "upgrade-1.0.7" {
 		t.Fatalf("fourth step label = %q, want upgrade-1.0.7", got)
 	}
-	if got := steps[4].label; got != "gate" {
-		t.Fatalf("fifth step label = %q, want gate", got)
+	if got := steps[4].label; got != "upgrade-1.0.8" {
+		t.Fatalf("fifth step label = %q, want upgrade-1.0.8", got)
+	}
+	if got := steps[5].label; got != "upgrade-1.0.9" {
+		t.Fatalf("sixth step label = %q, want upgrade-1.0.9", got)
+	}
+	if got := steps[6].label; got != "gate" {
+		t.Fatalf("seventh step label = %q, want gate", got)
 	}
 }
 
 func TestPostRunMonitorPrependsPulseFilterUpgradeForVersion104Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.4"})
-	if got := len(steps); got != 14 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.4) length = %d, want 14", got)
+	if got := len(steps); got != 16 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.4) length = %d, want 16", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.5" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.5", got)
@@ -775,7 +882,8 @@ func TestPostRunMonitorPrependsPulseFilterUpgradeForVersion104Manifest(t *testin
 		"WORKFLOW VERSION UPGRADE v1.0.4 -> v1.0.5",
 		`builder/improve.html`,
 		`get_reference_doc(kind="review-improve-log")`,
-		"Date, Kind, Search, Reset",
+		"Kind, Search, Reset",
+		"do not add a date picker",
 		`data-date="YYYY-MM-DD"`,
 		`data-kind="run|monitor|artifact|decision|advisor|cos|open|user|note"`,
 		`<!-- LOG ENTRIES: newest first -->`,
@@ -791,15 +899,21 @@ func TestPostRunMonitorPrependsPulseFilterUpgradeForVersion104Manifest(t *testin
 	if got := steps[2].label; got != "upgrade-1.0.7" {
 		t.Fatalf("third step label = %q, want upgrade-1.0.7", got)
 	}
-	if got := steps[3].label; got != "gate" {
-		t.Fatalf("fourth step label = %q, want gate", got)
+	if got := steps[3].label; got != "upgrade-1.0.8" {
+		t.Fatalf("fourth step label = %q, want upgrade-1.0.8", got)
+	}
+	if got := steps[4].label; got != "upgrade-1.0.9" {
+		t.Fatalf("fifth step label = %q, want upgrade-1.0.9", got)
+	}
+	if got := steps[5].label; got != "gate" {
+		t.Fatalf("sixth step label = %q, want gate", got)
 	}
 }
 
 func TestPostRunMonitorPrependsRichPulseWidgetUpgradeForVersion105Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.5"})
-	if got := len(steps); got != 13 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.5) length = %d, want 13", got)
+	if got := len(steps); got != 15 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.5) length = %d, want 15", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.6" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.6", got)
@@ -821,15 +935,21 @@ func TestPostRunMonitorPrependsRichPulseWidgetUpgradeForVersion105Manifest(t *te
 	if got := steps[1].label; got != "upgrade-1.0.7" {
 		t.Fatalf("second step label = %q, want upgrade-1.0.7", got)
 	}
-	if got := steps[2].label; got != "gate" {
-		t.Fatalf("third step label = %q, want gate", got)
+	if got := steps[2].label; got != "upgrade-1.0.8" {
+		t.Fatalf("third step label = %q, want upgrade-1.0.8", got)
+	}
+	if got := steps[3].label; got != "upgrade-1.0.9" {
+		t.Fatalf("fourth step label = %q, want upgrade-1.0.9", got)
+	}
+	if got := steps[4].label; got != "gate" {
+		t.Fatalf("fifth step label = %q, want gate", got)
 	}
 }
 
 func TestPostRunMonitorPrependsLegacyOptimizerCleanupUpgradeForVersion106Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.6"})
-	if got := len(steps); got != 12 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.6) length = %d, want 12", got)
+	if got := len(steps); got != 14 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.6) length = %d, want 14", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.7" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.7", got)
@@ -850,6 +970,70 @@ func TestPostRunMonitorPrependsLegacyOptimizerCleanupUpgradeForVersion106Manifes
 	} {
 		if !strings.Contains(steps[0].query, want) {
 			t.Fatalf("legacy optimizer cleanup step missing %q:\n%s", want, steps[0].query)
+		}
+	}
+	if got := steps[1].label; got != "upgrade-1.0.8" {
+		t.Fatalf("second step label = %q, want upgrade-1.0.8", got)
+	}
+	if got := steps[2].label; got != "upgrade-1.0.9" {
+		t.Fatalf("third step label = %q, want upgrade-1.0.9", got)
+	}
+	if got := steps[3].label; got != "gate" {
+		t.Fatalf("fourth step label = %q, want gate", got)
+	}
+}
+
+func TestPostRunMonitorPrependsPulseDatePickerCleanupForVersion107Manifest(t *testing.T) {
+	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.7"})
+	if got := len(steps); got != 13 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.7) length = %d, want 13", got)
+	}
+	if got := steps[0].label; got != "upgrade-1.0.8" {
+		t.Fatalf("first step label = %q, want upgrade-1.0.8", got)
+	}
+	for _, want := range []string{
+		"WORKFLOW VERSION UPGRADE v1.0.7 -> v1.0.8",
+		"remove the date picker",
+		`id="filter-date"`,
+		"keep Kind, Search, Reset",
+		"keep visible dates and data-date attributes",
+		`workflow.json "version" to "1.0.8"`,
+	} {
+		if !strings.Contains(steps[0].query, want) {
+			t.Fatalf("Pulse date-picker cleanup step missing %q:\n%s", want, steps[0].query)
+		}
+	}
+	if got := steps[1].label; got != "upgrade-1.0.9" {
+		t.Fatalf("second step label = %q, want upgrade-1.0.9", got)
+	}
+	if got := steps[2].label; got != "gate" {
+		t.Fatalf("third step label = %q, want gate", got)
+	}
+}
+
+func TestPostRunMonitorPrependsStableSoulAndPulseHierarchyUpgradeForVersion108Manifest(t *testing.T) {
+	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.8"})
+	if got := len(steps); got != 12 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.8) length = %d, want 12", got)
+	}
+	if got := steps[0].label; got != "upgrade-1.0.9" {
+		t.Fatalf("first step label = %q, want upgrade-1.0.9", got)
+	}
+	for _, want := range []string{
+		"WORKFLOW VERSION UPGRADE v1.0.8 -> v1.0.9",
+		"keep soul/soul.md limited to stable intent",
+		"explicit user-approved constraints",
+		"remove architecture",
+		"Assumptions challenged",
+		"Today's outcome",
+		`<details class="technical">`,
+		"#pulse-agent-handoff",
+		"must not repeat the user-facing report",
+		"Needs your decision",
+		`workflow.json "version" to "1.0.9"`,
+	} {
+		if !strings.Contains(steps[0].query, want) {
+			t.Fatalf("stable soul/Pulse hierarchy upgrade missing %q:\n%s", want, steps[0].query)
 		}
 	}
 	if got := steps[1].label; got != "gate" {

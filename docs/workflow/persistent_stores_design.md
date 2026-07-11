@@ -644,95 +644,71 @@ This is part of the same builder flow that produces `report_plan.md`, since the 
 
 ---
 
-## 8. `soul.md` — Builder Persistent Memory
+## 8. `soul.md` — Stable Workflow Intent
 
 ### What it is
 
-A markdown file that the **workflow interactive builder reads on every session start and writes to over time**. It accumulates context that falls out of conversations with the user — things that have nowhere else to go in the structured files.
-
-No other agent reads or writes it. It is purely the builder's long-term memory for this workflow.
+A Markdown file containing the workflow's stable north star. Runtime, evaluation,
+Pulse, and builder agents read its `## Objective` and `## Success Criteria`
+sections to decide what the workflow must achieve.
 
 ### What it is NOT
 
-- Not a duplicate of `plan.json` — `objective` and `success_criteria` stay in `plan.json` as one-liners for the runtime and learning agent to consume
+- Not architecture or a design document — the current "how" remains revisable in `planning/plan.json`, step config, and implementation artifacts
+- Not a decision log, navigation index, reference list, or store for agent assumptions
 - Not workflow config — capabilities, LLM settings, schedules stay in `workflow.json`
 - Not execution knowledge — HOW to run steps stays in `learnings/`
-- Not domain facts — discovered entities stay in `knowledgebase/`
+- Not business context, examples, or domain facts — those stay in `knowledgebase/`
 
 ### What it contains
 
-Two things:
+It contains:
 
-**1. User-specific context that has nowhere else to go**
-- Why the objective is what it is — the story behind the one-liner in `plan.json`
-- Decisions made during conversations ("tried bulk approach, too slow, switched to group-by-industry")
-- Constraints the user has stated ("never process same company twice", "output must match CRM format")
-- Things the builder has learned about the user's preferences over time
+1. `## Objective` — the outcome the workflow exists to produce.
+2. `## Success Criteria` — observable, checkable conditions for success.
+3. Optional `## Constraints` — only boundaries explicitly stated or approved by
+   the user as durable and non-negotiable.
+4. Optional `## Notifications` — the user's Pulse notification preference.
 
-**2. Curated references to important files across other stores**
-- Which `db/` files matter and what they contain
-- Which KB entity types are relevant
-- Where the key skill content lives in `learnings/`
-
-This makes `soul.md` a **navigation layer** — a builder can start a fresh session, read `soul.md`, and immediately know where the important things live across all stores.
+Architecture, providers, models, channels, thresholds, step boundaries, tactics,
+and other implementation choices are not stable merely because an agent wrote
+them down. Pulse and Goal Advisor may challenge and replace them when evidence
+supports a better approach.
 
 ### Relationship to `objective` and `success_criteria`
 
-`plan.json` keeps the one-liner versions of these because:
-- The execution orchestrator sets `hcpo.SetObjective()` from `plan.json` at runtime
-- The learning agent receives `CurrentObjective` from `hcpo.GetObjective()`
-- Parsing structured JSON is reliable; parsing free-form markdown is not
-
-`soul.md` carries the **richer version** — the context, evolution, and nuance behind them:
-
-```
-plan.json:   "objective": "Scrape and qualify LinkedIn companies"
-
-soul.md:     ## Why
-             Originally this was a bulk scrape. After two failed runs the user
-             decided to switch to group-by-industry to reduce rate limiting.
-             The real goal is to build a qualified list for outreach — quality
-             over quantity. Aim for 20 strong leads per run, not 200 weak ones.
-```
-
-They don't need to be identical. `plan.json` has the headline; `soul.md` has the story.
+`soul.md` is the canonical source. `planning/plan.json` is the current
+implementation attempt and no longer owns root objective/success fields. Runtime
+helpers parse the two required H2 sections directly from `soul.md`.
 
 ### Format
 
 ```markdown
----
-workflow: LinkedIn Outreach
-updated: 2026-04-15
----
+# LinkedIn Outreach
 
-## Why
-[Context behind the objective — things the user explained in chat
-that aren't captured in the one-line objective in plan.json]
+## Objective
+Build a qualified list of prospects that can support effective outreach.
 
-## Decisions & Constraints
-- Only target SaaS companies 50–200 employees
-- Skip companies already in db/processed.json
-- Output format must match CRM import schema (columns: name, email, title, company)
-- Tried bulk scrape approach — too slow and rate-limited, switched to group-by-industry
+## Success Criteria
+- Produce at least 20 verified, relevant leads per run.
+- Keep duplicate and invalid-contact rates below the user-approved threshold.
 
-## Key References
-- Processed companies: db/processed.json
-- Target company graph: knowledgebase/graph.json (entity type: company)
-- Execution skill: learnings/_global/SKILL.md
-- Current run results: db/results.json
+## Constraints
+- Never contact a prospect without human approval. <!-- only if user-approved -->
 
-## Notes
-[Free-form discoveries, things to revisit, open questions]
+## Notifications
+- Send a summary after every scheduled run.
 ```
 
 ### When the builder writes to it
 
-- **Automatically** when the user makes a decision worth preserving ("we'll skip companies under 10 employees")
-- **Automatically** when a new `db/` file or KB entity type becomes important
-- **On user request** — "remember this" or "save this decision"
-- **At session start** if `soul.md` doesn't exist yet — builder creates it from what it can infer from `plan.json` and existing stores
+- When the user confirms or changes the objective or success criteria.
+- When the user explicitly marks a boundary as a durable workflow-wide constraint.
+- When the user changes Pulse notification preferences.
 
-The builder does not ask for confirmation on every write — it writes silently, like the memory system. If the user wants to review, they can open `soul.md` directly.
+Do not silently promote agent-inferred assumptions or implementation decisions
+into `soul.md`. When authorship or durability is unclear and materially affects
+the goal, Pulse surfaces it under **Assumptions challenged** for user review.
 
 ### Location
 
@@ -740,9 +716,9 @@ The builder does not ask for confirmation on every write — it writes silently,
 soul/soul.md
 ```
 
-Dedicated top-level folder at workspace root, parallel to `planning/`, `db/`, `knowledgebase/`, `learnings/`. Kept out of `planning/` deliberately: `planning/` is read-only for the builder in workshop mode (modifications go through explicit plan-mod tools like `add_regular_step`, `update_regular_step`), but `soul.md` is free-form markdown that the builder updates frequently from chat context. Giving it its own folder means the builder can shell-write it directly without needing a dedicated mutation tool or a one-off whitelist exception in the `planning/` folder guard.
+Dedicated top-level folder at workspace root, parallel to `planning/`, `db/`, `knowledgebase/`, and `learnings/`. It stays separate because it defines the stable outcome that the current plan is judged against.
 
-The `soul/` folder is added to the builder's writable folder-guard paths. Only the workshop builder writes here; no execution or evaluation agent reads or writes it.
+The `soul/` folder is added to the builder's writable folder-guard paths. Workshop/Pulse may update it under the stable-intent contract; execution and evaluation agents read it but treat it as read-only.
 
 ### Key implementation touchpoints
 
@@ -751,7 +727,7 @@ The `soul/` folder is added to the builder's writable folder-guard paths. Only t
 | `controller_run_manager.go` | Create `soul/` folder on workspace init (alongside `db/`, `knowledgebase/`, etc.) |
 | Builder folder-guard setup (`interactive_workshop_manager.go` / `controller_agent_factory.go`) | Add `soul/` to the builder's writable paths so shell writes to `soul/soul.md` go through |
 | `interactive_workshop_manager.go` | Load `soul/soul.md` at session start; inject as `SoulContent` template var into all workshop mode prompts |
-| `interactive_workshop_manager.go` | After significant decisions, builder writes/updates `soul/soul.md` via shell (guard permits it; no dedicated mutation tool needed) |
+| `interactive_workshop_manager.go` | After user-confirmed objective/success/constraint changes, builder updates `soul/soul.md` via shell (guard permits it; no dedicated mutation tool needed) |
 | `cmd/server/workflow.go` | Add `handleGetSoul()`, `handleUpdateSoul()` HTTP handlers |
 | `pre_validation.go:1080` | Add `"soul"` to known workflow folder names |
 | `WorkflowToolbar.tsx` | Expose `soul.md` in the workspace file browser (already visible if file exists) |

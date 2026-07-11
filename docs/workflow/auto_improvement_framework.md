@@ -19,8 +19,8 @@ They are orthogonal — a run can be Bug-broken while Goal-on-target, or Bug-cle
 
 ## Files
 
-- `soul/soul.md`: objective and success criteria. The north star (Markdown — parsed for objective/success-criteria; there is no `soul.html`).
-- `builder/improve.html`: the **Pulse** — the single, self-contained, human-readable HTML log and the user's primary window into the workflow. Holds the two verdicts, a status headline, the goal card, signal tiles, the recent-runs strip, and a newest-first timeline of monitor observations, decisions, open findings, human input requests, user rules, and notes. Read it before every improve pass. See `get_reference_doc(kind="review-improve-log")` for the format.
+- `soul/soul.md`: stable intent only — objective, success criteria, optional explicit user-approved constraints, and optional notification preferences. Architecture and agent assumptions are revisable and do not belong here. It stays Markdown; there is no `soul.html`.
+- `builder/improve.html`: the **Pulse** — the single, self-contained, human-readable HTML log and the user's primary window into the workflow. Runloop renders pending decisions first; the HTML prioritizes active challenged assumptions, today's outcome, goal progress, and recent activity, with signal/cost/maintenance detail collapsed. A bottom Agent log carries only compact handoff state and evidence pointers, never duplicate narrative. Read it before every improve pass. See `get_reference_doc(kind="review-improve-log")` for the format.
 - `builder/improve-archive/YYYY-MM.html`: monthly archive files for old resolved findings and routine entries. Read only the archive files referenced by the active log's archive index or an unresolved id.
 - `builder/card.health.html`: the compact per-run dashboard card the monitor's final notify/summary step overwrites each run (final post-Pulse status + headline/detail in `data-*` attributes). The Bug/Goal verdicts themselves live in the Pulse log's pills + goal card — there is no separate verdict file.
 - `route_selection.json`: which route a run took (so the monitor judges only that path).
@@ -32,7 +32,7 @@ Old Markdown improve logs are **legacy**. Carry their unresolved findings into `
 
 Use this hierarchy when deciding what is true:
 
-1. `soul/soul.md`: canonical objective and success criteria.
+1. `soul/soul.md`: canonical stable intent. Only explicit user-approved constraints are authoritative; architecture and agent-inferred assumptions remain challengeable.
 2. `runs/iteration-0/<group>/...`: current reality from actual outputs, tool logs, validation, and eval reports.
 3. `evaluation/evaluation_plan.json`: measurement definition; fix it when it conflicts with `soul.md`.
 4. `planning/plan.json`: current implementation attempt, judged against `soul.md` and iteration-0 evidence.

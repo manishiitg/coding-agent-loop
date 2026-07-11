@@ -8,7 +8,7 @@ Pulse runs after a scheduled workflow run. It is not a fixed checklist. It is a 
 
 `builder/improve.html` is the authoritative durable source for Pulse history, prior fixes, findings, cadence reasoning, and decisions. The workflow's `db/db.sqlite` table `pulse_module_state` is only the current machine-readable Gate/worklist/result cache used by the scheduler and Pulse popup; it must not replace or contradict the HTML history. Every Gate decision, cadence reason, and module outcome that matters later must also be recorded visibly in `builder/improve.html`.
 
-When updating `builder/improve.html`, keep the first screen short. It may show the workflow name, one compact status headline, current goal/health widgets, and the next useful action. Do not duplicate the full latest-run Bug/Goal narrative at the top if the same details already appear in Recent runs or the timeline.
+When updating `builder/improve.html`, keep the first screen short and user-prioritized. Runloop renders pending **Needs your decision** requests above the HTML. The HTML then shows active **Assumptions challenged** only when consequential assumptions exist, followed by **Today's outcome**, goal progress, and recent activity. Signal tiles, cost/time, Maintenance Radar, cadence, and raw evidence stay inside the closed-by-default **Technical details** block. A collapsed **Agent log** at the bottom holds only compact current handoff state, evidence pointers, cursors, ids, and next-check conditions; it must not duplicate the report narrative. Do not duplicate the full latest-run Bug/Goal narrative at the top if the same details already appear in Recent runs or the timeline.
 
 ## Timeout Recovery
 
@@ -39,6 +39,19 @@ Gate uses a **progressive evidence scan**. Start with compact state and metadata
 Do not load full report HTML, full KB/learnings, broad DB rows, every cost file, or long run logs merely to decide cadence. Open large evidence only when a compact signal makes that module plausibly due or one targeted fact is needed to justify a decision. The selected module performs the deep inspection later; Gate only selects the evidence-backed worklist. When Gate sees a plausible bug signal, mark Harden due so Harden can investigate, fix, and verify it.
 
 Gate writes a compact **Pulse Gate / Worklist** entry in the Pulse log/timeline area of `builder/improve.html`. Do not put full Gate details in the first-screen/top dashboard; the top dashboard should stay focused on latest outcome, goal health, and next useful action.
+
+Gate also refreshes `#pulse-agent-handoff` at the bottom with the current Pulse/run
+ids, one compact module row per worklist decision, next-check conditions, cursor
+ids, unresolved/pending ids, and evidence pointers. Overwrite this handoff state;
+do not append copies or repeat user-facing conclusions.
+
+Treat `soul/soul.md` as stable intent only. Objective, success criteria, explicit
+user-approved constraints, and notification preferences are authoritative.
+Architecture, providers, tools, models, channels, thresholds, tactics, step shape,
+and assumptions written by an agent remain revisable. When one materially limits
+the goal, keep at most three active items under **Assumptions challenged**, naming
+where each came from, evidence for/against it, and how it will be validated or
+retired. Do not create user questions for routine implementation choices.
 
 The first screen may legitimately combine evidence measured by different routes or runs, but freshness must be explicit. The overall status reflects the latest run. Every carried-forward verdict, goal criterion, brief cell, and important signal/cost tile must visibly say `as of run <id/date>` or `last measured <id/date>`; never leave an older value looking current. If the latest run did not measure a signal, retain the last trustworthy value and label it `not measured this run · last measured ...`.
 
@@ -101,6 +114,10 @@ The module is report-only. It calls `review_artifact_sync` through `get_workflow
 ### report_health
 
 Mark due when the reporting dashboard is stale, misleading, broken, too text-heavy, not goal-oriented, or not using live persisted evidence correctly.
+Also mark it due when an approved Goal Advisor measurement step produces its
+first trustworthy rows, changes its schema/definition, or reaches a review
+checkpoint whose metric is not yet visible in the dashboard. A proposal without
+approved data collection is not enough to create a KPI tile.
 
 Good report-health work makes the report easier for the user to understand:
 
@@ -136,17 +153,23 @@ Mark due when workflow behavior changed or learning state may be stale:
 
 This module may update step config for learning lock/unlock decisions and may call `improve_learnings`. Use absolute workspace paths in prompts and evidence. Do not ask a step agent to hand-edit files through a path outside the workspace root.
 
+Load `assumption-audit`: reusable HOW must not preserve business policy, fixed strategy/architecture, or an unverified limitation as if it were permanent.
+
 ### knowledgebase_health
 
 Mark due when KB notes or KB config are missing, duplicated, stale, contradictory, or no longer aligned with the plan.
 
 `knowledgebase/context` is user-owned runtime business context. Read it for evidence, but do not rewrite it. Use `improve_kb` for notes/config cleanup.
 
+Load `assumption-audit`: KB notes must distinguish durable domain evidence from beliefs copied out of the current plan. Surface material unresolved restrictions instead of multiplying them across notes.
+
 ### db_health
 
 Mark due when DB schema, table contracts, upsert rules, report SQL, eval consumers, or `db/README.md` no longer match current writers and readers.
 
 Use `improve_db` for concrete DB contract/schema/report compatibility work. Do not run speculative row migrations.
+
+Load `assumption-audit`: schemas and enums should not unnecessarily freeze one source, channel, entity, group, or tactic. Apply only bounded contract fixes; strategy/schema choices requiring business judgment stay challenged assumptions.
 
 ### cost_llm_time
 
@@ -165,11 +188,32 @@ Mark due when strategic judgment is needed:
 - a user answered a strategic question
 - a Chief of Staff recommendation is strategic
 - enough new cross-run evidence exists for an expert out-of-plan critique
+- a healthy workflow reaches its previously scheduled headroom checkpoint
+- an active `.advisor-experiment` has an answer, reaches `data-review-after`,
+  accumulates enough measurement evidence, becomes blocked/unblocked, or gains
+  decisive contradictory evidence
 - the workflow may need an eval/report measurement change to judge success correctly
+- a material success criterion or active experiment is `Not measured`, and Goal
+  Advisor must propose a bounded metric definition plus a normal `regular`
+  collection step before Report Health can visualize it
 
 Goal Advisor is now a Pulse-selected module, not a separate recurring schedule. Pulse should not do the expensive strategic review inline. When the Gate selects Goal Advisor, the parent Pulse turn should call `run_goal_advisor_review(...)`, capture the returned `execution_id`, optionally call `query_step(step_id="goal-advisor", execution_id="<returned execution_id>")` once for immediate status, then stop if it is still running and rely on `[AUTO-NOTIFICATION]` to resume result recording. Do not use `sleep`, `list_executions`, or repeated `query_step` calls as a polling loop.
 
-The background Goal Advisor thinks like an experienced operator. It may apply a structural plan change only when the user already approved a Goal Advisor proposal in `report_human_inputs`. New strategic changes must be logged as proposal-only Advisor ideas and, when a decision is needed, created with `create_human_input_request`.
+Goal Advisor also challenges consequential assumptions embedded in soul, plan,
+steps, evals, KB, learnings, DB, or reports. It must distinguish user-approved
+constraints from agent-created choices and maintain the top **Assumptions
+challenged** section when those choices may cap the goal.
+
+The background Goal Advisor thinks like an experienced operator. It may apply a structural plan change only when the user already approved a Goal Advisor proposal in `report_human_inputs`. New strategic changes must be logged as proposal-only Advisor ideas and, when a decision is needed, created with `create_human_input_request`. When success cannot be judged from persisted evidence, the proposal may define a small decision-useful metric set and the exact normal `regular` measurement step needed to write timestamped rows to `db/db.sqlite`; this is a plan change, not a separate metrics subsystem. Report Health visualizes it only after approval and real data.
+
+Goal Advisor also owns one durable 10x/headroom experiment lifecycle in
+`builder/improve.html`. There may be only one active `.advisor-experiment` card
+(`proposed`, `deferred`, `approved`, `running`, `measuring`, or `blocked`) at a
+time. Pulse advances or measures that card at its checkpoint; it does not create
+daily bold-idea spam. Terminal states are `adopted`, `rejected`, and `retired`.
+When no experiment is active, a due healthy-headroom review applies the 10x
+counterfactual and may propose one bounded experiment while preserving the
+successful baseline.
 
 Goal Advisor does not do routine hardening, learning cleanup, KB cleanup, DB cleanup, or normal report repair. Those are separate Pulse modules.
 
@@ -188,7 +232,7 @@ For Goal Advisor plan-change proposals, use the existing interaction shape inste
 
 On a later Pulse run, an approved proposal may be applied with normal plan/config/eval/report tools and then marked consumed with `mark_human_input_consumed`. Rejected or deferred proposals should be recorded and consumed, not silently retried. After consuming an answer, remove the matching visible question card from `builder/improve.html` or replace it with a short outcome Decision/Note; do not leave a consumed answer displayed as an active question.
 
-Do not ask only in email or raw chat. Show the request in `builder/improve.html`, but treat `db/db.sqlite` as the source of truth. When a later pass uses an answer, call `mark_human_input_consumed` and clear the visible question from the Pulse HTML.
+Do not ask only in email or raw chat. Runloop renders the structured request first as **Needs your decision**; keep only a compact matching audit marker in `builder/improve.html`. When a later pass uses an answer, call `mark_human_input_consumed` and replace the visible marker with a short outcome.
 
 ## Finalizer And Notifications
 

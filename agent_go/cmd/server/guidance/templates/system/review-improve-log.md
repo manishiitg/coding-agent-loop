@@ -13,11 +13,13 @@ The workflow keeps a **single durable log** — `builder/improve.html` — the w
 - **Maintenance Radar** (Pulse depth, hygiene watchpoints, and why optional maintenance ran or was skipped),
 - **Artifact Review reports** (plan-change artifact drift cursor, clean/no-pending result, or drift findings),
 - **human input requests** (questions or choices the user must answer, with status and fallback),
-- **user rules** (authoritative constraints the user stated).
+- **user rules** (authoritative constraints the user stated),
+- **one active Goal Advisor experiment** (the durable 10x/headroom proposal,
+  baseline, checkpoint, and measured outcome).
 
 Do not create a separate review document. All review findings, monitor notes, decisions, human input requests, user rules, Artifact Review entries, and run notes belong in `builder/improve.html`.
 
-It is a **self-contained, human-readable HTML document — not Markdown, not a data dump.** This is the page the user opens to understand the workflow, so make it genuinely good to read. Call `get_reference_doc(kind="html-output")` for the style baseline. When creating or upgrading the file, also load `get_reference_doc(kind="review-improve-log-skeleton")` and copy that **Starter HTML skeleton** for the exact structure and polish. Top to bottom the document reads: **two verdicts → status headline → "what matters now" widget brief → the goal → color-coded signal tiles → cost/time readout → activity filters → recent runs → newest-first card timeline → archive**. The first screen should read like a daily operator dashboard, not a raw ledger.
+It is a **self-contained, human-readable HTML document — not Markdown, not a data dump.** This is the page the user opens to understand the workflow, so make it genuinely good to read. Call `get_reference_doc(kind="html-output")` for the style baseline. When creating or upgrading the file, also load `get_reference_doc(kind="review-improve-log-skeleton")` and copy that **Starter HTML skeleton** for the exact structure and polish. The Runloop Pulse view renders pending `report_human_inputs` first as **Needs your decision**. The HTML then reads: **two verdicts → status headline → active assumptions challenged (only when any exist) → Today's outcome → the goal → collapsed technical details → activity filters → recent runs → newest-first card timeline → collapsed Agent log → archive**. The first screen should read like a daily operator dashboard, not a raw ledger.
 
 The Pulse log is opened in a narrow right panel by default. Design it **mobile-first**:
 the base CSS must work at 360-480px with stacked rows, no overlapping metadata, no
@@ -35,9 +37,21 @@ A verdict, a goal-criterion status, or a tile can silently go stale if no recent
 
 Different sections may use different evidence dates. The overall status headline reflects the latest run, while a Goal metric may correctly retain the last trustworthy measurement from an older run. In that case show `not measured this run · last measured run #N / YYYY-MM-DD` directly on the card or tile. Every `.briefitem`, `.crit`, and important `.tile` needs a visible freshness label; do not rely on nearby sections or buried evidence paths to imply the date. Never replace a known older value with `—` merely because the latest route did not measure it, and never present that older value as current.
 
-### What matters now
+### Needs your decision — always first when present
 
-Directly below the chips, include one `.brief` section with 2-4 short cells. Use it to explain the current operating picture in human terms: latest result, main risk, next useful action, and evidence confidence. One cell should summarize the **Maintenance Radar** when Pulse has an active watchpoint or a high-frequency schedule: `Pulse depth: minimal|normal|deep`, why, and what would trigger a deeper check. Keep each cell to one or two sentences. This is not another timeline; it is the executive/operator summary that tells the user what to pay attention to before they scroll. Prefer widget cells and chips over paragraphs; if a cell needs more than two short sentences, split it into another tile or move the detail to the timeline.
+Pending decisions are the most actionable content, so the Runloop Pulse view renders the interactive `report_human_inputs` panel above `builder/improve.html`. Use `create_human_input_request`; never build custom form controls inside the static HTML. Title this surface **Needs your decision**. Ask only for a real user/business decision, credential, explicit durable constraint, or material strategy approval — never for a deterministic bug fix, stale path/receipt cleanup, schema wiring, or routine implementation choice.
+
+Keep the matching `Human input requested` timeline entry compact so it remains a durable audit record without repeating the full interactive card. When answered and consumed, remove the active visible ask and replace it with a short Decision/Note outcome.
+
+### Assumptions challenged
+
+Immediately after the status/chips, show an `.assumptions` section only when one or more consequential assumptions are actively limiting the workflow. Each item states: **Assumption**, **Where it came from**, **Evidence for/against**, and **How to validate or retire it**. Distinguish explicit user constraints from agent-inferred choices. Architecture, step shape, providers, channels, thresholds, and tactics are revisable unless the user explicitly approved them as durable constraints.
+
+Do not fill this section with routine implementation facts or generic uncertainty. Keep at most three active assumptions. When resolved, remove the item from the top and record the outcome in the timeline. If no consequential assumption is under challenge, omit the whole visible section; do not render an empty-state card.
+
+### Today's outcome
+
+Below active assumptions, include one `.brief` section with four short cells: **Outcome**, **Goal progress**, **Issues & fixes**, and **Next Pulse**. Each cell is one or two plain sentences and carries freshness where needed. This replaces the vague "What matters now" section and must not duplicate the recent-run row or the latest timeline card. The Maintenance Radar belongs in collapsed technical details, not this summary. Prefer widgets and chips over paragraphs; move raw detail to the timeline or technical section.
 
 ### Plain-language card contract
 
@@ -57,7 +71,7 @@ Every recent-run row and every timeline entry must be filterable. Add:
 - `data-date="YYYY-MM-DD"` — the actual event/run date in local workflow time when known; if only a run folder date exists, use that date.
 - `data-kind="run|monitor|maintenance|artifact|decision|advisor|cos|input|open|user|note"` — the primary activity type.
 
-The built-in filter bar searches both recent runs and timeline cards by exact date, kind, and free text. Do not remove the static filter script from the skeleton. It is UI behavior, not a legacy JSON data block.
+The built-in filter bar searches both recent runs and timeline cards by kind and free text. Dates remain visible and searchable as ordinary text; do not add a separate date picker. Do not remove the static filter script from the skeleton. It is UI behavior, not a legacy JSON data block.
 
 ### Two verdicts: Bug and Goal
 
@@ -66,7 +80,7 @@ Every workflow is judged on two independent axes, and the header shows **both** 
 - **Bug** — did it *run correctly*? Errors, skipped steps, missing/empty artifacts, regressions vs the last run. A bug is fixed by **hardening**. Operational, roughly binary.
 - **Goal** — is it *achieving its success criteria*? Eval scores and run evidence vs `soul.md`, trending over runs. A goal gap is fixed by **refining or replanning**. Continuous.
 
-They are orthogonal: a run can be **Bug: broken** (a step silently skipped) while **Goal: on-target**, or **Bug: clean** while **Goal: short** (it runs perfectly but produces output that misses the point). You need both lenses: operational monitoring catches run failures, while eval and output review catch goal gaps. **Health gates goal:** a run that wasn't operationally clean produces no trustworthy goal signal, so never judge the goal on a broken run.
+They are orthogonal: a run can be **Bug: broken** (a step silently skipped) while **Goal: on-target**, or **Bug: clean** while **Goal: short** (it runs perfectly but produces output that misses the point). You need both lenses: operational monitoring catches run failures, while eval and output review catch goal gaps. A broken run cannot prove that run's producing tactic succeeded, but it does not erase trustworthy retained cross-run business outcomes such as subscriber count, revenue, wins, responses, or latency. Pulse may therefore run Harden and Goal Advisor together when operational Bugs and a reliable Goal trend coexist.
 
 Tag each **Monitor**, **Open finding**, **Artifact Review**, and **Decision** entry with the axis it belongs to — a small **Bug** or **Goal** chip when applicable — so the timeline is filterable and the fix path is obvious (Bug → harden, Goal → refine/replan). Also add an action label chip when work was done, proposed, or a user answer is needed (`Bug fix`, `Improvement`, `Advisor idea`, `Artifact drift`, `Report fix`, `Eval fix`, `Cost/time`, `Backup/publish`, `Needs input`, `Manual`). Goal Advisor decisions must be visually distinct from Pulse harden notes: use the dedicated Decision card classes below, not a generic Note or Agent card.
 
@@ -74,13 +88,15 @@ The header verdicts are stable current-state elements, not timeline entries. Upd
 
 ### The goal card
 
-Directly under the verdicts, show **what the workflow is for**: the one-line objective plus the success criteria from `soul.md`, each with a live status — **Met / Short / At risk** — and the eval/run evidence behind that status. This is what the **Goal** verdict is measured against; without it the verdict is opaque. Keep it current as criteria are met or slip. (The `/goal-advisor` setup seeds this from `soul.md` when it bootstraps the goal.)
+Below Today's outcome, show **what the workflow is for**: the one-line objective plus the success criteria from `soul.md`, each with a live status — **Met / Short / At risk** — and the eval/run evidence behind that status. This is what the **Goal** verdict is measured against; without it the verdict is opaque. Keep it current as criteria are met or slip. (The `/goal-advisor` setup seeds this from `soul.md` when it bootstraps the goal.)
 
 The goal card **reads from `soul.md`** — it does not replace it. `soul.md` stays Markdown (it's parsed for objective/success-criteria); **do not create a `soul.html`** or convert it. This Pulse log is the only HTML document; soul.md is its Markdown source.
 
 ### Signal tiles — grouped by verdict
 
-Render readable, color-coded signal tiles (value + movement in words: `eval 0.78 -> target 0.90`, `cost 19c -> from 12c`, `wall 4m12s · LLM 2m08s`), grouped into **Bug tiles** (did it run: tests executed, last-run status, runtime), **Goal tiles** (is it achieving: eval scores and output checks vs success criteria), and **Cost/time tiles** (what the run spent: total cost/tokens, wall/LLM/tool time, top-cost step/agent, slowest step/agent). Use `.tile.ok`, `.tile.warn`, `.tile.bad`, `.tile.info`, `.tile.goal`, or `.tile.cost` to make the first screen scannable, and add a visible `.asof` line to every important tile. Read every number from eval reports, run outputs/logs, cost ledgers under `costs/`, and timing summaries under `runs/<run_folder>/logs/<step-id>/execution/` — the deterministic source of truth. Never fabricate a value or a trend, and never use charts.
+Render readable, color-coded signal tiles (value + movement in words: `eval 0.78 -> target 0.90`, `cost 19c -> from 12c`, `wall 4m12s · LLM 2m08s`), grouped into **Bug tiles** (did it run: tests executed, last-run status, runtime), **Goal tiles** (is it achieving: eval scores and output checks vs success criteria), and **Cost/time tiles** (what the run spent: total cost/tokens, wall/LLM/tool time, top-cost step/agent, slowest step/agent). Use `.tile.ok`, `.tile.warn`, `.tile.bad`, `.tile.info`, `.tile.goal`, or `.tile.cost` to make technical detail scannable, and add a visible `.asof` line to every important tile. Read every number from eval reports, run outputs/logs, cost ledgers under `costs/`, and timing summaries under `runs/<run_folder>/logs/<step-id>/execution/` — the deterministic source of truth. Never fabricate a value or a trend, and never use charts.
+
+These tiles, the Maintenance Radar, and detailed evidence live inside one collapsed `<details class="technical">` block labelled **Technical details**. Keep it closed by default so operational internals do not overwhelm the user; do not hide pending decisions, the outcome summary, the goal card, or important unresolved issues inside it.
 
 ### Cost/time readout — one compact operational report per run
 
@@ -101,6 +117,20 @@ Use this shape:
 
 If evidence is missing, say `missing cost evidence`, `missing timing evidence`, or `unpriced provider`; do not estimate. This section is report-only. Do not imply Pulse changed model tiers, prompts, schedules, or agent allocation.
 
+### Agent log — structured handoff at the bottom
+
+The user-facing sections explain outcomes; agents also need compact continuity state. Keep one closed-by-default `<details class="agentlog">` near the bottom, immediately before Archive. Its `#pulse-agent-handoff` body is **current handoff state, not a second report**.
+
+It may contain only:
+
+- current Pulse/run ids and workflow contract version,
+- one row per module with last result and next-check condition,
+- Artifact Sync Cursor and other durable cursor/anchor ids,
+- unresolved finding ids, pending human-input ids, and queued Chief of Staff recommendation ids,
+- short evidence paths/links needed by the next agent.
+
+Update this block in place on each Pulse. Never append historical copies. Do not repeat Today's outcome, goal narrative, issue explanations, decisions, or full evidence already visible above; reference their card anchor/path instead. Do not paste raw logs, SQL results, model conversations, report content, or large JSON. Historical narrative stays in the timeline/archive; machine scheduler state stays in SQLite; this bottom block is only the minimal bridge between them.
+
 ### Newest on top — always
 
 New entries go at the **top** of the timeline, not appended at the bottom. The file carries a stable anchor comment `<!-- LOG ENTRIES: newest first -->` directly below the header/tiles; insert each new entry immediately after it with `diff_patch_workspace_file`. Never reorder or rewrite existing entries except to close out an open finding (below). **Always read the existing file first** so you continue its style and don't duplicate entries.
@@ -115,8 +145,9 @@ Each entry is a small card: a date, a kind tag, optional classification chips, a
 - **Artifact Review** — a report-only Pulse/review entry: changelog range inspected, Artifact Sync Cursor before/after, steps inspected, clean/no-pending result or drift findings, and the recommended next owner. Do not present this entry as a fix that already happened; Pulse does not call harden or apply strategy changes from this item.
 - **Decision** — a change applied or proposed, with the one-line rationale and the file(s) touched. If it fixes an open finding, close that finding out (below). Goal Advisor decisions use `<div class="entry decision">` with tag text `Decision - Goal Advisor - Applied` or `Decision - Goal Advisor - Proposed`; use `<div class="entry decision major">` for material plan changes, report/eval changes that alter user-facing success measurement, cadence/scope changes, or any change the user should notice.
 - **Advisor opportunity** — a proposal-only Goal Advisor entry for an out-of-plan idea the current workflow has not considered but an expert operator would raise because it could materially advance the goal. It should be grounded in `soul.md`, run/eval/report evidence, market/process reasoning, or a clearly stated assumption; never present speculation as fact. Record it as `Decision - Goal Advisor - Proposed` with the `Goal` chip and `Advisor idea` work label, and include why it is outside the current plan, what evidence/assumption supports it, the expected upside, and the risk/next decision. Do not auto-apply it from the advisor scan alone.
+- **Advisor experiment** — the single durable Goal Advisor 10x/headroom card. Use `class="entry decision major advisor-experiment"`, stable `data-advisor-experiment-id="advisor-exp-<slug>"`, matching `data-input-id="plan-proposal-<slug>"`, `data-status`, and `data-review-after`. Active statuses are `proposed`, `deferred`, `approved`, `running`, `measuring`, and `blocked`; terminal statuses are `adopted`, `rejected`, and `retired`. The visible card contains Current baseline, Current strategy ceiling, 10x thesis, Bounded experiment, Primary success metric, Measurement plan (existing evidence or proposed/applied regular step id + DB contract), Guardrails, Review checkpoint, Rollback condition, Evidence, and Outcome when measured. Update it in place for the full lifecycle. Never leave two active cards and never append a new card for each status transition.
 - **Chief of Staff recommendation** — an org-level recommendation written by Chief of Staff / Org Pulse after reading workflow evidence against org goals. It should name the org goal/KPI target or `supporting/no explicit goal`, give an alignment verdict (`aligned`, `supporting`, `unaligned`, or `unknown-measurement`), cite evidence, state the gap, suggest a builder action, and describe the expected KPI/success-criteria impact. Treat it like an external **Open finding**: verify the cited evidence, then choose the normal builder path (Bug → `harden_workflow`, Goal/strategy → `queued_goal_advisor` / Goal Advisor plan-change proposal or a targeted builder edit, measurement gap → eval/report fix, cost/ops → review/apply if safe). Do not assume it is correct or already applied; close it only after the builder decision is made.
-- **Human input requested** — a durable question whenever Pulse, Goal Advisor, or Chief of Staff needs the user to decide, clarify, approve, provide credentials, or choose between options. Do not ask only in email/chat. Create or refresh the request with `create_human_input_request`; it is stored in this workflow's `db/db.sqlite` table `report_human_inputs`. The visible `builder/improve.html` card may display the question, why it matters, options, evidence, and answer status, but it must not be the source of truth. When a later pass uses the answer, call `mark_human_input_consumed` with the outcome summary instead of editing the SQLite row directly, then remove the matching visible question card from `builder/improve.html` or replace it with a short outcome Decision/Note so the Pulse HTML no longer shows it as active.
+- **Human input requested** — a durable question whenever Pulse, Goal Advisor, or Chief of Staff needs the user to decide, clarify, approve, provide credentials, or choose between options. Do not ask only in email/chat. Create or refresh the request with `create_human_input_request`; it is stored in this workflow's `db/db.sqlite` table `report_human_inputs` and rendered by Runloop as the first **Needs your decision** section. Keep the matching HTML timeline marker compact. When a later pass uses the answer, call `mark_human_input_consumed` with the outcome summary instead of editing the SQLite row directly, then remove the matching visible question marker from `builder/improve.html` or replace it with a short outcome Decision/Note.
 - **User rule** — a constraint the user stated. Mark it clearly as authoritative ("USER RULE — authoritative") so future agents treat it as a hard constraint, never silently override it. This replaces the old `source: "user"` field — say it in words.
 - **Note** — a freeform observation or watchpoint that explains weird runs ("staging UI is mid-redesign, expect selector churn through ~June 20 — not a workflow bug").
 - **Open finding** — something wrong that is not yet fixed. Give it a short stable anchor id (e.g. `id="of-2026-06-07-screenshots"`) **only so a later Decision can mark it resolved** — that is the one place an id earns its keep. No other entry kind needs an id.
@@ -284,16 +315,16 @@ An existing `builder/improve.html` is **old-format** — and must be upgraded, n
 - an `.etitle` rule missing `flex:1 1 auto`, or an `.ehead > .when` rule that keeps `margin-left:auto` / `white-space:nowrap` in the base mobile CSS. That older skeleton collapses entry titles and body text into narrow columns beside timestamp metadata, leaving the card half-empty in the right panel.
 - any recent-runs table/flex/grid whose date/status/type/age metadata can shrink into one-character columns. This usually comes from global `overflow-wrap:anywhere` on `body`, `td`, or metadata cells. Rewrite those rows as stacked/mobile-first cards or keep metadata/chips non-wrapping (`white-space:nowrap; overflow-wrap:normal; word-break:normal`) while only prose/evidence fields use `overflow-wrap:anywhere`.
 - any recent-runs desktop layout that puts the long `.note`/evidence text beside date/status/type/age metadata. The note must sit on a full-width second row so the run list stays readable in both the right panel and a wide browser.
-- missing `.filters` UI or missing `data-date` / `data-kind` attributes on recent-run rows and timeline entries. Add the filter bar and backfill dates/kinds from visible dates, run folders, entry labels, or best available evidence.
+- missing `.filters` UI or missing `data-date` / `data-kind` attributes on recent-run rows and timeline entries. Add the Kind/Search/Reset filter bar (no date picker) and backfill dates/kinds from visible dates, run folders, entry labels, or best available evidence.
 - missing `.worklabel` CSS/action-label examples. Current logs need action chips such as `Bug fix`, `Improvement`, `Advisor idea`, `Artifact drift`, `Report fix`, `Eval fix`, `Cost/time`, `Backup/publish`, `Needs input`, and `Manual` so the user can scan what kind of work happened.
-- a text-heavy first screen with no widget brief, no color-coded tiles, or recent runs rendered as a dense table. Upgrade it to the richer dashboard shell before appending new entries.
+- a text-heavy first screen, a visible `What matters now` heading instead of `Today's outcome`, signal/cost/Maintenance tiles outside a closed-by-default `.technical` details block, no optional `.assumptions` support, no bottom `#pulse-agent-handoff`, or recent runs rendered as a dense table. Upgrade it to the current human-first dashboard shell before appending new entries.
 
 Missing `#pulse-bug-verdict` or `#pulse-goal-verdict` alone does **not** require a full old-format rewrite when the rest of the current skeleton is intact. Insert the standard `.verdicts` block in place and preserve all existing cards, filters, and history.
 
 **Do NOT append your new entry into the old structure** — that produces good content in a stale, off-brand shell. Instead, **rewrite the entire document using `get_reference_doc(kind="review-improve-log-skeleton")`** as a one-time upgrade:
 
 1. Read the old file in full.
-2. Load `get_reference_doc(kind="review-improve-log-skeleton")` and write the skeleton fresh: header + two verdict pills, status headline, the "What matters now" brief, the goal card (objective + success criteria from `soul.md`), the signal tiles, filter bar, the recent-runs strip, the `<!-- LOG ENTRIES: newest first -->` anchor, the archive section.
+2. Load `get_reference_doc(kind="review-improve-log-skeleton")` and write the skeleton fresh: header + two verdict pills, status headline, optional active Assumptions challenged section, the Today's outcome brief, the goal card (objective + success criteria from `soul.md`), collapsed Technical details, filter bar, the recent-runs strip, the `<!-- LOG ENTRIES: newest first -->` anchor, the collapsed Agent log, and the archive section.
 3. Carry every **unresolved finding** and **still-relevant recent decision/run** forward as timeline **cards** (newest first), dropping the `<script>` JSON blocks and the `F-`/`I-` ids — write readable prose, give an open finding a short anchor id only.
 4. Delete any legacy `.md` (`execute_shell_command`) so nothing is duplicated.
 

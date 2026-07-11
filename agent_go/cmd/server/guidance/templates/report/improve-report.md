@@ -1,4 +1,7 @@
-Review and improve the workflow's report for accuracy, live-data wiring, evidence coverage, and presentation quality in two passes. **Load `get_reference_doc(kind="report-plan")` first** — it is the canonical report model (HTML document(s) in `reports/report_plan.json` reading `db/db.sqlite` live via `window.report`, no widget grammar) plus the content guide, design-quality bar, theming, and responsive rules; judge the report against it. Use builder/improve.html as the shared improvement log: read it first if it exists, create it if it does not, and append your findings and applied decisions when you finish. If you touch any `.html` output, also follow `get_reference_doc(kind="html-output")`.{{if .Focus}}
+Review and improve the workflow's report for accuracy, live-data wiring, evidence coverage, and presentation quality in two passes. **Load `get_reference_doc(kind="report-plan")` first** — it is the canonical report model (HTML document(s) in `reports/report_plan.json` reading `db/db.sqlite` live via `window.report`, no widget grammar) plus the content guide, design-quality bar, theming, and responsive rules; judge the report against it. Use builder/improve.html as the shared improvement log: read it first if it exists, create it if it does not, and append your findings and applied decisions when you finish. If you touch any `.html` output, also follow `get_reference_doc(kind="html-output")`.
+
+Load `get_reference_doc(kind="assumption-audit")` and apply its report lens. The dashboard must show goal/outcome truth, not present the current architecture, tactic, channel, source list, or inferred proxy as the user's permanent target. Fix bounded stale presentation assumptions and surface consequential unresolved ones under Pulse's Assumptions challenged.
+{{if .Focus}}
 
 Focus on: {{.Focus}}.{{end}}
 
@@ -16,6 +19,25 @@ Before proposing visual/layout work, translate `soul.md` success criteria into t
 - Prefer a compact goal band: status, current value/state, target/baseline, trend/delta vs prior run/window, last updated, and a short plain-language interpretation.
 - If a success criterion cannot be measured from existing persisted evidence, show an honest "not measured yet" or "missing evidence" state and log the missing data requirement. Do not hardcode guesses and do not create a separate metrics system.
 - Keep detailed tables/charts below the goal band; the user should know progress and issues before inspecting raw rows.
+
+GOAL ADVISOR MEASUREMENT HANDOFF
+- Read applied Goal Advisor decisions and the active `.advisor-experiment` in
+  `builder/improve.html`, then inspect the current plan for the named normal
+  measurement step and its persisted DB contract.
+- An unapproved metric proposal is not report data. Show it only as the current
+  proposed experiment/decision; do not add a KPI tile that implies measurement
+  exists.
+- After the approved measurement step has written trustworthy timestamped rows,
+  expose the metric through live `window.report.query` SQL. Show current value,
+  baseline/target, trend, freshness, group scope, and an honest unknown/error
+  state. The dashboard reads evidence; it never recomputes or fabricates missing
+  business outcomes from prose.
+- If the approved step exists but has not produced its first trustworthy row,
+  show `not measured yet` and the expected collection checkpoint. Do not display
+  zero.
+- If a Goal Advisor proposal identifies a useful metric but no approved
+  collection step/data exists, log the missing-data handoff for Goal Advisor or
+  plan work. Report Health must not create workflow steps itself.
 
 MODE
 - **Interactive/user-initiated mode:** show all proposed changes concretely and ask before editing.

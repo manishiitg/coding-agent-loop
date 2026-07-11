@@ -6,7 +6,7 @@ This file defines the builder-layer contract for coding-agent integrations in
 The low-level provider/tmux contract lives in:
 
 ```text
-/Users/mipl/ai-work/multi-llm-provider-go/docs/coding_sdk_tmux_contract.md
+https://github.com/manishiitg/multi-llm-provider-go/blob/main/docs/coding_sdk_tmux_contract.md
 ```
 
 That provider contract owns CLI launch details, prompt paste, ready/completion

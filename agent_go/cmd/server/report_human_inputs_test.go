@@ -135,6 +135,41 @@ func TestAnsweredGoalAdvisorPlanProposalCarriesContext(t *testing.T) {
 	}
 }
 
+func TestReportHumanInputAllowsFreeTextInsteadOfOption(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
+	workspacePath := "Workflow/free-text-choice"
+
+	_, err := createReportHumanInput(ctx, workspacePath, ReportHumanInputCreateRequest{
+		InputID:       "custom-answer",
+		Source:        "pulse",
+		Question:      "Which backup policy should be used?",
+		AllowFreeText: true,
+		Options: []ReportHumanInputOption{
+			{ID: "strict", Title: "Strict", Description: "Require secret migration first."},
+			{ID: "partial", Title: "Partial", Description: "Continue excluding the config file."},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if _, err := answerReportHumanInput(ctx, workspacePath, "custom-answer", ReportHumanInputAnswerRequest{}); err == nil {
+		t.Fatal("empty answer should be rejected")
+	}
+
+	answered, err := answerReportHumanInput(ctx, workspacePath, "custom-answer", ReportHumanInputAnswerRequest{
+		Note:       "Keep the full backup and do not treat the portal password as a workflow secret.",
+		AnsweredBy: "user",
+	})
+	if err != nil {
+		t.Fatalf("answer with free text: %v", err)
+	}
+	if answered.Status != "answered" || answered.SelectedOptionID != "" || !strings.Contains(answered.Note, "full backup") {
+		t.Fatalf("note-only answer mismatch: %+v", answered)
+	}
+}
+
 func TestReportHumanInputRejectsEscapingWorkspacePath(t *testing.T) {
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
 	if _, err := createReportHumanInput(context.Background(), "../outside", ReportHumanInputCreateRequest{

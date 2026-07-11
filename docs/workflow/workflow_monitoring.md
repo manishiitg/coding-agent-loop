@@ -26,7 +26,7 @@ There are three practical scopes:
 
 The **Pulse** (`builder/improve.html`) is the primary workflow-level monitoring surface and the user's main window into a workflow. It is a single, self-contained HTML document the workflow's agents curate, rendered as a first-class right-panel view alongside Plan, Report, and Soul, and it follows the app's light/dark theme.
 
-Top to bottom it reads: two verdicts → a one-line status headline → the goal card → signal tiles → recent runs → a newest-first timeline → archive. Every workflow is judged on two independent axes, each stamped with the run it's as-of:
+When pending input exists, Runloop renders **Needs your decision** first. The HTML then reads: two verdicts → a one-line status headline → active **Assumptions challenged** (only when consequential assumptions exist) → **Today's outcome** → the goal card → collapsed technical detail → recent runs → a newest-first timeline → collapsed **Agent log** → archive. The Agent log contains only current handoff state, ids, cursors, cadence, and evidence pointers; it never duplicates the user narrative. Every workflow is judged on two independent axes, each stamped with the run it's as-of:
 
 - **Bug** — did it run correctly (errors, skipped steps, missing/empty artifacts, regressions)? Fixed by hardening.
 - **Goal** — is it achieving its success criteria (eval scores and outcome metrics vs `soul.md`)? Fixed by refining or replanning.
@@ -53,7 +53,7 @@ The log viewer still supports these file families:
 
 Important current nuance:
 - validation logs still exist in the execution log viewer, but validation is no longer the main architecture story for workflow docs
-- pre-validation remains relevant runtime signal, but the canonical validation doc is [pre_validation_guide.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/pre_validation_guide.md)
+- pre-validation remains relevant runtime signal, but the canonical validation doc is [pre_validation_guide.md](./pre_validation_guide.md)
 - execution logs are best thought of as per-run forensic data, not as the source of workflow architecture truth
 
 ## Costs
@@ -95,7 +95,7 @@ What changed:
 - the main persistent learning surface is now the shared skill at `learnings/_global/SKILL.md`
 - scripted steps can still have step-specific saved code such as `learnings/{step-id}/main.py`
 
-The canonical architecture doc for this is [learning_architecture.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/learning_architecture.md).
+The canonical architecture doc for this is [learning_architecture.md](./learning_architecture.md).
 
 ## Run Overview And Scheduled Runs
 
@@ -119,8 +119,8 @@ This doc is still relevant because the product clearly has workflow monitoring a
 
 ## Related Docs
 
-- [cost_and_log_measurement.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/cost_and_log_measurement.md)
-- [pre_validation_guide.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/pre_validation_guide.md)
-- [learning_architecture.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/learning_architecture.md)
-- [evaluation_system.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/evaluation_system.md)
-- [workflow_manifest_architecture.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/workflow_manifest_architecture.md)
+- [cost_and_log_measurement.md](./cost_and_log_measurement.md)
+- [pre_validation_guide.md](./pre_validation_guide.md)
+- [learning_architecture.md](./learning_architecture.md)
+- [evaluation_system.md](./evaluation_system.md)
+- [workflow_manifest_architecture.md](./workflow_manifest_architecture.md)

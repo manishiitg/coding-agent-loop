@@ -87,7 +87,7 @@ After a successful step:
 - it updates the global skill
 - it updates step metadata
 
-This happens in [controller_learning.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_learning.go).
+This happens in [controller_learning.go](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_learning.go).
 
 Important current details:
 

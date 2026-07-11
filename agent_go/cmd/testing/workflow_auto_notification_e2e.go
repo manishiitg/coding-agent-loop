@@ -110,7 +110,7 @@ After the command returns, reply exactly RUN_WORKFLOW_TOOL_STARTED. Do not call 
 
 func init() {
 	workflowAutoNotificationE2ECmd.Flags().StringVar(&workflowAutoNotificationE2EFlags.serverURL, "server-url", "http://localhost:18743", "mcp-agent-builder-go server URL")
-	workflowAutoNotificationE2ECmd.Flags().StringVar(&workflowAutoNotificationE2EFlags.provider, "provider", "gemini-cli", "provider used for the main multi-agent chat turn")
+	workflowAutoNotificationE2ECmd.Flags().StringVar(&workflowAutoNotificationE2EFlags.provider, "provider", "codex-cli", "provider used for the main multi-agent chat turn")
 	workflowAutoNotificationE2ECmd.Flags().StringVar(&workflowAutoNotificationE2EFlags.model, "model", "", "model ID; defaults to the provider-specific E2E model")
 	workflowAutoNotificationE2ECmd.Flags().StringVar(&workflowAutoNotificationE2EFlags.sessionID, "session-id", "", "session ID to reuse; generated when omitted")
 	workflowAutoNotificationE2ECmd.Flags().StringVar(&workflowAutoNotificationE2EFlags.workspaceDocs, "workspace-docs", "", "absolute path to workspace-docs; defaults to WORKSPACE_DOCS_PATH or ../workspace-docs")

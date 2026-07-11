@@ -46,7 +46,7 @@ This intentionally exercises the full Builder path:
 Example:
   mcp-agent test agent-browse-e2e \
     --server-url http://127.0.0.1:18743 \
-    --provider gemini-cli \
+	--provider codex-cli \
     --model gemini-3.1-flash-lite \
     --target-url https://timesofindia.indiatimes.com/ \
     --cdp-port 9222`,
@@ -56,7 +56,7 @@ Example:
 
 		provider := strings.TrimSpace(agentBrowseE2EFlags.provider)
 		if provider == "" {
-			provider = "gemini-cli"
+			provider = "codex-cli"
 		}
 		model := strings.TrimSpace(agentBrowseE2EFlags.model)
 		if model == "" {
@@ -148,7 +148,7 @@ Use agent_browser session: %q`, tabLabel, tabLabel, agentBrowseE2EFlags.targetUR
 
 func init() {
 	agentBrowseE2ECmd.Flags().StringVar(&agentBrowseE2EFlags.serverURL, "server-url", "http://127.0.0.1:18743", "mcp-agent-builder-go server URL")
-	agentBrowseE2ECmd.Flags().StringVar(&agentBrowseE2EFlags.provider, "provider", "gemini-cli", "coding CLI provider; defaults to gemini-cli")
+	agentBrowseE2ECmd.Flags().StringVar(&agentBrowseE2EFlags.provider, "provider", "codex-cli", "coding CLI provider; defaults to codex-cli")
 	agentBrowseE2ECmd.Flags().StringVar(&agentBrowseE2EFlags.model, "model", "", "model ID; defaults to the provider-specific Builder coding-agent E2E model")
 	agentBrowseE2ECmd.Flags().StringVar(&agentBrowseE2EFlags.sessionID, "session-id", "", "session ID to reuse; generated when omitted")
 	agentBrowseE2ECmd.Flags().StringVar(&agentBrowseE2EFlags.selectedFolder, "selected-folder", "_users/default/Chats", "workspace-relative folder for the chat session")

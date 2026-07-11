@@ -156,7 +156,7 @@ get_build_args_for_image() {
         mcpagent-agent)
             # Install coding-agent CLIs in the k8s agent image so local CLI LLM
             # provider adapters work on prod. Other deploy targets skip this to stay lean.
-            echo "--build-arg INSTALL_GEMINI_CLI=true --build-arg INSTALL_PI_CLI=true"
+            echo "--build-arg INSTALL_PI_CLI=true"
             ;;
         *)
             echo ""

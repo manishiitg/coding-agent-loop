@@ -801,7 +801,6 @@ function formatRailTransportChip(terminal: TerminalSnapshot): string {
   return formatTransportChip(terminal)
     .replace(/^Claude Code\b/, 'Claude')
     .replace(/^Codex CLI\b/, 'Codex')
-    .replace(/^Gemini CLI\b/, 'Gemini')
 }
 
 // extractDoneStats parses the synthetic terminal's "[done · 1240ms · 412 in
@@ -2924,7 +2923,6 @@ function resolveErrorTerminal(event: PollingEvent, terminals: TerminalSnapshot[]
     metadata?.tmux_session_name,
     metadata?.claude_code_interactive_session,
     metadata?.codex_interactive_session,
-    metadata?.gemini_interactive_session, // Known limitation: Gemini CLI (Ink-based) redraws in place, so its tmux pane has no scrollback — use Gemini's in-app scroll keys.
     metadata?.cursor_interactive_session,
   )
   for (const tmuxSession of tmuxSessions) {

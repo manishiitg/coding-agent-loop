@@ -62,7 +62,7 @@ cd deploy/dedicated-vm
 What `quick-deploy.sh all` does:
 1. Rsyncs `agent_go/`, `workspace/`, `mcpagent/`, `multi-llm-provider-go/` to `/opt/mcp-agent/src/`
 2. Builds the frontend locally (`npm run build`) and rsyncs `dist/` → `src/frontend-dist/`
-3. Bumps bare-metal CLI tools: `agent-browser`, `@anthropic-ai/claude-code`, `@google/gemini-cli`, `@earendil-works/pi-coding-agent` (all `@latest`)
+3. Bumps bare-metal CLI tools: `agent-browser`, `@anthropic-ai/claude-code`, `@earendil-works/pi-coding-agent` (all `@latest`)
 4. Fixes `go.mod` replace directives in-place (paths differ on server)
 5. Rebuilds `mcpbridge` (`go install ./cmd/mcpbridge/`)
 6. `systemctl restart mcp-agent` and waits for `/api/health` → 200
@@ -118,10 +118,7 @@ ssh ... 'systemctl start mcp-agent mcp-workspace; \
 ### 1. `go.mod` replace directives
 Local `go.mod` uses `replace ../../mcpagent` (path differs on server). `quick-deploy.sh` rewrites them in-place after rsync. If you build manually on the server, run the `go mod edit -replace` block from [`quick-deploy.sh`](quick-deploy.sh#L158-L169) first.
 
-### 2. Gemini CLI auth
-Default `~/.gemini/settings.json` is OAuth — fails non-interactively. `ensureGeminiAPIKeyAuth()` in `llm_config_handlers.go` rewrites it to `"selectedType": "gemini-api-key"` on first use.
-
-### 3. Claude Code + `ANTHROPIC_API_KEY` conflict
+### 2. Claude Code + `ANTHROPIC_API_KEY` conflict
 If `ANTHROPIC_API_KEY` is set, Claude Code uses it instead of its OAuth credentials. Validation in `llm_config_handlers.go` strips it from env before `claude --print`. Also: don't pass `--dangerously-skip-permissions` when running as root.
 
 ### 3a. Antigravity CLI (`agy`) install + auth

@@ -28,7 +28,6 @@ func TestCodingAgentPersistentInteractiveFlags(t *testing.T) {
 		provider       string
 		wantClaudeCode bool
 		wantCodexCLI   bool
-		wantGeminiCLI  bool
 		wantCursorCLI  bool
 		wantAgyCLI     bool
 		wantPiCLI      bool
@@ -42,11 +41,6 @@ func TestCodingAgentPersistentInteractiveFlags(t *testing.T) {
 			name:         "codex chat gets persistent tmux",
 			provider:     string(llm.ProviderCodexCLI),
 			wantCodexCLI: true,
-		},
-		{
-			name:          "gemini chat gets persistent tmux",
-			provider:      string(llm.ProviderGeminiCLI),
-			wantGeminiCLI: true,
 		},
 		{
 			name:          "cursor chat gets persistent tmux",
@@ -71,9 +65,9 @@ func TestCodingAgentPersistentInteractiveFlags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotClaudeCode, gotCodexCLI, gotGeminiCLI, gotCursorCLI, gotAgyCLI, gotPiCLI := codingAgentPersistentInteractiveFlags(tt.provider)
-			if gotClaudeCode != tt.wantClaudeCode || gotCodexCLI != tt.wantCodexCLI || gotGeminiCLI != tt.wantGeminiCLI || gotCursorCLI != tt.wantCursorCLI || gotAgyCLI != tt.wantAgyCLI || gotPiCLI != tt.wantPiCLI {
-				t.Fatalf("flags = (%v, %v, %v, %v, %v, %v), want (%v, %v, %v, %v, %v, %v)", gotClaudeCode, gotCodexCLI, gotGeminiCLI, gotCursorCLI, gotAgyCLI, gotPiCLI, tt.wantClaudeCode, tt.wantCodexCLI, tt.wantGeminiCLI, tt.wantCursorCLI, tt.wantAgyCLI, tt.wantPiCLI)
+			gotClaudeCode, gotCodexCLI, gotCursorCLI, gotAgyCLI, gotPiCLI := codingAgentPersistentInteractiveFlags(tt.provider)
+			if gotClaudeCode != tt.wantClaudeCode || gotCodexCLI != tt.wantCodexCLI || gotCursorCLI != tt.wantCursorCLI || gotAgyCLI != tt.wantAgyCLI || gotPiCLI != tt.wantPiCLI {
+				t.Fatalf("flags = (%v, %v, %v, %v, %v), want (%v, %v, %v, %v, %v)", gotClaudeCode, gotCodexCLI, gotCursorCLI, gotAgyCLI, gotPiCLI, tt.wantClaudeCode, tt.wantCodexCLI, tt.wantCursorCLI, tt.wantAgyCLI, tt.wantPiCLI)
 			}
 		})
 	}
@@ -85,9 +79,9 @@ func TestCodingAgentPersistentInteractiveFlagsCoverTmuxContracts(t *testing.T) {
 			continue
 		}
 		t.Run(string(contract.Provider), func(t *testing.T) {
-			gotClaudeCode, gotCodexCLI, gotGeminiCLI, gotCursorCLI, gotAgyCLI, gotPiCLI := codingAgentPersistentInteractiveFlags(string(contract.Provider))
+			gotClaudeCode, gotCodexCLI, gotCursorCLI, gotAgyCLI, gotPiCLI := codingAgentPersistentInteractiveFlags(string(contract.Provider))
 			count := 0
-			for _, enabled := range []bool{gotClaudeCode, gotCodexCLI, gotGeminiCLI, gotCursorCLI, gotAgyCLI, gotPiCLI} {
+			for _, enabled := range []bool{gotClaudeCode, gotCodexCLI, gotCursorCLI, gotAgyCLI, gotPiCLI} {
 				if enabled {
 					count++
 				}
@@ -136,12 +130,12 @@ func TestDelegatedCodingAgentRuntimeFolderIsPerAgent(t *testing.T) {
 func TestTopLevelTierModelDoesNotOverrideExplicitChatLLM(t *testing.T) {
 	t.Setenv("WORKSPACE_API_URL", "http://127.0.0.1:9999")
 	req := QueryRequest{
-		Provider: "gemini-cli",
-		ModelID:  "gemini-3.1-flash-lite",
+		Provider: "codex-cli",
+		ModelID:  "high",
 		LLMConfig: &orchestrator.LLMConfig{
 			Primary: orchestrator.LLMModel{
-				Provider: "gemini-cli",
-				ModelID:  "gemini-3.1-flash-lite",
+				Provider: "codex-cli",
+				ModelID:  "high",
 			},
 		},
 		DelegationTierConfig: &virtualtools.DelegationTierConfig{
@@ -152,12 +146,12 @@ func TestTopLevelTierModelDoesNotOverrideExplicitChatLLM(t *testing.T) {
 		},
 	}
 
-	gotProvider, gotModel, _, applied := applyTopLevelTierModelIfNoExplicitLLM(context.Background(), req, "gemini-cli", "gemini-3.1-flash-lite", nil)
+	gotProvider, gotModel, _, applied := applyTopLevelTierModelIfNoExplicitLLM(context.Background(), req, "codex-cli", "high", nil)
 	if applied {
 		t.Fatal("tier model was applied despite an explicit chat LLM selection")
 	}
-	if gotProvider != "gemini-cli" || gotModel != "gemini-3.1-flash-lite" {
-		t.Fatalf("resolved chat LLM = %s/%s, want gemini-cli/gemini-3.1-flash-lite", gotProvider, gotModel)
+	if gotProvider != "codex-cli" || gotModel != "high" {
+		t.Fatalf("resolved chat LLM = %s/%s, want codex-cli/high", gotProvider, gotModel)
 	}
 }
 
@@ -188,7 +182,6 @@ func TestRecordLiveCodingAgentUserMessageCapturesVisibleEvent(t *testing.T) {
 	}{
 		{name: "claude code", provider: llm.ProviderClaudeCode},
 		{name: "codex cli", provider: llm.ProviderCodexCLI},
-		{name: "gemini cli", provider: llm.ProviderGeminiCLI},
 		{name: "cursor cli", provider: llm.ProviderCursorCLI},
 		{name: "agy cli", provider: llm.ProviderAgyCLI},
 		{name: "pi cli", provider: llm.ProviderPiCLI},

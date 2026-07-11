@@ -1484,7 +1484,7 @@ func TestStorePreservesSyntheticTerminalRowsFromMetadata(t *testing.T) {
 		map[string]interface{}{
 			"execution_kind": "main_agent",
 			"step_transport": "api",
-			"provider":       "gemini-cli",
+			"provider":       "codex-cli",
 			"rows":           rows,
 		},
 		time.Now(),
@@ -1864,37 +1864,6 @@ func TestStoreRepeatedIdenticalChunksRemainActiveWithoutLifecycleEvidence(t *tes
 	}
 }
 
-func TestStoreDetectsGeminiDebugConsoleFatalState(t *testing.T) {
-	store := NewStore()
-	screen := `▝▜▄ Gemini CLI v0.42.0
-Debug Console (F12 to close)
-This is an unexpected error. Please file a bug report.
-CRITICAL: Unhandled Promise Rejection!
-Reason: Error: ENAMETOOLONG: name too long, lstat
-'/private/var/folders/xc/gemini-cli-project-session-sub-exec-route-design-plan/fixyo.urflow", TOP LEVEL (REQUIRED)'`
-	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", screen, 1))
-
-	snapshot, ok := store.Get("session-1:exec-1")
-	if !ok {
-		t.Fatalf("expected terminal snapshot")
-	}
-	if snapshot.State != "failed" {
-		t.Fatalf("active fatal pane state = %q, want failed", snapshot.State)
-	}
-
-	store.HandleEvent("session-1", terminalEndEvent("exec-1", nil))
-	snapshot, ok = store.Get("session-1:exec-1")
-	if !ok {
-		t.Fatalf("expected terminal snapshot after end")
-	}
-	if snapshot.Active {
-		t.Fatalf("fatal terminal should not remain active")
-	}
-	if snapshot.State != "failed" {
-		t.Fatalf("ended fatal pane state = %q, want failed", snapshot.State)
-	}
-}
-
 func TestStoreKeepsTerminalRunningWhenEndArrivesDuringBusyPane(t *testing.T) {
 	store := NewStore()
 	screen := `╭──────────────────────────────────────────────────────────────────────────╮
@@ -2217,46 +2186,6 @@ func TestDeriveStatusExtractsClaudeAssistantPreview(t *testing.T) {
 	}
 	if status.ToolSummary != "api-bridge x3" {
 		t.Fatalf("tool summary = %q", status.ToolSummary)
-	}
-}
-
-func TestDeriveStatusExtractsGeminiAssistantPreview(t *testing.T) {
-	screen := `▝▜▄ Gemini CLI v0.42.0
-╭────────────────────────────╮
-│ ✓ execute_shell_command (api-bridge MCP Server) {"command":"pwd"} │
-╰────────────────────────────╯
-✦ My current working directory is /Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs.
-? for shortcuts
-Shift+Tab to accept edits`
-
-	status := DeriveStatus(screen, map[string]interface{}{"provider": "gemini-cli"})
-	if status.ProviderLabel != "Gemini CLI" {
-		t.Fatalf("provider = %q", status.ProviderLabel)
-	}
-	if status.AssistantPreview != "My current working directory is /Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs." {
-		t.Fatalf("assistant preview = %q", status.AssistantPreview)
-	}
-	if status.ToolSummary != "execute_shell_command" {
-		t.Fatalf("tool summary = %q", status.ToolSummary)
-	}
-}
-
-func TestDeriveStatusPreservesMultilineAssistantPreview(t *testing.T) {
-	screen := `▝▜▄ Gemini CLI v0.42.0
-✦ Here is what I found:
-- First useful detail
-- Second useful detail
-- Third useful detail
-
-╭────────────────────────────╮
-│ ✓ execute_shell_command (api-bridge MCP Server) {"command":"pwd"} │
-╰────────────────────────────╯
-? for shortcuts`
-
-	status := DeriveStatus(screen, map[string]interface{}{"provider": "gemini-cli"})
-	want := "Here is what I found:\n- First useful detail\n- Second useful detail\n- Third useful detail"
-	if status.AssistantPreview != want {
-		t.Fatalf("assistant preview = %q, want %q", status.AssistantPreview, want)
 	}
 }
 

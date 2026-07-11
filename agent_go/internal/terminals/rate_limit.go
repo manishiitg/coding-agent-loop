@@ -37,7 +37,7 @@ var rateLimitPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)429\s+too\s+many\s+requests`),
 	regexp.MustCompile(`(?i)tokens?\s+per\s+minute\b.*\b(exceeded|limit)`),
 
-	// Gemini CLI: prints "Resource has been exhausted", "RESOURCE_EXHAUSTED",
+	// Some providers print "Resource has been exhausted", "RESOURCE_EXHAUSTED",
 	// "Quota exceeded for quota metric".
 	regexp.MustCompile(`(?i)RESOURCE_EXHAUSTED`),
 	regexp.MustCompile(`(?i)resource\s+has\s+been\s+exhausted`),

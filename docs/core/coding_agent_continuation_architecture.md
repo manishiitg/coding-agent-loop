@@ -22,8 +22,8 @@ latest sync:
 |---|---|---|
 | `llmtypes.CodingProviderSessionHandle` | **Done** | `multi-llm-provider-go/llmtypes/coding_provider_session_handle.go:21` |
 | Attach/Extract helpers | **Done** | `AttachCodingProviderSessionHandle`, `ExtractCodingProviderSessionHandleFromResponse` |
-| Provider adapters emit handle | **Done** | Claude Code, Codex CLI, Gemini CLI all attach |
-| `ContinueCodingAgentSession` | **Done** | `multi-llm-provider-go/coding_agent_continuation.go:49`. Wired for Claude Code, Codex CLI, Gemini CLI. Cursor and Pi return `non_continuable` until certified. |
+| Provider adapters emit handle | **Done** | Claude Code, Codex CLI, Cursor CLI, Agy CLI, and Pi CLI attach |
+| `ContinueCodingAgentSession` | **Done** | `multi-llm-provider-go/coding_agent_continuation.go:49` routes certified coding-agent providers. |
 | Typed continuation errors | **Done** | `CodingAgentContinuationError` with kinds `non_applicable`, `non_continuable`, `stale_handle` |
 | `mcpagent.AgentSessionHandle` | **Done** | `mcpagent/agent/session_handle.go:14` |
 | `Agent.ContinueAgentSession` | **Done** | `session_handle.go:81`; also `ContinueAgentSessionWithHistory` |
@@ -53,7 +53,7 @@ mcp-agent-builder-go
       -> mcpagent runs history/tool loop
         -> mcpagent LLM layer calls multi-llm-provider-go GenerateContent(...)
           -> provider adapter
-            -> Claude Code / Codex CLI / Gemini CLI / API
+            -> Claude Code / Codex CLI / Cursor CLI / Pi CLI / API
 ```
 
 So workflow does not directly call the low-level provider adapter for normal
@@ -148,9 +148,9 @@ type AgentSessionHandle struct {
 }
 
 type CodingProviderSessionHandle struct {
-    Provider        string // claude-code, codex-cli, gemini-cli, cursor-cli, etc.
+    Provider        string // claude-code, codex-cli, cursor-cli, pi-cli, etc.
     Transport       string // tmux | api
-    NativeSessionID string // Claude resume id, Codex thread id, Gemini session id
+    NativeSessionID string // provider-native resume or thread id
     TmuxSession     string // empty for api transports
     WorkingDir      string
     ProjectDirID    string // Gemini-style project/session isolation
@@ -220,8 +220,8 @@ continuation only applies to coding-agent transports:
 
 | Transport | Examples | Continuation mechanism |
 |---|---|---|
-| **tmux** | Claude Code tmux, Codex CLI tmux, Gemini CLI tmux, Cursor CLI | Paste into existing pane if alive; restart with native `--resume` if pane is gone |
-| **structured CLI** | Codex CLI `exec resume --json`, Gemini structured mode | Pass resume/thread ID as a flag; no tmux involved |
+| **tmux** | Claude Code, Codex CLI, Cursor CLI, Agy CLI, Pi CLI | Paste into an existing pane if alive; restart with native resume state if the pane is gone |
+| **structured CLI** | Codex CLI `exec resume --json` | Pass the thread ID as a flag; no tmux involved |
 | **API provider** | OpenAI, Anthropic API, Gemini API | Continue through mcpagent-managed message history; no provider-native `ContinueCodingAgentSession` |
 
 The `CodingProviderSessionHandle.Transport` field encodes which mode is active
@@ -459,14 +459,6 @@ testing multi-turn memory, not recovery.
   `WithCodexResumeSessionID` + `WithCodexProjectDirID`.
 - **Done:** explicit kill-tmux provider E2E via
   `TestCodingAgentContinuationRealE2EAfterTmuxLoss`.
-
-### Phase 5: Gemini / Future Providers — **PARTIAL**
-
-- **Done:** Gemini CLI is wired in the same `ContinueCodingAgentSession`
-  switch (`WithGeminiResumeSessionID` + `WithGeminiProjectDirID`).
-- **Done:** Cursor CLI and Pi CLI explicitly return `non_continuable`
-  from `ContinueCodingAgentSession` until they are certified.
-- **Pending:** Gemini structured-mode E2E test for the workflow-step path.
 
 ## Non-Goals
 

@@ -215,3 +215,12 @@ func extractCodexThreadID(resp *llmtypes.ContentResponse) string {
 	threadID, _ := raw.(string)
 	return threadID
 }
+
+func lastLogLineContaining(lines []string, needle string) string {
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.Contains(lines[i], needle) {
+			return lines[i]
+		}
+	}
+	return ""
+}

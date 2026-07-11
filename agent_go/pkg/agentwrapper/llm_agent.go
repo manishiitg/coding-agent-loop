@@ -193,7 +193,6 @@ type LLMAgentConfig struct {
 	UseCodeExecutionMode                   bool
 	ClaudeCodePersistentInteractiveSession bool
 	CodexPersistentInteractiveSession      bool
-	GeminiPersistentInteractiveSession     bool
 	CursorPersistentInteractiveSession     bool
 	AgyPersistentInteractiveSession        bool
 	PiPersistentInteractiveSession         bool
@@ -439,10 +438,6 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	if config.CodexPersistentInteractiveSession {
 		agentOptions = append(agentOptions, mcpagent.WithCodexPersistentInteractiveSession(true))
 		logger.Info("🔗 Codex CLI persistent interactive tmux session enabled")
-	}
-	if config.GeminiPersistentInteractiveSession {
-		agentOptions = append(agentOptions, mcpagent.WithGeminiPersistentInteractiveSession(true))
-		logger.Info("🔗 Gemini CLI persistent interactive tmux session enabled")
 	}
 	if config.CursorPersistentInteractiveSession {
 		agentOptions = append(agentOptions, mcpagent.WithCursorPersistentInteractiveSession(true))
@@ -976,7 +971,7 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 		}()
 
 		// Set up real-time streaming callback to forward content chunks as they arrive.
-		// This is critical for CLI providers (Gemini CLI, Claude Code) where the entire
+		// This is critical for CLI providers such as Claude Code where the entire
 		// agentic loop runs inside the CLI process — without this, the user sees nothing
 		// until the full response is ready.
 		var streamedAny atomic.Bool
@@ -1167,11 +1162,8 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 			// Surface a user-visible error message so the frontend doesn't just silently hang.
 			errMsg := "⚠️ An error occurred while generating a response. Please try again."
 			errStr := err.Error()
-			if strings.Contains(errStr, "gemini cli overloaded") ||
-				strings.Contains(errStr, "high demand") ||
-				strings.Contains(errStr, "signal: killed") ||
-				strings.Contains(errStr, "gemini cli execution failed") {
-				errMsg = "⚠️ Gemini API is currently overloaded — no response received. Please try again in a moment."
+			if strings.Contains(errStr, "high demand") || strings.Contains(errStr, "signal: killed") {
+				errMsg = "⚠️ The provider is currently overloaded — no response received. Please try again in a moment."
 			} else if strings.Contains(errStr, "context deadline exceeded") || strings.Contains(errStr, "context canceled") {
 				errMsg = "⚠️ Request timed out. Please try again."
 			}

@@ -1803,7 +1803,7 @@ func normalizeChatHistoryRuntime(runtime *ChatHistoryAgentRuntime) {
 
 func defaultCodingAgentResumeFlag(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "claude-code", "gemini-cli", "cursor-cli":
+	case "claude-code", "cursor-cli":
 		return "--resume"
 	case "codex-cli":
 		return "resume"

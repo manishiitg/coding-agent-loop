@@ -384,7 +384,6 @@ function hasStoredProviderKeysPayload(keys) {
     'zai',
     'kimi',
     'vertex',
-    'gemini_cli',
     'codex_cli',
     'cursor_cli',
     'agy_cli',

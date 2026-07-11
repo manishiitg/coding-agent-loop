@@ -71,7 +71,6 @@ export interface StoredProviderKeys {
   zai?: string
   kimi?: string
   vertex?: string
-  gemini_cli?: string
   codex_cli?: string
   cursor_cli?: string
   pi_cli?: string

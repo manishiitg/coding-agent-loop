@@ -144,15 +144,6 @@ var providerStaticInfoMap = map[string]providerStaticInfo{
 		authDescription: "Local CLI (no API key)",
 		requiresAPIKey:  false,
 	},
-	"gemini-cli": {
-		displayName:     "Gemini CLI (Deprecated)",
-		description:     "Deprecated for new setup. Existing sessions remain runnable; use Pi CLI for new Gemini coding-agent work.",
-		integrationKind: "coding_agent",
-		authDescription: "Local CLI (API key optional)",
-		requiresAPIKey:  false,
-		apiKeyEnv:       "GEMINI_API_KEY",
-		apiKeyURL:       "https://aistudio.google.com/apikey",
-	},
 	"openai": {
 		displayName:     "OpenAI API",
 		description:     "Direct OpenAI API access for GPT models.",
@@ -342,7 +333,7 @@ func (api *StreamingAPI) handleGetProviderManifest(w http.ResponseWriter, r *htt
 
 	providerOrder := []string{
 		"claude-code", "codex-cli", "cursor-cli", "pi-cli",
-		"gemini-cli", "agy-cli",
+		"agy-cli",
 		"openai", "anthropic", "vertex", "bedrock", "azure",
 		"elevenlabs", "deepgram", "minimax",
 	}

@@ -83,28 +83,6 @@ func TestEffectiveModelIDFromTokenEventPicksRightKey(t *testing.T) {
 	}
 }
 
-func TestResolvePricingProviderAndModelUsesGemini3Aliases(t *testing.T) {
-	cases := []struct {
-		model string
-		want  string
-	}{
-		{model: "", want: "gemini-3.1-pro-preview"},
-		{model: "auto", want: "gemini-3.1-pro-preview"},
-		{model: "gemini-cli", want: "gemini-3.1-pro-preview"},
-		{model: "pro", want: "gemini-3.1-pro-preview"},
-		{model: "flash", want: "gemini-3-flash-preview"},
-		{model: "flash-lite", want: "gemini-3.1-flash-lite-preview"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.model, func(t *testing.T) {
-			gotProvider, gotModel := resolvePricingProviderAndModel("gemini-cli", tc.model)
-			if gotProvider != "vertex" || gotModel != tc.want {
-				t.Fatalf("resolvePricingProviderAndModel(gemini-cli, %q) = (%q, %q), want (vertex, %q)", tc.model, gotProvider, gotModel, tc.want)
-			}
-		})
-	}
-}
-
 func TestResolvePricingProviderAndModelUsesPiDefault(t *testing.T) {
 	gotProvider, gotModel := resolvePricingProviderAndModel("pi-cli", "")
 	if gotProvider != "pi-cli" || gotModel != "google/gemini-3.5-flash" {

@@ -299,7 +299,6 @@ func NewBaseAgent(
 		options = append(options,
 			mcpagent.WithClaudeCodePersistentInteractiveSession(true),
 			mcpagent.WithCodexPersistentInteractiveSession(true),
-			mcpagent.WithGeminiPersistentInteractiveSession(true),
 			mcpagent.WithCursorPersistentInteractiveSession(true),
 			mcpagent.WithAgyPersistentInteractiveSession(true),
 			mcpagent.WithPiPersistentInteractiveSession(true),

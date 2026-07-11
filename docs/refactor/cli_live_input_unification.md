@@ -1,7 +1,7 @@
 # Refactor spec: unify CLI live-input on tmux-session liveness (drop steer-vs-queue)
 
 **Status:** ✅ core implemented surgically (commit `fc5953e9` on pi-dev-integration). See "What was actually needed" below.
-**Scope:** coding-agent **CLI** providers only — `claude-code`, `codex`, `gemini-cli`, `cursor`, `agy`, `pi`. API/LLM agents are untouched.
+**Scope:** coding-agent **CLI** providers only — `claude-code`, `codex`, `cursor`, `agy`, `pi`. API/LLM agents are untouched.
 
 ## What was actually needed (post-implementation note)
 

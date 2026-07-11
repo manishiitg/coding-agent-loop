@@ -56,7 +56,6 @@ func (api *StreamingAPI) handleCancelCurrentTurn(w http.ResponseWriter, r *http.
 func closeAllCodingCLIInteractiveSessionsForOwner(owner, reason string) {
 	llmproviders.CloseAgyCLIInteractiveSessionForOwner(owner, reason)
 	llmproviders.CloseCursorCLIInteractiveSessionForOwner(owner, reason)
-	llmproviders.CloseGeminiCLIInteractiveSessionForOwner(owner, reason)
 	llmproviders.CloseCodexCLIInteractiveSessionForOwner(owner, reason)
 	llmproviders.CloseClaudeCodeInteractiveSessionForOwner(owner, reason)
 	llmproviders.ClosePiCLIInteractiveSessionForOwner(owner, reason)
@@ -85,8 +84,6 @@ func gracefulCloseCodingCLITmuxByName(tmuxName, reason string) bool {
 		llmproviders.CloseCodexCLIInteractiveSessionByTmux(name, reason)
 	case strings.HasPrefix(name, "mlp-cursor-cli"):
 		llmproviders.CloseCursorCLIInteractiveSessionByTmux(name, reason)
-	case strings.HasPrefix(name, "mlp-gemini-cli"):
-		llmproviders.CloseGeminiCLIInteractiveSessionByTmux(name, reason)
 	case strings.HasPrefix(name, "mlp-pi-cli"):
 		llmproviders.ClosePiCLIInteractiveSessionByTmux(name, reason)
 	default:

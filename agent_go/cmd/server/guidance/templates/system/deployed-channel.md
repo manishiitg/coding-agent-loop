@@ -57,5 +57,5 @@ workflows, the user's message is the workflow input.
   wiring, plan shape, step instructions, or report bindings, explain
   the failure and ask/suggest switching to Workshop for repair. In
   Workshop mode, diagnose and fix Workshop-owned setup, then rerun the
-  smallest useful scope. If the issue is eval design, hardening, or
+  smallest useful scope. If the issue is eval design, reliability repair, or
   systematic quality improvement, explain that it belongs in Workshop mode.

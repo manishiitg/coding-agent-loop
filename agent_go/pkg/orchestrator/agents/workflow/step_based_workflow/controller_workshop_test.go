@@ -10,6 +10,15 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 )
 
+func TestWorkshopStepLogFolderUsesDeclaredStepID(t *testing.T) {
+	if got := workshopStepLogFolder("  compile-report  "); got != "compile-report" {
+		t.Fatalf("workshopStepLogFolder() = %q, want declared step ID", got)
+	}
+	if got := workshopStepLogFolder(""); got != "" {
+		t.Fatalf("workshopStepLogFolder() invented fallback %q for empty step ID", got)
+	}
+}
+
 func TestSwitchWorkshopGroupSessionCachesPerGroup(t *testing.T) {
 	t.Setenv("MCP_API_URL", "http://example.test")
 

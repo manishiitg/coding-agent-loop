@@ -81,6 +81,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	// DB folder: Workflow/codeanalysis/db/ (structured JSON data, always enabled, shared across runs)
 	dbPath := getDBPath(baseWorkspacePath)
 	skillStepConfig := getAgentConfigs(step)
+	dbAccessForGuard := resolveDBAccess(skillStepConfig)
 	kbAccessForGuard := resolveKnowledgebaseAccess(skillStepConfig, hcpo.UseKnowledgebase())
 	kbWriteMethodForGuard := resolveKnowledgebaseWriteMethod(skillStepConfig)
 	learningsAccessForGuard := resolveLearningsAccess(skillStepConfig)
@@ -92,7 +93,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	// planning/, and sibling groups to a nested todo_task orchestrator whose job is
 	// to coordinate work inside the current run, not inspect global workflow state.
 	readPaths := []string{executionWorkspacePath, dbPath}
-	writePaths := []string{executionWorkspacePath, dbPath}
+	writePaths := []string{executionWorkspacePath}
+	if dbAccessForGuard == DBAccessReadWrite {
+		writePaths = append(writePaths, dbPath)
+	}
 	if learningsAccessForGuard != LearningsAccessNone {
 		globalLearningsPath := filepath.Join(baseWorkspacePath, "learnings", GlobalLearningID)
 		readPaths = append(readPaths, globalLearningsPath)
@@ -1794,7 +1798,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskPreValidation(
 	// Emit pre-validation completed event
 	hcpo.emitPreValidationCompletedEvent(ctx, step, stepIndex, stepPath, false, workspaceResults)
 
-	// Persist pre-validation results to disk for harden_workflow analysis
+	// Persist pre-validation results for Pulse Bug Review and diagnostics.
 	if hcpo.selectedRunFolder != "" {
 		preValLogPath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
 		SavePreValidationLog(ctx, hcpo.BaseOrchestrator, preValLogPath, step.GetID(), stepPath, workspaceResults, validationSchema)

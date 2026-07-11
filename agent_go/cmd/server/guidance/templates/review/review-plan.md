@@ -140,9 +140,9 @@ Treat plan, config, skills, learning, KB, db, reports, variables, and eval as on
    - Check `evaluation/evaluation_plan.json` covers the objective and success criteria with measurable rubrics, and that eval step IDs do not collide with execution step IDs.
    - Check `variables/variables.json` contains user-specific values that should not be hardcoded in descriptions, scripts, KB, db rows, or reports.
 8. For every artifact finding, route ownership:
-   - Builder owns skill selection/scoping, missing skill enablement, vague descriptions, and misplaced workflow-specific content.
-   - Builder owns schema contract, step descriptions, context/output wiring, report widget source changes, and `db/README.md`.
-   - Optimizer owns evidence-backed hardening when real runs show a step is violating the schema/merge contract.
+   - Workshop owns skill selection/scoping, missing skill enablement, vague descriptions, and misplaced workflow-specific content.
+   - Workshop owns schema contracts, step descriptions, context/output wiring, report source changes, and `db/README.md`.
+   - Pulse Bug Review/Fixer owns evidence-backed reliability repairs when real runs show a step is violating the schema/merge contract.
    - Run mode only reports findings in chat.
 
 OUTPUT FORMAT
@@ -184,6 +184,6 @@ Then a cross-step summary:
 - **Steps that look clean across all phases.**
 - **Top 5 issues to fix first** (highest-impact across all phases).
 
-{{if eq .WorkshopMode "run"}}RUN MODE OUTPUT: do not write builder/improve.html or any workspace file. Return the review in chat using the output format above. If the user wants the findings persisted, tell them to switch to Builder or Optimizer mode and rerun /review-plan.{{else}}REVIEW LOG: record findings as "Open finding" timeline entries in builder/improve.html (read it first if it exists, create it if it does not — newest on top). Include: what was reviewed, the structural findings (Phase 1), the boundary/description findings grouped by lens (Phase 2), the orchestrator/router findings (Phase 3), the dependent artifact findings (Phase 4: learnings, KB, db, reports, variables, eval), the cross-step summary, the top-5 list, items flagged for follow-up. Mark these as REVIEW (recommend; do NOT apply). Route fixes by ownership: Builder handles structure, step descriptions, context dependencies, validation schemas, variables, basic config, db/KB/report wiring; Optimizer handles hardening, evaluation design/scoring, scripted promotion, and lock decisions.{{end}}
+{{if eq .WorkshopMode "run"}}RUN MODE OUTPUT: do not write builder/improve.html or any workspace file. Return the review in chat using the output format above. If the user wants the findings persisted, tell them to switch to Workshop and rerun /review-plan.{{else}}REVIEW LOG: record findings as "Open finding" timeline entries in builder/improve.html (read it first if it exists, create it if it does not — newest on top). Include: what was reviewed, the structural findings (Phase 1), the boundary/description findings grouped by lens (Phase 2), the orchestrator/router findings (Phase 3), the dependent artifact findings (Phase 4: learnings, KB, db, reports, variables, eval), the cross-step summary, the top-5 list, items flagged for follow-up. Mark these as REVIEW (recommend; do NOT apply). Route later fixes through the normal Workshop owner: Pulse Bug Review/Fixer for bounded reliability and artifact-contract repairs, Goal Advisor for strategic plan proposals, and deliberate eval/report improvement for measurement or presentation changes.{{end}}
 
 **Open-finding ids.** Give each open finding only a short stable anchor id (e.g. `id="of-2026-06-07-screenshots"`) so a later decision can mark it resolved, per `get_reference_doc(kind="review-improve-log")`. No other entry kind needs an id{{if eq .WorkshopMode "run"}} — in Run mode assign temporary ids in the response only; do not scan or write builder/improve.html{{end}}.

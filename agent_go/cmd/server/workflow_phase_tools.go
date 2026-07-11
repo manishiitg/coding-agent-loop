@@ -213,7 +213,7 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 			// updates for long-running orchestrator sub-agents without
 			// synthetic turns at sub-agent start.
 			//
-			// Wire workshop execution notifier so execute_step/run_in_background/harden_workflow
+			// Wire workshop execution notifier so execute_step and run_in_background
 			// register in bgAgentRegistry (keeps frontend polling alive while background executions run).
 			workshopSession.SetWorkshopExecutionNotifier(&workshopExecutionBgNotifier{
 				api:           api,
@@ -380,8 +380,6 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 		if workshopSession != nil {
 			todo_creation_human.RegisterRunFullWorkflowTool(underlyingAgent, workshopSession, api.logger)
 			log.Printf("[WORKFLOW_PHASE] Registered run_full_workflow in %s", workflowPhaseID)
-			todo_creation_human.RegisterImproveKnowledgebaseTool(underlyingAgent, workshopSession, api.logger)
-			log.Printf("[WORKFLOW_PHASE] Registered improve_kb in %s", workflowPhaseID)
 			todo_creation_human.RegisterReorganizeKnowledgebaseTool(underlyingAgent, workshopSession, api.logger)
 			log.Printf("[WORKFLOW_PHASE] Registered reorganize_knowledgebase in %s", workflowPhaseID)
 			todo_creation_human.RegisterConsolidateKnowledgebaseTool(underlyingAgent, workshopSession, api.logger)
@@ -394,7 +392,7 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 			// merge.
 			switch phaseTemplateVars["WorkshopMode"] {
 			case "workshop", "optimizer":
-				RegisterAutoImprovementProposerTools(underlyingAgent, phaseWorkspacePath, "improve-workflow", api.logger)
+				RegisterAutoImprovementProposerTools(underlyingAgent, phaseWorkspacePath, "pulse-fixer", api.logger)
 				log.Printf("[WORKFLOW_PHASE] Registered auto-improvement proposer tools in %s (mode=%s)", workflowPhaseID, phaseTemplateVars["WorkshopMode"])
 			case "run":
 				RegisterCaptureContextTool(underlyingAgent, phaseWorkspacePath, api.logger)
@@ -423,7 +421,7 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 			// flow. Both coexist — the static skills give each CLI a
 			// browseable, file-mounted view via its native skill UI; the
 			// meta-skill + tool path remains the authoritative way to
-			// satisfy gates like the one wrapping harden_workflow.
+			// satisfy guidance precondition gates.
 			guidance.AttachReferenceSurface(workshopMode, underlyingAgent.AttachSkill)
 		}
 	default:

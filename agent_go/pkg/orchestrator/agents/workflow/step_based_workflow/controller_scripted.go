@@ -1457,7 +1457,7 @@ func GetScriptedModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRel
 	}
 
 	// Shared authoring rules — single source of truth used by this prompt, the workshop
-	// builder prompt, harden_workflow, and review_step_code so all agents that write or
+	// builder prompt and review_step_code so all agents that write or
 	// review main.py agree on what "compliant" means. Skipped when the script is locked:
 	// the LLM isn't authoring or patching main.py this turn, so authoring rules would
 	// only re-anchor it on writing code.

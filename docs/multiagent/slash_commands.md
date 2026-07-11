@@ -103,7 +103,6 @@ Workflow slash commands are wrappers around the backend `get_workflow_command_gu
 | `/define-success` | One-time setup: write the Workflow Profile to `builder/improve.md` and bootstrap metrics | Optimizer | `define-success` |
 | `/improve-evaluation` | Validate `evaluation/evaluation_plan.json` and improve goal/criteria coverage | Optimizer | `improve-evaluation` |
 | `/auto-improve` | Set up recurring workflow run + frequent lightweight optimizer improvement | Optimizer | `auto-improve` |
-| `/improve-workflow` | Use existing run evidence to review, replan if needed, harden, then optionally verify | Optimizer | `improve-workflow` |
 
 The workflow command source of truth is split across:
 

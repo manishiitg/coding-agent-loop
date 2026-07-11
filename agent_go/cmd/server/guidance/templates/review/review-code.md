@@ -68,4 +68,4 @@ For each step audited:
 
 End with a cross-step summary: which steps are clean, which need work, which are CRITICAL.
 
-REVIEW LOG: record findings as "Open finding" timeline entries in builder/improve.html (read it first if it exists, create it if it does not — newest on top). Include: which step(s) reviewed, the drift findings, the shortcut/dynamism findings, the browser best-practice findings, the operational findings, severity verdicts, and items flagged for follow-up. Mark these as REVIEW (recommend; do NOT apply — fixes go through optimizer-mode harden/replan tools).
+REVIEW LOG: record findings as "Open finding" timeline entries in builder/improve.html (read it first if it exists, create it if it does not — newest on top). Include: which step(s) reviewed, the drift findings, the shortcut/dynamism findings, the browser best-practice findings, the operational findings, severity verdicts, and items flagged for follow-up. Mark these as REVIEW (recommend; do NOT apply — fixes go through the Workshop owner or Pulse Fixer).

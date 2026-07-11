@@ -78,14 +78,15 @@ function formatWorkflowNameFromPath(path?: string | null): string {
 }
 
 const PULSE_MODULE_COMMANDS: Array<{ id: string; label: string; description: string }> = [
-  { id: 'harden', label: 'Harden', description: 'Bug checks and low-risk fixes' },
+  { id: 'bug_review', label: 'Bug review', description: 'Read-only reliability checks; Pulse Fixer applies safe fixes' },
   { id: 'artifact_review', label: 'Artifact review', description: 'Plan-change artifact drift' },
   { id: 'learning_health', label: 'Learning health', description: 'Learning freshness and quality' },
   { id: 'knowledgebase_health', label: 'Knowledge base', description: 'KB freshness and contradictions' },
   { id: 'db_health', label: 'Database health', description: 'DB/schema/data quality checks' },
   { id: 'eval_health', label: 'Eval health', description: 'Rubric and eval wiring quality' },
   { id: 'report_health', label: 'Report health', description: 'Dashboard/report accuracy' },
-  { id: 'cost_llm_time', label: 'Cost + LLM + time', description: 'Cost, model, and runtime review' },
+  { id: 'cost_llm_time', label: 'Cost + time', description: 'Cost, model usage, and runtime telemetry' },
+  { id: 'llm_ops_review', label: 'LLM + operations', description: 'Model routing and workflow setup recommendations' },
   { id: 'goal_advisor', label: 'Goal Advisor', description: 'Strategic review when goal evidence is weak' },
 ]
 

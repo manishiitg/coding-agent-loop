@@ -2,7 +2,7 @@
 
 A workflow is a web of **implicit dependencies**: a step's output feeds downstream steps, evals score it, the report dashboard queries its data, db stores it, and learnings/KB describe its behavior. Change a step and those silently rot — a downstream step reads a field you renamed, a report query returns nothing, an eval scores the wrong thing, a learning teaches the old behavior.
 
-**Whenever you change a plan** — add / remove / reorder a step, or change a step's output contract, behavior, or description — you are not done until you have checked and reconciled the blast radius. This is the discipline for that. It applies the same whether *you* made the change in the builder or a `replan`/`harden` pass did.
+**Whenever you change a plan** — add / remove / reorder a step, or change a step's output contract, behavior, or description — you are not done until you have checked and reconciled the blast radius. This applies whether the change came from an active Workshop edit, an approved Goal Advisor proposal, or a bounded Pulse Fixer repair.
 
 ## 1. Name the change surface
 First, pin down exactly what other artifacts key off — the **surface** of the change:
@@ -38,9 +38,9 @@ After tracing, write a short **impact summary** into `builder/improve.html`: wha
 ## The changelog is your work-list — keep it lean
 Every plan-mod tool call is auto-written to `planning/changelog/changelog-*.json` (tool, `reason`, affected step ids, old/new values). Treat entries without `artifact_review.done=true` as the **ledger of changes whose blast radius may not be reconciled yet** — your work-list. When you reconcile a change (steps 1–3), **record its impact summary in `builder/improve.html`** so it is human-visible.
 
-Do **not** edit or delete changelog files directly. Artifact Review marks reconciled entries through the dedicated `mark_changelog_artifact_reviewed` tool after it has recorded the review in `builder/improve.html`; Pulse uses that metadata to skip future no-op review turns.
+Do **not** edit or delete changelog files directly. The read-only Artifact Review agent returns exact inspected entries; the parent writer records the review in `builder/improve.html` and then marks those entries through the dedicated `mark_changelog_artifact_reviewed` tool. Pulse uses that metadata to skip future no-op review turns.
 
-This proactive check is one end of a loop; the **`review-artifact-drift` audit** (the `review_artifact_sync` tool, which advances the **Artifact Sync Cursor** in `builder/improve.html` and calls `mark_changelog_artifact_reviewed`) is the agentic backstop that sweeps the changelog and catches anything the proactive pass missed. Pulse runs it as a separate report-only Artifact Review item, not as part of harden.
+This proactive check is one end of a loop; the **`review-artifact-drift` audit** uses the read-only `review_artifact_sync` tool as the agentic backstop that sweeps the changelog and catches anything the proactive pass missed. Its parent writer advances the **Artifact Sync Cursor** in `builder/improve.html` and calls `mark_changelog_artifact_reviewed` only for exact inspected entries. Pulse handles the same concern inside its consolidated reviewer/fixer pass.
 
 ## Scope note
 The discipline **scales to the change**. A change that is purely internal to a step (same output contract, same db writes, same described behavior) has no blast radius — confirm that quickly and move on. A renamed output field touches downstream + report + eval + db; a reworded description that keeps the same contract may only touch learnings. Trace what the surface actually reaches, not a fixed checklist for its own sake.

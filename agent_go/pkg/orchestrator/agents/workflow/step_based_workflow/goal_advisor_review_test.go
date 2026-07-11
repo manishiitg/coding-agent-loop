@@ -60,7 +60,7 @@ func TestGoalAdvisorToolAllowlistsSeparateReadOnlyAndFinalizerActions(t *testing
 		assertToolListContains(t, approved, tool)
 	}
 
-	for _, tool := range []string{"harden_workflow", "improve_kb", "improve_learnings", "improve_db", "mark_pulse_module_result", "notify_user"} {
+	for _, tool := range []string{"harden_workflow", "mark_pulse_module_result", "notify_user"} {
 		assertToolListDoesNotContain(t, readOnly, tool)
 		assertToolListDoesNotContain(t, proposal, tool)
 		assertToolListDoesNotContain(t, approved, tool)
@@ -75,7 +75,7 @@ func TestGoalAdvisorAdvisorInstructionIsReadOnlyDraft(t *testing.T) {
 		"Pulse run id: pulse-123",
 		"Focus from Pulse Gate: goals are flat",
 		"this stage is read-only",
-		"Do NOT call harden_workflow",
+		"Do NOT launch nested maintenance reviewers",
 		"Do NOT modify plan/config/eval/report/HTML files",
 		"Evidence used",
 		"Advisor hypothesis",
@@ -119,7 +119,7 @@ func TestGoalAdvisorFinalizerInstructionOwnsDurableActions(t *testing.T) {
 		"plan/config/eval mutation tools: DISABLED",
 		"create_human_input_request",
 		"mark_human_input_consumed: DISABLED",
-		"Do not call harden_workflow",
+		"Do not launch nested maintenance reviewers",
 		"Do not call mark_pulse_module_result",
 		"Advisor proposal/takeaway",
 		"Critic verdict/objections",

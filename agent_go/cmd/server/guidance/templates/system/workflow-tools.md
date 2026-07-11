@@ -24,11 +24,10 @@ returns the live JSON schema for the tool.
 ## Step Config & Analysis (Workshop mode)
 
 - **`update_step_config(step_id, ...)`** — Update servers, tools, skills, learning settings, execution mode, LLMs, locks, review notes, and description review state. For eval steps this writes to `evaluation/step_config.json`.
-- **`harden_workflow(group_name?, focus?)`** — Reliability repair. Always reads `iteration-0` eval reports and execution outputs. Pass `group_name` to scope to one group, or omit it to analyze all groups under `iteration-0`. Use when the path is otherwise sound but local step behavior, validation, artifact shape, config, learnings, KB/db/report/eval wiring, or deterministic invariants are broken. It patches `main.py` only for `scripted` steps and deletes stale `main.py` files for `agentic` steps. **Precondition: call `get_reference_doc(kind="optimize-playbook")` first.**
+- **Pulse Bug Review/Fixer** — This is a scheduled Pulse protocol, not a standalone tool. The Bug Review is read-only and returns evidence, recommendations, and verification steps. The parent Pulse Fixer is the only writer and applies bounded safe fixes before recording the module result.
 - **Objective + success criteria** — Edit `soul/soul.md` directly via shell (fill in the `## Objective` and `## Success Criteria` sections). `soul.md` is stable intent, not architecture: never add step design, provider/tool choices, implementation decisions, inferred assumptions, or a decision log. Optional constraints belong there only when the user explicitly approved them as durable boundaries. `plan.json` owns the current implementation attempt. No dedicated tool — use `diff_patch_workspace_file` or a shell heredoc.
 - **Notification preference** — When the user tells you *when/what they want to be alerted about* for this workflow (e.g. "include the eval score in every run summary", "only WhatsApp me when it breaks, never on recovery", "always include the Pulse log link", "don't notify me at all"), capture it verbatim-in-intent as a `## Notifications` section in `soul/soul.md` (same shell/`diff_patch` edit as above). The post-run monitor reads that section and obeys it, overriding its default every-run summary policy. Keep it short and plain-language — it's an instruction to the monitor, not config. If the user hasn't said anything, leave the section out and the monitor keeps the default: one compact run summary after every run, with transitions clearly marked.
-- **Goal Advisor proposals and experiments** — Material strategy/path changes use the existing report interaction flow, not a separate replan tool. In scheduled Pulse, use `run_goal_advisor_review` so the dedicated background advisor does recovery or periodic healthy 10x/headroom review. It maintains at most one active `.advisor-experiment` in `builder/improve.html`, preserving the baseline, metric, guardrails, checkpoint, and rollback condition through proposal, approval, running, measurement, and terminal outcome. It may create or refresh `create_human_input_request(source="goal_advisor", input_id="plan-proposal-...", options=[approve,reject,defer], context="<proposal + exact intended edits + rationale + expected impact + risk + evidence>")`. A later Pulse run may apply an approved proposal with normal plan modification/config/eval/report tools, call `mark_human_input_consumed`, and advance the same experiment card. In active manual workshop chat, apply a bounded evidence-backed plan change directly only when the user is asking for improvement and the evidence is strong.
-- **`review_workflow_results(iteration?, group_name?, focus?)`** — Read-only outcome review: checks whether a real run is achieving the objective and success criteria, and whether the evaluation actually measures them properly.
+- **Goal Advisor proposals and experiments** — Material strategy/path changes use the existing report interaction flow, not a separate plan-change workflow. In scheduled Pulse, use `run_goal_advisor_review` so the dedicated background advisor does recovery or periodic healthy 10x/headroom review. It maintains at most one active `.advisor-experiment` in `builder/improve.html`, preserving the baseline, metric, guardrails, checkpoint, and rollback condition through proposal, approval, running, measurement, and terminal outcome. It may create or refresh `create_human_input_request(source="goal_advisor", input_id="plan-proposal-...", options=[approve,reject,defer], context="<proposal + exact intended edits + rationale + expected impact + risk + evidence>")`. A later Pulse run may apply an approved proposal with normal plan modification/config/eval/report tools, call `mark_human_input_consumed`, and advance the same experiment card. In active manual Workshop chat, apply a bounded evidence-backed plan change directly only when the user is asking for improvement and the evidence is strong.
 - **`review_workflow_timing(iteration?, group_name?, focus?)`** — Read-only latency review: finds the slowest groups/steps/tools/LLM calls and recommends faster descriptions, fewer handoffs, safer step merges, or plan changes.
 - **`review_workflow_costs(iteration?, group_name?, focus?)`** — Read-only cost review: finds the biggest cost drivers and recommends cheaper models, fewer retries/handoffs, better descriptions, or plan changes without sacrificing success criteria.
 - **`get_cost_summary(run_folder?)`** — Token usage and cost breakdown.
@@ -38,7 +37,7 @@ returns the live JSON schema for the tool.
 - **`get_step_prompts(step_id, attempt?, iteration?)`** — System prompt and user message for a step.
 - **`get_workflow_config`** — Inspect the workflow's current MCP servers, selected skills, available secrets, LLM config, and schedules. Use this instead of `cat workflow.json` when you need the full workflow config. For the global installed skill catalog, use `list_skills`.
 - **`get_llm_config`** — Per-step LLM overrides.
-- **`get_workflow_command_guidance(kind="review-artifact-drift", focus?)`** *(Workshop only)* — Canonical artifact drift audit after material plan/config changes. Checks unreviewed `planning/changelog/` entries against learnings, saved `main.py`, KB, db, reports, and eval wiring. In Pulse it runs as its own report-only Artifact Review item, separate from `harden_workflow`. Writes its cursor/report in `builder/improve.html` and uses `mark_changelog_artifact_reviewed` to stamp inspected entries with `artifact_review.done=true`; do not edit/delete changelog files directly or create a new state file.
+- **`get_workflow_command_guidance(kind="review-artifact-drift", focus?)`** *(Workshop only)* — Canonical read-only artifact drift audit after material plan/config changes. In Pulse it is separate from Bug Review; the parent Pulse Fixer applies verified repairs and marks reviewed changelog entries.
 
 ## Plan Modification (Workshop mode)
 
@@ -115,7 +114,6 @@ Every schedule in `workflow.json` has a `schedule_type` — `"cron"` (default) o
 Workflow schedules always use the workshop builder execution path. Do not create direct `mode="workflow"` schedules; legacy manifests with that value are normalized to workshop execution.
 
 - **Run** (`mode=workshop`, `workshop_mode=run`) — LLM-driven execution with per-step notifications. `messages` is optional; if omitted, the scheduler sends a default full-workflow run instruction. Prefer an explicit message when you need group-specific wording, backup instructions, or strict unattended behavior.
-- **Optimize** (`mode=workshop`, `workshop_mode=optimizer`) — legacy/custom optimizer job. Do not create this for Goal Advisor; Pulse Gate now selects the Goal Advisor module after normal runs. Use optimizer schedules only for an explicitly requested bespoke scheduled analysis job with bounded stop conditions.
 
 **Default mode rule:** create workflow schedules with `mode="workshop"`. New schedules should never use `mode="workflow"`.
 
@@ -138,7 +136,6 @@ Confirm with the user before skipping backup on a recurring schedule.
 
 - Write each message as a plain instruction, like you would type in chat: `"Run the full workflow"`, `"Generate the final report"`.
 - **Run mode** (`workshop_mode="run"`): typically one message with exact groups, e.g. `"Do not ask for confirmation. Run the full workflow for group-1 using run_full_workflow(group_name=\"group-1\")."`
-- **Optimize mode**: legacy/custom only. For `/goal-advisor`, do not create optimizer schedules; Pulse Gate runs Goal Advisor as a module when evidence warrants it.
 - Use multiple messages to break work into sequential phases, e.g. `["Run the workflow", "Generate the final report"]`.
 - Read `variables/variables.json` for available group names and include them explicitly in the message if needed.
 
@@ -149,22 +146,13 @@ Confirm with the user before skipping backup on a recurring schedule.
 - Tell the agent to skip or use defaults for anything unclear rather than pausing to ask.
 - Never include open-ended questions or `"let me know"` style instructions.
 - **Bad**: `"Run the workflow and ask me which steps to optimize"`.
-- **Good**: `"Review runs/iteration-0 for group-1, read eval/log evidence, then choose harden_workflow, an approved plan-change application, or a Goal Advisor proposal using the scheduled decision model. Log no action if nothing is ready."`
-
-### Legacy/custom optimizer schedules
-
-When creating a schedule with `workshop_mode="optimizer"`, craft the message around the exact recurring custom job. Do not use this for Goal Advisor; use `/goal-advisor` setup to enable Pulse and a normal run schedule.
-
-For custom optimizer messages:
-- Name the configured `group_names`.
-- Use only `runs/iteration-0` evidence for those groups.
-- Inspect run outputs plus execution/tool logs for failures, retries, wrong tool arguments, timeouts, validation errors, and stuck steps.
-- Read `builder/improve.html` (the single durable log), recent `planning/changelog/` entries, and current run/eval evidence.
-- Handle report accuracy/live-data/layout work with report-plan tools only when the recurring job explicitly includes report quality or an unresolved review/improve item queues it.
+- **Good**: `"Review runs/iteration-0 for group-1, collect read-only reliability evidence, then let the parent fixer choose a bounded repair, an approved plan change, a Goal Advisor proposal, or no action."`
 
 Pulse module cadence is not encoded in schedule JSON. Pulse Gate stores module state in `db/db.sqlite` and decides which modules are due after each normal run.
 
-**Infinite loop prevention**: Scheduled optimizer runs are unattended — they MUST have built-in stop conditions. The message should instruct the agent to: (1) use bounded evidence review, (2) apply at most one primary harden/replan action per fire, (3) avoid fresh workflow reruns unless verification is explicitly needed, (4) stop after recording what was applied or deferred.
+Do not create new `workshop_mode="optimizer"` schedules. Existing saved legacy
+values are handled by migration/backend compatibility; new continuous
+improvement uses normal Run mode plus Pulse.
 
 ## Shell & Discovery
 

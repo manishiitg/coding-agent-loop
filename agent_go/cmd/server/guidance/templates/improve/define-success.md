@@ -37,7 +37,7 @@ Walk the user through a primary type plus optional secondary traits. Real workfl
 Ask the user to confirm:
 - Primary type:
   - `deterministic_harden_first`: known plan/output; improve reliability, validation, and locking.
-  - `exploratory_goal_optimization`: goal known but best plan unknown; improve by experiments, eval evidence, and replanning.
+  - `exploratory_goal_optimization`: goal known but best plan unknown; improve by experiments, eval evidence, and Goal Advisor plan changes.
   - `business_context_accumulating`: workflow improves by remembering user rules, preferences, examples, account/domain context.
   - `compliance_audit`: correctness, evidence, traceability, and conservative change control matter most.
   - `human_review_production`: workflow prepares drafts/options for human approval; improve approval rate and reduce edit burden.
@@ -67,14 +67,14 @@ Leave signal tiles, recent-runs strip, the `<!-- LOG ENTRIES: newest first -->` 
 STEP 3 - SET FRAMEWORK FIELDS IN workflow.json
 These are the structured framework fields that drive behavior:
 - `oversight_mode`: `manual`, `supervised`, or `autonomous`. Recommended defaults: deterministic or ratcheting workflow -> `manual`; exploratory -> `autonomous`; contextual/business-context -> `supervised`.
-- `post_run_monitor`: `true` or `false`. Recommend `true` for workflows where a silently broken or drifting run would matter and is not watched live. Leave off for scratch, experimental, or interactive-only workflows where the extra per-run triage pass is not worth it.
+- `post_run_monitor`: `true` or `false`. Recommend `true` for workflows where a silently broken or drifting run would matter and is not watched live. Leave off for scratch, experimental, or interactive-only workflows where the extra per-run Pulse review is not worth it.
 
 When turning `post_run_monitor` on, ask the user how they want to be notified. Default: the monitor sends one compact run summary after every run, and marks broke / recovered / new finding transitions clearly. If they want something else, capture it as a `## Notifications` section in `soul/soul.md`. If they accept the default, leave the section out.
 
 STEP 4 - VERIFY EVAL COVERAGE
 Read `evaluation/evaluation_plan.json` and compare it to `soul.md` (the coverage matrix, both ways):
 - Does each important success criterion have an eval step measuring it?
-- Does any eval step map to no criterion, or duplicate operational checks that Pulse triage / `pre_validation` already own (missing artifacts, malformed output, skipped steps)? Flag those for retirement — eval measures the goal; Pulse owns operational quality.
+- Does any eval step map to no criterion, or duplicate operational checks that Pulse Gate/Bug Review / `pre_validation` already own (missing artifacts, malformed output, skipped steps)? Flag those for retirement — eval measures the goal; Pulse owns operational quality.
 - Do eval steps fail closed when inputs are missing (never pass on absent evidence)?
 - Are eval thresholds aligned with the confirmed success criteria?
 

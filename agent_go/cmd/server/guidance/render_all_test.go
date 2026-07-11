@@ -38,6 +38,17 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 		"one ordered finalizer turn",
 		"mark_pulse_final_command_result",
 		"not automatically due every Pulse",
+		"Parallel Review Team And Single Fixer",
+		"call_generic_agent` calls in the same tool-call batch",
+		"Do not use `run_in_background`",
+		"READ-ONLY REVIEW",
+		"same parent Pulse turn",
+		"does not launch",
+		"`run_goal_advisor_review`",
+		"without adding backend coordination",
+		"confirm every module marked",
+		"Never silently treat a",
+		"missing result as skipped or successful",
 	} {
 		if !strings.Contains(postRun, want) {
 			t.Fatalf("post-run-monitor missing %q", want)
@@ -85,13 +96,64 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 	}
 }
 
-func TestImprovementAndPlanGuidanceLoadsAssumptionAudit(t *testing.T) {
+func TestMaintenanceImproveGuidanceIsReadOnlyForPulseFixerHandoff(t *testing.T) {
+	cases := map[string][]string{
+		"improve-learnings": {
+			"READ-ONLY LEARNING HEALTH REVIEW",
+			"generic read-only reviewer",
+			"no separate learning-maintenance tool",
+			"call_generic_agent",
+			"Pulse Fixer",
+			"recommended_fix",
+		},
+		"improve-knowledge": {
+			"READ-ONLY KNOWLEDGEBASE HEALTH REVIEW",
+			"generic read-only reviewer",
+			"no separate KB-maintenance tool",
+			"call_generic_agent",
+			"Pulse Fixer",
+			"recommended_fix",
+		},
+		"improve-database": {
+			"READ-ONLY DATABASE HEALTH REVIEW",
+			"generic read-only reviewer",
+			"no separate DB-maintenance tool",
+			"call_generic_agent",
+			"Pulse Fixer",
+			"verification commands",
+		},
+		"improve-report": {
+			"READ-ONLY REPORT HEALTH REVIEW",
+			"do not edit or ask from the reviewer",
+			"Pulse Fixer",
+			"recommended_fix",
+		},
+		"improve-evaluation": {
+			"READ-ONLY EVALUATION HEALTH REVIEW",
+			"The reviewer does not edit or run anything",
+			"Pulse Fixer",
+			"GOAL_SEMANTIC",
+		},
+	}
+	for kind, wants := range cases {
+		rendered, err := renderFromRegistry(kind, tmplData{}, allKinds)
+		if err != nil {
+			t.Fatalf("render %s: %v", kind, err)
+		}
+		for _, want := range wants {
+			if !strings.Contains(rendered, want) {
+				t.Fatalf("%s missing read-only reviewer contract %q", kind, want)
+			}
+		}
+	}
+}
+
+func TestImprovementAndPlanGuidanceIncludesAssumptionAudit(t *testing.T) {
 	for _, kind := range []string{
 		"design-plan",
 		"review-plan",
 		"review-code",
 		"review-artifact-drift",
-		"improve-workflow",
 		"goal-advisor",
 		"improve-evaluation",
 		"improve-report",
@@ -103,8 +165,23 @@ func TestImprovementAndPlanGuidanceLoadsAssumptionAudit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("render %s: %v", kind, err)
 		}
-		if !strings.Contains(rendered, `get_reference_doc(kind="assumption-audit")`) {
-			t.Fatalf("%s guidance does not load assumption-audit", kind)
+		if !strings.Contains(rendered, "assumption-audit") {
+			t.Fatalf("%s guidance does not include assumption-audit", kind)
+		}
+	}
+	for _, kind := range []string{
+		"improve-evaluation",
+		"improve-report",
+		"improve-knowledge",
+		"improve-learnings",
+		"improve-database",
+	} {
+		rendered, err := renderFromRegistry(kind, tmplData{}, allKinds)
+		if err != nil {
+			t.Fatalf("render %s: %v", kind, err)
+		}
+		if !strings.Contains(rendered, "parent") || !strings.Contains(rendered, "provided") {
+			t.Fatalf("%s must tell the parent to provide assumption-audit to the generic reviewer", kind)
 		}
 	}
 
@@ -137,7 +214,7 @@ func TestGoalAdvisorTreatsCleanAbstentionAsStrategyEvidence(t *testing.T) {
 		"Never recommend violating an explicit user exclusion",
 		"opportunity supply or conversion",
 		"Do not require every producing step to be clean before reviewing strategy",
-		"Pulse can run Harden and Goal Advisor in the same cycle",
+		"Pulse can run Bug Review and Goal Advisor in the same cycle",
 		"include an alternative growth path",
 		"Check optimization headroom even when every success criterion is currently",
 		"Treat a numeric target as a floor",

@@ -3,7 +3,7 @@
 ## Iterations & Groups
 
 **Iterations** are just output folders (e.g., `iteration-0`). In
-workshop builder mode, always use **iteration-0**. Do not choose or
+Workshop mode, always use **iteration-0**. Do not choose or
 pass any other iteration. Every `execute_step` re-reads the **latest**
 `plan.json` — no caching or snapshotting.
 

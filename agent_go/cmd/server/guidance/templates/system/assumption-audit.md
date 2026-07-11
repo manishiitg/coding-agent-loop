@@ -75,7 +75,7 @@ a Goal concern. Do not confuse the two.
 - **Report:** show goal/outcome truth; do not make the current implementation or
   an inferred proxy look like the user's target.
 - **KB notes:** distinguish durable domain evidence from workflow-design beliefs.
-  Never rewrite user-owned `knowledgebase/context/` in an optimizer pass.
+  Never rewrite user-owned `knowledgebase/context/` in a Pulse maintenance pass.
 - **Learnings/skills:** keep reusable HOW; remove business policy, strategy, and
   stale architecture disguised as execution guidance.
 - **DB:** challenge schemas/enums/cardinality that unnecessarily lock the workflow

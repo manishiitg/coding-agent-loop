@@ -129,9 +129,31 @@ func TestWorkshopPromptSize(t *testing.T) {
 	}
 }
 
+func TestCanonicalWorkshopMode(t *testing.T) {
+	for input, want := range map[string]string{
+		"":          "",
+		"workshop":  "workshop",
+		"builder":   "workshop",
+		"optimizer": "workshop",
+		"reporting": "workshop",
+		"run":       "run",
+		"ask":       "run",
+		"debugger":  "run",
+	} {
+		if got := canonicalWorkshopMode(input); got != want {
+			t.Fatalf("canonicalWorkshopMode(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestDetectWorkshopModeDefaultsToWorkshop(t *testing.T) {
+	if got := detectWorkshopMode(nil, nil); got != "workshop" {
+		t.Fatalf("detectWorkshopMode(nil, nil) = %q, want workshop", got)
+	}
+}
+
 // TestWorkshopModeIsMergedSuperset verifies the canonical "workshop" mode
-// produces a prompt that includes the optimizer-flavor sections (since
-// optimizer is the tool-superset of the old builder+optimizer pair) AND
+// produces the complete editable workflow surface AND
 // the new phase-detection directive.
 func TestWorkshopModeIsMergedSuperset(t *testing.T) {
 	prompt := executeRealisticWorkshopPromptForMode(t, "workshop")
@@ -147,18 +169,17 @@ func TestWorkshopModeIsMergedSuperset(t *testing.T) {
 		t.Errorf("workshop mode prompt should include the phase-detection directive")
 	}
 
-	// Should expose the optimizer-flavor tooling (harden/advisor/eval). These
-	// are mentioned in the inline optimizer cheat sheet and through the
+	// Should expose strategy/eval tooling. These are mentioned in the inline
+	// Workshop cheat sheet and through the
 	// pointer to optimize-playbook.
 	mustContain := []string{
-		"harden_workflow",
 		"create_human_input_request",
 		"run_goal_advisor_review",
 		`get_reference_doc(kind="optimize-playbook")`,
 	}
 	for _, s := range mustContain {
 		if !strings.Contains(prompt, s) {
-			t.Errorf("workshop mode prompt missing optimizer-flavor content: %q", s)
+			t.Errorf("workshop mode prompt missing editable-workflow content: %q", s)
 		}
 	}
 }
@@ -175,7 +196,7 @@ func TestWorkshopModeIsMergedSuperset(t *testing.T) {
 // vars. Adding them here would just couple the test to var content the
 // helper synthesizes.
 func TestWorkshopPromptKeepsCriticalRules(t *testing.T) {
-	prompt := executeRealisticWorkshopPromptForMode(t, "builder")
+	prompt := executeRealisticWorkshopPromptForMode(t, "workshop")
 
 	// Things that MUST stay inline — hard rules / identity / dynamic state.
 	// All of these are inline template literals, not template-var injections.

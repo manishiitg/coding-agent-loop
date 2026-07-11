@@ -116,7 +116,7 @@ func TestOptimizerPromptDocumentsMessageSequenceRoutePatterns(t *testing.T) {
 	doc := guidance.RenderSystemDoc("message-sequence")
 	docMustContain := []string{
 		"## MESSAGE SEQUENCE ROUTE PATTERNS",
-		"Use these patterns when designing or hardening todo_task predefined routes",
+		"Use these patterns when designing or repairing todo_task predefined routes",
 		"For a todo_task route, use `message_sequence` when the orchestrator should preserve specialist memory",
 		"restart only when the prior conversation is stale, wrong, or contaminated",
 	}

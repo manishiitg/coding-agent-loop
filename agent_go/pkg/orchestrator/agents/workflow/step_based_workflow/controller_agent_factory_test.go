@@ -140,11 +140,10 @@ func TestApplyStepConfigToAgentConfigEnablesWorkspaceIsolation(t *testing.T) {
 // of CodingAgentWorkingDir. These factories live in two files:
 //   - controller_agent_factory.go (2): regular-step path (applyStepConfigToAgentConfig)
 //     and the todo-task orchestrator (createTodoTaskOrchestratorAgent).
-//   - interactive_workshop_manager.go (10): the workshop background agents — the
+//   - interactive_workshop_manager.go (7): the workshop background agents — the
 //     `run_in_background` task agent plus the Goal Advisor stage runner and
-//     the improve-db / review-plan /
-//     review-artifact-sync / review-results / review-timing / review-costs /
-//     review-step-code / harden agents — each spawns a coding-CLI
+//     the review-plan / review-artifact-sync / review-timing / review-costs /
+//     review-step-code agents — each spawns a coding-CLI
 //     session for a workflow task and must isolate its workspace.
 //
 // Without isolation on any of these, an agy-cli orchestrator / workshop
@@ -160,8 +159,8 @@ func TestAllWorkflowAgentFactoriesEnableWorkspaceIsolation(t *testing.T) {
 		path string
 		want int
 	}{
-		{path: "controller_agent_factory.go", want: 2},      // regular + todo-task orchestrator
-		{path: "interactive_workshop_manager.go", want: 10}, // run_in_background + goal-advisor + improve/review/harden/db workshop agents
+		{path: "controller_agent_factory.go", want: 2},     // regular + todo-task orchestrator
+		{path: "interactive_workshop_manager.go", want: 7}, // run_in_background + goal-advisor + review workshop agents
 	}
 	const needle = "config.IsolateCodingAgentWorkspace = true"
 	for _, tc := range cases {
@@ -415,6 +414,44 @@ func TestSetupExecutionFolderGuardHonorsLearningsAndKBNone(t *testing.T) {
 	for _, forbidden := range forbiddenWrites {
 		if slices.Contains(writePaths, forbidden) {
 			t.Fatalf("expected write paths not to include %q, got %v", forbidden, writePaths)
+		}
+	}
+}
+
+func TestSetupExecutionFolderGuardGivesGenericReviewerWorkflowWideReadOnlyView(t *testing.T) {
+	base, err := orchestrator.NewBaseOrchestrator(
+		loggerv2.NewNoop(), nil, orchestrator.OrchestratorTypeWorkflow, "", 0,
+		"", nil, nil, false, &orchestrator.LLMConfig{}, 1, nil, nil, nil,
+	)
+	if err != nil {
+		t.Fatalf("NewBaseOrchestrator returned error: %v", err)
+	}
+	base.SetWorkspacePath("Workflow/testing")
+	hcpo := &StepBasedWorkflowOrchestrator{
+		BaseOrchestrator:  base,
+		selectedRunFolder: "iteration-0/test-group",
+	}
+
+	readPaths, writePaths := hcpo.setupExecutionFolderGuard(
+		"parent-generic-report-health",
+		"generic-parent-report-health",
+		KBAccessRead,
+		LearningsAccessRead,
+		KBWriteMethodAgent,
+		DBAccessRead,
+	)
+
+	if !slices.Contains(readPaths, "Workflow/testing") {
+		t.Fatalf("generic reviewer must read the workflow root, got %v", readPaths)
+	}
+	for _, forbidden := range []string{
+		"Workflow/testing",
+		"Workflow/testing/planning",
+		"Workflow/testing/evaluation",
+		"Workflow/testing/reports",
+	} {
+		if slices.Contains(writePaths, forbidden) {
+			t.Fatalf("generic reviewer unexpectedly writes %q: %v", forbidden, writePaths)
 		}
 	}
 }

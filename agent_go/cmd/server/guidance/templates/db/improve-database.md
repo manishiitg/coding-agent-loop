@@ -1,12 +1,35 @@
-Improve the workflow database so `db/db.sqlite` supports the current plan, downstream steps, and report widgets.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+# READ-ONLY DATABASE HEALTH REVIEW
 
-Write to `builder/improve.html`. For the log format, the one-time migration, and how entries are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
+Review whether `db/db.sqlite`, `db/README.md`, and `db/assets/` support the
+current plan, downstream steps, evals, and reports. This checklist is passed to
+a generic read-only reviewer. Do not execute DDL/DML, edit any file, update
+`builder/improve.html`, or call module-result or human-input tools. Any later
+wording such as improve, apply, edit, update, add, drop, migrate, or resolve is a
+recommendation for the **Pulse Fixer**, not permission for this reviewer to
+mutate state.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
-Load `get_reference_doc(kind="assumption-audit")` and apply its DB lens within this command's boundaries. Check whether schemas, enums, keys, or cardinality unnecessarily hardcode one source, channel, entity type, group, or current tactic. Improve safe contracts, but do not perform speculative row migrations; surface a consequential strategy/schema choice under Pulse's Assumptions challenged when business judgment is required.
+EXECUTION
+
+The parent Workshop/Pulse agent first loads `assumption-audit`, then passes its
+relevant lens and this rendered checklist to
+`call_generic_agent` in an instruction beginning with `READ-ONLY REVIEW` and
+waits for its synchronous result. The parent then validates and applies any
+bounded safe edit. Do not create a dedicated DB-maintenance agent or use
+`run_in_background` for this review.
+
+Return only: `verdict`, ordered `findings`, precise `evidence`, a bounded
+`recommended_fix`, migration risk, verification commands, and
+`user_judgment_required` with reason. Use the remaining document only as the
+database-health audit checklist.
+
+Read `builder/improve.html` for prior context and matching open findings, but do
+not write it. The Pulse Fixer owns the consolidated log update.
+
+Apply the parent-provided `assumption-audit` DB lens within this command's boundaries. Check whether schemas, enums, keys, or cardinality unnecessarily hardcode one source, channel, entity type, group, or current tactic. Recommend safe contract changes, but do not perform speculative row migrations; surface a consequential strategy/schema choice for Pulse's Assumptions challenged when business judgment is required.
 
 BOUNDARIES
 
-1. The applied tool is `improve_db`; call it once with a concrete `instruction` string and optional `focus`.
+1. Return one concrete recommended instruction and optional focus for the Pulse Fixer; there is no separate DB-maintenance tool.
 2. Work only on `db/` files (`db/db.sqlite` + `db/README.md`). Do not edit `planning/`, `reports/`, `knowledgebase/`, `learnings/`, `evaluation/`, or run outputs from this command.
 3. Treat `db/db.sqlite` as structured state, not scratch output. Never delete rows, transform column values, or rewrite data semantics unless the user explicitly asks for that migration.
 4. Prefer contract and schema improvements: `db/README.md`, table schema consistency, PRIMARY KEY / index clarity, report compatibility (the `sql` widgets resolve), and data integrity.
@@ -46,13 +69,11 @@ Use `mode="cross_step"` when improving DB requires the plan, multiple writer/con
 
 If unsure, use `mode="auto"` or omit mode.
 
-ACTION
+REVIEW OUTPUT
 
 1. Build one concrete instruction. It must mention the objective, the user's focus if provided, the DB files or report widgets in scope, and whether row-data migration is explicitly allowed.
-2. Call:
-
-`improve_db(mode="auto", instruction="<specific DB improvement instruction>", focus="<optional focus>")`
-
-3. The tool runs in the background and returns an `execution_id`. Do not babysit it with `sleep`, repeated `list_executions`, or repeated `query_step` calls. Use `query_step(step_id="improve-db", execution_id="<returned execution_id>")` at most once for an immediate status/result check. If it is still running, stop and rely on `[AUTO-NOTIFICATION]` to resume when complete.
-4. When complete via `[AUTO-NOTIFICATION]` or a one-off result check, summarize tables/schema changed in `db/db.sqlite`, `db/README.md` contract improvements, report compatibility changes, any row/data migrations performed, and remaining follow-up work.
-5. If this is part of an optimizer/improvement pass, append a short note to `builder/improve.html` after the tool completes; otherwise report in chat only.
+2. Return the instruction and mode as `recommended_fix`.
+3. Name tables/contracts/indexes/assets affected, report/eval compatibility
+   impact, whether a row migration would be required, and exact verification
+   commands such as `PRAGMA integrity_check`.
+4. The Pulse Fixer owns every DB/file mutation and `builder/improve.html` update.

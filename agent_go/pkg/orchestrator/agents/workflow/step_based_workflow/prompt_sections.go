@@ -141,7 +141,7 @@ func contextOutputMatchesDependency(output string, dep string) bool {
 // patching a step's main.py MUST follow. Shared by:
 //   - the execution agent in scripted mode (via GetScriptedModeInstructions)
 //   - review_step_code (detects drift from these rules)
-//   - harden_workflow (patches main.py directly during eval-driven fixes)
+//   - the parent Pulse Fixer (applies reviewed eval-driven fixes)
 //
 // The workshop chat agent prompt does NOT call this anymore — it gets a short
 // cheat sheet and loads the full rules on demand via
@@ -244,7 +244,7 @@ func browserAuthoringRulesIfBrowserEnabled(p browserCapabilityProvider) string {
 // BrowserAuthoringRulesFromTemplateVars returns BuildBrowserAuthoringRules() when
 // templateVars["HasBrowserAccess"] is "true", else "". Use at call sites that don't
 // have direct access to the orchestrator (e.g. agent Execute methods that receive
-// only templateVars — harden_workflow, review_step_code).
+// only templateVars, including review_step_code).
 func BrowserAuthoringRulesFromTemplateVars(templateVars map[string]string) string {
 	if templateVars["HasBrowserAccess"] == "true" {
 		return BuildBrowserAuthoringRules()

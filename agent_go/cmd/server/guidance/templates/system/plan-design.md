@@ -93,7 +93,7 @@ Use `routing` when the next step must be **exactly one of N mutually exclusive p
 
 Routing has one mode: leave `description` and `context_output` empty, read an existing route file/source, then switch. The common case is that the builder/caller selects the fixed branch from the user's request with `route_selections`. If an agent/probe/judgment is needed, add a prior `regular` step that writes `route_selection.json` and have the routing step consume it with `route_source_file` or `context_dependencies: ["route_selection.json"]`. Each `routes` entry needs a stable `route_id`, a `condition` explaining when that route should be selected, and a `next_step_id` that points to another step in the plan (routing routes do **not** define inline sub-agents — they branch to existing steps); set `default_route_id` only as a missing-file fallback.
 
-For full route structure, file contract, and anti-patterns, call `get_reference_doc(kind="routing")` — load before designing or hardening any routing step.
+For full route structure, file contract, and anti-patterns, call `get_reference_doc(kind="routing")` — load before designing or repairing any routing step.
 
 ### Step 7: Design Validation
 

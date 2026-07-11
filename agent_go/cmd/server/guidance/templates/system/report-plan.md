@@ -73,7 +73,7 @@ A report answers questions and drives action — it is not a mirror of the datab
 For workflow dashboards, the report should help the user measure and track the workflow's goal, not just browse outputs. When evidence exists, make the first screen answer:
 - **Goal status:** whether the latest evidence is on track against `soul.md` success criteria.
 - **Tracked success signals:** for each important success criterion, show the current value/state, target or baseline, trend/delta vs prior run/window, last updated, and status. If a criterion cannot be measured yet, say exactly what evidence is missing.
-- **Current plan/strategy:** the current workflow strategy or active plan draft/replan proposal in plain language, especially after Goal Advisor changed direction.
+- **Current plan/strategy:** the current workflow strategy or active Goal Advisor proposal in plain language, especially after Goal Advisor changed direction.
 - **Issues and blockers:** broken steps, missing/stale data, eval failures, Pulse open findings, operational blockers, and material cost/time outliers.
 - **What changed since last run:** trend/delta or a short latest-run note so the user can see movement without opening logs.
 - **Evidence path:** the database/eval/Pulse source behind the claim, linked or summarized without exposing internal file noise to nontechnical users.
@@ -135,7 +135,7 @@ The content section above decides WHAT to show; these make it READABLE when you 
 If an HTML report renders empty because the underlying `db/db.sqlite` table hasn't been populated yet, you have `execute_step` and `run_full_workflow` available. Use them to make the data exist:
 - For a single missing table, run only the step(s) that write it: `execute_step(step_id, group_name)`.
 - For a fresh workflow with no runs yet, `run_full_workflow(group_name="...", disable_eval=true)` is the right fallback for report data. Report authoring does not own eval refreshes; omit `disable_eval=true` only when the user explicitly asks to refresh eval-backed data.
-- Diagnose first with `review_workflow_results` and `get_report_plan` — don't run steps blindly. The report's `window.report.query` might be hitting the wrong table/column, in which case the fix is in the HTML, not in the data.
+- Diagnose first with current Pulse/eval evidence and `get_report_plan` — don't run steps blindly. The report's `window.report.query` might be hitting the wrong table/column, in which case the fix is in the HTML, not in the data.
 
 ### What you do NOT do here
 

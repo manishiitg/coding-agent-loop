@@ -307,7 +307,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 		loaded := false
 		if isInnerStep && setup.Context.StepPathOverride != "" {
 			// For inner steps, read from the overridden step path
-			if r, ok := hcpo.loadStepResultFromLogsByPath(ctx, setup.Context.StepPathOverride); ok {
+			if r, ok := hcpo.loadStepResultFromLogsByPath(ctx, stepInfo.Step.GetID(), setup.Context.StepPathOverride); ok {
 				result = r
 				loaded = true
 			}
@@ -485,9 +485,9 @@ func appendInstructionsToStep(step PlanStepInterface, instructions string) PlanS
 	return updatedStep
 }
 
-// loadStepResultFromLogsByPath reads the latest execution result from logs using a custom step path.
-// This is used for inner steps that use a non-standard path (e.g., "step-3-sub-login-expert").
-func (hcpo *StepBasedWorkflowOrchestrator) loadStepResultFromLogsByPath(ctx context.Context, stepPath string) (string, bool) {
+// loadStepResultFromLogsByPath reads the latest execution result using the same
+// stable step identity as the runtime writer. stepPath remains structural context.
+func (hcpo *StepBasedWorkflowOrchestrator) loadStepResultFromLogsByPath(ctx context.Context, stepID, stepPath string) (string, bool) {
 	var validationWorkspacePath string
 	if hcpo.selectedRunFolder != "" {
 		validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
@@ -495,7 +495,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) loadStepResultFromLogsByPath(ctx cont
 		validationWorkspacePath = hcpo.GetWorkspacePath()
 	}
 
-	executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, "", stepPath)
+	executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, stepID, stepPath)
 	var latestResult string
 	var latestAttempt, latestIteration int
 

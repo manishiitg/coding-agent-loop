@@ -381,6 +381,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 
 		// Run execution phase for this group
 		err = hcpo.runExecutionPhase(ctx, breakdownSteps, iteration, progress, groupSetup.StartFromStep, groupSetup.Context)
+		persistenceErr := error(nil)
+		if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
+			flushCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+			persistenceErr = cab.WaitForTokenPersistence(flushCtx)
+			cancel()
+			if persistenceErr != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("Workflow execution finished, but cost persistence did not: %v", persistenceErr))
+			}
+		}
 
 		groupDuration := time.Since(groupStartTime)
 		remainingGroups := totalGroups - groupIndex - 1
@@ -402,8 +411,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 		hcpo.GetLogger().Info(fmt.Sprintf("✅ Batch execution: group %s completed successfully", group.Name))
 		result.CompletedGroups++
 		result.CompletedGroupNames = append(result.CompletedGroupNames, group.Name)
-		hcpo.finalizeRunMetadata(ctx, runFolder, "completed", groupStartTime, groupStartTime.Add(groupDuration))
-
 		// Auto-evaluation: Run scoring for this group if evaluation_plan.json exists
 		disableEval := hcpo.executionOptions != nil && hcpo.executionOptions.DisableEval
 		if disableEval {
@@ -423,6 +430,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 			// (design doc §2) is a live frontend view, produced on demand by the user
 			// opening the report panel.
 		}
+		// Evaluation emits its own token events, so drain again after it finishes.
+		if postEvalErr := hcpo.waitForTokenPersistence(); postEvalErr != nil {
+			if persistenceErr == nil {
+				persistenceErr = postEvalErr
+			} else {
+				persistenceErr = fmt.Errorf("%v; %w", persistenceErr, postEvalErr)
+			}
+		}
+		completionStatus := "completed"
+		if persistenceErr != nil {
+			completionStatus = "completed_with_persistence_error"
+		}
+		hcpo.finalizeRunMetadata(ctx, runFolder, completionStatus, groupStartTime, time.Now())
 
 		// If single step mode was active, stop batch execution after this group
 		// Single step mode should only run one group, not continue to additional groups
@@ -453,6 +473,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 	}
 
 	return result, nil
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) waitForTokenPersistence() error {
+	cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge)
+	if !ok {
+		return nil
+	}
+	flushCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	defer cancel()
+	return cab.WaitForTokenPersistence(flushCtx)
 }
 
 // determineBaseIterationFolder determines the base iteration folder based on run mode

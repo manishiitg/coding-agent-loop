@@ -650,7 +650,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceUserMessage(ctx
 	if writeAccess.Learnings && hcpo.shouldSkipDirectLearningsDueToLock(ctx, step.AgentConfigs, stepIndex) {
 		writeAccess.Learnings = false
 	}
-	readPaths, writePaths := hcpo.setupMessageSequenceFolderGuard(stepPath, step.GetID(), writeAccess)
+	writeAccess = hcpo.constrainMessageSequenceWriteAccess(getAgentConfigs(step), writeAccess)
+	readPaths, writePaths := hcpo.setupMessageSequenceFolderGuard(stepPath, step.GetID(), getAgentConfigs(step), writeAccess)
 	runtime, agentCtx, err := hcpo.getMessageSequenceRuntime(ctx, step, stepPath, session, readPaths, writePaths)
 	if err != nil {
 		return "", err
@@ -748,7 +749,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceCodeItem(ctx co
 	var output string
 	var exitCode int
 	for attempt := 0; attempt <= maxRepairAttempts; attempt++ {
-		output, exitCode, err = hcpo.runMessageSequencePython(ctx, stepPath, step.GetID(), item, mainRel, codeRel, itemRel)
+		output, exitCode, err = hcpo.runMessageSequencePython(ctx, stepPath, step.GetID(), getAgentConfigs(step), item, mainRel, codeRel, itemRel)
 		hcpo.writeMessageSequenceCodeResult(ctx, item, itemRel, mainRel, output, exitCode, err)
 		if err == nil && exitCode == 0 {
 			if item.SaveRepaired && attempt > 0 {
@@ -797,8 +798,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) writeMessageSequenceCodeResult(ctx co
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceCodeRepair(ctx context.Context, step *MessageSequencePlanStep, item MessageSequenceItem, stepPath string, session *messageSequenceSession, itemRel string, codeRel string, failureContext string, attempt int) error {
-	writeAccess := resolveMessageSequenceItemWriteAccess(item)
-	readPaths, writePaths := hcpo.setupMessageSequenceFolderGuard(stepPath, step.GetID(), writeAccess)
+	writeAccess := hcpo.constrainMessageSequenceWriteAccess(getAgentConfigs(step), resolveMessageSequenceItemWriteAccess(item))
+	readPaths, writePaths := hcpo.setupMessageSequenceFolderGuard(stepPath, step.GetID(), getAgentConfigs(step), writeAccess)
 	readPaths = append(readPaths, itemRel, codeRel)
 	writePaths = append(writePaths, itemRel, codeRel)
 	override := &messageSequenceFolderGuardOverride{
@@ -978,7 +979,15 @@ func resolveMessageSequenceItemWriteAccess(item MessageSequenceItem) MessageSequ
 	return access
 }
 
-func (hcpo *StepBasedWorkflowOrchestrator) setupMessageSequenceFolderGuard(stepPath string, stepID string, itemWriteAccess MessageSequenceWriteAccess) (readPaths, writePaths []string) {
+func (hcpo *StepBasedWorkflowOrchestrator) constrainMessageSequenceWriteAccess(stepConfig *AgentConfigs, requested MessageSequenceWriteAccess) MessageSequenceWriteAccess {
+	return MessageSequenceWriteAccess{
+		DB:            requested.DB && resolveDBAccess(stepConfig) == DBAccessReadWrite,
+		Knowledgebase: requested.Knowledgebase && kbAccessAllowsWrite(resolveKnowledgebaseAccess(stepConfig, hcpo.UseKnowledgebase())) && resolveKnowledgebaseWriteMethod(stepConfig) == KBWriteMethodDirect,
+		Learnings:     requested.Learnings && resolveLearningsAccess(stepConfig) == LearningsAccessReadWrite,
+	}
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) setupMessageSequenceFolderGuard(stepPath string, stepID string, stepConfig *AgentConfigs, itemWriteAccess MessageSequenceWriteAccess) (readPaths, writePaths []string) {
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	runWorkspacePath := baseWorkspacePath
 	if hcpo.selectedRunFolder != "" {
@@ -997,18 +1006,25 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupMessageSequenceFolderGuard(stepP
 		executionWorkspacePath,
 		fmt.Sprintf("%s/soul", baseWorkspacePath),
 		fmt.Sprintf("%s/builder", baseWorkspacePath),
-		getDBPath(baseWorkspacePath),
-		getKnowledgebasePath(baseWorkspacePath),
-		filepath.Join(baseWorkspacePath, LearningsFolderName, GlobalLearningID),
+	}
+	dbAccess := resolveDBAccess(stepConfig)
+	kbAccess := resolveKnowledgebaseAccess(stepConfig, hcpo.UseKnowledgebase())
+	learningsAccess := resolveLearningsAccess(stepConfig)
+	readPaths = append(readPaths, getDBPath(baseWorkspacePath))
+	if kbAccessAllowsRead(kbAccess) {
+		readPaths = append(readPaths, getKnowledgebasePath(baseWorkspacePath))
+	}
+	if learningsAccess != LearningsAccessNone {
+		readPaths = append(readPaths, filepath.Join(baseWorkspacePath, LearningsFolderName, GlobalLearningID))
 	}
 	writePaths = []string{stepFolderPath, downloadsPath}
-	if itemWriteAccess.DB {
+	if itemWriteAccess.DB && dbAccess == DBAccessReadWrite {
 		writePaths = append(writePaths, getDBPath(baseWorkspacePath))
 	}
-	if itemWriteAccess.Knowledgebase {
+	if itemWriteAccess.Knowledgebase && kbAccessAllowsWrite(kbAccess) && resolveKnowledgebaseWriteMethod(stepConfig) == KBWriteMethodDirect {
 		writePaths = append(writePaths, filepath.Join(getKnowledgebasePath(baseWorkspacePath), "notes"))
 	}
-	if itemWriteAccess.Learnings {
+	if itemWriteAccess.Learnings && learningsAccess == LearningsAccessReadWrite {
 		writePaths = append(writePaths, filepath.Join(baseWorkspacePath, LearningsFolderName, GlobalLearningID))
 	}
 	readPaths = hcpo.appendCDPHostDownloadsReadPath(readPaths)
@@ -1072,9 +1088,9 @@ func buildMessageSequenceAccessNote(writeAccess MessageSequenceWriteAccess) stri
 	return "Reads are available for execution outputs, soul, builder logs, db/, knowledgebase/, and learnings/_global/. Writes for this item are limited to: " + strings.Join(grants, ", ") + "."
 }
 
-func (hcpo *StepBasedWorkflowOrchestrator) runMessageSequencePython(ctx context.Context, stepPath string, stepID string, item MessageSequenceItem, mainRel string, codeRel string, itemRel string) (string, int, error) {
+func (hcpo *StepBasedWorkflowOrchestrator) runMessageSequencePython(ctx context.Context, stepPath string, stepID string, stepConfig *AgentConfigs, item MessageSequenceItem, mainRel string, codeRel string, itemRel string) (string, int, error) {
 	writeAccess := resolveMessageSequenceItemWriteAccess(item)
-	readPaths, writePaths := hcpo.setupMessageSequenceFolderGuard(stepPath, stepID, writeAccess)
+	readPaths, writePaths := hcpo.setupMessageSequenceFolderGuard(stepPath, stepID, stepConfig, writeAccess)
 	itemAbs := hcpo.messageSequenceAbsPath(itemRel)
 	codeAbs := hcpo.messageSequenceAbsPath(codeRel)
 	mainAbs := hcpo.messageSequenceAbsPath(mainRel)

@@ -1,4 +1,4 @@
-Run the Goal Advisor module for this workflow using actual retained run evidence. This is not routine Pulse maintenance. Pulse Gate selects this module when strategic judgment is due; a user can also invoke it manually. Routine Pulse modules own per-run QA, hardening, artifact review, cost/time reporting, backup, publish, notify, and normal report/eval repairs. Goal Advisor owns strategic judgment: why the workflow is not meeting `soul.md` goals even when it runs cleanly, what important lever the current plan misses, and whether a structural replan or proposal is warranted.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+Run the Goal Advisor module for this workflow using actual retained run evidence. This is not routine Pulse maintenance. Pulse Gate selects this module when strategic judgment is due; a user can also invoke it manually. Routine Pulse modules own per-run QA, bounded reliability fixes, artifact review, cost/time reporting, backup, publish, notify, and normal report/eval repairs. Goal Advisor owns strategic judgment: why the workflow is not meeting `soul.md` goals even when it runs cleanly, what important lever the current plan misses, and whether a structural plan change or proposal is warranted.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 Load `get_reference_doc(kind="assumption-audit")` and apply it as the strategy lens. Repeated agent-written restrictions are not user constraints; challenge architecture, tactics, channels, sources, thresholds, and proxies that may cap the goal, while preserving explicit user-approved boundaries and verified external facts.
 
@@ -12,7 +12,7 @@ Think like an experienced domain/operator advisor, not a mechanic for the curren
   quality, cost, time-to-outcome, reach, or risk?
 - Is there enough cross-run evidence to change the plan now, or should this stay proposal-only?
 
-Do not call `harden_workflow`, `improve_kb`, `improve_learnings`, or `improve_db`. If you find operational breakage, stale KB/learnings/db, or a routine report/eval correctness bug, record it for Pulse/manual maintenance with evidence and stop there. Goal Advisor may update eval/report measurement only when the change directly affects strategy or goal interpretation. A check accepting an older receipt/artifact for the current run, wrong `TARGET_RUN_PATH` wiring, missing fail-closed behavior, or a provider failure reported as success is operational correctness: never turn it into a Goal Advisor proposal or human-input question.
+Do not launch nested maintenance reviewers. If you find operational breakage, stale KB/learnings/db, or a routine report/eval correctness bug, route it to Pulse Bug Review/Fixer with evidence and stop there. Goal Advisor may update eval/report measurement only when the change directly affects strategy or goal interpretation. A check accepting an older receipt/artifact for the current run, wrong `TARGET_RUN_PATH` wiring, missing fail-closed behavior, or a provider failure reported as success is operational correctness: never turn it into a Goal Advisor proposal or human-input question.
 
 SOURCE-OF-TRUTH HIERARCHY
 1. `soul/soul.md` defines stable intent: objective, success criteria, and only explicit user-approved constraints. Architecture, implementation choices, and agent-inferred assumptions found there are not automatically authoritative; challenge them and keep the current "how" in plan/config artifacts.
@@ -71,7 +71,7 @@ For each configured group with evidence:
    When a trustworthy lagging outcome is repeatedly flat, run the strategic
    review with the evidence available and label causal uncertainty honestly.
    Operational failures may make one tactic inconclusive, but they do not erase
-   the business result. Pulse can run Harden and Goal Advisor in the same cycle.
+   the business result. Pulse can run Bug Review and Goal Advisor in the same cycle.
    Repeated operational fragility can itself be evidence that the current plan is
    too complex or poorly matched to the goal. If evidence cannot justify a full
    proposal, propose the smallest strategy-discriminating experiment instead of
@@ -237,9 +237,9 @@ PHASE 4 - APPLY BOUNDS
 CLOSE-OUT
 Update `builder/improve.html` before finishing. Follow `get_reference_doc(kind="review-improve-log")`.
 - Refresh the top `Assumptions challenged` section: keep at most three active consequential assumptions, remove resolved ones, and never present an explicit user constraint as merely inferred.
-- Use `Decision - Goal Advisor - Applied` for applied replan/eval/report measurement changes.
+- Use `Decision - Goal Advisor - Applied` for applied plan/eval/report measurement changes.
 - Use `Decision - Goal Advisor - Proposed` for proposal-only advisor ideas.
-- Use `<div class="entry decision major">` for material replans, measurement changes, user-facing dashboard interpretation changes, and high-leverage proposals.
+- Use `<div class="entry decision major">` for material plan changes, measurement changes, user-facing dashboard interpretation changes, and high-leverage proposals.
 - For a 10x/headroom proposal or experiment, use this stable machine-readable
   contract (visible labels may be styled to match the page):
   `<div class="entry decision major advisor-experiment" data-advisor-experiment-id="advisor-exp-<stable-slug>" data-input-id="plan-proposal-<stable-slug>" data-status="<proposed|deferred|approved|running|measuring|blocked|adopted|rejected|retired>" data-review-after="<ISO date/time, run id, or outcome milestone>">`.

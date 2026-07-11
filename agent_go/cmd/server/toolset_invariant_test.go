@@ -38,11 +38,10 @@ func knownWorkshopRegisteredToolNamesOutsideWorkflowPool() map[string]string {
 		"run_full_workflow", "run_goal_advisor_review",
 	)
 	add("workshop review/maintenance tools",
-		"update_step_config", "get_step_prompts", "analyze_step",
-		"improve_learnings", "improve_kb", "improve_db",
-		"review_plan", "review_artifact_sync", "review_workflow_results",
+		"update_step_config", "get_step_prompts",
+		"review_plan", "review_artifact_sync", "mark_changelog_artifact_reviewed",
 		"review_workflow_timing", "review_workflow_costs", "review_step_code",
-		"harden_workflow", "get_cost_summary",
+		"get_cost_summary",
 		"run_full_evaluation", "validate_evaluation_plan",
 	)
 	add("workshop workflow/config tools",
@@ -154,14 +153,20 @@ func TestToolSetInvariants(t *testing.T) {
 	for _, n := range []string{
 		"create_plan", "add_regular_step", "add_routing_step", "add_human_input_step",
 		"update_regular_step", "delete_plan_steps",
-		"execute_step", "harden_workflow", "create_human_input_request",
+		"execute_step", "create_human_input_request",
 		"update_workflow_config", "update_step_config", "get_report_plan",
 		"list_schedules", "update_schedule", "get_schedule_runs",
 		"execute_shell_command", "diff_patch_workspace_file",
 		"get_pulse_module_state", "record_pulse_worklist", "mark_pulse_module_result", "mark_pulse_final_command_result",
+		"mark_changelog_artifact_reviewed",
 	} {
 		if !workshop[n] {
 			t.Fatalf("workshop allow-list missing expected tool %q", n)
+		}
+	}
+	for _, removed := range []string{"improve_learnings", "improve_kb", "improve_db"} {
+		if workshop[removed] {
+			t.Fatalf("workshop allow-list still exposes removed dedicated maintenance tool %q", removed)
 		}
 	}
 
@@ -169,7 +174,7 @@ func TestToolSetInvariants(t *testing.T) {
 	for _, n := range todo_creation_human.GetToolsForWorkshopMode("run") {
 		run[n] = true
 	}
-	for _, n := range []string{"record_pulse_worklist", "mark_pulse_module_result", "mark_pulse_final_command_result"} {
+	for _, n := range []string{"record_pulse_worklist", "mark_pulse_module_result", "mark_pulse_final_command_result", "mark_changelog_artifact_reviewed"} {
 		if run[n] {
 			t.Fatalf("run allow-list must not expose Pulse mutation tool %q", n)
 		}

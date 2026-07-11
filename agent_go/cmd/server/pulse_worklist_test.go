@@ -30,8 +30,8 @@ func TestPulseWorklistUsesWorkflowLocalDB(t *testing.T) {
 	}
 
 	recorded, err := recordPulseWorklist(ctx, workspacePath, "pulse-run-1", completePulseWorklistDecisions(map[string]PulseWorklistDecision{
-		pulseModuleHarden: {
-			Module:       pulseModuleHarden,
+		pulseModuleBugReview: {
+			Module:       pulseModuleBugReview,
 			Due:          true,
 			Reason:       "Latest run skipped a required step.",
 			Evidence:     []string{"runs/iteration-0/logs/step-a"},
@@ -62,14 +62,14 @@ func TestPulseWorklistUsesWorkflowLocalDB(t *testing.T) {
 	if !ok {
 		t.Fatal("get worklist ok=false, want true")
 	}
-	if got := worklist[pulseModuleHarden].LastDecision; got != "due" {
-		t.Fatalf("harden decision = %q, want due", got)
+	if got := worklist[pulseModuleBugReview].LastDecision; got != "due" {
+		t.Fatalf("bug review decision = %q, want due", got)
 	}
 	if got := worklist[pulseModuleLearningHealth].LastDecision; got != "skipped" {
 		t.Fatalf("learning decision = %q, want skipped", got)
 	}
 
-	updated, err := markPulseModuleResult(ctx, workspacePath, pulseModuleHarden, "pulse-run-1", "changed", "Harden fixed the skipped step.", []string{"builder/improve.html#decision"})
+	updated, err := markPulseModuleResult(ctx, workspacePath, pulseModuleBugReview, "pulse-run-1", "changed", "Bug Review fixed the skipped step.", []string{"builder/improve.html#decision"})
 	if err != nil {
 		t.Fatalf("mark result: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestPulseWorklistUsesWorkflowLocalDB(t *testing.T) {
 		t.Fatalf("updated state mismatch: %+v", updated)
 	}
 
-	timedOut, err := markPulseModuleResult(ctx, workspacePath, pulseModuleHarden, "pulse-run-1", "timed_out", "Harden exceeded the scheduler wait limit.", []string{"scheduler timeout"})
+	timedOut, err := markPulseModuleResult(ctx, workspacePath, pulseModuleBugReview, "pulse-run-1", "timed_out", "Bug Review exceeded the scheduler wait limit.", []string{"scheduler timeout"})
 	if err != nil {
 		t.Fatalf("mark timed-out result: %v", err)
 	}
@@ -93,13 +93,13 @@ func TestPulseWorklistRequiresCompleteModuleSet(t *testing.T) {
 	workspacePath := "Workflow/example"
 
 	if _, err := recordPulseWorklist(ctx, workspacePath, "pulse-run-1", []PulseWorklistDecision{
-		{Module: pulseModuleHarden, Due: true, Reason: "A step failed."},
+		{Module: pulseModuleBugReview, Due: true, Reason: "A step failed."},
 	}); err == nil {
 		t.Fatal("recordPulseWorklist accepted a partial module list")
 	}
 
 	duplicates := completePulseWorklistDecisions(nil)
-	duplicates[len(duplicates)-1].Module = pulseModuleHarden
+	duplicates[len(duplicates)-1].Module = pulseModuleBugReview
 	if _, err := recordPulseWorklist(ctx, workspacePath, "pulse-run-2", duplicates); err == nil {
 		t.Fatal("recordPulseWorklist accepted duplicate modules")
 	}

@@ -1515,6 +1515,7 @@ export interface StepExecutionLogs {
   knowledgebase_access?: string;
   knowledgebase_write_method?: string;
   knowledgebase_contribution?: string;
+  message_sequence_status?: 'running' | 'completed' | 'failed';
   output_content?: StepOutputContent;  // Actual output file content
   artifacts?: { file_name: string; file_path: string }[]; // Other output files
   validations: ValidationLog[];

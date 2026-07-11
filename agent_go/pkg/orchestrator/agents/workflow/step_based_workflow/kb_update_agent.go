@@ -219,6 +219,14 @@ func renderKBUpdateSystemPrompt(templateVars map[string]string) string {
 
 var kbReorganizeSystemPromptTemplate = MustRegisterTemplate("kbReorganizeSystemPrompt", `# Knowledgebase Reorganize Agent
 
+## READ-ONLY REVIEW OVERRIDE
+This maintenance agent reviews a proposed KB reorganization. Do not create,
+edit, move, merge, rename, compact, or delete files. Do not update _index.json.
+Use shell only for read-only inspection and do not call
+diff_patch_workspace_file. Treat every later mutation instruction as an audit
+criterion. Return: verdict, ordered findings, exact evidence, bounded
+recommended edits for the Pulse Fixer, and whether user judgment is required.
+
 ## Role
 Apply a user-provided transformation to the workspace knowledgebase. You own reads and writes to the per-topic narrative files under `+"`"+`{{.NotesFolderPath}}/`+"`"+` and to `+"`"+`{{.NotesIndexPath}}`+"`"+` for this one operation.
 
@@ -298,9 +306,9 @@ var kbReorganizeUserMessageTemplate = MustRegisterTemplate("kbReorganizeUserMess
 ## Your task
 1. Read `+"`"+`{{.NotesIndexPath}}`+"`"+` and `+"`"+`cat`+"`"+` only the topic files the instruction names — never glob `+"`"+`notes/*.md`+"`"+`.
 2. Decide what changes the instruction implies. State the plan briefly.
-3. Apply the transformation. Follow every rule in the system prompt.
+3. Describe the exact transformation the Pulse Fixer should apply. Do not apply it.
 4. Resync `+"`"+`{{.NotesIndexPath}}`+"`"+` for every touched topic.
-5. Print the final summary line.
+5. Print the structured review result.
 `)
 
 type KBReorganizeAgent struct {
@@ -377,10 +385,19 @@ func renderKBUpdateUserMessage(templateVars map[string]string) string {
 // selected run folder and produces cross-step consolidation work that a single step's
 // KB update agent can't see — cross-step patterns, narrative dedupe across topics,
 // topic consolidation. Runs OUT-OF-BAND from any single step, invoked by the builder
-// via improve_kb(mode="cross_step"). Serialized through kbUpdateQueue so it
+// via the `/improve-knowledge` cross-step checklist. Serialized through kbUpdateQueue so it
 // can't race with per-step KB updates.
 
 var kbConsolidateSystemPromptTemplate = MustRegisterTemplate("kbConsolidateSystemPrompt", `# Knowledgebase Consolidate Agent
+
+## READ-ONLY REVIEW OVERRIDE
+This maintenance agent reviews cross-step KB consolidation opportunities. Do not
+create, edit, move, merge, canonicalize, or delete files. Do not update
+_index.json. Use shell only for read-only inspection and do not call
+diff_patch_workspace_file. Treat every later write instruction as an audit
+criterion. Return: verdict, ordered findings, exact evidence, bounded
+recommended edits for the Pulse Fixer, contradictions requiring user judgment,
+and deferred items.
 
 ## Role
 You are a cross-step consolidation pass over the workspace knowledgebase. You have a privileged, holistic view that the per-step KB update agent does not: you see every step's `+"`"+`knowledgebase_contribution`+"`"+` instruction AND every step's output folder for the selected run. Use this view to do work that is IMPOSSIBLE to do one step at a time — and only that work.
@@ -397,7 +414,7 @@ You own reads and writes to the per-topic narrative files under `+"`"+`{{.NotesF
 
 **Don't — out of scope:**
 - Do NOT extract new observations from step outputs that a step's own KB update agent should have extracted. If a step has a `+"`"+`knowledgebase_contribution`+"`"+` but nothing from it landed in notes, report that as a diagnostic — do not silently re-run the extraction.
-- Do NOT do per-file cleanup that isn't cross-step in nature (compaction, renaming). Those belong to `+"`"+`improve_kb(mode=\"targeted\")`+"`"+`.
+- Do NOT do per-file cleanup that isn't cross-step in nature (compaction, renaming). Those belong to the `+"`"+`/improve-knowledge`+"`"+` targeted checklist and parent fixer.
 - Do NOT touch `+"`"+`learnings/`+"`"+` or `+"`"+`db/`+"`"+`.
 - **Do NOT touch `+"`"+`knowledgebase/context/`+"`"+`** — that folder holds user-supplied runtime business context. It is excluded from consolidation. Read and write only `+"`"+`knowledgebase/notes/`+"`"+`.
 
@@ -439,10 +456,10 @@ var kbConsolidateUserMessageTemplate = MustRegisterTemplate("kbConsolidateUserMe
 ## Your task
 1. Read `+"`"+`{{.NotesIndexPath}}`+"`"+`. Form a picture of the current KB state.
 2. Cross-reference against the step contributions block above. Look for: topic duplicates under different slugs, missing pattern narratives implied by overlapping contributions, contradictions between steps on the same entity.
-3. Scope work to the stated objective. State your plan briefly (which consolidations you will and won't attempt, and why).
+3. Scope the review to the stated objective. State which consolidations you recommend and why.
 4. Apply the consolidations. For each merge or pattern-write, `+"`"+`cat`+"`"+` only the specific topic files or step output files that substantiate the change.
 5. Resync `+"`"+`{{.NotesIndexPath}}`+"`"+` for every touched topic.
-6. Print the final summary line.
+6. Print the structured review result. Do not apply any consolidation.
 `)
 
 type KBConsolidateAgent struct {

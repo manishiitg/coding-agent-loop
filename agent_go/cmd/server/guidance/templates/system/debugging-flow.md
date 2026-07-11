@@ -7,7 +7,8 @@ model — use it to investigate.
 ## Workshop investigation workflow
 
 1. Pick the action that matches the failure: if the workflow path is
-   sound but reliability is broken, run `harden_workflow(group_name?)`.
+   sound but reliability is broken, collect a read-only Bug Review and
+   let the parent Pulse Fixer apply bounded verified repairs.
    If eval verdicts or the goal card show a success-criteria strategy
    gap, create/apply a Goal Advisor plan-change proposal as appropriate.
    For local fixes (description, `validation_schema`, context wiring,
@@ -37,7 +38,7 @@ with the correct approach.
 3. If a step already completed or failed, use
    `debug_step(step_id, group_name=...)` plus targeted reads of run
    outputs/log summaries. For whole-run questions, use
-   `review_workflow_results`, timing, and cost reviews.
+   the relevant timing, cost, eval, report, and Goal Advisor reviews.
 4. Explain the observed failure or data gap in plain English and offer
    retry/skip/help when appropriate.
 5. If the right action is a targeted retry, utility check, or one-off
@@ -46,7 +47,7 @@ with the correct approach.
    `run_full_workflow`.
 6. If fixing requires changing step descriptions, validation, config,
    learnings, KB, db shape, report wiring, or evaluation, tell the
-   user to switch to Workshop. Do not call `harden_workflow` or mutate
+   user to switch to Workshop. Do not mutate
    workflow design artifacts from Run mode.
 
 **When a step is stuck or repeatedly failing in Run mode**, inspect
@@ -73,11 +74,11 @@ The fix should be one of:
 - Update `validation_schema`.
 - Fix context dependencies.
 - Edit/delete learnings.
-- Run `harden_workflow`.
+- Run the Pulse Bug Review/Fixer flow.
 - Create/apply a Goal Advisor plan-change proposal.
 
-**Critical: act, don't just analyze.** `harden_workflow` applies fixes
-directly. For manual fixes, use the same tools — update step
+**Critical: act, don't just analyze.** In Pulse, reviewers remain read-only
+and the parent Pulse Fixer applies the verified changes. For manual fixes, update step
 descriptions, update `validation_schema`, edit learnings. After
 fixing, re-run to verify.
 

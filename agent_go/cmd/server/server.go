@@ -73,7 +73,6 @@ import (
 var (
 	cleanupClaudeCodeProviderSessions = llmproviders.CleanupClaudeCodeTmuxSessions
 	cleanupCodexCLIProviderSessions   = llmproviders.CleanupCodexCLIInteractiveSessions
-	cleanupGeminiCLIProviderSessions  = llmproviders.CleanupGeminiCLIInteractiveSessions
 	cleanupCursorCLIProviderSessions  = llmproviders.CleanupCursorCLIInteractiveSessions
 	cleanupAgyCLIProviderSessions     = llmproviders.CleanupAgyCLIInteractiveSessions
 	cleanupPiCLIProviderSessions      = llmproviders.CleanupPiCLIInteractiveSessions
@@ -518,7 +517,7 @@ type QueryRequest struct {
 	PresetQueryID   string                  `json:"preset_query_id,omitempty"`
 	LLMGuidance     string                  `json:"llm_guidance,omitempty"` // LLM guidance message
 	// Code execution mode: When enabled, only virtual tools are added to LLM
-	// MCP tools are accessed via generated Go code using discover_code_files and write_code
+	// MCP tools are accessed through generated scripts using the on-demand HTTP API specification.
 	UseCodeExecutionMode bool `json:"use_code_execution_mode,omitempty"`
 	// Execution options from frontend (for workflow execution phase)
 	ExecutionOptions *ExecutionOptions `json:"execution_options,omitempty"`
@@ -1773,7 +1772,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Consolidated workspace state endpoint (NEW - loads everything in one call)
 	apiRouter.HandleFunc("/workspace/state", api.handleLoadWorkspaceState).Methods("GET", "OPTIONS")
 
-	// Legacy individual endpoints (kept for backward compatibility)
+	// Focused workflow endpoints used for mutations and incremental refreshes.
 	apiRouter.HandleFunc("/workflow/run-folders", api.handleGetRunFolders).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/run-folder", api.handleCreateRunFolder).Methods("POST", "OPTIONS")
 	// /workflow/progress endpoint removed — steps_done.json progress tracking no longer consumed by frontend
@@ -2033,7 +2032,6 @@ func cleanupCodingAgentInteractiveSessions(phase string) {
 
 	cleanupProvider("CLAUDE-CODE", cleanupClaudeCodeProviderSessions)
 	cleanupProvider("CODEX-CLI", cleanupCodexCLIProviderSessions)
-	cleanupProvider("GEMINI-CLI", cleanupGeminiCLIProviderSessions)
 	cleanupProvider("CURSOR-CLI", cleanupCursorCLIProviderSessions)
 	cleanupProvider("AGY-CLI", cleanupAgyCLIProviderSessions)
 	cleanupProvider("PI-CLI", cleanupPiCLIProviderSessions)
@@ -3109,7 +3107,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Inject merged API keys (env + workspace) into LLM config for workflow execution.
 		// Without this, workflow agents (todo task orchestrators, sub-agents) won't have
-		// provider API keys and CLI providers like gemini-cli will fail.
+		// provider API keys and authenticated CLI providers will fail.
 		workflowLLMConfig := req.LLMConfig
 		if workflowLLMConfig == nil {
 			workflowLLMConfig = &orchestrator.LLMConfig{}
@@ -3860,7 +3858,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Create new agent with streamCtx instead of r.Context()
 		log.Printf("[AGENT CONFIG DEBUG] Creating agent with ServerName: %s, UseCodeExecutionMode: %v", serverList, useCodeExecutionMode)
-		claudeCodePersistentInteractive, codexPersistentInteractive, geminiPersistentInteractive, cursorPersistentInteractive, agyPersistentInteractive, piPersistentInteractive := codingAgentPersistentInteractiveFlags(finalProvider)
+		claudeCodePersistentInteractive, codexPersistentInteractive, cursorPersistentInteractive, agyPersistentInteractive, piPersistentInteractive := codingAgentPersistentInteractiveFlags(finalProvider)
 		claudeCodeTransport := codingAgentClaudeCodeChatTransport(finalProvider)
 		chatWorkingFolder := perUserChatsFolder
 		if isWorkflowPhase && workflowPhaseFolder != "" && workflowPhaseFolder != "default_workspace" {
@@ -3891,11 +3889,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Detailed LLM configuration from frontend (unified fallback structure)
 			Fallbacks: fallbacks,
 			// Code execution mode: When enabled, only virtual tools are added to LLM
-			// MCP tools are accessed via generated Go code using discover_code_files and write_code
+			// MCP tools are accessed through generated scripts using the on-demand HTTP API specification.
 			UseCodeExecutionMode:                   useCodeExecutionMode,
 			ClaudeCodePersistentInteractiveSession: claudeCodePersistentInteractive,
 			CodexPersistentInteractiveSession:      codexPersistentInteractive,
-			GeminiPersistentInteractiveSession:     geminiPersistentInteractive,
 			CursorPersistentInteractiveSession:     cursorPersistentInteractive,
 			AgyPersistentInteractiveSession:        agyPersistentInteractive,
 			CursorBridgeToolsMode:                  cursorPersistentInteractive,
@@ -4389,42 +4386,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 					refreshMultiAgentDelegationTools = registerDelegationTools
 
-					// Register Chief workflow execution tools. This is currently
-					// disabled; users run workflows manually from the automation UI.
-					wfRunTools := createWorkflowRunTools()
-					wfRunExecutors := createWorkflowRunExecutors(api)
-					for _, tool := range wfRunTools {
-						if tool.Function == nil {
-							continue
-						}
-						toolName := tool.Function.Name
-						if exec, exists := wfRunExecutors[toolName]; exists {
-							var params map[string]interface{}
-							if tool.Function.Parameters != nil {
-								paramsBytes, _ := json.Marshal(tool.Function.Parameters)
-								json.Unmarshal(paramsBytes, &params)
-							}
-							// Wrap to inject session context
-							capturedExec := exec
-							wrappedExec := func(ctx context.Context, args map[string]interface{}) (string, error) {
-								ctx = context.WithValue(ctx, virtualtools.BGAgentSessionIDKey, sessionID)
-								return capturedExec(ctx, args)
-							}
-							if err := delegationAgent.RegisterCustomToolWithTimeout(
-								toolName,
-								tool.Function.Description,
-								params,
-								wrappedExec,
-								0,
-								delegationCategory,
-							); err != nil {
-								logfWithContext(queryLogCtx, "[WORKFLOW_RUN_TOOLS] Failed to register %s: %v", toolName, err)
-							} else {
-								logfWithContext(queryLogCtx, "[WORKFLOW_RUN_TOOLS] Registered %s", toolName)
-							}
-						}
-					}
-
 					// Register workflow schedule tools (list/create/update/delete/trigger/get-runs)
 					schedTools := createWorkflowScheduleTools()
 					schedExecutors := createWorkflowScheduleExecutors(api, currentUserID)
@@ -4514,7 +4475,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// In plan delegation mode (multi-agent), also include human tools (human_feedback)
 			// Register each custom tool with the agent
-			// This will trigger code generation and update the registry
+			// This updates the custom-tool registry and invalidates affected API specifications.
 			// Note: Workspace tools are already registered above, skip them in allTools
 			registeredCount := 0
 			for _, tool := range allTools {
@@ -4570,7 +4531,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 								}
 							}
 
-							// Register the tool - this triggers code generation
+							// Register the tool and refresh the relevant runtime metadata.
 							if err := underlyingAgent.RegisterCustomTool(
 								toolName,
 								tool.Function.Description,
@@ -5310,8 +5271,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				llmproviders.CloseAgyCLIInteractiveSessionForOwner(sessionID, reason)
 			case "cursor-cli":
 				llmproviders.CloseCursorCLIInteractiveSessionForOwner(sessionID, reason)
-			case "gemini-cli":
-				llmproviders.CloseGeminiCLIInteractiveSessionForOwner(sessionID, reason)
 			case "codex-cli":
 				llmproviders.CloseCodexCLIInteractiveSessionForOwner(sessionID, reason)
 			case "claude-code":
@@ -5975,20 +5934,6 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 				runtime.ResumeFlag = "--resume"
 				log.Printf("[CLAUDE CODE] Saved session ID %s for session %s", sid, sessionID)
 			}
-		case "gemini-cli":
-			sid := strings.TrimSpace(underlyingAgent.GeminiSessionID)
-			dirID := strings.TrimSpace(underlyingAgent.GeminiProjectDirID)
-			if sid != "" {
-				runtime.ExternalSessionID = sid
-				runtime.ResumeSupported = true
-				runtime.ResumeFlag = "--resume"
-				log.Printf("[GEMINI CLI] Saved session ID %s for session %s", sid, sessionID)
-			}
-			if dirID != "" {
-				workspace.SetSessionGeminiProjectDirID(sessionID, dirID)
-				runtime.ProjectDirID = dirID
-				log.Printf("[GEMINI CLI] Saved project dir ID %s for session %s", dirID, sessionID)
-			}
 		case "codex-cli":
 			if sid := strings.TrimSpace(underlyingAgent.CodexSessionID); sid != "" {
 				runtime.ExternalSessionID = sid
@@ -6090,8 +6035,6 @@ func codingAgentHasNativeResume(provider string, underlyingAgent *mcpagent.Agent
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "claude-code":
 		return strings.TrimSpace(underlyingAgent.ClaudeCodeSessionID) != ""
-	case "gemini-cli":
-		return strings.TrimSpace(underlyingAgent.GeminiSessionID) != "" || strings.TrimSpace(underlyingAgent.GeminiProjectDirID) != ""
 	case "codex-cli":
 		return strings.TrimSpace(underlyingAgent.CodexSessionID) != "" || strings.TrimSpace(underlyingAgent.CodexProjectDirID) != ""
 	case "cursor-cli":
@@ -6188,17 +6131,6 @@ func (api *StreamingAPI) seedCodingAgentRuntimeFromRestoredConversation(sessionI
 		underlyingAgent.ClaudeCodeSessionID = externalSessionID
 		log.Printf("[CLAUDE CODE] Restored native session %s from chat history for session %s", externalSessionID, sessionID)
 		return true
-	case "gemini-cli":
-		if externalSessionID != "" {
-			underlyingAgent.GeminiSessionID = externalSessionID
-			log.Printf("[GEMINI CLI] Restored native session %s from chat history for session %s", externalSessionID, sessionID)
-		}
-		if projectDirID != "" {
-			underlyingAgent.GeminiProjectDirID = projectDirID
-			workspace.SetSessionGeminiProjectDirID(sessionID, projectDirID)
-			log.Printf("[GEMINI CLI] Restored project dir ID %s from chat history for session %s", projectDirID, sessionID)
-		}
-		return externalSessionID != "" || projectDirID != ""
 	case "codex-cli":
 		if externalSessionID != "" {
 			underlyingAgent.CodexSessionID = externalSessionID
@@ -7180,7 +7112,7 @@ func (api *StreamingAPI) recordLiveCodingAgentUserMessage(sessionID, message, pr
 
 	event := events.Event{
 		ID:        messageID,
-		Type:      string(unifiedevents.UserMessageEventType),
+		Type:      string(unifiedevents.UserMessage),
 		Timestamp: time.Now(),
 		Data:      agentEvent,
 		SessionID: sessionID,
@@ -8120,7 +8052,7 @@ func (api *StreamingAPI) buildLLMToolsCallbacks() *todo_creation_human.LLMToolsC
 				return "provider is required.", nil
 			}
 			if !isPublishedLLMProviderAllowed(provider) {
-				return fmt.Sprintf("unsupported chat LLM provider %q. Use coding agents or direct API providers: codex-cli, cursor-cli, agy-cli, pi-cli, claude-code, gemini-cli, bedrock, openai, anthropic, vertex, or azure.", provider), nil
+				return fmt.Sprintf("unsupported chat LLM provider %q. Use coding agents or direct API providers: codex-cli, cursor-cli, agy-cli, pi-cli, claude-code, bedrock, openai, anthropic, vertex, or azure.", provider), nil
 			}
 
 			validationOptions := cloneOptionsMap(options)

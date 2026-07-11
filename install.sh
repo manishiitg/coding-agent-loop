@@ -66,7 +66,7 @@ ensure_go_for_mcpbridge() {
     if brew install go; then
       return 0
     fi
-    warn "Homebrew could not install Go. Claude Code/Codex/Gemini CLI tool access may fail until Go and mcpbridge are installed."
+    warn "Homebrew could not install Go. Claude Code/Codex tool access may fail until Go and mcpbridge are installed."
     return 1
   fi
 
@@ -122,7 +122,7 @@ ensure_mcpbridge() {
   if install_mcpbridge_from_sources; then
     return 0
   fi
-  warn "Failed to install mcpbridge. Claude Code/Codex/Gemini CLI tool access may fail until it is installed."
+  warn "Failed to install mcpbridge. Claude Code/Codex tool access may fail until it is installed."
 }
 
 # ---- Resolve version --------------------------------------------------------

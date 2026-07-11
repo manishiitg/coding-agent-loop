@@ -124,10 +124,6 @@ type EventDataUnion struct {
 	CacheEvent         *events.CacheEvent                `json:"cache_event,omitempty"`
 	ComprehensiveCache *mcpcache.ComprehensiveCacheEvent `json:"comprehensive_cache_event,omitempty"`
 
-	// Smart Routing Events
-	SmartRoutingStart *events.SmartRoutingStartEvent `json:"smart_routing_start,omitempty"`
-	SmartRoutingEnd   *events.SmartRoutingEndEvent   `json:"smart_routing_end,omitempty"`
-
 	// Unified Completion Event
 	UnifiedCompletion *events.UnifiedCompletionEvent `json:"unified_completion,omitempty"`
 
@@ -140,11 +136,11 @@ type EventDataUnion struct {
 	OrchestratorAgentError *orchestrator_events.OrchestratorAgentErrorEvent `json:"orchestrator_agent_error,omitempty"`
 
 	// Step Execution Events
-	StepTokenUsage           *todo_creation_human.StepTokenUsageEvent           `json:"step_token_usage,omitempty"`
-	StepProgressUpdated      *todo_creation_human.StepProgressUpdatedEvent      `json:"step_progress_updated,omitempty"`
-	RoutingEvaluated         *todo_creation_human.RoutingEvaluatedEvent         `json:"routing_evaluated,omitempty"`
-	PreValidationCompleted   *todo_creation_human.PreValidationCompletedEvent   `json:"pre_validation_completed,omitempty"`
-	ScriptedExecution *orchestrator_events.ScriptedExecutionEvent `json:"learn_code_script_execution,omitempty"`
+	StepTokenUsage         *todo_creation_human.StepTokenUsageEvent         `json:"step_token_usage,omitempty"`
+	StepProgressUpdated    *todo_creation_human.StepProgressUpdatedEvent    `json:"step_progress_updated,omitempty"`
+	RoutingEvaluated       *todo_creation_human.RoutingEvaluatedEvent       `json:"routing_evaluated,omitempty"`
+	PreValidationCompleted *todo_creation_human.PreValidationCompletedEvent `json:"pre_validation_completed,omitempty"`
+	ScriptedExecution      *orchestrator_events.ScriptedExecutionEvent      `json:"learn_code_script_execution,omitempty"`
 
 	// Todo/Planning Events
 	TodoStepsExtracted       *todo_creation_human.TodoStepsExtractedEvent       `json:"todo_steps_extracted,omitempty"`
@@ -261,10 +257,10 @@ var EventTypeMapping = map[events.EventType]string{
 	events.ContextEditingError:     "context_editing_error",
 
 	// Large Output Events
-	events.LargeToolOutputDetected:                   "large_tool_output_detected",
-	events.LargeToolOutputFileWritten:                "large_tool_output_file_written",
-	events.LargeToolOutputFileWriteErrorEventType:    "large_tool_output_file_write_error",
-	events.LargeToolOutputServerUnavailableEventType: "large_tool_output_server_unavailable",
+	events.LargeToolOutputDetected:          "large_tool_output_detected",
+	events.LargeToolOutputFileWritten:       "large_tool_output_file_written",
+	events.LargeToolOutputFileWriteError:    "large_tool_output_file_write_error",
+	events.LargeToolOutputServerUnavailable: "large_tool_output_server_unavailable",
 
 	// Fallback & Resilience Events
 	events.ModelChange:        "model_change",
@@ -275,10 +271,6 @@ var EventTypeMapping = map[events.EventType]string{
 
 	// Cache Events (comprehensive only - specific cache events are below)
 	events.ComprehensiveCache: "comprehensive_cache_event",
-
-	// Smart Routing Events
-	events.SmartRoutingStart: "smart_routing_start",
-	events.SmartRoutingEnd:   "smart_routing_end",
 
 	// Unified Completion Event
 	events.EventTypeUnifiedCompletion: "unified_completion",
@@ -292,11 +284,11 @@ var EventTypeMapping = map[events.EventType]string{
 	orchestrator_events.OrchestratorAgentError: "orchestrator_agent_error",
 
 	// Step Execution Events
-	orchestrator_events.StepTokenUsage:           "step_token_usage",
-	orchestrator_events.StepProgressUpdated:      "step_progress_updated",
-	orchestrator_events.RoutingEvaluated:         "routing_evaluated",
-	orchestrator_events.PreValidationCompleted:   "pre_validation_completed",
-	orchestrator_events.ScriptedExecution: "learn_code_script_execution",
+	orchestrator_events.StepTokenUsage:         "step_token_usage",
+	orchestrator_events.StepProgressUpdated:    "step_progress_updated",
+	orchestrator_events.RoutingEvaluated:       "routing_evaluated",
+	orchestrator_events.PreValidationCompleted: "pre_validation_completed",
+	orchestrator_events.ScriptedExecution:      "learn_code_script_execution",
 
 	// Todo/Planning Events
 	orchestrator_events.TodoStepsExtracted:       "todo_steps_extracted",
@@ -691,10 +683,6 @@ type UnifiedEvent struct {
 	ToolExecutionEvent          events.ToolExecutionEvent          `json:"tool_execution"`
 	LLMGenerationWithRetryEvent events.LLMGenerationWithRetryEvent `json:"llm_generation_with_retry"`
 
-	// Smart Routing Events (from unified events package)
-	SmartRoutingStartEvent events.SmartRoutingStartEvent `json:"smart_routing_start"`
-	SmartRoutingEndEvent   events.SmartRoutingEndEvent   `json:"smart_routing_end"`
-
 	// Orchestrator Events - now handled by unified events system
 	OrchestratorStartEvent      orchestrator_events.OrchestratorStartEvent      `json:"orchestrator_start"`
 	OrchestratorEndEvent        orchestrator_events.OrchestratorEndEvent        `json:"orchestrator_end"`
@@ -707,10 +695,10 @@ type UnifiedEvent struct {
 	RequestHumanFeedbackEvent orchestrator_events.RequestHumanFeedbackEvent `json:"request_human_feedback"`
 
 	// Step Execution Events
-	StepTokenUsageEvent           todo_creation_human.StepTokenUsageEvent           `json:"step_token_usage"`
-	StepProgressUpdatedEvent      todo_creation_human.StepProgressUpdatedEvent      `json:"step_progress_updated"`
-	PreValidationCompletedEvent   todo_creation_human.PreValidationCompletedEvent   `json:"pre_validation_completed"`
-	ScriptedExecutionEvent orchestrator_events.ScriptedExecutionEvent `json:"learn_code_script_execution"`
+	StepTokenUsageEvent         todo_creation_human.StepTokenUsageEvent         `json:"step_token_usage"`
+	StepProgressUpdatedEvent    todo_creation_human.StepProgressUpdatedEvent    `json:"step_progress_updated"`
+	PreValidationCompletedEvent todo_creation_human.PreValidationCompletedEvent `json:"pre_validation_completed"`
+	ScriptedExecutionEvent      orchestrator_events.ScriptedExecutionEvent      `json:"learn_code_script_execution"`
 
 	// Todo/Planning Events
 	TodoStepsExtractedEvent       todo_creation_human.TodoStepsExtractedEvent       `json:"todo_steps_extracted"`
@@ -783,29 +771,17 @@ func writeReportPlanSchema(filename string) error {
 func main() {
 	fmt.Println("Generating JSON schemas for event types...")
 
-	// Generate unified events schema (for backward compatibility).
-	// When run from agent_go/, schemas/ is the frontend-consumed path.
+	// Generate unified events schema. When run from agent_go/, schemas/ is
+	// the frontend-consumed path.
 	if err := writeSchema("schemas/unified-events-complete.schema.json", UnifiedEvent{}); err != nil {
 		fmt.Printf("Error generating unified events schema: %v\n", err)
 		os.Exit(1)
 	}
-	// Also generate to the repo-root schemas/ for compatibility with older tooling.
-	if err := writeSchema("../schemas/unified-events-complete.schema.json", UnifiedEvent{}); err != nil {
-		fmt.Printf("Error generating unified events schema to ../schemas: %v\n", err)
-		os.Exit(1)
-	}
-
 	// Generate the new PollingEvent schema with proper wire format.
-	// Write to agent_go/schemas/ for the frontend and repo-root schemas/ for compatibility.
 	if err := generateDiscriminatedUnionSchema("schemas/polling-event.schema.json"); err != nil {
 		fmt.Printf("Error generating polling event schema: %v\n", err)
 		os.Exit(1)
 	}
-	if err := generateDiscriminatedUnionSchema("../schemas/polling-event.schema.json"); err != nil {
-		fmt.Printf("Error generating polling event schema to ../schemas: %v\n", err)
-		os.Exit(1)
-	}
-
 	// Generate report plan schema. Go is the canonical source of truth for the
 	// report plan shape; the frontend types/parser/validator are generated from
 	// this output via json-schema-to-typescript (frontend/scripts/generate-event-types.mjs).
@@ -813,11 +789,6 @@ func main() {
 		fmt.Printf("Error generating report plan schema: %v\n", err)
 		os.Exit(1)
 	}
-	if err := writeReportPlanSchema("../schemas/report-plan.schema.json"); err != nil {
-		fmt.Printf("Error generating report plan schema to ../schemas: %v\n", err)
-		os.Exit(1)
-	}
-
 	fmt.Println("✅ Successfully generated schemas:")
 	fmt.Println("  - schemas/unified-events-complete.schema.json")
 	fmt.Println("  - schemas/polling-event.schema.json")

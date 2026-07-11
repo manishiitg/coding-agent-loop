@@ -61,7 +61,7 @@ Rename note: the public product name is moving to **AgentWorks**. During the tra
 curl -fsSL https://raw.githubusercontent.com/manishiitg/mcp-agent-builder-go/main/install.sh | bash
 ```
 
-Downloads the latest dmg, installs the Mac app to `/Applications`, ensures the MCP bridge used by Claude Code/Codex/Gemini CLI tool access is installed to `~/go/bin`, strips the macOS quarantine flag (no "damaged" warning), and launches the app. If Go is missing, the installer installs Go through Homebrew when available; otherwise it asks you to install Go and rerun the same curl command. Pin a specific version with `RUNLOOP_VERSION=v1.25.6 curl -fsSL … | bash`.
+Downloads the latest dmg, installs the Mac app to `/Applications`, ensures the MCP bridge used by Claude Code/Codex tool access is installed to `~/go/bin`, strips the macOS quarantine flag (no "damaged" warning), and launches the app. If Go is missing, the installer installs Go through Homebrew when available; otherwise it asks you to install Go and rerun the same curl command. Pin a specific version with `RUNLOOP_VERSION=v1.25.6 curl -fsSL … | bash`.
 
 ### Install manually
 
@@ -108,7 +108,7 @@ Code signing + Apple notarization requires an Apple Developer ID ($99/yr) and is
 
 ---
 
-Run **Claude Code, Codex, Gemini CLI, and open models** in one system. Build visual workflows, launch complex orchestrators, schedule recurring jobs, route agent conversations through **Slack, WhatsApp, and the web**, and roll their progress up against org goals.
+Run **Claude Code, Codex, Pi, and open models** in one system. Build visual workflows, launch complex orchestrators, schedule recurring jobs, route agent conversations through **Slack, WhatsApp, and the web**, and roll their progress up against org goals.
 
 AgentWorks is built for teams that want more than a chat box:
 - Build visual agent workflows and long-running orchestrators
@@ -122,7 +122,7 @@ AgentWorks is built for teams that want more than a chat box:
 ## Why AgentWorks
 
 - **Goal-driven operations**: Tie workflows to measurable goals, then let Pulse, Auto-improve, and Org Pulse keep the evidence and recommendations current.
-- **Multi-model by default**: Use Claude Code, Codex, Gemini CLI, OpenAI, Anthropic, Bedrock, Azure, MiniMax, OpenRouter, and open models in the same platform.
+- **Multi-model by default**: Use Claude Code, Codex, Pi, OpenAI, Anthropic, Bedrock, Azure, MiniMax, OpenRouter, and open models in the same platform.
 - **Visual workflows plus real execution**: Design workflows on a canvas, then run them with tools, browser automation, memory, and evaluation built in.
 - **Manage by exception**: The dashboard surfaces broken, off-goal, expensive, or decision-worthy work so operators do not need to inspect every run.
 - **Built for operations, not demos**: Add scheduling, observability, validation, approvals, and secure workspace isolation from day one.
@@ -130,7 +130,7 @@ AgentWorks is built for teams that want more than a chat box:
 
 ## What You Can Build
 
-- **Coding workflows** that delegate across Claude Code, Codex, Gemini CLI, and open-source coding models
+- **Coding workflows** that delegate across Claude Code, Codex, Pi, and open-source coding models
 - **Scheduled automations** for research, support, reporting, or back-office operations
 - **Human-in-the-loop agents** that pause for approvals, 2FA codes, or operator feedback
 - **Slack and WhatsApp agents** that continue conversations outside the dashboard
@@ -152,7 +152,7 @@ See the [public roadmap](ROADMAP.md) for upcoming work on onboarding, memory-awa
 
 - **Claude Code** via the `@anthropic-ai/claude-code` CLI experimental mode
 - **Codex-style agentic models** through OpenAI and Azure AI Foundry
-- **Gemini CLI** via the `@google-gemini/gemini-cli`
+- **Pi CLI** for Gemini and open-model coding workflows
 - **Pi CLI** via `@earendil-works/pi-coding-agent` with Pi provider/model IDs
 - **Open-source and frontier models** through OpenRouter, Bedrock, Vertex AI, and direct provider integrations
 
@@ -229,7 +229,7 @@ AgentWorks is provider-agnostic. Users configure published LLMs in the UI, then 
 #### 🛠️ Local CLI Agents
 Bring your existing CLI-based coding agents into the visual orchestrator via the **[MCP Bridge Layer](docs/core/mcp_bridge_layer.md)**:
 *   **Claude Code**: Native integration with the `@anthropic-ai/claude-code` CLI through experimental interactive sessions.
-*   **Gemini CLI**: Integration with the `@google-gemini/gemini-cli`.
+*   **Pi CLI**: Multi-provider coding-agent integration, including Gemini models.
 *   **State Persistence**: Support for `--resume` functionality, allowing the visual orchestrator to maintain long-running coding sessions across CLI restarts.
 
 ---
@@ -240,7 +240,7 @@ Bring your existing CLI-based coding agents into the visual orchestrator via the
 
 - Go 1.24+
 - Node.js 20+ and npm
-- Optional local tools depending on what you enable: Claude Code, Gemini CLI, Codex-compatible CLIs, browser tooling, AWS/GCP CLIs, etc.
+- Optional local tools depending on what you enable: Claude Code, Pi, Codex-compatible CLIs, browser tooling, AWS/GCP CLIs, etc.
 
 ### 2. Clone and Configure
 

@@ -11,13 +11,10 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/manishiitg/mcpagent/llm"
 )
-
-func getenvTrim(k string) string { return strings.TrimSpace(os.Getenv(k)) }
 
 const providerKeysFilePath = "config/provider-api-keys.json"
 const maskedProviderKeyPrefix = "********"
@@ -31,7 +28,6 @@ type StoredProviderKeys struct {
 	ZAI               string               `json:"zai,omitempty"`
 	Kimi              string               `json:"kimi,omitempty"`
 	Vertex            string               `json:"vertex,omitempty"`
-	GeminiCLI         string               `json:"gemini_cli,omitempty"`
 	CodexCLI          string               `json:"codex_cli,omitempty"`
 	CursorCLI         string               `json:"cursor_cli,omitempty"`
 	AgyCLI            string               `json:"agy_cli,omitempty"`
@@ -100,7 +96,6 @@ func hasStoredProviderKeys(keys *StoredProviderKeys) bool {
 		keys.ZAI,
 		keys.Kimi,
 		keys.Vertex,
-		keys.GeminiCLI,
 		keys.CodexCLI,
 		keys.CursorCLI,
 		keys.AgyCLI,
@@ -188,9 +183,6 @@ func ProviderKeysToAPIKeysMap(keys *StoredProviderKeys) map[string]interface{} {
 	if keys.Vertex != "" {
 		m["vertex"] = keys.Vertex
 	}
-	if keys.GeminiCLI != "" {
-		m["gemini_cli"] = keys.GeminiCLI
-	}
 	if keys.CodexCLI != "" {
 		m["codex_cli"] = keys.CodexCLI
 	}
@@ -270,9 +262,6 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 	if keys.Vertex != "" {
 		result.Vertex = &keys.Vertex
 	}
-	if keys.GeminiCLI != "" {
-		result.GeminiCLI = &keys.GeminiCLI
-	}
 	if keys.CodexCLI != "" {
 		result.CodexCLI = &keys.CodexCLI
 	}
@@ -319,9 +308,6 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 	var loaded []string
 	if result.OpenRouter != nil {
 		loaded = append(loaded, "openrouter")
-	}
-	if result.GeminiCLI != nil {
-		loaded = append(loaded, "gemini-cli")
 	}
 	if result.CodexCLI != nil {
 		loaded = append(loaded, "codex-cli")
@@ -407,7 +393,6 @@ func MergedProviderAPIKeys(ctx context.Context) *llm.ProviderAPIKeys {
 		ZAI:        pick(envKeys.ZAI, wsKeys.ZAI),
 		Kimi:       pick(envKeys.Kimi, wsKeys.Kimi),
 		Vertex:     pick(envKeys.Vertex, wsKeys.Vertex),
-		GeminiCLI:  pick(envKeys.GeminiCLI, wsKeys.GeminiCLI),
 		CodexCLI:   pick(envKeys.CodexCLI, wsKeys.CodexCLI),
 		CursorCLI:  pick(envKeys.CursorCLI, wsKeys.CursorCLI),
 		AgyCLI:     pick(envKeys.AgyCLI, wsKeys.AgyCLI),
@@ -552,7 +537,6 @@ func mergeStoredProviderKeyValues(existing, incoming *StoredProviderKeys) *Store
 		ZAI:        pick(existing.ZAI, incoming.ZAI),
 		Kimi:       pick(existing.Kimi, incoming.Kimi),
 		Vertex:     pick(existing.Vertex, incoming.Vertex),
-		GeminiCLI:  pick(existing.GeminiCLI, incoming.GeminiCLI),
 		CodexCLI:   pick(existing.CodexCLI, incoming.CodexCLI),
 		CursorCLI:  pick(existing.CursorCLI, incoming.CursorCLI),
 		AgyCLI:     pick(existing.AgyCLI, incoming.AgyCLI),
@@ -655,7 +639,6 @@ func discardMaskedProviderKeys(keys *StoredProviderKeys) *StoredProviderKeys {
 	sanitized.ZAI = clearMasked(sanitized.ZAI)
 	sanitized.Kimi = clearMasked(sanitized.Kimi)
 	sanitized.Vertex = clearMasked(sanitized.Vertex)
-	sanitized.GeminiCLI = clearMasked(sanitized.GeminiCLI)
 	sanitized.CodexCLI = clearMasked(sanitized.CodexCLI)
 	sanitized.CursorCLI = clearMasked(sanitized.CursorCLI)
 	sanitized.AgyCLI = clearMasked(sanitized.AgyCLI)
@@ -694,7 +677,6 @@ func maskStoredProviderKeys(keys *StoredProviderKeys) *StoredProviderKeys {
 	masked.ZAI = maskProviderKey(masked.ZAI)
 	masked.Kimi = maskProviderKey(masked.Kimi)
 	masked.Vertex = maskProviderKey(masked.Vertex)
-	masked.GeminiCLI = maskProviderKey(masked.GeminiCLI)
 	masked.CodexCLI = maskProviderKey(masked.CodexCLI)
 	masked.CursorCLI = maskProviderKey(masked.CursorCLI)
 	masked.AgyCLI = maskProviderKey(masked.AgyCLI)
@@ -824,7 +806,6 @@ func selectStoredPiAPIKeyForModel(keys *StoredProviderKeys, modelID string) stri
 		OpenAI:         stringFieldPtr(keys.OpenAI),
 		Anthropic:      stringFieldPtr(keys.Anthropic),
 		Vertex:         stringFieldPtr(keys.Vertex),
-		GeminiCLI:      stringFieldPtr(keys.GeminiCLI),
 		PiCLI:          stringFieldPtr(keys.PiCLI),
 		MiniMax:        stringFieldPtr(keys.MiniMax),
 		ZAI:            stringFieldPtr(keys.ZAI),
@@ -850,7 +831,7 @@ func selectPiAPIKeyForModel(keys *llm.ProviderAPIKeys, modelID string) string {
 	}
 	switch provider {
 	case "google", "google-vertex":
-		for _, value := range []*string{keys.PiCLI, keys.Vertex, keys.GeminiCLI} {
+		for _, value := range []*string{keys.PiCLI, keys.Vertex} {
 			if key := strings.TrimSpace(stringPtrValue(value)); key != "" {
 				return key
 			}

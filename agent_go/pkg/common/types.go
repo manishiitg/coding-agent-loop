@@ -147,13 +147,12 @@ func PopulateMCPBridgeShortEnv(env map[string]string) {
 // as a write prefix but adds Workflow/<name>/planning/ to BlockedWritePaths so the
 // agent can read plan.json but not raw-write it.
 type SessionShellConfig struct {
-	WorkingDir         string   // Default working directory (relative to workspace-docs)
-	ReadPaths          []string // Folder guard read paths for Isolator
-	WritePaths         []string // Folder guard write paths for Isolator
-	BlockedWritePaths  []string // Deny writes; reads allowed (flows to FolderGuardConfig.BlockedWritePaths)
-	GeminiProjectDirID string   // Active Gemini CLI project dir for this session
-	BrowserMode        string   // Resolved browser mode: "playwright", "headless", "cdp", ""
-	BrowserSessionID   string   // Shared browser identity for browser tools when "default" session is used
+	WorkingDir        string   // Default working directory (relative to workspace-docs)
+	ReadPaths         []string // Folder guard read paths for Isolator
+	WritePaths        []string // Folder guard write paths for Isolator
+	BlockedWritePaths []string // Deny writes; reads allowed (flows to FolderGuardConfig.BlockedWritePaths)
+	BrowserMode       string   // Resolved browser mode: "playwright", "headless", "cdp", ""
+	BrowserSessionID  string   // Shared browser identity for browser tools when "default" session is used
 	// Env is extra environment variables exported into this session's shell
 	// (bridge execute_shell_command). Lets per-step values like DB_PATH and
 	// STEP_OUTPUT_DIR reach the server-side bridge shell, which — unlike the
@@ -255,21 +254,6 @@ func GetSessionShellEnv(sessionID string) map[string]string {
 		out[k] = v
 	}
 	return out
-}
-
-// SetSessionGeminiProjectDirID stores the active Gemini CLI project dir ID for a session.
-// This lets workspace shell execution resolve Gemini-managed files like .gemini/policies/*
-// correctly across resumed CLI turns.
-func SetSessionGeminiProjectDirID(sessionID, dirID string) {
-	sessionShellConfigsMu.Lock()
-	defer sessionShellConfigsMu.Unlock()
-	cfg := sessionShellConfigs[sessionID]
-	if cfg == nil {
-		cfg = &SessionShellConfig{}
-		sessionShellConfigs[sessionID] = cfg
-	}
-	cfg.GeminiProjectDirID = dirID
-	log.Printf("[SHELL] Set Gemini project dir ID for session %s: %s", sessionID, dirID)
 }
 
 // SetSessionBrowserMode stores the resolved browser mode for a session.

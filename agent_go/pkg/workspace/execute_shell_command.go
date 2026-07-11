@@ -41,11 +41,6 @@ func SetSessionFolderGuardBlockedWritePaths(sessionID string, blockedWritePaths 
 	common.SetSessionFolderGuardBlockedWritePaths(sessionID, blockedWritePaths)
 }
 
-// SetSessionGeminiProjectDirID delegates to common.SetSessionGeminiProjectDirID.
-func SetSessionGeminiProjectDirID(sessionID, dirID string) {
-	common.SetSessionGeminiProjectDirID(sessionID, dirID)
-}
-
 // ClearSessionShellConfig delegates to common.ClearSessionShellConfig.
 func ClearSessionShellConfig(sessionID string) {
 	common.ClearSessionShellConfig(sessionID)
@@ -285,15 +280,6 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 		}, nil
 	}
 
-	if sessionCfg != nil && sessionCfg.GeminiProjectDirID != "" {
-		params.Command = rewriteGeminiRelativePaths(params.Command, sessionCfg.GeminiProjectDirID)
-		if params.ExtraEnv == nil {
-			params.ExtraEnv = make(map[string]string)
-		}
-		if _, exists := params.ExtraEnv["GEMINI_PROJECT_DIR"]; !exists {
-			params.ExtraEnv["GEMINI_PROJECT_DIR"] = geminiProjectDirPath(sessionCfg.GeminiProjectDirID)
-		}
-	}
 	redactedCommandForLog := redactShellCommandForLog(params.Command)
 
 	// Set default working directory:
@@ -901,25 +887,6 @@ func deduplicateStrings(input []string) []string {
 		}
 	}
 	return result
-}
-
-var geminiRelativePathPattern = regexp.MustCompile("(^|[\\s\\\"'=:(])(?:(?:\\.\\./|\\./)*)\\.gemini($|[/\\s\\\"'`:)])")
-
-func geminiProjectDirPath(projectDirID string) string {
-	return filepath.Join(os.TempDir(), "gemini-cli-project-"+projectDirID)
-}
-
-func rewriteGeminiRelativePaths(command, projectDirID string) string {
-	if projectDirID == "" || !strings.Contains(command, ".gemini") {
-		return command
-	}
-
-	absoluteGeminiDir := filepath.Join(geminiProjectDirPath(projectDirID), ".gemini")
-	rewritten := geminiRelativePathPattern.ReplaceAllString(command, "${1}"+absoluteGeminiDir+"${2}")
-	if rewritten != command {
-		log.Printf("[SHELL] Rewrote Gemini relative path for project dir %s: %s -> %s", projectDirID, command, rewritten)
-	}
-	return rewritten
 }
 
 // blockAbsoluteHostPaths rejects commands containing absolute paths that

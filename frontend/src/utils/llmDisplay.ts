@@ -12,7 +12,6 @@ export type ProviderType =
   | 'z-ai'
   | 'kimi'
   | 'claude-code'
-  | 'gemini-cli'
   | 'codex-cli'
   | 'cursor-cli'
   | 'agy-cli'
@@ -108,11 +107,6 @@ const PROVIDER_DISPLAY_INFO: Record<ProviderType, ProviderDisplayInfo> = {
     name: 'Claude Code',
     authDescription: 'Local CLI (no API key)',
     colorClass: 'text-amber-600 dark:text-amber-400',
-  },
-  'gemini-cli': {
-    name: 'Gemini CLI',
-    authDescription: 'Local CLI (no API key)',
-    colorClass: 'text-indigo-600 dark:text-indigo-400',
   },
   'codex-cli': {
     name: 'Codex CLI',

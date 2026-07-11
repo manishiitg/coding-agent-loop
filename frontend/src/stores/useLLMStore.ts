@@ -18,7 +18,7 @@ type PublishedLLMMetadataSnapshot = {
 
 const DEFAULT_CHAT_PROVIDER: LLMProvider = 'codex-cli'
 const DEFAULT_CHAT_MODEL = 'codex-cli'
-const FRONTEND_DEPRECATED_PROVIDER_IDS = new Set<string>(['gemini-cli', 'agy-cli'])
+const FRONTEND_DEPRECATED_PROVIDER_IDS = new Set<string>(['agy-cli'])
 const MASKED_PROVIDER_KEY_PREFIX = '********'
 const SUPPORTED_PROVIDERS_FALLBACK: LLMProvider[] = [
   'bedrock',
@@ -144,7 +144,6 @@ function hasStoredProviderKeys(keys?: StoredProviderKeys | null): boolean {
     keys?.zai ||
     keys?.kimi ||
     keys?.vertex ||
-    keys?.gemini_cli ||
     keys?.codex_cli ||
     keys?.cursor_cli ||
     keys?.pi_cli ||
@@ -170,7 +169,6 @@ function extractStoredProviderKeysFromState(state: {
   minimaxCodingPlanConfig: ExtendedLLMConfiguration
   elevenlabsConfig: ExtendedLLMConfiguration
   deepgramConfig: ExtendedLLMConfiguration
-  geminiCliApiKey: string
   savedLLMs: SavedLLM[]
 }): StoredProviderKeys {
   const keys: StoredProviderKeys = {
@@ -179,7 +177,6 @@ function extractStoredProviderKeysFromState(state: {
     zai: unmaskedProviderKey(state.zaiConfig?.api_key),
     kimi: unmaskedProviderKey(state.kimiConfig?.api_key),
     vertex: unmaskedProviderKey(state.vertexConfig?.api_key),
-    gemini_cli: unmaskedProviderKey(state.geminiCliApiKey),
     minimax: unmaskedProviderKey(state.minimaxConfig?.api_key),
     elevenlabs: unmaskedProviderKey(state.elevenlabsConfig?.api_key),
     deepgram: unmaskedProviderKey(state.deepgramConfig?.api_key),
@@ -249,12 +246,6 @@ interface LLMState extends StoreActions {
   minimaxCodingPlanConfig: ExtendedLLMConfiguration
   elevenlabsConfig: ExtendedLLMConfiguration
   deepgramConfig: ExtendedLLMConfiguration
-
-  // CLI provider API keys
-  geminiCliApiKey: string
-  setGeminiCliApiKey: (key: string) => void
-  geminiCliModel: string
-  setGeminiCliModel: (model: string) => void
 
   // Custom models for each provider
   customBedrockModels: string[]
@@ -480,16 +471,6 @@ export const useLLMStore = create<LLMState>()(
           fallback_models: [],
           cross_provider_fallback: undefined,
           api_key: ''
-        },
-
-        // CLI provider API keys
-        geminiCliApiKey: '',
-        setGeminiCliApiKey: (key) => {
-          set({ geminiCliApiKey: key })
-        },
-        geminiCliModel: 'auto',
-        setGeminiCliModel: (model) => {
-          set({ geminiCliModel: model })
         },
 
         // Custom models for each provider
@@ -1114,7 +1095,6 @@ export const useLLMStore = create<LLMState>()(
               minimaxCodingPlanConfig,
               elevenlabsConfig,
               deepgramConfig,
-              geminiCliApiKey: workspaceProviderKeys?.gemini_cli || '', // gitleaks:allow
               savedLLMs: newSavedLLMs,
               availableBedrockModels: defaults.available_models.bedrock,
               availableOpenRouterModels: defaults.available_models.openrouter || [],
@@ -1484,7 +1464,6 @@ export const useLLMStore = create<LLMState>()(
               api_key: ''
             },
             savedLLMs: [],
-            geminiCliApiKey: '',
             showLLMModal: false,
             availableLLMs: [],
             modelMetadataCatalog: [],
@@ -1530,7 +1509,6 @@ export const useLLMStore = create<LLMState>()(
           customVertexModels: state.customVertexModels,
           customAzureModels: state.customAzureModels,
           customMinimaxModels: state.customMinimaxModels,
-          geminiCliModel: state.geminiCliModel,
           showLLMModal: state.showLLMModal,
           delegationTierConfig: state.delegationTierConfig,
           // DO NOT persist availableBedrockModels, availableOpenRouterModels, availableOpenAIModels
@@ -1582,7 +1560,6 @@ function syncProviderKeysToServer() {
         zai: unmaskedProviderKey(s.zaiConfig?.api_key),
         kimi: unmaskedProviderKey(s.kimiConfig?.api_key),
         vertex: unmaskedProviderKey(s.vertexConfig?.api_key),
-        gemini_cli: unmaskedProviderKey(s.geminiCliApiKey),
         pi_cli: piSavedKey,
         minimax: unmaskedProviderKey(s.minimaxConfig?.api_key),
         elevenlabs: unmaskedProviderKey(s.elevenlabsConfig?.api_key),
@@ -1615,7 +1592,6 @@ const getProviderKeySnapshot = (state: LLMState) => ([
   state.elevenlabsConfig?.api_key,
   state.deepgramConfig?.api_key,
   state.bedrockConfig?.region,
-  state.geminiCliApiKey,
 ])
 
 // Watch for changes to any provider config or API key

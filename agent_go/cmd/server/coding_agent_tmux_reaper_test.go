@@ -42,7 +42,7 @@ func TestCleanupStaleCodingAgentTmuxSessionsClosesCompletedIdleBackstop(t *testi
 	now := time.Now()
 	store := terminals.NewStore()
 	sessionID := "completed-session"
-	tmuxSession := "mlp-gemini-cli-idle"
+	tmuxSession := "mlp-codex-cli-idle"
 	store.HandleEvent(sessionID, codingAgentTmuxReaperChunkEvent(now.Add(-4*time.Hour), sessionID, "main:"+sessionID, tmuxSession))
 	api := &StreamingAPI{
 		terminalStore: store,

@@ -922,8 +922,6 @@ func closeMessageSequenceCodingSession(provider string, ownerSessionID string, r
 		llmproviders.CloseCodexCLIInteractiveSessionForOwner(ownerSessionID, reason)
 	case string(llmproviders.ProviderCursorCLI):
 		llmproviders.CloseCursorCLIInteractiveSessionForOwner(ownerSessionID, reason)
-	case string(llmproviders.ProviderGeminiCLI):
-		llmproviders.CloseGeminiCLIInteractiveSessionForOwner(ownerSessionID, reason)
 	case string(llmproviders.ProviderPiCLI):
 		llmproviders.ClosePiCLIInteractiveSessionForOwner(ownerSessionID, reason)
 	}

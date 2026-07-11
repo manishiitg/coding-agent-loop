@@ -20,7 +20,7 @@ flowchart LR
 Example prompt:
 
 ```text
-Compare Claude Code, Codex, and Gemini CLI for a team building agentic coding workflows.
+Compare Claude Code, Codex, and Pi for a team building agentic coding workflows.
 Include model strengths, tool support, pricing considerations, and operational risks.
 ```
 
@@ -84,7 +84,7 @@ Expected output:
 
 ## Runnable Go Examples
 
-The lower-level SDK examples live in [agent_go/examples](../agent_go/examples/README.md). They show how to run local agents, connect workspace tools, and exercise CLI providers such as Claude Code and Gemini CLI.
+The lower-level SDK examples live in [agent_go/examples](../agent_go/examples/README.md). They show how to run local agents, connect workspace tools, and exercise CLI providers such as Claude Code and Pi.
 
 ## Demo GIF Storyboard
 
@@ -99,7 +99,7 @@ A high-impact README GIF should show the product outcome in 15-20 seconds:
 
 Good demo prompts:
 
-- `Compare Claude Code, Codex, and Gemini CLI for agentic coding workflows.`
+- `Compare Claude Code, Codex, and Pi for agentic coding workflows.`
 - `Review this PR for security, performance, and test gaps.`
 - `Triage these customer support tickets and draft responses.`
 

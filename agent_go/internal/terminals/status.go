@@ -72,8 +72,6 @@ func providerLabel(content string, metadata map[string]interface{}) string {
 		switch strings.ToLower(provider) {
 		case "claude-code", "claudecode":
 			return "Claude Code"
-		case "gemini-cli", "geminicli":
-			return "Gemini CLI"
 		case "codex-cli", "codexcli":
 			return "Codex CLI"
 		case "cursor-cli", "cursorcli":
@@ -89,8 +87,6 @@ func providerLabel(content string, metadata map[string]interface{}) string {
 	switch {
 	case strings.Contains(lower, "claude code"):
 		return "Claude Code"
-	case strings.Contains(lower, "gemini cli"):
-		return "Gemini CLI"
 	case strings.Contains(lower, "openai codex") || strings.Contains(lower, ">_ openai codex"):
 		return "Codex CLI"
 	case isCursorPaneHeader(lower):
@@ -113,8 +109,6 @@ func assistantPreview(content, provider string) string {
 	switch provider {
 	case "Claude Code":
 		return markerPreview(content, "⏺")
-	case "Gemini CLI":
-		return markerPreview(content, "✦")
 	case "Cursor CLI":
 		// Older Cursor builds prefix each assistant turn with a literal
 		// "Assistant:" header. Newer builds (CLI v2026-05-20 +) drop the label
@@ -341,7 +335,6 @@ func isNoisyTerminalLine(line string) bool {
 		"model:",
 		"directory:",
 		"claude code v",
-		"gemini cli v",
 		"openai codex",
 		"cursor agent v",
 		"tips for getting started",
@@ -469,8 +462,6 @@ func isProviderIdlePromptLine(provider, line string, hasExplicitCompletion bool)
 			(strings.Contains(lower, "/skills") ||
 				strings.Contains(lower, "type your message") ||
 				strings.Contains(lower, "/model to change"))
-	case "Gemini CLI":
-		return strings.HasPrefix(trimmed, ">") && strings.Contains(lower, "type your message")
 	case "Claude Code":
 		return trimmed == "❯" || strings.HasPrefix(trimmed, "❯ ")
 	case "Cursor CLI":

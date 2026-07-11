@@ -630,7 +630,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 // getCodeExecutionMode determines code execution mode with priority: step config > workflow/preset default
 // Note: The workflow/preset default reflects what the user explicitly set. Server.go no longer
 // auto-enables code execution mode for the entire workflow. Provider-based auto-enable
-// (claude-code/gemini-cli) is handled per-agent in applyStepConfigToAgentConfig.
+// Coding-agent provider setup is handled per-agent in applyStepConfigToAgentConfig.
 func (hcpo *StepBasedWorkflowOrchestrator) getCodeExecutionMode(stepConfig *AgentConfigs) bool {
 	if stepConfig != nil && stepConfig.UseCodeExecutionMode != nil {
 		isCodeExecutionMode := *stepConfig.UseCodeExecutionMode
@@ -1718,13 +1718,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx conte
 // learningPathIdentifier: Learning folder identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
 // Note: Learning integration functions removed - execution agent now auto-discovers learning files and scripts
 
-// createSuccessLearningAgent is a backward compatibility wrapper for createLearningAgent
-// Deprecated: Use createLearningAgent instead. The unified learning agent handles both success and failure cases.
-// stepIndex: 0-based step index for token tracking
-func (hcpo *StepBasedWorkflowOrchestrator) createSuccessLearningAgent(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool, stepID string, stepPath string, stepIndex int) (agents.OrchestratorAgent, error) {
-	return hcpo.createLearningAgentInternal(ctx, phase, learningPathIdentifier, agentName, stepConfig, isCodeExecutionMode, stepID, stepPath, stepIndex)
-}
-
 // ConversationEntry is a single flattened message in the sub-agent's conversation
 type ConversationEntry struct {
 	Index    int    `json:"index"`
@@ -1918,7 +1911,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default todo task orchestrator tools: %v", config.SelectedTools))
 	}
 
-	// Enable code execution mode for CLI providers (claude-code, gemini-cli) that need HTTP bridge for tool routing
+	// Enable code execution mode for CLI providers that need HTTP bridge tool routing.
 	// Non-CLI providers use simple agent mode (no code execution)
 	isCodeExecutionMode := common.IsCLIProvider(llmConfig.Primary.Provider)
 	config.UseCodeExecutionMode = isCodeExecutionMode

@@ -8,7 +8,6 @@ func TestIsCLIProvider(t *testing.T) {
 		want bool
 	}{
 		{"claude-code", true},
-		{"gemini-cli", true},
 		{"codex-cli", true},
 		{"cursor-cli", true},
 		{"agy-cli", true},

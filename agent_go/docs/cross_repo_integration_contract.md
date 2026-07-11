@@ -64,7 +64,6 @@ The agent's `executeLLM()` builds provider-specific options and calls
 | Provider | Adapter options passed |
 |---|---|
 | claude-code | `WithMCPConfig`, `WithResumeSessionID`, `WithClaudeCodeTools`, `WithClaudeCodeSettings`, `WithMaxTurns`, `WithClaudeCodeEffort` |
-| gemini-cli | `WithGeminiProjectSettings`, `WithGeminiAdminPolicyPath`, `WithGeminiWorkingDir`, `WithGeminiProjectDirID`, `WithGeminiResumeSessionID` |
 | codex-cli | `WithCodexDisableShellTool`, `WithCodexApprovalPolicy`, `WithCodexConfigOverrides`, `WithCodexResumeSessionID` |
 | cursor-cli | `WithCursorMCPConfig`, `WithCursorApproveMCPs`, `WithCursorForce` |
 | agy-cli | `WithAgyMCPConfig`, `WithAgyDangerouslySkipPermissions`, `WithAgyWorkingDir`, `WithAgyResumeSessionID`, persistent tmux session options |
@@ -171,7 +170,6 @@ auto-routing/composer/etc.) must be available downstream.
 | Provider | Effective-model key on Additional |
 |---|---|
 | Claude Code | `claude_code_model` |
-| Gemini CLI | `gemini_effective_model` (tmux) / `gemini_model` (structured) |
 | Codex CLI | `codex_effective_model` |
 | Cursor CLI | `cursor_model` |
 | Pi CLI | requested Pi model ID or provider/model route |
@@ -241,7 +239,6 @@ real provider call
 | OpenAI API | Computed | `cost_usd_estimated` |
 | Vertex (Gemini API) | Computed | `cost_usd_estimated` |
 | Codex CLI (structured + tmux) | Computed | `cost_usd_estimated` |
-| Gemini CLI (structured) | Computed | `cost_usd_estimated` |
 | Cursor CLI (structured) | Computed | `cost_usd_estimated` |
 | Cursor CLI (tmux) | **No tokens available** (transcript lacks usage) | — |
 | Antigravity CLI (tmux) | Estimated tokens only | `cost_usd_estimated` when rates are available |
@@ -422,9 +419,6 @@ Each contract area should be verified for all supported providers.
   requires local Antigravity sign-in; structured JSON transport is not part of
   the retained legacy contract.
 
-**Coding agents (structured JSON transport):**
-- gemini-cli
-
 **API providers (direct HTTP):**
 - anthropic, openai, vertex (Gemini API), bedrock, azure, z-ai, kimi, minimax, openrouter
 
@@ -462,7 +456,7 @@ Each contract area should be verified for all supported providers.
 | openai | 11 | ⏳ pending |
 | vertex | 10 | ⏳ pending |
 | kimi | 1 (skips without direct moonshot key) | — |
-| claudecode / codexcli / geminicli / cursorcli / agycli | structured + tmux transcript/contract tests as supported by each provider | ⏳ pending |
+| claudecode / codexcli / cursorcli / agycli / picli | structured + tmux transcript/contract tests as supported by each provider | ⏳ pending |
 | bedrock / azure / minimax / zai | code-only, no creds | — |
 
 Cross-adapter matrix test: `inspector_contract_matrix_test.go` (currently anthropic only).
@@ -501,7 +495,6 @@ behavior lives here.
 | `docs/coding_sdk_structured_contract.md` | Per-provider structured (`--print`/JSON) transport contract |
 | `docs/coding_sdk_tmux_contract.md` | Per-provider tmux interactive transport contract |
 | `docs/CODEX_CLI_CODING_AGENT_CONTRACT.md` | Codex CLI-specific behavior |
-| `docs/GEMINI_CLI_CODING_AGENT_CONTRACT.md` | Gemini CLI-specific behavior |
 
 ### mcpagent
 
@@ -510,7 +503,6 @@ behavior lives here.
 | `docs/token-usage-tracking.md` | Token accounting in the agent loop |
 | `docs/folder_guard.md` | Workspace isolation contract |
 | `docs/llm_resilience.md` | Retry, timeout, classification |
-| `docs/smart_routing.md` | Smart-routing model selection |
 | `docs/oauth.md` | OAuth flow for provider auth |
 | `docs/mcp_cache_system.md` | MCP server connection caching |
 | `docs/tool_search_mode.md` | Tool-search agent mode |

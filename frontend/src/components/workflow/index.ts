@@ -28,10 +28,7 @@ export type {
   UseWorkflowExecutionReturn
 } from './hooks'
 
-// Legacy exports (for backward compatibility during migration)
 export { WorkflowModeHandler, type WorkflowModeHandlerRef } from './WorkflowModeHandler'
-export { WorkflowPhaseHandler } from './WorkflowPhaseHandler'
-export { WorkflowPresetSelector } from './WorkflowPresetSelector'
 
 // Chat tabs
 export { WorkflowChatTabs } from './WorkflowChatTabs'

@@ -72,8 +72,6 @@ import type {
   TokenLimitExceededEvent,
   CacheEvent,
   ComprehensiveCacheEvent,
-  SmartRoutingStartEvent,
-  SmartRoutingEndEvent,
   UnifiedCompletionEvent,
   OrchestratorStartEvent,
   OrchestratorEndEvent,
@@ -225,8 +223,6 @@ export type EventTypeString =
   | 'token_limit_exceeded'
   | 'cache_event'
   | 'comprehensive_cache_event'
-  | 'smart_routing_start'
-  | 'smart_routing_end'
   | 'unified_completion'
   | 'orchestrator_start'
   | 'orchestrator_end'
@@ -351,8 +347,6 @@ export interface EventTypeToDataMap {
   'token_limit_exceeded': TokenLimitExceededEvent;
   'cache_event': CacheEvent;
   'comprehensive_cache_event': ComprehensiveCacheEvent;
-  'smart_routing_start': SmartRoutingStartEvent;
-  'smart_routing_end': SmartRoutingEndEvent;
   'unified_completion': UnifiedCompletionEvent;
   'orchestrator_start': OrchestratorStartEvent;
   'orchestrator_end': OrchestratorEndEvent;
@@ -884,8 +878,6 @@ export type {
   TokenLimitExceededEvent,
   CacheEvent,
   ComprehensiveCacheEvent,
-  SmartRoutingStartEvent,
-  SmartRoutingEndEvent,
   UnifiedCompletionEvent,
   OrchestratorStartEvent,
   OrchestratorEndEvent,

@@ -24,7 +24,7 @@ NC='\033[0m'
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 
 # Paths whose changes might affect the generated schemas / types.
-RELEVANT_PATTERN='^(agent_go/cmd/schema-gen/|agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/report_plan_helpers\.go|agent_go/pkg/(events|orchestrator/events)/|frontend/scripts/generate-event-types\.mjs|agent_go/schemas/|schemas/|frontend/src/generated/)'
+RELEVANT_PATTERN='^(agent_go/cmd/schema-gen/|agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/report_plan_helpers\.go|agent_go/pkg/(events|orchestrator/events)/|frontend/scripts/generate-event-types\.mjs|agent_go/schemas/|frontend/src/generated/)'
 
 STAGED=$(git diff --cached --name-only --diff-filter=ACMR | grep -E "$RELEVANT_PATTERN" || true)
 if [ -z "$STAGED" ]; then
@@ -38,9 +38,6 @@ GENERATED_FILES=(
     "agent_go/schemas/report-plan.schema.json"
     "agent_go/schemas/polling-event.schema.json"
     "agent_go/schemas/unified-events-complete.schema.json"
-    "schemas/report-plan.schema.json"
-    "schemas/polling-event.schema.json"
-    "schemas/unified-events-complete.schema.json"
     "frontend/src/generated/report-plan.ts"
     "frontend/src/generated/events.ts"
     "frontend/src/generated/events-bridge.ts"

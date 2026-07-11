@@ -11,7 +11,6 @@ import (
 
 	internalevents "mcp-agent-builder-go/agent_go/internal/events"
 	"mcp-agent-builder-go/agent_go/internal/terminals"
-	"mcp-agent-builder-go/agent_go/pkg/workspace"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	agentevents "github.com/manishiitg/mcpagent/events"
@@ -1129,36 +1128,6 @@ func TestCaptureChatHistoryAgentRuntimeStoresCLIResumeID(t *testing.T) {
 	}
 }
 
-func TestCaptureChatHistoryAgentRuntimeStoresGeminiSessionAndProjectDir(t *testing.T) {
-	sessionID := "gemini-chat-session"
-	workspace.ClearSessionShellConfig(sessionID)
-	t.Cleanup(func() { workspace.ClearSessionShellConfig(sessionID) })
-
-	api := &StreamingAPI{}
-
-	runtime := api.captureChatHistoryAgentRuntime(sessionID, "gemini-cli", "auto", "_users/default/Chats", &mcpagent.Agent{
-		GeminiSessionID:       "gemini-native-session-1",
-		GeminiProjectDirID:    "session-gemini-chat-session",
-		CodingAgentWorkingDir: "/tmp/user-chat",
-	})
-
-	if runtime == nil {
-		t.Fatal("expected runtime metadata")
-	}
-	if runtime.Kind != "coding_agent" || runtime.Provider != "gemini-cli" {
-		t.Fatalf("unexpected runtime identity: %#v", runtime)
-	}
-	if runtime.ExternalSessionID != "gemini-native-session-1" || !runtime.ResumeSupported || runtime.ResumeFlag != "--resume" {
-		t.Fatalf("unexpected Gemini resume metadata: %#v", runtime)
-	}
-	if runtime.ProjectDirID != "session-gemini-chat-session" {
-		t.Fatalf("runtime project dir ID = %q, want stable helper project dir", runtime.ProjectDirID)
-	}
-	if cfg := workspace.GetSessionShellConfig(sessionID); cfg == nil || cfg.GeminiProjectDirID != "session-gemini-chat-session" {
-		t.Fatalf("workspace shell Gemini project dir config = %#v", cfg)
-	}
-}
-
 func TestCaptureChatHistoryAgentRuntimeStoresCodexThreadID(t *testing.T) {
 	api := &StreamingAPI{}
 
@@ -1274,36 +1243,6 @@ func TestCaptureChatHistoryAgentRuntimeInfersProviderFromSessionHandle(t *testin
 	}
 	if runtime.ExternalSessionID != "codex-thread-typed" || !runtime.ResumeSupported {
 		t.Fatalf("runtime did not mirror native session from handle: %#v", runtime)
-	}
-}
-
-func TestSeedCodingAgentRuntimeRestoresGeminiProjectDirForNextTurn(t *testing.T) {
-	sessionID := "gemini-restore-session"
-	workspace.ClearSessionShellConfig(sessionID)
-	t.Cleanup(func() { workspace.ClearSessionShellConfig(sessionID) })
-
-	api := &StreamingAPI{}
-	runtime := &ChatHistoryAgentRuntime{
-		Kind:              "coding_agent",
-		Provider:          "gemini-cli",
-		ExternalSessionID: "gemini-native-session-2",
-		ProjectDirID:      "session-gemini-restore-session",
-		ResumeSupported:   true,
-	}
-	nextTurnAgent := &mcpagent.Agent{}
-
-	if !api.seedCodingAgentRuntimeFromRestoredConversation(sessionID, "gemini-cli", "", runtime, nextTurnAgent) {
-		t.Fatal("expected Gemini runtime to seed native resume state")
-	}
-
-	if nextTurnAgent.GeminiSessionID != "gemini-native-session-2" {
-		t.Fatalf("restored Gemini session ID = %q", nextTurnAgent.GeminiSessionID)
-	}
-	if nextTurnAgent.GeminiProjectDirID != "session-gemini-restore-session" {
-		t.Fatalf("restored Gemini project dir ID = %q", nextTurnAgent.GeminiProjectDirID)
-	}
-	if cfg := workspace.GetSessionShellConfig(sessionID); cfg == nil || cfg.GeminiProjectDirID != "session-gemini-restore-session" {
-		t.Fatalf("workspace shell Gemini project dir config = %#v", cfg)
 	}
 }
 
@@ -1694,7 +1633,7 @@ func TestSeedCodingAgentRuntimeFromRestoredConversationRejectsProviderMismatch(t
 		ResumeSupported:   true,
 	}
 
-	if api.seedCodingAgentRuntimeFromRestoredConversation("new-ui-session", "gemini-cli", "", runtime, agent) {
+	if api.seedCodingAgentRuntimeFromRestoredConversation("new-ui-session", "codex-cli", "", runtime, agent) {
 		t.Fatal("expected provider mismatch to skip native resume")
 	}
 	if agent.ClaudeCodeSessionID != "" {

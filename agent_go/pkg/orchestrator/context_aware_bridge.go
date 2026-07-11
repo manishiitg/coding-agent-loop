@@ -99,7 +99,7 @@ type ContextAwareEventBridge struct {
 	tokenPersister   TokenPersister // Interface for persisting token usage
 	iterationFolder  string         // Current iteration folder for persistence
 	currentPhase     string
-	currentStep      int    // Step index (deprecated, kept for backward compat)
+	currentStep      int    // Step index within the current phase
 	currentStepID    string // Step ID (e.g., "fetch-data", "process-results")
 	currentStepType  string // Plan step type (e.g., "regular", "todo_task", "routing")
 	currentAgentName string
@@ -241,7 +241,7 @@ type RichStepContext struct {
 	StepTotal     int    // Total steps in the plan
 	ParentStepID  string // Triggering step id (nested workflow / sub-agent)
 	Attempt       int    // 1-based retry counter
-	ExecutionMode string // "scripted" | "agentic" (legacy: "learn_code" | "code_exec")
+	ExecutionMode string // "scripted" | "agentic"; persisted older values are normalized on read
 	Transport     string // "tmux" | "structured"
 	TriggeredBy   string // "workflow_executor" | "run_full_workflow" | "execute_step" | "parent_step:X"
 }
@@ -823,12 +823,6 @@ func (c *ContextAwareEventBridge) StartTimingCapture() {
 	c.activeLLMCalls = nil
 }
 
-// StartToolCallCapture enables tool call capture. Call DrainToolCalls to retrieve and reset.
-// Deprecated: use StartTimingCapture for tool + LLM timing.
-func (c *ContextAwareEventBridge) StartToolCallCapture() {
-	c.StartTimingCapture()
-}
-
 // DrainTimingCapture returns all captured timing data in order and resets the collector.
 func (c *ContextAwareEventBridge) DrainTimingCapture() TimingCaptureSnapshot {
 	c.mu.Lock()
@@ -855,12 +849,6 @@ func (c *ContextAwareEventBridge) DrainTimingCapture() TimingCaptureSnapshot {
 	c.llmCalls = nil
 	c.activeLLMCalls = nil
 	return result
-}
-
-// DrainToolCalls returns all captured tool calls in order and resets the collector.
-// Deprecated: use DrainTimingCapture for tool + LLM timing.
-func (c *ContextAwareEventBridge) DrainToolCalls() []ToolCallEntry {
-	return c.DrainTimingCapture().ToolCalls
 }
 
 func (c *ContextAwareEventBridge) captureToolCallEvent(event *events.AgentEvent) {

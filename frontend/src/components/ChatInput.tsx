@@ -140,9 +140,6 @@ interface LiveMessageDelivery {
 const formatLiveInputProviderLabel = (provider?: string | null) => {
   const normalized = (provider || '').trim().toLowerCase()
   switch (normalized) {
-    case 'gemini-cli':
-    case 'gemini_cli':
-      return 'Gemini CLI'
     case 'claude-code':
     case 'claude_code':
       return 'Claude Code'

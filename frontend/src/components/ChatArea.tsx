@@ -469,11 +469,16 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   
   const {
     toolList: allTools,
-    selectedServers,
+    chatSelectedServers,
+    workflowSelectedServers,
   } = useMCPStore(useShallow(state => ({
     toolList: state.toolList,
-    selectedServers: state.selectedServers,
+    chatSelectedServers: state.chatSelectedServers,
+    workflowSelectedServers: state.workflowSelectedServers,
   })))
+  const selectedServers = selectedModeCategory === 'workflow'
+    ? workflowSelectedServers
+    : chatSelectedServers
 
   // All servers that are currently connected (status=ok)
   const connectedServers = useMemo<Set<string>>(
@@ -1245,14 +1250,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     }
   }, [setCurrentQuery, applyPreset, setCurrentWorkflowPhase, setCurrentWorkflowQueryId])
 
-  const handleWorkflowPresetCleared = useCallback(() => {
-    clearActivePreset('workflow')
-    setCurrentWorkflowQueryId(null) // Clear the stored preset query ID
-    const defaultPhase = useWorkflowStore.getState().getDefaultPhase()
-    setCurrentWorkflowPhase(defaultPhase) // Reset to default phase
-    setCurrentQuery('')
-  }, [clearActivePreset, setCurrentWorkflowQueryId, setCurrentWorkflowPhase, setCurrentQuery])
-  
   // Clear workflow state when starting a new chat
   const clearWorkflowState = useCallback(() => {
     clearActivePreset('workflow')
@@ -2190,8 +2187,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // Terminal view mode used to skip SSE — the assumption was that
     // TerminalCenter's /api/terminals poll covered everything. That was
     // true while every coding-agent provider was tmux-backed (live pane
-    // state came from polling). For structured CLI providers (gemini-cli
-    // since the contract flip, structured providers) the synthetic terminal is
+    // state came from polling). For structured CLI providers, the synthetic terminal is
     // built from streaming_chunk events, so skipping SSE means the pane
     // never updates and user messages appear lost. Connect SSE for every
     // active tab regardless of view mode.
@@ -3207,7 +3203,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           <WorkflowModeHandler
             ref={workflowModeHandlerRef}
             onPresetSelected={handleWorkflowPresetSelected}
-            onPresetCleared={handleWorkflowPresetCleared}
             onWorkflowPhaseChange={setCurrentWorkflowPhase}
           >
             {/* restoring — reconnectWorkflowTabs is replaying events. */}

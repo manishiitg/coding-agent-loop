@@ -71,7 +71,7 @@ interface GlobalPresetState {
 
   // Actions for manifest management
   refreshPresets: () => Promise<void>
-  savePreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'multi-agent' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string, enableContextSummarization?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, browserMode?: 'none' | 'headless' | 'cdp' | 'playwright') => Promise<CustomPreset | null>
+  savePreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'multi-agent' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, browserMode?: 'none' | 'headless' | 'cdp' | 'playwright') => Promise<CustomPreset | null>
   duplicatePreset: (presetId: string) => Promise<CustomPreset | null>
 
   // Actions for preset application
@@ -154,7 +154,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         return refreshPromise
       },
       
-      savePreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, id, enableContextSummarization, enableBrowserAccess, enableContextEditing, selectedSecrets, selectedGlobalSecretNames, browserMode) => {
+      savePreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, id, selectedSecrets, selectedGlobalSecretNames, browserMode) => {
         const toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
         const existingPreset = id ? get().workflowPresets.find(p => p.id === id) : undefined
         const globalSecretNamesForBackend = selectedGlobalSecretNames === undefined
@@ -413,9 +413,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             originalPreset.llmConfig,
             originalPreset.useCodeExecutionMode,
             undefined, // id (new preset)
-            undefined, // enableContextSummarization
-            undefined, // enableBrowserAccess
-            undefined, // enableContextEditing
             originalPreset.selectedSecrets, // Copy secret selections
             originalPreset.selectedGlobalSecretNames // Copy global secret selection
           )

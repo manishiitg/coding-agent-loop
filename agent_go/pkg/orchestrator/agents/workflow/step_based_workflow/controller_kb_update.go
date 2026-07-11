@@ -117,20 +117,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) maybeEnqueueKBUpdateWithHandle(
 	return true
 }
 
-func (hcpo *StepBasedWorkflowOrchestrator) runKBUpdatePhase(
-	ctx context.Context,
-	stepIndex int,
-	stepPath string,
-	stepID string,
-	stepTitle string,
-	stepDescription string,
-	runFolder string,
-	contribution string,
-	stepContextOutput string,
-) error {
-	return hcpo.runKBUpdatePhaseWithHandle(ctx, stepIndex, stepPath, stepID, stepTitle, stepDescription, runFolder, contribution, stepContextOutput, nil)
-}
-
 func (hcpo *StepBasedWorkflowOrchestrator) runKBUpdatePhaseWithHandle(
 	ctx context.Context,
 	stepIndex int,

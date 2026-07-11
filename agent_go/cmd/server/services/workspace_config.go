@@ -41,7 +41,7 @@ type PublishedLLM struct {
 func isPublishedLLMProviderAllowed(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "bedrock", "openai", "vertex", "anthropic", "azure",
-		"claude-code", "gemini-cli", "codex-cli", "cursor-cli", "agy-cli", "pi-cli":
+		"claude-code", "codex-cli", "cursor-cli", "agy-cli", "pi-cli":
 		return true
 	default:
 		return false
@@ -358,7 +358,6 @@ func LoadProviderKeys(ctx context.Context, workspaceURL string) (map[string]inte
 		ZAI            string            `json:"zai,omitempty"`
 		Kimi           string            `json:"kimi,omitempty"`
 		Vertex         string            `json:"vertex,omitempty"`
-		GeminiCLI      string            `json:"gemini_cli,omitempty"`
 		CodexCLI       string            `json:"codex_cli,omitempty"`
 		PiCLI          string            `json:"pi_cli,omitempty"`
 		MiniMax        string            `json:"minimax,omitempty"`
@@ -394,9 +393,6 @@ func LoadProviderKeys(ctx context.Context, workspaceURL string) (map[string]inte
 	}
 	if stored.Vertex != "" {
 		m["vertex"] = stored.Vertex
-	}
-	if stored.GeminiCLI != "" {
-		m["gemini_cli"] = stored.GeminiCLI
 	}
 	if stored.CodexCLI != "" {
 		m["codex_cli"] = stored.CodexCLI

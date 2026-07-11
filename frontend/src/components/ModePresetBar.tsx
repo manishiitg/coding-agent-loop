@@ -32,28 +32,6 @@ import {
 } from '../utils/onboarding'
 import { openWorkflowPresetPage } from '../utils/workflowSessionRestore'
 
-const getModeIcon = (category: string) => {
-  switch (category) {
-    case 'workflow':
-      return <Workflow className="w-3 h-3" />
-    case 'multi-agent':
-      return <Users className="w-3 h-3" />
-    default:
-      return <Users className="w-3 h-3" />
-  }
-}
-
-const getModeName = (category: string) => {
-  switch (category) {
-    case 'workflow':
-      return 'Automation Mode'
-    case 'multi-agent':
-      return 'Chief of Staff'
-    default:
-      return 'Chief of Staff'
-  }
-}
-
 const MODE_PILLS = [
   {
     key: 'workflow' as const,
@@ -184,9 +162,6 @@ export const ModePresetBar: React.FC = () => {
   const activePreset = presetModeCategory === null
     ? null
     : getActivePreset(presetModeCategory)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const activePresetForSchedule = (getActivePreset as any)(selectedModeCategory) as ReturnType<typeof getActivePreset>
-
   // Get presets for current mode
   const presetsForMode = presetModeCategory === null
     ? []
@@ -198,7 +173,6 @@ export const ModePresetBar: React.FC = () => {
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showRunsPanel, setShowRunsPanel] = useState(false)
   const [workflowScheduleSummary, setWorkflowScheduleSummary] = useState<WorkflowScheduleSummary>(EMPTY_WORKFLOW_SCHEDULE_SUMMARY)
-  const [showPlansManager, setShowPlansManager] = useState(false)
   const [showBotConnector, setShowBotConnector] = useState(false)
   const [restoreWorkspaceAfterBotConnector, setRestoreWorkspaceAfterBotConnector] = useState(false)
   const [showWorkflowsPopup, setShowWorkflowsPopup] = useState(false)
@@ -214,7 +188,6 @@ export const ModePresetBar: React.FC = () => {
   const setShowFileContent = useWorkspaceStore(state => state.setShowFileContent)
   const isOrganizationView = showWorkflowsOverview
   const shouldShowScheduleHeader = selectedModeCategory === 'workflow' || isOrganizationView
-  const isMultiAgentMode = selectedModeCategory === 'multi-agent'
   const shouldShowBotConnector = selectedModeCategory === 'multi-agent' || selectedModeCategory === 'workflow' || isOrganizationView
 
   const openWorkflowWalkthrough = useCallback(() => {
@@ -424,8 +397,6 @@ export const ModePresetBar: React.FC = () => {
     selectedFolder?: PlannerFile,
     llmConfig?: PresetLLMConfig,
     useCodeExecutionMode?: boolean,
-    enableContextSummarization?: boolean,
-    enableBrowserAccess?: boolean,
     selectedSecrets?: string[],
     selectedGlobalSecretNames?: string[] | null,
     browserMode?: 'none' | 'headless' | 'cdp' | 'playwright'
@@ -473,9 +444,6 @@ export const ModePresetBar: React.FC = () => {
         llmConfig,
         useCodeExecutionMode,
         editingPreset?.id,
-        enableContextSummarization,
-        enableBrowserAccess,
-        undefined, // enableContextEditing
         selectedSecrets,
         selectedGlobalSecretNames,
         browserMode
@@ -502,7 +470,7 @@ export const ModePresetBar: React.FC = () => {
             : 'Unknown error'
       useChatStore.getState().addToast(`Failed to save configuration: ${detail}`, 'error')
     }
-  }, [editingPreset, savePreset, handlePresetClick])
+  }, [editingPreset, savePreset, handlePresetClick, refreshPresets])
 
   const handleDeleteWorkflow = useCallback(async (preset: CustomPreset) => {
     const workspacePath = preset.selectedFolder?.filepath

@@ -197,7 +197,7 @@ cleanup_coding_agent_tmux_sessions() {
     local count=0
     while IFS= read -r session; do
         case "$session" in
-            mlp-claude-code-exp*|mlp-codex-cli-int*|mlp-gemini-cli-int*|mlp-cursor-cli-int*|mlp-agy-cli-int*|mlp-pi-cli-int*)
+            mlp-claude-code-exp*|mlp-codex-cli-int*|mlp-cursor-cli-int*|mlp-agy-cli-int*|mlp-pi-cli-int*)
                 tmux kill-session -t "$session" 2>/dev/null || true
                 count=$((count + 1))
                 ;;
@@ -931,9 +931,6 @@ export DEEP_SEARCH_MAIN_LLM_MAX_TOKENS="40000"
 export AGENT_PROVIDER="${AGENT_PROVIDER:-azure}"
 export AGENT_MODEL="${AGENT_MODEL:-gpt-5.2}"
 
-# Gemini CLI bridge safety: restrict Gemini tool usage to execute_shell_command and get_api_spec
-# for server-launched sessions. Callers can still override by pre-setting the env var.
-export MCPAGENT_GEMINI_ENFORCE_HTTP_TOOL_ROUTING="${MCPAGENT_GEMINI_ENFORCE_HTTP_TOOL_ROUTING:-true}"
 
 # Claude Code bridge safety: restrict tool usage to execute_shell_command and get_api_spec
 # for server-launched sessions. Callers can still override by pre-setting the env var.

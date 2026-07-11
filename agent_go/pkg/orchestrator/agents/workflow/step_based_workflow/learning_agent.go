@@ -190,11 +190,6 @@ func NewWorkflowLearningAgent(config *agents.OrchestratorAgentConfig, logger log
 	}
 }
 
-// NewWorkflowSuccessLearningAgent is a compatibility alias for the unified learning agent
-func NewWorkflowSuccessLearningAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *WorkflowLearningAgent {
-	return NewWorkflowLearningAgent(config, logger, tracer, eventBridge)
-}
-
 // Execute implements the OrchestratorAgent interface
 func (agent *WorkflowLearningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	// Extract variables from template variables

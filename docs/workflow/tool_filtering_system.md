@@ -19,7 +19,7 @@ The Tool Filtering and Configuration System provides a powerful, multi-layered m
 |-----------|------|----------------|
 | **Core Filter** | [`mcpagent/agent/tool_filter.go`](https://github.com/manishiitg/mcpagent/blob/main/agent/tool_filter.go) | `NewToolFilter()`, `ShouldIncludeTool()`, `NormalizeServerName()` |
 | **Agent Core** | [`mcpagent/agent/agent.go`](https://github.com/manishiitg/mcpagent/blob/main/agent/agent.go) | `WithSelectedTools()`, `WithSelectedServers()`, `NewAgent()` |
-| **Orchestrator Utilities** | [`agent_go/pkg/orchestrator/base_orchestrator_tools.go`](../../agent_go/pkg/orchestrator/base_orchestrator_tools.go) | `FilterCustomToolsByCategory()`, `ConvertOldFormatToNewFormat()` |
+| **Orchestrator Utilities** | [`agent_go/pkg/orchestrator/base_orchestrator_tools.go`](../../agent_go/pkg/orchestrator/base_orchestrator_tools.go) | `FilterCustomToolsByCategory()` |
 | **Agent Wrapper** | [`agent_go/pkg/agentwrapper/llm_agent.go`](../../agent_go/pkg/agentwrapper/llm_agent.go) | Pass `SelectedTools` to `mcpagent` options |
 | **Workflow Types** | [`agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_agent.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_agent.go) | `AgentConfigs` struct definition (Source of Truth for JSON fields) |
 
@@ -166,7 +166,7 @@ A tool can be **registered** (layer 1) yet still **blocked** (layer 2). This has
 
 ## 3. How CLI agents see tools — the mcpbridge gate
 
-CLI providers (`claude-code`, `gemini-cli`, `codex-cli`, `cursor-cli`, `pi-cli`; legacy `agy-cli`) do **not** receive tools as native tool-calling functions. They run in code-execution mode and reach every tool through the **api-bridge** (`mcp__api-bridge__*`), discovered at use-time via `get_api_spec`. So "do you have tool X?" asked of a CLI agent is unreliable — bridged tools aren't in its native list; it only sees them through `get_api_spec`.
+CLI providers (`claude-code`, `codex-cli`, `cursor-cli`, `pi-cli`; legacy `agy-cli`) do **not** receive tools as native tool-calling functions. They run in code-execution mode and reach every tool through the **api-bridge** (`mcp__api-bridge__*`), discovered at use-time via `get_api_spec`. So "do you have tool X?" asked of a CLI agent is unreliable — bridged tools aren't in its native list; it only sees them through `get_api_spec`.
 
 Crucially, the **layer-2 allow-list is the single gate for the bridge too**, enforced in two spots in `mcpagent` — both reading the same `sessionToolAllowLists[sessionID]` map (populated by `SetToolAllowList` → `codeexec.SetSessionToolAllowList`):
 

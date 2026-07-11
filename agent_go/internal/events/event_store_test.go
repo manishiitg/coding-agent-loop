@@ -20,7 +20,7 @@ func TestAddEventSnapshotsAgentEvent(t *testing.T) {
 				Metadata: map[string]interface{}{"reason": "before"},
 			},
 			Turn:     1,
-			ModelID:  "gemini-cli/auto",
+			ModelID:  "codex-cli/high",
 			Error:    "choice.Content is empty",
 			Duration: time.Second,
 		},

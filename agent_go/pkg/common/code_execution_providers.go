@@ -23,7 +23,6 @@ import "strings"
 // `UseCodeExecutionMode` should just set it to true unconditionally.
 var cliProviders = map[string]struct{}{
 	"claude-code": {},
-	"gemini-cli":  {},
 	"codex-cli":   {},
 	"cursor-cli":  {},
 	"agy-cli":     {},
@@ -31,7 +30,7 @@ var cliProviders = map[string]struct{}{
 }
 
 // IsCLIProvider reports whether the given provider ID is a CLI agent
-// runtime (claude-code, gemini-cli, codex-cli, cursor-cli, agy-cli, pi-cli).
+// runtime (claude-code, codex-cli, cursor-cli, agy-cli, pi-cli).
 // The lookup is case-insensitive and whitespace-trimmed for resilience against
 // config drift.
 func IsCLIProvider(provider string) bool {

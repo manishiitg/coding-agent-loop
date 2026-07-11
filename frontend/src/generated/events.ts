@@ -46,8 +46,6 @@ export interface UnifiedEventsComplete {
   orchestrator_start?: OrchestratorStartEvent;
   pre_validation_completed?: PreValidationCompletedEvent;
   request_human_feedback?: RequestHumanFeedbackEvent;
-  smart_routing_end?: SmartRoutingEndEvent;
-  smart_routing_start?: SmartRoutingStartEvent;
   step_progress_updated?: StepProgressUpdatedEvent;
   step_token_usage?: StepTokenUsageEvent;
   structured_output_end?: StructuredOutputEndEvent;
@@ -1042,66 +1040,6 @@ export interface RequestHumanFeedbackEvent {
   trace_id?: string;
   verification_type?: string;
   workflow_id?: string;
-}
-export interface SmartRoutingEndEvent {
-  appended_prompt_count?: number;
-  appended_prompt_summary?: string;
-  component?: string;
-  correlation_id?: string;
-  error?: string;
-  event_id?: string;
-  filtered_tools?: number;
-  has_appended_prompts?: boolean;
-  hierarchy_level?: number;
-  is_end_event?: boolean;
-  llm_max_tokens?: number;
-  llm_model_id?: string;
-  llm_provider?: string;
-  llm_response?: string;
-  llm_temperature?: number;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  parent_id?: string;
-  relevant_servers?: string[];
-  routing_duration?: number;
-  routing_reasoning?: string;
-  selected_servers?: string;
-  session_id?: string;
-  span_id?: string;
-  success?: boolean;
-  timestamp?: string;
-  total_servers?: number;
-  total_tools?: number;
-  trace_id?: string;
-}
-export interface SmartRoutingStartEvent {
-  component?: string;
-  conversation_context?: string;
-  correlation_id?: string;
-  event_id?: string;
-  hierarchy_level?: number;
-  is_end_event?: boolean;
-  llm_max_tokens?: number;
-  llm_model_id?: string;
-  llm_prompt?: string;
-  llm_provider?: string;
-  llm_temperature?: number;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  parent_id?: string;
-  session_id?: string;
-  span_id?: string;
-  thresholds?: {
-    max_servers?: number;
-    max_tools?: number;
-  };
-  timestamp?: string;
-  total_servers?: number;
-  total_tools?: number;
-  trace_id?: string;
-  user_query?: string;
 }
 export interface StepProgressUpdatedEvent {
   component?: string;

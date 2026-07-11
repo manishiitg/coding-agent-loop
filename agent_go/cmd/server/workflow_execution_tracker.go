@@ -453,23 +453,3 @@ func (api *StreamingAPI) findRunningTrackedExecutionForWorkspace(workspacePath s
 	}
 	return best
 }
-
-func (api *StreamingAPI) latestTrackedRunFolderForSession(sessionID string) string {
-	api.trackedWorkflowExecutionsMux.RLock()
-	defer api.trackedWorkflowExecutionsMux.RUnlock()
-
-	var best *TrackedWorkflowExecution
-	for _, exec := range api.trackedWorkflowExecutions {
-		if exec == nil || exec.SessionID != sessionID || strings.TrimSpace(exec.RunFolder) == "" {
-			continue
-		}
-		if best == nil || exec.StartedAt.After(best.StartedAt) {
-			copyExec := *exec
-			best = &copyExec
-		}
-	}
-	if best == nil {
-		return ""
-	}
-	return best.RunFolder
-}

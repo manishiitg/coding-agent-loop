@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -30,25 +29,20 @@ var supportedLLMProviders = []string{
 	"elevenlabs",
 	"deepgram",
 	"claude-code",
-	"gemini-cli",
 	"codex-cli",
 	"cursor-cli",
 	"agy-cli",
 	"pi-cli",
 }
 
-const claudeCodeDisableAutoMemoryEnv = "CLAUDE_CODE_DISABLE_AUTO_MEMORY"
-
 func isDeprecatedLLMProvider(provider string) bool {
 	provider = strings.ToLower(strings.TrimSpace(provider))
-	return provider == "gemini-cli" || provider == "agy-cli"
+	return provider == "agy-cli"
 }
 
 func providerDeprecationReason(provider string) string {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	switch {
-	case provider == "gemini-cli":
-		return "Gemini CLI is retained for existing sessions only. Use Pi CLI for new Gemini coding-agent setup."
 	case provider == "agy-cli":
 		return "Antigravity CLI is retained for existing sessions only. Use Pi CLI for new multi-provider coding-agent setup."
 	default:
@@ -59,7 +53,7 @@ func providerDeprecationReason(provider string) string {
 func providerReplacementProvider(provider string) string {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	switch {
-	case provider == "gemini-cli", provider == "agy-cli":
+	case provider == "agy-cli":
 		return "pi-cli"
 	default:
 		return ""
@@ -69,7 +63,7 @@ func providerReplacementProvider(provider string) string {
 func isPublishedLLMProviderAllowed(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "bedrock", "openai", "vertex", "anthropic", "azure",
-		"claude-code", "gemini-cli", "codex-cli", "cursor-cli", "agy-cli", "pi-cli":
+		"claude-code", "codex-cli", "cursor-cli", "agy-cli", "pi-cli":
 		return true
 	default:
 		return false
@@ -303,9 +297,6 @@ func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 	if region := os.Getenv("BEDROCK_REGION"); region != "" {
 		keys.Bedrock = &llm.BedrockConfig{Region: region}
 	}
-	if s := os.Getenv("GEMINI_API_KEY"); s != "" {
-		keys.GeminiCLI = &s
-	}
 	// Codex CLI: only use explicit CODEX_API_KEY (not OPENAI_API_KEY).
 	// Codex CLI has its own stored auth via `codex login`.
 	if s := os.Getenv("CODEX_API_KEY"); s != "" {
@@ -428,8 +419,6 @@ func providerDisplayLabel(provider string) string {
 		return "Pi CLI"
 	case "claude-code":
 		return "Claude Code"
-	case "gemini-cli":
-		return "Gemini CLI (Deprecated)"
 	case "openai":
 		return "OpenAI API"
 	case "anthropic":
@@ -497,8 +486,6 @@ func discoveryModelOptions(provider string) []string {
 			}
 		}
 		return options
-	case "gemini-cli":
-		return []string{"auto", "high", "medium", "low"}
 	default:
 		return nil
 	}
@@ -517,8 +504,6 @@ func discoverySetupHint(provider string, runtimeMissing bool) string {
 			return "Install Pi CLI with npm install -g @earendil-works/pi-coding-agent, or ensure npx is available on the backend PATH."
 		case "claude-code":
 			return "Install Claude Code so the claude command is available on the backend PATH."
-		case "gemini-cli":
-			return "Install Gemini CLI so the gemini command is available on the backend PATH."
 		default:
 			return "Install the provider CLI so its command is available on the backend PATH."
 		}
@@ -535,8 +520,6 @@ func discoverySetupHint(provider string, runtimeMissing bool) string {
 		return "Set PI_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY, then test again."
 	case "claude-code":
 		return "Run claude to finish Claude Code authentication, then test again."
-	case "gemini-cli":
-		return "Set GEMINI_API_KEY or finish Gemini CLI authentication, then test again."
 	default:
 		return "Provider auth was not detected in the server environment or workspace provider keys."
 	}
@@ -555,7 +538,6 @@ func buildLLMDiscovery(ctx context.Context) llmDiscoveryResponse {
 		"codex-cli",
 		"cursor-cli",
 		"pi-cli",
-		"gemini-cli",
 		"agy-cli",
 		"openai",
 		"anthropic",
@@ -969,8 +951,6 @@ func (api *StreamingAPI) populateValidationCredentialsFromMergedKeys(ctx context
 		setAPIKey(keys.Anthropic)
 	case "vertex":
 		setAPIKey(keys.Vertex)
-	case "gemini-cli":
-		setAPIKey(keys.GeminiCLI)
 	case "codex-cli":
 		setAPIKey(keys.CodexCLI)
 	case "cursor-cli":
@@ -1021,8 +1001,6 @@ func validateProviderConfig(req llm.APIKeyValidationRequest) llm.APIKeyValidatio
 	switch provider {
 	case "claude-code":
 		return validateClaudeCodeCLI()
-	case "gemini-cli":
-		return validateGeminiCLI(req.APIKey)
 	case "codex-cli":
 		return validateCodexCLI(req.APIKey)
 	case "cursor-cli":
@@ -1116,153 +1094,6 @@ func validateClaudeCodeCLI() llm.APIKeyValidationResponse {
 		Valid:   true,
 		Message: fmt.Sprintf("Claude Code is working. Response: %s", responseText),
 	}
-}
-
-// validateGeminiCLI validates the Gemini CLI by checking it exists and sending a test prompt
-// validateGeminiCLI validates the Gemini CLI by running a real adapter call
-// through llm.InitializeLLM so the test exercises the same path as production
-// (TRUST_WORKSPACE env, model alias resolution, transport, all match).
-func validateGeminiCLI(apiKey string) llm.APIKeyValidationResponse {
-	log.Printf("[GEMINI-CLI VALIDATION] Starting CLI validation")
-
-	geminiPath, err := exec.LookPath("gemini")
-	if err != nil {
-		log.Printf("[GEMINI-CLI VALIDATION] CLI not found on PATH: %v", err)
-		return llm.APIKeyValidationResponse{
-			Valid:   false,
-			Message: "Gemini CLI not found. Install it with: npm install -g @google/gemini-cli (see https://github.com/google-gemini/gemini-cli)",
-		}
-	}
-	log.Printf("[GEMINI-CLI VALIDATION] CLI found at: %s", geminiPath)
-
-	// Gemini CLI defaults to oauth-personal auth which fails in non-interactive
-	// mode. Flip ~/.gemini/settings.json to "gemini-api-key" so the adapter's
-	// API-key auth path actually works.
-	ensureGeminiAPIKeyAuth()
-
-	workspaceDir, err := os.MkdirTemp("", "gemini-cli-validation-*")
-	if err != nil {
-		return llm.APIKeyValidationResponse{
-			Valid:   false,
-			Message: "Could not create a temporary workspace for Gemini CLI validation.",
-		}
-	}
-	defer os.RemoveAll(workspaceDir)
-
-	keys := &llm.ProviderAPIKeys{}
-	if apiKey == "" {
-		apiKey = os.Getenv("GEMINI_API_KEY")
-	}
-	if strings.TrimSpace(apiKey) != "" {
-		keys.GeminiCLI = &apiKey
-	}
-
-	model, err := llm.InitializeLLM(llm.Config{
-		Provider: llm.ProviderGeminiCLI,
-		ModelID:  "medium",
-		APIKeys:  keys,
-		Context:  context.Background(),
-	})
-	if err != nil {
-		return llm.APIKeyValidationResponse{
-			Valid:   false,
-			Message: fmt.Sprintf("Failed to initialize Gemini CLI: %v", err),
-		}
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-
-	resp, err := model.GenerateContent(ctx, []llmtypes.MessageContent{
-		{
-			Role: llmtypes.ChatMessageTypeHuman,
-			Parts: []llmtypes.ContentPart{
-				llmtypes.TextContent{Text: "Reply with exactly: Gemini CLI is working."},
-			},
-		},
-	}, llm.WithGeminiWorkingDir(workspaceDir))
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return llm.APIKeyValidationResponse{
-				Valid:   false,
-				Message: "Gemini CLI timed out after 90s. Check that you are authenticated (run 'gemini' to log in).",
-			}
-		}
-		return llm.APIKeyValidationResponse{
-			Valid:   false,
-			Message: fmt.Sprintf("Gemini CLI error: %s", strings.TrimSpace(err.Error())),
-		}
-	}
-
-	responseText := ""
-	if resp != nil && len(resp.Choices) > 0 {
-		responseText = strings.TrimSpace(resp.Choices[0].Content)
-	}
-	if responseText == "" {
-		return llm.APIKeyValidationResponse{
-			Valid:   false,
-			Message: "Gemini CLI returned an empty response. Check authentication with 'gemini'.",
-		}
-	}
-
-	log.Printf("[GEMINI-CLI VALIDATION SUCCESS] Got response: %s", responseText)
-	return llm.APIKeyValidationResponse{
-		Valid:   true,
-		Message: fmt.Sprintf("Gemini CLI is working. Response: %s", responseText),
-	}
-}
-
-// ensureGeminiAPIKeyAuth ensures Gemini CLI settings.json uses "gemini-api-key" auth type
-// instead of the default "oauth-personal" which requires an interactive terminal.
-func ensureGeminiAPIKeyAuth() {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		log.Printf("[GEMINI-CLI] Could not determine home dir: %v", err)
-		return
-	}
-	geminiDir := filepath.Join(homeDir, ".gemini")
-	settingsPath := filepath.Join(geminiDir, "settings.json")
-
-	// Read existing settings
-	var settings map[string]interface{}
-	data, err := os.ReadFile(settingsPath)
-	if err == nil {
-		_ = json.Unmarshal(data, &settings)
-	}
-	if settings == nil {
-		settings = make(map[string]interface{})
-	}
-
-	// Check if already set to gemini-api-key
-	if security, ok := settings["security"].(map[string]interface{}); ok {
-		if auth, ok := security["auth"].(map[string]interface{}); ok {
-			if auth["selectedType"] == "gemini-api-key" {
-				return // already configured
-			}
-		}
-	}
-
-	// Set auth type to gemini-api-key
-	settings["security"] = map[string]interface{}{
-		"auth": map[string]interface{}{
-			"selectedType": "gemini-api-key",
-		},
-	}
-
-	if err := os.MkdirAll(geminiDir, 0700); err != nil {
-		log.Printf("[GEMINI-CLI] Could not create .gemini dir: %v", err)
-		return
-	}
-	out, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		log.Printf("[GEMINI-CLI] Could not marshal settings: %v", err)
-		return
-	}
-	if err := os.WriteFile(settingsPath, out, 0644); err != nil {
-		log.Printf("[GEMINI-CLI] Could not write settings: %v", err)
-		return
-	}
-	log.Printf("[GEMINI-CLI] Configured settings.json for API key auth")
 }
 
 // validateCodexCLI validates the OpenAI Codex CLI by running a real adapter

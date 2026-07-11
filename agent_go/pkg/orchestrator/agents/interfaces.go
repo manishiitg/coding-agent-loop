@@ -108,7 +108,7 @@ type OrchestratorAgentConfig struct {
 	StructuredOutputType   string `json:"structured_output_type,omitempty"` // "plan", "steps", "custom"
 
 	// Code execution mode: When enabled, only virtual tools are added to LLM
-	// MCP tools are accessed via generated Go code using discover_code_files and write_code
+	// MCP tools are accessed through generated scripts using the on-demand HTTP API specification.
 	UseCodeExecutionMode bool `json:"use_code_execution_mode,omitempty"`
 	// ClaudeCodeTransport optionally overrides the Claude Code provider
 	// transport for this workflow agent. Workflow agents use the interactive
@@ -124,7 +124,7 @@ type OrchestratorAgentConfig struct {
 	// keepalive outside this orchestrator config.
 	CodingAgentKeepAlive bool `json:"coding_agent_keep_alive,omitempty"`
 	// ForceStructuredCodingAgent forces the coding-agent CLI providers
-	// (claude-code, codex-cli, cursor-cli, gemini-cli, pi-cli) to use the
+	// (claude-code, codex-cli, cursor-cli, pi-cli) to use the
 	// structured JSON transport (--print / --exec) for this step,
 	// even when tmux would otherwise be used. Wired from the workflow
 	// step config's AgentConfigs.Transport == "structured".

@@ -174,36 +174,6 @@ func TestAllWorkflowAgentFactoriesEnableWorkspaceIsolation(t *testing.T) {
 	}
 }
 
-func TestApplyStepConfigToAgentConfigGeminiWorkflowStepsDefaultToTmux(t *testing.T) {
-	tests := []struct {
-		name                string
-		stepConfig          *AgentConfigs
-		wantForceStructured bool
-	}{
-		{name: "no step config", stepConfig: nil},
-		{name: "default transport", stepConfig: &AgentConfigs{}},
-		{name: "explicit tmux honored", stepConfig: &AgentConfigs{Transport: "tmux"}},
-		{name: "legacy structured ignored", stepConfig: &AgentConfigs{Transport: "structured"}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			hcpo := newAgentFactoryTestOrchestrator(t)
-			config := agents.NewOrchestratorAgentConfig("step-agent")
-			config.LLMConfig.Primary.Provider = string(mcpllm.ProviderGeminiCLI)
-
-			hcpo.applyStepConfigToAgentConfig(config, tt.stepConfig, false)
-
-			if !config.UseCodeExecutionMode {
-				t.Fatal("expected Gemini CLI workflow step to use code execution mode")
-			}
-			if config.ForceStructuredCodingAgent != tt.wantForceStructured {
-				t.Fatalf("ForceStructuredCodingAgent = %v, want %v (Gemini follows the standard CLI tmux-default policy)", config.ForceStructuredCodingAgent, tt.wantForceStructured)
-			}
-		})
-	}
-}
-
 func TestApplyStepConfigToAgentConfigKeepsTmuxDefaultForOtherCLIWorkflowSteps(t *testing.T) {
 	tests := []struct {
 		name                string
@@ -243,9 +213,6 @@ func TestWorkflowTransportResolverAppliesDedicatedModes(t *testing.T) {
 		wantTransport       string
 		wantForceStructured bool
 	}{
-		{name: "gemini defaults tmux", provider: string(mcpllm.ProviderGeminiCLI), wantTransport: "tmux"},
-		{name: "gemini honors tmux", provider: string(mcpllm.ProviderGeminiCLI), stepConfig: &AgentConfigs{Transport: "tmux"}, wantTransport: "tmux"},
-		{name: "gemini explicit structured ignored", provider: string(mcpllm.ProviderGeminiCLI), stepConfig: &AgentConfigs{Transport: "structured"}, wantTransport: "tmux"},
 		{name: "codex defaults tmux", provider: string(mcpllm.ProviderCodexCLI), wantTransport: "tmux"},
 		{name: "codex explicit structured ignored", provider: string(mcpllm.ProviderCodexCLI), stepConfig: &AgentConfigs{Transport: "structured"}, wantTransport: "tmux"},
 		{name: "claude explicit structured ignored", provider: string(mcpllm.ProviderClaudeCode), stepConfig: &AgentConfigs{Transport: "structured"}, wantTransport: "tmux"},
@@ -531,7 +498,7 @@ func TestApplyStepConfigToAgentConfigForcesCodeExecForCLIProviders(t *testing.T)
 
 	hcpo := &StepBasedWorkflowOrchestrator{BaseOrchestrator: base}
 	config := agents.NewOrchestratorAgentConfig("test-agent")
-	config.LLMConfig.Primary.Provider = "gemini-cli"
+	config.LLMConfig.Primary.Provider = "claude-code"
 
 	hcpo.applyStepConfigToAgentConfig(config, nil, false)
 
@@ -553,49 +520,6 @@ func TestClaudeCodeTransportHelpers(t *testing.T) {
 	forceWorkflowClaudeCodeInteractiveTransport(chatConfig)
 	if chatConfig.ClaudeCodeTransport != mcpllm.ClaudeCodeTransportTmux {
 		t.Fatalf("chat ClaudeCodeTransport = %q, want %q", chatConfig.ClaudeCodeTransport, mcpllm.ClaudeCodeTransportTmux)
-	}
-}
-
-// Gemini CLI follows the same workflow-step policy as every other CLI:
-// tmux by default, including when an old step_config still says structured.
-func TestWorkflowGeminiUsesTmuxLikeOtherCLIs(t *testing.T) {
-	hcpo := newAgentFactoryTestOrchestrator(t)
-
-	newGemini := func() *agents.OrchestratorAgentConfig {
-		c := agents.NewOrchestratorAgentConfig("workflow-runtime-agent")
-		c.LLMConfig.Primary.Provider = string(mcpllm.ProviderGeminiCLI)
-		return c
-	}
-
-	// Default (no per-step transport) → tmux, like every other CLI.
-	c := newGemini()
-	if got := hcpo.applyWorkflowTransportToAgentConfig(c, nil, "runtime"); got != "tmux" {
-		t.Fatalf("default transport = %q, want tmux", got)
-	}
-	if c.ForceStructuredCodingAgent {
-		t.Fatal("default ForceStructuredCodingAgent = true, want false")
-	}
-
-	// Explicit transport=tmux is now honored (previously forced to structured).
-	c = newGemini()
-	if got := hcpo.applyWorkflowTransportToAgentConfig(c, &AgentConfigs{Transport: "tmux"}, "runtime"); got != "tmux" {
-		t.Fatalf("transport=tmux = %q, want tmux", got)
-	}
-	if c.ForceStructuredCodingAgent {
-		t.Fatal("transport=tmux ForceStructuredCodingAgent = true, want false")
-	}
-
-	// Legacy structured is ignored and leaves keep-alive untouched.
-	c = newGemini()
-	c.CodingAgentKeepAlive = true
-	if got := hcpo.applyWorkflowTransportToAgentConfig(c, &AgentConfigs{Transport: "structured"}, "runtime"); got != "tmux" {
-		t.Fatalf("transport=structured = %q, want tmux", got)
-	}
-	if c.ForceStructuredCodingAgent {
-		t.Fatal("transport=structured ForceStructuredCodingAgent = true, want false")
-	}
-	if !c.CodingAgentKeepAlive {
-		t.Fatal("transport=structured CodingAgentKeepAlive = false, want true")
 	}
 }
 

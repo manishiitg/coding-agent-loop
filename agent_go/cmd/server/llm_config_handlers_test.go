@@ -9,44 +9,6 @@ import (
 	"testing"
 )
 
-func TestBuildLLMDiscoveryShowsMissingCodingCLI(t *testing.T) {
-	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
-	t.Setenv("SUPPORTED_LLM_PROVIDERS", "gemini-cli")
-	t.Setenv("PATH", t.TempDir())
-	t.Setenv("GEMINI_API_KEY", "")
-
-	response := buildLLMDiscovery(context.Background())
-	if len(response.Candidates) != 1 {
-		t.Fatalf("candidate count = %d, want 1: %+v", len(response.Candidates), response.Candidates)
-	}
-
-	candidate := response.Candidates[0]
-	if candidate.Provider != "gemini-cli" {
-		t.Fatalf("provider = %q, want gemini-cli", candidate.Provider)
-	}
-	if candidate.RuntimeAvailable == nil || *candidate.RuntimeAvailable {
-		t.Fatalf("runtime_available = %v, want false", candidate.RuntimeAvailable)
-	}
-	if candidate.Usable {
-		t.Fatal("usable = true, want false for missing runtime")
-	}
-	if candidate.DetectionSource != "CLI not found" {
-		t.Fatalf("detection_source = %q, want CLI not found", candidate.DetectionSource)
-	}
-	if candidate.Reason != "CLI runtime was not detected." {
-		t.Fatalf("reason = %q, want missing runtime reason", candidate.Reason)
-	}
-	if !strings.Contains(candidate.SetupHint, "Install Gemini CLI") {
-		t.Fatalf("setup_hint = %q, want install hint", candidate.SetupHint)
-	}
-	if !candidate.Deprecated {
-		t.Fatal("gemini-cli discovery candidate should be marked deprecated")
-	}
-	if candidate.ReplacementProvider != "pi-cli" {
-		t.Fatalf("replacement_provider = %q, want pi-cli", candidate.ReplacementProvider)
-	}
-}
-
 func TestLLMDiscoveryHTTPShowsCursorLoginRequired(t *testing.T) {
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
 	t.Setenv("SUPPORTED_LLM_PROVIDERS", "cursor-cli")
@@ -107,7 +69,7 @@ func TestClaudeCodeDiscoveryOptionsIncludeManualNewModels(t *testing.T) {
 
 func TestProviderManifestMarksDeprecatedCodingAgents(t *testing.T) {
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
-	t.Setenv("SUPPORTED_LLM_PROVIDERS", "gemini-cli,agy-cli,pi-cli")
+	t.Setenv("SUPPORTED_LLM_PROVIDERS", "agy-cli,pi-cli")
 	t.Setenv("PATH", t.TempDir())
 
 	api := &StreamingAPI{}
@@ -139,10 +101,7 @@ func TestProviderManifestMarksDeprecatedCodingAgents(t *testing.T) {
 		t.Fatalf("decode manifest: %v", err)
 	}
 
-	want := map[string]string{
-		"gemini-cli": "pi-cli",
-		"agy-cli":    "pi-cli",
-	}
+	want := map[string]string{"agy-cli": "pi-cli"}
 	seen := map[string]bool{}
 	for _, provider := range resp.Providers {
 		replacement, ok := want[provider.ID]

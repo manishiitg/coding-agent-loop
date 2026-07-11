@@ -155,10 +155,6 @@ func lazySkillBody(filePath, folderName, body string) string {
 		lazySkillExcerptLines, len(lines), filePath, path.Dir(filePath))
 }
 
-func filterFilesystemSkills(selectedSkills []string) []string {
-	return selectedSkills
-}
-
 // loadSkillSupportingFiles walks workspace/skills/<folder>/ and returns
 // every non-SKILL.md file under it as a SkillFile. Binary files are
 // skipped — the workspace ReadFile API refuses to return them as

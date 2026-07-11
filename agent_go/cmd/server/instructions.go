@@ -188,7 +188,7 @@ Published LLM metadata and provider authentication are workspace-backed configur
   - ` + "`\"fallback\"`" + ` = backup search provider
 - Use ` + "`search_priority`" + ` to order providers within the same role. Lower numbers win.
 - If the tool call passes a specific ` + "`provider`" + `, that override wins over ` + "`search_role`" + ` / ` + "`search_priority`" + `.
-- Example: ` + "`{\"id\":\"gemini-search\",\"name\":\"Gemini Search\",\"provider\":\"gemini-cli\",\"model_id\":\"gemini-2.5-pro\",\"search_role\":\"primary\",\"search_priority\":1}`" + `
+- Example: ` + "`{\"id\":\"vertex-search\",\"name\":\"Gemini Search\",\"provider\":\"vertex\",\"model_id\":\"gemini-3.5-flash\",\"search_role\":\"primary\",\"search_priority\":1}`" + `
 
 ## Image Generation Defaults
 Image generation defaults are workspace-backed configuration. Provider authentication is managed separately through ` + "`set_provider_auth`" + `.
@@ -864,30 +864,6 @@ func readFileContent(client *skills.WorkspaceAPIClient, filePath string) string 
 		return ""
 	}
 	return strings.TrimSpace(content)
-}
-
-// readDirectoryMarkdownFiles reads all .md files from a directory and concatenates them.
-// Returns empty string if directory doesn't exist or has no .md files.
-func readDirectoryMarkdownFiles(client *skills.WorkspaceAPIClient, dirPath string) string {
-	entries, err := client.ListFiles(dirPath)
-	if err != nil {
-		return ""
-	}
-
-	var memoryParts []string
-	for _, entry := range entries {
-		if entry.Type != "file" || !strings.HasSuffix(entry.Filepath, ".md") {
-			continue
-		}
-		content := readFileContent(client, entry.Filepath)
-		if content != "" {
-			memoryParts = append(memoryParts, content)
-		}
-	}
-	if len(memoryParts) == 0 {
-		return ""
-	}
-	return strings.Join(memoryParts, "\n\n---\n\n")
 }
 
 // variableEntry represents a variable in variables.json

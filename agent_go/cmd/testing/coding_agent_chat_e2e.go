@@ -55,7 +55,7 @@ This intentionally does not call the provider adapter directly. It exercises:
 Example:
   mcp-agent test coding-agent-chat-e2e \
     --server-url http://localhost:18743 \
-    --provider gemini-cli \
+	--provider codex-cli \
     --model gemini-3.1-flash-lite \
     --selected-folder _users/default/Chats
 
@@ -89,7 +89,7 @@ Example:
 
 		provider := strings.TrimSpace(codingAgentChatE2EFlags.provider)
 		if provider == "" {
-			provider = "gemini-cli"
+			provider = "codex-cli"
 		}
 		model := strings.TrimSpace(codingAgentChatE2EFlags.model)
 		if model == "" {
@@ -248,7 +248,7 @@ Example:
 
 func init() {
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.serverURL, "server-url", "http://localhost:18743", "mcp-agent-builder-go server URL")
-	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.provider, "provider", "gemini-cli", "coding CLI provider: gemini-cli, codex-cli, cursor-cli, agy-cli, pi-cli, or claude-code")
+	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.provider, "provider", "codex-cli", "coding CLI provider: codex-cli, cursor-cli, agy-cli, pi-cli, or claude-code")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.model, "model", "", "model ID; defaults to the provider-specific E2E model")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.sessionID, "session-id", "", "session ID to reuse; generated when omitted")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.selectedFolder, "selected-folder", "_users/default/Chats", "workspace-relative folder for the chat session")
@@ -280,8 +280,6 @@ type codingAgentChatE2EClient struct {
 
 func defaultCodingAgentE2EModel(provider string) string {
 	switch provider {
-	case "gemini-cli":
-		return "gemini-3.1-flash-lite"
 	case "codex-cli":
 		return "gpt-5.3-codex-spark"
 	case "cursor-cli":
@@ -692,17 +690,6 @@ func extractUnifiedCompletionFinal(events []map[string]interface{}) string {
 		}
 	}
 	return ""
-}
-
-func (c *codingAgentChatE2EClient) sessionEventsProveProvider(ctx context.Context, sessionID, provider string) (bool, error) {
-	if provider == "" {
-		return true, nil
-	}
-	resp, _, err := c.getEvents(ctx, sessionID)
-	if err != nil {
-		return false, err
-	}
-	return eventsProveProvider(resp.Events, provider), nil
 }
 
 func eventsProveProvider(events []map[string]interface{}, provider string) bool {

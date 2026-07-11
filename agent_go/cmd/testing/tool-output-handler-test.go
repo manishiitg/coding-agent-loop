@@ -11,8 +11,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"mcp-agent-builder-go/agent_go/internal/utils"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
+	"mcp-agent-builder-go/agent_go/internal/utils"
 )
 
 var toolOutputHandlerTestCmd = &cobra.Command{
@@ -249,21 +249,23 @@ func testLargeOutputVirtualTools(testDir string) error {
 	handler.OutputFolder = testDir
 	handler.SessionID = "test-session"
 
-	result, err = agent.HandleLargeOutputVirtualTool(ctx, "read_large_output", map[string]interface{}{
-		"filename": "tool_20250731_143800_test_tool.json",
-		"start":    float64(1),
-		"end":      float64(20),
+	result, err = agent.HandleLargeOutputVirtualTool(ctx, "search_large_output", map[string]interface{}{
+		"filename":  "tool_20250731_143800_test_tool.json",
+		"operation": "read",
+		"start":     float64(1),
+		"end":       float64(20),
 	})
-	logger.Info(fmt.Sprintf("read_large_output when enabled: %s, error: %v", result, err))
+	logger.Info(fmt.Sprintf("search_large_output read when enabled: %s, error: %v", result, err))
 
 	// Test large output tool when disabled (should fail)
 	agent.EnableContextOffloading = false
-	result, err = agent.HandleLargeOutputVirtualTool(ctx, "read_large_output", map[string]interface{}{
-		"filename": "test.json",
-		"start":    float64(1),
-		"end":      float64(100),
+	result, err = agent.HandleLargeOutputVirtualTool(ctx, "search_large_output", map[string]interface{}{
+		"filename":  "test.json",
+		"operation": "read",
+		"start":     float64(1),
+		"end":       float64(100),
 	})
-	logger.Info(fmt.Sprintf("read_large_output when disabled: %s, error: %v", result, err))
+	logger.Info(fmt.Sprintf("search_large_output read when disabled: %s, error: %v", result, err))
 
 	logger.Info("✅ Large output virtual tools tests passed!")
 	return nil

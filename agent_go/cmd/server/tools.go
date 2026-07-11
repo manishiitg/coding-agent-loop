@@ -657,11 +657,6 @@ func (api *StreamingAPI) initializeToolCache() {
 	api.logger.Info(fmt.Sprintf("📊 Cache stats: total_entries=%v, valid_entries=%v, cache_dir=%v",
 		stats["total_entries"], stats["valid_entries"], stats["cache_directory"]))
 
-	// Enable code generation so that missing code is regenerated when loading from cache
-	// This ensures MCP server code is available even if generated/ folder was cleared
-	cacheManager.SetCodeGenerationEnabled(true)
-	api.logger.Info("🔧 Code generation enabled in cache manager for automatic code regeneration")
-
 	// Load merged config (base + user additions)
 	cfg, err := api.loadMergedConfig()
 	if err != nil {
@@ -802,7 +797,6 @@ func (api *StreamingAPI) convertToolStatusToCacheEntry(toolStatus *ToolStatus, s
 			Resources:    []mcp.Resource{},
 			SystemPrompt: "",
 			CreatedAt:    time.Now(),
-			LastAccessed: time.Now(),
 			TTLMinutes:   ttlMinutes,
 			Protocol:     "unknown",
 			ServerInfo:   make(map[string]interface{}),
@@ -824,7 +818,6 @@ func (api *StreamingAPI) convertToolStatusToCacheEntry(toolStatus *ToolStatus, s
 		Resources:    []mcp.Resource{}, // Empty for now
 		SystemPrompt: "",               // Empty for now
 		CreatedAt:    time.Now(),
-		LastAccessed: time.Now(),
 		TTLMinutes:   ttlMinutes, // Use configured TTL from cache manager
 		Protocol:     "unknown",  // Will be updated by actual discovery
 		ServerInfo:   make(map[string]interface{}),

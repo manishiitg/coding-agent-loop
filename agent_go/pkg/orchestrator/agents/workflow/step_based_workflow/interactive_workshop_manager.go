@@ -2290,7 +2290,7 @@ func (agent *WorkflowInteractiveWorkshopAgent) Execute(ctx context.Context, temp
 		logger.Warn(fmt.Sprintf("Failed to register changelog artifact-review marker tool: %v", err))
 	}
 
-	// Update code execution registry for CLI providers (claude-code, gemini-cli)
+	// Update the code execution registry for CLI providers.
 	if agent.GetConfig().UseCodeExecutionMode {
 		if err := mcpAgentRef.UpdateCodeExecutionRegistry(); err != nil {
 			logger.Warn(fmt.Sprintf("⚠️ Failed to update code execution registry with workshop tools: %v", err))
@@ -6532,7 +6532,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"resume_previous": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Optional opt-in when this workflow runs on a coding-agent CLI (claude-code, cursor-cli, codex-cli, gemini-cli, pi-cli, agy-cli). When true, each scheduled run resumes the previous run's thread (same CLI) instead of starting a fresh session, so the agent keeps prior context across runs. API model providers and non-resumable runs start fresh. Defaults to false; omit for fresh sessions.",
+					"description": "Optional opt-in when this workflow runs on a coding-agent CLI (claude-code, cursor-cli, codex-cli, pi-cli, agy-cli). When true, each scheduled run resumes the previous run's thread (same CLI) instead of starting a fresh session, so the agent keeps prior context across runs. API model providers and non-resumable runs start fresh. Defaults to false; omit for fresh sessions.",
 				},
 			},
 			"required": []string{"name", "cron_expression", "timezone", "group_names"},
@@ -7130,7 +7130,7 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagen
 			"properties": map[string]interface{}{
 				"provider": map[string]interface{}{
 					"type":        "string",
-					"description": "Provider id such as openai, openrouter, anthropic, vertex, azure, minimax, bedrock, gemini-cli, pi-cli, claude-code.",
+					"description": "Provider id such as openai, openrouter, anthropic, vertex, azure, minimax, bedrock, pi-cli, claude-code.",
 				},
 			},
 			"required": []string{"provider"},
@@ -7156,7 +7156,7 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagen
 			"properties": map[string]interface{}{
 				"provider": map[string]interface{}{
 					"type":        "string",
-					"description": "Provider id such as openai, openrouter, anthropic, vertex, azure, minimax, bedrock, gemini-cli, pi-cli, claude-code, codex-cli.",
+					"description": "Provider id such as openai, openrouter, anthropic, vertex, azure, minimax, bedrock, pi-cli, claude-code, codex-cli.",
 				},
 				"model_id": map[string]interface{}{
 					"type":        "string",

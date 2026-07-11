@@ -118,17 +118,6 @@ func chatHistoryConversationPath(userID, sessionID string, t time.Time) string {
 	return pathpkg.Join(chatHistoryRoot(userID), chatHistoryConversationDate(t), chatHistoryConversationFileName(sessionID))
 }
 
-// persistChatConversation saves an already persistence-cleaned conversation in
-// the same format as the workflow builder: a single conversation.json with the
-// full message history. Called inline right after finalHistory is captured.
-func (api *StreamingAPI) persistChatConversation(sessionID, agentMode, userID string, persistedHistory []llmtypes.MessageContent, runtime *ChatHistoryAgentRuntime, uiEvents []internalevents.Event) {
-	api.persistChatConversationToPath(sessionID, agentMode, userID, persistedHistory, runtime, uiEvents, "")
-}
-
-func (api *StreamingAPI) persistChatConversationToPath(sessionID, agentMode, userID string, persistedHistory []llmtypes.MessageContent, runtime *ChatHistoryAgentRuntime, uiEvents []internalevents.Event, conversationPath string) {
-	api.persistChatConversationToPathWithTerminalSession(sessionID, sessionID, agentMode, userID, persistedHistory, runtime, uiEvents, conversationPath)
-}
-
 func (api *StreamingAPI) persistChatConversationToPathWithTerminalSession(sessionID, terminalSnapshotSessionID, agentMode, userID string, persistedHistory []llmtypes.MessageContent, runtime *ChatHistoryAgentRuntime, uiEvents []internalevents.Event, conversationPath string) {
 	if len(persistedHistory) == 0 {
 		return
@@ -1803,7 +1792,7 @@ func normalizeChatHistoryRuntime(runtime *ChatHistoryAgentRuntime) {
 
 func defaultCodingAgentResumeFlag(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "claude-code", "gemini-cli", "cursor-cli":
+	case "claude-code", "cursor-cli":
 		return "--resume"
 	case "codex-cli":
 		return "resume"

@@ -116,15 +116,19 @@ func TestIsWorkflowStepTrackingExecution(t *testing.T) {
 	}
 }
 
-func TestCollectAdditionalFolderGuardFolders(t *testing.T) {
+func TestCollectSplitFolderGuardFolders(t *testing.T) {
 	query := "Please inspect this.\n📁 Files in context: Workflow/Main/plan.json, skills/custom/SKILL.md, Chats/ignore.md\n"
 	workflowPaths := []string{"Workflow/Referenced", "Workflow/Main"}
 
-	got := collectAdditionalFolderGuardFolders(query, workflowPaths)
-	want := []string{"Workflow/Main/plan.json", "skills/custom/SKILL.md", "Workflow/Referenced", "Workflow/Main"}
+	writeFolders, readOnlyFolders := collectSplitFolderGuardFolders(query, workflowPaths)
+	wantWrite := []string{"Workflow/Main/plan.json", "skills/custom/SKILL.md"}
+	wantReadOnly := []string{"Workflow/Referenced", "Workflow/Main"}
 
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("collectAdditionalFolderGuardFolders() = %v, want %v", got, want)
+	if !reflect.DeepEqual(writeFolders, wantWrite) {
+		t.Fatalf("write folders = %v, want %v", writeFolders, wantWrite)
+	}
+	if !reflect.DeepEqual(readOnlyFolders, wantReadOnly) {
+		t.Fatalf("read-only folders = %v, want %v", readOnlyFolders, wantReadOnly)
 	}
 }
 

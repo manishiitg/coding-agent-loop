@@ -1,7 +1,5 @@
 package server
 
-import "time"
-
 // =====================================================================
 // Auto-Improvement Framework — shared types
 // Schemas: schemas/auto-improvement.schema.json
@@ -30,17 +28,6 @@ const (
 //      respects guidance in improve.html.
 //   3. Prose captures nuance enums can't ("mostly stable but new tactics
 //      monthly", "frozen except during compliance reviews").
-
-// PlanStability is retained as a type alias for the field in WorkflowManifest
-// during the deprecation window — the framework no longer reads it. New code
-// must NOT introduce new readers. Setting the field has no behavioral effect.
-type PlanStability string
-
-const (
-	PlanStabilityMutable PlanStability = "mutable"
-	PlanStabilityRatchet PlanStability = "ratchet"
-	PlanStabilityFrozen  PlanStability = "frozen"
-)
 
 // DecisionSource — who emitted this decision.
 type DecisionSource string
@@ -76,9 +63,4 @@ type DecisionEntry struct {
 	RuleAdded    string   `json:"rule_added,omitempty"`
 	RuleSection  string   `json:"rule_section,omitempty"`
 	ExamplePaths []string `json:"example_paths,omitempty"`
-}
-
-// nowUTC returns the current time in ISO-8601 UTC string form.
-func nowUTC() string {
-	return time.Now().UTC().Format(time.RFC3339)
 }

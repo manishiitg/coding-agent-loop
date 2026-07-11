@@ -469,11 +469,16 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   
   const {
     toolList: allTools,
-    selectedServers,
+    chatSelectedServers,
+    workflowSelectedServers,
   } = useMCPStore(useShallow(state => ({
     toolList: state.toolList,
-    selectedServers: state.selectedServers,
+    chatSelectedServers: state.chatSelectedServers,
+    workflowSelectedServers: state.workflowSelectedServers,
   })))
+  const selectedServers = selectedModeCategory === 'workflow'
+    ? workflowSelectedServers
+    : chatSelectedServers
 
   // All servers that are currently connected (status=ok)
   const connectedServers = useMemo<Set<string>>(
@@ -1245,14 +1250,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     }
   }, [setCurrentQuery, applyPreset, setCurrentWorkflowPhase, setCurrentWorkflowQueryId])
 
-  const handleWorkflowPresetCleared = useCallback(() => {
-    clearActivePreset('workflow')
-    setCurrentWorkflowQueryId(null) // Clear the stored preset query ID
-    const defaultPhase = useWorkflowStore.getState().getDefaultPhase()
-    setCurrentWorkflowPhase(defaultPhase) // Reset to default phase
-    setCurrentQuery('')
-  }, [clearActivePreset, setCurrentWorkflowQueryId, setCurrentWorkflowPhase, setCurrentQuery])
-  
   // Clear workflow state when starting a new chat
   const clearWorkflowState = useCallback(() => {
     clearActivePreset('workflow')
@@ -3206,7 +3203,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           <WorkflowModeHandler
             ref={workflowModeHandlerRef}
             onPresetSelected={handleWorkflowPresetSelected}
-            onPresetCleared={handleWorkflowPresetCleared}
             onWorkflowPhaseChange={setCurrentWorkflowPhase}
           >
             {/* restoring — reconnectWorkflowTabs is replaying events. */}

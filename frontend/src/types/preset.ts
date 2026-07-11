@@ -15,8 +15,6 @@ export interface CustomPreset {
   selectedFolder?: PlannerFile; // Single folder
   llmConfig?: PresetLLMConfig; // LLM configuration for this preset
   useCodeExecutionMode?: boolean; // MCP code execution mode
-  enableContextSummarization?: boolean; // Enable context summarization
-  enableContextEditing?: boolean; // Enable context editing (dynamic context reduction)
   enableBrowserAccess?: boolean; // Deprecated: use browserMode
   browserMode?: 'none' | 'headless' | 'cdp' | 'playwright'; // Browser mode (source of truth)
   employee_id?: string; // Assigned employee ID
@@ -34,8 +32,6 @@ export interface PredefinedPreset {
   selectedFolder?: PlannerFile;
   llmConfig?: PresetLLMConfig; // LLM configuration for this preset
   useCodeExecutionMode?: boolean; // MCP code execution mode
-  enableContextSummarization?: boolean; // Enable context summarization
-  enableContextEditing?: boolean; // Enable context editing (dynamic context reduction)
   enableBrowserAccess?: boolean; // Deprecated: use browserMode
   browserMode?: 'none' | 'headless' | 'cdp' | 'playwright'; // Browser mode (source of truth)
   employee_id?: string; // Assigned employee ID

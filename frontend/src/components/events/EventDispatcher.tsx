@@ -1,5 +1,5 @@
 import React from 'react'
-import { Code2, Sparkles, Search, ChevronDown, ChevronRight } from 'lucide-react'
+import { Code2, ChevronDown, ChevronRight } from 'lucide-react'
 import type { PollingEvent, SessionExecutionTreeResponse } from '../../services/api-types'
 import { EventHierarchy } from './EventHierarchy'
 import { EventWithOrchestratorContext } from './common/EventWithOrchestratorContext'
@@ -116,8 +116,6 @@ import {
   ModelChangeEventDisplay,
   MaxTurnsReachedEventDisplay,
   ContextCancelledEventDisplay,
-  SmartRoutingStartEventDisplay,
-  SmartRoutingEndEventDisplay,
   CacheEventDisplay,
   ComprehensiveCacheEventDisplay,
   StructuredOutputStartEventDisplay,
@@ -160,6 +158,9 @@ const DelegationStreamingCard: React.FC<{ delegationId: string }> = ({ delegatio
 
 const OwnedTerminalStreamCard: React.FC<{ ownerKey?: string; ownerKeys?: string[]; sessionId?: string; compact?: boolean }> = () => null
 
+// Shared with EventHierarchy; keeping it beside the dispatcher avoids duplicating
+// the event-owner normalization rules.
+// eslint-disable-next-line react-refresh/only-export-components
 export function getOwnedTerminalOwnerKeys(event: PollingEvent, payload?: Record<string, unknown>): string[] {
   const sessionId = event.session_id?.trim()
   if (!sessionId) return []
@@ -1364,14 +1365,6 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   }
   if (isEventType(event, 'comprehensive_cache_event')) {
     return <CompactWrapper compact={compact}><ComprehensiveCacheEventDisplay event={getEventData(event)} /></CompactWrapper>
-  }
-
-  // Smart Routing Events
-  if (isEventType(event, 'smart_routing_start')) {
-    return <CompactWrapper compact={compact}><SmartRoutingStartEventDisplay event={getEventData(event)} /></CompactWrapper>
-  }
-  if (isEventType(event, 'smart_routing_end')) {
-    return <CompactWrapper compact={compact}><SmartRoutingEndEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
 
   // Unified Completion Events

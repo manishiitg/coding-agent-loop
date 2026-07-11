@@ -19,7 +19,7 @@ The Tool Filtering and Configuration System provides a powerful, multi-layered m
 |-----------|------|----------------|
 | **Core Filter** | [`mcpagent/agent/tool_filter.go`](https://github.com/manishiitg/mcpagent/blob/main/agent/tool_filter.go) | `NewToolFilter()`, `ShouldIncludeTool()`, `NormalizeServerName()` |
 | **Agent Core** | [`mcpagent/agent/agent.go`](https://github.com/manishiitg/mcpagent/blob/main/agent/agent.go) | `WithSelectedTools()`, `WithSelectedServers()`, `NewAgent()` |
-| **Orchestrator Utilities** | [`agent_go/pkg/orchestrator/base_orchestrator_tools.go`](../../agent_go/pkg/orchestrator/base_orchestrator_tools.go) | `FilterCustomToolsByCategory()`, `ConvertOldFormatToNewFormat()` |
+| **Orchestrator Utilities** | [`agent_go/pkg/orchestrator/base_orchestrator_tools.go`](../../agent_go/pkg/orchestrator/base_orchestrator_tools.go) | `FilterCustomToolsByCategory()` |
 | **Agent Wrapper** | [`agent_go/pkg/agentwrapper/llm_agent.go`](../../agent_go/pkg/agentwrapper/llm_agent.go) | Pass `SelectedTools` to `mcpagent` options |
 | **Workflow Types** | [`agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_agent.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_agent.go) | `AgentConfigs` struct definition (Source of Truth for JSON fields) |
 

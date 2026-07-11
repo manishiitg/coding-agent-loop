@@ -1999,12 +1999,6 @@
         "comprehensive_cache_event": {
           "$ref": "#/$defs/ComprehensiveCacheEvent"
         },
-        "smart_routing_start": {
-          "$ref": "#/$defs/SmartRoutingStartEvent"
-        },
-        "smart_routing_end": {
-          "$ref": "#/$defs/SmartRoutingEndEvent"
-        },
         "unified_completion": {
           "$ref": "#/$defs/UnifiedCompletionEvent"
         },
@@ -2227,8 +2221,6 @@
         "pre_validation_completed",
         "request_human_feedback",
         "routing_evaluated",
-        "smart_routing_end",
-        "smart_routing_start",
         "step_progress_updated",
         "step_token_usage",
         "streaming_chunk",
@@ -4590,179 +4582,6 @@
         },
         "error": {
           "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "SmartRoutingEndEvent": {
-      "properties": {
-        "timestamp": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "trace_id": {
-          "type": "string"
-        },
-        "span_id": {
-          "type": "string"
-        },
-        "event_id": {
-          "type": "string"
-        },
-        "parent_id": {
-          "type": "string"
-        },
-        "is_end_event": {
-          "type": "boolean"
-        },
-        "correlation_id": {
-          "type": "string"
-        },
-        "hierarchy_level": {
-          "type": "integer"
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "component": {
-          "type": "string"
-        },
-        "metadata": {
-          "type": "object"
-        },
-        "total_tools": {
-          "type": "integer"
-        },
-        "filtered_tools": {
-          "type": "integer"
-        },
-        "total_servers": {
-          "type": "integer"
-        },
-        "relevant_servers": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "routing_reasoning": {
-          "type": "string"
-        },
-        "routing_duration": {
-          "type": "integer"
-        },
-        "success": {
-          "type": "boolean"
-        },
-        "error": {
-          "type": "string"
-        },
-        "llm_response": {
-          "type": "string"
-        },
-        "selected_servers": {
-          "type": "string"
-        },
-        "has_appended_prompts": {
-          "type": "boolean"
-        },
-        "appended_prompt_count": {
-          "type": "integer"
-        },
-        "appended_prompt_summary": {
-          "type": "string"
-        },
-        "llm_model_id": {
-          "type": "string"
-        },
-        "llm_provider": {
-          "type": "string"
-        },
-        "llm_temperature": {
-          "type": "number"
-        },
-        "llm_max_tokens": {
-          "type": "integer"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "SmartRoutingStartEvent": {
-      "properties": {
-        "timestamp": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "trace_id": {
-          "type": "string"
-        },
-        "span_id": {
-          "type": "string"
-        },
-        "event_id": {
-          "type": "string"
-        },
-        "parent_id": {
-          "type": "string"
-        },
-        "is_end_event": {
-          "type": "boolean"
-        },
-        "correlation_id": {
-          "type": "string"
-        },
-        "hierarchy_level": {
-          "type": "integer"
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "component": {
-          "type": "string"
-        },
-        "metadata": {
-          "type": "object"
-        },
-        "total_tools": {
-          "type": "integer"
-        },
-        "total_servers": {
-          "type": "integer"
-        },
-        "thresholds": {
-          "properties": {
-            "max_tools": {
-              "type": "integer"
-            },
-            "max_servers": {
-              "type": "integer"
-            }
-          },
-          "additionalProperties": false,
-          "type": "object"
-        },
-        "llm_prompt": {
-          "type": "string"
-        },
-        "user_query": {
-          "type": "string"
-        },
-        "conversation_context": {
-          "type": "string"
-        },
-        "llm_model_id": {
-          "type": "string"
-        },
-        "llm_provider": {
-          "type": "string"
-        },
-        "llm_temperature": {
-          "type": "number"
-        },
-        "llm_max_tokens": {
-          "type": "integer"
         }
       },
       "additionalProperties": false,

@@ -78,11 +78,11 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
 
   // Store subscriptions
   const { primaryConfig: llmConfig } = useLLMStore()
-  const { toolList: allTools, selectedServers } = useMCPStore()
+  const { toolList: allTools, workflowSelectedServers } = useMCPStore()
   const { currentPresetServers, currentPresetTools, getActivePreset } = usePresetApplication()
 
   // Get effective servers
-  const effectiveServers = currentPresetServers.length > 0 ? currentPresetServers : selectedServers
+  const effectiveServers = currentPresetServers.length > 0 ? currentPresetServers : workflowSelectedServers
 
   // Filter tools to only include those from effective servers
   const enabledTools = allTools.filter(tool =>
@@ -324,8 +324,6 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
 
     // Reset event polling index so next workflow/chat starts fresh
     useChatStore.getState().setLastEventIndex(-1)
-    // Deprecated: setLastEventCount removed
-
     // Clear current step tracking in store
     useWorkflowStore.getState().setCurrentStepId(null)
 
@@ -351,7 +349,7 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
     } else {
       console.warn('[useWorkflowExecution] ⚠️ No session ID available to stop session')
     }
-  }, [setTabStreaming])
+  }, [getActivePreset, setTabStreaming])
 
   // Resume workflow
   const resumeWorkflow = useCallback(async () => {

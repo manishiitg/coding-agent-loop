@@ -143,11 +143,11 @@ func effectiveModelIDFromTokenEvent(tokenEvent *events.TokenUsageEvent) string {
 }
 
 // extractLLMCallCount extracts LLM call count from a TokenUsageEvent's GenerationInfo
-// Returns 1 if not available (fallback for single-call events like smart routing)
+// Returns 1 if not available (fallback for single-call events).
 // For conversation end events, this returns the cumulative call count
 func extractLLMCallCount(tokenEvent *events.TokenUsageEvent) int {
 	if tokenEvent.GenerationInfo == nil {
-		return 1 // Default to 1 for single-call events (smart routing, etc.)
+		return 1 // Default to 1 for single-call events.
 	}
 
 	// Check for cumulative_llm_call_count (from conversation end event)
@@ -158,6 +158,6 @@ func extractLLMCallCount(tokenEvent *events.TokenUsageEvent) int {
 		return int(count)
 	}
 
-	// Fallback: return 1 for single-call events (smart routing, etc.)
+	// Fallback: return 1 for single-call events.
 	return 1
 }

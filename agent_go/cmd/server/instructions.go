@@ -867,30 +867,6 @@ func readFileContent(client *skills.WorkspaceAPIClient, filePath string) string 
 	return strings.TrimSpace(content)
 }
 
-// readDirectoryMarkdownFiles reads all .md files from a directory and concatenates them.
-// Returns empty string if directory doesn't exist or has no .md files.
-func readDirectoryMarkdownFiles(client *skills.WorkspaceAPIClient, dirPath string) string {
-	entries, err := client.ListFiles(dirPath)
-	if err != nil {
-		return ""
-	}
-
-	var memoryParts []string
-	for _, entry := range entries {
-		if entry.Type != "file" || !strings.HasSuffix(entry.Filepath, ".md") {
-			continue
-		}
-		content := readFileContent(client, entry.Filepath)
-		if content != "" {
-			memoryParts = append(memoryParts, content)
-		}
-	}
-	if len(memoryParts) == 0 {
-		return ""
-	}
-	return strings.Join(memoryParts, "\n\n---\n\n")
-}
-
 // variableEntry represents a variable in variables.json
 type variableEntry struct {
 	Name  string `json:"name"`

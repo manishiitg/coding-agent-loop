@@ -375,8 +375,8 @@ const getDefaultTabConfig = (mode: 'workflow' | 'multi-agent' = 'multi-agent'): 
   const isWorkflowMode = mode === 'workflow'
 
   const selectedServers = isWorkflowMode
-    ? (mcpStore?.workflowSelectedServers || mcpStore?.selectedServers || [])
-    : (mcpStore?.chatSelectedServers || mcpStore?.selectedServers || [])
+    ? (mcpStore?.workflowSelectedServers || [])
+    : (mcpStore?.chatSelectedServers || [])
 
   // Get mode-specific LLM config (multi-agent uses chat settings)
   const llmConfig = isWorkflowMode

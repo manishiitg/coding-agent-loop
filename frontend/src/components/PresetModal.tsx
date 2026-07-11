@@ -3,7 +3,7 @@ import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { Textarea } from './ui/Textarea';
 import { Card } from './ui/Card';
-import { Folder, Plus, X, Settings, Sparkles, Code2, Info, Search, Download, Trash2, SlidersHorizontal } from 'lucide-react';
+import { Folder, Plus, X, Settings, Info, Download, Trash2, SlidersHorizontal } from 'lucide-react';
 import { FolderSelectionDialog } from './FolderSelectionDialog';
 import { ToolSelectionSection } from './ToolSelectionSection';
 import { SkillSelectionSection } from './skills/SkillSelectionSection';
@@ -28,7 +28,7 @@ import { chromeCdpInstallCommand, chromeCdpLaunchCommand, chromeCdpVerifyCommand
 interface PresetModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'multi-agent' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, enableBrowserAccess?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, browserMode?: 'none' | 'headless' | 'cdp' | 'playwright') => void;
+  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'multi-agent' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, browserMode?: 'none' | 'headless' | 'cdp' | 'playwright') => void;
   editingPreset?: CustomPreset | null;
   availableServers?: string[];
   hideAgentModeSelection?: boolean;
@@ -62,7 +62,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [showFolderDialog, setShowFolderDialog] = useState(false);
   const [folderDialogPosition, setFolderDialogPosition] = useState({ top: 0, left: 0 });
   const [llmConfig, setLlmConfig] = useState<PresetLLMConfig | null>(null);
-  const enableContextSummarization = true;
   const [browserMode, setBrowserModeState] = useState<'none' | 'headless' | 'cdp' | 'playwright'>('none');
   const enableBrowserAccess = browserMode === 'headless' || browserMode === 'cdp';
   const [useCdp, setUseCdp] = useState(false);
@@ -523,15 +522,13 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         selectedFolder || undefined,
         finalLLMConfig,
         false, // useCodeExecutionMode — backend determines mode from browser selection
-        enableContextSummarization,
-        enableBrowserAccess, // Browser automation access
         selectedSecrets, // Secret names for workflow injection
         selectedGlobalSecrets, // Per-preset global secret selection (null=all)
         browserMode // Browser mode: none|headless|cdp|playwright
       );
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, builderLLM, effectiveBuilderLLM, maintenanceLLM, effectiveMaintenanceLLM, pulseLLM, effectivePulseLLM, enableBrowserAccess, browserMode, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, enableContextSummarization, defaultAgentLLM, effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM, showWorkflowLLMAdvanced]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, builderLLM, effectiveBuilderLLM, maintenanceLLM, effectiveMaintenanceLLM, pulseLLM, effectivePulseLLM, browserMode, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, defaultAgentLLM, effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM, showWorkflowLLMAdvanced]);
 
   // Close modal on escape key
   useEffect(() => {

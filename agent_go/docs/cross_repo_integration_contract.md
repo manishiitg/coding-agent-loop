@@ -503,7 +503,6 @@ behavior lives here.
 | `docs/token-usage-tracking.md` | Token accounting in the agent loop |
 | `docs/folder_guard.md` | Workspace isolation contract |
 | `docs/llm_resilience.md` | Retry, timeout, classification |
-| `docs/smart_routing.md` | Smart-routing model selection |
 | `docs/oauth.md` | OAuth flow for provider auth |
 | `docs/mcp_cache_system.md` | MCP server connection caching |
 | `docs/tool_search_mode.md` | Tool-search agent mode |

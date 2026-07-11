@@ -1924,8 +1924,8 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 	// Note: backup-on-completion is not appended here as a message turn. Backup is
 	// owned by two arms that share one source-hash-gated contract: the Pulse pass
 	// (runPostRunMonitor, step 4) for scheduled runs when Pulse is enabled, and the
-	// run_workflow completion directive (workflowRunCompletionDirective) for
-	// interactive runs (and as the fallback when Pulse is off). The shared source-hash
+	// interactive-run completion directive for interactive runs (and as the fallback
+	// when Pulse is off). The shared source-hash
 	// gate means whichever arm runs second sees the state already backed up and skips
 	// the push — so the overlap can't double-back up.
 

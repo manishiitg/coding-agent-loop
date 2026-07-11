@@ -189,7 +189,7 @@ type LLMAgentConfig struct {
 	// Unified fallback configuration (replaces FallbackModels and CrossProviderFallback)
 	Fallbacks []FallbackModel // Fallback models with optional provider override
 	// Code execution mode: When enabled, only virtual tools are added to LLM
-	// MCP tools are accessed via generated Go code using discover_code_files and write_code
+	// MCP tools are accessed through generated scripts using the on-demand HTTP API specification.
 	UseCodeExecutionMode                   bool
 	ClaudeCodePersistentInteractiveSession bool
 	CodexPersistentInteractiveSession      bool
@@ -355,7 +355,7 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	// Initialize the underlying MCP agent with the new API
 	var agent *mcpagent.Agent
 
-	// Build agent options with smart routing configuration
+	// Build agent options.
 	agentOptions := []mcpagent.AgentOption{
 		mcpagent.WithTemperature(config.Temperature),
 		mcpagent.WithMaxTurns(config.MaxTurns),
@@ -421,7 +421,7 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	// Add code execution mode if enabled
 	if config.UseCodeExecutionMode {
 		agentOptions = append(agentOptions, mcpagent.WithCodeExecutionMode(true))
-		logger.Info("🔧 Code execution mode enabled - MCP tools will be accessed via generated Go code")
+		logger.Info("🔧 Code execution mode enabled - MCP tools will be accessed through generated scripts and HTTP APIs")
 	}
 	if config.ClaudeCodePersistentInteractiveSession {
 		agentOptions = append(agentOptions, mcpagent.WithClaudeCodePersistentInteractiveSession(true))

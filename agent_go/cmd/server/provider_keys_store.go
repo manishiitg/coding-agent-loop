@@ -11,13 +11,10 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/manishiitg/mcpagent/llm"
 )
-
-func getenvTrim(k string) string { return strings.TrimSpace(os.Getenv(k)) }
 
 const providerKeysFilePath = "config/provider-api-keys.json"
 const maskedProviderKeyPrefix = "********"

@@ -62,11 +62,11 @@ func (w *WeatherTool) Call(ctx context.Context, input string) (string, error) {
 var customToolsTestCmd = &cobra.Command{
 	Use:   "custom-tools",
 	Short: "Test custom tools integration with external agent",
-	Long: `Test custom tools integration with external agent using the WithCustomTools functional option pattern.
+	Long: `Test custom tools integration with external agent using runtime registration.
 
 This test demonstrates:
 1. Creating custom tools (weather tool)
-2. Using WithCustomTools in agent configuration
+2. Registering tools with RegisterCustomTool after agent creation
 3. Verifying custom tools are available to the agent`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Get logging configuration from viper
@@ -111,7 +111,7 @@ This test demonstrates:
 		agent, err := mcpagent.NewAgent(
 			ctx,
 			llmModel,
-			"configs/mcp_servers_simple.json", // config path
+			"configs/mcp_servers_simple.json",     // config path
 			mcpagent.WithServerName("fileserver"), // server name
 			mcpagent.WithMaxTurns(5),
 		)

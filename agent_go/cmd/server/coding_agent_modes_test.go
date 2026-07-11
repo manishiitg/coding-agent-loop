@@ -569,7 +569,7 @@ func TestDelegationStartEventParentsToBackgroundAgent(t *testing.T) {
 
 func assertLiveCodingUserMessageEvent(t *testing.T, event internalevents.Event, sessionID, provider string) {
 	t.Helper()
-	if event.Type != string(pkgevents.UserMessageEventType) {
+	if event.Type != string(pkgevents.UserMessage) {
 		t.Fatalf("event type = %q, want user_message", event.Type)
 	}
 	if event.SessionID != sessionID {

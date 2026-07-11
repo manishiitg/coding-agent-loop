@@ -4,24 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
-	mcpagent "github.com/manishiitg/mcpagent/agent"
 	agentevents "github.com/manishiitg/mcpagent/events"
-	"github.com/manishiitg/mcpagent/llm"
-	"github.com/manishiitg/mcpagent/mcpclient"
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 
-	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	storeevents "mcp-agent-builder-go/agent_go/internal/events"
 	"mcp-agent-builder-go/agent_go/internal/terminals"
-	agent "mcp-agent-builder-go/agent_go/pkg/agentwrapper"
-	"mcp-agent-builder-go/agent_go/pkg/common"
 )
 
 // ChatHistoryRoutes registers chat history endpoints.
@@ -146,8 +139,8 @@ func startRestoredTerminalHandler(api *StreamingAPI) http.HandlerFunc {
 
 		// Only the attach-existing tier is safe to run at restore: it reuses
 		// a live tmux pane without launching a new CLI process. The two launch
-		// tiers (startRestoredTerminalFromInMemoryAgent / FromNewAgent) used
-		// to fire here as a fallback, but they hit a tool-registration race —
+		// launch-based fallback tiers used to fire here, but they hit a
+		// tool-registration race —
 		// the CLI caches its tool catalog via get_api_spec at launch, before
 		// /api/query has registered phase-specific tools like run_full_workflow
 		// or execute_step. The CLI then never sees those tools and falls back
@@ -328,65 +321,6 @@ func persistedTerminalSnapshotPreferred(candidate, existing terminals.Snapshot) 
 	return candidate.UpdatedAt.After(existing.UpdatedAt)
 }
 
-func (api *StreamingAPI) startRestoredTerminalFromInMemoryAgent(ctx context.Context, sessionID string, runtime *ChatHistoryAgentRuntime) (*terminals.Snapshot, bool, string) {
-	if api == nil || runtime == nil {
-		return nil, false, "api_unavailable"
-	}
-	if !restoredRuntimeUsesLaunchableTerminalTransport(runtime) {
-		return nil, false, "not_tmux_transport"
-	}
-	api.sessionAgentsMux.RLock()
-	llmAgent := api.sessionAgents[sessionID]
-	api.sessionAgentsMux.RUnlock()
-	if llmAgent == nil || llmAgent.GetUnderlyingAgent() == nil {
-		return nil, false, "agent_not_in_memory"
-	}
-	return api.startRestoredTerminalFromAgent(ctx, sessionID, runtime, llmAgent.GetUnderlyingAgent())
-}
-
-func (api *StreamingAPI) startRestoredTerminalFromAgent(ctx context.Context, sessionID string, runtime *ChatHistoryAgentRuntime, underlyingAgent *mcpagent.Agent) (*terminals.Snapshot, bool, string) {
-	if api == nil || runtime == nil || underlyingAgent == nil {
-		return nil, false, "underlying_agent_missing"
-	}
-	provider := strings.ToLower(strings.TrimSpace(runtime.Provider))
-	if provider == "" && runtime.AgentSessionHandle != nil {
-		provider = strings.ToLower(strings.TrimSpace(runtime.AgentSessionHandle.Provider.Provider))
-	}
-	if !api.seedCodingAgentRuntimeFromRestoredConversation(sessionID, provider, "", runtime, underlyingAgent) {
-		return nil, false, "seed_failed"
-	}
-
-	// PHASE_TOOL_RACE_DIAGNOSTIC: This restore path launches the CLI process
-	// before any /api/query runs. The workflow-phase tool registrations
-	// (RegisterRunFullWorkflowTool, RegisterWorkshopChatTools, etc., over in
-	// server.go's workflow-builder case) only fire inside /api/query. If the
-	// CLI caches its tool catalog at launch via get_api_spec, it won't see
-	// run_full_workflow / execute_step until the next launch AFTER a real
-	// /api/query has registered them. See PHASE_TOOL_REGISTER_* logs in
-	// server.go to compare timing.
-	log.Printf("[PHASE_TOOL_RACE] AUTO_RESTORE_LAUNCH starting for session=%s provider=%s — no phase-specific tool registration runs before this",
-		sessionID, provider)
-	launchCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
-	defer cancel()
-	launchStart := time.Now()
-	handle, err := underlyingAgent.StartCodingAgentTransportSession(launchCtx)
-	log.Printf("[PHASE_TOOL_RACE] AUTO_RESTORE_LAUNCH completed for session=%s in %s (err=%v)",
-		sessionID, time.Since(launchStart), err)
-	if err != nil || handle == nil {
-		if err != nil {
-			api.logRestoredTerminalf("Failed to start restored coding-agent tmux transport for session %s: %v", sessionID, err)
-			return nil, false, "transport_start_failed"
-		}
-		return nil, false, "transport_handle_missing"
-	}
-	if terminal, started, reason := api.materializeRestoredTmuxTerminal(ctx, sessionID, runtime, handle.TmuxSession); started {
-		return terminal, true, ""
-	} else if reason != "" {
-		return nil, false, reason
-	}
-	return nil, false, "terminal_snapshot_not_created"
-}
-
 func (api *StreamingAPI) materializeRestoredTmuxTerminal(ctx context.Context, sessionID string, runtime *ChatHistoryAgentRuntime, tmuxSession string) (*terminals.Snapshot, bool, string) {
 	tmuxSession = strings.TrimSpace(tmuxSession)
 	if tmuxSession == "" {
@@ -420,193 +354,6 @@ func (api *StreamingAPI) materializeRestoredTmuxTerminal(ctx context.Context, se
 		return &enriched, true, ""
 	}
 	return nil, false, "terminal_snapshot_not_created"
-}
-
-func (api *StreamingAPI) startRestoredTerminalFromNewAgent(ctx context.Context, sessionID, userID string, runtime *ChatHistoryAgentRuntime) (*terminals.Snapshot, bool, string) {
-	if api == nil || runtime == nil {
-		return nil, false, "api_unavailable"
-	}
-	if !restoredRuntimeUsesLaunchableTerminalTransport(runtime) {
-		return nil, false, "not_tmux_transport"
-	}
-	provider := strings.ToLower(strings.TrimSpace(runtime.Provider))
-	modelID := strings.TrimSpace(runtime.ModelID)
-	workingDir := ""
-	if runtime.AgentSessionHandle != nil && !runtime.AgentSessionHandle.Empty() {
-		handle := runtime.AgentSessionHandle.Provider
-		if provider == "" {
-			provider = strings.ToLower(strings.TrimSpace(handle.Provider))
-		}
-		if modelID == "" {
-			modelID = strings.TrimSpace(handle.Model)
-		}
-		workingDir = strings.TrimSpace(handle.WorkingDir)
-	}
-	if provider == "" {
-		return nil, false, "provider_missing"
-	}
-	if modelID == "" {
-		modelID = provider
-	}
-	if workingDir == "" {
-		workspaceFolder := strings.TrimSpace(runtime.WorkspacePath)
-		if workspaceFolder == "" {
-			workspaceFolder = perUserChatsFolderFor(userID)
-		}
-		workingDir = codingAgentWorkspaceWorkingDir(workspaceFolder)
-	}
-
-	// Replay the original session's MCP server+tool selection so the coding-agent
-	// bridge exposes the same catalog. A restored agent built with NoServers
-	// leaves get_api_spec empty ("server not available"), so the resumed CLI loses
-	// all its tools. Prefer the selection persisted in the runtime (the exact set
-	// the original agent ran with). For sessions saved before that was persisted
-	// (empty ServerName), fall back to the workflow manifest for this workspace,
-	// then to the full configured set so the bridge catalog is never empty.
-	restoredServerName := strings.TrimSpace(runtime.ServerName)
-	restoredSelectedTools := runtime.SelectedTools
-	restoredBrowserMode := strings.TrimSpace(runtime.BrowserMode)
-	var restoredSecretNames []string
-	restoredWorkspacePath := strings.TrimSpace(runtime.WorkspacePath)
-	// Always consult the workflow manifest: it's the source of truth for
-	// workflow-scoped secrets, and the fallback for server/tool/browser
-	// selection on sessions saved before those were persisted in the runtime.
-	if restoredWorkspacePath != "" {
-		if manifest, found, mErr := ReadWorkflowManifest(ctx, restoredWorkspacePath); mErr == nil && found {
-			caps := manifest.Capabilities
-			restoredSecretNames = caps.SelectedSecrets
-			if restoredServerName == "" {
-				if len(caps.SelectedServers) > 0 {
-					restoredServerName = strings.Join(caps.SelectedServers, ",")
-				}
-				restoredSelectedTools = caps.SelectedTools
-			}
-			if restoredBrowserMode == "" {
-				restoredBrowserMode = strings.TrimSpace(caps.BrowserMode)
-			}
-		}
-	}
-	if restoredServerName == "" {
-		restoredServerName = mcpclient.AllServers
-	}
-	// Replay the session's browser capability so browser-backed tools work and
-	// context-aware shell blocking knows a browser is available (mirrors the
-	// fresh-session SetSessionBrowserMode call in the query handler).
-	if restoredBrowserMode != "" && restoredBrowserMode != "none" {
-		common.SetSessionBrowserMode(sessionID, restoredBrowserMode)
-	}
-
-	claudeCodePersistent, codexPersistent, cursorPersistent, agyPersistent, piPersistent := codingAgentPersistentInteractiveFlags(provider)
-	if piPersistent {
-		if closed := api.cleanupConflictingPiCLIInteractiveSessions(sessionID, workingDir, "restoring chat terminal"); closed > 0 {
-			api.logRestoredTerminalInfof("restore session=%s closed %d conflicting Pi CLI session(s) in %s", sessionID, closed, workingDir)
-		}
-	}
-	cfg := agent.LLMAgentConfig{
-		Name:                                   "restored-terminal-agent",
-		ServerName:                             restoredServerName,
-		SelectedTools:                          restoredSelectedTools,
-		ConfigPath:                             api.mcpConfigPath,
-		Provider:                               llm.Provider(provider),
-		ModelID:                                modelID,
-		ToolChoice:                             "auto",
-		StreamingChunkSize:                     50,
-		UseCodeExecutionMode:                   true,
-		ClaudeCodePersistentInteractiveSession: claudeCodePersistent,
-		CodexPersistentInteractiveSession:      codexPersistent,
-		CursorPersistentInteractiveSession:     cursorPersistent,
-		AgyPersistentInteractiveSession:        agyPersistent,
-		CursorBridgeToolsMode:                  cursorPersistent,
-		PiPersistentInteractiveSession:         piPersistent,
-		ClaudeCodeTransport:                    codingAgentClaudeCodeChatTransport(provider),
-		CodingAgentWorkingDir:                  workingDir,
-		APIKeys:                                MergedProviderAPIKeys(ctx),
-		SessionID:                              sessionID,
-		UserID:                                 userID,
-	}
-	llmAgent, err := agent.NewLLMAgentWrapper(ctx, cfg, nil, api.logger)
-	if err != nil {
-		return nil, false, "agent_create_failed"
-	}
-	underlyingAgent := llmAgent.GetUnderlyingAgent()
-	if underlyingAgent == nil {
-		return nil, false, "underlying_agent_missing"
-	}
-	if api.eventStore != nil {
-		underlyingAgent.AddEventListener(storeevents.NewEventObserverWithLogger(api.eventStore, sessionID, api.logger))
-	}
-	underlyingAgent.AddEventListener(newCostObserver(api.costLedger, sessionID, userID, "multi-agent"))
-	api.runningAgentsMux.Lock()
-	if api.runningAgents != nil {
-		api.runningAgents[sessionID] = underlyingAgent
-	}
-	api.runningAgentsMux.Unlock()
-	api.sessionAgentsMux.Lock()
-	if api.sessionAgents != nil {
-		api.sessionAgents[sessionID] = llmAgent
-	}
-	api.sessionAgentsMux.Unlock()
-
-	// Re-register the session-scoped virtual tools a fresh session would have
-	// (secret-aware workspace tools + browser tools) so the resumed agent's
-	// bridge catalog matches. Must happen before the transport session launches.
-	api.registerRestoredCodingAgentTools(ctx, underlyingAgent, sessionID, userID, restoredWorkspacePath, restoredBrowserMode, restoredSecretNames)
-
-	if terminal, started, reason := api.startRestoredTerminalFromAgent(ctx, sessionID, runtime, underlyingAgent); started {
-		return terminal, true, ""
-	} else if reason != "" {
-		return nil, false, reason
-	}
-	return nil, false, "tmux_start_failed"
-}
-
-// registerRestoredCodingAgentTools re-registers the session-scoped virtual tools
-// a fresh coding-agent session would have, so a restored agent's bridge exposes
-// the same catalog: secret-aware workspace tools (so shell commands see SECRET_*
-// env) and, when a browser mode is active, the workspace browser tools. Executors
-// are wrapped in a conservative folder guard (the session's workspace folder is
-// writable, everything else read-only) since restore doesn't persist the original
-// fine-grained grants. Skills are applied separately via the system prompt.
-func (api *StreamingAPI) registerRestoredCodingAgentTools(ctx context.Context, ag *mcpagent.Agent, sessionID, userID, workspacePath, browserMode string, secretNames []string) {
-	if ag == nil {
-		return
-	}
-	// Conservative folder guard: the session's workspace folder is writable,
-	// everything else read-only (restore doesn't persist the original
-	// fine-grained grants). Supplied as a closure so the shared registrars apply
-	// it without owning guard policy.
-	var guard codingToolGuard
-	if guardFolder := strings.Trim(strings.TrimSpace(workspacePath), "/"); guardFolder != "" {
-		guard = func(execs codingAgentToolExecutors) codingAgentToolExecutors {
-			return wrapExecutorsWithPlanFolderGuard(execs, guardFolder, nil)
-		}
-	}
-
-	// Secret-aware workspace tools — bake the workflow's secrets in as SECRET_*
-	// env so the resumed agent's shell commands have them.
-	secretEnvVars := map[string]string{}
-	for _, s := range api.loadSelectedSecrets(ctx, userID, workspacePath, secretNames) {
-		secretEnvVars["SECRET_"+s.Name] = s.Value
-	}
-	wsExecutors, _ := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSessionAndEnv(userID, sessionID, secretEnvVars)
-	if guard != nil {
-		wsExecutors = guard(wsExecutors)
-	}
-	wsCategory := virtualtools.GetWorkspaceAdvancedToolCategory()
-	if err := registerCodingToolGroup(ag.RegisterCustomTool, virtualtools.CreateWorkspaceAdvancedTools(), wsExecutors, func(string) string { return wsCategory }, nil); err != nil {
-		api.logRestoredTerminalf("restore workspace tool registration: %v", err)
-	}
-
-	// Browser tools when a browser mode is active (shared with the fresh path).
-	if browserMode == "headless" || browserMode == "cdp" {
-		cdpPort := 0
-		if browserMode == "cdp" {
-			cdpPort = 9222
-		}
-		if err := registerCodingBrowserTools(ag, sessionID, cdpPort, guard); err != nil {
-			api.logRestoredTerminalf("restore browser tool registration: %v", err)
-		}
-	}
 }
 
 func (api *StreamingAPI) logRestoredTerminalf(format string, args ...interface{}) {

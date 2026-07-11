@@ -5368,7 +5368,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					return
 				}
 				execCtx = context.WithValue(execCtx, maintenanceToolLLMOverrideKey, phaseLLM)
-				learningAgent, createErr := iwm.controller.createSuccessLearningAgent(
+				learningAgent, createErr := iwm.controller.createLearningAgentInternal(
 					execCtx, "organize_learnings", GlobalLearningID, agentName,
 					stepOverrides, false, GlobalLearningID, "", 0,
 				)

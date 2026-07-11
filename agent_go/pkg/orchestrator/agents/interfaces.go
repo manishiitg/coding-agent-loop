@@ -108,7 +108,7 @@ type OrchestratorAgentConfig struct {
 	StructuredOutputType   string `json:"structured_output_type,omitempty"` // "plan", "steps", "custom"
 
 	// Code execution mode: When enabled, only virtual tools are added to LLM
-	// MCP tools are accessed via generated Go code using discover_code_files and write_code
+	// MCP tools are accessed through generated scripts using the on-demand HTTP API specification.
 	UseCodeExecutionMode bool `json:"use_code_execution_mode,omitempty"`
 	// ClaudeCodeTransport optionally overrides the Claude Code provider
 	// transport for this workflow agent. Workflow agents use the interactive

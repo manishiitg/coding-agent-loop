@@ -35,8 +35,6 @@ var supportedLLMProviders = []string{
 	"pi-cli",
 }
 
-const claudeCodeDisableAutoMemoryEnv = "CLAUDE_CODE_DISABLE_AUTO_MEMORY"
-
 func isDeprecatedLLMProvider(provider string) bool {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	return provider == "agy-cli"

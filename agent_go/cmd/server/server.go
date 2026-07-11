@@ -517,7 +517,7 @@ type QueryRequest struct {
 	PresetQueryID   string                  `json:"preset_query_id,omitempty"`
 	LLMGuidance     string                  `json:"llm_guidance,omitempty"` // LLM guidance message
 	// Code execution mode: When enabled, only virtual tools are added to LLM
-	// MCP tools are accessed via generated Go code using discover_code_files and write_code
+	// MCP tools are accessed through generated scripts using the on-demand HTTP API specification.
 	UseCodeExecutionMode bool `json:"use_code_execution_mode,omitempty"`
 	// Execution options from frontend (for workflow execution phase)
 	ExecutionOptions *ExecutionOptions `json:"execution_options,omitempty"`
@@ -1772,7 +1772,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Consolidated workspace state endpoint (NEW - loads everything in one call)
 	apiRouter.HandleFunc("/workspace/state", api.handleLoadWorkspaceState).Methods("GET", "OPTIONS")
 
-	// Legacy individual endpoints (kept for backward compatibility)
+	// Focused workflow endpoints used for mutations and incremental refreshes.
 	apiRouter.HandleFunc("/workflow/run-folders", api.handleGetRunFolders).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/run-folder", api.handleCreateRunFolder).Methods("POST", "OPTIONS")
 	// /workflow/progress endpoint removed — steps_done.json progress tracking no longer consumed by frontend
@@ -3889,7 +3889,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Detailed LLM configuration from frontend (unified fallback structure)
 			Fallbacks: fallbacks,
 			// Code execution mode: When enabled, only virtual tools are added to LLM
-			// MCP tools are accessed via generated Go code using discover_code_files and write_code
+			// MCP tools are accessed through generated scripts using the on-demand HTTP API specification.
 			UseCodeExecutionMode:                   useCodeExecutionMode,
 			ClaudeCodePersistentInteractiveSession: claudeCodePersistentInteractive,
 			CodexPersistentInteractiveSession:      codexPersistentInteractive,
@@ -4386,42 +4386,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 					refreshMultiAgentDelegationTools = registerDelegationTools
 
-					// Register Chief workflow execution tools. This is currently
-					// disabled; users run workflows manually from the automation UI.
-					wfRunTools := createWorkflowRunTools()
-					wfRunExecutors := createWorkflowRunExecutors(api)
-					for _, tool := range wfRunTools {
-						if tool.Function == nil {
-							continue
-						}
-						toolName := tool.Function.Name
-						if exec, exists := wfRunExecutors[toolName]; exists {
-							var params map[string]interface{}
-							if tool.Function.Parameters != nil {
-								paramsBytes, _ := json.Marshal(tool.Function.Parameters)
-								json.Unmarshal(paramsBytes, &params)
-							}
-							// Wrap to inject session context
-							capturedExec := exec
-							wrappedExec := func(ctx context.Context, args map[string]interface{}) (string, error) {
-								ctx = context.WithValue(ctx, virtualtools.BGAgentSessionIDKey, sessionID)
-								return capturedExec(ctx, args)
-							}
-							if err := delegationAgent.RegisterCustomToolWithTimeout(
-								toolName,
-								tool.Function.Description,
-								params,
-								wrappedExec,
-								0,
-								delegationCategory,
-							); err != nil {
-								logfWithContext(queryLogCtx, "[WORKFLOW_RUN_TOOLS] Failed to register %s: %v", toolName, err)
-							} else {
-								logfWithContext(queryLogCtx, "[WORKFLOW_RUN_TOOLS] Registered %s", toolName)
-							}
-						}
-					}
-
 					// Register workflow schedule tools (list/create/update/delete/trigger/get-runs)
 					schedTools := createWorkflowScheduleTools()
 					schedExecutors := createWorkflowScheduleExecutors(api, currentUserID)
@@ -4511,7 +4475,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// In plan delegation mode (multi-agent), also include human tools (human_feedback)
 			// Register each custom tool with the agent
-			// This will trigger code generation and update the registry
+			// This updates the custom-tool registry and invalidates affected API specifications.
 			// Note: Workspace tools are already registered above, skip them in allTools
 			registeredCount := 0
 			for _, tool := range allTools {
@@ -4567,7 +4531,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 								}
 							}
 
-							// Register the tool - this triggers code generation
+							// Register the tool and refresh the relevant runtime metadata.
 							if err := underlyingAgent.RegisterCustomTool(
 								toolName,
 								tool.Function.Description,
@@ -7148,7 +7112,7 @@ func (api *StreamingAPI) recordLiveCodingAgentUserMessage(sessionID, message, pr
 
 	event := events.Event{
 		ID:        messageID,
-		Type:      string(unifiedevents.UserMessageEventType),
+		Type:      string(unifiedevents.UserMessage),
 		Timestamp: time.Now(),
 		Data:      agentEvent,
 		SessionID: sessionID,

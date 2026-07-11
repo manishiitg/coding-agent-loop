@@ -35,51 +35,6 @@ func getToolNamesByCategory(category string) map[string]bool {
 	return toolNames
 }
 
-// ConvertOldFormatToNewFormat converts old format (categories + tools) to new unified format
-// Old: enabledCategories=["workspace_tools"], enabledTools=["execute_shell_command"]
-// New: ["workspace_tools:*", "workspace_tools:execute_shell_command"]
-//
-// If enabledTools already contains entries with ":" (new format), returns them as-is
-func ConvertOldFormatToNewFormat(enabledCategories []string, enabledTools []string) []string {
-	// Check if enabledTools is already in new format (contains ":")
-	if len(enabledTools) > 0 {
-		firstEntry := enabledTools[0]
-		if strings.Contains(firstEntry, ":") {
-			// Already in new format, return as-is (ignore enabledCategories)
-			return enabledTools
-		}
-	}
-
-	// Old format - convert it
-	result := make([]string, 0)
-
-	// Convert categories to "category:*" format
-	for _, category := range enabledCategories {
-		result = append(result, category+":*")
-	}
-
-	// Convert specific tools - need to determine category for each tool
-	allCategoryTools := make(map[string]string) // toolName -> category
-	for _, category := range []string{"workspace_tools", "workspace_advanced", "workspace_browser", "human_tools", "workspace_image"} {
-		categoryToolNames := getToolNamesByCategory(category)
-		for toolName := range categoryToolNames {
-			allCategoryTools[toolName] = category
-		}
-	}
-
-	// Add specific tools with their category prefix
-	for _, toolName := range enabledTools {
-		if category, exists := allCategoryTools[toolName]; exists {
-			result = append(result, category+":"+toolName)
-		} else {
-			// Unknown tool, add without category (will be skipped in parsing)
-			result = append(result, "unknown:"+toolName)
-		}
-	}
-
-	return result
-}
-
 // FilterCustomToolsByCategory filters custom tools and executors based on enabled tools
 // Format: single array with entries like "category:tool" or "category:*"
 //   - "workspace_tools:*" → all tools from CreateWorkspaceToolExecutors()

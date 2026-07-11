@@ -10,8 +10,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"mcp-agent-builder-go/agent_go/internal/utils"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
+	"mcp-agent-builder-go/agent_go/internal/utils"
 )
 
 var largeOutputIntegrationTestCmd = &cobra.Command{
@@ -145,25 +145,27 @@ func testVirtualToolsForLargeOutput(testDir string) error {
 
 	ctx := context.Background()
 
-	// Test 1: read_large_output tool
-	logger.Info("Testing read_large_output tool...")
-	result, err := agent.HandleLargeOutputVirtualTool(ctx, "read_large_output", map[string]interface{}{
-		"filename": testFileName,
-		"start":    float64(1),
-		"end":      float64(100),
+	// Test 1: read operation
+	logger.Info("Testing search_large_output read operation...")
+	result, err := agent.HandleLargeOutputVirtualTool(ctx, "search_large_output", map[string]interface{}{
+		"filename":  testFileName,
+		"operation": "read",
+		"start":     float64(1),
+		"end":       float64(100),
 	})
 	if err != nil {
-		return fmt.Errorf("read_large_output failed: %w", err)
+		return fmt.Errorf("search_large_output read failed: %w", err)
 	}
 	if len(result) != 100 {
-		return fmt.Errorf("read_large_output returned wrong length: expected 100, got %d", len(result))
+		return fmt.Errorf("search_large_output read returned wrong length: expected 100, got %d", len(result))
 	}
-	logger.Info(fmt.Sprintf("✅ read_large_output works correctly (read %d characters)", len(result)))
+	logger.Info(fmt.Sprintf("✅ search_large_output read works correctly (read %d characters)", len(result)))
 
 	// Test 2: search_large_output tool
 	logger.Info("Testing search_large_output tool...")
 	result, err = agent.HandleLargeOutputVirtualTool(ctx, "search_large_output", map[string]interface{}{
 		"filename":       testFileName,
+		"operation":      "search",
 		"pattern":        "test",
 		"case_sensitive": false,
 		"max_results":    float64(10),
@@ -173,8 +175,8 @@ func testVirtualToolsForLargeOutput(testDir string) error {
 	}
 	logger.Info(fmt.Sprintf("✅ search_large_output works correctly: %s", result))
 
-	// Test 3: query_large_output tool (JSON query)
-	logger.Info("Testing query_large_output tool...")
+	// Test 3: query operation
+	logger.Info("Testing search_large_output query operation...")
 	jsonContent := `{"name":"test","items":[{"id":1,"value":"test1"},{"id":2,"value":"test2"}]}`
 	jsonFileName := "tool_20250802_213000_test_json.json"
 	jsonFilePath := filepath.Join(testDir, "test-session-virtual", jsonFileName)
@@ -182,23 +184,24 @@ func testVirtualToolsForLargeOutput(testDir string) error {
 		return fmt.Errorf("failed to write JSON test file: %w", err)
 	}
 
-	result, err = agent.HandleLargeOutputVirtualTool(ctx, "query_large_output", map[string]interface{}{
-		"filename": jsonFileName,
-		"query":    ".items[0].value",
-		"compact":  false,
-		"raw":      true,
+	result, err = agent.HandleLargeOutputVirtualTool(ctx, "search_large_output", map[string]interface{}{
+		"filename":  jsonFileName,
+		"operation": "query",
+		"query":     ".items[0].value",
+		"compact":   false,
+		"raw":       true,
 	})
 	if err != nil {
-		logger.Info(fmt.Sprintf("⚠️ query_large_output failed: %v", err))
+		logger.Info(fmt.Sprintf("⚠️ search_large_output query failed: %v", err))
 		logger.Info(fmt.Sprintf("⚠️ This is expected if jq is not available or if there are permission issues"))
-		logger.Info("✅ Skipping query_large_output test (not critical for core functionality)")
+		logger.Info("✅ Skipping search_large_output query test (not critical for core functionality)")
 	} else {
 		// Trim whitespace and newlines from the result
 		result = strings.TrimSpace(result)
 		if result != "test1" {
-			return fmt.Errorf("query_large_output failed: %w", err)
+			return fmt.Errorf("search_large_output query failed: %w", err)
 		}
-		logger.Info(fmt.Sprintf("✅ query_large_output works correctly: %s", result))
+		logger.Info(fmt.Sprintf("✅ search_large_output query works correctly: %s", result))
 	}
 
 	return nil

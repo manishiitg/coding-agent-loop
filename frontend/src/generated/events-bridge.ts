@@ -121,8 +121,6 @@ export interface EventDataUnion {
   token_limit_exceeded?: TokenLimitExceededEvent;
   cache_event?: CacheEvent;
   comprehensive_cache_event?: ComprehensiveCacheEvent;
-  smart_routing_start?: SmartRoutingStartEvent;
-  smart_routing_end?: SmartRoutingEndEvent;
   unified_completion?: UnifiedCompletionEvent;
   orchestrator_start?: OrchestratorStartEvent;
   orchestrator_end?: OrchestratorEndEvent;
@@ -1169,66 +1167,6 @@ export interface ServerCacheStatus {
   age?: string;
   reason?: string;
   error?: string;
-}
-export interface SmartRoutingStartEvent {
-  timestamp?: string;
-  trace_id?: string;
-  span_id?: string;
-  event_id?: string;
-  parent_id?: string;
-  is_end_event?: boolean;
-  correlation_id?: string;
-  hierarchy_level?: number;
-  session_id?: string;
-  component?: string;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  total_tools?: number;
-  total_servers?: number;
-  thresholds?: {
-    max_tools?: number;
-    max_servers?: number;
-  };
-  llm_prompt?: string;
-  user_query?: string;
-  conversation_context?: string;
-  llm_model_id?: string;
-  llm_provider?: string;
-  llm_temperature?: number;
-  llm_max_tokens?: number;
-}
-export interface SmartRoutingEndEvent {
-  timestamp?: string;
-  trace_id?: string;
-  span_id?: string;
-  event_id?: string;
-  parent_id?: string;
-  is_end_event?: boolean;
-  correlation_id?: string;
-  hierarchy_level?: number;
-  session_id?: string;
-  component?: string;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  total_tools?: number;
-  filtered_tools?: number;
-  total_servers?: number;
-  relevant_servers?: string[];
-  routing_reasoning?: string;
-  routing_duration?: number;
-  success?: boolean;
-  error?: string;
-  llm_response?: string;
-  selected_servers?: string;
-  has_appended_prompts?: boolean;
-  appended_prompt_count?: number;
-  appended_prompt_summary?: string;
-  llm_model_id?: string;
-  llm_provider?: string;
-  llm_temperature?: number;
-  llm_max_tokens?: number;
 }
 export interface UnifiedCompletionEvent {
   timestamp?: string;

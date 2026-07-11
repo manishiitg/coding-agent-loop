@@ -68,8 +68,6 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
   const [pulseLLM, setPulseLLM] = useState<AgentLLMConfig | null>(manifestLLM?.pulse_llm ?? existing?.pulse_llm ?? null)
   const [showAdvanced, setShowAdvanced] = useState(() => hasAdvancedWorkflowLLMConfig(manifestLLM ?? existing))
 
-  if (!activePreset) return null
-
   function hasOptions(options?: Record<string, unknown>) {
     return Boolean(options && Object.keys(options).length > 0)
   }
@@ -186,6 +184,8 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
     }
   }, [activePreset?.selectedFolder?.filepath, loadDefaultsFromBackend])
 
+  if (!activePreset) return null
+
   const handleSave = async () => {
     setIsSaving(true)
     try {
@@ -236,9 +236,6 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
         newLLMConfig,
         activePreset.useCodeExecutionMode,
         activePreset.id, // existing preset id
-        activePreset.enableContextSummarization,
-        activePreset.enableBrowserAccess,
-        activePreset.enableContextEditing,
         activePreset.selectedSecrets,
       )
       onClose()

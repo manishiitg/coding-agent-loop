@@ -14,10 +14,6 @@ export { MaxTurnsReachedEventDisplay } from './MaxTurnsReachedEvent'
 export { ModelChangeEventDisplay } from './ModelChangeEvent'
 export { ContextCancelledEventDisplay } from './ContextCancelledEvent'
 
-// Smart Routing event components
-export { SmartRoutingStartEventDisplay } from './SmartRoutingStartEvent'
-export { SmartRoutingEndEventDisplay } from './SmartRoutingEndEvent'
-
 // Unified cache event component
 export { CacheEventDisplay } from './CacheEvent'
 export { ComprehensiveCacheEventDisplay } from './ComprehensiveCacheEvent'

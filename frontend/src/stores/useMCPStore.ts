@@ -11,10 +11,6 @@ interface MCPState extends StoreActions {
   enabledServers: string[]
   enabledTools: string[]
 
-  // Server selection (unified approach)
-  // LEGACY: kept for backward compatibility, use mode-specific selections
-  selectedServers: string[]
-
   // Mode-specific server selections (multi-agent vs workflow)
   chatSelectedServers: string[]
   workflowSelectedServers: string[]
@@ -41,10 +37,6 @@ interface MCPState extends StoreActions {
 
   // Actions
   setEnabledServers: (servers: string[]) => void
-  setSelectedServers: (servers: string[]) => void
-  toggleServer: (server: string) => void
-  selectAllServers: () => void
-  clearAllServers: () => void
   refreshTools: () => Promise<void>
 
   // Mode-specific server actions
@@ -72,7 +64,6 @@ interface MCPState extends StoreActions {
   getAvailableServers: () => string[]
   getServerGroups: () => Record<string, ToolDefinition[]>
   isServerEnabled: (server: string) => boolean
-  isServerSelected: (server: string) => boolean
 }
 
 export const useMCPStore = create<MCPState>()(
@@ -82,9 +73,7 @@ export const useMCPStore = create<MCPState>()(
         toolList: [],
         enabledServers: [],
         enabledTools: [],
-        // LEGACY: kept for backward compatibility
-        selectedServers: [],
-        // Mode-specific server selections (initialized empty, will be migrated)
+        // Mode-specific server selections
         chatSelectedServers: [],
         workflowSelectedServers: [],
         expandedServers: new Set(),
@@ -102,34 +91,6 @@ export const useMCPStore = create<MCPState>()(
         // Actions
         setEnabledServers: (servers) => {
           set({ enabledServers: servers })
-        },
-
-        setSelectedServers: (servers) => {
-          set({ selectedServers: servers })
-        },
-
-        toggleServer: (server) => {
-          set((state) => {
-            // Remove "NO_SERVERS" if toggling a real server
-            const filtered = state.selectedServers.filter(s => s !== "NO_SERVERS")
-            const newSelected = filtered.includes(server)
-              ? filtered.filter(s => s !== server)
-              : [...filtered, server]
-            
-            return { selectedServers: newSelected }
-          })
-        },
-
-        selectAllServers: () => {
-          const state = get()
-          const availableServers = state.getAvailableServers()
-          // Filter out "NO_SERVERS" and set actual server names
-          set({ selectedServers: availableServers.filter(s => s !== "NO_SERVERS") })
-        },
-
-        clearAllServers: () => {
-          // Set "NO_SERVERS" to indicate no servers should be used
-          set({ selectedServers: ["NO_SERVERS"] })
         },
 
         // Mode-specific server actions
@@ -162,11 +123,11 @@ export const useMCPStore = create<MCPState>()(
             const currentEnabledServers = get().enabledServers
             const filteredEnabledServers = currentEnabledServers.filter(server => availableServers.includes(server))
 
-            // Filter persisted selectedServers to only include servers that still exist
-            const currentSelectedServers = get().selectedServers
-            const filteredSelectedServers = currentSelectedServers.filter(server =>
+            const filterSelectedServers = (servers: string[]) => servers.filter(server =>
               server === "NO_SERVERS" || availableServers.includes(server)
             )
+            const filteredChatSelectedServers = filterSelectedServers(get().chatSelectedServers)
+            const filteredWorkflowSelectedServers = filterSelectedServers(get().workflowSelectedServers)
 
             // Filter persisted toolDetails to only include servers that still exist
             const currentToolDetails = get().toolDetails
@@ -193,8 +154,8 @@ export const useMCPStore = create<MCPState>()(
               enabledServers: filteredEnabledServers.length === 0
                 ? availableServers
                 : filteredEnabledServers,
-              // Update selectedServers to remove deleted servers
-              selectedServers: filteredSelectedServers,
+              chatSelectedServers: filteredChatSelectedServers,
+              workflowSelectedServers: filteredWorkflowSelectedServers,
               // Update toolDetails to remove deleted servers
               toolDetails: filteredToolDetails,
               // Update expandedServers to remove deleted servers
@@ -318,19 +279,14 @@ export const useMCPStore = create<MCPState>()(
           return state.enabledServers.includes(server)
         },
 
-        isServerSelected: (server) => {
-          const state = get()
-          // Filter out "NO_SERVERS" when checking if a real server is selected
-          return state.selectedServers.filter(s => s !== "NO_SERVERS").includes(server)
-        },
-
         // Generic actions
         reset: () => {
           set({
             toolList: [],
             enabledServers: [],
             enabledTools: [],
-            selectedServers: [],
+            chatSelectedServers: [],
+            workflowSelectedServers: [],
             expandedServers: new Set(),
             selectedTool: null,
             toolDetails: {},
@@ -357,9 +313,6 @@ export const useMCPStore = create<MCPState>()(
         partialize: (state) => ({
           // Only persist user preferences, not temporary state
           enabledServers: state.enabledServers,
-          // Legacy field (kept for backward compatibility)
-          selectedServers: state.selectedServers,
-          // Mode-specific server selections
           chatSelectedServers: state.chatSelectedServers,
           workflowSelectedServers: state.workflowSelectedServers,
           expandedServers: Array.from(state.expandedServers), // Convert Set to Array for persistence
@@ -374,18 +327,21 @@ export const useMCPStore = create<MCPState>()(
           if (state && state.toolList && state.toolList.length > 0) {
             state.isLoadingTools = false
           }
-          // Migration: copy legacy selectedServers to mode-specific if not already set
+          // One-time migration from the pre-mode-specific persisted selection.
           if (state) {
-            const hasLegacyServers = state.selectedServers && state.selectedServers.length > 0
+            const migratedState = state as MCPState & { selectedServers?: string[] }
+            const legacyServers = migratedState.selectedServers || []
+            const hasLegacyServers = legacyServers.length > 0
             const hasChatServers = state.chatSelectedServers && state.chatSelectedServers.length > 0
             const hasWorkflowServers = state.workflowSelectedServers && state.workflowSelectedServers.length > 0
 
             if (hasLegacyServers && !hasChatServers) {
-              state.chatSelectedServers = [...state.selectedServers]
+              state.chatSelectedServers = [...legacyServers]
             }
             if (hasLegacyServers && !hasWorkflowServers) {
-              state.workflowSelectedServers = [...state.selectedServers]
+              state.workflowSelectedServers = [...legacyServers]
             }
+            delete migratedState.selectedServers
           }
         }
       }

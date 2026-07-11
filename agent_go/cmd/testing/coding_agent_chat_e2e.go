@@ -692,17 +692,6 @@ func extractUnifiedCompletionFinal(events []map[string]interface{}) string {
 	return ""
 }
 
-func (c *codingAgentChatE2EClient) sessionEventsProveProvider(ctx context.Context, sessionID, provider string) (bool, error) {
-	if provider == "" {
-		return true, nil
-	}
-	resp, _, err := c.getEvents(ctx, sessionID)
-	if err != nil {
-		return false, err
-	}
-	return eventsProveProvider(resp.Events, provider), nil
-}
-
 func eventsProveProvider(events []map[string]interface{}, provider string) bool {
 	provider = strings.TrimSpace(provider)
 	if provider == "" {

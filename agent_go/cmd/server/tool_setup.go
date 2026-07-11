@@ -140,15 +140,6 @@ func extractWorkflowContextFolders(paths []string) []string {
 	return result
 }
 
-// collectAdditionalFolderGuardFolders merges extra folder guard paths from @file context
-// and #workflow context, preserving order and removing duplicates.
-// DEPRECATED: Use collectSplitFolderGuardFolders instead which separates write vs read-only paths.
-func collectAdditionalFolderGuardFolders(query string, workflowContextPaths []string) []string {
-	combined := append([]string{}, extractFileContextWriteFolders(query)...)
-	combined = append(combined, extractWorkflowContextFolders(workflowContextPaths)...)
-	return common.DeduplicateStrings(combined)
-}
-
 // collectSplitFolderGuardFolders returns separate write and read-only folder lists.
 // @file context paths get write access; #workflow context paths get read-only access.
 func collectSplitFolderGuardFolders(query string, workflowContextPaths []string) (writeFolders, readOnlyFolders []string) {

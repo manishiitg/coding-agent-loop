@@ -473,64 +473,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     return filtered.filter(entry => entry !== formatToolEntry(category, toolName));
   };
 
-  // Helper to check if a sub-category is enabled
-  const isSubCategoryEnabled = (category: string, subCategoryTools: string[], enabledTools: string[]): boolean => {
-    if (enabledTools.length === 0) return true; // Default: all enabled
-    // Check if parent workspace_tools:* is enabled
-    if (WORKSPACE_SUB_CATEGORIES.includes(category) && isCategoryEnabled('workspace_tools', enabledTools)) return true;
-    // Check if sub-category itself is enabled (e.g., workspace_advanced:*)
-    if (isCategoryEnabled(category, enabledTools)) return true;
-
-    const enabledInSubCategory = subCategoryTools.filter(toolName =>
-      isToolEnabled(category, toolName, enabledTools)
-    );
-    return enabledInSubCategory.length === subCategoryTools.length;
-  };
-
-  // Helper to enable/disable a sub-category
-  const toggleSubCategory = (category: string, subCategoryTools: string[], enabled: boolean, enabledTools: string[]): string[] => {
-    let result = enabledTools;
-
-    // If parent workspace_tools:* is enabled, expand it first
-    if (WORKSPACE_SUB_CATEGORIES.includes(category) && isCategoryEnabled('workspace_tools', result)) {
-      result = result.filter(e => e !== formatToolEntry('workspace_tools', '*'));
-      const allWsTools = getToolsByCategory('workspace_tools', capabilities?.workspace);
-      for (const tool of allWsTools) {
-        const cat = getCategoryForTool(tool) || 'workspace_tools';
-        result.push(formatToolEntry(cat, tool));
-      }
-    }
-
-    if (enabled) {
-      // Enable sub-category - add all tools from this sub-category
-      // If sub-category:* is already enabled, nothing to do
-      if (isCategoryEnabled(category, result)) {
-        return result;
-      }
-
-      // Add all tools from this sub-category
-      for (const toolName of subCategoryTools) {
-        const toolEntry = formatToolEntry(category, toolName);
-        if (!result.includes(toolEntry)) {
-          result = [...result, toolEntry];
-        }
-      }
-
-      return result;
-    } else {
-      // Disable sub-category - remove all tools from this sub-category
-      // Remove category:* if present
-      result = result.filter(e => e !== formatToolEntry(category, '*'));
-
-      // Remove all individual tools from this sub-category
-      return result.filter(entry => {
-        const parsed = parseToolEntry(entry);
-        if (!parsed || parsed.category !== category) return true;
-        return !subCategoryTools.includes(parsed.tool);
-      });
-    }
-  };
-
   // Update execution LLM
   const handleExecutionLLMSelect = (llm: LLMOption) => {
     setAgentConfigs((prev) => ({
@@ -1846,7 +1788,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                 >
                   Enable Context Offloading Virtual Tools
                   <span className="text-gray-500 dark:text-gray-500 ml-1">
-                    (read_large_output, search_large_output, query_large_output)
+                    (search_large_output with read/search/query operations)
                   </span>
                 </label>
               </div>

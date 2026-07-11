@@ -1721,13 +1721,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx conte
 // learningPathIdentifier: Learning folder identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
 // Note: Learning integration functions removed - execution agent now auto-discovers learning files and scripts
 
-// createSuccessLearningAgent is a backward compatibility wrapper for createLearningAgent
-// Deprecated: Use createLearningAgent instead. The unified learning agent handles both success and failure cases.
-// stepIndex: 0-based step index for token tracking
-func (hcpo *StepBasedWorkflowOrchestrator) createSuccessLearningAgent(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool, stepID string, stepPath string, stepIndex int) (agents.OrchestratorAgent, error) {
-	return hcpo.createLearningAgentInternal(ctx, phase, learningPathIdentifier, agentName, stepConfig, isCodeExecutionMode, stepID, stepPath, stepIndex)
-}
-
 // ConversationEntry is a single flattened message in the sub-agent's conversation
 type ConversationEntry struct {
 	Index    int    `json:"index"`

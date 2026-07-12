@@ -1222,6 +1222,18 @@ func TestSelectedPostRunMonitorModuleStepsUsesGateWorklist(t *testing.T) {
 	}
 }
 
+func TestPulseBackupRunsOnlyInParentTurn(t *testing.T) {
+	preBackup := postRunMonitorPreBackupStep("pulse-run-1").query
+	finalizer := postRunMonitorFinalSteps("pulse-run-1")[0].query
+	for name, message := range map[string]string{"pre-backup": preBackup, "finalizer": finalizer} {
+		for _, required := range []string{"THIS parent", "Never delegate", "run_in_background", "call_generic_agent", ".git directory"} {
+			if !strings.Contains(message, required) {
+				t.Fatalf("%s message missing parent-only backup guard %q", name, required)
+			}
+		}
+	}
+}
+
 func TestSelectedPostRunMonitorModuleStepsFallsBackConservatively(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

@@ -849,6 +849,7 @@ type InteractiveWorkshopManager struct {
 	cancelAllServerAgents  func()                    // optional: cancel all running agents in server's bgAgentRegistry
 	listServerAgents       func() []ServerAgentInfo  // optional: list all agents from server's bgAgentRegistry
 	workshopModeOverride   string                    // frontend-selected workshop mode (takes priority over auto-detection)
+	toolAgentSetupMu       sync.Mutex                // protects temporary controller/bridge state while tool agents are created
 }
 
 func uniqueStringsPreserveOrder(values []string) []string {
@@ -3181,6 +3182,67 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		"workflow",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register run_in_background tool: %v", err))
+	}
+
+	// Pulse reviewers are synchronous so the parent cannot enter its fixer phase
+	// until every parallel review result has returned. This executor is registered
+	// on the exact workshop session, preventing another workflow's todo_task
+	// executor from being selected through the global code-exec registry.
+	if err := mcpAgent.RegisterCustomTool(
+		"call_generic_agent",
+		"Run one synchronous read-only reviewer in an isolated context for this workflow and return its findings. Intended for Pulse's parallel review batch. The reviewer cannot mutate files, configuration, plans, reports, evaluations, human inputs, or module state.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"todo_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Stable reviewer task ID used for correlation.",
+				},
+				"instructions": map[string]interface{}{
+					"type":        "string",
+					"description": "Complete read-only review instructions, including workflow path, Pulse run id, module, evidence, and response contract.",
+				},
+				"preferred_tier": map[string]interface{}{
+					"type":        "integer",
+					"enum":        []int{1, 2, 3},
+					"description": "Required intended reasoning tier. Pulse reviewers execute with the workflow maintenance model.",
+				},
+			},
+			"required": []string{"todo_id", "instructions", "preferred_tier"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			todoID, _ := args["todo_id"].(string)
+			todoID = strings.TrimSpace(todoID)
+			if todoID == "" {
+				return "", fmt.Errorf("todo_id is required")
+			}
+			instructions, _ := args["instructions"].(string)
+			instructions = strings.TrimSpace(instructions)
+			if instructions == "" {
+				return "", fmt.Errorf("instructions are required")
+			}
+			preferredTier, ok := args["preferred_tier"].(float64)
+			if !ok || preferredTier < 1 || preferredTier > 3 {
+				return "", fmt.Errorf("preferred_tier is required and must be 1, 2, or 3")
+			}
+
+			execCtx, cancel, ctxErr := iwm.newExecContext()
+			if ctxErr != nil {
+				return "", ctxErr
+			}
+			defer cancel()
+			agentSessionID := fmt.Sprintf("workshop-review-%d", time.Now().UnixNano())
+			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
+
+			workspacePath := iwm.controller.GetWorkspacePath()
+			scopeHeader := fmt.Sprintf("READ-ONLY REVIEW SCOPE: inspect only %s. If any evidence path resolves outside this workflow, stop and return scope_error.\n\n", workspacePath)
+			return iwm.runGoalAdvisorStageAgent(execCtx, "Pulse reviewer - "+todoID, scopeHeader+instructions, goalAdvisorStageReadOnly)
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register workshop call_generic_agent tool: %v", err))
 	}
 
 	// Tool: run_goal_advisor_review — dedicated strategic review background pipeline.
@@ -9157,11 +9219,24 @@ func (iwm *InteractiveWorkshopManager) runGoalAdvisorStageAgent(ctx context.Cont
 		allowedToolNames = goalAdvisorFinalizerApprovedToolAgentAllowedToolNames()
 	}
 
+	// Agent creation temporarily mutates controller folder-guard and bridge state.
+	// Serialize only this setup window; the independent agents execute in parallel
+	// after their session-specific guards have been materialized.
+	iwm.toolAgentSetupMu.Lock()
+	setupRestored := false
 	prevReadPaths, prevWritePaths := iwm.controller.GetFolderGuardPaths()
 	prevReadPaths = append([]string(nil), prevReadPaths...)
 	prevWritePaths = append([]string(nil), prevWritePaths...)
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	defer iwm.controller.SetWorkspacePathForFolderGuard(prevReadPaths, prevWritePaths)
+	restoreSetup := func() {
+		if setupRestored {
+			return
+		}
+		iwm.controller.SetWorkspacePathForFolderGuard(prevReadPaths, prevWritePaths)
+		setupRestored = true
+		iwm.toolAgentSetupMu.Unlock()
+	}
+	defer restoreSetup()
 
 	llmConfigToUse := iwm.controller.selectMaintenanceLLM(name)
 	if llmConfigToUse == nil {
@@ -9205,6 +9280,7 @@ func (iwm *InteractiveWorkshopManager) runGoalAdvisorStageAgent(ctx context.Cont
 	if err := iwm.controller.applyPostSetupToAgent(agent, "goal-advisor-agent", false); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Post-setup configuration failed for goal-advisor-agent: %v", err))
 	}
+	restoreSetup()
 
 	templateVars := map[string]string{
 		"WorkspacePath":    workspacePath,

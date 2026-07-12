@@ -172,6 +172,13 @@ them to a public one is refused — make the repo private or keep the secrets ou
 
 ## Git workflow per per-workflow repo
 
+Run Git backup commands in the **parent workflow-builder/Pulse turn only**.
+Do not delegate backup through `run_in_background`, `call_generic_agent`, a
+reviewer, or another sub-agent. Delegated tool agents have deliberately narrower
+write access and cannot write the workflow's `.git/` directory; attempting Git
+there produces misleading `FETCH_HEAD` / `index.lock: Operation not permitted`
+errors. This is a sandbox boundary, not a macOS ownership or mount problem.
+
 Assume the workflow folder is itself a git working tree with a single
 remote pointing at the per-workflow repo. Common operations:
 

@@ -787,24 +787,6 @@ func getLearningFolderPathByStepID(baseWorkspacePath string, stepID string, step
 	return fmt.Sprintf("learnings/%s", stepID)
 }
 
-// ensureStepLearningsFolderExists ensures the step learnings folder exists by creating it if needed.
-// Takes a relative path within the workspace (e.g., "learnings/step-1") and uses createFolderViaAPI
-// to create it with proper path normalization.
-func (hcpo *StepBasedWorkflowOrchestrator) ensureStepLearningsFolderExists(ctx context.Context, stepLearningsRelativePath string) error {
-	if stepLearningsRelativePath == "" {
-		return fmt.Errorf("invalid step learnings path: empty")
-	}
-
-	// Create folder via Workspace API with workspacePath for normalization
-	// e.g., "learnings/step-1" + "Workflow/ICICI..." -> "Workflow/ICICI.../learnings/step-1"
-	workspacePath := hcpo.GetWorkspacePath()
-	if err := createFolderViaAPI(ctx, stepLearningsRelativePath, workspacePath); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create step learnings folder via API: %s: %v", stepLearningsRelativePath, err))
-		return fmt.Errorf("failed to create step learnings folder: %w", err)
-	}
-	return nil
-}
-
 // addCompletedStepIndex safely adds a step index to the completed list, preventing duplicates
 // This is important when decision steps route back to previous steps, which can cause
 // the same step index to be added multiple times if not checked
@@ -1942,7 +1924,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					attemptStartedAt = time.Now().UTC()
 					hcpo.recordWorkflowContinuationPhase(ctx, artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseMainExecution, workflowContinuationStatusRunning, "", executionAgent)
 					// Execute execution-only agent with learning history (reused from learning reading above)
-					executionResult, executionConversationHistory, err = executionAgent.Execute(ctx, templateVars, []llmtypes.MessageContent{})
+					executionResult, executionConversationHistory, err = hcpo.withWorkshopMessageTarget(ctx, step.GetID(), "execution", executionAgent, func() (string, []llmtypes.MessageContent, error) {
+						return executionAgent.Execute(ctx, templateVars, []llmtypes.MessageContent{})
+					})
 				} else {
 					// Continuation path: send validation feedback as a follow-up user
 					// message on the existing agent. The system prompt, tool state, and
@@ -1961,7 +1945,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					}
 					attemptStartedAt = time.Now().UTC()
 					hcpo.recordWorkflowContinuationPhase(ctx, artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseMainExecution, workflowContinuationStatusRunning, "", executionAgent)
-					executionResult, executionConversationHistory, err = ba.Execute(ctx, feedbackUserMsg, executionConversationHistory, "", false)
+					executionResult, executionConversationHistory, err = hcpo.withWorkshopMessageTarget(ctx, step.GetID(), "validation-retry", executionAgent, func() (string, []llmtypes.MessageContent, error) {
+						return ba.Execute(ctx, feedbackUserMsg, executionConversationHistory, "", false)
+					})
 				}
 				attemptCompletedAt = time.Now().UTC()
 				attemptDuration = attemptCompletedAt.Sub(attemptStartedAt)
@@ -2226,7 +2212,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						// Fresh conversation each time — feedback message already contains
 						// the full script + execution output + validation errors as context.
 						if ba := executionAgent.GetBaseAgent(); ba != nil {
-							_, executionConversationHistory, err = ba.Execute(ctx, feedbackMsg, nil, repairSystemPrompt, false)
+							_, executionConversationHistory, err = hcpo.withWorkshopMessageTarget(ctx, step.GetID(), "script-repair", executionAgent, func() (string, []llmtypes.MessageContent, error) {
+								return ba.Execute(ctx, feedbackMsg, nil, repairSystemPrompt, false)
+							})
 							if err != nil {
 								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] agent error during fix attempt %d: %v", fixIter+1, err))
 								break
@@ -2402,7 +2390,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							hcpo.GetLogger().Info(fmt.Sprintf("🧠 KB contribution self-review: firing one-shot continuation for step %d", stepIndex+1))
 							hcpo.recordWorkflowContinuationPhase(ctx, artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseKBReview, workflowContinuationStatusRunning, "", executionAgent)
 							if ba := executionAgent.GetBaseAgent(); ba != nil {
-								reviewResult, updatedHistory, reviewErr := ba.Execute(ctx, reviewMsg, executionConversationHistory, "", false)
+								reviewResult, updatedHistory, reviewErr := hcpo.withWorkshopMessageTarget(ctx, step.GetID(), "knowledgebase-review", executionAgent, func() (string, []llmtypes.MessageContent, error) {
+									return ba.Execute(ctx, reviewMsg, executionConversationHistory, "", false)
+								})
 								if reviewErr != nil {
 									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ KB self-review continuation failed for step %d: %v (accepting step anyway)", stepIndex+1, reviewErr))
 									hcpo.recordWorkflowContinuationPhase(context.Background(), artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseKBReview, workflowContinuationStatusFailed, reviewErr.Error(), executionAgent)
@@ -2475,7 +2465,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 									hcpo.GetLogger().Info(fmt.Sprintf("🧠 Direct-learnings: firing one-shot continuation for step %d (objective length=%d)", stepIndex+1, len(learnObjective)))
 									hcpo.recordWorkflowContinuationPhase(ctx, artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseDirectLearning, workflowContinuationStatusRunning, "", executionAgent)
 									if ba := executionAgent.GetBaseAgent(); ba != nil {
-										learnResult, learnHistory, learnErr := ba.Execute(ctx, learningsTurnMsg, executionConversationHistory, "", false)
+										learnResult, learnHistory, learnErr := hcpo.withWorkshopMessageTarget(ctx, step.GetID(), "learnings", executionAgent, func() (string, []llmtypes.MessageContent, error) {
+											return ba.Execute(ctx, learningsTurnMsg, executionConversationHistory, "", false)
+										})
 										if learnErr != nil {
 											hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Direct-learnings continuation failed for step %d: %v (accepting step anyway)", stepIndex+1, learnErr))
 											hcpo.recordWorkflowContinuationPhase(context.Background(), artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseDirectLearning, workflowContinuationStatusFailed, learnErr.Error(), executionAgent)

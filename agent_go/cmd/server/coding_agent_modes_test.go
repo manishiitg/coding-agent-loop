@@ -260,7 +260,7 @@ func TestHandleLiveInputMessageRoutesThroughAgentDelivery(t *testing.T) {
 	}
 }
 
-func TestHandleLiveInputMessageDeliversToRetainedCodingAgentWithoutActiveTurn(t *testing.T) {
+func TestHandleLiveInputMessageRejectsStaleRetainedCodingAgent(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	defer store.Stop()
 
@@ -284,14 +284,14 @@ func TestHandleLiveInputMessageDeliversToRetainedCodingAgentWithoutActiveTurn(t 
 	rr := httptest.NewRecorder()
 
 	api.handleLiveInputMessage(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200 retained CLI delivery", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status = %d body=%s, want 409 explicit delivery failure", rr.Code, rr.Body.String())
 	}
 	if api.isSessionBusy(sessionID) {
-		t.Fatal("retained CLI delivery without a foreground turn should clear stale server busy state")
+		t.Fatal("stale retained session should clear stale busy state even though delivery was rejected")
 	}
-	if got := len(store.GetAllEventsRaw(sessionID)); got != 1 {
-		t.Fatalf("retained CLI delivery recorded %d events, want 1", got)
+	if got := len(store.GetAllEventsRaw(sessionID)); got != 0 {
+		t.Fatalf("failed delivery recorded %d events, want 0", got)
 	}
 }
 
@@ -318,10 +318,10 @@ func TestCanSteerSessionRequiresActiveForegroundTurn(t *testing.T) {
 	}
 }
 
-// Single-entry routing: a /api/query message for a BUSY coding-agent session must
-// be steered into the running turn (Status live_input_delivered) instead of
-// starting a second streaming turn, and recorded so it persists in the timeline.
-func TestTryDeliverQueryAsLiveInputBusyCodingAgent(t *testing.T) {
+// A retained agent object without a matching provider-native tmux registration
+// is stale. Live delivery must fail explicitly and let /api/query start a clean
+// resumed turn instead of silently parking the message in a steer queue.
+func TestTryDeliverQueryAsLiveInputBusyStaleCodingAgentFallsThrough(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	defer store.Stop()
 
@@ -340,28 +340,18 @@ func TestTryDeliverQueryAsLiveInputBusyCodingAgent(t *testing.T) {
 	req.Header.Set("X-Session-ID", sessionID)
 	rr := httptest.NewRecorder()
 
-	if !api.tryDeliverQueryAsLiveInput(rr, req, sessionID, "steer me into the running turn", "query_test_busy") {
-		t.Fatalf("tryDeliverQueryAsLiveInput = false for a busy coding-agent session; want true (steer, not new turn). body=%s", rr.Body.String())
+	if api.tryDeliverQueryAsLiveInput(rr, req, sessionID, "steer me into the running turn", "query_test_busy") {
+		t.Fatalf("tryDeliverQueryAsLiveInput = true for stale coding-agent registration; want normal-turn fallback. body=%s", rr.Body.String())
 	}
-	var resp QueryResponse
-	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if resp.Status != queryStatusLiveInputDelivered {
-		t.Fatalf("status = %q, want %q", resp.Status, queryStatusLiveInputDelivered)
-	}
-	if resp.DeliveryStatus == "" {
-		t.Fatal("delivery_status empty; want a live-input delivery status")
-	}
-	if got := len(store.GetAllEventsRaw(sessionID)); got != 1 {
-		t.Fatalf("recorded %d events, want 1 (the steered user message)", got)
+	if got := len(store.GetAllEventsRaw(sessionID)); got != 0 {
+		t.Fatalf("recorded %d events, want 0 for an unconfirmed send", got)
 	}
 }
 
 // Single-entry routing: a retained coding-agent CLI should accept the next
 // message when there is no foreground-turn/busy proof but the live tmux pane is
 // still registered. The CLI owns how to handle the input in its tmux session.
-func TestTryDeliverQueryAsLiveInputRetainedCodingAgentUsesLiveTmuxWithoutBusyTurn(t *testing.T) {
+func TestTryDeliverQueryAsLiveInputRetainedCodingAgentWithStaleTmuxFallsThrough(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	defer store.Stop()
 
@@ -380,11 +370,11 @@ func TestTryDeliverQueryAsLiveInputRetainedCodingAgentUsesLiveTmuxWithoutBusyTur
 
 	req := httptest.NewRequest(http.MethodPost, "/api/query", nil)
 	rr := httptest.NewRecorder()
-	if !api.tryDeliverQueryAsLiveInput(rr, req, sessionID, "next message", "query_test_retained") {
-		t.Fatalf("tryDeliverQueryAsLiveInput = false for a retained coding-agent CLI; want live delivery. body=%s", rr.Body.String())
+	if api.tryDeliverQueryAsLiveInput(rr, req, sessionID, "next message", "query_test_retained") {
+		t.Fatalf("tryDeliverQueryAsLiveInput = true for stale provider registration; want normal-turn fallback. body=%s", rr.Body.String())
 	}
-	if got := len(store.GetAllEventsRaw(sessionID)); got != 1 {
-		t.Fatalf("retained CLI delivery recorded %d events, want 1", got)
+	if got := len(store.GetAllEventsRaw(sessionID)); got != 0 {
+		t.Fatalf("failed retained CLI delivery recorded %d events, want 0", got)
 	}
 }
 

@@ -10,7 +10,7 @@ import {
   type NodeChange,
   type OnNodeDrag
 } from '@xyflow/react'
-import { Braces, Download, FileText, GitBranch, Laptop, ListOrdered, Loader2, PanelRightClose, RefreshCw, Route, Settings, SlidersHorizontal, Smartphone, X } from 'lucide-react'
+import { Braces, Download, FileText, GitBranch, Laptop, ListOrdered, Loader2, PanelRightClose, RefreshCw, Route, Settings, SlidersHorizontal, Smartphone, Tablet, X } from 'lucide-react'
 import '@xyflow/react/dist/style.css'
 
 import { useModeStore } from '../../../stores/useModeStore'
@@ -138,9 +138,10 @@ export const WORKFLOW_REPORT_REFRESH_EVENT = 'workflow-report-refresh-requested'
 
 const PREVIEW_DEVICE_OPTS = [
   { mode: 'mobile' as const, Icon: Smartphone, label: 'Mobile preview' },
+  { mode: 'tablet' as const, Icon: Tablet, label: 'Tablet preview' },
   { mode: 'desktop' as const, Icon: Laptop, label: 'Laptop preview' },
 ]
-type PreviewDevice = 'mobile' | 'desktop'
+type PreviewDevice = 'mobile' | 'tablet' | 'desktop'
 
 // Shared device-width preference, synced across the on-pane bar, the report
 // shell, and the plan/flow shell via REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT.
@@ -152,7 +153,7 @@ export function usePreviewDevice(scopeId?: string | null): PreviewDevice {
   const read = (): PreviewDevice => {
     try {
       const v = localStorage.getItem(reportPreviewPreferenceKey(scopeId))
-      return v === 'mobile' || v === 'desktop' ? v : 'desktop'
+      return v === 'mobile' || v === 'tablet' || v === 'desktop' ? v : 'desktop'
     } catch { return 'desktop' }
   }
   const [pref, setPref] = React.useState<PreviewDevice>(read)
@@ -163,7 +164,7 @@ export function usePreviewDevice(scopeId?: string | null): PreviewDevice {
       const detail = (e as CustomEvent).detail
       if ((detail?.scopeId ?? null) !== (scopeId ?? null)) return
       const p = detail?.preference
-      if (p === 'mobile' || p === 'desktop') setPref(p)
+      if (p === 'mobile' || p === 'tablet' || p === 'desktop') setPref(p)
     }
     window.addEventListener(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, handler)
     return () => window.removeEventListener(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, handler)
@@ -179,6 +180,8 @@ function setPreviewDevice(mode: PreviewDevice, scopeId?: string | null) {
 export function previewDeviceShellClass(device: PreviewDevice): string {
   return device === 'mobile'
     ? 'mx-auto w-full max-w-[480px]'
+    : device === 'tablet'
+      ? 'w-full max-w-full'
     : 'w-full'
 }
 
@@ -391,8 +394,8 @@ const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasPr
       ? 'mobile'
       : undefined
   const documentPreviewShellClassName =
-    reportPreviewDevice === 'mobile'
-      ? `${previewDeviceShellClass('mobile')} h-full overflow-hidden`
+    reportPreviewDevice !== 'desktop'
+      ? `${previewDeviceShellClass(reportPreviewDevice)} h-full overflow-hidden`
       : 'h-full w-full'
   const planData = usePlanData(workspacePath)
   const plan = planData.plan

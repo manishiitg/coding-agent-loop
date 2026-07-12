@@ -316,7 +316,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) queueRecoveredDirectKBReview(state *W
 		if base == nil {
 			return "", fmt.Errorf("execution agent base is nil")
 		}
-		result, _, err := base.Execute(execCtx, reviewMsg, runtime.ExecutionHistory, "", false)
+		result, _, err := hcpo.withWorkshopMessageTarget(execCtx, state.StepID, "recovered-knowledgebase-review", agent, func() (string, []llmtypes.MessageContent, error) {
+			return base.Execute(execCtx, reviewMsg, runtime.ExecutionHistory, "", false)
+		})
 		return summarizeExecutionResultForNotification(result), err
 	})
 }
@@ -361,7 +363,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) queueRecoveredDirectLearning(state *W
 		hcpo.recordWorkflowContinuationPhaseForRunFolder(execCtx, state.RunFolder, state.StepID, state.StepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseDirectLearning, workflowContinuationStatusWaitingForLock, "", agent)
 		learningsGlobalFileMutex.Lock()
 		defer learningsGlobalFileMutex.Unlock()
-		result, _, err := base.Execute(execCtx, learnMsg, runtime.ExecutionHistory, "", false)
+		result, _, err := hcpo.withWorkshopMessageTarget(execCtx, state.StepID, "recovered-learnings", agent, func() (string, []llmtypes.MessageContent, error) {
+			return base.Execute(execCtx, learnMsg, runtime.ExecutionHistory, "", false)
+		})
 		if err != nil {
 			return "", err
 		}

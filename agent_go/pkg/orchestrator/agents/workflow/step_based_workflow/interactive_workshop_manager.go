@@ -538,15 +538,18 @@ type TmuxLookupFunc func(ctx context.Context, mainSessionID, stepID string) (tmu
 
 // WorkshopStepExecution tracks a single background step execution
 type WorkshopStepExecution struct {
-	ID             string
-	StepID         string
-	AgentSessionID string // correlation ID used to tag events for this execution
-	Status         WorkshopStepStatus
-	CreatedAt      time.Time
-	Result         string
-	Err            error
-	cancel         context.CancelFunc
-	mu             sync.RWMutex
+	ID                      string
+	StepID                  string
+	AgentSessionID          string // correlation ID used to tag events for this execution
+	Status                  WorkshopStepStatus
+	CreatedAt               time.Time
+	Result                  string
+	Err                     error
+	cancel                  context.CancelFunc
+	mu                      sync.RWMutex
+	messageSendMu           sync.Mutex
+	messageTarget           *workshopStepMessageTarget
+	messageTargetGeneration uint64
 }
 
 // WorkshopExecutionStart carries the canonical information needed to register a running execution.
@@ -561,14 +564,16 @@ type WorkshopExecutionStart struct {
 
 // WorkshopStepSnapshot is a read-only copy of a tracked execution for external callers.
 type WorkshopStepSnapshot struct {
-	ID             string
-	StepID         string
-	AgentSessionID string
-	Status         WorkshopStepStatus
-	CreatedAt      time.Time
-	Result         string
-	Err            error
-	CanCancel      bool
+	ID                 string
+	StepID             string
+	AgentSessionID     string
+	Status             WorkshopStepStatus
+	CreatedAt          time.Time
+	Result             string
+	Err                error
+	CanCancel          bool
+	CanReceiveMessage  bool
+	ActiveMessagePhase string
 }
 
 var (
@@ -579,7 +584,7 @@ var (
 func (e *WorkshopStepExecution) Snapshot() WorkshopStepSnapshot {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	return WorkshopStepSnapshot{
+	snapshot := WorkshopStepSnapshot{
 		ID:             e.ID,
 		StepID:         e.StepID,
 		AgentSessionID: e.AgentSessionID,
@@ -589,6 +594,11 @@ func (e *WorkshopStepExecution) Snapshot() WorkshopStepSnapshot {
 		Err:            e.Err,
 		CanCancel:      e.cancel != nil,
 	}
+	if e.Status == WorkshopStepRunning && e.messageTarget != nil {
+		snapshot.CanReceiveMessage = true
+		snapshot.ActiveMessagePhase = e.messageTarget.phase
+	}
+	return snapshot
 }
 
 // finalizeExecStatus sets the final status on a WorkshopStepExecution under lock,
@@ -614,8 +624,11 @@ func (e *WorkshopStepExecution) Snapshot() WorkshopStepSnapshot {
 //	    }
 //	}()
 func finalizeExecStatus(exec *WorkshopStepExecution, ctx context.Context, result *string, execErr *error) (skipNotify bool) {
+	exec.messageSendMu.Lock()
+	defer exec.messageSendMu.Unlock()
 	exec.mu.Lock()
 	defer exec.mu.Unlock()
+	exec.messageTarget = nil
 	if exec.Status == WorkshopStepCancelled {
 		log.Printf("[FINALIZE_EXEC] exec=%s step=%s — already cancelled by stop_step, skipNotify=true", exec.ID, exec.StepID)
 		return true // stop_step already called OnExecutionTerminated
@@ -742,9 +755,12 @@ func (r *WorkshopStepRegistry) Cancel(id string) (WorkshopStepSnapshot, error) {
 	}
 
 	exec.cancel()
+	exec.messageSendMu.Lock()
 	exec.mu.Lock()
 	exec.Status = WorkshopStepCancelled
+	exec.messageTarget = nil
 	exec.mu.Unlock()
+	exec.messageSendMu.Unlock()
 	return exec.Snapshot(), nil
 }
 
@@ -767,9 +783,12 @@ func (r *WorkshopStepRegistry) CancelAll() []WorkshopStepSnapshot {
 		if exec.cancel != nil {
 			exec.cancel()
 		}
+		exec.messageSendMu.Lock()
 		exec.mu.Lock()
 		exec.Status = WorkshopStepCancelled
+		exec.messageTarget = nil
 		exec.mu.Unlock()
+		exec.messageSendMu.Unlock()
 		cancelled = append(cancelled, exec.Snapshot())
 	}
 	return cancelled
@@ -1028,7 +1047,7 @@ func (iwm *InteractiveWorkshopManager) SetToolCallQuery(mainSessionID string, qu
 //
 // Tools are grouped into categories:
 //   - System tools: always included (shell, workspace, non-blocking human notification, virtual tools)
-//   - Workshop execution tools: execute_step, query_step, stop, list, run_in_background
+//   - Workshop execution tools: execute_step, query_step, send_step_message, stop, list, run_in_background
 //   - Step config/tools: update_step_config, review_step_code
 //   - Plan modification tools: add/update/delete steps, branches, routes
 //   - Variable/config tools: update_variable, groups, workflow config
@@ -1070,7 +1089,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 
 	// Workshop execution tools
 	execution := []string{
-		"execute_step", "query_step", "stop_step", "stop_all_executions",
+		"execute_step", "query_step", "send_step_message", "stop_step", "stop_all_executions",
 		"list_executions", "run_in_background",
 	}
 
@@ -1249,41 +1268,6 @@ func filterWorkspaceToolsByName(allTools []llmtypes.Tool, allExecutors map[strin
 	}
 
 	return filteredTools, filteredExecutors
-}
-
-func optimizerToolAgentAllowedToolNames() []string {
-	return []string{
-		// Workspace/file tools. Keep direct filesystem mutation narrow: use shell
-		// and diff_patch under FolderGuard, plus media/PDF readers for evidence.
-		"execute_shell_command", "diff_patch_workspace_file",
-		"read_image", "generate_text_llm", "search_web_llm",
-
-		// Read-only workflow state.
-		"get_step_prompts", "get_workflow_config", "get_llm_config", "get_cost_summary",
-		"list_skills", "search_skills", "list_published_llms", "list_provider_models",
-
-		// Step/config analysis and maintenance.
-		"update_step_config", "debug_step",
-
-		// Plan and validation tools.
-		"create_plan",
-		"add_regular_step", "add_message_sequence_step", "add_routing_step",
-		"add_human_input_step", "add_todo_task_step", "add_todo_task_route",
-		"update_regular_step", "update_message_sequence_step", "update_routing_step",
-		"update_human_input_step", "update_todo_task_step", "update_todo_task_route",
-		"delete_todo_task_route", "delete_plan_steps", "cleanup_orphan_step_configs",
-		"update_validation_schema", "validate_evaluation_plan",
-
-		// Workflow-level config that affects future execution.
-		"update_variable", "add_group", "update_group", "delete_group",
-		"update_workflow_config", "test_llm", "set_workflow_llm_config",
-		"mark_cos_recommendation_status",
-
-		// Report artifact maintenance.
-		"get_report_plan", "upsert_report_widget", "remove_report_widget",
-		"move_report_widget", "toggle_report_widget", "set_report_theme",
-		"set_section_layout", "validate_report_plan", "preview_report_render",
-	}
 }
 
 type goalAdvisorStageAccess int
@@ -2215,7 +2199,7 @@ For the full playbook (validation design, learning config, three-locks decision 
 This is the one-line-per-category map. For full signatures, parameters, when-to-use rules, and gotchas (especially Schedules and Secrets, which have multi-step flows), call **`+"`get_reference_doc(kind=\"workflow-tools\")`"+`**.
 
 {{if or (eq .WorkshopMode "workshop") (eq .WorkshopMode "run")}}
-- **Step execution & inspection**: `+"`execute_step`"+`, `+"`query_step`"+`, `+"`debug_step`"+`, `+"`list_executions`"+`, `+"`stop_step`"+`, `+"`stop_all_executions`"+`, `+"`run_in_background`"+`, `+"`run_full_workflow`"+`. {{if eq .WorkshopMode "workshop"}}Workshop also exposes `+"`execute_step(..., fast_path_only=true)`"+` for scripted main.py fast-path testing.{{end}}
+- **Step execution & inspection**: `+"`execute_step`"+`, `+"`query_step`"+`, `+"`send_step_message`"+`, `+"`debug_step`"+`, `+"`list_executions`"+`, `+"`stop_step`"+`, `+"`stop_all_executions`"+`, `+"`run_in_background`"+`, `+"`run_full_workflow`"+`. {{if eq .WorkshopMode "workshop"}}Workshop also exposes `+"`execute_step(..., fast_path_only=true)`"+` for scripted main.py fast-path testing.{{end}}
 {{end}}{{if eq .WorkshopMode "workshop"}}
 - **Step config & analysis**: `+"`update_step_config`"+`, read-only improve/review tools, `+"`review_workflow_timing`"+`, `+"`review_workflow_costs`"+`, and `+"`get_cost_summary`"+`. Objective + success criteria live in `+"`soul/soul.md`"+`. Pulse uses parallel read-only reviewers and one parent Pulse Fixer. Strategy changes use normal plan tools only after approval or during an explicit bounded manual request.
 - **Strategy review & decisions**: `+"`run_goal_advisor_review`"+` runs the dedicated advisor/critic/finalizer pipeline for a manual workshop review. Use `+"`create_human_input_request`"+` for durable approval/clarification cards; scheduled Pulse renders them in `+"`builder/improve.html`"+`.
@@ -2284,7 +2268,7 @@ func (agent *WorkflowInteractiveWorkshopAgent) Execute(ctx context.Context, temp
 	// Variable management tools (update_variable, group CRUD)
 	// are registered inside registerInteractiveWorkshopTools for both full and HAE modes.
 
-	// Register custom workshop tools (execute_step, query_step, stop_step, update_step_config)
+	// Register custom workshop tools (execute_step, query_step, send_step_message, stop_step, update_step_config)
 	registerInteractiveWorkshopTools(iwm, mcpAgentRef, logger)
 	if err := iwm.registerMarkChangelogArtifactReviewedTool(mcpAgentRef, workspacePath, logger); err != nil {
 		logger.Warn(fmt.Sprintf("Failed to register changelog artifact-review marker tool: %v", err))
@@ -2666,7 +2650,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 1: execute_step — start step in background
 	if err := mcpAgent.RegisterCustomTool(
 		"execute_step",
-		"Start a workflow step in the background, including a normal plan step, nested route step, or plan-local orphan utility step. Returns an execution_id immediately. You will be automatically notified when it completes. Idempotent while running: if the step already has a running execution, this returns that existing execution_id instead of starting a duplicate — do NOT re-call to retry a step that is still running. Learnings follow the step's persistent config (`learnings_access`, `learning_objective`, `lock_learnings`). When learning writes are enabled, SKILL.md updates run as the step agent's direct post-completion continuation before the step is fully finalized. Workshop mode only: set fast_path_only=true to run ONLY the saved learnings/{step-id}/main.py script with no LLM fallback when testing scripted patches.",
+		"Start a workflow step in the background, including a normal plan step, nested route step, or plan-local orphan utility step. Returns an execution_id immediately. You will be automatically notified when it completes. Idempotent while running: if the step already has a running execution, this returns that existing execution_id instead of starting a duplicate — use send_step_message with the returned execution_id to steer its currently active agent turn. Learnings follow the step's persistent config (`learnings_access`, `learning_objective`, `lock_learnings`). When learning writes are enabled, SKILL.md updates run as the step agent's direct post-completion continuation before the step is fully finalized. Workshop mode only: set fast_path_only=true to run ONLY the saved learnings/{step-id}/main.py script with no LLM fallback when testing scripted patches.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -2684,11 +2668,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"human_input": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional human input/custom instructions for the step agent. For message_sequence steps with an existing session, this is sent as the next user message and the configured queue is not replayed unless message_sequence_restart=true. For human_input steps, it is used as the response. For other executable steps, it is injected as high-priority context.",
+					"description": "Optional human input/custom instructions for this run. For a standalone message_sequence step, this is opening context and the configured queue still runs from the beginning; standalone sessions are not resumed across execute_step calls. For human_input steps, it is used as the response. For other executable steps, it is injected as high-priority context.",
 				},
 				"message_sequence_restart": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Message_sequence steps only. If true, archive any existing session and run the configured item queue from scratch. If false/omitted and human_input is provided, resume the existing conversation with human_input as the next user message.",
+					"description": "Message_sequence steps only. Request a clean run and clear route-local runtime artifacts before replaying the configured queue. Standalone execute_step calls already start a fresh queue and do not provide durable conversation resume. In-memory route re-entry exists only while a todo-task workflow run is still active.",
 				},
 				"tier": map[string]interface{}{
 					"type":        "string",
@@ -3040,7 +3024,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				groupInfo = fmt.Sprintf(", group=%q", groupName)
 			}
 			logger.Info(fmt.Sprintf("🚀 Workshop: step %q started in background, execution_id=%q%s, fast_path_only=%v", stepID, execID, groupInfo, fastPathOnly))
-			return fmt.Sprintf("Step %q started in background.\nexecution_id: %q\nUse query_step(step_id=%q) to inspect live status.\nYou will be automatically notified when it completes.", stepID, execID, stepID), nil
+			return fmt.Sprintf("Step %q started in background.\nexecution_id: %q\nUse query_step(step_id=%q) to inspect live status. Use send_step_message(execution_id=%q, message=...) for a live correction while an agent turn is active.\nYou will be automatically notified when it completes.", stepID, execID, stepID, execID), nil
 		},
 		"workflow",
 	); err != nil {
@@ -3421,6 +3405,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			switch status {
 			case WorkshopStepRunning:
+				messageHint := "\n\n**Live steering:** no active agent turn is currently available; the execution may be validating or running script-only work. Wait for the next phase or completion notification."
+				if exec.CanReceiveMessage {
+					messageHint = fmt.Sprintf("\n\n**Live steering:** send_step_message(execution_id=%q, message=...) can steer the active %s phase.", execID, exec.ActiveMessagePhase)
+				}
 				mainSessID := iwm.mainSessionID
 				if mainSessID == "" {
 					mainSessID = iwm.sessionID
@@ -3461,9 +3449,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 
 				if toolCallInfo == "" {
-					return fmt.Sprintf("Step %q is registered and running.\nexecution_id: %s\n\nNo structured MCP tool calls have been captured for this execution yet. This is normal for coding CLI providers while they are booting, thinking, using terminal/TUI output, or before they make their first api-bridge call. It does not mean the step failed to start or is stuck.\n\nDo not stop or re-run this execution solely because no tool calls are listed; wait for the automatic completion notification unless the user explicitly asks you to stop/retry.%s%s", stepID, execID, tmuxInfo, hint), nil
+					return fmt.Sprintf("Step %q is registered and running.\nexecution_id: %s\n\nNo structured MCP tool calls have been captured for this execution yet. This is normal for coding CLI providers while they are booting, thinking, using terminal/TUI output, or before they make their first api-bridge call. It does not mean the step failed to start or is stuck.\n\nDo not stop or re-run this execution solely because no tool calls are listed; wait for the automatic completion notification unless the user explicitly asks you to stop/retry.%s%s%s", stepID, execID, messageHint, tmuxInfo, hint), nil
 				}
-				return fmt.Sprintf("Step %q is still running.\nexecution_id: %s%s%s%s", stepID, execID, toolCallInfo, tmuxInfo, hint), nil
+				return fmt.Sprintf("Step %q is still running.\nexecution_id: %s%s%s%s%s", stepID, execID, messageHint, toolCallInfo, tmuxInfo, hint), nil
 
 			case WorkshopStepDone:
 				// Background tasks get a generic completion response (no step-specific hints)
@@ -3485,6 +3473,40 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		"workflow",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register query_step tool: %v", err))
+	}
+
+	// Tool 2a: send_step_message — steer the exact child agent currently active
+	// inside a running execution. This never starts or resumes an execution.
+	if err := mcpAgent.RegisterCustomTool(
+		"send_step_message",
+		"Send a follow-up message to the active agent turn inside one exact running workflow execution. Use the execution_id returned by execute_step or run_full_workflow. This is live steering only: it never starts, restarts, or resumes a completed step. Coding CLI agents receive provider-native live input; API agents queue the message for the next safe turn boundary. If the execution is currently validating or running script-only work, the result is no_active_agent and you should wait rather than retry in a loop.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"execution_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Exact running execution_id returned by execute_step or run_full_workflow.",
+				},
+				"message": map[string]interface{}{
+					"type":        "string",
+					"description": "Follow-up instruction or correction to deliver to the currently active child agent.",
+				},
+			},
+			"required": []string{"execution_id", "message"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			executionID, _ := args["execution_id"].(string)
+			message, _ := args["message"].(string)
+			result := iwm.stepRegistry.SendMessage(ctx, executionID, message)
+			payload, err := json.MarshalIndent(result, "", "  ")
+			if err != nil {
+				return "", err
+			}
+			return string(payload), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register send_step_message tool: %v", err))
 	}
 
 	// Tool 2b: debug_step — rich insights about a step's execution
@@ -3647,7 +3669,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 2b: list_executions — list all tracked background executions
 	if err := mcpAgent.RegisterCustomTool(
 		"list_executions",
-		"List all background executions (for example execute_step and run_in_background). Shows execution_id, step_id, status (running/done/failed/cancelled), and type. Useful when you need to find execution IDs for query_step or stop_step.",
+		"List all background executions (for example execute_step and run_in_background). Shows execution_id, step_id, status (running/done/failed/cancelled), and whether a running execution currently accepts send_step_message. Useful when you need to find execution IDs for query_step, send_step_message, or stop_step.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -3688,6 +3710,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 				count++
 				sb.WriteString(fmt.Sprintf("- **%s** | step: %s | status: %s", exec.ID, exec.StepID, status))
+				if exec.CanReceiveMessage {
+					sb.WriteString(fmt.Sprintf(" | messageable: %s", exec.ActiveMessagePhase))
+				}
 				if status == "failed" && execErr != nil {
 					sb.WriteString(fmt.Sprintf(" | error: %v", execErr))
 				}

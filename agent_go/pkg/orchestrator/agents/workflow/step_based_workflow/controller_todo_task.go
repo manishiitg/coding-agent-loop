@@ -367,7 +367,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 			if ba == nil {
 				return false, "", fmt.Errorf("todo task orchestrator has no base agent for continuation on attempt %d", retryAttempt)
 			}
-			_, updatedHistory, err = ba.Execute(ctx, feedbackUserMsg, conversationHistory, "", false)
+			_, updatedHistory, err = hcpo.withWorkshopMessageTarget(ctx, step.GetID(), "todo-validation-retry", todoTaskAgent, func() (string, []llmtypes.MessageContent, error) {
+				return ba.Execute(ctx, feedbackUserMsg, conversationHistory, "", false)
+			})
 		}
 		attemptCompletedAt := time.Now().UTC()
 		attemptDuration := attemptCompletedAt.Sub(attemptStartedAt)
@@ -467,7 +469,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskContributionTurns(ctx cont
 			defer restoreDirectLearningTurn()
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("📝 Todo task %s contribution turn for step %d", label, stepIndex+1))
-		_, updated, err := ba.Execute(ctx, msg, *conversationHistory, "", false)
+		_, updated, err := hcpo.withWorkshopMessageTarget(ctx, step.GetID(), "todo-"+label, agent, func() (string, []llmtypes.MessageContent, error) {
+			return ba.Execute(ctx, msg, *conversationHistory, "", false)
+		})
 		if err != nil {
 			// Non-fatal by design (the step's main work already succeeded and
 			// pre-validation passed), but the loss of a learnings/KB write must
@@ -529,7 +533,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskMessageSequence(
 			cab.StartTimingCapture()
 		}
 		startedAt := time.Now().UTC()
-		_, updated, err := ba.Execute(ctx, text, *conversationHistory, "", false)
+		_, updated, err := hcpo.withWorkshopMessageTarget(ctx, step.GetID(), "todo-message-sequence", agent, func() (string, []llmtypes.MessageContent, error) {
+			return ba.Execute(ctx, text, *conversationHistory, "", false)
+		})
 		completedAt := time.Now().UTC()
 		var toolCalls []orchestrator.ToolCallEntry
 		var llmCalls []orchestrator.LLMCallEntry
@@ -608,7 +614,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskMessageSequence(
 					feedback = fmt.Sprintf("Pre-validation gate could not run: %v. Ensure the required outputs exist before continuing.", vErr)
 				}
 				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Todo task gate (messages[%d]) failed for step %d - corrective turn %d/%d", i, stepIndex+1, attempt+1, maxCorr))
-				_, updated, exErr := ba.Execute(ctx, feedback, *conversationHistory, "", false)
+				_, updated, exErr := hcpo.withWorkshopMessageTarget(ctx, step.GetID(), "todo-prevalidation-repair", agent, func() (string, []llmtypes.MessageContent, error) {
+					return ba.Execute(ctx, feedback, *conversationHistory, "", false)
+				})
 				if exErr != nil {
 					return fmt.Errorf("todo task gate %d correction turn failed: %w", i+1, exErr)
 				}
@@ -996,7 +1004,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskOrchestratorAgent(
 	}
 
 	// Execute — single-shot, the agent delegates to sub-agents and runs to completion
-	_, updatedHistory, err := agent.Execute(ctx, templateVars, conversationHistory)
+	_, updatedHistory, err := hcpo.withWorkshopMessageTarget(ctx, step.GetID(), "todo-orchestrator", agent, func() (string, []llmtypes.MessageContent, error) {
+		return agent.Execute(ctx, templateVars, conversationHistory)
+	})
 	if err != nil {
 		return nil, nil, "", subAgentExecCtx, agent, fmt.Errorf("todo task orchestrator execution failed: %w", err)
 	}

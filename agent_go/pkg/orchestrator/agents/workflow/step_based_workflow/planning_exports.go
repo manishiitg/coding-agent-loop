@@ -1623,7 +1623,7 @@ func RegisterRunFullWorkflowTool(
 ) {
 	if err := mcpAgent.RegisterCustomTool(
 		"run_full_workflow",
-		"Execute the complete workflow: load the plan, resolve variables, and run all steps for a single variable group. Always uses iteration-0 and starts from the beginning. Runs in background - you will be notified when complete. If the plan contains human_input steps on the selected path, you MUST provide human_inputs with a response for each one. If the plan contains deterministic routing steps and the user's request already selected a branch, pass route_selections keyed by routing step ID. Pass disable_eval=true to skip the automatic evaluation pass after the workflow completes.",
+		"Execute the complete workflow: load the plan, resolve variables, and run all steps for a single variable group. Always uses iteration-0 and starts from the beginning. Runs in background - you will be notified when complete. Use send_step_message with the returned execution_id to steer whichever workflow child-agent turn is currently active. If the plan contains human_input steps on the selected path, you MUST provide human_inputs with a response for each one. If the plan contains deterministic routing steps and the user's request already selected a branch, pass route_selections keyed by routing step ID. Pass disable_eval=true to skip the automatic evaluation pass after the workflow completes.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1974,7 +1974,7 @@ func RegisterRunFullWorkflowTool(
 			if disableEval {
 				evalInfo = "\nAuto-evaluation: disabled"
 			}
-			return fmt.Sprintf("Full workflow execution started.\nexecution_id: %q\nStrategy: %s%s%s%s\nAll steps will be executed end-to-end.\nYou will be automatically notified when it completes.", execID, strategy, groupInfo, iterInfo, evalInfo), nil
+			return fmt.Sprintf("Full workflow execution started.\nexecution_id: %q\nStrategy: %s%s%s%s\nAll steps will be executed end-to-end. Use send_step_message(execution_id=%q, message=...) for a live correction while a child-agent turn is active.\nYou will be automatically notified when it completes.", execID, strategy, groupInfo, iterInfo, evalInfo, execID), nil
 		},
 		"workflow",
 	); err != nil {

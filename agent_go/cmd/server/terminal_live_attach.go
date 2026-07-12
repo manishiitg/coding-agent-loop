@@ -18,6 +18,7 @@ import (
 	"github.com/creack/pty"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/tmuxinput"
 
 	"mcp-agent-builder-go/agent_go/internal/liveattach"
 	"mcp-agent-builder-go/agent_go/internal/terminals"
@@ -1014,7 +1015,20 @@ func (api *StreamingAPI) liveAttachRawInput(ctx context.Context, tmuxSession str
 	}
 	cctx, cancel := context.WithTimeout(ctx, terminalTmuxActionTimeout)
 	defer cancel()
-	if err := runTerminalTmuxCommand(cctx, "", args...); err != nil {
+	priority := tmuxinput.PriorityNormal
+	// A lone ESC and Ctrl-C are interrupts. Arrow/navigation keys are multi-byte
+	// escape sequences and must retain normal FIFO ordering.
+	if len(data) == 1 && (data[0] == 0x03 || data[0] == 0x1b) {
+		priority = tmuxinput.PriorityInterrupt
+	}
+	_, err := tmuxinput.Default.Do(cctx, tmuxinput.Request{
+		SessionID: tmuxSession,
+		Source:    "terminal-live-raw",
+		Priority:  priority,
+	}, func(ctx context.Context) error {
+		return runTerminalTmuxCommand(ctx, "", args...)
+	})
+	if err != nil {
 		log.Printf("[live-attach] raw input session=%s: %v", tmuxSession, err)
 	}
 }
@@ -1042,15 +1056,8 @@ func (api *StreamingAPI) liveAttachControlFrame(ctx context.Context, st *liveAtt
 	case "input":
 		cctx, cancel := context.WithTimeout(ctx, terminalTmuxActionTimeout)
 		defer cancel()
-		if ctrl.Text != "" {
-			if err := pasteTerminalText(cctx, tmuxSession, ctrl.Text); err != nil {
-				log.Printf("[live-attach] input session=%s: %v", tmuxSession, err)
-			}
-		}
-		if ctrl.Submit {
-			if err := sendTerminalKey(cctx, tmuxSession, "enter"); err != nil {
-				log.Printf("[live-attach] submit session=%s: %v", tmuxSession, err)
-			}
+		if err := deliverTerminalInput(cctx, tmuxSession, ctrl.Text, ctrl.Submit, terminalTmuxSessionLooksCursor(tmuxSession), "terminal-live-input"); err != nil {
+			log.Printf("[live-attach] input session=%s: %v", tmuxSession, err)
 		}
 	case "key":
 		cctx, cancel := context.WithTimeout(ctx, terminalTmuxActionTimeout)

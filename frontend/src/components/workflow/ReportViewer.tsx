@@ -694,14 +694,14 @@ export function ReportViewer({ workspacePath, isOpen, onClose }: ReportViewerPro
 // Inline content — renders the report plan directly without modal chrome. Used by the
 // workflow canvas when canvasViewMode === 'report'.
 function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onClose, focusTier, reserveTopControlsSpace = false }: ReportViewProps) {
-  // Two explicit preview widths plus 'auto'. The internal name 'desktop' is
+  // Three explicit preview widths plus 'auto'. The internal name 'desktop' is
   // surfaced as "Laptop" in the UI to match the user's mental model — laptop
   // viewports are what fill the full max-width shell. 'auto' falls back to
   // desktop unless the parent explicitly requests a focused mobile pane.
-  const [previewPreference, setPreviewPreference] = useState<'auto' | 'desktop' | 'mobile'>(() => {
+  const [previewPreference, setPreviewPreference] = useState<'auto' | 'desktop' | 'tablet' | 'mobile'>(() => {
     try {
       const saved = localStorage.getItem(reportPreviewPreferenceKey(workspacePath))
-      return saved === 'desktop' || saved === 'mobile' ? saved : 'auto'
+      return saved === 'desktop' || saved === 'tablet' || saved === 'mobile' ? saved : 'auto'
     } catch {
       return 'auto'
     }
@@ -711,7 +711,7 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
   useEffect(() => {
     try {
       const saved = localStorage.getItem(reportPreviewPreferenceKey(workspacePath))
-      setPreviewPreference(saved === 'desktop' || saved === 'mobile' ? saved : 'auto')
+      setPreviewPreference(saved === 'desktop' || saved === 'tablet' || saved === 'mobile' ? saved : 'auto')
     } catch {
       setPreviewPreference('auto')
     }
@@ -870,7 +870,7 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
       // Only react to changes for THIS workflow (scoped per workspacePath).
       if ((detail?.scopeId ?? null) !== (workspacePath ?? null)) return
       const p = detail?.preference
-      if (p === 'mobile' || p === 'desktop' || p === 'auto') setPreviewPreference(p)
+      if (p === 'mobile' || p === 'tablet' || p === 'desktop' || p === 'auto') setPreviewPreference(p)
     }
     const onDataStale = (e: Event) => {
       const stalePath = (e as CustomEvent).detail?.workspacePath
@@ -948,9 +948,9 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
   // Mobile the parent passes focusTier='mobile' so the report fits the narrow pane;
   // otherwise it follows the user's saved preference. Device selection lives in the
   // shared on-pane bar (PreviewPaneControls).
-  const previewMode: 'desktop' | 'mobile' = focusTier
+  const previewMode: 'desktop' | 'tablet' | 'mobile' = focusTier
     ? focusTier
-    : (previewPreference === 'mobile' || previewPreference === 'desktop'
+    : (previewPreference === 'mobile' || previewPreference === 'tablet' || previewPreference === 'desktop'
         ? previewPreference
         : 'desktop')
   useLayoutEffect(() => {
@@ -962,12 +962,15 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
     const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
     container.scrollTop = Math.min(savedScrollTop, maxScrollTop)
   }, [hasAnyContent, previewMode, viewStateKey])
-  // Per-mode shell width. Mobile mimics a phone (~480px); laptop fills available
-  // space. Content width mirrors the shell so widget reflow tests against the
-  // right container size.
+  // Per-mode shell width. Mobile mimics a phone (~480px). Tablet is a split-layout
+  // mode: the compact terminal already constrains the available report viewport,
+  // so the report must fill that pane instead of being centered inside another
+  // artificial width cap. Laptop also fills all available space.
   const previewShellClassName =
     previewMode === 'mobile'
       ? 'mx-auto w-full max-w-[480px] p-1.5 transition-all duration-200'
+      : previewMode === 'tablet'
+        ? 'w-full max-w-full transition-all duration-200'
       : 'mx-auto w-full max-w-full transition-all duration-200'
   // A report made only of self-contained documents (md/html) renders edge-to-edge:
   // each document owns its own width / padding / background, so we add no

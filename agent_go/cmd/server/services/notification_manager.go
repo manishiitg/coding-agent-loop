@@ -178,7 +178,7 @@ func (nm *NotificationManager) SendUserNotification(ctx context.Context, message
 //
 // Each send runs on a context that is DETACHED from the caller's cancellation
 // (context.WithoutCancel) but time-bounded, so it is not killed when the agent's
-// request context is cancelled at turn end (the cause of the "gws … signal: killed"
+// request context is canceled at turn end (the cause of the "gws … signal: killed"
 // failures) and a stuck connector can't hang the turn forever.
 func (nm *NotificationManager) SendUserNotificationSync(ctx context.Context, message string, contextMsg string, dest *NotificationDestination) []ConnectorResult {
 	nm.mu.RLock()

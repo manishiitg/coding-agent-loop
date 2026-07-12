@@ -198,7 +198,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) runKBUpdatePhaseWithHandle(
 	}
 
 	hcpo.recordWorkflowContinuationPhase(ctx, stepID, stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseKBUpdateAgent, workflowContinuationStatusRunning, "", agent)
-	result, _, err := agent.Execute(ctx, templateVars, []llmtypes.MessageContent{})
+	result, _, err := hcpo.withWorkshopMessageTarget(ctx, stepID, "knowledgebase-update", agent, func() (string, []llmtypes.MessageContent, error) {
+		return agent.Execute(ctx, templateVars, []llmtypes.MessageContent{})
+	})
 	hcpo.recordWorkflowContinuationPhase(ctx, stepID, stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseKBUpdateAgent, workflowContinuationStatusRunning, "", agent)
 	if err != nil {
 		return fmt.Errorf("KB update agent execution failed: %w", err)

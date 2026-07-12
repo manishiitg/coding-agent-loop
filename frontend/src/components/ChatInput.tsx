@@ -1,7 +1,7 @@
 import React, { useRef, useCallback, useMemo, useState, useEffect, useLayoutEffect } from 'react'
 
 const DBG = '[skill-popup]'
-import { Send, Square, Code2, Sparkles, Wand2, Loader2, Search, Globe, Layers, X, History, Bot, Server, Download, Paperclip, CalendarClock, MessageSquare, Terminal, Keyboard } from 'lucide-react'
+import { Send, Square, Code2, Sparkles, Wand2, Loader2, Search, Globe, Layers, X, History, Bot, Server, Download, Paperclip, CalendarClock, MessageSquare, Terminal } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
@@ -24,7 +24,6 @@ import { isChatCompatiblePhase } from '../utils/chatSubmitHelpers'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { useWorkflowManifestStore } from '../stores/useWorkflowManifestStore'
 import { requestTerminalRefreshBurst } from '../utils/terminalRefresh'
-import { isMainAgentTerminal, terminalDisplayLabel, keyEventToTerminalAction } from '../utils/terminals'
 import { startRestoredTransportTerminal } from '../utils/restoredTerminal'
 import { chromeCdpInstallCommand, chromeCdpLaunchCommand, chromeCdpVerifyCommand, chromeCdpZipUrl } from '../utils/cdpSetup'
 import { CHAT_TOOL_COMMAND_EVENT, chatToolCommandFromEvent } from '../utils/chatToolEvents'
@@ -162,7 +161,7 @@ import SkillImportDialog from './skills/SkillImportDialog'
 import { MCPConfigPopup } from './MCPConfigPopup'
 import MCPDetailsModal from './MCPDetailsModal'
 import LLMConfigurationModal from './LLMConfigurationModal'
-import type { PlannerFile, LLMProvider, ChatHistorySession, TerminalSnapshot } from '../services/api-types'
+import type { PlannerFile, LLMProvider, ChatHistorySession } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import { useAppStore, useMCPStore, useLLMStore, useChatStore } from '../stores'
 import { useCapabilitiesStore } from '../stores/useCapabilitiesStore'
@@ -294,7 +293,7 @@ const getResumeSessionKind = (session: ChatHistorySession): ResumeSessionKind =>
 
 interface ChatInputProps {
   // Handlers (callbacks only)
-  onSubmit: (query: string) => void
+  onSubmit: (query: string, options?: { preferLiveInput?: boolean }) => void
   onStopStreaming: () => void
   // Optional tab scope for embedded chat panes, such as WorkflowLayout. When
   // omitted, ChatInput uses the globally active chat tab.
@@ -1361,12 +1360,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileUploadInputRef = useRef<HTMLInputElement>(null)
 
-  // --- Keyboard passthrough: forward keystrokes straight to the main agent
-  // terminal instead of editing the chat input. ---
-  const [keyboardMode, setKeyboardMode] = useState(false)
-  const [kbTerminal, setKbTerminal] = useState<TerminalSnapshot | null>(null)
-  // Serializes key/input sends so keystrokes reach the terminal in order.
-  const kbSendChainRef = useRef<Promise<unknown>>(Promise.resolve())
   const uploadFilesToChatRef = useRef<(files: File[]) => Promise<void>>(async () => {})
   const dragCounterRef = useRef(0)
   
@@ -1731,11 +1724,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // (React re-renders Stop→Send mid-click, causing the browser to dispatch submit on the new button)
   const justStoppedStreamingRef = useRef(false)
 
-  // Guard: prevent double submission from rapid Enter presses, key repeat, or double-clicks
-  // queryToSubmit is a memoized value that doesn't update until re-render, so a second
-  // submit within the same render cycle would re-send the same message
-  const justSubmittedRef = useRef(false)
-
   const clearInputState = useCallback(() => {
     setLocalInputText('')
     if (syncToStoreTimeoutRef.current) {
@@ -1831,19 +1819,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // If the user has already typed surrounding text, keep pasted content out of
   // the textarea and insert a stable marker the message can refer to.
   const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    if (keyboardMode) {
-      e.preventDefault()
-      const text = e.clipboardData?.getData('text') ?? ''
-      const terminal = kbTerminal
-      if (terminal && text) {
-        const terminalId = terminal.terminal_id
-        kbSendChainRef.current = kbSendChainRef.current
-          .then(() => agentApi.sendTerminalInput(terminalId, text, false))
-          .then(() => { requestTerminalRefreshBurst() })
-          .catch(() => {})
-      }
-      return
-    }
     const pastedImageFiles = getClipboardImageFiles(e.clipboardData)
     if (pastedImageFiles.length > 0) {
       e.preventDefault()
@@ -1888,114 +1863,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       textarea.setSelectionRange(cursorPosition, cursorPosition)
       adjustTextareaHeight()
     }, 0)
-  }, [activeTabId, addPastedAttachment, adjustTextareaHeight, inputText, setTabConfig, keyboardMode, kbTerminal])
-
-  const resolveMainAgentTerminal = useCallback(async (): Promise<TerminalSnapshot | null> => {
-    if (!tabSessionId) return null
-    try {
-      const res = await agentApi.listTerminals(tabSessionId, 'none')
-      const candidates = (res.terminals || []).filter(t =>
-        t.session_id === tabSessionId && isMainAgentTerminal(t) && (t.tmux_session || '').trim() !== '')
-      // Prefer a live terminal, else fall back to the first match.
-      return candidates.find(t => t.state === 'running' || t.active) || candidates[0] || null
-    } catch {
-      return null
-    }
-  }, [tabSessionId])
-
-  const exitKeyboardMode = useCallback(() => {
-    setKeyboardMode(false)
-    setKbTerminal(null)
-  }, [])
-
-  const enterKeyboardMode = useCallback(async () => {
-    if (!tabSessionId) { addToast('No active session yet.', 'info'); return }
-    const terminal = await resolveMainAgentTerminal()
-    if (!terminal) {
-      addToast('No live main-agent terminal found for this session.', 'warning')
-      return
-    }
-    clearInputState()
-    setKbTerminal(terminal)
-    setKeyboardMode(true)
-    setTimeout(() => textareaRef.current?.focus(), 0)
-  }, [addToast, clearInputState, resolveMainAgentTerminal, tabSessionId])
-
-  // Queue a key/input send to the captured terminal, preserving order.
-  const enqueueKbSend = useCallback((task: () => Promise<unknown>) => {
-    kbSendChainRef.current = kbSendChainRef.current
-      .then(task)
-      .then(() => { requestTerminalRefreshBurst() })
-      .catch((err) => {
-        const status = getHttpErrorStatus(err)
-        if (status === 404 || status === 410) {
-          addToast('That terminal is gone — exiting keyboard mode.', 'warning')
-          exitKeyboardMode()
-        }
-      })
-  }, [addToast, exitKeyboardMode])
-
-  // Keyboard passthrough coalescing: merge consecutive printable characters into
-  // a single sendTerminalInput over a short window instead of one HTTP + tmux
-  // paste per keystroke (which floods the backend on fast typing). Any control
-  // key flushes the buffer first so ordering/semantics are preserved.
-  const kbTextBufferRef = useRef('')
-  const kbFlushTimerRef = useRef<number | null>(null)
-
-  const flushKbTextBuffer = useCallback(() => {
-    if (kbFlushTimerRef.current !== null) {
-      window.clearTimeout(kbFlushTimerRef.current)
-      kbFlushTimerRef.current = null
-    }
-    const text = kbTextBufferRef.current
-    if (!text) return
-    kbTextBufferRef.current = ''
-    const terminal = kbTerminal
-    if (!terminal) return
-    const terminalId = terminal.terminal_id
-    enqueueKbSend(() => agentApi.sendTerminalInput(terminalId, text, false))
-  }, [enqueueKbSend, kbTerminal])
-
-  const forwardKeyboardEvent = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    const terminal = kbTerminal
-    if (!terminal) return
-    const action = keyEventToTerminalAction(e)
-    if (!action) return
-    const terminalId = terminal.terminal_id
-    if (action.kind === 'text') {
-      // Buffer printable chars and flush them as one paste after a brief window,
-      // so a burst of typing becomes a single send.
-      kbTextBufferRef.current += action.text
-      if (kbFlushTimerRef.current === null) {
-        kbFlushTimerRef.current = window.setTimeout(flushKbTextBuffer, 30)
-      }
-      return
-    }
-    // Control key (enter, ctrl-*, arrows, backspace, tab, …): flush any buffered
-    // text first so it lands before the key, then send the key immediately.
-    flushKbTextBuffer()
-    enqueueKbSend(() => agentApi.sendTerminalKey(terminalId, action.key))
-  }, [enqueueKbSend, kbTerminal, flushKbTextBuffer])
-
-  // Flush any buffered keystrokes when leaving keyboard mode so nothing is lost.
-  useEffect(() => {
-    if (!keyboardMode) flushKbTextBuffer()
-  }, [keyboardMode, flushKbTextBuffer])
-
-  // Leave keyboard mode if the session changes or becomes view-only.
-  useEffect(() => {
-    if (!keyboardMode) return
-    if (isViewOnly || !tabSessionId || (kbTerminal && kbTerminal.session_id !== tabSessionId)) {
-      exitKeyboardMode()
-    }
-  }, [keyboardMode, isViewOnly, tabSessionId, kbTerminal, exitKeyboardMode])
+  }, [activeTabId, addPastedAttachment, adjustTextareaHeight, inputText, setTabConfig])
 
   // Memoized handlers to prevent re-creation
   const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    // In keyboard-passthrough mode the textarea is a blank capture surface; any
-    // value change (IME composition, autofill) is ignored — keys are forwarded
-    // to the terminal via handleKeyDown instead.
-    if (keyboardMode) return
     const newValue = e.target.value
     const previousValue = prevInputTextRef.current
     const nextPastedAttachments = chatPastedAttachments.filter(p => !p.marker || newValue.includes(p.marker))
@@ -2347,7 +2218,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
       fileRemovalTimeoutRef.current = null
     }, 500)
-  }, [chatFileContext, chatPastedAttachments, removeFileFromContext, showCommandDialog, showWorkflowDialog, activeTabId, setTabConfig, adjustTextareaHeight, isWorkflowPhaseChat, keyboardMode])
+  }, [chatFileContext, chatPastedAttachments, removeFileFromContext, showCommandDialog, showWorkflowDialog, activeTabId, setTabConfig, adjustTextareaHeight, isWorkflowPhaseChat])
 
   // Handle manual summarization
   // If messageToSendAfter is provided, it will be sent as a user message after summarization completes
@@ -2479,10 +2350,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       const trimmed = query?.trim()
       if (!trimmed) return
       // tmux-transport (CLI): SINGLE-ENTRY routing — always /api/query. The backend
-      // disambiguates busy (steer into the running turn) vs idle/gone (new turn +
-      // materialize). The frontend no longer inspects terminal liveness.
+      // attempts the minimal live-input path first and falls back to a full
+      // resume/new turn when the retained CLI is no longer available.
       if (routeLiveInputToCLI) {
-        onSubmit(trimmed)
+        onSubmit(trimmed, { preferLiveInput: true })
         return
       }
       if (isStreaming) {
@@ -2582,12 +2453,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // routeSubmit is the single send-routing decision shared by Enter (handleKeyDown)
   // and the Send button (handleSubmit).
   //
-  // TMUX-TRANSPORT (CLI coding agent) — SINGLE-ENTRY routing: the frontend no longer
-  // inspects terminal liveness (which was flaky/stale and mis-routed resumes). It
-  // ALWAYS submits to /api/query (onSubmit) and the BACKEND is the single source of
-  // truth: it delivers to a retained CLI when possible, and starts a new turn
-  // (with --resume + tools + system prompt + secrets + terminal materialize) when
-  // needed. isStreaming is UI-only (spinner/Stop) for these providers.
+  // TMUX-TRANSPORT (CLI coding agent) — SINGLE-ENTRY routing: the frontend does not
+  // inspect terminal liveness. ChatArea first asks the backend for minimal live
+  // delivery; the backend either submits to the retained CLI / resumes a saved turn,
+  // or rejects it so ChatArea performs full turn setup. isStreaming remains UI-only.
   //
   // NON-tmux (API/LLM): isStreaming-based steer-vs-queue, unchanged.
   const routeSubmit = useCallback((query: string) => {
@@ -2596,11 +2465,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     if (routeLiveInputToCLI) {
       if (hasSubmitTarget) {
-        if (justSubmittedRef.current) return
-        justSubmittedRef.current = true
-        setTimeout(() => { justSubmittedRef.current = false }, 300)
         clearInputState()
-        onSubmit(query)
+        onSubmit(query, { preferLiveInput: true })
         return
       }
       const reason = getSubmitBlockReason()
@@ -2609,9 +2475,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
 
     if (canSubmitImmediately) {
-      if (justSubmittedRef.current) return
-      justSubmittedRef.current = true
-      setTimeout(() => { justSubmittedRef.current = false }, 300)
       clearInputState()
       onSubmit(query)
     } else if (canSubmit && isStreaming) {
@@ -2624,18 +2487,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [routeLiveInputToCLI, hasSubmitTarget, clearInputState, onSubmit, getSubmitBlockReason, addToast, canSubmitImmediately, canSubmit, isStreaming, queueStreamingMessage])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // Keyboard passthrough: every keystroke goes to the main agent terminal.
-    // Shift+Esc is the one reserved combo that exits the mode.
-    if (keyboardMode) {
-      e.preventDefault()
-      if (e.key === 'Escape' && e.shiftKey) {
-        exitKeyboardMode()
-        return
-      }
-      forwardKeyboardEvent(e)
-      return
-    }
-
     // If any selection dialog is open, let it handle keyboard events
     if (showCommandDialog || showFileDialog || showWorkflowDialog || showResumeDialog || showSkillPopup || showServerPopup) {
       // Prevent default for arrow keys, enter, escape so textarea doesn't move cursor
@@ -2716,7 +2567,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [showFileDialog, showCommandDialog, showWorkflowDialog, showResumeDialog, showSkillPopup, showServerPopup, isStreaming, onStopStreaming, queryToSubmit, executeSlashCommandFromQuery, tabSessionId, routeSubmit, supportsLiveCodingAgentInput, canSteer, sendLiveCodingAgentControlKey, keyboardMode, exitKeyboardMode, forwardKeyboardEvent, inputText, setLocalInputText])
+  }, [showFileDialog, showCommandDialog, showWorkflowDialog, showResumeDialog, showSkillPopup, showServerPopup, isStreaming, onStopStreaming, queryToSubmit, executeSlashCommandFromQuery, tabSessionId, routeSubmit, supportsLiveCodingAgentInput, canSteer, sendLiveCodingAgentControlKey, inputText, setLocalInputText])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
@@ -3582,22 +3433,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 })}
               </div>
             )}
-            {/* Keyboard passthrough indicator */}
-            {keyboardMode && kbTerminal && (
-              <div className="flex items-center justify-between gap-2 rounded-md border border-emerald-600/40 bg-emerald-500/10 px-3 py-1 mb-1 text-[11px] text-emerald-700 dark:text-emerald-400">
-                <span className="flex items-center gap-1.5 truncate">
-                  <Keyboard className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">Keys → <span className="font-medium text-emerald-800 dark:text-emerald-300">{terminalDisplayLabel(kbTerminal)}</span> <span className="text-emerald-600/60 dark:text-emerald-500/70">· typing goes to the terminal</span></span>
-                </span>
-                <button
-                  type="button"
-                  onClick={exitKeyboardMode}
-                  className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 hover:bg-emerald-600/15 dark:text-neutral-400 dark:hover:text-emerald-300"
-                >
-                  Exit (Shift+Esc)
-                </button>
-              </div>
-            )}
             {/* Show text input — compact and auto-growing (no reserved dead
                 space). adjustTextareaHeight's early-return guard prevents the
                 per-keystroke height='auto' reflow that would otherwise resize the
@@ -3606,7 +3441,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             <Textarea
               data-tour="chat-input-box"
               ref={textareaRef}
-              value={keyboardMode ? '' : inputText}
+              value={inputText}
               onChange={handleTextChange}
               onFocus={() => { void ensureMultiAgentTabReady() }}
               onKeyDown={handleKeyDown}
@@ -3615,15 +3450,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
               onDragOver={handleTextareaDragOver}
               onDragLeave={handleTextareaDragLeave}
               onDrop={handleTextareaDrop}
-              placeholder={keyboardMode
-                ? 'Keyboard → terminal: type to drive the main agent terminal. Shift+Esc to exit.'
-                : placeholder}
+              placeholder={placeholder}
               className={`!min-h-[40px] max-h-[100px] resize-none text-xs overflow-y-auto leading-[1.3] !py-1 !px-3 placeholder:text-xs ${
-                keyboardMode ? 'ring-1 ring-emerald-600/60 border-emerald-600/70' : ''
-              } ${
                 isDraggingFiles ? 'ring-2 ring-blue-500 border-blue-500 bg-blue-50/30 dark:bg-blue-900/10' : ''
               }`}
-              disabled={keyboardMode ? false : inputDisabled}
+              disabled={inputDisabled}
               data-testid="chat-input-textarea"
             />
             </div>
@@ -3639,34 +3470,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                   <div className="flex max-w-[18rem] items-center gap-1 rounded-md border border-gray-300 bg-gray-100 px-2 py-1.5 text-xs text-gray-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-400">
                     <span className="truncate">{activeLLMLabel}</span>
                   </div>
-                )}
-
-                {/* Keyboard → terminal toggle — shown next to the active agent label. */}
-                {((hideExtras && isWorkflowPhaseChat) || isMultiAgentMode) && mainAgentIsTmuxCLI && (
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          disabled={!tabSessionId || isViewOnly || isSummarizing}
-                          onClick={() => { keyboardMode ? exitKeyboardMode() : void enterKeyboardMode() }}
-                          className={`flex h-7 w-7 items-center justify-center rounded-md border transition-colors disabled:opacity-40 ${
-                            keyboardMode
-                              ? 'border-emerald-700/60 bg-emerald-600/10 text-emerald-700 dark:text-emerald-400'
-                              : 'border-transparent text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800'
-                          }`}
-                          data-testid={isWorkflowPhaseChat ? 'chat-keyboard-mode-button-workflow' : 'chat-keyboard-mode-button'}
-                        >
-                          <Keyboard className="h-4 w-4" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent side="top">
-                        <p>{keyboardMode
-                          ? 'Keyboard → terminal is ON — keystrokes go to the main agent terminal (Shift+Esc to exit)'
-                          : 'Keyboard → terminal: send keystrokes straight to the main agent terminal'}</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
                 )}
 
                 {/* Server and LLM Selection — hidden in workflow phase chat (servers come from preset) */}
@@ -3714,35 +3517,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           </TooltipTrigger>
                           <TooltipContent side="top">
                             <p>{llmConfigLocked ? 'Select from admin-configured LLMs' : 'Select Primary LLM'}</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    )}
-                    {/* Keyboard → terminal toggle — only for tmux-transport CLI
-                        agents (claude-code, codex-cli, cursor-cli, pi-cli),
-                        where typing into the pane actually drives the agent. */}
-                    {!hideExtras && !isMultiAgentMode && mainAgentIsTmuxCLI && (
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              disabled={!tabSessionId || isViewOnly || isSummarizing}
-                              onClick={() => { keyboardMode ? exitKeyboardMode() : void enterKeyboardMode() }}
-                              className={`flex h-7 w-7 items-center justify-center rounded-md border transition-colors disabled:opacity-40 ${
-                                keyboardMode
-                                  ? 'border-emerald-700/60 bg-emerald-600/10 text-emerald-700 dark:text-emerald-400'
-                                  : 'border-transparent text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800'
-                              }`}
-                              data-testid="chat-keyboard-mode-button"
-                            >
-                              <Keyboard className="h-4 w-4" />
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent side="top">
-                            <p>{keyboardMode
-                              ? 'Keyboard → terminal is ON — keystrokes go to the main agent terminal (Shift+Esc to exit)'
-                              : 'Keyboard → terminal: send keystrokes straight to the main agent terminal'}</p>
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>

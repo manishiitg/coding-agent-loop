@@ -31,6 +31,13 @@ When running a step or the full workflow:
    blocking for manual UI input.
 4. Tell the user the step is running. Move on to other work or wait
    for the auto-notification.
+   - If the user adds a correction while it is running, call
+     `send_step_message(execution_id, message)` with the exact ID returned
+     by `execute_step`. Do not start a duplicate execution.
+   - `sent_to_cli` means the coding CLI received live input.
+     `queued_for_injection` means the message will be injected at the next
+     safe agent boundary. `no_active_agent` means the execution is currently
+     validating or running script-only work; wait rather than polling.
 5. When the notification arrives:
    - ✅ If success: briefly tell the user the result.
    - ❌ If failed: report the error clearly. Investigate the root
@@ -73,6 +80,9 @@ All background agents **automatically notify you** when they complete:
   coding CLI providers, terminal/TUI activity is shown in the UI
   terminal stream and may exist before any structured tool call
   appears.
+- `query_step` and `list_executions` report whether the exact execution is
+  currently messageable. Live steering is not a durable resume mechanism:
+  completed, failed, and cancelled executions reject new messages.
 
 ## Stopping tasks
 

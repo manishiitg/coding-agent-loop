@@ -3,7 +3,6 @@ package step_based_workflow
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 
 	"mcp-agent-builder-go/agent_go/pkg/skills"
 )
@@ -20,55 +19,6 @@ func GetSystemSkills() []SystemSkill {
 	return []SystemSkill{
 		{Source: "anthropics/skills@skill-creator", Name: "skill-creator"},
 	}
-}
-
-// ensureSkillCreator ensures the Anthropic skill-creator skill is installed in the workspace.
-// If it doesn't exist, installs it via the skills CLI. Returns the absolute path to the SKILL.md.
-func (hcpo *StepBasedWorkflowOrchestrator) ensureSkillCreator(ctx context.Context) (string, error) {
-	return ensureSkillInstalled(ctx, "skill-creator")
-}
-
-// ensureSkillInstalled ensures a skill is installed. Checks workspace first,
-// installs via CLI if not found. Returns the absolute path to the SKILL.md.
-func ensureSkillInstalled(ctx context.Context, skillName string) (string, error) {
-	workspaceAPIURL := getWorkspaceAPIURL()
-	if workspaceAPIURL == "" {
-		return "", fmt.Errorf("workspace API URL not available")
-	}
-
-	skillFilePath := filepath.Join("skills", skillName, "SKILL.md")
-	absPath := filepath.Join(GetPromptDocsRoot(), skillFilePath)
-
-	// Check if it already exists
-	if _, err := skills.GetSkill(workspaceAPIURL, skillName); err == nil {
-		return absPath, nil
-	}
-
-	// Look up the source from system skills
-	var source string
-	for _, ss := range GetSystemSkills() {
-		if ss.Name == skillName {
-			source = ss.Source
-			break
-		}
-	}
-	if source == "" {
-		return "", fmt.Errorf("skill '%s' not found and no known source to install from", skillName)
-	}
-
-	// Install via CLI
-	result, err := skills.ImportToWorkspace(ctx, workspaceAPIURL, source)
-	if err != nil {
-		return "", fmt.Errorf("failed to install skill '%s' from %s: %w", skillName, source, err)
-	}
-
-	// Verify it was installed
-	for _, name := range result.InstalledSkills {
-		if name == skillName {
-			return absPath, nil
-		}
-	}
-	return "", fmt.Errorf("skill '%s' was not found in source %s", skillName, source)
 }
 
 // SyncSystemSkills ensures all system skills are installed.

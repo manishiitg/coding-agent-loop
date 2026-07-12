@@ -666,7 +666,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceUserMessage(ctx
 		message = session.LastRuntimeContext + "\n\n## Next instruction\n" + message
 	}
 	templateVars := hcpo.buildMessageSequenceTemplateVars(step, item, stepIndex, stepPath, message, readPaths, writePaths, writeAccess)
-	result, history, err := runtime.Agent.Execute(agentCtx, templateVars, session.ConversationHistory)
+	result, history, err := hcpo.withWorkshopMessageTarget(agentCtx, step.GetID(), "message-sequence:"+item.ID, runtime.Agent, func() (string, []llmtypes.MessageContent, error) {
+		return runtime.Agent.Execute(agentCtx, templateVars, session.ConversationHistory)
+	})
 	if err != nil {
 		return "", err
 	}
@@ -812,7 +814,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceCodeRepair(ctx 
 	}
 	message := failureContext + "\n\nRepair the working copy at " + hcpo.messageSequenceAbsPath(filepath.Join(codeRel, "main.py")) + ". Keep the fix narrowly scoped. Do not announce success; the runtime will rerun the script after your edit."
 	templateVars := hcpo.buildMessageSequenceTemplateVars(step, item, 0, stepPath, message, override.ReadPaths, override.WritePaths, writeAccess)
-	_, history, err := runtime.Agent.Execute(agentCtx, templateVars, session.ConversationHistory)
+	_, history, err := hcpo.withWorkshopMessageTarget(agentCtx, step.GetID(), "message-sequence-repair:"+item.ID, runtime.Agent, func() (string, []llmtypes.MessageContent, error) {
+		return runtime.Agent.Execute(agentCtx, templateVars, session.ConversationHistory)
+	})
 	if err != nil {
 		return err
 	}

@@ -864,8 +864,8 @@ type QueryResponse struct {
 // queryStatusLiveInputDelivered is the QueryResponse.Status returned when a
 // /api/query message was delivered to a retained coding-agent CLI instead of
 // starting a new streaming turn. This is the single backend source of truth for
-// tmux-transport CLI input: the frontend always POSTs /api/query and the backend
-// disambiguates deliver-vs-new-turn.
+// tmux-transport CLI input. The regular query endpoint still uses this path as
+// a fallback; plain CLI follow-ups use the smaller /live-input endpoint first.
 const queryStatusLiveInputDelivered = "live_input_delivered"
 
 const (
@@ -5044,7 +5044,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 							switch effectiveBrowserMode {
 							case "cdp":
 								phaseBrowserCfg.HasAgentBrowser = true
-								phaseBrowserCfg.CdpPort = 9222 // Default CDP port (stored in preset, not req)
 							case "headless":
 								phaseBrowserCfg.HasAgentBrowser = true
 							case "playwright":
@@ -6763,6 +6762,10 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 		log.Printf("[QUERY→LIVE] Live delivery failed for session %s, falling back to new turn: %v", sessionID, err)
 		return false
 	}
+	if delivery.DeliveryStatus != mcpagent.UserMessageDeliveryStatusSentToCLI {
+		log.Printf("[QUERY→LIVE] Provider did not confirm CLI submission for session %s status=%s; falling back to new turn", sessionID, delivery.DeliveryStatus)
+		return false
+	}
 
 	messageID := newSteerMessageID()
 	provider := string(delivery.Provider)
@@ -6902,6 +6905,14 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 		http.Error(w, fmt.Sprintf("Live input unavailable: %v", err), http.StatusConflict)
 		return
 	}
+	if agentSupportsLiveInputDelivery(runningAgent) && delivery.DeliveryStatus != mcpagent.UserMessageDeliveryStatusSentToCLI {
+		log.Printf("[LIVE INPUT] Provider did not confirm CLI submission for session %s status=%s", sessionID, delivery.DeliveryStatus)
+		if !hasActiveForegroundTurn && api.startNextTurnFromLiveInput(w, r, sessionID, req.Message, runningAgent) {
+			return
+		}
+		http.Error(w, "Live input was not confirmed by the coding CLI", http.StatusConflict)
+		return
+	}
 
 	messageID := newSteerMessageID()
 	provider := string(delivery.Provider)
@@ -7023,7 +7034,7 @@ func (api *StreamingAPI) startNextTurnFromLiveInput(w http.ResponseWriter, r *ht
 // handleControlKey injects a tmux control key (e.g. "Escape", "Enter", "Up",
 // "Down") into a running coding-agent session. Used by the chat UI to route
 // interrupt/navigation/confirmation keys to the foreground CLI pane instead of
-// always cancelling the agent's Go context.
+// always canceling the agent's Go context.
 func (api *StreamingAPI) handleControlKey(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)

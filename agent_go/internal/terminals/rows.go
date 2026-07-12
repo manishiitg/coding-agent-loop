@@ -89,7 +89,6 @@ func ParseRows(content string) []Row {
 				rows[activeTextRowIndex].Text = appendRowText(rows[activeTextRowIndex].Text, continuation)
 				continue
 			}
-			activeTextRowIndex = -1
 		}
 
 		row := classifyRow(line)

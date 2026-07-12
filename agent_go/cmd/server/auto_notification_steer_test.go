@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"strings"
 	"sync"
 	"testing"
 
@@ -11,11 +10,10 @@ import (
 	internalevents "mcp-agent-builder-go/agent_go/internal/events"
 )
 
-// TestSteerBackgroundAgentCompletionFallsBackForQueuedInjection verifies that a
-// queued-for-injection steer is not treated as delivered. The queue/retry path
-// must still own delivery until the provider confirms the notification reached
-// the live CLI.
-func TestSteerBackgroundAgentCompletionFallsBackForQueuedInjection(t *testing.T) {
+// TestSteerBackgroundAgentCompletionFallsBackForFailedLiveDelivery verifies
+// that an unconfirmed tmux send is not hidden in the agent steer queue. The
+// caller-owned notification queue remains responsible for retrying it.
+func TestSteerBackgroundAgentCompletionFallsBackForFailedLiveDelivery(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	defer store.Stop()
 
@@ -51,8 +49,8 @@ func TestSteerBackgroundAgentCompletionFallsBackForQueuedInjection(t *testing.T)
 		t.Fatal("steerBackgroundAgentCompletion = true for queued injection; want false so caller queues")
 	}
 
-	// QueuedForInjection is not definitive delivery, so the completion must not
-	// be flagged notified. The queue/drain backstop will redeliver it later.
+	// Failed live delivery is not definitive, so the completion must not be
+	// flagged notified. The caller's queue/drain backstop will redeliver it later.
 	bg.mu.RLock()
 	notified := bg.notified
 	bg.mu.RUnlock()
@@ -61,11 +59,8 @@ func TestSteerBackgroundAgentCompletionFallsBackForQueuedInjection(t *testing.T)
 	}
 
 	queued := runningAgent.DrainSteerMessages()
-	if len(queued) != 1 {
-		t.Fatalf("steered messages = %d, want 1: %#v", len(queued), queued)
-	}
-	if !strings.Contains(queued[0], "[AUTO-NOTIFICATION]") || !strings.Contains(queued[0], "status=failed") {
-		t.Fatalf("steered message missing expected content: %q", queued[0])
+	if len(queued) != 0 {
+		t.Fatalf("steered messages = %d, want 0 because the caller owns retries: %#v", len(queued), queued)
 	}
 
 	if api.steerBackgroundAgentCompletion(sessionID, bg.ID) {

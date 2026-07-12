@@ -15,7 +15,7 @@ import (
 // Tests exercising specific step-execution modes the main 5-step e2e
 // doesn't cover. Same env gates + harness as edge_cases_test.go.
 //
-// Every test here uses tightened assertions (post the realisation in
+// Every test here uses tightened assertions (post the realization in
 // the prior round that "tokens appear in session.json" doesn't prove
 // sequencing — the engine could batch prompts into one LLM turn and
 // still produce all tokens). The new shape parses the session

@@ -198,7 +198,7 @@ func (r *terminalPipeRecorder) start(ctx context.Context, rec *terminalPipeRecor
 //
 // The reseed strategy is screen-mode-aware:
 //   - ALT-SCREEN TUI (e.g. codex): seed the alt-screen prologue (enter alt + clear
-//     + home) and force a SIGWINCH repaint — an alt-screen app responds with a true
+//   - home) and force a SIGWINCH repaint — an alt-screen app responds with a true
 //     full-frame redraw, so the recording restarts on a clean, complete screen.
 //   - NORMAL-BUFFER inline TUI (e.g. pi-cli) or UNKNOWN mode: a SIGWINCH only makes
 //     such a CLI emit INCREMENTAL cursor-relative redraws of its bottom live region,
@@ -278,7 +278,7 @@ func terminalPipeRecorderPrologue(ctx context.Context, tmuxSession string) strin
 
 // terminalPaneAlternateScreenOn reports whether the tmux pane is currently
 // showing the alternate screen (#{alternate_on} == 1). The second return value is
-// false when tmux could not be queried or returned an unexpected value, signalling
+// false when tmux could not be queried or returned an unexpected value, signaling
 // callers to use the safe fallback prologue.
 func terminalPaneAlternateScreenOn(ctx context.Context, tmuxSession string) (bool, bool) {
 	tmuxSession = strings.TrimSpace(tmuxSession)

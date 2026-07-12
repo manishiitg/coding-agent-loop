@@ -130,6 +130,7 @@ The interactive builder commonly uses:
 
 - `execute_step`
 - `query_step`
+- `send_step_message`
 - `stop_step`
 - `stop_all_executions`
 - `list_executions`
@@ -156,6 +157,10 @@ The builder can execute steps directly from chat.
 Key behavior:
 - `execute_step(...)` runs in background and returns an execution ID
 - `query_step(...)` is used to inspect progress and live tool calls
+- `send_step_message(execution_id, message)` steers the exact active child-agent
+  turn without starting a second run. Coding CLIs receive live input; other
+  agents queue it for the next safe turn boundary. It cannot resume completed
+  work and may return `no_active_agent` during validation or script-only phases.
 - `run_in_background(...)` can spawn a side task with the same workspace access
 
 In builder mode:

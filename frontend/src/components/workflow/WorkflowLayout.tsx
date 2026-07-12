@@ -911,10 +911,10 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     showResumeHint &&
     !!workspacePath
 
-  const [reportPreviewPreference, setReportPreviewPreference] = useState<'auto' | 'desktop' | 'mobile'>(() => {
+  const [reportPreviewPreference, setReportPreviewPreference] = useState<'auto' | 'desktop' | 'tablet' | 'mobile'>(() => {
     try {
       const saved = localStorage.getItem(reportPreviewPreferenceKey(workspacePath))
-      return saved === 'desktop' || saved === 'mobile' ? saved : 'auto'
+      return saved === 'desktop' || saved === 'tablet' || saved === 'mobile' ? saved : 'auto'
     } catch {
       return 'auto'
     }
@@ -973,7 +973,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     const syncReportPreviewPreference = () => {
       try {
         const saved = localStorage.getItem(reportPreviewPreferenceKey(workspacePath))
-        setReportPreviewPreference(saved === 'desktop' || saved === 'mobile' ? saved : 'auto')
+        setReportPreviewPreference(saved === 'desktop' || saved === 'tablet' || saved === 'mobile' ? saved : 'auto')
       } catch {
         setReportPreviewPreference('auto')
       }
@@ -997,6 +997,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // pane stayed pinned at 50% of the screen.
   //
   //   mobile  → preview/files 480px column, chat takes the rest (review-style)
+  //   tablet  → chat stays at a compact terminal width, preview takes the rest
   //   laptop  → chat is hidden, report fills the full width
   //   default → 50/50 split (no preview pref, or running in non-preview views)
   const isPreviewableWorkspaceCanvas =
@@ -1004,9 +1005,11 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     showChatArea &&
     workspacePaneVisible &&
     (canvasViewMode === 'report' || canvasViewMode === 'flow' || canvasViewMode === 'log' || canvasViewMode === 'soul')
-  const previewPaneTier: 'mobile' | 'laptop' | null = isPreviewableWorkspaceCanvas
+  const previewPaneTier: 'mobile' | 'tablet' | 'laptop' | null = isPreviewableWorkspaceCanvas
     ? reportPreviewPreference === 'mobile'
       ? 'mobile'
+      : reportPreviewPreference === 'tablet'
+        ? 'tablet'
       : reportPreviewPreference === 'desktop'
         ? 'laptop'
         : null
@@ -1025,12 +1028,14 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       : 'flex'
   // The report preview preference drives the outer pane width:
   //   mobile/files → right pane 480px, chat fills the rest (chat is col 1, pane col 2)
+  //   tablet → compact terminal column, report/flow uses the remaining width
   //   laptop → chat is hidden, report/flow fills the full width
   //   default → normal split pane
   const laptopHidesChat = previewPaneTier === 'laptop'
   const splitGridCols = isFilesWorkspace
     ? 'md:grid-cols-[minmax(0,1fr)_480px]'
     : previewPaneTier === 'mobile' ? 'md:grid-cols-[minmax(0,1fr)_480px]'
+    : previewPaneTier === 'tablet' ? 'md:grid-cols-[clamp(360px,28vw,480px)_minmax(0,1fr)]'
     : previewPaneTier === 'laptop' ? 'md:grid-cols-[minmax(0,1fr)]'
     : 'md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]'
   // Animate the GRID TRACK widths on the container so the chat↔report resize

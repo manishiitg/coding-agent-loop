@@ -93,7 +93,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) rotatePairedIterationZero(ctx context
 			if err := hcpo.MoveWorkspaceFile(ctx, evalIter0, evalBackup); err != nil {
 				if workflowMoved {
 					if rollbackErr := hcpo.MoveWorkspaceFile(ctx, workflowBackup, workflowIter0); rollbackErr != nil {
-						return fmt.Errorf("failed to back up eval iteration-0 to %s: %v; workflow backup rollback also failed: %w", backupName, err, rollbackErr)
+						return fmt.Errorf("failed to back up eval iteration-0 to %s: %w; workflow backup rollback also failed: %w", backupName, err, rollbackErr)
 					}
 				}
 				return fmt.Errorf("refusing to rotate runs: failed to back up eval iteration-0 to %s: %w", backupName, err)

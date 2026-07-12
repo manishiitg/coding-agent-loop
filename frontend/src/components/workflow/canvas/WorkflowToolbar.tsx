@@ -601,14 +601,14 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   return (
     <>
     <div className={`
-      flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-1.5
+      flex min-h-10 min-w-0 flex-nowrap items-center gap-3 overflow-hidden px-3 py-1.5
       bg-background border-b border-border
       relative z-10
       ${className}
     `}>
       {/* Left side - chat tab strip (grows). Per-tab status dot + Stop live
           inside each tab pill (WorkflowChatTabs), not as a separate badge here. */}
-      <div className="flex min-w-0 flex-1 items-center gap-3">
+      <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
         {chatTabsSlot}
       </div>
 

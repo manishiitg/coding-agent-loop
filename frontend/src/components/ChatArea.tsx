@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState, type ForwardedRef } from 'react'
 import { useRenderLogger, useMemoLogger } from '../utils/renderLogger'
+import { PromiseLane } from '../utils/promiseLane'
 import { isInternalAutoNotificationEvent } from '../utils/internalChatEvents'
 import { useShallow } from 'zustand/react/shallow'
 import { agentApi, resetSessionId, getSessionId } from '../services/api'
@@ -2305,10 +2306,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
   // Store execution options for use in the request
   const executionOptionsRef = useRef<ExecutionOptions | undefined>(undefined)
-
-  // Guard: prevent duplicate submission of the same message from any source
-  // (Enter key repeat, form submit/click overlap, restore-triggered rerender races, etc.).
-  const submitGuardRef = useRef<{ key: string; expiresAt: number } | null>(null)
+  const submitLanesRef = useRef(new PromiseLane())
 
   // Helper: reset streaming state (replaces 4 duplicated blocks)
   const resetStreamingState = useCallback((tabId?: string) => {
@@ -2319,7 +2317,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   }, [])
 
   // Wrapper function to submit query with the current local query
-  const submitQueryWithQuery = useCallback(async (query: string, executionOptions?: ExecutionOptions, options?: { isAutoNotification?: boolean }) => {
+  const submitQueryImmediately = useCallback(async (query: string, executionOptions?: ExecutionOptions, options?: { isAutoNotification?: boolean; preferLiveInput?: boolean }) => {
     // Mark that user has interacted — enables auto-notifications
     // (prevents stale notifications from SSE backfill on page load)
     hasUserSentMessageRef.current = true
@@ -2333,21 +2331,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const submitAgentMode = submitModeCategory
       ? getAgentModeFromCategory(submitModeCategory) as AgentMode
       : correctAgentMode
-    const activeTabKey = activeTab?.tabId || 'no-tab'
-    const submitGuardKey = `${submitModeCategory || 'unknown'}:${activeTabKey}:${trimmedQuery}`
-    const now = Date.now()
-    const activeGuard = submitGuardRef.current
-    if (activeGuard && activeGuard.key === submitGuardKey && activeGuard.expiresAt > now) {
-      console.warn('[ChatArea] Blocked duplicate submitQueryWithQuery call', { query: trimmedQuery.substring(0, 50) })
-      return
-    }
-    submitGuardRef.current = { key: submitGuardKey, expiresAt: now + 3000 }
-    setTimeout(() => {
-      if (submitGuardRef.current?.key === submitGuardKey) {
-        submitGuardRef.current = null
-      }
-    }, 3000)
-
     console.log('[ChatArea] submitQueryWithQuery called', { query: trimmedQuery.substring(0, 80), stack: new Error().stack?.split('\n').slice(1, 4).join(' <- ') })
 
     // Get fresh tab state from store to avoid stale closure issues
@@ -2369,6 +2352,55 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const resolved = await resolveOrCreateTab({ freshActiveTab, selectedModeCategory: submitModeCategory })
     if (!resolved) return
     let { tab: currentTab, sessionId: tabSessionId } = resolved
+
+    const hasOneShotContext = Boolean(
+      currentTab.config?.restoredConversationPath?.trim() ||
+      currentTab.config?.fileContext?.length ||
+      executionOptions
+    )
+    if (options?.preferLiveInput && tabSessionId && !hasOneShotContext) {
+      try {
+        const response = await agentApi.sendLiveInput(tabSessionId, trimmedQuery)
+        if (response.delivery_status === 'sent_to_cli' || response.delivery_status === 'next_turn_started') {
+          const existingEvents = chatStore.getTabEvents(tabSessionId)
+          const indexedEvents = existingEvents.filter(event => typeof event.event_index === 'number')
+          const nextEventIndex = indexedEvents.length > 0
+            ? indexedEvents.reduce((maxIndex, event) => Math.max(maxIndex, event.event_index as number), -1) + 1
+            : undefined
+          const latestTimestampMs = existingEvents.reduce((latest, event) => {
+            const ts = getEventTimestampMs(event)
+            return ts === null ? latest : Math.max(latest, ts)
+          }, 0)
+          const optimisticTimestampMs = Math.max(Date.now(), latestTimestampMs + 1)
+          chatStore.addTabEvents(tabSessionId, [createUserMessageEvent(
+            trimmedQuery,
+            nextEventIndex,
+            new Date(optimisticTimestampMs).toISOString(),
+          )])
+          chatStore.setAutoScroll(true)
+          chatStore.setIsCompleted(false)
+          chatStore.setIsStreaming(true)
+          chatStore.setHasActiveChat(true)
+          chatStore.setTabCompleted(currentTab.tabId, false)
+          chatStore.setTabStreaming(currentTab.tabId, true)
+          requestTerminalRefreshBurst()
+          setTimeout(() => { scrollToBottom('smooth') }, 50)
+          if (!useChatStore.getState().sseConnections[tabSessionId]) {
+            connectSSE(
+              tabSessionId,
+              (msg: SSEEventMessage) => handleSSEMessage(msg, tabSessionId),
+              (msg: SSEStatusMessage) => handleSSEStatus(msg, tabSessionId),
+              () => handleSSEFallback(tabSessionId),
+            )
+          }
+          return
+        }
+      } catch (error) {
+        // A stale/missing native session is expected after long idle periods.
+        // Continue into the full request path, which resumes or launches the CLI.
+        logger.debug('ChatArea', 'Minimal live input unavailable; using full turn setup', error)
+      }
+    }
 
     const pendingRestoredConversationPath = currentTab.config?.restoredConversationPath?.trim() || ''
     const hasLocalSessionEvents = chatStore.getTabEvents(tabSessionId).length > 0
@@ -2771,6 +2803,14 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     }
 
   }, [correctAgentMode, selectedModeCategory, getAgentModeFromCategory, isRequiredFolderSelected, isStreaming, stopStreaming, finalResponse, startPolling, effectiveServers, enabledTools, selectedWorkflowPreset, activeWorkflowPreset, pollEvents, processedCompletionEventsRef, activeTab, scrollToBottom, getActiveSessions, resetStreamingState, connectSSE, handleSSEMessage, handleSSEStatus])
+
+  // Serialize the complete submission path per chat tab. This preserves the
+  // user's original order even when tab creation, secret resolution, or request
+  // preparation takes different amounts of time for consecutive messages.
+  const submitQueryWithQuery = useCallback((query: string, executionOptions?: ExecutionOptions, options?: { isAutoNotification?: boolean; preferLiveInput?: boolean }) => {
+    const laneKey = activeTab?.tabId || `${selectedModeCategory || 'unknown'}:pending-tab`
+    return submitLanesRef.current.enqueue(laneKey, () => submitQueryImmediately(query, executionOptions, options))
+  }, [activeTab?.tabId, selectedModeCategory, submitQueryImmediately])
 
   // If the active tab is stuck in streaming state, ChatInput queues the user's text
   // instead of calling /api/query. Force-refresh active sessions so the store can
@@ -3272,7 +3312,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       {/* Input Area - Completely isolated from event updates, hidden in workflow mode */}
       {!hideInput && (
         <ChatInput
-          onSubmit={submitQueryWithQuery}
+          onSubmit={(query, options) => submitQueryWithQuery(query, undefined, options)}
           onStopStreaming={stopStreaming}
           tabId={targetTabId}
           restoredConversationPending={resumePending && !hasRestoredLiveContent}

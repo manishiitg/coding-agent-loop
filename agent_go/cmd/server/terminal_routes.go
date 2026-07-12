@@ -17,6 +17,7 @@ import (
 	"github.com/gorilla/mux"
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/tmuxcapture"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/tmuxinput"
 
 	"mcp-agent-builder-go/agent_go/internal/terminals"
 )
@@ -589,17 +590,9 @@ func (api *StreamingAPI) handleSendTerminalInput(w http.ResponseWriter, r *http.
 
 	ctx, cancel := context.WithTimeout(r.Context(), terminalTmuxActionTimeout)
 	defer cancel()
-	if req.Text != "" {
-		if err := pasteTerminalTextForSnapshot(ctx, snapshot, req.Text); err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-	}
-	if req.Submit {
-		if err := sendTerminalKey(ctx, snapshot.TmuxSession, "enter"); err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
+	if err := deliverTerminalInput(ctx, snapshot.TmuxSession, req.Text, req.Submit, terminalSnapshotPrefersReadablePaste(snapshot), "terminal-http"); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
 	}
 	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot)})
 }
@@ -841,10 +834,6 @@ func (api *StreamingAPI) requireAccessibleTerminal(w http.ResponseWriter, r *htt
 	return snapshot, true
 }
 
-func pasteTerminalTextForSnapshot(ctx context.Context, snapshot terminals.Snapshot, text string) error {
-	return pasteTerminalTextWithReadableMode(ctx, snapshot.TmuxSession, text, terminalSnapshotPrefersReadablePaste(snapshot))
-}
-
 func pasteTerminalText(ctx context.Context, tmuxSession, text string) error {
 	return pasteTerminalTextWithReadableMode(ctx, tmuxSession, text, terminalTmuxSessionLooksCursor(tmuxSession))
 }
@@ -854,6 +843,16 @@ func pasteTerminalTextWithReadableMode(ctx context.Context, tmuxSession, text st
 	if tmuxSession == "" {
 		return fmt.Errorf("tmux session is required")
 	}
+	_, err := tmuxinput.Default.Do(ctx, tmuxinput.Request{
+		SessionID: tmuxSession,
+		Source:    "terminal-paste",
+	}, func(ctx context.Context) error {
+		return pasteTerminalTextUnserialized(ctx, tmuxSession, text, readable)
+	})
+	return err
+}
+
+func pasteTerminalTextUnserialized(ctx context.Context, tmuxSession, text string, readable bool) error {
 	bufferName := fmt.Sprintf("mcp-terminal-ui-%d", time.Now().UnixNano())
 	if err := runTerminalTmuxCommand(ctx, text, "load-buffer", "-b", bufferName, "-"); err != nil {
 		return fmt.Errorf("failed to load terminal input into tmux buffer: %w", err)
@@ -867,6 +866,28 @@ func pasteTerminalTextWithReadableMode(ctx context.Context, tmuxSession, text st
 		return fmt.Errorf("failed to paste terminal input into tmux session: %w", err)
 	}
 	return nil
+}
+
+func deliverTerminalInput(ctx context.Context, tmuxSession, text string, submit, readable bool, source string) error {
+	tmuxSession = strings.TrimSpace(tmuxSession)
+	if tmuxSession == "" {
+		return fmt.Errorf("tmux session is required")
+	}
+	_, err := tmuxinput.Default.Do(ctx, tmuxinput.Request{
+		SessionID: tmuxSession,
+		Source:    source,
+	}, func(ctx context.Context) error {
+		if text != "" {
+			if err := pasteTerminalTextUnserialized(ctx, tmuxSession, text, readable); err != nil {
+				return err
+			}
+		}
+		if submit {
+			return sendTerminalKeyUnserialized(ctx, tmuxSession, "enter")
+		}
+		return nil
+	})
+	return err
 }
 
 func terminalSnapshotPrefersReadablePaste(snapshot terminals.Snapshot) bool {
@@ -1098,6 +1119,17 @@ func sendTerminalKey(ctx context.Context, tmuxSession, key string) error {
 	if tmuxSession == "" {
 		return fmt.Errorf("tmux session is required")
 	}
+	_, err := tmuxinput.Default.Do(ctx, tmuxinput.Request{
+		SessionID: tmuxSession,
+		Source:    "terminal-key",
+		Priority:  tmuxinput.PriorityForKey(key),
+	}, func(ctx context.Context) error {
+		return sendTerminalKeyUnserialized(ctx, tmuxSession, key)
+	})
+	return err
+}
+
+func sendTerminalKeyUnserialized(ctx context.Context, tmuxSession, key string) error {
 	tmuxKey, ok := tmuxKeyName(key)
 	if !ok {
 		return fmt.Errorf("unsupported terminal key %q", key)

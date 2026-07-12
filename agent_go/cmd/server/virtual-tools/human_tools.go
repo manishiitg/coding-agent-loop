@@ -374,7 +374,7 @@ func handleNotifyUser(ctx context.Context, args map[string]interface{}) (string,
 	}
 
 	// Synchronous send so we can report real per-channel delivery to the agent
-	// (and so the send isn't killed when this turn's context is cancelled).
+	// (and so the send isn't killed when this turn's context is canceled).
 	results := notificationManager.SendUserNotificationSync(ctx, messageForUser, "", dest)
 
 	delivered := []string{}

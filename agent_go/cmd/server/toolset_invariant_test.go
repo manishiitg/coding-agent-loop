@@ -33,7 +33,7 @@ func knownWorkshopRegisteredToolNamesOutsideWorkflowPool() map[string]string {
 		"update_validation_schema",
 	)
 	add("workshop execution tools",
-		"execute_step", "query_step", "debug_step", "list_executions",
+		"execute_step", "query_step", "send_step_message", "debug_step", "list_executions",
 		"stop_step", "stop_all_executions", "run_in_background",
 		"run_full_workflow", "run_goal_advisor_review",
 	)

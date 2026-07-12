@@ -435,7 +435,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 			if persistenceErr == nil {
 				persistenceErr = postEvalErr
 			} else {
-				persistenceErr = fmt.Errorf("%v; %w", persistenceErr, postEvalErr)
+				persistenceErr = fmt.Errorf("%w; %w", persistenceErr, postEvalErr)
 			}
 		}
 		completionStatus := "completed"

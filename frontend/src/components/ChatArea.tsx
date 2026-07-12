@@ -16,7 +16,7 @@ import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { useAppStore, useLLMStore, useMCPStore, useChatStore, useGlobalPresetStore } from '../stores'
 import { useModeStore, type ModeCategory } from '../stores/useModeStore'
 import { PreviousChatHistoryPanel } from './PreviousChatHistoryPanel'
-import { resolveChatSurface } from './resolveChatSurface'
+import { resolveChatSurface, resolveWorkflowChatSurface } from './resolveChatSurface'
 import { PresetSelectionOverlay } from './PresetSelectionOverlay'
 import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
 import { normalizeEventViewMode, type ChatTab } from '../stores/useChatStore'
@@ -3081,28 +3081,32 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     hasRestoredLiveContent,
     isReadOnlyRunView,
   })
+  // A workflow terminal is authoritative even when the chat has no hydrated
+  // events and its streaming flag has settled. Without feeding this signal into
+  // the resolver, an idle-but-live tmux pane could be replaced by Previous Chats
+  // on a later polling render.
+  const workflowHasTerminalSurface =
+    hasPendingTerminalActivity || hasLiveWorkflowTerminal || restoredSessionHasTerminal
   // Workflow shares the resume-pending signals (resumeSettling + the terminal/
   // execution-tree probe) so a coding-agent/terminal resume in the workflow pane
   // stays 'restoring' until its terminal is confirmed — then 'active' — instead of
   // flashing the previous-chats list on the first Resume click. Both inputs are
   // false/gated whenever there's no restoredConversationPath, so a FRESH workflow
   // chat is unaffected (still resolves to 'landing').
-  const workflowSurface = resolveChatSurface({
+  const workflowSurface = resolveWorkflowChatSurface({
     isRestoring: isRestoringWorkflowSessions,
     resumeSettling: resumePending,
     hasContent: displayEvents.length > 0,
     isStreaming: activeTabStreaming,
     hasRestoredLiveContent,
     isReadOnlyRunView,
-  })
+  }, workflowHasTerminalSurface)
   // In workflow terminal mode, old events are not enough to show the terminal
   // surface. Ctrl+K should open an idle automation to its normal landing/history
   // view unless there is a live submitted turn, a running backend session, or an
   // actual terminal snapshot for this resumed session. Restored terminal rows can
   // be stale snapshots when tmux is gone; they still need to render TerminalCenter
   // so Resume never lands on a blank workflow pane.
-  const workflowHasTerminalSurface =
-    hasPendingTerminalActivity || hasLiveWorkflowTerminal || restoredSessionHasTerminal
   const visibleWorkflowSurface =
     workflowSurface === 'active' &&
     activeEventViewMode === 'terminal' &&

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Activity,
   AlertTriangle,
+  ArrowRight,
   Bug,
   CheckCircle2,
   CircleAlert,
@@ -14,6 +15,7 @@ import {
   X,
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
+import type { ReportHumanInput } from '../../services/api-types'
 import ModalPortal from '../ui/ModalPortal'
 
 type HealthStatus = 'healthy' | 'bug' | 'critical' | 'idle'
@@ -37,11 +39,13 @@ interface WorkflowDashEntry {
   health: CardData | null
   progress: CardData | null
   cost: CardData | null
+  pendingInputs: ReportHumanInput[]
   failed: boolean
 }
 
 interface OrgDashboardProps {
   workflows: Array<{ workspacePath: string; label: string }>
+  onOpenDecision: (workspacePath: string) => void
 }
 
 const HEALTH_VALUES: ReadonlySet<string> = new Set(['healthy', 'bug', 'critical'])
@@ -86,18 +90,6 @@ function progressStatus(card: CardData | null): ProgressStatus {
 function costStatus(card: CardData | null): CostStatus {
   if (card && COST_VALUES.has(card.status)) return card.status as CostStatus
   return 'idle'
-}
-
-function openInputCount(card: CardData | null): number {
-  const value = card?.fields.input?.trim()
-  if (!value) return 0
-  if (/^(0\b|none\b|no\b|no open|no input|no questions)/i.test(value)) return 0
-  const match = value.match(/\b(\d+)\b/)
-  if (match) {
-    const count = Number.parseInt(match[1], 10)
-    return count > 0 ? count : 0
-  }
-  return 1
 }
 
 function latestUpdated(...cards: Array<CardData | null>): string {
@@ -313,7 +305,7 @@ const WorkflowDetailModal: React.FC<{
   )
 }
 
-export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
+export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows, onOpenDecision }) => {
   const [entries, setEntries] = useState<WorkflowDashEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -326,10 +318,14 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
       const results = await Promise.all(
         workflows.map(async (wf): Promise<WorkflowDashEntry> => {
           try {
-            const [health, progress, cost] = await Promise.all([
+            const [health, progress, cost, humanInputs] = await Promise.all([
               agentApi.getBuilderDoc(wf.workspacePath, 'card-health'),
               agentApi.getBuilderDoc(wf.workspacePath, 'card-progress'),
               agentApi.getBuilderDoc(wf.workspacePath, 'card-cost'),
+              agentApi.listReportHumanInputs(wf.workspacePath, 'pending').catch(() => ({
+                success: false,
+                inputs: [],
+              })),
             ])
             return {
               workspacePath: wf.workspacePath,
@@ -337,7 +333,8 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
               health: health.success && health.exists ? parseCard(health.content) : null,
               progress: progress.success && progress.exists ? parseCard(progress.content) : null,
               cost: cost.success && cost.exists ? parseCard(cost.content) : null,
-              failed: false,
+              pendingInputs: humanInputs.success && Array.isArray(humanInputs.inputs) ? humanInputs.inputs : [],
+              failed: !humanInputs.success,
             }
           } catch {
             return {
@@ -346,6 +343,7 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
               health: null,
               progress: null,
               cost: null,
+              pendingInputs: [],
               failed: true,
             }
           }
@@ -353,7 +351,7 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
       )
       setEntries(results)
       if (results.some(r => r.failed)) {
-        setError('Some workflow status cards could not be loaded.')
+        setError('Some workflow dashboard data could not be loaded.')
       }
     } catch {
       setError('Could not load the org dashboard.')
@@ -391,7 +389,7 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
       if (c === 'elevated') costElevated++
       else if (c === 'missing') costMissing++
       else if (c === 'normal') costNormal++
-      inputOpen += openInputCount(e.health)
+      inputOpen += e.pendingInputs?.length ?? 0
     }
     const needAttention = critical + bug + offGoal + atRisk + costElevated + costMissing + inputOpen
     return { critical, bug, healthy, offGoal, atRisk, onTrack, costElevated, costMissing, costNormal, inputOpen, needAttention }
@@ -405,7 +403,7 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
       const h = healthStatus(e.health)
       const p = progressStatus(e.progress)
       const c = costStatus(e.cost)
-      const needsAttention = h === 'critical' || h === 'bug' || p === 'off-goal' || p === 'at-risk' || c === 'elevated' || c === 'missing' || openInputCount(e.health) > 0
+      const needsAttention = h === 'critical' || h === 'bug' || p === 'off-goal' || p === 'at-risk' || c === 'elevated' || c === 'missing' || (e.pendingInputs?.length ?? 0) > 0
       const group = needsAttention ? ATTENTION_GROUP : OK_GROUP
       const bucket = map.get(group)
       if (bucket) bucket.push(e)
@@ -419,10 +417,23 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
     })
   }, [entries])
 
-  const hasAnyCard = useMemo(
-    () => entries.some(e => e.health || e.progress || e.cost),
-    [entries]
-  )
+  const pendingDecisions = useMemo(() => {
+    const priorityRank: Record<string, number> = { high: 0, medium: 1, low: 2 }
+    return entries
+      .flatMap(entry => (entry.pendingInputs ?? []).map(input => ({
+        input,
+        workspacePath: entry.workspacePath,
+        workflowLabel: entry.label,
+      })))
+      .sort((a, b) => {
+        const priorityDiff = (priorityRank[a.input.priority] ?? 3) - (priorityRank[b.input.priority] ?? 3)
+        if (priorityDiff !== 0) return priorityDiff
+        return new Date(b.input.updated_at).getTime() - new Date(a.input.updated_at).getTime()
+      })
+  }, [entries])
+
+  const hasAnyCard = useMemo(() => entries.some(e => e.health || e.progress || e.cost), [entries])
+  const hasDashboardContent = hasAnyCard || pendingDecisions.length > 0
 
   const refreshButton = (
     <button
@@ -468,7 +479,7 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
   )
 
   // Workflows exist but no cards yet
-  if (!hasAnyCard) {
+  if (!hasDashboardContent) {
     return (
       <div className="flex h-full flex-col">
         {header}
@@ -520,6 +531,58 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
 
       {/* Status groups */}
       <div className="flex-1 space-y-5 overflow-auto px-4 py-4">
+        {pendingDecisions.length > 0 && (
+          <section className="space-y-2" aria-labelledby="org-decisions-heading">
+            <div className="flex items-center gap-2">
+              <CircleHelp className="h-4 w-4 text-violet-500" />
+              <h3 id="org-decisions-heading" className="text-sm font-semibold tracking-tight text-foreground">
+                Decisions required
+              </h3>
+              <span className="font-runloop-mono text-[11px] text-muted-foreground">
+                {pendingDecisions.length} open
+              </span>
+            </div>
+            <div className="overflow-hidden rounded-lg border border-violet-500/20 bg-card/95 shadow-sm divide-y divide-border">
+              {pendingDecisions.map(({ input, workspacePath, workflowLabel }) => {
+                const priority = input.priority.toLowerCase()
+                const priorityClass = priority === 'high'
+                  ? 'border-red-500/25 bg-red-500/10 text-red-600 dark:text-red-300'
+                  : priority === 'low'
+                    ? 'border-border bg-muted/70 text-muted-foreground'
+                    : 'border-amber-500/25 bg-amber-500/10 text-amber-600 dark:text-amber-300'
+                return (
+                  <button
+                    key={`${workspacePath}:${input.id}`}
+                    type="button"
+                    onClick={() => onOpenDecision(workspacePath)}
+                    className="group flex w-full items-start gap-3 px-3 py-3 text-left transition-colors hover:bg-violet-500/[0.06] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring/50"
+                    aria-label={`Open decision for ${workflowLabel}: ${input.question}`}
+                  >
+                    <span className={`${PILL_BASE} mt-0.5 shrink-0 ${priorityClass}`}>
+                      {priority}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                        <span className="text-xs font-semibold text-foreground">{workflowLabel}</span>
+                        <span className="font-runloop-mono text-[10px] uppercase tracking-[0.06em] text-muted-foreground">
+                          {input.source.replaceAll('_', ' ')}
+                        </span>
+                        <span className="font-runloop-mono text-[10px] text-muted-foreground/80">
+                          {relativeTime(input.updated_at).replace(/^updated /, '')}
+                        </span>
+                      </span>
+                      <span className="mt-1 block line-clamp-2 text-sm leading-5 text-foreground/90">
+                        {input.question}
+                      </span>
+                    </span>
+                    <ArrowRight className="mt-2 h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
+                  </button>
+                )
+              })}
+            </div>
+          </section>
+        )}
+
         {groups.map(([group, items]) => (
           <section key={group} className="space-y-2">
             <div className="flex items-center gap-2">
@@ -541,7 +604,7 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows }) => {
                 const updated = latestUpdated(entry.health, entry.progress, entry.cost)
                 const rel = relativeTime(updated)
                 const goalLabel = entry.health?.goal?.trim() || entry.progress?.goal?.trim() || entry.cost?.goal?.trim() || ''
-                const inputOpen = openInputCount(entry.health)
+                const inputOpen = entry.pendingInputs?.length ?? 0
                 const healthSecondary = entry.health?.fields.next || entry.health?.fields.fix || entry.health?.detail
                 const healthSecondaryLabel = entry.health?.fields.next ? 'Next' : entry.health?.fields.fix ? 'Fix' : 'Detail'
                 return (

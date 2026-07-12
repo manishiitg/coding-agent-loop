@@ -301,27 +301,39 @@ export function ReportHumanInputPanel({ workspacePath, className = '' }: { works
                   {input.options.map(option => {
                     const checked = draft.selectedOptionId === option.id
                     return (
-                      <label
+                      <button
                         key={option.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={checked}
+                        onPointerDown={event => event.stopPropagation()}
+                        onClick={event => {
+                          event.stopPropagation()
+                          updateDraft(input.id, { selectedOptionId: option.id })
+                        }}
                         className={compactOptions
-                          ? `flex cursor-pointer items-start gap-2 border-b border-border/60 p-2.5 last:border-b-0 transition-colors ${checked ? 'bg-cyan-400/10' : 'hover:bg-muted/40'}`
-                          : `cursor-pointer rounded-md border p-2 transition-colors ${checked ? 'border-cyan-400 bg-cyan-400/10' : 'border-border bg-card/50 hover:border-cyan-400/50'}`
+                          ? `flex w-full cursor-pointer items-start gap-2 border-b border-border/60 p-2.5 text-left last:border-b-0 transition-colors ${checked ? 'bg-cyan-400/10' : 'hover:bg-muted/40'}`
+                          : `flex cursor-pointer items-start gap-2 rounded-md border p-2 text-left transition-colors ${checked ? 'border-cyan-400 bg-cyan-400/10' : 'border-border bg-card/50 hover:border-cyan-400/50'}`
                         }
                       >
-                        <input
-                          type="radio"
-                          name={`report-human-input-${input.id}`}
-                          className={compactOptions ? 'mt-0.5 h-3.5 w-3.5 shrink-0 accent-cyan-400' : 'sr-only'}
-                          checked={checked}
-                          onChange={() => updateDraft(input.id, { selectedOptionId: option.id })}
-                        />
-                        <span className="min-w-0">
+                        <span
+                          aria-hidden="true"
+                          className={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border ${checked ? 'border-cyan-300' : 'border-muted-foreground/60'}`}
+                        >
+                          {checked && <span className="h-1.5 w-1.5 rounded-full bg-cyan-300" />}
+                        </span>
+                        <span className="min-w-0 flex-1 text-left">
                           <span className="block break-words text-xs font-semibold text-foreground">{option.title}</span>
                           {option.description && <span className="mt-0.5 block break-words text-xs leading-5 text-muted-foreground">{option.description}</span>}
                         </span>
-                      </label>
+                      </button>
                     )
                   })}
+                </div>
+              )}
+              {draft.selectedOptionId && (
+                <div className="mt-2 text-xs text-cyan-200">
+                  Selected: {input.options.find(option => option.id === draft.selectedOptionId)?.title || draft.selectedOptionId}. Save the answer to confirm it.
                 </div>
               )}
               {input.allow_free_text && (

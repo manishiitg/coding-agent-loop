@@ -1346,7 +1346,10 @@ export const EmployeeDashboard: React.FC = () => {
           <div className="lg:sticky lg:top-6 self-start">
             {orgView === 'dashboard' ? (
               <div className="h-[calc(100vh-160px)] min-h-[480px] overflow-hidden bg-background">
-                <OrgDashboard workflows={workflows} />
+                <OrgDashboard
+                  workflows={workflows}
+                  onOpenDecision={(workspacePath) => handleSelectWorkflow(workspacePath, 'pulse')}
+                />
               </div>
             ) : orgView === 'goals' ? (
               <div className="h-[calc(100vh-160px)] min-h-[480px] overflow-hidden bg-background">
@@ -1425,7 +1428,7 @@ export const EmployeeDashboard: React.FC = () => {
                 </div>
               </div>
 
-              <div className="max-h-[calc(100vh-240px)] overflow-y-auto p-5">
+              <div className={reviewTab === 'pulse' ? 'p-5' : 'max-h-[calc(100vh-240px)] overflow-y-auto p-5'}>
                 {!selectedWorkflow ? (
                   <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
                     Select an automation from the left to review its report, Pulse, and cost.
@@ -1444,7 +1447,7 @@ export const EmployeeDashboard: React.FC = () => {
                     <ReportView workspacePath={selectedWorkflow.workspacePath} selectedRunFolder={selectedWorkflow.latestRunFolder} reviewData={reviewState.reviewData} />
                   </div>
                 ) : reviewTab === 'pulse' ? (
-                  <div className="h-[calc(100vh-320px)] min-h-[400px] overflow-hidden rounded-xl border border-border bg-card">
+                  <div className="min-w-0">
                     <LogViewer workspacePath={selectedWorkflow.workspacePath} />
                   </div>
                 ) : reviewTab === 'flow' ? (

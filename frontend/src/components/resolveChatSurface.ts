@@ -91,3 +91,17 @@ export function resolveChatSurface(inputs: ChatSurfaceInputs): ChatSurface {
   //    (empty → restoring above; with content → active above).
   return 'landing'
 }
+
+/**
+ * Workflow terminal mode has one additional authoritative signal: a retained
+ * tmux pane can be live even after streaming ends and without hydrated events.
+ */
+export function resolveWorkflowChatSurface(
+  inputs: ChatSurfaceInputs,
+  hasTerminalSurface: boolean,
+): ChatSurface {
+  return resolveChatSurface({
+    ...inputs,
+    hasRestoredLiveContent: inputs.hasRestoredLiveContent || hasTerminalSurface,
+  })
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveChatSurface, type ChatSurfaceInputs } from './resolveChatSurface'
+import { resolveChatSurface, resolveWorkflowChatSurface, type ChatSurfaceInputs } from './resolveChatSurface'
 
 // Baseline = a fresh New Chat: nothing loading, no content, no read-only run.
 const base: ChatSurfaceInputs = {
@@ -175,5 +175,15 @@ describe('resolveChatSurface', () => {
         hasRestoredLiveContent: false,
       }),
     ).toBe('landing')
+  })
+})
+
+describe('resolveWorkflowChatSurface', () => {
+  it('keeps an idle workflow on its retained tmux terminal', () => {
+    expect(resolveWorkflowChatSurface(base, true)).toBe('active')
+  })
+
+  it('keeps an actually empty workflow on Previous Chats', () => {
+    expect(resolveWorkflowChatSurface(base, false)).toBe('landing')
   })
 })

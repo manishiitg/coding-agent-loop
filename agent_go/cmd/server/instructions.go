@@ -244,9 +244,9 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 
 **Runs (execution output):**
 - ` + "`runs/iteration-0/`" + ` — **active run folder**. All new executions land here. When a new run starts, the previous ` + "`iteration-0`" + ` is backed up to a monotonic ` + "`iteration-{N}`" + ` folder. ` + "`workflow.json::run_retention_count`" + ` controls how many backup iterations are kept; default 5.
-- ` + "`runs/iteration-{N}/{group-name}/execution/step-X/`" + ` — per-step execution outputs (when variable groups are in use, each group runs in its own subfolder)
-- ` + "`runs/iteration-{N}/{group-name}/execution/step-X/code/main.py`" + ` — per-run working copy of the ` + "`scripted`" + ` script
-- ` + "`runs/iteration-{N}/{group-name}/logs/step-X/`" + ` — per-step logs (see Log Layout below)
+- ` + "`runs/iteration-{N}/{group-name}/execution/{step-id}/`" + ` — per-step execution outputs, keyed by the declared ID in ` + "`planning/plan.json`" + ` (when variable groups are in use, each group runs in its own subfolder)
+- ` + "`runs/iteration-{N}/{group-name}/execution/{step-id}/code/main.py`" + ` — per-run working copy of the ` + "`scripted`" + ` script
+- ` + "`runs/iteration-{N}/{group-name}/logs/{step-id}/`" + ` — per-step logs (see Log Layout below). Generated nested routes may use composite folders; inspect the actual directory for those executions.
 
 **Reports & evaluation:**
 - ` + "`reports/report_plan.json`" + ` — registers the workflow's live report HTML document(s)
@@ -267,7 +267,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 - The workflow's **profile** lives as prose in ` + "`builder/improve.html`" + ` under a "## Workflow Profile" section. It declares a primary type, optional secondary traits, plan stability, runtime mode, business-context accumulation, and improvement cadence. Read it on every improvement turn and adjust behavior accordingly. Real workflows don't fit a single enum (e.g. Twitter can be open metric optimization + dual-mode + contextual all at once); primary/secondary prose captures the nuance.
 - ` + "`oversight_mode`" + ` (in ` + "`workflow.json`" + `) — ` + "`manual`" + ` (every change gated) | ` + "`supervised`" + ` (low-risk auto, high-risk gated) | ` + "`autonomous`" + ` (all auto). Default: ` + "`supervised`" + `. Hard gate: drives auto-vs-human-approval flow.
 - ` + "`run_retention_count`" + ` (in ` + "`workflow.json`" + `) — optional integer, 1-50. Number of backup run/eval iterations to keep, excluding active ` + "`iteration-0`" + `. Default: 5. Builder, harden, and optimizer agents may raise it when a workflow needs a wider evidence window.
-### Log Layout (inside ` + "`runs/iteration-{N}/{group-name}/logs/step-X/`" + `)
+### Log Layout (inside ` + "`runs/iteration-{N}/{group-name}/logs/{step-id}/`" + `)
 - ` + "`validation-{N}.json`" + ` — validation attempts for the step
 - ` + "`execution/execution-attempt-{A}-iteration-{I}.json`" + ` — execution result per attempt
 - ` + "`execution/execution-attempt-{A}-iteration-{I}-conversation.json`" + ` — full LLM conversation for that attempt
@@ -313,7 +313,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 
 ## Pulse and Goal Advisor — When to Use the Tools
 
-In ` + "`optimizer`" + ` workshop mode, scheduled Goal Advisor reads eval reports, run outputs, ` + "`soul.md`" + `, and the Pulse log to decide whether the current workflow strategy is capped and whether an evidence-backed plan-change proposal is warranted. Pulse handles per-run QA and ` + "`harden_workflow`" + ` for Bugs.
+In ` + "`optimizer`" + ` workshop mode, scheduled Goal Advisor reads eval reports, run outputs, ` + "`soul.md`" + `, and the Pulse log to decide whether the current workflow strategy is capped and whether an evidence-backed plan-change proposal is warranted. Pulse handles per-run QA through a read-only Bug Review and the parent Pulse Fixer.
 
 **Two-layer mental model — internalize this before reasoning about any /improve-* flow:**
 
@@ -323,7 +323,7 @@ In ` + "`optimizer`" + ` workshop mode, scheduled Goal Advisor reads eval report
 Said simply: **plan defines the work and goal; eval plus run evidence shows where harden or replan is needed.**
 
 **Decision model:**
-- Pulse uses ` + "`harden_workflow(group_name?, focus?)`" + ` when the workflow path is basically right but prompts/config/validation/learnings/KB/db/report/eval wiring need repair.
+- Pulse selects ` + "`bug_review`" + ` when the workflow path is basically right but prompts/config/validation/learnings/KB/db/report/eval wiring may need repair. The reviewer only returns evidence and recommendations; the parent Pulse Fixer applies bounded safe fixes.
 - Goal Advisor applies material plan changes only from approved ` + "`create_human_input_request`" + ` proposal cards, or during an explicit manual workshop improvement request. If the evidence is useful but not approved or not strong enough, it records a proposal or asks the user through ` + "`create_human_input_request`" + `.
 
 ### Setup precondition: ` + "`/define-success`" + `
@@ -333,13 +333,13 @@ Before recurring improvement can do useful work, the workflow should have its **
 1. Classifies the workflow through conversation as one primary type plus optional secondary traits, then maps that to plan stability, runtime mode, business-context accumulation, and improvement cadence. Writes a "## Workflow Profile" section into ` + "`builder/improve.html`" + `. Sets ` + "`oversight_mode`" + ` in ` + "`workflow.json`" + ` (the one hard gate that stays structured).
 2. For workflows that accumulate business context, scaffolds ` + "`knowledgebase/context/context.md`" + ` with clear user-owned sections.
 
-When a user runs ` + "`/improve-evaluation`" + `, ` + "`/improve-workflow`" + `, or ` + "`/goal-advisor`" + ` on a workflow that has not been set up yet (no Workflow Profile in improve.html), **stop and redirect them to ` + "`/define-success`" + ` first.** Do NOT bootstrap inline — setup is a meaningful conversation, and conflating it with improvement work bloats every improvement turn.
+When a user runs ` + "`/improve-evaluation`" + ` or ` + "`/goal-advisor`" + ` on a workflow that has not been set up yet (no Workflow Profile in improve.html), **stop and redirect them to ` + "`/define-success`" + ` first.** Do NOT bootstrap inline.
 
 ### Tool: ` + "`get_workflow_command_guidance`" + `
 
 Returns the canonical guided-flow text for any workflow slash command. Always call this tool — and follow its returned ` + "`guidance`" + ` field verbatim — when:
 
-  1. The user invokes a slash command (` + "`/improve-workflow`" + `, ` + "`/review-plan`" + `, etc.). The slash command's submitted message names the kind to pass; you call this tool with that kind. Do NOT improvise the flow yourself.
+  1. The user invokes a slash command (` + "`/review-plan`" + `, ` + "`/improve-evaluation`" + `, etc.). The slash command's submitted message names the kind to pass; you call this tool with that kind. Do NOT improvise the flow yourself.
   2. The user describes the same intent in plain chat ("help me improve this workflow", "review whether the goal is being met", "improve the eval plan"). Recognize the intent, pick the matching kind, and call the tool. The user gets the same canonical flow whether they typed the slash or asked in chat.
   3. You're running on a schedule (e.g. the scheduled Goal Advisor message). The schedule message names the kind to call.
 
@@ -357,7 +357,6 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
 
   Improvements:
     - define-success           → one-time framework bootstrap
-    - improve-workflow         → manual unified plan + report + KB + learnings + db maintenance
     - improve-evaluation       → evaluation_plan changes
     - goal-advisor-setup       → set up recurring run + Goal Advisor schedules
     - goal-advisor             → scheduled expert strategy review / evidence-backed replan or proposal
@@ -372,9 +371,9 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
 
 The returned text is your instructions for this turn — do not paraphrase or skip steps.
 
-### How improvement commands are split
+### How improvement is split
 
-` + "`/improve-workflow`" + ` is manual maintenance when the user explicitly asks for a broad improvement pass. Pulse is the default daily/per-run steward and owns routine hardening, artifact review, KB/learnings/db/report hygiene when evidence points there. ` + "`/goal-advisor`" + ` sets up the recurring expert strategy loop; Pulse selects it for Goal recovery or periodic healthy 10x/headroom review. Goal Advisor advances at most one active experiment in ` + "`builder/improve.html`" + ` and applies structural changes only through the approved proposal path.
+Pulse is the single broad maintenance path and owns routine Bug Review, bounded fixes, artifact review, and KB/learnings/db/report hygiene when evidence points there. Targeted ` + "`/improve-*`" + ` commands remain specialist reviews. ` + "`/goal-advisor`" + ` configures the strategy loop; Pulse selects it for Goal recovery or periodic healthy 10x/headroom review.
 
 ### Resolution discipline
 
@@ -428,7 +427,7 @@ There is no slash command for context capture because it should happen naturally
 
 The ` + "`Workflow/`" + ` folder is read-only via raw shell writes — but several aspects can be modified through dedicated chat tools that go through privileged server-side I/O. **Do not refuse modification requests on the basis of "Workflow/ is read-only" without first checking whether a tool exists for what's being asked.**
 
-**Chief of Staff recommendations** — Chief of Staff may write only to existing workflow Pulse logs at ` + "`Workflow/<name>/builder/improve.html`" + `, and only to add newest-first recommendation/open-finding cards. Use this when org-goal evidence, reports, or workflow Pulse verdicts show an improvement the workflow builder should consider. Every card must be grounded in goal alignment: name the org goal/KPI target or say "supporting/no explicit goal", give the alignment verdict (` + "`aligned`" + `, ` + "`supporting`" + `, ` + "`unaligned`" + `, or ` + "`unknown-measurement`" + `), cite evidence paths, state the gap, assign priority, propose the builder action (` + "`harden_workflow`" + `, Goal Advisor plan-change proposal, eval/report measurement fix, manual review, or no-action watchpoint), and describe the expected KPI/success-criteria impact. Do not use this exception to edit any other workflow file.
+**Chief of Staff recommendations** — Chief of Staff may write only to existing workflow Pulse logs at ` + "`Workflow/<name>/builder/improve.html`" + `, and only to add newest-first recommendation/open-finding cards. Use this when org-goal evidence, reports, or workflow Pulse verdicts show an improvement the workflow builder should consider. Every card must be grounded in goal alignment: name the org goal/KPI target or say "supporting/no explicit goal", give the alignment verdict (` + "`aligned`" + `, ` + "`supporting`" + `, ` + "`unaligned`" + `, or ` + "`unknown-measurement`" + `), cite evidence paths, state the gap, assign priority, propose the builder action (Pulse Bug Review/Fixer, Goal Advisor plan-change proposal, eval/report measurement fix, manual review, or no-action watchpoint), and describe the expected KPI/success-criteria impact. Do not use this exception to edit any other workflow file.
 
 **Cron schedules** — fully managed from chat. Tools:
 - ` + "`list_all_schedules`" + ` / ` + "`list_workflow_schedules(workflow_path)`" + ` — view existing schedules. Run ` + "`list_all_schedules`" + ` *before* creating a new one to avoid cron-time overlap with other workflows.
@@ -825,7 +824,7 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 - Global workflow learnings: `+"`%s/learnings/_global/SKILL.md`"+` (plus `+"`references/`"+` and `+"`scripts/`"+` siblings) — shared domain knowledge for the whole workflow
 - Per-step saved scripts: `+"`%s/learnings/{step_id}/main.py`"+` — persistent script for `+"`scripted`"+` steps (source of truth, reused across runs)
 - Knowledgebase: `+"`%s/knowledgebase/`"+` — persistent files across runs
-- Runs: `+"`%s/runs/iteration-0/`"+` is the **active** run; older runs are backed up to monotonic `+"`iteration-{N}/`"+` folders. `+"`workflow.json::run_retention_count`"+` controls how many backups are kept; default 5. Per-run layout: `+"`runs/iteration-{N}/{group}/execution/step-{N}/code/main.py`"+` for working main.py copies.
+- Runs: `+"`%s/runs/iteration-0/`"+` is the **active** run; older runs are backed up to monotonic `+"`iteration-{N}/`"+` folders. `+"`workflow.json::run_retention_count`"+` controls how many backups are kept; default 5. Per-run layout: `+"`runs/iteration-{N}/{group}/execution/{step-id}/code/main.py`"+` for working main.py copies.
 - Live report dashboard: `+"`%s/reports/report_plan.json`"+` plus `+"`%s/db/reports/*.html`"+` — HTML documents that read `+"`db/db.sqlite`"+` through `+"`window.report`"+`
 - Legacy finished-run prose: `+"`%s/reports/{group-name}/{timestamp}.md`"+` — supporting evidence when present, not the live dashboard contract
 - Evaluation reports: `+"`%s/evaluation/runs/{runFolder}/evaluation_report.json`"+`
@@ -836,21 +835,21 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 
 	// 7. Step folder naming conventions and log file guide
 	parts = append(parts, `**Step Folder Naming (inside execution/ and logs/):**
-- Regular steps: `+"`step-{X}/`"+` (X = 1-based step number)
+- Regular steps: `+"`{step-id}/`"+` using the declared ID from `+"`planning/plan.json`"+`
 - Conditional branches: `+"`step-{X}-if-true-{idx}/`"+`, `+"`step-{X}-if-false-{idx}/`"+`
 - Sub-agents (orchestration/todo_task): `+"`step-{X}-sub-agent-{idx}/`"+`
 - Generic agents (todo_task only): `+"`step-{X}-generic-agent-{idx}/`"+`
 
 **Key Log Files Per Step:**
-- All steps: `+"`logs/step-X/validation-{N}.json`"+` (validation attempts), `+"`logs/step-X/execution/execution-attempt-{A}-iteration-{I}.json`"+` (execution result)
-- Full LLM conversation: `+"`logs/step-X/execution/execution-attempt-{A}-iteration-{I}-conversation.json`"+`
-- Conditional: `+"`logs/step-X/conditional-evaluation.json`"+` — condition_result, condition_reason, branch_executed
-- Orchestration/TodoTask: `+"`logs/step-X/orchestration-execution.json`"+` (JSONL, one line per iteration)
+- All steps: `+"`logs/{step-id}/validation-{N}.json`"+` (validation attempts), `+"`logs/{step-id}/execution/execution-attempt-{A}-iteration-{I}.json`"+` (execution result)
+- Full LLM conversation: `+"`logs/{step-id}/execution/execution-attempt-{A}-iteration-{I}-conversation.json`"+`
+- Conditional: `+"`logs/{step-id}/conditional-evaluation.json`"+` — condition_result, condition_reason, branch_executed
+- Orchestration/TodoTask: `+"`logs/{step-id}/orchestration-execution.json`"+` (JSONL, one line per iteration)
 
 **How to Investigate:**
 - Read plan: `+"`read_file`"+` on `+"`{path}/planning/plan.json`"+`
-- Check step output: `+"`read_file`"+` on `+"`{path}/runs/{iteration}/execution/step-{N}_*.json`"+`
-- Check step logs: `+"`list_files`"+` on `+"`{path}/runs/{iteration}/logs/step-{N}/`"+`
+- Check step output: `+"`read_file`"+` on `+"`{path}/runs/{iteration}/{group}/execution/{step-id}/`"+`
+- Check step logs: `+"`list_files`"+` on `+"`{path}/runs/{iteration}/{group}/logs/{step-id}/`"+`
 - Check learnings: `+"`list_files`"+` on `+"`{path}/learnings/`"+`
 - All paths are workspace-relative (e.g., "Workflow/myproject/plan.md")
 `)

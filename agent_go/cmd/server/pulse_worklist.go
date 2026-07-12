@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	pulseModuleHarden              = "harden"
+	pulseModuleBugReview           = "bug_review"
 	pulseModuleArtifactReview      = "artifact_review"
 	pulseModuleReportHealth        = "report_health"
 	pulseModuleEvalHealth          = "eval_health"
@@ -21,11 +21,12 @@ const (
 	pulseModuleKnowledgebaseHealth = "knowledgebase_health"
 	pulseModuleDBHealth            = "db_health"
 	pulseModuleCostLLMTime         = "cost_llm_time"
+	pulseModuleLLMOpsReview        = "llm_ops_review"
 	pulseModuleGoalAdvisor         = "goal_advisor"
 )
 
 var pulseModuleOrder = []string{
-	pulseModuleHarden,
+	pulseModuleBugReview,
 	pulseModuleArtifactReview,
 	pulseModuleLearningHealth,
 	pulseModuleKnowledgebaseHealth,
@@ -33,11 +34,12 @@ var pulseModuleOrder = []string{
 	pulseModuleEvalHealth,
 	pulseModuleReportHealth,
 	pulseModuleCostLLMTime,
+	pulseModuleLLMOpsReview,
 	pulseModuleGoalAdvisor,
 }
 
 var validPulseModules = map[string]bool{
-	pulseModuleHarden:              true,
+	pulseModuleBugReview:           true,
 	pulseModuleArtifactReview:      true,
 	pulseModuleReportHealth:        true,
 	pulseModuleEvalHealth:          true,
@@ -45,6 +47,7 @@ var validPulseModules = map[string]bool{
 	pulseModuleKnowledgebaseHealth: true,
 	pulseModuleDBHealth:            true,
 	pulseModuleCostLLMTime:         true,
+	pulseModuleLLMOpsReview:        true,
 	pulseModuleGoalAdvisor:         true,
 }
 
@@ -552,7 +555,7 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "record_pulse_worklist",
-			Description: "Record the dynamic Pulse worklist for this run in the workflow's db/db.sqlite. Pulse Gate must call this exactly once after deciding which modules are due or skipped. The decisions array must contain exactly one entry for each Pulse module: harden, artifact_review, learning_health, knowledgebase_health, db_health, eval_health, report_health, cost_llm_time, and goal_advisor. Every skipped module must include next_check_at, next_check_after_run_id, or a positive cooldown_runs value. The scheduler reads this table and only sends prompts for due modules.",
+			Description: "Record the dynamic Pulse worklist for this run in the workflow's db/db.sqlite. Pulse Gate must call this exactly once after deciding which modules are due or skipped. The decisions array must contain exactly one entry for each Pulse module: bug_review, artifact_review, learning_health, knowledgebase_health, db_health, eval_health, report_health, cost_llm_time, llm_ops_review, and goal_advisor. Every skipped module must include next_check_at, next_check_after_run_id, or a positive cooldown_runs value. The scheduler reads this table and only sends prompts for due modules.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

@@ -44,10 +44,10 @@ workflow's state.
 | Job | **FIX** — keep it *working* | **IMPROVE** — make it *win* |
 | Axis | 🩺 operational + 💵 spend/time ("does it run right, and did it spend sanely?") | 🎯 goal ("is it achieving its goal?") |
 | Trigger | **after every run** (reactive) | **scheduled** (proactive) |
-| Autonomy | applies low-risk fixes itself (`harden_workflow`) | **proposal-only** for big changes (replan); user/builder approve |
+| Autonomy | applies low-risk fixes itself (`Pulse Bug Review/Fixer`) | **proposal-only** for big changes (replan); user/builder approve |
 | Statuses | healthy / bug / critical; normal / elevated / missing cost | on-track / at-risk / off-goal |
 | Code | `runPostRunMonitor` / `postRunMonitorSteps` (`scheduler.go`) | `optimizerScheduleMessages` (`scheduler.go`) |
-| Guidance | `post-run-monitor.md`, `optimize-playbook.md` | `optimize-playbook.md` + `get_workflow_command_guidance(kind="improve-workflow")` |
+| Guidance | `post-run-monitor.md`, `optimize-playbook.md` | Goal Advisor guidance selected by Pulse Gate |
 | Detailed doc | `pulse_consolidation.md` | `auto_improvement_framework.md` |
 
 **Pulse step sequence** (one focused turn per step): triage → fix/harden → artifact review → LLM/cost report

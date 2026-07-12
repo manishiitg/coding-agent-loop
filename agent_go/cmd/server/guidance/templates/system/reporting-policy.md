@@ -18,7 +18,7 @@ report. This policy only covers when/where reports apply and the mode boundary.
 Workshop mode can author and maintain the report when it needs to reflect
 optimization/evaluation/run evidence: authoring the HTML document(s), themes,
 tabs, and `reports/report_plan.json` edits. Keep report edits presentation-only
-unless the user also asked for workflow hardening/eval changes.
+unless the user also asked for workflow behavior or eval changes.
 
 ### When the user asks "create a report" / "build a reporting UI" / "show me X in a dashboard"
 

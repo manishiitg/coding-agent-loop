@@ -12,7 +12,7 @@ Workflow improvement has three layers:
 
 Optimizer actions are deliberately small in number:
 
-- `harden_workflow(group_name?, focus?)`: use when the workflow path is basically right, but prompts, config, validation, KB, learnings, db/report wiring, or eval coverage need repair. It should delete stale `learnings/{step-id}/main.py` for `code_exec` steps and only patch `main.py` for `learn_code`.
+- `Pulse Bug Review/Fixer(group_name?, focus?)`: use when the workflow path is basically right, but prompts, config, validation, KB, learnings, db/report wiring, or eval coverage need repair. It should delete stale `learnings/{step-id}/main.py` for `code_exec` steps and only patch `main.py` for `learn_code`.
 - Goal Advisor proposals and experiments: use for Goal recovery, a capped strategy, or periodic healthy 10x/headroom review. Scheduled Pulse starts this through `run_goal_advisor_review(...)`; material plan changes are proposed through `create_human_input_request(source="goal_advisor", ...)` and later applied with normal plan/config/eval/report tools only after approval. `builder/improve.html` holds at most one active `.advisor-experiment` card, which preserves the current baseline and advances through proposal, approval, running, measurement, and a terminal adopted/rejected/retired outcome. Pulse schedules the next meaningful checkpoint instead of generating bold ideas every run.
 - Eval-plan improvement: use when eval coverage, scoring, structured output, or validation schema is weak enough that measurement cannot be trusted, or eval cost is out of proportion to run cost.
 
@@ -49,7 +49,6 @@ improve-knowledge
 improve-learnings
 improve-data
 define-success
-improve-workflow
 improve-evaluation
 auto-improve
 improve-report
@@ -70,7 +69,6 @@ improve-report
 | `/improve-learnings` | Builder, Optimizer | Improve global learnings with targeted cleanup or current-plan consolidation. |
 | `/improve-data` | Builder, Optimizer | Improve durable data contracts, schemas, and report compatibility. |
 | `/define-success` | Optimizer | Confirm the goal, write the workflow profile, and seed the Pulse goal card. |
-| `/improve-workflow` | Optimizer | Read prior improve/review logs and run/eval/log evidence, then choose harden, replan, eval-plan improvement, or no action. |
 | `/improve-evaluation` | Optimizer | Improve evaluation coverage and rubric quality. |
 | `/auto-improve` | Optimizer | Create/update frequent Run-mode and Optimizer-mode schedules. |
 | `/improve-report` | Builder, Optimizer | Improve report layout, color, density, and widget/data wiring. |
@@ -81,17 +79,12 @@ improve-report
 |---|---|
 | Execution | `execute_step`, `query_step`, `stop_step`, `stop_all_executions`, `list_executions`, `run_full_workflow`, `debug_step` |
 | Plan/config | `add_regular_step`, `add_routing_step`, `add_human_input_step`, `add_todo_task_step`, `update_*_step`, `delete_plan_steps`, `cleanup_orphan_step_configs`, `update_step_config`, `update_validation_schema` |
-| Review | `review_plan`, `review_artifact_sync`, `review_workflow_results`, `review_workflow_timing`, `review_workflow_costs` |
-| Optimizer | `harden_workflow`, `run_goal_advisor_review`, Goal Advisor proposal cards |
+| Review | `review_plan`, `review_artifact_sync`, `review_workflow_timing`, `review_workflow_costs` |
+| Optimizer | `Pulse Bug Review/Fixer`, `run_goal_advisor_review`, Goal Advisor proposal cards |
 | Eval | `validate_evaluation_plan`, `run_full_evaluation` |
 | Reports | `get_report_plan`, `upsert_report_widget`, `move_report_widget`, `toggle_report_widget`, `remove_report_widget`, `set_report_theme`, `set_section_layout`, `validate_report_plan`, `preview_report_render` |
 | Schedules | `create_schedule`, `create_calendar_schedule`, `update_schedule`, `delete_schedule`, `trigger_schedule`, `get_schedule_runs` |
 
 ## Continuous Improvement Cadence
 
-`/auto-improve` creates or updates two workshop schedules:
-
-- Run schedule: `mode="workshop"`, `workshop_mode="run"`, message can call `run_full_workflow(group_name=...)`, execute targeted/orphan steps, or answer directly from KB/learnings/db/run state when that is the scheduled job.
-- Improve schedule: `mode="workshop"`, `workshop_mode="optimizer"`, message performs a short cadence/group-scope check, then calls `get_workflow_command_guidance(kind="improve-workflow", ...)` and follows that canonical improvement flow. It does not duplicate the harden/replan decision model inline.
-
-For active workflows, the improve schedule should normally run after every run or every two runs. Weekly cadence is only appropriate when the workflow itself runs weekly or the user explicitly asks for low-touch maintenance.
+Pulse is the single recurring maintenance loop. Its Gate decides which review modules are due, and its parent Pulse Fixer applies bounded verified changes.

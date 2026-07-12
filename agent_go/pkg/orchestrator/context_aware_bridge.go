@@ -131,6 +131,53 @@ type ContextAwareEventBridge struct {
 	toolCallCapture bool // whether to capture tool calls
 	mu              sync.RWMutex
 	logger          loggerv2.Logger
+	tokenPersistWG  sync.WaitGroup
+	tokenPersistMu  sync.Mutex
+	tokenPersistErr []error
+}
+
+const tokenPersistenceTimeout = 30 * time.Second
+
+func (c *ContextAwareEventBridge) persistTokenUsageAsync(label string, persist func(context.Context) error) {
+	c.tokenPersistWG.Add(1)
+	go func() {
+		defer c.tokenPersistWG.Done()
+		persistCtx, cancel := context.WithTimeout(context.Background(), tokenPersistenceTimeout)
+		defer cancel()
+		if err := persist(persistCtx); err != nil {
+			wrapped := fmt.Errorf("%s: %w", label, err)
+			c.tokenPersistMu.Lock()
+			c.tokenPersistErr = append(c.tokenPersistErr, wrapped)
+			c.tokenPersistMu.Unlock()
+			c.logger.Warn(fmt.Sprintf("Failed to persist token usage: %v", wrapped))
+		}
+	}()
+}
+
+// WaitForTokenPersistence drains token writes before a workflow is finalized.
+// It returns any persistence failures separately from the workflow result.
+func (c *ContextAwareEventBridge) WaitForTokenPersistence(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		c.tokenPersistWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("waiting for token persistence: %w", ctx.Err())
+	case <-done:
+	}
+	c.tokenPersistMu.Lock()
+	defer c.tokenPersistMu.Unlock()
+	if len(c.tokenPersistErr) == 0 {
+		return nil
+	}
+	messages := make([]string, 0, len(c.tokenPersistErr))
+	for _, err := range c.tokenPersistErr {
+		messages = append(messages, err.Error())
+	}
+	c.tokenPersistErr = nil
+	return fmt.Errorf("token persistence failed: %s", strings.Join(messages, "; "))
 }
 
 // Name implements the EventBridge interface
@@ -706,14 +753,9 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 				if persister != nil {
 					// Check if persister implements PhaseTokenPersister interface
 					if phasePersister, ok := persister.(PhaseTokenPersister); ok {
-						// Persist asynchronously to avoid blocking event processing
-						go func() {
-							if err := phasePersister.PersistPhaseTokenUsage(ctx, phaseTokenData, modelTokenData); err != nil {
-								c.logger.Warn(fmt.Sprintf("⚠️ Failed to persist phase token usage: %v", err))
-							} else {
-								c.logger.Debug("💾 Persisted phase token usage directly to file")
-							}
-						}()
+						c.persistTokenUsageAsync("phase token usage", func(persistCtx context.Context) error {
+							return phasePersister.PersistPhaseTokenUsage(persistCtx, phaseTokenData, modelTokenData)
+						})
 					} else {
 						c.logger.Debug("⚠️ Token persister does not implement PhaseTokenPersister, skipping phase token persistence")
 					}
@@ -743,14 +785,9 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 				c.mu.RUnlock()
 
 				if persister != nil && iterationFolder != "" {
-					// Persist asynchronously to avoid blocking event processing
-					go func() {
-						if err := persister.PersistTokenUsage(ctx, iterationFolder, stepTokenData, modelTokenData); err != nil {
-							c.logger.Warn(fmt.Sprintf("⚠️ Failed to persist token usage: %v", err))
-						} else {
-							c.logger.Debug("💾 Persisted token usage directly to file")
-						}
-					}()
+					c.persistTokenUsageAsync("step token usage", func(persistCtx context.Context) error {
+						return persister.PersistTokenUsage(persistCtx, iterationFolder, stepTokenData, modelTokenData)
+					})
 				}
 			}
 		}

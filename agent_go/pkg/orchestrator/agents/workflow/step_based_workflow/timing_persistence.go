@@ -592,6 +592,26 @@ func (hcpo *StepBasedWorkflowOrchestrator) finalizeRunMetadata(ctx context.Conte
 		}
 		meta["completed_at"] = formatRFC3339UTC(completedAt)
 		meta["duration_ms"] = completedAt.Sub(startedAt).Milliseconds()
+		if status == "completed" {
+			if failures, ok := meta["persistence_errors"].([]interface{}); ok && len(failures) > 0 {
+				status = "completed_with_persistence_error"
+			}
+		}
 		meta["status"] = status
+	})
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) recordRunPersistenceError(ctx context.Context, stepID string, persistenceErr error) {
+	if persistenceErr == nil || strings.TrimSpace(hcpo.selectedRunFolder) == "" {
+		return
+	}
+	hcpo.upsertRunMetadata(ctx, hcpo.selectedRunFolder, func(meta map[string]interface{}) {
+		entry := map[string]interface{}{
+			"step_id":    stepID,
+			"error":      persistenceErr.Error(),
+			"created_at": formatRFC3339UTC(time.Now().UTC()),
+		}
+		existing, _ := meta["persistence_errors"].([]interface{})
+		meta["persistence_errors"] = append(existing, entry)
 	})
 }

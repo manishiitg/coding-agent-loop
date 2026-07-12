@@ -20,8 +20,8 @@ A step's access to each store is independent and defaults differently. Grant the
 
 | Lock | Scope | Effect | Set when |
 |---|---|---|---|
-| `lock_learnings` | per-step | Stops this step's post-run learning writes to `learnings/_global/SKILL.md` (writes still allowed while `_global/` is empty, to bootstrap). Reads unaffected | deliberate builder/user decision, or the description-hash auto-lock after 3 same-description runs |
-| `lock_code` | per-step (scripted) | Freezes `learnings/{step}/main.py`, skips the fix loop | **user asks to lock** → allow it; **builder auto-locking on its own** → only after 10+ scenario-covering runs |
+| `lock_learnings` | per-step | Stops this step's post-run learning writes to `learnings/_global/SKILL.md` (writes still allowed while `_global/` is empty, to bootstrap). Reads unaffected | deliberate Workshop/user decision after reviewing stable evidence; runtime never auto-locks it |
+| `lock_code` | per-step (scripted) | Freezes `learnings/{step}/main.py`, skips the fix loop | **user asks to lock** → allow it; **Workshop auto-locking on its own** → only after 10+ scenario-covering runs |
 | `lock_knowledgebase` | workflow-wide | Freezes `knowledgebase/notes/` auto-updates | when KB is curated and should stop auto-evolving |
 
 Only pass a lock field when you are explicitly changing it — passing `lock_learnings:false` while editing other fields resets a previously set value.
@@ -32,7 +32,7 @@ Only pass a lock field when you are explicitly changing it — passing `lock_lea
   - **Scripts are for DETERMINISTIC work** — a saved `main.py` does the same thing every run (API calls, parsing, math, data transforms, fixed SQL). If the step's behavior **varies run-to-run or needs adaptive judgment** (most browser/UI flows, LLM reasoning, fuzzy extraction, anything that reads a fresh page or decides differently per input), scripted is the wrong tool: it will drift and need constant repair. Keep those `agentic`.
   - **And SMALL** — a scripted step should do ONE focused job (one source → one transform → one table), not carry a big branching pipeline. Split deterministic work into small scripted steps that coordinate through the db; large/adaptive logic stays agentic.
   - **User explicitly asks for a scripted step** (e.g. "make this scripted so I can test it") → set `scripted` right away — the user owns that call; **no run-count gate**. But if the work isn't deterministic, say so plainly first ("this flow reads live UI state, so a frozen script will break often — agentic is more reliable; want me to script it anyway?") and honor their decision.
-  - **Builder promoting agentic→scripted on its own initiative** → only when behavior is deterministic AND proven across 10+ scenario-covering successful runs. That's the guardrail against silently freezing a brittle script the user didn't ask to freeze.
+  - **Workshop promoting agentic→scripted on its own initiative** → only when behavior is deterministic AND proven across 10+ scenario-covering successful runs. That's the guardrail against silently freezing a brittle script the user didn't ask to freeze.
   - Set `declared_execution_mode_reason` either way.
 - **`use_code_execution_mode`**: per-step override of the preset's code-execution toggle (nil = inherit).
 - **Model selection**: `execution_tier` (`high`/`medium`/`low`) maps to the workflow's tiered allocation; `execution_llm` / `validation_llm` pin a specific published model for that role. Prefer tiers over hard pins. Full framework: `get_reference_doc(kind="llm-selection")`.
@@ -41,11 +41,11 @@ Only pass a lock field when you are explicitly changing it — passing `lock_lea
 
 - **`validation_schema`** — the only automated gate (set via `update_validation_schema`); catches stale files, missing fields, constraint violations. Every step needs one.
 - **`enabled_skills`** — step-level skill selection (step execution does NOT inherit workflow-selected skills; set explicitly). `enabled_custom_tools`, `selected_servers`, `selected_tools` — narrow the step's tool surface.
-- **`review_notes`** — one-line WHY for non-obvious config (future hardening passes + other reviewers read it). Record it whenever you set learning/KB access or designate a db writer.
+- **`review_notes`** — one-line WHY for non-obvious config (future Pulse and Workshop reviews read it). Record it whenever you set learning/KB access or designate a db writer.
 - **`description_reviewed`**, `coding_agent_tmux_lifecycle`, `transport`, `disable_parallel_tool_execution` — situational.
 
 ### Workflow
 
 1. `update_step_config(step_id, <field>=<value>, ...)` to set; `update_step_config(step_id, clear=["<field>", ...])` to revert to default.
 2. Pair access grants with their prerequisite (`learnings_access: read-write` ⇒ `learning_objective`; KB write ⇒ `knowledgebase_contribution`).
-3. For the harden/replan decision-making that drives most config changes: `get_reference_doc(kind="optimize-playbook")`.
+3. For the reliability/strategy decision-making that drives most config changes: `get_reference_doc(kind="optimize-playbook")`.

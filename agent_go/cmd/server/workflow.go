@@ -3376,7 +3376,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 			name := filepath.Base(item.FilePath)
 			isDir := item.Type == "folder"
 
-			if isDir && strings.HasPrefix(name, "step-") {
+			if isDir && isExecutionLogStepFolder(item, stepMetadata) {
 				stepId := name
 
 				if len(item.Children) > 0 {
@@ -3799,8 +3799,8 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 			name := filepath.Base(item.FilePath)
 			isDir := item.Type == "folder"
 
-			// Case 1: Folder or File named after a step (e.g., execution/step-1/ or execution/step-1)
-			if strings.HasPrefix(name, "step-") {
+			// Case 1: Folder or file named after a declared step ID.
+			if isExecutionOutputStepItem(item, stepMetadata, stepsLogs) {
 				stepId := name
 				entry := getStepEntry(stepId)
 				expectedOutputsStr, _ := entry["context_output"].(string)
@@ -3815,6 +3815,17 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 
 							if childIsDir {
 								continue
+							}
+
+							if childName == "session.json" {
+								if content, exists, _ := readFileFromWorkspace(r.Context(), child.FilePath); exists {
+									var session struct {
+										Status string `json:"status"`
+									}
+									if json.Unmarshal([]byte(content), &session) == nil && strings.TrimSpace(session.Status) != "" {
+										entry["message_sequence_status"] = strings.ToLower(strings.TrimSpace(session.Status))
+									}
+								}
 							}
 
 							// Match against expected outputs
@@ -3902,7 +3913,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 						archivedStepName := filepath.Base(archivedStepFolder.FilePath)
 						archivedStepIsDir := archivedStepFolder.Type == "folder"
 
-						if !archivedStepIsDir || !strings.HasPrefix(archivedStepName, "step-") {
+						if !archivedStepIsDir || !isKnownExecutionStepID(archivedStepName, stepMetadata, stepsLogs) {
 							continue
 						}
 
@@ -4029,6 +4040,67 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+func isKnownExecutionStepID(
+	stepID string,
+	stepMetadata map[string]map[string]string,
+	stepsLogs map[string]map[string]interface{},
+) bool {
+	if _, ok := stepMetadata[stepID]; ok {
+		return true
+	}
+	_, ok := stepsLogs[stepID]
+	return ok
+}
+
+func isExecutionLogStepFolder(
+	item virtualtools.WorkspaceFolderItem,
+	stepMetadata map[string]map[string]string,
+) bool {
+	if item.Type != "folder" {
+		return false
+	}
+
+	name := filepath.Base(item.FilePath)
+	if _, ok := stepMetadata[name]; ok {
+		return true
+	}
+
+	// Keep logs visible even when the plan was replaced after the run. A real
+	// step log directory contains one of these runtime-owned files/folders;
+	// wrapper directories such as "logs" do not.
+	for _, child := range item.Children {
+		childName := filepath.Base(child.FilePath)
+		if child.Type == "folder" && (childName == "execution" || childName == "archived") {
+			return true
+		}
+		if child.Type == "folder" {
+			continue
+		}
+		if strings.HasPrefix(childName, "validation") ||
+			childName == "learning-execution.json" ||
+			childName == "conditional-evaluation.json" ||
+			childName == "decision-evaluation.json" ||
+			childName == "orchestration-execution.json" ||
+			childName == "todo-task-execution.json" {
+			return true
+		}
+	}
+
+	return false
+}
+
+func isExecutionOutputStepItem(
+	item virtualtools.WorkspaceFolderItem,
+	stepMetadata map[string]map[string]string,
+	stepsLogs map[string]map[string]interface{},
+) bool {
+	name := filepath.Base(item.FilePath)
+	if name == "archived" || name == "execution" {
+		return false
+	}
+	return isKnownExecutionStepID(name, stepMetadata, stepsLogs)
 }
 
 // handleGetCosts handles getting cost data (token usage) for workflow runs

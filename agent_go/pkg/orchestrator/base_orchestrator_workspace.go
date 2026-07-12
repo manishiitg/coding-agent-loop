@@ -37,11 +37,6 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 		return "", fmt.Errorf("failed to read file %s: %w", filePath, err)
 	}
 
-	if result.Content == "" {
-		bo.GetLogger().Warn(fmt.Sprintf("ReadWorkspaceFile(%s) failed: no content found", filePath))
-		return "", fmt.Errorf("no content found in workspace response")
-	}
-
 	return result.Content, nil
 }
 

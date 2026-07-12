@@ -45,7 +45,7 @@ Wrong-store usage is the most common silent design error. Check each step's acce
 - **db/db.sqlite — WHAT this run produced.** State, results, rows, plus durable assets under `db/assets/` (with a metadata row). Every step can read+write via `$DB_PATH` (`db_access` defaults read-write; set `read` for pure readers / report-shaping / validation so an accidental write is sandbox-denied). This is the source of truth — results go here, not into files.
 - **knowledgebase/ — reusable DOMAIN knowledge across runs.** Business facts, product/catalog info, portal quirks-as-notes, and user-supplied runtime context/preferences/rules (put those in `knowledgebase/context/context.md`). Opt-in per step via `knowledgebase_access` (`read` to consume, `read-write` + `knowledgebase_contribution` to add notes). NOT for run results (db) and NOT for execution mechanics (learnings).
 - **learnings/ (SKILL.md) — HOW to run the task.** Reusable execution know-how: browser selectors/timing, auth/login flows, tool/MCP/API quirks, CLI/SDK command patterns, parsing/retry/recovery rules. `learnings_access` defaults `read` (the step sees SKILL.md); set `read-write` + a specific `learning_objective` ONLY for steps with reusable execution HOW worth capturing. Routing, validation, mechanical transforms, aggregation, pure readers, and human gates should stay read-only. Not for results (db) or domain facts (kb).
-- **soul.md** — the workflow's long-term purpose/persona (builder-maintained). Reference it for "what is this workflow for."
+- **soul.md** — the workflow's long-term purpose/persona (Workshop-maintained). Reference it for "what is this workflow for."
 
 Decision rule to surface to the user: *results/state → db; cross-run business knowledge → kb; cross-run execution mechanics → learnings.* If a step writes results into kb/learnings, or tries to keep "how to log in" in the db, flag it.
 
@@ -58,7 +58,7 @@ PART 6 — DESIGN LENSES (recommend the better shape, even when nothing is broke
 - **Gate everything** — every produces-output step needs a `validation_schema`; prefer db checks on the source of truth. A gate catches drift the moment it lands, not three steps downstream.
 - **Human gates** — consequential actions (sending messages, spending, medical/legal/irreversible decisions) without a `human_input` step are usually under-gated. Ask whether one belongs.
 - **Naming** — "process_data"/"do_step" are generic; "classify_emails_by_buyer_intent" makes the plan self-documenting.
-- **Mode** — new executable steps default to **agentic**; don't flip a step to scripted on your own. But if the **user explicitly asks** for a scripted step (e.g. to build and test it), set `scripted` — that's their call, and they need it scripted to gather run evidence. The 10+-run determinism bar is for *freezing* it (`lock_code`) / the Optimizer trusting it as the stable fast path, not for honoring a user's request to create one.
+- **Mode** — new executable steps default to **agentic**; don't flip a step to scripted on your own. But if the **user explicitly asks** for a scripted step (e.g. to build and test it), set `scripted` — that's their call, and they need it scripted to gather run evidence. The 10+-run determinism bar is for *freezing* it (`lock_code`) / Workshop trusting it as the stable fast path, not for honoring a user's request to create one.
 
 For each recommendation give: **what's there now** (one quoted sentence), **what to consider** (better shape + concrete example), **why** (which practice it serves).
 

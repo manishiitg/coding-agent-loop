@@ -138,7 +138,7 @@ func TestMessageSequenceTemplateVarsReflectItemWriteAccess(t *testing.T) {
 		Type:        "user_message",
 		WriteAccess: MessageSequenceWriteAccess{DB: true, Knowledgebase: true, Learnings: true},
 	}
-	readPaths, writePaths := hcpo.setupMessageSequenceFolderGuard("step-1", step.GetID(), item.WriteAccess)
+	readPaths, writePaths := hcpo.setupMessageSequenceFolderGuard("step-1", step.GetID(), getAgentConfigs(step), item.WriteAccess)
 	vars := hcpo.buildMessageSequenceTemplateVars(step, item, 0, "step-1", "write the durable notes", readPaths, writePaths, item.WriteAccess)
 
 	if got := vars["KbAccess"]; got != KBAccessReadWrite {
@@ -177,7 +177,7 @@ func TestMessageSequenceTemplateVarsUseEffectiveWriteAccess(t *testing.T) {
 		WriteAccess: MessageSequenceWriteAccess{Learnings: true},
 	}
 	effectiveAccess := MessageSequenceWriteAccess{}
-	readPaths, writePaths := hcpo.setupMessageSequenceFolderGuard("step-1", step.GetID(), effectiveAccess)
+	readPaths, writePaths := hcpo.setupMessageSequenceFolderGuard("step-1", step.GetID(), getAgentConfigs(step), effectiveAccess)
 	vars := hcpo.buildMessageSequenceTemplateVars(step, item, 0, "step-1", "write the durable notes", readPaths, writePaths, effectiveAccess)
 
 	if note := vars["MessageSequenceAccessNote"]; strings.Contains(strings.TrimPrefix(note, "Reads are available for execution outputs, soul, builder logs, db/, knowledgebase/, and learnings/_global/. "), "learnings/_global/") {
@@ -222,5 +222,23 @@ func TestMessageSequenceItemReportedFailure(t *testing.T) {
 				t.Fatalf("reason=%q, want %q", reason, tc.wantReason)
 			}
 		})
+	}
+}
+
+func TestMessageSequenceItemCannotEscalateReadOnlyStorePermissions(t *testing.T) {
+	hcpo := newMessageSequenceClosingTestOrchestrator(t)
+	config := &AgentConfigs{
+		DBAccess:            DBAccessRead,
+		KnowledgebaseAccess: KBAccessRead,
+		LearningsAccess:     LearningsAccessRead,
+	}
+	_, writePaths := hcpo.setupMessageSequenceFolderGuard("step-1", "readonly", config, MessageSequenceWriteAccess{
+		DB: true, Knowledgebase: true, Learnings: true,
+	})
+	joined := strings.Join(writePaths, "\n")
+	for _, forbidden := range []string{"/db", "/knowledgebase/notes", "/learnings/_global"} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("read-only step unexpectedly received write access to %s: %v", forbidden, writePaths)
+		}
 	}
 }

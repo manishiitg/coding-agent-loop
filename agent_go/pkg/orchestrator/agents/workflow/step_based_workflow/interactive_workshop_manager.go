@@ -37,21 +37,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// knownWorkspaceToolNames lists workspace/system tool names that are NOT from MCP servers.
-// Used by analyze_step to distinguish MCP tools from built-in tools in execution logs.
-var knownWorkspaceToolNames = map[string]bool{
-	"execute_shell_command":     true,
-	"diff_patch_workspace_file": true,
-	"read_image":                true,
-	"generate_text_llm":         true,
-	"search_web_llm":            true,
-	"human_feedback":            true,
-	"submit_human_answer":       true,
-	"agent_browser":             true,
-	"search_tools":              true,
-	"add_tool":                  true,
-}
-
 const workshopFixedIteration = "iteration-0"
 
 const workshopLearningScaffoldTemplate = `---
@@ -340,6 +325,12 @@ func findWorkshopStepByID(steps []PlanStepInterface, stepID string) *WorkshopSte
 	return nil
 }
 
+// workshopStepLogFolder mirrors the runtime artifact writer: declared step IDs
+// are the canonical folder names for normal and directly addressed inner steps.
+func workshopStepLogFolder(stepID string) string {
+	return strings.TrimSpace(stepID)
+}
+
 // ============================================================================
 // Complex Step Query Enrichment — lightweight hints for todo_task/orchestration
 // ============================================================================
@@ -378,8 +369,8 @@ func (iwm *InteractiveWorkshopManager) enrichQueryForComplexStep(
 		return ""
 	}
 
-	stepNum := stepInfo.TopIndex
-	logPath := fmt.Sprintf("runs/%s/logs/step-%d/%s", runFolder, stepNum, logFileName)
+	logFolder := workshopStepLogFolder(stepID)
+	logPath := fmt.Sprintf("runs/%s/logs/%s/%s", runFolder, logFolder, logFileName)
 
 	content, err := iwm.controller.ReadWorkspaceFile(ctx, logPath)
 	if err != nil {
@@ -1038,7 +1029,7 @@ func (iwm *InteractiveWorkshopManager) SetToolCallQuery(mainSessionID string, qu
 // Tools are grouped into categories:
 //   - System tools: always included (shell, workspace, non-blocking human notification, virtual tools)
 //   - Workshop execution tools: execute_step, query_step, stop, list, run_in_background
-//   - Step config/tools: update_step_config, harden_workflow, improve_learnings
+//   - Step config/tools: update_step_config, review_step_code
 //   - Plan modification tools: add/update/delete steps, branches, routes
 //   - Variable/config tools: update_variable, groups, workflow config
 //   - Schedule tools: list/create/update/delete schedules
@@ -1085,9 +1076,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 
 	// Step config & analysis tools
 	stepConfig := []string{
-		"update_step_config", "improve_learnings",
-		"harden_workflow", "review_step_code",
-		"analyze_step",
+		"update_step_config", "review_step_code",
 	}
 
 	// LLM config tools — inspect published/available models and save tiered LLM
@@ -1130,23 +1119,12 @@ func GetToolsForWorkshopMode(mode string) []string {
 	}
 
 	// Report tools — manage reports/report_plan.json and validate/preview against real db/ + KB sources.
-	// Available in builder/optimizer/reporting modes. Run mode may read report data
+	// Available in Workshop mode. Run mode may read report data
 	// for answers, but does not author report_plan.json.
 	report := []string{
 		"get_report_plan", "upsert_report_widget", "remove_report_widget", "move_report_widget", "toggle_report_widget",
 		"set_report_theme", "set_section_layout",
 		"validate_report_plan", "preview_report_render",
-	}
-
-	// Knowledgebase write tools — explicit graph/notes mutations. Registered only
-	// in the workflow-builder phase (server.go) and kept out of run mode. Run mode
-	// can read KB/learnings as runtime context, but only gets capture_context for
-	// confirmed user-owned runtime context writes.
-	kb := []string{
-		"improve_kb",
-	}
-	db := []string{
-		"improve_db",
 	}
 
 	// Auto-improvement tools. capture_context is also available in run mode so
@@ -1168,31 +1146,28 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"record_pulse_worklist",
 		"mark_pulse_module_result",
 		"mark_pulse_final_command_result",
+		"mark_changelog_artifact_reviewed",
 	}
 
 	var tools []string
 	tools = append(tools, system...)
 	tools = append(tools, readOnly...)
 
-	// Normalize legacy mode aliases. "builder", "optimizer", and "reporting"
-	// were pre-merge mode names; everything downstream sees only "workshop".
-	// Production callers should already have run mode strings through
-	// normalizeChatHistoryWorkshopMode, but this is a defense-in-depth
-	// safety net so direct callers don't accidentally fall to the default
-	// "no restrictions" branch.
-	switch mode {
-	case "builder", "optimizer", "reporting":
-		mode = "workshop"
+	// Normalize every legacy alias before selecting a tool surface. Production
+	// callers normally do this earlier, but direct callers must not fall through
+	// to an unintended tool set.
+	if canonical := canonicalWorkshopMode(mode); canonical != "" {
+		mode = canonical
 	}
 
 	switch mode {
 	case "workshop":
-		// WORKSHOP: merged builder + optimizer. Full toolkit for designing,
-		// running, evaluating, hardening, and evolving a workflow. The agent
+		// WORKSHOP: full toolkit for designing,
+		// running, evaluating, reviewing, and evolving a workflow. The agent
 		// derives the current "phase" from workspace state (does a plan
 		// exist? are there successful runs?) and uses the appropriate tools.
-		// Tools that only make sense post-runs (harden_workflow,
-		// harden, eval, and plan-edit tools are present here; their
+		// Tools that only make sense post-runs (Bug Review,
+		// eval, and plan-edit tools are present here; their
 		// downstream agents check evidence and refuse
 		// when state isn't ready.
 		tools = append(tools, execution...)
@@ -1206,13 +1181,10 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "run_full_workflow")
 		tools = append(tools, "review_plan")
 		tools = append(tools, "review_artifact_sync")
-		tools = append(tools, "review_workflow_results")
 		tools = append(tools, "review_workflow_timing")
 		tools = append(tools, "review_workflow_costs")
 		tools = append(tools, eval...)
 		tools = append(tools, report...)
-		tools = append(tools, kb...)
-		tools = append(tools, db...)
 		tools = append(tools, autoImprovement...)
 		tools = append(tools, pulseState...)
 		tools = append(tools, "get_reference_doc")
@@ -1221,7 +1193,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		// RUN: deployed/user-facing runtime for workflow-backed work, Slack, WhatsApp,
 		// and direct operational requests. It can answer directly from workflow state,
 		// run individual steps including orphan utility steps, or run the full workflow.
-		// No plan changes, no optimization, no config changes, no harden — that's
+		// No plan changes, no optimization, and no config changes — those belong to
 		// Workshop.
 		// The only framework mutation allowed here is capture_context after user
 		// confirmation, so context learned during a run is not lost.
@@ -1230,7 +1202,6 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "run_full_workflow")
 		tools = append(tools, "debug_step")
 		tools = append(tools, "review_plan")
-		tools = append(tools, "review_workflow_results")
 		tools = append(tools, "review_workflow_timing")
 		tools = append(tools, "review_workflow_costs")
 		tools = append(tools, "get_workflow_command_guidance") // /review-* commands need this even in run mode
@@ -1248,8 +1219,6 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, llmConfig...)
 		tools = append(tools, eval...)
 		tools = append(tools, report...)
-		tools = append(tools, kb...)
-		tools = append(tools, db...)
 		tools = append(tools, "debug_step")
 	}
 
@@ -1294,8 +1263,7 @@ func optimizerToolAgentAllowedToolNames() []string {
 		"list_skills", "search_skills", "list_published_llms", "list_provider_models",
 
 		// Step/config analysis and maintenance.
-		"update_step_config", "improve_learnings", "analyze_step", "debug_step",
-		"improve_kb", "improve_db",
+		"update_step_config", "debug_step",
 
 		// Plan and validation tools.
 		"create_plan",
@@ -1520,7 +1488,7 @@ func (iwm *InteractiveWorkshopManager) registerMarkChangelogArtifactReviewedTool
 	}
 	return mcpAgent.RegisterCustomTool(
 		"mark_changelog_artifact_reviewed",
-		"Mark planning/changelog entries as fully inspected by Artifact Review. This is the only supported way for review_artifact_sync to set artifact_review.done=true; do not edit changelog JSON directly.",
+		"Mark planning/changelog entries as fully inspected after the parent Pulse/workshop agent has recorded the Artifact Review in builder/improve.html. Read-only reviewers, including review_artifact_sync, must only propose exact marks and must not call this tool. This is the only supported way to set artifact_review.done=true; do not edit changelog JSON directly.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1668,23 +1636,31 @@ func (iwm *InteractiveWorkshopManager) markChangelogArtifactReviewed(ctx context
 	return fmt.Sprintf("Marked %d changelog %s artifact_review.done=true across %d file(s): %s", totalMarked, entryWord, len(touchedFiles), strings.Join(touchedFiles, ", ")), nil
 }
 
-// detectWorkshopMode returns the default workshop mode when the frontend has not
-// provided an explicit mode override. Builder is the conservative default for
-// editable workflow sessions, while Run/Optimizer/Reporting are explicit user
-// choices.
-func detectWorkshopMode(plan *PlanningResponse, stepConfigs []StepConfig) string {
-	if plan == nil || len(plan.Steps) == 0 {
-		return "builder"
+// canonicalWorkshopMode keeps this package aligned with server-side chat-history
+// normalization. Legacy editable-mode names all mean the unified Workshop mode.
+func canonicalWorkshopMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "workshop", "builder", "optimizer", "reporting", "eval", "output":
+		return "workshop"
+	case "run", "ask", "debugger", "runner":
+		return "run"
+	default:
+		return ""
 	}
-	return "builder"
+}
+
+// detectWorkshopMode returns the editable Workshop default when the frontend
+// has not provided an explicit Run override.
+func detectWorkshopMode(plan *PlanningResponse, stepConfigs []StepConfig) string {
+	return "workshop"
 }
 
 func (iwm *InteractiveWorkshopManager) currentWorkshopModeFromConfigs(stepConfigs []StepConfig) string {
 	if iwm == nil {
-		return "builder"
+		return "workshop"
 	}
-	if iwm.workshopModeOverride != "" {
-		return iwm.workshopModeOverride
+	if mode := canonicalWorkshopMode(iwm.workshopModeOverride); mode != "" {
+		return mode
 	}
 	mode := detectWorkshopMode(iwm.controller.approvedPlan, stepConfigs)
 	return mode
@@ -1728,8 +1704,8 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 
 	// Use the run folder passed from the frontend toolbar selection (if any).
 	// Workshop mode is pinned to iteration-0, so normalize any incoming selection.
-	// If empty, leave selectedRunFolder unset outside builder mode.
-	if iwm.workshopModeOverride == "builder" {
+	// If empty, leave selectedRunFolder unset outside Workshop mode.
+	if canonicalWorkshopMode(iwm.workshopModeOverride) == "workshop" {
 		runFolder = normalizeWorkshopBuilderRunFolder(runFolder)
 	}
 	if runFolder != "" {
@@ -1770,12 +1746,12 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 	// Default user goal — in chat mode the user provides goals via conversation messages
 	userGoal := "Help me build, run, and optimize the workflow steps."
 
-	// Default workshop mode; explicit frontend overrides select Run/Optimizer/Reporting.
+	// Default workshop mode; an explicit frontend override may select Run.
 	workshopMode := detectWorkshopMode(iwm.controller.approvedPlan, stepConfigs)
 	iwm.controller.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Default mode: %s", workshopMode))
 	// Apply frontend override if set
-	if iwm.workshopModeOverride != "" {
-		workshopMode = iwm.workshopModeOverride
+	if mode := canonicalWorkshopMode(iwm.workshopModeOverride); mode != "" {
+		workshopMode = mode
 		iwm.controller.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Frontend override applied: %s", workshopMode))
 	}
 
@@ -1838,8 +1814,8 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 
 // createInteractiveWorkshopAgent creates the workshop agent following the createExecutionDebuggerAgent pattern
 // workshopWritePaths returns the explicit per-subfolder write allow-list shared
-// by the workshop main agent and every workshop sub-agent (harden_workflow,
-// harden/improve background tasks). Keeping writes confined to
+// by the workshop main agent and every workshop sub-agent (review agents,
+// maintenance background tasks). Keeping writes confined to
 // these subfolders means a builder can't `cat > planning/plan.json` via shell
 // or `diff_patch_workspace_file` and bypass the plan-mod tools that validate
 // schemas and emit events. Workspace-root config files (workflow.json,
@@ -2018,18 +1994,18 @@ The person you talk to is almost always a **business owner / operator, not a dev
 - **Ask simple questions.** When you need a decision, ask one plain question with the trade-off in business terms; don't surface technical options.
 - Keep the detail and precision **in the artifacts you build** (step descriptions, code, schemas) — that's where rigor belongs. The chat stays simple. Go technical in chat only when the user does, or when you must confirm a concrete change before applying it.
 
-**Before doing anything else, read `+"`soul/soul.md`"+`.** This is the canonical source of truth for stable intent: objective, success criteria, and only explicit user-approved durable constraints. Ground every decision — design, run, debug, harden, or report — in that intent. Architecture, current step design, provider/tool/model choices, historical decisions, references, and agent-inferred assumptions are revisable and must not be written into soul.md. If the file is missing or empty, ask the user what the workflow is for before proceeding.
+**Before doing anything else, read `+"`soul/soul.md`"+`.** This is the canonical source of truth for stable intent: objective, success criteria, and only explicit user-approved durable constraints. Ground every decision — design, run, debug, repair, or report — in that intent. Architecture, current step design, provider/tool/model choices, historical decisions, references, and agent-inferred assumptions are revisable and must not be written into soul.md. If the file is missing or empty, ask the user what the workflow is for before proceeding.
 
 ## CURRENT MODE: {{if eq .WorkshopMode "workshop"}}WORKSHOP{{else}}RUN{{end}}
 
 {{if eq .WorkshopMode "workshop"}}
 **First, determine the current phase from workspace state.** Read `+"`planning/plan.json`"+` (does a plan exist?) and `+"`runs/`"+` (any successful runs?) and choose your default behavior accordingly:
 
-- **No plan / incomplete plan** → DESIGN phase. Talk through the workflow before adding steps. Use plan modification tools to build it out step by step. Set new steps to `+"`agentic`"+`. Do NOT call `+"`harden_workflow`"+` or eval tools — these need run evidence to be meaningful.
-- **Plan exists, no successful runs yet** → STABILIZE phase. Use `+"`execute_step`"+` and `+"`run_full_workflow`"+` to find and fix problems. Update step descriptions, validation, config. Hardening / strategy changes still don't apply yet — there's no evidence to base them on.
-- **Plan + successful runs** → HARDEN / IMPROVE phase. `+"`harden_workflow`"+`, eval tools, report tools, and normal plan modification tools become available. Use evidence from `+"`runs/`"+` and `+"`evaluation/`"+` to drive decisions. For strategy changes in scheduled Pulse/Goal Advisor, create an approval card with `+"`create_human_input_request`"+`; in active manual workshop chat, apply only bounded evidence-backed plan changes the user is asking for.
+- **No plan / incomplete plan** → DESIGN phase. Talk through the workflow before adding steps. Use plan modification tools to build it out step by step. Set new steps to `+"`agentic`"+`. Do not run Pulse maintenance or eval tools — these need run evidence to be meaningful.
+- **Plan exists, no successful runs yet** → STABILIZE phase. Use `+"`execute_step`"+` and `+"`run_full_workflow`"+` to find and fix problems. Update step descriptions, validation, config. Broad strategy changes still do not apply yet — there is no evidence to base them on.
+- **Plan + successful runs** → REVIEW / IMPROVE phase. Use Pulse Bug Review, read-only improve reviewers, the parent fixer, eval/report tools, and normal plan modification tools. Use evidence from `+"`runs/`"+` and `+"`evaluation/`"+` to drive decisions. Strategy changes require the existing approval-card flow unless the user explicitly requests a bounded manual edit.
 
-Until you've checked, do not assume the workflow needs hardening or fresh design.
+Until you have checked, do not assume the workflow needs repair or fresh design.
 {{end}}
 {{.SpecialWorkspaceToolsInstructions}}
 
@@ -2048,7 +2024,7 @@ Users may reach this workflow through Slack, WhatsApp, or another bot channel. T
 
 The workflow has a **live frontend report viewer** at the top toolbar's "Report" tab. It reads `+"`reports/report_plan.json`"+` and renders the **HTML document(s)** registered there — each an HTML file under `+"`db/reports/`"+`. There is no widget grammar and no other format: a report is HTML. It reads `+"`db/db.sqlite`"+` live via the `+"`window.report`"+` API and renders its own charts/tables/branded visuals. **No separate "generate report" phase** — author the document **once**; HTML reads live data on view, so there is nothing to regenerate per run.
 
-{{if eq .WorkshopMode "workshop"}}**Workshop owns `+"`reports/report_plan.json`"+`** — author the HTML document(s) and register them with the report-plan tools (`+"`get_report_plan`"+` / `+"`upsert_report_widget`"+` (kind `+"`file`"+`, `+"`renderFormat`"+` `+"`html`"+`) / etc.). Keep report edits presentation-only unless the user also asked for workflow hardening/eval changes. A report is HTML: it reads `+"`db/db.sqlite`"+` live via `+"`window.report.query(sql)`"+` and renders its own visuals — start from the `+"`html-output`"+` skeleton so even a simple narrative report is quick and consistent. Author the file ONCE and wire it to read data live — do NOT add a step that regenerates the report each run, and do NOT bake live data into the HTML as static text. For per-entity reports (per-PAN, per-route) use a tabbed section: one HTML document per entity via `+"`set_section_layout(mode=\"tabs\")`"+` + `+"`tab`"+`. For the full policy (`+"`window.report`"+` API, tabbed layout, "No report yet" diagnosis, auto-refresh discipline): `+"`get_reference_doc(kind=\"reporting-policy\")`"+`.
+{{if eq .WorkshopMode "workshop"}}**Workshop owns `+"`reports/report_plan.json`"+`** — author the HTML document(s) and register them with the report-plan tools (`+"`get_report_plan`"+` / `+"`upsert_report_widget`"+` (kind `+"`file`"+`, `+"`renderFormat`"+` `+"`html`"+`) / etc.). Keep report edits presentation-only unless the user also asked for workflow reliability/eval changes. A report is HTML: it reads `+"`db/db.sqlite`"+` live via `+"`window.report.query(sql)`"+` and renders its own visuals — start from the `+"`html-output`"+` skeleton so even a simple narrative report is quick and consistent. Author the file ONCE and wire it to read data live — do NOT add a step that regenerates the report each run, and do NOT bake live data into the HTML as static text. For per-entity reports (per-PAN, per-route) use a tabbed section: one HTML document per entity via `+"`set_section_layout(mode=\"tabs\")`"+` + `+"`tab`"+`. For the full policy (`+"`window.report`"+` API, tabbed layout, "No report yet" diagnosis, auto-refresh discipline): `+"`get_reference_doc(kind=\"reporting-policy\")`"+`.
 {{else}}**Run mode does not author reports.** If the user asks to create/edit the report, themes, tabs, or `+"`reports/report_plan.json`"+`, tell them to switch to Workshop. Do not edit `+"`reports/report_plan.json`"+` via shell from Run mode. For policy details: `+"`get_reference_doc(kind=\"reporting-policy\")`"+`.
 {{end}}
 
@@ -2074,7 +2050,7 @@ You may maintain the live frontend report (`+"`reports/report_plan.json`"+`) so 
 {{if eq .WorkshopMode "workshop"}}
 ### Evaluation plan — evaluation/evaluation_plan.json (brief)
 
-Workshop owns the eval plan: write it, validate it, run it against `+"`iteration-0`"+`, and keep it sharp as you harden the workflow. Each eval step needs `+"`id`"+` + `+"`title`"+` + `+"`description`"+`; eval step IDs must NOT collide with execution-plan step IDs (both share `+"`learnings/{stepID}/`"+`). **Evals measure GOAL achievement against `+"`soul.md`"+` success criteria — one eval step per criterion; Pulse triage and `+"`pre_validation`"+` own operational checks (file-exists/format/step-ran), so never duplicate those in eval.** Compute facts in code, judge the verdict against the criterion: fully scripted only for contract-anchored mechanical checks, agentic with a frozen rubric for subjective quality. Eval runs after every execution, so keep it cheap: few steps, low tiers for extraction, route gating. A good eval must **catch fake/placeholder/empty data and score 0** (cross-checked against the source artifact), not pass just because a field is non-empty; ground scoring in the real run via `+"`{{\"{{TARGET_RUN_PATH}}\"}}`"+` + `+"`db/db.sqlite`"+`. After every edit, call `+"`validate_evaluation_plan`"+`; to test, call `+"`run_full_evaluation(group_name=\"...\")`"+` (always targets `+"`iteration-0`"+`).
+Workshop owns the eval plan: write it, validate it, run it against `+"`iteration-0`"+`, and keep it aligned as the workflow evolves. Each eval step needs `+"`id`"+` + `+"`title`"+` + `+"`description`"+`; eval step IDs must NOT collide with execution-plan step IDs (both share `+"`learnings/{stepID}/`"+`). **Evals measure GOAL achievement against `+"`soul.md`"+` success criteria — one eval step per criterion; Pulse Gate/Bug Review and `+"`pre_validation`"+` own operational checks (file-exists/format/step-ran), so never duplicate those in eval.** Compute facts in code, judge the verdict against the criterion: fully scripted only for contract-anchored mechanical checks, agentic with a frozen rubric for subjective quality. Eval runs after every execution, so keep it cheap: few steps, low tiers for extraction, route gating. A good eval must **catch fake/placeholder/empty data and score 0** (cross-checked against the source artifact), not pass just because a field is non-empty; ground scoring in the real run via `+"`{{\"{{TARGET_RUN_PATH}}\"}}`"+` + `+"`db/db.sqlite`"+`. After every edit, call `+"`validate_evaluation_plan`"+`; to test, call `+"`run_full_evaluation(group_name=\"...\")`"+` (always targets `+"`iteration-0`"+`).
 
 Files: plan at `+"`evaluation/evaluation_plan.json`"+`, per-step config at `+"`evaluation/step_config.json`"+`, eval runs/reports at `+"`evaluation/runs/iteration-0[/group]/`"+`.
 
@@ -2096,7 +2072,7 @@ If the user wants to change what gets stored, how db files are shaped, or how KB
 {{else}}
 ## Three persistent stores
 
-Each workflow has three separate stores that survive across runs: `+"`learnings/_global/SKILL.md`"+` (HOW to run the task — selectors, API quirks, timing), `+"`knowledgebase/`"+` (business context + per-topic narrative notes), `+"`db/db.sqlite`"+` (workflow output state in SQLite tables — the only place HTML reports read live data from, via `+"`window.report.query`"+`). Hard rule: declare every table's PRIMARY KEY + upsert rule in `+"`db/README.md`"+` BEFORE writing. KB and per-step learning writes are opt-in via step config. For the full design contract (write rules, decision tree, schema discipline, opt-in questions, run-time grounding): `+"`get_reference_doc(kind=\"stores\")`"+` — load before designing or hardening any step that writes to db/, KB, or learnings.
+Each workflow has three separate stores that survive across runs: `+"`learnings/_global/SKILL.md`"+` (HOW to run the task — selectors, API quirks, timing), `+"`knowledgebase/`"+` (business context + per-topic narrative notes), `+"`db/db.sqlite`"+` (workflow output state in SQLite tables — the only place HTML reports read live data from, via `+"`window.report.query`"+`). Hard rule: declare every table's PRIMARY KEY + upsert rule in `+"`db/README.md`"+` BEFORE writing. KB and per-step learning writes are opt-in via step config. For the full design contract (write rules, decision tree, schema discipline, opt-in questions, run-time grounding): `+"`get_reference_doc(kind=\"stores\")`"+` — load before designing or repairing any step that writes to db/, KB, or learnings.
 {{end}}
 
 
@@ -2104,13 +2080,13 @@ Each workflow has three separate stores that survive across runs: `+"`learnings/
 {{end}}
 
 {{if eq .WorkshopMode "workshop"}}
-**WORKSHOP MODE** — Design, run, evaluate, harden, and evolve the plan as a single mode. The agent decides the right action from workspace state (see the phase-detection directive near the top of this prompt). Make existing steps reliable across all groups and runs; build new steps when the plan needs extending.
+**WORKSHOP MODE** — Design, run, evaluate, repair, and evolve the plan as a single mode. The agent decides the right action from workspace state (see the phase-detection directive near the top of this prompt). Make existing steps reliable across all groups and runs; build new steps when the plan needs extending.
 
 **Foundation check:** verify `+"`soul/soul.md`"+` has both `+"`## Objective`"+` and `+"`## Success Criteria`"+` sections. If either is missing, ask the user and write via shell. Keep soul.md limited to stable intent; the current architecture and implementation belong in plan/config and remain open to improvement. `+"`planning/plan.json`"+` no longer stores root objective/success fields.
 
 **Read previous builder conversations** from `+"`builder/`"+` folder (`+"`ls -t builder/*.json | head -3`"+`) to avoid repeating failed approaches.
 
-**Core loop:** run → eval → classify → act → verify. Treat harden, approved plan change/proposal, eval improvement, and no-action/blocker as peer outcomes. For the full playbook (harden_workflow details, optimization workflow steps, progressive hardening loop across groups, when-to-redirect decision tree): `+"`get_reference_doc(kind=\"workshop-mode-flow\")`"+`. Load before choosing between harden_workflow, plan-change proposal/application, or before running a multi-group hardening loop.
+**Core loop:** run → eval → classify → review → fix → verify. Treat Bug Review, approved plan change/proposal, eval improvement, and no-action/blocker as peer outcomes. Load `+"`get_reference_doc(kind=\"post-run-monitor\")`"+` for the parallel read-only reviewer and single Pulse Fixer contract.
 {{else}}
 **RUN MODE** — You're chatting with a workflow that's already been built and tuned. Most of the time you'll be running it and answering questions about results, often over WhatsApp / Slack / a phone screen rather than a desktop terminal.
 
@@ -2158,7 +2134,7 @@ The user here is usually **non-technical** — a stakeholder, a teammate, an end
 - **Show the report**: if the user asks to "see the dashboard" or "show me the numbers", tell them to open the **Report tab**. The report is rendered live; you don't generate it.
 
 ### What's blocked here
-Plan / config / learnings / evaluation design / knowledgebase / the report. If the user wants to change *what the workflow does* or *what the report looks like*, tell them which mode handles that — Workshop for design, report, and hardening changes — and offer to switch when they're ready. Don't try to make those changes from Run.
+Plan / config / learnings / evaluation design / knowledgebase / the report. If the user wants to change *what the workflow does* or *what the report looks like*, tell them which mode handles that — Workshop for design, report, and reliability changes — and offer to switch when they are ready. Do not try to make those changes from Run.
 
 ### When something fails
 - Don't paste stack traces. Read the error, translate it: "the login page didn't load — looks like a temporary network issue" or "the Excel file we expected isn't there yet".
@@ -2215,18 +2191,18 @@ For the full 6-step execution procedure (run / handle human_input / wait / succe
 
 When a step doesn't do what it should — wrong output, missing actions, incomplete results — **don't just re-run it**. You have a smarter model — use it to investigate.
 
-{{if eq .WorkshopMode "workshop"}}**Workshop:** harden / bounded plan edit / manual edit per the workshop investigation workflow. When a step is stuck or repeatedly failing, run the task yourself using the same tools the step agent would use, after reading `+"`learnings/_global/SKILL.md`"+`; figure out what works, then update the step. **Act, don't just analyze.**
+{{if eq .WorkshopMode "workshop"}}**Workshop:** bounded reliability fix / plan edit / manual edit per the workshop investigation workflow. When a step is stuck or repeatedly failing, run the task yourself using the same tools the step agent would use, after reading `+"`learnings/_global/SKILL.md`"+`; figure out what works, then update the step. **Act, don't just analyze.**
 {{else}}**Run mode:** inspect via `+"`query_step`"+` (live) / `+"`debug_step`"+` (completed) / `+"`list_executions`"+`; explain the likely fix in plain English. Do not mutate plan/config/learnings/KB/report/eval here — redirect those to Workshop.
 {{end}}
 
-For the full debugging playbook (workshop vs run investigation workflow steps, root-cause → fix mapping table, fix options per mode): `+"`get_reference_doc(kind=\"debugging-flow\")`"+`. Load when a step has failed or is stuck and you need to decide between retry / manual fix / harden_workflow / plan change / mode switch.
+For the full debugging playbook (workshop vs run investigation workflow steps, root-cause → fix mapping table, fix options per mode): `+"`get_reference_doc(kind=\"debugging-flow\")`"+`. Load when a step has failed or is stuck and you need to decide between retry, Pulse Bug Review/Fixer, plan change, or mode switch.
 
 {{if eq .WorkshopMode "workshop"}}
 ## Optimization
 
 Priority order when reviewing a step: (1) Correctness — description precision, validation schema completeness, context I/O wiring. (2) Knowledge — learnings quality, lock lifecycle. (3) Efficiency — tool-call waste, workflow structure (merge/split/reorder).
 
-	Hard rules: `+"`validation_schema`"+` is the only automated gate (catch stale files, field completeness, constraints); default `+"`learnings_access`"+` = `+"`\"read\"`"+`; use `+"`\"read-write\"`"+` + `+"`learning_objective`"+` only for reusable execution HOW (browser selectors/timing/auth, API/MCP quirks, CLI/SDK command patterns, parsing/retry/recovery rules). Routing, validation, mechanical transforms, aggregation/report shaping, human approval, pure db/KB readers, and mature scripted steps should usually stay read-only. `+"`db_access`"+` defaults to `+"`\"read-write\"`"+` (every step can read+write `+"`db/db.sqlite`"+` via `+"`$DB_PATH`"+`); set `+"`\"read\"`"+` for least-privilege steps that must never mutate the db (pure readers, report-shaping/aggregation, validation) so an accidental write is sandbox-denied. `+"`lock_learnings=true`"+` is a deliberate builder/user decision, never a runtime side effect; `+"`lock_code=true`"+` only after user-explicit scripted + 10+ scenario-covering runs; workshop-created steps arrive as `+"`agentic`"+`, promote to `+"`scripted`"+` only with explicit ask + determinism + 10+ runs. Three locks: `+"`lock_learnings`"+` (per-step, freezes SKILL.md), `+"`lock_code`"+` (per-step scripted, freezes main.py), `+"`lock_knowledgebase`"+` (workflow-wide, freezes notes/ auto-updates).
+	Hard rules: `+"`validation_schema`"+` is the only automated gate (catch stale files, field completeness, constraints); default `+"`learnings_access`"+` = `+"`\"read\"`"+`; use `+"`\"read-write\"`"+` + `+"`learning_objective`"+` only for reusable execution HOW (browser selectors/timing/auth, API/MCP quirks, CLI/SDK command patterns, parsing/retry/recovery rules). Routing, validation, mechanical transforms, aggregation/report shaping, human approval, pure db/KB readers, and mature scripted steps should usually stay read-only. `+"`db_access`"+` defaults to `+"`\"read-write\"`"+` (every step can read+write `+"`db/db.sqlite`"+` via `+"`$DB_PATH`"+`); set `+"`\"read\"`"+` for least-privilege steps that must never mutate the db (pure readers, report-shaping/aggregation, validation) so an accidental write is sandbox-denied. `+"`lock_learnings=true`"+` is a deliberate Workshop/user decision, never a runtime side effect; `+"`lock_code=true`"+` only after user-explicit scripted + 10+ scenario-covering runs; workshop-created steps arrive as `+"`agentic`"+`, promote to `+"`scripted`"+` only with explicit ask + determinism + 10+ runs. Three locks: `+"`lock_learnings`"+` (per-step, freezes SKILL.md), `+"`lock_code`"+` (per-step scripted, freezes main.py), `+"`lock_knowledgebase`"+` (workflow-wide, freezes notes/ auto-updates).
 
 For the full playbook (validation design, learning config, three-locks decision tree, scripted debugging, mode promotion gates, evidence-based locking, orchestrator design + fast path, KB curation modes): `+"`get_reference_doc(kind=\"optimize-playbook\")`"+`. For the per-step config knobs themselves — all store-access modes (`+"`learnings_access`"+` / `+"`knowledgebase_access`"+` / `+"`db_access`"+`), the three locks, execution mode/tier/model, and `+"`update_step_config`"+`/clear usage — load `+"`get_reference_doc(kind=\"step-config\")`"+`. When patching `+"`learnings/{step-id}/main.py`"+`: also load `+"`code-authoring`"+`.
 {{end}}
@@ -2241,13 +2217,14 @@ This is the one-line-per-category map. For full signatures, parameters, when-to-
 {{if or (eq .WorkshopMode "workshop") (eq .WorkshopMode "run")}}
 - **Step execution & inspection**: `+"`execute_step`"+`, `+"`query_step`"+`, `+"`debug_step`"+`, `+"`list_executions`"+`, `+"`stop_step`"+`, `+"`stop_all_executions`"+`, `+"`run_in_background`"+`, `+"`run_full_workflow`"+`. {{if eq .WorkshopMode "workshop"}}Workshop also exposes `+"`execute_step(..., fast_path_only=true)`"+` for scripted main.py fast-path testing.{{end}}
 {{end}}{{if eq .WorkshopMode "workshop"}}
-- **Step config & analysis**: `+"`update_step_config`"+`, `+"`harden_workflow`"+`, `+"`run_goal_advisor_review`"+`, `+"`review_workflow_results`"+`, `+"`review_workflow_timing`"+`, `+"`review_workflow_costs`"+`, `+"`get_cost_summary`"+`. Objective + success criteria live in `+"`soul/soul.md`"+` — edit via shell, no dedicated tool. `+"`harden_workflow`"+` requires `+"`get_reference_doc(kind=\"optimize-playbook\")`"+` first. Scheduled Pulse should call `+"`run_goal_advisor_review`"+` for strategic review instead of doing that expensive work inline. Strategy changes use normal plan tools only after user approval or during an explicit manual workshop improvement request.
+- **Step config & analysis**: `+"`update_step_config`"+`, read-only improve/review tools, `+"`review_workflow_timing`"+`, `+"`review_workflow_costs`"+`, and `+"`get_cost_summary`"+`. Objective + success criteria live in `+"`soul/soul.md`"+`. Pulse uses parallel read-only reviewers and one parent Pulse Fixer. Strategy changes use normal plan tools only after approval or during an explicit bounded manual request.
+- **Strategy review & decisions**: `+"`run_goal_advisor_review`"+` runs the dedicated advisor/critic/finalizer pipeline for a manual workshop review. Use `+"`create_human_input_request`"+` for durable approval/clarification cards; scheduled Pulse renders them in `+"`builder/improve.html`"+`.
 {{end}}
 - **Read-only info**: `+"`get_step_prompts`"+`, `+"`get_workflow_config`"+`, `+"`get_llm_config`"+`{{if eq .WorkshopMode "workshop"}}, `+"`get_workflow_command_guidance(kind=\"review-artifact-drift\")`"+`{{else}}. Artifact drift reviews belong in Workshop — switch modes and run `+"`/review-artifact-drift`"+` if needed{{end}}.
 {{if eq .WorkshopMode "workshop"}}
 - **Plan modification**: `+"`create_plan`"+`, `+"`add_<type>_step`"+`, `+"`update_<type>_step`"+`, `+"`delete_plan_steps`"+`, `+"`cleanup_orphan_step_configs`"+`, todo-task route tools, `+"`update_validation_schema`"+`.
 - **Variables & config**: `+"`update_variable`"+`, `+"`add_group`"+`/`+"`update_group`"+`/`+"`delete_group`"+`, `+"`update_workflow_config`"+`. Use `+"`update_workflow_config`"+` for workflow MCP servers, workflow-level MCP tool allowlists, selected skills, selected secrets, browser_mode, KB lock, run retention, and the per-run monitor (`+"`post_run_monitor`"+`). Do NOT edit `+"`workflow.json`"+` manually.
-- **Schedule management**: `+"`list_schedules`"+`, `+"`create_schedule`"+`, `+"`create_calendar_schedule`"+`, `+"`update_schedule`"+`, `+"`delete_schedule`"+`, `+"`trigger_schedule`"+`, `+"`get_schedule_runs`"+`. Cron / message-authoring rules, workshop run vs optimizer scheduling, the `+"`/goal-advisor`"+` setup path, infinite-loop prevention rules, and unattended-message discipline — all live in the `+"`workflow-tools`"+` ref doc. Workflow schedules always use the workshop path; do not create direct `+"`mode=\"workflow\"`"+` schedules. **Whenever you create a recurring schedule, also pair it with a backup** so unattended runs persist their state off-box — see `+"`get_reference_doc(kind=\"backup-strategy\")`"+`.
+- **Schedule management**: `+"`list_schedules`"+`, `+"`create_schedule`"+`, `+"`create_calendar_schedule`"+`, `+"`update_schedule`"+`, `+"`delete_schedule`"+`, `+"`trigger_schedule`"+`, `+"`get_schedule_runs`"+`. Cron / message-authoring rules, normal Run schedules plus Pulse, the `+"`/goal-advisor`"+` setup path, and unattended-message discipline — all live in the `+"`workflow-tools`"+` ref doc. Workflow schedules always use the workshop path; do not create direct `+"`mode=\"workflow\"`"+` schedules. **Whenever you create a recurring schedule, also pair it with a backup** so unattended runs persist their state off-box — see `+"`get_reference_doc(kind=\"backup-strategy\")`"+`.
 {{end}}
 - **Shell & discovery**: `+"`execute_shell_command`"+`, `+"`diff_patch_workspace_file`"+`, `+"`read_image`"+`, `+"`generate_text_llm`"+`, `+"`search_web_llm`"+`.
 - **Notify the user**: `+"`notify_user`"+` sends a non-blocking message to the user's connected channels (Slack / WhatsApp / email) — use it for FYIs, progress, alerts, or completion notices when you do not need a reply. If you need an answer in builder chat, ask in your normal response; workflow runtime steps can use configured human-input tools during execution. For email it accepts `+"`email_subject`"+`, an HTML body (`+"`email_html`"+` or `+"`email_html_file`"+`), and `+"`email_attachments`"+`. It returns per-channel delivery status — report failures honestly. Workflow STEPS can also message the user this way: keep `+"`human_tools`"+` in the step's `+"`enabled_custom_tools`"+` (it's in the default set) and have the step call `+"`notify_user`"+`.
@@ -2309,6 +2286,9 @@ func (agent *WorkflowInteractiveWorkshopAgent) Execute(ctx context.Context, temp
 
 	// Register custom workshop tools (execute_step, query_step, stop_step, update_step_config)
 	registerInteractiveWorkshopTools(iwm, mcpAgentRef, logger)
+	if err := iwm.registerMarkChangelogArtifactReviewedTool(mcpAgentRef, workspacePath, logger); err != nil {
+		logger.Warn(fmt.Sprintf("Failed to register changelog artifact-review marker tool: %v", err))
+	}
 
 	// Update the code execution registry for CLI providers.
 	if agent.GetConfig().UseCodeExecutionMode {
@@ -2810,7 +2790,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					messageSequenceRestart = b
 				}
 			}
-			if fastPathOnly && iwm.currentWorkshopModeFromConfigs(nil) == "builder" {
+			if fastPathOnly && iwm.currentWorkshopModeFromConfigs(nil) == "workshop" {
 				return "fast_path_only requires a scripted step. Workshop mode tests steps through agentic with execute_step(step_id, group_name) and leaves scripted main.py fast-path debugging to Workshop mode.", nil
 			}
 
@@ -3490,7 +3470,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				if strings.HasPrefix(execID, "bg-") {
 					return fmt.Sprintf("Background task %q completed.\n\n%s", stepID, result), nil
 				}
-				return fmt.Sprintf("Step %q completed.\nexecution_id: %s\n\n%s\n\n**Next actions (do these now):**\n1. Review the result against the step's success criteria\n2. Read shared workflow guidance: 'cat learnings/_global/SKILL.md'. If this is a scripted step, also inspect 'cat learnings/%s/main.py'.\n3. Check learning metadata: 'cat learnings/%s/.learning_metadata.json'. If the builder/user decides this step should stop writing SKILL.md, set lock_learnings=true intentionally with review_notes. For scripted, lock_code requires explicit user intent plus 10+ scenario-covering successful runs.\n4. Note the highest-priority optimization from Post-Execution Step Review.\n5. If output looks wrong, investigate with debug_step(%q) or analyze_step(%q) and fix the root cause before re-running.", stepID, execID, result, stepID, stepID, stepID, stepID), nil
+				return fmt.Sprintf("Step %q completed.\nexecution_id: %s\n\n%s\n\n**Next actions (do these now):**\n1. Review the result against the step's success criteria\n2. Read shared workflow guidance: 'cat learnings/_global/SKILL.md'. If this is a scripted step, also inspect 'cat learnings/%s/main.py'.\n3. Check learning metadata: 'cat learnings/%s/.learning_metadata.json'. If the Workshop user decides this step should stop writing SKILL.md, set lock_learnings=true intentionally with review_notes. For scripted, lock_code requires explicit user intent plus 10+ scenario-covering successful runs.\n4. Note the highest-priority optimization from Post-Execution Step Review.\n5. If output looks wrong, investigate with debug_step(%q) and fix the root cause before re-running.", stepID, execID, result, stepID, stepID, stepID), nil
 			case WorkshopStepFailed:
 				if strings.HasPrefix(execID, "bg-") {
 					return fmt.Sprintf("Background task %q failed: %v", stepID, execErr), nil
@@ -3618,11 +3598,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			result.WriteString("\n")
 
 			// Section 2: Validation result
-			stepNum := stepInfo.TopIndex
-			if stepNum < 1 {
-				stepNum = 1 // inner steps use step-1
-			}
-			validationLogDir := fmt.Sprintf("runs/%s/logs/step-%d", runFolder, stepNum)
+			logFolder := workshopStepLogFolder(resolvedID)
+			validationLogDir := fmt.Sprintf("runs/%s/logs/%s", runFolder, logFolder)
 
 			result.WriteString("### Validation\n")
 			foundValidation := false
@@ -3655,7 +3632,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			// Section 4: Log paths for manual inspection
 			result.WriteString("### Log Paths\n")
-			result.WriteString(fmt.Sprintf("Execution logs: runs/%s/logs/step-%d/execution/\n", runFolder, stepNum))
+			result.WriteString(fmt.Sprintf("Execution logs: runs/%s/logs/%s/execution/\n", runFolder, logFolder))
 			result.WriteString(fmt.Sprintf("Validation: %s/\n", validationLogDir))
 			result.WriteString(fmt.Sprintf("Learnings: %s/\n", learningsPath))
 			result.WriteString("Use execute_shell_command to read these files for details.\n")
@@ -3670,7 +3647,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 2b: list_executions — list all tracked background executions
 	if err := mcpAgent.RegisterCustomTool(
 		"list_executions",
-		"List all background executions (execute_step, harden_workflow, improve_learnings). Shows execution_id, step_id, status (running/done/failed/cancelled), and type. Useful when you need to find execution IDs for query_step or stop_step.",
+		"List all background executions (for example execute_step and run_in_background). Shows execution_id, step_id, status (running/done/failed/cancelled), and type. Useful when you need to find execution IDs for query_step or stop_step.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -3856,11 +3833,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	declaredExecutionModeEnum := []interface{}{"agentic", "scripted"}
 	declaredExecutionModeDescription := "Required mode declaration for this step. Always set this intentionally so the improve pass records the final decision explicitly. Default is agentic. Set scripted only when the user explicitly asked for it and the step is highly deterministic; freezing the saved script afterwards (lock_code) additionally requires 10+ successful scenario-covering runs."
 	lockCodeDescription := "If true, lock the saved main.py script — prevents LLM-rewritten scripts from being saved back to learnings, and skips the fix loop (falls back directly to agentic mode). Only applies to scripted steps. Use only when the user explicitly wanted scripted, the script is deterministic, and script_metadata/eval evidence shows 10+ successful scenario-covering runs."
-	if iwm.currentWorkshopModeFromConfigs(nil) == "builder" {
-		declaredExecutionModeEnum = []interface{}{"agentic"}
-		declaredExecutionModeDescription = "Builder mode only accepts agentic. Create and debug the workflow with agentic steps; promote to scripted later (Workshop/Optimizer) on explicit user request — 10+ scenario-covering runs gate lock_code, not scripted itself."
-		lockCodeDescription = "Unavailable in Builder mode. Builder creates and debugs agentic steps; lock_code freezes a scripted step's main.py and requires explicit user intent plus 10+ scenario-covering successful runs proving the script is stable. Passing lock_code=true here is rejected."
-	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_step_config",
 		"Update step_config.json for a specific workflow or evaluation step. The tool auto-detects whether step_id belongs to planning/plan.json or evaluation/evaluation_plan.json, then writes planning/step_config.json or evaluation/step_config.json accordingly. Changes take effect on the next execute_step or run_full_evaluation call. To REMOVE a field (so the step falls back to preset/default behavior where that field has a fallback, or removes the explicit setting otherwise), list its name in clear_fields — sending null in a value field does NOT clear; it's ignored.",
@@ -3957,7 +3929,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"declared_execution_mode_reason": map[string]interface{}{
 					"type":        "string",
-					"description": "Audit trail: why the chosen execution mode is the best fit for this step. Not consumed by Go runtime, but preserved so future LLM reviewers (harden, plan-change review) reading step_config.json see the original rationale.",
+					"description": "Audit trail: why the chosen execution mode is the best fit for this step. Not consumed by Go runtime, but preserved so future Pulse and plan-change reviewers reading step_config.json see the original rationale.",
 				},
 				"description_reviewed": map[string]interface{}{
 					"type":        "boolean",
@@ -3965,7 +3937,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"review_notes": map[string]interface{}{
 					"type":        "string",
-					"description": "Free-form rationale covering why the config, locks, learning/KB choices, or description review state are justified. Cite concrete evidence — e.g., 'description is clear and secret-free; passed 3 groups with eval >= 9; learnings stable; pre-validation catches format regressions'. Persisted so later passes (harden, plan-change review, review tools) see the context.",
+					"description": "Free-form rationale covering why the config, locks, learning/KB choices, or description review state are justified. Cite concrete evidence — e.g., 'description is clear and secret-free; passed 3 groups with eval >= 9; learnings stable; pre-validation catches format regressions'. Persisted so later Pulse, plan-change, and review passes see the context.",
 				},
 				"execution_llm": map[string]interface{}{
 					"type":        "object",
@@ -4053,20 +4025,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if err != nil {
 				configs = []StepConfig{}
 			}
-			workshopMode := iwm.currentWorkshopModeFromConfigs(configs)
-			if workshopMode == "builder" {
-				if val, ok := args["declared_execution_mode"]; ok && val != nil {
-					if s, ok := val.(string); ok && canonicalDeclaredExecutionMode(s) == StepModeScripted {
-						return "Builder mode only creates and debugs agentic steps. Use declared_execution_mode=\"agentic\" here. Promote to scripted from Workshop/Optimizer on explicit user request — 10+ scenario-covering runs gate lock_code, not scripted itself.", nil
-					}
-				}
-				if val, ok := args["lock_code"]; ok && val != nil {
-					if b, ok := val.(bool); ok && b {
-						return "lock_code is unavailable in Builder mode because it freezes scripted main.py. Keep steps agentic while building and use execute_step/query_step to debug; lock later from Workshop/Optimizer once the scripted step has 10+ scenario-covering successful runs.", nil
-					}
-				}
-			}
-
 			// Find or create entry for this step
 			var targetConfig *StepConfig
 			for i := range configs {
@@ -4659,17 +4617,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			// Determine the correct log path based on step type
 			var stepPath string
-			if stepInfo.TopIndex > 0 {
-				// Top-level step
-				if routeID != "" {
-					// User wants sub-agent logs under this top-level step
-					stepPath = fmt.Sprintf("step-%d-sub-%s", stepInfo.TopIndex, routeID)
-				} else {
-					stepPath = fmt.Sprintf("step-%d", stepInfo.TopIndex)
-				}
+			if routeID != "" && stepInfo.TopIndex > 0 {
+				// Generated route executions retain their historical composite folder name.
+				stepPath = fmt.Sprintf("step-%d-sub-%s", stepInfo.TopIndex, routeID)
 			} else {
-				// Inner step — resolve to the correct log path (e.g., step-3-sub-icici-login)
-				stepPath = resolveInnerStepPath(iwm.controller.approvedPlan.Steps, stepInfo)
+				stepPath = workshopStepLogFolder(resolvedForPrompts)
 			}
 			logDir := fmt.Sprintf("runs/%s/logs/%s/execution", runFolder, stepPath)
 			filenameBase := fmt.Sprintf("execution-attempt-%d-iteration-%d", attempt, iteration)
@@ -4796,765 +4748,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 	// === Tools: analyze, learn, optimize, background tasks ===
 
-	// Tool 6: analyze_step — analyze a step's config and suggest optimizations
-	if err := mcpAgent.RegisterCustomTool(
-		"analyze_step",
-		"Analyze a step's configuration and execution history, then suggest optimizations. Checks: (1) validation schema presence, (2) learning config efficiency, (3) tool/server usage vs configured. Call after executing a step to get actionable suggestions.",
-		map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"step_id": map[string]interface{}{
-					"type":        "string",
-					"description": "The step ID from plan.json (e.g., 'step-create-report') or positional reference (e.g., '1', 'step-1')",
-				},
-			},
-			"required": []string{"step_id"},
-		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			stepIDRaw, ok := args["step_id"]
-			if !ok || stepIDRaw == nil {
-				return "step_id is required", nil
-			}
-			stepID, ok := stepIDRaw.(string)
-			if !ok || stepID == "" {
-				return "step_id must be a non-empty string", nil
-			}
-
-			// Ensure plan is loaded
-			if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
-				return fmt.Sprintf("Failed to load plan: %v", err), nil
-			}
-			resolvedID, resolveErr := resolveWorkshopStepID(iwm.controller, stepID)
-			if resolveErr != nil {
-				return resolveErr.Error(), nil
-			}
-
-			// Find the step in the plan (including inner steps)
-			stepInfo := findWorkshopStepByID(iwm.controller.approvedPlan.Steps, resolvedID)
-			if stepInfo == nil {
-				return fmt.Sprintf("step %q not found in plan", stepID), nil
-			}
-			targetStep := stepInfo.Step
-			stepNum := stepInfo.TopIndex // -1 for inner steps
-
-			// Read step config
-			stepConfigs, _ := iwm.controller.ReadStepConfigs(ctx)
-			var stepCfg *AgentConfigs
-			for _, sc := range stepConfigs {
-				if sc.ID == resolvedID {
-					stepCfg = sc.AgentConfigs
-					break
-				}
-			}
-
-			var result strings.Builder
-			if stepNum > 0 {
-				result.WriteString(fmt.Sprintf("## Analysis for Step %d: %s\n\n", stepNum, targetStep.GetTitle()))
-			} else {
-				result.WriteString(fmt.Sprintf("## Analysis for Inner Step: %s\n   (parent: `%s`, branch: %s)\n\n", targetStep.GetTitle(), stepInfo.ParentID, stepInfo.BranchName))
-			}
-			suggestions := 0
-
-			// === 1. Validation Schema Check ===
-			result.WriteString("### Pre-Validation Schema\n")
-			schema := targetStep.GetValidationSchema()
-			if schema == nil || len(schema.Files) == 0 {
-				suggestions++
-				result.WriteString("⚠️ **No validation schema defined.** Adding a pre-validation JSON schema ensures the step's output is verified automatically before marking it complete. This catches structural errors without needing an LLM validation pass.\n")
-				result.WriteString("   → Use plan modification tools to add a `validation_schema` with file checks and JSON path rules.\n\n")
-			} else {
-				totalChecks := 0
-				for _, f := range schema.Files {
-					totalChecks += len(f.JSONChecks)
-				}
-				result.WriteString(fmt.Sprintf("✅ Schema defined: %d file(s), %d JSON check(s)\n\n", len(schema.Files), totalChecks))
-			}
-
-			// === 2. Learning Config Check ===
-			result.WriteString("### Learning Configuration\n")
-			descLen := len(targetStep.GetDescription())
-			isSimpleStep := descLen < 200 && targetStep.StepType() == StepTypeRegular
-
-			learningOptedIn := false
-			lockLearnings := false
-			effectiveAccess := resolveLearningsAccess(stepCfg)
-			learningOptedIn = effectiveAccess == LearningsAccessReadWrite && stepCfg != nil && strings.TrimSpace(stepCfg.LearningObjective) != ""
-			if stepCfg != nil && stepCfg.LockLearnings != nil && *stepCfg.LockLearnings {
-				lockLearnings = true
-			}
-
-			switch {
-			case effectiveAccess == LearningsAccessNone:
-				result.WriteString("✅ Learnings disabled for this step (learnings_access=\"none\" — neither reads nor writes).\n\n")
-			case !learningOptedIn:
-				result.WriteString(fmt.Sprintf("✅ Learnings read-only (learnings_access=%q — step sees _global/SKILL.md but doesn't contribute).\n\n", effectiveAccess))
-			case lockLearnings:
-				result.WriteString("✅ Learnings are locked (using existing SKILL.md, not generating new).\n\n")
-			case isSimpleStep:
-				suggestions++
-				result.WriteString("⚠️ **Step looks simple** (short description, regular type). Consider:\n")
-				result.WriteString("   → Set `learnings_access: \"read\"` (drop the write contribution) if this step doesn't produce insights worth accumulating\n")
-				result.WriteString("   → `lock_learnings: true` after a few successful runs to freeze learnings and skip the learning agent\n\n")
-			default:
-				result.WriteString("ℹ️ Learnings read-write (learning_objective set). After successful runs, consider `lock_learnings: true` to freeze learnings and save execution time.\n\n")
-			}
-
-			// === 3. Tool/Server Usage Analysis ===
-			// === 3. Execution Mode Check ===
-			result.WriteString("### Execution Mode\n")
-			isCodeExec := false
-			if stepCfg != nil {
-				if stepCfg.UseCodeExecutionMode != nil && *stepCfg.UseCodeExecutionMode {
-					isCodeExec = true
-				}
-			}
-			// Check orchestrator defaults if step doesn't override
-			if !isCodeExec && (stepCfg == nil || stepCfg.UseCodeExecutionMode == nil) {
-				isCodeExec = iwm.controller.GetUseCodeExecutionMode()
-			}
-
-			if isCodeExec {
-				result.WriteString("Mode: **Code Execution** (CLI-based, tools via code)\n")
-				result.WriteString("   ℹ️ In code execution mode, tool optimization applies differently — the agent calls tools via generated code rather than direct tool calls.\n")
-			} else {
-				result.WriteString("Mode: **Code Execution** (default)\n")
-			}
-			result.WriteString("\n")
-
-			result.WriteString("### Tool & Server Configuration\n")
-
-			// Get configured servers/tools/custom tools
-			configuredServers := []string{}
-			configuredTools := []string{}
-			configuredCustomTools := []string{}
-			if stepCfg != nil {
-				configuredServers = stepCfg.SelectedServers
-				configuredTools = stepCfg.SelectedTools
-				configuredCustomTools = stepCfg.EnabledCustomTools
-			}
-
-			// Try to extract actual tool usage from logs
-			runFolder := iwm.controller.selectedRunFolder
-			if runFolder != "" {
-				// For inner steps executed standalone, logs are at step-1 (single-step plan).
-				// For top-level steps, logs are at step-{N}.
-				logsStepNum := stepNum
-				if logsStepNum <= 0 {
-					logsStepNum = 1 // inner steps executed standalone use index 1
-				}
-				// Use relative path — ReadWorkspaceFile auto-prepends workspacePath
-				relativeLogsPath := fmt.Sprintf("runs/%s/logs/step-%d/execution", runFolder, logsStepNum)
-				toolUsageMap := make(map[string]*ToolUsageEntry)
-				dummySummary := &StepToolUsageSummary{}
-				extractToolsFromLogsPath(ctx, relativeLogsPath, toolUsageMap, iwm.controller.ReadWorkspaceFile, logger, dummySummary)
-
-				if len(toolUsageMap) > 0 {
-					// Categorize tools
-					usedMCPServerTools := make(map[string][]string) // server → [tool1, tool2]
-					usedWorkspaceTools := make(map[string]bool)
-					usedMCPToolNames := []string{} // raw tool names for pre-discovered suggestion
-					for name := range toolUsageMap {
-						if strings.HasPrefix(name, "mcp__") {
-							// Code execution mode: mcp__server__tool format
-							withoutPrefix := strings.TrimPrefix(name, "mcp__")
-							parts := strings.SplitN(withoutPrefix, "__", 2)
-							if len(parts) == 2 {
-								usedMCPServerTools[parts[0]] = append(usedMCPServerTools[parts[0]], parts[1])
-								usedMCPToolNames = append(usedMCPToolNames, parts[1])
-							}
-						} else if knownWorkspaceToolNames[name] {
-							usedWorkspaceTools[name] = true
-						} else {
-							// Regular mode: raw MCP tool name (no server prefix)
-							usedMCPToolNames = append(usedMCPToolNames, name)
-						}
-					}
-
-					// Report actually used tools
-					result.WriteString("**Tools actually used in last run:**\n")
-					if len(usedMCPServerTools) > 0 {
-						for server, tools := range usedMCPServerTools {
-							toolStrs := make([]string, len(tools))
-							for i, t := range tools {
-								toolStrs[i] = fmt.Sprintf("%s:%s", server, t)
-							}
-							result.WriteString(fmt.Sprintf("   MCP [%s]: %s\n", server, strings.Join(toolStrs, ", ")))
-						}
-					} else if len(usedMCPToolNames) > 0 {
-						result.WriteString(fmt.Sprintf("   MCP tools: %s\n", strings.Join(usedMCPToolNames, ", ")))
-					}
-					if len(usedWorkspaceTools) > 0 {
-						wsList := make([]string, 0, len(usedWorkspaceTools))
-						for t := range usedWorkspaceTools {
-							wsList = append(wsList, t)
-						}
-						result.WriteString(fmt.Sprintf("   Workspace/custom: %s\n", strings.Join(wsList, ", ")))
-					}
-
-					// === MCP Server/Tool Suggestions ===
-					result.WriteString("\n**MCP Servers & Tools:**\n")
-					if len(configuredServers) == 0 && len(configuredTools) == 0 {
-						if len(usedMCPServerTools) > 0 {
-							suggestions++
-							suggestedServers := make([]string, 0, len(usedMCPServerTools))
-							suggestedTools := []string{}
-							for server, tools := range usedMCPServerTools {
-								suggestedServers = append(suggestedServers, server)
-								for _, t := range tools {
-									suggestedTools = append(suggestedTools, fmt.Sprintf("%s:%s", server, t))
-								}
-							}
-							result.WriteString("⚠️ No step-level MCP filter. Suggested config:\n")
-							result.WriteString(fmt.Sprintf("   → `servers: %v`\n", suggestedServers))
-							result.WriteString(fmt.Sprintf("   → `tools: %v`\n", suggestedTools))
-							result.WriteString("   Or `server:*` for all tools from a server\n")
-						} else if len(usedMCPToolNames) > 0 {
-							result.WriteString(fmt.Sprintf("ℹ️ MCP tools used: %v — set `servers` to scope which MCP servers are available.\n", usedMCPToolNames))
-						} else {
-							result.WriteString("✅ Step uses no MCP tools. Consider setting `servers: [\"NO_SERVERS\"]` to explicitly disable MCP.\n")
-						}
-					} else {
-						result.WriteString(fmt.Sprintf("✅ servers=%v, tools=%v\n", configuredServers, configuredTools))
-						// Check for missing tools
-						if len(configuredTools) > 0 {
-							configuredSet := make(map[string]bool)
-							for _, t := range configuredTools {
-								configuredSet[t] = true
-							}
-							for server, tools := range usedMCPServerTools {
-								for _, t := range tools {
-									toolKey := fmt.Sprintf("%s:%s", server, t)
-									wildcardKey := fmt.Sprintf("%s:*", server)
-									if !configuredSet[toolKey] && !configuredSet[wildcardKey] {
-										suggestions++
-										result.WriteString(fmt.Sprintf("   ⚠️ Tool `%s` was used but not in configured list\n", toolKey))
-									}
-								}
-							}
-						}
-					}
-
-					// === Workspace Custom Tool Suggestions ===
-					result.WriteString("\n**Workspace Custom Tools (enabled_custom_tools):**\n")
-					if len(configuredCustomTools) == 0 {
-						suggestedCustom := []string{}
-						needsHumanTools := usedWorkspaceTools["human_feedback"]
-						needsReadImage := usedWorkspaceTools["read_image"]
-						needsDiffPatch := usedWorkspaceTools["diff_patch_workspace_file"]
-
-						suggestedCustom = append(suggestedCustom, "workspace_advanced:execute_shell_command")
-						if needsDiffPatch {
-							suggestedCustom = append(suggestedCustom, "workspace_advanced:diff_patch_workspace_file")
-						}
-						if needsReadImage {
-							suggestedCustom = append(suggestedCustom, "workspace_advanced:read_image")
-						}
-						if needsHumanTools {
-							suggestedCustom = append(suggestedCustom, "human_tools:*")
-						}
-
-						if !needsHumanTools || !needsReadImage {
-							suggestions++
-							result.WriteString("⚠️ Default config includes all workspace_advanced + human_tools. Based on usage:\n")
-							if !needsHumanTools {
-								result.WriteString("   → `human_feedback` not used — can remove `human_tools:*`\n")
-							}
-							if !needsReadImage {
-								result.WriteString("   → `read_image` not used — can exclude\n")
-							}
-							if !needsDiffPatch {
-								result.WriteString("   → `diff_patch_workspace_file` not used — can exclude\n")
-							}
-							result.WriteString(fmt.Sprintf("   Suggested: `enabled_custom_tools: %v`\n", suggestedCustom))
-						} else {
-							result.WriteString("✅ All workspace_advanced tools and human_tools are being used.\n")
-						}
-					} else {
-						result.WriteString(fmt.Sprintf("✅ Custom tools configured: %v\n", configuredCustomTools))
-					}
-				} else {
-					result.WriteString("ℹ️ No execution logs found yet — run the step first for usage-based suggestions.\n\n")
-				}
-
-				// Always show current config status and static suggestions (even without logs)
-				if len(toolUsageMap) == 0 {
-					// MCP config status
-					result.WriteString("**MCP Servers & Tools (current config):**\n")
-					if len(configuredServers) == 0 && len(configuredTools) == 0 {
-						suggestions++
-						result.WriteString("⚠️ No step-level MCP filter — step uses all preset servers. Run the step and re-analyze to see which are actually needed.\n")
-					} else {
-						result.WriteString(fmt.Sprintf("✅ servers=%v, tools=%v\n", configuredServers, configuredTools))
-					}
-
-					// Workspace custom tools status
-					result.WriteString("\n**Workspace Custom Tools (current config):**\n")
-					if len(configuredCustomTools) == 0 {
-						suggestions++
-						result.WriteString("⚠️ No `enabled_custom_tools` set — default includes **all** workspace_advanced + human_tools:\n")
-						result.WriteString("   - `workspace_advanced:*` → execute_shell_command, diff_patch_workspace_file, read_image, generate_text_llm, search_web_llm, generate_video, text_to_speech, speech_to_text, generate_music\n")
-						result.WriteString("   - `human_tools:*` → human_feedback, notify_user\n")
-						result.WriteString("   Consider: does this step need `read_image`? `generate_text_llm`? `search_web_llm`? `human_feedback`?\n")
-						result.WriteString("   If not, set `enabled_custom_tools` to only what's needed, e.g.:\n")
-						result.WriteString("   `[\"workspace_advanced:execute_shell_command\", \"workspace_advanced:diff_patch_workspace_file\"]`\n")
-					} else {
-						result.WriteString(fmt.Sprintf("✅ Custom tools configured: %v\n", configuredCustomTools))
-					}
-				}
-			} else {
-				result.WriteString("ℹ️ No run folder selected — cannot analyze tool usage.\n")
-			}
-
-			// === Optimization Readiness Note ===
-			result.WriteString("\n### Optimization Readiness\n")
-			// Check if step has learnings by looking for learnings folder content
-			hasLearnings := false
-			learningsPath := ""
-			if stepNum > 0 {
-				learningsPath = fmt.Sprintf("runs/%s/logs/step-%d/learnings", runFolder, stepNum)
-			} else {
-				learningsPath = fmt.Sprintf("runs/%s/logs/step-1/learnings", runFolder)
-			}
-			if runFolder != "" {
-				if learningsContent, err := iwm.controller.ReadWorkspaceFile(ctx, learningsPath+"/step_learnings.json"); err == nil && len(learningsContent) > 10 {
-					hasLearnings = true
-				}
-			}
-
-			if hasLearnings {
-				result.WriteString("ℹ️ Step has accumulated learnings from previous runs. Optimization suggestions above are based on observed behavior and can be applied if you're satisfied with the step's output quality.\n")
-			} else {
-				result.WriteString("⚠️ Step has no accumulated learnings yet. The suggestions above are initial guidance — consider running the step a few more times before applying optimizations like lock_learnings, server scoping, or tool filtering. Premature optimization may degrade output quality.\n")
-			}
-			result.WriteString("**Note**: These are suggestions, not requirements. Apply them when you're confident the step is producing good results consistently.\n")
-
-			result.WriteString(fmt.Sprintf("\n---\n**%d suggestion(s)** found.\n", suggestions))
-			return result.String(), nil
-		},
-		"workflow",
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register analyze_step tool: %v", err))
-	}
-
-	// Tool 7a: improve_learnings — reorganize and consolidate the global skill folder
-	//
-	// Gated: requires optimize-playbook (covers the learning lifecycle, lock
-	// rules, and consolidation guidance the downstream agent will apply).
-	if err := mcpAgent.RegisterCustomTool(
-		"improve_learnings",
-		"Improve the global workflow learnings skill (learnings/_global/) for the current plan. Supports targeted reorganization (split bloated files, merge small ones, remove duplicates, update SKILL.md index per the skill-creator guide) and cross-step consolidation (promote HOW knowledge implied by multiple learning_objective declarations into shared references/ sections; flag declared objectives whose scope is not reflected in the current skill). Precondition: call get_reference_doc(kind=\"optimize-playbook\") first.",
-		map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"instruction": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional instruction for how to improve learnings/_global/. Targeted examples: 'merge the auth files into one', 'split the API section by endpoint', 'remove outdated selectors'. Cross-step examples: 'optimize the global skill for the current plan', 'promote HOW-knowledge implied by multiple learning_objective declarations into shared references/ sections', 'flag declared learning_objective scopes that have no matching content in SKILL.md'.",
-				},
-				"focus": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional. Narrow the improvement to a step id, reference file, tool/API area, selector family, failure pattern, or plan concern.",
-				},
-				"mode": map[string]interface{}{
-					"type":        "string",
-					"enum":        []string{"auto", "targeted", "cross_step"},
-					"default":     "auto",
-					"description": "Optional mode. Use targeted for known file hygiene; cross_step for current-plan or multi-step consolidation; auto when unsure.",
-				},
-			},
-		},
-		guidance.WithDocPrecondition([]string{"optimize-playbook"}, guidance.DefaultTracker(), func(ctx context.Context, args map[string]interface{}) (string, error) {
-			instruction := ""
-			if val, ok := args["instruction"]; ok && val != nil {
-				if s, ok := val.(string); ok {
-					instruction = s
-				}
-			}
-			// Backward-compatible arg handling for older prompt text/tests.
-			if instruction == "" {
-				if val, ok := args["guidance"]; ok && val != nil {
-					if s, ok := val.(string); ok {
-						instruction = s
-					}
-				}
-			}
-			focus := ""
-			if val, ok := args["focus"]; ok && val != nil {
-				if s, ok := val.(string); ok {
-					focus = strings.TrimSpace(s)
-				}
-			}
-			mode := "auto"
-			if val, ok := args["mode"]; ok && val != nil {
-				if s, ok := val.(string); ok {
-					switch strings.TrimSpace(s) {
-					case "targeted", "cross_step", "auto":
-						mode = strings.TrimSpace(s)
-					}
-				}
-			}
-
-			// Ensure plan is loaded (needed for workspace path)
-			if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
-				return fmt.Sprintf("Failed to load plan: %v", err), nil
-			}
-
-			// Read execution_defaults for skill objective
-			stepOverrides, _ := iwm.controller.ReadStepOverrides(ctx)
-
-			// Read existing global learnings
-			globalLearningsPath := iwm.controller.getLearningsBasePath() + "/" + GlobalLearningID
-			_ = iwm.controller.ensureStepLearningsFolderExists(ctx, globalLearningsPath)
-			existingFiles, _ := iwm.controller.readStepLearningFiles(ctx, globalLearningsPath)
-			if len(existingFiles) == 0 {
-				return "No global learnings found yet. Run some steps first so the global skill has content to organize.", nil
-			}
-			existingContent, _ := iwm.controller.formatStepLearningFilesAsHistory(existingFiles)
-
-			// Get skill objective
-			skillObjective := ""
-			if stepOverrides != nil && stepOverrides.GlobalSkillObjective != "" {
-				skillObjective = stepOverrides.GlobalSkillObjective
-			}
-
-			// Build template vars — reuse the global learning template with a special "reorganize" trigger.
-			// LearningObjectivesBlock gives the agent holistic-view input: every step's declared
-			// learning_objective, so it can catch redundantly-learned lessons and objectives whose
-			// scope isn't reflected in SKILL.md. Parallel to KB consolidate's contributions block.
-			templateVars := map[string]string{
-				"StepTitle":                "Global Skill Reorganization",
-				"StepDescription":          "Improve the global skill folder for the current plan. Review all files, restructure following the skill-creator guide, remove duplicates, split bloated files, merge small ones, promote cross-step HOW knowledge into focused references, flag declared learning objectives missing from the skill, and update the SKILL.md index.",
-				"StepSuccessCriteria":      "",
-				"StepContextOutput":        "",
-				"WorkspacePath":            iwm.controller.GetWorkspacePath(),
-				"ExecutionHistory":         "",
-				"ValidationResult":         "N/A — this is a reorganization task, not an execution result.",
-				"CurrentObjective":         iwm.controller.GetObjective(),
-				"LearningTrigger":          "success",
-				"IsScriptedCodeMode":       "false",
-				"AllowedTools":             "",
-				"StepExecutionPath":        "",
-				"StepNumber":               GlobalLearningID,
-				"ExecutionLogsPath":        "",
-				"ExistingLearningsContent": existingContent,
-				"LearningObjectivesBlock":  iwm.controller.BuildLearningObjectivesBlock(),
-				"UseGlobalLearning":        "true",
-				"ContributingStepID":       "reorganize",
-				"ContributingStepTitle":    "Reorganization",
-			}
-			if skillObjective != "" {
-				templateVars["GlobalSkillObjective"] = skillObjective
-			}
-			if instruction != "" || focus != "" || mode != "auto" {
-				var guidanceBuilder strings.Builder
-				guidanceBuilder.WriteString(fmt.Sprintf("Mode: %s\n", mode))
-				switch mode {
-				case "targeted":
-					guidanceBuilder.WriteString("Scope: known file hygiene or focused cleanup inside learnings/_global/.\n")
-				case "cross_step":
-					guidanceBuilder.WriteString("Scope: optimize learnings/_global/ against the current plan and declared learning_objective values across steps.\n")
-				default:
-					guidanceBuilder.WriteString("Scope: choose targeted cleanup for concrete file/index work; choose cross-step consolidation for current-plan or multi-step issues.\n")
-				}
-				if instruction != "" {
-					guidanceBuilder.WriteString("Instruction: ")
-					guidanceBuilder.WriteString(instruction)
-					guidanceBuilder.WriteString("\n")
-				}
-				if focus != "" {
-					guidanceBuilder.WriteString("Focus: ")
-					guidanceBuilder.WriteString(focus)
-					guidanceBuilder.WriteString("\n")
-				}
-				templateVars["StepDescription"] = fmt.Sprintf("%s\n\n## Human Guidance\n%s", templateVars["StepDescription"], strings.TrimSpace(guidanceBuilder.String()))
-			}
-
-			// Add variable names
-			if variableNames := FormatVariableNames(iwm.controller.variablesManifest); variableNames != "" {
-				templateVars["VariableNames"] = variableNames
-			}
-
-			// Ensure skill-creator guide is available
-			if guidePath, err := iwm.controller.ensureSkillCreator(ctx); err == nil {
-				templateVars["SkillCreatorPath"] = guidePath
-			}
-
-			// Launch in background
-			execID := fmt.Sprintf("organize-global-%05d", time.Now().UnixNano()%100000)
-			execCtx, cancel, ctxErr := iwm.newExecContext()
-			if ctxErr != nil {
-				return "Session was stopped — execution skipped", nil
-			}
-
-			agentSessionID := fmt.Sprintf("workshop-organize-global-%d", time.Now().UnixNano())
-			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
-			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
-			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
-
-			exec := &WorkshopStepExecution{
-				ID:             execID,
-				StepID:         "Skill Update",
-				AgentSessionID: agentSessionID,
-				Status:         WorkshopStepRunning,
-				cancel:         cancel,
-			}
-			iwm.stepRegistry.Register(exec)
-
-			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
-					ID:                execID,
-					ParentExecutionID: currentWorkshopParentExecutionID(execCtx),
-					Name:              "Skill Update",
-					Cancel:            cancel,
-				})
-			}
-
-			go func() {
-				var result string
-				var execErr error
-				eventBridge := iwm.controller.GetContextAwareBridge()
-				defer func() {
-					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
-					if eventBridge != nil {
-						isCancelled := skipNotify || execCtx.Err() != nil
-						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-							AgentType:     "workshop-organize-learnings",
-							AgentName:     "Organize Global Learnings",
-							Success:       execErr == nil,
-						}
-						if execErr != nil {
-							if isCancelled {
-								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
-							} else {
-								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
-							}
-						} else {
-							endEvent.Result = result
-						}
-						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-							Type:          orchestrator_events.OrchestratorAgentEnd,
-							Timestamp:     time.Now(),
-							Data:          endEvent,
-							CorrelationID: agentSessionID,
-						})
-					}
-					if !skipNotify && iwm.executionNotifier != nil {
-						iwm.executionNotifier.OnExecutionComplete(execID, "Organize Global Learnings", result, nil, execErr)
-					}
-				}()
-
-				if eventBridge != nil {
-					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-organize-learnings",
-						AgentName:     "Organize Global Learnings",
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type:          orchestrator_events.OrchestratorAgentStart,
-						Timestamp:     time.Now(),
-						Data:          startEvent,
-						CorrelationID: agentSessionID,
-					})
-				}
-
-				// Create learning agent with write access to _global folder.
-				// Use a human-readable name (not the "_global-…" slug): it surfaces as
-				// the terminal/agent label, and the folder/lookup identity is carried
-				// separately by the stepID (GlobalLearningID), not this name.
-				agentName := "Organize Global Learnings"
-				phaseLLM := iwm.controller.selectMaintenanceLLM("organize global learnings agent")
-				if phaseLLM == nil {
-					execErr = fmt.Errorf("no valid LLM configuration found for organize global learnings agent")
-					return
-				}
-				execCtx = context.WithValue(execCtx, maintenanceToolLLMOverrideKey, phaseLLM)
-				learningAgent, createErr := iwm.controller.createLearningAgentInternal(
-					execCtx, "organize_learnings", GlobalLearningID, agentName,
-					stepOverrides, false, GlobalLearningID, "", 0,
-				)
-				if createErr != nil {
-					logger.Warn(fmt.Sprintf("⚠️ Failed to create organize agent: %v", createErr))
-					execErr = createErr
-					return
-				}
-
-				var organizeResult string
-				organizeResult, _, execErr = learningAgent.Execute(execCtx, templateVars, []llmtypes.MessageContent{})
-
-				if execErr == nil {
-					updatedFiles, _ := iwm.controller.readStepLearningFiles(execCtx, globalLearningsPath)
-					var sb strings.Builder
-					sb.WriteString("✅ Global learnings reorganized\n")
-					sb.WriteString(fmt.Sprintf("Files: %d | Path: %s\n", len(updatedFiles), globalLearningsPath))
-					for f := range updatedFiles {
-						sb.WriteString(fmt.Sprintf("  - %s\n", f))
-					}
-					sb.WriteString(fmt.Sprintf("\nAgent output:\n%s", organizeResult))
-					result = sb.String()
-				}
-			}()
-
-			guidanceInfo := fmt.Sprintf("\nMode: %s", mode)
-			if instruction != "" {
-				guidanceInfo += fmt.Sprintf("\nInstruction: %s", instruction)
-			}
-			if focus != "" {
-				guidanceInfo += fmt.Sprintf("\nFocus: %s", focus)
-			}
-			logger.Info(fmt.Sprintf("🧠 Workshop: improve learnings started in background, execution_id=%q", execID))
-			return fmt.Sprintf("Improve learnings started in background.\nexecution_id: %q%s\nYou will be automatically notified when it completes.", execID, guidanceInfo), nil
-		}),
-		"workflow",
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register improve_learnings tool: %v", err))
-	}
-
-	// Tool 7b: improve_db — guarded maintenance pass over workflow-root db/ JSON contracts
-	//
-	// Gated: requires stores (the design contract for db/db.sqlite tables
-	// including primary key / upsert rule / writer / schema that the downstream
-	// agent must honor when editing schemas).
-	if err := mcpAgent.RegisterCustomTool(
-		"improve_db",
-		"Improve workflow-root db/db.sqlite tables, db/assets/, and db/README.md for the current plan. Supports targeted cleanup, asset reference hygiene, schema/DDL/index/contract documentation, and cross-step/report compatibility checks. Guarded: the background agent can write only under db/, and row/data or asset migrations require explicit instruction. Precondition: call get_reference_doc(kind=\"stores\") first.",
-		map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"instruction": map[string]interface{}{
-					"type":        "string",
-					"description": "Specific DB improvement goal. Examples: 'document db/companies.json schema and primary key', 'make db/order_status.json report-compatible without changing row values', 'optimize db contracts for this plan'.",
-				},
-				"focus": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional. Narrow the improvement to a db file, field, report query, step id, primary key, or data-quality concern.",
-				},
-				"mode": map[string]interface{}{
-					"type":        "string",
-					"enum":        []string{"auto", "targeted", "schema", "cross_step"},
-					"default":     "auto",
-					"description": "Optional mode. targeted = one known cleanup; schema = db/README.md and contract work; cross_step = reconcile plan/report/writer-consumer contracts; auto = choose from instruction/focus.",
-				},
-			},
-			"required": []string{"instruction"},
-		},
-		guidance.WithDocPrecondition([]string{"stores"}, guidance.DefaultTracker(), func(ctx context.Context, args map[string]interface{}) (string, error) {
-			instruction := ""
-			if val, ok := args["instruction"]; ok && val != nil {
-				if s, ok := val.(string); ok {
-					instruction = strings.TrimSpace(s)
-				}
-			}
-			if instruction == "" {
-				return "instruction is required — describe the DB improvement goal in natural language", nil
-			}
-			focus := ""
-			if val, ok := args["focus"]; ok && val != nil {
-				if s, ok := val.(string); ok {
-					focus = strings.TrimSpace(s)
-				}
-			}
-			mode := "auto"
-			if val, ok := args["mode"]; ok && val != nil {
-				if s, ok := val.(string); ok {
-					switch strings.TrimSpace(s) {
-					case "targeted", "schema", "cross_step", "auto":
-						mode = strings.TrimSpace(s)
-					}
-				}
-			}
-
-			execID := fmt.Sprintf("improve-db-%05d", time.Now().UnixNano()%100000)
-			execCtx, cancel, ctxErr := iwm.newExecContext()
-			if ctxErr != nil {
-				return "Session was stopped — execution skipped", nil
-			}
-			agentSessionID := fmt.Sprintf("workshop-improve-db-%d", time.Now().UnixNano())
-			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
-			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
-			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
-
-			exec := &WorkshopStepExecution{
-				ID:             execID,
-				StepID:         "improve-db",
-				AgentSessionID: agentSessionID,
-				Status:         WorkshopStepRunning,
-				cancel:         cancel,
-			}
-			iwm.stepRegistry.Register(exec)
-
-			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
-					ID:                execID,
-					ParentExecutionID: currentWorkshopParentExecutionID(execCtx),
-					Name:              "Improve DB",
-					Cancel:            cancel,
-				})
-			}
-
-			go func() {
-				var result string
-				var execErr error
-				eventBridge := iwm.controller.GetContextAwareBridge()
-				defer func() {
-					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
-					if eventBridge != nil {
-						isCancelled := skipNotify || execCtx.Err() != nil
-						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-							AgentType:     "workshop-improve-db",
-							AgentName:     "Improve DB",
-							Success:       execErr == nil,
-						}
-						if execErr != nil {
-							if isCancelled {
-								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
-							} else {
-								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
-							}
-						} else {
-							endEvent.Result = result
-						}
-						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-							Type:          orchestrator_events.OrchestratorAgentEnd,
-							Timestamp:     time.Now(),
-							Data:          endEvent,
-							CorrelationID: agentSessionID,
-						})
-					}
-					if !skipNotify && iwm.executionNotifier != nil {
-						iwm.executionNotifier.OnExecutionComplete(execID, "Improve DB", result, nil, execErr)
-					}
-				}()
-
-				if eventBridge != nil {
-					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-improve-db",
-						AgentName:     "Improve DB",
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type:          orchestrator_events.OrchestratorAgentStart,
-						Timestamp:     time.Now(),
-						Data:          startEvent,
-						CorrelationID: agentSessionID,
-					})
-				}
-
-				result, execErr = iwm.runImproveDBAgent(execCtx, mode, instruction, focus)
-			}()
-
-			info := fmt.Sprintf("\nMode: %s\nInstruction: %s", mode, instruction)
-			if focus != "" {
-				info += fmt.Sprintf("\nFocus: %s", focus)
-			}
-			logger.Info(fmt.Sprintf("🗄️ Workshop: improve DB started in background, execution_id=%q", execID))
-			return fmt.Sprintf("Improve DB started in background.\nexecution_id: %q%s\nYou will be automatically notified when it completes.", execID, info), nil
-		}),
-		"workflow",
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register improve_db tool: %v", err))
-	}
-
 	// Tool 7f: review_plan — background agent that critically reviews current workflow design and artifacts
 	if err := mcpAgent.RegisterCustomTool(
 		"review_plan",
@@ -5659,7 +4852,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 7f1: review_artifact_sync — background audit of plan changelog vs dependent artifacts
 	if err := mcpAgent.RegisterCustomTool(
 		"review_artifact_sync",
-		"Start a background agent that audits unreviewed planning/changelog entries against dependent artifacts: planning/step_config.json, learnings, saved main.py, KB notes, db files, reports/report_plan.json, and evaluation/evaluation_plan.json. It uses builder/improve.html as the Artifact Sync Cursor, appends a report-only Artifact Review item there, and marks fully inspected changelog entries via mark_changelog_artifact_reviewed. Returns execution_id immediately — you will be automatically notified when it completes.",
+		"Start a read-only background agent that audits unreviewed planning/changelog entries against dependent artifacts: planning/step_config.json, learnings, saved main.py, KB notes, db files, reports/report_plan.json, and evaluation/evaluation_plan.json. It returns evidence, findings, the proposed Artifact Sync Cursor, and exact changelog entry indexes. The parent Pulse/workshop agent writes builder/improve.html and marks reviewed entries. Returns execution_id immediately — you will be automatically notified when it completes.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -5743,142 +4936,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		"workflow",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register review_artifact_sync tool: %v", err))
-	}
-
-	// Tool 7f2: review_workflow_results — read-only review of actual outcomes vs objective/success criteria and eval quality
-	if err := mcpAgent.RegisterCustomTool(
-		"review_workflow_results",
-		"Start a background agent that reviews actual workflow outcomes against the objective and success criteria, and checks whether the evaluation plan/report measures them properly. It distinguishes workflow failures from weak evaluation. Read-only. Returns execution_id immediately — you will be automatically notified when it completes.",
-		map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"focus": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional focus for the review, e.g., 'success criteria coverage', 'goal achievement', 'evaluation quality', 'false confidence'.",
-				},
-				"iteration": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional iteration folder (e.g., 'iteration-3'). If omitted, the selected run folder is used when present; otherwise the reviewer finds the latest meaningful run/eval evidence.",
-				},
-				"group_name": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional group/user subfolder within the iteration (e.g., 'saurabh'). Use together with iteration for grouped workflows.",
-				},
-			},
-		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			focus := ""
-			if val, ok := args["focus"]; ok && val != nil {
-				if s, ok := val.(string); ok {
-					focus = s
-				}
-			}
-			targetRunFolder := ""
-			if iter, ok := args["iteration"]; ok && iter != nil {
-				if s, ok := iter.(string); ok && strings.TrimSpace(s) != "" {
-					targetRunFolder = strings.TrimSpace(s)
-					if gid, ok := args["group_name"]; ok && gid != nil {
-						if g, ok := gid.(string); ok && strings.TrimSpace(g) != "" {
-							targetRunFolder += "/" + strings.TrimSpace(g)
-						}
-					}
-				}
-			}
-			if targetRunFolder == "" {
-				targetRunFolder = strings.TrimSpace(iwm.controller.selectedRunFolder)
-			}
-
-			execID := fmt.Sprintf("review-results-%05d", time.Now().UnixNano()%100000)
-			execCtx, cancel, ctxErr := iwm.newExecContext()
-			if ctxErr != nil {
-				return "Session was stopped — execution skipped", nil
-			}
-
-			agentSessionID := fmt.Sprintf("workshop-review-results-%d", time.Now().UnixNano())
-			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
-			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
-			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
-
-			exec := &WorkshopStepExecution{
-				ID:             execID,
-				StepID:         "review-workflow-results",
-				AgentSessionID: agentSessionID,
-				Status:         WorkshopStepRunning,
-				cancel:         cancel,
-			}
-			iwm.stepRegistry.Register(exec)
-
-			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
-					ID:                execID,
-					ParentExecutionID: currentWorkshopParentExecutionID(execCtx),
-					Name:              "Review Workflow Results",
-					Cancel:            cancel,
-				})
-			}
-
-			go func() {
-				var result string
-				var execErr error
-				eventBridge := iwm.controller.GetContextAwareBridge()
-				defer func() {
-					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
-					if eventBridge != nil {
-						isCancelled := skipNotify || execCtx.Err() != nil
-						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-							AgentType:     "workshop-review-results",
-							AgentName:     "Review Workflow Results",
-							Success:       execErr == nil,
-						}
-						if execErr != nil {
-							if isCancelled {
-								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
-							} else {
-								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
-							}
-						} else {
-							endEvent.Result = result
-						}
-						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-							Type: orchestrator_events.OrchestratorAgentEnd, Timestamp: time.Now(),
-							Data: endEvent, CorrelationID: agentSessionID,
-						})
-					}
-					if !skipNotify && iwm.executionNotifier != nil {
-						iwm.executionNotifier.OnExecutionComplete(execID, "Review Workflow Results", result, nil, execErr)
-					}
-				}()
-
-				if eventBridge != nil {
-					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-review-results",
-						AgentName:     "Review Workflow Results",
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type: orchestrator_events.OrchestratorAgentStart, Timestamp: time.Now(),
-						Data: startEvent, CorrelationID: agentSessionID,
-					})
-				}
-
-				result, execErr = iwm.runReviewWorkflowResultsAgent(execCtx, targetRunFolder, focus)
-			}()
-
-			focusInfo := ""
-			if focus != "" {
-				focusInfo = fmt.Sprintf("\nFocus: %s", focus)
-			}
-			runInfo := ""
-			if targetRunFolder != "" {
-				runInfo = fmt.Sprintf("\nTarget run folder: %s", targetRunFolder)
-			}
-			logger.Info(fmt.Sprintf("📊 Workshop: review_workflow_results agent started in background, execution_id=%q, target_run_folder=%q", execID, targetRunFolder))
-			return fmt.Sprintf("Workflow results review agent started in background.\nexecution_id: %q%s%s\nYou will be automatically notified when it completes.", execID, runInfo, focusInfo), nil
-		},
-		"workflow",
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register review_workflow_results tool: %v", err))
 	}
 
 	// Tool 7f3: review_workflow_timing — read-only review of runtime latency and speedup opportunities
@@ -6277,138 +5334,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		"workflow",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register review_step_code tool: %v", err))
-	}
-
-	// Tool 7g2: harden_workflow — reliability repair plus invariant cleanup
-	//
-	// Gated by guidance.WithDocPrecondition: the agent must call
-	// get_reference_doc(kind="optimize-playbook") earlier in the same session
-	// before this tool will execute. The optimize-playbook covers the
-	// harden vs. strategy-change decision tree, the locking checklist, and the
-	// evidence requirements harden_workflow's downstream agent will apply.
-	// Without it, harden risks producing changes that violate those rules.
-	if err := mcpAgent.RegisterCustomTool(
-		"harden_workflow",
-		"Start a background agent that reads retained run evidence (latest iteration-0 plus older iteration-N runs selected by improve.html/decision timestamps), identifies failing local reliability/contract regressions, runs a best-practice sweep over workflow artifacts, and applies targeted fixes: adds pre-validation rules, tightens descriptions, deletes stale agentic main.py files, patches main.py for scripted steps, fixes learning/KB/db/report/eval wiring when evidence or hard invariants justify it, and updates step config. Use this to EXPLOIT the current strategy — refine the SAME approach: fix bugs and write the existing steps better. Do NOT redesign the approach here, even though you have the plan tools to. If the evidence shows the approach itself is capped or misaligned with the goal, record a Goal Advisor proposal through the existing report human-input flow instead of changing strategy inside harden. Precondition: call get_reference_doc(kind=\"optimize-playbook\") first.",
-		map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"group_name": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional group name. When provided, harden scopes behavior analysis and fixes to this group's evidence across the selected retained run window. When omitted, harden discovers current groups under iteration-0 and uses retained iterations for cross-group and cross-run failure patterns.",
-				},
-				"focus": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional focus for the hardening pass, e.g. 'pre-validation', 'parsing failures', 'data integrity'.",
-				},
-			},
-		},
-		guidance.WithDocPrecondition([]string{"optimize-playbook"}, guidance.DefaultTracker(), func(ctx context.Context, args map[string]interface{}) (string, error) {
-			targetRunFolder := "iteration-0"
-			groupName := ""
-			if val, ok := args["group_name"]; ok && val != nil {
-				if s, ok := val.(string); ok {
-					groupName = strings.TrimSpace(s)
-				}
-			}
-			focus := ""
-			if val, ok := args["focus"]; ok && val != nil {
-				if s, ok := val.(string); ok {
-					focus = s
-				}
-			}
-
-			execID := fmt.Sprintf("harden-%05d", time.Now().UnixNano()%100000)
-			execCtx, cancel, ctxErr := iwm.newExecContext()
-			if ctxErr != nil {
-				return "Session was stopped — execution skipped", nil
-			}
-
-			agentSessionID := fmt.Sprintf("workshop-harden-workflow-%d", time.Now().UnixNano())
-			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
-			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
-			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
-
-			exec := &WorkshopStepExecution{
-				ID:             execID,
-				StepID:         "harden-workflow",
-				AgentSessionID: agentSessionID,
-				Status:         WorkshopStepRunning,
-				cancel:         cancel,
-			}
-			iwm.stepRegistry.Register(exec)
-
-			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
-					ID:                execID,
-					ParentExecutionID: currentWorkshopParentExecutionID(execCtx),
-					Name:              "Harden Workflow",
-					Cancel:            cancel,
-				})
-			}
-
-			go func() {
-				var result string
-				var execErr error
-				eventBridge := iwm.controller.GetContextAwareBridge()
-				defer func() {
-					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
-					if eventBridge != nil {
-						isCancelled := skipNotify || execCtx.Err() != nil
-						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-							AgentType:     "workshop-harden-workflow",
-							AgentName:     "Harden Workflow",
-							Success:       execErr == nil,
-						}
-						if execErr != nil {
-							if isCancelled {
-								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
-							} else {
-								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
-							}
-						} else {
-							endEvent.Result = result
-						}
-						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-							Type: orchestrator_events.OrchestratorAgentEnd, Timestamp: time.Now(),
-							Data: endEvent, CorrelationID: agentSessionID,
-						})
-					}
-					if !skipNotify && iwm.executionNotifier != nil {
-						iwm.executionNotifier.OnExecutionComplete(execID, "Harden Workflow", result, nil, execErr)
-					}
-				}()
-
-				if eventBridge != nil {
-					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-harden-workflow",
-						AgentName:     "Harden Workflow",
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type: orchestrator_events.OrchestratorAgentStart, Timestamp: time.Now(),
-						Data: startEvent, CorrelationID: agentSessionID,
-					})
-				}
-
-				result, execErr = iwm.runHardenWorkflowAgent(execCtx, targetRunFolder, groupName, focus)
-			}()
-
-			focusInfo := ""
-			if focus != "" {
-				focusInfo = fmt.Sprintf("\nFocus: %s", focus)
-			}
-			groupInfo := ""
-			if groupName != "" {
-				groupInfo = fmt.Sprintf("\nGroup scope: %s", groupName)
-			}
-			logger.Info(fmt.Sprintf("🛡️ Workshop: harden_workflow agent started in background, execution_id=%q, target_run_folder=%q, group_name=%q", execID, targetRunFolder, groupName))
-			return fmt.Sprintf("Workflow hardening agent started in background.\nexecution_id: %q\nTarget run folder: %s%s%s\nYou will be automatically notified when it completes.", execID, targetRunFolder, groupInfo, focusInfo), nil
-		}),
-		"workflow",
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register harden_workflow tool: %v", err))
 	}
 
 	// Tool 8: get_cost_summary — parse token_usage.json and show formatted cost breakdown
@@ -6834,7 +5759,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			sb.WriteString("\n")
 			sb.WriteString(fmt.Sprintf("- lock_knowledgebase: %v", ctrl.LockKnowledgebase()))
 			if ctrl.LockKnowledgebase() {
-				sb.WriteString(" — post-step KB update agent is FROZEN workflow-wide; notes/ mutates only via explicit improve_kb calls")
+				sb.WriteString(" — post-step KB update agent is FROZEN workflow-wide; use the /improve-knowledge checklist with a generic read-only reviewer and parent fixer for intentional note changes")
 			}
 			sb.WriteString("\n")
 
@@ -6964,7 +5889,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"lock_knowledgebase": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Workflow-level freeze on the post-step KB update agent. When true, notes/ only mutates via explicit improve_kb calls (reads unaffected). Set after KB is stable to save LLM cost per step.",
+					"description": "Workflow-level freeze on the post-step KB update agent. When true, automatic notes/ writes stop; use the /improve-knowledge checklist with a generic read-only reviewer and parent fixer for intentional changes (reads unaffected). Set after KB is stable to save LLM cost per step.",
 				},
 				"browser_mode": map[string]interface{}{
 					"type":        "string",
@@ -6975,11 +5900,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "integer",
 					"minimum":     1,
 					"maximum":     maxRunRetentionCount,
-					"description": "Number of backup run/eval iterations to keep, excluding active iteration-0. Defaults to 5 when omitted. Raise this for workflows whose harden or Goal Advisor reviews need a wider evidence window.",
+					"description": "Number of backup run/eval iterations to keep, excluding active iteration-0. Defaults to 5 when omitted. Raise this for workflows whose Pulse or Goal Advisor reviews need a wider evidence window.",
 				},
 				"post_run_monitor": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Enable the per-run monitor (Pulse): after each scheduled run a focused pass records Bug + Goal findings, runs a separate report-only Artifact Review item, and writes LLM/cost/time into builder/improve.html for harden/Goal Advisor/org consumers. Set true for workflows where a silent failure matters (scheduled QA, production); default off. /goal-advisor turns this on as part of setup.",
+					"description": "Enable the per-run monitor (Pulse): after each scheduled run Gate selects evidence-backed read-only reviews, one parent Pulse Fixer applies bounded changes, and the finalizer updates builder/improve.html, backup/publish status, and notification. Set true for workflows where a silent failure matters; default off. /goal-advisor turns this on as part of setup.",
 				},
 			},
 		},
@@ -7425,7 +6350,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					iwm.controller.SetLockKnowledgebase(lockVal)
 					anyChanged = true
 					if lockVal {
-						sb.WriteString("\n### Knowledgebase Lock (enabled)\nPost-step KB update agent is now frozen workflow-wide. `notes/` only mutates via explicit `improve_kb` calls; reads are unaffected.\n")
+						sb.WriteString("\n### Knowledgebase Lock (enabled)\nPost-step KB update agent is now frozen workflow-wide. Use the `/improve-knowledge` checklist with a generic read-only reviewer and parent fixer for intentional `notes/` changes; reads are unaffected.\n")
 					} else {
 						sb.WriteString("\n### Knowledgebase Lock (disabled)\nPost-step KB update agent resumes for steps with `knowledgebase_contribution` set and write access.\n")
 					}
@@ -7569,7 +6494,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: create_schedule — Create a new cron schedule
 	if err := mcpAgent.RegisterCustomTool(
 		"create_schedule",
-		"Create a new cron schedule for this workflow. Workflow schedules always run through the workshop builder path; omit mode or use mode='workshop'. Messages are optional for normal run schedules; when omitted, the scheduler asks the workshop to run the full workflow. For /goal-advisor, create or update the normal run schedule and enable Pulse/post-run monitor; do NOT create a separate optimizer/Goal Advisor schedule. Goal Advisor now runs as a Pulse-selected module after normal scheduled workflow runs. Use workshop_mode='optimizer' only for an explicit custom optimizer job the user asks for, with exact scope, evidence window, stop conditions, and messages.",
+		"Create a new cron schedule for this workflow. Workflow schedules use mode='workshop' with workshop_mode='run'. Messages are optional; when omitted, the scheduler asks Run mode to execute the full workflow. Continuous improvement, including Goal Advisor, is selected dynamically by Pulse after normal scheduled runs; do not create a separate optimizer schedule.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -7602,8 +6527,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"workshop_mode": map[string]interface{}{
 					"type":        "string",
-					"description": "Defaults to 'run'. Use 'optimizer' for scheduled improvement/hardening loops that generate learnings and analyze steps.",
-					"enum":        []string{"run", "optimizer"},
+					"description": "Run mode is the only supported value for new schedules. Pulse selects maintenance and Goal Advisor work after runs.",
+					"enum":        []string{"run"},
 				},
 				"resume_previous": map[string]interface{}{
 					"type":        "boolean",
@@ -7694,7 +6619,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"mode":          map[string]interface{}{"type": "string", "description": "Execution mode. Only 'workshop' is supported for workflow schedules; legacy 'workflow' input is normalized to 'workshop'.", "enum": []string{"workshop"}},
 				"messages":      map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Optional default workshop messages for all items. Omit for the default full-workflow run message."},
-				"workshop_mode": map[string]interface{}{"type": "string", "description": "Defaults to 'run'.", "enum": []string{"run", "optimizer"}},
+				"workshop_mode": map[string]interface{}{"type": "string", "description": "Run mode is the only supported value for new schedules; Pulse selects maintenance after runs.", "enum": []string{"run"}},
 			},
 			"required": []string{"name", "timezone", "calendar_items", "group_names"},
 		},
@@ -7797,8 +6722,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"workshop_mode": map[string]interface{}{
 					"type":        "string",
-					"description": "Workshop builder mode: 'run' (default) or 'optimizer'.",
-					"enum":        []string{"run", "optimizer"},
+					"description": "Use 'run'. Omit this field to preserve an existing legacy schedule value.",
+					"enum":        []string{"run"},
 				},
 				"resume_previous": map[string]interface{}{
 					"type":        "boolean",
@@ -8309,7 +7234,7 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagen
 				"tier_1":          llmEntrySchema("High-reasoning execution tier: first-time or difficult work.", "Ordered fallback models tried if the primary fails."),
 				"tier_2":          llmEntrySchema("Medium-reasoning execution tier: established work with useful context.", "Ordered fallback models tried if the primary fails."),
 				"tier_3":          llmEntrySchema("Low-reasoning execution tier: validation and mature routine work.", "Ordered fallback models tried if the primary fails."),
-				"maintenance_llm": llmEntrySchema("Maintenance model for expensive Pulse modules such as Goal Advisor, hardening, report/eval improvement, KB health, and DB health.", "Ordered fallback models tried if the Maintenance model fails."),
+				"maintenance_llm": llmEntrySchema("Maintenance model for expensive Pulse modules such as Goal Advisor, Bug Review, report/eval improvement, KB health, and DB health.", "Ordered fallback models tried if the Maintenance model fails."),
 				"pulse_llm":       llmEntrySchema("Pulse coordinator model for gate, worklist, reporting, and notification turns.", "Ordered fallback models tried if the Pulse model fails."),
 			},
 			"required": []string{"mode"},
@@ -8463,98 +7388,6 @@ func workshopJSONUnmarshal(data []byte, v interface{}) error {
 	return json.Unmarshal(data, v)
 }
 
-var improveDBAgentSystemTemplate = MustRegisterTemplate("improveDBAgentSystem", `# DB Improve Agent
-
-You improve the workflow-root `+"`db/`"+` surface for the current plan. The durable structured state lives in a single SQLite database `+"`db/db.sqlite`"+` (one table per entity), queried by steps with the `+"`sqlite3`"+` CLI and read live by HTML reports via the `+"`window.report.query(sql)`"+` API; `+"`db/assets/`"+` holds durable media/file assets referenced by table rows.
-
-This is a guarded maintenance pass:
-- You may read `+"`soul/`"+`, `+"`planning/`"+`, `+"`builder/`"+`, `+"`reports/`"+`, `+"`db/`"+`, selected `+"`runs/`"+`, and `+"`evaluation/`"+` evidence.
-- You may write only under `+"`db/`"+`.
-- Do not edit `+"`planning/`"+`, `+"`reports/`"+`, `+"`knowledgebase/`"+`, `+"`learnings/`"+`, `+"`evaluation/`"+`, or run outputs.
-
-## Safety Rules
-
-1. **No silent data migration**: Do not delete rows, transform row values, rename populated fields, split/merge files, or change data semantics unless the instruction explicitly authorizes that migration.
-2. **Prefer contracts over data rewrites**: When row migration is not explicitly allowed, improve `+"`db/README.md`"+`, add schema/DDL notes, add missing indexes, identify stale columns in the summary, or make narrowly safe fixes.
-3. **Preserve report compatibility**: If an HTML report queries a table via `+"`window.report.query`"+`, do not break the column names/shape those SQL queries depend on. Prefer documenting/reporting needed report edits rather than changing reports here.
-4. **Valid SQL only**: Any DDL/DML you run must apply cleanly via `+"`sqlite3 db/db.sqlite`"+` and leave the DB readable. Run changes in a transaction; verify with `+"`PRAGMA integrity_check`"+` and a row-count spot check.
-5. **Database shape**: Each table needs a documented purpose, PRIMARY KEY, upsert rule (`+"`INSERT ... ON CONFLICT DO UPDATE`"+`), indexes for report/query access, writers, consumers, group/run separation, and report consumers. Nested data lives in JSON-text columns (`+"`json_extract`"+` to read).
-6. **Asset discipline**: Store durable images, PDFs, screenshots, audio, downloads, and generated files under `+"`db/assets/`"+`. Keep metadata, provenance, MIME/type, and path references in a `+"`db/db.sqlite`"+` table. Do not store large blobs in the DB.
-7. **No redundant tables**: Helper/derived tables are suspect when the same transformation can be done in an HTML report's `+"`window.report.query`"+` SQL (JOIN/GROUP BY). Do not drop them unless explicitly instructed; flag or document the replacement query.
-
-## Context
-
-- Workspace: {{.WorkspacePath}}
-{{if .WorkflowObjective}}- Objective: {{.WorkflowObjective}}{{end}}
-{{if .WorkflowSuccessCriteria}}- Success Criteria: {{.WorkflowSuccessCriteria}}{{end}}
-- Mode: {{.Mode}}
-{{if .Focus}}- Focus: {{.Focus}}{{end}}
-
-## Path Discipline
-
-For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`"+`. For workspace file tools that expect workspace-relative paths, use `+"`{{.WorkspacePath}}/...`"+`. Do not use bare `+"`runs/...`"+`, `+"`evaluation/...`"+`, `+"`db/...`"+`, or similar paths unless a tool explicitly requires a path relative to the workflow root. Do not use host paths outside workspace-docs.
-
-## Required Reads
-
-1. Read `+"`soul/soul.md`"+` if present.
-2. Read `+"`planning/plan.json`"+` and `+"`planning/step_config.json`"+` if present. Map steps that write, save, track, accumulate, append, dedupe, or report data.
-3. Read `+"`reports/report_plan.json`"+` and the HTML report document(s) under `+"`db/reports/`"+` if present. Map the `+"`window.report.query`"+` SQL the reports run to their `+"`db/db.sqlite`"+` tables, `+"`db/assets/`"+` references, and the columns they select.
-4. Read `+"`db/README.md`"+` if present.
-5. Inspect the DB and assets: `+"`sqlite3 db/db.sqlite \".tables\"`"+` and `+"`.schema <table>`"+`; sample with `+"`SELECT * FROM <table> LIMIT 5`"+` and `+"`SELECT COUNT(*)`"+`. Do not dump whole tables.
-
-## Allowed Work By Mode
-
-- `+"`targeted`"+`: one concrete repair or cleanup named in the instruction.
-- `+"`schema`"+`: improve `+"`db/README.md`"+` and table schema/DDL/index clarity; avoid data changes unless explicitly requested.
-- `+"`cross_step`"+`: reconcile plan writers, db tables, downstream consumers, and report queries; write only safe contract/schema fixes unless explicit data migration is requested.
-- `+"`auto`"+`: choose the narrowest safe behavior from the instruction and focus.
-
-## Final Output
-
-End with a concise summary containing:
-- tables/schema changed in `+"`db/db.sqlite`"+` and `+"`db/README.md`"+`
-- schema/DDL/index/contract improvements made
-- report compatibility notes
-- whether row/data migration was performed
-- remaining follow-up work or migrations that require explicit approval`)
-
-var improveDBAgentUserTemplate = MustRegisterTemplate("improveDBAgentUser", `Improve the workflow DB surface.
-
-Instruction: {{.Instruction}}
-Mode: {{.Mode}}
-{{if .Focus}}Focus: {{.Focus}}{{end}}
-
-Follow the safety rules exactly. If the instruction is broad, optimize the `+"`db/`"+` contract for the current plan and report consumers. If a potentially destructive data migration would help but was not explicitly authorized, do not perform it; report the proposed migration instead.`)
-
-// DBImproveAgent performs guarded maintenance on workflow-root db/ files.
-type DBImproveAgent struct {
-	*agents.BaseOrchestratorAgent
-}
-
-func newDBImproveAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *DBImproveAgent {
-	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(config, logger, tracer, agents.TodoPlannerExecutionQAAgentType, eventBridge)
-	return &DBImproveAgent{BaseOrchestratorAgent: baseAgent}
-}
-
-func (agent *DBImproveAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
-	if agent.BaseOrchestratorAgent.BaseAgent() == nil || agent.BaseOrchestratorAgent.BaseAgent().Agent() == nil {
-		return "", nil, fmt.Errorf("agent not initialized")
-	}
-	var systemPrompt, userMessage strings.Builder
-	if err := improveDBAgentSystemTemplate.Execute(&systemPrompt, templateVars); err != nil {
-		return "", nil, err
-	}
-	if err := improveDBAgentUserTemplate.Execute(&userMessage, templateVars); err != nil {
-		return "", nil, err
-	}
-	inputProcessor := func(map[string]string) string { return userMessage.String() }
-	result, updatedHistory, err := agent.ExecuteWithTemplateValidation(ctx, templateVars, inputProcessor, conversationHistory, struct{}{}, systemPrompt.String(), true)
-	if err != nil {
-		return "", nil, err
-	}
-	return result, updatedHistory, nil
-}
-
 var reviewPlanAgentSystemTemplate = MustRegisterTemplate("reviewPlanAgentSystem", `# Workflow Plan Review Agent
 
 You are a critical reviewer of the current workflow design. Your job is not to optimize or rewrite the plan. Your job is to challenge the decisions already made and identify where the current plan or its dependent artifacts are weak, unjustified, risky, overfit, stale, or internally inconsistent.
@@ -8574,7 +7407,7 @@ This is a **read-only review**:
 7. **Do not drift into full redesign**: You may suggest a concrete correction, but the primary task is to review and explain what is wrong with the current decision.
 8. **Check portability and secrecy**: Flag plan-visible secrets, user-specific values, absolute paths, run-folder-specific values, and brittle environment assumptions.
 9. **Check persistent-store discipline**: Stores survive across runs — `+"`"+`learnings/`+"`"+` (HOW to run), `+"`knowledgebase/context/`"+` (user-supplied runtime business context), `+"`"+`knowledgebase/notes/`+"`"+` (workflow-discovered durable narrative observations), `+"`"+`db/db.sqlite`+"`"+` (structured durable SQLite tables for cross-run state, read live by HTML reports via `+"`window.report.query`"+`), and `+"`db/assets/`"+` (durable media/file assets referenced by db rows or reports). Flag steps that confuse these stores: stashing durable facts in learnings or plan.json, stashing user-owned context in notes, writing report data only to run folders, embedding assets as blobs, or failing to declare `+"`"+`knowledgebase_contribution`+"`"+` / `+"`"+`db/README.md`+"`"+` contracts when steps produce persistent facts.
-10. **Check learning discipline**: A step should write learnings only when it has reusable HOW-to-run knowledge worth capturing across runs, and it must have a concrete `+"`"+`learning_objective`+"`"+`. `+"`"+`learnings_write_method`+"`"+` is compatibility-only; do not add it to new plans. Browser-based steps should not be promoted to `+"`"+`scripted`+"`"+`. `+"`"+`scripted`+"`"+` should appear only after explicit user request, highly deterministic behavior, 10+ scenario-covering successful runs, and no recent harden/plan-change pass still changing the behavior.
+10. **Check learning discipline**: A step should write learnings only when it has reusable HOW-to-run knowledge worth capturing across runs, and it must have a concrete `+"`"+`learning_objective`+"`"+`. `+"`"+`learnings_write_method`+"`"+` is compatibility-only; do not add it to new plans. Browser-based steps should not be promoted to `+"`"+`scripted`+"`"+`. `+"`"+`scripted`+"`"+` should appear only after explicit user request, highly deterministic behavior, 10+ scenario-covering successful runs, and no recent Pulse fix or plan-change pass still changing the behavior.
 11. **Check KB discipline**: KB writes require a useful `+"`"+`knowledgebase_contribution`+"`"+`, correct read/write access, and preferably `+"`"+`knowledgebase_write_method=\"direct\"`+"`"+`. `+"`knowledgebase/context/`"+` should contain user-supplied runtime context; `+"`knowledgebase/notes/`"+` should contain workflow-discovered durable narrative observations, not execution recipes, raw rows, or volatile run state. If `+"`"+`knowledgebase/notes/_index.json`+"`"+` exists, it must point to coherent topic notes.
 12. **Check db discipline**: `+"`"+`db/db.sqlite`+"`"+` should be a clean relational surface: each table documented in `+"`"+`db/README.md`+"`"+` with DDL, PRIMARY KEY, upsert rule (`+"`INSERT ... ON CONFLICT`"+`), indexes, writer ownership, group separation, report consumers (the HTML report `+"`window.report.query`"+` SQL that reads it), and correct references to durable assets under `+"`db/assets/`"+`.
 13. **Check skill discipline**: Installed skills live under `+"`skills/{folder}/SKILL.md`"+` and are reusable capability instructions shared across workflows. Review workflow-selected skills and per-step `+"`enabled_skills`"+` against the actual plan. Flag missing needed skills, selected-but-unused skills, descriptions that reference skills not enabled for the execution agent, malformed skill folders, and skills that duplicate workflow-specific learnings or contain workflow-specific secrets/paths/run state. Do not assume workflow-level selected skills automatically reach step execution; verify step-level `+"`enabled_skills`"+` when runtime requires explicit scoping.
@@ -8620,7 +7453,7 @@ Review these files/directories when present. Stay read-only:
 - `+"`learnings/_global/SKILL.md`"+`: check whether HOW-to-run learnings match current step descriptions and do not duplicate task instructions.
 - `+"`learnings/{step-id}/.learning_metadata.json`"+`: inspect for every step with learning writes or `+"`lock_learnings=true`"+`. Check `+"`successful_runs`"+`, `+"`description_hash_runs`"+`, and latest detection history. Flag locks that look stale, lack a clear builder/user rationale in review_notes, or contradict the current step description/config.
 - `+"`learnings/{step-id}/main.py`"+` and `+"`learnings/{step-id}/script_metadata.json`"+`: inspect for scripted steps. For `+"`agentic`"+` steps, verify `+"`learnings/{step-id}/main.py`"+` does NOT exist; if it does, flag it as a stale artifact that should be deleted because agentic never runs or maintains persistent main.py.
-- `+"`knowledgebase/context/context.md`"+`: check whether user-supplied runtime context is present when steps appear to rely on chat memory, and verify optimizer-owned notes did not absorb user-owned rules/preferences that belong here.
+- `+"`knowledgebase/context/context.md`"+`: check whether user-supplied runtime context is present when steps appear to rely on chat memory, and verify maintenance-owned notes did not absorb user-owned rules/preferences that belong here.
 - `+"`knowledgebase/notes/_index.json`"+` and relevant `+"`knowledgebase/notes/*.md`"+`: check topic registry, stale/duplicated notes, and whether steps that produce domain facts have matching KB contribution contracts.
 - `+"`db/README.md`"+`, `+"`db/db.sqlite`"+`, and `+"`db/assets/`"+`: check schema/DDL documentation, table shape, primary keys, upsert rules, indexes, writer ownership, group separation, durable asset metadata/provenance, and report compatibility.
 - `+"`reports/report_plan.json`"+` + the HTML report document(s): check whether the report's `+"`window.report.query`"+` SQL reads durable `+"`db/db.sqlite`"+` tables (and references `+"`db/assets/`"+`/KB via `+"`window.report.get`"+`/`+"`fileUrl`"+`) rather than volatile run paths, whether referenced columns exist, and whether derived report helper tables could be collapsed into the report's query (JOIN/GROUP BY).
@@ -8681,15 +7514,16 @@ var reviewPlanAgentUserTemplate = MustRegisterTemplate("reviewPlanAgentUser", `C
 
 var reviewArtifactSyncAgentSystemTemplate = MustRegisterTemplate("reviewArtifactSyncAgentSystem", `# Artifact Sync Review Agent
 
-You audit whether recent plan/config changes have been propagated to dependent artifacts. The source of truth for changes is `+"`planning/changelog/changelog-*.json`"+`. Entries marked `+"`artifact_review.done=true`"+` are already reviewed and should be skipped unless the user explicitly asks to re-audit them. The checkpoint and human-facing Artifact Review report live in `+"`builder/improve.html`"+` under an **Artifact Sync Cursor** block. Do not create a new state file.
+You audit whether recent plan/config changes have been propagated to dependent artifacts. The source of truth for changes is `+"`planning/changelog/changelog-*.json`"+`. Entries marked `+"`artifact_review.done=true`"+` are already reviewed and should be skipped unless the user explicitly asks to re-audit them. The current checkpoint and human-facing Artifact Review report live in `+"`builder/improve.html`"+` under an **Artifact Sync Cursor** block.
 
-You have a harden-like tool surface so you can inspect workflow state deeply. For this tool, you are still a reviewer:
-- do not update the plan
-- do not update step_config
-- do not patch main.py
-- do not change reports/evals/KB/db
-- the only file you may write directly is `+"`builder/improve.html`"+`, to maintain the cursor and append the report-only Artifact Review item
-- do not edit `+"`planning/changelog/changelog-*.json`"+` directly; after the report is written, call `+"`mark_changelog_artifact_reviewed`"+` to set `+"`artifact_review.done=true`"+` on the exact entries you fully inspected or cursor-backfilled
+## READ-ONLY REVIEW OVERRIDE
+
+You are strictly read-only. Inspect deeply and return a precise review package to the parent Pulse/workshop agent.
+- Do not create, edit, patch, move, or delete any file.
+- Do not update plan, step config, code, learnings, KB, DB, reports, evaluations, or workflow config.
+- Do not update `+"`builder/improve.html`"+` or its Artifact Sync Cursor.
+- Do not edit changelog JSON and do not call `+"`mark_changelog_artifact_reviewed`"+`.
+- The parent Pulse Fixer/workshop agent is the only writer. It records your findings in `+"`builder/improve.html`"+`, advances the cursor, applies any approved fixes, and marks exact reviewed entries.
 
 ## Context
 - Workspace: {{.WorkspacePath}}
@@ -8712,8 +7546,8 @@ For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`
 
 ## Required Procedure
 
-1. Read `+"`builder/improve.html`"+`. If it does not exist, create it using the current Pulse log structure.
-2. Ensure exactly one cursor block near the top:
+1. Read `+"`builder/improve.html`"+`. If it does not exist, report that the parent must create it; do not create it yourself.
+2. Read the existing cursor block when present:
 
 `+"```md"+`
 ## Artifact Sync Cursor
@@ -8725,8 +7559,8 @@ last_synced_at: <RFC3339 timestamp or none>
 `+"```"+`
 
 3. List `+"`planning/changelog/changelog-*.json`"+` sorted by filename ascending.
-4. Select entries whose `+"`artifact_review.done`"+` is not true. If no reviewed markers exist yet but the cursor already covers older entries, you may mark entries at or before the cursor as `+"`artifact_review.done=true`"+` with `+"`result=\"cursor-backfill\"`"+` without re-auditing; then audit only unreviewed entries after the cursor. If no cursor exists, initialize the cursor and audit from the earliest unreviewed changelog entry unless there are more than 100 unreviewed entries; if more than 100, audit only the latest 100 and clearly say older entries were skipped because there was no prior cursor.
-5. If `+"`{{.StepID}}`"+` is non-empty, only inspect entries that affect that step id. Do not advance past or mark reviewed any entries you did not inspect or cursor-backfill.
+4. Select entries whose `+"`artifact_review.done`"+` is not true. If no reviewed markers exist yet but the cursor covers older entries, identify those exact entries as proposed `+"`cursor-backfill`"+` marks without re-auditing. If no cursor exists, audit from the earliest unreviewed changelog entry unless there are more than 100 unreviewed entries; if more than 100, audit only the latest 100 and clearly say older entries were skipped because there was no prior cursor.
+{{if .StepID}}5. Only inspect entries that affect step `+"`{{.StepID}}`"+`.{{else}}5. Inspect every affected step represented by the selected entries.{{end}} Never propose cursor advancement or marks past entries you did not inspect or safely classify as cursor-backfill.
 6. Treat an entry as material when it touches description, title, context_dependencies, context_output, validation/pre_validation, step type, route membership, enabled tools/servers/skills, declared_execution_mode, lock_code, lock_learnings, learnings_access, learning_objective, learnings_write_method, knowledgebase_access, knowledgebase_contribution, or add/delete operations.
 7. For each affected step inspect:
    - current step in `+"`planning/plan.json`"+`
@@ -8749,20 +7583,16 @@ Create a finding when:
 - KB contribution still describes the old extraction/update behavior
 - the report's `+"`window.report.query`"+` SQL (or asset/file references) point at old tables, columns, paths, labels, or assumptions
 - eval steps check old files, fields, thresholds, labels, or behavior
-- the change leaves the eval plan misaligned with the goal: a changed/added success criterion or output has no eval step measuring it, an eval step no longer maps to any criterion (orphan), or an eval step only re-checks what `+"`pre_validation`"+`/Pulse triage already cover — recommend eval-plan improvement (owner: Optimizer, label `+"`Eval fix`"+`)
+- the change leaves the eval plan misaligned with the goal: a changed/added success criterion or output has no eval step measuring it, an eval step no longer maps to any criterion (orphan), or an eval step only re-checks what `+"`pre_validation`"+`/Pulse Gate and Bug Review already cover — recommend eval-plan improvement (owner: Workshop/Pulse Fixer, label `+"`Eval fix`"+`)
 - the changed step should write cross-run/report-facing data but no db target is named
 - a deleted step still has step_config, learnings, report, eval, or KB references
 - a new step lacks config/review notes where scoped tools, KB, learnings, report, or eval wiring clearly matters
 
 Do not flag artifacts that you inspected and found aligned. Include clean checks briefly.
 
-## Writing builder/improve.html
+## Review Package For The Parent
 
-Use `+"`diff_patch_workspace_file`"+` to update `+"`builder/improve.html`"+`. Preserve existing findings and resolved markers.
-
-Append a report-only Artifact Review card using the current Pulse log structure. It must include an `+"`Artifact drift`"+` action label chip (`+"`<span class=\"worklabel artifact\">Artifact drift</span>`"+`) so the user can distinguish plan-change drift review from Bug hardening and Goal Advisor decisions. If a finding is report-specific, eval-specific, or strategy-side, you may add one secondary work label (`+"`Report fix`"+`, `+"`Eval fix`"+`, or `+"`Improvement`"+`) to show the recommended owner/fix type, but do not present the review itself as a fix.
-
-Append:
+Return enough structured evidence for the parent to write one Artifact Review card. Include this report content, but do not write it yourself:
 
 `+"```md"+`
 ## Artifact Sync Review YYYY-MM-DD HH:MM UTC
@@ -8779,23 +7609,17 @@ Clean checks:
 - <step-id> — <artifact(s)> matched the current contract.
 `+"```"+`
 
-Finding IDs must continue today's highest `+"`F-YYYY-MM-DD-NNN`"+` sequence already in `+"`builder/improve.html`"+`.
-
-Rewrite only the Artifact Sync Cursor block to the latest fully inspected changelog entry. If the audit is interrupted or skips entries due to missing files/errors, do not advance past the last fully inspected entry.
-
-After writing the report, call `+"`mark_changelog_artifact_reviewed`"+` for each changelog entry you fully inspected. Pass file names plus zero-based `+"`entries[]`"+` indexes. The tool stamps this metadata:
+Also return exact proposed mark calls, grouped by result when necessary:
 
 `+"```json"+`
-"artifact_review": {
-  "done": true,
-  "reviewed_at": "<RFC3339 UTC>",
-  "reviewed_by": "review_artifact_sync",
-  "result": "clean|findings|cursor-backfill",
-  "report_entry_id": "<builder/improve.html entry id or heading slug>"
+{
+  "proposed_marks": [
+    {"file":"changelog-....json","entry_indexes":[0,1],"result":"clean|findings|cursor-backfill"}
+  ]
 }
 `+"```"+`
 
-Do not delete changelog files and do not patch them yourself. The scheduler uses `+"`artifact_review.done=true`"+` to skip this Pulse turn on future runs when there is nothing new to inspect.
+Only include entries you fully inspected or safely cursor-backfilled. If the audit is interrupted or evidence is missing, state the blocked entry and set the proposed cursor to the last fully inspected entry before it.
 
 ## Final Response
 
@@ -8803,129 +7627,12 @@ Return a concise summary:
 - changelog file/entry range inspected
 - steps inspected
 - findings count by severity
-- cursor before/after
-- changelog entries marked reviewed
+- cursor before and proposed cursor after
+- exact changelog files and zero-based entry indexes proposed for marking
 - next recommended fix owner
 `)
 
-var reviewArtifactSyncAgentUserTemplate = MustRegisterTemplate("reviewArtifactSyncAgentUser", `Run the artifact drift review. Read planning/changelog entries after the Artifact Sync Cursor in builder/improve.html, audit changed step artifacts, append a report-only Artifact Review item to builder/improve.html, and update the cursor.{{if .StepID}} Limit to step "{{.StepID}}" and do not advance past uninspected entries.{{end}}{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
-
-var reviewWorkflowResultsAgentSystemTemplate = MustRegisterTemplate("reviewWorkflowResultsAgentSystem", `# Workflow Results Review Agent
-
-You are a read-only reviewer of actual workflow outcomes. Your job is to determine:
-1. whether the workflow is achieving its stated objective
-2. whether the defined success criteria are actually being met
-3. whether the evaluation plan/report is a good measurement of the objective and success criteria
-
-This is a **read-only review**:
-- do not modify files
-- do not recommend success just because one eval step output looks good
-- separate workflow quality from evaluation quality
-
-## RULES
-1. **Read-Only**: Do NOT modify any files.
-2. **Evidence first**: Use actual run outputs, logs, and evaluation artifacts whenever they exist. Do not infer success from the plan alone.
-3. **Assess outcome and measurement separately**: The workflow may be doing well while eval is weak, or eval may look green while the workflow still misses the real goal. Call that out explicitly.
-4. **Success criteria is condition-by-condition**: Break the success criteria into concrete conditions and assess each one as "met", "partial", "unmet", or "unknown".
-5. **Objective is end-to-end**: After reviewing the conditions, answer the bigger question: is the workflow actually achieving the overall objective?
-6. **Review eval quality directly**: Read `+"`evaluation/evaluation_plan.json`"+` and any published evaluation report. Check whether the eval:
-   - directly measures each success condition
-   - indirectly approximates it
-   - misses it entirely
-   - tests irrelevant things that do not matter to the objective
-   - could pass while the real workflow outcome is still wrong
-7. **If no target run folder is preset**: Use shell to find the latest meaningful run/eval evidence. If no run evidence exists, say you cannot assess actual achievement yet.
-8. **Be concrete**: Reference exact criterion text, step IDs, output files, and evaluation evidence where possible.
-
-## CONTEXT
-
-- **Workspace**: {{.WorkspacePath}}
-{{if .WorkflowObjective}}- **Workflow Objective**: {{.WorkflowObjective}}{{else}}- **Workflow Objective**: ⚠️ NOT SET — treat missing objective as a top-level finding{{end}}
-{{if .WorkflowSuccessCriteria}}- **Success Criteria**: {{.WorkflowSuccessCriteria}}{{else}}- **Success Criteria**: ⚠️ NOT SET — treat missing success criteria as a top-level finding{{end}}
-{{if .TargetRunFolder}}- **Target Run Folder**: {{.TargetRunFolder}}{{else}}- **Target Run Folder**: not preset — find the latest meaningful run/eval evidence before judging outcomes{{end}}
-
-## PATH DISCIPLINE
-
-For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`"+`. For workspace file tools that expect workspace-relative paths, use `+"`{{.WorkspacePath}}/...`"+`. Do not use bare `+"`runs/...`"+`, `+"`evaluation/...`"+`, or similar paths unless a tool explicitly requires a path relative to the workflow root. Do not use host paths outside workspace-docs.
-
-{{if .PlanJSON}}## CURRENT PLAN
-`+"```json\n{{.PlanJSON}}\n```"+`
-{{else}}Read the plan from `+"`planning/plan.json`"+` using shell commands before starting the review.{{end}}
-
-{{if .StepConfigSummary}}## STEP CONFIG SUMMARY
-{{.StepConfigSummary}}
-{{end}}
-
-## REQUIRED EVIDENCE TO READ
-
-1. Read `+"`evaluation/evaluation_plan.json`"+` if it exists.
-2. Read the target run evidence:
-   - execution outputs under `+"`runs/<target>/execution/`"+`
-   - step logs under `+"`runs/<target>/logs/`"+`
-   - evaluation report at `+"`evaluation/runs/<target>/evaluation_report.json`"+` if it exists
-3. Read enough actual output artifacts to verify the real business outcome, not just intermediate files.
-4. If the run folder is missing or incomplete, say exactly what evidence is absent and how that limits confidence.
-
-{{if .Focus}}## FOCUS
-Prioritize this area: **{{.Focus}}**
-{{end}}
-
-## REVIEW TASKS
-
-1. Identify the concrete success conditions implied by the success criteria text.
-2. For each success condition:
-   - determine whether the actual run evidence shows it is met, partial, unmet, or unknown
-   - cite the strongest evidence
-   - state whether the eval plan/report measures this condition directly, indirectly, weakly, or not at all
-3. Decide whether the overall objective is being achieved end-to-end.
-4. Review the evaluation quality itself:
-   - **Coverage gaps**: success conditions or objective-critical outcomes that eval does not measure
-   - **Phantom evals**: eval checks that do not matter to the real goal
-   - **False-confidence risks**: places where eval could pass while the workflow still fails the actual objective
-   - **Weak proxies**: eval checks that are too indirect or too easy to game
-   - **Outcome-vs-artifact mismatch**: eval validates intermediate artifacts when the real success condition is downstream
-5. Distinguish:
-   - workflow is failing because execution/results are weak
-   - workflow may be fine but eval is weak or misaligned
-   - both are weak
-
-## OUTPUT FORMAT
-
-### Verdict
-- **Goal achievement**: achieved | probably achieved | partially achieved | not achieved | cannot assess
-- **Success criteria status**: <how many met / partial / unmet / unknown>
-- **Evaluation quality**: strong | mixed | weak
-- **Confidence**: high | medium | low
-
-### Success Criteria Review
-For each condition:
-- **[met|partial|unmet|unknown] <criterion or derived condition>**
-  - **Evidence**: <actual outputs, logs, evaluation report, missing evidence>
-  - **Eval coverage**: <direct | indirect | weak | missing>
-  - **Gap**: <what still prevents confidence or success>
-
-### Goal Review
-Answer plainly whether the workflow is achieving the stated objective and why.
-
-### Evaluation Review
-List only real eval-quality findings:
-- coverage gaps
-- phantom evals
-- false-confidence risks
-- weak proxies
-- contradictions between eval logic and the actual objective/success criteria
-
-### Blocking Gaps
-List the most important reasons the workflow is not yet achieving the goal, or the reasons you cannot trust the current eval.
-
-### Priority Next Actions
-Give the top 3-5 next actions. Prefer concrete tool calls when possible, and distinguish:
-- workflow fixes
-- eval fixes
-- evidence-gathering steps
-`)
-
-var reviewWorkflowResultsAgentUserTemplate = MustRegisterTemplate("reviewWorkflowResultsAgentUser", `Review the actual workflow outcomes against the objective and success criteria, and judge whether the evaluation truly measures them.{{if .TargetRunFolder}} Use run evidence from "{{.TargetRunFolder}}".{{else}} Find the latest meaningful run/eval evidence first.{{end}}{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
+var reviewArtifactSyncAgentUserTemplate = MustRegisterTemplate("reviewArtifactSyncAgentUser", `Run a read-only artifact drift review. Read planning/changelog entries after the Artifact Sync Cursor in builder/improve.html, audit changed step artifacts, and return findings, the proposed cursor, and exact changelog file/entry indexes for the parent to record and mark. Do not modify any file or state.{{if .StepID}} Limit to step "{{.StepID}}" and do not propose advancing past uninspected entries.{{end}}{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
 
 var reviewWorkflowTimingAgentSystemTemplate = MustRegisterTemplate("reviewWorkflowTimingAgentSystem", `# Workflow Timing Review Agent
 
@@ -8950,7 +7657,7 @@ This is a **read-only review**:
    - too many step boundaries or handoffs
    - unclear descriptions causing extra tool calls, retries, or thinking loops
 5. **Protect the objective**: A speedup is only good if it still preserves the stated objective and success criteria. Flag risky suggestions clearly.
-6. **Recommend the smallest effective fix**: Prefer a tighter description over a structural replan when the issue is prompt ambiguity. Prefer a structural change only when the current plan shape is causing waste.
+6. **Recommend the smallest effective fix**: Prefer a tighter description over a structural plan change when the issue is prompt ambiguity. Prefer a structural change only when the current plan shape is causing waste.
 7. **If no target run folder is preset**: Use shell to find the latest meaningful run evidence. If no run evidence exists, say you cannot assess real workflow speed yet.
 
 ## CONTEXT
@@ -9068,7 +7775,7 @@ This is a **read-only review**:
    - unnecessary tool calls
    - expensive evaluation that is not measuring the real objective well
    - background learning / KB updates / fix loops that are still unlocked without enough benefit
-5. **Recommend the smallest effective fix**: Prefer a tighter description or config change over a structural replan when the issue is local. Recommend structural changes only when the plan shape itself is creating waste.
+5. **Recommend the smallest effective fix**: Prefer a tighter description or config change over a structural plan change when the issue is local. Recommend structural changes only when the plan shape itself is creating waste.
 6. **If no target run folder is preset**: Use shell to find the latest meaningful cost/run evidence. If no cost evidence exists, say you cannot assess real workflow cost yet.
 
 ## CONTEXT
@@ -9329,328 +8036,29 @@ For each step listed above, carefully compare the description with the script an
 7. For browser automation: does the script use browser_snapshot + ref-based clicks, or does it blindly inject JavaScript?`)
 
 // ============================================================================
-// Harden Workflow Agent — eval-driven hardening plus invariant cleanup
+// Background Task Agent — standalone agent for run_in_background tool
 // ============================================================================
 
-var hardenWorkflowAgentSystemTemplate = MustRegisterTemplate("hardenWorkflowAgentSystem", `# Workflow Hardening Agent
+var backgroundTaskAgentSystemTemplate = MustRegisterTemplate("backgroundTaskAgentSystem", `# Background Task Agent
 
-You are an eval-driven workflow hardener and best-practice enforcer. Your job is to read evaluation results from a real run, identify every failing step, run a scoped artifact-quality sweep, and apply targeted fixes so the next run is more reliable and the workflow state is cleaner.
+You are a background agent spawned by the workflow builder to perform a specific task. You have access to the same workspace tools as the workflow execution agents.
 
-**This is NOT a read-only review.** You MUST apply fixes directly using the tools available to you.
+**Workspace folder:** {{.WorkspacePath}}
 
-## PHILOSOPHY
+## Path Discipline
 
-Every evaluation failure should leave behind a **structural artifact** — a pre-validation rule, a code fix, or a tighter description — not just prose learnings. In addition, every harden pass should clean objective best-practice violations that create future failures or drift even when the current eval did not catch them. The goal is convergence: each harden pass makes the workflow strictly better.
+For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`"+`. For workspace file tools that expect workspace-relative paths, use `+"`{{.WorkspacePath}}/...`"+`. Do not use bare `+"`runs/...`"+`, `+"`evaluation/...`"+`, `+"`planning/...`"+`, `+"`db/...`"+`, or similar paths unless a tool explicitly requires a path relative to the workflow root. Do not use host paths outside workspace-docs.
 
-## SOURCE-OF-TRUTH HIERARCHY
-Use this hierarchy before fixing:
-1. `+"`soul/soul.md`"+` is the truth for stable intent: objective, success criteria, and only explicit user-approved constraints define what the workflow must achieve. Architecture and agent-inferred assumptions remain revisable even if older soul text contains them.
-2. `+"`runs/iteration-{N}/<group>/...`"+` proves runtime reality: actual outputs, tool/execution logs, validation results, and eval reports show what the workflow really did. `+"`iteration-0`"+` is latest/current; older retained iterations are supporting evidence for trends, regressions, and whether previous improve.html actions helped.
-3. `+"`evaluation/evaluation_plan.json`"+` explains measurement: use it to understand scores, but if eval conflicts with `+"`soul.md`"+`, fix eval instead of optimizing to a bad rubric.
-4. `+"`planning/plan.json`"+` is only the current implementation attempt. Judge it against `+"`soul.md`"+` and retained run evidence; do not treat the current plan as proof that the workflow is correct.
-5. `+"`builder/improve.html`"+` is the memory/audit log: use it to avoid repeating past decisions, carry unresolved findings, and link fixes. It is not the source of truth when it conflicts with `+"`soul.md`"+` or current run/eval evidence.
+## Instructions
+Complete the task described in the user message below. Be thorough and specific in your output.
+When you finish, summarize what you did and any important findings.
 
-## PERSISTENT STORES (READ BEFORE FIXING)
-
-Workflows have three separate stores that survive across runs. Don't move content between them sideways when fixing:
-- **learnings/** — HOW to run (selectors, tool patterns, quirks). Managed by the learning agent; injected as '## Skill' into every step's prompt.
-- **skills/** — reusable external capability instructions installed at the workspace root. Workflow-selected skills help the builder discover capabilities; runtime step agents receive only the skill folders explicitly listed in that step's `+"`enabled_skills`"+`.
-- **knowledgebase/context/** — user-supplied runtime business context (rules, preferences, constraints, assumptions, examples). Read-only for harden/optimizer unless the user explicitly asks to curate captured context.
-- **knowledgebase/notes/** — per-topic narrative markdown the workflow has built up about its subject matter (entity-scoped or `+"`"+`pattern-*`+"`"+` topics). Plus `+"`"+`notes/_index.json`+"`"+` as a registry. Normally written by step agents in direct-write mode; written by the post-step KB update agent only when the user explicitly asked for agent mode.
-- **db/db.sqlite** — workflow state/results (SQLite tables produced or consumed this run; query with sqlite3). Step-owned; upsert via INSERT ... ON CONFLICT; never DROP/recreate a table.
-- **db/assets/** — durable media/file assets referenced from db rows, reports, or later steps. Keep metadata/provenance in a db/db.sqlite table.
-
-Per-step KB config:
-- `+"`"+`knowledgebase_access`+"`"+` — "read" | "write" | "read-write" | "none". Defaults to "none" (KB is opt-in per step).
-- `+"`"+`knowledgebase_contribution`+"`"+` — natural-language contribution contract for direct writes, or extraction instruction for an explicitly requested post-step KB agent. If empty, KB update does NOT run for this step even with write access.
-
-## PLAN EDITING TOOL RULE
-
-`+"`planning/plan.json`"+` is system-managed and protected by FolderGuard. You may read it with shell/JQ, but you MUST NOT use `+"`diff_patch_workspace_file`"+`, shell redirects, heredocs, or manual JSON edits to mutate it. Apply every plan/validation/config change through the workflow tools:
-- Description/step edits: `+"`update_regular_step`"+`, `+"`update_message_sequence_step`"+`, `+"`update_routing_step`"+`, `+"`update_human_input_step`"+`, `+"`update_todo_task_step`"+`, `+"`update_todo_task_route`"+`
-- Structural edits: `+"`add_regular_step`"+`, `+"`add_message_sequence_step`"+`, `+"`add_routing_step`"+`, `+"`add_human_input_step`"+`, `+"`add_todo_task_step`"+`, `+"`add_todo_task_route`"+`, `+"`delete_plan_steps`"+`, `+"`delete_todo_task_route`"+`
-- Cleanup stale step configs: `+"`cleanup_orphan_step_configs`"+`
-- Validation/config edits: `+"`update_validation_schema`"+`, `+"`update_step_config`"+`, `+"`update_workflow_config`"+`
-
-Use `+"`diff_patch_workspace_file`"+` only for non-plan artifacts that are intentionally file-authored, such as `+"`learnings/_global/SKILL.md`"+`, scripted `+"`main.py`"+`, KB notes, db schema docs, report plans, or `+"`builder/improve.html`"+`.
-
-## RULES
-1. **Evidence-first, invariant-aware**: Fix every actual failure. You may also fix objective best-practice violations even on passing steps when the violation is deterministic and non-speculative: stale `+"`agentic`"+` main.py, invalid lock state, KB/db/report contract mismatch, missing pre-validation for a produced output, hardcoded secrets/paths, or config that runtime validation would reject. Do not redesign passing behavior without evidence.
-2. **Fix the class, not the instance**: When a step fails because of a specific edge case, fix it in a way that handles the entire class of similar cases (e.g., "handle XLS and CSV" not just "handle rohit's file").
-3. **Four fix types per failing step** (apply all that are relevant):
-   a. **Pre-validation rules** — Add json_checks to validation_schema that would have CAUGHT this failure before evaluation. Use update_validation_schema.
-   b. **Description tightening & de-bloating** — Make the step description more explicit about what the agent must/must not do, AND strip stale accumulated cruft that piled up over test iterations: dated verification stamps ("VERIFIED 2026-...", "as of <date>"), workarounds whose premise no longer holds (a since-fixed bug, a tool that no longer times out, a limitation that's gone), "until X lands do Y" / "currently the only ..." transient caveats, and single-run testing scaffolding. Trim the description to the current, minimal, durable task contract; move reusable run-discovered HOW into SKILL.md and DELETE genuinely obsolete notes rather than preserving them. Use plan modification tools (`+"`update_regular_step`"+`, `+"`update_todo_task_route`"+`, etc.); never patch `+"`planning/plan.json`"+` by file.
-   c. **Code/learning fixes** — If the step uses `+"`scripted`"+` and has `+"`learnings/{step-id}/main.py`"+`, patch the script directly with diff_patch_workspace_file. For `+"`agentic`"+` steps, fix the description, validation schema, tool/server config, or global learnings instead; agentic does not write a persistent main.py. If a `+"`agentic`"+` step still has `+"`learnings/{step-id}/main.py`"+`, delete that stale script (and clear lock_code if set) rather than patching it — leaving it behind creates drift and confuses future reviewers. Update `+"`learnings/_global/SKILL.md`"+` for supplemental notes when the fix is reusable HOW-knowledge. Every patch MUST follow the authoring rules below — violations will regress at the next learning pass.
-   d. **Skill config fixes** — If the failure stems from missing reusable capability guidance, use `+"`list_skills`"+` and read matching `+"`skills/{folder}/SKILL.md`"+`. Enable the skill on the affected step with `+"`update_step_config(step_id, enabled_skills=[...])`"+`; do not assume workflow-selected skills cascade into runtime steps. If a selected/enabled skill is irrelevant, malformed, or duplicating workflow-specific learnings, remove or re-scope it. Put workflow-specific HOW in `+"`learnings/_global/SKILL.md`"+`, not in an external skill.
-   e. **KB config fixes** — If the failure stems from a step consuming KB facts that don't exist (bad `+"`"+`knowledgebase_access`+"`"+`, or missing `+"`"+`knowledgebase_contribution`+"`"+` on an upstream producer step), use update_step_config to correct it.
-
-{{.MainPyAuthoringRules}}
-4. **Structural fixes are allowed when evidence demands them** — If the failure is caused by a missing step, obsolete step, wrong boundary, or bad ordering, use the plan modification tools (`+"`add_regular_step`"+`, `+"`add_todo_task_route`"+`, `+"`update_*`"+`, `+"`delete_*`"+`) to apply the smallest evidence-backed structural fix. If the exact plan edit cannot be expressed by the available tools, stop and report the limitation instead of patching `+"`planning/plan.json`"+` by file. If run/eval evidence shows the workflow path itself is misaligned with the objective or success criteria and needs broader redesign across multiple steps/routes, record that as a Goal Advisor proposal instead of changing the strategy inside harden.
-5. **Preserve what works** — Do not modify steps that passed evaluation. Do not weaken existing pre-validation rules.
-6. **Mark reliable evidence** — If a step passed across ALL groups with clean eval/run evidence, increment successful_runs via update_step_config. Use 3+ successful runs only as operational stability evidence for lock_learnings consideration; do NOT promote to `+"`scripted`"+` or set `+"`lock_code=true`"+` unless the user explicitly asked for scripted, the step is highly deterministic, and script/eval evidence shows 10+ successful runs across the relevant scenario/group surface. Always pass `+"`"+`review_notes`+"`"+` with a one-sentence justification citing the concrete evidence (groups passed, pre-validation presence, clean tool usage) — future passes read this to decide whether to unlock.
-7. **Portability check** — When touching a step, scan for hardcoded user-specific values (account IDs, sheet URLs, paths) in descriptions and learnings. Replace with variable placeholders.
-8. **Store discipline** — If the failure evidence shows a step writing cross-run state into learnings/ or plan.json, recommend moving that content to `+"`"+`db/`+"`"+` or to the KB (via `+"`"+`knowledgebase_contribution`+"`"+`) as appropriate.
-9. **Best-practice sweep is required** — After building the failure map, inspect the workflow artifacts listed below and fix hard violations. For non-blocking concerns, append findings to your summary instead of making speculative edits.
-
-## BEST-PRACTICE SWEEP
-
-Run this sweep on every harden pass. For a single-group harden, use that group's run evidence for behavioral conclusions, but global artifact invariants still apply.
-
-1. **Execution mode / saved code**
-   - `+"`agentic`"+` steps must not keep `+"`learnings/{step-id}/main.py`"+`. If present, delete it and clear `+"`lock_code`"+`.
-   - Browser/UI-heavy steps should generally stay `+"`agentic`"+`. If a browser step is `+"`scripted`"+`, keep it only with explicit user intent and 10+ scenario-covering successful runs proving durable selectors/state-driven waits; otherwise convert to `+"`agentic`"+` and remove stale script artifacts.
-   - `+"`scripted`"+` steps should have `+"`script_metadata.json`"+` evidence with 10+ successful runs across the relevant scenarios/groups before `+"`lock_code=true`"+`.
-2. **Learning state**
-   - Steps with `+"`learnings_access=\"read-write\"`"+` need a concrete `+"`learning_objective`"+`. `+"`learnings_write_method`"+` is compatibility-only and should be omitted from new plans.
-   - For `+"`lock_learnings=true`"+`, read `+"`learnings/{step-id}/.learning_metadata.json`"+` and review_notes. Keep the lock only when a builder/user rationale is clear and still matches the current step description; otherwise unlock or correct config with review_notes.
-   - For `+"`scripted`"+` steps, avoid duplicate global learning writes unless there is HOW knowledge outside the script.
-3. **Skills**
-   - Read `+"`get_workflow_config`"+` and `+"`planning/step_config.json`"+` to compare workflow-selected skills with per-step `+"`enabled_skills`"+`. Use `+"`list_skills`"+` to verify every selected/enabled skill exists, then read each relevant `+"`skills/{folder}/SKILL.md`"+`.
-   - A runtime step that needs an installed skill must list it in `+"`enabled_skills`"+`. Workflow-selected skills alone are not enough for execution.
-   - If a failing step is using ad-hoc description text for a capability already covered by an installed skill, enable the skill on that step and simplify only the duplicated HOW text; keep the task/output contract explicit in the description.
-   - If a skill is selected/enabled but no current step needs it, remove it from the workflow or the step to reduce prompt noise.
-   - If a skill contains workflow-specific selectors, account names, run paths, current plan steps, or learned quirks from this workflow, move that content into `+"`learnings/_global/`"+` via `+"`improve_learnings`"+` or a focused learning patch, and leave the external skill reusable.
-4. **Knowledgebase**
-   - If a step needs user-supplied context from `+"`knowledgebase/context/context.md`"+`, it must have KB read access AND its step description must name the relevant section/path so the runtime agent knows to read and apply it. Fix both together.
-   - KB write/read-write access requires a useful `+"`knowledgebase_contribution`"+`.
-   - Prefer `+"`knowledgebase_write_method=\"direct\"`"+`; use `+"`agent`"+` only when the user explicitly requested a separate KB writer/reviewer.
-   - KB notes should contain workflow-discovered durable domain observations, not raw rows, run logs, execution recipes, or user-owned runtime context that belongs under `+"`knowledgebase/context/`"+`.
-5. **Database**
-   - Any step writing a `+"`db/db.sqlite`"+` table must reference the target table and its schema contract in `+"`db/README.md`"+`.
-   - Each table needs stable DDL, PRIMARY KEY, upsert rule, indexes, writer ownership, and group separation where groups can run.
-   - Durable images, PDFs, screenshots, audio, or other media/files must live under `+"`db/assets/`"+` with references and metadata in a `+"`db/db.sqlite`"+` table; do not store large blobs in the DB.
-   - If a failing/touched step DROP/recreates a table or writes report data only to run folders, fix the description/code/config so it upserts durable, keyed rows.
-6. **Reports**
-   - The HTML report's `+"`window.report.query`"+` SQL should read durable `+"`db/db.sqlite`"+` tables (and reference `+"`db/assets/`"+`/KB via `+"`window.report.get`"+`/`+"`fileUrl`"+`), not volatile `+"`runs/`"+` paths.
-   - Push joins/aggregation/sort/limit into that SQL rather than maintaining derived report helper tables — one `+"`SELECT ... JOIN ... GROUP BY`"+` returns exactly the rows the report needs.
-   - If the report depends on a redundant helper table or a `+"`step-generate-report`"+` / flatten-data step, collapse it into the report's query against the canonical tables when the transformation is deterministic and does not need a workflow step.
-   - When a harden fix changes output/db field names, update report wiring or flag the required report change.
-7. **Evaluation and variables**
-   - If eval missed a clear output/schema failure, add or tighten pre-validation and, when appropriate, evaluation coverage.
-   - User-specific values belong in `+"`variables/variables.json`"+` / secrets, not descriptions, scripts, SKILL.md, KB, db rows, or reports.
-
-## CONTEXT
-
-- **Workspace**: {{.WorkspacePath}}
-- **Latest Iteration**: {{.TargetRunFolder}}
-{{if .WorkflowObjective}}- **Workflow Objective**: {{.WorkflowObjective}}{{end}}
-{{if .WorkflowSuccessCriteria}}- **Success Criteria**: {{.WorkflowSuccessCriteria}}{{end}}
-{{if .WorkflowSelectedSkills}}- **Workflow-Selected Skills**: {{.WorkflowSelectedSkills}}{{else}}- **Workflow-Selected Skills**: none configured{{end}}
-
-## PATH DISCIPLINE
-
-For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`"+`. For workspace file tools that expect workspace-relative paths, use `+"`{{.WorkspacePath}}/...`"+`. Do not use bare `+"`runs/...`"+`, `+"`evaluation/...`"+`, `+"`builder/...`"+`, `+"`planning/...`"+`, or similar paths unless a tool explicitly requires a path relative to the workflow root. Do not use host paths outside workspace-docs.
-
-{{if .PlanJSON}}## CURRENT PLAN
-`+"```json\n{{.PlanJSON}}\n```"+`
-{{end}}
-
-{{if .StepConfigSummary}}## STEP CONFIG STATE
-{{.StepConfigSummary}}
-{{end}}
-
-	{{if .Focus}}## FOCUS
-	Prioritize this area while hardening: **{{.Focus}}**
-	{{end}}
-
-	## EVIDENCE WINDOW
-
-	Before building the failure map, select the retained runs that matter:
-	- Always include latest `+"`{{.TargetRunFolder}}`"+`.
-	- Read `+"`builder/improve.html`"+`, `+"`planning/changelog/`"+`, and run/eval `+"`run_metadata.json`"+` timestamps.
-	- Include older iterations since the last relevant harden/plan/eval change, plus 1-2 runs immediately before that change when you need before/after comparison.
-	- Use older runs to identify recurring failures, regressions, and whether a previous fix helped. Do not let stale runs override latest evidence after a material plan/config/eval change.
-
-	## DATA LAYOUT
-
-Path examples below are relative to the workflow root for readability. In actual tool calls, prefix them with `+"`{{.WorkspacePath}}/`"+` unless a tool explicitly requires workflow-root-relative paths. Replace {iter} with a selected retained iteration folder (always include latest `+"`{{.TargetRunFolder}}`"+`; include older `+"`iteration-{N}`"+` folders when improve.html/decision timestamps make them relevant) and {group} with the group subfolder name.
-
-### Per-group execution data
-| Path | Contents |
-|------|----------|
-| `+"`runs/{iter}/{group}/execution/{step-id}/`"+` | Step output files (*.json) — the primary evidence of what was produced |
-| `+"`runs/{iter}/{group}/execution/Downloads/`"+` | Downloaded files (bank statements, etc.) |
-
-### Per-group logs
-| Path | Contents |
-|------|----------|
-| `+"`runs/{iter}/{group}/run_metadata.json`"+` | **Workflow-level timing**: `+"`started_at`"+`, `+"`completed_at`"+`, `+"`duration_ms`"+`, `+"`status`"+` |
-| `+"`runs/{iter}/{group}/logs/{step-id}/execution/`"+` | Execution logs folder for a step |
-| `+"`runs/{iter}/{group}/logs/{step-id}/execution/execution-attempt-{N}-iteration-{M}-conversation.json`"+` | Full conversation log with `+"`conversation_history`"+` (system/human/AI messages) and `+"`tool_calls`"+` array (each entry has `+"`tool_name`"+`, `+"`args`"+`, `+"`result`"+`, `+"`duration`"+`) |
-| `+"`runs/{iter}/{group}/logs/{step-id}/execution/execution-attempt-{N}-iteration-{M}.json`"+` | Execution summary: model used, result text, step path, `+"`duration_ms`"+`, `+"`llm_call_count`"+`, `+"`llm_duration_ms`"+`, `+"`tool_call_count`"+`, `+"`tool_duration_ms`"+` |
-| `+"`runs/{iter}/{group}/logs/{step-id}/execution/execution-attempt-{N}-iteration-{M}-timing.json`"+` | **Clear timing breakdown**: workflow builder should read `+"`agent.*`"+` for agent wall-clock, `+"`llm.*`"+` for LLM timing (`+"`time_to_first_response_ms`"+`, `+"`time_to_first_content_ms`"+`, `+"`time_to_first_tool_call_ms`"+`), and `+"`tools.calls[]`"+` for per-tool durations/offsets |
-| `+"`runs/{iter}/{group}/logs/{step-id}/execution/scripted_fast_path.json`"+` | **scripted steps only**: main.py execution result — `+"`exit_code`"+`, `+"`output`"+` (stdout), `+"`error`"+` (stderr), `+"`success`"+`, `+"`script_path`"+`, `+"`validation_error`"+`. This is the fastest way to see what main.py did. |
-| `+"`runs/{iter}/{group}/logs/{step-id}/pre_validation.json`"+` | Pre-validation result: `+"`overall_pass`"+`, `+"`errors[]`"+`, `+"`files_checked[]`"+`, `+"`schema_used`"+` |
-
-### Timing Read Order
-When the task is to explain workflow slowness, read timing in this order:
-1. `+"`runs/{iter}/{group}/run_metadata.json`"+` for workflow total duration.
-2. Each step's `+"`execution-attempt-{N}-iteration-{M}.json`"+` to identify the slowest step attempt quickly.
-3. The matching `+"`execution-attempt-{N}-iteration-{M}-timing.json`"+` for the slowest step.
-
-Inside `+"`*-timing.json`"+`, interpret fields this way:
-- `+"`agent.duration_ms`"+`: full step-attempt wall-clock.
-- `+"`llm.total_duration_ms`"+`: total time spent in LLM calls.
-- `+"`llm.time_to_first_response_ms`"+`: model startup / first-response latency.
-- `+"`llm.time_to_first_content_ms`"+`: first text-token/content latency.
-- `+"`llm.time_to_first_tool_call_ms`"+`: how long the model thought before deciding to use a tool.
-- `+"`llm.calls[]`"+`: per-call breakdown; use this to find whether a single call or many calls caused the slowdown.
-- `+"`tools.total_duration_ms`"+`: total tool time for the attempt.
-- `+"`tools.calls[]`"+`: per-tool breakdown; use `+"`duration_ms`"+` to rank slow tools and `+"`offset_from_agent_start_ms`"+` to place them in sequence.
-
-Analysis rules:
-- If `+"`llm.total_duration_ms`"+` dominates, the bottleneck is model time.
-- If `+"`tools.total_duration_ms`"+` dominates, the bottleneck is tool execution.
-- If `+"`agent.duration_ms`"+` is much larger than both, the remaining gap is non-tool/non-LLM overhead such as orchestration, validation, file operations, or waiting between phases.
-- Read the conversation log last, only to explain the reason for the slow call after the timing files already identified it.
-
-### Evaluation data
-| Path | Contents |
-|------|----------|
-| `+"`evaluation/runs/{iter}/{group}/evaluation_report.json`"+` | Eval step outputs + evidence |
-| `+"`evaluation/evaluation_plan.json`"+` | Eval step definitions |
-
-### Learnings and code (persistent across runs)
-| Path | Contents |
-|------|----------|
-| `+"`learnings/{step-id}/main.py`"+` | Saved Python script for scripted steps — **this is what gets executed on each scripted run** |
-| `+"`learnings/_global/SKILL.md`"+` | Global prose learnings shared across all steps |
-| `+"`learnings/{step-id}/.learning_metadata.json`"+` | Learning observability metadata: description hash runs, successful runs, latest detection history |
-| `+"`learnings/{step-id}/script_metadata.json`"+` | Script version, run counts, per-group stats, duration stats, recent run history, last failure details, streak |
-
-### Plan and config
-| Path | Contents |
-|------|----------|
-| `+"`planning/plan.json`"+` | Step definitions, descriptions, validation schemas |
-| `+"`planning/step_config.json`"+` | Per-step config overrides |
-| `+"`skills/{folder}/SKILL.md`"+` | Installed reusable skills selected at workflow level or enabled per step |
-| `+"`variables/variables.json`"+` | Variable groups and user-specific values that descriptions/scripts should reference by placeholder |
-| `+"`knowledgebase/notes/_index.json`"+` | KB topic registry; read this before reading topic notes |
-| `+"`knowledgebase/notes/*.md`"+` | Durable narrative domain observations |
-| `+"`knowledgebase/context/context.md`"+` | User-supplied runtime business context; read-only unless explicitly asked to curate |
-| `+"`db/README.md`"+` | Durable db schema contracts: per-table DDL, primary key, upsert rule, indexes, writers, consumers |
-| `+"`db/db.sqlite`"+` | Durable structured SQLite tables used across runs and by reports |
-| `+"`db/assets/`"+` | Durable images, PDFs, downloads, generated files, and other assets referenced by db rows/reports |
-| `+"`reports/report_plan.json`"+` | Registers the report's HTML document(s) under db/reports/ |
-
-### Important: todo_task orchestrator logs
-For `+"`todo_task`"+` steps, the orchestrator may run sub-agent main.py scripts directly via shell commands instead of delegating to sub-agents. When this happens:
-- The main.py stdout/stderr is inside the orchestrator's `+"`tool_calls`"+` array in its conversation log, NOT in a separate `+"`scripted_fast_path.json`"+`
-- Look for tool calls with tool_name `+"`mcp__api-bridge__execute_shell_command`"+` where `+"`args`"+` contains `+"`python3`"+` and the step's `+"`main.py`"+` path
-- The `+"`result`"+` JSON has `+"`exit_code`"+`, `+"`stdout`"+`, and `+"`stderr`"+`
-
-{{if .GroupName}}## SCOPE — SINGLE GROUP
-
-**This run is scoped to a single group: `+"`{{.GroupName}}`"+`.**
-
-Limit ALL analysis and fixes to data under that group's subfolder. Do NOT inspect other groups even if their folders exist on disk. Cross-group failure aggregation does not apply — the failure map is per-step pass/fail for THIS group only. Mark a step "passing" if `+"`{{.GroupName}}`"+` passed; do not require pass-across-all-groups before incrementing successful_runs.
-
-When you finish, name the group explicitly in your summary (e.g. "Hardened step X for group {{.GroupName}}") so the user can tell which group's run produced the changes.
-
-{{end}}## PROCEDURE
-
-	{{if .GroupName}}1. **Use the scoped group** — `+"`{{.GroupName}}`"+`. Do NOT discover other groups; ignore them entirely. For this group, read latest `+"`{{.TargetRunFolder}}`"+` plus older retained iterations selected by the evidence-window rules.
-
-	2. **Read evaluation reports for {{.GroupName}}** — for each selected iteration, read:
-	   - `+"`evaluation/runs/{iteration}/{{.GroupName}}/evaluation_report.json`"+`
-	   - `+"`runs/{iteration}/{{.GroupName}}/execution/{step-id}/`"+` step output files
-	   - `+"`runs/{iteration}/{{.GroupName}}/logs/{step-id}/execution/scripted_fast_path.json`"+` for main.py results
-	   - `+"`runs/{iteration}/{{.GroupName}}/logs/{step-id}/pre_validation.json`"+` for validation results
-
-	3. **Build a failure list for {{.GroupName}}** — per-step pass/fail with failure reasons across selected iterations. No cross-group aggregation.
-
-4. **Run the best-practice sweep** — read plan/config/skills/learnings metadata/KB/db/report/eval/variables artifacts and fix hard invariant violations using the rules above.{{else}}1. **Discover current groups** — List the subdirectories under `+"`runs/{{.TargetRunFolder}}/`"+` to find current group folders (e.g., vikas, rohit, atul). Ignore `+"`run_metadata.json`"+`. Then select older retained iterations using the evidence-window rules.
-
-	2. **Read evaluation reports** — For each current group and selected iteration, read:
-	   - `+"`evaluation/runs/{iteration}/{group}/evaluation_report.json`"+`
-	   - `+"`runs/{iteration}/{group}/execution/{step-id}/`"+` step output files
-	   - `+"`runs/{iteration}/{group}/logs/{step-id}/execution/scripted_fast_path.json`"+` for main.py results
-	   - `+"`runs/{iteration}/{group}/logs/{step-id}/pre_validation.json`"+` for validation results
-
-	3. **Build a failure map** — For each step, aggregate failures across all current groups and selected iterations:
-	   | Step ID | Iterations reviewed | Groups that passed | Groups that failed | Failure reasons | Trend/regression note |{{end}}
-
-4. **Run the best-practice sweep** — read plan/config/skills/learnings metadata/KB/db/report/eval/variables artifacts and fix hard invariant violations using the rules above.
-
-5. **For each failing step** (ordered by failure count, worst first):
-   a. Read the current step description, validation_schema, learnings, and main.py (if scripted)
-	   b. Read the actual execution output and logs {{if .GroupName}}for `+"`{{.GroupName}}`"+` in the selected iterations{{else}}for 1-2 failing groups across the selected iterations{{end}}
-   c. Categorize the failure:
-      - **Output format/structure** → add pre-validation json_checks
-      - **Data correctness** (wrong values, missing data) → tighten description + patch code
-      - **Edge case** (format variant, unexpected input) → patch code + add format-specific handling
-      - **Cross-step consistency** (upstream output doesn't match downstream expectation) → tighten both descriptions
-   d. Apply fixes using the appropriate tools
-   e. Document what you changed and why
-
-	6. **For each passing step** ({{if .GroupName}}passed for `+"`{{.GroupName}}`"+` in the selected run window{{else}}passed ALL current groups in the selected run window{{end}}):
-   - If successful_runs < 3, increment via update_step_config
-   - If successful_runs >= 3, recommend lock_learnings=true only when the builder/user wants to stop SKILL.md writes for this step and the learning notes are stable; include review_notes. For scripted steps, set lock_code=true only when the user explicitly wanted scripted, the step is highly deterministic, and script/eval evidence shows 10+ successful runs across the relevant scenario/group surface.
-   - **Lock guard**: If you suspect the step description changed since the last review (description_reviewed may no longer reflect the current description), flag the step as "description may have changed since last review — re-review before locking" and leave lock_learnings / lock_code at their previous values.{{if .GroupName}}
-   - **Single-group caution**: locking after only one group passing is weaker evidence than after all-groups passing. Be more conservative — prefer incrementing successful_runs to locking outright unless the count is already at 3+.{{end}}
-
-7. **Update `+"`builder/improve.html`"+` when you changed anything**:
-   - Follow `+"`get_reference_doc(kind=\"review-improve-log\")`"+` if available in this mode.
-   - Add or refresh one Decision card tagged `+"`Decision - Pulse harden`"+` when this pass was launched by Pulse, otherwise `+"`Decision - Manual`"+`.
-   - Include the `+"`Bug`"+` verdict chip.
-   - Include a primary action label chip: `+"`Bug fix`"+` by default; use `+"`Report fix`"+` for report/dashboard repairs, `+"`Eval fix`"+` for evaluation/pre-validation/rubric wiring repairs, `+"`Artifact drift`"+` when closing an Artifact Review finding, and `+"`Manual`"+` when the fix is explicitly user-requested.
-   - If you resolved an existing Open finding, edit that finding in place with a `+"`Resolved YYYY-MM-DD — <how>`"+` line. Do not delete the original finding.
-
-8. **Produce a summary** with:
-   - Steps hardened (with specific changes made)
-   - Best-practice violations cleaned up
-   - Best-practice concerns intentionally left as findings only
-   - Skill scoping changes made or left as recommendations
-   - Steps with learnings/code locks updated
-   - Structural fixes applied, or broader success-criteria/metric alignment redesign still recommended as a Goal Advisor proposal
-   - Remaining risk areas
-
-## PRE-VALIDATION EVOLUTION GUIDE
-
-When adding pre-validation rules, follow this priority:
-1. **File existence** — must_exist for all expected output files
-2. **Field existence and type** — must_exist + value_type for critical fields
-3. **Value ranges** — min_value/max_value for numeric fields (e.g., balance > 0)
-4. **Format patterns** — pattern regex for dates, month names, IDs
-5. **Array lengths** — min_length for lists that must have entries
-6. **Cross-field consistency** — consistency_check comparing related fields (e.g., count field matches array length)
-
-Always prefer specific checks over generic ones. A check that catches the actual failure is worth more than ten generic existence checks.
+{{.SkillPrompt}}
+{{.SecretPrompt}}
+{{.BrowserPrompt}}
 `)
 
-var hardenWorkflowAgentUserTemplate = MustRegisterTemplate("hardenWorkflowAgentUser", `Harden the workflow from retained run/evaluation evidence. Start with latest "{{.TargetRunFolder}}"{{if .GroupName}}, scoped to group "{{.GroupName}}" only{{end}}, then include older iterations selected by improve.html / decisions / changelog timestamps when they show relevant trends, regressions, or before-after evidence. {{if .GroupName}}Read this group's eval reports across the selected run window{{else}}Read all current group eval reports across the selected run window{{end}}, identify every failing or regressing step, run the required best-practice sweep over plan/config/skills/learnings metadata/KB/db/reports/variables/eval artifacts, and apply targeted fixes (pre-validation rules, description tightening via workflow plan tools, skill scoping via update_step_config, stale-script cleanup, config fixes, code patches for scripted). For any step that is agentic and has learnings/{step-id}/main.py, remove that stale main.py and clear lock_code if set. Do not patch planning/plan.json directly. Update review_notes and locks only when the evidence supports them. Summarize all changes made and any best-practice findings left for later.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
-
-// HardenWorkflowAgent applies eval-driven fixes to failing steps
-type HardenWorkflowAgent struct {
-	*agents.BaseOrchestratorAgent
-}
-
-func newHardenWorkflowAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *HardenWorkflowAgent {
-	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(config, logger, tracer, agents.TodoPlannerExecutionQAAgentType, eventBridge)
-	return &HardenWorkflowAgent{BaseOrchestratorAgent: baseAgent}
-}
-
-func (agent *HardenWorkflowAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
-	if agent.BaseOrchestratorAgent.BaseAgent() == nil || agent.BaseOrchestratorAgent.BaseAgent().Agent() == nil {
-		return "", nil, fmt.Errorf("agent not initialized")
-	}
-	if _, has := templateVars["MainPyAuthoringRules"]; !has {
-		templateVars["MainPyAuthoringRules"] = BuildMainPyAuthoringRules() + BrowserAuthoringRulesFromTemplateVars(templateVars)
-	}
-	var systemPrompt, userMessage strings.Builder
-	if err := hardenWorkflowAgentSystemTemplate.Execute(&systemPrompt, templateVars); err != nil {
-		return "", nil, err
-	}
-	if err := hardenWorkflowAgentUserTemplate.Execute(&userMessage, templateVars); err != nil {
-		return "", nil, err
-	}
-	inputProcessor := func(map[string]string) string { return userMessage.String() }
-	result, updatedHistory, err := agent.ExecuteWithTemplateValidation(ctx, templateVars, inputProcessor, conversationHistory, struct{}{}, systemPrompt.String(), true)
-	if err != nil {
-		return "", nil, err
-	}
-	return result, updatedHistory, nil
-}
+var backgroundTaskAgentUserTemplate = MustRegisterTemplate("backgroundTaskAgentUser", `{{.Instruction}}`)
 
 // StepCodeReviewAgent compares step descriptions with their saved main.py scripts to detect drift.
 type StepCodeReviewAgent struct {
@@ -9742,35 +8150,6 @@ func (agent *ArtifactSyncReviewAgent) Execute(ctx context.Context, templateVars 
 	return result, updatedHistory, nil
 }
 
-// WorkflowResultsReviewAgent reviews actual run outcomes against the objective, success criteria, and eval quality.
-type WorkflowResultsReviewAgent struct {
-	*agents.BaseOrchestratorAgent
-}
-
-func newWorkflowResultsReviewAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *WorkflowResultsReviewAgent {
-	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(config, logger, tracer, agents.TodoPlannerExecutionQAAgentType, eventBridge)
-	return &WorkflowResultsReviewAgent{BaseOrchestratorAgent: baseAgent}
-}
-
-func (agent *WorkflowResultsReviewAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
-	if agent.BaseOrchestratorAgent.BaseAgent() == nil || agent.BaseOrchestratorAgent.BaseAgent().Agent() == nil {
-		return "", nil, fmt.Errorf("agent not initialized")
-	}
-	var systemPrompt, userMessage strings.Builder
-	if err := reviewWorkflowResultsAgentSystemTemplate.Execute(&systemPrompt, templateVars); err != nil {
-		return "", nil, err
-	}
-	if err := reviewWorkflowResultsAgentUserTemplate.Execute(&userMessage, templateVars); err != nil {
-		return "", nil, err
-	}
-	inputProcessor := func(map[string]string) string { return userMessage.String() }
-	result, updatedHistory, err := agent.ExecuteWithTemplateValidation(ctx, templateVars, inputProcessor, conversationHistory, struct{}{}, systemPrompt.String(), true)
-	if err != nil {
-		return "", nil, err
-	}
-	return result, updatedHistory, nil
-}
-
 // WorkflowTimingReviewAgent reviews actual run latency and speedup opportunities.
 type WorkflowTimingReviewAgent struct {
 	*agents.BaseOrchestratorAgent
@@ -9827,83 +8206,6 @@ func (agent *WorkflowCostReviewAgent) Execute(ctx context.Context, templateVars 
 		return "", nil, err
 	}
 	return result, updatedHistory, nil
-}
-
-func (iwm *InteractiveWorkshopManager) runImproveDBAgent(ctx context.Context, mode string, instruction string, focus string) (string, error) {
-	workspacePath := iwm.controller.GetWorkspacePath()
-	logger := iwm.controller.GetLogger()
-
-	mode = strings.TrimSpace(mode)
-	switch mode {
-	case "targeted", "schema", "cross_step", "auto":
-	default:
-		mode = "auto"
-	}
-
-	if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ improve_db: failed to reload plan for objective: %v (using cached value)", err))
-	}
-	workflowObjective, workflowSuccessCriteria := iwm.controller.ResolveWorkflowObjective(ctx)
-
-	readPaths := []string{
-		fmt.Sprintf("%s/soul", workspacePath),
-		fmt.Sprintf("%s/planning", workspacePath),
-		fmt.Sprintf("%s/builder", workspacePath),
-		fmt.Sprintf("%s/reports", workspacePath),
-		fmt.Sprintf("%s/db", workspacePath),
-		fmt.Sprintf("%s/runs", workspacePath),
-		fmt.Sprintf("%s/evaluation", workspacePath),
-	}
-	writePaths := []string{
-		fmt.Sprintf("%s/db", workspacePath),
-	}
-	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-
-	phaseLLM := iwm.controller.selectMaintenanceLLM("improve db agent")
-	if phaseLLM == nil {
-		return "", fmt.Errorf("no valid LLM configuration found for improve db agent")
-	}
-
-	config := iwm.controller.CreateStandardAgentConfigWithLLM("improve-db-agent", 50, agents.OutputFormatStructured, phaseLLM)
-	// Isolate the coding-CLI session in a fresh tmp dir instead of the
-	// builder's live workflow folder. This background tool agent reaches
-	// workspace files through the MCP bridge (absolute paths), so it does
-	// not need to sit in the builder's CWD — and projecting its own
-	// CLAUDE.md/.claude/ there would collide with the active builder
-	// session's projection. Mirrors runBackgroundTaskAgent.
-	config.IsolateCodingAgentWorkspace = true
-	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
-	config.ServerNames = []string{mcpclient.NoServers}
-	defer iwm.configureWorkshopToolAgentSession(config, "improve-db", readPaths, writePaths)()
-
-	phaseTools, phaseExecutors := iwm.controller.BaseOrchestrator.PreparePhaseAgentTools()
-	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, log loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-		return newDBImproveAgent(cfg, log, tracer, eventBridge)
-	}
-	agent, err := iwm.controller.CreateAndSetupStandardAgentWithConfig(
-		ctx, config, "improve-db", 0, 0, "improve-db",
-		createAgentFunc, phaseTools, phaseExecutors, true,
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to create improve_db agent: %w", err)
-	}
-
-	templateVars := map[string]string{
-		"WorkspacePath":           workspacePath,
-		"AbsWorkspacePath":        absPromptWorkspacePath(workspacePath),
-		"WorkflowObjective":       workflowObjective,
-		"WorkflowSuccessCriteria": workflowSuccessCriteria,
-		"Mode":                    mode,
-		"Instruction":             instruction,
-		"Focus":                   focus,
-	}
-
-	logger.Info(fmt.Sprintf("🗄️ Running improve_db agent (mode: %q, instruction: %q, focus: %q)", mode, instruction, focus))
-	result, _, err := agent.Execute(ctx, templateVars, nil)
-	if err != nil {
-		return "", fmt.Errorf("improve_db agent failed: %w", err)
-	}
-	return result, nil
 }
 
 // runReviewPlanAgent performs a read-only critical review of the current workflow design and dependent artifacts.
@@ -10099,9 +8401,7 @@ func (iwm *InteractiveWorkshopManager) runReviewArtifactSyncAgent(ctx context.Co
 		fmt.Sprintf("%s/reports", workspacePath),
 		fmt.Sprintf("%s/evaluation", workspacePath),
 	}
-	writePaths := []string{
-		fmt.Sprintf("%s/builder", workspacePath),
-	}
+	writePaths := []string{}
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 
 	llmConfigToUse := iwm.controller.selectMaintenanceLLM("review_artifact_sync agent")
@@ -10118,8 +8418,7 @@ func (iwm *InteractiveWorkshopManager) runReviewArtifactSyncAgent(ctx context.Co
 	defer iwm.configureWorkshopToolAgentSession(config, "review-artifact-sync", readPaths, writePaths)()
 
 	allowedToolNames := []string{
-		"execute_shell_command", "diff_patch_workspace_file",
-		"mark_changelog_artifact_reviewed",
+		"execute_shell_command",
 		"get_step_prompts", "get_workflow_config", "get_llm_config",
 		"get_report_plan", "validate_report_plan", "preview_report_render",
 		"validate_evaluation_plan",
@@ -10155,105 +8454,6 @@ func (iwm *InteractiveWorkshopManager) runReviewArtifactSyncAgent(ctx context.Co
 	result, _, err := agent.Execute(ctx, templateVars, nil)
 	if err != nil {
 		return "", fmt.Errorf("review_artifact_sync agent failed: %w", err)
-	}
-	return result, nil
-}
-
-// runReviewWorkflowResultsAgent reviews actual run outcomes against the objective, success criteria, and evaluation quality.
-func (iwm *InteractiveWorkshopManager) runReviewWorkflowResultsAgent(ctx context.Context, targetRunFolder string, focus string) (string, error) {
-	workspacePath := iwm.controller.GetWorkspacePath()
-	logger := iwm.controller.GetLogger()
-
-	planJSON := ""
-	if planContent, err := iwm.controller.ReadWorkspaceFile(ctx, "planning/plan.json"); err == nil {
-		planJSON = planContent
-	}
-
-	stepConfigSummary := ""
-	if stepConfigs, err := iwm.controller.ReadStepConfigs(ctx); err == nil && len(stepConfigs) > 0 {
-		var sb strings.Builder
-		for _, sc := range stepConfigs {
-			mode := "agentic"
-			declaredMode := ""
-			successfulRuns := 0
-			lockLearnings := false
-			lockCode := false
-			if sc.AgentConfigs != nil {
-				if isScriptedExecutionModeConfig(sc.AgentConfigs) {
-					mode = "scripted"
-				}
-				declaredMode = sc.AgentConfigs.DeclaredExecutionMode
-				if sc.AgentConfigs.SuccessfulRuns != nil {
-					successfulRuns = *sc.AgentConfigs.SuccessfulRuns
-				}
-				if sc.AgentConfigs.LockLearnings != nil {
-					lockLearnings = *sc.AgentConfigs.LockLearnings
-				}
-				if sc.AgentConfigs.LockCode != nil {
-					lockCode = *sc.AgentConfigs.LockCode
-				}
-			}
-			sb.WriteString(fmt.Sprintf("- %s: mode=%s, declared_mode=%s, successful_runs=%d, lock_learnings=%v, lock_code=%v\n", sc.ID, mode, declaredMode, successfulRuns, lockLearnings, lockCode))
-		}
-		stepConfigSummary = sb.String()
-	}
-
-	if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ review_workflow_results: failed to reload plan for objective: %v (using cached value)", err))
-	}
-	workflowObjective, workflowSuccessCriteria := iwm.controller.ResolveWorkflowObjective(ctx)
-
-	readPaths := []string{
-		workspacePath,
-		fmt.Sprintf("%s/runs", workspacePath),
-		fmt.Sprintf("%s/planning", workspacePath),
-		fmt.Sprintf("%s/learnings", workspacePath),
-		fmt.Sprintf("%s/evaluation", workspacePath),
-	}
-	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, []string{})
-
-	llmConfigToUse := iwm.controller.selectMaintenanceLLM("review_workflow_results agent")
-	if llmConfigToUse == nil {
-		return "", fmt.Errorf("no valid LLM configuration for review_workflow_results agent")
-	}
-
-	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-workflow-results-agent", 60, agents.OutputFormatStructured, llmConfigToUse)
-	// Isolate in a fresh tmp dir; don't project CLAUDE.md/.claude into the
-	// builder's live workflow folder. See improve-db-agent above.
-	config.IsolateCodingAgentWorkspace = true
-	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
-	config.ServerNames = []string{mcpclient.NoServers}
-	defer iwm.configureWorkshopToolAgentSession(config, "review-workflow-results", readPaths, []string{})()
-
-	phaseTools, phaseExecutors := iwm.controller.BaseOrchestrator.PreparePhaseAgentTools()
-	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, log loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-		return newWorkflowResultsReviewAgent(cfg, log, tracer, eventBridge)
-	}
-	agent, err := iwm.controller.CreateAndSetupStandardAgentWithConfig(
-		ctx, config, "review-workflow-results", 0, 0, "review-workflow-results",
-		createAgentFunc, phaseTools, phaseExecutors, true,
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to create review_workflow_results agent: %w", err)
-	}
-
-	templateVars := map[string]string{
-		"WorkspacePath":           workspacePath,
-		"AbsWorkspacePath":        absPromptWorkspacePath(workspacePath),
-		"TargetRunFolder":         targetRunFolder,
-		"PlanJSON":                planJSON,
-		"StepConfigSummary":       stepConfigSummary,
-		"WorkflowObjective":       workflowObjective,
-		"WorkflowSuccessCriteria": workflowSuccessCriteria,
-		"Focus":                   focus,
-		"SessionID":               iwm.sessionID,
-		"WorkflowID":              iwm.workflowID,
-	}
-
-	logger.Info(fmt.Sprintf("📊 Running review_workflow_results agent (target_run_folder: %q, objective: %q, success_criteria: %q, focus: %q)", targetRunFolder, workflowObjective, workflowSuccessCriteria, focus))
-	result, _, err := agent.Execute(ctx, templateVars, nil)
-	if err != nil {
-		return "", fmt.Errorf("review_workflow_results agent failed: %w", err)
 	}
 	return result, nil
 }
@@ -10626,160 +8826,6 @@ func (iwm *InteractiveWorkshopManager) runReviewStepCodeAgent(ctx context.Contex
 	return result, nil
 }
 
-// runHardenWorkflowAgent reads eval reports from a run and applies targeted fixes to failing steps.
-// When groupName is non-empty, the agent is told to scope its analysis and fixes to ONLY that group.
-// When empty, it discovers all groups under the iteration and analyzes them collectively.
-func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Context, targetRunFolder string, groupName string, focus string) (string, error) {
-	workspacePath := iwm.controller.GetWorkspacePath()
-	logger := iwm.controller.GetLogger()
-
-	planJSON := ""
-	if planContent, err := iwm.controller.ReadWorkspaceFile(ctx, "planning/plan.json"); err == nil {
-		planJSON = planContent
-	}
-
-	stepConfigSummary := ""
-	if stepConfigs, err := iwm.controller.ReadStepConfigs(ctx); err == nil && len(stepConfigs) > 0 {
-		var sb strings.Builder
-		for _, sc := range stepConfigs {
-			mode := "agentic"
-			declaredMode := ""
-			successfulRuns := 0
-			lockLearnings := false
-			lockCode := false
-			learningsAccess := ""
-			learningObjective := ""
-			learningsWriteMethod := ""
-			kbAccess := ""
-			kbContribution := ""
-			kbWriteMethod := ""
-			enabledSkills := []string{}
-			reviewNotes := ""
-			if sc.AgentConfigs != nil {
-				if isScriptedExecutionModeConfig(sc.AgentConfigs) {
-					mode = "scripted"
-				}
-				declaredMode = sc.AgentConfigs.DeclaredExecutionMode
-				if sc.AgentConfigs.SuccessfulRuns != nil {
-					successfulRuns = *sc.AgentConfigs.SuccessfulRuns
-				}
-				if sc.AgentConfigs.LockLearnings != nil {
-					lockLearnings = *sc.AgentConfigs.LockLearnings
-				}
-				if sc.AgentConfigs.LockCode != nil {
-					lockCode = *sc.AgentConfigs.LockCode
-				}
-				learningsAccess = resolveLearningsAccess(sc.AgentConfigs)
-				learningObjective = sc.AgentConfigs.LearningObjective
-				learningsWriteMethod = resolveLearningsWriteMethod(sc.AgentConfigs)
-				kbAccess = sc.AgentConfigs.KnowledgebaseAccess
-				kbContribution = sc.AgentConfigs.KnowledgebaseContribution
-				kbWriteMethod = resolveKnowledgebaseWriteMethod(sc.AgentConfigs)
-				enabledSkills = append([]string(nil), sc.AgentConfigs.EnabledSkills...)
-				reviewNotes = sc.AgentConfigs.ReviewNotes
-			}
-			sb.WriteString(fmt.Sprintf("- %s: mode=%s, declared_mode=%s, successful_runs=%d, lock_learnings=%v, lock_code=%v, enabled_skills=%v, learnings_access=%s, learning_objective=%q, learnings_write_method=%s, kb_access=%s, kb_contribution=%q, kb_write_method=%s, review_notes=%q\n", sc.ID, mode, declaredMode, successfulRuns, lockLearnings, lockCode, enabledSkills, learningsAccess, learningObjective, learningsWriteMethod, kbAccess, kbContribution, kbWriteMethod, reviewNotes))
-		}
-		stepConfigSummary = sb.String()
-	}
-
-	if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ harden_workflow: failed to reload plan for objective: %v (using cached value)", err))
-	}
-	workflowObjective, workflowSuccessCriteria := iwm.controller.ResolveWorkflowObjective(ctx)
-
-	readPaths := []string{
-		workspacePath,
-		fmt.Sprintf("%s/runs", workspacePath),
-		fmt.Sprintf("%s/planning", workspacePath),
-		fmt.Sprintf("%s/learnings", workspacePath),
-		fmt.Sprintf("%s/evaluation", workspacePath),
-	}
-	writePaths := workshopWritePaths(workspacePath)
-	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-
-	llmConfigToUse := iwm.controller.selectMaintenanceLLM("harden_workflow agent")
-	if llmConfigToUse == nil {
-		return "", fmt.Errorf("no valid LLM configuration for harden_workflow agent")
-	}
-
-	config := iwm.controller.CreateStandardAgentConfigWithLLM("harden-workflow-agent", 120, agents.OutputFormatStructured, llmConfigToUse)
-	// Isolate in a fresh tmp dir; don't project CLAUDE.md/.claude into the
-	// builder's live workflow folder. See improve-db-agent above.
-	config.IsolateCodingAgentWorkspace = true
-	config.UseCodeExecutionMode = false
-	config.ServerNames = []string{mcpclient.NoServers}
-	defer iwm.configureWorkshopToolAgentSession(config, "harden-workflow", readPaths, writePaths)()
-
-	allowedToolNames := optimizerToolAgentAllowedToolNames()
-	toolsToRegister, executorsToUse := filterWorkspaceToolsByName(iwm.controller.WorkspaceTools, iwm.controller.WorkspaceToolExecutors, allowedToolNames)
-
-	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, log loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-		return newHardenWorkflowAgent(cfg, log, tracer, eventBridge)
-	}
-	agent, err := iwm.controller.CreateAndSetupStandardAgentWithConfig(
-		ctx, config, "harden-workflow", 0, 0, "harden-workflow",
-		createAgentFunc, toolsToRegister, executorsToUse, true,
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to create harden_workflow agent: %w", err)
-	}
-	iwm.registerWorkshopMutationToolsForToolAgent(agent, workspacePath, "harden-workflow", allowedToolNames, logger)
-
-	workflowSelectedSkills := strings.Join(iwm.controller.GetSelectedSkills(), ", ")
-	templateVars := map[string]string{
-		"WorkspacePath":           workspacePath,
-		"AbsWorkspacePath":        absPromptWorkspacePath(workspacePath),
-		"TargetRunFolder":         targetRunFolder,
-		"GroupName":               groupName,
-		"PlanJSON":                planJSON,
-		"StepConfigSummary":       stepConfigSummary,
-		"WorkflowObjective":       workflowObjective,
-		"WorkflowSuccessCriteria": workflowSuccessCriteria,
-		"WorkflowSelectedSkills":  workflowSelectedSkills,
-		"Focus":                   focus,
-		"SessionID":               iwm.sessionID,
-		"WorkflowID":              iwm.workflowID,
-		// Required so BrowserAuthoringRulesFromTemplateVars (consumed inside
-		// the harden agent's Execute) emits the durable-selector rules. Without
-		// this flag the harden agent patches main.py without the ref-ephemeral
-		// / DOM-probe guidance — the very rules it should be enforcing.
-		"HasBrowserAccess": fmt.Sprintf("%t", iwm.controller.HasBrowserCapability()),
-	}
-
-	logger.Info(fmt.Sprintf("🛡️ Running harden_workflow agent (target_run_folder: %q, group_name: %q, objective: %q, success_criteria: %q, focus: %q)", targetRunFolder, groupName, workflowObjective, workflowSuccessCriteria, focus))
-	result, _, err := agent.Execute(ctx, templateVars, nil)
-	if err != nil {
-		return "", fmt.Errorf("harden_workflow agent failed: %w", err)
-	}
-	return result, nil
-}
-
-// ============================================================================
-// Background Task Agent — standalone agent for run_in_background tool
-// ============================================================================
-
-var backgroundTaskAgentSystemTemplate = MustRegisterTemplate("backgroundTaskAgentSystem", `# Background Task Agent
-
-You are a background agent spawned by the workflow builder to perform a specific task. You have access to the same workspace tools as the workflow execution agents.
-
-**Workspace folder:** {{.WorkspacePath}}
-
-## Path Discipline
-
-For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`"+`. For workspace file tools that expect workspace-relative paths, use `+"`{{.WorkspacePath}}/...`"+`. Do not use bare `+"`runs/...`"+`, `+"`evaluation/...`"+`, `+"`planning/...`"+`, `+"`db/...`"+`, or similar paths unless a tool explicitly requires a path relative to the workflow root. Do not use host paths outside workspace-docs.
-
-## Instructions
-Complete the task described in the user message below. Be thorough and specific in your output.
-When you finish, summarize what you did and any important findings.
-
-{{.SkillPrompt}}
-{{.SecretPrompt}}
-{{.BrowserPrompt}}
-`)
-
-var backgroundTaskAgentUserTemplate = MustRegisterTemplate("backgroundTaskAgentUser", `{{.Instruction}}`)
-
 func buildGoalAdvisorStageHeader(pulseRunID, focus string) string {
 	var sb strings.Builder
 	if strings.TrimSpace(pulseRunID) != "" {
@@ -10803,12 +8849,12 @@ func buildGoalAdvisorAdvisorInstruction(pulseRunID, focus string) string {
 		sb.WriteString("\n\n")
 	}
 	sb.WriteString(`
-Use ` + "`get_workflow_command_guidance(kind=\"goal-advisor\", focus=\"Pulse-selected Goal Advisor module; expert strategy advisor, not routine hardening\")`" + ` as the strategy playbook, but this stage is read-only.
+Use ` + "`get_workflow_command_guidance(kind=\"goal-advisor\", focus=\"Pulse-selected Goal Advisor module; expert strategy advisor, not routine maintenance\")`" + ` as the strategy playbook, but this stage is read-only.
 
 Read the workflow evidence yourself: builder/improve.html including the Pulse Gate/worklist, soul/soul.md, latest run/eval evidence, planning/changelog, report/dashboard evidence, answered human inputs in db/db.sqlite/report_human_inputs, and queued Chief of Staff recommendations (.cos-rec, especially data-status="queued_goal_advisor").
 
 Strict boundaries for this Advisor stage:
-- Do NOT call harden_workflow, improve_kb, improve_learnings, improve_db, mark_human_input_consumed, create_human_input_request, notify_user, backup, publish, or mark_pulse_module_result.
+- Do NOT launch nested maintenance reviewers or call mark_human_input_consumed, create_human_input_request, notify_user, backup, publish, or mark_pulse_module_result.
 - Do NOT modify plan/config/eval/report/HTML files.
 - Produce an evidence-backed draft only. The Critic and Finalizer stages decide what survives.
 
@@ -10850,13 +8896,13 @@ Your job is to challenge the Advisor draft before anything is logged, proposed, 
 
 Strict boundaries for this Critic stage:
 - Read evidence yourself when needed; do not rely only on the Advisor's wording.
-- Do NOT call harden_workflow, improve_kb, improve_learnings, improve_db, mark_human_input_consumed, create_human_input_request, notify_user, backup, publish, or mark_pulse_module_result.
+- Do NOT launch nested maintenance reviewers or call mark_human_input_consumed, create_human_input_request, notify_user, backup, publish, or mark_pulse_module_result.
 - Do NOT modify plan/config/eval/report/HTML files.
 
 Critique against these checks:
 - Is the proposal aligned with soul/soul.md objective and success criteria?
 - Is every important claim backed by concrete run/eval/report/HTML/db evidence?
-- Is this really strategy/measurement work, or should routine Pulse harden/KB/DB/learning/report modules handle it?
+- Is this really strategy/measurement work, or should routine Pulse Bug Review/KB/DB/learning/report modules handle it?
 - Does it hallucinate unavailable data, user intent, external facts, costs, or success?
 - Is the 10x thesis materially different from incremental tuning, while still being grounded enough to test? Treat 10x as a thinking lens, not a promised result.
 - Did the Advisor preserve the current successful baseline and define a primary metric, guardrails, review checkpoint, and rollback condition?
@@ -10954,7 +9000,7 @@ Experiment lifecycle contract:
 - A new material thesis becomes proposed and uses the matching stable plan-proposal slug. Approved edits move that same card to running. At the checkpoint move it to measuring; then adopt only with metric improvement and intact guardrails, reject on user rejection, retire when disproved/stale/rolled back, or block with a concrete unblock condition.
 - Update the existing card in place. Do not append lifecycle duplicates. A deferred answer keeps the same experiment active with a future review checkpoint.
 
-Do not call harden_workflow, improve_kb, improve_learnings, or improve_db. Those are separate Pulse modules.
+Do not launch nested maintenance reviewers. Learning, KB, and DB health are separate generic read-only Pulse reviews.
 Do not call mark_pulse_module_result; the parent Pulse turn records the module result after reading your completion.
 
 When writing builder/improve.html, show both:
@@ -11309,7 +9355,7 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgent(ctx context.Contex
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 
 	// --- LLM: generic run_in_background follows the normal workshop/phase model.
-	// Maintenance-heavy agents (Goal Advisor, harden, KB/DB/report review) use
+	// Maintenance-heavy agents (Goal Advisor, Bug Review, KB/DB/report review) use
 	// their own dedicated runners and selectMaintenanceLLM instead.
 	llmConfigToUse := iwm.controller.selectPhaseLLM("background task agent")
 	if llmConfigToUse == nil && iwm.presetLLM != nil && iwm.presetLLM.Provider != "" && iwm.presetLLM.ModelID != "" {

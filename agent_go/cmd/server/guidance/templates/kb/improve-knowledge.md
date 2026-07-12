@@ -1,20 +1,41 @@
-Improve the workflow knowledgebase notes so they support the current plan and objective.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+# READ-ONLY KNOWLEDGEBASE HEALTH REVIEW
 
-Write to `builder/improve.html`. For the log format, the one-time migration, and how entries are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
+Review whether workflow knowledgebase notes support the current plan and
+objective. This checklist is passed to a generic read-only reviewer. Do not edit
+any file, update `builder/improve.html`, or call module-result or human-input
+tools. Any later wording such as improve, apply, edit, update, merge, rename,
+compact, or resolve describes a recommendation for the **Pulse Fixer**, not an
+action for this reviewer.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
-Load `get_reference_doc(kind="assumption-audit")` and apply its KB-notes lens within this command's boundaries. A note that merely repeats the current plan's tactic, architecture, fixed source/channel, or unverified belief is not durable domain knowledge. Keep user-owned `knowledgebase/context/` untouched; surface a consequential unresolved restriction under Pulse's Assumptions challenged instead of copying it into more notes.
+EXECUTION
+
+The parent Workshop/Pulse agent first loads `assumption-audit`, then passes its
+relevant lens and this rendered checklist to
+`call_generic_agent` in an instruction beginning with `READ-ONLY REVIEW` and
+waits for its synchronous result. The parent then validates and applies any
+bounded safe edit. Do not create a dedicated KB-maintenance agent or use
+`run_in_background` for this review.
+
+Return only: `verdict`, ordered `findings`, precise `evidence`, a bounded
+`recommended_fix`, and `user_judgment_required` with reason. Use the remaining
+document only as the KB-health audit checklist.
+
+Read `builder/improve.html` for prior context and matching open findings, but do
+not write it. The Pulse Fixer owns the consolidated log update.
+
+Apply the parent-provided `assumption-audit` KB-notes lens within this command's boundaries. A note that merely repeats the current plan's tactic, architecture, fixed source/channel, or unverified belief is not durable domain knowledge. Keep user-owned `knowledgebase/context/` untouched; surface a consequential unresolved restriction for Pulse's Assumptions challenged instead of copying it into more notes.
 
 BOUNDARIES
 
 1. Work only on `knowledgebase/notes/` and `knowledgebase/notes/_index.json`.
-2. Never read or write `knowledgebase/context/`. That folder is user-owned runtime business context, not optimizer-maintained notes.
+2. Never read or write `knowledgebase/context/`. That folder is user-owned runtime business context, not maintenance-owned notes.
 3. Do not edit planning files, eval files, report files, learnings, or db files unless the user explicitly asks outside this command.
-4. This command is allowed in Builder and Optimizer because KB shape can be part of workflow design or optimizer cleanup. It is not available in Run mode.
+4. This review is available in Workshop because KB shape can be part of workflow design or Pulse cleanup. It is not available in Run mode.
 
 READ FIRST
 
 1. Read `soul/soul.md` if present to understand the workflow objective and success criteria.
-2. Read `builder/improve.html` if present. Use unresolved KB/db/report findings, prior failed cleanup attempts, recent harden/replan actions, and plan changes as context.
+2. Read `builder/improve.html` if present. Use unresolved KB/db/report findings, prior failed cleanup attempts, recent Pulse fixes or Goal Advisor actions, and plan changes as context.
 3. Read `planning/plan.json` and `planning/step_config.json` if present so the KB improvement is aligned with the current plan.
 4. Read `knowledgebase/notes/_index.json` before opening topic files.
 5. Read only topic markdown files relevant to the requested cleanup or consolidation. Do not glob or load every `knowledgebase/notes/*.md` file.
@@ -42,13 +63,11 @@ Use `mode="cross_step"` when improving the KB requires the plan or multiple step
 
 If unsure, use `mode="auto"` or omit mode. Broad instructions like "optimize the KB for this plan" should resolve to cross-step consolidation.
 
-ACTION
+REVIEW OUTPUT
 
 1. Convert the user's request into one concrete instruction. If the focus is empty, base the instruction on `soul/soul.md`, `planning/plan.json`, unresolved findings and recent entries in `builder/improve.html`, and the KB index.
-2. Call:
-
-`improve_kb(mode="auto", instruction="<specific KB improvement instruction>", focus="<optional focus>")`
-
-3. After the tool returns, inspect the summary. If it reports no change, explain why. If it reports changes, summarize the affected topics, contradictions surfaced, pattern notes written, and remaining uncertainty.
-4. If the improvement resolves an existing open finding in `builder/improve.html`, edit that finding's entry in place to add a `Resolved YYYY-MM-DD — <how>` line. Otherwise do not create review findings from this command.
-5. If this is part of an optimization action or scheduled improvement, append a short note to `builder/improve.html` with the instruction, evidence, mode, and tool result. Otherwise, report in chat only.
+2. Return the instruction and mode as `recommended_fix`; there is no separate KB-maintenance tool.
+3. Name affected topics, contradictions, pattern-note opportunities, index
+   corrections, and remaining uncertainty.
+4. Identify matching open findings only as evidence. The Pulse Fixer owns every
+   file mutation and `builder/improve.html` update.

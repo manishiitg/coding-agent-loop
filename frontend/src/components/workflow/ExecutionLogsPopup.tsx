@@ -168,6 +168,10 @@ const sortStepIds = (a: string, b: string): number => {
     }
   }
 
+  if (segA.length === 0 && segB.length === 0) {
+    return a.localeCompare(b)
+  }
+
   // Shorter one (parent) comes first
   return segA.length - segB.length
 }
@@ -503,11 +507,9 @@ const getStepStatus = (stepLogs: any): 'completed' | 'failed' | 'running' | 'pen
   const todoTask = stepLogs.todo_task || []
 
   if (stepLogs.type === 'message_sequence') {
-    const artifacts = stepLogs.artifacts || []
-    const hasSession = artifacts.some((art: any) => art.file_name === 'session.json')
-    if (hasSession) {
-      return 'completed'
-    }
+    if (stepLogs.message_sequence_status === 'failed') return 'failed'
+    if (stepLogs.message_sequence_status === 'completed') return 'completed'
+    if (stepLogs.message_sequence_status === 'running') return 'running'
     return 'pending'
   }
 

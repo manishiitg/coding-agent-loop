@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
@@ -34,8 +35,72 @@ func ParseStepConfigContent(content string) ([]StepConfig, error) {
 		return nil, fmt.Errorf("failed to parse step_config.json: expected format { \"steps\": [...] }, got error: %w", err)
 	}
 
-	// Return the steps array directly
+	if err := validateStepConfigs(configFile.Steps); err != nil {
+		return nil, err
+	}
 	return configFile.Steps, nil
+}
+
+func validateStepConfigs(configs []StepConfig) error {
+	seen := make(map[string]int, len(configs))
+	for i, config := range configs {
+		id := strings.TrimSpace(config.ID)
+		if id == "" {
+			return fmt.Errorf("step_config.json step at index %d has an empty id", i)
+		}
+		if previous, exists := seen[id]; exists {
+			return fmt.Errorf("step_config.json has duplicate id %q at indices %d and %d", id, previous, i)
+		}
+		seen[id] = i
+	}
+	return nil
+}
+
+// repairStepConfigs migrates legacy ambiguous files deterministically. The last
+// occurrence wins, matching the historical map-based matcher, and empty IDs are
+// removed because they cannot address a plan step.
+func repairStepConfigs(configs []StepConfig) ([]StepConfig, bool) {
+	last := make(map[string]int, len(configs))
+	for i, config := range configs {
+		if id := strings.TrimSpace(config.ID); id != "" {
+			last[id] = i
+		}
+	}
+	repaired := make([]StepConfig, 0, len(last))
+	changed := len(last) != len(configs)
+	for i, config := range configs {
+		id := strings.TrimSpace(config.ID)
+		if id == "" || last[id] != i {
+			changed = true
+			continue
+		}
+		if config.ID != id {
+			config.ID = id
+			changed = true
+		}
+		repaired = append(repaired, config)
+	}
+	return repaired, changed
+}
+
+func readAndRepairStepConfigs(ctx context.Context, bo *orchestrator.BaseOrchestrator, path, content string) ([]StepConfig, error) {
+	var configFile StepConfigFile
+	if err := json.Unmarshal([]byte(content), &configFile); err != nil {
+		return nil, fmt.Errorf("failed to parse step_config.json: expected format { \"steps\": [...] }, got error: %w", err)
+	}
+	configs, changed := repairStepConfigs(configFile.Steps)
+	if !changed {
+		return configs, validateStepConfigs(configs)
+	}
+	data, err := json.MarshalIndent(StepConfigFile{Steps: configs}, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal repaired step_config.json: %w", err)
+	}
+	if err := bo.WriteWorkspaceFile(ctx, path, string(data)); err != nil {
+		return nil, fmt.Errorf("failed to persist repaired step_config.json at %s: %w", path, err)
+	}
+	bo.GetLogger().Warn(fmt.Sprintf("Repaired duplicate or empty step_config IDs in %s using deterministic last-entry-wins migration", path))
+	return configs, nil
 }
 
 // ReadStepConfigs reads step_config.json from the workspace
@@ -75,7 +140,7 @@ func ReadStepConfigs(ctx context.Context, bo *orchestrator.BaseOrchestrator, wor
 	content, err := bo.ReadWorkspaceFile(ctx, runConfigRelativePath)
 	if err == nil {
 		// Run folder config exists - use it
-		configs, err := ParseStepConfigContent(content)
+		configs, err := readAndRepairStepConfigs(ctx, bo, runConfigRelativePath, content)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse run folder step_config.json: %w", err)
 		}
@@ -96,7 +161,7 @@ func ReadStepConfigs(ctx context.Context, bo *orchestrator.BaseOrchestrator, wor
 		return nil, fmt.Errorf("failed to read step_config.json: %w", err)
 	}
 
-	configs, err := ParseStepConfigContent(content)
+	configs, err := readAndRepairStepConfigs(ctx, bo, configPath, content)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse step_config.json: %w", err)
 	}
@@ -163,6 +228,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) WriteStepConfigsToSubdir(ctx context.
 	}
 	// Use relative path only - WriteWorkspaceFile auto-prepends workspacePath
 	configPath := filepath.Join(configSubdir, "step_config.json")
+	if err := validateStepConfigs(configs); err != nil {
+		return err
+	}
 
 	// Write in object format with "steps" field
 	configFile := StepConfigFile{

@@ -62,18 +62,34 @@ func validateRoutingStepTyped(step PlanStepInterface, stepIndex int) error {
 
 // validatePlanStepIDs recursively validates that all steps have IDs
 // Throws error if any step is missing an ID
-func validatePlanStepIDs(steps []PlanStepInterface) error {
+func validatePlanStepIDsAtPath(steps []PlanStepInterface, pathPrefix string) error {
 	for i, step := range steps {
+		thisLoc := fmt.Sprintf("%s[%d]", pathPrefix, i)
 		if step.GetID() == "" {
-			return fmt.Errorf("step at index %d is missing required ID field. Step title: %q", i, step.GetTitle())
+			return fmt.Errorf("step at %s is missing required ID field. Step title: %q", thisLoc, step.GetTitle())
 		}
 
 		// Validate routing step fields
 		if err := validateRoutingStepTyped(step, i); err != nil {
 			return err
 		}
+		if todo, ok := step.(*TodoTaskPlanStep); ok {
+			for routeIndex, route := range todo.PredefinedRoutes {
+				if route.SubAgentStep == nil {
+					continue
+				}
+				routePath := fmt.Sprintf("%s.predefined_routes[%d].sub_agent_step", thisLoc, routeIndex)
+				if err := validatePlanStepIDsAtPath([]PlanStepInterface{route.SubAgentStep}, routePath); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	return nil
+}
+
+func validatePlanStepIDs(steps []PlanStepInterface) error {
+	return validatePlanStepIDsAtPath(steps, "steps")
 }
 
 // collectStepIDsRecursive walks steps (and any nested branch steps) and records
@@ -89,6 +105,17 @@ func collectStepIDsRecursive(steps []PlanStepInterface, pathPrefix string, seen 
 				return fmt.Errorf("duplicate step ID %q: first at %s, again at %s", id, prev, thisLoc)
 			}
 			seen[id] = thisLoc
+		}
+		if todo, ok := step.(*TodoTaskPlanStep); ok {
+			for routeIndex, route := range todo.PredefinedRoutes {
+				if route.SubAgentStep == nil {
+					continue
+				}
+				routePath := fmt.Sprintf("%s.predefined_routes[%d].sub_agent_step", thisLoc, routeIndex)
+				if err := collectStepIDsRecursive([]PlanStepInterface{route.SubAgentStep}, routePath, seen); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil

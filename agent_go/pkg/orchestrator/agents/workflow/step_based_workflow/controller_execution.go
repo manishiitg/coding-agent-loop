@@ -844,7 +844,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveExecutionConversationLogs(
 	attemptStartedAt time.Time,
 	attemptCompletedAt time.Time,
 	attemptDuration time.Duration,
-) {
+) error {
 	// Use background context so saves succeed even when execution was canceled/stopped by user
 	saveCtx := context.Background()
 
@@ -923,10 +923,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveExecutionConversationLogs(
 		"timing":                        timingData,
 		"timestamp":                     attemptCompletedAt.Format(time.RFC3339),
 	}
-	if resultJSON, err := json.MarshalIndent(resultData, "", "  "); err == nil {
-		if err := hcpo.WriteWorkspaceFile(saveCtx, resultPath, string(resultJSON)); err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write execution result to %s: %v", resultPath, err))
-		}
+	resultJSON, err := json.MarshalIndent(resultData, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal required execution result %s: %w", resultPath, err)
+	}
+	if err := hcpo.WriteWorkspaceFile(saveCtx, resultPath, string(resultJSON)); err != nil {
+		return fmt.Errorf("write required execution result %s: %w", resultPath, err)
 	}
 
 	// Save conversation history
@@ -984,6 +986,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveExecutionConversationLogs(
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("💾 Saved execution logs for step %d (%s) attempt %d", stepIndex+1, stepPath, retryAttempt))
+	return nil
 }
 
 // loadSingleStepResultFromLogs reads the execution result for a single step (1-based stepNumber)
@@ -2002,8 +2005,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					// tool responses from interrupted executions via debug_step or log files.
 					if len(executionConversationHistory) > 0 {
 						hcpo.GetLogger().Info(fmt.Sprintf("[PARTIAL-LOGS] Saving partial execution logs for step %d (%s) — %d conversation entries, error: %v", stepIndex+1, stepPath, len(executionConversationHistory), err))
-						hcpo.saveExecutionConversationLogs(stepIndex, artifactStepID, artifactStepPath, retryAttempt, 0,
-							fmt.Sprintf("FAILED: %v", err), executionLLM, executionConversationHistory, executionAgent, capturedToolCalls, capturedLLMCalls, attemptStartedAt, attemptCompletedAt, attemptDuration)
+						if logErr := hcpo.saveExecutionConversationLogs(stepIndex, artifactStepID, artifactStepPath, retryAttempt, 0,
+							fmt.Sprintf("FAILED: %v", err), executionLLM, executionConversationHistory, executionAgent, capturedToolCalls, capturedLLMCalls, attemptStartedAt, attemptCompletedAt, attemptDuration); logErr != nil {
+							hcpo.recordRunPersistenceError(context.Background(), artifactStepID, logErr)
+						}
 					} else {
 						hcpo.GetLogger().Warn(fmt.Sprintf("[PARTIAL-LOGS] No conversation history to save for step %d (%s) — execution failed before any LLM turns", stepIndex+1, stepPath))
 					}
@@ -2020,8 +2025,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				hcpo.recordWorkflowContinuationPhase(context.Background(), artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseMainExecution, workflowContinuationStatusCompleted, "", executionAgent)
 
 				// Save execution logs (result, conversation history, system prompt)
-				hcpo.saveExecutionConversationLogs(stepIndex, artifactStepID, artifactStepPath, retryAttempt, 0,
-					executionResult, executionLLM, executionConversationHistory, executionAgent, capturedToolCalls, capturedLLMCalls, attemptStartedAt, attemptCompletedAt, attemptDuration)
+				if logErr := hcpo.saveExecutionConversationLogs(stepIndex, artifactStepID, artifactStepPath, retryAttempt, 0,
+					executionResult, executionLLM, executionConversationHistory, executionAgent, capturedToolCalls, capturedLLMCalls, attemptStartedAt, attemptCompletedAt, attemptDuration); logErr != nil {
+					hcpo.recordRunPersistenceError(context.Background(), artifactStepID, logErr)
+					hcpo.GetLogger().Warn(fmt.Sprintf("Step %s completed, but its required execution result could not be persisted: %v", artifactStepID, logErr))
+				}
 
 				// Learn code mode: inner fix loop — run main.py and feed errors back as user messages
 				// in the same conversation chain (no new agent, no system-prompt reset).
@@ -2354,7 +2362,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				}
 				hcpo.recordWorkflowContinuationPhase(ctx, artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhasePreValidation, preValidationStatus, preValidationError, executionAgent)
 
-				// Persist pre-validation results to disk for harden_workflow analysis
+				// Persist pre-validation results for Pulse Bug Review and diagnostics.
 				if hcpo.selectedRunFolder != "" {
 					preValLogPath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
 					SavePreValidationLog(ctx, hcpo.BaseOrchestrator, preValLogPath, step.GetID(), stepPath, preValidationResults, preValidationSchema)

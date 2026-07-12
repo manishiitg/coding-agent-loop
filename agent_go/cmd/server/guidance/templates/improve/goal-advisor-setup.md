@@ -6,7 +6,7 @@ Write to `builder/improve.html` — the durable Pulse and advisor log. For the l
 
 Pulse is the recurring maintenance system. After every scheduled run, Pulse Gate decides which modules are due:
 
-- harden
+- Bug Review / bounded reliability repair
 - artifact review
 - report health
 - learning health

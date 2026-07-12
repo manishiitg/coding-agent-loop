@@ -58,7 +58,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveRunRetentionCount(ctx context.
 
 // rotatePairedIterationZero rotates iteration-0 in both the workflow runs tree
 // and the eval runs tree to the SAME backup name. This keeps run N and its
-// eval N paired, so harden_workflow / report viewers can resolve both halves
+// eval N paired, so Pulse reviewers and report viewers can resolve both halves
 // from one index.
 //
 // The next backup name is computed across both trees (max+1 of any iteration-N
@@ -77,19 +77,26 @@ func (hcpo *StepBasedWorkflowOrchestrator) rotatePairedIterationZero(ctx context
 
 	if workflowExists || evalExists {
 		backupName := hcpo.nextAvailableIterationAcross(ctx, runsPath, evalRunsPath)
+		workflowBackup := fmt.Sprintf("%s/%s", runsPath, backupName)
+		workflowMoved := false
 
 		if workflowExists {
-			workflowBackup := fmt.Sprintf("%s/%s", runsPath, backupName)
 			hcpo.GetLogger().Info(fmt.Sprintf("Backing up %s/iteration-0 -> %s", runsPath, backupName))
 			if err := hcpo.MoveWorkspaceFile(ctx, workflowIter0, workflowBackup); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("Failed to back up workflow iteration-0 to %s: %v, will overwrite", backupName, err))
+				return fmt.Errorf("refusing to rotate runs: failed to back up workflow iteration-0 to %s: %w", backupName, err)
 			}
+			workflowMoved = true
 		}
 		if evalExists {
 			evalBackup := fmt.Sprintf("%s/%s", evalRunsPath, backupName)
 			hcpo.GetLogger().Info(fmt.Sprintf("Backing up %s/iteration-0 -> %s (paired with workflow)", evalRunsPath, backupName))
 			if err := hcpo.MoveWorkspaceFile(ctx, evalIter0, evalBackup); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("Failed to back up eval iteration-0 to %s: %v, will overwrite", backupName, err))
+				if workflowMoved {
+					if rollbackErr := hcpo.MoveWorkspaceFile(ctx, workflowBackup, workflowIter0); rollbackErr != nil {
+						return fmt.Errorf("failed to back up eval iteration-0 to %s: %v; workflow backup rollback also failed: %w", backupName, err, rollbackErr)
+					}
+				}
+				return fmt.Errorf("refusing to rotate runs: failed to back up eval iteration-0 to %s: %w", backupName, err)
 			}
 		}
 	}

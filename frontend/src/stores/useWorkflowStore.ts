@@ -3,36 +3,11 @@ import type { WorkflowPhase, ExecutionOptions, VariablesManifest, EvaluationPlan
 import type { WorkshopMode } from '../commands/types'
 import type { AgentConfigs } from '../utils/stepConfigMatching'
 
-// Migrate any persisted legacy workshop mode values to the current visible
-// 2-mode workshop UI set (workshop / run). Older personas fold in:
-//   'builder' / 'optimizer'                → 'workshop' (merged mode)
-//   'eval' / 'output'                      → 'workshop'
-//   'ask' / 'debugger' / 'runner'          → 'run'
-//   'reporting'                            → 'workshop'
-//   anything else / unrecognized           → 'workshop'
-// Builder and Optimizer used to be separate buttons in the toggle. They are
-// now a single "Workshop" mode that handles design + hardening + replanning
-// with the agent deciding the right phase from workspace state. Legacy
-// values still type-check (WorkshopMode keeps them) but the UI never shows
-// them.
-function migrateWorkshopMode(raw: unknown): WorkshopMode {
-  switch (raw) {
-    case 'workshop':
-    case 'run':
-      return raw
-    case 'builder':
-    case 'optimizer':
-    case 'reporting':
-    case 'eval':
-    case 'output':
-      return 'workshop'
-    case 'ask':
-    case 'debugger':
-    case 'runner':
-      return 'run'
-    default:
-      return 'workshop'
-  }
+// Interactive automation chats always use Workshop. Run remains a backend
+// execution mode for bot and scheduled routes, but is not selectable or
+// restored by the frontend.
+function migrateWorkshopMode(_raw: unknown): WorkshopMode {
+  return 'workshop'
 }
 
 function migrateWorkshopModeMap(raw: unknown): Record<string, WorkshopMode> {

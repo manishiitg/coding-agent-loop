@@ -54,7 +54,7 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 			Type: "function",
 			Function: &llmtypes.FunctionDefinition{
 				Name:        "create_workflow_schedule",
-				Description: "Create a new cron schedule on a workflow. Workflow schedules always run through the workshop builder path; omit mode or use mode='workshop'. Messages are optional for normal run schedules; when omitted, the scheduler asks the workshop to run the full workflow. Do not create optimizer schedules for Goal Advisor; Pulse Gate now selects Goal Advisor after normal runs. Use workshop_mode='optimizer' only for explicitly-authored custom optimizer jobs.",
+				Description: "Create a new cron schedule on a workflow. Use mode='workshop' with workshop_mode='run'. Messages are optional; when omitted, the scheduler asks Run mode to execute the full workflow. Pulse dynamically selects maintenance and Goal Advisor work after normal runs; do not create a separate optimizer schedule.",
 				Parameters: &llmtypes.Parameters{
 					Type: "object",
 					Properties: map[string]interface{}{
@@ -91,8 +91,8 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 						},
 						"workshop_mode": map[string]interface{}{
 							"type":        "string",
-							"description": "Defaults to 'run'. Use 'optimizer' only for explicitly-authored custom optimizer jobs; Goal Advisor is a Pulse module, not a separate schedule.",
-							"enum":        []string{"run", "optimizer"},
+							"description": "Run mode is the only supported value for new schedules. Pulse selects maintenance after runs.",
+							"enum":        []string{"run"},
 						},
 						"resume_previous": map[string]interface{}{
 							"type":        "boolean",
@@ -148,8 +148,8 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 						},
 						"workshop_mode": map[string]interface{}{
 							"type":        "string",
-							"description": "Workshop builder mode override.",
-							"enum":        []string{"run", "optimizer"},
+							"description": "Use 'run'. Omit to preserve an existing legacy schedule value.",
+							"enum":        []string{"run"},
 						},
 						"resume_previous": map[string]interface{}{
 							"type":        "boolean",
@@ -212,7 +212,7 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 						"workshop_mode": map[string]interface{}{
 							"type":        "string",
 							"description": "Defaults to 'run'.",
-							"enum":        []string{"run", "optimizer"},
+							"enum":        []string{"run"},
 						},
 					},
 					Required: []string{"workflow_path", "name", "timezone", "calendar_items", "group_names"},

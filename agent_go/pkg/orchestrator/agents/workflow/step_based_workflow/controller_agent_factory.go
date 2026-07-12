@@ -557,6 +557,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	soulPath := fmt.Sprintf("%s/soul", baseWorkspacePath)
 	builderPath := fmt.Sprintf("%s/builder", baseWorkspacePath)
 	readPaths = []string{executionWorkspacePath, soulPath, builderPath}
+	// Generic agents are also used as read-only Pulse specialists. Their review
+	// contracts span plan, eval, report, cost, config, store, and run evidence,
+	// so give them workflow-wide read access while retaining the narrow write
+	// scope established below.
+	if isGenericAgentStep(stepID, stepPath) {
+		readPaths = []string{baseWorkspacePath}
+	}
 	if learningsAccess != LearningsAccessNone {
 		globalLearningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, GlobalLearningID)
 		readPaths = append(readPaths, globalLearningsPath)
@@ -1104,10 +1111,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) createKBUpdateAgent(ctx context.Conte
 	return agent, nil
 }
 
-type maintenanceToolLLMContextKey struct{}
-
-var maintenanceToolLLMOverrideKey = maintenanceToolLLMContextKey{}
-
 func (hcpo *StepBasedWorkflowOrchestrator) selectPhaseLLM(agentPurpose string) *orchestrator.LLMConfig {
 	if hcpo.presetPhaseLLM == nil || hcpo.presetPhaseLLM.Provider == "" || hcpo.presetPhaseLLM.ModelID == "" {
 		hcpo.GetLogger().Warn(fmt.Sprintf("selectPhaseLLM: no valid phase LLM configured for %s", agentPurpose))
@@ -1324,12 +1327,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context
 	}
 	_ = stepConfig
 	_ = stepID
-
-	if override, ok := ctx.Value(maintenanceToolLLMOverrideKey).(*orchestrator.LLMConfig); ok && override != nil && override.Primary.Provider != "" && override.Primary.ModelID != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 [MAINTENANCE TOOL] Using explicit LLM override for learning agent %s: %s/%s",
-			stepPath, override.Primary.Provider, override.Primary.ModelID))
-		return override
-	}
 
 	// ── 1. TIERED MODE ───────────────────────────────────────────────────────
 	if hcpo.tierResolver != nil {

@@ -188,18 +188,6 @@ export const builtinCommands: CommandDefinition[] = [
     }
   },
   {
-    command: 'improve-workflow',
-    description: 'Use existing run evidence to review, replan if needed, harden, then optionally verify',
-    icon: <RefreshCw className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'workshop',
-    source: 'builtin',
-    execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'improve-workflow')
-    }
-  },
-  {
     command: 'review-code',
     description: 'Review saved scripts (main.py) against step descriptions to detect drift',
     icon: <FileText className="w-4 h-4" />,
@@ -209,18 +197,6 @@ export const builtinCommands: CommandDefinition[] = [
     source: 'builtin',
     execute: (ctx) => {
       submitGuidedWorkflowCommand(ctx, 'review-code', { background: true })
-    }
-  },
-  {
-    command: 'monitor',
-    description: 'Post-run monitor: record Bug + Goal verdicts for the latest run into the automation log',
-    icon: <Activity className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'workshop',
-    source: 'builtin',
-    execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'monitor')
     }
   },
   {

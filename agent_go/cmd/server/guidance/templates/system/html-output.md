@@ -266,7 +266,7 @@ For findings sections, use colored `<div>` containers instead of table rows. Gro
   <span class="badge fail">CRITICAL</span>
   <strong>route-design-plan — version contradiction</strong>
   <p>db/card-template-contracts.json is v3.0 but validators pin ^1\.0$...</p>
-  <p><em>Action:</em> update regex to <code>^3\.0$</code>. Owner: Builder.</p>
+  <p><em>Action:</em> update regex to <code>^3\.0$</code>. Owner: Pulse Fixer.</p>
 </div>
 
 <h3 class="severity-heading warning-heading">WARNING (13)</h3>

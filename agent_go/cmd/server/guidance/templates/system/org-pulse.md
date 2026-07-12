@@ -102,7 +102,7 @@ so it must be goal-aligned and actionable:
 - **Evidence:** concrete paths/tables/reports/runs that prove the status or gap.
 - **Gap:** what is blocking goal movement, measurement, or confidence.
 - **Priority:** high/medium/low, based on goal impact and urgency.
-- **Suggested builder action:** `harden_workflow`, Goal Advisor plan-change proposal,
+- **Suggested builder action:** Pulse Bug Review/Fixer, Goal Advisor plan-change proposal,
   eval/report measurement fix, manual review, or no-action watchpoint.
 - **Expected impact:** the KPI or workflow success criterion that should move if the builder
   accepts the recommendation.
@@ -218,10 +218,10 @@ Every recommendation must be:
   first. The user should be able to read the top one and act.
 - **PROPOSAL-ONLY.** You recommend; the user (or the workflow builder) decides and applies. You
   **never** edit a plan, config, prompt, report, DB, KB, or learnings to "act on" a
-  recommendation, and you never auto-trigger an improvement or replan run. The only thing you
+  recommendation, and you never auto-trigger a workflow or strategy-change run. The only thing you
   write is the recommendation itself, into the surfaces below.
 
-**Think beyond the obvious.** Don't stop at "harden workflow X." The org-level moves are the
+**Think beyond the obvious.** Don't stop at "repair workflow X." The org-level moves are the
 ones no single workflow can see:
 
 - a **new automation** for a goal nothing currently serves;
@@ -235,7 +235,7 @@ ones no single workflow can see:
 Write recommendations to the **right surface**, never both:
 
 - **Per-automation recommendation → that automation's `builder/improve.html`.** When the move is
-  internal to one workflow (harden, retarget a metric, change a prompt/approach inside it), add a
+  internal to one workflow (repair reliability, retarget a metric, change a prompt/approach inside it), add a
   newest-first Chief of Staff recommendation card to that workflow's `builder/improve.html` — the
   per-automation recommendation ledger, the one workflow-internal surface you may write. Include
   goal/KPI, alignment verdict, evidence, gap, priority, suggested builder action, and expected

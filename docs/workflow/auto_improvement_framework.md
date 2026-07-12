@@ -44,7 +44,7 @@ The per-run monitor only **detects and records**. The scheduled passes then choo
 
 Harden and replan are the two ends of an **exploit/explore** ladder against the success-criteria definition — same plan tools, opposite intent:
 
-- `harden_workflow(group_name?, focus?)` — **exploit: refine the current strategy.** The approach is right but execution/wiring is weak: prompts, config, validation, KB, learnings, db/report wiring, or eval coverage need repair. Not a redesign. Harden removes stale `learnings/{step-id}/main.py` for `code_exec` steps; only `learn_code` steps should retain reusable `main.py`.
+- `Pulse Bug Review/Fixer(group_name?, focus?)` — **exploit: refine the current strategy.** The approach is right but execution/wiring is weak: prompts, config, validation, KB, learnings, db/report wiring, or eval coverage need repair. Not a redesign. Harden removes stale `learnings/{step-id}/main.py` for `code_exec` steps; only `learn_code` steps should retain reusable `main.py`.
 - Goal Advisor proposal/application — **explore: a different strategy for better success.** The current approach is **capped** — even executed cleanly it cannot satisfy the success criteria — or run evidence reveals a materially better approach. Scheduled Pulse starts this as a background `run_goal_advisor_review(...)` pass. New material strategy changes are proposal-first: create a `source="goal_advisor"` human-input request with exact intended edits, rationale, expected impact, risk, and evidence; a later Pulse pass applies approved changes with normal plan/config/eval/report tools.
 - Eval-plan improvement: evaluation coverage, scoring, structured output, or validation schema is weak enough that measurement cannot be trusted — a success criterion is unmeasured, an eval step is orphaned or duplicates Pulse/pre-validation, the rubric drifts, or eval cost is out of proportion to run cost.
 - No action: evidence is weak, recent changes need more runs, or the workflow is already aligned.
@@ -54,10 +54,9 @@ Each improve pass should perform at most one primary action unless the user expl
 ## Commands
 
 - `/define-success`: confirms the goal with the user, writes the workflow profile, and seeds the Pulse goal card from `soul.md`.
-- `/monitor` (and the **Monitor** toggle in the workflow toolbar): turns on the per-run review-only pass via `post_run_monitor` so every run records Bug/Goal findings.
-- `/improve-workflow`: reads the Pulse and current evidence, then chooses harden, replan, eval-plan improvement, or no action.
+- The **Pulse** toolbar control enables the per-run review/fix pass via `post_run_monitor`.
 - `/improve-evaluation`: improves eval coverage and rubric quality.
-- `/auto-improve`: turns on the per-run monitor, then creates or updates the Optimizer-mode **harden** schedule (frequent — ~every 1-2 runs) and **replan-proposal** schedule (less frequent — ~every 3-4 runs). Each Optimizer fire delegates the improvement pass to canonical `/improve-workflow` guidance, then self-tunes only its own cadence/scope.
+- Goal Advisor is selected dynamically by Pulse Gate; no separate recurring optimizer schedule is required.
 
 ## Audit Discipline
 

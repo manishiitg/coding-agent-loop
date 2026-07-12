@@ -35,8 +35,9 @@ Gate uses a **progressive evidence scan**. Start with compact state and metadata
 - open and answered report human inputs in `db/db.sqlite`
 - Chief of Staff recommendation cards in `builder/improve.html`
 - compact cost/timing availability and change signals when present
+- workflow version, compact resolved LLM/tier/fallback signature, and backup/publish/notification readiness metadata
 
-Do not load full report HTML, full KB/learnings, broad DB rows, every cost file, or long run logs merely to decide cadence. Open large evidence only when a compact signal makes that module plausibly due or one targeted fact is needed to justify a decision. The selected module performs the deep inspection later; Gate only selects the evidence-backed worklist. When Gate sees a plausible bug signal, mark Harden due so Harden can investigate, fix, and verify it.
+Do not load full report HTML, full KB/learnings, broad DB rows, every cost file, or long run logs merely to decide cadence. Open large evidence only when a compact signal makes that module plausibly due or one targeted fact is needed to justify a decision. The selected module performs the deep inspection later; Gate only selects the evidence-backed worklist. When Gate sees a plausible bug signal, mark Bug Review due so its read-only reviewer can investigate and the Pulse Fixer can repair and verify it.
 
 Gate writes a compact **Pulse Gate / Worklist** entry in the Pulse log/timeline area of `builder/improve.html`. Do not put full Gate details in the first-screen/top dashboard; the top dashboard should stay focused on latest outcome, goal health, and next useful action.
 
@@ -62,9 +63,73 @@ Update the stable header elements `#pulse-bug-verdict` and `#pulse-goal-verdict`
 - Maintenance Radar: which lanes are quiet, watching, or due?
 - Module worklist: each module `due` or `skipped`, with a short plain-language reason and evidence.
 
-Gate does not call repair tools. It does not call `harden_workflow`, `improve_learnings`, `improve_kb`, `improve_db`, plan modification tools, backup, publish, or notify.
+Gate does not launch reviewers or call mutation tools, plan modification tools, backup, publish, or notify.
 
 Gate must record exactly one decision for each module. A partial worklist is invalid because omitted modules would otherwise disappear silently.
+
+## Parallel Review Team And Single Fixer
+
+The fixed module messages are entry points, not independent maintenance passes.
+The first selected module whose current `pulse_run_id` still has unresolved due
+modules owns the whole review batch:
+
+This consolidated protocol overrides older module-brief wording that says to
+launch a dedicated maintenance agent. Treat those module briefs as domain and
+evidence guidance only; do not execute their nested-agent calls.
+
+1. Read `get_pulse_module_state` and the Gate/worklist in
+   `builder/improve.html`. If every due module already has a current-run result,
+   stop. This is how later fixed module messages become harmless no-ops.
+2. Create one reviewer task per due module and issue the independent
+   `call_generic_agent` calls in the same tool-call batch so they can run in
+   parallel. Use bounded fan-out and the cheapest tier that can judge the module
+   reliably. Do not use `run_in_background`: the parent Pulse turn must remain
+   active until reviewer calls return, so the fixed sequence cannot reach the
+   finalizer early.
+3. Every reviewer prompt must start with **READ-ONLY REVIEW** and include the
+   workflow path, Pulse run id, module name, Gate evidence pointers, relevant
+   reference guidance, and a compact response contract: verdict, findings,
+   evidence, bounded recommended fix, and whether user judgment is required.
+   Explicitly forbid file edits, config or plan changes, publishing,
+   notification, user questions, mutation tools, `builder/improve.html` writes,
+   and `mark_pulse_module_result`.
+   Use the existing specialist guidance as the reviewer brief: learning health
+   uses `improve-learnings`, KB health uses `improve-knowledge`, DB health uses
+   `improve-database`, report health uses `improve-report`, and eval health uses
+   `improve-evaluation`. These improve prompts are read-only reviewers in Pulse;
+   they return fixer instructions rather than applying them.
+4. Reviewer agents only inspect and advise. The parent waits naturally for the
+   synchronous tool results; it must not use sleep, `list_executions`,
+   `query_step`, or a polling loop.
+5. For Goal Advisor, first obtain the read-only strategy review, then send that
+   draft and its evidence to a separate read-only critic. The parent accepts,
+   narrows, or rejects the proposal using both results.
+6. Consolidate and deduplicate all findings. Then the same parent Pulse turn
+   becomes the **Pulse Fixer**, the single writer for the batch. No reviewer may
+   mutate the workflow.
+7. Apply bounded fixes sequentially. Do not launch nested mutating maintenance
+   agents such as `review_artifact_sync` or `run_goal_advisor_review`; those
+   would create multiple fixers. Load the read-only `improve-*` guidance as
+   needed and use the normal direct file, plan, config, eval, report, and
+   human-input tools.
+8. Strategy changes and LLM/Ops changes remain proposal-only unless an exact
+   matching request was already approved. Create or consume the existing
+   structured human-input request as required.
+9. Only the Pulse Fixer may update files, DB contracts, plan/config, report/eval
+   artifacts, human-input state, changelog review state, or module state. Update
+   `builder/improve.html` once after all reviews and fixes with one
+   consolidated outcome. Preserve the user-first hierarchy and compact agent
+   handoff.
+10. Call `mark_pulse_module_result` exactly once for every due module, including
+    clean, changed, blocked, or failed outcomes. A reviewer failure affects only
+    that module unless missing evidence makes a safe fix impossible.
+11. Return one concise combined result. Later module messages stop at step 1,
+    and the normal Pulse finalizer performs backup, publish, and the single user
+    notification after all due module results exist.
+
+This is an agent protocol, not a security boundary. Read-only behavior is enforced
+by reviewer prompts. The single-fixer rule prevents concurrent writes and
+duplicate `improve.html` updates without adding backend coordination.
 
 ## Module Decisions
 
@@ -74,7 +139,7 @@ Cadence remains agentic. New evidence can override any earlier cooldown or next-
 
 Use these module names exactly:
 
-- `harden`
+- `bug_review`
 - `artifact_review`
 - `report_health`
 - `eval_health`
@@ -82,9 +147,10 @@ Use these module names exactly:
 - `knowledgebase_health`
 - `db_health`
 - `cost_llm_time`
+- `llm_ops_review`
 - `goal_advisor`
 
-### harden
+### bug_review
 
 Mark due for real Bug findings:
 
@@ -95,7 +161,10 @@ Mark due for real Bug findings:
 - stale guards, validation, retry, or defaulting behavior
 - Chief of Staff recommendations that are operational bugs
 
-The module calls `harden_workflow` after loading `get_reference_doc(kind="optimize-playbook")`.
+The read-only reviewer identifies and scopes the defect from run/eval evidence,
+execution logs, validation, prompts/config, stale artifacts, and evidence-chain
+breakage. It returns exact findings and verification steps. The Pulse Fixer
+applies and verifies the bounded repair directly.
 
 ### artifact_review
 
@@ -109,7 +178,11 @@ Mark due when `planning/changelog/` has unreviewed material entries or when plan
 - saved code artifacts
 - step prompts/configs
 
-The module is report-only. It calls `review_artifact_sync` through `get_workflow_command_guidance(kind="review-artifact-drift")` and uses `mark_changelog_artifact_reviewed`; it does not fix artifacts directly.
+The read-only reviewer follows
+`get_workflow_command_guidance(kind="review-artifact-drift")` to identify drift.
+The Pulse Fixer records the review result and uses
+`mark_changelog_artifact_reviewed` for fully inspected entries. Artifact review
+remains report-only; it does not repair the reviewed artifacts in this module.
 
 ### report_health
 
@@ -128,6 +201,10 @@ Good report-health work makes the report easier for the user to understand:
 - compact visual cards before long text
 - accurate tabs/sections and responsive layout
 
+The read-only reviewer follows `improve-report` as its audit checklist and
+returns exact recommended HTML/report-plan edits. The Pulse Fixer applies and
+verifies bounded report-only fixes and records the consolidated outcome.
+
 ### eval_health
 
 Mark due when evaluation evidence cannot be trusted or does not measure the workflow's stated success criteria:
@@ -138,7 +215,11 @@ Mark due when evaluation evidence cannot be trusted or does not measure the work
 - eval reports make misleading claims or cannot be reconciled with DB/report evidence
 - plan, DB, report, or output contracts changed and eval coverage did not follow
 
-The module calls `get_workflow_command_guidance(kind="improve-evaluation")` for bounded eval-plan/config repair. Prefer targeted evaluation changes, validate the plan when the validation tool is available, and only run a targeted eval when it materially helps verify the fix. Record changed eval artifacts as an `Eval fix` in `builder/improve.html`.
+The read-only reviewer follows
+`get_workflow_command_guidance(kind="improve-evaluation")` as its audit
+checklist. It returns bounded recommendations and verification steps. The Pulse
+Fixer applies safe correctness repairs, validates them, and records changed eval
+artifacts as an `Eval fix` in `builder/improve.html`.
 
 ### learning_health
 
@@ -151,7 +232,10 @@ Mark due when workflow behavior changed or learning state may be stale:
 - a run discovered reusable HOW-to knowledge worth capturing
 - selectors/API quirks changed
 
-This module may update step config for learning lock/unlock decisions and may call `improve_learnings`. Use absolute workspace paths in prompts and evidence. Do not ask a step agent to hand-edit files through a path outside the workspace root.
+The read-only reviewer identifies stale learning content and lock/unlock changes.
+The Pulse Fixer applies bounded learning and step-config edits directly. Use
+absolute workspace paths in reviewer prompts and evidence. The generic read-only
+learning reviewer follows the `improve-learnings` guidance and never writes.
 
 Load `assumption-audit`: reusable HOW must not preserve business policy, fixed strategy/architecture, or an unverified limitation as if it were permanent.
 
@@ -159,7 +243,11 @@ Load `assumption-audit`: reusable HOW must not preserve business policy, fixed s
 
 Mark due when KB notes or KB config are missing, duplicated, stale, contradictory, or no longer aligned with the plan.
 
-`knowledgebase/context` is user-owned runtime business context. Read it for evidence, but do not rewrite it. Use `improve_kb` for notes/config cleanup.
+`knowledgebase/context` is user-owned runtime business context. Read it for
+evidence, but do not rewrite it. The read-only reviewer proposes precise note or
+config cleanup and the Pulse Fixer applies only bounded approved-safe changes
+directly. The generic reviewer follows the `improve-knowledge` guidance as a
+read-only checklist.
 
 Load `assumption-audit`: KB notes must distinguish durable domain evidence from beliefs copied out of the current plan. Surface material unresolved restrictions instead of multiplying them across notes.
 
@@ -167,7 +255,10 @@ Load `assumption-audit`: KB notes must distinguish durable domain evidence from 
 
 Mark due when DB schema, table contracts, upsert rules, report SQL, eval consumers, or `db/README.md` no longer match current writers and readers.
 
-Use `improve_db` for concrete DB contract/schema/report compatibility work. Do not run speculative row migrations.
+The generic read-only reviewer scopes concrete DB contract/schema/report
+compatibility work. The Pulse Fixer applies bounded contract fixes directly and
+must not run speculative row migrations. The reviewer follows
+`improve-database` as a read-only checklist.
 
 Load `assumption-audit`: schemas and enums should not unnecessarily freeze one source, channel, entity, group, or tactic. Apply only bounded contract fixes; strategy/schema choices requiring business judgment stay challenged assumptions.
 
@@ -177,7 +268,17 @@ This is report-only, but it is not automatically due every Pulse. High-frequency
 
 Read workflow execution cost, evaluation cost, builder/Pulse overhead, token usage, model/tier evidence, missing cost buckets, and timing summaries. If any bucket is missing or unpriced, say that plainly instead of estimating.
 
-Do not change model tiers, prompts, schedules, or agent allocation from this module. If model selection looks wrong, record it as evidence for `goal_advisor` or user review.
+Do not change model tiers, prompts, schedules, or agent allocation from this module. If model selection looks wrong, record it as evidence for `llm_ops_review`.
+
+### llm_ops_review
+
+This is a low-frequency coaching pass, not telemetry and not Goal Advisor. Mark it due when it has never completed, its planned checkpoint arrives, resolved model/tier/fallback configuration changes, cost evidence suggests avoidable overkill, an answered `llm-ops-*` request is waiting, or publish/notify/backup/version readiness materially changes. Otherwise schedule a meaningful later checkpoint instead of running it every Pulse.
+
+Inspect resolved provider/model/options/fallback configuration and actual step/eval tier use. Check whether high, medium, and low are configured and used sensibly; whether repeated low-risk validation, extraction, formatting, or summarization uses an unnecessarily expensive tier; whether eval/verification would benefit from provider diversity; whether Pulse and Maintenance models are sensible; and whether fallbacks exist. Also check report publishing/password protection, notification instructions/setup, backup status, and workflow-version readiness.
+
+Keep one compact **LLM & operations recommendations** area in `builder/improve.html`, with recommendation cards grouped as cost saving, quality, reliability, or setup. Every recommendation must show the current state, exact suggestion, reason, expected benefit, risk, and evidence. Do not create generic best-practice noise or duplicate an open recommendation.
+
+Configuration changes require the existing human-input flow. Use `create_human_input_request(source="pulse", input_id="llm-ops-<stable-slug>", options=[approve,reject,defer], allow_free_text=true, context="<exact proposed edits + rationale + expected impact + risk>")`. Keep at most two open LLM/Ops decisions. On a later run, apply only an explicitly approved exact edit with normal LLM/workflow/step config tools, verify it, record the outcome, and call `mark_human_input_consumed`. Reject, defer, and custom answers are recorded and consumed without applying the proposed edit. Never invent models, providers, recipients, destinations, passwords, secrets, or credentials; never publish or notify from this module.
 
 ### goal_advisor
 
@@ -197,7 +298,12 @@ Mark due when strategic judgment is needed:
   Advisor must propose a bounded metric definition plus a normal `regular`
   collection step before Report Health can visualize it
 
-Goal Advisor is now a Pulse-selected module, not a separate recurring schedule. Pulse should not do the expensive strategic review inline. When the Gate selects Goal Advisor, the parent Pulse turn should call `run_goal_advisor_review(...)`, capture the returned `execution_id`, optionally call `query_step(step_id="goal-advisor", execution_id="<returned execution_id>")` once for immediate status, then stop if it is still running and rely on `[AUTO-NOTIFICATION]` to resume result recording. Do not use `sleep`, `list_executions`, or repeated `query_step` calls as a polling loop.
+Goal Advisor is a Pulse-selected module, not a separate recurring schedule. Its
+expensive thinking stays outside the parent context through a read-only strategy
+reviewer followed by a separate read-only critic. The parent Pulse Fixer uses
+their combined evidence to record a proposal, advance the active experiment, or
+apply an exact previously approved proposal. It does not launch
+`run_goal_advisor_review` and does not poll background executions.
 
 Goal Advisor also challenges consequential assumptions embedded in soul, plan,
 steps, evals, KB, learnings, DB, or reports. It must distinguish user-approved
@@ -215,7 +321,7 @@ When no experiment is active, a due healthy-headroom review applies the 10x
 counterfactual and may propose one bounded experiment while preserving the
 successful baseline.
 
-Goal Advisor does not do routine hardening, learning cleanup, KB cleanup, DB cleanup, or normal report repair. Those are separate Pulse modules.
+Goal Advisor does not do routine Bug Review, learning cleanup, KB cleanup, DB cleanup, or normal report repair. Those are separate Pulse modules.
 
 ## Human Input
 
@@ -237,6 +343,13 @@ Do not ask only in email or raw chat. Runloop renders the structured request fir
 ## Finalizer And Notifications
 
 Pulse sends one summary every run unless the user's `soul/soul.md ## Notifications` section explicitly says not to notify.
+
+Before finalizing, read `get_pulse_module_state` and confirm every module marked
+due for this `pulse_run_id` has a terminal module result. If any due result is
+missing, do not publish or notify a complete Pulse. Run the consolidated
+read-only review plus single-fixer protocol for only those unresolved modules,
+record their results, and then continue finalization. Never silently treat a
+missing result as skipped or successful.
 
 Dashboard/questions, backup, publish, and notify run in one ordered finalizer turn to avoid four repeated context loads. Before and after each command, call `mark_pulse_final_command_result` so the Pulse popup shows `waiting`, `running`, `done`, `skipped`, `blocked`, `failed`, or scheduler-recorded `timed_out` instead of static labels. The scheduler treats any command left waiting/running after the turn as failed rather than pretending it completed.
 

@@ -44,7 +44,7 @@ lands the first time. Reads never need a grant.
 
 ## MESSAGE SEQUENCE ROUTE PATTERNS
 
-Use these patterns when designing or hardening todo_task predefined routes:
+Use these patterns when designing or repairing todo_task predefined routes:
 
 - **Stateful Specialist**: one todo_task route owns an expert conversation the orchestrator can re-enter across feedback loops.
 - **Test/Fix Loop**: orchestrator calls the same message_sequence route, runs validation/tests, then re-enters it with failures instead of starting over.

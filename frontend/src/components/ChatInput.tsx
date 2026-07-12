@@ -23,18 +23,11 @@ import WorkflowSelectionDialog from './WorkflowSelectionDialog'
 import { isChatCompatiblePhase } from '../utils/chatSubmitHelpers'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { useWorkflowManifestStore } from '../stores/useWorkflowManifestStore'
-import { useAuthStore } from '../stores/useAuthStore'
-import { hasWorkflowWriteAccess } from '../utils/workflowPermissions'
 import { requestTerminalRefreshBurst } from '../utils/terminalRefresh'
 import { isMainAgentTerminal, terminalDisplayLabel, keyEventToTerminalAction } from '../utils/terminals'
 import { startRestoredTransportTerminal } from '../utils/restoredTerminal'
 import { chromeCdpInstallCommand, chromeCdpLaunchCommand, chromeCdpVerifyCommand, chromeCdpZipUrl } from '../utils/cdpSetup'
 import { CHAT_TOOL_COMMAND_EVENT, chatToolCommandFromEvent } from '../utils/chatToolEvents'
-
-// Visible workshop modes in the UI. The merged "workshop" mode replaced
-// the pre-merge Builder / Optimize / Report buttons. Run remains separate
-// for read-mostly bot routes.
-type VisibleWorkshopMode = 'workshop' | 'run'
 
 const removePasteMarkersFromText = (text: string, markers: string[]) => {
   return markers.reduce((next, marker) => {
@@ -163,86 +156,6 @@ const liveDeliveryPreview = (message: string) => {
   return `${normalized.slice(0, 87)}...`
 }
 
-function WorkshopModeToggle() {
-  const canWriteWorkflow = useAuthStore(state => hasWorkflowWriteAccess(state.user, state.isMultiUserMode))
-  const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
-  const workflowMode = useWorkflowStore(state => state.workflowMode)
-  const setWorkflowMode = useWorkflowStore(state => state.setWorkflowMode)
-  const workshopMode = useWorkflowStore(state => {
-    return (activePresetId && state.workshopModeByPreset[activePresetId]) || state.workshopMode
-  })
-  const setWorkshopMode = useWorkflowStore(state => state.setWorkshopMode)
-
-  useEffect(() => {
-    if (!canWriteWorkflow && workshopMode !== 'run') {
-      setWorkflowMode('plan')
-      setWorkshopMode('run')
-    }
-  }, [canWriteWorkflow, setWorkflowMode, setWorkshopMode, workshopMode])
-
-  const persistWorkshopMode = (mode: string) => {
-    if (!activePresetId) return
-    const workspacePath = useWorkflowManifestStore.getState().getWorkflowById(activePresetId)?.workspace_path
-    if (!workspacePath) return
-    agentApi.updateWorkflowManifest({ workspace_path: workspacePath, workshop_mode: mode }).catch(() => {
-      // Non-fatal: localStorage still tracks the mode; persist is best-effort
-    })
-  }
-
-  const applyWorkshopMode = (mode: VisibleWorkshopMode) => {
-    setWorkflowMode('plan')
-    setWorkshopMode(mode)
-    if (canWriteWorkflow) {
-      persistWorkshopMode(mode)
-    }
-  }
-
-  const requestWorkshopMode = (mode: VisibleWorkshopMode) => {
-    if (workshopMode === mode) return
-    applyWorkshopMode(mode)
-  }
-
-  // Workshop is the merged Builder+Optimizer mode: design steps, run them,
-  // evaluate, harden, replan — all in one toolset. The agent figures out
-  // from workspace state (does a plan exist? are there successful runs?)
-  // whether to bias toward design or hardening on a given turn.
-  const builderModes = [
-    { id: 'workshop' as const, label: 'Workshop', title: 'Workshop', description: 'Design, run, evaluate, harden, and replan — full toolset. The agent picks the right action for the current phase.' },
-    { id: 'run' as const, label: 'Run', title: 'Run', description: 'Use the automation without write tools — execute steps and read state only.' },
-  ].filter(mode => canWriteWorkflow || mode.id === 'run')
-
-  return (
-    <TooltipProvider delayDuration={120}>
-      <div className="relative flex items-center gap-2">
-        <div className="flex items-center rounded-md border border-border overflow-hidden text-xs font-medium">
-          {builderModes.map(({ id, label, title, description }) => (
-            <Tooltip key={id}>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => {
-                    requestWorkshopMode(id)
-                  }}
-                  className={`px-2.5 py-1 transition-colors ${
-                    workshopMode === id
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
-                  }`}
-                  aria-label={title}
-                >
-                  {label}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{description}</p>
-              </TooltipContent>
-            </Tooltip>
-          ))}
-        </div>
-      </div>
-    </TooltipProvider>
-  )
-}
 import InlineSelectionPopup from './InlineSelectionPopup'
 import type { InlineSelectionFilterTab, InlineSelectionItem } from './InlineSelectionPopup'
 import SkillImportDialog from './skills/SkillImportDialog'
@@ -4258,10 +4171,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     </div>
                   ) : (
                     <div data-tour="chat-send-controls" data-testid="tour-chat-send-controls" className="flex items-center gap-1">
-                      {/* Workshop mode toggle: Build / Optimize / Run */}
-                      {workflowPhaseId === 'workflow-builder' && !isOrganizationContext && (
-                        <WorkshopModeToggle />
-                      )}
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button

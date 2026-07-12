@@ -865,6 +865,9 @@ func (s *SchedulerService) StopRunningJob(scheduleID string) {
 	}
 
 	scheduleLogf("[SCHEDULER] Stopping running job %s (session: %s)", scheduleID, sessionID)
+	if isScheduledSession(sessionID) {
+		s.api.markSessionTurnInterrupted(sessionID)
+	}
 	s.cancelScheduledSessionWork(sessionID, "scheduled job stopped by user")
 
 	// Update runtime state
@@ -885,6 +888,10 @@ func (s *SchedulerService) cancelScheduledSessionWork(sessionID, closeReason str
 	if s == nil || s.api == nil || strings.TrimSpace(sessionID) == "" {
 		return
 	}
+	// Make every scheduler-level stop visible to the sequence waiter before
+	// clearing busy state. This prevents the next workflow/Pulse/Org Pulse
+	// message from starting after either a user stop or timeout recovery.
+	s.api.markSessionStopped(sessionID)
 
 	// Cancel agent execution context
 	s.api.agentCancelMux.Lock()
@@ -1154,7 +1161,12 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 
 	status := "success"
 	errMsg := ""
-	if execErr != nil {
+	userInterrupted := errors.Is(execErr, errWorkshopSequenceInterrupted)
+	if userInterrupted {
+		status = "stopped"
+		errMsg = execErr.Error()
+		s.sessionLogf(sctx, sessionID, "[SCHEDULER] %s stopped by user after %dms", schedID, durationMs)
+	} else if execErr != nil {
 		status = "error"
 		errMsg = execErr.Error()
 		s.sessionLogf(sctx, sessionID, "[SCHEDULER] %s failed in %dms: %v", schedID, durationMs, execErr)
@@ -1176,7 +1188,7 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 		if err := UpdateMultiAgentScheduleRun(ctx, sctx.UserID, runID, status, errMsg, &durationMs, sessionID); err != nil {
 			s.sessionLogf(sctx, sessionID, "[SCHEDULER] Failed to update multi-agent run entry for %s: %v", schedID, err)
 		}
-		if shouldUpdateChiefTaskReport(sctx) {
+		if !userInterrupted && shouldUpdateChiefTaskReport(sctx) {
 			if err := s.runChiefTaskReportUpdate(ctx, sctx, runID, status, errMsg, durationMs, startTime, time.Now().UTC(), sessionID); err != nil {
 				s.sessionLogf(sctx, sessionID, "[TASK_REPORT] Failed to update pulse/task.html for %s: %v", schedID, err)
 			}
@@ -1195,7 +1207,7 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 		// the user / builder enabled Pulse. Only after an actual workflow RUN, not an
 		// optimizer/improvement pass (there's no fresh run output to scan there).
 		// Never affects the run's recorded result.
-		if runFolder != "" && sctx.Schedule.WorkshopMode != "optimizer" {
+		if !userInterrupted && runFolder != "" && sctx.Schedule.WorkshopMode != "optimizer" {
 			if manifest, found, mErr := ReadWorkflowManifest(ctx, sctx.WorkspacePath); mErr == nil && found && manifest.MonitorEnabled() {
 				// Pass the run's sessionID so Pulse resumes the SAME chat (not a fresh one).
 				s.runPostRunMonitor(ctx, sctx, manifest, status, runFolder, sessionID)
@@ -1422,7 +1434,9 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 		if err := s.waitForWorkshopIdleWithInactivityTimeout(ctx, sessionID, st.idleMaxInactivity()); err != nil {
 			s.sessionLogf(sctx, sessionID, "[PULSE] step %q idle wait failed: %v", st.label, err)
 			outcome := postRunMonitorStepWaitFailed
-			if errors.Is(err, errWorkshopIdleWaitTimeout) {
+			if errors.Is(err, errWorkshopSequenceInterrupted) {
+				outcome = postRunMonitorStepInterrupted
+			} else if errors.Is(err, errWorkshopIdleWaitTimeout) {
 				outcome = postRunMonitorStepTimedOut
 			}
 			if st.label == "finalize" {
@@ -1470,10 +1484,22 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 		}
 		return reason
 	}
+	abortIfInterrupted := func(st postRunMonitorStep, result postRunMonitorStepRunResult) bool {
+		if result.outcome != postRunMonitorStepInterrupted {
+			return false
+		}
+		reason := fmt.Sprintf("Pulse stopped by user during %s", st.label)
+		s.sessionLogf(sctx, sessionID, "[PULSE] %s; no later module, recovery, finalizer, publish, or notification turn will run", reason)
+		_ = finalizeUnresolvedPulseFinalCommands(ctx, sctx.WorkspacePath, pulseRunID, "skipped", reason)
+		return true
+	}
 
 	gateReady := true
 	for _, st := range upgradeSteps {
 		result := runStep(st)
+		if abortIfInterrupted(st, result) {
+			return
+		}
 		if result.outcome != postRunMonitorStepCompleted {
 			handleStepFailure(st, result, true)
 			gateReady = false
@@ -1492,7 +1518,9 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 		} else if assessment.Due {
 			s.sessionLogf(sctx, sessionID, "[PULSE] improve.html archive due: %s", assessment.triggerSummary())
 			archiveStep := postRunMonitorArchiveStep(assessment)
-			if result := runStep(archiveStep); result.outcome != postRunMonitorStepCompleted {
+			if result := runStep(archiveStep); abortIfInterrupted(archiveStep, result) {
+				return
+			} else if result.outcome != postRunMonitorStepCompleted {
 				handleStepFailure(archiveStep, result, true)
 			}
 		}
@@ -1502,6 +1530,9 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 	if gateReady {
 		gateStep := postRunMonitorGateStep(pulseRunID, runFolder, runStatus)
 		result := runStep(gateStep)
+		if abortIfInterrupted(gateStep, result) {
+			return
+		}
 		if result.outcome == postRunMonitorStepCompleted {
 			steps = s.selectedPostRunMonitorModuleSteps(ctx, sctx, pulseRunID)
 			s.sessionLogf(sctx, sessionID, "[PULSE] selected %d post-gate steps for %s", len(steps), sctx.Schedule.ID)
@@ -1525,6 +1556,9 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 			continue
 		}
 		result := runStep(st)
+		if abortIfInterrupted(st, result) {
+			return
+		}
 		if result.outcome != postRunMonitorStepCompleted {
 			reason := handleStepFailure(st, result, i < len(steps)-1)
 			if !isPostRunMonitorFinalStep(st.label) {
@@ -1554,6 +1588,7 @@ const (
 	postRunMonitorStepStartFailed postRunMonitorStepOutcome = "start_failed"
 	postRunMonitorStepWaitFailed  postRunMonitorStepOutcome = "wait_failed"
 	postRunMonitorStepTimedOut    postRunMonitorStepOutcome = "timed_out"
+	postRunMonitorStepInterrupted postRunMonitorStepOutcome = "interrupted"
 )
 
 type postRunMonitorStepRunResult struct {
@@ -2585,6 +2620,7 @@ var schedulerWorkshopIdlePollInterval = 3 * time.Second
 var schedulerWorkshopMaxInactivity = 10 * time.Minute
 var schedulerGoalAdvisorMaxInactivity = 30 * time.Minute
 var errWorkshopIdleWaitTimeout = errors.New("workshop idle wait timed out")
+var errWorkshopSequenceInterrupted = errors.New("workshop sequence interrupted by user")
 
 const schedulerWorkshopIdleConsecutiveChecks = 2
 
@@ -2601,11 +2637,26 @@ func (s *SchedulerService) waitForWorkshopIdleWithInactivityTimeout(ctx context.
 	consecutiveIdleChecks := 0
 	lastObservedProgress := s.workshopLastProgressAt(sessionID)
 	lastProgressAt := time.Now()
+	checkUserInterruption := func() error {
+		if s.api.isSessionMarkedStopped(sessionID) {
+			return fmt.Errorf("%w: session %s was stopped", errWorkshopSequenceInterrupted, sessionID)
+		}
+		if s.api.consumeSessionTurnInterrupted(sessionID) {
+			return fmt.Errorf("%w: current response in session %s was canceled", errWorkshopSequenceInterrupted, sessionID)
+		}
+		return nil
+	}
+	if err := checkUserInterruption(); err != nil {
+		return err
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
+			if err := checkUserInterruption(); err != nil {
+				return err
+			}
 			refreshErr := s.refreshSessionTmuxSnapshotsForIdleCheck(ctx, sessionID)
 			now := time.Now()
 			if observedProgress := s.workshopLastProgressAt(sessionID); observedProgress.After(lastObservedProgress) {

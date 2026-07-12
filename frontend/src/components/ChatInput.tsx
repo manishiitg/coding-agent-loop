@@ -27,6 +27,8 @@ import { requestTerminalRefreshBurst } from '../utils/terminalRefresh'
 import { startRestoredTransportTerminal } from '../utils/restoredTerminal'
 import { chromeCdpInstallCommand, chromeCdpLaunchCommand, chromeCdpVerifyCommand, chromeCdpZipUrl } from '../utils/cdpSetup'
 import { CHAT_TOOL_COMMAND_EVENT, chatToolCommandFromEvent } from '../utils/chatToolEvents'
+import { resolveDelegationMainModel } from '../utils/workflowLLMTierDefaults'
+import { hasActiveSessionWork } from '../utils/activitySessions'
 
 const removePasteMarkersFromText = (text: string, markers: string[]) => {
   return markers.reduce((next, marker) => {
@@ -593,11 +595,17 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const canSteer = activeTab?.canSteer ?? false
   const tabSessionId = activeTab?.sessionId ?? null
   const isViewOnly = activeTab?.metadata?.isViewOnly ?? false
-  const activeSessionRuntime = useChatStore(state => {
+  const activeSession = useChatStore(state => {
     if (!tabSessionId) return undefined
-    return state.activeSessionsCache.find(session => session.session_id === tabSessionId)?.runtime
+    return state.activeSessionsCache.find(session => session.session_id === tabSessionId)
   })
+  const activeSessionRuntime = hasActiveSessionWork(activeSession) ? activeSession?.runtime : undefined
   const delegationTierConfig = useLLMStore(state => state.delegationTierConfig)
+  const {
+    providerManifest,
+    providerManifestLoaded,
+    loadProviderManifest,
+  } = useLLMStore()
   
   // Note: activeTab may be undefined during initial render before tabs are created
   // This is expected and will resolve once the tab store initializes
@@ -647,20 +655,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       return { provider: runtimeProvider as LLMProvider, model_id: runtimeModel }
     }
 
-    if (delegationTierConfig?.main?.provider && delegationTierConfig.main.model_id) {
-      return {
-        provider: delegationTierConfig.main.provider as LLMProvider,
-        model_id: delegationTierConfig.main.model_id,
-      }
-    }
+    const configuredMain = resolveDelegationMainModel(delegationTierConfig, providerManifest)
+    if (configuredMain) return configuredMain
 
     return null
   }, [
     activeSessionRuntime?.model_id,
     activeSessionRuntime?.provider,
-    delegationTierConfig?.main?.model_id,
-    delegationTierConfig?.main?.provider,
+    delegationTierConfig,
     isMultiAgentMode,
+    providerManifest,
   ])
 
   const effectiveProviderForSteer = useMemo(() => {
@@ -681,11 +685,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     workflowPhasePreset?.llmConfig?.builder_llm?.provider,
     workflowPhasePreset?.llmConfig?.provider,
   ])
-  const {
-    providerManifest,
-    providerManifestLoaded,
-    loadProviderManifest,
-  } = useLLMStore()
   useEffect(() => {
     if (!providerManifestLoaded) {
       void loadProviderManifest()
@@ -1301,6 +1300,17 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       )
     }
 
+    // Do not flash an unrelated stale tab model while the provider manifest is
+    // still loading. The selected profile is already authoritative.
+    if (isMultiAgentMode && delegationTierConfig?.mode === 'provider_profile' && delegationTierConfig.provider) {
+      return {
+        provider: delegationTierConfig.provider as LLMProvider,
+        model: '',
+        label: delegationTierConfig.provider,
+        description: 'Selected coding-agent profile',
+      }
+    }
+
     if (tabConfig?.llmConfig) {
       const config = tabConfig.llmConfig
       const foundLLM = availableLLMs.find(llm =>
@@ -1327,6 +1337,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     multiAgentEffectiveLLMConfig?.model_id,
     multiAgentEffectiveLLMConfig?.provider,
     activeSessionRuntime?.provider,
+    delegationTierConfig?.mode,
+    delegationTierConfig?.provider,
     workflowPrimaryConfig,
     manifestBuilderLLM?.provider,
     manifestBuilderLLM?.model_id,
@@ -3990,12 +4002,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                               size="sm"
                               className="px-3"
                               data-testid="chat-stop-button"
+                              aria-label="Cancel current response"
                             >
                               <Square className="w-4 h-4" />
                             </Button>
                           </TooltipTrigger>
                           <TooltipContent>
-                            <p>Stop streaming</p>
+                            <p>Cancel current response</p>
                           </TooltipContent>
                         </Tooltip>
                       )}

@@ -100,8 +100,6 @@ const RAW_XTERM_MIN_FIT_WIDTH_PX = 240
 const RAW_XTERM_MIN_FIT_HEIGHT_PX = 120
 const TERMINAL_DETAIL_CACHE_LIMIT = 40
 const MAX_PRIOR_ARCHIVED_TURNS_TO_INLINE = 3
-const PROMPT_COMPLETION_FALLBACK_SECONDS = 60
-const INACTIVE_FALLBACK_SECONDS = 120
 const EMPTY_TERMINAL_RESPONSE_GRACE_POLLS = 10
 const TERMINAL_POLL_INTERVAL_MS = 3000
 const TERMINAL_ACTIVE_RAIL_PROBE_LIMIT = 4
@@ -1217,43 +1215,6 @@ function formatRailAge(terminal: TerminalSnapshot): { label: string; title: stri
   if (minutes < 60) return { label: `${minutes}m ago`, title }
   const hours = Math.floor(minutes / 60)
   return { label: `${hours}h ago`, title }
-}
-
-function formatFallbackSeconds(seconds: number): string {
-  if (seconds <= 0) return 'now'
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  const rem = seconds % 60
-  return rem ? `${minutes}m ${rem}s` : `${minutes}m`
-}
-
-function hasPromptCompletionFallbackText(content?: string): boolean {
-  if (!content) return false
-  return /status:\s*complete(d)?/i.test(content)
-}
-
-function terminalUsesIdleFallback(terminal: TerminalSnapshot): boolean {
-  return Boolean(terminal.tmux_session) || (terminal.step_transport || '').toLowerCase() === 'tmux'
-}
-
-function terminalFallbackInfo(terminal: TerminalSnapshot): { label: string; title: string } | null {
-  if (!terminalUsesIdleFallback(terminal)) return null
-  if (!terminal.active || terminalState(terminal) !== 'running') return null
-  const updatedAt = terminalUpdatedTime(terminal)
-  if (!updatedAt) return null
-  const ageSeconds = Math.max(0, Math.floor((Date.now() - updatedAt) / 1000))
-  const hasPromptFallback = hasPromptCompletionFallbackText(terminal.content)
-  const threshold = hasPromptFallback ? PROMPT_COMPLETION_FALLBACK_SECONDS : INACTIVE_FALLBACK_SECONDS
-  const remaining = Math.max(0, threshold - ageSeconds)
-  if (remaining > 30) return null
-  const rule = hasPromptFallback ? 'completion fallback' : 'idle fallback'
-  const label = remaining > 0
-    ? `${rule} in ${formatFallbackSeconds(remaining)}`
-    : `${rule} due`
-  const title = hasPromptFallback
-    ? `Backend will mark this terminal completed if the STATUS: COMPLETED fallback remains unchanged for ${formatFallbackSeconds(PROMPT_COMPLETION_FALLBACK_SECONDS)}.`
-    : `Backend will mark this terminal completed if the screen has no changes for ${formatFallbackSeconds(INACTIVE_FALLBACK_SECONDS)}.`
-  return { label, title }
 }
 
 // isMainAgentTerminal returns true for the persistent chat-session
@@ -4299,11 +4260,6 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
             {state === 'closing' && (
               <span className={`shrink-0 ${terminalTheme.warningText}`}>· {terminalStateLabel(terminal)}</span>
             )}
-            {terminalFallbackInfo(terminal) && (
-              <span className={`shrink-0 ${terminalTheme.warningText}`} title={terminalFallbackInfo(terminal)?.title}>
-                · {terminalFallbackInfo(terminal)?.label}
-              </span>
-            )}
           </div>
           )}
           {latestTerminalError && (
@@ -4456,14 +4412,6 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
                           title={terminalStateDescription(selectedTerminalView)}
                         >
                           {terminalStateLabel(selectedTerminalView)}
-                        </span>
-                      )}
-                      {terminalFallbackInfo(selectedTerminalView) && (
-                        <span
-                          className={`rounded border px-1.5 py-0.5 font-medium ${terminalTheme.chipText} ${terminalTheme.warningChip}`}
-                          title={terminalFallbackInfo(selectedTerminalView)?.title}
-                        >
-                          {terminalFallbackInfo(selectedTerminalView)?.label}
                         </span>
                       )}
                       <button

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { Plus, ArrowDown, ListTree, Terminal, Globe, DollarSign, CalendarClock, SlidersHorizontal } from 'lucide-react'
+import { Plus, ArrowDown, ListTree, Terminal, Globe, DollarSign, CalendarClock, SlidersHorizontal, Square } from 'lucide-react'
 import { normalizeEventViewMode, useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useAppStore } from '../stores/useAppStore'
 import { OrgPulseControl } from './OrgPulseControl'
@@ -15,6 +15,8 @@ import { dispatchChatToolCommand } from '../utils/chatToolEvents'
 import CostDashboard from './CostDashboard'
 import MultiAgentSchedulesPopup from './scheduler/MultiAgentSchedulesPopup'
 import { schedulerApi } from '../api/scheduler'
+import { agentApi } from '../services/api'
+import { hasActiveSessionWork } from '../utils/activitySessions'
 
 interface ChatTabsProps {
   // For multi-agent mode: callback when starting a new chat (reset-in-place)
@@ -40,6 +42,7 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
   const [pendingTreeViewTabId, setPendingTreeViewTabId] = useState<string | null>(null)
   const [showCostDashboard, setShowCostDashboard] = useState(false)
   const [showMultiAgentSchedules, setShowMultiAgentSchedules] = useState(false)
+  const [stoppingSessionId, setStoppingSessionId] = useState<string | null>(null)
   const [multiAgentScheduleCount, setMultiAgentScheduleCount] = useState(0)
   const [multiAgentRunningScheduleCount, setMultiAgentRunningScheduleCount] = useState(0)
   const [multiAgentEnabledScheduleCount, setMultiAgentEnabledScheduleCount] = useState(0)
@@ -54,6 +57,9 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
     setAutoScroll,
     setTabConfig,
     setTabViewMode,
+    setTabStreaming,
+    setTabHasRunningBgAgents,
+    activeSessionsCache,
   } = useChatStore()
   const { toolList: mcpToolList, setChatSelectedServers } = useMCPStore()
   const delegationTierConfig = useLLMStore(state => state.delegationTierConfig)
@@ -74,7 +80,30 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
     [activeTabId, chatTabs]
   )
   const activeTab = activeTabId ? chatTabs[activeTabId] : undefined
+  const activeSession = activeTab?.sessionId
+    ? activeSessionsCache.find(session => session.session_id === activeTab.sessionId)
+    : undefined
+  const hasActiveWork = !!activeTab?.sessionId && (
+    !!activeTab.isStreaming ||
+    !!activeTab.hasRunningBgAgents ||
+    hasActiveSessionWork(activeSession)
+  )
   const showAutoScrollControl = activeViewMode === 'tree'
+
+  const stopChiefOfStaffSession = useCallback(async () => {
+    if (!activeTabId || !activeTab?.sessionId || stoppingSessionId) return
+    const sessionId = activeTab.sessionId
+    setStoppingSessionId(sessionId)
+    try {
+      await agentApi.stopSession(sessionId, true)
+      setTabStreaming(activeTabId, false)
+      setTabHasRunningBgAgents(activeTabId, false)
+    } catch (error) {
+      console.error('[ChatTabs] Failed to stop Chief of Staff session:', error)
+    } finally {
+      setStoppingSessionId(null)
+    }
+  }, [activeTab?.sessionId, activeTabId, setTabHasRunningBgAgents, setTabStreaming, stoppingSessionId])
 
   const isHiddenOrganizationTab = useCallback((tab: ChatTab) => {
     // Only hide tabs explicitly marked as org assistant via metadata.
@@ -288,6 +317,25 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
       <span className="min-w-0 max-w-[min(360px,34vw)] truncate whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
         {chatTitle}
       </span>
+
+      {hasActiveWork && activeTab?.sessionId && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={stopChiefOfStaffSession}
+              disabled={stoppingSessionId === activeTab.sessionId}
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[hsl(var(--destructive))] opacity-75 transition-colors hover:bg-[hsl(var(--destructive)/0.12)] hover:opacity-100 disabled:cursor-wait disabled:opacity-40"
+              aria-label="Stop Chief of Staff session and background work"
+            >
+              <Square className="h-3 w-3" fill="currentColor" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>Stop session and background work</p>
+          </TooltipContent>
+        </Tooltip>
+      )}
 
       {/* New Chat — resets the current chat in place (confirmation handled upstream) */}
       {onNewChat && (

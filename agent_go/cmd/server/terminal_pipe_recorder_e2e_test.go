@@ -63,7 +63,9 @@ func TestTerminalPipeRecorderHTTPE2EPreservesAnsiAndAppends(t *testing.T) {
 	}
 
 	sendTmuxLiteralCommand(t, ctx, sessionName, "printf '\\033[31mred-start\\033[0m\\n'; printf '\\033[33mspinner-frame-1\\033[0m\\n'; printf 'MCP_API_TOKEN=super-secret\\nMCP_AUTH=Authorization: Bearer bearer-secret\\nSECRET_FOO=hidden-secret\\n'")
-	first := waitForTerminalDetail(t, api, terminalID, "red-start")
+	// The interactive shell echoes the literal printf command before executing
+	// it. Wait for rendered ANSI output, not the plain word in that echo.
+	first := waitForTerminalDetail(t, api, terminalID, "\x1b[31mred-start")
 	if first.ContentSource != "tmux_pipe" {
 		t.Fatalf("content_source = %q, want tmux_pipe", first.ContentSource)
 	}

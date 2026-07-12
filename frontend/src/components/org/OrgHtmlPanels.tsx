@@ -4,11 +4,12 @@ import jetBrainsMonoLatin400Woff2 from '@fontsource/jetbrains-mono/files/jetbrai
 import jetBrainsMonoLatin600Woff2 from '@fontsource/jetbrains-mono/files/jetbrains-mono-latin-600-normal.woff2?url'
 import { agentApi } from '../../services/api'
 import { useTheme } from '../../hooks/useTheme'
+import { useWorkflowManifestStore } from '../../stores/useWorkflowManifestStore'
 import { HtmlRenderer } from '../ui/HtmlRenderer'
+import { ReportHumanInputPanel } from '../workflow/ReportHumanInputPanel'
 import {
   ORG_HTML_PREVIEW_PREFERENCE_CHANGED_EVENT,
   getOrgHtmlPreviewDevice,
-  orgHtmlPreviewShellClass,
   type OrgHtmlPreviewDevice,
 } from './orgHtmlPreview'
 
@@ -88,6 +89,7 @@ interface OrgHtmlPanelProps {
   // (used when embedded in a narrow column, e.g. the org page goals column).
   fixedDevice?: OrgHtmlPreviewDevice
   hideHeader?: boolean
+  leadingContent?: React.ReactNode
 }
 
 const toolbarIconBtnClass = 'inline-flex h-7 w-7 flex-none items-center justify-center rounded-lg border border-border bg-background/90 text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50'
@@ -96,7 +98,7 @@ function isMissingFileMessage(message: unknown): boolean {
   return typeof message === 'string' && /file does not exist|not found|no such file/i.test(message)
 }
 
-const OrgHtmlPanel: React.FC<OrgHtmlPanelProps> = ({ title, path, loadingText, emptyText, Icon, toolbarLeading, onClosePanel, fixedDevice, hideHeader = false }) => {
+const OrgHtmlPanel: React.FC<OrgHtmlPanelProps> = ({ title, path, loadingText, emptyText, Icon, toolbarLeading, onClosePanel, fixedDevice, hideHeader = false, leadingContent }) => {
   const [content, setContent] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -174,21 +176,47 @@ const OrgHtmlPanel: React.FC<OrgHtmlPanelProps> = ({ title, path, loadingText, e
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-hidden bg-muted/20">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain bg-muted/20 [scrollbar-gutter:stable]">
+        {leadingContent}
         {loading && !content ? (
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">{loadingText}</div>
+          <div className="flex min-h-64 items-center justify-center text-sm text-muted-foreground">{loadingText}</div>
         ) : content ? (
-          <div className={orgHtmlPreviewShellClass(device)}>
-            <HtmlRenderer content={themedContent} />
+          <div className={device === 'mobile' ? 'mx-auto w-full max-w-[480px]' : 'w-full'}>
+            <HtmlRenderer content={themedContent} autoHeight />
           </div>
         ) : (
-          <div className="flex h-full items-center justify-center p-4 text-center">
+          <div className="flex min-h-64 items-center justify-center p-4 text-center">
             <div className="rounded-md bg-muted/60 px-3 py-2.5 text-xs text-muted-foreground">
               {error || emptyText}
             </div>
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+const ChiefOfStaffQuestions: React.FC = () => {
+  const workflows = useWorkflowManifestStore(state => state.workflows)
+  const lastRefreshed = useWorkflowManifestStore(state => state.lastRefreshed)
+  const refreshWorkflows = useWorkflowManifestStore(state => state.refreshWorkflows)
+
+  useEffect(() => {
+    if (lastRefreshed === null) void refreshWorkflows()
+  }, [lastRefreshed, refreshWorkflows])
+
+  return (
+    <div>
+      {workflows.map(workflow => (
+        <ReportHumanInputPanel
+          key={workflow.workspace_path}
+          workspacePath={workflow.workspace_path}
+          workspaceLabel={workflow.manifest.label || workflow.workspace_path.split('/').pop() || workflow.workspace_path}
+          source="chief_of_staff"
+          pendingOnly
+          className="mx-3 mt-3"
+        />
+      ))}
     </div>
   )
 }
@@ -218,6 +246,7 @@ export const OrgPulsePanel: React.FC<{ toolbarLeading?: React.ReactNode; onClose
     onClosePanel={onClosePanel}
     fixedDevice={fixedDevice}
     hideHeader={hideHeader}
+    leadingContent={<ChiefOfStaffQuestions />}
   />
 )
 

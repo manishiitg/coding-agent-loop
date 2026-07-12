@@ -229,6 +229,85 @@ func TestHandleStopSessionCancelsActiveWorkAndPreventsPaneReuse(t *testing.T) {
 	}
 }
 
+func TestHandleCancelCurrentTurnPreservesSessionAndBackgroundWork(t *testing.T) {
+	const sessionID = "schedule-cron--test_1"
+	turnCanceled := false
+	backgroundCanceled := false
+	registry := NewBackgroundAgentRegistry()
+	registry.Register(sessionID, &BackgroundAgent{
+		ID:        "bg-1",
+		Name:      "background-check",
+		SessionID: sessionID,
+		Status:    BGAgentRunning,
+		cancel:    func() { backgroundCanceled = true },
+	})
+
+	api := &StreamingAPI{
+		agentCancelFuncs: map[string]context.CancelFunc{
+			sessionID: func() { turnCanceled = true },
+		},
+		activeSessions: map[string]*ActiveSessionInfo{
+			sessionID: {SessionID: sessionID, Status: "running"},
+		},
+		stoppedSessions: map[string]bool{},
+		bgAgentRegistry: registry,
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/session/cancel-turn", nil)
+	req.Header.Set("X-Session-ID", sessionID)
+	rec := httptest.NewRecorder()
+
+	api.handleCancelCurrentTurn(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("cancel-turn status = %d body=%s, want 204", rec.Code, rec.Body.String())
+	}
+	if !turnCanceled {
+		t.Fatalf("foreground turn cancel func was not called")
+	}
+	if backgroundCanceled {
+		t.Fatalf("background work was canceled by foreground turn stop")
+	}
+	if registry.Get(sessionID, "bg-1") == nil {
+		t.Fatalf("background agent was removed by foreground turn stop")
+	}
+	if api.stoppedSessions[sessionID] {
+		t.Fatalf("session was marked stopped by foreground turn stop")
+	}
+	if got := api.activeSessions[sessionID].Status; got != "running" {
+		t.Fatalf("active session status = %q, want running", got)
+	}
+	if _, ok := api.agentCancelFuncs[sessionID]; ok {
+		t.Fatalf("foreground cancel func was not removed after cancellation")
+	}
+	if !api.consumeSessionTurnInterrupted(sessionID) {
+		t.Fatalf("foreground turn cancellation did not record a sequence interruption")
+	}
+}
+
+func TestHandleCancelCurrentTurnRecordsInterruptionBetweenTurns(t *testing.T) {
+	const sessionID = "schedule-cron--test_2"
+	api := &StreamingAPI{
+		agentCancelFuncs: map[string]context.CancelFunc{},
+		activeSessions: map[string]*ActiveSessionInfo{
+			sessionID: {SessionID: sessionID, Status: "running"},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/session/cancel-turn", nil)
+	req.Header.Set("X-Session-ID", sessionID)
+	rec := httptest.NewRecorder()
+
+	api.handleCancelCurrentTurn(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("cancel-turn status = %d body=%s, want 204", rec.Code, rec.Body.String())
+	}
+	if !api.consumeSessionTurnInterrupted(sessionID) {
+		t.Fatalf("cancel between turns did not preserve the user's sequence-stop intent")
+	}
+}
+
 func TestCleanupCodingAgentInteractiveSessionsCallsEveryProvider(t *testing.T) {
 	oldClaude := cleanupClaudeCodeProviderSessions
 	oldCodex := cleanupCodexCLIProviderSessions

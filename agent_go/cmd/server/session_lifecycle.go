@@ -31,6 +31,13 @@ func (api *StreamingAPI) handleCancelCurrentTurn(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// Preserve the user's intent even if the foreground cancel function has just
+	// completed and disappeared. A scheduled sequencer may be between turns at
+	// that exact moment; its waiter must still abort before sending the next one.
+	if isScheduledSession(sessionID) {
+		api.markSessionTurnInterrupted(sessionID)
+	}
+
 	api.agentCancelMux.Lock()
 	cancelFunc, exists := api.agentCancelFuncs[sessionID]
 	if exists {
@@ -110,6 +117,9 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 	// instead of re-creating workshop sessions or spawning new CLI processes.
 	// See stoppedSessions field comment for the full race condition description.
 	api.markSessionStopped(sessionID)
+	if isScheduledSession(sessionID) {
+		api.markSessionTurnInterrupted(sessionID)
+	}
 
 	// Cancel agent execution context if it exists
 	api.agentCancelMux.Lock()

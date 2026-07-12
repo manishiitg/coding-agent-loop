@@ -898,9 +898,9 @@ func (api *StreamingAPI) resolveLiveAttachTerminal(w http.ResponseWriter, r *htt
 
 	// Backend restarts clear the in-memory terminal store while the browser can
 	// still hold the last terminal snapshot and the tmux session can still be
-	// alive. Recover the live stream from those client-supplied identifiers, but
-	// only after applying the same session access check and verifying tmux still
-	// has the target session.
+	// alive. Recover the live stream from those client-supplied identifiers only
+	// after applying the same session access check and verifying the tmux-native
+	// owner metadata. A client-supplied tmux name alone is not authorization.
 	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
 	tmuxSession := strings.TrimSpace(r.URL.Query().Get("tmux_session"))
 	if sessionID == "" || tmuxSession == "" || !api.canAccessTerminalSession(r, sessionID) {
@@ -910,6 +910,12 @@ func (api *StreamingAPI) resolveLiveAttachTerminal(w http.ResponseWriter, r *htt
 	ctx, cancel := context.WithTimeout(r.Context(), terminalTmuxActionTimeout)
 	defer cancel()
 	if err := runTerminalTmuxCommand(ctx, "", "has-session", "-t", tmuxSession); err != nil {
+		http.Error(w, "Terminal not found", http.StatusNotFound)
+		return terminals.Snapshot{}, false
+	}
+	ownerSessionID, err := runTerminalTmuxOutputCommand(ctx, "show-options", "-v", "-t", tmuxSession, tmuxinput.OwnerSessionOption)
+	if err != nil || strings.TrimSpace(ownerSessionID) != sessionID {
+		log.Printf("[LIVE_ATTACH] Rejected unowned restart recovery terminal=%q tmux=%q requested_session=%q", terminalID, tmuxSession, sessionID)
 		http.Error(w, "Terminal not found", http.StatusNotFound)
 		return terminals.Snapshot{}, false
 	}

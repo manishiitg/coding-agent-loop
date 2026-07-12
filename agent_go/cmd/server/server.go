@@ -353,6 +353,12 @@ type StreamingAPI struct {
 	stoppedSessions   map[string]bool
 	stoppedSessionsMu sync.RWMutex
 
+	// interruptedTurns records a user cancel of only the foreground response.
+	// Scheduled message sequences consume this marker so an interrupted turn is
+	// never mistaken for a successfully completed (idle) turn and advanced.
+	interruptedTurns   map[string]bool
+	interruptedTurnsMu sync.Mutex
+
 	// Orchestrator objects in memory for guidance injection
 	workflowOrchestrators    map[string]orchestrator.Orchestrator
 	workflowOrchestratorsMux sync.RWMutex
@@ -396,12 +402,10 @@ type StreamingAPI struct {
 	runningAgents    map[string]*mcpagent.Agent
 	runningAgentsMux sync.RWMutex
 
-	// Per-session input lane for interactive/coding-agent chats. /api/query
-	// returns before the background goroutine finishes launching/materializing a
-	// coding CLI, so a second rapid submit can otherwise overtake the first by
-	// taking the retained live-input path. Hold this lane until a new turn has
-	// handed its prompt to StreamWithEvents, then live steering can resume.
-	sessionInputLanes   map[string]*sync.Mutex
+	// Per-session new-turn lane for interactive chats. It serializes expensive
+	// turn construction only; retained coding-CLI live input bypasses it and is
+	// ordered at the provider's tmux readiness/broker boundary.
+	sessionInputLanes   map[string]*sessionInputLane
 	sessionInputLanesMu sync.Mutex
 
 	// Last-seen WorkshopMode per session — used to detect mode toggles between
@@ -887,11 +891,13 @@ func requestLLMConfigOverridesManifest(req QueryRequest) bool {
 }
 
 func shouldSerializeInteractiveQueryInput(req QueryRequest) bool {
-	if req.IsAutoNotification {
-		return false
-	}
 	mode := normalizeAgentMode(req.AgentMode)
 	return mode == "workflow_phase" || isToolBackedChatMode(mode)
+}
+
+type sessionInputLane struct {
+	mu   sync.Mutex
+	refs int
 }
 
 func (api *StreamingAPI) lockSessionInputLane(sessionID string) func() {
@@ -900,19 +906,28 @@ func (api *StreamingAPI) lockSessionInputLane(sessionID string) func() {
 	}
 	api.sessionInputLanesMu.Lock()
 	if api.sessionInputLanes == nil {
-		api.sessionInputLanes = make(map[string]*sync.Mutex)
+		api.sessionInputLanes = make(map[string]*sessionInputLane)
 	}
 	lane := api.sessionInputLanes[sessionID]
 	if lane == nil {
-		lane = &sync.Mutex{}
+		lane = &sessionInputLane{}
 		api.sessionInputLanes[sessionID] = lane
 	}
+	lane.refs++
 	api.sessionInputLanesMu.Unlock()
 
-	lane.Lock()
+	lane.mu.Lock()
 	var once sync.Once
 	return func() {
-		once.Do(lane.Unlock)
+		once.Do(func() {
+			lane.mu.Unlock()
+			api.sessionInputLanesMu.Lock()
+			lane.refs--
+			if lane.refs == 0 && api.sessionInputLanes[sessionID] == lane {
+				delete(api.sessionInputLanes, sessionID)
+			}
+			api.sessionInputLanesMu.Unlock()
+		})
 	}
 }
 
@@ -1262,10 +1277,11 @@ func runServer(cmd *cobra.Command, args []string) {
 		sessionWorkspaceFolders:         make(map[string]string),
 		sessionAgents:                   make(map[string]*agent.LLMAgentWrapper),
 		runningAgents:                   make(map[string]*mcpagent.Agent),
-		sessionInputLanes:               make(map[string]*sync.Mutex),
+		sessionInputLanes:               make(map[string]*sessionInputLane),
 		completionLoopStarted:           make(map[string]bool),
 		lastWorkshopModeBySession:       make(map[string]string),
 		stoppedSessions:                 make(map[string]bool),
+		interruptedTurns:                make(map[string]bool),
 	}
 
 	// BG-001: Wire the onDropped callback so a full notification channel re-queues
@@ -2546,16 +2562,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	api.applySavedMultiAgentChatConfig(r.Context(), &req, currentUserID)
 
-	var releaseInputLane func()
-	if shouldSerializeInteractiveQueryInput(req) {
-		releaseInputLane = api.lockSessionInputLane(sessionID)
-		defer func() {
-			if releaseInputLane != nil {
-				releaseInputLane()
-			}
-		}()
-	}
-
 	// Default maxTurns only when omitted (0). Negative values are preserved to mean "no turn cap".
 	// Multi-agent chat and the workflow builder run uncapped by default.
 	isWorkflowBuilderPhase := req.AgentMode == "workflow_phase" && req.PhaseID == workflowtypes.WorkflowStatusWorkflowBuilder
@@ -2631,6 +2637,31 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Only genuinely new turns use the backend lane. Taking this before the
+	// retained-live-input check made normal follow-ups wait behind slow CLI
+	// startup and caused later messages/notifications to arrive in bursts.
+	var releaseInputLane func()
+	if shouldSerializeInteractiveQueryInput(req) {
+		// User input has priority over a synthetic completion turn. Cancel it
+		// before waiting for the shared turn lane; otherwise the user would wait
+		// behind the very synthetic turn it is meant to interrupt.
+		if !req.IsAutoNotification && req.AgentMode != "workflow_phase" && api.isSyntheticTurn(sessionID) {
+			api.agentCancelMux.RLock()
+			cancelFn := api.agentCancelFuncs[sessionID]
+			api.agentCancelMux.RUnlock()
+			if cancelFn != nil {
+				log.Printf("[SYNTHETIC_TURN] Canceling synthetic turn for session %s before user turn waits for lane", sessionID)
+				cancelFn()
+			}
+		}
+		releaseInputLane = api.lockSessionInputLane(sessionID)
+		defer func() {
+			if releaseInputLane != nil {
+				releaseInputLane()
+			}
+		}()
+	}
+
 	// Builder-chat single-runner constraint: only one workflow-builder chat
 	// session per workflow folder may run at a time. Phase executions
 	// (cron, bot, manual phase runs) are NOT subject to this — they have
@@ -2672,16 +2703,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Chat sessions are in-memory only — tracked via activeSessions map
 	// below. No persistent session metadata.
 
-	// Clear the stopped guard now that the user is explicitly sending a new message.
-	// This must happen AFTER session reactivation and BEFORE workshop creation,
-	// so the workshop code path sees a clean slate.
-	api.clearSessionStopped(sessionID)
-	// Also lift the registry-level zombie-prevention flag. A scheduled/workflow run
-	// stopped via the stop icon marks its MCP session IDs "stopped" (CloseHTTPSession);
-	// without clearing them here, an intentional resume reuses the same coding-agent
-	// bridge session, the registry refuses its connections, and its api-bridge tools
-	// read as "No such tool available" until a full reload.
-	mcpagent.ClearHTTPSessionStopped(sessionID)
+	// Only a real user message may reactivate a stopped/interrupted session.
+	// Cron sequence turns and synthetic auto-notifications are internal work; if
+	// they clear these guards, Pulse/Org Pulse can continue after the user pressed
+	// Stop. startSessionInternal preserves TriggeredBy="cron", so this distinction
+	// also applies to backend-driven turns.
+	if !req.IsAutoNotification && !strings.EqualFold(strings.TrimSpace(req.TriggeredBy), "cron") {
+		api.clearSessionStopped(sessionID)
+		// Lift the MCP registry zombie-prevention flag only for that intentional
+		// user resume, otherwise internal recovery can resurrect stopped bridges.
+		mcpagent.ClearHTTPSessionStopped(sessionID)
+	}
 
 	// Track active session for page refresh recovery (no observer needed)
 	api.trackActiveSession(sessionID, req.AgentMode, req.Query, currentUserID, req.BotPlatform, req.TriggeredBy)
@@ -3641,21 +3673,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Set user-facing busy state for regular chat turns.
 	if !isWorkflowPhase {
-		// If a synthetic (auto-notification) turn is running, cancel it so user gets priority.
-		// The synthetic turn's auto-notification content is already in conversation history,
-		// so the agent will see it as context when processing the user's message.
-		if api.isSyntheticTurn(sessionID) {
-			api.agentCancelMux.RLock()
-			cancelFn, hasCancelFn := api.agentCancelFuncs[sessionID]
-			api.agentCancelMux.RUnlock()
-			if hasCancelFn {
-				log.Printf("[SYNTHETIC_TURN] Canceling synthetic turn for session %s — user message takes priority", sessionID)
-				cancelFn()
-				// Wait briefly for the synthetic turn goroutine to clean up
-				time.Sleep(100 * time.Millisecond)
-			}
-		}
-
 		api.setSessionBusy(sessionID, true)
 		// Mark auto-notification turns as synthetic so frontend doesn't block input
 		if req.IsAutoNotification {
@@ -3670,27 +3687,30 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	queryInputLaneRelease := releaseInputLane
 	if queryInputLaneRelease != nil {
-		// Ownership moves to the background turn. It must stay held past the
-		// immediate /api/query response; otherwise a rapid second submit can reach
-		// the retained tmux pane before this first prompt has actually been sent.
+		// Ownership moves to the background turn for its full lifetime. Normal
+		// follow-ups bypass this lane through confirmed provider live input; only a
+		// true next turn waits here, preventing overlapping cleanup/state writes.
 		releaseInputLane = nil
 	}
 
 	// Process the query in the background
 	go func() {
-		if queryInputLaneRelease != nil {
-			defer queryInputLaneRelease()
-		}
-
-		// Clear session busy when the agent turn completes
-		if !isWorkflowPhase {
-			defer func() {
+		defer func() {
+			// Publish completion before releasing the turn lane. A queued synthetic
+			// turn can then acquire the lane and set running=true without an older
+			// cleanup racing afterward and clearing its state.
+			if !isWorkflowPhase {
 				api.setSyntheticTurn(sessionID, false)
 				api.setSessionBusy(sessionID, false)
-				// Drain pending auto-notifications after turn ends (batched to avoid concurrent StreamWithEvents).
+			}
+			if queryInputLaneRelease != nil {
+				queryInputLaneRelease()
+			}
+			if !isWorkflowPhase {
+				// Drain only after releasing the lane; synthetic turns acquire it.
 				api.drainPendingAutoNotificationsAfterTurn(sessionID)
-			}()
-		}
+			}
+		}()
 
 		// Helper function to send error and continue (not terminate)
 		sendError := func(errorMsg string, shouldTerminate bool) {
@@ -3828,17 +3848,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[CODE_EXECUTION] Code execution mode enabled (always on)")
 		}
 
-		// In plan delegation mode, orchestrator uses Main tier model (falls back to High if Main not set)
-		// only when the request did not choose a primary chat model. The chat UI's provider
-		// selector must win over saved/env tier defaults; delegated sub-agents still resolve tiers
-		// at spawn time in executeDelegatedTask.
+		// In plan delegation mode, the orchestrator uses Main (falling back to High)
+		// when no primary chat model was selected. A provider-profile selection is
+		// also authoritative and replaces stale tab-level provider/model fields.
+		// Delegated sub-agents still resolve their tiers when they are spawned.
 		var resolvedPrimaryOptions map[string]interface{}
 		if req.LLMConfig != nil {
 			resolvedPrimaryOptions = req.LLMConfig.Primary.Options
 		}
 		if !isWorkflowPhase {
 			var appliedTier bool
-			finalProvider, finalModelID, fallbacks, appliedTier = applyTopLevelTierModelIfNoExplicitLLM(streamCtx, req, finalProvider, finalModelID, fallbacks)
+			finalProvider, finalModelID, fallbacks, appliedTier = applyTopLevelDelegationModel(streamCtx, req, finalProvider, finalModelID, fallbacks)
 			if appliedTier {
 				if tierConfig := LoadAndResolveTierConfig(streamCtx, req.DelegationTierConfig); tierConfig != nil {
 					if tierConfig.Main != nil {
@@ -5162,12 +5182,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// the global cost log.
 		eventObserver := events.NewEventObserverWithLogger(api.eventStore, sessionID, api.logger)
 		costObs := newCostObserver(api.costLedger, sessionID, currentUserID, req.AgentMode)
+		var registeredRunningAgent *mcpagent.Agent
 		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
 			underlyingAgent.AddEventListener(eventObserver)
 			underlyingAgent.AddEventListener(costObs)
 			api.runningAgentsMux.Lock()
 			api.runningAgents[sessionID] = underlyingAgent
 			api.runningAgentsMux.Unlock()
+			registeredRunningAgent = underlyingAgent
 		} else {
 			log.Printf("[AGENT] ERROR: underlying MCP agent is nil for session %s", sessionID)
 		}
@@ -5484,10 +5506,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			sendError(fmt.Sprintf("Failed to start streaming: %v", err), true)
 			return
 		}
-		if queryInputLaneRelease != nil {
-			queryInputLaneRelease()
-			queryInputLaneRelease = nil
-		}
 		logfWithContext(queryLogCtx, "[LATENCY_DEBUG] T+%dms | StreamWithEvents channel opened | queryID=%s", time.Since(startTime).Milliseconds(), queryID)
 		log.Printf("[AGENT DEBUG] llmAgent.StreamWithEvents() started successfully for query %s", queryID)
 
@@ -5550,7 +5568,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Clean up running agent reference (steer injection no longer possible)
 		api.runningAgentsMux.Lock()
-		delete(api.runningAgents, sessionID)
+		if api.runningAgents[sessionID] == registeredRunningAgent {
+			delete(api.runningAgents, sessionID)
+		}
 		api.runningAgentsMux.Unlock()
 
 		// Final save of conversation history (in case streaming was stopped mid-way)
@@ -6345,8 +6365,13 @@ func queryRequestHasExplicitLLMSelection(req QueryRequest) bool {
 	return strings.TrimSpace(req.Provider) != "" || strings.TrimSpace(req.ModelID) != ""
 }
 
-func applyTopLevelTierModelIfNoExplicitLLM(ctx context.Context, req QueryRequest, finalProvider, finalModelID string, fallbacks []agent.FallbackModel) (string, string, []agent.FallbackModel, bool) {
-	if queryRequestHasExplicitLLMSelection(req) {
+func applyTopLevelDelegationModel(ctx context.Context, req QueryRequest, finalProvider, finalModelID string, fallbacks []agent.FallbackModel) (string, string, []agent.FallbackModel, bool) {
+	// A provider profile is itself the user's explicit selection. It must win
+	// over stale tab-level provider/model fields sent by an older frontend state.
+	providerProfileSelected := req.DelegationTierConfig != nil &&
+		strings.EqualFold(strings.TrimSpace(req.DelegationTierConfig.Mode), "provider_profile") &&
+		strings.TrimSpace(req.DelegationTierConfig.Provider) != ""
+	if queryRequestHasExplicitLLMSelection(req) && !providerProfileSelected {
 		return finalProvider, finalModelID, fallbacks, false
 	}
 	tierConfig := LoadAndResolveTierConfig(ctx, req.DelegationTierConfig)
@@ -6859,11 +6884,9 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 		http.Error(w, "No active foreground turn or live terminal for this session", http.StatusConflict)
 		return
 	}
-	var releaseLiveInputLane func()
-	if agentSupportsLiveInputDelivery(runningAgent) {
-		releaseLiveInputLane = api.lockSessionInputLane(sessionID)
-		defer releaseLiveInputLane()
-	}
+	// Do not wait on the new-turn lane here. Live coding-agent input is ordered by
+	// provider startup readiness and the per-tmux transaction broker; waiting on
+	// request construction would turn a slow CLI launch into a blocked chat send.
 	if !hasActiveForegroundTurn {
 		// API/LLM agents still need a server-owned foreground turn. Retained
 		// tmux-transport CLIs can accept the next message directly, whether their

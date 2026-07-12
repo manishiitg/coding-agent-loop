@@ -66,7 +66,21 @@ function HumanInputContext({ value }: { value: string }) {
   )
 }
 
-export function ReportHumanInputPanel({ workspacePath, className = '' }: { workspacePath: string; className?: string }) {
+interface ReportHumanInputPanelProps {
+  workspacePath: string
+  className?: string
+  source?: string
+  pendingOnly?: boolean
+  workspaceLabel?: string
+}
+
+export function ReportHumanInputPanel({
+  workspacePath,
+  className = '',
+  source,
+  pendingOnly = false,
+  workspaceLabel,
+}: ReportHumanInputPanelProps) {
   const [inputs, setInputs] = useState<ReportHumanInput[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -82,7 +96,7 @@ export function ReportHumanInputPanel({ workspacePath, className = '' }: { works
     setLoading(true)
     setError(null)
     try {
-      const res = await agentApi.listReportHumanInputs(workspacePath)
+      const res = await agentApi.listReportHumanInputs(workspacePath, pendingOnly ? 'pending' : undefined, source)
       if (cancelled?.()) return
       if (!res.success) throw new Error(res.error || 'Failed to load questions.')
       setInputs(res.inputs || [])
@@ -93,7 +107,7 @@ export function ReportHumanInputPanel({ workspacePath, className = '' }: { works
     } finally {
       if (!cancelled?.()) setLoading(false)
     }
-  }, [workspacePath])
+  }, [pendingOnly, source, workspacePath])
 
   useEffect(() => {
     let cancelled = false
@@ -114,7 +128,7 @@ export function ReportHumanInputPanel({ workspacePath, className = '' }: { works
   }, [workspacePath])
 
   const pending = inputs.filter(input => input.status === 'pending')
-  const history = inputs.filter(input => input.status !== 'pending' && input.status !== 'consumed').slice(0, 4)
+  const history = pendingOnly ? [] : inputs.filter(input => input.status !== 'pending' && input.status !== 'consumed').slice(0, 4)
   if (!loading && !error && pending.length === 0 && history.length === 0) return null
 
   const updateDraft = (id: string, patch: Partial<ReportHumanInputDraft>) => {
@@ -264,7 +278,9 @@ export function ReportHumanInputPanel({ workspacePath, className = '' }: { works
           </div>
           <div className="min-w-0">
             <div className="text-sm font-semibold text-foreground">
-              {pending.length > 0 ? 'Needs your decision' : 'Recent answers'}
+              {pending.length > 0
+                ? `Needs your decision${workspaceLabel ? ` · ${workspaceLabel}` : ''}`
+                : 'Recent answers'}
             </div>
             <div className="text-xs text-muted-foreground">
               {pending.length > 0 ? 'Your answer will be used by the next Pulse run.' : 'Previous decisions and outcomes.'}

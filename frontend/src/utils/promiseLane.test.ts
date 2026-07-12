@@ -49,5 +49,26 @@ describe('PromiseLane', () => {
     releaseA()
     await tabA
   })
-})
 
+  it('keeps ordering when a tab lane is linked to its backend session', async () => {
+    const lane = new PromiseLane()
+    const executed: string[] = []
+    let releaseFirst!: () => void
+    const firstBlocked = new Promise<void>(resolve => { releaseFirst = resolve })
+
+    const first = lane.enqueue('tab-a', async () => {
+      await firstBlocked
+      executed.push('first')
+    })
+    lane.link('tab-a', 'session-a')
+    const second = lane.enqueue('session-a', async () => {
+      executed.push('second')
+    })
+
+    await Promise.resolve()
+    expect(executed).toEqual([])
+    releaseFirst()
+    await Promise.all([first, second])
+    expect(executed).toEqual(['first', 'second'])
+  })
+})

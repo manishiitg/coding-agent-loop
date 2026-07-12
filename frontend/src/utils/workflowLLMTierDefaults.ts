@@ -1,4 +1,4 @@
-import type { AgentLLMConfig, LLMProvider } from '../services/api-types'
+import type { AgentLLMConfig, DelegationTierConfig, LLMProvider } from '../services/api-types'
 import type {
   ProviderDefaultTierModels,
   ProviderManifestEntry,
@@ -72,6 +72,31 @@ function resolveManifestDefaults(defaults?: ProviderDefaultTierModels) {
     maintenance,
     pulse: defaults.pulse ?? defaults.high,
     chiefOfStaff: defaults.chief_of_staff ?? maintenance,
+  }
+}
+
+/** Resolve the live Chief of Staff orchestrator model from simple or advanced setup. */
+export function resolveDelegationMainModel(
+  config: DelegationTierConfig | null | undefined,
+  providerManifest: ProviderManifestEntry[] = [],
+): AgentLLMConfig | null {
+  if (!config) return null
+
+  if (config.mode === 'provider_profile' && config.provider) {
+    const defaults = resolveManifestDefaults(findManifestDefaults(config.provider, providerManifest))
+    if (!defaults) return null
+    return {
+      provider: defaults.builder.provider as LLMProvider,
+      model_id: defaults.builder.model_id,
+      ...(hasOptions(defaults.builder.options) ? { options: defaults.builder.options } : {}),
+    }
+  }
+
+  if (!config.main?.provider || !config.main.model_id) return null
+  return {
+    provider: config.main.provider as LLMProvider,
+    model_id: config.main.model_id,
+    ...(hasOptions(config.main.options) ? { options: config.main.options } : {}),
   }
 }
 

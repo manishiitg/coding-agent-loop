@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  hasActiveSessionWork,
   hasIdleAliveCodingAgent,
   hasLiveBackgroundAgents,
   isTerminalActivityStatus,
@@ -7,6 +8,15 @@ import {
 } from './activitySessions'
 
 describe('activity session helpers', () => {
+  it('does not treat an idle retained session as active work', () => {
+    expect(hasActiveSessionWork({ status: 'completed' })).toBe(false)
+  })
+
+  it('recognizes running and waiting sessions as active work', () => {
+    expect(hasActiveSessionWork({ status: 'running' })).toBe(true)
+    expect(hasActiveSessionWork({ status: 'waiting_feedback' })).toBe(true)
+  })
+
   it('ignores stale background-agent flags on completed sessions', () => {
     expect(hasLiveBackgroundAgents({
       status: 'completed',

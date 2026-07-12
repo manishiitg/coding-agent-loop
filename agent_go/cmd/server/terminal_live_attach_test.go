@@ -15,6 +15,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/tmuxinput"
 
 	"mcp-agent-builder-go/agent_go/internal/liveattach"
 	"mcp-agent-builder-go/agent_go/internal/terminals"
@@ -63,6 +64,58 @@ func TestHandleTerminalStreamMissingManagerReturns404(t *testing.T) {
 	api.handleTerminalStream(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+func TestResolveLiveAttachRestartRecoveryRequiresMatchingTmuxOwner(t *testing.T) {
+	oldRun := runTerminalTmuxCommand
+	oldOutput := runTerminalTmuxOutputCommand
+	defer func() {
+		runTerminalTmuxCommand = oldRun
+		runTerminalTmuxOutputCommand = oldOutput
+	}()
+	runTerminalTmuxCommand = func(context.Context, string, ...string) error { return nil }
+	runTerminalTmuxOutputCommand = func(_ context.Context, args ...string) (string, error) {
+		if len(args) == 5 && args[0] == "show-options" && args[4] == tmuxinput.OwnerSessionOption {
+			return "owner-session\n", nil
+		}
+		return "", nil
+	}
+
+	api := &StreamingAPI{}
+	req := httptest.NewRequest(http.MethodGet, "/api/terminals/main/stream?session_id=owner-session&tmux_session=mlp-test", nil)
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": "main"})
+	rec := httptest.NewRecorder()
+	snapshot, ok := api.resolveLiveAttachTerminal(rec, req)
+	if !ok {
+		t.Fatalf("restart recovery rejected matching owner: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if snapshot.SessionID != "owner-session" || snapshot.TmuxSession != "mlp-test" {
+		t.Fatalf("unexpected snapshot: %+v", snapshot)
+	}
+}
+
+func TestResolveLiveAttachRestartRecoveryRejectsDifferentTmuxOwner(t *testing.T) {
+	oldRun := runTerminalTmuxCommand
+	oldOutput := runTerminalTmuxOutputCommand
+	defer func() {
+		runTerminalTmuxCommand = oldRun
+		runTerminalTmuxOutputCommand = oldOutput
+	}()
+	runTerminalTmuxCommand = func(context.Context, string, ...string) error { return nil }
+	runTerminalTmuxOutputCommand = func(context.Context, ...string) (string, error) {
+		return "different-session\n", nil
+	}
+
+	api := &StreamingAPI{}
+	req := httptest.NewRequest(http.MethodGet, "/api/terminals/main/stream?session_id=owner-session&tmux_session=mlp-other", nil)
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": "main"})
+	rec := httptest.NewRecorder()
+	if _, ok := api.resolveLiveAttachTerminal(rec, req); ok {
+		t.Fatal("restart recovery accepted a tmux session owned by another chat")
+	}
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
 	}
 }
 

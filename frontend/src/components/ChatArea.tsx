@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState, type ForwardedRef } from 'react'
 import { useRenderLogger, useMemoLogger } from '../utils/renderLogger'
-import { PromiseLane } from '../utils/promiseLane'
+import { chatSubmissionLane } from '../utils/promiseLane'
 import { isInternalAutoNotificationEvent } from '../utils/internalChatEvents'
 import { useShallow } from 'zustand/react/shallow'
 import { agentApi, resetSessionId, getSessionId } from '../services/api'
@@ -41,6 +41,7 @@ import {
   validateExecutionGroups,
   isChatCompatiblePhase,
 } from '../utils/chatSubmitHelpers'
+import { resolveDelegationMainModel } from '../utils/workflowLLMTierDefaults'
 
 // Stable empty array to avoid infinite re-render loops in Zustand selectors
 // (a new [] on every selector call breaks referential equality checks)
@@ -2306,8 +2307,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
   // Store execution options for use in the request
   const executionOptionsRef = useRef<ExecutionOptions | undefined>(undefined)
-  const submitLanesRef = useRef(new PromiseLane())
-
   // Helper: reset streaming state (replaces 4 duplicated blocks)
   const resetStreamingState = useCallback((tabId?: string) => {
     const store = useChatStore.getState()
@@ -2352,6 +2351,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const resolved = await resolveOrCreateTab({ freshActiveTab, selectedModeCategory: submitModeCategory })
     if (!resolved) return
     let { tab: currentTab, sessionId: tabSessionId } = resolved
+    chatSubmissionLane.link(currentTab.tabId, tabSessionId)
 
     const hasOneShotContext = Boolean(
       currentTab.config?.restoredConversationPath?.trim() ||
@@ -2651,8 +2651,14 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           ? currentTab.config.llmConfig
           : llmStore.primaryConfig
       const tierConfig = llmStore.delegationTierConfig
-      const effectiveLLMConfig: ExtendedLLMConfiguration = (isMultiAgentMode && tierConfig?.main?.provider && tierConfig?.main?.model_id)
-        ? { ...baseLLMConfig, provider: tierConfig.main.provider as ExtendedLLMConfiguration['provider'], model_id: tierConfig.main.model_id }
+      const delegationMainModel = resolveDelegationMainModel(tierConfig, llmStore.providerManifest)
+      const effectiveLLMConfig: ExtendedLLMConfiguration = (isMultiAgentMode && delegationMainModel)
+        ? {
+            ...baseLLMConfig,
+            provider: delegationMainModel.provider as ExtendedLLMConfiguration['provider'],
+            model_id: delegationMainModel.model_id,
+            options: delegationMainModel.options,
+          }
         : baseLLMConfig
 
       const llmConfigWithApiKeys = buildLLMConfigWithApiKeys(effectiveLLMConfig)
@@ -2804,13 +2810,14 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
   }, [correctAgentMode, selectedModeCategory, getAgentModeFromCategory, isRequiredFolderSelected, isStreaming, stopStreaming, finalResponse, startPolling, effectiveServers, enabledTools, selectedWorkflowPreset, activeWorkflowPreset, pollEvents, processedCompletionEventsRef, activeTab, scrollToBottom, getActiveSessions, resetStreamingState, connectSSE, handleSSEMessage, handleSSEStatus])
 
-  // Serialize the complete submission path per chat tab. This preserves the
-  // user's original order even when tab creation, secret resolution, or request
-  // preparation takes different amounts of time for consecutive messages.
+  // Serialize the complete submission path by durable session. A restored chat
+  // can receive a new React tab ID while an older request is still preparing;
+  // session-first keys preserve user order across that remount. New chats use
+  // their tab ID until the backend assigns a session.
   const submitQueryWithQuery = useCallback((query: string, executionOptions?: ExecutionOptions, options?: { isAutoNotification?: boolean; preferLiveInput?: boolean }) => {
-    const laneKey = activeTab?.tabId || `${selectedModeCategory || 'unknown'}:pending-tab`
-    return submitLanesRef.current.enqueue(laneKey, () => submitQueryImmediately(query, executionOptions, options))
-  }, [activeTab?.tabId, selectedModeCategory, submitQueryImmediately])
+    const laneKey = activeTab?.sessionId || activeTab?.tabId || `${selectedModeCategory || 'unknown'}:pending-tab`
+    return chatSubmissionLane.enqueue(laneKey, () => submitQueryImmediately(query, executionOptions, options))
+  }, [activeTab?.sessionId, activeTab?.tabId, selectedModeCategory, submitQueryImmediately])
 
   // If the active tab is stuck in streaming state, ChatInput queues the user's text
   // instead of calling /api/query. Force-refresh active sessions so the store can

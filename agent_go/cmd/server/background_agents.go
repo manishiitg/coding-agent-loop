@@ -51,28 +51,48 @@ type ToolCallRecord struct {
 
 // BackgroundAgent represents a background agent running asynchronously
 type BackgroundAgent struct {
-	ID                string                `json:"id"`
-	ParentExecutionID string                `json:"parent_execution_id,omitempty"`
-	Name              string                `json:"name"`
-	SessionID         string                `json:"session_id"`
-	Instruction       string                `json:"instruction"`
-	Kind              string                `json:"kind,omitempty"`
-	Status            BackgroundAgentStatus `json:"status"`
-	Result            string                `json:"result,omitempty"`
-	Error             string                `json:"error,omitempty"`
-	CreatedAt         time.Time             `json:"created_at"`
-	CompletedAt       *time.Time            `json:"completed_at,omitempty"`
-	ReasoningLevel    string                `json:"reasoning_level,omitempty"`
-	ModelID           string                `json:"model_id,omitempty"`
-	Metadata          map[string]string     `json:"metadata,omitempty"` // arbitrary key-value pairs (e.g. workshop_mode, lock_code)
-	cancel            context.CancelFunc
-	mu                sync.RWMutex
-	startNotified     bool
-	notified          bool
-	terminalNotified  bool             // a terminal event (background_agent_terminated) has been emitted; prevents duplicates across OnExecutionTerminated / OnExecutionComplete
-	getHistory        HistoryFunc      // returns last N conversation entries from the running sub-agent
-	toolCalls         []ToolCallRecord // tracked tool calls with timing
-	activeToolCall    map[string]int   // toolCallID → index in toolCalls (for matching start/end)
+	ID                   string                `json:"id"`
+	ParentExecutionID    string                `json:"parent_execution_id,omitempty"`
+	Name                 string                `json:"name"`
+	SessionID            string                `json:"session_id"`
+	Instruction          string                `json:"instruction"`
+	Kind                 string                `json:"kind,omitempty"`
+	Status               BackgroundAgentStatus `json:"status"`
+	Result               string                `json:"result,omitempty"`
+	Error                string                `json:"error,omitempty"`
+	CreatedAt            time.Time             `json:"created_at"`
+	CompletedAt          *time.Time            `json:"completed_at,omitempty"`
+	ReasoningLevel       string                `json:"reasoning_level,omitempty"`
+	ModelID              string                `json:"model_id,omitempty"`
+	Metadata             map[string]string     `json:"metadata,omitempty"` // arbitrary key-value pairs (e.g. workshop_mode, lock_code)
+	cancel               context.CancelFunc
+	mu                   sync.RWMutex
+	startNotified        bool
+	notified             bool
+	notificationInFlight bool
+	terminalNotified     bool             // a terminal event (background_agent_terminated) has been emitted; prevents duplicates across OnExecutionTerminated / OnExecutionComplete
+	getHistory           HistoryFunc      // returns last N conversation entries from the running sub-agent
+	toolCalls            []ToolCallRecord // tracked tool calls with timing
+	activeToolCall       map[string]int   // toolCallID → index in toolCalls (for matching start/end)
+}
+
+func (a *BackgroundAgent) beginCompletionNotification() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.notified || a.notificationInFlight {
+		return false
+	}
+	a.notificationInFlight = true
+	return true
+}
+
+func (a *BackgroundAgent) finishCompletionNotification(delivered bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.notificationInFlight = false
+	if delivered {
+		a.notified = true
+	}
 }
 
 // MarkStartNotified records that the main agent has been notified about this
@@ -866,6 +886,25 @@ func (api *StreamingAPI) isSessionMarkedStopped(sessionID string) bool {
 	return api.stoppedSessions[sessionID]
 }
 
+func (api *StreamingAPI) markSessionTurnInterrupted(sessionID string) {
+	api.interruptedTurnsMu.Lock()
+	if api.interruptedTurns == nil {
+		api.interruptedTurns = make(map[string]bool)
+	}
+	api.interruptedTurns[sessionID] = true
+	api.interruptedTurnsMu.Unlock()
+}
+
+func (api *StreamingAPI) consumeSessionTurnInterrupted(sessionID string) bool {
+	api.interruptedTurnsMu.Lock()
+	defer api.interruptedTurnsMu.Unlock()
+	if !api.interruptedTurns[sessionID] {
+		return false
+	}
+	delete(api.interruptedTurns, sessionID)
+	return true
+}
+
 // setSyntheticTurn marks a session as running an auto-notification synthetic turn.
 // The frontend uses this to avoid blocking user input during background agent notifications.
 func (api *StreamingAPI) setSyntheticTurn(sessionID string, synthetic bool) {
@@ -896,16 +935,18 @@ func (api *StreamingAPI) notifyBackgroundAgentStarted(sessionID, agentID string)
 		return
 	}
 
-	// A scheduled run already owns the background work it just started. Sending
-	// a second synthetic "Started ... Ack only" turn into its retained coding-CLI
-	// pane adds no orchestration information and leaves long runs with dozens of
-	// internal prompts. Keep the background_agent_started event for monitoring,
-	// but reserve start synthetic turns for interactive and bot sessions.
-	if isScheduledSession(sessionID) {
+	// Interactive app sessions already receive the background_agent_started
+	// event emitted by the notifier. Starting a synthetic LLM turn merely to
+	// acknowledge that event resumes and resets the retained coding-CLI pane,
+	// which makes the user's terminal appear to restart. Keep synthetic start
+	// turns only for bot sessions, where a model turn is required to send the
+	// acknowledgement back through the external chat channel. Completion
+	// notifications remain unchanged and still reach the main agent.
+	if !strings.HasPrefix(sessionID, "bot-") {
 		if agent := api.bgAgentRegistry.Get(sessionID, agentID); agent != nil {
 			agent.MarkStartNotified()
 		}
-		log.Printf("[BG AGENT] Suppressed redundant scheduled-run start synthetic turn for agent %s in session %s", agentID, sessionID)
+		log.Printf("[BG AGENT] Recorded UI-only background start for agent %s in session %s", agentID, sessionID)
 		return
 	}
 
@@ -1166,10 +1207,10 @@ func (api *StreamingAPI) requeueUnnotifiedCompletions(sessionID string) {
 		if snap.Status != BGAgentCompleted && snap.Status != BGAgentFailed {
 			continue
 		}
-		agent.mu.Lock()
-		notified := agent.notified
-		agent.mu.Unlock()
-		if notified {
+		agent.mu.RLock()
+		notifiedOrInFlight := agent.notified || agent.notificationInFlight
+		agent.mu.RUnlock()
+		if notifiedOrInFlight {
 			continue
 		}
 		api.queuePendingCompletion(sessionID, snap.ID)
@@ -1413,13 +1454,9 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 			continue
 		}
 
-		agent.mu.Lock()
-		if agent.notified {
-			agent.mu.Unlock()
+		if !agent.beginCompletionNotification() {
 			continue
 		}
-		// Do NOT set notified=true yet — commit only after dispatch succeeds.
-		agent.mu.Unlock()
 
 		var resultText string
 		if snap.Status == BGAgentCompleted {
@@ -1474,13 +1511,11 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 	}
 
 	// Mark notified=true only for agents whose turn was actually dispatched.
-	if api.executeSyntheticTurn(sessionID, syntheticMsg) {
-		for _, a := range agentRefs {
-			a.mu.Lock()
-			a.notified = true
-			a.mu.Unlock()
-		}
-	} else if !api.autoNotificationSessionUnreachable(sessionID) {
+	dispatched := api.executeSyntheticTurn(sessionID, syntheticMsg)
+	for _, a := range agentRefs {
+		a.finishCompletionNotification(dispatched)
+	}
+	if !dispatched && !api.autoNotificationSessionUnreachable(sessionID) {
 		// Dispatch failed but the session is still reachable. Leave every batched
 		// agent notified=false and arm the retry backstop so they are redelivered
 		// rather than dropped (no-stored-agent / stream-error drop fix).
@@ -1562,16 +1597,11 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 		return
 	}
 
-	// Prevent duplicate processing — but do NOT set notified=true yet.
-	// We commit notified only after executeSyntheticTurn succeeds so a
-	// short-circuit (no stored agent) doesn't permanently strand the agent
-	// (notified-before-executeSyntheticTurn fix).
-	agent.mu.Lock()
-	if agent.notified {
-		agent.mu.Unlock()
+	// Claim this completion across both direct and retry loops. The claim is
+	// released if dispatch fails so the retry backstop can deliver it later.
+	if !agent.beginCompletionNotification() {
 		return
 	}
-	agent.mu.Unlock()
 
 	syntheticMsg := api.buildAutoNotificationMessage(sessionID, snap)
 
@@ -1592,11 +1622,9 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 
 	// Trigger a synthetic turn using the stored QueryRequest.
 	// Set notified=true only when the turn was actually dispatched.
-	if api.executeSyntheticTurn(sessionID, syntheticMsg) {
-		agent.mu.Lock()
-		agent.notified = true
-		agent.mu.Unlock()
-	} else if !api.autoNotificationSessionUnreachable(sessionID) {
+	dispatched := api.executeSyntheticTurn(sessionID, syntheticMsg)
+	agent.finishCompletionNotification(dispatched)
+	if !dispatched && !api.autoNotificationSessionUnreachable(sessionID) {
 		// Dispatch failed but the session is still reachable (no stored agent yet,
 		// or StreamWithEvents errored). Leave notified=false and arm the retry
 		// backstop so requeueUnnotifiedCompletions redelivers this completion
@@ -1820,21 +1848,16 @@ func (api *StreamingAPI) steerBackgroundAgentCompletion(sessionID, agentID strin
 		return false
 	}
 
-	// Dedup without committing: do not set notified until delivery succeeds, so a
-	// failed steer can still fall through to the queue path.
-	agent.mu.Lock()
-	alreadyNotified := agent.notified
-	agent.mu.Unlock()
-	if alreadyNotified {
-		return true // nothing left to deliver; treat as handled so caller won't queue
+	// Atomically claim delivery. Multiple completion/retry loops can reach this
+	// function at once; checking notified and setting it only after I/O allowed
+	// duplicate [AUTO-NOTIFICATION] messages into the same tmux pane.
+	if !agent.beginCompletionNotification() {
+		return true // already delivered or another goroutine owns this delivery
 	}
+	delivered := false
+	defer func() { agent.finishCompletionNotification(delivered) }()
 
 	msg := api.buildAutoNotificationMessage(sessionID, snap)
-
-	if agentSupportsLiveInputDelivery(runningAgent) {
-		releaseInputLane := api.lockSessionInputLane(sessionID)
-		defer releaseInputLane()
-	}
 
 	inputCtx, cancel := context.WithTimeout(context.Background(), liveCodingAgentInputTimeout)
 	defer cancel()
@@ -1869,9 +1892,7 @@ func (api *StreamingAPI) steerBackgroundAgentCompletion(sessionID, agentID strin
 	}
 
 	// Commit the dedup only after a confirmed SentToCLI hand-off.
-	agent.mu.Lock()
-	agent.notified = true
-	agent.mu.Unlock()
+	delivered = true
 
 	api.recordLiveCodingAgentUserMessage(sessionID, msg, provider, newSteerMessageID(), deliveryStatus)
 	api.emitBackgroundAgentEvent(sessionID, agentID, "auto_notification_steered", map[string]interface{}{
@@ -1950,6 +1971,15 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) bo
 		return false
 	}
 
+	// Synthetic turns share the same full-turn lane as user-created turns. This
+	// prevents an old completion turn and a resumed user turn from concurrently
+	// mutating conversation history, running-agent maps, and terminal state.
+	releaseInputLane := api.lockSessionInputLane(sessionID)
+	if api.autoNotificationSessionUnreachable(sessionID) {
+		releaseInputLane()
+		return false
+	}
+
 	// Get stored query request for user ID context
 	api.lastQueryMu.RLock()
 	req, hasReq := api.lastQueryRequests[sessionID]
@@ -2002,6 +2032,7 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) bo
 		api.setSyntheticTurn(sessionID, false)
 		api.setSessionBusy(sessionID, false)
 		api.updateSessionStatus(sessionID, "error")
+		releaseInputLane()
 		return false
 	}
 
@@ -2017,6 +2048,7 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) bo
 
 			// Clear session busy first so any later work sees the session as idle.
 			api.setSessionBusy(sessionID, false)
+			releaseInputLane()
 
 			// If the session was explicitly stopped while this synthetic turn was running,
 			// do not chain any queued completions. That would re-enter the stopped session.

@@ -335,9 +335,11 @@ not whether you send the digest.
 If a recommendation needs a user decision for a specific workflow, do not leave that question only
 in email/chat. Call `create_human_input_request(workspace_path="<workflow path>", source="chief_of_staff", ...)`
 so the request is stored in that workflow's `db/db.sqlite` table `report_human_inputs`. The
-workflow's Pulse/report panel is where the user answers; when a later Chief of Staff or workflow
-pass uses the answer, it must call `mark_human_input_consumed` and remove or replace the matching
-visible question card in that workflow's Pulse HTML with a short outcome.
+request is rendered at the top of both Chief of Staff Org Pulse and the affected workflow's Pulse,
+using the same answer controls. Keep the recommendation summary itself in `pulse/org-pulse.html`;
+use the structured request only when an answer is genuinely needed. When a later Chief of Staff or
+workflow pass uses the answer, it must call `mark_human_input_consumed` and remove or replace the
+matching visible question card in that workflow's Pulse HTML with a short outcome.
 
 - `message_for_user`: one terse line for chat channels, formatted as
   `<emoji> Org Pulse — daily digest · <workflow health> · <goal metric> · <top decision or all healthy> · <url>`.

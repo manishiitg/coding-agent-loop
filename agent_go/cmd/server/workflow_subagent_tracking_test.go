@@ -105,13 +105,18 @@ func TestWorkflowSubAgentTrackingNotifierSignalsStart(t *testing.T) {
 		t.Fatalf("expected background_agent_started event, got %q", got)
 	}
 
-	pending := api.drainPendingStartNotifications(sessionID)
-	if len(pending) != 1 || pending[0] != agentID {
-		t.Fatalf("expected queued start notification for %q, got %#v", agentID, pending)
+	if pending := api.drainPendingStartNotifications(sessionID); len(pending) != 0 {
+		t.Fatalf("interactive start should be UI-only, got queued notification %#v", pending)
+	}
+	agent.mu.RLock()
+	startNotified := agent.startNotified
+	agent.mu.RUnlock()
+	if !startNotified {
+		t.Fatal("interactive start should be marked handled")
 	}
 }
 
-func TestWorkflowStartAutoNotificationPayloadAndDrain(t *testing.T) {
+func TestWorkflowStartNotificationPayloadAndInteractiveDelivery(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	defer store.Stop()
 
@@ -155,35 +160,48 @@ func TestWorkflowStartAutoNotificationPayloadAndDrain(t *testing.T) {
 	}
 
 	api.notifyBackgroundAgentStarted(sessionID, agentID)
-	if pending := api.drainPendingStartNotifications(sessionID); len(pending) != 1 || pending[0] != agentID {
-		t.Fatalf("expected queued start notification for busy session, got %#v", pending)
-	} else {
-		api.queuePendingStartNotifications(sessionID, pending)
-	}
-
-	api.setSessionBusy(sessionID, false)
-	api.processBatchedBackgroundAgentStarts(sessionID, api.drainPendingStartNotifications(sessionID))
-
-	events := store.GetAllEventsRaw(sessionID)
-	if len(events) != 1 {
-		t.Fatalf("expected one synthetic_turn_ready event, got %d", len(events))
-	}
-	if got := events[0].Type; got != "synthetic_turn_ready" {
-		t.Fatalf("expected synthetic_turn_ready, got %q", got)
+	if pending := api.drainPendingStartNotifications(sessionID); len(pending) != 0 {
+		t.Fatalf("interactive start should not queue a synthetic turn, got %#v", pending)
 	}
 	agent := api.bgAgentRegistry.Get(sessionID, agentID)
 	agent.mu.RLock()
 	startNotified := agent.startNotified
 	agent.mu.RUnlock()
-	if startNotified {
-		t.Fatal("expected start notification to remain unmarked when no synthetic turn dispatches")
+	if !startNotified {
+		t.Fatal("interactive start should be marked handled without a synthetic turn")
 	}
-	if pending := api.drainPendingStartNotifications(sessionID); len(pending) != 1 || pending[0] != agentID {
-		t.Fatalf("expected start notification to be requeued after dispatch failure, got %#v", pending)
+	if events := store.GetAllEventsRaw(sessionID); len(events) != 0 {
+		t.Fatalf("notifyBackgroundAgentStarted should not emit a synthetic event, got %d", len(events))
 	}
 }
 
-func TestScheduledRunSuppressesRedundantStartSyntheticTurn(t *testing.T) {
+func TestBotBackgroundStartStillQueuesOutboundAcknowledgement(t *testing.T) {
+	const sessionID = "bot-slack-session"
+	const agentID = "bot-background-agent"
+	api := &StreamingAPI{
+		bgAgentRegistry:           NewBackgroundAgentRegistry(),
+		sessionBusy:               map[string]bool{sessionID: true},
+		pendingStartNotifications: make(map[string][]string),
+		stoppedSessions:           make(map[string]bool),
+	}
+	api.bgAgentRegistry.Register(sessionID, &BackgroundAgent{
+		ID:        agentID,
+		Name:      "Prepare report",
+		SessionID: sessionID,
+		Kind:      "delegation",
+		Status:    BGAgentRunning,
+		CreatedAt: time.Now(),
+	})
+
+	api.notifyBackgroundAgentStarted(sessionID, agentID)
+
+	if pending := api.drainPendingStartNotifications(sessionID); len(pending) != 1 || pending[0] != agentID {
+		t.Fatalf("bot start should remain queued for outbound acknowledgement, got %#v", pending)
+	}
+	api.markSessionStopped(sessionID)
+}
+
+func TestScheduledRunStartIsUIOnly(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	defer store.Stop()
 
@@ -393,8 +411,15 @@ func TestWorkflowStepStartAndCompletionNotifyMainAgent(t *testing.T) {
 		Name: "Step -> cdp-test",
 	})
 
-	if pending := api.drainPendingStartNotifications(sessionID); len(pending) != 1 || pending[0] != execID {
-		t.Fatalf("expected workflow-step start notification for %q, got %#v", execID, pending)
+	if pending := api.drainPendingStartNotifications(sessionID); len(pending) != 0 {
+		t.Fatalf("workflow-step start should be UI-only, got queued notification %#v", pending)
+	}
+	started := api.bgAgentRegistry.Get(sessionID, execID)
+	started.mu.RLock()
+	startNotified := started.startNotified
+	started.mu.RUnlock()
+	if !startNotified {
+		t.Fatal("workflow-step start should be marked handled")
 	}
 
 	notifier.OnExecutionComplete(execID, "Step -> cdp-test", "step completed", map[string]string{

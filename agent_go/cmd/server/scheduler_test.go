@@ -1797,6 +1797,30 @@ func TestWaitForWorkshopIdleRequiresTwoFreshIdleTmuxChecks(t *testing.T) {
 	}
 }
 
+func TestWaitForWorkshopIdleAbortsStoppedSequenceBeforeNextMessage(t *testing.T) {
+	api := &StreamingAPI{stoppedSessions: map[string]bool{"session-stopped": true}}
+	svc := &SchedulerService{api: api}
+
+	err := svc.waitForWorkshopIdle(context.Background(), "session-stopped")
+	if !errors.Is(err, errWorkshopSequenceInterrupted) {
+		t.Fatalf("error = %v, want errWorkshopSequenceInterrupted", err)
+	}
+}
+
+func TestWaitForWorkshopIdleAbortsCanceledTurnBeforeNextMessage(t *testing.T) {
+	api := &StreamingAPI{}
+	api.markSessionTurnInterrupted("session-canceled-turn")
+	svc := &SchedulerService{api: api}
+
+	err := svc.waitForWorkshopIdle(context.Background(), "session-canceled-turn")
+	if !errors.Is(err, errWorkshopSequenceInterrupted) {
+		t.Fatalf("error = %v, want errWorkshopSequenceInterrupted", err)
+	}
+	if api.consumeSessionTurnInterrupted("session-canceled-turn") {
+		t.Fatalf("interruption marker was not consumed by the scheduler wait")
+	}
+}
+
 func TestWaitForWorkshopIdleTimesOutWhenSessionStaysBusy(t *testing.T) {
 	oldInterval := schedulerWorkshopIdlePollInterval
 	oldMaxInactivity := schedulerWorkshopMaxInactivity

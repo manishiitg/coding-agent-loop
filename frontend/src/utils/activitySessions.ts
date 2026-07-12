@@ -22,6 +22,24 @@ export function hasLiveBackgroundAgents(
     (session.running_background_agent_count ?? 0) > 0
 }
 
+const ACTIVE_SESSION_WORK_STATUSES = new Set([
+  'running',
+  'active',
+  'in_progress',
+  'paused',
+  'waiting',
+  'waiting_feedback',
+])
+
+export function hasActiveSessionWork(
+  session?: Pick<ActiveSessionInfo, 'status' | 'needs_user_input' | 'has_running_background_agents' | 'running_background_agent_count'> | null,
+): boolean {
+  if (!session || isTerminalActivityStatus(session.status)) return false
+  return ACTIVE_SESSION_WORK_STATUSES.has(normalizedActivityStatus(session.status)) ||
+    session.needs_user_input === true ||
+    hasLiveBackgroundAgents(session)
+}
+
 // A main-agent coding CLI keeps its tmux pane alive after a turn finishes so the
 // user can send a follow-up without relaunching. The backend flips such an idle,
 // non-steerable session to status "completed" (so chat streaming state clears and

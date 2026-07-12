@@ -136,8 +136,8 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
             onStop(tab.tabId)
           }}
           className="ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded text-[hsl(var(--destructive))] opacity-70 transition-colors hover:bg-[hsl(var(--destructive)/0.12)] hover:opacity-100"
-          aria-label={`Stop ${displayName}`}
-          title="Stop this session"
+          aria-label={`Stop ${displayName} session and background work`}
+          title="Stop session and background work"
         >
           <Square className="h-2.5 w-2.5" fill="currentColor" />
         </button>

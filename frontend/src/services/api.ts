@@ -1435,9 +1435,13 @@ export const agentApi = {
     }
   },
 
-  listReportHumanInputs: async (workspacePath: string, status?: string) => {
+  listReportHumanInputs: async (workspacePath: string, status?: string, source?: string) => {
     const response = await api.get('/api/report-human-inputs', {
-      params: { workspace_path: workspacePath, ...(status ? { status } : {}) },
+      params: {
+        workspace_path: workspacePath,
+        ...(status ? { status } : {}),
+        ...(source ? { source } : {}),
+      },
     })
     return response.data as ReportHumanInputsResponse
   },

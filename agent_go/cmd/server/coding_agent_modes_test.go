@@ -146,7 +146,7 @@ func TestTopLevelTierModelDoesNotOverrideExplicitChatLLM(t *testing.T) {
 		},
 	}
 
-	gotProvider, gotModel, _, applied := applyTopLevelTierModelIfNoExplicitLLM(context.Background(), req, "codex-cli", "high", nil)
+	gotProvider, gotModel, _, applied := applyTopLevelDelegationModel(context.Background(), req, "codex-cli", "high", nil)
 	if applied {
 		t.Fatal("tier model was applied despite an explicit chat LLM selection")
 	}
@@ -166,12 +166,41 @@ func TestTopLevelTierModelAppliesWhenChatLLMIsMissing(t *testing.T) {
 		},
 	}
 
-	gotProvider, gotModel, _, applied := applyTopLevelTierModelIfNoExplicitLLM(context.Background(), req, "", "", nil)
+	gotProvider, gotModel, _, applied := applyTopLevelDelegationModel(context.Background(), req, "", "", nil)
 	if !applied {
 		t.Fatal("tier model was not applied for a request with no chat LLM selection")
 	}
 	if gotProvider != "claude-code" || gotModel != "claude-sonnet-4-6" {
 		t.Fatalf("resolved chat LLM = %s/%s, want claude-code/claude-sonnet-4-6", gotProvider, gotModel)
+	}
+}
+
+func TestProviderProfileOverridesStaleExplicitChatLLM(t *testing.T) {
+	t.Setenv("WORKSPACE_API_URL", "http://127.0.0.1:9999")
+	req := QueryRequest{
+		Provider: "openrouter",
+		ModelID:  "grok-1",
+		LLMConfig: &orchestrator.LLMConfig{
+			Primary: orchestrator.LLMModel{
+				Provider: "openrouter",
+				ModelID:  "grok-1",
+			},
+		},
+		DelegationTierConfig: &virtualtools.DelegationTierConfig{
+			SchemaVersion: 2,
+			Mode:          "provider_profile",
+			Provider:      "codex-cli",
+		},
+	}
+
+	gotProvider, gotModel, _, applied := applyTopLevelDelegationModel(
+		context.Background(), req, "openrouter", "grok-1", nil,
+	)
+	if !applied {
+		t.Fatal("provider profile did not override the stale explicit chat LLM")
+	}
+	if gotProvider != "codex-cli" || gotModel != "gpt-5.6-terra" {
+		t.Fatalf("resolved chat LLM = %s/%s, want codex-cli/gpt-5.6-terra", gotProvider, gotModel)
 	}
 }
 
@@ -477,18 +506,20 @@ func TestRequestLLMConfigOverridesManifestOnlyForScheduledSources(t *testing.T) 
 func TestSessionInputLaneSerializesRapidInteractiveSubmits(t *testing.T) {
 	sessionID := "rapid-submit-session"
 	api := &StreamingAPI{
-		sessionInputLanes: make(map[string]*sync.Mutex),
+		sessionInputLanes: make(map[string]*sessionInputLane),
 	}
 
 	releaseFirst := api.lockSessionInputLane(sessionID)
 	attemptingSecond := make(chan struct{})
 	acquiredSecond := make(chan struct{})
+	releasedSecond := make(chan struct{})
 
 	go func() {
 		close(attemptingSecond)
 		releaseSecond := api.lockSessionInputLane(sessionID)
-		defer releaseSecond()
 		close(acquiredSecond)
+		releaseSecond()
+		close(releasedSecond)
 	}()
 
 	<-attemptingSecond
@@ -503,6 +534,66 @@ func TestSessionInputLaneSerializesRapidInteractiveSubmits(t *testing.T) {
 	case <-acquiredSecond:
 	case <-time.After(time.Second):
 		t.Fatal("second submit did not acquire the input lane after the first released it")
+	}
+	<-releasedSecond
+	api.sessionInputLanesMu.Lock()
+	remainingLanes := len(api.sessionInputLanes)
+	api.sessionInputLanesMu.Unlock()
+	if remainingLanes != 0 {
+		t.Fatalf("session input lane registry retained %d idle lane(s), want 0", remainingLanes)
+	}
+}
+
+func TestLiveInputDoesNotWaitForQueryLaunchLane(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	defer store.Stop()
+
+	const sessionID = "live-input-during-launch"
+	runningAgent := &mcpagent.Agent{ModelID: "claude-sonnet-4-6"}
+	runningAgent.SetProvider(llm.ProviderClaudeCode)
+	api := &StreamingAPI{
+		eventStore:        store,
+		terminalStore:     terminals.NewStore(),
+		runningAgents:     map[string]*mcpagent.Agent{sessionID: runningAgent},
+		runningAgentsMux:  sync.RWMutex{},
+		agentCancelFuncs:  map[string]context.CancelFunc{sessionID: func() {}},
+		agentCancelMux:    sync.RWMutex{},
+		sessionInputLanes: make(map[string]*sessionInputLane),
+	}
+	api.terminalStore.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "main:"+sessionID, "missing-test-tmux", "claude ready\n> ", 1))
+
+	releaseLaunchLane := api.lockSessionInputLane(sessionID)
+	defer releaseLaunchLane()
+
+	body := bytes.NewBufferString(`{"message":"must not wait behind launch"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/live-input", body)
+	req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
+	rr := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		api.handleLiveInputMessage(rr, req)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		if rr.Code != http.StatusConflict {
+			t.Fatalf("status = %d body=%s, want explicit delivery failure without blocking", rr.Code, rr.Body.String())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("live input blocked behind the long-running query launch lane")
+	}
+}
+
+func TestChiefOfStaffQueriesUseInteractiveInputLane(t *testing.T) {
+	if !shouldSerializeInteractiveQueryInput(QueryRequest{AgentMode: "multi-agent"}) {
+		t.Fatal("Chief of Staff multi-agent query must use the session input lane")
+	}
+	if !shouldSerializeInteractiveQueryInput(QueryRequest{AgentMode: "simple"}) {
+		t.Fatal("legacy Chief of Staff simple query must use the session input lane")
+	}
+	if !shouldSerializeInteractiveQueryInput(QueryRequest{AgentMode: "multi-agent", IsAutoNotification: true}) {
+		t.Fatal("auto-notification turns must share the same full-turn lane")
 	}
 }
 

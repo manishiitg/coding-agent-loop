@@ -16,6 +16,7 @@ import { compareEventsChronologically, compareEventsReverseChronologically } fro
 import { getWorkspaceScopedStorageKey } from './useWorkspaceConnectionStore'
 import { looksLikeTerminalScreenText, splitStreamingStatusAndText } from '../utils/streamingStatus'
 import { createHydrationGate, HydrationBackstopError, type HydrationGateSnapshot } from '../utils/hydrationGate'
+import { createBufferedPersistStorage } from '../utils/bufferedPersistStorage'
 
 // Active sessions cache TTL (30 seconds - shorter than polling interval to allow force refresh)
 const ACTIVE_SESSIONS_CACHE_TTL = 30000
@@ -661,6 +662,84 @@ interface ChatState extends StoreActions {
   resetChatState: () => void
   isAtBottom: (element: HTMLDivElement) => boolean
 }
+
+type DurableChatState = Pick<ChatState, 'chatTabs' | 'activeTabId' | 'eventViewModePreference'>
+
+let previousDurableChatTabs: ChatState['chatTabs'] | null = null
+let previousDurableActiveTabId: string | null | undefined
+let previousDurableViewMode: EventViewMode | undefined
+let previousDurableChatState: DurableChatState | null = null
+
+/**
+ * Keeps volatile stream/event updates out of persistence. Zustand invokes
+ * partialize for every set, so unchanged durable input must return the exact
+ * same object for the buffered adapter to skip serialization entirely.
+ */
+const selectDurableChatState = (state: ChatState): DurableChatState => {
+  if (
+    previousDurableChatState &&
+    state.chatTabs === previousDurableChatTabs &&
+    state.activeTabId === previousDurableActiveTabId &&
+    state.eventViewModePreference === previousDurableViewMode
+  ) {
+    return previousDurableChatState
+  }
+
+  const chatTabs = Object.fromEntries(
+    Object.entries(state.chatTabs)
+      .filter(([, tab]) => {
+        const isRelevantMode = tab.metadata?.mode === 'workflow' || tab.metadata?.mode === 'multi-agent'
+        if (!isRelevantMode) return false
+        return Date.now() - (tab.createdAt || 0) < 24 * 60 * 60 * 1000
+      })
+      .map(([tabId, tab]) => [
+        tabId,
+        {
+          tabId: tab.tabId,
+          name: tab.name,
+          sessionId: tab.sessionId,
+          isStreaming: false,
+          isCompleted: false,
+          hasRunningBgAgents: false,
+          isSyntheticTurn: false,
+          canSteer: false,
+          hideToolCalls: tab.hideToolCalls ?? true,
+          viewMode: normalizeEventViewMode(tab.viewMode),
+          config: persistDurableTabConfig(tab.config),
+          createdAt: tab.createdAt,
+          lastAccessedAt: tab.lastAccessedAt || tab.createdAt,
+          lastViewedEventCount: 0,
+          lastViewedEventCounts: { micro: 0 },
+          metadata: tab.metadata,
+        },
+      ]),
+  )
+  const activeTab = state.activeTabId ? state.chatTabs[state.activeTabId] : null
+  const activeTabId = activeTab?.metadata?.mode === 'workflow' || activeTab?.metadata?.mode === 'multi-agent'
+    ? state.activeTabId
+    : null
+
+  previousDurableChatTabs = state.chatTabs
+  previousDurableActiveTabId = state.activeTabId
+  previousDurableViewMode = state.eventViewModePreference
+  previousDurableChatState = {
+    chatTabs,
+    activeTabId,
+    eventViewModePreference: normalizeEventViewMode(state.eventViewModePreference),
+  }
+  return previousDurableChatState
+}
+
+const chatPersistStorage = (() => {
+  try {
+    return typeof globalThis.localStorage === 'undefined'
+      ? undefined
+      : createBufferedPersistStorage<DurableChatState>(globalThis.localStorage)
+  } catch (error) {
+    console.error('[ChatStore] Browser storage is unavailable', error)
+    return undefined
+  }
+})()
 
 const reconcileInactiveSessionTabs = (
   state: ChatState,
@@ -2802,58 +2881,8 @@ export const useChatStore = create<ChatState>()(
       }),
       {
         name: getWorkspaceScopedStorageKey('chat-store'),
-        partialize: (state) => ({
-          // Persist workflow and multi-agent tabs (for reconnection)
-          // Only persist tabs created within the last 24 hours to prevent stale tabs
-          // from accumulating in localStorage and causing page hangs on reload
-          chatTabs: Object.fromEntries(
-            Object.entries(state.chatTabs)
-              .filter(([, tab]) => {
-                const isRelevantMode = tab.metadata?.mode === 'workflow' || tab.metadata?.mode === 'multi-agent'
-                if (!isRelevantMode) return false
-                // Drop tabs older than 24 hours - they won't have active sessions
-                const MAX_TAB_AGE = 24 * 60 * 60 * 1000
-                const age = Date.now() - (tab.createdAt || 0)
-                return age < MAX_TAB_AGE
-              })
-              .map(([tabId, tab]) => [
-              tabId,
-              {
-                tabId: tab.tabId,
-                name: tab.name,
-                sessionId: tab.sessionId, // Persist session ID for direct restore on page refresh
-                isStreaming: false, // Reset streaming state on reload
-                isCompleted: false,
-                hasRunningBgAgents: false,
-                isSyntheticTurn: false,
-                canSteer: false,
-                
-                hideToolCalls: tab.hideToolCalls ?? true, // Default true — collapse tool calls by default
-                viewMode: normalizeEventViewMode(tab.viewMode), // Persist layout mode across reload
-                config: persistDurableTabConfig(tab.config), // Persist durable config including:
-                // - selectedServers (MCP server selections)
-                // - llmConfig (LLM provider, model_id, fallback_models, etc.)
-                // - useCodeExecutionMode (Simple vs Code Exec mode)
-                // - fileContext (selected files/folders)
-                // - inputText (chat input text)
-                // - enableContextSummarization
-                // - restoredConversationPath metadata for resumed coding-agent tabs
-                createdAt: tab.createdAt, // Persist for ordering
-                lastAccessedAt: tab.lastAccessedAt || tab.createdAt,
-                lastViewedEventCount: 0, // @deprecated - Reset on reload
-                lastViewedEventCounts: { micro: 0 }, // Reset on reload
-                metadata: tab.metadata // Persist mode and phase info
-              }
-            ])
-          ),
-          // Persist activeTabId for workflow and multi-agent tabs
-          activeTabId: (() => {
-            const activeTab = state.activeTabId ? state.chatTabs[state.activeTabId] : null
-            return (activeTab?.metadata?.mode === 'workflow' || activeTab?.metadata?.mode === 'multi-agent') ? state.activeTabId : null
-          })(),
-          eventViewModePreference: normalizeEventViewMode(state.eventViewModePreference)
-          // Exclude all other state (isStreaming, pollingInterval, tabEvents, etc.)
-        }),
+        storage: chatPersistStorage,
+        partialize: selectDurableChatState,
         onRehydrateStorage: () => (_state, error) => {
           // Defer until create() has assigned useChatStore. This also makes tab
           // cleanup/migration part of the hydration contract seen by all callers.
@@ -2862,6 +2891,18 @@ export const useChatStore = create<ChatState>()(
       }
     )
 )
+
+if (chatPersistStorage) {
+  const flushDurableChatState = () => chatPersistStorage.flush()
+  const flushDurableChatStateWhenHidden = () => {
+    if (globalThis.document?.visibilityState === 'hidden') flushDurableChatState()
+  }
+  globalThis.addEventListener?.('pagehide', flushDurableChatState)
+  globalThis.addEventListener?.('beforeunload', flushDurableChatState)
+  globalThis.document?.addEventListener('visibilitychange', flushDurableChatStateWhenHidden)
+} else {
+  queueMicrotask(() => finalizeChatStoreHydration())
+}
 
 function normalizeHydratedChatStore(): void {
   const state = useChatStore.getState()

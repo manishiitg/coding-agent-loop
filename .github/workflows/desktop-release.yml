@@ -57,12 +57,22 @@ jobs:
             frontend/package-lock.json
             desktop/package-lock.json
 
-      - name: Build Frontend Static Assets
+      - name: Install Frontend Dependencies
         run: |
           set -euo pipefail
           cd frontend
           npm ci
-          npm test -- --run
+
+      - name: Test Frontend Performance Contracts
+        run: |
+          set -euo pipefail
+          cd frontend
+          npm test
+
+      - name: Build Frontend Static Assets
+        run: |
+          set -euo pipefail
+          cd frontend
           npm run build
 
       - name: Copy Frontend Into Agent Static Directory
@@ -151,12 +161,22 @@ jobs:
             frontend/package-lock.json
             desktop/package-lock.json
 
-      - name: Build Frontend Static Assets
+      - name: Install Frontend Dependencies
         run: |
           set -euo pipefail
           cd frontend
           npm ci
-          npm test -- --run
+
+      - name: Test Frontend Performance Contracts
+        run: |
+          set -euo pipefail
+          cd frontend
+          npm test
+
+      - name: Build Frontend Static Assets
+        run: |
+          set -euo pipefail
+          cd frontend
           npm run build
 
       - name: Copy Frontend Into Agent Static Directory

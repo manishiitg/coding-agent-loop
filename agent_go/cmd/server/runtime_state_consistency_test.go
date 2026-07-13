@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -147,27 +148,29 @@ func TestInactiveCleanupEvictsRuntimeCoordinatorRecord(t *testing.T) {
 func TestScheduleStopInvalidatesLateCompletion(t *testing.T) {
 	canceled := false
 	startedAt := time.Now().Add(-time.Minute)
+	runtimeKey := workflowScheduleRuntimeKey("/tmp/workflow", "schedule-1")
 	svc := &SchedulerService{
 		runtimeStates: map[string]*ScheduleRuntimeState{
-			"schedule-1": {
-				LastStatus: "running", LastRunAt: &startedAt, runGeneration: 4,
-				runCancel: func() { canceled = true },
+			runtimeKey: {
+				ActiveRunID: "run-1", LastStatus: "running", LastRunAt: &startedAt,
 			},
 		},
+		runCancels: map[string]context.CancelFunc{"run-1": func() { canceled = true }},
 	}
 
 	svc.StopRunningJob("schedule-1")
-	state := svc.GetRuntimeState("schedule-1")
+	state := svc.getRuntimeStateByKey(runtimeKey)
 	if state.LastStatus != "stopped" || state.LastError != "stopped by user" {
 		t.Fatalf("stopped state = %#v", state)
 	}
 	if !canceled {
 		t.Fatal("StopRunningJob did not cancel the run context")
 	}
-	if svc.finishScheduleRun("schedule-1", 4, "success", "", 100, nil) {
-		t.Fatal("late generation was allowed to commit")
+	sctx := &ScheduleContext{WorkspacePath: "/tmp/workflow", Schedule: WorkflowSchedule{ID: "schedule-1"}}
+	if _, err := svc.runJob(context.Background(), sctx, "run-1"); !errors.Is(err, errWorkshopSequenceInterrupted) {
+		t.Fatalf("late run error = %v, want errWorkshopSequenceInterrupted", err)
 	}
-	state = svc.GetRuntimeState("schedule-1")
+	state = svc.getRuntimeStateByKey(runtimeKey)
 	if state.LastStatus != "stopped" {
 		t.Fatalf("late completion overwrote stopped state with %q", state.LastStatus)
 	}
@@ -180,7 +183,7 @@ func TestScheduleRuntimeReadReturnsSnapshot(t *testing.T) {
 		"schedule-1": {LastStatus: "running", LastRunAt: &lastRun, LastDurationMs: &duration},
 	}}
 
-	snapshot := svc.getRuntimeStateSnapshot("schedule-1")
+	snapshot := svc.getRuntimeStateByKey("schedule-1")
 	snapshot.LastStatus = "stopped"
 	*snapshot.LastRunAt = time.Time{}
 	*snapshot.LastDurationMs = 999

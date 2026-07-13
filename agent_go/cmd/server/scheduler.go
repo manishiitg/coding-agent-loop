@@ -105,8 +105,6 @@ type ScheduleRuntimeState struct {
 	LastDurationMs      *int64     `json:"last_duration_ms,omitempty"`
 	RunCount            int        `json:"run_count"`
 	ConsecutiveFailures int        `json:"consecutive_failures"`
-	runGeneration       uint64
-	runCancel           context.CancelFunc
 }
 
 // registeredJob is a schedule registered for wall-clock evaluation.
@@ -778,10 +776,30 @@ func (s *SchedulerService) getRuntimeStateByKey(key string) ScheduleRuntimeState
 	s.runtimeStatesMu.RLock()
 	var merged ScheduleRuntimeState
 	if state, ok := s.runtimeStates[key]; ok {
-		merged = *state
+		merged = cloneScheduleRuntimeState(state)
 	}
 	s.runtimeStatesMu.RUnlock()
 	return merged
+}
+
+func cloneScheduleRuntimeState(state *ScheduleRuntimeState) ScheduleRuntimeState {
+	if state == nil {
+		return ScheduleRuntimeState{}
+	}
+	copy := *state
+	if state.LastRunAt != nil {
+		value := *state.LastRunAt
+		copy.LastRunAt = &value
+	}
+	if state.NextRunAt != nil {
+		value := *state.NextRunAt
+		copy.NextRunAt = &value
+	}
+	if state.LastDurationMs != nil {
+		value := *state.LastDurationMs
+		copy.LastDurationMs = &value
+	}
+	return copy
 }
 
 func (s *SchedulerService) runtimeKeysForScheduleID(scheduleID string) []string {
@@ -1499,6 +1517,16 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 		})
 		return "", errors.Join(errWorkshopSequenceInterrupted, err)
 	}
+	if strings.TrimSpace(runID) == "" {
+		return "", errors.Join(errWorkshopSequenceInterrupted, errors.New("scheduled run is missing its run id"))
+	}
+	s.runtimeStatesMu.RLock()
+	activeState := s.runtimeStates[runtimeKey]
+	ownsActiveRun := activeState != nil && activeState.LastStatus == "running" && activeState.ActiveRunID == runID
+	s.runtimeStatesMu.RUnlock()
+	if !ownsActiveRun {
+		return "", errors.Join(errWorkshopSequenceInterrupted, fmt.Errorf("scheduled run %s no longer owns %s", runID, runtimeKey))
+	}
 
 	// Clear session/error fields — status is already "running" (set atomically by caller)
 	s.updateRuntimeState(runtimeKey, func(state *ScheduleRuntimeState) {
@@ -1534,7 +1562,7 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 	})
 
 	// Execute
-	sessionID, runFolder, execErr := s.executeJob(runCtx, sctx, runID)
+	sessionID, runFolder, execErr := s.executeJob(ctx, sctx, runID)
 
 	// Calculate results
 	durationMs := time.Since(startTime).Milliseconds()
@@ -3460,45 +3488,6 @@ func (s *SchedulerService) getRuntimeStateLocked(scheduleID string) *ScheduleRun
 	state := &ScheduleRuntimeState{}
 	s.runtimeStates[scheduleID] = state
 	return state
-}
-
-func (s *SchedulerService) setScheduleSessionID(scheduleID string, generation uint64, sessionID string) bool {
-	s.runtimeStatesMu.Lock()
-	defer s.runtimeStatesMu.Unlock()
-	state := s.getRuntimeStateLocked(scheduleID)
-	if state.LastStatus != "running" || state.runGeneration != generation {
-		return false
-	}
-	state.LastSessionID = sessionID
-	return true
-}
-
-func (s *SchedulerService) scheduleRunInvalidated(scheduleID string, generation uint64) bool {
-	s.runtimeStatesMu.RLock()
-	defer s.runtimeStatesMu.RUnlock()
-	state := s.runtimeStates[scheduleID]
-	return state == nil || state.LastStatus != "running" || state.runGeneration != generation
-}
-
-func (s *SchedulerService) finishScheduleRun(scheduleID string, generation uint64, status, errMsg string, durationMs int64, nextRun *time.Time) bool {
-	s.runtimeStatesMu.Lock()
-	defer s.runtimeStatesMu.Unlock()
-	state := s.getRuntimeStateLocked(scheduleID)
-	if state.LastStatus != "running" || state.runGeneration != generation {
-		return false
-	}
-	state.LastStatus = status
-	state.LastError = errMsg
-	state.LastDurationMs = &durationMs
-	state.NextRunAt = nextRun
-	state.RunCount++
-	state.runCancel = nil
-	if status == "error" {
-		state.ConsecutiveFailures++
-	} else {
-		state.ConsecutiveFailures = 0
-	}
-	return true
 }
 
 func runningWorkflowScheduleInSetLocked(runtimeStates map[string]*ScheduleRuntimeState, scheduleIDs []string, ignoreScheduleID string) (string, string) {

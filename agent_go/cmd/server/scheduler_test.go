@@ -2246,26 +2246,29 @@ func TestWaitForWorkshopIdleAbortsCanceledTurnBeforeNextMessage(t *testing.T) {
 	}
 }
 
-func TestRunJobGenerationZeroDoesNotJoinActiveRun(t *testing.T) {
+func TestRunJobDoesNotJoinAnotherActiveRun(t *testing.T) {
 	startedAt := time.Now().Add(-time.Minute)
+	sctx := &ScheduleContext{
+		WorkspacePath: "/tmp/workflow",
+		Schedule:      WorkflowSchedule{ID: "schedule-1", Name: "Active schedule"},
+	}
+	runtimeKey := scheduleRuntimeKey(sctx)
 	svc := &SchedulerService{runtimeStates: map[string]*ScheduleRuntimeState{
-		"schedule-1": {
-			LastStatus:    "running",
-			LastRunAt:     &startedAt,
-			runGeneration: 7,
+		runtimeKey: {
+			ActiveRunID: "active-run",
+			LastStatus:  "running",
+			LastRunAt:   &startedAt,
 		},
+	}, runCancels: map[string]context.CancelFunc{
+		"stale-run": func() {},
 	}}
-	sctx := &ScheduleContext{Schedule: WorkflowSchedule{ID: "schedule-1", Name: "Active schedule"}}
 
-	_, err := svc.runJob(context.Background(), sctx)
+	_, err := svc.runJob(context.Background(), sctx, "stale-run")
 	if !errors.Is(err, errWorkshopSequenceInterrupted) {
 		t.Fatalf("runJob error = %v, want errWorkshopSequenceInterrupted", err)
 	}
-	if sctx.runGeneration != 0 {
-		t.Fatalf("generation-zero caller adopted generation %d", sctx.runGeneration)
-	}
-	if got := svc.runtimeStates["schedule-1"].runGeneration; got != 7 {
-		t.Fatalf("active run generation changed to %d", got)
+	if got := svc.runtimeStates[runtimeKey].ActiveRunID; got != "active-run" {
+		t.Fatalf("active run ownership changed to %q", got)
 	}
 }
 

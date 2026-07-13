@@ -1,4 +1,5 @@
 import React, { useMemo, useCallback, useRef, useEffect, forwardRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { PanelRightOpen } from 'lucide-react'
 import { WorkflowCanvas, type WorkflowCanvasRef } from './canvas'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
@@ -681,7 +682,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   onCreatePlan,
   onNewChat
 }) => {
-  const { selectedModeCategory } = useModeStore()
+  const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
   // Narrow selectors: bare useChatStore() re-renders on every store update (10x/sec with 2 parallel sessions)
   const currentWorkflowPhase = useChatStore(state => state.currentWorkflowPhase)
   const setCurrentWorkflowPhase = useChatStore(state => state.setCurrentWorkflowPhase)
@@ -781,7 +782,10 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const setStepOverride = useWorkflowStore(state => state.setStepOverride)
   const selectedGroupIds = useWorkflowStore(state => state.selectedGroupIds)
   const variablesManifest = useWorkflowStore(state => state.variablesManifest)
-  const { fetchFiles, setExpandedFolders } = useWorkspaceStore()
+  const { fetchFiles, setExpandedFolders } = useWorkspaceStore(useShallow(state => ({
+    fetchFiles: state.fetchFiles,
+    setExpandedFolders: state.setExpandedFolders,
+  })))
   // Subscribe to workspace minimized state so we can skip fetches when panel is hidden
   const workspaceMinimized = useAppStore(state => state.workspaceMinimized)
   const setWorkspaceMinimized = useAppStore(state => state.setWorkspaceMinimized)
@@ -855,9 +859,11 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   }, [])
 
   // Get active workflow preset (file-backed manifests, not DB presets)
-  const { getActivePreset } = useGlobalPresetStore()
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
-  const activeWorkflowPreset = getActivePreset('workflow')
+  const activeWorkflowPreset = useGlobalPresetStore(state => {
+    const presetId = state.activePresetIds.workflow
+    return presetId ? state.workflowPresets.find(preset => preset.id === presetId) ?? null : null
+  })
   const activeWorkflowWorkspacePath = activeWorkflowPreset?.selectedFolder?.filepath ?? null
   const showResumeHint = useChatStore(state => {
     const tabId = state.activeTabId

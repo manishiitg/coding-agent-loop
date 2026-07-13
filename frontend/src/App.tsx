@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useShallow } from "zustand/react/shallow";
 import { useEffect, useCallback, useRef, useState, forwardRef, lazy, Suspense } from "react";
 import { ThemeProvider } from "./contexts/ThemeContext.tsx";
 import { UpdateProgressToast } from "./components/UpdateProgressToast";
@@ -198,8 +199,13 @@ function App() {
   const [orgHtmlPreviewDevice, setOrgHtmlPreviewDevice] = useState<OrgHtmlPreviewDevice>(() => getOrgHtmlPreviewDevice())
 
   // Store subscriptions
-  const { setAgentMode } = useAppStore()
-  const { hasCompletedInitialSetup, selectedModeCategory, setModeCategory, completeInitialSetup } = useModeStore()
+  const setAgentMode = useAppStore(state => state.setAgentMode)
+  const { hasCompletedInitialSetup, selectedModeCategory, setModeCategory, completeInitialSetup } = useModeStore(useShallow(state => ({
+    hasCompletedInitialSetup: state.hasCompletedInitialSetup,
+    selectedModeCategory: state.selectedModeCategory,
+    setModeCategory: state.setModeCategory,
+    completeInitialSetup: state.completeInitialSetup,
+  })))
   const defaultsLoaded = useLLMStore(state => state.defaultsLoaded)
   const savedLLMs = useLLMStore(state => state.savedLLMs)
   const llmConfigLocked = useLLMStore(state => state.llmConfigLocked)
@@ -220,7 +226,17 @@ function App() {
     setMultiAgentRightPanelView,
     showWorkflowsOverview,
     setShowWorkflowsOverview
-  } = useAppStore()
+  } = useAppStore(useShallow(state => ({
+    setSelectedPresetId: state.setSelectedPresetId,
+    workspaceMinimized: state.workspaceMinimized,
+    workspaceMinimizedByMode: state.workspaceMinimizedByMode,
+    setWorkspaceMinimized: state.setWorkspaceMinimized,
+    setWorkspaceMinimizedForLayout: state.setWorkspaceMinimizedForLayout,
+    multiAgentRightPanelView: state.multiAgentRightPanelView,
+    setMultiAgentRightPanelView: state.setMultiAgentRightPanelView,
+    showWorkflowsOverview: state.showWorkflowsOverview,
+    setShowWorkflowsOverview: state.setShowWorkflowsOverview,
+  })))
   const [hasOpenedWorkflowsOverview, setHasOpenedWorkflowsOverview] = useState(showWorkflowsOverview)
   
   const {
@@ -241,7 +257,25 @@ function App() {
     getHasUnsavedChanges,
     saveFile,
     binaryFileData
-  } = useWorkspaceStore()
+  } = useWorkspaceStore(useShallow(state => ({
+    selectedFile: state.selectedFile,
+    fileContent: state.fileContent,
+    loadingFileContent: state.loadingFileContent,
+    showFileContent: state.showFileContent,
+    setShowFileContent: state.setShowFileContent,
+    setFileContent: state.setFileContent,
+    setLoadingFileContent: state.setLoadingFileContent,
+    showRevisionsModal: state.showRevisionsModal,
+    setShowRevisionsModal: state.setShowRevisionsModal,
+    isEditMode: state.isEditMode,
+    setIsEditMode: state.setIsEditMode,
+    editedContent: state.editedContent,
+    setEditedContent: state.setEditedContent,
+    isSaving: state.isSaving,
+    getHasUnsavedChanges: state.getHasUnsavedChanges,
+    saveFile: state.saveFile,
+    binaryFileData: state.binaryFileData,
+  })))
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -707,7 +741,9 @@ function App() {
   const hasCreatedDefaultTabRef = useRef<string | null>(null)
 
   
-  const { clearActivePreset, applyPreset, getActivePreset } = useGlobalPresetStore()
+  const clearActivePreset = useGlobalPresetStore(state => state.clearActivePreset)
+  const applyPreset = useGlobalPresetStore(state => state.applyPreset)
+  const getActivePreset = useGlobalPresetStore(state => state.getActivePreset)
 
   useEffect(() => {
     const handleOpenQuickSwitcher = (event: Event) => {

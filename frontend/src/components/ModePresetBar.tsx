@@ -1,4 +1,5 @@
 import React, { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { Workflow, Users, Settings, Copy, Keyboard, Bot, Building2, HelpCircle } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { useGlobalPresetStore, usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
@@ -130,11 +131,19 @@ const workflowManifestToPreset = (manifest: WorkflowManifest, workspacePath: str
  * Allows users to select mode (multi-agent/workflow) and presets regardless of active tabs
  */
 export const ModePresetBar: React.FC = () => {
-  const { selectedModeCategory, setModeCategory, getAgentModeFromCategory } = useModeStore()
+  const { selectedModeCategory, setModeCategory, getAgentModeFromCategory } = useModeStore(useShallow(state => ({
+    selectedModeCategory: state.selectedModeCategory,
+    setModeCategory: state.setModeCategory,
+    getAgentModeFromCategory: state.getAgentModeFromCategory,
+  })))
   const presetModeCategory = selectedModeCategory === 'workflow' || selectedModeCategory === 'multi-agent'
     ? selectedModeCategory
     : null
-  const { setWorkspaceMinimized, workspaceMinimized, agentMode } = useAppStore()
+  const { setWorkspaceMinimized, workspaceMinimized, agentMode } = useAppStore(useShallow(state => ({
+    setWorkspaceMinimized: state.setWorkspaceMinimized,
+    workspaceMinimized: state.workspaceMinimized,
+    agentMode: state.agentMode,
+  })))
   // Use toolList to get all available servers, not just enabled ones
   const toolList = useMCPStore(state => state.toolList)
   const appVersion = useAppVersion()

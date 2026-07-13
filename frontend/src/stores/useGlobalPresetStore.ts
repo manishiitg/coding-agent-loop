@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { useShallow } from 'zustand/react/shallow'
 import { agentApi, workflowManifestApi } from '../services/api'
 import type { PlannerFile, PresetLLMConfig } from '../services/api-types'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
@@ -705,8 +706,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
 
 // Export convenience hooks for specific functionality
 export const usePresetApplication = () => {
-  const store = useGlobalPresetStore()
-  return {
+  return useGlobalPresetStore(useShallow(store => ({
     applyPreset: store.applyPreset,
     clearActivePreset: store.clearActivePreset,
     getActivePreset: store.getActivePreset,
@@ -717,29 +717,27 @@ export const usePresetApplication = () => {
     currentPresetTools: store.currentPresetTools,
     activePresetIds: store.activePresetIds,
     workflowPresets: store.workflowPresets,
-  }
+  })))
 }
 
 export const usePresetManagement = () => {
-  const store = useGlobalPresetStore()
-  return {
+  return useGlobalPresetStore(useShallow(store => ({
     workflowPresets: store.workflowPresets,
     loading: store.loading,
     error: store.error,
     refreshPresets: store.refreshPresets,
     savePreset: store.savePreset,
     duplicatePreset: store.duplicatePreset,
-  }
+  })))
 }
 
 export const usePresetState = () => {
-  const store = useGlobalPresetStore()
-  return {
+  return useGlobalPresetStore(useShallow(store => ({
     currentPresetServers: store.currentPresetServers,
     selectedPresetFolder: store.selectedPresetFolder,
     currentQuery: store.currentQuery,
     setCurrentPresetServers: store.setCurrentPresetServers,
     setSelectedPresetFolder: store.setSelectedPresetFolder,
-    setCurrentQuery: store.setCurrentQuery
-  }
+    setCurrentQuery: store.setCurrentQuery,
+  })))
 }

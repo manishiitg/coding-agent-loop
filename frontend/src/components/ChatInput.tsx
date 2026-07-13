@@ -1,4 +1,5 @@
 import React, { useRef, useCallback, useMemo, useState, useEffect, useLayoutEffect } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 
 const DBG = '[skill-popup]'
 import { Send, Square, Code2, Sparkles, Wand2, Loader2, Search, Globe, Layers, X, History, Bot, Server, Download, Paperclip, CalendarClock, MessageSquare, Terminal } from 'lucide-react'
@@ -540,7 +541,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     agentMode,
     setWorkspaceMinimized,
     showWorkflowsOverview
-  } = useAppStore()
+  } = useAppStore(useShallow(state => ({
+    agentMode: state.agentMode,
+    setWorkspaceMinimized: state.setWorkspaceMinimized,
+    showWorkflowsOverview: state.showWorkflowsOverview,
+  })))
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
   const storeActiveTabId = useChatStore(state => state.activeTabId)
   const activeTabId = scopedTabId === null ? null : (scopedTabId ?? storeActiveTabId)
@@ -605,7 +610,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     providerManifest,
     providerManifestLoaded,
     loadProviderManifest,
-  } = useLLMStore()
+  } = useLLMStore(useShallow(state => ({
+    providerManifest: state.providerManifest,
+    providerManifestLoaded: state.providerManifestLoaded,
+    loadProviderManifest: state.loadProviderManifest,
+  })))
   
   // Note: activeTab may be undefined during initial render before tabs are created
   // This is expected and will resolve once the tab store initializes
@@ -841,7 +850,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const {
     toolList: mcpToolList,
     setChatSelectedServers
-  } = useMCPStore()
+  } = useMCPStore(useShallow(state => ({
+    toolList: state.toolList,
+    setChatSelectedServers: state.setChatSelectedServers,
+  })))
 
   const availableServers = useMemo(
     () => [...new Set(mcpToolList.filter(t => t.status === 'ok').map(t => t.server).filter((s): s is string => typeof s === 'string' && !DEDICATED_MCP_SERVERS.has(s)))],
@@ -1207,10 +1219,23 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     refreshAvailableLLMs: onRefreshAvailableLLMs,
     llmConfigLocked,
     workflowPrimaryConfig
-  } = useLLMStore()
+  } = useLLMStore(useShallow(state => ({
+    availableLLMs: state.availableLLMs,
+    getCurrentLLMOption: state.getCurrentLLMOption,
+    refreshAvailableLLMs: state.refreshAvailableLLMs,
+    llmConfigLocked: state.llmConfigLocked,
+    workflowPrimaryConfig: state.workflowPrimaryConfig,
+  })))
 
-  const { scrollToFile } = useWorkspaceStore()
-  const { showSkillImport, showMCPDetails, showMCPConfig, showModels, openDialog, closeDialog } = useCommandDialogStore()
+  const scrollToFile = useWorkspaceStore(state => state.scrollToFile)
+  const { showSkillImport, showMCPDetails, showMCPConfig, showModels, openDialog, closeDialog } = useCommandDialogStore(useShallow(state => ({
+    showSkillImport: state.showSkillImport,
+    showMCPDetails: state.showMCPDetails,
+    showMCPConfig: state.showMCPConfig,
+    showModels: state.showModels,
+    openDialog: state.openDialog,
+    closeDialog: state.closeDialog,
+  })))
 
   // LLM selection (always update tab config)
   const onPrimaryLLMSelect = useCallback((llm: LLMOption) => {

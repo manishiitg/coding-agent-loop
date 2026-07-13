@@ -109,7 +109,7 @@ func (s *sqliteLedger) append(e Entry) error {
 	if err != nil {
 		return fmt.Errorf("costledger: marshal operation metadata: %w", err)
 	}
-	_, err = s.db.Exec(`
+	const insertEvent = `
 INSERT OR IGNORE INTO cost_events (
     event_id, idempotency_key, occurred_at, user_id, workflow_id, session_id,
     run_id, execution_id, scope, agent_mode, component, correlation_id,
@@ -117,7 +117,8 @@ INSERT OR IGNORE INTO cost_events (
     turn_count, llm_call_count, prompt_tokens, completion_tokens, reasoning_tokens,
     cache_read_tokens, cache_write_tokens, total_cost_usd, currency, billing_basis,
     pricing_source, pricing_version, tool_name, operation_metadata_json
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	args := []interface{}{
 		e.EventID, e.IdempotencyKey, e.Timestamp.UTC().Format(time.RFC3339Nano),
 		e.UserID, e.WorkflowID, e.SessionID, e.RunID, e.ExecutionID, e.Scope,
 		e.AgentMode, e.Component, e.CorrelationID, e.Provider, e.ModelID,
@@ -125,27 +126,52 @@ INSERT OR IGNORE INTO cost_events (
 		e.PromptTokens, e.CompletionTokens, e.ReasoningTokens, e.CacheReadTokens,
 		e.CacheWriteTokens, e.TotalCostUSD, e.Currency, e.BillingBasis,
 		e.PricingSource, e.PricingVersion, e.ToolName, string(metadata),
-	)
-	if err != nil {
-		return fmt.Errorf("costledger: insert SQLite event: %w", err)
 	}
-	return nil
+	for attempt := 0; ; attempt++ {
+		_, err = s.db.Exec(insertEvent, args...)
+		if err == nil {
+			return nil
+		}
+		if attempt >= 2 || !isSQLiteBusy(err) {
+			return fmt.Errorf("costledger: insert SQLite event: %w", err)
+		}
+		time.Sleep(time.Duration(attempt+1) * 100 * time.Millisecond)
+	}
 }
 
 func (s *sqliteLedger) summarize(from, to string) (*Summary, error) {
+	fromInclusive, toExclusive, err := costDateBounds(from, to)
+	if err != nil {
+		return nil, err
+	}
 	summary := &Summary{
 		From: from, To: to,
 		ByDate: make(map[string]*DateAggregate), ByModel: make(map[string]*Aggregate),
 		Coverage: Coverage{Source: "sqlite"},
 	}
-	rows, err := s.db.Query(`
+	query := `
 SELECT event_id, idempotency_key, occurred_at, user_id, workflow_id, session_id,
        run_id, execution_id, scope, agent_mode, component, correlation_id,
        requested_provider, requested_model_id, effective_provider, effective_model_id,
        turn_count, llm_call_count, prompt_tokens, completion_tokens, reasoning_tokens,
        cache_read_tokens, cache_write_tokens, total_cost_usd, currency, billing_basis,
        pricing_source, pricing_version, tool_name, operation_metadata_json
-FROM cost_events ORDER BY occurred_at`)
+FROM cost_events`
+	where := make([]string, 0, 2)
+	args := make([]interface{}, 0, 2)
+	if fromInclusive != "" {
+		where = append(where, "occurred_at >= ?")
+		args = append(args, fromInclusive)
+	}
+	if toExclusive != "" {
+		where = append(where, "occurred_at < ?")
+		args = append(args, toExclusive)
+	}
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	query += " ORDER BY occurred_at"
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("costledger: query SQLite events: %w", err)
 	}
@@ -171,9 +197,6 @@ FROM cost_events ORDER BY occurred_at`)
 		}
 		e.Timestamp = ts
 		date := ts.UTC().Format("2006-01-02")
-		if from != "" && date < from || to != "" && date > to {
-			continue
-		}
 		addEntryToSummary(summary, date, e)
 	}
 	if err := rows.Err(); err != nil {
@@ -183,6 +206,47 @@ FROM cost_events ORDER BY occurred_at`)
 		return nil, fmt.Errorf("costledger: count quarantined events: %w", err)
 	}
 	return summary, nil
+}
+
+func costDateBounds(from, to string) (string, string, error) {
+	from = strings.TrimSpace(from)
+	to = strings.TrimSpace(to)
+	parse := func(name, value string) (time.Time, error) {
+		parsed, err := time.Parse("2006-01-02", value)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("costledger: invalid %s date %q (expected YYYY-MM-DD): %w", name, value, err)
+		}
+		return parsed.UTC(), nil
+	}
+	fromInclusive := ""
+	if from != "" {
+		parsed, err := parse("from", from)
+		if err != nil {
+			return "", "", err
+		}
+		fromInclusive = parsed.Format(time.RFC3339Nano)
+	}
+	toExclusive := ""
+	if to != "" {
+		parsed, err := parse("to", to)
+		if err != nil {
+			return "", "", err
+		}
+		toExclusive = parsed.AddDate(0, 0, 1).Format(time.RFC3339Nano)
+	}
+	if fromInclusive != "" && toExclusive != "" && fromInclusive >= toExclusive {
+		return "", "", fmt.Errorf("costledger: from date %q must not be after to date %q", from, to)
+	}
+	return fromInclusive, toExclusive, nil
+}
+
+func isSQLiteBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "sqlite_busy") || strings.Contains(message, "database is locked") ||
+		strings.Contains(message, "database table is locked")
 }
 
 func (s *sqliteLedger) migrateLegacyJSONL(path string) (MigrationReport, error) {

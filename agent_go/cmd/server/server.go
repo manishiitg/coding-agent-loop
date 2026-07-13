@@ -1186,9 +1186,13 @@ func runServer(cmd *cobra.Command, args []string) {
 		log.Fatalf("Failed to initialize cost event database: %v", err)
 	}
 	defer costLedger.Close()
+	costledger.SetDefaultLedger(costLedger)
+	defer costledger.SetDefaultLedger(nil)
 	legacyCostPath := filepath.Join(fsutil.WorkspaceDocsRoot(), "_system", "costs.jsonl")
 	if report, migrateErr := costLedger.MigrateLegacyJSONL(legacyCostPath); migrateErr != nil {
-		log.Fatalf("Failed to migrate legacy cost ledger: %v", migrateErr)
+		// SQLite is already initialized and remains authoritative. A damaged or
+		// unreadable compatibility file must not make every future startup fail.
+		log.Printf("[COST_LEDGER] Legacy migration skipped after error: %v", migrateErr)
 	} else if report.Imported > 0 || report.Duplicates > 0 || report.Quarantined > 0 {
 		log.Printf("[COST_LEDGER] Legacy migration imported=%d duplicates=%d quarantined=%d",
 			report.Imported, report.Duplicates, report.Quarantined)
@@ -4936,6 +4940,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 				// Build template vars by reading current plan and variables from workspace
 				phaseRunFolder := "iteration-0"
+				if req.ExecutionOptions != nil && strings.TrimSpace(req.ExecutionOptions.SelectedRunFolder) != "" {
+					phaseRunFolder = strings.TrimSpace(req.ExecutionOptions.SelectedRunFolder)
+				}
 				workflowPhaseRunFolder = phaseRunFolder
 				var phaseEnabledGroupNames []string
 				if req.ExecutionOptions != nil {

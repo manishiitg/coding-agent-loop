@@ -11,6 +11,15 @@ import (
 func TestRecordPricedToolCostPersistsWithoutOutputPath(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("WORKSPACE_DOCS_PATH", root)
+	ledger, err := costledger.NewSQLiteLedger(filepath.Join(root, "_system", "costs.sqlite"))
+	if err != nil {
+		t.Fatalf("NewSQLiteLedger() error = %v", err)
+	}
+	costledger.SetDefaultLedger(ledger)
+	defer func() {
+		costledger.SetDefaultLedger(nil)
+		ledger.Close()
+	}()
 	recordPricedToolCost(context.Background(), "", "user-1", pricedToolCost{
 		ToolName:   "image_gen",
 		Capability: "image",
@@ -20,11 +29,6 @@ func TestRecordPricedToolCostPersistsWithoutOutputPath(t *testing.T) {
 		Estimated:  false,
 	})
 
-	ledger, err := costledger.NewSQLiteLedger(filepath.Join(root, "_system", "costs.sqlite"))
-	if err != nil {
-		t.Fatalf("NewSQLiteLedger() error = %v", err)
-	}
-	defer ledger.Close()
 	summary, err := ledger.Summarize("", "")
 	if err != nil {
 		t.Fatalf("Summarize() error = %v", err)

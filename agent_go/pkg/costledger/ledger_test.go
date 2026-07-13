@@ -155,6 +155,20 @@ func TestSQLiteLedgerSeparatesCallsFromToolEventsAndUTCDateBounds(t *testing.T) 
 	}
 }
 
+func TestSQLiteLedgerRejectsInvalidDateBounds(t *testing.T) {
+	ledger, err := NewSQLiteLedger(filepath.Join(t.TempDir(), "costs.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ledger.Close()
+	if _, err := ledger.Summarize("2026-07-14", "2026-07-13"); err == nil {
+		t.Fatal("reversed date bounds should be rejected")
+	}
+	if _, err := ledger.Summarize("not-a-date", ""); err == nil {
+		t.Fatal("invalid date should be rejected")
+	}
+}
+
 func TestLedgerAppendAndSummarizeViaWorkspaceAPI(t *testing.T) {
 	server := newLedgerTestServer(t)
 	defer server.Close()

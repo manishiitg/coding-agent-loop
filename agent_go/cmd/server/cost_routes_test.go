@@ -198,6 +198,32 @@ func TestCostObserverHandleEventRecordsTokenUsage(t *testing.T) {
 	}
 }
 
+func TestCostObserverDoesNotInventCallForEmptyFallbackEvent(t *testing.T) {
+	ledger, err := costledger.NewSQLiteLedger(t.TempDir() + "/costs.sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ledger.Close()
+	obs := newCostObserver(ledger, "empty-turn", "user-1", "chat")
+	if err := obs.HandleEvent(context.Background(), &unifiedevents.AgentEvent{
+		Type:      unifiedevents.TokenUsage,
+		Timestamp: time.Now().UTC(),
+		Data:      &unifiedevents.TokenUsageEvent{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := ledger.Summarize("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Total.CallCount != 0 || summary.Total.AccountingEventCount != 1 {
+		t.Fatalf("empty fallback totals = %#v", summary.Total)
+	}
+	if inferCostScope("chat", "") != "chat" {
+		t.Fatal("plain chat was not attributed to chat scope")
+	}
+}
+
 func TestCostObserverMultiTurnAccumulation(t *testing.T) {
 	srv := costledger.NewTestServer(t)
 	defer srv.Close()

@@ -271,7 +271,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			parentReq.AgentMode,
 			withCostModel(string(provider), modelID),
 			withCostAttribution(
-				"background_review",
+				inferCostScope(parentReq.AgentMode, parentReq.PhaseID),
 				parentReq.SelectedFolder,
 				"",
 				delegationID,

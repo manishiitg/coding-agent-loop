@@ -146,6 +146,27 @@ type Ledger struct {
 	mu      sync.Mutex
 }
 
+var (
+	defaultLedgerMu sync.RWMutex
+	defaultLedger   *Ledger
+)
+
+// SetDefaultLedger publishes the process-wide production ledger used by paid
+// virtual tools. The server owns its lifecycle; callers must not close it.
+func SetDefaultLedger(ledger *Ledger) {
+	defaultLedgerMu.Lock()
+	defaultLedger = ledger
+	defaultLedgerMu.Unlock()
+}
+
+// DefaultLedger returns the process-wide ledger, when the server initialized
+// one. Tests and standalone tools may leave it unset and open their own store.
+func DefaultLedger() *Ledger {
+	defaultLedgerMu.RLock()
+	defer defaultLedgerMu.RUnlock()
+	return defaultLedger
+}
+
 type sqliteStore interface {
 	append(Entry) error
 	summarize(from, to string) (*Summary, error)

@@ -179,7 +179,10 @@ func (o *costObserver) recordLegacyTokenUsage(event *unifiedevents.AgentEvent, t
 	entry.EffectiveProvider = provider
 	entry.EffectiveModelID = effectiveModel
 	entry.TurnCount = 1
-	entry.LLMCallCount = costFirstPositive(toInt(tu.GenerationInfo["llm_call_count"]), 1)
+	entry.LLMCallCount = toInt(tu.GenerationInfo["llm_call_count"])
+	if entry.LLMCallCount == 0 && (tu.PromptTokens > 0 || tu.CompletionTokens > 0 || tu.ReasoningTokens > 0 || totalCostUSD > 0) {
+		entry.LLMCallCount = 1
+	}
 	entry.PromptTokens = tu.PromptTokens
 	entry.CompletionTokens = tu.CompletionTokens
 	entry.ReasoningTokens = tu.ReasoningTokens
@@ -236,7 +239,7 @@ func inferCostScope(agentMode, phaseID string) string {
 	case strings.Contains(strings.ToLower(agentMode), "workflow"):
 		return "builder"
 	default:
-		return "builder"
+		return "chat"
 	}
 }
 

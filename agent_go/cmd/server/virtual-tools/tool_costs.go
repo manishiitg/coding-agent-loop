@@ -111,12 +111,20 @@ func recordPricedToolCost(ctx context.Context, workspaceAPIURL, userID string, c
 	if cost.Estimated {
 		billingBasis = "token_estimate"
 	}
-	ledger, err := costledger.NewSQLiteLedger(filepath.Join(fsutil.WorkspaceDocsRoot(), "_system", "costs.sqlite"))
-	if err != nil {
-		log.Printf("[TOOL_COST] failed to open cost event database for %s: %v", cost.ToolName, err)
-		return
+	ledger := costledger.DefaultLedger()
+	closeLedger := false
+	if ledger == nil {
+		var err error
+		ledger, err = costledger.NewSQLiteLedger(filepath.Join(fsutil.WorkspaceDocsRoot(), "_system", "costs.sqlite"))
+		if err != nil {
+			log.Printf("[TOOL_COST] failed to open cost event database for %s: %v", cost.ToolName, err)
+			return
+		}
+		closeLedger = true
 	}
-	defer ledger.Close()
+	if closeLedger {
+		defer ledger.Close()
+	}
 	if err := ledger.Append(costledger.Entry{
 		Timestamp:         now,
 		UserID:            userID,

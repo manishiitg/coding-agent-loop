@@ -33,7 +33,6 @@ export function reconcileTerminalSnapshots(
   if (incoming.length === 0) return incoming
 
   const currentByID = new Map(current.map(terminal => [terminal.terminal_id, terminal]))
-  const incomingIDs = new Set(incoming.map(terminal => terminal.terminal_id))
   let changed = current.length !== incoming.length
   const reconciled = incoming.map(terminal => {
     const existing = currentByID.get(terminal.terminal_id)
@@ -42,8 +41,6 @@ export function reconcileTerminalSnapshots(
     return terminal
   })
 
-  if (!changed && current.every(terminal => incomingIDs.has(terminal.terminal_id))) {
-    return current
-  }
+  if (!changed) return current
   return reconciled
 }

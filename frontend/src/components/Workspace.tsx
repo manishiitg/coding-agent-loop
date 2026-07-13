@@ -1,4 +1,5 @@
 import { useEffect, useCallback, useRef, useMemo, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { Plus, Upload, FolderPlus, ChevronDown, CheckSquare, X, Trash2, PanelRightClose } from 'lucide-react'
 import { agentApi, workspaceApi } from '../services/api'
 import type { PlannerFile } from '../services/api-types'
@@ -41,7 +42,7 @@ export default function Workspace({
   hideMinimizeControl = false
 }: WorkspaceProps) {
   // Get mode-specific file context and handlers
-  const { selectedModeCategory } = useModeStore()
+  const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
   const authUser = useAuthStore(state => state.user)
   const currentUserFolder = `_users/${authUser?.id || 'default'}`
   const showWorkflowsOverview = useAppStore(state => state.showWorkflowsOverview)
@@ -157,7 +158,46 @@ export default function Workspace({
     setBinaryFileData,
     needsRefresh,
     setNeedsRefresh
-  } = useWorkspaceStore()
+  } = useWorkspaceStore(useShallow(state => ({
+    files: state.files,
+    loading: state.loading,
+    error: state.error,
+    setError: state.setError,
+    searchQuery: state.searchQuery,
+    setSearchQuery: state.setSearchQuery,
+    uploadDialog: state.uploadDialog,
+    setUploadDialog: state.setUploadDialog,
+    openUploadDialog: state.openUploadDialog,
+    closeUploadDialog: state.closeUploadDialog,
+    createFolderDialog: state.createFolderDialog,
+    openCreateFolderDialog: state.openCreateFolderDialog,
+    closeCreateFolderDialog: state.closeCreateFolderDialog,
+    deleteDialog: state.deleteDialog,
+    setDeleteDialog: state.setDeleteDialog,
+    openDeleteDialog: state.openDeleteDialog,
+    closeDeleteDialog: state.closeDeleteDialog,
+    deleteAllFilesDialog: state.deleteAllFilesDialog,
+    setDeleteAllFilesDialog: state.setDeleteAllFilesDialog,
+    openDeleteAllFilesDialog: state.openDeleteAllFilesDialog,
+    closeDeleteAllFilesDialog: state.closeDeleteAllFilesDialog,
+    showActionsDropdown: state.showActionsDropdown,
+    setShowActionsDropdown: state.setShowActionsDropdown,
+    expandedFolders: state.expandedFolders,
+    setExpandedFolders: state.setExpandedFolders,
+    expandFoldersForFile: state.expandFoldersForFile,
+    expandFoldersToLevel: state.expandFoldersToLevel,
+    toggleFolder: state.toggleFolder,
+    highlightedFile: state.highlightedFile,
+    setSelectedFile: state.setSelectedFile,
+    setFileContent: state.setFileContent,
+    setLoadingFileContent: state.setLoadingFileContent,
+    setShowFileContent: state.setShowFileContent,
+    fetchFiles: state.fetchFiles,
+    setActiveFolder: state.setActiveFolder,
+    setBinaryFileData: state.setBinaryFileData,
+    needsRefresh: state.needsRefresh,
+    setNeedsRefresh: state.setNeedsRefresh,
+  })))
 
   const fetchCapabilities = useCapabilitiesStore(s => s.fetchCapabilities)
 

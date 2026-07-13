@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { Plus, ArrowDown, ListTree, Terminal, Globe, DollarSign, CalendarClock, SlidersHorizontal, Square } from 'lucide-react'
 import { normalizeEventViewMode, useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useAppStore } from '../stores/useAppStore'
@@ -60,8 +61,22 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
     setTabStreaming,
     setTabHasRunningBgAgents,
     activeSessionsCache,
-  } = useChatStore()
-  const { toolList: mcpToolList, setChatSelectedServers } = useMCPStore()
+  } = useChatStore(useShallow(state => ({
+    chatTabs: state.chatTabs,
+    activeTabId: state.activeTabId,
+    switchTab: state.switchTab,
+    autoScroll: state.autoScroll,
+    setAutoScroll: state.setAutoScroll,
+    setTabConfig: state.setTabConfig,
+    setTabViewMode: state.setTabViewMode,
+    setTabStreaming: state.setTabStreaming,
+    setTabHasRunningBgAgents: state.setTabHasRunningBgAgents,
+    activeSessionsCache: state.activeSessionsCache,
+  })))
+  const { toolList: mcpToolList, setChatSelectedServers } = useMCPStore(useShallow(state => ({
+    toolList: state.toolList,
+    setChatSelectedServers: state.setChatSelectedServers,
+  })))
   const delegationTierConfig = useLLMStore(state => state.delegationTierConfig)
   const setShowTierModal = useLLMStore(state => state.setShowTierModal)
 

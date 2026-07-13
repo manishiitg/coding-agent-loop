@@ -9,11 +9,13 @@ WORKFLOW_NAME="Desktop DMG"
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/desktop-release.sh v1.25.81
+  scripts/desktop-release.sh [--dry-run] v1.25.81
 
 What it does:
   - switches gh to the manishiitg account
-  - requires the release to come from main
+  - requires canonical origin/main with no unpublished local commits
+  - verifies the version is newer than the current Latest release
+  - commits the matching desktop package/package-lock version
   - generates release notes from commits since the previous published release
   - pushes main and the version tag
   - waits for the Desktop DMG workflow
@@ -30,11 +32,18 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
 }
 
+dry_run=false
+if [[ "${1:-}" == "--dry-run" ]]; then
+  dry_run=true
+  shift
+fi
+
 version_arg="${1:-}"
 if [[ -z "$version_arg" || "$version_arg" == "-h" || "$version_arg" == "--help" ]]; then
   usage
   exit 0
 fi
+[[ $# -eq 1 ]] || die "expected exactly one version argument"
 
 if [[ ! "$version_arg" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   die "version must look like v1.25.81"
@@ -42,6 +51,20 @@ fi
 
 require_cmd git
 require_cmd gh
+require_cmd node
+require_cmd npm
+
+semver_gt() {
+  local candidate="${1#v}"
+  local baseline="${2#v}"
+  local candidate_major candidate_minor candidate_patch
+  local baseline_major baseline_minor baseline_patch
+  IFS=. read -r candidate_major candidate_minor candidate_patch <<<"$candidate"
+  IFS=. read -r baseline_major baseline_minor baseline_patch <<<"$baseline"
+  (( candidate_major > baseline_major )) ||
+    (( candidate_major == baseline_major && candidate_minor > baseline_minor )) ||
+    (( candidate_major == baseline_major && candidate_minor == baseline_minor && candidate_patch > baseline_patch ))
+}
 
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
@@ -72,17 +95,26 @@ fi
 
 git fetch origin "$MAIN_BRANCH" --tags
 
+origin_url="$(git remote get-url origin)"
+case "$origin_url" in
+  git@github.com:manishiitg/mcp-agent-builder-go.git | \
+    https://github.com/manishiitg/mcp-agent-builder-go.git | \
+    https://github.com/manishiitg/mcp-agent-builder-go | \
+    ssh://git@github.com/manishiitg/mcp-agent-builder-go.git)
+    ;;
+  *)
+    die "origin points to $origin_url, expected the canonical $REPO repository"
+    ;;
+esac
+
+# A stale local main may be safely fast-forwarded. Local-only or divergent
+# commits are never pushed by the release script.
+git merge --ff-only "origin/$MAIN_BRANCH"
+
 local_head="$(git rev-parse "$MAIN_BRANCH")"
 remote_head="$(git rev-parse "origin/$MAIN_BRANCH")"
-merge_base="$(git merge-base "$MAIN_BRANCH" "origin/$MAIN_BRANCH")"
-
-if [[ "$local_head" == "$remote_head" ]]; then
-  echo "==> main is in sync with origin/main"
-elif [[ "$merge_base" == "$remote_head" ]]; then
-  echo "==> main is ahead of origin/main; will push before tagging"
-else
-  die "main is behind or diverged from origin/main; sync it first"
-fi
+[[ "$local_head" == "$remote_head" ]] || die "local main must exactly match origin/main; merge and push reviewed changes first"
+echo "==> main is exactly in sync with origin/main ($local_head)"
 
 if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
   die "local tag already exists: $tag"
@@ -90,17 +122,19 @@ fi
 if git ls-remote --exit-code --tags origin "$tag" >/dev/null 2>&1; then
   die "remote tag already exists: $tag"
 fi
+if gh release view "$tag" --repo "$REPO" >/dev/null 2>&1; then
+  die "GitHub release already exists: $tag"
+fi
+
+previous_tag="$(gh release view --repo "$REPO" --json tagName --jq .tagName)"
+if [[ ! "$previous_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  die "Latest release tag is not plain semver: $previous_tag"
+fi
+semver_gt "$tag" "$previous_tag" || die "$tag must be greater than Latest release $previous_tag"
 
 echo "==> Building changelog"
-previous_tag="$(
-  gh api "repos/$REPO/releases?per_page=100" \
-    --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' |
-    grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' |
-    grep -v -x "$tag" |
-    head -n 1 || true
-)"
-
 notes_file="$(mktemp)"
+trap 'rm -f "$notes_file"' EXIT
 {
   echo "Desktop release $tag."
   echo
@@ -121,12 +155,38 @@ notes_file="$(mktemp)"
 
 cat "$notes_file"
 
-echo "==> Pushing main"
-git push origin "$MAIN_BRANCH"
+package_version="$(node -p "require('./desktop/package.json').version")"
+lock_version="$(node -p "require('./desktop/package-lock.json').version")"
+echo "==> Desktop metadata: package=$package_version lock=$lock_version target=$version"
 
-echo "==> Creating and pushing tag $tag"
+if $dry_run; then
+  if [[ "$package_version" != "$version" || "$lock_version" != "$version" ]]; then
+    echo "==> Dry run: would update and commit desktop version metadata to $version"
+  fi
+  echo "==> Dry run complete; no commit, push, tag, workflow, or release was created"
+  exit 0
+fi
+
+if [[ "$package_version" != "$version" || "$lock_version" != "$version" ]]; then
+  echo "==> Updating desktop version metadata to $version"
+  (
+    cd desktop
+    npm version "$version" --no-git-tag-version --allow-same-version
+  )
+  updated_package_version="$(node -p "require('./desktop/package.json').version")"
+  updated_lock_version="$(node -p "require('./desktop/package-lock.json').version")"
+  [[ "$updated_package_version" == "$version" && "$updated_lock_version" == "$version" ]] ||
+    die "npm did not update both desktop version files to $version"
+  git add desktop/package.json desktop/package-lock.json
+  git commit -m "Bump desktop version to $version"
+fi
+
+[[ -z "$(git status --porcelain)" ]] || die "working tree became dirty while preparing release"
+
+echo "==> Creating tag $tag"
 git tag -a "$tag" -m "Release $tag"
-git push origin "$tag"
+echo "==> Atomically pushing main and $tag"
+git push --atomic origin "$MAIN_BRANCH" "refs/tags/$tag"
 
 head_sha="$(git rev-parse HEAD)"
 run_id=""

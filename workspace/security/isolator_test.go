@@ -14,13 +14,13 @@ import (
 
 // TestEnvironment holds test fixtures
 type TestEnvironment struct {
-	TempDir       string
-	ReadOnlyDir   string
-	ReadWriteDir  string
-	ForbiddenDir  string
-	DownloadsDir  string
-	CleanupFuncs  []func()
-	t             *testing.T
+	TempDir      string
+	ReadOnlyDir  string
+	ReadWriteDir string
+	ForbiddenDir string
+	DownloadsDir string
+	CleanupFuncs []func()
+	t            *testing.T
 }
 
 // Setup creates test directories and files
@@ -86,6 +86,7 @@ func TestIsolatorOSDetection(t *testing.T) {
 		ReadPaths:  []string{env.ReadOnlyDir},
 		WritePaths: []string{env.ReadWriteDir},
 		WorkDir:    env.TempDir,
+		BaseDir:    env.TempDir,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -152,6 +153,7 @@ func TestMacOSSandboxProfile(t *testing.T) {
 		ReadPaths:  []string{env.ReadOnlyDir},
 		WritePaths: []string{env.ReadWriteDir},
 		WorkDir:    env.TempDir,
+		BaseDir:    env.TempDir,
 	}
 
 	profile := isolator.generateSandboxProfile()
@@ -169,11 +171,21 @@ func TestMacOSSandboxProfile(t *testing.T) {
 	}
 
 	// Verify paths are included
-	if !strings.Contains(profile, env.ReadOnlyDir) {
-		t.Errorf("Read-only path not in profile: %s", env.ReadOnlyDir)
+	canonicalReadOnly := canonicalPath(env.ReadOnlyDir)
+	if !strings.Contains(profile, canonicalReadOnly) {
+		t.Errorf("Read-only path not in profile: %s", canonicalReadOnly)
 	}
-	if !strings.Contains(profile, env.ReadWriteDir) {
-		t.Errorf("Read-write path not in profile: %s", env.ReadWriteDir)
+	canonicalReadWrite := canonicalPath(env.ReadWriteDir)
+	if !strings.Contains(profile, canonicalReadWrite) {
+		t.Errorf("Read-write path not in profile: %s", canonicalReadWrite)
+	}
+
+	canonicalWorkDir := canonicalPath(env.TempDir)
+	if strings.Contains(profile, fmt.Sprintf("(allow file-read* (subpath \"%s\"))", canonicalWorkDir)) {
+		t.Error("sandbox profile grants broad read access to the working directory")
+	}
+	if !strings.Contains(profile, fmt.Sprintf("(allow file-read-metadata (literal \"%s\"))", canonicalWorkDir)) {
+		t.Error("sandbox profile must grant only working-directory metadata access")
 	}
 
 	t.Logf("✓ Sandbox profile generated correctly:\n%s", profile)
@@ -413,8 +425,9 @@ func TestMacOSSandboxIsolation(t *testing.T) {
 	})
 }
 
-// TestDownloadsFolderException tests that Downloads is always accessible
-func TestDownloadsFolderException(t *testing.T) {
+// TestDownloadsRequiresExplicitPermission ensures a shared folder name does not
+// bypass the same allow-list applied to every other workspace path.
+func TestDownloadsRequiresExplicitPermission(t *testing.T) {
 	env := &TestEnvironment{}
 	if err := env.Setup(t); err != nil {
 		t.Fatalf("Failed to setup test environment: %v", err)
@@ -425,24 +438,27 @@ func TestDownloadsFolderException(t *testing.T) {
 	// Actual enforcement requires /app/workspace-docs structure
 
 	isolator := &Isolator{
-		ReadPaths:  []string{}, // No paths allowed
-		WritePaths: []string{}, // No paths allowed
-		WorkDir:    env.TempDir,
+		WorkDir: env.TempDir,
+		BaseDir: env.TempDir,
 	}
 
 	if runtime.GOOS == "darwin" {
 		profile := isolator.generateSandboxProfile()
-		if !strings.Contains(profile, "Downloads") {
-			t.Error("Downloads folder not found in macOS sandbox profile")
-		} else {
-			t.Log("✓ Downloads folder included in macOS sandbox profile")
+		if strings.Contains(profile, canonicalPath(env.DownloadsDir)) {
+			t.Error("Downloads must not be implicitly allowed in macOS sandbox profile")
+		}
+		isolator.ReadPaths = []string{env.DownloadsDir}
+		if !strings.Contains(isolator.generateSandboxProfile(), canonicalPath(env.DownloadsDir)) {
+			t.Error("explicit Downloads read permission missing from macOS sandbox profile")
 		}
 	} else if runtime.GOOS == "linux" {
 		script := isolator.generateMountScript("echo", []string{"test"})
-		if !strings.Contains(script, "Downloads") {
-			t.Error("Downloads folder not found in Linux mount script")
-		} else {
-			t.Log("✓ Downloads folder included in Linux mount script")
+		if strings.Contains(script, env.DownloadsDir) {
+			t.Error("Downloads must not be implicitly allowed in Linux mount script")
+		}
+		isolator.ReadPaths = []string{env.DownloadsDir}
+		if !strings.Contains(isolator.generateMountScript("echo", []string{"test"}), env.DownloadsDir) {
+			t.Error("explicit Downloads read permission missing from Linux mount script")
 		}
 	}
 }

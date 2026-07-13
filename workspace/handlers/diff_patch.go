@@ -389,7 +389,26 @@ func correctAgentGeneratedDiff(diffContent, currentContent string) string {
 					currentHunk.oldCount++
 					currentHunk.newCount++
 				} else if strings.HasPrefix(line, "-") {
-					currentHunk.oldCount++
+					// Agents sometimes omit the diff context prefix for Markdown
+					// bullets. If the removal payload is absent but the complete
+					// bullet exists, this is context rather than a deletion.
+					payloadExists := false
+					lineExists := false
+					for _, fl := range currentLines {
+						if fl == line[1:] {
+							payloadExists = true
+						}
+						if fl == line {
+							lineExists = true
+						}
+					}
+					if !payloadExists && lineExists {
+						line = " " + line
+						currentHunk.oldCount++
+						currentHunk.newCount++
+					} else {
+						currentHunk.oldCount++
+					}
 				} else if strings.HasPrefix(line, "+") {
 					currentHunk.newCount++
 				}
@@ -549,6 +568,15 @@ func applyAgentGeneratedDiffFallback(currentContent, diffContent string) (string
 	fmt.Printf("🔍 Trying fallback approach for agent-generated diffs\n")
 
 	lines := strings.Split(diffContent, "\n")
+	hasOldHeader := false
+	hasNewHeader := false
+	for _, line := range lines {
+		hasOldHeader = hasOldHeader || strings.HasPrefix(line, "--- ")
+		hasNewHeader = hasNewHeader || strings.HasPrefix(line, "+++ ")
+	}
+	if !hasOldHeader || !hasNewHeader {
+		return "", fmt.Errorf("missing or malformed diff headers (---/+++)")
+	}
 
 	resultLines := strings.Split(currentContent, "\n")
 
@@ -560,7 +588,7 @@ func applyAgentGeneratedDiffFallback(currentContent, diffContent string) (string
 
 	var currentHunk *hunk
 
-	for _, line := range lines {
+	for lineIndex, line := range lines {
 
 		if strings.HasPrefix(line, "@@") {
 
@@ -582,11 +610,15 @@ func applyAgentGeneratedDiffFallback(currentContent, diffContent string) (string
 
 				currentHunk.lines = append(currentHunk.lines, line)
 
-			} else if line == "" && len(currentHunk.lines) > 0 {
+			} else if line == "" && len(currentHunk.lines) > 0 && lineIndex < len(lines)-1 {
 
 				// Empty line inside hunk is treated as context
 
 				currentHunk.lines = append(currentHunk.lines, " ")
+
+			} else if line != "" {
+
+				return "", fmt.Errorf("malformed hunk line %q: context, removals, and additions must use a diff prefix", line)
 
 			}
 
@@ -631,27 +663,7 @@ func applyAgentGeneratedDiffFallback(currentContent, diffContent string) (string
 		}
 
 		if len(expectedLines) == 0 {
-
-			// Pure addition hunk, apply to bottom
-
-			var additions []string
-
-			for _, hl := range h.lines {
-
-				if strings.HasPrefix(hl, "+") {
-
-					additions = append(additions, hl[1:])
-
-				}
-
-			}
-
-			newResult, _ := applyAdditionsToBottom(strings.Join(resultLines, "\n"), additions)
-
-			resultLines = strings.Split(newResult, "\n")
-
-			continue
-
+			return "", fmt.Errorf("pure-addition fallback hunk has no context; provide an exact unified diff so insertion location is unambiguous")
 		}
 
 		fmt.Printf("🔍 Attempting to match hunk with %d expected lines against %d file lines\n", len(expectedLines), len(resultLines))
@@ -662,27 +674,10 @@ func applyAgentGeneratedDiffFallback(currentContent, diffContent string) (string
 
 		minMismatches := len(expectedLines) + 1
 
+		// Fallback ignores line numbers, so require an exact content match.
+		// Whitespace is normalized below, but content mismatches must never be
+		// guessed because removals could otherwise target the wrong block.
 		maxAllowedMismatches := 0
-
-		if len(expectedLines) >= 4 {
-
-			// For larger hunks, allow ~15-20% mismatch
-
-			maxAllowedMismatches = len(expectedLines) / 6
-
-			if maxAllowedMismatches < 1 {
-
-				maxAllowedMismatches = 1
-
-			}
-
-			if maxAllowedMismatches > 3 {
-
-				maxAllowedMismatches = 3 // Cap at 3 mismatches max
-
-			}
-
-		}
 
 		for i := 0; i <= len(resultLines)-len(expectedLines); i++ {
 
@@ -724,7 +719,7 @@ func applyAgentGeneratedDiffFallback(currentContent, diffContent string) (string
 
 			matchIndex = bestMatchIndex
 
-			fmt.Printf("✅ Found fuzzy match at line %d with %d mismatches\n", matchIndex+1, minMismatches)
+			fmt.Printf("✅ Found exact fallback match at line %d\n", matchIndex+1)
 
 		}
 

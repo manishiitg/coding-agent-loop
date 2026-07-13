@@ -46,7 +46,9 @@ func (api *StreamingAPI) startCodingTmuxRateLimitWatchdog() {
 func (api *StreamingAPI) reapRateLimitedCodingSessionsOnce(streak map[string]int) {
 	// Metadata listing deliberately avoids Store's content reconciliation. Actual
 	// tmux pane state below is authoritative for whether a terminal is still live.
-	snapshots := api.terminalStore.ListMetadata("")
+	// Process supervision must include terminals dismissed from presentation.
+	// ListRaw avoids content reconciliation while retaining those ownership rows.
+	snapshots := api.terminalStore.ListRaw("")
 	stillLimited := make(map[string]bool)
 
 	for _, snap := range snapshots {
@@ -57,7 +59,7 @@ func (api *StreamingAPI) reapRateLimitedCodingSessionsOnce(streak map[string]int
 		}
 		// Confirmation belongs to one real pane, not the app session. A workflow
 		// session can host several terminals; keying by tmux keeps two limited
-		// panes satisfy a two-tick streak during the same poll.
+		// panes from satisfying a two-tick streak during the same poll.
 		watchdogKey := tmux
 		switch inspectCodingTmuxPaneState(tmux) {
 		case codingTmuxPaneMissing:
@@ -68,6 +70,13 @@ func (api *StreamingAPI) reapRateLimitedCodingSessionsOnce(streak map[string]int
 			delete(streak, watchdogKey)
 			continue
 		case codingTmuxPaneDead:
+			killCtx, cancel := context.WithTimeout(context.Background(), terminalTmuxActionTimeout)
+			killErr := runTmuxKill(killCtx, tmux)
+			cancel()
+			if killErr != nil && !isMissingTmuxTargetError(killErr) {
+				log.Printf("[CODING_WATCHDOG] dead pane cleanup failed session=%s tmux=%s: %v", sessionID, tmux, killErr)
+				continue
+			}
 			if snap.Active || !strings.EqualFold(strings.TrimSpace(snap.State), "completed") {
 				api.terminalStore.MarkCompleted(snap.TerminalID)
 			}
@@ -162,6 +171,6 @@ func captureTmuxPanePlain(tmuxSession string) string {
 	return out.String()
 }
 
-func runTmuxKill(ctx context.Context, tmuxSession string) error {
-	return exec.CommandContext(ctx, "tmux", "kill-session", "-t", tmuxSession).Run()
+var runTmuxKill = func(ctx context.Context, tmuxSession string) error {
+	return runTerminalTmuxCommand(ctx, "", "kill-session", "-t", tmuxSession)
 }

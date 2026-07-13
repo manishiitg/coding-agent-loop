@@ -20,6 +20,7 @@ const (
 	tmuxOptionRunloopOwnerPID       = "@runloop_owner_pid"
 	tmuxOptionRunloopOwnerStartedAt = "@runloop_owner_started_at"
 	tmuxOptionRunloopHeartbeat      = "@runloop_heartbeat"
+	terminalLeaseTagAttempts        = 3
 )
 
 type ownedTmuxSession struct {
@@ -53,24 +54,40 @@ func (api *StreamingAPI) ensureTerminalLeaseRegistry() *terminalleases.Registry 
 }
 
 func markTerminalLeaseOwnership(lease terminalleases.Lease) {
+	markTerminalLeaseOwnershipAt(lease, time.Now())
+}
+
+func markTerminalLeaseOwnershipAt(lease terminalleases.Lease, now time.Time) {
 	if strings.TrimSpace(lease.TmuxSession) == "" || lease.OwnerPID <= 0 || strings.TrimSpace(lease.InstanceID) == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), terminalTmuxActionTimeout)
-	defer cancel()
+	if now.IsZero() {
+		now = time.Now()
+	}
 	values := [][2]string{
 		{tmuxOptionRunloopInstanceID, lease.InstanceID},
 		{tmuxOptionRunloopOwnerPID, strconv.Itoa(lease.OwnerPID)},
 		{tmuxOptionRunloopOwnerStartedAt, strconv.FormatInt(lease.OwnerStartedAt.Unix(), 10)},
-		{tmuxOptionRunloopHeartbeat, strconv.FormatInt(time.Now().Unix(), 10)},
+		{tmuxOptionRunloopHeartbeat, strconv.FormatInt(now.Unix(), 10)},
 	}
-	for _, pair := range values {
-		if err := runTerminalTmuxCommand(ctx, "", "set-option", "-t", lease.TmuxSession, pair[0], pair[1]); err != nil {
-			if !isMissingTmuxTargetError(err) {
-				log.Printf("[TERMINAL_LEASE] failed to tag tmux=%q option=%s: %v", lease.TmuxSession, pair[0], err)
+	for attempt := 1; attempt <= terminalLeaseTagAttempts; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), terminalTmuxActionTimeout)
+		var tagErr error
+		for _, pair := range values {
+			if err := runTerminalTmuxCommand(ctx, "", "set-option", "-t", lease.TmuxSession, pair[0], pair[1]); err != nil {
+				tagErr = err
+				break
 			}
+		}
+		cancel()
+		if tagErr == nil || isMissingTmuxTargetError(tagErr) {
 			return
 		}
+		if attempt == terminalLeaseTagAttempts {
+			log.Printf("[TERMINAL_LEASE] failed to tag tmux=%q after %d attempts: %v", lease.TmuxSession, attempt, tagErr)
+			return
+		}
+		time.Sleep(time.Duration(attempt) * 100 * time.Millisecond)
 	}
 }
 
@@ -86,14 +103,30 @@ func (api *StreamingAPI) heartbeatTerminalLeases(now time.Time) {
 		if lease.ProcessState == terminalleases.ProcessClosed || strings.TrimSpace(lease.TmuxSession) == "" {
 			continue
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), terminalTmuxActionTimeout)
-		err := runTerminalTmuxCommand(ctx, "", "set-option", "-t", lease.TmuxSession,
-			tmuxOptionRunloopHeartbeat, strconv.FormatInt(now.Unix(), 10))
-		cancel()
-		if err != nil && !isMissingTmuxTargetError(err) {
-			log.Printf("[TERMINAL_LEASE] heartbeat failed tmux=%q: %v", lease.TmuxSession, err)
-		}
+		// Refresh every ownership field, not only the heartbeat. This repairs a
+		// partial initial tag write instead of leaving an unowned process forever.
+		markTerminalLeaseOwnershipAt(lease, now)
 	}
+}
+
+func tmuxSessionOwnedByRegistry(ctx context.Context, tmuxSession string, registry *terminalleases.Registry) bool {
+	if registry == nil || strings.TrimSpace(tmuxSession) == "" {
+		return false
+	}
+	out, err := runTerminalTmuxOutputCommand(ctx, "display-message", "-p", "-t", tmuxSession,
+		"#{session_name}\t#{@runloop_instance_id}\t#{@runloop_owner_pid}\t#{@runloop_owner_started_at}\t#{@runloop_heartbeat}")
+	if err != nil {
+		return false
+	}
+	rows := parseOwnedTmuxSessions(out)
+	if len(rows) != 1 {
+		return false
+	}
+	owner := rows[0]
+	return owner.Name == strings.TrimSpace(tmuxSession) &&
+		owner.InstanceID == registry.InstanceID() &&
+		owner.OwnerPID == registry.OwnerPID() &&
+		absInt64(owner.OwnerStartedAt-registry.OwnerStartedAt().Unix()) <= 2
 }
 
 // sweepOrphanedOwnedTmuxSessions only removes sessions carrying Runloop owner

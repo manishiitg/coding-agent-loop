@@ -2362,6 +2362,33 @@ func TestSessionHasRetainedCodingTmuxDoesNotRequireBusyContent(t *testing.T) {
 	}
 }
 
+func TestDismissedLiveCodingTmuxRemainsOperationallyVisible(t *testing.T) {
+	store := NewStore()
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"main:session-1",
+		cursorBusyPaneFixture,
+		0,
+		map[string]interface{}{
+			"tmux_session":   "mlp-codex-cli-dismissed",
+			"execution_kind": "main_agent",
+		},
+		time.Now(),
+	))
+	terminalID := "session-1:main:session-1"
+	if !store.Dismiss(terminalID) {
+		t.Fatal("expected terminal dismissal to succeed")
+	}
+	if store.SessionHasBusyCodingTmux("session-1") != true {
+		t.Fatal("dismissed live pane must remain visible to busy routing")
+	}
+	if store.SessionHasRetainedCodingTmux("session-1") != true {
+		t.Fatal("dismissed live pane must remain visible to lifecycle routing")
+	}
+	if _, visible := store.Get(terminalID); visible {
+		t.Fatal("dismissed pane should remain hidden from presentation")
+	}
+}
+
 func TestDeriveStatusLabelsCursor(t *testing.T) {
 	status := DeriveStatus(cursorBusyPaneFixture, map[string]interface{}{"provider": "cursor-cli"})
 	if status.ProviderLabel != "Cursor CLI" {

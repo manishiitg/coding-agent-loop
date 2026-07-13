@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -109,6 +110,44 @@ func TestMarkTerminalLeaseOwnershipWritesOwnerMetadata(t *testing.T) {
 		if !found {
 			t.Fatalf("missing option %s in %v", option, commands)
 		}
+	}
+}
+
+func TestMarkTerminalLeaseOwnershipRetriesPartialTagWrite(t *testing.T) {
+	oldRun := runTerminalTmuxCommand
+	t.Cleanup(func() { runTerminalTmuxCommand = oldRun })
+	calls := 0
+	runTerminalTmuxCommand = func(_ context.Context, _ string, args ...string) error {
+		calls++
+		if calls == 1 {
+			return errors.New("temporary tmux failure")
+		}
+		return nil
+	}
+
+	markTerminalLeaseOwnership(testTerminalLease("mlp-codex-cli-int-retry"))
+
+	if calls != 5 {
+		t.Fatalf("commands = %d, want one failed command plus four successful tags", calls)
+	}
+}
+
+func TestTmuxSessionOwnedByRegistryRequiresMatchingOwnerTags(t *testing.T) {
+	oldOutput := runTerminalTmuxOutputCommand
+	t.Cleanup(func() { runTerminalTmuxOutputCommand = oldOutput })
+	startedAt := time.Unix(100, 0)
+	registry := terminalleases.NewRegistry("instance-1", 1234, startedAt)
+	runTerminalTmuxOutputCommand = func(context.Context, ...string) (string, error) {
+		return "mlp-pi-cli-owned\tinstance-1\t1234\t100\t200", nil
+	}
+	if !tmuxSessionOwnedByRegistry(context.Background(), "mlp-pi-cli-owned", registry) {
+		t.Fatal("matching ownership tags should be accepted")
+	}
+	runTerminalTmuxOutputCommand = func(context.Context, ...string) (string, error) {
+		return "mlp-pi-cli-owned\tforeign-instance\t1234\t100\t200", nil
+	}
+	if tmuxSessionOwnedByRegistry(context.Background(), "mlp-pi-cli-owned", registry) {
+		t.Fatal("foreign ownership tags must be rejected")
 	}
 }
 

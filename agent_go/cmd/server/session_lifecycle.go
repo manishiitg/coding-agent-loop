@@ -313,7 +313,7 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 	// bookkeeping drifted from the terminal store's owner ID.
 	if r.URL.Query().Get("cancelAgents") == "true" && api.terminalStore != nil {
 		mainOwner := "main:" + sessionID
-		for _, snap := range api.terminalStore.List(sessionID) {
+		for _, snap := range api.terminalStore.ListRaw(sessionID) {
 			owner := strings.TrimSpace(snap.OwnerID)
 			if owner == "" || owner == sessionID || owner == mainOwner {
 				continue // chat / main-agent session already handled above

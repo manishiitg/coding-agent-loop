@@ -46,11 +46,14 @@ func TestInspectCodingTmuxPaneStateRejectsEmptySession(t *testing.T) {
 func TestCodingTmuxWatchdogReconcilesFromActualPaneState(t *testing.T) {
 	originalOutput := runTerminalTmuxOutputCommand
 	originalCapture := captureTmuxPanePlainForWatchdog
+	originalKill := runTmuxKill
 	t.Cleanup(func() {
 		runTerminalTmuxOutputCommand = originalOutput
 		captureTmuxPanePlainForWatchdog = originalCapture
+		runTmuxKill = originalKill
 	})
 	captureTmuxPanePlainForWatchdog = func(string) string { return "" }
+	runTmuxKill = func(context.Context, string) error { return nil }
 
 	tests := []struct {
 		name       string
@@ -61,7 +64,7 @@ func TestCodingTmuxWatchdogReconcilesFromActualPaneState(t *testing.T) {
 		wantTmux   bool
 	}{
 		{name: "live pane stays active", paneState: "0\n", wantActive: true, wantState: "running", wantTmux: true},
-		{name: "dead pane completes", paneState: "1\n", wantActive: false, wantState: "completed", wantTmux: true},
+		{name: "dead pane completes", paneState: "1\n", wantActive: false, wantState: "completed", wantTmux: false},
 		{name: "missing session becomes stale", paneErr: errors.New("can't find session: mlp-test"), wantActive: false, wantState: "stale", wantTmux: false},
 		{name: "unknown failure stays active", paneErr: errors.New("temporary tmux failure"), wantActive: true, wantState: "running", wantTmux: true},
 	}

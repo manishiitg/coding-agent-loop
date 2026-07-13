@@ -6091,7 +6091,7 @@ func (api *StreamingAPI) sessionHasLiveCodingTmux(sessionID string) bool {
 	if api == nil || api.terminalStore == nil {
 		return false
 	}
-	for _, snapshot := range api.terminalStore.List(sessionID) {
+	for _, snapshot := range api.terminalStore.ListRaw(sessionID) {
 		if snapshot.Active && strings.TrimSpace(snapshot.TmuxSession) != "" {
 			return true
 		}
@@ -6603,7 +6603,7 @@ func (api *StreamingAPI) getAllActiveSessions() []*ActiveSessionInfo {
 
 // cleanupInactiveSessions runs periodically to:
 // 1. Mark running sessions as inactive if no events for 10 minutes
-// 2. Evict event store buffers after 30 minutes
+// 2. Evict event store buffers when the retained session expires
 // 3. Fully delete sessions from activeSessions after 24 hours
 //
 // The session entry is intentionally kept alive for 24 hours (not the old 30 minutes) so
@@ -8805,7 +8805,7 @@ func makeStepTmuxLookup(api *StreamingAPI) todo_creation_human.TmuxLookupFunc {
 		if strings.TrimSpace(mainSessionID) == "" || strings.TrimSpace(stepID) == "" {
 			return "", "", false
 		}
-		for _, snap := range api.terminalStore.List(mainSessionID) {
+		for _, snap := range api.terminalStore.ListRaw(mainSessionID) {
 			if snap.StepID != stepID {
 				continue
 			}

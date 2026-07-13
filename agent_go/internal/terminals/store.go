@@ -314,7 +314,9 @@ func (s *Store) SessionHasBusyCodingTmux(sessionID string) bool {
 	if s == nil {
 		return false
 	}
-	for _, snapshot := range s.List(sessionID) {
+	// Dismissal only hides a terminal from the UI. A dismissed live pane still
+	// owns runtime work and must remain visible to busy/input routing.
+	for _, snapshot := range s.ListRaw(sessionID) {
 		if strings.TrimSpace(snapshot.TmuxSession) == "" {
 			continue
 		}
@@ -346,7 +348,7 @@ func (s *Store) SessionHasRetainedCodingTmux(sessionID string) bool {
 	if s == nil || sessionID == "" {
 		return false
 	}
-	for _, snapshot := range s.List(sessionID) {
+	for _, snapshot := range s.ListRaw(sessionID) {
 		if !snapshot.Active {
 			continue
 		}
@@ -471,19 +473,24 @@ func (s *Store) MarkStale(terminalID string) (Snapshot, bool) {
 // MarkArchived records that the backing process was deliberately reconciled
 // and closed while retaining the read-only capture until its snapshot deadline.
 func (s *Store) MarkArchived(terminalID, reason string) (Snapshot, bool) {
-	snapshot, ok := s.MarkStale(terminalID)
-	if !ok {
+	terminalID = strings.TrimSpace(terminalID)
+	if s == nil || terminalID == "" {
 		return Snapshot{}, false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	snapshot, ok = s.byID[strings.TrimSpace(terminalID)]
+	snapshot, ok := s.byID[terminalID]
 	if !ok {
 		return Snapshot{}, false
 	}
+	snapshot.Active = false
+	snapshot.State = "stale"
+	snapshot.ProcessState = "closed"
+	snapshot.SnapshotKind = "archived"
+	snapshot.TmuxSession = ""
 	snapshot.CloseReason = strings.TrimSpace(reason)
 	snapshot.UpdatedAt = time.Now()
-	s.byID[snapshot.TerminalID] = snapshot
+	s.byID[terminalID] = snapshot
 	return snapshot, true
 }
 

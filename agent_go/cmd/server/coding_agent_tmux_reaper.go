@@ -239,9 +239,12 @@ func (api *StreamingAPI) cleanupConflictingPiCLIInteractiveSessions(currentSessi
 	}
 
 	sessionStates := api.codingAgentTmuxActiveSessionStates()
-	closedTmuxSessions := map[string]struct{}{}
+	registry := api.ensureTerminalLeaseRegistry()
+	if registry == nil {
+		return 0
+	}
 	closed := 0
-	for _, snapshot := range api.terminalStore.List("") {
+	for _, snapshot := range api.terminalStore.ListRaw("") {
 		if snapshot.SessionID == currentSessionID {
 			continue
 		}
@@ -253,6 +256,18 @@ func (api *StreamingAPI) cleanupConflictingPiCLIInteractiveSessions(currentSessi
 			continue
 		}
 		if !sameCodingAgentWorkingDir(codingAgentSnapshotWorkingDir(snapshot), targetWorkingDir) {
+			continue
+		}
+		lease, leased := registry.GetByTerminal(snapshot.TerminalID)
+		if !leased || lease.ProcessState == terminalleases.ProcessClosed {
+			continue
+		}
+		ownershipCtx, ownershipCancel := context.WithTimeout(context.Background(), terminalTmuxActionTimeout)
+		owned := tmuxSessionOwnedByRegistry(ownershipCtx, tmuxSession, registry)
+		ownershipCancel()
+		if !owned {
+			log.Printf("[PI_CLI_CONFLICT] Preserving unowned Pi CLI tmux=%s old_session=%s while starting %s",
+				tmuxSession, snapshot.SessionID, currentSessionID)
 			continue
 		}
 
@@ -267,16 +282,20 @@ func (api *StreamingAPI) cleanupConflictingPiCLIInteractiveSessions(currentSessi
 		if reason != "" {
 			closeReason += ": " + reason
 		}
-		closeCodingAgentTmuxSessionByName(tmuxSession, closeReason)
+		if !closeCodingAgentTmuxSessionByName(tmuxSession, closeReason) {
+			continue
+		}
+		registry.MarkClosed(tmuxSession, closeReason, time.Now())
 		api.detachConflictingPiCLISession(snapshot.SessionID, state.status)
-		closedTmuxSessions[tmuxSession] = struct{}{}
-		if _, ok := api.terminalStore.MarkStale(snapshot.TerminalID); ok {
+		if snapshot.Active {
+			api.terminalStore.MarkFailed(snapshot.TerminalID)
+		}
+		if _, ok := api.terminalStore.MarkProcessClosed(snapshot.TerminalID, closeReason); ok {
 			closed++
 			log.Printf("[PI_CLI_CONFLICT] Closed conflicting Pi CLI tmux session %q terminal=%q old_session=%q new_session=%q status=%q working_dir=%s",
 				tmuxSession, snapshot.TerminalID, snapshot.SessionID, currentSessionID, state.status, targetWorkingDir)
 		}
 	}
-	closed += cleanupLivePiCLITmuxSessionsByWorkingDir(targetWorkingDir, closedTmuxSessions, reason)
 	return closed
 }
 
@@ -355,56 +374,4 @@ func cleanCodingAgentWorkingDir(path string) string {
 		return ""
 	}
 	return filepath.Clean(path)
-}
-
-func cleanupLivePiCLITmuxSessionsByWorkingDir(workingDir string, alreadyClosed map[string]struct{}, reason string) int {
-	targetWorkingDir := cleanCodingAgentWorkingDir(workingDir)
-	if targetWorkingDir == "" {
-		return 0
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), terminalTmuxActionTimeout)
-	defer cancel()
-	output, err := runTerminalTmuxOutputCommand(ctx, "list-panes", "-a", "-F", "#{session_name}\t#{pane_current_path}")
-	if err != nil {
-		if !isMissingTmuxTargetError(err) {
-			log.Printf("[PI_CLI_CONFLICT] Failed to list tmux panes for Pi CLI conflict cleanup: %v", err)
-		}
-		return 0
-	}
-
-	closed := 0
-	seen := map[string]struct{}{}
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		parts := strings.SplitN(line, "\t", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		tmuxSession := strings.TrimSpace(parts[0])
-		paneWorkingDir := strings.TrimSpace(parts[1])
-		if !strings.HasPrefix(tmuxSession, "mlp-pi-cli") {
-			continue
-		}
-		if !sameCodingAgentWorkingDir(paneWorkingDir, targetWorkingDir) {
-			continue
-		}
-		if _, ok := alreadyClosed[tmuxSession]; ok {
-			continue
-		}
-		if _, ok := seen[tmuxSession]; ok {
-			continue
-		}
-		seen[tmuxSession] = struct{}{}
-		closeReason := "pi-cli live same-working-dir conflict"
-		if reason != "" {
-			closeReason += ": " + reason
-		}
-		closeCodingAgentTmuxSessionByName(tmuxSession, closeReason)
-		closed++
-		log.Printf("[PI_CLI_CONFLICT] Closed live Pi CLI tmux session %q in working_dir=%s", tmuxSession, targetWorkingDir)
-	}
-	return closed
 }

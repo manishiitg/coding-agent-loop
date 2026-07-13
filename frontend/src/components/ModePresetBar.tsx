@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react'
 import { Workflow, Users, Settings, Copy, Keyboard, Bot, Building2, HelpCircle } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { useGlobalPresetStore, usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
@@ -7,7 +7,6 @@ import type { PlannerFile, PresetLLMConfig, ScheduledJob, WorkflowManifest } fro
 import PresetModal from './PresetModal'
 import WorkflowScheduleRunsPanel from './scheduler/WorkflowScheduleRunsPanel'
 import BotConnectorModal from './settings/BotConnectorModal'
-import { WorkflowsOverviewPopup } from './WorkflowsOverviewPage'
 import { schedulerApi } from '../api/scheduler'
 import { agentApi, workflowManifestApi } from '../services/api'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from './ui/tooltip'
@@ -31,6 +30,8 @@ import {
   isWorkflowWalkthroughDismissed,
 } from '../utils/onboarding'
 import { openWorkflowPresetPage } from '../utils/workflowSessionRestore'
+
+const WorkflowsOverviewPopup = lazy(() => import('./WorkflowsOverviewPage').then(module => ({ default: module.WorkflowsOverviewPopup })))
 
 const MODE_PILLS = [
   {
@@ -1010,10 +1011,14 @@ export const ModePresetBar: React.FC = () => {
       )}
 
       {/* Workflows Overview Popup */}
-      <WorkflowsOverviewPopup
-        isOpen={showWorkflowsPopup}
-        onClose={() => setShowWorkflowsPopup(false)}
-      />
+      {showWorkflowsPopup && (
+        <Suspense fallback={null}>
+          <WorkflowsOverviewPopup
+            isOpen
+            onClose={() => setShowWorkflowsPopup(false)}
+          />
+        </Suspense>
+      )}
 
       <WorkflowWalkthrough
         isOpen={showWorkflowWalkthrough}

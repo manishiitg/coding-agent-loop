@@ -15,10 +15,16 @@ import { logger } from '../utils/logger'
 import { compareEventsChronologically, compareEventsReverseChronologically } from '../utils/eventOrdering'
 import { getWorkspaceScopedStorageKey } from './useWorkspaceConnectionStore'
 import { looksLikeTerminalScreenText, splitStreamingStatusAndText } from '../utils/streamingStatus'
+import { createHydrationGate, type HydrationGateSnapshot } from '../utils/hydrationGate'
 
 // Active sessions cache TTL (30 seconds - shorter than polling interval to allow force refresh)
 const ACTIVE_SESSIONS_CACHE_TTL = 30000
 const STALE_STREAMING_GRACE_MS = 10000
+
+// This gate must exist before Zustand creates the persisted store. Browser
+// localStorage hydration can finish synchronously during create(), so the
+// callback cannot safely touch useChatStore or module bindings declared later.
+const chatStoreHydrationGate = createHydrationGate()
 
 // Streaming inactivity auto-clear timers (per sessionId)
 // When no new chunk arrives for 3s, streaming text is auto-cleared
@@ -2843,95 +2849,89 @@ export const useChatStore = create<ChatState>()(
           eventViewModePreference: normalizeEventViewMode(state.eventViewModePreference)
           // Exclude all other state (isStreaming, pollingInterval, tabEvents, etc.)
         }),
-        onRehydrateStorage: () => (state) => {
-          if (!state) return
-          // Signal that localStorage rehydration is complete
-          markChatStoreHydrated()
-
-          // Clean up stale tabs that survived partialize (edge case: clock skew, etc.)
-          const MAX_TAB_AGE = 24 * 60 * 60 * 1000
-          const now = Date.now()
-          const freshTabs: Record<string, typeof state.chatTabs[string]> = {}
-          let removedCount = 0
-          for (const [tabId, tab] of Object.entries(state.chatTabs)) {
-            const age = now - (tab.createdAt || 0)
-            if (age >= MAX_TAB_AGE) {
-              removedCount++
-              continue
-            }
-            // Note: we previously dropped workflow tabs without phaseId here,
-            // but this was too aggressive — it removed valid builder tabs from older sessions.
-            // Stale tabs are handled by the 24-hour age check above.
-            freshTabs[tabId] = tab
-          }
-          if (removedCount > 0) {
-            logger.debug('ChatStore', `Cleaned up ${removedCount} stale tabs on rehydrate`)
-            useChatStore.setState({ chatTabs: freshTabs })
-          }
-
-          // Migrate tabs: compute browserMode from enableBrowserAccess/useCdp if missing
-          let migratedTabConfig = false
-          for (const tab of Object.values(freshTabs)) {
-            if (tab.config && tab.config.browserMode === undefined) {
-              if (tab.config.enableBrowserAccess) {
-                tab.config.browserMode = tab.config.useCdp ? 'cdp' : 'headless'
-              } else {
-                tab.config.browserMode = 'none'
-              }
-              migratedTabConfig = true
-            }
-          }
-          if (migratedTabConfig) {
-            useChatStore.setState({ chatTabs: { ...freshTabs } })
-          }
-
-          // Auto-select first tab if activeTabId is null or points to a removed tab
-          if (!state.activeTabId || !freshTabs[state.activeTabId]) {
-            const tabs = Object.values(freshTabs)
-            if (tabs.length > 0) {
-              const sorted = [...tabs].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
-              useChatStore.setState({ activeTabId: sorted[0].tabId })
-            } else {
-              useChatStore.setState({ activeTabId: null })
-            }
-          }
+        onRehydrateStorage: () => (_state, error) => {
+          // Defer until create() has assigned useChatStore. This also makes tab
+          // cleanup/migration part of the hydration contract seen by all callers.
+          queueMicrotask(() => finalizeChatStoreHydration(error))
         }
       }
     )
 )
 
-// Hydration flag — set to true once zustand rehydrates persisted tabs from localStorage.
-// The source of truth is `useChatStore.persist.hasHydrated()`. The module-level
-// flag is only a fast path for callers that do not need to touch persist.
-let chatStoreHydrated = false
+function normalizeHydratedChatStore(): void {
+  const state = useChatStore.getState()
+  const maxTabAge = 24 * 60 * 60 * 1000
+  const now = Date.now()
+  const freshTabs: Record<string, ChatTab> = {}
+  let removedCount = 0
+  let migratedTabConfig = false
 
-/** Returns a promise that resolves once useChatStore has rehydrated from localStorage. */
-export function waitForChatStoreHydration(): Promise<void> {
-  if (chatStoreHydrated || useChatStore.persist.hasHydrated()) {
-    chatStoreHydrated = true
-    return Promise.resolve()
-  }
-  return new Promise(resolve => {
-    const unsubscribe = useChatStore.persist.onFinishHydration(() => {
-      chatStoreHydrated = true
-      clearTimeout(timeoutId)
-      unsubscribe()
-      resolve()
-    })
-    const timeoutId = setTimeout(() => {
-      if (useChatStore.persist.hasHydrated()) {
-        chatStoreHydrated = true
-      } else {
-        // Safety timeout: don't hang forever if hydration never fires
-        console.warn('[waitForChatStoreHydration] Timeout after 3s, proceeding anyway')
+  for (const [tabId, tab] of Object.entries(state.chatTabs)) {
+    const age = now - (tab.createdAt || 0)
+    if (age >= maxTabAge) {
+      removedCount++
+      continue
+    }
+
+    let nextTab = tab
+    if (tab.config && tab.config.browserMode === undefined) {
+      nextTab = {
+        ...tab,
+        config: {
+          ...tab.config,
+          browserMode: tab.config.enableBrowserAccess
+            ? (tab.config.useCdp ? 'cdp' : 'headless')
+            : 'none',
+        },
       }
-      unsubscribe()
-      resolve()
-    }, 3000)
-  })
+      migratedTabConfig = true
+    }
+    freshTabs[tabId] = nextTab
+  }
+
+  const tabsChanged = removedCount > 0 || migratedTabConfig
+  const activeTabIsValid = !!state.activeTabId && !!freshTabs[state.activeTabId]
+  let activeTabId = state.activeTabId
+  if (!activeTabIsValid) {
+    const oldestTab = Object.values(freshTabs)
+      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))[0]
+    activeTabId = oldestTab?.tabId ?? null
+  }
+
+  if (tabsChanged || activeTabId !== state.activeTabId) {
+    useChatStore.setState({
+      ...(tabsChanged ? { chatTabs: freshTabs } : {}),
+      ...(activeTabId !== state.activeTabId ? { activeTabId } : {}),
+    })
+  }
+  if (removedCount > 0) {
+    logger.debug('ChatStore', `Cleaned up ${removedCount} stale tabs on rehydrate`)
+  }
 }
 
-/** Called by onRehydrateStorage to signal hydration is complete */
-export function markChatStoreHydrated() {
-  chatStoreHydrated = true
+function finalizeChatStoreHydration(error?: unknown): void {
+  if (chatStoreHydrationGate.snapshot().status !== 'pending') return
+  if (error !== undefined) {
+    const result = chatStoreHydrationGate.settle(error)
+    console.error('[ChatStore] Failed to hydrate persisted chat state', result.error)
+    return
+  }
+
+  try {
+    normalizeHydratedChatStore()
+    chatStoreHydrationGate.settle()
+  } catch (normalizationError) {
+    const result = chatStoreHydrationGate.settle(normalizationError)
+    console.error('[ChatStore] Failed to normalize hydrated chat state', result.error)
+  }
+}
+
+/** Returns a promise that resolves once useChatStore has rehydrated from localStorage. */
+export async function waitForChatStoreHydration(): Promise<void> {
+  await chatStoreHydrationGate.wait()
+}
+
+/** Exposes hydration failures to diagnostics without making callers poll. */
+export function getChatStoreHydrationSnapshot(): HydrationGateSnapshot {
+  return chatStoreHydrationGate.snapshot()
 }

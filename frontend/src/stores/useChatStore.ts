@@ -2915,19 +2915,29 @@ function normalizeHydratedChatStore(): void {
 }
 
 function finalizeChatStoreHydration(error?: unknown): void {
-  if (chatStoreHydrationGate.snapshot().status !== 'pending') return
+  const gateIsPending = chatStoreHydrationGate.snapshot().status === 'pending'
   if (error !== undefined) {
-    const result = chatStoreHydrationGate.settle(error)
-    console.error('[ChatStore] Failed to hydrate persisted chat state', result.error)
+    if (gateIsPending) {
+      const result = chatStoreHydrationGate.settle(error)
+      console.error('[ChatStore] Failed to hydrate persisted chat state', result.error)
+    } else {
+      console.error('[ChatStore] Persisted chat state failed after hydration backstop', error)
+    }
     return
   }
 
   try {
+    // A backstop releases callers but does not cancel Zustand hydration. Always
+    // normalize the eventual persisted state, even if the gate already settled.
     normalizeHydratedChatStore()
-    chatStoreHydrationGate.settle()
+    if (gateIsPending) chatStoreHydrationGate.settle()
   } catch (normalizationError) {
-    const result = chatStoreHydrationGate.settle(normalizationError)
-    console.error('[ChatStore] Failed to normalize hydrated chat state', result.error)
+    if (gateIsPending) {
+      const result = chatStoreHydrationGate.settle(normalizationError)
+      console.error('[ChatStore] Failed to normalize hydrated chat state', result.error)
+    } else {
+      console.error('[ChatStore] Failed to normalize late hydrated chat state', normalizationError)
+    }
   }
 }
 

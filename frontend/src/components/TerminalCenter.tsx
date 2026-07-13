@@ -5,6 +5,7 @@ import { Terminal as XTerm, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { agentApi } from '../services/api'
+import { reconcileTerminalSnapshots } from '../utils/terminalSnapshotIdentity'
 import type { PollingEvent, TerminalSnapshot } from '../services/api-types'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { normalizeEventViewMode, useChatStore } from '../stores/useChatStore'
@@ -3384,7 +3385,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
           gracePolls: EMPTY_TERMINAL_RESPONSE_GRACE_POLLS,
         })
         emptyResponseCountRef.current = continuity.emptyPollCount
-        return continuity.terminals
+        return reconcileTerminalSnapshots(current, continuity.terminals)
       })
       setError(null)
     } catch (err) {

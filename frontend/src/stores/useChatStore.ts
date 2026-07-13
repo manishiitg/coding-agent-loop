@@ -2894,8 +2894,12 @@ export const useChatStore = create<ChatState>()(
 
 if (chatPersistStorage) {
   const flushDurableChatState = () => chatPersistStorage.flush()
+  const flushDurableChatStateWhenHidden = () => {
+    if (globalThis.document?.visibilityState === 'hidden') flushDurableChatState()
+  }
   globalThis.addEventListener?.('pagehide', flushDurableChatState)
   globalThis.addEventListener?.('beforeunload', flushDurableChatState)
+  globalThis.document?.addEventListener('visibilitychange', flushDurableChatStateWhenHidden)
 } else {
   queueMicrotask(() => finalizeChatStoreHydration())
 }

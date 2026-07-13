@@ -439,6 +439,10 @@ func (api *StreamingAPI) handleDismissTerminal(w http.ResponseWriter, r *http.Re
 		http.Error(w, "Terminal not found", http.StatusNotFound)
 		return
 	}
+	if registry := api.ensureTerminalLeaseRegistry(); registry != nil {
+		registry.Observe(snapshot, snapshot.UpdatedAt)
+		registry.MarkSnapshotDismissed(terminalID)
+	}
 	_ = json.NewEncoder(w).Encode(map[string]bool{"dismissed": true})
 }
 
@@ -465,10 +469,13 @@ func (api *StreamingAPI) handleCompleteTerminal(w http.ResponseWriter, r *http.R
 	if before.Active && strings.TrimSpace(before.TmuxSession) != "" {
 		forceCompleteCodingAgentTmuxSession(before.TmuxSession)
 	}
+	if registry := api.ensureTerminalLeaseRegistry(); registry != nil {
+		registry.Observe(snapshot, snapshot.UpdatedAt)
+	}
 	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot)})
 }
 
-// handleFailTerminal marks one view-only terminal snapshot failed.
+// handleFailTerminal fails the terminal and closes its backing process.
 // POST /api/terminals/{terminal_id}/fail
 func (api *StreamingAPI) handleFailTerminal(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -484,6 +491,16 @@ func (api *StreamingAPI) handleFailTerminal(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		http.Error(w, "Terminal not found", http.StatusNotFound)
 		return
+	}
+	if before.Active && strings.TrimSpace(before.TmuxSession) != "" {
+		if closeCodingAgentTmuxSessionByName(before.TmuxSession, "failed by operator") {
+			if registry := api.ensureTerminalLeaseRegistry(); registry != nil {
+				registry.MarkClosed(before.TmuxSession, "failed by operator", time.Now())
+			}
+			if archived, archivedOK := api.terminalStore.MarkProcessClosed(before.TerminalID, "failed by operator"); archivedOK {
+				snapshot = archived
+			}
+		}
 	}
 	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot)})
 }
@@ -554,6 +571,12 @@ func (api *StreamingAPI) handleKillTerminal(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		http.Error(w, "Terminal not found", http.StatusNotFound)
 		return
+	}
+	if registry := api.ensureTerminalLeaseRegistry(); registry != nil {
+		registry.MarkClosed(snapshot.TmuxSession, "killed by operator", time.Now())
+	}
+	if archived, archivedOK := api.terminalStore.MarkProcessClosed(snapshot.TerminalID, "killed by operator"); archivedOK {
+		updated = archived
 	}
 	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), updated)})
 }

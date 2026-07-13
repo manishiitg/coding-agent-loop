@@ -60,6 +60,7 @@ import (
 	"mcp-agent-builder-go/agent_go/cmd/server/guidance"
 	"mcp-agent-builder-go/agent_go/cmd/server/services"
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	"mcp-agent-builder-go/agent_go/internal/terminalleases"
 	"mcp-agent-builder-go/agent_go/internal/terminals"
 	browserinstructions "mcp-agent-builder-go/agent_go/pkg/instructions"
 	"mcp-agent-builder-go/agent_go/pkg/workspace"
@@ -76,7 +77,6 @@ var (
 	cleanupCursorCLIProviderSessions  = llmproviders.CleanupCursorCLIInteractiveSessions
 	cleanupAgyCLIProviderSessions     = llmproviders.CleanupAgyCLIInteractiveSessions
 	cleanupPiCLIProviderSessions      = llmproviders.CleanupPiCLIInteractiveSessions
-	sweepOrphanedTmuxSessions         = llmproviders.SweepOrphanedInteractiveTmuxSessions
 )
 
 var mcpBridgeCustomToolCategories = map[string]bool{
@@ -305,6 +305,10 @@ type StreamingAPI struct {
 
 	// View-only runtime terminal snapshots for coding-agent TUI streams.
 	terminalStore *terminals.Store
+	// Process ownership is independent from terminal snapshot visibility and
+	// retention. The lease registry remains authoritative after UI dismissal.
+	terminalLeaseRegistry *terminalleases.Registry
+	terminalLeaseMux      sync.Mutex
 
 	// Phase 1 observer: immutable aggregate runtime snapshots. Existing stores
 	// remain authoritative until observer comparisons are proven in production.
@@ -1039,16 +1043,12 @@ func runServer(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// Startup recovery: sweep coding-agent tmux sessions (and their orphaned
-	// process trees) stranded by a PREVIOUS run that exited ungracefully
-	// (crash, SIGKILL, machine sleep). The in-process registries the shutdown
-	// cleanup relies on are empty on a fresh boot, so those leftovers would
-	// otherwise accumulate across restarts. Single-instance only — set
-	// MCP_DISABLE_TMUX_STARTUP_SWEEP=1 to skip (e.g. when sharing a tmux server
-	// with another backend or test).
+	// Startup recovery is ownership-aware: only tagged coding-agent tmux
+	// sessions whose backend PID is dead are removed. Untagged legacy sessions
+	// and sessions owned by another live backend/test are preserved.
 	if os.Getenv("MCP_DISABLE_TMUX_STARTUP_SWEEP") == "" {
 		sweepCtx, cancelSweep := context.WithTimeout(context.Background(), 10*time.Second)
-		if n := sweepOrphanedTmuxSessions(sweepCtx); n > 0 {
+		if n := sweepOrphanedOwnedTmuxSessions(sweepCtx); n > 0 {
 			fmt.Printf("🧹 Swept %d orphaned coding-agent tmux session(s) from a previous run\n", n)
 			log.Printf("[STARTUP] swept %d orphaned coding-agent tmux sessions", n)
 		}
@@ -1164,9 +1164,25 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 	eventStore := events.NewEventStore(maxSessionEvents)
 	terminalStore := terminals.NewStore()
+	serverStartedAt := time.Now()
+	if processStart, ok := processStartedAt(os.Getpid()); ok {
+		serverStartedAt = processStart
+	}
+	terminalLeaseRegistry := terminalleases.NewRegistry(
+		fmt.Sprintf("%d-%d", os.Getpid(), serverStartedAt.UnixNano()),
+		os.Getpid(),
+		serverStartedAt,
+	)
 	terminalPipeRecorder := newTerminalPipeRecorder()
 	eventStore.SetEventAddedCallback(func(sessionID string, event events.Event) {
-		terminalStore.HandleEvent(sessionID, event)
+		if !terminalStore.HandleEventWithChange(sessionID, event) {
+			return
+		}
+		for _, snapshot := range terminalStore.ListRaw(sessionID) {
+			if lease, acquired := terminalLeaseRegistry.Observe(snapshot, event.Timestamp); acquired {
+				go markTerminalLeaseOwnership(lease)
+			}
+		}
 		if terminalPipeRecorder != nil {
 			terminalPipeRecorder.ObserveSnapshots(terminalStore.List(sessionID))
 		}
@@ -1264,6 +1280,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		eventStore:                         eventStore,
 		terminalStore:                      terminalStore,
 		runtimeCoordinator:                 NewRuntimeCoordinator(),
+		terminalLeaseRegistry:              terminalLeaseRegistry,
 		terminalPipeRecorder:               terminalPipeRecorder,
 		liveAttach:                         newLiveAttachManagerIfEnabled(),
 		provider:                           config.Provider,
@@ -6074,7 +6091,7 @@ func (api *StreamingAPI) sessionHasLiveCodingTmux(sessionID string) bool {
 	if api == nil || api.terminalStore == nil {
 		return false
 	}
-	for _, snapshot := range api.terminalStore.List(sessionID) {
+	for _, snapshot := range api.terminalStore.ListRaw(sessionID) {
 		if snapshot.Active && strings.TrimSpace(snapshot.TmuxSession) != "" {
 			return true
 		}
@@ -6600,8 +6617,12 @@ func (api *StreamingAPI) cleanupInactiveSessions() {
 	for range ticker.C {
 		now := time.Now()
 		api.cleanupInactiveSessionsAt(now)
+		api.heartbeatTerminalLeases(now)
 		if closed := api.cleanupStaleCodingAgentTmuxSessions(now); closed > 0 {
 			log.Printf("[ACTIVE_SESSION] Cleanup: Closed %d stale coding-agent tmux session(s)", closed)
+		}
+		if registry := api.ensureTerminalLeaseRegistry(); registry != nil {
+			registry.Prune(now)
 		}
 	}
 }
@@ -8784,7 +8805,7 @@ func makeStepTmuxLookup(api *StreamingAPI) todo_creation_human.TmuxLookupFunc {
 		if strings.TrimSpace(mainSessionID) == "" || strings.TrimSpace(stepID) == "" {
 			return "", "", false
 		}
-		for _, snap := range api.terminalStore.List(mainSessionID) {
+		for _, snap := range api.terminalStore.ListRaw(mainSessionID) {
 			if snap.StepID != stepID {
 				continue
 			}

@@ -1923,20 +1923,26 @@ func TestStoreLaterFailureOverridesEarlierCompletionText(t *testing.T) {
 	}
 }
 
-func TestStoreDismissRemovesTerminalAndSuppressesFutureChunks(t *testing.T) {
+func TestStoreDismissHidesTerminalButRetainsOwnershipAndFutureChunks(t *testing.T) {
 	store := NewStore()
 	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", "screen one", 1))
 
 	if !store.Dismiss("session-1:exec-1") {
-		t.Fatalf("expected dismiss to remove terminal")
+		t.Fatalf("expected dismiss to hide terminal")
 	}
 	if _, ok := store.Get("session-1:exec-1"); ok {
-		t.Fatalf("terminal should be removed after dismiss")
+		t.Fatalf("terminal should be hidden after dismiss")
+	}
+	if raw, ok := store.GetRaw("session-1:exec-1"); !ok || raw.Content != "screen one" {
+		t.Fatalf("dismissal lost ownership snapshot: ok=%v content=%q", ok, raw.Content)
 	}
 
 	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", "screen two", 2))
 	if _, ok := store.Get("session-1:exec-1"); ok {
-		t.Fatalf("dismissed terminal should not be recreated by future chunks")
+		t.Fatalf("dismissed terminal should stay hidden")
+	}
+	if raw, ok := store.GetRaw("session-1:exec-1"); !ok || raw.Content != "screen two" {
+		t.Fatalf("future chunk did not update hidden ownership snapshot: ok=%v content=%q", ok, raw.Content)
 	}
 }
 
@@ -2353,6 +2359,33 @@ func TestSessionHasRetainedCodingTmuxDoesNotRequireBusyContent(t *testing.T) {
 	}
 	if store.SessionHasRetainedCodingTmux("session-1") {
 		t.Fatal("completed terminal should not be reported as retained/live")
+	}
+}
+
+func TestDismissedLiveCodingTmuxRemainsOperationallyVisible(t *testing.T) {
+	store := NewStore()
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"main:session-1",
+		cursorBusyPaneFixture,
+		0,
+		map[string]interface{}{
+			"tmux_session":   "mlp-codex-cli-dismissed",
+			"execution_kind": "main_agent",
+		},
+		time.Now(),
+	))
+	terminalID := "session-1:main:session-1"
+	if !store.Dismiss(terminalID) {
+		t.Fatal("expected terminal dismissal to succeed")
+	}
+	if store.SessionHasBusyCodingTmux("session-1") != true {
+		t.Fatal("dismissed live pane must remain visible to busy routing")
+	}
+	if store.SessionHasRetainedCodingTmux("session-1") != true {
+		t.Fatal("dismissed live pane must remain visible to lifecycle routing")
+	}
+	if _, visible := store.Get(terminalID); visible {
+		t.Fatal("dismissed pane should remain hidden from presentation")
 	}
 }
 

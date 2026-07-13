@@ -323,7 +323,7 @@ func (api *StreamingAPI) terminalFingerprint(sessionID string) string {
 		return ""
 	}
 	var b strings.Builder
-	for _, snapshot := range api.terminalStore.List(sessionID) {
+	for _, snapshot := range api.terminalStore.ListRaw(sessionID) {
 		if strings.TrimSpace(snapshot.TmuxSession) == "" {
 			continue
 		}

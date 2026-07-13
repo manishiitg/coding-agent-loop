@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 
@@ -312,7 +313,7 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 	// bookkeeping drifted from the terminal store's owner ID.
 	if r.URL.Query().Get("cancelAgents") == "true" && api.terminalStore != nil {
 		mainOwner := "main:" + sessionID
-		for _, snap := range api.terminalStore.List(sessionID) {
+		for _, snap := range api.terminalStore.ListRaw(sessionID) {
 			owner := strings.TrimSpace(snap.OwnerID)
 			if owner == "" || owner == sessionID || owner == mainOwner {
 				continue // chat / main-agent session already handled above
@@ -339,6 +340,10 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 				// terminals in their terminal state.
 				api.terminalStore.MarkFailed(snap.TerminalID)
 			}
+			if registry := api.ensureTerminalLeaseRegistry(); registry != nil {
+				registry.MarkClosed(tmux, closeReason, time.Now())
+			}
+			api.terminalStore.MarkProcessClosed(snap.TerminalID, closeReason)
 			log.Printf("[SESSION DEBUG] Tore down workflow sub-agent terminal owner=%s tmux=%s active=%v for stopped session %s", owner, tmux, snap.Active, sessionID)
 		}
 	}

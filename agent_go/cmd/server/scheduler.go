@@ -998,23 +998,26 @@ func (s *SchedulerService) cancelScheduledSessionWork(sessionID, closeReason str
 	// stop is a hard, full stop — always cancel sub-agents).
 	closeAllCodingCLIInteractiveSessionsForOwner(sessionID, closeReason)
 	if s.api.terminalStore != nil {
-		mainOwner := "main:" + sessionID
-		for _, snap := range s.api.terminalStore.List(sessionID) {
-			owner := strings.TrimSpace(snap.OwnerID)
+		closedTmux := make(map[string]struct{})
+		for _, snap := range s.api.terminalStore.ListRaw(sessionID) {
 			tmux := strings.TrimSpace(snap.TmuxSession)
-			if tmux == "" || owner == sessionID || owner == mainOwner {
-				continue // no pane, or main agent already handled above
+			if tmux == "" {
+				continue
 			}
-			if handled := gracefulCloseCodingCLITmuxByName(tmux, closeReason); !handled {
-				killCtx, killCancel := context.WithTimeout(context.Background(), terminalTmuxActionTimeout)
-				if err := runTerminalTmuxCommand(killCtx, "", "kill-session", "-t", tmux); err != nil {
-					scheduleLogf("[SCHEDULER] kill-session %q (owner %s) failed (may already be gone): %v", tmux, owner, err)
+			if _, seen := closedTmux[tmux]; !seen {
+				if !closeCodingAgentTmuxSessionByName(tmux, closeReason) {
+					scheduleLogf("[SCHEDULER] failed to close tmux %q (owner %s)", tmux, strings.TrimSpace(snap.OwnerID))
+					continue
 				}
-				killCancel()
+				closedTmux[tmux] = struct{}{}
+				if registry := s.api.ensureTerminalLeaseRegistry(); registry != nil {
+					registry.MarkClosed(tmux, closeReason, time.Now())
+				}
 			}
 			if snap.Active {
 				s.api.terminalStore.MarkFailed(snap.TerminalID)
 			}
+			s.api.terminalStore.MarkProcessClosed(snap.TerminalID, closeReason)
 		}
 	}
 

@@ -596,6 +596,9 @@ export interface TerminalSnapshot {
   chunk_index: number
   active: boolean
   state?: 'running' | 'completed' | 'failed' | 'idle' | 'closing' | 'stale' | string
+  process_state?: 'live' | 'closing' | 'closed' | string
+  snapshot_kind?: 'live' | 'archived' | string
+  close_reason?: string
   closes_at?: string
   retention_seconds?: number
   status: TerminalStatus

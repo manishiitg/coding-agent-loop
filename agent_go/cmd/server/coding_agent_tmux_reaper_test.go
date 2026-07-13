@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -142,6 +143,64 @@ func TestCleanupStaleCodingAgentTmuxSessionsClosesStoppedSessionImmediately(t *t
 	}
 }
 
+func TestCleanupBoundedTmuxKeepsDismissedSnapshotUntilDisplayDeadline(t *testing.T) {
+	now := time.Now()
+	store := terminals.NewStore()
+	sessionID := "bounded-session"
+	tmuxSession := "mlp-cursor-cli-int-bounded"
+	terminalID := sessionID + ":workflow-step:review-plan"
+	store.HandleEvent(sessionID, codingAgentTmuxReaperChunkEvent(now, sessionID, "workflow-step:review-plan", tmuxSession))
+	store.HandleEvent(sessionID, storeevents.Event{
+		Type:          "streaming_end",
+		Timestamp:     now,
+		SessionID:     sessionID,
+		ExecutionID:   "workflow-step:review-plan",
+		ExecutionKind: "workflow_step",
+		Data: &agentevents.AgentEvent{
+			Type: agentevents.StreamingEnd,
+			Data: &agentevents.StreamingEndEvent{
+				BaseEventData: agentevents.BaseEventData{Metadata: map[string]interface{}{
+					"kind":                       "terminal",
+					"tmux_session":               tmuxSession,
+					"terminal_retention_seconds": 1800,
+				}},
+			},
+		},
+	})
+	if !store.Dismiss(terminalID) {
+		t.Fatal("expected snapshot dismissal")
+	}
+	api := &StreamingAPI{
+		terminalStore: store,
+		activeSessions: map[string]*ActiveSessionInfo{
+			sessionID: {SessionID: sessionID, Status: "running"},
+		},
+	}
+	gotArgs := stubTerminalTmuxCommand(t)
+
+	closed := api.cleanupStaleCodingAgentTmuxSessions(now.Add(31 * time.Second))
+
+	if closed != 1 {
+		t.Fatalf("closed = %d, want 1", closed)
+	}
+	if got := strings.Join(*gotArgs, " "); got != "kill-session -t "+tmuxSession {
+		t.Fatalf("tmux args = %q, want kill-session", got)
+	}
+	raw, ok := store.GetRaw(terminalID)
+	if !ok {
+		t.Fatal("process cleanup deleted retained snapshot")
+	}
+	if raw.TmuxSession != "" || raw.ProcessState != "closed" || raw.SnapshotKind != "archived" {
+		t.Fatalf("raw tmux/process/kind = %q/%q/%q", raw.TmuxSession, raw.ProcessState, raw.SnapshotKind)
+	}
+	if raw.ClosesAt == nil || !raw.ClosesAt.After(now.Add(20*time.Minute)) {
+		t.Fatalf("snapshot display deadline was not retained: %v", raw.ClosesAt)
+	}
+	if _, visible := store.Get(terminalID); visible {
+		t.Fatal("dismissed snapshot became visible during cleanup")
+	}
+}
+
 func TestCleanupConflictingPiCLIInteractiveSessionsClosesManualSameWorkingDir(t *testing.T) {
 	now := time.Now()
 	store := terminals.NewStore()
@@ -162,6 +221,7 @@ func TestCleanupConflictingPiCLIInteractiveSessionsClosesManualSameWorkingDir(t 
 	}
 
 	gotArgs := stubTerminalTmuxCommand(t)
+	stubOwnedTmuxSession(t, api, tmuxSession)
 
 	closed := api.cleanupConflictingPiCLIInteractiveSessions(newSessionID, workingDir, "test")
 
@@ -175,8 +235,8 @@ func TestCleanupConflictingPiCLIInteractiveSessionsClosesManualSameWorkingDir(t 
 	if !ok {
 		t.Fatal("expected terminal snapshot to remain visible")
 	}
-	if snapshot.Active || snapshot.State != "stale" || snapshot.TmuxSession != "" {
-		t.Fatalf("snapshot active/state/tmux = %v/%q/%q, want false/stale/empty", snapshot.Active, snapshot.State, snapshot.TmuxSession)
+	if snapshot.Active || snapshot.State != "completed" || snapshot.TmuxSession != "" {
+		t.Fatalf("snapshot active/state/tmux = %v/%q/%q, want false/completed/empty", snapshot.Active, snapshot.State, snapshot.TmuxSession)
 	}
 	if got := api.activeSessions[oldSessionID].Status; got != "completed" {
 		t.Fatalf("old session status = %q, want completed", got)
@@ -206,6 +266,7 @@ func TestCleanupConflictingPiCLIInteractiveSessionsStopsRunningManualSameWorking
 	}
 
 	gotArgs := stubTerminalTmuxCommand(t)
+	stubOwnedTmuxSession(t, api, tmuxSession)
 
 	closed := api.cleanupConflictingPiCLIInteractiveSessions(newSessionID, workingDir, "test")
 
@@ -223,6 +284,37 @@ func TestCleanupConflictingPiCLIInteractiveSessionsStopsRunningManualSameWorking
 	}
 	if api.isSessionBusy(oldSessionID) {
 		t.Fatal("expected old session busy flag to be cleared")
+	}
+}
+
+func TestCleanupConflictingPiCLIInteractiveSessionsPreservesForeignOwner(t *testing.T) {
+	now := time.Now()
+	store := terminals.NewStore()
+	oldSessionID := "foreign-chat-session"
+	newSessionID := "new-chat-session"
+	tmuxSession := "mlp-pi-cli-int-foreign"
+	workingDir := "/tmp/workspace-docs/_users/default/Chats"
+	store.HandleEvent(oldSessionID, codingAgentTmuxReaperChunkEvent(now, oldSessionID, "main:"+oldSessionID, tmuxSession))
+	store.HandleEvent(oldSessionID, codingAgentTmuxStatusLineEvent(now, oldSessionID, tmuxSession, workingDir))
+	api := &StreamingAPI{
+		terminalStore: store,
+		activeSessions: map[string]*ActiveSessionInfo{
+			oldSessionID: {SessionID: oldSessionID, Status: "completed"},
+			newSessionID: {SessionID: newSessionID, Status: "running"},
+		},
+	}
+	gotArgs := stubTerminalTmuxCommand(t)
+	oldOutput := runTerminalTmuxOutputCommand
+	runTerminalTmuxOutputCommand = func(context.Context, ...string) (string, error) {
+		return tmuxSession + "\tforeign-instance\t999999\t1\t1", nil
+	}
+	t.Cleanup(func() { runTerminalTmuxOutputCommand = oldOutput })
+
+	if closed := api.cleanupConflictingPiCLIInteractiveSessions(newSessionID, workingDir, "test"); closed != 0 {
+		t.Fatalf("closed = %d, want 0", closed)
+	}
+	if len(*gotArgs) != 0 {
+		t.Fatalf("foreign-owned tmux must not be killed: %v", *gotArgs)
 	}
 }
 
@@ -259,7 +351,7 @@ func TestCleanupConflictingPiCLIInteractiveSessionsKeepsCronSameWorkingDir(t *te
 	}
 }
 
-func TestCleanupConflictingPiCLIInteractiveSessionsClosesLiveTmuxFallback(t *testing.T) {
+func TestCleanupConflictingPiCLIInteractiveSessionsPreservesUntrackedTmux(t *testing.T) {
 	workingDir := "/tmp/workspace-docs/_users/default/Chats"
 	tmuxSession := "mlp-pi-cli-int-live-orphan"
 	api := &StreamingAPI{terminalStore: terminals.NewStore()}
@@ -285,12 +377,33 @@ func TestCleanupConflictingPiCLIInteractiveSessionsClosesLiveTmuxFallback(t *tes
 
 	closed := api.cleanupConflictingPiCLIInteractiveSessions("new-chat-session", workingDir, "test")
 
-	if closed != 1 {
-		t.Fatalf("closed = %d, want 1", closed)
+	if closed != 0 {
+		t.Fatalf("closed = %d, want 0", closed)
 	}
-	if got := strings.Join(gotKill, " "); got != "kill-session -t "+tmuxSession {
-		t.Fatalf("tmux args = %q, want kill-session", got)
+	if len(gotKill) != 0 {
+		t.Fatalf("untracked tmux must not be killed: %v", gotKill)
 	}
+}
+
+func stubOwnedTmuxSession(t *testing.T, api *StreamingAPI, tmuxSession string) {
+	t.Helper()
+	registry := api.ensureTerminalLeaseRegistry()
+	if registry == nil {
+		t.Fatal("expected terminal lease registry")
+	}
+	original := runTerminalTmuxOutputCommand
+	runTerminalTmuxOutputCommand = func(_ context.Context, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "display-message" {
+			return fmt.Sprintf("%s\t%s\t%d\t%d\t1",
+				tmuxSession,
+				registry.InstanceID(),
+				registry.OwnerPID(),
+				registry.OwnerStartedAt().Unix(),
+			), nil
+		}
+		return original(context.Background(), args...)
+	}
+	t.Cleanup(func() { runTerminalTmuxOutputCommand = original })
 }
 
 // TestSessionHasLiveCodingTmuxTracksReap covers the gate that decides whether an

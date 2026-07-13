@@ -1175,6 +1175,7 @@ func getScheduledJobRunsHandler(svc *SchedulerService) http.HandlerFunc {
 		// Check if it's a multi-agent schedule
 		userID := svc.GetUserForSchedule(id)
 		if userID != "" {
+			_ = svc.reconcileMultiAgentScheduleRuns(r.Context(), userID, id)
 			runs, total, err = ListMultiAgentScheduleRuns(r.Context(), userID, id, limit, offset)
 		} else {
 			// Find workspace path for workflow schedule
@@ -1186,6 +1187,7 @@ func getScheduledJobRunsHandler(svc *SchedulerService) http.HandlerFunc {
 					return
 				}
 				if result.SourceType == "multi-agent" {
+					_ = svc.reconcileMultiAgentScheduleRuns(r.Context(), result.UserID, id)
 					runs, total, err = ListMultiAgentScheduleRuns(r.Context(), result.UserID, id, limit, offset)
 				} else {
 					workspacePath = result.WorkspacePath

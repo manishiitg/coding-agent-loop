@@ -218,6 +218,102 @@ func TestStopRunningJobCancelsBeforeSessionStarts(t *testing.T) {
 	}
 }
 
+func TestScheduleRunPublicationRegistersCancelBeforeUnlock(t *testing.T) {
+	store, err := schedulerstate.Open(filepath.Join(t.TempDir(), "schedule-state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	svc := NewSchedulerService(nil)
+	svc.stateStore = store
+	sctx := buildScheduleContext("Workflow/demo", &WorkflowManifest{ID: "demo"}, WorkflowSchedule{ID: "daily"})
+	runID := "atomic-publication"
+	startedAt := time.Now().UTC()
+	if err := svc.claimScheduleRun(context.Background(), sctx, runID, startedAt); err != nil {
+		t.Fatal(err)
+	}
+
+	runtimeKey := scheduleRuntimeKey(sctx)
+	svc.runtimeStatesMu.Lock()
+	state := svc.getRuntimeStateLocked(runtimeKey)
+	runCtx := svc.activateScheduleRunLocked(state, runID, startedAt)
+	stopStarted := make(chan struct{})
+	stopDone := make(chan struct{})
+	go func() {
+		close(stopStarted)
+		svc.stopRunningJob(runtimeKey, sctx.Schedule.ID)
+		close(stopDone)
+	}()
+	<-stopStarted
+	select {
+	case <-stopDone:
+		t.Fatal("stop completed before active run publication released its lock")
+	case <-time.After(20 * time.Millisecond):
+	}
+	svc.runtimeStatesMu.Unlock()
+
+	select {
+	case <-runCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("stop did not cancel the atomically published run context")
+	}
+	select {
+	case <-stopDone:
+	case <-time.After(time.Second):
+		t.Fatal("stop did not complete")
+	}
+}
+
+func TestTriggerMultiAgentNowFindsBuiltinWithoutScheduleFile(t *testing.T) {
+	workspace := httptest.NewServer(&mockWorkspaceAPI{files: map[string]string{}})
+	defer workspace.Close()
+	t.Setenv("WORKSPACE_API_URL", workspace.URL)
+
+	svc := NewSchedulerService(nil)
+	userID := "user-without-schedule-file"
+	svc.updateRuntimeState(multiAgentScheduleRuntimeKey(userID, builtinOrgPulseID), func(state *ScheduleRuntimeState) {
+		state.LastStatus = "running"
+		state.LastSessionID = "existing-session"
+	})
+
+	_, err := svc.TriggerMultiAgentNow(userID, builtinOrgPulseID)
+	if err == nil || !strings.Contains(err.Error(), "job is already running") {
+		t.Fatalf("TriggerMultiAgentNow() error = %v, want builtin resolution followed by running guard", err)
+	}
+}
+
+func TestGetRuntimeStateForUserReconcilesStaleRun(t *testing.T) {
+	workspace := httptest.NewServer(&mockWorkspaceAPI{files: map[string]string{}})
+	defer workspace.Close()
+	t.Setenv("WORKSPACE_API_URL", workspace.URL)
+
+	userID := "user-1"
+	scheduleID := "daily"
+	if err := AppendMultiAgentScheduleRun(context.Background(), userID, &ScheduleRunEntry{
+		ID:         "stale-run",
+		ScheduleID: scheduleID,
+		SessionID:  "missing-session",
+		Status:     "running",
+		StartedAt:  time.Now().Add(-time.Minute).UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewSchedulerService(&StreamingAPI{})
+	state := svc.GetRuntimeStateForUser(userID, scheduleID)
+	if state.LastStatus != "error" || !strings.Contains(state.LastError, "session not active") {
+		t.Fatalf("reconciled state = %+v, want stale run finalized as error", state)
+	}
+	runs, err := ReadMultiAgentScheduleRuns(context.Background(), userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].Status != "error" || runs[0].CompletedAt == nil {
+		t.Fatalf("persisted runs = %+v, want finalized stale run", runs)
+	}
+}
+
 func TestScheduleConfigFingerprintChangesWithCapabilities(t *testing.T) {
 	sctx := buildMultiAgentScheduleContext("user-1", WorkflowSchedule{ID: "daily", Enabled: true, CronExpression: "0 9 * * *", Timezone: "UTC"}, WorkflowCapabilities{})
 	first := scheduleConfigFingerprint(sctx)

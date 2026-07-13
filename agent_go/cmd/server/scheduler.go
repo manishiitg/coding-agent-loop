@@ -752,6 +752,7 @@ func (s *SchedulerService) GetRuntimeStateForWorkflow(workspacePath, scheduleID 
 
 func (s *SchedulerService) GetRuntimeStateForUser(userID, scheduleID string) ScheduleRuntimeState {
 	merged := s.getRuntimeStateByKey(multiAgentScheduleRuntimeKey(userID, scheduleID))
+	_ = s.reconcileMultiAgentScheduleRuns(context.Background(), userID, scheduleID)
 	runs, err := ReadMultiAgentScheduleRuns(context.Background(), userID)
 	if err == nil {
 		return mergeRuntimeStateWithRuns(merged, scheduleID, runs)
@@ -822,6 +823,48 @@ func (s *SchedulerService) reconcileWorkflowScheduleRuns(ctx context.Context, wo
 		return nil
 	}
 	return WriteScheduleRuns(ctx, workspacePath, runs)
+}
+
+func (s *SchedulerService) reconcileMultiAgentScheduleRuns(ctx context.Context, userID, scheduleID string) error {
+	if s == nil || s.api == nil || strings.TrimSpace(userID) == "" {
+		return nil
+	}
+
+	runs, err := ReadMultiAgentScheduleRuns(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	now := time.Now().UTC()
+	changed := false
+	for i := range runs {
+		if runs[i].Status != "running" {
+			continue
+		}
+		if scheduleID != "" && runs[i].ScheduleID != scheduleID {
+			continue
+		}
+
+		status, errMsg, shouldFinalize := s.reconciledScheduleRunStatus(&runs[i], now)
+		if !shouldFinalize {
+			continue
+		}
+
+		runs[i].Status = status
+		runs[i].Error = errMsg
+		durationMs := now.Sub(runs[i].StartedAt).Milliseconds()
+		if durationMs < 0 {
+			durationMs = 0
+		}
+		runs[i].DurationMs = &durationMs
+		runs[i].CompletedAt = &now
+		changed = true
+	}
+
+	if !changed {
+		return nil
+	}
+	return WriteMultiAgentScheduleRuns(ctx, userID, runs)
 }
 
 func (s *SchedulerService) reconciledScheduleRunStatus(run *ScheduleRunEntry, now time.Time) (string, string, bool) {
@@ -998,12 +1041,7 @@ func (s *SchedulerService) TriggerNow(workspacePath string, scheduleID string) (
 		s.recordScheduleFireDecision(ctx, sctx, "skipped_busy", err.Error(), "", startTime)
 		return "", err
 	}
-	state.LastStatus = "running"
-	state.ActiveRunID = runID
-	state.LastRunAt = &startTime
-	state.LastError = ""
-	state.runGeneration++
-	runGeneration := state.runGeneration
+	runCtx := s.activateScheduleRunLocked(state, runID, startTime)
 	s.runtimeStatesMu.Unlock()
 	s.recordScheduleFireDecision(ctx, sctx, "started", "manual trigger accepted", runID, startTime)
 
@@ -1011,7 +1049,6 @@ func (s *SchedulerService) TriggerNow(workspacePath string, scheduleID string) (
 		s.logf(sctx, "[SCHEDULER] Warning: failed to record manual schedule execution for %s: %v", scheduleID, err)
 	}
 
-	runCtx := s.registerScheduleRunContext(runID)
 	go func() {
 		if _, err := s.runJob(runCtx, sctx, runID); err != nil {
 			scheduleLogf("[SCHEDULER] Triggered job %s failed: %v", scheduleID, err)
@@ -1025,8 +1062,8 @@ func (s *SchedulerService) TriggerNow(workspacePath string, scheduleID string) (
 func (s *SchedulerService) TriggerMultiAgentNow(userID string, scheduleID string) (string, error) {
 	ctx := context.Background()
 
-	f, exists, err := ReadMultiAgentSchedules(ctx, userID)
-	if err != nil || !exists {
+	f, _, err := ReadMultiAgentSchedules(ctx, userID)
+	if err != nil {
 		return "", fmt.Errorf("failed to read multi-agent schedules for user %s: %w", userID, err)
 	}
 
@@ -1059,17 +1096,11 @@ func (s *SchedulerService) TriggerMultiAgentNow(userID string, scheduleID string
 		s.recordScheduleFireDecision(ctx, sctx, "skipped_busy", err.Error(), "", startTime)
 		return "", err
 	}
-	state.LastStatus = "running"
-	state.ActiveRunID = runID
-	state.LastRunAt = &startTime
-	state.LastError = ""
-	state.runGeneration++
-	runGeneration := state.runGeneration
+	runCtx := s.activateScheduleRunLocked(state, runID, startTime)
 	s.runtimeStatesMu.Unlock()
 
 	s.recordScheduleFireDecision(ctx, sctx, "started", "manual trigger accepted", runID, startTime)
 
-	runCtx := s.registerScheduleRunContext(runID)
 	go func() {
 		if _, err := s.runJob(runCtx, sctx, runID); err != nil {
 			scheduleLogf("[SCHEDULER] Triggered multi-agent job %s failed: %v", scheduleID, err)
@@ -1395,15 +1426,9 @@ func (s *SchedulerService) triggerSchedule(sctx *ScheduleContext) {
 		s.logf(freshCtx, "[SCHEDULER] ⏭️ Durable run lease rejected schedule %s: %v", schedID, err)
 		return
 	}
-	state.LastStatus = "running"
-	state.ActiveRunID = runID
-	state.LastRunAt = &startTime
-	state.LastError = ""
-	state.runGeneration++
-	freshCtx.runGeneration = state.runGeneration
+	runCtx := s.activateScheduleRunLocked(state, runID, startTime)
 	s.runtimeStatesMu.Unlock()
 	s.recordScheduleFireDecision(ctx, freshCtx, "started", "cron fire accepted", runID, startTime)
-	runCtx := s.registerScheduleRunContext(runID)
 
 	if freshCtx.SourceType == "workflow" {
 		if err := RecordWorkflowScheduleExecution(context.Background(), freshCtx.WorkspacePath, freshCtx.Schedule, startTime); err != nil {
@@ -3198,6 +3223,16 @@ func (s *SchedulerService) updateRuntimeState(scheduleID string, update func(*Sc
 		update(state)
 	}
 	return *state
+}
+
+// activateScheduleRunLocked publishes the active run and its cancellation
+// handle as one runtime-state operation. Caller must hold runtimeStatesMu.
+func (s *SchedulerService) activateScheduleRunLocked(state *ScheduleRuntimeState, runID string, startedAt time.Time) context.Context {
+	state.LastStatus = "running"
+	state.ActiveRunID = runID
+	state.LastRunAt = &startedAt
+	state.LastError = ""
+	return s.registerScheduleRunContext(runID)
 }
 
 func (s *SchedulerService) registerScheduleRunContext(runID string) context.Context {

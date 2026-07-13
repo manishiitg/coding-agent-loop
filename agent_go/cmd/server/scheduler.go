@@ -1189,11 +1189,13 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 	s.runtimeStatesMu.Lock()
 	state := s.getRuntimeStateLocked(schedID)
 	if sctx.runGeneration == 0 {
-		if state.LastStatus != "running" {
-			state.LastStatus = "running"
-			state.LastRunAt = &startTime
-			state.runGeneration++
+		if state.LastStatus == "running" {
+			s.runtimeStatesMu.Unlock()
+			return "", errWorkshopSequenceInterrupted
 		}
+		state.LastStatus = "running"
+		state.LastRunAt = &startTime
+		state.runGeneration++
 		sctx.runGeneration = state.runGeneration
 	}
 	if state.LastStatus != "running" || state.runGeneration != sctx.runGeneration {

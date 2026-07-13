@@ -3701,7 +3701,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Process the query in the background
 	go func() {
+		var agentCancel context.CancelFunc
 		defer func() {
+			if agentCancel != nil {
+				agentCancel()
+				api.agentCancelMux.Lock()
+				delete(api.agentCancelFuncs, sessionID)
+				api.agentCancelMux.Unlock()
+			}
 			// Publish completion before releasing the turn lane. A queued synthetic
 			// turn can then acquire the lane and set running=true without an older
 			// cleanup racing afterward and clearing its state.
@@ -3709,6 +3716,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				api.setSyntheticTurn(sessionID, false)
 				api.setSessionBusy(sessionID, false)
 			}
+			api.observeRuntimeSnapshot(sessionID, nil)
 			if queryInputLaneRelease != nil {
 				queryInputLaneRelease()
 			}
@@ -5771,11 +5779,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[BG AGENT] Stored agent for session %s for synthetic turn reuse", sessionID)
 		}
 
-		// Clean up the agent cancel function when streaming is complete
-		api.agentCancelMux.Lock()
-		delete(api.agentCancelFuncs, sessionID)
-		api.agentCancelMux.Unlock()
-
 		// Update active session status to completed
 		log.Printf("[COMPLETION] Updating session %s status to completed", sessionID)
 		api.updateSessionStatus(sessionID, "completed")
@@ -6607,6 +6610,7 @@ func (api *StreamingAPI) cleanupInactiveSessionsAt(now time.Time) {
 	}
 
 	sessionsToEvictEventBuffer := make([]string, 0)
+	sessionsToEvictRuntime := make([]string, 0)
 	api.activeSessionsMux.Lock()
 	for sessionID, session := range api.activeSessions {
 		age := now.Sub(session.LastActivity)
@@ -6626,6 +6630,7 @@ func (api *StreamingAPI) cleanupInactiveSessionsAt(now time.Time) {
 		}
 		if age >= sessionRetention {
 			delete(api.activeSessions, sessionID)
+			sessionsToEvictRuntime = append(sessionsToEvictRuntime, sessionID)
 			if api.terminalStore != nil {
 				api.terminalStore.RemoveSession(sessionID)
 			}
@@ -6633,6 +6638,12 @@ func (api *StreamingAPI) cleanupInactiveSessionsAt(now time.Time) {
 		}
 	}
 	api.activeSessionsMux.Unlock()
+
+	for _, sessionID := range sessionsToEvictRuntime {
+		if api.runtimeCoordinator != nil {
+			api.runtimeCoordinator.Evict(sessionID)
+		}
+	}
 
 	for _, sessionID := range sessionsToEvictEventBuffer {
 		if api.eventStore != nil {

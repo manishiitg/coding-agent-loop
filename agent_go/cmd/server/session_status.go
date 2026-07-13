@@ -101,7 +101,6 @@ func (api *StreamingAPI) sessionDisplayStatus(sessionID string) SessionDisplaySt
 		CanSteer:                   canSteer,
 		HasRunningBackgroundAgents: hasBg,
 	}
-	api.observeRuntimeSnapshot(sessionID, &result)
 	return result
 }
 

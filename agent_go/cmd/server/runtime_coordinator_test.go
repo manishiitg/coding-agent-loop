@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -39,6 +40,42 @@ func TestRuntimeCoordinatorSnapshotsAreImmutableAndDeduplicated(t *testing.T) {
 	}
 	if stored.ChildExecutions[0].Status != trackedExecutionStatusCompleted || stored.ChildExecutions[0].CompletedAt.IsZero() {
 		t.Fatalf("returned snapshot mutated coordinator state: %#v", stored.ChildExecutions[0])
+	}
+}
+
+func TestRuntimeCoordinatorEvictsRetainedSnapshot(t *testing.T) {
+	coordinator := NewRuntimeCoordinator()
+	coordinator.Observe(RuntimeSnapshot{SessionID: "session-1", Phase: runtimePhaseIdle})
+
+	coordinator.Evict("session-1")
+
+	if _, ok := coordinator.Snapshot("session-1"); ok {
+		t.Fatal("evicted runtime snapshot is still retained")
+	}
+}
+
+func TestSessionDisplayStatusDoesNotObserveOnRead(t *testing.T) {
+	coordinator := NewRuntimeCoordinator()
+	api := &StreamingAPI{
+		runtimeCoordinator: coordinator,
+		activeSessions: map[string]*ActiveSessionInfo{
+			"session-1": {SessionID: "session-1", Status: "running"},
+		},
+		sessionBusy:      map[string]bool{"session-1": true},
+		agentCancelFuncs: map[string]context.CancelFunc{},
+	}
+
+	status := api.sessionDisplayStatus("session-1")
+	if status.Status != sessionExecutionDisplayBusy {
+		t.Fatalf("display status = %q, want busy", status.Status)
+	}
+	if _, ok := coordinator.Snapshot("session-1"); ok {
+		t.Fatal("display-status read performed an expensive runtime observation")
+	}
+
+	api.observeRuntimeSnapshot("session-1", &status)
+	if _, ok := coordinator.Snapshot("session-1"); !ok {
+		t.Fatal("explicit status-cadence observation was not recorded")
 	}
 }
 

@@ -109,6 +109,7 @@ func (api *StreamingAPI) handleSSEStream(w http.ResponseWriter, r *http.Request)
 		})
 		if len(result.Events) > 0 {
 			runtimeStatus := api.sessionDisplayStatus(sessionID)
+			api.observeRuntimeSnapshot(sessionID, &runtimeStatus)
 			msg := sseEventMessage{
 				Events:                     result.Events,
 				SessionStatus:              sessionStatus,
@@ -189,6 +190,10 @@ func (api *StreamingAPI) handleSSEStream(w http.ResponseWriter, r *http.Request)
 				sessionStatus = currentStatus // update cached status
 			}
 			runtimeStatus := api.sessionDisplayStatus(sessionID)
+			// Runtime observation is intentionally tied to the status cadence,
+			// not the event case above. Token streams can emit dozens of events
+			// per second, while the observer clones and sorts several stores.
+			api.observeRuntimeSnapshot(sessionID, &runtimeStatus)
 			msg := sseStatusMessage{
 				SessionStatus:              currentStatus,
 				DisplayStatus:              runtimeStatus.Status,

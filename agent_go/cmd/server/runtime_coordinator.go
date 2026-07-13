@@ -129,6 +129,18 @@ func (c *RuntimeCoordinator) Snapshot(sessionID string) (RuntimeSnapshot, bool) 
 	return cloneRuntimeSnapshot(record.snapshot), true
 }
 
+// Evict removes observer state when the authoritative session retention window
+// expires. The coordinator is non-authoritative, so it must never outlive the
+// session it mirrors.
+func (c *RuntimeCoordinator) Evict(sessionID string) {
+	if c == nil || strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	c.mu.Lock()
+	delete(c.records, sessionID)
+	c.mu.Unlock()
+}
+
 func (c *RuntimeCoordinator) CompareLegacy(snapshot RuntimeSnapshot, legacy SessionDisplayStatus) {
 	if c == nil || snapshot.SessionID == "" {
 		return

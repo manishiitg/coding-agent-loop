@@ -113,6 +113,32 @@ func TestInactiveCleanupPreservesLiveTurnAndMarksTrulyIdleSession(t *testing.T) 
 	}
 }
 
+func TestInactiveCleanupEvictsRuntimeCoordinatorRecord(t *testing.T) {
+	now := time.Now()
+	coordinator := NewRuntimeCoordinator()
+	coordinator.Observe(RuntimeSnapshot{SessionID: "expired", Phase: runtimePhaseCompleted})
+	api := &StreamingAPI{
+		runtimeCoordinator: coordinator,
+		activeSessions: map[string]*ActiveSessionInfo{
+			"expired": {
+				SessionID:    "expired",
+				Status:       "completed",
+				CreatedAt:    now.Add(-26 * time.Hour),
+				LastActivity: now.Add(-25 * time.Hour),
+			},
+		},
+	}
+
+	api.cleanupInactiveSessionsAt(now)
+
+	if _, ok := api.activeSessions["expired"]; ok {
+		t.Fatal("expired active session was not removed")
+	}
+	if _, ok := coordinator.Snapshot("expired"); ok {
+		t.Fatal("expired session left a runtime coordinator record behind")
+	}
+}
+
 func TestScheduleStopInvalidatesLateCompletion(t *testing.T) {
 	canceled := false
 	startedAt := time.Now().Add(-time.Minute)

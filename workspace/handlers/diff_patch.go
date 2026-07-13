@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -218,9 +219,13 @@ func validateDiffFormat(diffContent string) error {
 		if inHunk && (strings.HasPrefix(line, " ") || strings.HasPrefix(line, "-") || strings.HasPrefix(line, "+")) {
 			// This is a valid diff line
 			continue
-		} else if inHunk && line == "" {
-			// Empty line ends the hunk
+		} else if inHunk && line == "" && i == len(lines)-1 {
+			// strings.Split exposes the required trailing newline as one final
+			// empty element. A blank line inside a hunk must still carry a space
+			// context prefix; accepting it here can silently truncate the patch.
 			inHunk = false
+		} else if inHunk && line == "" {
+			return fmt.Errorf("malformed diff line %d: blank context lines must start with a space", i+1)
 		} else if inHunk && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "+") && line != "" {
 			// Invalid line in hunk
 			return fmt.Errorf("malformed diff line %d: %q - diff lines must start with space (context), - (removal), or + (addition)", i+1, line)
@@ -282,9 +287,10 @@ func applyDiffPatch(currentContent, diffContent string) (string, error) {
 	}
 	patchFile.Close()
 
-	// Apply patch using the standard patch command
-	// Use -F 3 to be more lenient with context matches (fuzz factor)
-	cmd := exec.Command("patch", "-u", "-F", "3", tempFile.Name(), patchFile.Name())
+	// Apply only against complete context. The exact-match fallback below can
+	// recover stale line numbers without allowing patch(1) to discard context
+	// and place an otherwise ambiguous hunk under the wrong duplicate heading.
+	cmd := exec.Command("patch", "-u", "-F", "0", tempFile.Name(), patchFile.Name())
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// Provide more specific error messages based on patch output
@@ -308,11 +314,88 @@ func applyDiffPatch(currentContent, diffContent string) (string, error) {
 	return string(patchedContent), nil
 }
 
-// correctAgentGeneratedDiff attempts to fix common agent-generated diff patterns
+// safeMalformedContextLines identifies context lines where an agent omitted the
+// unified-diff prefix. A line is repairable only when the hunk's complete
+// old-side sequence has an explicit context/removal anchor and occurs exactly
+// once as a contiguous block in the current file.
+func safeMalformedContextLines(diffLines, currentLines []string) map[int]bool {
+	safe := make(map[int]bool)
+	for start := 0; start < len(diffLines); start++ {
+		if !strings.HasPrefix(diffLines[start], "@@") {
+			continue
+		}
+
+		var oldSide []string
+		var candidates []int
+		hasAnchor := false
+		end := start + 1
+		for ; end < len(diffLines); end++ {
+			line := diffLines[end]
+			if strings.HasPrefix(line, "@@") || strings.HasPrefix(line, "--- ") || strings.HasPrefix(line, "+++ ") {
+				break
+			}
+			if line == "" {
+				if end == len(diffLines)-1 {
+					break
+				}
+				oldSide = append(oldSide, "")
+				candidates = append(candidates, end)
+				continue
+			}
+			switch line[0] {
+			case ' ':
+				oldSide = append(oldSide, line[1:])
+				hasAnchor = true
+			case '-':
+				payload := line[1:]
+				payloadExists := slices.Contains(currentLines, payload)
+				if strings.HasPrefix(line, "- ") && !payloadExists && slices.Contains(currentLines, line) {
+					oldSide = append(oldSide, line)
+					candidates = append(candidates, end)
+				} else {
+					oldSide = append(oldSide, payload)
+					hasAnchor = true
+				}
+			case '+':
+				// Additions do not participate in old-side matching.
+			default:
+				if slices.Contains(currentLines, line) {
+					oldSide = append(oldSide, line)
+					candidates = append(candidates, end)
+				} else {
+					oldSide = nil
+					candidates = nil
+					end = len(diffLines)
+				}
+			}
+		}
+		if !hasAnchor || len(candidates) == 0 || len(oldSide) == 0 {
+			continue
+		}
+
+		matches := 0
+		for i := 0; i+len(oldSide) <= len(currentLines); i++ {
+			if slices.Equal(currentLines[i:i+len(oldSide)], oldSide) {
+				matches++
+			}
+		}
+		if matches == 1 {
+			for _, candidate := range candidates {
+				safe[candidate] = true
+			}
+		}
+		start = end - 1
+	}
+	return safe
+}
+
+// correctAgentGeneratedDiff repairs hunk counts and only the malformed bullet
+// context pattern that can be proven against the current file.
 func correctAgentGeneratedDiff(diffContent, currentContent string) string {
 	lines := strings.Split(diffContent, "\n")
 	corrected := make([]string, 0, len(lines))
 	currentLines := strings.Split(currentContent, "\n")
+	safeContext := safeMalformedContextLines(lines, currentLines)
 
 	type hunkInfo struct {
 		index    int
@@ -375,34 +458,10 @@ func correctAgentGeneratedDiff(diffContent, currentContent string) string {
 		if currentHunk != nil {
 			if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "+") || strings.HasPrefix(line, "-") {
 				if strings.HasPrefix(line, " ") {
-					// Try to find matching line in file to fix whitespace/indentation
-					content := line[1:]
-					trimmedContent := strings.TrimSpace(content)
-					if len(trimmedContent) > 0 {
-						for _, fl := range currentLines {
-							if strings.TrimSpace(fl) == trimmedContent {
-								line = " " + fl // Use the actual line from the file
-								break
-							}
-						}
-					}
 					currentHunk.oldCount++
 					currentHunk.newCount++
 				} else if strings.HasPrefix(line, "-") {
-					// Agents sometimes omit the diff context prefix for Markdown
-					// bullets. If the removal payload is absent but the complete
-					// bullet exists, this is context rather than a deletion.
-					payloadExists := false
-					lineExists := false
-					for _, fl := range currentLines {
-						if fl == line[1:] {
-							payloadExists = true
-						}
-						if fl == line {
-							lineExists = true
-						}
-					}
-					if !payloadExists && lineExists {
+					if safeContext[i] {
 						line = " " + line
 						currentHunk.oldCount++
 						currentHunk.newCount++
@@ -413,32 +472,10 @@ func correctAgentGeneratedDiff(diffContent, currentContent string) string {
 					currentHunk.newCount++
 				}
 				corrected = append(corrected, line)
-			} else if len(strings.TrimSpace(line)) > 0 && !strings.HasPrefix(line, "---") && !strings.HasPrefix(line, "+++") && !strings.HasPrefix(line, "@@") {
-				// Line without prefix - try to guess if it's context or addition
-				trimmedContent := strings.TrimSpace(line)
-				foundInFile := false
-				for _, fl := range currentLines {
-					if strings.TrimSpace(fl) == trimmedContent {
-						foundInFile = true
-						line = " " + fl // Treat as context
-						break
-					}
-				}
-				if !foundInFile {
-					if !strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "-") && !strings.HasPrefix(line, " ") {
-						line = "+ " + line // Treat as addition
-					}
-					currentHunk.newCount++
-				} else {
-					currentHunk.oldCount++
-					currentHunk.newCount++
-				}
-				corrected = append(corrected, line)
-			} else if line == "" && i < len(lines)-1 {
-				// Treat empty line as context if it's inside a hunk
+			} else if safeContext[i] {
 				currentHunk.oldCount++
 				currentHunk.newCount++
-				corrected = append(corrected, " ")
+				corrected = append(corrected, " "+line)
 			} else {
 				// Non-diff line ends the hunk
 				corrected[currentHunk.index] = fmt.Sprintf("@@ -%s,%d +%s,%d @@",
@@ -470,6 +507,8 @@ func correctAgentGeneratedDiff(diffContent, currentContent string) string {
 // applyDiffPatchFlexible tries multiple approaches to apply diffs
 func applyDiffPatchFlexible(currentContent, diffContent string) (string, error) {
 	fmt.Printf("🔍 Attempting flexible diff patch approach\n")
+	currentContent = normalizeLineEndings(currentContent)
+	diffContent = normalizeLineEndings(diffContent)
 
 	var result string
 	var err error
@@ -485,7 +524,13 @@ func applyDiffPatchFlexible(currentContent, diffContent string) (string, error) 
 			fmt.Printf("✅ Corrected diff applied successfully\n")
 			return validateAndRepairJSON(result), nil
 		}
-		fmt.Printf("⚠️ Corrected diff failed, trying original: %v\n", err)
+		fmt.Printf("⚠️ Corrected diff failed strict patch, trying exact fallback: %v\n", err)
+		result, fallbackErr := applyAgentGeneratedDiffFallback(currentContent, correctedDiff)
+		if fallbackErr == nil {
+			fmt.Printf("✅ Corrected diff applied through exact fallback\n")
+			return validateAndRepairJSON(result), nil
+		}
+		fmt.Printf("⚠️ Corrected diff fallback failed, trying original: %v\n", fallbackErr)
 	}
 
 	// Try the original diff

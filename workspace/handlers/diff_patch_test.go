@@ -153,7 +153,7 @@ func TestApplyDiffPatchFlexible(t *testing.T) {
 - Leverages tavily-search for comprehensive research`,
 		},
 		{
-			name: "Single addition only (simplified format - should fail)",
+			name: "Simplified addition with unique full-file context",
 			currentContent: `# Todo List
 
 ## Objective
@@ -175,7 +175,16 @@ func TestApplyDiffPatchFlexible(t *testing.T) {
 ## Notes
 - Leverages tavily-search for comprehensive research
 `,
-			expectedError: true, // Simplified diffs should fail - this is expected
+			expectedError: false,
+			expectedResult: `# Todo List
+**Single Addition**: This is a test.
+
+## Objective
+- Complete project analysis
+- Generate comprehensive report
+
+## Notes
+- Leverages tavily-search for comprehensive research`,
 		},
 		{
 			name: "Empty diff (should fail validation)",
@@ -327,8 +336,7 @@ func TestValidateDiffFormat(t *testing.T) {
 @@ -1,3 +1,4 @@
  # Header
 +New line
-
- ## Section
+` + " \n" + ` ## Section
 `,
 			expectError: false,
 		},
@@ -390,7 +398,24 @@ func TestCorrectAgentGeneratedDiff(t *testing.T) {
 		expected string
 	}{
 		{
-			name: "Correct context lines with minus instead of space",
+			name: "Correct contiguous bullet context with an explicit anchor",
+			input: `--- a/todo.md
++++ b/todo.md
+@@ -3,2 +3,3 @@
+ ## Objective
+- Complete project analysis
++- Test patch: Added via AI agent
+`,
+			expected: `--- a/todo.md
++++ b/todo.md
+@@ -3,2 +3,3 @@
+ ## Objective
+ - Complete project analysis
++- Test patch: Added via AI agent
+`,
+		},
+		{
+			name: "Do not correct non-contiguous bullet context",
 			input: `--- a/todo.md
 +++ b/todo.md
 @@ -1,3 +1,4 @@
@@ -400,9 +425,9 @@ func TestCorrectAgentGeneratedDiff(t *testing.T) {
 `,
 			expected: `--- a/todo.md
 +++ b/todo.md
-@@ -1,2 +1,3 @@
+@@ -1,2 +1,2 @@
  # Todo List
- - Complete project analysis
+- Complete project analysis
 +- Test patch: Added via AI agent
 `,
 		},
@@ -413,8 +438,7 @@ func TestCorrectAgentGeneratedDiff(t *testing.T) {
 @@ -1,3 +1,4 @@
  # Todo List
 +**New addition**: Added via unified diff.
-
- ## Objective
+` + " \n" + ` ## Objective
 `,
 			expected: `--- a/todo.md
 +++ b/todo.md
@@ -425,19 +449,19 @@ func TestCorrectAgentGeneratedDiff(t *testing.T) {
 `,
 		},
 		{
-			name: "Multiple context line corrections",
+			name: "Multiple contiguous bullet context corrections",
 			input: `--- a/todo.md
 +++ b/todo.md
-@@ -1,4 +1,5 @@
- # Todo List
+@@ -3,3 +3,4 @@
+ ## Objective
 - Complete project analysis
 - Generate comprehensive report
 +- Test patch: Added via AI agent
 `,
 			expected: `--- a/todo.md
 +++ b/todo.md
-@@ -1,3 +1,4 @@
- # Todo List
+@@ -3,3 +3,4 @@
+ ## Objective
  - Complete project analysis
  - Generate comprehensive report
 +- Test patch: Added via AI agent

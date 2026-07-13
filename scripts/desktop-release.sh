@@ -12,8 +12,8 @@ Usage:
   scripts/desktop-release.sh [--dry-run] v1.25.81
 
 What it does:
-  - switches gh to the manishiitg account
-  - requires canonical origin/main with no unpublished local commits
+  - uses the stored manishiitg token without switching the active gh account
+  - prepares from canonical origin/main in an isolated temporary worktree
   - verifies the version is newer than the current Latest release
   - commits the matching desktop package/package-lock version
   - generates release notes from commits since the previous published release
@@ -45,7 +45,7 @@ if [[ -z "$version_arg" || "$version_arg" == "-h" || "$version_arg" == "--help" 
 fi
 [[ $# -eq 1 ]] || die "expected exactly one version argument"
 
-if [[ ! "$version_arg" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+if [[ ! "$version_arg" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
   die "version must look like v1.25.81"
 fi
 
@@ -69,31 +69,47 @@ semver_gt() {
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
+release_tmp_root=""
+release_worktree=""
+notes_file=""
+created_tag=""
+push_succeeded=false
+
+cleanup() {
+  local status=$?
+  trap - EXIT
+  set +e
+  cd "$repo_root" 2>/dev/null
+  if [[ -n "$created_tag" && "$push_succeeded" != "true" ]]; then
+    git tag -d "$created_tag" >/dev/null 2>&1
+  fi
+  if [[ -n "$release_worktree" ]]; then
+    git worktree remove --force "$release_worktree" >/dev/null 2>&1
+  fi
+  [[ -z "$release_tmp_root" ]] || rm -rf "$release_tmp_root"
+  [[ -z "$notes_file" ]] || rm -f "$notes_file"
+  exit "$status"
+}
+trap cleanup EXIT
+
 tag="$version_arg"
 version="${tag#v}"
 
-echo "==> Selecting GitHub account: $GH_USER"
-gh auth switch -h github.com -u "$GH_USER" >/dev/null
+echo "==> Using GitHub credentials for: $GH_USER"
+github_token="$(gh auth token -h github.com -u "$GH_USER")" || die "no stored GitHub token for $GH_USER"
+export GH_TOKEN="$github_token"
 active_user="$(gh api user --jq .login)"
 [[ "$active_user" == "$GH_USER" ]] || die "active gh user is $active_user, expected $GH_USER"
 
-auth_status="$(gh auth status -h github.com --active 2>&1 || true)"
-if ! grep -Eq "Token scopes: .*'workflow'" <<<"$auth_status"; then
-  echo "==> Refreshing gh token with workflow scope"
-  gh auth refresh -h github.com -s workflow
+auth_headers="$(gh api -i user 2>/dev/null || true)"
+if ! grep -Eiq '^X-Oauth-Scopes:.*workflow' <<<"$auth_headers"; then
+  die "the stored $GH_USER token needs workflow scope; refresh it with: gh auth switch -h github.com -u $GH_USER && gh auth refresh -h github.com -s workflow"
 fi
 
 echo "==> Checking main branch"
 if [[ -n "$(git status --porcelain)" ]]; then
   die "working tree is dirty; commit or stash changes before release"
 fi
-
-current_branch="$(git branch --show-current)"
-if [[ "$current_branch" != "$MAIN_BRANCH" ]]; then
-  git switch "$MAIN_BRANCH"
-fi
-
-git fetch origin "$MAIN_BRANCH" --tags
 
 origin_url="$(git remote get-url origin)"
 case "$origin_url" in
@@ -107,14 +123,13 @@ case "$origin_url" in
     ;;
 esac
 
-# A stale local main may be safely fast-forwarded. Local-only or divergent
-# commits are never pushed by the release script.
-git merge --ff-only "origin/$MAIN_BRANCH"
-
-local_head="$(git rev-parse "$MAIN_BRANCH")"
+git fetch origin "$MAIN_BRANCH" --tags
 remote_head="$(git rev-parse "origin/$MAIN_BRANCH")"
-[[ "$local_head" == "$remote_head" ]] || die "local main must exactly match origin/main; merge and push reviewed changes first"
-echo "==> main is exactly in sync with origin/main ($local_head)"
+echo "==> Preparing exact origin/main revision $remote_head"
+release_tmp_root="$(mktemp -d)"
+release_worktree="$release_tmp_root/repo"
+git worktree add --detach --quiet "$release_worktree" "$remote_head"
+cd "$release_worktree"
 
 if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
   die "local tag already exists: $tag"
@@ -126,15 +141,19 @@ if gh release view "$tag" --repo "$REPO" >/dev/null 2>&1; then
   die "GitHub release already exists: $tag"
 fi
 
-previous_tag="$(gh release view --repo "$REPO" --json tagName --jq .tagName)"
-if [[ ! "$previous_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  die "Latest release tag is not plain semver: $previous_tag"
+previous_tag=""
+if previous_tag="$(gh release view --repo "$REPO" --json tagName --jq .tagName 2>/dev/null)"; then
+  if [[ ! "$previous_tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+    die "Latest release tag is not plain semver: $previous_tag"
+  fi
+  semver_gt "$tag" "$previous_tag" || die "$tag must be greater than Latest release $previous_tag"
+else
+  previous_tag=""
+  echo "==> No published release exists; validating this as the first release"
 fi
-semver_gt "$tag" "$previous_tag" || die "$tag must be greater than Latest release $previous_tag"
 
 echo "==> Building changelog"
 notes_file="$(mktemp)"
-trap 'rm -f "$notes_file"' EXIT
 {
   echo "Desktop release $tag."
   echo
@@ -185,8 +204,10 @@ fi
 
 echo "==> Creating tag $tag"
 git tag -a "$tag" -m "Release $tag"
+created_tag="$tag"
 echo "==> Atomically pushing main and $tag"
-git push --atomic origin "$MAIN_BRANCH" "refs/tags/$tag"
+git push --atomic origin "HEAD:refs/heads/$MAIN_BRANCH" "refs/tags/$tag"
+push_succeeded=true
 
 head_sha="$(git rev-parse HEAD)"
 run_id=""

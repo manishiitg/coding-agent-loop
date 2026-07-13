@@ -47,6 +47,9 @@ type Snapshot struct {
 	ChunkIndex        int        `json:"chunk_index"`
 	Active            bool       `json:"active"`
 	State             string     `json:"state"`
+	ProcessState      string     `json:"process_state,omitempty"`
+	SnapshotKind      string     `json:"snapshot_kind,omitempty"`
+	CloseReason       string     `json:"close_reason,omitempty"`
 	ClosesAt          *time.Time `json:"closes_at,omitempty"`
 	RetentionSeconds  int        `json:"retention_seconds,omitempty"`
 	Status            Status     `json:"status"`
@@ -141,38 +144,54 @@ func NewStore() *Store {
 
 // HandleEvent ingests terminal streaming events emitted by coding-agent adapters.
 func (s *Store) HandleEvent(sessionID string, event storeevents.Event) {
+	s.handleEvent(sessionID, event)
+}
+
+// HandleEventWithChange preserves the callback-compatible HandleEvent API while
+// telling the server whether downstream terminal lifecycle work is necessary.
+func (s *Store) HandleEventWithChange(sessionID string, event storeevents.Event) bool {
+	return s.handleEvent(sessionID, event)
+}
+
+func (s *Store) handleEvent(sessionID string, event storeevents.Event) bool {
 	if s == nil {
-		return
+		return false
 	}
 	sessionID = firstNonEmpty(sessionID, event.SessionID)
 	if sessionID == "" {
-		return
+		return false
 	}
 
 	switch event.Type {
 	case "streaming_chunk":
 		content, chunkIndex, metadata, ok := terminalChunk(event)
 		if !ok || strings.TrimSpace(content) == "" || !isTerminalMetadata(metadata) {
-			return
+			return false
 		}
 		s.upsertTerminal(sessionID, event, metadata, content, chunkIndex)
+		return true
 	case "streaming_end":
 		metadata := metadataForEvent(event)
 		if !isTerminalMetadata(metadata) {
-			return
+			return false
 		}
 		s.markInactive(sessionID, terminalOwnerID(sessionID, event, metadata), metadata)
+		return true
 	case string(agentevents.ToolCallStart), string(agentevents.ToolCallEnd), string(agentevents.ToolCallError):
 		metadata := metadataForEvent(event)
 		if !isNonTmuxWorkflowTerminalMetadata(metadata) {
-			return
+			return false
 		}
 		s.upsertToolLine(sessionID, event, metadata)
+		return true
 	case "pre_validation_completed":
 		s.updatePreValidationStatus(sessionID, event)
+		return true
 	case "status_line":
 		s.handleStatusLine(sessionID, event)
+		return true
 	}
+	return false
 }
 
 func (s *Store) List(sessionID string) []Snapshot {
@@ -184,6 +203,9 @@ func (s *Store) List(sessionID string) []Snapshot {
 	var out []Snapshot
 	if strings.TrimSpace(sessionID) != "" {
 		for terminalID := range s.bySession[sessionID] {
+			if _, dismissed := s.dismissed[terminalID]; dismissed {
+				continue
+			}
 			if snapshot, ok := s.reconcileTerminalStateLocked(terminalID, now); ok {
 				out = append(out, snapshot)
 			}
@@ -191,6 +213,9 @@ func (s *Store) List(sessionID string) []Snapshot {
 	} else {
 		out = make([]Snapshot, 0, len(s.byID))
 		for terminalID := range s.byID {
+			if _, dismissed := s.dismissed[terminalID]; dismissed {
+				continue
+			}
 			if snapshot, ok := s.reconcileTerminalStateLocked(terminalID, now); ok {
 				out = append(out, snapshot)
 			}
@@ -220,6 +245,49 @@ func (s *Store) ListMetadata(sessionID string) []Snapshot {
 	var out []Snapshot
 	if strings.TrimSpace(sessionID) != "" {
 		for terminalID := range s.bySession[sessionID] {
+			if _, dismissed := s.dismissed[terminalID]; dismissed {
+				continue
+			}
+			if snapshot, ok := s.byID[terminalID]; ok {
+				out = append(out, snapshot)
+			}
+		}
+	} else {
+		out = make([]Snapshot, 0, len(s.byID))
+		for terminalID, snapshot := range s.byID {
+			if _, dismissed := s.dismissed[terminalID]; dismissed {
+				continue
+			}
+			out = append(out, snapshot)
+		}
+	}
+	out = dedupeCurrentMainAgentSnapshots(out)
+
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Active != out[j].Active {
+			return out[i].Active
+		}
+		return out[i].UpdatedAt.After(out[j].UpdatedAt)
+	})
+	return out
+}
+
+// ListRaw returns ownership-bearing snapshots without pruning expired or
+// dismissed UI entries. Process cleanup must use this path rather than List:
+// hiding or expiring a rendered snapshot cannot erase knowledge of a live tmux
+// process before the lifecycle coordinator closes it.
+func (s *Store) ListRaw(sessionID string) []Snapshot {
+	if s == nil {
+		return nil
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var out []Snapshot
+	if sessionID != "" {
+		out = make([]Snapshot, 0, len(s.bySession[sessionID]))
+		for terminalID := range s.bySession[sessionID] {
 			if snapshot, ok := s.byID[terminalID]; ok {
 				out = append(out, snapshot)
 			}
@@ -230,12 +298,7 @@ func (s *Store) ListMetadata(sessionID string) []Snapshot {
 			out = append(out, snapshot)
 		}
 	}
-	out = dedupeCurrentMainAgentSnapshots(out)
-
 	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Active != out[j].Active {
-			return out[i].Active
-		}
 		return out[i].UpdatedAt.After(out[j].UpdatedAt)
 	})
 	return out
@@ -300,7 +363,23 @@ func (s *Store) Get(terminalID string) (Snapshot, bool) {
 	defer s.mu.Unlock()
 	now := time.Now()
 	s.pruneExpiredLocked(now)
+	if _, dismissed := s.dismissed[terminalID]; dismissed {
+		return Snapshot{}, false
+	}
 	return s.reconcileTerminalStateLocked(terminalID, now)
+}
+
+// GetRaw returns a snapshot even when it is dismissed from the UI. It is for
+// lifecycle coordination only; HTTP handlers should continue to use Get.
+func (s *Store) GetRaw(terminalID string) (Snapshot, bool) {
+	terminalID = strings.TrimSpace(terminalID)
+	if s == nil || terminalID == "" {
+		return Snapshot{}, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	snapshot, ok := s.byID[terminalID]
+	return snapshot, ok
 }
 
 func (s *Store) RemoveSession(sessionID string) {
@@ -331,7 +410,8 @@ func (s *Store) Dismiss(terminalID string) bool {
 	if _, ok := s.byID[terminalID]; !ok {
 		return false
 	}
-	s.removeTerminalLocked(terminalID)
+	// Dismissal is presentation-only. Keep the snapshot's ownership metadata so
+	// a live or closing tmux process remains visible to the lease/reaper path.
 	s.dismissed[terminalID] = struct{}{}
 	return true
 }
@@ -380,8 +460,52 @@ func (s *Store) MarkStale(terminalID string) (Snapshot, bool) {
 	now := time.Now()
 	snapshot.Active = false
 	snapshot.State = "stale"
+	snapshot.ProcessState = "closed"
+	snapshot.SnapshotKind = "archived"
 	snapshot.TmuxSession = ""
 	snapshot.UpdatedAt = now
+	s.byID[terminalID] = snapshot
+	return snapshot, true
+}
+
+// MarkArchived records that the backing process was deliberately reconciled
+// and closed while retaining the read-only capture until its snapshot deadline.
+func (s *Store) MarkArchived(terminalID, reason string) (Snapshot, bool) {
+	snapshot, ok := s.MarkStale(terminalID)
+	if !ok {
+		return Snapshot{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snapshot, ok = s.byID[strings.TrimSpace(terminalID)]
+	if !ok {
+		return Snapshot{}, false
+	}
+	snapshot.CloseReason = strings.TrimSpace(reason)
+	snapshot.UpdatedAt = time.Now()
+	s.byID[snapshot.TerminalID] = snapshot
+	return snapshot, true
+}
+
+// MarkProcessClosed separates process liveness from the terminal outcome. It
+// preserves completed/failed state while converting the capture to an archive.
+func (s *Store) MarkProcessClosed(terminalID, reason string) (Snapshot, bool) {
+	terminalID = strings.TrimSpace(terminalID)
+	if s == nil || terminalID == "" {
+		return Snapshot{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snapshot, ok := s.byID[terminalID]
+	if !ok {
+		return Snapshot{}, false
+	}
+	snapshot.Active = false
+	snapshot.ProcessState = "closed"
+	snapshot.SnapshotKind = "archived"
+	snapshot.CloseReason = strings.TrimSpace(reason)
+	snapshot.TmuxSession = ""
+	snapshot.UpdatedAt = time.Now()
 	s.byID[terminalID] = snapshot
 	return snapshot, true
 }
@@ -421,6 +545,8 @@ func (s *Store) UpsertStaticSnapshot(sessionID string, snapshot Snapshot) (Snaps
 	snapshot.OwnerID = ownerID
 	snapshot.TmuxSession = ""
 	snapshot.Active = false
+	snapshot.ProcessState = "closed"
+	snapshot.SnapshotKind = "archived"
 	if strings.TrimSpace(snapshot.State) == "" || snapshot.State == "running" || snapshot.State == "closing" {
 		snapshot.State = "stale"
 	}
@@ -480,6 +606,10 @@ func (s *Store) markTerminalState(terminalID, state string) (Snapshot, bool) {
 	now := time.Now()
 	snapshot.Active = false
 	snapshot.State = state
+	if strings.TrimSpace(snapshot.TmuxSession) != "" {
+		snapshot.ProcessState = "closing"
+		snapshot.SnapshotKind = "live"
+	}
 	snapshot.ClosesAt = nil
 	snapshot.RetentionSeconds = 0
 	snapshot.UpdatedAt = now
@@ -630,9 +760,6 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.dismissed[terminalID]; ok {
-		return
-	}
 
 	current, exists := s.byID[terminalID]
 	if forcedAt, forced := s.forcedInactive[terminalID]; forced {
@@ -725,6 +852,8 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	current.TmuxSession = firstNonEmpty(
 		stringValue(metadata, "tmux_session"),
 		stringValue(metadata, "tmux_session_name"),
+		stringValue(metadata, "pi_interactive_session"),
+		stringValue(metadata, "agy_interactive_session"),
 		stringValue(metadata, "claude_code_interactive_session"),
 		stringValue(metadata, "codex_interactive_session"),
 		stringValue(metadata, "gemini_interactive_session"),
@@ -746,6 +875,9 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	current.ChunkIndex = chunkIndex
 	current.Active = true
 	current.State = terminalStateFromContent(lifecycleContent, true)
+	current.ProcessState = "live"
+	current.SnapshotKind = "live"
+	current.CloseReason = ""
 	current.ClosesAt = nil
 	current.RetentionSeconds = 0
 	previousStatus := current.Status
@@ -1080,6 +1212,7 @@ func (s *Store) removeTerminalLocked(terminalID string) {
 	}
 	delete(s.byID, terminalID)
 	delete(s.forcedInactive, terminalID)
+	delete(s.dismissed, terminalID)
 	if snapshot.SessionID == "" {
 		return
 	}
@@ -1226,6 +1359,9 @@ func (s *Store) markInactive(sessionID, ownerID string, metadata map[string]inte
 	if state == "running" {
 		snapshot.Active = true
 		snapshot.State = "running"
+		snapshot.ProcessState = "live"
+		snapshot.SnapshotKind = "live"
+		snapshot.CloseReason = ""
 		snapshot.ClosesAt = nil
 		snapshot.RetentionSeconds = 0
 		snapshot.UpdatedAt = now
@@ -1233,6 +1369,10 @@ func (s *Store) markInactive(sessionID, ownerID string, metadata map[string]inte
 		return
 	}
 	snapshot.Active = false
+	if strings.TrimSpace(snapshot.TmuxSession) != "" {
+		snapshot.ProcessState = "closing"
+		snapshot.SnapshotKind = "live"
+	}
 	// Retention is caller-decided: whoever emits the streaming events
 	// attaches terminal_retention_seconds to metadata when the
 	// terminal is transient (workflow step, sub-agent, one-shot CLI
@@ -1279,6 +1419,8 @@ func (s *Store) findInactiveTargetLocked(sessionID, ownerID string, metadata map
 	tmuxSession := firstNonEmpty(
 		stringValue(metadata, "tmux_session"),
 		stringValue(metadata, "tmux_session_name"),
+		stringValue(metadata, "pi_interactive_session"),
+		stringValue(metadata, "agy_interactive_session"),
 		stringValue(metadata, "claude_code_interactive_session"),
 		stringValue(metadata, "codex_interactive_session"),
 		stringValue(metadata, "gemini_interactive_session"),
@@ -2108,6 +2250,7 @@ func (s *Store) handleStatusLine(sessionID string, event storeevents.Event) {
 		stringValue(statusMeta, "tmux_session"),
 		stringValue(statusMeta, "tmux_session_name"),
 		stringValue(statusMeta, "pi_interactive_session"),
+		stringValue(statusMeta, "agy_interactive_session"),
 		stringValue(statusMeta, "claude_code_interactive_session"),
 		stringValue(statusMeta, "codex_interactive_session"),
 		stringValue(statusMeta, "gemini_interactive_session"),

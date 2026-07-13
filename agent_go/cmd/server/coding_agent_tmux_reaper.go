@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"mcp-agent-builder-go/agent_go/internal/terminalleases"
 	"mcp-agent-builder-go/agent_go/internal/terminals"
 )
 
@@ -19,6 +20,7 @@ const (
 
 type codingAgentTmuxCleanupCandidate struct {
 	snapshot terminals.Snapshot
+	lease    terminalleases.Lease
 	reason   string
 }
 
@@ -50,7 +52,10 @@ func (api *StreamingAPI) cleanupStaleCodingAgentTmuxSessions(now time.Time) int 
 	closed := 0
 	for _, candidate := range candidates {
 		snapshot := candidate.snapshot
-		tmuxSession := strings.TrimSpace(snapshot.TmuxSession)
+		tmuxSession := strings.TrimSpace(candidate.lease.TmuxSession)
+		if tmuxSession == "" {
+			tmuxSession = strings.TrimSpace(snapshot.TmuxSession)
+		}
 		if tmuxSession == "" {
 			continue
 		}
@@ -58,12 +63,16 @@ func (api *StreamingAPI) cleanupStaleCodingAgentTmuxSessions(now time.Time) int 
 		if candidate.reason != "" {
 			reason += ": " + candidate.reason
 		}
-		closeCodingAgentTmuxSessionByName(tmuxSession, reason)
-		if _, ok := api.terminalStore.MarkStale(snapshot.TerminalID); ok {
-			closed++
-			log.Printf("[TMUX_REAPER] Closed stale coding-agent tmux session %q terminal=%q owner=%q session=%q reason=%s",
-				tmuxSession, snapshot.TerminalID, snapshot.OwnerID, snapshot.SessionID, candidate.reason)
+		if !closeCodingAgentTmuxSessionByName(tmuxSession, reason) {
+			continue
 		}
+		if registry := api.ensureTerminalLeaseRegistry(); registry != nil {
+			registry.MarkClosed(tmuxSession, candidate.reason, now)
+		}
+		api.terminalStore.MarkArchived(snapshot.TerminalID, candidate.reason)
+		closed++
+		log.Printf("[TMUX_REAPER] Closed stale coding-agent tmux session %q terminal=%q owner=%q session=%q reason=%s",
+			tmuxSession, snapshot.TerminalID, snapshot.OwnerID, snapshot.SessionID, candidate.reason)
 	}
 	return closed
 }
@@ -80,35 +89,61 @@ func (api *StreamingAPI) staleCodingAgentTmuxCleanupCandidates(now time.Time, id
 	}
 
 	sessionStates := api.codingAgentTmuxActiveSessionStates()
-	snapshots := api.terminalStore.List("")
+	registry := api.ensureTerminalLeaseRegistry()
+	if registry == nil {
+		return nil
+	}
+	leases := registry.List()
 	candidates := make([]codingAgentTmuxCleanupCandidate, 0)
-	for _, snapshot := range snapshots {
-		tmuxSession := strings.TrimSpace(snapshot.TmuxSession)
+	for _, lease := range leases {
+		if lease.ProcessState == terminalleases.ProcessClosed {
+			continue
+		}
+		tmuxSession := strings.TrimSpace(lease.TmuxSession)
 		if tmuxSession == "" || !isCodingAgentTmuxSessionName(tmuxSession) {
 			continue
 		}
+		snapshot, ok := api.terminalStore.GetRaw(lease.TerminalID)
+		if !ok {
+			snapshot = terminals.Snapshot{
+				TerminalID:    lease.TerminalID,
+				TmuxSession:   lease.TmuxSession,
+				SessionID:     lease.SessionID,
+				OwnerID:       lease.OwnerID,
+				ExecutionID:   lease.ExecutionID,
+				ExecutionKind: lease.ExecutionKind,
+				WorkflowPath:  lease.WorkflowPath,
+				UpdatedAt:     lease.LastActivity,
+			}
+		}
 
-		state, sessionExists := sessionStates[snapshot.SessionID]
+		state, sessionExists := sessionStates[lease.SessionID]
 		switch {
 		case !sessionExists:
 			candidates = append(candidates, codingAgentTmuxCleanupCandidate{
 				snapshot: snapshot,
+				lease:    lease,
 				reason:   "owner session missing",
 			})
 		case codingAgentTmuxSessionStatusClosesImmediately(state.status):
 			candidates = append(candidates, codingAgentTmuxCleanupCandidate{
 				snapshot: snapshot,
+				lease:    lease,
 				reason:   "owner session " + state.status,
 			})
-		case snapshot.ClosesAt != nil && !now.Before(*snapshot.ClosesAt):
+		case lease.Policy == terminalleases.PolicyBounded &&
+			lease.ProcessDeadline != nil && !now.Before(*lease.ProcessDeadline):
 			candidates = append(candidates, codingAgentTmuxCleanupCandidate{
 				snapshot: snapshot,
-				reason:   "retention elapsed",
+				lease:    lease,
+				reason:   "bounded process grace elapsed",
 			})
 		case codingAgentTmuxSessionStatusUsesIdleBackstop(state.status) &&
+			lease.Policy == terminalleases.PolicyPersistent &&
 			codingAgentTmuxSnapshotIdleFor(snapshot, now, idleTimeout):
 			candidates = append(candidates, codingAgentTmuxCleanupCandidate{
 				snapshot: snapshot,
+				lease:    lease,
 				reason:   "idle backstop elapsed",
 			})
 		}
@@ -173,17 +208,19 @@ func isCodingAgentTmuxSessionName(tmuxSession string) bool {
 		strings.HasPrefix(name, "mlp-pi-cli")
 }
 
-func closeCodingAgentTmuxSessionByName(tmuxSession, reason string) {
+func closeCodingAgentTmuxSessionByName(tmuxSession, reason string) bool {
 	tmuxSession = strings.TrimSpace(tmuxSession)
 	if tmuxSession == "" {
-		return
+		return false
 	}
 	_ = gracefulCloseCodingCLITmuxByName(tmuxSession, reason)
 	ctx, cancel := context.WithTimeout(context.Background(), terminalTmuxActionTimeout)
 	defer cancel()
 	if err := runTerminalTmuxCommand(ctx, "", "kill-session", "-t", tmuxSession); err != nil && !isMissingTmuxTargetError(err) {
 		log.Printf("[TMUX_REAPER] kill-session %q failed: %v", tmuxSession, err)
+		return false
 	}
+	return true
 }
 
 // cleanupConflictingPiCLIInteractiveSessions closes older manual Pi CLI main

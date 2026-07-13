@@ -55,16 +55,27 @@ func (api *StreamingAPI) reapRateLimitedCodingSessionsOnce(streak map[string]int
 		if tmux == "" || sessionID == "" {
 			continue
 		}
+		// Confirmation belongs to one real pane, not the app session. A workflow
+		// session can host several terminals; keying by tmux keeps two limited
+		// panes satisfy a two-tick streak during the same poll.
+		watchdogKey := tmux
 		switch inspectCodingTmuxPaneState(tmux) {
 		case codingTmuxPaneMissing:
 			api.terminalStore.MarkStale(snap.TerminalID)
-			delete(streak, sessionID)
+			if registry := api.ensureTerminalLeaseRegistry(); registry != nil {
+				registry.MarkClosed(tmux, "tmux pane missing", time.Now())
+			}
+			delete(streak, watchdogKey)
 			continue
 		case codingTmuxPaneDead:
 			if snap.Active || !strings.EqualFold(strings.TrimSpace(snap.State), "completed") {
 				api.terminalStore.MarkCompleted(snap.TerminalID)
 			}
-			delete(streak, sessionID)
+			api.terminalStore.MarkProcessClosed(snap.TerminalID, "tmux pane exited")
+			if registry := api.ensureTerminalLeaseRegistry(); registry != nil {
+				registry.MarkClosed(tmux, "tmux pane exited", time.Now())
+			}
+			delete(streak, watchdogKey)
 			continue
 		case codingTmuxPaneUnknown:
 			// A transient tmux command failure is not evidence of completion.
@@ -74,11 +85,11 @@ func (api *StreamingAPI) reapRateLimitedCodingSessionsOnce(streak map[string]int
 		if !terminals.DetectRateLimit(captured) {
 			continue
 		}
-		stillLimited[sessionID] = true
-		streak[sessionID]++
-		if streak[sessionID] < codingWatchdogConfirmChecks {
+		stillLimited[watchdogKey] = true
+		streak[watchdogKey]++
+		if streak[watchdogKey] < codingWatchdogConfirmChecks {
 			log.Printf("[CODING_WATCHDOG] session %s tmux %s looks rate-limited (%d/%d) - waiting to confirm",
-				sessionID, tmux, streak[sessionID], codingWatchdogConfirmChecks)
+				sessionID, tmux, streak[watchdogKey], codingWatchdogConfirmChecks)
 			continue
 		}
 
@@ -91,12 +102,16 @@ func (api *StreamingAPI) reapRateLimitedCodingSessionsOnce(streak map[string]int
 		_ = runTmuxKill(killCtx, tmux)
 		cancel()
 		api.terminalStore.MarkFailed(snap.TerminalID)
-		delete(streak, sessionID)
+		api.terminalStore.MarkProcessClosed(snap.TerminalID, "provider usage/rate limit reached")
+		if registry := api.ensureTerminalLeaseRegistry(); registry != nil {
+			registry.MarkClosed(tmux, "provider usage/rate limit reached", time.Now())
+		}
+		delete(streak, watchdogKey)
 	}
 
-	for sessionID := range streak {
-		if !stillLimited[sessionID] {
-			delete(streak, sessionID)
+	for watchdogKey := range streak {
+		if !stillLimited[watchdogKey] {
+			delete(streak, watchdogKey)
 		}
 	}
 }

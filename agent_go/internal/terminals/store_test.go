@@ -1923,20 +1923,26 @@ func TestStoreLaterFailureOverridesEarlierCompletionText(t *testing.T) {
 	}
 }
 
-func TestStoreDismissRemovesTerminalAndSuppressesFutureChunks(t *testing.T) {
+func TestStoreDismissHidesTerminalButRetainsOwnershipAndFutureChunks(t *testing.T) {
 	store := NewStore()
 	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", "screen one", 1))
 
 	if !store.Dismiss("session-1:exec-1") {
-		t.Fatalf("expected dismiss to remove terminal")
+		t.Fatalf("expected dismiss to hide terminal")
 	}
 	if _, ok := store.Get("session-1:exec-1"); ok {
-		t.Fatalf("terminal should be removed after dismiss")
+		t.Fatalf("terminal should be hidden after dismiss")
+	}
+	if raw, ok := store.GetRaw("session-1:exec-1"); !ok || raw.Content != "screen one" {
+		t.Fatalf("dismissal lost ownership snapshot: ok=%v content=%q", ok, raw.Content)
 	}
 
 	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", "screen two", 2))
 	if _, ok := store.Get("session-1:exec-1"); ok {
-		t.Fatalf("dismissed terminal should not be recreated by future chunks")
+		t.Fatalf("dismissed terminal should stay hidden")
+	}
+	if raw, ok := store.GetRaw("session-1:exec-1"); !ok || raw.Content != "screen two" {
+		t.Fatalf("future chunk did not update hidden ownership snapshot: ok=%v content=%q", ok, raw.Content)
 	}
 }
 

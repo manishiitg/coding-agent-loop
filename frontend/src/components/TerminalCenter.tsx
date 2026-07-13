@@ -1002,6 +1002,9 @@ function formatCloseCountdown(seconds: number): string {
 
 function terminalState(terminal: TerminalSnapshot): string {
   if (isArchivedTurnTerminal(terminal)) return 'completed'
+  if (terminal.snapshot_kind === 'archived' && terminal.process_state === 'closed') {
+    return terminal.state === 'failed' ? 'failed' : 'archived'
+  }
   if (!terminal.active && terminalSecondsUntilClose(terminal) > 0) return 'closing'
   if (terminal.state === 'closing' && terminalSecondsUntilClose(terminal) <= 0) return 'completed'
   if (terminal.active && terminal.state === 'idle') return 'running'
@@ -1019,6 +1022,8 @@ function terminalStateLabel(terminal: TerminalSnapshot): string {
       return 'failed'
     case 'stale':
       return 'stale'
+    case 'archived':
+      return 'archived'
     case 'closing':
       // The tmux process is already gone (killed 30s after task end);
       // what this countdown measures is when the read-only snapshot
@@ -1040,6 +1045,10 @@ function terminalStateDescription(terminal: TerminalSnapshot): string {
       return 'Failed: the coding agent or automation step ended with an error.'
     case 'stale':
       return 'Stale: no terminal updates were received for a long time; this pane may have lost its lifecycle event.'
+    case 'archived':
+      return terminal.close_reason
+        ? `Archived terminal capture: ${terminal.close_reason}. The tmux process is closed.`
+        : 'Archived terminal capture: the tmux process is closed and this view is read-only.'
     case 'closing':
       return `Snapshot: the agent finished and this read-only view will be removed in ${formatCloseCountdown(terminalSecondsUntilClose(terminal))}.`
     default:
@@ -1057,6 +1066,8 @@ function terminalDotClass(terminal: TerminalSnapshot, theme: TerminalTheme): str
       return 'bg-red-400'
     case 'stale':
       return 'bg-zinc-400'
+    case 'archived':
+      return theme.dotCompleted
     case 'closing':
       return theme.dotClosing
     default:
@@ -1069,6 +1080,8 @@ function terminalStateTextClass(terminal: TerminalSnapshot, theme: TerminalTheme
     case 'running':
       return theme.stateRunning
     case 'completed':
+      return theme.stateCompleted
+    case 'archived':
       return theme.stateCompleted
     case 'failed':
       return 'text-red-300'
@@ -1147,6 +1160,9 @@ function terminalDebugText(terminal: TerminalSnapshot): string {
     terminal.execution_kind ? `execution_kind=${terminal.execution_kind}` : '',
     terminal.step_type ? `step_type=${terminal.step_type}` : '',
     terminal.state ? `state=${terminal.state}` : '',
+    terminal.process_state ? `process_state=${terminal.process_state}` : '',
+    terminal.snapshot_kind ? `snapshot_kind=${terminal.snapshot_kind}` : '',
+    terminal.close_reason ? `close_reason=${terminal.close_reason}` : '',
     terminal.closes_at ? `closes_at=${terminal.closes_at}` : '',
     terminal.retention_seconds ? `retention_seconds=${terminal.retention_seconds}` : '',
     `title=${formatTerminalTitle(terminal)}`,

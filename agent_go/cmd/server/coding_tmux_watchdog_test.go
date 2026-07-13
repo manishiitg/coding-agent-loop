@@ -92,3 +92,39 @@ func TestCodingTmuxWatchdogReconcilesFromActualPaneState(t *testing.T) {
 		})
 	}
 }
+
+func TestCodingTmuxWatchdogRequiresDistinctTicksPerTerminal(t *testing.T) {
+	oldOutput := runTerminalTmuxOutputCommand
+	oldCapture := captureTmuxPanePlainForWatchdog
+	t.Cleanup(func() {
+		runTerminalTmuxOutputCommand = oldOutput
+		captureTmuxPanePlainForWatchdog = oldCapture
+	})
+	runTerminalTmuxOutputCommand = func(context.Context, ...string) (string, error) {
+		return "0", nil
+	}
+	captureTmuxPanePlainForWatchdog = func(string) string {
+		return "You've hit your usage limit"
+	}
+
+	store := terminals.NewStore()
+	sessionID := "shared-watchdog-session"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:one", "mlp-codex-cli-int-one", "limited", 1))
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:two", "mlp-codex-cli-int-two", "limited", 1))
+	api := &StreamingAPI{
+		terminalStore: store,
+		activeSessions: map[string]*ActiveSessionInfo{
+			sessionID: {SessionID: sessionID, Status: "running"},
+		},
+	}
+	streak := map[string]int{}
+
+	api.reapRateLimitedCodingSessionsOnce(streak)
+
+	if got := api.activeSessions[sessionID].Status; got != "running" {
+		t.Fatalf("session stopped after one tick across two terminals: %q", got)
+	}
+	if streak["mlp-codex-cli-int-one"] != 1 || streak["mlp-codex-cli-int-two"] != 1 {
+		t.Fatalf("terminal streaks = %#v, want one observation each", streak)
+	}
+}

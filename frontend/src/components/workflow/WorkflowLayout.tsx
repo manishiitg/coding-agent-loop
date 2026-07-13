@@ -859,9 +859,11 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   }, [])
 
   // Get active workflow preset (file-backed manifests, not DB presets)
-  const getActivePreset = useGlobalPresetStore(state => state.getActivePreset)
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
-  const activeWorkflowPreset = getActivePreset('workflow')
+  const activeWorkflowPreset = useGlobalPresetStore(state => {
+    const presetId = state.activePresetIds.workflow
+    return presetId ? state.workflowPresets.find(preset => preset.id === presetId) ?? null : null
+  })
   const activeWorkflowWorkspacePath = activeWorkflowPreset?.selectedFolder?.filepath ?? null
   const showResumeHint = useChatStore(state => {
     const tabId = state.activeTabId

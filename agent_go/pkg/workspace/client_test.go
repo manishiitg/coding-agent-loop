@@ -116,6 +116,33 @@ func TestResolveEffectiveFolderGuardPreservesReadOnlyAndDenyPaths(t *testing.T) 
 	}
 }
 
+func TestSystemManagedWritePathsOverrideWriteOnlyDeny(t *testing.T) {
+	sessionID := "system-managed-write-session"
+	SetSessionFolderGuard(sessionID, []string{"Workflow/demo"}, []string{"Workflow/demo"})
+	SetSessionFolderGuardBlockedPaths(sessionID, []string{"Workflow/demo/secrets"})
+	SetSessionFolderGuardBlockedWritePaths(sessionID, []string{"Workflow/demo/planning"})
+	defer ClearSessionShellConfig(sessionID)
+
+	client := NewClient("http://unused")
+	ctx := context.WithValue(context.Background(), common.ChatSessionIDKey, sessionID)
+	planPath := "Workflow/demo/planning/plan.json"
+
+	if err := client.ValidatePathWithContext(ctx, planPath, true); err == nil || !strings.Contains(err.Error(), "blocked for writes") {
+		t.Fatalf("ordinary session write should remain blocked, got %v", err)
+	}
+
+	managedCtx := WithSystemManagedWritePaths(ctx, "Workflow/demo/planning")
+	if err := client.ValidatePathWithContext(managedCtx, planPath, true); err != nil {
+		t.Fatalf("trusted plan write should bypass write-only deny: %v", err)
+	}
+	if err := client.ValidatePathWithContext(managedCtx, "Workflow/demo/secrets/token.txt", true); err == nil || !strings.Contains(err.Error(), "is blocked") {
+		t.Fatalf("system-managed write must not bypass hard deny, got %v", err)
+	}
+	if err := client.ValidatePathWithContext(managedCtx, "Workflow/other/planning/plan.json", true); err == nil {
+		t.Fatal("system-managed capability escaped its workflow planning path")
+	}
+}
+
 // TestValidatePathAgainstGuard_BlockedPathsStillDeniesBoth asserts that the
 // pre-existing BlockedPaths semantic — "deny both reads and writes" — is
 // unchanged by the addition of BlockedWritePaths. These are two independent

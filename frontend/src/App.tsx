@@ -741,11 +741,9 @@ function App() {
   const hasCreatedDefaultTabRef = useRef<string | null>(null)
 
   
-  const { clearActivePreset, applyPreset, getActivePreset } = useGlobalPresetStore(useShallow(state => ({
-    clearActivePreset: state.clearActivePreset,
-    applyPreset: state.applyPreset,
-    getActivePreset: state.getActivePreset,
-  })))
+  const clearActivePreset = useGlobalPresetStore(state => state.clearActivePreset)
+  const applyPreset = useGlobalPresetStore(state => state.applyPreset)
+  const getActivePreset = useGlobalPresetStore(state => state.getActivePreset)
 
   useEffect(() => {
     const handleOpenQuickSwitcher = (event: Event) => {

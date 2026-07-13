@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	workspacepkg "github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 
@@ -4483,6 +4484,8 @@ func registerPlanModificationTools(
 	agentName string, // e.g., "planning agent" or "plan improvement agent"
 	unlockLearningsFunc func(context.Context, string, int) error, // Optional: function to unlock learnings after plan modifications
 ) error {
+	writeFile = withPlanMutationWriteAccess(workspacePath, writeFile)
+
 	// Note: human_feedback is already registered via WorkspaceTools (created by createCustomTools in server.go)
 	// No need to register it again here to avoid duplicate registration errors
 
@@ -4774,6 +4777,13 @@ func registerPlanModificationTools(
 	}
 
 	return nil
+}
+
+func withPlanMutationWriteAccess(workspacePath string, writeFile func(context.Context, string, string) error) func(context.Context, string, string) error {
+	planningPath := normalizePathForWorkspaceAPI("planning", workspacePath)
+	return func(ctx context.Context, path, content string) error {
+		return writeFile(workspacepkg.WithSystemManagedWritePaths(ctx, planningPath), path, content)
+	}
 }
 
 // createAddTodoTaskRouteExecutor creates an executor function for add_todo_task_route tool

@@ -46,6 +46,38 @@ type Client struct {
 	DefaultWorkingDir string            // Default working directory for shell commands (relative to docs-dir)
 }
 
+type internalContextKey string
+
+const systemManagedWritePathsKey internalContextKey = "system_managed_write_paths"
+
+// WithSystemManagedWritePaths grants trusted Go-side tools write access to
+// system-owned paths that remain blocked from shell and general file tools.
+// The capability exists only in the in-process context and is never accepted
+// from HTTP or LLM tool arguments.
+func WithSystemManagedWritePaths(ctx context.Context, paths ...string) context.Context {
+	existing, _ := ctx.Value(systemManagedWritePathsKey).([]string)
+	granted := clonePathList(existing)
+	for _, path := range paths {
+		path = filepath.Clean(strings.TrimSpace(path))
+		if path == "." || path == "" {
+			continue
+		}
+		granted = append(granted, path)
+	}
+	return context.WithValue(ctx, systemManagedWritePathsKey, deduplicateStrings(granted))
+}
+
+func systemManagedWriteAllowed(ctx context.Context, inputPath string) bool {
+	paths, _ := ctx.Value(systemManagedWritePathsKey).([]string)
+	inputPath = filepath.Clean(inputPath)
+	for _, path := range paths {
+		if isPathUnder(inputPath, filepath.Clean(path)) {
+			return true
+		}
+	}
+	return false
+}
+
 // ClientOption is a functional option for configuring the Client
 type ClientOption func(*Client)
 
@@ -199,6 +231,18 @@ func cloneFolderGuard(guard *FolderGuardConfig) *FolderGuardConfig {
 // where session-scoped restrictions must be enforced.
 func (c *Client) ValidatePathWithContext(ctx context.Context, inputPath string, isWrite bool) error {
 	guard := c.resolveEffectiveFolderGuard(ctx)
+	if isWrite && systemManagedWriteAllowed(ctx, inputPath) {
+		// System-managed access may override a write-only deny, but never a hard
+		// read/write deny. This keeps secrets and other absolute exclusions closed.
+		if guard != nil {
+			for _, blocked := range guard.BlockedPaths {
+				if isPathUnder(filepath.Clean(inputPath), filepath.Clean(blocked)) {
+					return fmt.Errorf("path %q is blocked", inputPath)
+				}
+			}
+		}
+		return nil
+	}
 	if guard == nil || !guard.Enabled {
 		return nil
 	}

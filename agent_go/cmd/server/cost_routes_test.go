@@ -234,6 +234,73 @@ func TestCostObserverMultiTurnAccumulation(t *testing.T) {
 	}
 }
 
+func TestCostObserverRecordsPerCallAndIgnoresCumulativeFallback(t *testing.T) {
+	ledger, err := costledger.NewSQLiteLedger(t.TempDir() + "/costs.sqlite")
+	if err != nil {
+		t.Fatalf("NewSQLiteLedger() error = %v", err)
+	}
+	defer ledger.Close()
+	obs := newCostObserver(
+		ledger,
+		"sess-per-call",
+		"user-1",
+		"workflow_phase",
+		withCostModel("codex-cli", "auto"),
+		withCostAttribution("pulse", "Workflow/demo", "iteration-0/default", "exec-1"),
+	)
+
+	perCall := &unifiedevents.AgentEvent{
+		Type:      unifiedevents.LLMGenerationEnd,
+		Timestamp: time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC),
+		SpanID:    "span-call-1",
+		Component: "llm",
+		Data: &unifiedevents.LLMGenerationEndEvent{
+			UsageMetrics: unifiedevents.UsageMetrics{
+				PromptTokens: 120, CompletionTokens: 30, CacheTokens: 40,
+			},
+			BaseEventData: unifiedevents.BaseEventData{Metadata: map[string]interface{}{
+				"provider":                "codex-cli",
+				"codex_effective_model":   "gpt-5.6-sol",
+				"cost_usd_estimated":      0.12,
+				"cache_read_input_tokens": 40,
+			}},
+		},
+	}
+	if err := obs.HandleEvent(context.Background(), perCall); err != nil {
+		t.Fatalf("HandleEvent(per call) error = %v", err)
+	}
+	if err := obs.HandleEvent(context.Background(), &unifiedevents.AgentEvent{
+		Type:      unifiedevents.TokenUsage,
+		Timestamp: perCall.Timestamp.Add(time.Second),
+		SpanID:    "span-cumulative",
+		Data: &unifiedevents.TokenUsageEvent{
+			Provider: "codex-cli", ModelID: "auto", PromptTokens: 120,
+			CompletionTokens: 30, TotalCost: 0.12,
+			GenerationInfo: map[string]interface{}{"llm_call_count": 1},
+		},
+	}); err != nil {
+		t.Fatalf("HandleEvent(cumulative) error = %v", err)
+	}
+	// A duplicate observer delivery of the same event is also idempotent.
+	if err := obs.HandleEvent(context.Background(), perCall); err != nil {
+		t.Fatalf("HandleEvent(duplicate) error = %v", err)
+	}
+
+	summary, err := ledger.Summarize("", "")
+	if err != nil {
+		t.Fatalf("Summarize() error = %v", err)
+	}
+	if summary.Total.CallCount != 1 || summary.Total.AccountingEventCount != 1 {
+		t.Fatalf("summary total = %#v, want one immutable call", summary.Total)
+	}
+	if summary.Total.SubscriptionShadowUSD != 0.12 {
+		t.Fatalf("SubscriptionShadowUSD = %v, want 0.12", summary.Total.SubscriptionShadowUSD)
+	}
+	if got := summary.ByModel["gpt-5.6-sol"]; got == nil || got.PromptTokens != 120 {
+		t.Fatalf("effective model aggregate = %#v", got)
+	}
+}
+
 func TestCostObserverNilSafety(t *testing.T) {
 	obs := newCostObserver(nil, "", "", "")
 	if err := obs.HandleEvent(context.Background(), nil); err != nil {

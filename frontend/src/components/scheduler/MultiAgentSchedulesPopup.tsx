@@ -9,6 +9,9 @@ const MISSED_SCHEDULE_GRACE_MS = 60_000
 const ORG_PULSE_JOB_ID = 'builtin-org-pulse'
 type JobFilter = 'running' | 'enabled' | 'paused' | 'missed' | 'issues' | 'all'
 
+const isScheduleIssueStatus = (status?: ScheduledJob['last_status']) =>
+  status === 'error' || status === 'partial' || status === 'interrupted'
+
 function describeCron(expr: string): string {
   try {
     return cronstrue.toString(expr, { throwExceptionOnParseError: true })
@@ -67,7 +70,7 @@ function sortJobs(a: ScheduledJob, b: ScheduledJob): number {
     if (getMissedScheduleDelayMs(job) != null) return 1
     if (job.enabled && job.next_run_at) return 2
     if (job.enabled) return 3
-    if (job.last_status === 'error') return 4
+    if (job.last_status === 'error' || job.last_status === 'partial' || job.last_status === 'interrupted') return 4
     return 5
   }
 
@@ -152,7 +155,7 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
       if (job.enabled) enabled += 1
       else paused += 1
       if (getMissedScheduleDelayMs(job) != null) missed += 1
-      if (job.last_status === 'error') issues += 1
+      if (isScheduleIssueStatus(job.last_status)) issues += 1
       if (job.last_run_at && (!lastRunAt || job.last_run_at > lastRunAt)) {
         lastRunAt = job.last_run_at
       }
@@ -186,7 +189,7 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
         case 'missed':
           return getMissedScheduleDelayMs(job) != null
         case 'issues':
-          return job.last_status === 'error'
+          return isScheduleIssueStatus(job.last_status)
         case 'all':
         default:
           return true
@@ -273,6 +276,16 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
     if (job.last_status === 'error') {
       return <span className="inline-flex items-center gap-1 rounded-full border border-red-500/30 bg-red-500/10 px-1.5 py-0.5 text-[11px] font-medium text-red-600 dark:text-red-300">
         <AlertCircle className="h-3 w-3" /> Issue
+      </span>
+    }
+    if (job.last_status === 'partial' || job.last_status === 'interrupted') {
+      return <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+        <AlertCircle className="h-3 w-3" /> {job.last_status === 'partial' ? 'Partial' : 'Interrupted'}
+      </span>
+    }
+    if (job.last_status === 'stopped') {
+      return <span className="inline-flex items-center gap-1 rounded-full border border-gray-500/30 bg-gray-500/10 px-1.5 py-0.5 text-[11px] font-medium text-gray-600 dark:text-gray-300">
+        <Square className="h-3 w-3" /> Stopped
       </span>
     }
     if (job.last_status === 'success') {
@@ -432,6 +445,7 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
                                 isRunning ? 'bg-amber-500 animate-pulse' :
                                 missedDelayMs != null ? 'bg-amber-500' :
                                 job.last_status === 'error' ? 'bg-red-500' :
+                                job.last_status === 'partial' || job.last_status === 'interrupted' ? 'bg-amber-500' :
                                 job.enabled ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'
                               }`} />
                               <div className="min-w-0 flex-1">
@@ -484,8 +498,8 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
                                   </p>
                                 )}
 
-                                {job.last_error && job.last_status === 'error' && (
-                                  <p className="mt-1 truncate text-xs text-red-500" title={job.last_error}>
+                                {job.last_error && (isScheduleIssueStatus(job.last_status) || job.last_status === 'stopped') && (
+                                  <p className={`mt-1 truncate text-xs ${job.last_status === 'error' ? 'text-red-500' : job.last_status === 'stopped' ? 'text-muted-foreground' : 'text-amber-600 dark:text-amber-400'}`} title={job.last_error}>
                                     {job.last_error}
                                   </p>
                                 )}

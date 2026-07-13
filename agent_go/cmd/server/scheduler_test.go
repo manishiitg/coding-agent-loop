@@ -9,11 +9,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/internal/terminals"
+	"mcp-agent-builder-go/agent_go/pkg/schedulerstate"
 	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 )
 
@@ -50,6 +52,429 @@ func TestBuildScheduleCronExpressionAlwaysSetsTimezone(t *testing.T) {
 				t.Fatalf("buildScheduleCronExpression() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestMergeRuntimeStatePreservesRunningPulseForSameSession(t *testing.T) {
+	runtimeStarted := time.Now().Add(-time.Minute).UTC()
+	historyStarted := runtimeStarted.Add(time.Millisecond)
+	duration := int64(1200)
+
+	got := mergeRuntimeStateWithRuns(ScheduleRuntimeState{
+		LastStatus:    "running",
+		LastRunAt:     &runtimeStarted,
+		LastSessionID: "session-1",
+	}, "schedule-1", []ScheduleRunEntry{{
+		ID:         "run-1",
+		ScheduleID: "schedule-1",
+		SessionID:  "session-1",
+		Status:     "success",
+		StartedAt:  historyStarted,
+		DurationMs: &duration,
+	}})
+
+	if got.LastStatus != "running" {
+		t.Fatalf("LastStatus = %q, want running while Pulse owns the session", got.LastStatus)
+	}
+	if got.LastSessionID != "session-1" {
+		t.Fatalf("LastSessionID = %q, want session-1", got.LastSessionID)
+	}
+}
+
+func TestMergeRuntimeStateAdoptsGenuinelyNewerRun(t *testing.T) {
+	runtimeStarted := time.Now().Add(-time.Hour).UTC()
+	historyStarted := runtimeStarted.Add(30 * time.Minute)
+
+	got := mergeRuntimeStateWithRuns(ScheduleRuntimeState{
+		LastStatus:    "running",
+		LastRunAt:     &runtimeStarted,
+		LastSessionID: "old-session",
+	}, "schedule-1", []ScheduleRunEntry{{
+		ID:         "run-2",
+		ScheduleID: "schedule-1",
+		SessionID:  "new-session",
+		Status:     "success",
+		StartedAt:  historyStarted,
+	}})
+
+	if got.LastStatus != "success" || got.LastSessionID != "new-session" {
+		t.Fatalf("merged state = %+v, want newer persisted run", got)
+	}
+}
+
+func TestUpdateRuntimeStateSerializesMutations(t *testing.T) {
+	svc := NewSchedulerService(nil)
+	const workers = 32
+	const increments = 250
+
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < increments; j++ {
+				svc.updateRuntimeState("schedule-1", func(state *ScheduleRuntimeState) {
+					state.RunCount++
+				})
+			}
+		}()
+	}
+	wg.Wait()
+
+	got := svc.GetRuntimeState("schedule-1")
+	if got.RunCount != workers*increments {
+		t.Fatalf("RunCount = %d, want %d", got.RunCount, workers*increments)
+	}
+}
+
+func TestRuntimeStateIsScopedAcrossUsersAndWorkflows(t *testing.T) {
+	svc := NewSchedulerService(nil)
+	userOneKey := multiAgentScheduleRuntimeKey("user-1", "builtin-org-pulse")
+	userTwoKey := multiAgentScheduleRuntimeKey("user-2", "builtin-org-pulse")
+	workflowOneKey := workflowScheduleRuntimeKey("Workflow/one", "copied-schedule")
+	workflowTwoKey := workflowScheduleRuntimeKey("Workflow/two", "copied-schedule")
+
+	svc.updateRuntimeState(userOneKey, func(state *ScheduleRuntimeState) {
+		state.LastStatus = "running"
+		state.LastSessionID = "user-1-session"
+	})
+	svc.updateRuntimeState(userTwoKey, func(state *ScheduleRuntimeState) {
+		state.LastStatus = "success"
+		state.LastSessionID = "user-2-session"
+	})
+	svc.updateRuntimeState(workflowOneKey, func(state *ScheduleRuntimeState) {
+		state.LastStatus = "running"
+	})
+	svc.updateRuntimeState(workflowTwoKey, func(state *ScheduleRuntimeState) {
+		state.LastStatus = "stopped"
+	})
+
+	if got := svc.getRuntimeStateByKey(userOneKey); got.LastSessionID != "user-1-session" || got.LastStatus != "running" {
+		t.Fatalf("user 1 state = %+v", got)
+	}
+	if got := svc.getRuntimeStateByKey(userTwoKey); got.LastSessionID != "user-2-session" || got.LastStatus != "success" {
+		t.Fatalf("user 2 state = %+v", got)
+	}
+	if got := svc.getRuntimeStateByKey(workflowOneKey); got.LastStatus != "running" {
+		t.Fatalf("workflow one state = %+v", got)
+	}
+	if got := svc.getRuntimeStateByKey(workflowTwoKey); got.LastStatus != "stopped" {
+		t.Fatalf("workflow two state = %+v", got)
+	}
+	if got := svc.GetRuntimeState("builtin-org-pulse"); got.LastStatus != "" {
+		t.Fatalf("ambiguous unscoped state = %+v, want empty", got)
+	}
+}
+
+func TestScheduleStateLockKeyFromRuntimeKey(t *testing.T) {
+	workflowKey := workflowScheduleRuntimeKey("/tmp/Workflow/demo", "daily")
+	wantWorkflow := strings.Join([]string{"workflow", "/tmp/Workflow/demo"}, scheduleScopeSeparator)
+	if got := scheduleStateLockKeyFromRuntimeKey(workflowKey); got != wantWorkflow {
+		t.Fatalf("workflow lock key = %q, want %q", got, wantWorkflow)
+	}
+	multiAgentKey := multiAgentScheduleRuntimeKey("user-1", "daily")
+	if got := scheduleStateLockKeyFromRuntimeKey(multiAgentKey); got != multiAgentKey {
+		t.Fatalf("multi-agent lock key = %q, want %q", got, multiAgentKey)
+	}
+}
+
+func TestStopRunningJobCancelsBeforeSessionStarts(t *testing.T) {
+	store, err := schedulerstate.Open(filepath.Join(t.TempDir(), "schedule-state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	svc := NewSchedulerService(nil)
+	svc.stateStore = store
+	sctx := buildScheduleContext("Workflow/demo", &WorkflowManifest{ID: "demo"}, WorkflowSchedule{ID: "daily"})
+	runID := "run-before-session"
+	if err := svc.claimScheduleRun(context.Background(), sctx, runID, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	runCtx := svc.registerScheduleRunContext(runID)
+	runtimeKey := scheduleRuntimeKey(sctx)
+	svc.updateRuntimeState(runtimeKey, func(state *ScheduleRuntimeState) {
+		state.ActiveRunID = runID
+		state.LastStatus = "running"
+	})
+
+	svc.stopRunningJob(runtimeKey, sctx.Schedule.ID)
+	select {
+	case <-runCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("run context was not canceled")
+	}
+	run, err := store.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.State != schedulerstate.StateStopped {
+		t.Fatalf("durable state = %s, want stopped", run.State)
+	}
+	state := svc.getRuntimeStateByKey(runtimeKey)
+	if state.LastStatus != "stopped" || state.ActiveRunID != "" {
+		t.Fatalf("runtime state after stop = %+v", state)
+	}
+}
+
+func TestScheduleRunPublicationRegistersCancelBeforeUnlock(t *testing.T) {
+	store, err := schedulerstate.Open(filepath.Join(t.TempDir(), "schedule-state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	svc := NewSchedulerService(nil)
+	svc.stateStore = store
+	sctx := buildScheduleContext("Workflow/demo", &WorkflowManifest{ID: "demo"}, WorkflowSchedule{ID: "daily"})
+	runID := "atomic-publication"
+	startedAt := time.Now().UTC()
+	if err := svc.claimScheduleRun(context.Background(), sctx, runID, startedAt); err != nil {
+		t.Fatal(err)
+	}
+
+	runtimeKey := scheduleRuntimeKey(sctx)
+	svc.runtimeStatesMu.Lock()
+	state := svc.getRuntimeStateLocked(runtimeKey)
+	runCtx := svc.activateScheduleRunLocked(state, runID, startedAt)
+	stopStarted := make(chan struct{})
+	stopDone := make(chan struct{})
+	go func() {
+		close(stopStarted)
+		svc.stopRunningJob(runtimeKey, sctx.Schedule.ID)
+		close(stopDone)
+	}()
+	<-stopStarted
+	select {
+	case <-stopDone:
+		t.Fatal("stop completed before active run publication released its lock")
+	case <-time.After(20 * time.Millisecond):
+	}
+	svc.runtimeStatesMu.Unlock()
+
+	select {
+	case <-runCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("stop did not cancel the atomically published run context")
+	}
+	select {
+	case <-stopDone:
+	case <-time.After(time.Second):
+		t.Fatal("stop did not complete")
+	}
+}
+
+func TestStopBetweenReservationAndDurableClaimPreventsExecution(t *testing.T) {
+	store, err := schedulerstate.Open(filepath.Join(t.TempDir(), "schedule-state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	svc := NewSchedulerService(nil)
+	svc.stateStore = store
+	sctx := buildScheduleContext("Workflow/demo", &WorkflowManifest{ID: "demo"}, WorkflowSchedule{ID: "daily"})
+	runtimeKey := scheduleRuntimeKey(sctx)
+	runID := "stop-during-claim"
+	startedAt := time.Now().UTC()
+
+	svc.runtimeStatesMu.Lock()
+	state := svc.getRuntimeStateLocked(runtimeKey)
+	runCtx := svc.activateScheduleRunLocked(state, runID, startedAt)
+	svc.runtimeStatesMu.Unlock()
+
+	// This is the historical race window: Stop sees the reservation before the
+	// SQLite run row exists.
+	svc.stopRunningJob(runtimeKey, sctx.Schedule.ID)
+	if err := svc.claimScheduleRun(context.Background(), sctx, runID, startedAt); err != nil {
+		t.Fatalf("durable claim after stop: %v", err)
+	}
+	if !svc.abortCanceledScheduleRunBeforeStart(runCtx, sctx, runtimeKey, runID) {
+		t.Fatal("canceled reservation was allowed to start")
+	}
+
+	run, err := store.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.State != schedulerstate.StateStopped {
+		t.Fatalf("durable state = %s, want stopped", run.State)
+	}
+}
+
+func TestTriggerMultiAgentNowFindsBuiltinWithoutScheduleFile(t *testing.T) {
+	workspace := httptest.NewServer(&mockWorkspaceAPI{files: map[string]string{}})
+	defer workspace.Close()
+	t.Setenv("WORKSPACE_API_URL", workspace.URL)
+
+	svc := NewSchedulerService(nil)
+	userID := "user-without-schedule-file"
+	svc.updateRuntimeState(multiAgentScheduleRuntimeKey(userID, builtinOrgPulseID), func(state *ScheduleRuntimeState) {
+		state.LastStatus = "running"
+		state.LastSessionID = "existing-session"
+	})
+
+	_, err := svc.TriggerMultiAgentNow(userID, builtinOrgPulseID)
+	if err == nil || !strings.Contains(err.Error(), "job is already running") {
+		t.Fatalf("TriggerMultiAgentNow() error = %v, want builtin resolution followed by running guard", err)
+	}
+}
+
+func TestGetRuntimeStateForUserReconcilesStaleRun(t *testing.T) {
+	workspace := httptest.NewServer(&mockWorkspaceAPI{files: map[string]string{}})
+	defer workspace.Close()
+	t.Setenv("WORKSPACE_API_URL", workspace.URL)
+
+	userID := "user-1"
+	scheduleID := "daily"
+	if err := AppendMultiAgentScheduleRun(context.Background(), userID, &ScheduleRunEntry{
+		ID:         "stale-run",
+		ScheduleID: scheduleID,
+		SessionID:  "missing-session",
+		Status:     "running",
+		StartedAt:  time.Now().Add(-time.Minute).UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewSchedulerService(&StreamingAPI{})
+	state := svc.GetRuntimeStateForUser(userID, scheduleID)
+	if state.LastStatus != "error" || !strings.Contains(state.LastError, "session not active") {
+		t.Fatalf("reconciled state = %+v, want stale run finalized as error", state)
+	}
+	runs, err := ReadMultiAgentScheduleRuns(context.Background(), userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].Status != "error" || runs[0].CompletedAt == nil {
+		t.Fatalf("persisted runs = %+v, want finalized stale run", runs)
+	}
+}
+
+func TestScheduleConfigFingerprintChangesWithCapabilities(t *testing.T) {
+	sctx := buildMultiAgentScheduleContext("user-1", WorkflowSchedule{ID: "daily", Enabled: true, CronExpression: "0 9 * * *", Timezone: "UTC"}, WorkflowCapabilities{})
+	first := scheduleConfigFingerprint(sctx)
+	second := scheduleConfigFingerprint(sctx)
+	if first == "" || first != second {
+		t.Fatalf("fingerprint should be stable and non-empty: %q %q", first, second)
+	}
+	sctx.Capabilities.SelectedSkills = []string{"research"}
+	if changed := scheduleConfigFingerprint(sctx); changed == first {
+		t.Fatal("capability change did not change schedule fingerprint")
+	}
+}
+
+func TestScheduleWithReloadedCalendarItemUsesLatestOverrides(t *testing.T) {
+	requested := &CalendarScheduleItem{ID: "item-1", Date: "2030-01-01", Time: "09:00", Messages: []string{"old"}}
+	sched := WorkflowSchedule{
+		ID: "calendar", ScheduleType: "calendar", Timezone: "UTC",
+		Messages:      []string{"base"},
+		CalendarItems: []CalendarScheduleItem{{ID: "item-1", Date: requested.Date, Time: requested.Time, Messages: []string{"new"}}},
+	}
+	resolved, item, ok := scheduleWithReloadedCalendarItem(sched, requested)
+	if !ok || item == nil {
+		t.Fatal("expected calendar item to resolve")
+	}
+	if got := strings.Join(resolved.Messages, ","); got != "new" {
+		t.Fatalf("resolved messages = %q, want latest override", got)
+	}
+}
+
+func TestLoadScheduleReplacesCalendarRegistrations(t *testing.T) {
+	svc := NewSchedulerService(nil)
+	when := time.Now().UTC().Add(24 * time.Hour)
+	item := CalendarScheduleItem{ID: "item-1", Date: when.Format("2006-01-02"), Time: when.Format("15:04"), Messages: []string{"old"}}
+	sched := WorkflowSchedule{ID: "calendar", Name: "Calendar", Enabled: true, ScheduleType: "calendar", Timezone: "UTC", CalendarItems: []CalendarScheduleItem{item}}
+	if err := svc.LoadSchedule(buildMultiAgentScheduleContext("user-1", sched, WorkflowCapabilities{})); err != nil {
+		t.Fatalf("initial load: %v", err)
+	}
+
+	sched.CalendarItems[0].Messages = []string{"new"}
+	if err := svc.LoadSchedule(buildMultiAgentScheduleContext("user-1", sched, WorkflowCapabilities{})); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+
+	keyPrefix := multiAgentScheduleRuntimeKey("user-1", sched.ID) + "__cal__"
+	matching := 0
+	for key, job := range svc.jobs {
+		if !strings.HasPrefix(key, keyPrefix) {
+			continue
+		}
+		matching++
+		if job.sctx.CalendarItem == nil || strings.Join(job.sctx.Schedule.Messages, ",") != "new" {
+			t.Fatalf("calendar registration did not retain latest item override: %+v", job.sctx)
+		}
+	}
+	if matching != 1 {
+		t.Fatalf("calendar registrations = %d, want 1", matching)
+	}
+}
+
+func TestLoadScheduleDoesNotRememberInvalidCronFingerprint(t *testing.T) {
+	svc := NewSchedulerService(nil)
+	sctx := buildMultiAgentScheduleContext("user-1", WorkflowSchedule{
+		ID: "daily", Enabled: true, CronExpression: "not-a-cron", Timezone: "UTC",
+	}, WorkflowCapabilities{})
+	runtimeKey := scheduleRuntimeKey(sctx)
+	if err := svc.LoadSchedule(sctx); err == nil {
+		t.Fatal("invalid cron unexpectedly loaded")
+	}
+	if _, ok := svc.scheduleFingerprints[runtimeKey]; ok {
+		t.Fatal("invalid cron fingerprint should not suppress the next rescan")
+	}
+
+	sctx.Schedule.CronExpression = "0 9 * * *"
+	if err := svc.LoadSchedule(sctx); err != nil {
+		t.Fatalf("corrected cron was not retried: %v", err)
+	}
+	if _, ok := svc.scheduleFingerprints[runtimeKey]; !ok {
+		t.Fatal("valid schedule fingerprint was not recorded")
+	}
+}
+
+func TestRemoveJobDropsInactiveRuntimeState(t *testing.T) {
+	svc := NewSchedulerService(nil)
+	runtimeKey := workflowScheduleRuntimeKey("Workflow/demo", "daily")
+	svc.updateRuntimeState(runtimeKey, func(state *ScheduleRuntimeState) {
+		state.LastStatus = "success"
+	})
+	if err := svc.removeJobByKey(runtimeKey); err != nil {
+		t.Fatal(err)
+	}
+	svc.runtimeStatesMu.RLock()
+	_, exists := svc.runtimeStates[runtimeKey]
+	svc.runtimeStatesMu.RUnlock()
+	if exists {
+		t.Fatal("removed schedule retained inactive runtime state")
+	}
+}
+
+func TestLoadScheduleKeepsSameIDForDifferentUsers(t *testing.T) {
+	svc := NewSchedulerService(nil)
+	for _, userID := range []string{"user-1", "user-2"} {
+		sctx := buildMultiAgentScheduleContext(userID, WorkflowSchedule{
+			ID:             "builtin-org-pulse",
+			Name:           "Org Pulse",
+			Enabled:        true,
+			CronExpression: "0 9 * * *",
+			Timezone:       "UTC",
+			Query:          "Run Org Pulse",
+		}, WorkflowCapabilities{})
+		if err := svc.LoadSchedule(sctx); err != nil {
+			t.Fatalf("LoadSchedule(%s): %v", userID, err)
+		}
+	}
+
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
+	if len(svc.jobs) != 2 {
+		t.Fatalf("len(jobs) = %d, want 2 scoped jobs", len(svc.jobs))
+	}
+	for _, userID := range []string{"user-1", "user-2"} {
+		if _, ok := svc.jobs[multiAgentScheduleRuntimeKey(userID, "builtin-org-pulse")]; !ok {
+			t.Fatalf("missing scoped job for %s", userID)
+		}
 	}
 }
 
@@ -1821,26 +2246,29 @@ func TestWaitForWorkshopIdleAbortsCanceledTurnBeforeNextMessage(t *testing.T) {
 	}
 }
 
-func TestRunJobGenerationZeroDoesNotJoinActiveRun(t *testing.T) {
+func TestRunJobDoesNotJoinAnotherActiveRun(t *testing.T) {
 	startedAt := time.Now().Add(-time.Minute)
+	sctx := &ScheduleContext{
+		WorkspacePath: "/tmp/workflow",
+		Schedule:      WorkflowSchedule{ID: "schedule-1", Name: "Active schedule"},
+	}
+	runtimeKey := scheduleRuntimeKey(sctx)
 	svc := &SchedulerService{runtimeStates: map[string]*ScheduleRuntimeState{
-		"schedule-1": {
-			LastStatus:    "running",
-			LastRunAt:     &startedAt,
-			runGeneration: 7,
+		runtimeKey: {
+			ActiveRunID: "active-run",
+			LastStatus:  "running",
+			LastRunAt:   &startedAt,
 		},
+	}, runCancels: map[string]context.CancelFunc{
+		"stale-run": func() {},
 	}}
-	sctx := &ScheduleContext{Schedule: WorkflowSchedule{ID: "schedule-1", Name: "Active schedule"}}
 
-	_, err := svc.runJob(context.Background(), sctx)
+	_, err := svc.runJob(context.Background(), sctx, "stale-run")
 	if !errors.Is(err, errWorkshopSequenceInterrupted) {
 		t.Fatalf("runJob error = %v, want errWorkshopSequenceInterrupted", err)
 	}
-	if sctx.runGeneration != 0 {
-		t.Fatalf("generation-zero caller adopted generation %d", sctx.runGeneration)
-	}
-	if got := svc.runtimeStates["schedule-1"].runGeneration; got != 7 {
-		t.Fatalf("active run generation changed to %d", got)
+	if got := svc.runtimeStates[runtimeKey].ActiveRunID; got != "active-run" {
+		t.Fatalf("active run ownership changed to %q", got)
 	}
 }
 

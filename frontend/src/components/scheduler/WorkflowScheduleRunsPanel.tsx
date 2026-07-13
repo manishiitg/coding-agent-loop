@@ -35,6 +35,12 @@ type ActivePopup = 'costs' | 'logs' | 'eval' | 'report' | 'live' | null
 type JobFilter = 'running' | 'enabled' | 'paused' | 'missed' | 'issues' | 'all'
 type SchedulePanelView = 'overview' | 'calendar' | 'by-workflow' | 'schedules'
 
+const isScheduleIssueStatus = (status?: ScheduledJob['last_status']) =>
+  status === 'error' || status === 'partial' || status === 'interrupted'
+
+const isSchedulePartialStatus = (status?: ScheduledJob['last_status']) =>
+  status === 'partial' || status === 'interrupted'
+
 const WORKFLOW_SCHEDULE_PANEL_LIMIT = 10_000
 
 type WorkflowScheduleGroup = {
@@ -575,7 +581,7 @@ function sortJobs(a: ScheduledJob, b: ScheduledJob): number {
     if (isMissedSchedule(job)) return 1
     if (job.enabled && job.next_run_at) return 2
     if (job.enabled) return 3
-    if (job.last_status === 'error') return 4
+    if (isScheduleIssueStatus(job.last_status)) return 4
     return 5
   }
 
@@ -861,7 +867,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   const summary = useMemo(() => {
     const running = panelJobs.filter(j => j.last_status === 'running').length
     const missed = panelJobs.filter(isMissedSchedule).length
-    const issues = panelJobs.filter(j => j.last_status === 'error').length
+    const issues = panelJobs.filter(j => isScheduleIssueStatus(j.last_status)).length
     const paused = panelJobs.filter(j => !j.enabled).length
     const lastRunAt = panelJobs.reduce<string | undefined>((latest, job) => {
       if (!job.last_run_at) return latest
@@ -997,7 +1003,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
       group.runCount += job.run_count || 0
       if (job.last_status === 'running') group.running += 1
       if (isMissedSchedule(job)) group.missed += 1
-      if (job.last_status === 'error') group.issues += 1
+      if (isScheduleIssueStatus(job.last_status)) group.issues += 1
       if (job.enabled) group.enabled += 1
       else group.paused += 1
 
@@ -1438,6 +1444,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                 isRunningJob ? 'bg-amber-500 animate-pulse' :
                 isMissedJob ? 'bg-amber-500' :
                 job.last_status === 'error' ? 'bg-red-500' :
+                isSchedulePartialStatus(job.last_status) ? 'bg-amber-500' :
                 job.enabled ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'
               }`} />
               <div className="min-w-0 flex-1">
@@ -1463,6 +1470,11 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                   {job.last_status === 'error' && (
                     <span className="rounded-full border border-red-500/30 bg-red-500/10 px-1.5 py-0.5 text-[11px] font-medium text-red-600 dark:text-red-300">
                       Issue
+                    </span>
+                  )}
+                  {isSchedulePartialStatus(job.last_status) && (
+                    <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                      {job.last_status === 'partial' ? 'Partial' : 'Interrupted'}
                     </span>
                   )}
                 </div>
@@ -1509,8 +1521,11 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                   )}
                 </div>
 
-                {job.last_status === 'error' && job.last_error && (
-                  <div className="mt-1 truncate text-xs text-red-500" title={job.last_error}>
+                {isScheduleIssueStatus(job.last_status) && job.last_error && (
+                  <div
+                    className={`mt-1 truncate text-xs ${isSchedulePartialStatus(job.last_status) ? 'text-amber-600 dark:text-amber-400' : 'text-red-500'}`}
+                    title={job.last_error}
+                  >
                     {job.last_error}
                   </div>
                 )}
@@ -2463,6 +2478,10 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                               <CheckCircle className="w-3 h-3 text-green-500" />
                             ) : job.last_status === 'error' ? (
                               <XCircle className="w-3 h-3 text-red-500" />
+                            ) : isSchedulePartialStatus(job.last_status) ? (
+                              <AlertTriangle className="w-3 h-3 text-amber-500" />
+                            ) : job.last_status === 'stopped' ? (
+                              <Square className="w-3 h-3 text-gray-500" />
                             ) : (
                               <Minus className="w-3 h-3" />
                             )}
@@ -2493,8 +2512,8 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                         </div>
 
                         {/* Error message */}
-                        {job.last_status === 'error' && job.last_error && (
-                          <div className="mt-1 text-xs text-red-500 truncate max-w-lg" title={job.last_error}>
+                        {(isScheduleIssueStatus(job.last_status) || job.last_status === 'stopped') && job.last_error && (
+                          <div className={`mt-1 text-xs truncate max-w-lg ${job.last_status === 'error' ? 'text-red-500' : isSchedulePartialStatus(job.last_status) ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500'}`} title={job.last_error}>
                             ✗ {job.last_error}
                           </div>
                         )}

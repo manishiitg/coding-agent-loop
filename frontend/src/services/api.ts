@@ -599,6 +599,7 @@ workspaceApi.interceptors.response.use(
 
 
 const coalesceRuntimeRead = createRequestCoalescer()
+const RUNTIME_READ_TIMEOUT_MS = 15_000
 
 export const agentApi = {
   // Observer APIs removed - no longer needed
@@ -652,7 +653,7 @@ export const agentApi = {
     if (options?.activeOnly) params.active_only = 1
     const requestKey = `terminals:${sessionId || '*'}:${content}:${options?.activeOnly ? 'active' : 'all'}`
     return coalesceRuntimeRead(requestKey, async () => {
-      const response = await api.get('/api/terminals', { params, timeout: 15000 })
+      const response = await api.get('/api/terminals', { params, timeout: RUNTIME_READ_TIMEOUT_MS })
       return response.data
     })
   },
@@ -789,7 +790,7 @@ export const agentApi = {
   // Get all active sessions
   getActiveSessions: async (): Promise<GetActiveSessionsResponse> => {
     return coalesceRuntimeRead('active-sessions', async () => {
-      const response = await api.get('/api/sessions/active')
+      const response = await api.get('/api/sessions/active', { timeout: RUNTIME_READ_TIMEOUT_MS })
       return response.data
     })
   },
@@ -840,7 +841,7 @@ export const agentApi = {
   },
 
   getSessionExecutionTree: async (sessionId: string): Promise<SessionExecutionTreeResponse> => {
-    const response = await api.get(`/api/sessions/${sessionId}/execution-tree`)
+    const response = await api.get(`/api/sessions/${sessionId}/execution-tree`, { timeout: RUNTIME_READ_TIMEOUT_MS })
     return response.data
   },
 
@@ -1621,7 +1622,7 @@ export const agentApi = {
 
   listRunningWorkflows: async (): Promise<{ running: RunningWorkflowInfo[] }> => {
     return coalesceRuntimeRead('running-workflows', async () => {
-      const response = await api.get('/api/workflow/running')
+      const response = await api.get('/api/workflow/running', { timeout: RUNTIME_READ_TIMEOUT_MS })
       return response.data
     })
   },

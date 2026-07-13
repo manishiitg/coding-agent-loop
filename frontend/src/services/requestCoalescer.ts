@@ -3,6 +3,9 @@ export type RequestCoalescer = <T>(key: string, request: () => Promise<T>) => Pr
 /**
  * Shares one in-flight promise for identical reads. The entry is removed after
  * either success or failure so later polling intervals still fetch fresh data.
+ * A caller immediately following a mutation can join an older in-flight read;
+ * mutation flows that require read-after-write consistency must use a distinct
+ * key or wait for the existing request to settle.
  */
 export function createRequestCoalescer(): RequestCoalescer {
   const inFlight = new Map<string, Promise<unknown>>()

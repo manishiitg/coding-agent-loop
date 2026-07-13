@@ -12,6 +12,8 @@ import { isLocalActivityFallbackTab } from '../utils/activityFallback'
 import { hasIdleAliveCodingAgent, hasLiveBackgroundAgents, normalizedActivityStatus } from '../utils/activitySessions'
 import { activeSessionsFromLiveWorkflowTerminals } from '../utils/workflowTerminalActivity'
 
+// This matches useChatStore's active-session cache TTL. A longer store TTL also
+// increases the monitor's effective freshness window and should be changed here.
 const ACTIVITY_DETAILS_POLL_MS = 30000
 const MAX_INLINE_ACTIVITY_ITEMS = 2
 

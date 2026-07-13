@@ -609,7 +609,7 @@ export default function PlannerFileList({
           return (
             <div
               key={row.file.filepath}
-              className="absolute inset-x-0"
+              className="absolute inset-x-0 hover:z-50 focus-within:z-50"
               style={{ height: FILE_ROW_HEIGHT, transform: `translateY(${absoluteIndex * FILE_ROW_HEIGHT}px)` }}
             >
               {renderFileItem(row.file, row.depth)}

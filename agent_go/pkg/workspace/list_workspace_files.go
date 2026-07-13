@@ -15,7 +15,7 @@ type ListWorkspaceFilesParams struct {
 // ListWorkspaceFiles lists files using the REST API: GET /api/documents
 func (c *Client) ListWorkspaceFiles(ctx context.Context, params ListWorkspaceFilesParams) (ListFilesResult, error) {
 	// Validate folder path against folder guard (read operation)
-	if err := c.ValidatePath(params.Folder, false); err != nil {
+	if err := c.ValidatePathWithContext(ctx, params.Folder, false); err != nil {
 		return ListFilesResult{}, err
 	}
 

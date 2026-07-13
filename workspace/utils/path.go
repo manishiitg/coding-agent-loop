@@ -11,27 +11,50 @@ import (
 
 // IsValidFilePath validates that the file path is safe and within the docs directory
 func IsValidFilePath(filePath, docsDir string) bool {
-	// Clean the path to resolve any .. or . components
-	cleanPath := filepath.Clean(filePath)
-	cleanDocsDir := filepath.Clean(docsDir)
-
-	// Check if the file path is within the docs directory
-	relPath, err := filepath.Rel(cleanDocsDir, cleanPath)
+	cleanPath, err := filepath.Abs(filepath.Clean(filePath))
 	if err != nil {
 		return false
 	}
-
-	// Check for directory traversal attempts
-	if strings.HasPrefix(relPath, "..") {
+	cleanDocsDir, err := filepath.Abs(filepath.Clean(docsDir))
+	if err != nil || !pathWithinRoot(cleanPath, cleanDocsDir) {
 		return false
 	}
 
-	// Check for invalid characters
-	if strings.Contains(relPath, "..") {
+	resolvedRoot, err := filepath.EvalSymlinks(cleanDocsDir)
+	if err != nil {
+		// The server must establish its workspace root before serving paths. If the
+		// root cannot be resolved, no containment guarantee can be made.
 		return false
 	}
+	resolvedCandidate, err := resolveExistingPathPrefix(cleanPath, cleanDocsDir)
+	return err == nil && pathWithinRoot(resolvedCandidate, resolvedRoot)
+}
 
-	return true
+func resolveExistingPathPrefix(candidate, root string) (string, error) {
+	current := candidate
+	for {
+		if _, err := os.Lstat(current); err == nil {
+			return filepath.EvalSymlinks(current)
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		if current == root {
+			return filepath.EvalSymlinks(root)
+		}
+		parent := filepath.Dir(current)
+		if parent == current || !pathWithinRoot(parent, root) {
+			return "", fmt.Errorf("path %q escapes workspace root %q", candidate, root)
+		}
+		current = parent
+	}
+}
+
+func pathWithinRoot(candidate, root string) bool {
+	relative, err := filepath.Rel(root, candidate)
+	if err != nil {
+		return false
+	}
+	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 // GetRelativePath converts a full internal path to a relative path for API responses
@@ -149,6 +172,9 @@ func ResolveUserPath(docsDir, requestedPath, userID string) (string, error) {
 	cleanRoot := filepath.Clean(docsDir)
 	if resolved != cleanRoot && !strings.HasPrefix(resolved, cleanRoot+string(filepath.Separator)) {
 		return "", fmt.Errorf("path %q escapes the workspace root", requestedPath)
+	}
+	if !IsValidFilePath(resolved, docsDir) {
+		return "", fmt.Errorf("path %q resolves outside the workspace root", requestedPath)
 	}
 
 	return resolved, nil

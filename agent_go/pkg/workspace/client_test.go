@@ -1,8 +1,11 @@
 package workspace
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"mcp-agent-builder-go/agent_go/pkg/common"
 )
 
 // TestValidatePathAgainstGuard_BlockedWritePaths verifies the write-only deny
@@ -77,6 +80,39 @@ func TestValidatePathAgainstGuard_BlockedWritePaths(t *testing.T) {
 				t.Fatalf("expected error containing %q, got: %v", tc.wantError, err)
 			}
 		})
+	}
+}
+
+func TestValidatePathAgainstGuardEmptyCapabilitiesFailClosed(t *testing.T) {
+	guard := &FolderGuardConfig{Enabled: true}
+	if err := validatePathAgainstGuard(guard, "Workflow/demo/report.html", false); err == nil || !strings.Contains(err.Error(), "no workspace read paths") {
+		t.Fatalf("empty read capability should fail closed, got %v", err)
+	}
+	if err := validatePathAgainstGuard(guard, "Workflow/demo/report.html", true); err == nil || !strings.Contains(err.Error(), "no workspace write paths") {
+		t.Fatalf("empty write capability should fail closed, got %v", err)
+	}
+}
+
+func TestResolveEffectiveFolderGuardPreservesReadOnlyAndDenyPaths(t *testing.T) {
+	sessionID := "read-only-session-guard"
+	SetSessionFolderGuard(sessionID, []string{"Workflow/demo"}, nil)
+	SetSessionFolderGuardBlockedPaths(sessionID, []string{"Workflow/demo/secrets"})
+	SetSessionFolderGuardBlockedWritePaths(sessionID, []string{"Workflow/demo/planning"})
+	defer ClearSessionShellConfig(sessionID)
+
+	ctx := context.WithValue(context.Background(), common.ChatSessionIDKey, sessionID)
+	guard := NewClient("http://unused").resolveEffectiveFolderGuard(ctx)
+	if guard == nil || len(guard.ReadPaths) != 1 || len(guard.WritePaths) != 0 {
+		t.Fatalf("read-only guard was not preserved: %#v", guard)
+	}
+	if len(guard.BlockedPaths) != 1 || len(guard.BlockedWritePaths) != 1 {
+		t.Fatalf("deny paths were dropped: %#v", guard)
+	}
+	if err := validatePathAgainstGuard(guard, "Workflow/demo/report.html", false); err != nil {
+		t.Fatalf("granted read should pass: %v", err)
+	}
+	if err := validatePathAgainstGuard(guard, "Workflow/demo/report.html", true); err == nil {
+		t.Fatal("read-only session unexpectedly gained write access")
 	}
 }
 

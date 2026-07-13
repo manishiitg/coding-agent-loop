@@ -32,6 +32,9 @@ func (c *Client) DiffPatchWorkspaceFile(ctx context.Context, params DiffPatchWor
 	// The workspace HTTP handler does its own validation with the real docs-dir,
 	// but the filepath goes into the URL path so it must be relative.
 	params.Filepath = stripWorkspacePrefix(params.Filepath)
+	if err := c.ValidatePathWithContext(ctx, params.Filepath, true); err != nil {
+		return DiffPatchResult{}, err
+	}
 
 	// Build API URL for diff patching
 	apiURL := c.BaseURL + "/api/documents/" + encodeWorkspaceDocumentPath(params.Filepath) + "/diff"

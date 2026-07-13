@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	agent "mcp-agent-builder-go/agent_go/pkg/agentwrapper"
+	"mcp-agent-builder-go/agent_go/pkg/workspace"
 )
 
 type shutdownTestWorkshopSession struct {
@@ -95,6 +97,9 @@ func TestCancelActiveWorkForShutdown(t *testing.T) {
 }
 
 func TestHandleStopSessionCancelsActiveWorkAndPreventsPaneReuse(t *testing.T) {
+	workspace.SetSessionFolderGuard("session-1", []string{"Workflow/test"}, []string{"Workflow/test"})
+	defer workspace.ClearSessionShellConfig("session-1")
+
 	agentCanceled := false
 	workflowCanceled := false
 	backgroundCanceled := false
@@ -224,6 +229,9 @@ func TestHandleStopSessionCancelsActiveWorkAndPreventsPaneReuse(t *testing.T) {
 	if _, ok := api.workflowObjectives["session-1"]; ok {
 		t.Fatalf("workflow objective was not cleared")
 	}
+	if got := workspace.GetSessionShellConfig("session-1"); got != nil {
+		t.Fatalf("session shell config was not cleared: %+v", got)
+	}
 	if body := rec.Body.String(); !strings.Contains(body, "Session stopped") {
 		t.Fatalf("unexpected stop response body: %q", body)
 	}
@@ -305,6 +313,40 @@ func TestHandleCancelCurrentTurnRecordsInterruptionBetweenTurns(t *testing.T) {
 	}
 	if !api.consumeSessionTurnInterrupted(sessionID) {
 		t.Fatalf("cancel between turns did not preserve the user's sequence-stop intent")
+	}
+}
+
+func TestHandleClearSessionRefusesActiveWorkAndPreservesGuard(t *testing.T) {
+	const sessionID = "session-clear-active"
+	workspace.SetSessionFolderGuard(sessionID, []string{"Workflow/test"}, []string{"Workflow/test"})
+	defer workspace.ClearSessionShellConfig(sessionID)
+
+	api := &StreamingAPI{
+		agentCancelFuncs: map[string]context.CancelFunc{
+			sessionID: func() {},
+		},
+		activeSessions: map[string]*ActiveSessionInfo{
+			sessionID: {SessionID: sessionID, Status: "running"},
+		},
+		conversationHistory: map[string][]llmtypes.MessageContent{
+			sessionID: {},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/session/clear", nil)
+	req.Header.Set("X-Session-ID", sessionID)
+	rec := httptest.NewRecorder()
+
+	api.handleClearSession(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("clear status = %d body=%s, want 409", rec.Code, rec.Body.String())
+	}
+	if workspace.GetSessionShellConfig(sessionID) == nil {
+		t.Fatal("active clear removed the session permission guard")
+	}
+	if _, ok := api.conversationHistory[sessionID]; !ok {
+		t.Fatal("active clear removed conversation history")
 	}
 }
 

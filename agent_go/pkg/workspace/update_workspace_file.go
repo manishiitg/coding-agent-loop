@@ -20,7 +20,7 @@ func (c *Client) UpdateWorkspaceFile(ctx context.Context, params UpdateWorkspace
 	}
 
 	// Validate path against folder guard (write operation)
-	if err := c.ValidatePath(params.Filepath, true); err != nil {
+	if err := c.ValidatePathWithContext(ctx, params.Filepath, true); err != nil {
 		return UpdateFileResult{}, err
 	}
 

@@ -9,6 +9,7 @@ import (
 	"log"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -111,54 +112,86 @@ func (c *Client) resolveEffectiveFolderGuard(ctx context.Context) *FolderGuardCo
 	}
 	if sessionID != "" {
 		sessionCfg := GetSessionShellConfig(sessionID)
-		if sessionCfg != nil && len(sessionCfg.WritePaths) > 0 {
+		if sessionCfg != nil && sessionConfigHasFolderGuard(sessionCfg) {
 			readPaths := sessionCfg.WritePaths
 			if len(sessionCfg.ReadPaths) > 0 {
 				readPaths = deduplicateStrings(append(sessionCfg.ReadPaths, sessionCfg.WritePaths...))
 			}
 			log.Printf("[FOLDER_GUARD_RESOLVE] SessionConfig for file op: session=%s WritePaths=%v ReadPaths=%v", sessionID, sessionCfg.WritePaths, readPaths)
 			return &FolderGuardConfig{
-				Enabled:    true,
-				WritePaths: sessionCfg.WritePaths,
-				ReadPaths:  readPaths,
+				Enabled:           true,
+				WritePaths:        clonePathList(sessionCfg.WritePaths),
+				ReadPaths:         clonePathList(readPaths),
+				BlockedPaths:      clonePathList(sessionCfg.BlockedPaths),
+				BlockedWritePaths: clonePathList(sessionCfg.BlockedWritePaths),
 			}
 		}
 	}
 
 	// 2. Context System 1: chat/plan/prototype mode
-	if allowedWrites, ok := ctx.Value(common.FolderGuardAllowedWriteFolderKey).([]string); ok && len(allowedWrites) > 0 {
+	if allowedWrites, ok := ctx.Value(common.FolderGuardAllowedWriteFolderKey).([]string); ok {
 		ctxReads, hasCtxReads := ctx.Value(common.FolderGuardReadPathsKey).([]string)
 		readPaths := allowedWrites
 		if hasCtxReads && len(ctxReads) > 0 {
 			readPaths = deduplicateStrings(append(ctxReads, allowedWrites...))
 		}
 		return &FolderGuardConfig{
-			Enabled:    true,
-			WritePaths: allowedWrites,
-			ReadPaths:  readPaths,
+			Enabled:           true,
+			WritePaths:        clonePathList(allowedWrites),
+			ReadPaths:         clonePathList(readPaths),
+			BlockedPaths:      contextPathList(ctx, common.FolderGuardBlockedPathsKey),
+			BlockedWritePaths: contextPathList(ctx, common.FolderGuardBlockedWritePathsKey),
 		}
 	}
 
 	// 3. Context System 2: workflow orchestrator
-	if ctxWrites, ok := ctx.Value(common.FolderGuardWritePathsKey).([]string); ok && len(ctxWrites) > 0 {
+	if ctxWrites, ok := ctx.Value(common.FolderGuardWritePathsKey).([]string); ok {
 		ctxReads, hasCtxReads := ctx.Value(common.FolderGuardReadPathsKey).([]string)
 		readPaths := ctxWrites
 		if hasCtxReads && len(ctxReads) > 0 {
 			readPaths = deduplicateStrings(append(ctxReads, ctxWrites...))
 		}
 		return &FolderGuardConfig{
-			Enabled:    true,
-			WritePaths: ctxWrites,
-			ReadPaths:  readPaths,
+			Enabled:           true,
+			WritePaths:        clonePathList(ctxWrites),
+			ReadPaths:         clonePathList(readPaths),
+			BlockedPaths:      contextPathList(ctx, common.FolderGuardBlockedPathsKey),
+			BlockedWritePaths: contextPathList(ctx, common.FolderGuardBlockedWritePathsKey),
 		}
 	}
 
 	// 4. Client-level fallback
 	if c.FolderGuard != nil && c.FolderGuard.Enabled {
-		return c.FolderGuard
+		return cloneFolderGuard(c.FolderGuard)
 	}
 
 	return nil // No folder guard at all
+}
+
+func sessionConfigHasFolderGuard(config *SessionShellConfig) bool {
+	return config != nil && (config.FolderGuardSet || len(config.ReadPaths) > 0 || len(config.WritePaths) > 0 ||
+		len(config.BlockedPaths) > 0 || len(config.BlockedWritePaths) > 0)
+}
+
+func clonePathList(paths []string) []string {
+	return append([]string(nil), paths...)
+}
+
+func contextPathList(ctx context.Context, key common.ContextKey) []string {
+	paths, _ := ctx.Value(key).([]string)
+	return clonePathList(paths)
+}
+
+func cloneFolderGuard(guard *FolderGuardConfig) *FolderGuardConfig {
+	if guard == nil {
+		return nil
+	}
+	copy := *guard
+	copy.ReadPaths = clonePathList(guard.ReadPaths)
+	copy.WritePaths = clonePathList(guard.WritePaths)
+	copy.BlockedPaths = clonePathList(guard.BlockedPaths)
+	copy.BlockedWritePaths = clonePathList(guard.BlockedWritePaths)
+	return &copy
 }
 
 // ValidatePathWithContext checks if a path is allowed based on the effective folder guard
@@ -229,9 +262,13 @@ func validatePathAgainstGuard(guard *FolderGuardConfig, inputPath string, isWrit
 		allowedPaths = append(guard.ReadPaths, guard.WritePaths...)
 	}
 
-	// Empty allowed paths means allow all (when folder guard is enabled but no paths specified)
+	// An enabled guard with no capability for this operation is an explicit deny.
 	if len(allowedPaths) == 0 {
-		return nil
+		opType := "read"
+		if isWrite {
+			opType = "write"
+		}
+		return fmt.Errorf("ACCESS DENIED: no workspace %s paths were granted", opType)
 	}
 
 	// Check if path is under any allowed path
@@ -463,7 +500,10 @@ func (c *Client) UploadBinary(ctx context.Context, folderPath, fileName string, 
 // DownloadFile downloads a file from the workspace and returns its raw bytes.
 // filePath is the workspace path (e.g. "Chats/generated-images/image-1234.png").
 func (c *Client) DownloadFile(ctx context.Context, filePath string) ([]byte, error) {
-	encodedPath := strings.ReplaceAll(filePath, "/", "%2F")
+	if err := c.ValidatePathWithContext(ctx, filePath, false); err != nil {
+		return nil, err
+	}
+	encodedPath := url.PathEscape(filePath)
 	return c.request(ctx, "GET", "/api/documents/"+encodedPath+"/raw", nil)
 }
 

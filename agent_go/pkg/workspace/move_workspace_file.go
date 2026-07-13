@@ -24,10 +24,10 @@ func (c *Client) MoveWorkspaceFile(ctx context.Context, params MoveWorkspaceFile
 	}
 
 	// Validate both paths against folder guard (write operations)
-	if err := c.ValidatePath(params.SourceFilepath, true); err != nil {
+	if err := c.ValidatePathWithContext(ctx, params.SourceFilepath, true); err != nil {
 		return MoveFileResult{}, fmt.Errorf("source path validation failed: %w", err)
 	}
-	if err := c.ValidatePath(params.DestinationFilepath, true); err != nil {
+	if err := c.ValidatePathWithContext(ctx, params.DestinationFilepath, true); err != nil {
 		return MoveFileResult{}, fmt.Errorf("destination path validation failed: %w", err)
 	}
 

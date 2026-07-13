@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"log"
 	"mcp-agent-builder-go/agent_go/pkg/browser"
+	"mcp-agent-builder-go/agent_go/pkg/workspace"
 	"net/http"
 	"os"
 	"strings"
@@ -342,6 +343,11 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// Permission state is scoped to the lifetime of the chat session. Keeping it
+	// after stop can leak stale workspace roots, secrets, or browser grants into a
+	// later session that reuses the same ID.
+	workspace.ClearSessionShellConfig(sessionID)
+
 	// Note: Conversation history and orchestrator state are preserved to allow resuming the conversation
 	// Use /api/session/clear if you want to clear conversation history
 
@@ -391,6 +397,14 @@ func (api *StreamingAPI) handleClearSession(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Clearing a live session would remove its shell permission contract while
+	// the agent can still issue tool calls. Stop the session first so cancellation
+	// and tmux teardown complete before its guard is discarded.
+	if api.sessionHasActiveWork(sessionID) {
+		http.Error(w, "Session is still active; stop it before clearing conversation history", http.StatusConflict)
+		return
+	}
+
 	// Clear conversation and coding-agent resume state guarded by the same
 	// mutex used by query/resume paths.
 	api.conversationMux.Lock()
@@ -415,7 +429,20 @@ func (api *StreamingAPI) handleClearSession(w http.ResponseWriter, r *http.Reque
 
 	// Kill headless browser processes for this session
 	api.cleanupBrowserSessions(sessionID)
+	workspace.ClearSessionShellConfig(sessionID)
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Session cleared (conversation history and orchestrator state removed)"))
+}
+
+func (api *StreamingAPI) sessionHasActiveWork(sessionID string) bool {
+	if api == nil || strings.TrimSpace(sessionID) == "" {
+		return false
+	}
+	if api.hasActiveTurnCancel(sessionID) || api.sessionHasLiveCodingTmux(sessionID) ||
+		api.hasRunningTrackedExecutionForSession(sessionID) || api.isSessionBusy(sessionID) ||
+		api.isSyntheticTurn(sessionID) {
+		return true
+	}
+	return api.bgAgentRegistry != nil && api.bgAgentRegistry.HasRunningAgents(sessionID)
 }

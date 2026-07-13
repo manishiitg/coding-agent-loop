@@ -335,9 +335,14 @@ func (bo *BaseOrchestrator) wrapWorkspaceToolsWithPaths(snapshotReadPaths, snaps
 
 			// Inject event emitter into context before calling executor
 			ctx = context.WithValue(ctx, virtualtools.WorkspaceEventEmitterKey, bo.contextAwareBridge)
-			// Inject snapshotted folder guard paths into context for shell execution
-			ctx = context.WithValue(ctx, virtualtools.FolderGuardReadPathsKey, snapshotReadPaths)
-			ctx = context.WithValue(ctx, virtualtools.FolderGuardWritePathsKey, snapshotWritePaths)
+			// Explicit guard paths are capabilities, including an intentionally empty
+			// write list. In legacy workspace-path mode, leave these keys absent so the
+			// executor uses the validated workspacePath grant instead of interpreting
+			// empty, non-nil slices as a deny-all contract.
+			if useFolderGuardPaths {
+				ctx = context.WithValue(ctx, virtualtools.FolderGuardReadPathsKey, snapshotReadPaths)
+				ctx = context.WithValue(ctx, virtualtools.FolderGuardWritePathsKey, snapshotWritePaths)
+			}
 			// Inject browser downloads path into context for agent-browser executor
 			if bo.browserDownloadsPath != "" {
 				ctx = context.WithValue(ctx, common.BrowserDownloadsPathKey, bo.browserDownloadsPath)

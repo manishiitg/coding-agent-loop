@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createHydrationGate } from './hydrationGate'
+import { createHydrationGate, HydrationBackstopError } from './hydrationGate'
 
 describe('createHydrationGate', () => {
   it('shares one pending promise across all waiters', async () => {
@@ -41,6 +41,24 @@ describe('createHydrationGate', () => {
 
     gate.settle()
     await expect(waiter).resolves.toMatchObject({ status: 'hydrated' })
+    expect(vi.getTimerCount()).toBe(0)
+    vi.useRealTimers()
+  })
+
+  it('fails open after one shared backstop when hydration never settles', async () => {
+    vi.useFakeTimers()
+    const gate = createHydrationGate({ backstopMs: 10_000 })
+    const first = gate.wait()
+    const second = gate.wait()
+
+    expect(vi.getTimerCount()).toBe(1)
+    await vi.advanceTimersByTimeAsync(10_000)
+
+    await expect(first).resolves.toMatchObject({
+      status: 'failed',
+      error: expect.any(HydrationBackstopError),
+    })
+    await expect(second).resolves.toMatchObject({ status: 'failed' })
     expect(vi.getTimerCount()).toBe(0)
     vi.useRealTimers()
   })

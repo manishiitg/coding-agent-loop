@@ -15,7 +15,7 @@ import { logger } from '../utils/logger'
 import { compareEventsChronologically, compareEventsReverseChronologically } from '../utils/eventOrdering'
 import { getWorkspaceScopedStorageKey } from './useWorkspaceConnectionStore'
 import { looksLikeTerminalScreenText, splitStreamingStatusAndText } from '../utils/streamingStatus'
-import { createHydrationGate, type HydrationGateSnapshot } from '../utils/hydrationGate'
+import { createHydrationGate, HydrationBackstopError, type HydrationGateSnapshot } from '../utils/hydrationGate'
 
 // Active sessions cache TTL (30 seconds - shorter than polling interval to allow force refresh)
 const ACTIVE_SESSIONS_CACHE_TTL = 30000
@@ -24,7 +24,12 @@ const STALE_STREAMING_GRACE_MS = 10000
 // This gate must exist before Zustand creates the persisted store. Browser
 // localStorage hydration can finish synchronously during create(), so the
 // callback cannot safely touch useChatStore or module bindings declared later.
-const chatStoreHydrationGate = createHydrationGate()
+const CHAT_STORE_HYDRATION_BACKSTOP_MS = 10_000
+const chatStoreHydrationGate = createHydrationGate({
+  backstopMs: CHAT_STORE_HYDRATION_BACKSTOP_MS,
+  backstopMessage: `Chat-store hydration did not finish within ${CHAT_STORE_HYDRATION_BACKSTOP_MS}ms`,
+})
+let chatStoreHydrationBackstopReported = false
 
 // Streaming inactivity auto-clear timers (per sessionId)
 // When no new chunk arrives for 3s, streaming text is auto-cleared
@@ -2928,7 +2933,15 @@ function finalizeChatStoreHydration(error?: unknown): void {
 
 /** Returns a promise that resolves once useChatStore has rehydrated from localStorage. */
 export async function waitForChatStoreHydration(): Promise<void> {
-  await chatStoreHydrationGate.wait()
+  const result = await chatStoreHydrationGate.wait()
+  if (
+    result.status === 'failed' &&
+    result.error instanceof HydrationBackstopError &&
+    !chatStoreHydrationBackstopReported
+  ) {
+    chatStoreHydrationBackstopReported = true
+    console.error('[ChatStore] Hydration backstop released blocked callers', result.error)
+  }
 }
 
 /** Exposes hydration failures to diagnostics without making callers poll. */

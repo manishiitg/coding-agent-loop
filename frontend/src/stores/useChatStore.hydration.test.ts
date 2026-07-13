@@ -29,8 +29,7 @@ describe('useChatStore hydration bootstrap', () => {
     vi.restoreAllMocks()
   })
 
-  it('finishes synchronous storage hydration without a timeout fallback', async () => {
-    const timeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+  it('finishes synchronous storage hydration before callers need the backstop', async () => {
     const chatStore = await import('./useChatStore')
 
     await chatStore.waitForChatStoreHydration()
@@ -39,6 +38,5 @@ describe('useChatStore hydration bootstrap', () => {
       status: 'hydrated',
       error: null,
     })
-    expect(timeoutSpy.mock.calls.some(([, delay]) => delay === 3000)).toBe(false)
   })
 })

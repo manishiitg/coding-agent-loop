@@ -46,6 +46,7 @@ declare global {
 }
 
 import { copyToClipboard } from './utils/textUtils'
+import LazyModalFallback from './components/ui/LazyModalFallback'
 
 const queryClient = new QueryClient();
 
@@ -2259,7 +2260,7 @@ function App() {
 
         {/* File Revisions Modal */}
         {showRevisionsModal && (
-          <Suspense fallback={null}>
+          <Suspense fallback={<LazyModalFallback label="Loading file history..." />}>
             <FileRevisionsModal
               isOpen
               onClose={() => {

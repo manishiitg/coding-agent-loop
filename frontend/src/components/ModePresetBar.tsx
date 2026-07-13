@@ -22,6 +22,7 @@ import { RunloopLockup } from './branding/RunloopLogo'
 import WorkspaceTopBarControls from './WorkspaceTopBarControls'
 import { useAppVersion } from './topbar/useAppVersion'
 import ConfirmationDialog from './ui/ConfirmationDialog'
+import LazyModalFallback from './ui/LazyModalFallback'
 import {
   LLM_DISCOVERY_ONBOARDING_CLEARED_EVENT,
   LLM_DISCOVERY_ONBOARDING_OPENED_EVENT,
@@ -1012,7 +1013,7 @@ export const ModePresetBar: React.FC = () => {
 
       {/* Workflows Overview Popup */}
       {showWorkflowsPopup && (
-        <Suspense fallback={null}>
+        <Suspense fallback={<LazyModalFallback label="Loading automations..." />}>
           <WorkflowsOverviewPopup
             isOpen
             onClose={() => setShowWorkflowsPopup(false)}

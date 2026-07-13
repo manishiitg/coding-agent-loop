@@ -1,10 +1,15 @@
-import { useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { FileText, Folder, AlertCircle, Loader2, ChevronRight, ChevronDown, Trash2, MessageSquare, Upload, Plus, Image, MoreHorizontal, Move, Download, Archive, CheckSquare, Edit2, Link, Check } from 'lucide-react'
 import type { PlannerFile } from '../../services/api-types'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../ui/tooltip'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { useAuthStore } from '../../stores/useAuthStore'
 import { copyToClipboard } from '../../utils/textUtils'
+import {
+  flattenVisiblePlannerFiles,
+  WORKSPACE_SCROLL_TO_FILE_EVENT,
+  type WorkspaceScrollToFileDetail,
+} from '../../utils/plannerFileTree'
 
 interface PlannerFileListProps {
   files: PlannerFile[]
@@ -40,7 +45,12 @@ interface PlannerFileListProps {
   onToggleFileSelection?: (file: PlannerFile) => void
   onSelectFileAndEnterSelectionMode?: (file: PlannerFile) => void
   forceExpandFolders?: boolean
+  scrollContainerRef?: RefObject<HTMLDivElement | null>
 }
+
+const VIRTUALIZE_FILE_COUNT = 200
+const FILE_ROW_HEIGHT = 40
+const FILE_ROW_OVERSCAN = 8
 
 export default function PlannerFileList({
   files,
@@ -76,10 +86,101 @@ export default function PlannerFileList({
   selectedFiles = new Set(),
   onToggleFileSelection,
   onSelectFileAndEnterSelectionMode,
-  forceExpandFolders = false
+  forceExpandFolders = false,
+  scrollContainerRef,
 }: PlannerFileListProps) {
-  const { scrollToFile } = useWorkspaceStore()
+  const scrollToFile = useWorkspaceStore(state => state.scrollToFile)
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
+  const listRef = useRef<HTMLDivElement | null>(null)
+  const [viewport, setViewport] = useState({ scrollTop: 0, height: 0, listTop: 0 })
+  const visibleRows = useMemo(
+    () => flattenVisiblePlannerFiles(files, expandedFolders, forceExpandFolders),
+    [expandedFolders, files, forceExpandFolders],
+  )
+
+  useEffect(() => {
+    const container = scrollContainerRef?.current
+    if (!container) return
+
+    const updateViewport = () => {
+      setViewport(current => {
+        const containerTop = container.getBoundingClientRect().top
+        const listTop = listRef.current
+          ? listRef.current.getBoundingClientRect().top - containerTop + container.scrollTop
+          : 0
+        const next = {
+          scrollTop: container.scrollTop,
+          height: container.clientHeight,
+          listTop,
+        }
+        return current.scrollTop === next.scrollTop &&
+          current.height === next.height &&
+          current.listTop === next.listTop
+          ? current
+          : next
+      })
+    }
+    let animationFrame: number | null = null
+    const scheduleViewportUpdate = () => {
+      if (animationFrame !== null) return
+      animationFrame = window.requestAnimationFrame(() => {
+        animationFrame = null
+        updateViewport()
+      })
+    }
+    const resizeObserver = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(scheduleViewportUpdate)
+    resizeObserver?.observe(container)
+    container.addEventListener('scroll', scheduleViewportUpdate, { passive: true })
+    updateViewport()
+    return () => {
+      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame)
+      resizeObserver?.disconnect()
+      container.removeEventListener('scroll', scheduleViewportUpdate)
+    }
+  }, [scrollContainerRef])
+
+  useLayoutEffect(() => {
+    const container = scrollContainerRef?.current
+    const list = listRef.current
+    if (!container || !list) return
+
+    const containerTop = container.getBoundingClientRect().top
+    const next = {
+      scrollTop: container.scrollTop,
+      height: container.clientHeight,
+      listTop: list.getBoundingClientRect().top - containerTop + container.scrollTop,
+    }
+    setViewport(current => (
+      current.scrollTop === next.scrollTop &&
+      current.height === next.height &&
+      current.listTop === next.listTop
+        ? current
+        : next
+    ))
+  }, [loading, scrollContainerRef, visibleRows.length])
+
+  useEffect(() => {
+    const container = scrollContainerRef?.current
+    if (!container) return
+
+    const revealFile = (event: Event) => {
+      const filepath = (event as CustomEvent<WorkspaceScrollToFileDetail>).detail?.filepath
+      if (!filepath) return
+      const rowIndex = visibleRows.findIndex(row => (
+        row.file.filepath === filepath || row.file.originalFilepath === filepath
+      ))
+      if (rowIndex < 0) return
+
+      const rowTop = viewport.listTop + rowIndex * FILE_ROW_HEIGHT
+      const centeredTop = rowTop - Math.max(0, (container.clientHeight - FILE_ROW_HEIGHT) / 2)
+      container.scrollTo({ top: Math.max(0, centeredTop), behavior: 'smooth' })
+    }
+
+    window.addEventListener(WORKSPACE_SCROLL_TO_FILE_EVENT, revealFile)
+    return () => window.removeEventListener(WORKSPACE_SCROLL_TO_FILE_EVENT, revealFile)
+  }, [scrollContainerRef, viewport.listTop, visibleRows])
 
   // Render a single item (file or folder) with proper hierarchy
   const renderFileItem = (file: PlannerFile, depth: number = 0) => {
@@ -95,10 +196,10 @@ export default function PlannerFileList({
     const isSelected = selectedFiles.has(file.filepath)
 
     return (
-      <div key={file.filepath} className="select-none">
+      <div key={file.filepath} className="h-10 select-none">
         <div
           className={`
-            flex items-center gap-2 p-2 rounded-md transition-colors
+            flex h-9 items-center gap-2 p-2 rounded-md transition-colors
             ${isSelectionMode ? 'cursor-default' : isClickable ? 'cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800' : 'cursor-default'}
             ${isHighlighted ? 'bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700' : ''}
             ${isInContext ? 'bg-green-50 dark:bg-green-900/20 border-l-2 border-green-500' : ''}
@@ -465,23 +566,6 @@ export default function PlannerFileList({
           </div>
         </div>
 
-        {/* Render children if folder is expanded */}
-        {file.type === 'folder' && isExpanded && file.children && (
-          <div>
-            {file.children
-              .sort((a, b) => {
-                // If both are folders or both are files, sort alphabetically
-                if (a.type === b.type) {
-                  return a.filepath.localeCompare(b.filepath)
-                }
-                // Folders come first
-                if (a.type === 'folder') return -1
-                if (b.type === 'folder') return 1
-                return 0
-              })
-              .map(child => renderFileItem(child, depth + 1))}
-          </div>
-        )}
       </div>
     )
   }
@@ -519,22 +603,39 @@ export default function PlannerFileList({
     )
   }
 
-  // Sort files to show folders first, then files
-  const sortedFiles = [...files].sort((a, b) => {
-    // If both are folders or both are files, sort alphabetically
-    if (a.type === b.type) {
-      return a.filepath.localeCompare(b.filepath)
-    }
-    // Folders come first
-    if (a.type === 'folder') return -1
-    if (b.type === 'folder') return 1
-    return 0
-  })
+  const shouldVirtualize = visibleRows.length >= VIRTUALIZE_FILE_COUNT && viewport.height > 0
+  const localScrollTop = Math.max(0, viewport.scrollTop - viewport.listTop)
+  const firstVisibleIndex = shouldVirtualize
+    ? Math.max(0, Math.floor(localScrollTop / FILE_ROW_HEIGHT) - FILE_ROW_OVERSCAN)
+    : 0
+  const lastVisibleIndex = shouldVirtualize
+    ? Math.min(
+      visibleRows.length,
+      Math.ceil((localScrollTop + viewport.height) / FILE_ROW_HEIGHT) + FILE_ROW_OVERSCAN,
+    )
+    : visibleRows.length
+  const renderedRows = visibleRows.slice(firstVisibleIndex, lastVisibleIndex)
 
   return (
     <TooltipProvider>
-      <div className="space-y-1">
-        {sortedFiles.map(file => renderFileItem(file))}
+      <div
+        ref={listRef}
+        className={shouldVirtualize ? 'relative' : ''}
+        style={shouldVirtualize ? { height: visibleRows.length * FILE_ROW_HEIGHT } : undefined}
+      >
+        {renderedRows.map((row, renderedIndex) => {
+          if (!shouldVirtualize) return renderFileItem(row.file, row.depth)
+          const absoluteIndex = firstVisibleIndex + renderedIndex
+          return (
+            <div
+              key={row.file.filepath}
+              className="absolute inset-x-0 hover:z-50 focus-within:z-50"
+              style={{ height: FILE_ROW_HEIGHT, transform: `translateY(${absoluteIndex * FILE_ROW_HEIGHT}px)` }}
+            >
+              {renderFileItem(row.file, row.depth)}
+            </div>
+          )
+        })}
       </div>
     </TooltipProvider>
   )

@@ -9,6 +9,7 @@ import (
 	"log"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -502,7 +503,7 @@ func (c *Client) DownloadFile(ctx context.Context, filePath string) ([]byte, err
 	if err := c.ValidatePathWithContext(ctx, filePath, false); err != nil {
 		return nil, err
 	}
-	encodedPath := strings.ReplaceAll(filePath, "/", "%2F")
+	encodedPath := url.PathEscape(filePath)
 	return c.request(ctx, "GET", "/api/documents/"+encodedPath+"/raw", nil)
 }
 

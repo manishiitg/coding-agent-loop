@@ -204,6 +204,14 @@ func TestResolveUserPath(t *testing.T) {
 	})
 }
 
+func TestIsValidFilePathRejectsMissingWorkspaceRoot(t *testing.T) {
+	parent := t.TempDir()
+	missingRoot := filepath.Join(parent, "not-created")
+	if IsValidFilePath(filepath.Join(missingRoot, "report.html"), missingRoot) {
+		t.Fatal("missing workspace root must fail closed")
+	}
+}
+
 // --- ConvertToUserRelativePath ---
 
 func TestConvertToUserRelativePath(t *testing.T) {
@@ -271,17 +279,17 @@ func TestSanitizeInputPath(t *testing.T) {
 // --- IsValidFilePath ---
 
 func TestIsValidFilePath(t *testing.T) {
-	docsDir := "/app/workspace-docs"
+	docsDir := t.TempDir()
 
 	tests := []struct {
 		name     string
 		filePath string
 		want     bool
 	}{
-		{"valid-subpath", "/app/workspace-docs/Chats/session.json", true},
-		{"traversal-attack", "/app/workspace-docs/../etc/passwd", false},
+		{"valid-subpath", filepath.Join(docsDir, "Chats", "session.json"), true},
+		{"traversal-attack", filepath.Join(docsDir, "..", "etc", "passwd"), false},
 		{"outside-docsdir", "/etc/passwd", false},
-		{"exactly-docsdir", "/app/workspace-docs", true},
+		{"exactly-docsdir", docsDir, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

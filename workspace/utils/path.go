@@ -22,9 +22,9 @@ func IsValidFilePath(filePath, docsDir string) bool {
 
 	resolvedRoot, err := filepath.EvalSymlinks(cleanDocsDir)
 	if err != nil {
-		// A non-existent root cannot contain an observable symlink escape. The
-		// workspace server creates its root before serving requests.
-		return os.IsNotExist(err)
+		// The server must establish its workspace root before serving paths. If the
+		// root cannot be resolved, no containment guarantee can be made.
+		return false
 	}
 	resolvedCandidate, err := resolveExistingPathPrefix(cleanPath, cleanDocsDir)
 	return err == nil && pathWithinRoot(resolvedCandidate, resolvedRoot)

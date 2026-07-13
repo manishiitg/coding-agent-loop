@@ -23,6 +23,7 @@ import { agentApi, workspaceApi } from '../../services/api'
 import { useReportFilePreviewStore } from '../../stores/useReportFilePreviewStore'
 import { useChatStore } from '../../stores/useChatStore'
 import { useRunningWorkflowsStore } from '../../stores/useRunningWorkflowsStore'
+import { createBoundedCache } from '../../utils/boundedCache'
 import {
   applyWidgetFilter,
   evaluateShowIf,
@@ -129,7 +130,7 @@ type ReportViewUiState = {
   tabsBySection: Record<string, string>
 }
 
-const reportViewUiStateCache = new Map<string, ReportViewUiState>()
+const reportViewUiStateCache = createBoundedCache<string, ReportViewUiState>(24)
 
 function reportViewUiStateKey(workspacePath: string, selectedRunFolder?: string | null): string {
   return selectedRunFolder ? `${workspacePath}::run:${selectedRunFolder}` : workspacePath
@@ -521,7 +522,7 @@ interface ReportDataSnapshot {
   sources: SourceCache
 }
 
-const reportDataCache = new Map<string, ReportDataSnapshot>()
+const reportDataCache = createBoundedCache<string, ReportDataSnapshot>(8)
 const reportDataPromises = new Map<string, Promise<ReportDataSnapshot>>()
 
 // Workflow runs write the data reports read (db/db.sqlite + artifacts), so a

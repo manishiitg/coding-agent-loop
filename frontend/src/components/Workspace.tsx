@@ -2153,6 +2153,7 @@ export default function Workspace({
                 onToggleFileSelection={toggleFileSelection}
                 onSelectFileAndEnterSelectionMode={selectFileAndEnterSelectionMode}
                 forceExpandFolders={!!searchQuery.trim()}
+                scrollContainerRef={workspaceScrollRef}
               />
 
               {/* Refresh from server when local search finds nothing */}

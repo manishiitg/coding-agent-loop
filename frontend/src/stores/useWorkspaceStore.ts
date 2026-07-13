@@ -4,6 +4,10 @@ import { agentApi } from '../services/api'
 import { extractFolderPaths, processHierarchicalFiles } from '../utils/fileUtils'
 import { getTypedEventData } from '../generated/event-types'
 import type { WorkspaceFileOperationEvent } from '../generated/events-bridge'
+import {
+  WORKSPACE_SCROLL_TO_FILE_EVENT,
+  type WorkspaceScrollToFileDetail,
+} from '../utils/plannerFileTree'
 
 interface WorkspaceState {
   // File Management
@@ -1374,7 +1378,17 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           // it without a folder param fetches ALL files from root, replacing the
           // workflow-scoped tree. The file will appear after the next debounced fetch.
           
-          // Use a small delay to ensure DOM is updated
+          // Virtual rows do not exist in the DOM until their parent list scrolls
+          // them into view. Expand ancestors first, then ask the list to reveal it.
+          get().expandFoldersForFile(filepath)
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent<WorkspaceScrollToFileDetail>(
+              WORKSPACE_SCROLL_TO_FILE_EVENT,
+              { detail: { filepath } },
+            ))
+          }, 50)
+
+          // Small non-virtual lists still use the native DOM scroll path.
           setTimeout(() => {
             // Find the file element and scroll to it
             const fileElement = document.querySelector(`[data-filepath="${filepath}"]`)

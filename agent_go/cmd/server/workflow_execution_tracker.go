@@ -203,6 +203,7 @@ func (api *StreamingAPI) trackExecutionStart(exec *TrackedWorkflowExecution) {
 	api.trackedWorkflowExecutions[exec.ExecutionID] = exec
 	api.pruneTrackedExecutionsLocked(time.Now().UTC())
 	api.trackedWorkflowExecutionsMux.Unlock()
+	api.observeRuntimeSnapshot(exec.SessionID, nil)
 }
 
 func (api *StreamingAPI) trackWorkflowRunStart(exec *ActiveWorkflowExecution) {
@@ -260,12 +261,13 @@ func (api *StreamingAPI) completeTrackedExecution(executionID, status, errorMess
 	}
 
 	api.trackedWorkflowExecutionsMux.Lock()
-	defer api.trackedWorkflowExecutionsMux.Unlock()
 
 	exec := api.trackedWorkflowExecutions[executionID]
 	if exec == nil || exec.Status != trackedExecutionStatusRunning {
+		api.trackedWorkflowExecutionsMux.Unlock()
 		return
 	}
+	sessionID := exec.SessionID
 
 	now := time.Now().UTC()
 	exec.Status = status
@@ -281,6 +283,8 @@ func (api *StreamingAPI) completeTrackedExecution(executionID, status, errorMess
 		exec.Kind = inferTrackedExecutionKind(exec.Source, exec.PhaseID, exec.Name, meta)
 	}
 	api.pruneTrackedExecutionsLocked(now)
+	api.trackedWorkflowExecutionsMux.Unlock()
+	api.observeRuntimeSnapshot(sessionID, nil)
 }
 
 func (api *StreamingAPI) cancelTrackedExecutionsForSession(sessionID string) {
@@ -289,7 +293,6 @@ func (api *StreamingAPI) cancelTrackedExecutionsForSession(sessionID string) {
 	}
 
 	api.trackedWorkflowExecutionsMux.Lock()
-	defer api.trackedWorkflowExecutionsMux.Unlock()
 
 	now := time.Now().UTC()
 	for _, exec := range api.trackedWorkflowExecutions {
@@ -300,6 +303,8 @@ func (api *StreamingAPI) cancelTrackedExecutionsForSession(sessionID string) {
 		exec.CompletedAt = &now
 	}
 	api.pruneTrackedExecutionsLocked(now)
+	api.trackedWorkflowExecutionsMux.Unlock()
+	api.observeRuntimeSnapshot(sessionID, nil)
 }
 
 func (api *StreamingAPI) finalizeTrackedExecutionIfRunning(executionID, status, errorMessage string) {
@@ -308,12 +313,13 @@ func (api *StreamingAPI) finalizeTrackedExecutionIfRunning(executionID, status, 
 	}
 
 	api.trackedWorkflowExecutionsMux.Lock()
-	defer api.trackedWorkflowExecutionsMux.Unlock()
 
 	exec := api.trackedWorkflowExecutions[executionID]
 	if exec == nil || exec.Status != trackedExecutionStatusRunning {
+		api.trackedWorkflowExecutionsMux.Unlock()
 		return
 	}
+	sessionID := exec.SessionID
 
 	now := time.Now().UTC()
 	exec.Status = status
@@ -322,6 +328,8 @@ func (api *StreamingAPI) finalizeTrackedExecutionIfRunning(executionID, status, 
 		exec.LastError = errorMessage
 	}
 	api.pruneTrackedExecutionsLocked(now)
+	api.trackedWorkflowExecutionsMux.Unlock()
+	api.observeRuntimeSnapshot(sessionID, nil)
 }
 
 // runningWorkflowExecutionBySessionLocked returns the latest running top-level workflow execution.

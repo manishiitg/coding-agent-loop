@@ -756,6 +756,7 @@ func (api *StreamingAPI) setSessionBusy(sessionID string, busy bool) {
 	}
 	api.sessionBusy[sessionID] = busy
 	api.sessionBusyMu.Unlock()
+	api.observeRuntimeSnapshot(sessionID, nil)
 }
 
 func (api *StreamingAPI) hasActiveTurnCancel(sessionID string) bool {

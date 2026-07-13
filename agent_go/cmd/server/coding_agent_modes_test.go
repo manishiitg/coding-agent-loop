@@ -199,8 +199,8 @@ func TestProviderProfileOverridesStaleExplicitChatLLM(t *testing.T) {
 	if !applied {
 		t.Fatal("provider profile did not override the stale explicit chat LLM")
 	}
-	if gotProvider != "codex-cli" || gotModel != "gpt-5.6-terra" {
-		t.Fatalf("resolved chat LLM = %s/%s, want codex-cli/gpt-5.6-terra", gotProvider, gotModel)
+	if gotProvider != "codex-cli" || gotModel != "gpt-5.6-sol" {
+		t.Fatalf("resolved chat LLM = %s/%s, want codex-cli/gpt-5.6-sol", gotProvider, gotModel)
 	}
 }
 
@@ -582,6 +582,34 @@ func TestLiveInputDoesNotWaitForQueryLaunchLane(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("live input blocked behind the long-running query launch lane")
+	}
+}
+
+func TestQueryRequestForContinuationRestoresWorkflowPhaseContext(t *testing.T) {
+	req := QueryRequest{
+		AgentMode:     "multi-agent", // adapted engine mode inside handleQuery
+		PhaseID:       "workflow-builder",
+		PresetQueryID: "wf-marketing",
+		Query:         "continue the workflow",
+	}
+
+	got := queryRequestForContinuation(req, true, "Workflow/llmprovideropensourcemarketing")
+	if got.AgentMode != "workflow_phase" {
+		t.Fatalf("agent mode = %q, want workflow_phase", got.AgentMode)
+	}
+	if got.PhaseID != req.PhaseID || got.PresetQueryID != req.PresetQueryID {
+		t.Fatalf("workflow identity changed: phase=%q preset=%q", got.PhaseID, got.PresetQueryID)
+	}
+	if got.SelectedFolder != "Workflow/llmprovideropensourcemarketing" {
+		t.Fatalf("selected folder = %q, want workflow folder", got.SelectedFolder)
+	}
+}
+
+func TestQueryRequestForContinuationLeavesMultiAgentContextUnchanged(t *testing.T) {
+	req := QueryRequest{AgentMode: "multi-agent", Query: "continue chat", SelectedFolder: "custom"}
+	got := queryRequestForContinuation(req, false, "Workflow/ignored")
+	if got.AgentMode != req.AgentMode || got.SelectedFolder != req.SelectedFolder {
+		t.Fatalf("non-workflow continuation changed: got=%#v want=%#v", got, req)
 	}
 }
 

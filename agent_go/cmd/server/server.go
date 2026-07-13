@@ -306,6 +306,10 @@ type StreamingAPI struct {
 	// View-only runtime terminal snapshots for coding-agent TUI streams.
 	terminalStore *terminals.Store
 
+	// Phase 1 observer: immutable aggregate runtime snapshots. Existing stores
+	// remain authoritative until observer comparisons are proven in production.
+	runtimeCoordinator *RuntimeCoordinator
+
 	// Raw tmux pipe-pane recorder used for append/replay terminal display.
 	terminalPipeRecorder *terminalPipeRecorder
 
@@ -1242,6 +1246,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		inspectorStore:                     inspector.NewStore(),
 		eventStore:                         eventStore,
 		terminalStore:                      terminalStore,
+		runtimeCoordinator:                 NewRuntimeCoordinator(),
 		terminalPipeRecorder:               terminalPipeRecorder,
 		liveAttach:                         newLiveAttachManagerIfEnabled(),
 		provider:                           config.Provider,
@@ -3667,8 +3672,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// start the next turn from a lightweight live-input message when a retained
 	// coding CLI session is idle. Synthetic turns also reuse this context.
 	req.userID = currentUserID
+	continuationReq := queryRequestForContinuation(req, isWorkflowPhase, workflowPhaseFolder)
 	api.lastQueryMu.Lock()
-	api.lastQueryRequests[sessionID] = req
+	api.lastQueryRequests[sessionID] = continuationReq
 	api.lastQueryMu.Unlock()
 
 	// Set user-facing busy state for regular chat turns.
@@ -6187,23 +6193,23 @@ func (api *StreamingAPI) seedCodingAgentRuntimeFromRestoredConversation(sessionI
 // updateSessionActivity updates the LastActivity timestamp for a session when events are added
 func (api *StreamingAPI) updateSessionActivity(sessionID string) {
 	api.activeSessionsMux.Lock()
-	defer api.activeSessionsMux.Unlock()
-
 	if session, exists := api.activeSessions[sessionID]; exists {
 		session.LastActivity = time.Now()
 		// Don't log every activity update to avoid log spam
 	}
+	api.activeSessionsMux.Unlock()
 }
 
 // updateSessionStatus updates the status of an active session in memory.
 func (api *StreamingAPI) updateSessionStatus(sessionID, status string) {
 	api.activeSessionsMux.Lock()
-	defer api.activeSessionsMux.Unlock()
 	if session, exists := api.activeSessions[sessionID]; exists {
 		session.Status = status
 		session.LastActivity = time.Now()
 		log.Printf("[ACTIVE_SESSION] Updated session %s status to: %s", sessionID, status)
 	}
+	api.activeSessionsMux.Unlock()
+	api.observeRuntimeSnapshot(sessionID, nil)
 }
 
 // removeSessionQueryID removes a completed workflow query from the session ->
@@ -6491,27 +6497,49 @@ func (api *StreamingAPI) getActiveSession(sessionID string) (*ActiveSessionInfo,
 	defer api.activeSessionsMux.RUnlock()
 
 	session, exists := api.activeSessions[sessionID]
-	return session, exists
+	if !exists || session == nil {
+		return nil, false
+	}
+	return cloneActiveSessionInfo(session), true
+}
+
+func cloneActiveSessionInfo(session *ActiveSessionInfo) *ActiveSessionInfo {
+	if session == nil {
+		return nil
+	}
+	copy := *session
+	if session.WaitingSince != nil {
+		waitingSince := *session.WaitingSince
+		copy.WaitingSince = &waitingSince
+	}
+	return &copy
 }
 
 // getAllActiveSessions returns live sessions plus retained terminal sessions.
 func (api *StreamingAPI) getAllActiveSessions() []*ActiveSessionInfo {
 	api.activeSessionsMux.RLock()
-	defer api.activeSessionsMux.RUnlock()
+	snapshots := make([]*ActiveSessionInfo, 0, len(api.activeSessions))
+	for _, session := range api.activeSessions {
+		snapshots = append(snapshots, cloneActiveSessionInfo(session))
+	}
+	api.activeSessionsMux.RUnlock()
 
 	now := time.Now()
 	inactivityTimeout := 10 * time.Minute
 	sessionRetention := 24 * time.Hour
-	sessions := make([]*ActiveSessionInfo, 0, len(api.activeSessions))
+	sessions := make([]*ActiveSessionInfo, 0, len(snapshots))
 
-	for _, session := range api.activeSessions {
-		// Include running sessions that have been active within the last 10 minutes
-		if session.Status == "running" && now.Sub(session.LastActivity) < inactivityTimeout {
-			sessions = append(sessions, session)
+	for _, session := range snapshots {
+		if normalizeSessionLifecycleStatus(session.Status) == sessionLifecycleRunning {
+			hasBg := api.bgAgentRegistry != nil && api.bgAgentRegistry.HasRunningAgents(session.SessionID)
+			hasRunningWork := api.sessionHasRunningWork(session.SessionID, hasBg, api.canSteerSession(session.SessionID))
+			if now.Sub(session.LastActivity) < inactivityTimeout || hasRunningWork {
+				sessions = append(sessions, session)
+			}
 			continue
 		}
 
-		isTerminal := session.Status == "completed" || session.Status == "inactive" || session.Status == "stopped" || session.Status == "error"
+		isTerminal := isStoppedSessionStatus(session.Status)
 		if isTerminal && now.Sub(session.LastActivity) < sessionRetention {
 			sessions = append(sessions, session)
 		}
@@ -6534,73 +6562,82 @@ func (api *StreamingAPI) cleanupInactiveSessions() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		api.activeSessionsMux.Lock()
 		now := time.Now()
-		inactivityTimeout := 10 * time.Minute
-		sessionRetention := 24 * time.Hour
-		eventBufferRetention := sessionRetention
-		sessionsToMarkInactive := make([]string, 0)
-		sessionsToEvictEventBuffer := make([]string, 0)
-		sessionsToDelete := make([]string, 0)
-
-		for sessionID, session := range api.activeSessions {
-			// Mark as inactive if no activity for 10 minutes and status is still "running",
-			// but only when there are no pending completions or running background agents
-			// (race-inactive-pending-completion fix: avoid stranding completions by
-			// marking the session inactive before they can be drained).
-			if session.Status == "running" && now.Sub(session.LastActivity) >= inactivityTimeout {
-				hasPending := false
-				api.pendingMu.RLock()
-				if len(api.pendingCompletions[sessionID]) > 0 || api.completionRetryScheduled[sessionID] {
-					hasPending = true
-				}
-				api.pendingMu.RUnlock()
-				if !hasPending && api.bgAgentRegistry != nil && api.bgAgentRegistry.HasRunningAgents(sessionID) {
-					hasPending = true
-				}
-				if !hasPending {
-					sessionsToMarkInactive = append(sessionsToMarkInactive, sessionID)
-				}
-			}
-			isTerminal := session.Status == "completed" || session.Status == "inactive" || session.Status == "stopped" || session.Status == "error"
-			age := now.Sub(session.LastActivity)
-			// Evict SSE event buffers after 30 min to free streaming memory.
-			if isTerminal && age >= eventBufferRetention {
-				sessionsToEvictEventBuffer = append(sessionsToEvictEventBuffer, sessionID)
-			}
-			// Fully delete session entry after 24 hours.
-			if isTerminal && age >= sessionRetention {
-				sessionsToDelete = append(sessionsToDelete, sessionID)
-			}
-		}
-
-		for _, sessionID := range sessionsToDelete {
-			if session, exists := api.activeSessions[sessionID]; exists {
-				delete(api.activeSessions, sessionID)
-				if api.terminalStore != nil {
-					api.terminalStore.RemoveSession(sessionID)
-				}
-				log.Printf("[ACTIVE_SESSION] Cleanup: Removed old %s session %s from memory (>24h)", session.Status, sessionID)
-			}
-		}
-
-		api.activeSessionsMux.Unlock()
-
-		for _, sessionID := range sessionsToEvictEventBuffer {
-			if api.eventStore != nil {
-				api.eventStore.RemoveSession(sessionID)
-				log.Printf("[ACTIVE_SESSION] Cleanup: Removed event buffer for session %s", sessionID)
-			}
-		}
-
-		// Mark sessions as inactive (outside lock to avoid deadlock)
-		for _, sessionID := range sessionsToMarkInactive {
-			log.Printf("[ACTIVE_SESSION] Marking session %s as inactive (no activity for 10+ minutes)", sessionID)
-			api.updateSessionStatus(sessionID, "inactive")
-		}
-
+		api.cleanupInactiveSessionsAt(now)
 		if closed := api.cleanupStaleCodingAgentTmuxSessions(now); closed > 0 {
 			log.Printf("[ACTIVE_SESSION] Cleanup: Closed %d stale coding-agent tmux session(s)", closed)
+		}
+	}
+}
+
+type inactiveSessionCandidate struct {
+	sessionID    string
+	status       string
+	lastActivity time.Time
+}
+
+func (api *StreamingAPI) cleanupInactiveSessionsAt(now time.Time) {
+	const (
+		inactivityTimeout    = 10 * time.Minute
+		sessionRetention     = 24 * time.Hour
+		eventBufferRetention = 24 * time.Hour
+	)
+
+	api.activeSessionsMux.RLock()
+	candidates := make([]inactiveSessionCandidate, 0, len(api.activeSessions))
+	for sessionID, session := range api.activeSessions {
+		candidates = append(candidates, inactiveSessionCandidate{
+			sessionID: sessionID, status: session.Status, lastActivity: session.LastActivity,
+		})
+	}
+	api.activeSessionsMux.RUnlock()
+
+	markInactive := make(map[string]time.Time)
+	for _, candidate := range candidates {
+		if normalizeSessionLifecycleStatus(candidate.status) != sessionLifecycleRunning || now.Sub(candidate.lastActivity) < inactivityTimeout {
+			continue
+		}
+		api.pendingMu.RLock()
+		hasPending := len(api.pendingCompletions[candidate.sessionID]) > 0 || api.completionRetryScheduled[candidate.sessionID]
+		api.pendingMu.RUnlock()
+		hasBg := api.bgAgentRegistry != nil && api.bgAgentRegistry.HasRunningAgents(candidate.sessionID)
+		if !hasPending && !api.sessionHasRunningWork(candidate.sessionID, hasBg, api.canSteerSession(candidate.sessionID)) {
+			markInactive[candidate.sessionID] = candidate.lastActivity
+		}
+	}
+
+	sessionsToEvictEventBuffer := make([]string, 0)
+	api.activeSessionsMux.Lock()
+	for sessionID, session := range api.activeSessions {
+		age := now.Sub(session.LastActivity)
+		if previousActivity, ok := markInactive[sessionID]; ok &&
+			session.LastActivity.Equal(previousActivity) &&
+			normalizeSessionLifecycleStatus(session.Status) == sessionLifecycleRunning {
+			session.Status = string(sessionLifecycleInactive)
+			session.LastActivity = now
+			age = 0
+			log.Printf("[ACTIVE_SESSION] Marked session %s inactive after verified idle timeout", sessionID)
+		}
+		if !isStoppedSessionStatus(session.Status) {
+			continue
+		}
+		if age >= eventBufferRetention {
+			sessionsToEvictEventBuffer = append(sessionsToEvictEventBuffer, sessionID)
+		}
+		if age >= sessionRetention {
+			delete(api.activeSessions, sessionID)
+			if api.terminalStore != nil {
+				api.terminalStore.RemoveSession(sessionID)
+			}
+			log.Printf("[ACTIVE_SESSION] Cleanup: Removed old %s session %s from memory (>24h)", session.Status, sessionID)
+		}
+	}
+	api.activeSessionsMux.Unlock()
+
+	for _, sessionID := range sessionsToEvictEventBuffer {
+		if api.eventStore != nil {
+			api.eventStore.RemoveSession(sessionID)
+			log.Printf("[ACTIVE_SESSION] Cleanup: Removed event buffer for session %s", sessionID)
 		}
 	}
 }
@@ -6967,6 +7004,22 @@ type internalResponseCapture struct {
 	header http.Header
 	status int
 	body   bytes.Buffer
+}
+
+// queryRequestForContinuation restores the product-level mode after handleQuery
+// has adapted a workflow-builder request to the shared multi-agent engine. The
+// stored request is later used by /live-input when a retained CLI object is
+// between turns. Persisting the adapted "multi-agent" value silently restarted
+// workflow follow-ups in _users/default/Chats instead of their workflow folder.
+func queryRequestForContinuation(req QueryRequest, isWorkflowPhase bool, workflowPhaseFolder string) QueryRequest {
+	if !isWorkflowPhase {
+		return req
+	}
+	req.AgentMode = "workflow_phase"
+	if strings.TrimSpace(req.SelectedFolder) == "" {
+		req.SelectedFolder = strings.TrimSpace(workflowPhaseFolder)
+	}
+	return req
 }
 
 func (c *internalResponseCapture) Header() http.Header {

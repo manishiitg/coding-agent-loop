@@ -87,6 +87,7 @@ type GetEventsResponse struct {
 	HasMore                    bool           `json:"has_more"`
 	SessionID                  string         `json:"session_id"`
 	SessionStatus              string         `json:"session_status,omitempty"`                // Session status: "running", "completed", "error", "stopped", "inactive"
+	DisplayStatus              string         `json:"display_status,omitempty"`                // Consolidated live status: "busy", "idle", "stopped"
 	LastProcessedIndex         int            `json:"last_processed_index"`                    // Last index processed in unfiltered array (for correct sinceIndex tracking)
 	HasRunningBackgroundAgents bool           `json:"has_running_background_agents,omitempty"` // Whether background agents are still running for this session
 	IsSyntheticTurn            bool           `json:"is_synthetic_turn,omitempty"`             // True when running auto-notification turn (frontend should not block input)
@@ -180,14 +181,15 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 		}
 		sessionStatus = activeSession.Status
 	}
-	canSteer := api.canSteerSession(sessionID)
 	hasRunningBackgroundAgents := api.bgAgentRegistry != nil && api.bgAgentRegistry.HasRunningAgents(sessionID)
 	if api.shouldCompleteIdleForegroundSession(sessionID, sessionStatus, hasRunningBackgroundAgents) {
 		api.setSessionBusy(sessionID, false)
 		api.updateSessionStatus(sessionID, "completed")
 		sessionStatus = "completed"
-		canSteer = false
 	}
+	runtimeStatus := api.sessionDisplayStatus(sessionID)
+	canSteer := runtimeStatus.CanSteer
+	hasRunningBackgroundAgents = runtimeStatus.HasRunningBackgroundAgents
 
 	// If the session doesn't exist in the in-memory event store, return an
 	// empty events payload. This happens when polling starts before events
@@ -198,6 +200,7 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 			HasMore:                    false,
 			SessionID:                  sessionID,
 			SessionStatus:              sessionStatus,
+			DisplayStatus:              runtimeStatus.Status,
 			LastProcessedIndex:         -1,
 			HasRunningBackgroundAgents: hasRunningBackgroundAgents,
 			CanSteer:                   canSteer,
@@ -236,6 +239,7 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 		HasMore:                    hasMore,
 		SessionID:                  sessionID,
 		SessionStatus:              sessionStatus,
+		DisplayStatus:              runtimeStatus.Status,
 		LastProcessedIndex:         lastProcessedIndex,
 		HasRunningBackgroundAgents: hasRunningBackgroundAgents,
 		CanSteer:                   canSteer,
@@ -530,17 +534,18 @@ func (api *StreamingAPI) handleGetSessionStatus(w http.ResponseWriter, r *http.R
 	// Return active session info
 	status := activeSession.Status
 	hasRunningBackgroundAgents := api.bgAgentRegistry != nil && api.bgAgentRegistry.HasRunningAgents(sessionID)
-	canSteer := api.canSteerSession(sessionID)
 	hasRetainedTmuxSession := api.sessionHasRetainedCodingTmux(sessionID)
 	if api.shouldCompleteIdleForegroundSession(sessionID, status, hasRunningBackgroundAgents) {
 		api.setSessionBusy(sessionID, false)
 		api.updateSessionStatus(sessionID, "completed")
 		status = "completed"
-		canSteer = false
 	}
+	runtimeStatus := api.sessionDisplayStatus(sessionID)
+	canSteer := runtimeStatus.CanSteer
 	response := map[string]interface{}{
 		"session_id":                activeSession.SessionID,
 		"status":                    status,
+		"display_status":            runtimeStatus.Status,
 		"agent_mode":                activeSession.AgentMode,
 		"created_at":                activeSession.CreatedAt,
 		"last_activity":             activeSession.LastActivity,

@@ -42,7 +42,7 @@ describe('useChatStore hydration bootstrap', () => {
     })
   })
 
-  it('does not persist streaming chunks and coalesces durable changes', async () => {
+  it('does not persist 1,000 streaming chunks and coalesces durable changes', async () => {
     vi.useFakeTimers()
     const storage = createMemoryStorage()
     const setItem = vi.spyOn(storage, 'setItem')
@@ -53,7 +53,7 @@ describe('useChatStore hydration bootstrap', () => {
     vi.advanceTimersByTime(250)
     setItem.mockClear()
 
-    for (let index = 1; index <= 20; index += 1) {
+    for (let index = 1; index <= 1_000; index += 1) {
       chatStore.useChatStore.getState().appendStreamingChunk('session-1', index, `chunk-${index}`)
     }
     vi.advanceTimersByTime(250)
@@ -65,6 +65,38 @@ describe('useChatStore hydration bootstrap', () => {
     vi.advanceTimersByTime(250)
 
     expect(setItem).toHaveBeenCalledTimes(1)
+  })
+
+  it('coalesces repeated workflow switches into one durable write', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-13T00:00:00Z'))
+    const storage = createMemoryStorage()
+    const setItem = vi.spyOn(storage, 'setItem')
+    vi.stubGlobal('localStorage', storage)
+    const chatStore = await import('./useChatStore')
+    await chatStore.waitForChatStoreHydration()
+
+    const firstTab = await chatStore.useChatStore.getState().createChatTab('First workflow', {
+      mode: 'workflow',
+      phaseId: 'workflow-builder',
+      presetQueryId: 'workflow-one',
+    })
+    vi.setSystemTime(new Date('2026-07-13T00:00:00.001Z'))
+    const secondTab = await chatStore.useChatStore.getState().createChatTab('Second workflow', {
+      mode: 'workflow',
+      phaseId: 'workflow-builder',
+      presetQueryId: 'workflow-two',
+    })
+    vi.advanceTimersByTime(250)
+    setItem.mockClear()
+
+    for (let index = 0; index < 100; index += 1) {
+      chatStore.useChatStore.getState().switchTab(index % 2 === 0 ? firstTab : secondTab)
+    }
+    vi.advanceTimersByTime(250)
+
+    expect(setItem).toHaveBeenCalledTimes(1)
+    expect(chatStore.useChatStore.getState().activeTabId).toBe(secondTab)
   })
 
   it('restores the existing persisted chat-store envelope', async () => {

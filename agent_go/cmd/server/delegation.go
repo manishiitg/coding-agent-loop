@@ -264,7 +264,22 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		}
 		underlyingAgent.AddEventListener(subAgentObserver)
 		parentUserID, _ := ctx.Value(common.UserIDKey).(string)
-		underlyingAgent.AddEventListener(newCostObserver(api.costLedger, sessionID, parentUserID, parentReq.AgentMode))
+		subAgentCostObserver := newCostObserver(
+			api.costLedger,
+			sessionID,
+			parentUserID,
+			parentReq.AgentMode,
+			withCostModel(string(provider), modelID),
+			withCostAttribution(
+				inferCostScope(parentReq.AgentMode, parentReq.PhaseID),
+				parentReq.SelectedFolder,
+				"",
+				delegationID,
+			),
+		)
+		underlyingAgent.AddEventListener(subAgentCostObserver)
+		defer underlyingAgent.RemoveEventListener(subAgentObserver)
+		defer underlyingAgent.RemoveEventListener(subAgentCostObserver)
 		log.Printf("[DELEGATION] Added event observers for sub-agent at depth %d", currentDepth)
 
 		// Phase 6 explicit-pass: sub-agents inherit NO skills from the

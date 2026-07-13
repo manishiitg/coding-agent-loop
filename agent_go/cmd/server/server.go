@@ -291,7 +291,7 @@ type StreamingAPI struct {
 	// Operator-state store: bot connector configs + per-user encrypted secrets.
 	chatStore chathistory.Store
 
-	// Global append-only cost ledger — one line per token_usage event.
+	// Global immutable cost event repository (SQLite in production).
 	costLedger *costledger.Ledger
 
 	// In-memory inspector event store. Holds the rolling debug-event
@@ -1174,14 +1174,31 @@ func runServer(cmd *cobra.Command, args []string) {
 	log.Printf("📡 EventStore retention: max %d events per session", maxSessionEvents)
 
 	// Initialize the operator-state store (bot connector configs + user
-	// secrets) and the global cost ledger.
+	// secrets) and the authoritative global cost event database.
 	chatStore, err := chathistory.NewWorkspaceAPIStore(getWorkspaceAPIURL())
 	if err != nil {
 		log.Fatalf("Failed to initialize workspace API operator store: %v", err)
 	}
 	defer chatStore.Close()
-	costLedger := costledger.NewLedger(getWorkspaceAPIURL())
+	costDBPath := filepath.Join(fsutil.WorkspaceDocsRoot(), "_system", "costs.sqlite")
+	costLedger, err := costledger.NewSQLiteLedger(costDBPath)
+	if err != nil {
+		log.Fatalf("Failed to initialize cost event database: %v", err)
+	}
+	defer costLedger.Close()
+	costledger.SetDefaultLedger(costLedger)
+	defer costledger.SetDefaultLedger(nil)
+	legacyCostPath := filepath.Join(fsutil.WorkspaceDocsRoot(), "_system", "costs.jsonl")
+	if report, migrateErr := costLedger.MigrateLegacyJSONL(legacyCostPath); migrateErr != nil {
+		// SQLite is already initialized and remains authoritative. A damaged or
+		// unreadable compatibility file must not make every future startup fail.
+		log.Printf("[COST_LEDGER] Legacy migration skipped after error: %v", migrateErr)
+	} else if report.Imported > 0 || report.Duplicates > 0 || report.Quarantined > 0 {
+		log.Printf("[COST_LEDGER] Legacy migration imported=%d duplicates=%d quarantined=%d",
+			report.Imported, report.Duplicates, report.Quarantined)
+	}
 	fmt.Printf("💾 Operator store: workspace API (%s)\n", getWorkspaceAPIURL())
+	fmt.Printf("💵 Cost events: SQLite (%s)\n", costDBPath)
 
 	notificationManager := services.GetNotificationManager()
 	if notificationManager != nil {
@@ -2856,7 +2873,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	isWorkflowPhase := req.AgentMode == "workflow_phase"
 	workflowPhaseID := req.PhaseID
 	workflowPhaseFolder := "" // The preset's SelectedFolder — used to auto-grant write access in FolderGuard
-	_ = workflowPhaseFolder   // used later in the function
+	workflowPhaseRunFolder := ""
+	_ = workflowPhaseFolder // used later in the function
 	if isWorkflowPhase {
 		logfWithContext(queryLogCtx, "[WORKFLOW_PHASE] Phase chat mode detected: phase=%s preset=%s session=%s", workflowPhaseID, req.PresetQueryID, sessionID)
 		if req.PresetQueryID == "" {
@@ -4922,6 +4940,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 				// Build template vars by reading current plan and variables from workspace
 				phaseRunFolder := "iteration-0"
+				if req.ExecutionOptions != nil && strings.TrimSpace(req.ExecutionOptions.SelectedRunFolder) != "" {
+					phaseRunFolder = strings.TrimSpace(req.ExecutionOptions.SelectedRunFolder)
+				}
+				workflowPhaseRunFolder = phaseRunFolder
 				var phaseEnabledGroupNames []string
 				if req.ExecutionOptions != nil {
 					phaseEnabledGroupNames = req.ExecutionOptions.EnabledGroupNames
@@ -5192,10 +5214,21 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Attach the in-memory event observer for real-time SSE/polling, plus
-		// the cost-ledger observer that persists every token_usage event to
-		// the global cost log.
+		// the cost observer that persists immutable per-call usage events.
 		eventObserver := events.NewEventObserverWithLogger(api.eventStore, sessionID, api.logger)
-		costObs := newCostObserver(api.costLedger, sessionID, currentUserID, req.AgentMode)
+		costObs := newCostObserver(
+			api.costLedger,
+			sessionID,
+			currentUserID,
+			req.AgentMode,
+			withCostModel(finalProvider, finalModelID),
+			withCostAttribution(
+				inferCostScope(req.AgentMode, workflowPhaseID),
+				costFirstNonEmpty(workflowPhaseFolder, req.SelectedFolder),
+				workflowPhaseRunFolder,
+				queryID,
+			),
+		)
 		var registeredRunningAgent *mcpagent.Agent
 		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
 			underlyingAgent.AddEventListener(eventObserver)

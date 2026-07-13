@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"log"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"mcp-agent-builder-go/agent_go/pkg/common"
 	"mcp-agent-builder-go/agent_go/pkg/costledger"
+	"mcp-agent-builder-go/agent_go/pkg/fsutil"
+	orchestratorevents "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	"mcp-agent-builder-go/agent_go/pkg/workspace"
 )
 
@@ -73,25 +77,75 @@ type toolCostUsageFileEntry struct {
 }
 
 func recordPricedToolCost(ctx context.Context, workspaceAPIURL, userID string, cost pricedToolCost) {
-	if strings.TrimSpace(workspaceAPIURL) == "" || cost.TotalCost <= 0 || len(cost.OutputPaths) == 0 {
+	if cost.TotalCost <= 0 {
 		return
 	}
 
 	now := time.Now().UTC()
-	ledger := costledger.NewLedger(workspaceAPIURL)
+	target := workflowCostTarget{}
+	hasTarget := false
+	for _, outputPath := range cost.OutputPaths {
+		if candidate, ok := inferWorkflowCostTarget(ctx, outputPath); ok {
+			target = candidate
+			hasTarget = true
+			break
+		}
+	}
+	scope := "tool"
+	if hasTarget {
+		scope = "workflow_execution"
+		if target.Scope == toolCostScopeEvaluation {
+			scope = "evaluation"
+		}
+	}
+	sessionID := ""
+	executionID := ""
+	if ctx != nil {
+		sessionID, _ = ctx.Value(common.WorkflowSessionIDKey).(string)
+		if strings.TrimSpace(sessionID) == "" {
+			sessionID, _ = ctx.Value(common.ChatSessionIDKey).(string)
+		}
+		executionID, _ = ctx.Value(orchestratorevents.ParentExecutionIDKey).(string)
+	}
+	billingBasis := "provider_actual"
+	if cost.Estimated {
+		billingBasis = "token_estimate"
+	}
+	ledger := costledger.DefaultLedger()
+	closeLedger := false
+	if ledger == nil {
+		var err error
+		ledger, err = costledger.NewSQLiteLedger(filepath.Join(fsutil.WorkspaceDocsRoot(), "_system", "costs.sqlite"))
+		if err != nil {
+			log.Printf("[TOOL_COST] failed to open cost event database for %s: %v", cost.ToolName, err)
+			return
+		}
+		closeLedger = true
+	}
+	if closeLedger {
+		defer ledger.Close()
+	}
 	if err := ledger.Append(costledger.Entry{
-		Timestamp:    now,
-		UserID:       userID,
-		Component:    "tool:" + cost.ToolName,
-		Provider:     cost.Provider,
-		ModelID:      cost.ModelID,
-		TotalCostUSD: cost.TotalCost,
+		Timestamp:         now,
+		UserID:            userID,
+		WorkflowID:        target.WorkspacePath,
+		RunID:             target.RunFolder,
+		ExecutionID:       executionID,
+		SessionID:         sessionID,
+		Scope:             scope,
+		Component:         "tool:" + cost.ToolName,
+		Provider:          cost.Provider,
+		ModelID:           cost.ModelID,
+		TotalCostUSD:      cost.TotalCost,
+		BillingBasis:      billingBasis,
+		PricingSource:     "tool_price_registry",
+		ToolName:          cost.ToolName,
+		OperationMetadata: cost.Metadata,
 	}); err != nil {
 		log.Printf("[TOOL_COST] failed to append global cost ledger entry for %s: %v", cost.ToolName, err)
 	}
 
-	target, ok := inferWorkflowCostTarget(ctx, cost.OutputPaths[0])
-	if !ok {
+	if strings.TrimSpace(workspaceAPIURL) == "" || !hasTarget {
 		return
 	}
 

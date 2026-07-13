@@ -5,30 +5,63 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
+	"sync"
 
 	unifiedevents "github.com/manishiitg/mcpagent/events"
 
 	"mcp-agent-builder-go/agent_go/pkg/costledger"
 )
 
-// costObserver implements mcpagent's AgentEventListener. It listens for
-// token_usage events on every agent run (main or sub-agent) and appends one
-// entry per event to the global cost ledger. This is how the cost dashboard
-// gets populated — there is no per-session event persistence anymore.
+// costObserver persists immutable per-LLM-call events. The cumulative
+// token_usage event remains a compatibility fallback for older providers, but
+// is ignored once a per-call completion has been observed.
 type costObserver struct {
-	ledger    *costledger.Ledger
-	sessionID string
-	userID    string
-	agentMode string
+	ledger      *costledger.Ledger
+	sessionID   string
+	userID      string
+	agentMode   string
+	provider    string
+	modelID     string
+	workflowID  string
+	runID       string
+	executionID string
+	scope       string
+
+	mu         sync.Mutex
+	sawPerCall bool
 }
 
-func newCostObserver(ledger *costledger.Ledger, sessionID, userID, agentMode string) *costObserver {
-	return &costObserver{
+type costObserverOption func(*costObserver)
+
+func withCostModel(provider, modelID string) costObserverOption {
+	return func(o *costObserver) {
+		o.provider = strings.TrimSpace(provider)
+		o.modelID = strings.TrimSpace(modelID)
+	}
+}
+
+func withCostAttribution(scope, workflowID, runID, executionID string) costObserverOption {
+	return func(o *costObserver) {
+		o.scope = strings.TrimSpace(scope)
+		o.workflowID = strings.TrimSpace(workflowID)
+		o.runID = strings.TrimSpace(runID)
+		o.executionID = strings.TrimSpace(executionID)
+	}
+}
+
+func newCostObserver(ledger *costledger.Ledger, sessionID, userID, agentMode string, opts ...costObserverOption) *costObserver {
+	observer := &costObserver{
 		ledger:    ledger,
 		sessionID: sessionID,
 		userID:    userID,
 		agentMode: agentMode,
+		scope:     inferCostScope(agentMode, ""),
 	}
+	for _, opt := range opts {
+		opt(observer)
+	}
+	return observer
 }
 
 func (o *costObserver) Name() string { return "costObserver" }
@@ -37,51 +70,227 @@ func (o *costObserver) HandleEvent(_ context.Context, event *unifiedevents.Agent
 	if o == nil || o.ledger == nil || event == nil {
 		return nil
 	}
-	if event.Type != unifiedevents.TokenUsage {
-		return nil
+	switch event.Type {
+	case unifiedevents.LLMGenerationEnd:
+		generation, ok := event.Data.(*unifiedevents.LLMGenerationEndEvent)
+		if !ok || generation == nil {
+			return nil
+		}
+		o.mu.Lock()
+		o.sawPerCall = true
+		o.mu.Unlock()
+		o.recordLLMGeneration(event, generation)
+	case unifiedevents.TokenUsage:
+		o.mu.Lock()
+		sawPerCall := o.sawPerCall
+		o.mu.Unlock()
+		if sawPerCall {
+			return nil
+		}
+		tu, ok := event.Data.(*unifiedevents.TokenUsageEvent)
+		if !ok || tu == nil {
+			return nil
+		}
+		o.recordLegacyTokenUsage(event, tu)
 	}
-	tu, ok := event.Data.(*unifiedevents.TokenUsageEvent)
-	if !ok || tu == nil {
-		return nil
-	}
+	return nil
+}
 
+func (o *costObserver) recordLLMGeneration(event *unifiedevents.AgentEvent, generation *unifiedevents.LLMGenerationEndEvent) {
+	metadata := generation.Metadata
+	cacheRead, cacheWrite := extractCacheTokens(metadata)
+	effectiveModel, estimatedCost := extractCostAndEffectiveModel(metadata)
+	provider := costFirstNonEmpty(costStringValue(metadata["provider"]), o.provider)
+	modelID := o.modelID
+	if modelID == "" {
+		modelID = costStringValue(metadata["requested_model_id"])
+	}
+	totalCostUSD := costNumberValue(metadata["cost_usd"])
+	billingBasis := "provider_actual"
+	pricingSource := "provider"
+	if totalCostUSD <= 0 && estimatedCost > 0 {
+		totalCostUSD = estimatedCost
+		billingBasis = "token_estimate"
+		pricingSource = "model_registry"
+		if isSubscriptionCodingProvider(provider) {
+			billingBasis = "subscription_shadow"
+		}
+	}
+	if totalCostUSD <= 0 {
+		billingBasis = "unpriced"
+		pricingSource = ""
+	}
+	if effectiveModel == "" {
+		effectiveModel = modelID
+	}
+	entry := o.baseEntry(event)
+	entry.Provider = provider
+	entry.ModelID = modelID
+	entry.EffectiveProvider = provider
+	entry.EffectiveModelID = effectiveModel
+	entry.TurnCount = 1
+	entry.LLMCallCount = 1
+	entry.PromptTokens = generation.UsageMetrics.PromptTokens
+	entry.CompletionTokens = generation.UsageMetrics.CompletionTokens
+	entry.ReasoningTokens = generation.UsageMetrics.ReasoningTokens
+	entry.CacheReadTokens = costFirstPositive(cacheRead, generation.UsageMetrics.CacheTokens)
+	entry.CacheWriteTokens = cacheWrite
+	entry.TotalCostUSD = totalCostUSD
+	entry.BillingBasis = billingBasis
+	entry.PricingSource = pricingSource
+	o.append(entry)
+}
+
+func (o *costObserver) recordLegacyTokenUsage(event *unifiedevents.AgentEvent, tu *unifiedevents.TokenUsageEvent) {
 	cacheRead, cacheWrite := extractCacheTokens(tu.GenerationInfo)
 	effectiveModel, estimatedCost := extractCostAndEffectiveModel(tu.GenerationInfo)
-
-	// Provider-blessed cost wins over the adapter-side estimate; the
-	// estimate only fills in for CLIs whose JSON doesn't ship USD
-	// (codex / cursor) or for tmux paths.
-	totalCostUSD := tu.TotalCost
-	costSource := ""
-	if totalCostUSD > 0 {
-		costSource = "provider"
-	} else if estimatedCost > 0 {
+	provider := costFirstNonEmpty(tu.Provider, o.provider)
+	modelID := costFirstNonEmpty(tu.ModelID, o.modelID)
+	totalCostUSD := costNumberValue(tu.GenerationInfo["cost_usd"])
+	billingBasis := "provider_actual"
+	pricingSource := "provider"
+	if totalCostUSD <= 0 && estimatedCost > 0 {
 		totalCostUSD = estimatedCost
-		costSource = "estimated"
+		billingBasis = "token_estimate"
+		pricingSource = "model_registry"
+		if isSubscriptionCodingProvider(provider) {
+			billingBasis = "subscription_shadow"
+		}
+	} else if totalCostUSD <= 0 && tu.TotalCost > 0 {
+		// TotalCost on the cumulative event is generally computed from model
+		// metadata. It must not be labeled as a provider invoice.
+		totalCostUSD = tu.TotalCost
+		billingBasis = "token_estimate"
+		pricingSource = "agent_token_pricing"
+		if isSubscriptionCodingProvider(provider) {
+			billingBasis = "subscription_shadow"
+		}
 	}
+	if totalCostUSD <= 0 {
+		billingBasis = "unpriced"
+		pricingSource = ""
+	}
+	if effectiveModel == "" {
+		effectiveModel = modelID
+	}
+	entry := o.baseEntry(event)
+	entry.Provider = provider
+	entry.ModelID = modelID
+	entry.EffectiveProvider = provider
+	entry.EffectiveModelID = effectiveModel
+	entry.TurnCount = 1
+	entry.LLMCallCount = toInt(tu.GenerationInfo["llm_call_count"])
+	if entry.LLMCallCount == 0 && (tu.PromptTokens > 0 || tu.CompletionTokens > 0 || tu.ReasoningTokens > 0 || totalCostUSD > 0) {
+		entry.LLMCallCount = 1
+	}
+	entry.PromptTokens = tu.PromptTokens
+	entry.CompletionTokens = tu.CompletionTokens
+	entry.ReasoningTokens = tu.ReasoningTokens
+	entry.CacheReadTokens = cacheRead
+	entry.CacheWriteTokens = cacheWrite
+	entry.TotalCostUSD = totalCostUSD
+	entry.BillingBasis = billingBasis
+	entry.PricingSource = pricingSource
+	o.append(entry)
+}
 
-	entry := costledger.Entry{
-		Timestamp:        event.Timestamp,
-		SessionID:        o.sessionID,
-		UserID:           o.userID,
-		AgentMode:        o.agentMode,
-		Component:        event.Component,
-		CorrelationID:    event.CorrelationID,
-		Provider:         tu.Provider,
-		ModelID:          tu.ModelID,
-		EffectiveModelID: effectiveModel,
-		PromptTokens:     tu.PromptTokens,
-		CompletionTokens: tu.CompletionTokens,
-		ReasoningTokens:  tu.ReasoningTokens,
-		CacheReadTokens:  cacheRead,
-		CacheWriteTokens: cacheWrite,
-		TotalCostUSD:     totalCostUSD,
-		CostUSDSource:    costSource,
+func (o *costObserver) baseEntry(event *unifiedevents.AgentEvent) costledger.Entry {
+	eventID := strings.TrimSpace(event.SpanID)
+	if eventID == "" {
+		eventID = strings.TrimSpace(event.CorrelationID)
 	}
+	storedEventID := ""
+	idempotencyKey := ""
+	if eventID != "" {
+		storedEventID = strings.Join([]string{o.sessionID, eventID}, ":")
+		idempotencyKey = storedEventID
+	}
+	return costledger.Entry{
+		EventID:        storedEventID,
+		IdempotencyKey: idempotencyKey,
+		Timestamp:      event.Timestamp,
+		SessionID:      o.sessionID,
+		UserID:         o.userID,
+		WorkflowID:     o.workflowID,
+		RunID:          o.runID,
+		ExecutionID:    o.executionID,
+		Scope:          o.scope,
+		AgentMode:      o.agentMode,
+		Component:      event.Component,
+		CorrelationID:  event.CorrelationID,
+	}
+}
+
+func (o *costObserver) append(entry costledger.Entry) {
 	if err := o.ledger.Append(entry); err != nil {
 		log.Printf("[COST_LEDGER] Failed to append entry: %v", err)
 	}
-	return nil
+}
+
+func inferCostScope(agentMode, phaseID string) string {
+	phase := strings.ToLower(strings.TrimSpace(phaseID))
+	switch {
+	case strings.Contains(phase, "post_run_monitor"), strings.Contains(phase, "pulse"):
+		return "pulse"
+	case strings.Contains(phase, "evaluation"), strings.Contains(phase, "eval"):
+		return "evaluation"
+	case strings.Contains(strings.ToLower(agentMode), "chief"):
+		return "chief_of_staff"
+	case strings.Contains(strings.ToLower(agentMode), "workflow"):
+		return "builder"
+	default:
+		return "chat"
+	}
+}
+
+func isSubscriptionCodingProvider(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "claude-code", "claude_code", "codex-cli", "codex_cli", "cursor-cli", "cursor_cli":
+		return true
+	default:
+		return false
+	}
+}
+
+func costStringValue(v interface{}) string {
+	s, _ := v.(string)
+	return strings.TrimSpace(s)
+}
+
+func costNumberValue(v interface{}) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case float32:
+		return float64(n)
+	case int:
+		return float64(n)
+	case int64:
+		return float64(n)
+	case json.Number:
+		value, _ := n.Float64()
+		return value
+	default:
+		return 0
+	}
+}
+
+func costFirstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func costFirstPositive(values ...int) int {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 // extractCostAndEffectiveModel pulls the unified cost+model fields the

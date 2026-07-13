@@ -490,7 +490,7 @@ func formatGlobalSchedules(ctx context.Context, api *StreamingAPI, currentUserID
 					nextRun: getNextRunTime(sched.CronExpression, sched.Timezone),
 				}
 				if api.scheduler != nil {
-					st := api.scheduler.GetRuntimeState(sched.ID)
+					st := api.scheduler.GetRuntimeStateForWorkflow(dw.WorkspacePath, sched.ID)
 					entry.lastStatus = st.LastStatus
 					entry.lastRunAt = st.LastRunAt
 				}
@@ -512,7 +512,7 @@ func formatGlobalSchedules(ctx context.Context, api *StreamingAPI, currentUserID
 					nextRun: getNextRunTime(sched.CronExpression, sched.Timezone),
 				}
 				if api.scheduler != nil {
-					st := api.scheduler.GetRuntimeState(sched.ID)
+					st := api.scheduler.GetRuntimeStateForUser(currentUserID, sched.ID)
 					entry.lastStatus = st.LastStatus
 					entry.lastRunAt = st.LastRunAt
 				}

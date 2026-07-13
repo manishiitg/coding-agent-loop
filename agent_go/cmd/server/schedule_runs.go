@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,7 +23,7 @@ type ScheduleRunEntry struct {
 	ScheduleID  string     `json:"schedule_id"`
 	RunFolder   string     `json:"run_folder,omitempty"`
 	SessionID   string     `json:"session_id,omitempty"`
-	Status      string     `json:"status"` // running, success, error
+	Status      string     `json:"status"` // running, success, error, stopped, partial, interrupted
 	Error       string     `json:"error,omitempty"`
 	DurationMs  *int64     `json:"duration_ms,omitempty"`
 	GroupNames  []string   `json:"group_names,omitempty"`
@@ -32,12 +33,27 @@ type ScheduleRunEntry struct {
 
 const maxScheduleRuns = 200
 
+var scheduleRunFileLocks sync.Map
+
+func scheduleRunFileLock(path string) *sync.Mutex {
+	lock, _ := scheduleRunFileLocks.LoadOrStore(path, &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
 func scheduleRunsPath(workspacePath string) string {
 	return workspacePath + "/schedule-runs.json"
 }
 
 // ReadScheduleRuns reads all run entries from <workspace>/schedule-runs.json.
 func ReadScheduleRuns(ctx context.Context, workspacePath string) ([]ScheduleRunEntry, error) {
+	path := scheduleRunsPath(workspacePath)
+	lock := scheduleRunFileLock(path)
+	lock.Lock()
+	defer lock.Unlock()
+	return readScheduleRunsUnlocked(ctx, workspacePath)
+}
+
+func readScheduleRunsUnlocked(ctx context.Context, workspacePath string) ([]ScheduleRunEntry, error) {
 	content, exists, err := readFileFromWorkspace(ctx, scheduleRunsPath(workspacePath))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read schedule-runs.json: %w", err)
@@ -55,6 +71,14 @@ func ReadScheduleRuns(ctx context.Context, workspacePath string) ([]ScheduleRunE
 
 // WriteScheduleRuns writes run entries to <workspace>/schedule-runs.json.
 func WriteScheduleRuns(ctx context.Context, workspacePath string, runs []ScheduleRunEntry) error {
+	path := scheduleRunsPath(workspacePath)
+	lock := scheduleRunFileLock(path)
+	lock.Lock()
+	defer lock.Unlock()
+	return writeScheduleRunsUnlocked(ctx, workspacePath, runs)
+}
+
+func writeScheduleRunsUnlocked(ctx context.Context, workspacePath string, runs []ScheduleRunEntry) error {
 	data, err := json.MarshalIndent(runs, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal schedule runs: %w", err)
@@ -64,10 +88,17 @@ func WriteScheduleRuns(ctx context.Context, workspacePath string, runs []Schedul
 
 // AppendScheduleRun adds a run entry, keeping at most maxScheduleRuns entries (trimming oldest).
 func AppendScheduleRun(ctx context.Context, workspacePath string, run *ScheduleRunEntry) error {
-	runs, err := ReadScheduleRuns(ctx, workspacePath)
+	if run == nil {
+		return fmt.Errorf("schedule run is required")
+	}
+	path := scheduleRunsPath(workspacePath)
+	lock := scheduleRunFileLock(path)
+	lock.Lock()
+	defer lock.Unlock()
+
+	runs, err := readScheduleRunsUnlocked(ctx, workspacePath)
 	if err != nil {
-		// If file is corrupt, start fresh
-		runs = []ScheduleRunEntry{}
+		return err
 	}
 
 	runs = append([]ScheduleRunEntry{*run}, runs...) // prepend (newest first)
@@ -76,12 +107,17 @@ func AppendScheduleRun(ctx context.Context, workspacePath string, run *ScheduleR
 		runs = runs[:maxScheduleRuns]
 	}
 
-	return WriteScheduleRuns(ctx, workspacePath, runs)
+	return writeScheduleRunsUnlocked(ctx, workspacePath, runs)
 }
 
 // UpdateScheduleRun finds a run by ID and updates its fields.
 func UpdateScheduleRun(ctx context.Context, workspacePath string, runID string, status string, errMsg string, durationMs *int64, runFolder string, sessionID string) error {
-	runs, err := ReadScheduleRuns(ctx, workspacePath)
+	path := scheduleRunsPath(workspacePath)
+	lock := scheduleRunFileLock(path)
+	lock.Lock()
+	defer lock.Unlock()
+
+	runs, err := readScheduleRunsUnlocked(ctx, workspacePath)
 	if err != nil {
 		return err
 	}
@@ -97,15 +133,24 @@ func UpdateScheduleRun(ctx context.Context, workspacePath string, runID string, 
 			if sessionID != "" {
 				runs[i].SessionID = sessionID
 			}
-			if status == "success" || status == "error" {
+			if isTerminalScheduleRunStatus(status) {
 				now := time.Now().UTC()
 				runs[i].CompletedAt = &now
 			}
-			return WriteScheduleRuns(ctx, workspacePath, runs)
+			return writeScheduleRunsUnlocked(ctx, workspacePath, runs)
 		}
 	}
 
-	return nil // run not found, ignore
+	return fmt.Errorf("schedule run %q not found in %s", runID, path)
+}
+
+func isTerminalScheduleRunStatus(status string) bool {
+	switch status {
+	case "success", "error", "stopped", "partial", "failed", "interrupted":
+		return true
+	default:
+		return false
+	}
 }
 
 // ListScheduleRuns returns runs for a specific schedule ID with pagination.

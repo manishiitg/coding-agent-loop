@@ -2270,7 +2270,7 @@ export interface ScheduledJob {
   last_run_at?: string
   next_run_at?: string
   last_session_id?: string
-  last_status?: 'success' | 'error' | 'running' | 'stopped'
+  last_status?: 'success' | 'error' | 'running' | 'partial' | 'stopped' | 'interrupted'
   last_error?: string
   last_duration_ms?: number
   run_count: number

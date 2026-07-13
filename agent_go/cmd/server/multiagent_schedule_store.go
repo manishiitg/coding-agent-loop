@@ -121,6 +121,14 @@ func DiscoverMultiAgentSchedules(ctx context.Context) ([]DiscoveredMultiAgentSch
 
 // ReadMultiAgentScheduleRuns reads run history for a user's multi-agent schedules.
 func ReadMultiAgentScheduleRuns(ctx context.Context, userID string) ([]ScheduleRunEntry, error) {
+	path := multiAgentScheduleRunsPath(userID)
+	lock := scheduleRunFileLock(path)
+	lock.Lock()
+	defer lock.Unlock()
+	return readMultiAgentScheduleRunsUnlocked(ctx, userID)
+}
+
+func readMultiAgentScheduleRunsUnlocked(ctx context.Context, userID string) ([]ScheduleRunEntry, error) {
 	content, exists, err := readFileFromWorkspace(ctx, multiAgentScheduleRunsPath(userID))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read multiagent-schedule-runs.json: %w", err)
@@ -138,6 +146,14 @@ func ReadMultiAgentScheduleRuns(ctx context.Context, userID string) ([]ScheduleR
 
 // WriteMultiAgentScheduleRuns writes run history for a user's multi-agent schedules.
 func WriteMultiAgentScheduleRuns(ctx context.Context, userID string, runs []ScheduleRunEntry) error {
+	path := multiAgentScheduleRunsPath(userID)
+	lock := scheduleRunFileLock(path)
+	lock.Lock()
+	defer lock.Unlock()
+	return writeMultiAgentScheduleRunsUnlocked(ctx, userID, runs)
+}
+
+func writeMultiAgentScheduleRunsUnlocked(ctx context.Context, userID string, runs []ScheduleRunEntry) error {
 	data, err := json.MarshalIndent(runs, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal multiagent-schedule-runs.json: %w", err)
@@ -147,9 +163,17 @@ func WriteMultiAgentScheduleRuns(ctx context.Context, userID string, runs []Sche
 
 // AppendMultiAgentScheduleRun adds a run entry for a user's multi-agent schedule.
 func AppendMultiAgentScheduleRun(ctx context.Context, userID string, run *ScheduleRunEntry) error {
-	runs, err := ReadMultiAgentScheduleRuns(ctx, userID)
+	if run == nil {
+		return fmt.Errorf("multi-agent schedule run is required")
+	}
+	path := multiAgentScheduleRunsPath(userID)
+	lock := scheduleRunFileLock(path)
+	lock.Lock()
+	defer lock.Unlock()
+
+	runs, err := readMultiAgentScheduleRunsUnlocked(ctx, userID)
 	if err != nil {
-		runs = []ScheduleRunEntry{}
+		return err
 	}
 
 	runs = append([]ScheduleRunEntry{*run}, runs...) // prepend (newest first)
@@ -158,12 +182,17 @@ func AppendMultiAgentScheduleRun(ctx context.Context, userID string, run *Schedu
 		runs = runs[:maxScheduleRuns]
 	}
 
-	return WriteMultiAgentScheduleRuns(ctx, userID, runs)
+	return writeMultiAgentScheduleRunsUnlocked(ctx, userID, runs)
 }
 
 // UpdateMultiAgentScheduleRun updates a run entry for a user's multi-agent schedule.
 func UpdateMultiAgentScheduleRun(ctx context.Context, userID string, runID string, status string, errMsg string, durationMs *int64, sessionID string) error {
-	runs, err := ReadMultiAgentScheduleRuns(ctx, userID)
+	path := multiAgentScheduleRunsPath(userID)
+	lock := scheduleRunFileLock(path)
+	lock.Lock()
+	defer lock.Unlock()
+
+	runs, err := readMultiAgentScheduleRunsUnlocked(ctx, userID)
 	if err != nil {
 		return err
 	}
@@ -176,15 +205,15 @@ func UpdateMultiAgentScheduleRun(ctx context.Context, userID string, runID strin
 			if sessionID != "" {
 				runs[i].SessionID = sessionID
 			}
-			if status == "success" || status == "error" {
+			if isTerminalScheduleRunStatus(status) {
 				now := time.Now().UTC()
 				runs[i].CompletedAt = &now
 			}
-			return WriteMultiAgentScheduleRuns(ctx, userID, runs)
+			return writeMultiAgentScheduleRunsUnlocked(ctx, userID, runs)
 		}
 	}
 
-	return nil
+	return fmt.Errorf("multi-agent schedule run %q not found in %s", runID, path)
 }
 
 // ListMultiAgentScheduleRuns returns runs for a specific schedule ID with pagination.

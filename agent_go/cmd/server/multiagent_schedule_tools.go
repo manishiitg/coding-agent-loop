@@ -226,7 +226,7 @@ func createMultiAgentScheduleExecutors(api *StreamingAPI, currentUserID string) 
 					sb.WriteString(fmt.Sprintf("  - query: %s\n", s.Query))
 				}
 				if api.scheduler != nil {
-					st := api.scheduler.GetRuntimeState(s.ID)
+					st := api.scheduler.GetRuntimeStateForUser(userID, s.ID)
 					if st.LastStatus != "" {
 						lastRun := ""
 						if st.LastRunAt != nil {

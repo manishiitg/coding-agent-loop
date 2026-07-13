@@ -130,7 +130,7 @@ func (api *StreamingAPI) listRunningScheduleActivities(ctx context.Context, curr
 			continue
 		}
 		for _, sched := range wf.Manifest.Schedules {
-			state := api.scheduler.GetRuntimeState(sched.ID)
+			state := api.scheduler.GetRuntimeStateForWorkflow(wf.WorkspacePath, sched.ID)
 			if !strings.EqualFold(state.LastStatus, "running") {
 				continue
 			}
@@ -158,7 +158,7 @@ func (api *StreamingAPI) listRunningScheduleActivities(ctx context.Context, curr
 			return nil, fmt.Errorf("failed to read multi-agent schedules: %w", err)
 		} else if exists && f != nil {
 			for _, sched := range MergeBuiltinSchedules(f.Schedules) {
-				state := api.scheduler.GetRuntimeState(sched.ID)
+				state := api.scheduler.GetRuntimeStateForUser(currentUserID, sched.ID)
 				if !strings.EqualFold(state.LastStatus, "running") {
 					continue
 				}

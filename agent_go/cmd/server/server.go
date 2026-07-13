@@ -7704,7 +7704,7 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				sb.WriteString(fmt.Sprintf("- **Timezone**: %s\n", sched.Timezone))
 				sb.WriteString(fmt.Sprintf("- **Status**: %s\n", status))
 				if api.scheduler != nil {
-					state := api.scheduler.GetRuntimeState(sched.ID)
+					state := api.scheduler.GetRuntimeStateForWorkflow(workspacePath, sched.ID)
 					if state.LastStatus != "" {
 						sb.WriteString(fmt.Sprintf("- **Last Run**: %v (status: %s)\n", state.LastRunAt, state.LastStatus))
 					}
@@ -7896,12 +7896,12 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 			return fmt.Sprintf("Schedule updated.\n- **ID**: `%s`\n- **Name**: %s\n- **Cron**: `%s`\n- **Enabled**: %v\n- **Next Run**: %s", sched.ID, sched.Name, sched.CronExpression, sched.Enabled, nextRunStr), nil
 		},
 		DeleteSchedule: func(ctx context.Context, jobID string) error {
-			if api.scheduler != nil {
-				api.scheduler.RemoveJob(jobID)
-			}
 			workspacePath, manifest, idx, err := findScheduleByID(ctx, jobID)
 			if err != nil {
 				return err
+			}
+			if api.scheduler != nil {
+				_ = api.scheduler.RemoveWorkflowJob(workspacePath, jobID)
 			}
 			manifest.Schedules = append(manifest.Schedules[:idx], manifest.Schedules[idx+1:]...)
 			return WriteWorkflowManifest(ctx, workspacePath, manifest)

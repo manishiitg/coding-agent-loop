@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"mcp-agent-builder-go/agent_go/internal/events"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 
 	"github.com/manishiitg/mcpagent/toolcalllog"
 )

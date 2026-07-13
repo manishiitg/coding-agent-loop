@@ -17,8 +17,8 @@ import (
 	"github.com/manishiitg/mcpagent/observability"
 	"github.com/manishiitg/mcpagent/toolcalllog"
 
-	"mcp-agent-builder-go/agent_go/pkg/common"
-	agentlogger "mcp-agent-builder-go/agent_go/pkg/logger"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
+	agentlogger "github.com/manishiitg/coding-agent-loop/agent_go/pkg/logger"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )

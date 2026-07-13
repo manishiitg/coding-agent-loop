@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 )
 
 const (

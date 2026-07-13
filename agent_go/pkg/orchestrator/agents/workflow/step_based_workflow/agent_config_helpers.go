@@ -3,7 +3,7 @@ package step_based_workflow
 import (
 	"fmt"
 
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents"
 )
 
 func agentConfigUseCodeExecutionMode(cfg *agents.OrchestratorAgentConfig) bool {

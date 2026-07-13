@@ -9,7 +9,7 @@ import (
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/mcpclient"
 
-	"mcp-agent-builder-go/agent_go/pkg/common"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 )
 
 // MissingDependency describes one workflow-required resource that isn't

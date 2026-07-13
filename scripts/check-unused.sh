@@ -9,7 +9,7 @@ echo "🔍 Checking for unused code..."
 echo ""
 
 cd agent_go 2>/dev/null || {
-    echo "❌ agent_go directory not found. Run from mcp-agent-builder-go root."
+    echo "❌ agent_go directory not found. Run from coding-agent-loop root."
     exit 1
 }
 

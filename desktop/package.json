@@ -2,7 +2,7 @@
   "name": "runloop-desktop",
   "version": "1.25.48",
   "description": "Standalone Mac app for AgentWorks",
-  "repository": "github:manishiitg/mcp-agent-builder-go",
+  "repository": "github:manishiitg/coding-agent-loop",
   "main": "main.js",
   "private": true,
   "scripts": {

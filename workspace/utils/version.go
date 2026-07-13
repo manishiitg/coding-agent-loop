@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/manishiitg/mcp-agent-builder-go/workspace/models"
+	"github.com/manishiitg/coding-agent-loop/workspace/models"
 )
 
 // GitVersionManager handles git version operations

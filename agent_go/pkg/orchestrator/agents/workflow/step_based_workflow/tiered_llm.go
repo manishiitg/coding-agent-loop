@@ -3,7 +3,7 @@ package step_based_workflow
 import (
 	"strings"
 
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 )
 
 // workshopTierContextKey is used to pass tier overrides via context (concurrent-safe)

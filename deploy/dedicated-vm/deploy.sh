@@ -111,18 +111,18 @@ if [[ "$STAGE" == "build" || "$STAGE" == "all" ]]; then
   remote "export PATH=\$PATH:/usr/local/go/bin && cd $REMOTE_DIR/src/agent_go && \
     go mod edit -dropreplace=github.com/manishiitg/mcpagent 2>/dev/null; \
     go mod edit -dropreplace=github.com/manishiitg/multi-llm-provider-go 2>/dev/null; \
-    go mod edit -dropreplace=github.com/manishiitg/mcp-agent-builder-go/workspace 2>/dev/null; \
+    go mod edit -dropreplace=github.com/manishiitg/coding-agent-loop/workspace 2>/dev/null; \
     go mod edit -replace=github.com/manishiitg/mcpagent=../mcpagent && \
     go mod edit -replace=github.com/manishiitg/multi-llm-provider-go=../multi-llm-provider-go && \
-    go mod edit -replace=github.com/manishiitg/mcp-agent-builder-go/workspace=../workspace && \
+    go mod edit -replace=github.com/manishiitg/coding-agent-loop/workspace=../workspace && \
     cd ../mcpagent && \
     go mod edit -dropreplace=github.com/manishiitg/multi-llm-provider-go 2>/dev/null; \
-    go mod edit -dropreplace=github.com/manishiitg/mcp-agent-builder-go/workspace 2>/dev/null; \
+    go mod edit -dropreplace=github.com/manishiitg/coding-agent-loop/workspace 2>/dev/null; \
     go mod edit -replace=github.com/manishiitg/multi-llm-provider-go=../multi-llm-provider-go && \
-    go mod edit -replace=github.com/manishiitg/mcp-agent-builder-go/workspace=../workspace && \
+    go mod edit -replace=github.com/manishiitg/coding-agent-loop/workspace=../workspace && \
     cd ../multi-llm-provider-go && \
-    go mod edit -dropreplace=github.com/manishiitg/mcp-agent-builder-go/workspace 2>/dev/null; \
-    go mod edit -replace=github.com/manishiitg/mcp-agent-builder-go/workspace=../workspace"
+    go mod edit -dropreplace=github.com/manishiitg/coding-agent-loop/workspace 2>/dev/null; \
+    go mod edit -replace=github.com/manishiitg/coding-agent-loop/workspace=../workspace"
 
   # Build mcpbridge (required for CLI provider MCP bridge)
   echo "    Building mcpbridge..."

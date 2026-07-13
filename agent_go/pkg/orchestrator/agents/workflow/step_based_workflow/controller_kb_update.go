@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	orchestratorevents "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	orchestratorevents "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"

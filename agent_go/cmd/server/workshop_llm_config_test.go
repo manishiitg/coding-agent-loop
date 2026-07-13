@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
-	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
 
 func TestWorkshopConvertTieredLLMConfigHandlesPartialTiers(t *testing.T) {

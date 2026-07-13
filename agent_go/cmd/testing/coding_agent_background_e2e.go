@@ -27,7 +27,7 @@ const backgroundContractAgentName = "bg-contract-check"
 var codingAgentBackgroundE2ECmd = &cobra.Command{
 	Use:   "coding-agent-background-e2e",
 	Short: "Run a real e2e test for coding-agent background delegation state",
-	Long: `Runs a real end-to-end test through the live mcp-agent-builder-go HTTP API.
+	Long: `Runs a real end-to-end test through the live coding-agent-loop HTTP API.
 
 This test exercises the same path the UI uses:
 1. /api/query with a tmux-backed coding agent
@@ -139,7 +139,7 @@ Do not call any other tools after delegate returns.`, backgroundContractAgentNam
 }
 
 func init() {
-	codingAgentBackgroundE2ECmd.Flags().StringVar(&codingAgentBackgroundE2EFlags.serverURL, "server-url", "http://localhost:18743", "mcp-agent-builder-go server URL")
+	codingAgentBackgroundE2ECmd.Flags().StringVar(&codingAgentBackgroundE2EFlags.serverURL, "server-url", "http://localhost:18743", "coding-agent-loop server URL")
 	codingAgentBackgroundE2ECmd.Flags().StringVar(&codingAgentBackgroundE2EFlags.provider, "provider", "claude-code", "coding CLI provider")
 	codingAgentBackgroundE2ECmd.Flags().StringVar(&codingAgentBackgroundE2EFlags.model, "model", "", "model ID; defaults to a low-cost model for the selected provider")
 	codingAgentBackgroundE2ECmd.Flags().StringVar(&codingAgentBackgroundE2EFlags.sessionID, "session-id", "", "session ID to reuse; generated when omitted")

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"

@@ -12,7 +12,7 @@ import (
 
 	agentEvents "github.com/manishiitg/mcpagent/events"
 
-	storeEvents "mcp-agent-builder-go/agent_go/internal/events"
+	storeEvents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 )
 
 const restoredBuilderConversationMessageLimit = 12

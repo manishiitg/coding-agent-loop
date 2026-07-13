@@ -3,8 +3,8 @@ package server
 import (
 	"testing"
 
-	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
-	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
+	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
+	todo_creation_human "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 )
 
 func knownWorkshopRegisteredToolNamesOutsideWorkflowPool() map[string]string {

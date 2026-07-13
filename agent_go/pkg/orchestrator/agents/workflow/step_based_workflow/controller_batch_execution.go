@@ -9,10 +9,10 @@ import (
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	baseevents "github.com/manishiitg/mcpagent/events"
-	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
-	"mcp-agent-builder-go/agent_go/pkg/common"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 )
 
 // BatchExecutionResult contains the result of batch execution

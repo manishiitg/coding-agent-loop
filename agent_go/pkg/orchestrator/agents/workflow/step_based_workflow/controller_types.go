@@ -7,7 +7,7 @@ import (
 
 	baseevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 )
 
 // BranchStepProgress tracks branch execution progress for conditional steps

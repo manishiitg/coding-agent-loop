@@ -40,7 +40,7 @@ var codingAgentChatE2EFlags struct {
 var codingAgentChatE2ECmd = &cobra.Command{
 	Use:   "coding-agent-chat-e2e",
 	Short: "Run real e2e tests for tmux-backed coding agent chat sessions",
-	Long: `Runs a real end-to-end test through the live mcp-agent-builder-go HTTP API.
+	Long: `Runs a real end-to-end test through the live coding-agent-loop HTTP API.
 
 This intentionally does not call the provider adapter directly. It exercises:
 1. /api/query turn startup
@@ -247,7 +247,7 @@ Example:
 }
 
 func init() {
-	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.serverURL, "server-url", "http://localhost:18743", "mcp-agent-builder-go server URL")
+	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.serverURL, "server-url", "http://localhost:18743", "coding-agent-loop server URL")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.provider, "provider", "codex-cli", "coding CLI provider: codex-cli, cursor-cli, agy-cli, pi-cli, or claude-code")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.model, "model", "", "model ID; defaults to the provider-specific E2E model")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.sessionID, "session-id", "", "session ID to reuse; generated when omitted")

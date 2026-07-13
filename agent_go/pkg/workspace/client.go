@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/pkg/common"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 )
 
 // FolderGuardConfig represents folder access restrictions.

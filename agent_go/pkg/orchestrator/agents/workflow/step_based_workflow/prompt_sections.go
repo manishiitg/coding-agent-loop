@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	prompt "github.com/manishiitg/mcpagent/agent/prompt"
-	"mcp-agent-builder-go/agent_go/cmd/server/guidance"
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/guidance"
 )
 
 // BuildStepFilesListing enumerates files in a single step-associated folder (step output

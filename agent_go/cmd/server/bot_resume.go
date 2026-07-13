@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/cmd/server/services"
-	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
 
 func (api *StreamingAPI) resolveBotResumeTarget(ctx context.Context, userID, selector string, filter services.BotResumeFilter) (*services.BotResumeTarget, error) {

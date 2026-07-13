@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/internal/terminalleases"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminalleases"
 )
 
 const (

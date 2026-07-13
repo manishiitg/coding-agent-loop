@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"mcp-agent-builder-go/agent_go/internal/terminals"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
 )
 
 func TestInspectCodingTmuxPaneStateUsesRealPaneState(t *testing.T) {

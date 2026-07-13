@@ -1,6 +1,6 @@
 # =============================================================================
 # Workspace API image - uses same shared base as agent (Dockerfile.base).
-# Build context: directory containing workspace/ (e.g. mcp-agent-builder-go).
+# Build context: directory containing workspace/ (e.g. coding-agent-loop).
 # =============================================================================
 # ARG before first FROM so it is available to the FROM that uses it
 ARG BASE_IMAGE

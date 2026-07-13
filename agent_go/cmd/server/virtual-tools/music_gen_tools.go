@@ -10,7 +10,7 @@ import (
 
 	llm "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	"mcp-agent-builder-go/agent_go/pkg/workspace"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
 )
 
 const (

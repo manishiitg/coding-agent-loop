@@ -7,7 +7,7 @@ import (
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/llm"
-	internalevents "mcp-agent-builder-go/agent_go/internal/events"
+	internalevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 )
 
 // TestSteerBackgroundAgentCompletionFallsBackForFailedLiveDelivery verifies

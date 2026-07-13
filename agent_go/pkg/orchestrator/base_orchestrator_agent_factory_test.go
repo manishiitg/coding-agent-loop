@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"mcp-agent-builder-go/agent_go/pkg/common"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents"
 )
 
 func TestSyncCodingAgentWorkingDirUsesShellSessionWorkingDir(t *testing.T) {

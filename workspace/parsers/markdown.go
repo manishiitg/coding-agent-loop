@@ -3,7 +3,7 @@ package parsers
 import (
 	"regexp"
 	"strings"
-	"github.com/manishiitg/mcp-agent-builder-go/workspace/models"
+	"github.com/manishiitg/coding-agent-loop/workspace/models"
 )
 
 // ParseMarkdown parses markdown content and returns its structure

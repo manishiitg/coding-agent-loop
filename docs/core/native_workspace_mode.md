@@ -73,6 +73,6 @@ These use `WORKSPACE_DOCS_PATH` for the actual filesystem path, not to detect Do
 
 When adding code that behaves differently in Docker vs native:
 
-1. Import `mcp-agent-builder-go/agent_go/pkg/common`
+1. Import `coding-agent-loop/agent_go/pkg/common`
 2. Use `common.IsNativeWorkspace()` — do not check other env vars for mode detection
 3. Add an entry to the table above

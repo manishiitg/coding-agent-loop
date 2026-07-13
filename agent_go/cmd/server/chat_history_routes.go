@@ -13,8 +13,8 @@ import (
 	agentevents "github.com/manishiitg/mcpagent/events"
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 
-	storeevents "mcp-agent-builder-go/agent_go/internal/events"
-	"mcp-agent-builder-go/agent_go/internal/terminals"
+	storeevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
 )
 
 // ChatHistoryRoutes registers chat history endpoints.

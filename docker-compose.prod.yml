@@ -24,7 +24,7 @@ services:
       # container-internal path).
       - WORKSPACE_DOCS_HOST_PATH=${WORKSPACE_DOCS_HOST_PATH:-/app/workspace-docs-host}
       # Docker network so project containers can reach workspace-api by name.
-      - DOCKER_NETWORK=${COMPOSE_PROJECT_NAME:-mcp-agent-builder-go}_default
+      - DOCKER_NETWORK=${COMPOSE_PROJECT_NAME:-coding-agent-loop}_default
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock  # DooD: manage sibling project containers
       - ${WORKSPACE_DOCS_HOST_PATH:-./workspace-docs}:/app/workspace-docs-host:ro  # host path reference

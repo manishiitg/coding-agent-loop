@@ -4,13 +4,13 @@
 # Gatekeeper doesn't show "Runloop is damaged".
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/manishiitg/mcp-agent-builder-go/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/install.sh | bash
 #
 # Override the version with RUNLOOP_VERSION (e.g. RUNLOOP_VERSION=v1.25.6 …).
 
 set -euo pipefail
 
-REPO="manishiitg/mcp-agent-builder-go"
+REPO="manishiitg/coding-agent-loop"
 APP_NAME="Runloop"
 INSTALL_DIR="/Applications"
 

@@ -1,7 +1,7 @@
 # Coding Agent Builder E2E Contract
 
 This file defines the builder-layer contract for coding-agent integrations in
-`mcp-agent-builder-go`.
+`coding-agent-loop`.
 
 The low-level provider/tmux contract lives in:
 

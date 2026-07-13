@@ -6,8 +6,8 @@ import (
 	"time"
 
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
-	"mcp-agent-builder-go/agent_go/pkg/browser"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 )
 
 func TestWorkshopStepLogFolderUsesDeclaredStepID(t *testing.T) {

@@ -1,4 +1,4 @@
-module github.com/manishiitg/mcp-agent-builder-go/workspace
+module github.com/manishiitg/coding-agent-loop/workspace
 
 go 1.25.0
 

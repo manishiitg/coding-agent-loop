@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/pkg/fsutil"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/fsutil"
 )
 
 // FilesystemStore is the filesystem-backed implementation of Store. It owns

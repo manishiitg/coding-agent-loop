@@ -19,7 +19,7 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/pkg/tmuxcapture"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/tmuxinput"
 
-	"mcp-agent-builder-go/agent_go/internal/terminals"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
 )
 
 const listTerminalContentMaxBytes = 64 * 1024

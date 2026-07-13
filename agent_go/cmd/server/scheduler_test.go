@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
-	"mcp-agent-builder-go/agent_go/internal/terminals"
-	"mcp-agent-builder-go/agent_go/pkg/schedulerstate"
-	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
+	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/schedulerstate"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
 
 func TestBuildScheduleCronExpressionAlwaysSetsTimezone(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 )
 
 func TestInferWorkflowOwnerFromPath(t *testing.T) {
-	owner := inferWorkflowOwnerFromPath("/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs/Workflow/tectonicusadaytrading/runs/iteration-0/default/execution/score-and-plan/output.json")
+	owner := inferWorkflowOwnerFromPath("/Users/mipl/ai-work/coding-agent-loop/workspace-docs/Workflow/tectonicusadaytrading/runs/iteration-0/default/execution/score-and-plan/output.json")
 
 	if owner.WorkflowID != "tectonicusadaytrading" {
 		t.Fatalf("WorkflowID = %q", owner.WorkflowID)

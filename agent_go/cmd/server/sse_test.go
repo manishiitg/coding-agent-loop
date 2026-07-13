@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/internal/events"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 
 	pkgevents "github.com/manishiitg/mcpagent/events"
 )

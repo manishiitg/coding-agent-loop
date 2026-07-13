@@ -7,7 +7,7 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"mcp-agent-builder-go/agent_go/internal/inspector"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/inspector"
 )
 
 // inspectorSummary is the JSON shape the GET /api/inspector/<session>

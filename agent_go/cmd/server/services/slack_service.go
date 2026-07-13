@@ -20,7 +20,7 @@ import (
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 
-	"mcp-agent-builder-go/agent_go/pkg/workspace"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
 )
 
 // Slack state is persisted as two small JSON files under <workspace-docs>/config/:

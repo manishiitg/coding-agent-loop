@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"mcp-agent-builder-go/agent_go/pkg/fsutil"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/fsutil"
 )
 
 func workspaceDocsAbsoluteTestPath(relativePath string) string {

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	orchestrator_events "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 	baseevents "github.com/manishiitg/mcpagent/events"
 )
 

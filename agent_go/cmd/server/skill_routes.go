@@ -5,7 +5,7 @@ import (
 	"log"
 	"net/http"
 
-	"mcp-agent-builder-go/agent_go/pkg/skills"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/skills"
 
 	"github.com/gorilla/mux"
 )

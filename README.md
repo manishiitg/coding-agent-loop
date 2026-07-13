@@ -2,7 +2,7 @@
 
 **AgentWorks** is an AI operations platform for running many autonomous workflows like an organization. Define goals, build workflow agents, run them on schedules, and let Pulse, Auto-improve, Chief of Staff, and the dashboard help you manage by exception instead of watching logs.
 
-[![Latest Release](https://img.shields.io/github/v/release/manishiitg/mcp-agent-builder-go?label=release)](https://github.com/manishiitg/mcp-agent-builder-go/releases/latest)
+[![Latest Release](https://img.shields.io/github/v/release/manishiitg/coding-agent-loop?label=release)](https://github.com/manishiitg/coding-agent-loop/releases/latest)
 ![macOS Apple Silicon](https://img.shields.io/badge/macOS-Apple%20Silicon-000000?logo=apple)
 ![Installer](https://img.shields.io/badge/install-curl%20%7C%20bash-2ea44f)
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](#license--architecture-foundations)
@@ -51,14 +51,14 @@ The high-level loop is documented in [Workflow self-improvement & reporting](doc
 
 ## 💻 Desktop App (macOS)
 
-A standalone macOS app is available — no Docker, no manual server setup. Each release is published at [Releases](https://github.com/manishiitg/mcp-agent-builder-go/releases/latest).
+A standalone macOS app is available — no Docker, no manual server setup. Each release is published at [Releases](https://github.com/manishiitg/coding-agent-loop/releases/latest).
 
-Rename note: the public product name is moving to **AgentWorks**. During the transition, the GitHub repo and some release assets still use the historical `mcp-agent-builder-go` / `Runloop` names so existing installs and update checks remain compatible.
+Rename note: the public product is **AgentWorks** and the GitHub repository is now `coding-agent-loop`. Some release assets and compatibility identifiers still use the historical `Runloop` name so existing installs and update checks remain compatible. The former `mcp-agent-builder-go` repository URL redirects to this repository but should not be used in new documentation.
 
 ### Install (one-liner — recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/manishiitg/mcp-agent-builder-go/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/install.sh | bash
 ```
 
 Downloads the latest dmg, installs the Mac app to `/Applications`, ensures the MCP bridge used by Claude Code/Codex tool access is installed to `~/go/bin`, strips the macOS quarantine flag (no "damaged" warning), and launches the app. If Go is missing, the installer installs Go through Homebrew when available; otherwise it asks you to install Go and rerun the same curl command. Pin a specific version with `RUNLOOP_VERSION=v1.25.6 curl -fsSL … | bash`.
@@ -245,8 +245,8 @@ Bring your existing CLI-based coding agents into the visual orchestrator via the
 ### 2. Clone and Configure
 
 ```bash
-git clone https://github.com/manishiitg/mcp-agent-builder-go.git
-cd mcp-agent-builder-go
+git clone https://github.com/manishiitg/coding-agent-loop.git
+cd coding-agent-loop
 cp agent_go/env.example agent_go/.env
 ```
 
@@ -388,7 +388,7 @@ cd agent_go && go test ./...
 If you use Local Chrome (CDP) on macOS, install the dedicated launcher from the public GitHub script:
 
 ```bash
-curl -fsSL 'https://raw.githubusercontent.com/manishiitg/mcp-agent-builder-go/main/scripts/install-chrome-cdp-macOS.sh' | bash
+curl -fsSL 'https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/scripts/install-chrome-cdp-macOS.sh' | bash
 ```
 
 The installer downloads `Chrome CDP.app`, installs it into `/Applications`, clears quarantine attributes, applies a local ad-hoc signature when possible, opens the app, and checks that CDP is reachable on port `9222`.

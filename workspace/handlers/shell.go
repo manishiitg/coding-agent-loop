@@ -13,9 +13,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/manishiitg/mcp-agent-builder-go/workspace/models"
-	"github.com/manishiitg/mcp-agent-builder-go/workspace/security"
-	"github.com/manishiitg/mcp-agent-builder-go/workspace/utils"
+	"github.com/manishiitg/coding-agent-loop/workspace/models"
+	"github.com/manishiitg/coding-agent-loop/workspace/security"
+	"github.com/manishiitg/coding-agent-loop/workspace/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"

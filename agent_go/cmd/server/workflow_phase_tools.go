@@ -6,10 +6,10 @@ import (
 	"log"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/cmd/server/guidance"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
-	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
-	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/guidance"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
+	todo_creation_human "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/llm"

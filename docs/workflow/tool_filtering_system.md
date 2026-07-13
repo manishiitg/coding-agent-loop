@@ -63,7 +63,7 @@ graph TD
 #### Backend Configuration (Go)
 
 ```go
-// From mcp-agent-builder-go/agent_go/pkg/agentwrapper/llm_agent.go
+// From coding-agent-loop/agent_go/pkg/agentwrapper/llm_agent.go
 if len(config.SelectedTools) > 0 {
     // Pass specific tool filters to mcpagent
     agentOptions = append(agentOptions, mcpagent.WithSelectedTools(config.SelectedTools))

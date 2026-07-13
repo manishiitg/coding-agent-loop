@@ -1,7 +1,7 @@
 package server
 
 // BuilderInvariantID is an executable proof point for one user-facing
-// invariant the mcp-agent-builder-go layer must hold across the HTTP API,
+// invariant the coding-agent-loop layer must hold across the HTTP API,
 // orchestrator runtime, MCP bridge, terminal store, and frontend.
 //
 // IDs correspond to the rows in docs/core/coding_agent_builder_e2e_contract.md
@@ -168,7 +168,7 @@ func AllBuilderInvariants() []BuilderInvariantID {
 }
 
 // BuilderInvariantCertification records the executable proof for a builder
-// invariant. TestFile is repository-relative (from mcp-agent-builder-go root)
+// invariant. TestFile is repository-relative (from coding-agent-loop root)
 // so the drift test can open it directly to verify TestName exists.
 type BuilderInvariantCertification struct {
 	ID          BuilderInvariantID

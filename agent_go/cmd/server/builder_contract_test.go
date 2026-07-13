@@ -122,7 +122,7 @@ func TestBuilderInvariantCertificationReferencesExistingFiles(t *testing.T) {
 }
 
 // findRepoRoot walks up from this test's working dir until it finds a
-// directory containing both agent_go/ and frontend/ (mcp-agent-builder-go's
+// directory containing both agent_go/ and frontend/ (coding-agent-loop's
 // repo root). Falls back to t.Fatal if not found within 8 levels — well
 // beyond what any reasonable Go test workdir nests.
 func findRepoRoot(t *testing.T) string {
@@ -144,6 +144,6 @@ func findRepoRoot(t *testing.T) string {
 		}
 		dir = parent
 	}
-	t.Fatalf("could not locate mcp-agent-builder-go repo root from %s", cwd)
+	t.Fatalf("could not locate coding-agent-loop repo root from %s", cwd)
 	return ""
 }

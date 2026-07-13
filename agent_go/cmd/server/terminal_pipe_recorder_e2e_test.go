@@ -14,7 +14,7 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"mcp-agent-builder-go/agent_go/internal/terminals"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
 )
 
 func TestTerminalPipeRecorderHTTPE2EPreservesAnsiAndAppends(t *testing.T) {

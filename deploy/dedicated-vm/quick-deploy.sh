@@ -157,16 +157,16 @@ if [[ "$TARGET" == "all" || "$TARGET" == "agent" ]]; then
 
   # Fix go.mod replace directives
   cd $REMOTE/src/agent_go
-  go mod edit -dropreplace=github.com/manishiitg/mcpagent 2>/dev/null; go mod edit -dropreplace=github.com/manishiitg/multi-llm-provider-go 2>/dev/null; go mod edit -dropreplace=github.com/manishiitg/mcp-agent-builder-go/workspace 2>/dev/null
-  go mod edit -replace=github.com/manishiitg/mcpagent=../mcpagent -replace=github.com/manishiitg/multi-llm-provider-go=../multi-llm-provider-go -replace=github.com/manishiitg/mcp-agent-builder-go/workspace=../workspace
+  go mod edit -dropreplace=github.com/manishiitg/mcpagent 2>/dev/null; go mod edit -dropreplace=github.com/manishiitg/multi-llm-provider-go 2>/dev/null; go mod edit -dropreplace=github.com/manishiitg/coding-agent-loop/workspace 2>/dev/null
+  go mod edit -replace=github.com/manishiitg/mcpagent=../mcpagent -replace=github.com/manishiitg/multi-llm-provider-go=../multi-llm-provider-go -replace=github.com/manishiitg/coding-agent-loop/workspace=../workspace
 
   cd $REMOTE/src/mcpagent
-  go mod edit -dropreplace=github.com/manishiitg/multi-llm-provider-go 2>/dev/null; go mod edit -dropreplace=github.com/manishiitg/mcp-agent-builder-go/workspace 2>/dev/null
-  go mod edit -replace=github.com/manishiitg/multi-llm-provider-go=../multi-llm-provider-go -replace=github.com/manishiitg/mcp-agent-builder-go/workspace=../workspace
+  go mod edit -dropreplace=github.com/manishiitg/multi-llm-provider-go 2>/dev/null; go mod edit -dropreplace=github.com/manishiitg/coding-agent-loop/workspace 2>/dev/null
+  go mod edit -replace=github.com/manishiitg/multi-llm-provider-go=../multi-llm-provider-go -replace=github.com/manishiitg/coding-agent-loop/workspace=../workspace
 
   cd $REMOTE/src/multi-llm-provider-go
-  go mod edit -dropreplace=github.com/manishiitg/mcp-agent-builder-go/workspace 2>/dev/null
-  go mod edit -replace=github.com/manishiitg/mcp-agent-builder-go/workspace=../workspace
+  go mod edit -dropreplace=github.com/manishiitg/coding-agent-loop/workspace 2>/dev/null
+  go mod edit -replace=github.com/manishiitg/coding-agent-loop/workspace=../workspace
 
   # Rebuild mcpbridge
   cd $REMOTE/src/mcpagent && go install ./cmd/mcpbridge/ 2>&1 | tail -1

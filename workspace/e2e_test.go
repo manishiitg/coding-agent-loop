@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/manishiitg/mcp-agent-builder-go/workspace/models"
+	"github.com/manishiitg/coding-agent-loop/workspace/models"
 )
 
 // TestE2EFolderGuardMacOS is a REAL end-to-end test that validates folder guard

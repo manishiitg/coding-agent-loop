@@ -1,7 +1,7 @@
 package testing
 
 import (
-	"mcp-agent-builder-go/agent_go/pkg/logger"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/logger"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 

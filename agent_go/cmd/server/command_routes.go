@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"mcp-agent-builder-go/agent_go/pkg/commands"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/commands"
 
 	"github.com/gorilla/mux"
 )

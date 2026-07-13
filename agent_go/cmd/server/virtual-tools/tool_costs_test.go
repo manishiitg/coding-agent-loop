@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"mcp-agent-builder-go/agent_go/pkg/costledger"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/costledger"
 )
 
 func TestRecordPricedToolCostPersistsWithoutOutputPath(t *testing.T) {

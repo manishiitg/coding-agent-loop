@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/manishiitg/mcp-agent-builder-go/workspace/handlers"
+	"github.com/manishiitg/coding-agent-loop/workspace/handlers"
 
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"

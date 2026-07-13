@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/pkg/chathistory"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
 
-	"mcp-agent-builder-go/agent_go/cmd/server/services"
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
 
 	"github.com/gorilla/mux"
 )

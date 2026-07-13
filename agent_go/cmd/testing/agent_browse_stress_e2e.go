@@ -131,7 +131,7 @@ Example:
 }
 
 func init() {
-	agentBrowseStressE2ECmd.Flags().StringVar(&agentBrowseStressE2EFlags.serverURL, "server-url", "http://127.0.0.1:18743", "mcp-agent-builder-go server URL")
+	agentBrowseStressE2ECmd.Flags().StringVar(&agentBrowseStressE2EFlags.serverURL, "server-url", "http://127.0.0.1:18743", "coding-agent-loop server URL")
 	agentBrowseStressE2ECmd.Flags().StringVar(&agentBrowseStressE2EFlags.provider, "provider", "codex-cli", "coding CLI provider; defaults to codex-cli")
 	agentBrowseStressE2ECmd.Flags().StringVar(&agentBrowseStressE2EFlags.model, "model", "", "model ID; defaults to the provider-specific Builder coding-agent E2E model")
 	agentBrowseStressE2ECmd.Flags().StringVar(&agentBrowseStressE2EFlags.selectedFolder, "selected-folder", "_users/default/Chats", "workspace-relative folder for the chat sessions")

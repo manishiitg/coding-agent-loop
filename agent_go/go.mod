@@ -1,4 +1,4 @@
-module mcp-agent-builder-go/agent_go
+module github.com/manishiitg/coding-agent-loop/agent_go
 
 go 1.25.12
 
@@ -14,7 +14,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/invopop/jsonschema v0.13.0
 	github.com/joho/godotenv v1.5.1
-	github.com/manishiitg/mcp-agent-builder-go/workspace v0.0.0
+	github.com/manishiitg/coding-agent-loop/workspace v0.0.0
 	github.com/manishiitg/mcpagent v1.7.10
 	github.com/manishiitg/multi-llm-provider-go v0.7.2
 	github.com/mark3labs/mcp-go v0.45.0
@@ -31,7 +31,7 @@ require (
 	modernc.org/sqlite v1.49.1
 )
 
-replace github.com/manishiitg/mcp-agent-builder-go/workspace => ../workspace
+replace github.com/manishiitg/coding-agent-loop/workspace => ../workspace
 
 replace github.com/manishiitg/mcpagent => ../../mcpagent
 

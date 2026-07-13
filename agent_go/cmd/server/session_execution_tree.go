@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	internalevents "mcp-agent-builder-go/agent_go/internal/events"
+	internalevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 
 	"github.com/gorilla/mux"
 )

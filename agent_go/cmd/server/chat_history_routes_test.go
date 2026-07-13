@@ -7,7 +7,7 @@ import (
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	"mcp-agent-builder-go/agent_go/internal/terminals"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
 )
 
 func TestRestoredRuntimeUsesLaunchableTransportFromHandle(t *testing.T) {

@@ -12,8 +12,8 @@ import (
 	"time"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
-	"mcp-agent-builder-go/agent_go/cmd/server/services"
-	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
+	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"

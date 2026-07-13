@@ -13,10 +13,10 @@ import (
 
 	"github.com/gorilla/mux"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
-	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
-	internalevents "mcp-agent-builder-go/agent_go/internal/events"
-	"mcp-agent-builder-go/agent_go/internal/terminals"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
+	internalevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 
 	pkgevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/llm"

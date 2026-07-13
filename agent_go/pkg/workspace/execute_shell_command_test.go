@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"mcp-agent-builder-go/agent_go/pkg/common"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 )
 
 func TestRedactShellCommandForLog(t *testing.T) {
@@ -146,7 +146,7 @@ func TestExecuteShellCommand_BlocksRawChromeCDPAccess(t *testing.T) {
 }
 
 func TestBlockAbsoluteHostPaths_AllowsAbsoluteWorkspacePathOutsideGuardForSandboxEnforcement(t *testing.T) {
-	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs")
+	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/coding-agent-loop/workspace-docs")
 
 	guard := &FolderGuardConfig{
 		Enabled:    true,
@@ -155,7 +155,7 @@ func TestBlockAbsoluteHostPaths_AllowsAbsoluteWorkspacePathOutsideGuardForSandbo
 	}
 
 	err := blockAbsoluteHostPaths(
-		`cat '/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs/Workflow/testing/workflow.json'`,
+		`cat '/Users/mipl/ai-work/coding-agent-loop/workspace-docs/Workflow/testing/workflow.json'`,
 		guard,
 	)
 	if err != nil {
@@ -164,7 +164,7 @@ func TestBlockAbsoluteHostPaths_AllowsAbsoluteWorkspacePathOutsideGuardForSandbo
 }
 
 func TestBlockAbsoluteHostPaths_DeniesAbsoluteHostPathOutsideWorkspaceDocs(t *testing.T) {
-	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs")
+	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/coding-agent-loop/workspace-docs")
 
 	guard := &FolderGuardConfig{
 		Enabled:    true,
@@ -185,7 +185,7 @@ func TestBlockAbsoluteHostPaths_DeniesAbsoluteHostPathOutsideWorkspaceDocs(t *te
 }
 
 func TestBlockAbsoluteHostPaths_AllowsExplicitReadOnlyHostDownloadsGrant(t *testing.T) {
-	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs")
+	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/coding-agent-loop/workspace-docs")
 
 	guard := &FolderGuardConfig{
 		Enabled:           true,
@@ -204,7 +204,7 @@ func TestBlockAbsoluteHostPaths_AllowsExplicitReadOnlyHostDownloadsGrant(t *test
 }
 
 func TestBlockAbsoluteHostPaths_DeniesHostReadPathWithoutWriteBlock(t *testing.T) {
-	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs")
+	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/coding-agent-loop/workspace-docs")
 
 	guard := &FolderGuardConfig{
 		Enabled:    true,
@@ -222,7 +222,7 @@ func TestBlockAbsoluteHostPaths_DeniesHostReadPathWithoutWriteBlock(t *testing.T
 }
 
 func TestBlockAbsoluteHostPaths_AllowsAbsoluteWorkspacePathInsideGuardAndIgnoresHeredocData(t *testing.T) {
-	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs")
+	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/coding-agent-loop/workspace-docs")
 
 	guard := &FolderGuardConfig{
 		Enabled:    true,
@@ -230,10 +230,10 @@ func TestBlockAbsoluteHostPaths_AllowsAbsoluteWorkspacePathInsideGuardAndIgnores
 		WritePaths: []string{"Workflow/testing/runs/iteration-0/test-group/execution/math-solver"},
 	}
 
-	command := `cat '/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs/Workflow/testing/runs/iteration-0/test-group/execution/prepare-test-fixtures/test_fixtures.json'
-cat > '/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs/Workflow/testing/runs/iteration-0/test-group/execution/math-solver/math_probe.json' <<'EOF'
+	command := `cat '/Users/mipl/ai-work/coding-agent-loop/workspace-docs/Workflow/testing/runs/iteration-0/test-group/execution/prepare-test-fixtures/test_fixtures.json'
+cat > '/Users/mipl/ai-work/coding-agent-loop/workspace-docs/Workflow/testing/runs/iteration-0/test-group/execution/math-solver/math_probe.json' <<'EOF'
 {
-  "attempted_path": "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs/Workflow/testing/workflow.json"
+  "attempted_path": "/Users/mipl/ai-work/coding-agent-loop/workspace-docs/Workflow/testing/workflow.json"
 }
 EOF`
 
@@ -308,7 +308,7 @@ func TestExecuteShellCommand_InjectsSessionEnv(t *testing.T) {
 }
 
 func TestExecuteShellCommand_PassesCDPHostDownloadsReadOnlyGuard(t *testing.T) {
-	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs")
+	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/coding-agent-loop/workspace-docs")
 	t.Setenv("PI_HOST_DOWNLOADS_PATH", "/Users/mipl/Downloads")
 
 	sessionID := "test-cdp-downloads"
@@ -447,7 +447,7 @@ func TestParseGitHubOwnerRepo(t *testing.T) {
 		url, owner, repo string
 		ok               bool
 	}{
-		{"https://github.com/manishiitg/mcp-agent-builder-go.git", "manishiitg", "mcp-agent-builder-go", true},
+		{"https://github.com/manishiitg/coding-agent-loop.git", "manishiitg", "coding-agent-loop", true},
 		{"git@github.com:owner/repo.git", "owner", "repo", true},
 		{"ssh://git@github.com/owner/repo", "owner", "repo", true},
 		{"https://github.com/owner/repo", "owner", "repo", true},

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/cmd/server/services"
-	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
+	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"

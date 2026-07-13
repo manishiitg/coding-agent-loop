@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 )
 
 // validateDBRule runs a DBValidationRule's read-only query against db/db.sqlite and

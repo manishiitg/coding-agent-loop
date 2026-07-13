@@ -1,6 +1,6 @@
 # Browser System
 
-Complete reference for browser automation in mcp-agent-builder-go — session limits, CDP local browser, Playwright artifacts, and known bugs.
+Complete reference for browser automation in coding-agent-loop — session limits, CDP local browser, Playwright artifacts, and known bugs.
 
 ---
 
@@ -309,7 +309,7 @@ For workflow builder: `browser::<workspace-hash>::<group-id>` (canonical `group_
 
 ### Files Involved
 
-**mcp-agent-builder-go:**
+**coding-agent-loop:**
 - `agent_go/pkg/orchestrator/base_orchestrator.go` — single-session propagation
 - `agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller.go` — workshop group session cache
 - `agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_workshop.go` — workshop group switching

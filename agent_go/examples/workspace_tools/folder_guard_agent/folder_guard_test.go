@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"mcp-agent-builder-go/agent_go/pkg/workspace"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
 )
 
 func TestFolderGuard_BlocksOutsidePaths(t *testing.T) {

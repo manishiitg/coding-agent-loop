@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
-	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 )
 
 type recordedRoutingCompletion struct {

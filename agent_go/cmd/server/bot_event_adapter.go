@@ -3,8 +3,8 @@ package server
 import (
 	"log"
 
-	"mcp-agent-builder-go/agent_go/cmd/server/services"
-	"mcp-agent-builder-go/agent_go/internal/events"
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 )
 
 // BotEventSubscriberAdapter bridges EventStore to the BotEventSubscriber interface

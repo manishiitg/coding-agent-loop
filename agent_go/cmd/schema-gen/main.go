@@ -13,8 +13,8 @@ import (
 
 	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/mcpcache"
-	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
-	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	todo_creation_human "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
+	orchestrator_events "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 
 	"github.com/invopop/jsonschema"
 )
@@ -738,6 +738,7 @@ type UnifiedEvent struct {
 // interfaces for nested types (sections, widgets, layout).
 func writeReportPlanSchema(filename string) error {
 	r := new(jsonschema.Reflector)
+	r.Anonymous = true
 	r.ExpandedStruct = true
 	r.DoNotReference = false
 	r.RequiredFromJSONSchemaTags = true

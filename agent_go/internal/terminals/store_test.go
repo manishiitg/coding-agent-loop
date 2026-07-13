@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	storeevents "mcp-agent-builder-go/agent_go/internal/events"
+	storeevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 
 	agentevents "github.com/manishiitg/mcpagent/events"
 )
@@ -2238,7 +2238,7 @@ const cursorIdlePaneFixture = `  Cursor Agent
 
   Ask (shift+tab to cycle)
   Composer 2.5 · 15.8%                                                                                                                                Auto-run
-  ~/ai-work/mcp-agent-builder-go/workspace-docs/_users/default/Chats · main`
+  ~/ai-work/coding-agent-loop/workspace-docs/_users/default/Chats · main`
 
 const cursorBusyPaneFixture = `  Cursor Agent
   v2026.05.20-2b5dd59
@@ -2257,7 +2257,7 @@ const cursorBusyPaneFixture = `  Cursor Agent
 
   Ask (shift+tab to cycle)
   Composer 2.5 · 15.3%                                                                                                                                Auto-run
-  ~/ai-work/mcp-agent-builder-go/workspace-docs/_users/default/Chats · main`
+  ~/ai-work/coding-agent-loop/workspace-docs/_users/default/Chats · main`
 
 func TestProviderLabelDetectsCursor(t *testing.T) {
 	// Metadata path.
@@ -2536,7 +2536,7 @@ func TestDeriveStatusCursorPreviewWorksWithoutAssistantLabel(t *testing.T) {
 
   Ask (shift+tab to cycle)
   Composer 2.5 · 14.4%                                                                                                                                Auto-run
-  ~/ai-work/mcp-agent-builder-go/workspace-docs/_users/default/Chats · main`
+  ~/ai-work/coding-agent-loop/workspace-docs/_users/default/Chats · main`
 
 	status := DeriveStatus(screen, map[string]interface{}{"provider": "cursor-cli"})
 	if status.ProviderLabel != "Cursor CLI" {

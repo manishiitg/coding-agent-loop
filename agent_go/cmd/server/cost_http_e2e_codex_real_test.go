@@ -15,7 +15,7 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	codexcliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 
-	"mcp-agent-builder-go/agent_go/pkg/costledger"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/costledger"
 )
 
 // TestCostSummaryHTTPCapturesRealCodexCLITmuxTurn is the tmux-transport

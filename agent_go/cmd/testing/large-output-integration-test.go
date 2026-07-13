@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/viper"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
-	"mcp-agent-builder-go/agent_go/internal/utils"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/utils"
 )
 
 var largeOutputIntegrationTestCmd = &cobra.Command{

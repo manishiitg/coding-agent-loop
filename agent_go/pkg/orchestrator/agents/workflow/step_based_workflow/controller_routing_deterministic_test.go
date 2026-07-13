@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 )
 
 func TestParseRouteSelectionPayloadAcceptsCanonicalAndLegacyFields(t *testing.T) {

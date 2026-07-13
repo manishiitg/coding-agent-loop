@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/manishiitg/mcp-agent-builder-go/workspace/models"
-	"github.com/manishiitg/mcp-agent-builder-go/workspace/utils"
+	"github.com/manishiitg/coding-agent-loop/workspace/models"
+	"github.com/manishiitg/coding-agent-loop/workspace/utils"
 
 	"github.com/gin-gonic/gin"
 	// "github.com/sergi/go-diff/diffmatchpatch" // Available for future use

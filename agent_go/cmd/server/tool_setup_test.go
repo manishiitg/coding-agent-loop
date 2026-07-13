@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"mcp-agent-builder-go/agent_go/pkg/common"
-	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
+	todo_creation_human "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 )
 
 func TestExtractWorkflowContextFolders(t *testing.T) {

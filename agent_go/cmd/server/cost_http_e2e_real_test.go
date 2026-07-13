@@ -19,7 +19,7 @@ import (
 	anthropicadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/anthropic"
 	claudecodeadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 
-	"mcp-agent-builder-go/agent_go/pkg/costledger"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/costledger"
 )
 
 // TestCostSummaryHTTPCapturesRealAnthropicTurn is the full-stack HTTP

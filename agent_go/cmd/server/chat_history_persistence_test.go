@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	internalevents "mcp-agent-builder-go/agent_go/internal/events"
-	"mcp-agent-builder-go/agent_go/internal/terminals"
+	internalevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	agentevents "github.com/manishiitg/mcpagent/events"

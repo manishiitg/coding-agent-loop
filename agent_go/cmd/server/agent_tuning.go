@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	agent "mcp-agent-builder-go/agent_go/pkg/agentwrapper"
-	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
+	agent "github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentwrapper"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
 
 // applySharedLLMAgentTuning fills the LLMAgentConfig fields whose resolution

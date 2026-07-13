@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"mcp-agent-builder-go/agent_go/cmd/server/guidance"
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/guidance"
 )
 
 func executeInteractiveWorkshopPromptForMode(t *testing.T, mode string) string {

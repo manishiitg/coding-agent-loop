@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/pkg/common"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 )
 
 const cdpTabListTimeout = 15 * time.Second

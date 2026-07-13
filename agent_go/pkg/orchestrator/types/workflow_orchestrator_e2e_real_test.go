@@ -18,9 +18,9 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
-	stepworkflow "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
-	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
+	stepworkflow "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
 
 // TestWorkflowE2ESingleRegularStepPiCLI is the tracer-bullet for the workflow
@@ -34,7 +34,7 @@ func TestWorkflowE2ESingleRegularStepPiCLI(t *testing.T) {
 	apiKey, model := requirePiCLIWorkflowE2E(t)
 	// The workflow engine reads workspace files via an HTTP documents
 	// API (see base_orchestrator.go:250 — WORKSPACE_API_URL). The
-	// user's running mcp-agent-builder-go server hosts this API at
+	// user's running coding-agent-loop server hosts this API at
 	// 127.0.0.1:18744, serving files relative to workspace-docs/. We
 	// must therefore:
 	//   1. Point WORKSPACE_API_URL at the running server.
@@ -55,7 +55,7 @@ func TestWorkflowE2ESingleRegularStepPiCLI(t *testing.T) {
 	// Pick a workspace path under workspace-docs so the API can serve it.
 	wsRoot := strings.TrimSpace(os.Getenv("WORKSPACE_DOCS_PATH"))
 	if wsRoot == "" {
-		wsRoot = "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs"
+		wsRoot = "/Users/mipl/ai-work/coding-agent-loop/workspace-docs"
 	}
 	t.Setenv("WORKSPACE_DOCS_PATH", wsRoot)
 	relWorkspace := "Workflow/_e2e_test_" + filepath.Base(t.TempDir())
@@ -319,7 +319,7 @@ func TestWorkflowE2EMessageSequencePiCLI(t *testing.T) {
 
 	wsRoot := strings.TrimSpace(os.Getenv("WORKSPACE_DOCS_PATH"))
 	if wsRoot == "" {
-		wsRoot = "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs"
+		wsRoot = "/Users/mipl/ai-work/coding-agent-loop/workspace-docs"
 	}
 	t.Setenv("WORKSPACE_DOCS_PATH", wsRoot)
 	relWorkspace := "Workflow/_e2e_msgseq_" + filepath.Base(t.TempDir())

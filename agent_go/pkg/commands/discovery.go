@@ -5,7 +5,7 @@ import (
 	"path"
 	"strings"
 
-	"mcp-agent-builder-go/agent_go/pkg/skills"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/skills"
 )
 
 // DiscoverCommands discovers all user-defined commands in the workspace

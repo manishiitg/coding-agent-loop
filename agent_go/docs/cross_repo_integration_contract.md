@@ -5,7 +5,7 @@
 > which now point here.
 
 ```
-mcp-agent-builder-go (HTTP API + frontend)      ← YOU ARE HERE
+coding-agent-loop (HTTP API + frontend)      ← YOU ARE HERE
   → mcpagent (orchestrator + agent loop)
     → multi-llm-provider-go (adapter + real CLI)
 ```
@@ -34,7 +34,7 @@ handling, cancellation.
 
 ## Boundaries
 
-### Boundary 1: mcp-agent-builder-go → mcpagent
+### Boundary 1: coding-agent-loop → mcpagent
 
 The Go API server builds an `LLMAgentConfig` from the HTTP request and passes it
 to `agent.NewLLMAgentWrapperWithTrace()`. The wrapper calls
@@ -381,8 +381,8 @@ matrix test fails loudly with which provider broke.
 | Types + emitter unit | `multi-llm-provider-go/llmtypes/inspector_emitter_test.go` |
 | Per-adapter regression | `multi-llm-provider-go/pkg/adapters/anthropic/anthropic_inspector_real_test.go` (more as adapters get wired) |
 | Cross-provider matrix | `multi-llm-provider-go/inspector_contract_matrix_test.go` |
-| Cross-stack | `mcp-agent-builder-go/agent_go/cmd/server/inspector_e2e_real_test.go` |
-| Store unit | `mcp-agent-builder-go/agent_go/internal/inspector/store_test.go` |
+| Cross-stack | `github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/inspector_e2e_real_test.go` |
+| Store unit | `github.com/manishiitg/coding-agent-loop/agent_go/internal/inspector/store_test.go` |
 
 ---
 
@@ -391,13 +391,13 @@ matrix test fails loudly with which provider broke.
 | # | Area | Boundary | Test Location |
 |---|---|---|---|
 | IC-1 | Config propagation | B1 + B2 | mcpagent |
-| IC-2 | Streaming chunk flow | B2 + B1 | mcpagent + mcp-agent-builder-go |
+| IC-2 | Streaming chunk flow | B2 + B1 | mcpagent + coding-agent-loop |
 | IC-3 | Token usage & cost | B3 → B1 | adapter + bridge + ledger + HTTP |
 | IC-4 | Session ID & resume | B3 → B2 → B3 | mcpagent |
 | IC-5 | Model metadata | B3 → B1 | mcpagent + cost ledger (effective) |
 | IC-6 | Fallback chain | B2 | mcpagent |
-| IC-7 | Error propagation | B3 → B1 | mcpagent + mcp-agent-builder-go |
-| IC-8 | Cancellation propagation | B1 → B3 | mcp-agent-builder-go |
+| IC-7 | Error propagation | B3 → B1 | mcpagent + coding-agent-loop |
+| IC-8 | Cancellation propagation | B1 → B3 | coding-agent-loop |
 | IC-9 | Multi-turn tool context | B2 → B3 | mcpagent |
 | IC-10 | MCP bridge propagation | B1 → B3 | mcpagent |
 | Cost | Cost emission + bucketing | B3 → B2 → B1 | adapter + bridge + ledger + HTTP |
@@ -471,7 +471,7 @@ Cross-adapter matrix test: `inspector_contract_matrix_test.go` (currently anthro
 - IC-9: `agent/cli_tool_history_test.go` — 3 tests
 - IC-10: `agent/coding_agents_bridge_test.go` — 7 tests
 
-**API-level (mcp-agent-builder-go):**
+**API-level (coding-agent-loop):**
 - IC-3 + Cost: `cmd/server/cost_routes_test.go` (20 subtests), `cost_routes_extract_test.go`, `cost_ledger_e2e_real_test.go`, `cost_http_e2e_real_test.go`, `pkg/orchestrator/workflow_cost_e2e_real_test.go`
 - IC-7: `cmd/server/sse_test.go` — 4 tests
 - IC-8: `internal/events/event_store_test.go` (19 subtests), `cmd/server/shutdown_cleanup_test.go` (2 tests)
@@ -508,7 +508,7 @@ behavior lives here.
 | `docs/tool_search_mode.md` | Tool-search agent mode |
 | `docs/tool_use_agent.md` | Agentic tool-use loop |
 
-### mcp-agent-builder-go (this repo)
+### coding-agent-loop (this repo)
 
 | Document | What it covers |
 |---|---|

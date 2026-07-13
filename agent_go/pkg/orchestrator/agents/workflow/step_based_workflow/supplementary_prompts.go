@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 
-	"mcp-agent-builder-go/agent_go/pkg/common"
-	browserinstructions "mcp-agent-builder-go/agent_go/pkg/instructions"
-	"mcp-agent-builder-go/agent_go/pkg/skills"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
+	browserinstructions "github.com/manishiitg/coding-agent-loop/agent_go/pkg/instructions"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/skills"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents"
 )
 
 // appendSupplementaryPrompts injects skills, secrets, browser isolation,

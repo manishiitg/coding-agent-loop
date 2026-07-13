@@ -14,9 +14,9 @@ import (
 	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/mcpclient"
 
-	"mcp-agent-builder-go/agent_go/pkg/chathistory"
-	"mcp-agent-builder-go/agent_go/pkg/skills"
-	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/skills"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
 
 // newBotSessionID mints a session ID for a bot-initiated chat. Encoding the

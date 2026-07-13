@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
+	todo_creation_human "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 )

@@ -3,9 +3,9 @@ package llm
 import (
 	"context"
 	"fmt"
-	agentlogger "mcp-agent-builder-go/agent_go/pkg/logger"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	agentlogger "github.com/manishiitg/coding-agent-loop/agent_go/pkg/logger"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	baseevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/llm"

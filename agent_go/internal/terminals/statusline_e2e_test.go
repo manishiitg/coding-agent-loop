@@ -5,7 +5,7 @@ import (
 	"time"
 
 	agentevents "github.com/manishiitg/mcpagent/events"
-	storeevents "mcp-agent-builder-go/agent_go/internal/events"
+	storeevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 )
 
 // TestStatusLineE2EThroughEventStore wires the store to the EventStore exactly

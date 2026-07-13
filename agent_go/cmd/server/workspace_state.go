@@ -10,9 +10,9 @@ import (
 	"strings"
 	"sync"
 
-	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
-	orchtypes "mcp-agent-builder-go/agent_go/pkg/orchestrator/types"
+	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
+	orchtypes "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/types"
 )
 
 // WorkspaceStateResponse is the consolidated response containing all workspace data

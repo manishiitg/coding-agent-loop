@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/pkg/browser"
-	"mcp-agent-builder-go/agent_go/pkg/common"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 
 	"github.com/manishiitg/mcpagent/events"
 )

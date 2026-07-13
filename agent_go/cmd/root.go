@@ -9,9 +9,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"mcp-agent-builder-go/agent_go/cmd/mcp"
-	"mcp-agent-builder-go/agent_go/cmd/server"
-	"mcp-agent-builder-go/agent_go/cmd/testing"
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/mcp"
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server"
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/testing"
 )
 
 var cfgFile string

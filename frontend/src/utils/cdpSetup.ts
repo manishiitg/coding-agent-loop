@@ -1,8 +1,8 @@
 const defaultCdpPort = 9222
 export const chromeCdpInstallerUrl =
-  'https://raw.githubusercontent.com/manishiitg/mcp-agent-builder-go/main/scripts/install-chrome-cdp-macOS.sh'
+  'https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/scripts/install-chrome-cdp-macOS.sh'
 export const chromeCdpZipUrl =
-  'https://raw.githubusercontent.com/manishiitg/mcp-agent-builder-go/main/agent_go/cmd/server/embed_downloads/Chrome-CDP-macOS.zip'
+  'https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/agent_go/cmd/server/embed_downloads/Chrome-CDP-macOS.zip'
 
 function safeCdpPort(port: number): number {
   return Number.isFinite(port) && port >= 1 && port <= 65535 ? Math.trunc(port) : defaultCdpPort

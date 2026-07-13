@@ -5,8 +5,8 @@ import (
 	"log"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	"mcp-agent-builder-go/agent_go/pkg/browser"
-	"mcp-agent-builder-go/agent_go/pkg/common"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 )
 
 // GetWorkspaceBrowserToolCategory returns the category name for workspace browser tools

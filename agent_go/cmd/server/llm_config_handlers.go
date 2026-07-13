@@ -16,7 +16,7 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/azure"
 
-	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 )
 
 var supportedLLMProviders = []string{

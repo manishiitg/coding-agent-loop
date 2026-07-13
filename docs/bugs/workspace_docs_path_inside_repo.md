@@ -18,7 +18,7 @@ The original analysis is preserved below for context.
 
 ## Problem
 
-When `run_server_with_logging.sh --with-workspace` runs, `workspace-docs/` is mounted from inside the project tree (`mcp-agent-builder-go/workspace-docs/`). The LLM sees absolute paths like `/Users/<user>/ai-work/mcp-agent-builder-go/workspace-docs/foo.md` when reading or writing files. From there it can — and does — traverse upward into sibling directories (`agent_go/`, `frontend/`, `mcpagent/`, etc.) and read project source files that have nothing to do with the user's workspace.
+When `run_server_with_logging.sh --with-workspace` runs, `workspace-docs/` is mounted from inside the project tree (`coding-agent-loop/workspace-docs/`). The LLM sees absolute paths like `/Users/<user>/ai-work/coding-agent-loop/workspace-docs/foo.md` when reading or writing files. From there it can — and does — traverse upward into sibling directories (`agent_go/`, `frontend/`, `mcpagent/`, etc.) and read project source files that have nothing to do with the user's workspace.
 
 This both pollutes the agent's context with irrelevant code and creates a soft confidentiality issue for anyone running the binary against a workspace that should be sandboxed.
 
@@ -41,7 +41,7 @@ The env var itself is already plumbed everywhere it needs to be (`pkg/workspace/
 ## Impact
 
 - LLM regularly reads project source files that aren't part of the user workspace.
-- Workspace paths leak `/Users/<user>/ai-work/mcp-agent-builder-go/...` into agent context, making prompts non-portable across machines.
+- Workspace paths leak `/Users/<user>/ai-work/coding-agent-loop/...` into agent context, making prompts non-portable across machines.
 - Anyone wanting to keep notes outside the repo has to edit the script.
 
 ## Options Considered
@@ -54,7 +54,7 @@ The env var itself is already plumbed everywhere it needs to be (`pkg/workspace/
 ### Option B: Change the default to an out-of-repo path
 - Default to e.g. `~/Documents/mcp-agent-workspace` or `~/Library/Application Support/mcp-agent/workspace-docs`.
 - Pros: solves the problem for everyone by default.
-- Cons: existing content in `mcp-agent-builder-go/workspace-docs` becomes invisible until the user moves it or sets the env var back. We have a lot of existing content — a silent default flip would surprise people.
+- Cons: existing content in `coding-agent-loop/workspace-docs` becomes invisible until the user moves it or sets the env var back. We have a lot of existing content — a silent default flip would surprise people.
 
 ### Option C: Hybrid — auto-detect existing folder
 - If `WORKSPACE_DOCS_PATH` is set → use it.
@@ -71,7 +71,7 @@ The env var itself is already plumbed everywhere it needs to be (`pkg/workspace/
    - `~/.local/share/mcp-agent/workspace-docs` (XDG, cross-platform-friendly)
    - `~/mcp-agent/workspace-docs` (simple, clutters home)
 2. **Migration story.** Do we ship a one-shot migration script, or document the `mv` in the bug fix and let users run it manually?
-3. **Symlink as bridge?** A symlink from `mcp-agent-builder-go/workspace-docs` → `~/...` would let both old and new code paths resolve to the same content during a transition. Worth supporting?
+3. **Symlink as bridge?** A symlink from `coding-agent-loop/workspace-docs` → `~/...` would let both old and new code paths resolve to the same content during a transition. Worth supporting?
 4. **Frontend / Electron.** `desktop/main.js` also reads `WORKSPACE_DOCS_PATH`. Confirm it picks up the same env var without script changes.
 5. **Docker / production.** The current "ignore .env" hack exists because compose sets `/app/workspace-docs`. Need to verify the new logic doesn't regress prod by sourcing `WORKSPACE_DOCS_PATH=/app/...` from `.env` and using it on a developer Mac. (Capturing from shell env *before* `.env` source addresses this.)
 6. **Path containment.** Even with workspace-docs moved out of the repo, the workspace tools still hand out absolute paths. Should we additionally enforce path containment in the workspace server (reject any `..` resolution that escapes `WORKSPACE_DOCS_PATH`) so that this class of bug can't recur?
@@ -92,4 +92,4 @@ The env var itself is already plumbed everywhere it needs to be (`pkg/workspace/
 None purely via env right now — the script overwrites `WORKSPACE_DOCS_PATH`. Manual workarounds:
 
 - Edit `run_server_with_logging.sh` line 405 locally and point it at the desired path.
-- Or symlink `mcp-agent-builder-go/workspace-docs` to a folder outside the repo (`ln -s ~/Documents/mcp-agent-workspace mcp-agent-builder-go/workspace-docs`). The script will still resolve to the in-repo path, but the actual storage lives elsewhere.
+- Or symlink `coding-agent-loop/workspace-docs` to a folder outside the repo (`ln -s ~/Documents/mcp-agent-workspace coding-agent-loop/workspace-docs`). The script will still resolve to the in-repo path, but the actual storage lives elsewhere.

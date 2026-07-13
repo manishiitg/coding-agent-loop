@@ -15,11 +15,11 @@ import (
 	baseevents "github.com/manishiitg/mcpagent/events"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
-	"mcp-agent-builder-go/agent_go/pkg/instructions"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
-	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
-	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
+	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/instructions"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
+	orchestrator_events "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
 
 var workflowExecutionIDCounter atomic.Uint64

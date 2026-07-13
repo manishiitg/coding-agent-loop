@@ -1,7 +1,7 @@
 package step_based_workflow
 
 import (
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 )
 
 // GetEffectiveSkills returns the skills explicitly enabled for this step.

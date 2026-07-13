@@ -18,8 +18,8 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	claudecodeadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 
-	"mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
-	"mcp-agent-builder-go/agent_go/pkg/costledger"
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/costledger"
 )
 
 // TestMultiAgentChatPromptSteersToReferenceDocs is a real-LLM e2e test for

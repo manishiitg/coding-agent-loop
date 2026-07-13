@@ -11,8 +11,8 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
-	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
 
 // Edge-case suite for the workflow engine.
@@ -371,7 +371,7 @@ func buildEdgeCaseOrchestrator(t *testing.T) (*edgeCaseHarness, func(), bool) {
 	}
 	wsRoot := strings.TrimSpace(os.Getenv("WORKSPACE_DOCS_PATH"))
 	if wsRoot == "" {
-		wsRoot = "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs"
+		wsRoot = "/Users/mipl/ai-work/coding-agent-loop/workspace-docs"
 	}
 	// GetPromptDocsRoot (prompt_sections.go:561) reads this env var
 	// to resolve absolute paths the engine passes to subprocesses

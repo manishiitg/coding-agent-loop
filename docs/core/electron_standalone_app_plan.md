@@ -1,6 +1,6 @@
 # Runloop — Plan
 
-A plan for packaging mcp-agent-builder-go as a downloadable Mac app that runs the agent and workspace servers automatically—no browser or manual server startup required.
+A plan for packaging coding-agent-loop as a downloadable Mac app that runs the agent and workspace servers automatically—no browser or manual server startup required.
 
 ---
 
@@ -158,7 +158,7 @@ The standalone Electron application has been successfully packaged and released 
 ## Directory / artifact layout (conceptual)
 
 ```
-mcp-agent-builder-go/
+coding-agent-loop/
   desktop/                    # New: Electron app
     package.json              # electron, electron-builder, main script
     main.js                   # Main process: spawn servers, health check, window, cleanup

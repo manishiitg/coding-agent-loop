@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/cmd/server/services"
-	"mcp-agent-builder-go/agent_go/pkg/common"
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 )
 
 type testUserNotificationConnector struct {

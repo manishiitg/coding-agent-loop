@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"mcp-agent-builder-go/agent_go/internal/events"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 )
 
 func TestNormalizeSessionLifecycleStatus(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/events"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
-	orchevents "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	orchevents "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 )
 
 // TokenPersister defines the interface for persisting token usage to file

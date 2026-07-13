@@ -4,7 +4,7 @@ set -euo pipefail
 APP_NAME="Chrome CDP.app"
 INSTALL_DIR="${CHROME_CDP_INSTALL_DIR:-/Applications}"
 APP_PATH="${INSTALL_DIR}/${APP_NAME}"
-DEFAULT_ZIP_URL="https://raw.githubusercontent.com/manishiitg/mcp-agent-builder-go/main/agent_go/cmd/server/embed_downloads/Chrome-CDP-macOS.zip"
+DEFAULT_ZIP_URL="https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/agent_go/cmd/server/embed_downloads/Chrome-CDP-macOS.zip"
 ZIP_URL="${CHROME_CDP_ZIP_URL:-${DEFAULT_ZIP_URL}}"
 CDP_PORT="${CHROME_CDP_PORT:-9222}"
 OPEN_AFTER_INSTALL="${CHROME_CDP_OPEN_AFTER_INSTALL:-1}"

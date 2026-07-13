@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/internal/terminalleases"
-	"mcp-agent-builder-go/agent_go/internal/terminals"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminalleases"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
 )
 
 const (

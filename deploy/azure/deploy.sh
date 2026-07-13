@@ -121,10 +121,10 @@ run_build() {
 create_clean_context() {
   local TEMP_DIR="$1"
   echo "    Creating clean build context in $TEMP_DIR..."
-  mkdir -p "$TEMP_DIR/mcp-agent-builder-go"
+  mkdir -p "$TEMP_DIR/coding-agent-loop"
   
-  # rsync from REPO_ROOT to TEMP_DIR/mcp-agent-builder-go with exclusions
-  rsync -avq "$REPO_ROOT/" "$TEMP_DIR/mcp-agent-builder-go/" \
+  # rsync from REPO_ROOT to TEMP_DIR/coding-agent-loop with exclusions
+  rsync -avq "$REPO_ROOT/" "$TEMP_DIR/coding-agent-loop/" \
     --exclude='.git' \
     --exclude='node_modules' \
     --exclude='workspace-docs' \
@@ -145,8 +145,8 @@ create_clean_context() {
 
   # Aggressively prune known heavy folders that are not needed
   echo "    Pruning unnecessary heavy folders..."
-  rm -rf "$TEMP_DIR/mcp-agent-builder-go/frontend/node_modules"
-  rm -rf "$TEMP_DIR/mcp-agent-builder-go/frontend/dist"
+  rm -rf "$TEMP_DIR/coding-agent-loop/frontend/node_modules"
+  rm -rf "$TEMP_DIR/coding-agent-loop/frontend/dist"
     
   echo "    Clean context created."
 }
@@ -158,28 +158,28 @@ build_agent() {
      # For local build, we can just use the selective copy approach we established
      # It's faster than rsyncing everything for local docker context too
      echo "    Creating selective build context in $CONTEXT_DIR..."
-     mkdir -p "$CONTEXT_DIR/mcp-agent-builder-go"
-     cp -r "$REPO_ROOT/agent_go" "$CONTEXT_DIR/mcp-agent-builder-go/"
-     cp -r "$REPO_ROOT/workspace" "$CONTEXT_DIR/mcp-agent-builder-go/"
+     mkdir -p "$CONTEXT_DIR/coding-agent-loop"
+     cp -r "$REPO_ROOT/agent_go" "$CONTEXT_DIR/coding-agent-loop/"
+     cp -r "$REPO_ROOT/workspace" "$CONTEXT_DIR/coding-agent-loop/"
   else 
      # Use the same selective context for remote build to be consistent
      echo "    Creating selective build context in $CONTEXT_DIR..."
-     mkdir -p "$CONTEXT_DIR/mcp-agent-builder-go"
-     cp -r "$REPO_ROOT/agent_go" "$CONTEXT_DIR/mcp-agent-builder-go/"
-     cp -r "$REPO_ROOT/workspace" "$CONTEXT_DIR/mcp-agent-builder-go/"
+     mkdir -p "$CONTEXT_DIR/coding-agent-loop"
+     cp -r "$REPO_ROOT/agent_go" "$CONTEXT_DIR/coding-agent-loop/"
+     cp -r "$REPO_ROOT/workspace" "$CONTEXT_DIR/coding-agent-loop/"
   fi
 
   # MCP config: use deploy/azure/mcp_config.json if present (like K8s deploy/k8s/agent/mcp_config.json); else use repo default
   if [ -f "$SCRIPT_DIR/mcp_config.json" ]; then
-    cp "$SCRIPT_DIR/mcp_config.json" "$CONTEXT_DIR/mcp-agent-builder-go/agent_go/configs/mcp_servers_clean_user.json"
+    cp "$SCRIPT_DIR/mcp_config.json" "$CONTEXT_DIR/coding-agent-loop/agent_go/configs/mcp_servers_clean_user.json"
   else
-    cp "$REPO_ROOT/agent_go/configs/mcp_servers_clean_user.json" "$CONTEXT_DIR/mcp-agent-builder-go/agent_go/configs/mcp_servers_clean_user.json"
+    cp "$REPO_ROOT/agent_go/configs/mcp_servers_clean_user.json" "$CONTEXT_DIR/coding-agent-loop/agent_go/configs/mcp_servers_clean_user.json"
   fi
 
   echo "    [Agent] Building..."
   (
-    cd "$CONTEXT_DIR/mcp-agent-builder-go" || exit 1
-    run_build "mcp-agent" "$SCRIPT_DIR/Dockerfile.agent" "$BASE_IMAGE_ARG" "$CONTEXT_DIR/mcp-agent-builder-go"
+    cd "$CONTEXT_DIR/coding-agent-loop" || exit 1
+    run_build "mcp-agent" "$SCRIPT_DIR/Dockerfile.agent" "$BASE_IMAGE_ARG" "$CONTEXT_DIR/coding-agent-loop"
   )
     
   echo "    [Agent] Build complete."
@@ -192,8 +192,8 @@ build_workspace() {
 
   echo "    [Workspace] Building..."
   (
-    cd "$CONTEXT_DIR/mcp-agent-builder-go" || exit 1
-    run_build "workspace-api" "$SCRIPT_DIR/Dockerfile.workspace" "$BASE_IMAGE_ARG" "$CONTEXT_DIR/mcp-agent-builder-go"
+    cd "$CONTEXT_DIR/coding-agent-loop" || exit 1
+    run_build "workspace-api" "$SCRIPT_DIR/Dockerfile.workspace" "$BASE_IMAGE_ARG" "$CONTEXT_DIR/coding-agent-loop"
   )
     
   echo "    [Workspace] Build complete."
@@ -220,8 +220,8 @@ build_frontend() {
   local CONTEXT_DIR="/tmp/mcp-agent-build-ctx-$$/frontend"
   # Optimization: Use selective copy instead of full repo rsync
   echo "    Creating selective build context in $CONTEXT_DIR..."
-  mkdir -p "$CONTEXT_DIR/mcp-agent-builder-go"
-  cp -r "$REPO_ROOT/frontend" "$CONTEXT_DIR/mcp-agent-builder-go/"
+  mkdir -p "$CONTEXT_DIR/coding-agent-loop"
+  cp -r "$REPO_ROOT/frontend" "$CONTEXT_DIR/coding-agent-loop/"
 
   echo "    [Frontend] Building..."
   # Allow overriding URLs via env vars (useful for VM/Hybrid deployment)
@@ -230,11 +230,11 @@ build_frontend() {
   local WORKSPACE_URL="${FRONTEND_WORKSPACE_URL-$(terraform output -raw workspace_api_fqdn 2>/dev/null)}"
   
   echo "DEBUG: Checking api.ts content in context:"
-  head -n 5 "$CONTEXT_DIR/mcp-agent-builder-go/frontend/src/services/api.ts"
+  head -n 5 "$CONTEXT_DIR/coding-agent-loop/frontend/src/services/api.ts"
 
   (
-    cd "$CONTEXT_DIR/mcp-agent-builder-go/frontend" || exit 1
-    run_build "mcp-agent-frontend" "Dockerfile.prod" "--build-arg VITE_API_BASE_URL=$AGENT_URL --build-arg VITE_WORKSPACE_API_URL=$WORKSPACE_URL" "$CONTEXT_DIR/mcp-agent-builder-go/frontend"
+    cd "$CONTEXT_DIR/coding-agent-loop/frontend" || exit 1
+    run_build "mcp-agent-frontend" "Dockerfile.prod" "--build-arg VITE_API_BASE_URL=$AGENT_URL --build-arg VITE_WORKSPACE_API_URL=$WORKSPACE_URL" "$CONTEXT_DIR/coding-agent-loop/frontend"
   )
     
   echo "    [Frontend] Build complete."

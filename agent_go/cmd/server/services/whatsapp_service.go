@@ -28,7 +28,7 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
 
-	"mcp-agent-builder-go/agent_go/pkg/workspace"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
 
 	// Pure-Go SQLite driver (registered as "sqlite"). SQLite is an exception
 	// to the project's "no-database, workspace-file only" convention — see

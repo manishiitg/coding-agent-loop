@@ -15,7 +15,7 @@ import (
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
-	"mcp-agent-builder-go/agent_go/internal/events"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 )
 
 // CompactContextRequest represents a request to compact stale tool responses

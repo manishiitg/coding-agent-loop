@@ -7,7 +7,7 @@ import (
 
 	mcpagent_events "github.com/manishiitg/mcpagent/events"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
-	orchevents "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	orchevents "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 )
 
 type captureEventListener struct {

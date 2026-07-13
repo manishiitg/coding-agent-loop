@@ -11,8 +11,8 @@ import (
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
-	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
-	"mcp-agent-builder-go/agent_go/pkg/common"
+	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 )
 
 // extractWorkspacePathFromObjective extracts the workspace path from the objective string

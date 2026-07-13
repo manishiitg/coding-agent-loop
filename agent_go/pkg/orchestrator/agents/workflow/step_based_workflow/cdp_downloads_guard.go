@@ -1,6 +1,6 @@
 package step_based_workflow
 
-import "mcp-agent-builder-go/agent_go/pkg/common"
+import "github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 
 func (hcpo *StepBasedWorkflowOrchestrator) effectiveBrowserModeForHostDownloads() string {
 	if mode := hcpo.GetBrowserMode(); mode != "" {

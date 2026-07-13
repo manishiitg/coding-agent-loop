@@ -27,7 +27,7 @@ var workflowAutoNotificationE2EFlags struct {
 var workflowAutoNotificationE2ECmd = &cobra.Command{
 	Use:   "workflow-auto-notification-e2e",
 	Short: "Run a real workflow AUTO-notification e2e against a live builder server",
-	Long: `Runs a real end-to-end check through the live mcp-agent-builder-go HTTP API.
+	Long: `Runs a real end-to-end check through the live coding-agent-loop HTTP API.
 
 This test:
 1. Creates a real temporary workflow under workspace-docs/Workflow.
@@ -109,7 +109,7 @@ After the command returns, reply exactly RUN_WORKFLOW_TOOL_STARTED. Do not call 
 }
 
 func init() {
-	workflowAutoNotificationE2ECmd.Flags().StringVar(&workflowAutoNotificationE2EFlags.serverURL, "server-url", "http://localhost:18743", "mcp-agent-builder-go server URL")
+	workflowAutoNotificationE2ECmd.Flags().StringVar(&workflowAutoNotificationE2EFlags.serverURL, "server-url", "http://localhost:18743", "coding-agent-loop server URL")
 	workflowAutoNotificationE2ECmd.Flags().StringVar(&workflowAutoNotificationE2EFlags.provider, "provider", "codex-cli", "provider used for the main multi-agent chat turn")
 	workflowAutoNotificationE2ECmd.Flags().StringVar(&workflowAutoNotificationE2EFlags.model, "model", "", "model ID; defaults to the provider-specific E2E model")
 	workflowAutoNotificationE2ECmd.Flags().StringVar(&workflowAutoNotificationE2EFlags.sessionID, "session-id", "", "session ID to reuse; generated when omitted")

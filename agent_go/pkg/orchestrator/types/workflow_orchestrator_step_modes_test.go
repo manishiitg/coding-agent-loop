@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
 
 // Tests exercising specific step-execution modes the main 5-step e2e

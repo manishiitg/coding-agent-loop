@@ -712,7 +712,7 @@ function createMenu() {
         {
           label: 'Learn More',
           click: async () => {
-            await shell.openExternal('https://github.com/manishiitg/mcp-agent-builder-go')
+            await shell.openExternal('https://github.com/manishiitg/coding-agent-loop')
           }
         }
       ]
@@ -1389,7 +1389,7 @@ function checkForUpdates(manual = false) {
 
   const options = {
     hostname: 'api.github.com',
-    path: '/repos/manishiitg/mcp-agent-builder-go/releases/latest',
+    path: '/repos/manishiitg/coding-agent-loop/releases/latest',
     method: 'GET',
     headers: { 'User-Agent': 'AgentWorks' }
   };
@@ -1561,7 +1561,7 @@ async function downloadAndPrepareUpdate(targetVersion) {
   updateState.dmgPath = null;
 
   const dmgName = `Runloop-${versionNoV}-arm64.dmg`;
-  const url = `https://github.com/manishiitg/mcp-agent-builder-go/releases/download/v${versionNoV}/${dmgName}`;
+  const url = `https://github.com/manishiitg/coding-agent-loop/releases/download/v${versionNoV}/${dmgName}`;
   const dir = updateCacheDir();
   try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
   cleanUpdateCache();
@@ -1623,7 +1623,7 @@ function installDownloadedUpdate() {
     dialog.showErrorBox('Update error', 'The downloaded update was not found. Please check for updates again.');
     return;
   }
-  const innerCmd = `export RUNLOOP_VERSION='v${updateState.version}'; export RUNLOOP_DMG_PATH='${updateState.dmgPath}'; curl -fsSL https://raw.githubusercontent.com/manishiitg/mcp-agent-builder-go/main/install.sh | bash > /tmp/runloop-update.log 2>&1`;
+  const innerCmd = `export RUNLOOP_VERSION='v${updateState.version}'; export RUNLOOP_DMG_PATH='${updateState.dmgPath}'; curl -fsSL https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/install.sh | bash > /tmp/runloop-update.log 2>&1`;
   const wrapped = `nohup bash -c ${JSON.stringify(innerCmd)} >/dev/null 2>&1 &`;
 
   console.log('[update] spawning detached installer for v' + updateState.version + ' (pre-downloaded)');

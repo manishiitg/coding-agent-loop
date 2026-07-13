@@ -16,7 +16,7 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	cursorcliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
 
-	"mcp-agent-builder-go/agent_go/internal/inspector"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/inspector"
 )
 
 // TestInspectorHTTPCapturesRealCursorEvents is the cursor-cli

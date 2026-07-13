@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/anthropic"

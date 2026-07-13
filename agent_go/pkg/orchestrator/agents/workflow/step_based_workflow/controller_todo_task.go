@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
-	orchestratoragents "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
+	orchestratoragents "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 
 	baseevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"

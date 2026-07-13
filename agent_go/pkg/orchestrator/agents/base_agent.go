@@ -11,7 +11,7 @@ import (
 	internalLLM "github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/mcpagent/mcpclient"
 	"github.com/manishiitg/mcpagent/observability"
-	"mcp-agent-builder-go/agent_go/pkg/common"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )

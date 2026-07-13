@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 )

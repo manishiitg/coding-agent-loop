@@ -17,8 +17,8 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/tmuxinput"
 
-	"mcp-agent-builder-go/agent_go/internal/liveattach"
-	"mcp-agent-builder-go/agent_go/internal/terminals"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/liveattach"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
 )
 
 func TestLiveAttachEnabled(t *testing.T) {

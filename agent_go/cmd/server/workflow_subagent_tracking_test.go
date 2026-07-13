@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	internalevents "mcp-agent-builder-go/agent_go/internal/events"
-	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
+	internalevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
+	todo_creation_human "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 )
 
 func TestWorkflowSubAgentTrackingNotifierSignalsCompletion(t *testing.T) {

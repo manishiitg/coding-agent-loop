@@ -147,7 +147,7 @@ Use agent_browser session: %q`, tabLabel, tabLabel, agentBrowseE2EFlags.targetUR
 }
 
 func init() {
-	agentBrowseE2ECmd.Flags().StringVar(&agentBrowseE2EFlags.serverURL, "server-url", "http://127.0.0.1:18743", "mcp-agent-builder-go server URL")
+	agentBrowseE2ECmd.Flags().StringVar(&agentBrowseE2EFlags.serverURL, "server-url", "http://127.0.0.1:18743", "coding-agent-loop server URL")
 	agentBrowseE2ECmd.Flags().StringVar(&agentBrowseE2EFlags.provider, "provider", "codex-cli", "coding CLI provider; defaults to codex-cli")
 	agentBrowseE2ECmd.Flags().StringVar(&agentBrowseE2EFlags.model, "model", "", "model ID; defaults to the provider-specific Builder coding-agent E2E model")
 	agentBrowseE2ECmd.Flags().StringVar(&agentBrowseE2EFlags.sessionID, "session-id", "", "session ID to reuse; generated when omitted")

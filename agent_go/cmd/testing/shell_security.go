@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/manishiitg/mcp-agent-builder-go/workspace/models"
+	"github.com/manishiitg/coding-agent-loop/workspace/models"
 
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 

@@ -8,8 +8,8 @@ type DesktopConnectButtonProps = {
   variant?: 'full' | 'icon' | 'inline'
 }
 
-const DMG_DOWNLOAD_URL = 'https://github.com/manishiitg/mcp-agent-builder-go/releases/download/v1.25.26/Runloop-1.25.26-arm64.dmg'
-const DMG_INSTALL_COMMAND = 'curl -fsSL https://raw.githubusercontent.com/manishiitg/mcp-agent-builder-go/main/install.sh | bash'
+const DMG_DOWNLOAD_URL = 'https://github.com/manishiitg/coding-agent-loop/releases/download/v1.25.26/Runloop-1.25.26-arm64.dmg'
+const DMG_INSTALL_COMMAND = 'curl -fsSL https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/install.sh | bash'
 
 function WorkspaceSwitcherHint() {
   return (

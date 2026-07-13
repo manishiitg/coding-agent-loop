@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	storeevents "mcp-agent-builder-go/agent_go/internal/events"
+	storeevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 
 	agentevents "github.com/manishiitg/mcpagent/events"
 )

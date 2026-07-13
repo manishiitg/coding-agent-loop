@@ -7,9 +7,9 @@ import (
 	"sort"
 	"strings"
 
-	browserinstructions "mcp-agent-builder-go/agent_go/pkg/instructions"
-	"mcp-agent-builder-go/agent_go/pkg/skills"
-	"mcp-agent-builder-go/agent_go/pkg/utils"
+	browserinstructions "github.com/manishiitg/coding-agent-loop/agent_go/pkg/instructions"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/skills"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/utils"
 )
 
 // AgentInstructions contains custom instructions for both React and Simple agents

@@ -14,7 +14,7 @@ export default function DesktopAppControl() {
     <Tooltip>
       <TooltipTrigger asChild>
         <a
-          href="https://github.com/manishiitg/mcp-agent-builder-go/releases/latest"
+          href="https://github.com/manishiitg/coding-agent-loop/releases/latest"
           target="_blank"
           rel="noopener noreferrer"
           className="p-1.5 rounded-md text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"

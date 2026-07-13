@@ -9,9 +9,9 @@ import (
 )
 
 func TestStripWorkspacePrefixUsesEnvRoot(t *testing.T) {
-	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs")
+	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/coding-agent-loop/workspace-docs")
 
-	got := stripWorkspacePrefix("/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs/Workflow/demo/learnings/_global/SKILL.md")
+	got := stripWorkspacePrefix("/Users/mipl/ai-work/coding-agent-loop/workspace-docs/Workflow/demo/learnings/_global/SKILL.md")
 	want := "Workflow/demo/learnings/_global/SKILL.md"
 	if got != want {
 		t.Fatalf("stripWorkspacePrefix() = %q, want %q", got, want)

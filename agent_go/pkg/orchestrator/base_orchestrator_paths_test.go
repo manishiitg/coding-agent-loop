@@ -7,11 +7,11 @@ import (
 )
 
 func TestNormalizePathForAllowedPathsAcceptsAbsoluteDocsPathFromEnv(t *testing.T) {
-	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs")
+	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/coding-agent-loop/workspace-docs")
 
 	got, _, err := normalizePathForAllowedPaths(
 		[]string{"Workflow/demo/learnings/_global"},
-		"/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs/Workflow/demo/learnings/_global/SKILL.md",
+		"/Users/mipl/ai-work/coding-agent-loop/workspace-docs/Workflow/demo/learnings/_global/SKILL.md",
 	)
 	if err != nil {
 		t.Fatal(err)

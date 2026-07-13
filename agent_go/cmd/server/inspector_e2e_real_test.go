@@ -17,7 +17,7 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	anthropicadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/anthropic"
 
-	"mcp-agent-builder-go/agent_go/internal/inspector"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/inspector"
 )
 
 // TestInspectorHTTPCapturesRealAnthropicEvents is the cross-stack

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="manishiitg/mcp-agent-builder-go"
+REPO="manishiitg/coding-agent-loop"
 GH_USER="manishiitg"
 MAIN_BRANCH="main"
 WORKFLOW_NAME="Desktop DMG"
@@ -113,10 +113,10 @@ fi
 
 origin_url="$(git remote get-url origin)"
 case "$origin_url" in
-  git@github.com:manishiitg/mcp-agent-builder-go.git | \
-    https://github.com/manishiitg/mcp-agent-builder-go.git | \
-    https://github.com/manishiitg/mcp-agent-builder-go | \
-    ssh://git@github.com/manishiitg/mcp-agent-builder-go.git)
+  git@github.com:manishiitg/coding-agent-loop.git | \
+    https://github.com/manishiitg/coding-agent-loop.git | \
+    https://github.com/manishiitg/coding-agent-loop | \
+    ssh://git@github.com/manishiitg/coding-agent-loop.git)
     ;;
   *)
     die "origin points to $origin_url, expected the canonical $REPO repository"

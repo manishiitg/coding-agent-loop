@@ -1,6 +1,6 @@
 # Dedicated VM Deployment (Hetzner)
 
-Production deployment of mcp-agent-builder-go on a single Hetzner VM. Hybrid setup: agent + workspace run **bare-metal** under systemd, frontend + caddy run in **Docker**.
+Production deployment of coding-agent-loop on a single Hetzner VM. Hybrid setup: agent + workspace run **bare-metal** under systemd, frontend + caddy run in **Docker**.
 
 ## Access
 

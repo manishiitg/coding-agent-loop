@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/pkg/workspace"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
 
-	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 )
 
 // resolveWorkspacePath prepends the workspace path to relative paths, with double-prepend protection.

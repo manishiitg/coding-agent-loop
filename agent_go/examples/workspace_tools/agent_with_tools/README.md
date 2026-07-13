@@ -1,6 +1,6 @@
 # Agent with Workspace Tools Example
 
-This example demonstrates how to build an agent that utilizes the `workspace:basic` toolset from the `mcp-agent-builder-go/pkg` library.
+This example demonstrates how to build an agent that utilizes the `workspace:basic` toolset from the `coding-agent-loop/pkg` library.
 
 ## Prerequisites
 

@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/manishiitg/mcpagent/events"
-	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	orchestrator_events "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 )
 
 // BlockingEventCallback is called when a blocking event is received.

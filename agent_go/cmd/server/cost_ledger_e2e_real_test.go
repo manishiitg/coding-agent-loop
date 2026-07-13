@@ -14,7 +14,7 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	anthropicadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/anthropic"
 
-	"mcp-agent-builder-go/agent_go/pkg/costledger"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/costledger"
 )
 
 // e2eMockLogger is a stdout-silent logger for the adapter under test.

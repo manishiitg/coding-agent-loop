@@ -4,7 +4,7 @@ import (
 	"time"
 
 	baseevents "github.com/manishiitg/mcpagent/events"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 )
 
 // RoutingResponseEvent represents the routing response data for events

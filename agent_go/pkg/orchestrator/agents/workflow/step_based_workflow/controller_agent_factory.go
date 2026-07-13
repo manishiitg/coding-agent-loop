@@ -16,12 +16,12 @@ import (
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/mcpclient"
 	"github.com/manishiitg/mcpagent/observability"
-	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
-	"mcp-agent-builder-go/agent_go/pkg/browser"
-	"mcp-agent-builder-go/agent_go/pkg/common"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
-	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents"
+	orchestrator_events "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -285,7 +285,7 @@ func getWorkspaceDocsRoot() string {
 	}
 
 	// Fallback: calculate relative to current working directory
-	// Assuming agent_go is at mcp-agent-builder-go/agent_go, workspace-docs is at ../workspace-docs
+	// Assuming agent_go is at github.com/manishiitg/coding-agent-loop/agent_go, workspace-docs is at ../workspace-docs
 	cwd, err := os.Getwd()
 	if err != nil {
 		// If we can't get CWD, return empty and let caller handle it

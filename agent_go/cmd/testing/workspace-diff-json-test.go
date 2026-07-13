@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
-	"github.com/manishiitg/mcp-agent-builder-go/workspace/handlers"
-	"github.com/manishiitg/mcp-agent-builder-go/workspace/models"
+	"github.com/manishiitg/coding-agent-loop/workspace/handlers"
+	"github.com/manishiitg/coding-agent-loop/workspace/models"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"

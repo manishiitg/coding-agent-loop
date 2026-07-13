@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"mcp-agent-builder-go/agent_go/pkg/skills"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/skills"
 )
 
 // SystemSkill defines a skill that should be auto-installed on startup

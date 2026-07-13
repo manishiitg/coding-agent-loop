@@ -13,7 +13,7 @@ import (
 
 	"github.com/manishiitg/mcpagent/events"
 
-	internalevents "mcp-agent-builder-go/agent_go/internal/events"
+	internalevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 )
 
 // startSessionInternal starts an agent session programmatically (used by bot connector).

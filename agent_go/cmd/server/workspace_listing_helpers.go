@@ -9,7 +9,7 @@ import (
 	pathpkg "path"
 	"strings"
 
-	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 )
 
 func listWorkspaceChildFolders(ctx context.Context, folderPath string) ([]string, error) {

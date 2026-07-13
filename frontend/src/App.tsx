@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useEffect, useCallback, useRef, useState, forwardRef } from "react";
+import { useEffect, useCallback, useRef, useState, forwardRef, lazy, Suspense } from "react";
 import { ThemeProvider } from "./contexts/ThemeContext.tsx";
 import { UpdateProgressToast } from "./components/UpdateProgressToast";
 import Workspace from "./components/Workspace.tsx";
@@ -8,9 +8,6 @@ import { ORG_HTML_PREVIEW_PREFERENCE_CHANGED_EVENT, getOrgHtmlPreviewDevice, set
 import ChatArea, { type ChatAreaRef } from "./components/ChatArea.tsx";
 import { MarkdownRenderer, MermaidDiagram } from "./components/ui/MarkdownRenderer";
 import { CsvRenderer } from "./components/ui/CsvRenderer";
-import { XlsxRenderer } from "./components/ui/XlsxRenderer";
-import { DocxRenderer } from "./components/ui/DocxRenderer";
-import { PdfRenderer } from "./components/ui/PdfRenderer";
 import { HtmlRenderer } from "./components/ui/HtmlRenderer";
 import { ConversationRenderer, isConversationJSON } from "./components/ui/ConversationRenderer";
 import { DiffRenderer } from "./components/ui/DiffRenderer";
@@ -18,9 +15,7 @@ import { RenderedContentSearchBar, RenderedContentSearchButton, useRenderedConte
 import { resetSessionId, agentApi } from "./services/api";
 import { AuthWrapper } from "./components/AuthWrapper";
 import type { FileVersion } from "./services/api-types";
-import FileRevisionsModal from "./components/workspace/FileRevisionsModal";
 import PushToGistDialog from "./components/workspace/PushToGistDialog";
-import FileEditor from "./components/workspace/FileEditor";
 import { isValidJSON } from "./utils/event-helpers";
 import { prepareDomForPdfExport } from "./utils/pdfExport";
 import { convertToSlackMarkdown } from "./utils/slackMarkdown";
@@ -28,7 +23,6 @@ import { isDiffFilePath, looksLikeDiffContent } from "./utils/diff";
 import { findBlockingMultiAgentSession, shouldConfirmForSessionStatus, shouldConfirmNewMultiAgentChat } from "./utils/newChatConfirmation";
 import { Edit, Save, X, Loader2, Download, Link, Github, PanelRightClose, PanelRightOpen, Smartphone, Laptop } from "lucide-react";
 import { WorkflowLayout } from "./components/workflow";
-import { WorkflowsOverviewPage } from "./components/WorkflowsOverviewPage";
 import { ModePresetBar } from "./components/ModePresetBar";
 import { QuickSwitcher } from "./components/QuickSwitcher";
 import { ChatTabs } from "./components/ChatTabs";
@@ -52,8 +46,23 @@ declare global {
 }
 
 import { copyToClipboard } from './utils/textUtils'
+import LazyModalFallback from './components/ui/LazyModalFallback'
 
 const queryClient = new QueryClient();
+
+const FileEditor = lazy(() => import('./components/workspace/FileEditor'))
+const FileRevisionsModal = lazy(() => import('./components/workspace/FileRevisionsModal'))
+const WorkflowsOverviewPage = lazy(() => import('./components/WorkflowsOverviewPage').then(module => ({ default: module.WorkflowsOverviewPage })))
+const XlsxRenderer = lazy(() => import('./components/ui/XlsxRenderer').then(module => ({ default: module.XlsxRenderer })))
+const DocxRenderer = lazy(() => import('./components/ui/DocxRenderer').then(module => ({ default: module.DocxRenderer })))
+const PdfRenderer = lazy(() => import('./components/ui/PdfRenderer').then(module => ({ default: module.PdfRenderer })))
+
+const FileSurfaceFallback = () => (
+  <div className="flex h-full min-h-40 items-center justify-center text-muted-foreground">
+    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+    Loading viewer...
+  </div>
+)
 
 const WORKSPACE_COLLAPSING_POPUP_SELECTOR = [
   '[data-workspace-popup="true"]',
@@ -212,6 +221,7 @@ function App() {
     showWorkflowsOverview,
     setShowWorkflowsOverview
   } = useAppStore()
+  const [hasOpenedWorkflowsOverview, setHasOpenedWorkflowsOverview] = useState(showWorkflowsOverview)
   
   const {
     selectedFile,
@@ -1474,6 +1484,12 @@ function App() {
 
   useEffect(() => {
     if (showWorkflowsOverview) {
+      setHasOpenedWorkflowsOverview(true)
+    }
+  }, [showWorkflowsOverview])
+
+  useEffect(() => {
+    if (showWorkflowsOverview) {
       setWorkspaceMinimizedForLayout(true)
       return
     }
@@ -1656,9 +1672,13 @@ function App() {
             />
             
               <div className="flex-1 min-h-0 overflow-hidden relative">
-                <div className={showWorkflowsOverview ? 'h-full' : 'hidden'}>
-                  <WorkflowsOverviewPage />
-                </div>
+                {hasOpenedWorkflowsOverview && (
+                  <div className={showWorkflowsOverview ? 'h-full' : 'hidden'}>
+                    <Suspense fallback={<FileSurfaceFallback />}>
+                      <WorkflowsOverviewPage />
+                    </Suspense>
+                  </div>
+                )}
                 <div className={!showWorkflowsOverview ? 'h-full' : 'hidden'}>
                   <div className={selectedModeCategory === 'workflow' ? 'h-full' : 'hidden'}>
                     <WorkflowLayout
@@ -2054,22 +2074,26 @@ function App() {
                       </div>
                     ) : isEditMode ? (
                       <div className="h-full overflow-hidden">
-                        <FileEditor
-                          value={editedContent}
-                          filepath={selectedFile?.path || ''}
-                          readOnly={false}
-                          onChange={(value) => setEditedContent(value || '')}
-                          height="100%"
-                        />
+                        <Suspense fallback={<FileSurfaceFallback />}>
+                          <FileEditor
+                            value={editedContent}
+                            filepath={selectedFile?.path || ''}
+                            readOnly={false}
+                            onChange={(value) => setEditedContent(value || '')}
+                            height="100%"
+                          />
+                        </Suspense>
                       </div>
                     ) : (selectedFile?.path && isCodeFile(selectedFile.path) && !/\.html?$/i.test(selectedFile.path)) ? (
                       <div className="h-full overflow-hidden">
-                        <FileEditor
-                          value={fileContent}
-                          filepath={selectedFile.path}
-                          readOnly={true}
-                          height="100%"
-                        />
+                        <Suspense fallback={<FileSurfaceFallback />}>
+                          <FileEditor
+                            value={fileContent}
+                            filepath={selectedFile.path}
+                            readOnly={true}
+                            height="100%"
+                          />
+                        </Suspense>
                       </div>
                     ) : (
                       <div className={(selectedFile?.path?.toLowerCase().endsWith('.pdf') || selectedFile?.path?.toLowerCase().endsWith('.html') || selectedFile?.path?.toLowerCase().endsWith('.htm')) ? "" : "p-6"}>
@@ -2083,19 +2107,29 @@ function App() {
 
                           // Excel files (binary)
                           if ((filePath.endsWith('.xlsx') || filePath.endsWith('.xls')) && binaryFileData) {
-                            return <XlsxRenderer data={binaryFileData} />
+                            return (
+                              <Suspense fallback={<FileSurfaceFallback />}>
+                                <XlsxRenderer data={binaryFileData} />
+                              </Suspense>
+                            )
                           }
 
                           // DOCX files (binary)
                           if (filePath.endsWith('.docx') && binaryFileData) {
-                            return <DocxRenderer data={binaryFileData} />
+                            return (
+                              <Suspense fallback={<FileSurfaceFallback />}>
+                                <DocxRenderer data={binaryFileData} />
+                              </Suspense>
+                            )
                           }
 
                           // PDF files (binary)
                           if (filePath.endsWith('.pdf') && binaryFileData) {
                             return (
                               <div className="h-[calc(100vh-120px)] w-full">
-                                <PdfRenderer data={binaryFileData} />
+                                <Suspense fallback={<FileSurfaceFallback />}>
+                                  <PdfRenderer data={binaryFileData} />
+                                </Suspense>
                               </div>
                             )
                           }
@@ -2225,15 +2259,19 @@ function App() {
         />
 
         {/* File Revisions Modal */}
-        <FileRevisionsModal
-          isOpen={showRevisionsModal}
-          onClose={() => {
-            setShowRevisionsModal(false)
-            setRestoreError(null)
-          }}
-          filepath={selectedFile?.path || ''}
-          onRestoreVersion={handleRestoreVersion}
-        />
+        {showRevisionsModal && (
+          <Suspense fallback={<LazyModalFallback label="Loading file history..." />}>
+            <FileRevisionsModal
+              isOpen
+              onClose={() => {
+                setShowRevisionsModal(false)
+                setRestoreError(null)
+              }}
+              filepath={selectedFile?.path || ''}
+              onRestoreVersion={handleRestoreVersion}
+            />
+          </Suspense>
+        )}
         
         {/* Restore Error Toast */}
         {restoreError && (

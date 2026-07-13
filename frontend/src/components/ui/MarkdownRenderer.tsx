@@ -1,15 +1,19 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react'
+import React, { lazy, Suspense, useEffect, useRef, useState, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
-import { prism } from 'react-syntax-highlighter/dist/esm/styles/prism'
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { useAppStore } from '../../stores/useAppStore'
 import { useModeStore } from '../../stores/useModeStore'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { workspaceApi, agentApi, getApiBaseUrl } from '../../services/api'
-import mermaid from 'mermaid'
+
+const SyntaxHighlightedCode = lazy(() => import('./SyntaxHighlightedCode'))
+
+let mermaidModule: Promise<typeof import('mermaid').default> | null = null
+const loadMermaid = () => {
+  mermaidModule ??= import('mermaid').then(module => module.default)
+  return mermaidModule
+}
 
 interface MarkdownRendererProps {
   content: string
@@ -503,20 +507,6 @@ const ToolDefinition: React.FC<{ content: string }> = ({ content }) => {
   )
 }
 
-// Mermaid initialization
-let mermaidInitialized = false
-const initMermaid = () => {
-  if (!mermaidInitialized) {
-    mermaid.initialize({
-      startOnLoad: false,
-      theme: document.documentElement.classList.contains('dark') ||
-             document.documentElement.classList.contains('dark-plus') ? 'dark' : 'default',
-      securityLevel: 'loose',
-    })
-    mermaidInitialized = true
-  }
-}
-
 let mermaidCounter = 0
 
 export const MermaidDiagram: React.FC<{ content: string }> = ({ content }) => {
@@ -527,7 +517,7 @@ export const MermaidDiagram: React.FC<{ content: string }> = ({ content }) => {
 
   const renderDiagram = useCallback(async () => {
     try {
-      initMermaid()
+      const mermaid = await loadMermaid()
       // Re-init theme on each render to pick up dark mode changes
       const isDark = document.documentElement.classList.contains('dark') ||
                      document.documentElement.classList.contains('dark-plus')
@@ -1151,35 +1141,15 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             
             return (
               <div className="my-4 min-w-0 max-w-full overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm">
-                <SyntaxHighlighter
-                  // @ts-expect-error: theme type mismatch is safe for SyntaxHighlighter
-                  style={isDark ? (oneDark as { [key: string]: React.CSSProperties }) : (prism as { [key: string]: React.CSSProperties })}
-                  language={language}
-                  PreTag="div"
-                  className="!m-0 !p-0"
-                  customStyle={{
-                    margin: 0,
-                    padding: '1rem',
-                    borderRadius: '0.5rem',
-                    fontSize: '0.875rem',
-                    lineHeight: '1.6',
-                    overflowX: 'auto',
-                    maxWidth: '100%',
-                    width: '100%',
-                    boxSizing: 'border-box',
-                    background: isDark ? '#1f2937' : '#f9fafb',
-                  }}
-                  codeTagProps={{
-                    style: {
-                      display: 'block',
-                      overflowX: 'auto',
-                      maxWidth: '100%',
-                    }
-                  }}
-                  {...props}
+                <Suspense
+                  fallback={(
+                    <pre className="m-0 overflow-x-auto p-4 text-xs leading-6 text-gray-700 dark:text-gray-300">
+                      {codeString}
+                    </pre>
+                  )}
                 >
-                  {codeString}
-                </SyntaxHighlighter>
+                  <SyntaxHighlightedCode code={codeString} language={language} isDark={isDark} />
+                </Suspense>
               </div>
             )
           },

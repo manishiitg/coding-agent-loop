@@ -36,6 +36,17 @@ describe('reconcileTerminalSnapshots', () => {
     expect(result[0]).toBe(current[0])
   })
 
+  it('does not churn state for 20 unchanged active terminals', () => {
+    const current = Array.from({ length: 20 }, (_, index) => terminal(`terminal-${index}`))
+    const incoming = current.map(item => ({
+      ...item,
+      rows: [...item.rows],
+      status: { ...item.status },
+    }))
+
+    expect(reconcileTerminalSnapshots(current, incoming)).toBe(current)
+  })
+
   it('ignores backend ordering changes when the terminal set is unchanged', () => {
     const current = [terminal('one'), terminal('two')]
     const incoming = [{ ...current[1] }, { ...current[0] }]

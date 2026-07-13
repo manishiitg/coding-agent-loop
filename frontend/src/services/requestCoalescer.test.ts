@@ -7,13 +7,13 @@ describe('createRequestCoalescer', () => {
     let resolve!: (value: string) => void
     const request = vi.fn(() => new Promise<string>(done => { resolve = done }))
 
-    const first = coalesce('terminals:all', request)
-    const second = coalesce('terminals:all', request)
-    expect(first).toBe(second)
+    const requests = Array.from({ length: 20 }, () => coalesce('terminals:all', request))
+    const first = requests[0]
+    expect(requests.every(pending => pending === first)).toBe(true)
     expect(request).toHaveBeenCalledTimes(1)
 
     resolve('ok')
-    await expect(first).resolves.toBe('ok')
+    await expect(Promise.all(requests)).resolves.toEqual(Array(20).fill('ok'))
   })
 
   it('does not combine different request keys', async () => {

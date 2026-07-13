@@ -24,7 +24,6 @@ type Isolator struct {
 	BaseDir           string // Workspace base directory (default: /app/workspace-docs)
 }
 
-
 const defaultBaseDir = "/app/workspace-docs"
 
 // getBaseDir returns the configured base directory or the default
@@ -33,6 +32,83 @@ func (iso *Isolator) getBaseDir() string {
 		return iso.BaseDir
 	}
 	return defaultBaseDir
+}
+
+// canonicalPath returns the kernel-visible spelling of a path. macOS exposes
+// /var and /tmp through symlinks to /private; sandbox-exec rules written with
+// the unresolved spelling do not protect the resolved path.
+func canonicalPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		absPath = filepath.Clean(path)
+	}
+	if resolved, err := filepath.EvalSymlinks(absPath); err == nil {
+		return resolved
+	}
+
+	// Write targets may not exist yet. Resolve the nearest existing ancestor,
+	// then append the missing suffix without changing its meaning.
+	ancestor := absPath
+	var suffix []string
+	for {
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return filepath.Clean(absPath)
+		}
+		suffix = append([]string{filepath.Base(ancestor)}, suffix...)
+		ancestor = parent
+		if resolved, err := filepath.EvalSymlinks(ancestor); err == nil {
+			parts := append([]string{resolved}, suffix...)
+			return filepath.Join(parts...)
+		}
+	}
+}
+
+func sandboxQuoted(path string) string {
+	path = strings.ReplaceAll(path, `\`, `\\`)
+	return strings.ReplaceAll(path, `"`, `\"`)
+}
+
+func (iso *Isolator) sandboxPath(path string) string {
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(iso.getBaseDir(), strings.TrimSuffix(path, "/"))
+	}
+	return canonicalPath(path)
+}
+
+func pathWithin(path, root string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// sandboxAllowedPath resolves an allow-list entry without letting a path that
+// was granted inside the workspace escape through a symlink. Absolute paths
+// outside BaseDir remain valid because callers use them for explicit host
+// grants such as Downloads access.
+func (iso *Isolator) sandboxAllowedPath(path string) (string, bool) {
+	baseDir := filepath.Clean(iso.getBaseDir())
+	canonicalBaseDir := canonicalPath(baseDir)
+	workspaceScoped := !filepath.IsAbs(path)
+
+	resolvedPath := path
+	if workspaceScoped {
+		resolvedPath = filepath.Join(baseDir, strings.TrimSuffix(path, "/"))
+	} else {
+		resolvedPath = filepath.Clean(path)
+		workspaceScoped = pathWithin(resolvedPath, baseDir) || pathWithin(resolvedPath, canonicalBaseDir)
+	}
+
+	canonicalAllowedPath := canonicalPath(resolvedPath)
+	if workspaceScoped && !pathWithin(canonicalAllowedPath, canonicalBaseDir) {
+		return "", false
+	}
+	return canonicalAllowedPath, true
 }
 
 // ExecuteIsolated runs a command with filesystem restrictions
@@ -123,18 +199,15 @@ func (iso *Isolator) generateSandboxProfile() string {
 	sb.WriteString("(version 1)\n")
 	sb.WriteString("(allow default)\n\n")
 
-	baseDir := iso.getBaseDir()
+	baseDir := canonicalPath(iso.getBaseDir())
 
 	// Mode 1: BlockedPaths only (deny-list mode for chat)
 	if len(iso.BlockedPaths) > 0 && len(iso.ReadPaths) == 0 && len(iso.WritePaths) == 0 {
 		sb.WriteString("; Deny-list mode: block specific paths\n")
 		sb.WriteString("(deny file-read* file-write*\n")
 		for _, path := range iso.BlockedPaths {
-			fullPath := path
-			if !strings.HasPrefix(path, "/") {
-				fullPath = filepath.Join(baseDir, strings.TrimSuffix(path, "/"))
-			}
-			sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", fullPath))
+			fullPath := iso.sandboxPath(path)
+			sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", sandboxQuoted(fullPath)))
 		}
 		sb.WriteString(")\n\n")
 
@@ -147,19 +220,20 @@ func (iso *Isolator) generateSandboxProfile() string {
 	// .env files) then re-allow only workspace-docs subpaths within it.
 	// Everything else (home dir tool configs, system paths) stays accessible
 	// so CLIs like aws, gcloud, kubectl, docker etc. work normally.
-	projectRoot := filepath.Dir(baseDir)
+	projectRoot := canonicalPath(filepath.Dir(baseDir))
 	sb.WriteString("; Deny project root (source code, server configs, .env)\n")
-	sb.WriteString(fmt.Sprintf("(deny file-read* file-write* (subpath \"%s\"))\n\n", projectRoot))
+	sb.WriteString(fmt.Sprintf("(deny file-read* file-write* (subpath \"%s\"))\n\n", sandboxQuoted(projectRoot)))
 
-	// Allow the shell to read the working directory and its parents for getcwd().
-	workDir := iso.WorkDir
+	// getcwd() only needs directory metadata. Granting file-read* on WorkDir
+	// would expose its entire subtree and bypass the allow-list.
+	workDir := canonicalPath(iso.WorkDir)
 	if workDir != "" {
-		sb.WriteString("; Allow working directory access\n")
-		sb.WriteString(fmt.Sprintf("(allow file-read* (subpath \"%s\"))\n", workDir))
-		for dir := filepath.Dir(workDir); strings.HasPrefix(dir, baseDir) && dir != baseDir; dir = filepath.Dir(dir) {
-			sb.WriteString(fmt.Sprintf("(allow file-read-data (literal \"%s\"))\n", dir))
+		sb.WriteString("; Allow working directory metadata for getcwd\n")
+		sb.WriteString(fmt.Sprintf("(allow file-read-metadata (literal \"%s\"))\n", sandboxQuoted(workDir)))
+		for dir := filepath.Dir(workDir); strings.HasPrefix(dir, baseDir+string(filepath.Separator)); dir = filepath.Dir(dir) {
+			sb.WriteString(fmt.Sprintf("(allow file-read-metadata (literal \"%s\"))\n", sandboxQuoted(dir)))
 		}
-		sb.WriteString(fmt.Sprintf("(allow file-read-data (literal \"%s\"))\n", baseDir))
+		sb.WriteString(fmt.Sprintf("(allow file-read-metadata (literal \"%s\"))\n", sandboxQuoted(baseDir)))
 		sb.WriteString("\n")
 	}
 
@@ -168,11 +242,11 @@ func (iso *Isolator) generateSandboxProfile() string {
 		sb.WriteString("; Allowed read paths\n")
 		sb.WriteString("(allow file-read*\n")
 		for _, path := range iso.ReadPaths {
-			fullPath := path
-			if !strings.HasPrefix(path, "/") {
-				fullPath = filepath.Join(baseDir, strings.TrimSuffix(path, "/"))
+			fullPath, ok := iso.sandboxAllowedPath(path)
+			if !ok {
+				continue
 			}
-			sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", fullPath))
+			sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", sandboxQuoted(fullPath)))
 		}
 		sb.WriteString(")\n\n")
 	}
@@ -182,11 +256,11 @@ func (iso *Isolator) generateSandboxProfile() string {
 		sb.WriteString("; Allowed write paths\n")
 		sb.WriteString("(allow file-read* file-write*\n")
 		for _, path := range iso.WritePaths {
-			fullPath := path
-			if !strings.HasPrefix(path, "/") {
-				fullPath = filepath.Join(baseDir, strings.TrimSuffix(path, "/"))
+			fullPath, ok := iso.sandboxAllowedPath(path)
+			if !ok {
+				continue
 			}
-			sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", fullPath))
+			sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", sandboxQuoted(fullPath)))
 		}
 		sb.WriteString(")\n\n")
 	}
@@ -196,11 +270,8 @@ func (iso *Isolator) generateSandboxProfile() string {
 		sb.WriteString("; Explicit deny for blocked paths (overrides allows)\n")
 		sb.WriteString("(deny file-read* file-write*\n")
 		for _, path := range iso.BlockedPaths {
-			fullPath := path
-			if !strings.HasPrefix(path, "/") {
-				fullPath = filepath.Join(baseDir, strings.TrimSuffix(path, "/"))
-			}
-			sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", fullPath))
+			fullPath := iso.sandboxPath(path)
+			sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", sandboxQuoted(fullPath)))
 		}
 		sb.WriteString(")\n")
 	}
@@ -211,11 +282,8 @@ func (iso *Isolator) generateSandboxProfile() string {
 		sb.WriteString("; Explicit deny for write-only blocked paths (reads allowed)\n")
 		sb.WriteString("(deny file-write*\n")
 		for _, path := range iso.BlockedWritePaths {
-			fullPath := path
-			if !strings.HasPrefix(path, "/") {
-				fullPath = filepath.Join(baseDir, strings.TrimSuffix(path, "/"))
-			}
-			sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", fullPath))
+			fullPath := iso.sandboxPath(path)
+			sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", sandboxQuoted(fullPath)))
 		}
 		sb.WriteString(")\n")
 	}
@@ -357,7 +425,6 @@ func (iso *Isolator) generateMountScript(command string, args []string) string {
 		}
 		sb.WriteString("\n")
 	}
-
 
 	// Change to working directory
 	sb.WriteString(fmt.Sprintf("cd \"%s\"\n", iso.WorkDir))

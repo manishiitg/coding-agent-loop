@@ -14,13 +14,13 @@ import (
 
 // TestEnvironment holds test fixtures
 type TestEnvironment struct {
-	TempDir       string
-	ReadOnlyDir   string
-	ReadWriteDir  string
-	ForbiddenDir  string
-	DownloadsDir  string
-	CleanupFuncs  []func()
-	t             *testing.T
+	TempDir      string
+	ReadOnlyDir  string
+	ReadWriteDir string
+	ForbiddenDir string
+	DownloadsDir string
+	CleanupFuncs []func()
+	t            *testing.T
 }
 
 // Setup creates test directories and files
@@ -86,6 +86,7 @@ func TestIsolatorOSDetection(t *testing.T) {
 		ReadPaths:  []string{env.ReadOnlyDir},
 		WritePaths: []string{env.ReadWriteDir},
 		WorkDir:    env.TempDir,
+		BaseDir:    env.TempDir,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -152,6 +153,7 @@ func TestMacOSSandboxProfile(t *testing.T) {
 		ReadPaths:  []string{env.ReadOnlyDir},
 		WritePaths: []string{env.ReadWriteDir},
 		WorkDir:    env.TempDir,
+		BaseDir:    env.TempDir,
 	}
 
 	profile := isolator.generateSandboxProfile()
@@ -169,11 +171,21 @@ func TestMacOSSandboxProfile(t *testing.T) {
 	}
 
 	// Verify paths are included
-	if !strings.Contains(profile, env.ReadOnlyDir) {
-		t.Errorf("Read-only path not in profile: %s", env.ReadOnlyDir)
+	canonicalReadOnly := canonicalPath(env.ReadOnlyDir)
+	if !strings.Contains(profile, canonicalReadOnly) {
+		t.Errorf("Read-only path not in profile: %s", canonicalReadOnly)
 	}
-	if !strings.Contains(profile, env.ReadWriteDir) {
-		t.Errorf("Read-write path not in profile: %s", env.ReadWriteDir)
+	canonicalReadWrite := canonicalPath(env.ReadWriteDir)
+	if !strings.Contains(profile, canonicalReadWrite) {
+		t.Errorf("Read-write path not in profile: %s", canonicalReadWrite)
+	}
+
+	canonicalWorkDir := canonicalPath(env.TempDir)
+	if strings.Contains(profile, fmt.Sprintf("(allow file-read* (subpath \"%s\"))", canonicalWorkDir)) {
+		t.Error("sandbox profile grants broad read access to the working directory")
+	}
+	if !strings.Contains(profile, fmt.Sprintf("(allow file-read-metadata (literal \"%s\"))", canonicalWorkDir)) {
+		t.Error("sandbox profile must grant only working-directory metadata access")
 	}
 
 	t.Logf("✓ Sandbox profile generated correctly:\n%s", profile)
@@ -413,8 +425,9 @@ func TestMacOSSandboxIsolation(t *testing.T) {
 	})
 }
 
-// TestDownloadsFolderException tests that Downloads is always accessible
-func TestDownloadsFolderException(t *testing.T) {
+// TestDownloadsRequiresExplicitPermission ensures a shared folder name does not
+// bypass the same allow-list applied to every other workspace path.
+func TestDownloadsRequiresExplicitPermission(t *testing.T) {
 	env := &TestEnvironment{}
 	if err := env.Setup(t); err != nil {
 		t.Fatalf("Failed to setup test environment: %v", err)
@@ -425,25 +438,129 @@ func TestDownloadsFolderException(t *testing.T) {
 	// Actual enforcement requires /app/workspace-docs structure
 
 	isolator := &Isolator{
-		ReadPaths:  []string{}, // No paths allowed
-		WritePaths: []string{}, // No paths allowed
-		WorkDir:    env.TempDir,
+		WorkDir: env.TempDir,
+		BaseDir: env.TempDir,
 	}
 
 	if runtime.GOOS == "darwin" {
 		profile := isolator.generateSandboxProfile()
-		if !strings.Contains(profile, "Downloads") {
-			t.Error("Downloads folder not found in macOS sandbox profile")
-		} else {
-			t.Log("✓ Downloads folder included in macOS sandbox profile")
+		if strings.Contains(profile, canonicalPath(env.DownloadsDir)) {
+			t.Error("Downloads must not be implicitly allowed in macOS sandbox profile")
+		}
+		isolator.ReadPaths = []string{env.DownloadsDir}
+		if !strings.Contains(isolator.generateSandboxProfile(), canonicalPath(env.DownloadsDir)) {
+			t.Error("explicit Downloads read permission missing from macOS sandbox profile")
 		}
 	} else if runtime.GOOS == "linux" {
 		script := isolator.generateMountScript("echo", []string{"test"})
-		if !strings.Contains(script, "Downloads") {
-			t.Error("Downloads folder not found in Linux mount script")
-		} else {
-			t.Log("✓ Downloads folder included in Linux mount script")
+		if strings.Contains(script, env.DownloadsDir) {
+			t.Error("Downloads must not be implicitly allowed in Linux mount script")
 		}
+		isolator.ReadPaths = []string{env.DownloadsDir}
+		if !strings.Contains(isolator.generateMountScript("echo", []string{"test"}), env.DownloadsDir) {
+			t.Error("explicit Downloads read permission missing from Linux mount script")
+		}
+	}
+}
+
+func TestSandboxAllowPathsRejectWorkspaceSymlinkEscapes(t *testing.T) {
+	root := t.TempDir()
+	baseDir := filepath.Join(root, "workspace-docs")
+	outsideDir := filepath.Join(root, "repo-secrets")
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	if err := os.MkdirAll(outsideDir, 0755); err != nil {
+		t.Fatalf("mkdir outside target: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(outsideDir, "secret.txt"), []byte("secret"), 0644); err != nil {
+		t.Fatalf("write outside secret: %v", err)
+	}
+	if err := os.Symlink(outsideDir, filepath.Join(baseDir, "escaped-read")); err != nil {
+		t.Fatalf("create read symlink: %v", err)
+	}
+	if err := os.Symlink(outsideDir, filepath.Join(baseDir, "escaped-write")); err != nil {
+		t.Fatalf("create write symlink: %v", err)
+	}
+
+	iso := &Isolator{
+		ReadPaths:  []string{"escaped-read"},
+		WritePaths: []string{filepath.Join(baseDir, "escaped-write")},
+		WorkDir:    baseDir,
+		BaseDir:    baseDir,
+	}
+
+	profile := iso.generateSandboxProfile()
+	canonicalOutside := canonicalPath(outsideDir)
+	if strings.Contains(profile, fmt.Sprintf("(subpath \"%s\")", canonicalOutside)) {
+		t.Fatalf("workspace symlink escape was re-allowed in sandbox profile:\n%s", profile)
+	}
+
+	if path, ok := iso.sandboxAllowedPath("escaped-read"); ok || path != "" {
+		t.Fatalf("relative workspace symlink escape accepted: path=%q ok=%v", path, ok)
+	}
+	if path, ok := iso.sandboxAllowedPath(filepath.Join(baseDir, "escaped-write")); ok || path != "" {
+		t.Fatalf("absolute workspace symlink escape accepted: path=%q ok=%v", path, ok)
+	}
+
+	if runtime.GOOS == "darwin" {
+		t.Run("RealSandboxBlocksEscapedRead", func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			cmd, cleanup, err := iso.ExecuteIsolated(ctx, "cat", []string{filepath.Join(baseDir, "escaped-read", "secret.txt")})
+			if cleanup != nil {
+				defer cleanup()
+			}
+			if err != nil {
+				t.Fatalf("prepare isolated read: %v", err)
+			}
+			if output, err := cmd.CombinedOutput(); err == nil {
+				t.Fatalf("sandbox read escaped through workspace symlink: %s", output)
+			}
+		})
+
+		t.Run("RealSandboxBlocksEscapedWrite", func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			createdPath := filepath.Join(baseDir, "escaped-write", "created.txt")
+			cmd, cleanup, err := iso.ExecuteIsolated(ctx, "touch", []string{createdPath})
+			if cleanup != nil {
+				defer cleanup()
+			}
+			if err != nil {
+				t.Fatalf("prepare isolated write: %v", err)
+			}
+			if output, err := cmd.CombinedOutput(); err == nil {
+				t.Fatalf("sandbox write escaped through workspace symlink: %s", output)
+			}
+			if _, err := os.Stat(filepath.Join(outsideDir, "created.txt")); !os.IsNotExist(err) {
+				t.Fatalf("escaped write created outside file: %v", err)
+			}
+		})
+	}
+}
+
+func TestSandboxAllowPathsPreserveExplicitExternalGrant(t *testing.T) {
+	root := t.TempDir()
+	baseDir := filepath.Join(root, "workspace-docs")
+	externalDir := filepath.Join(t.TempDir(), "Downloads")
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	if err := os.MkdirAll(externalDir, 0755); err != nil {
+		t.Fatalf("mkdir external grant: %v", err)
+	}
+
+	iso := &Isolator{BaseDir: baseDir, WorkDir: baseDir, ReadPaths: []string{externalDir}}
+	allowedPath, ok := iso.sandboxAllowedPath(externalDir)
+	if !ok {
+		t.Fatal("explicit external absolute grant was rejected")
+	}
+	if allowedPath != canonicalPath(externalDir) {
+		t.Fatalf("external grant canonicalized incorrectly: got %q want %q", allowedPath, canonicalPath(externalDir))
+	}
+	if !strings.Contains(iso.generateSandboxProfile(), fmt.Sprintf("(subpath \"%s\")", sandboxQuoted(allowedPath))) {
+		t.Fatal("explicit external absolute grant missing from sandbox profile")
 	}
 }
 

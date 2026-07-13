@@ -60,7 +60,7 @@ func TestApplyDiffPatchFlexible(t *testing.T) {
 - Complete project analysis`,
 		},
 		{
-			name: "Diff without newline ending (should fail validation)",
+			name: "Diff without newline ending is normalized",
 			currentContent: `# Todo List
 
 ## Objective`,
@@ -68,8 +68,12 @@ func TestApplyDiffPatchFlexible(t *testing.T) {
 +++ b/todo.md
 @@ -1,2 +1,3 @@
  # Todo List
-+**No Newline**: This should fail validation`,
-			expectedError: true, // Should fail validation due to missing newline
++**No Newline**: This should be normalized`,
+			expectedError: false,
+			expectedResult: `# Todo List
+**No Newline**: This should be normalized
+
+## Objective`,
 		},
 		{
 			name: "Diff with proper newline ending",
@@ -120,7 +124,7 @@ func TestApplyDiffPatchFlexible(t *testing.T) {
 			expectedError: true, // Should fail due to context mismatch
 		},
 		{
-			name: "Simplified diff format (should fail with patch command)",
+			name: "Simplified diff format with exact context",
 			currentContent: `# Todo List
 
 ## Objective
@@ -137,10 +141,19 @@ func TestApplyDiffPatchFlexible(t *testing.T) {
 
  ## Objective
 `,
-			expectedError: true, // Simplified diffs should fail - this is expected
+			expectedError: false,
+			expectedResult: `# Todo List
+**Simplified Patch**: This was added via simplified diff.
+
+## Objective
+- Complete project analysis
+- Generate comprehensive report
+
+## Notes
+- Leverages tavily-search for comprehensive research`,
 		},
 		{
-			name: "Single addition only (simplified format - should fail)",
+			name: "Simplified addition with unique full-file context",
 			currentContent: `# Todo List
 
 ## Objective
@@ -162,7 +175,16 @@ func TestApplyDiffPatchFlexible(t *testing.T) {
 ## Notes
 - Leverages tavily-search for comprehensive research
 `,
-			expectedError: true, // Simplified diffs should fail - this is expected
+			expectedError: false,
+			expectedResult: `# Todo List
+**Single Addition**: This is a test.
+
+## Objective
+- Complete project analysis
+- Generate comprehensive report
+
+## Notes
+- Leverages tavily-search for comprehensive research`,
 		},
 		{
 			name: "Empty diff (should fail validation)",
@@ -188,7 +210,7 @@ func TestApplyDiffPatchFlexible(t *testing.T) {
 			expectedError: true,
 		},
 		{
-			name: "Context lines with minus instead of space (should be auto-corrected)",
+			name: "Ambiguous non-contiguous bullet context is rejected",
 			currentContent: `# Todo List
 
 ## Objective
@@ -200,12 +222,23 @@ func TestApplyDiffPatchFlexible(t *testing.T) {
 - Complete project analysis
 +- Test patch: Added via AI agent
 `,
-			expectedError: false, // Should be auto-corrected and succeed
-			expectedResult: `# Todo List
+			expectedError: true,
+		},
+		{
+			name: "Duplicate exact fallback context is rejected",
+			currentContent: `## Section
+same value
 
-## Objective
-- Complete project analysis
-- Test patch: Added via AI agent`,
+## Section
+same value`,
+			diffContent: `--- a/todo.md
++++ b/todo.md
+@@ -100,2 +100,3 @@
+ ## Section
+ same value
++new value
+`,
+			expectedError: true,
 		},
 		{
 			name: "Real agent-generated diff pattern (should be auto-corrected)",
@@ -228,7 +261,7 @@ func TestApplyDiffPatchFlexible(t *testing.T) {
 - Test patch: Added via diff tool`,
 		},
 		{
-			name: "Agent diff with invalid line references (should be auto-corrected)",
+			name: "Ambiguous invalid line references are rejected",
 			currentContent: `## Notes
 - Each todo builds on previous research to create comprehensive analysis
 - Success criteria are measurable and tied to specific deliverables
@@ -239,11 +272,7 @@ func TestApplyDiffPatchFlexible(t *testing.T) {
 @@ -last,2 +last-1,1 @@
  - Dependencies ensure logical progression of analysis depth
 -Updated for testing.`,
-			expectedError: false, // Should be auto-corrected and succeed
-			expectedResult: `## Notes
-- Each todo builds on previous research to create comprehensive analysis
-- Success criteria are measurable and tied to specific deliverables
-- Dependencies ensure logical progression of analysis depth`,
+			expectedError: true,
 		},
 	}
 
@@ -323,8 +352,7 @@ func TestValidateDiffFormat(t *testing.T) {
 @@ -1,3 +1,4 @@
  # Header
 +New line
-
- ## Section
+` + " \n" + ` ## Section
 `,
 			expectError: false,
 		},
@@ -386,7 +414,24 @@ func TestCorrectAgentGeneratedDiff(t *testing.T) {
 		expected string
 	}{
 		{
-			name: "Correct context lines with minus instead of space",
+			name: "Correct contiguous bullet context with an explicit anchor",
+			input: `--- a/todo.md
++++ b/todo.md
+@@ -3,2 +3,3 @@
+ ## Objective
+- Complete project analysis
++- Test patch: Added via AI agent
+`,
+			expected: `--- a/todo.md
++++ b/todo.md
+@@ -3,2 +3,3 @@
+ ## Objective
+ - Complete project analysis
++- Test patch: Added via AI agent
+`,
+		},
+		{
+			name: "Do not correct non-contiguous bullet context",
 			input: `--- a/todo.md
 +++ b/todo.md
 @@ -1,3 +1,4 @@
@@ -396,9 +441,9 @@ func TestCorrectAgentGeneratedDiff(t *testing.T) {
 `,
 			expected: `--- a/todo.md
 +++ b/todo.md
-@@ -1,3 +1,4 @@
+@@ -1,2 +1,2 @@
  # Todo List
-  Complete project analysis
+- Complete project analysis
 +- Test patch: Added via AI agent
 `,
 		},
@@ -409,34 +454,32 @@ func TestCorrectAgentGeneratedDiff(t *testing.T) {
 @@ -1,3 +1,4 @@
  # Todo List
 +**New addition**: Added via unified diff.
-
- ## Objective
+` + " \n" + ` ## Objective
 `,
 			expected: `--- a/todo.md
 +++ b/todo.md
 @@ -1,3 +1,4 @@
  # Todo List
 +**New addition**: Added via unified diff.
-
- ## Objective
+` + " \n" + ` ## Objective
 `,
 		},
 		{
-			name: "Multiple context line corrections",
+			name: "Multiple contiguous bullet context corrections",
 			input: `--- a/todo.md
 +++ b/todo.md
-@@ -1,4 +1,5 @@
- # Todo List
+@@ -3,3 +3,4 @@
+ ## Objective
 - Complete project analysis
 - Generate comprehensive report
 +- Test patch: Added via AI agent
 `,
 			expected: `--- a/todo.md
 +++ b/todo.md
-@@ -1,4 +1,5 @@
- # Todo List
-  Complete project analysis
-  Generate comprehensive report
+@@ -3,3 +3,4 @@
+ ## Objective
+ - Complete project analysis
+ - Generate comprehensive report
 +- Test patch: Added via AI agent
 `,
 		},

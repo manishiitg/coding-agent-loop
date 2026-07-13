@@ -178,6 +178,15 @@ package_version="$(node -p "require('./desktop/package.json').version")"
 lock_version="$(node -p "require('./desktop/package-lock.json').version")"
 echo "==> Desktop metadata: package=$package_version lock=$lock_version target=$version"
 
+for metadata_version in "$package_version" "$lock_version"; do
+  if [[ ! "$metadata_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+    die "desktop version metadata is not plain semver: $metadata_version"
+  fi
+done
+if semver_gt "$package_version" "$version" || semver_gt "$lock_version" "$version"; then
+  die "$tag would downgrade desktop version metadata (package=$package_version lock=$lock_version)"
+fi
+
 if $dry_run; then
   if [[ "$package_version" != "$version" || "$lock_version" != "$version" ]]; then
     echo "==> Dry run: would update and commit desktop version metadata to $version"

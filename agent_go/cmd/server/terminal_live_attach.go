@@ -307,9 +307,12 @@ func (st *liveAttachStream) start() {
 	ctx, cancel := context.WithCancel(context.Background())
 	st.cancel = cancel
 	go func() {
-		defer cancel()
-		defer st.mgr.dropStream(st)
+		// Defers run in reverse order. Publish done only after the attach context
+		// is canceled and the manager/subscriber cleanup has completed, so callers
+		// cannot observe a finished stream that is still registered.
 		defer close(st.done)
+		defer st.mgr.dropStream(st)
+		defer cancel()
 		liveAttachAttachFn(st, ctx)
 	}()
 }

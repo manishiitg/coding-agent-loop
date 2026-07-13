@@ -16,6 +16,12 @@ const terminal = (id: string, overrides: Partial<TerminalSnapshot> = {}): Termin
 })
 
 describe('reconcileTerminalSnapshots', () => {
+  it('preserves the array for repeated empty polls', () => {
+    const current: TerminalSnapshot[] = []
+
+    expect(reconcileTerminalSnapshots(current, [])).toBe(current)
+  })
+
   it('preserves the array and objects for semantically identical polls', () => {
     const current = [terminal('one'), terminal('two')]
     const incoming = current.map(item => ({

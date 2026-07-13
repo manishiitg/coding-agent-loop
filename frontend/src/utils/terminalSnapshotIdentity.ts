@@ -29,7 +29,7 @@ export function reconcileTerminalSnapshots(
   current: TerminalSnapshot[],
   incoming: TerminalSnapshot[],
 ): TerminalSnapshot[] {
-  if (current.length === 0) return incoming
+  if (current.length === 0) return incoming.length === 0 ? current : incoming
   if (incoming.length === 0) return incoming
 
   const currentByID = new Map(current.map(terminal => [terminal.terminal_id, terminal]))

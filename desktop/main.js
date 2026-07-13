@@ -1373,6 +1373,38 @@ function waitForHealth(agentUrl, workspaceUrl) {
 // it survives AgentWorks quitting) and quit ourselves. install.sh kills any
 // leftover AgentWorks processes, downloads the new dmg, replaces
 // the app bundle, strips quarantine, and relaunches.
+function fetchJsonWithRedirects(url, redirectsLeft = 6) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { headers: { 'User-Agent': 'AgentWorks' } }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume();
+        if (redirectsLeft <= 0) {
+          reject(new Error('Too many redirects'));
+          return;
+        }
+        const redirectUrl = new URL(res.headers.location, url).toString();
+        fetchJsonWithRedirects(redirectUrl, redirectsLeft - 1).then(resolve, reject);
+        return;
+      }
+
+      let data = '';
+      res.on('data', (chunk) => data += chunk);
+      res.on('end', () => {
+        if (res.statusCode !== 200) {
+          reject(new Error(`GitHub returned HTTP ${res.statusCode}`));
+          return;
+        }
+        try {
+          resolve(JSON.parse(data));
+        } catch (err) {
+          reject(new Error(`Could not parse GitHub response: ${err.message}`));
+        }
+      });
+    });
+    req.on('error', reject);
+  });
+}
+
 function checkForUpdates(manual = false) {
   if (!app.isPackaged) {
     console.log('[update] Skipping check — not packaged');
@@ -1387,29 +1419,8 @@ function checkForUpdates(manual = false) {
     return;
   }
 
-  const options = {
-    hostname: 'api.github.com',
-    path: '/repos/manishiitg/coding-agent-loop/releases/latest',
-    method: 'GET',
-    headers: { 'User-Agent': 'AgentWorks' }
-  };
-
-  const req = https.request(options, (res) => {
-    let data = '';
-    res.on('data', (chunk) => data += chunk);
-    res.on('end', async () => {
-      if (res.statusCode !== 200) {
-        if (manual) {
-          dialog.showErrorBox('Update check failed', `GitHub returned HTTP ${res.statusCode}.`);
-        }
-        return;
-      }
-      let release;
-      try { release = JSON.parse(data); } catch (e) {
-        console.error('[update] parse error:', e);
-        if (manual) dialog.showErrorBox('Update check failed', 'Could not parse GitHub response.');
-        return;
-      }
+  fetchJsonWithRedirects('https://api.github.com/repos/manishiitg/coding-agent-loop/releases/latest')
+    .then(async (release) => {
       const latestVersion = (release.tag_name || '').replace(/^v/, '');
       const currentVersion = app.getVersion();
       if (!latestVersion || !isNewerVersion(latestVersion, currentVersion)) {
@@ -1450,10 +1461,13 @@ function checkForUpdates(manual = false) {
       } else if (choice.response === 1) {
         if (release.html_url) shell.openExternal(release.html_url);
       }
+    })
+    .catch((err) => {
+      console.warn('[update] check failed:', err?.message || err);
+      if (manual) {
+        dialog.showErrorBox('Update check failed', String(err?.message || err));
+      }
     });
-  });
-  req.on('error', (e) => console.warn('[update] check failed:', e?.message || e));
-  req.end();
 }
 
 // Compare semver-ish strings (e.g. "1.25.10" vs "1.25.9"). Numeric per dotted

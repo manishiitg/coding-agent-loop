@@ -15,7 +15,6 @@ import { RenderedContentSearchBar, RenderedContentSearchButton, useRenderedConte
 import { resetSessionId, agentApi } from "./services/api";
 import { AuthWrapper } from "./components/AuthWrapper";
 import type { FileVersion } from "./services/api-types";
-import PushToGistDialog from "./components/workspace/PushToGistDialog";
 import { isValidJSON } from "./utils/event-helpers";
 import { prepareDomForPdfExport } from "./utils/pdfExport";
 import { convertToSlackMarkdown } from "./utils/slackMarkdown";
@@ -24,7 +23,6 @@ import { findBlockingMultiAgentSession, shouldConfirmForSessionStatus, shouldCon
 import { Edit, Save, X, Loader2, Download, Link, Github, PanelRightClose, PanelRightOpen, Smartphone, Laptop } from "lucide-react";
 import { WorkflowLayout } from "./components/workflow";
 import { ModePresetBar } from "./components/ModePresetBar";
-import { QuickSwitcher } from "./components/QuickSwitcher";
 import { ChatTabs } from "./components/ChatTabs";
 import ConfirmationDialog from "./components/ui/ConfirmationDialog";
 import { useAppStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore, useWorkflowStore, useChatStore } from "./stores";
@@ -52,6 +50,8 @@ const queryClient = new QueryClient();
 
 const FileEditor = lazy(() => import('./components/workspace/FileEditor'))
 const FileRevisionsModal = lazy(() => import('./components/workspace/FileRevisionsModal'))
+const PushToGistDialog = lazy(() => import('./components/workspace/PushToGistDialog'))
+const QuickSwitcher = lazy(() => import('./components/QuickSwitcher'))
 const WorkflowsOverviewPage = lazy(() => import('./components/WorkflowsOverviewPage').then(module => ({ default: module.WorkflowsOverviewPage })))
 const XlsxRenderer = lazy(() => import('./components/ui/XlsxRenderer').then(module => ({ default: module.XlsxRenderer })))
 const DocxRenderer = lazy(() => import('./components/ui/DocxRenderer').then(module => ({ default: module.DocxRenderer })))
@@ -1640,11 +1640,15 @@ function App() {
               (ModePresetBar → WorkspaceTopBarControls). */}
           <div className="flex-1 flex flex-col min-w-0 min-h-0 relative z-10 overflow-hidden">
             {/* Quick Switcher (Ctrl+K) - constrained to the main content area */}
-            <QuickSwitcher
-              isOpen={showQuickSwitcher}
-              onClose={() => setShowQuickSwitcher(false)}
-              initialQuery={quickSwitcherInitialQuery}
-            />
+            {showQuickSwitcher && (
+              <Suspense fallback={<LazyModalFallback label="Loading switcher..." />}>
+                <QuickSwitcher
+                  isOpen
+                  onClose={() => setShowQuickSwitcher(false)}
+                  initialQuery={quickSwitcherInitialQuery}
+                />
+              </Suspense>
+            )}
 
             {/* Global Mode & Preset Bar - only above middle content area, not sidebars */}
             <ModePresetBar />
@@ -2251,12 +2255,16 @@ function App() {
         </div>
 
         {/* Push to Gist Dialog */}
-        <PushToGistDialog
-          isOpen={showPushToGistDialog}
-          onClose={() => setShowPushToGistDialog(false)}
-          fileContent={fileContent}
-          fileName={selectedFile?.name || selectedFile?.path?.split('/').pop() || 'document.md'}
-        />
+        {showPushToGistDialog && (
+          <Suspense fallback={<LazyModalFallback label="Loading GitHub sharing..." />}>
+            <PushToGistDialog
+              isOpen
+              onClose={() => setShowPushToGistDialog(false)}
+              fileContent={fileContent}
+              fileName={selectedFile?.name || selectedFile?.path?.split('/').pop() || 'document.md'}
+            />
+          </Suspense>
+        )}
 
         {/* File Revisions Modal */}
         {showRevisionsModal && (

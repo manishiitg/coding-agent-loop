@@ -87,6 +87,31 @@ func TestNormalizePresetLLMConfigMigratesLegacyCodingAgentToProviderProfile(t *t
 	}
 }
 
+func TestResolveProviderProfileConfigUsesBuilderDefaults(t *testing.T) {
+	tests := []struct {
+		provider string
+		model    string
+		effort   string
+	}{
+		{provider: "claude-code", model: "claude-opus-4-8", effort: "high"},
+		{provider: "codex-cli", model: "gpt-5.6-sol", effort: "high"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.provider, func(t *testing.T) {
+			builder, _, ok := ResolveProviderProfileConfig(providerProfile(tt.provider))
+			if !ok || builder == nil {
+				t.Fatalf("ResolveProviderProfileConfig(%q) = %+v, ok=%v", tt.provider, builder, ok)
+			}
+			if builder.Provider != tt.provider || builder.ModelID != tt.model {
+				t.Fatalf("builder = %+v, want %s/%s", builder, tt.provider, tt.model)
+			}
+			if got := builder.Options["reasoning_effort"]; got != tt.effort {
+				t.Fatalf("reasoning_effort = %#v, want %q", got, tt.effort)
+			}
+		})
+	}
+}
+
 func TestResolveProviderProfileMaintenanceConfigUsesProviderDefault(t *testing.T) {
 	got, ok := ResolveProviderProfileMaintenanceConfig(providerProfile("claude-code"))
 	if !ok || got.Provider != "claude-code" || got.ModelID != "claude-opus-4-8" {

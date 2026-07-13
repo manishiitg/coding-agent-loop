@@ -17,6 +17,7 @@ import (
 type sseEventMessage struct {
 	Events                     []events.Event `json:"events"`
 	SessionStatus              string         `json:"session_status,omitempty"`
+	DisplayStatus              string         `json:"display_status,omitempty"`
 	LastProcessedIndex         int            `json:"last_processed_index"`
 	HasRunningBackgroundAgents bool           `json:"has_running_background_agents,omitempty"`
 	IsSyntheticTurn            bool           `json:"is_synthetic_turn,omitempty"` // True when running auto-notification turn (frontend should not block input)
@@ -26,6 +27,7 @@ type sseEventMessage struct {
 // sseStatusMessage is sent on the "status" SSE event.
 type sseStatusMessage struct {
 	SessionStatus              string `json:"session_status,omitempty"`
+	DisplayStatus              string `json:"display_status,omitempty"`
 	HasRunningBackgroundAgents bool   `json:"has_running_background_agents,omitempty"`
 	IsSyntheticTurn            bool   `json:"is_synthetic_turn,omitempty"`
 	CanSteer                   bool   `json:"can_steer,omitempty"`
@@ -106,13 +108,16 @@ func (api *StreamingAPI) handleSSEStream(w http.ResponseWriter, r *http.Request)
 			IncludeStreaming: true,
 		})
 		if len(result.Events) > 0 {
+			runtimeStatus := api.sessionDisplayStatus(sessionID)
+			api.observeRuntimeSnapshot(sessionID, &runtimeStatus)
 			msg := sseEventMessage{
 				Events:                     result.Events,
 				SessionStatus:              sessionStatus,
+				DisplayStatus:              runtimeStatus.Status,
 				LastProcessedIndex:         result.LastProcessedIndex,
-				HasRunningBackgroundAgents: api.bgAgentRegistry.HasRunningAgents(sessionID),
+				HasRunningBackgroundAgents: runtimeStatus.HasRunningBackgroundAgents,
 				IsSyntheticTurn:            api.isSyntheticTurn(sessionID),
-				CanSteer:                   api.canSteerSession(sessionID),
+				CanSteer:                   runtimeStatus.CanSteer,
 			}
 			if err := writeSSEEvent(w, "event", result.LastProcessedIndex, msg); err != nil {
 				return
@@ -162,13 +167,15 @@ func (api *StreamingAPI) handleSSEStream(w http.ResponseWriter, r *http.Request)
 				currentStatus = sessionStatus
 			}
 
+			runtimeStatus := api.sessionDisplayStatus(sessionID)
 			msg := sseEventMessage{
 				Events:                     []events.Event{event},
 				SessionStatus:              currentStatus,
+				DisplayStatus:              runtimeStatus.Status,
 				LastProcessedIndex:         lastIndex,
-				HasRunningBackgroundAgents: api.bgAgentRegistry.HasRunningAgents(sessionID),
+				HasRunningBackgroundAgents: runtimeStatus.HasRunningBackgroundAgents,
 				IsSyntheticTurn:            api.isSyntheticTurn(sessionID),
-				CanSteer:                   api.canSteerSession(sessionID),
+				CanSteer:                   runtimeStatus.CanSteer,
 			}
 			if err := writeSSEEvent(w, "event", lastIndex, msg); err != nil {
 				return
@@ -182,11 +189,17 @@ func (api *StreamingAPI) handleSSEStream(w http.ResponseWriter, r *http.Request)
 			} else {
 				sessionStatus = currentStatus // update cached status
 			}
+			runtimeStatus := api.sessionDisplayStatus(sessionID)
+			// Runtime observation is intentionally tied to the status cadence,
+			// not the event case above. Token streams can emit dozens of events
+			// per second, while the observer clones and sorts several stores.
+			api.observeRuntimeSnapshot(sessionID, &runtimeStatus)
 			msg := sseStatusMessage{
 				SessionStatus:              currentStatus,
-				HasRunningBackgroundAgents: api.bgAgentRegistry.HasRunningAgents(sessionID),
+				DisplayStatus:              runtimeStatus.Status,
+				HasRunningBackgroundAgents: runtimeStatus.HasRunningBackgroundAgents,
 				IsSyntheticTurn:            api.isSyntheticTurn(sessionID),
-				CanSteer:                   api.canSteerSession(sessionID),
+				CanSteer:                   runtimeStatus.CanSteer,
 			}
 			if err := writeSSEEvent(w, "status", -1, msg); err != nil {
 				return

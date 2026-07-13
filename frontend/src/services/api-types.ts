@@ -555,6 +555,7 @@ export interface GetEventsResponse {
   has_more: boolean
   session_id: string
   session_status: string // Session status: "running", "completed", "error", "stopped", "inactive" (required - source of truth)
+  display_status?: 'busy' | 'idle' | 'stopped'
   last_processed_index?: number // Last index processed in unfiltered array (for correct sinceIndex tracking when filtering)
   has_running_background_agents?: boolean // Whether background agents are still running for this session
   is_synthetic_turn?: boolean // True when running auto-notification turn (input remains locked as normal)
@@ -687,6 +688,7 @@ export interface ReconnectSessionResponse {
 export interface SessionStatusResponse {
   session_id: string
   status: string // "active", "completed", "not_found"
+  display_status?: 'busy' | 'idle' | 'stopped'
   agent_mode?: string
   created_at?: string
   last_activity?: string
@@ -1080,6 +1082,7 @@ export interface WorkflowBuilderSessionResponse {
 export interface SSEEventMessage {
   events: PollingEvent[]
   session_status?: string
+  display_status?: 'busy' | 'idle' | 'stopped'
   last_processed_index: number
   has_running_background_agents?: boolean
   is_synthetic_turn?: boolean
@@ -1088,6 +1091,7 @@ export interface SSEEventMessage {
 
 export interface SSEStatusMessage {
   session_status?: string
+  display_status?: 'busy' | 'idle' | 'stopped'
   has_running_background_agents?: boolean
   is_synthetic_turn?: boolean
   can_steer?: boolean
@@ -2263,7 +2267,7 @@ export interface ScheduledJob {
   last_run_at?: string
   next_run_at?: string
   last_session_id?: string
-  last_status?: 'success' | 'error' | 'running'
+  last_status?: 'success' | 'error' | 'running' | 'stopped'
   last_error?: string
   last_duration_ms?: number
   run_count: number

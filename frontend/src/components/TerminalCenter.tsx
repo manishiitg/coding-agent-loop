@@ -14,6 +14,7 @@ import { terminalReconnectDelayMs, terminalSnapshotCanReconnect } from '../utils
 import { useTheme } from '../hooks/useTheme'
 import type { Theme } from '../contexts/ThemeContext'
 import { normalizeAnsiForEmbeddedXterm } from '../utils/ansiSanitize'
+import { preserveTerminalContinuity } from '../utils/terminalContinuity'
 import { MarkdownRenderer } from './ui/MarkdownRenderer'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 
@@ -3376,14 +3377,14 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
             terminalMatchesWorkflow(terminal, terminalWorkflowPathFilter)
           )
         )
-        if (!viewAll && currentSessionId && nextTerminals.length === 0 && current.length > 0 && currentMatchesScope) {
-          emptyResponseCountRef.current += 1
-          if (emptyResponseCountRef.current <= EMPTY_TERMINAL_RESPONSE_GRACE_POLLS) {
-            return current
-          }
-        }
-        emptyResponseCountRef.current = nextTerminals.length === 0 ? emptyResponseCountRef.current : 0
-        return nextTerminals
+        const continuity = preserveTerminalContinuity(current, nextTerminals, {
+          sameScope: !viewAll && !!currentSessionId && currentMatchesScope,
+          hasPendingActivity: hasPendingTerminalActivity,
+          emptyPollCount: emptyResponseCountRef.current,
+          gracePolls: EMPTY_TERMINAL_RESPONSE_GRACE_POLLS,
+        })
+        emptyResponseCountRef.current = continuity.emptyPollCount
+        return continuity.terminals
       })
       setError(null)
     } catch (err) {
@@ -3395,7 +3396,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
         fetchInFlightScopeRef.current = null
       }
     }
-  }, [currentSessionId, dismissedTerminalIDs, terminalWorkflowPathFilter, viewAll])
+  }, [currentSessionId, dismissedTerminalIDs, hasPendingTerminalActivity, terminalWorkflowPathFilter, viewAll])
 
   const dismissTerminal = useCallback(async (terminal: TerminalSnapshot) => {
     if (!canDismissTerminal(terminal)) return

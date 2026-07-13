@@ -31,6 +31,7 @@ type ScheduleContext struct {
 	UserID        string // Set for multi-agent schedules (derived from _users/{userID}/ path)
 	SourceType    string // "workflow" or "multi-agent"
 	TriggerSource string // "cron" (default) or "manual"; encoded into the session ID
+	runGeneration uint64 // identifies the in-memory run that owns runtime-state updates
 }
 
 // newScheduleSessionID mints the session ID for a scheduled run. Encoding the
@@ -58,6 +59,8 @@ type ScheduleRuntimeState struct {
 	LastDurationMs      *int64     `json:"last_duration_ms,omitempty"`
 	RunCount            int        `json:"run_count"`
 	ConsecutiveFailures int        `json:"consecutive_failures"`
+	runGeneration       uint64
+	runCancel           context.CancelFunc
 }
 
 // registeredJob is a schedule registered for wall-clock evaluation.
@@ -506,9 +509,11 @@ func (s *SchedulerService) LoadSchedule(sctx *ScheduleContext) error {
 		nextRun = getNextRunTime(sched.CronExpression, sched.Timezone)
 	}
 
-	// Initialize runtime state with next run
-	state := s.getOrCreateRuntimeState(sched.ID)
+	// Initialize runtime state with next run.
+	s.runtimeStatesMu.Lock()
+	state := s.getRuntimeStateLocked(sched.ID)
 	state.NextRunAt = nextRun
+	s.runtimeStatesMu.Unlock()
 
 	nextRunStr := "unknown"
 	if nextRun != nil {
@@ -589,12 +594,7 @@ func (s *SchedulerService) RemoveJob(id string) error {
 
 // GetRuntimeState returns the in-memory runtime state for a schedule.
 func (s *SchedulerService) GetRuntimeState(scheduleID string) ScheduleRuntimeState {
-	s.runtimeStatesMu.RLock()
-	var merged ScheduleRuntimeState
-	if state, ok := s.runtimeStates[scheduleID]; ok {
-		merged = *state
-	}
-	s.runtimeStatesMu.RUnlock()
+	merged := s.getRuntimeStateSnapshot(scheduleID)
 
 	if userID := s.GetUserForSchedule(scheduleID); userID != "" {
 		runs, err := ReadMultiAgentScheduleRuns(context.Background(), userID)
@@ -613,6 +613,36 @@ func (s *SchedulerService) GetRuntimeState(scheduleID string) ScheduleRuntimeSta
 	}
 
 	return merged
+}
+
+func (s *SchedulerService) getRuntimeStateSnapshot(scheduleID string) ScheduleRuntimeState {
+	s.runtimeStatesMu.RLock()
+	defer s.runtimeStatesMu.RUnlock()
+	if state, ok := s.runtimeStates[scheduleID]; ok && state != nil {
+		return cloneScheduleRuntimeState(state)
+	}
+	return ScheduleRuntimeState{}
+}
+
+func cloneScheduleRuntimeState(state *ScheduleRuntimeState) ScheduleRuntimeState {
+	if state == nil {
+		return ScheduleRuntimeState{}
+	}
+	copy := *state
+	copy.runCancel = nil
+	if state.LastRunAt != nil {
+		value := *state.LastRunAt
+		copy.LastRunAt = &value
+	}
+	if state.NextRunAt != nil {
+		value := *state.NextRunAt
+		copy.NextRunAt = &value
+	}
+	if state.LastDurationMs != nil {
+		value := *state.LastDurationMs
+		copy.LastDurationMs = &value
+	}
+	return copy
 }
 
 func (s *SchedulerService) reconcileWorkflowScheduleRuns(ctx context.Context, workspacePath, scheduleID string) error {
@@ -679,7 +709,9 @@ func (s *SchedulerService) reconciledScheduleRunStatus(run *ScheduleRunEntry, no
 		return "", "", false
 	case "completed":
 		return "success", "", true
-	case "error", "stopped", "inactive", "dismissed":
+	case "stopped", "dismissed":
+		return "stopped", fmt.Sprintf("session ended with status %s", session.Status), true
+	case "error", "failed", "inactive":
 		return "error", fmt.Sprintf("session ended with status %s", session.Status), true
 	default:
 		return "", "", false
@@ -793,10 +825,13 @@ func (s *SchedulerService) TriggerNow(workspacePath string, scheduleID string) (
 	state.LastStatus = "running"
 	state.LastRunAt = &startTime
 	state.LastError = ""
+	state.runGeneration++
+	runGeneration := state.runGeneration
 	s.runtimeStatesMu.Unlock()
 
 	sctx := buildScheduleContext(workspacePath, manifest, *sched)
 	sctx.TriggerSource = "manual"
+	sctx.runGeneration = runGeneration
 
 	if err := RecordWorkflowScheduleExecution(context.Background(), workspacePath, *sched, startTime); err != nil {
 		s.logf(sctx, "[SCHEDULER] Warning: failed to record manual schedule execution for %s: %v", scheduleID, err)
@@ -842,10 +877,13 @@ func (s *SchedulerService) TriggerMultiAgentNow(userID string, scheduleID string
 	state.LastStatus = "running"
 	state.LastRunAt = &startTime
 	state.LastError = ""
+	state.runGeneration++
+	runGeneration := state.runGeneration
 	s.runtimeStatesMu.Unlock()
 
 	sctx := buildMultiAgentScheduleContext(userID, *sched, f.Capabilities)
 	sctx.TriggerSource = "manual"
+	sctx.runGeneration = runGeneration
 
 	go func() {
 		if _, err := s.runJob(context.Background(), sctx); err != nil {
@@ -858,24 +896,37 @@ func (s *SchedulerService) TriggerMultiAgentNow(userID string, scheduleID string
 
 // StopRunningJob stops a running scheduled job by canceling its session.
 func (s *SchedulerService) StopRunningJob(scheduleID string) {
-	state := s.GetRuntimeState(scheduleID)
-	sessionID := state.LastSessionID
-	if sessionID == "" {
+	s.runtimeStatesMu.Lock()
+	state := s.getRuntimeStateLocked(scheduleID)
+	if state.LastStatus != "running" {
+		s.runtimeStatesMu.Unlock()
 		return
 	}
+	sessionID := state.LastSessionID
+	cancel := state.runCancel
+	durationMs := int64(0)
+	if state.LastRunAt != nil {
+		durationMs = time.Since(*state.LastRunAt).Milliseconds()
+	}
+	state.LastStatus = "stopped"
+	state.LastError = "stopped by user"
+	state.LastDurationMs = &durationMs
+	state.runGeneration++ // invalidates every late write from the stopped run
+	state.runCancel = nil
+	s.runtimeStatesMu.Unlock()
 
 	scheduleLogf("[SCHEDULER] Stopping running job %s (session: %s)", scheduleID, sessionID)
+	if cancel != nil {
+		cancel()
+	}
+	if sessionID == "" {
+		scheduleLogf("[SCHEDULER] Stopped job %s before its session was registered", scheduleID)
+		return
+	}
 	if isScheduledSession(sessionID) {
 		s.api.markSessionTurnInterrupted(sessionID)
 	}
 	s.cancelScheduledSessionWork(sessionID, "scheduled job stopped by user")
-
-	// Update runtime state
-	s.runtimeStatesMu.Lock()
-	if st, ok := s.runtimeStates[scheduleID]; ok {
-		st.LastStatus = "stopped"
-	}
-	s.runtimeStatesMu.Unlock()
 
 	scheduleLogf("[SCHEDULER] Stopped job %s (session: %s)", scheduleID, sessionID)
 }
@@ -1105,6 +1156,8 @@ func (s *SchedulerService) triggerSchedule(sctx *ScheduleContext) {
 	state.LastStatus = "running"
 	state.LastRunAt = &startTime
 	state.LastError = ""
+	state.runGeneration++
+	freshCtx.runGeneration = state.runGeneration
 	s.runtimeStatesMu.Unlock()
 
 	if freshCtx.SourceType == "workflow" {
@@ -1128,10 +1181,31 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 	s.logf(sctx, "[SCHEDULER] runJob starting for %s (%s) at %s, groups=%v",
 		schedID, sctx.Schedule.Name, startTime.Format(time.RFC3339), sctx.Schedule.GroupNames)
 
-	// Clear session/error fields — status is already "running" (set atomically by caller)
-	state := s.getOrCreateRuntimeState(schedID)
+	// Bind this goroutine to the exact run generation that started it. Stop or a
+	// later restart invalidates the generation, so this run cannot overwrite the
+	// newer state when it eventually returns.
+	runCtx, runCancel := context.WithCancel(ctx)
+	defer runCancel()
+	s.runtimeStatesMu.Lock()
+	state := s.getRuntimeStateLocked(schedID)
+	if sctx.runGeneration == 0 {
+		if state.LastStatus == "running" {
+			s.runtimeStatesMu.Unlock()
+			return "", errWorkshopSequenceInterrupted
+		}
+		state.LastStatus = "running"
+		state.LastRunAt = &startTime
+		state.runGeneration++
+		sctx.runGeneration = state.runGeneration
+	}
+	if state.LastStatus != "running" || state.runGeneration != sctx.runGeneration {
+		s.runtimeStatesMu.Unlock()
+		return "", errWorkshopSequenceInterrupted
+	}
 	state.LastSessionID = ""
 	state.LastError = ""
+	state.runCancel = runCancel
+	s.runtimeStatesMu.Unlock()
 
 	// Create run history entry (file-based)
 	runID := uuid.New().String()
@@ -1153,7 +1227,7 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 	}
 
 	// Execute
-	sessionID, runFolder, execErr := s.executeJob(ctx, sctx, runID)
+	sessionID, runFolder, execErr := s.executeJob(runCtx, sctx, runID)
 
 	// Calculate results
 	durationMs := time.Since(startTime).Milliseconds()
@@ -1161,10 +1235,15 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 
 	status := "success"
 	errMsg := ""
-	userInterrupted := errors.Is(execErr, errWorkshopSequenceInterrupted)
+	userInterrupted := errors.Is(execErr, errWorkshopSequenceInterrupted) || s.scheduleRunInvalidated(schedID, sctx.runGeneration)
 	if userInterrupted {
 		status = "stopped"
-		errMsg = execErr.Error()
+		if execErr != nil {
+			errMsg = execErr.Error()
+		} else {
+			errMsg = "stopped by user"
+			execErr = errWorkshopSequenceInterrupted
+		}
 		s.sessionLogf(sctx, sessionID, "[SCHEDULER] %s stopped by user after %dms", schedID, durationMs)
 	} else if execErr != nil {
 		status = "error"
@@ -1180,7 +1259,7 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 	// frequent cron can start the next workflow run while Pulse is between steps.
 	// That makes the next Pulse turn fail with workflow_busy (commonly after the
 	// LLM/cost/time report), so cadence/backup/publish/notify never run.
-	state.LastSessionID = sessionID
+	s.setScheduleSessionID(schedID, sctx.runGeneration, sessionID)
 
 	// Update run history entry for the actual workflow/task run. Post-run Pulse
 	// may continue after this, but it does not change the recorded run result.
@@ -1216,15 +1295,10 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 	}
 
 	// Now the whole scheduled job, including post-run side effects, is done.
-	state.LastStatus = status
-	state.LastError = errMsg
-	state.LastDurationMs = &durationMs
-	state.NextRunAt = nextRun
-	state.RunCount++
-	if status == "error" {
-		state.ConsecutiveFailures++
-	} else {
-		state.ConsecutiveFailures = 0
+	if !s.finishScheduleRun(schedID, sctx.runGeneration, status, errMsg, durationMs, nextRun) {
+		stateSnapshot := s.getRuntimeStateSnapshot(schedID)
+		s.sessionLogf(sctx, sessionID, "[SCHEDULER] Ignoring late completion for %s generation %d; current generation=%d status=%s",
+			schedID, sctx.runGeneration, stateSnapshot.runGeneration, stateSnapshot.LastStatus)
 	}
 
 	return sessionID, execErr
@@ -1919,8 +1993,7 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 
 	sessionID := s.newScheduleSessionID(sctx)
 
-	state := s.getOrCreateRuntimeState(sctx.Schedule.ID)
-	state.LastSessionID = sessionID
+	s.setScheduleSessionID(sctx.Schedule.ID, sctx.runGeneration, sessionID)
 
 	if runID != "" {
 		_ = UpdateScheduleRun(ctx, sctx.WorkspacePath, runID, "running", "", nil, runFolder, sessionID)
@@ -2210,8 +2283,7 @@ func (s *SchedulerService) executeMultiAgentJob(ctx context.Context, sctx *Sched
 
 	sessionID := s.newScheduleSessionID(sctx)
 
-	state := s.getOrCreateRuntimeState(sctx.Schedule.ID)
-	state.LastSessionID = sessionID
+	s.setScheduleSessionID(sctx.Schedule.ID, sctx.runGeneration, sessionID)
 
 	if runID != "" {
 		_ = UpdateMultiAgentScheduleRun(ctx, sctx.UserID, runID, "running", "", nil, sessionID)
@@ -2802,18 +2874,6 @@ func (api *StreamingAPI) refreshSessionTmuxSnapshotsForIdleCheck(ctx context.Con
 	return nil
 }
 
-// getOrCreateRuntimeState returns (or creates) the in-memory runtime state for a schedule.
-func (s *SchedulerService) getOrCreateRuntimeState(scheduleID string) *ScheduleRuntimeState {
-	s.runtimeStatesMu.Lock()
-	defer s.runtimeStatesMu.Unlock()
-	if state, ok := s.runtimeStates[scheduleID]; ok {
-		return state
-	}
-	state := &ScheduleRuntimeState{}
-	s.runtimeStates[scheduleID] = state
-	return state
-}
-
 // getRuntimeStateLocked returns or creates runtime state. Caller MUST hold runtimeStatesMu write lock.
 func (s *SchedulerService) getRuntimeStateLocked(scheduleID string) *ScheduleRuntimeState {
 	if state, ok := s.runtimeStates[scheduleID]; ok {
@@ -2822,6 +2882,45 @@ func (s *SchedulerService) getRuntimeStateLocked(scheduleID string) *ScheduleRun
 	state := &ScheduleRuntimeState{}
 	s.runtimeStates[scheduleID] = state
 	return state
+}
+
+func (s *SchedulerService) setScheduleSessionID(scheduleID string, generation uint64, sessionID string) bool {
+	s.runtimeStatesMu.Lock()
+	defer s.runtimeStatesMu.Unlock()
+	state := s.getRuntimeStateLocked(scheduleID)
+	if state.LastStatus != "running" || state.runGeneration != generation {
+		return false
+	}
+	state.LastSessionID = sessionID
+	return true
+}
+
+func (s *SchedulerService) scheduleRunInvalidated(scheduleID string, generation uint64) bool {
+	s.runtimeStatesMu.RLock()
+	defer s.runtimeStatesMu.RUnlock()
+	state := s.runtimeStates[scheduleID]
+	return state == nil || state.LastStatus != "running" || state.runGeneration != generation
+}
+
+func (s *SchedulerService) finishScheduleRun(scheduleID string, generation uint64, status, errMsg string, durationMs int64, nextRun *time.Time) bool {
+	s.runtimeStatesMu.Lock()
+	defer s.runtimeStatesMu.Unlock()
+	state := s.getRuntimeStateLocked(scheduleID)
+	if state.LastStatus != "running" || state.runGeneration != generation {
+		return false
+	}
+	state.LastStatus = status
+	state.LastError = errMsg
+	state.LastDurationMs = &durationMs
+	state.NextRunAt = nextRun
+	state.RunCount++
+	state.runCancel = nil
+	if status == "error" {
+		state.ConsecutiveFailures++
+	} else {
+		state.ConsecutiveFailures = 0
+	}
+	return true
 }
 
 func runningWorkflowScheduleInSetLocked(runtimeStates map[string]*ScheduleRuntimeState, scheduleIDs []string, ignoreScheduleID string) (string, string) {

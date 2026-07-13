@@ -1115,17 +1115,13 @@ func stopScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 
 		svc.StopRunningJob(id)
 
-		// Update runtime state
-		svc.runtimeStatesMu.Lock()
-		s := svc.getRuntimeStateLocked(id)
+		// StopRunningJob owns the runtime transition. The route only mirrors that
+		// terminal state into persisted run history.
+		stoppedState := svc.getRuntimeStateSnapshot(id)
 		durationMs := int64(0)
-		if s.LastRunAt != nil {
-			durationMs = time.Since(*s.LastRunAt).Milliseconds()
+		if stoppedState.LastDurationMs != nil {
+			durationMs = *stoppedState.LastDurationMs
 		}
-		s.LastStatus = "error"
-		s.LastError = "stopped by user"
-		s.LastDurationMs = &durationMs
-		svc.runtimeStatesMu.Unlock()
 
 		// Update latest run entry — check multi-agent first, then workflow
 		userID := svc.GetUserForSchedule(id)
@@ -1134,7 +1130,7 @@ func stopScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			if err == nil {
 				for i := range runs {
 					if runs[i].ScheduleID == id && runs[i].Status == "running" {
-						_ = UpdateMultiAgentScheduleRun(r.Context(), userID, runs[i].ID, "error", "stopped by user", &durationMs, "")
+						_ = UpdateMultiAgentScheduleRun(r.Context(), userID, runs[i].ID, "stopped", "stopped by user", &durationMs, "")
 						break
 					}
 				}
@@ -1146,7 +1142,7 @@ func stopScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 				if err == nil && len(runs) > 0 {
 					for i := range runs {
 						if runs[i].ScheduleID == id && runs[i].Status == "running" {
-							_ = UpdateScheduleRun(r.Context(), workspacePath, runs[i].ID, "error", "stopped by user", &durationMs, "", "")
+							_ = UpdateScheduleRun(r.Context(), workspacePath, runs[i].ID, "stopped", "stopped by user", &durationMs, "", "")
 							break
 						}
 					}

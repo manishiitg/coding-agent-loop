@@ -1,0 +1,251 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/gorilla/mux"
+	"mcp-agent-builder-go/agent_go/internal/events"
+)
+
+func TestNormalizeSessionLifecycleStatus(t *testing.T) {
+	tests := map[string]sessionLifecycleStatus{
+		"running":                   sessionLifecycleRunning,
+		"active":                    sessionLifecycleRunning,
+		"success":                   sessionLifecycleCompleted,
+		"completed":                 sessionLifecycleCompleted,
+		"error":                     sessionLifecycleFailed,
+		"failed":                    sessionLifecycleFailed,
+		legacyCanceledBritishStatus: sessionLifecycleStopped,
+		"stopped":                   sessionLifecycleStopped,
+		"inactive":                  sessionLifecycleInactive,
+	}
+	for input, want := range tests {
+		if got := normalizeSessionLifecycleStatus(input); got != want {
+			t.Fatalf("normalizeSessionLifecycleStatus(%q) = %q, want %q", input, got, want)
+		}
+	}
+	if !isStoppedSessionStatus("failed") || !isStoppedSessionStatus("error") {
+		t.Fatal("both failed and legacy error statuses must be terminal")
+	}
+}
+
+func TestActiveSessionReadsReturnSnapshots(t *testing.T) {
+	waitingSince := time.Now().Add(-time.Minute)
+	api := &StreamingAPI{
+		activeSessions: map[string]*ActiveSessionInfo{
+			"session-1": {
+				SessionID:    "session-1",
+				Status:       "running",
+				CreatedAt:    time.Now().Add(-time.Hour),
+				LastActivity: time.Now(),
+				WaitingSince: &waitingSince,
+			},
+		},
+	}
+
+	snapshot, ok := api.getActiveSession("session-1")
+	if !ok {
+		t.Fatal("expected active session")
+	}
+	snapshot.Status = "stopped"
+	*snapshot.WaitingSince = time.Time{}
+	if api.activeSessions["session-1"].Status != "running" {
+		t.Fatal("mutating a returned session changed shared state")
+	}
+	if api.activeSessions["session-1"].WaitingSince.IsZero() {
+		t.Fatal("nested pointer was not copied")
+	}
+
+	all := api.getAllActiveSessions()
+	if len(all) != 1 {
+		t.Fatalf("getAllActiveSessions returned %d sessions, want 1", len(all))
+	}
+	all[0].Status = "failed"
+	if api.activeSessions["session-1"].Status != "running" {
+		t.Fatal("mutating an active-session list item changed shared state")
+	}
+}
+
+func TestInactiveCleanupPreservesLiveTurnAndMarksTrulyIdleSession(t *testing.T) {
+	now := time.Now()
+	liveCtx, liveCancel := context.WithCancel(context.Background())
+	defer liveCancel()
+	api := &StreamingAPI{
+		runtimeCoordinator: NewRuntimeCoordinator(),
+		activeSessions: map[string]*ActiveSessionInfo{
+			"live": {
+				SessionID: "live", Status: "running", CreatedAt: now.Add(-time.Hour), LastActivity: now.Add(-20 * time.Minute),
+			},
+			"idle": {
+				SessionID: "idle", Status: "running", CreatedAt: now.Add(-time.Hour), LastActivity: now.Add(-20 * time.Minute),
+			},
+		},
+		agentCancelFuncs:         map[string]context.CancelFunc{"live": liveCancel},
+		pendingCompletions:       map[string][]string{},
+		completionRetryScheduled: map[string]bool{},
+		bgAgentRegistry:          NewBackgroundAgentRegistry(),
+	}
+	_ = liveCtx
+
+	api.cleanupInactiveSessionsAt(now)
+
+	if got := api.activeSessions["live"].Status; got != "running" {
+		t.Fatalf("live foreground turn status = %q, want running", got)
+	}
+	if got := api.activeSessions["idle"].Status; got != "inactive" {
+		t.Fatalf("truly idle session status = %q, want inactive", got)
+	}
+	observed, ok := api.runtimeCoordinator.Snapshot("idle")
+	if !ok || observed.RawSessionStatus != "inactive" {
+		t.Fatalf("inactive transition was not observed immediately: %#v, ok=%v", observed, ok)
+	}
+	active := api.getAllActiveSessions()
+	if len(active) != 2 {
+		t.Fatalf("active sessions count = %d, want retained live plus inactive session", len(active))
+	}
+	foundLive := false
+	for _, session := range active {
+		if session.SessionID == "live" {
+			foundLive = true
+		}
+	}
+	if !foundLive {
+		t.Fatal("old session with a live foreground turn was hidden from active-session list")
+	}
+}
+
+func TestInactiveCleanupEvictsRuntimeCoordinatorRecord(t *testing.T) {
+	now := time.Now()
+	coordinator := NewRuntimeCoordinator()
+	coordinator.Observe(RuntimeSnapshot{SessionID: "expired", Phase: runtimePhaseCompleted})
+	api := &StreamingAPI{
+		runtimeCoordinator: coordinator,
+		activeSessions: map[string]*ActiveSessionInfo{
+			"expired": {
+				SessionID:    "expired",
+				Status:       "completed",
+				CreatedAt:    now.Add(-26 * time.Hour),
+				LastActivity: now.Add(-25 * time.Hour),
+			},
+		},
+	}
+
+	api.cleanupInactiveSessionsAt(now)
+
+	if _, ok := api.activeSessions["expired"]; ok {
+		t.Fatal("expired active session was not removed")
+	}
+	if _, ok := coordinator.Snapshot("expired"); ok {
+		t.Fatal("expired session left a runtime coordinator record behind")
+	}
+}
+
+func TestScheduleStopInvalidatesLateCompletion(t *testing.T) {
+	canceled := false
+	startedAt := time.Now().Add(-time.Minute)
+	svc := &SchedulerService{
+		runtimeStates: map[string]*ScheduleRuntimeState{
+			"schedule-1": {
+				LastStatus: "running", LastRunAt: &startedAt, runGeneration: 4,
+				runCancel: func() { canceled = true },
+			},
+		},
+	}
+
+	svc.StopRunningJob("schedule-1")
+	state := svc.GetRuntimeState("schedule-1")
+	if state.LastStatus != "stopped" || state.LastError != "stopped by user" {
+		t.Fatalf("stopped state = %#v", state)
+	}
+	if !canceled {
+		t.Fatal("StopRunningJob did not cancel the run context")
+	}
+	if svc.finishScheduleRun("schedule-1", 4, "success", "", 100, nil) {
+		t.Fatal("late generation was allowed to commit")
+	}
+	state = svc.GetRuntimeState("schedule-1")
+	if state.LastStatus != "stopped" {
+		t.Fatalf("late completion overwrote stopped state with %q", state.LastStatus)
+	}
+}
+
+func TestScheduleRuntimeReadReturnsSnapshot(t *testing.T) {
+	lastRun := time.Now()
+	duration := int64(10)
+	svc := &SchedulerService{runtimeStates: map[string]*ScheduleRuntimeState{
+		"schedule-1": {LastStatus: "running", LastRunAt: &lastRun, LastDurationMs: &duration},
+	}}
+
+	snapshot := svc.getRuntimeStateSnapshot("schedule-1")
+	snapshot.LastStatus = "stopped"
+	*snapshot.LastRunAt = time.Time{}
+	*snapshot.LastDurationMs = 999
+	state := svc.runtimeStates["schedule-1"]
+	if state.LastStatus != "running" || state.LastRunAt.IsZero() || *state.LastDurationMs != 10 {
+		t.Fatalf("mutating schedule snapshot changed shared state: %#v", state)
+	}
+}
+
+func TestScheduleReconciliationPreservesStoppedStatus(t *testing.T) {
+	now := time.Now()
+	svc := &SchedulerService{api: &StreamingAPI{
+		activeSessions: map[string]*ActiveSessionInfo{
+			"schedule-session": {SessionID: "schedule-session", Status: "stopped", LastActivity: now},
+		},
+	}}
+	status, _, terminal := svc.reconciledScheduleRunStatus(&ScheduleRunEntry{
+		SessionID: "schedule-session",
+		StartedAt: now.Add(-time.Minute),
+	}, now)
+	if !terminal || status != "stopped" {
+		t.Fatalf("reconciled stopped session = status %q terminal=%t", status, terminal)
+	}
+}
+
+func TestRuntimeEndpointsUseSameDisplayStatus(t *testing.T) {
+	store := events.NewEventStore(10)
+	defer store.Stop()
+	const sessionID = "session-busy"
+	now := time.Now()
+	api := &StreamingAPI{
+		eventStore:      store,
+		bgAgentRegistry: NewBackgroundAgentRegistry(),
+		activeSessions: map[string]*ActiveSessionInfo{
+			sessionID: {SessionID: sessionID, Status: "running", CreatedAt: now, LastActivity: now},
+		},
+		sessionBusy:      map[string]bool{sessionID: true},
+		sessionBusySince: map[string]time.Time{sessionID: now},
+	}
+
+	eventsRequest := httptest.NewRequest("GET", "/api/sessions/"+sessionID+"/events?since=0", nil)
+	eventsRequest = mux.SetURLVars(eventsRequest, map[string]string{"session_id": sessionID})
+	eventsResponse := httptest.NewRecorder()
+	api.handleGetSessionEvents(eventsResponse, eventsRequest)
+	var pollingBody GetEventsResponse
+	if err := json.Unmarshal(eventsResponse.Body.Bytes(), &pollingBody); err != nil {
+		t.Fatalf("decode polling response: %v", err)
+	}
+
+	statusRequest := httptest.NewRequest("GET", "/api/sessions/"+sessionID+"/status", nil)
+	statusRequest = mux.SetURLVars(statusRequest, map[string]string{"session_id": sessionID})
+	statusResponse := httptest.NewRecorder()
+	api.handleGetSessionStatus(statusResponse, statusRequest)
+	var statusBody struct {
+		DisplayStatus string `json:"display_status"`
+	}
+	if err := json.Unmarshal(statusResponse.Body.Bytes(), &statusBody); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+
+	if pollingBody.DisplayStatus != sessionExecutionDisplayBusy || statusBody.DisplayStatus != pollingBody.DisplayStatus {
+		t.Fatalf("display status mismatch: polling=%q status=%q", pollingBody.DisplayStatus, statusBody.DisplayStatus)
+	}
+	sseBody := sseStatusMessage{DisplayStatus: api.sessionDisplayStatus(sessionID).Status}
+	if sseBody.DisplayStatus != pollingBody.DisplayStatus {
+		t.Fatalf("SSE display status=%q, polling=%q", sseBody.DisplayStatus, pollingBody.DisplayStatus)
+	}
+}

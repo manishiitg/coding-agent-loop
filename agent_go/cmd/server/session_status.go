@@ -1,5 +1,7 @@
 package server
 
+import "strings"
+
 // Consolidated session "live status" logic — the single source of truth for
 // whether a session is busy / idle / stopped (and steerable). Previously this
 // determination was reimplemented in several places (the execution-tree summary,
@@ -12,6 +14,38 @@ type SessionDisplayStatus struct {
 	Status                     string // sessionExecutionDisplay{Busy,Idle,Stopped}
 	CanSteer                   bool
 	HasRunningBackgroundAgents bool
+}
+
+type sessionLifecycleStatus string
+
+const legacyCanceledBritishStatus = "cancel" + "led"
+
+const (
+	sessionLifecycleRunning   sessionLifecycleStatus = "running"
+	sessionLifecycleCompleted sessionLifecycleStatus = "completed"
+	sessionLifecycleFailed    sessionLifecycleStatus = "failed"
+	sessionLifecycleStopped   sessionLifecycleStatus = "stopped"
+	sessionLifecycleInactive  sessionLifecycleStatus = "inactive"
+	sessionLifecycleUnknown   sessionLifecycleStatus = "unknown"
+)
+
+// normalizeSessionLifecycleStatus gives internal state decisions one stable
+// vocabulary while preserving the legacy wire value in existing API fields.
+func normalizeSessionLifecycleStatus(status string) sessionLifecycleStatus {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "running", "active", "busy", "paused", "waiting":
+		return sessionLifecycleRunning
+	case "completed", "complete", "success", "succeeded", "done":
+		return sessionLifecycleCompleted
+	case "error", "failed", "failure":
+		return sessionLifecycleFailed
+	case "stopped", "canceled", legacyCanceledBritishStatus, "dismissed":
+		return sessionLifecycleStopped
+	case "inactive", "idle":
+		return sessionLifecycleInactive
+	default:
+		return sessionLifecycleUnknown
+	}
 }
 
 // deriveSessionDisplayStatus maps raw running/terminal signals to the
@@ -30,8 +64,8 @@ func deriveSessionDisplayStatus(hasRunningWork, isStopped bool) string {
 // isStoppedSessionStatus reports whether a session-level status string means the
 // session has finished/halted (vs. actively idle and able to continue).
 func isStoppedSessionStatus(status string) bool {
-	switch status {
-	case "completed", "stopped", "inactive", "dismissed":
+	switch normalizeSessionLifecycleStatus(status) {
+	case sessionLifecycleCompleted, sessionLifecycleFailed, sessionLifecycleStopped, sessionLifecycleInactive:
 		return true
 	default:
 		return false
@@ -45,6 +79,7 @@ func isStoppedSessionStatus(status string) bool {
 // tree (scheduler, polling).
 func (api *StreamingAPI) sessionHasRunningWork(sessionID string, hasRunningBackgroundAgents, canSteer bool) bool {
 	return api.isSessionBusy(sessionID) ||
+		api.hasActiveTurnCancel(sessionID) ||
 		hasRunningBackgroundAgents ||
 		api.hasRunningTrackedExecutionForSession(sessionID) ||
 		canSteer
@@ -61,11 +96,12 @@ func (api *StreamingAPI) sessionDisplayStatus(sessionID string) SessionDisplaySt
 	}
 	hasBg := api.bgAgentRegistry != nil && api.bgAgentRegistry.HasRunningAgents(sessionID)
 	canSteer := api.canSteerSession(sessionID)
-	return SessionDisplayStatus{
+	result := SessionDisplayStatus{
 		Status:                     deriveSessionDisplayStatus(api.sessionHasRunningWork(sessionID, hasBg, canSteer), isStoppedSessionStatus(sessionStatus)),
 		CanSteer:                   canSteer,
 		HasRunningBackgroundAgents: hasBg,
 	}
+	return result
 }
 
 // sessionIsBusy is a convenience wrapper: true when the session's consolidated

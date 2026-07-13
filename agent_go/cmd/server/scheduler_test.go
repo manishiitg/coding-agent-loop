@@ -1821,6 +1821,29 @@ func TestWaitForWorkshopIdleAbortsCanceledTurnBeforeNextMessage(t *testing.T) {
 	}
 }
 
+func TestRunJobGenerationZeroDoesNotJoinActiveRun(t *testing.T) {
+	startedAt := time.Now().Add(-time.Minute)
+	svc := &SchedulerService{runtimeStates: map[string]*ScheduleRuntimeState{
+		"schedule-1": {
+			LastStatus:    "running",
+			LastRunAt:     &startedAt,
+			runGeneration: 7,
+		},
+	}}
+	sctx := &ScheduleContext{Schedule: WorkflowSchedule{ID: "schedule-1", Name: "Active schedule"}}
+
+	_, err := svc.runJob(context.Background(), sctx)
+	if !errors.Is(err, errWorkshopSequenceInterrupted) {
+		t.Fatalf("runJob error = %v, want errWorkshopSequenceInterrupted", err)
+	}
+	if sctx.runGeneration != 0 {
+		t.Fatalf("generation-zero caller adopted generation %d", sctx.runGeneration)
+	}
+	if got := svc.runtimeStates["schedule-1"].runGeneration; got != 7 {
+		t.Fatalf("active run generation changed to %d", got)
+	}
+}
+
 func TestWaitForWorkshopIdleTimesOutWhenSessionStaysBusy(t *testing.T) {
 	oldInterval := schedulerWorkshopIdlePollInterval
 	oldMaxInactivity := schedulerWorkshopMaxInactivity

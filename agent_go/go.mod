@@ -16,12 +16,10 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/manishiitg/mcp-agent-builder-go/workspace v0.0.0
 	github.com/manishiitg/mcpagent v1.7.10
-	github.com/manishiitg/multi-llm-provider-go v0.6.2-0.20260713045530-9e88f0324804
+	github.com/manishiitg/multi-llm-provider-go v0.7.2
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/openai/openai-go/v3 v3.36.0
-	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/robfig/cron/v3 v3.0.1
-	github.com/sirupsen/logrus v1.9.3
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/slack-go/slack v0.17.3
 	github.com/spf13/cobra v1.10.1
@@ -100,11 +98,13 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/petermattis/goid v0.0.0-20260330135022-df67b199bc81 // indirect
+	github.com/pkoukk/tiktoken-go v0.1.8 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/quic-go/quic-go v0.59.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rs/zerolog v1.35.0 // indirect
 	github.com/sagikazarmark/locafero v0.11.0 // indirect
+	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect

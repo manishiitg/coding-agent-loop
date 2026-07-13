@@ -594,7 +594,13 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
                         <div>Next run: {new Date(existingJob.next_run_at).toLocaleString()}</div>
                       )}
                       {existingJob.last_status && (
-                        <div className={existingJob.last_status === 'error' ? 'text-red-500' : 'text-green-600 dark:text-green-400'}>
+                        <div className={
+                          existingJob.last_status === 'error'
+                            ? 'text-red-500'
+                            : existingJob.last_status === 'stopped'
+                              ? 'text-amber-600 dark:text-amber-400'
+                              : 'text-green-600 dark:text-green-400'
+                        }>
                           Last status: {existingJob.last_status}
                           {existingJob.last_error && ` — ${existingJob.last_error}`}
                         </div>

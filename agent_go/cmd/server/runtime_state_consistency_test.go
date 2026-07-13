@@ -75,6 +75,7 @@ func TestInactiveCleanupPreservesLiveTurnAndMarksTrulyIdleSession(t *testing.T) 
 	liveCtx, liveCancel := context.WithCancel(context.Background())
 	defer liveCancel()
 	api := &StreamingAPI{
+		runtimeCoordinator: NewRuntimeCoordinator(),
 		activeSessions: map[string]*ActiveSessionInfo{
 			"live": {
 				SessionID: "live", Status: "running", CreatedAt: now.Add(-time.Hour), LastActivity: now.Add(-20 * time.Minute),
@@ -97,6 +98,10 @@ func TestInactiveCleanupPreservesLiveTurnAndMarksTrulyIdleSession(t *testing.T) 
 	}
 	if got := api.activeSessions["idle"].Status; got != "inactive" {
 		t.Fatalf("truly idle session status = %q, want inactive", got)
+	}
+	observed, ok := api.runtimeCoordinator.Snapshot("idle")
+	if !ok || observed.RawSessionStatus != "inactive" {
+		t.Fatalf("inactive transition was not observed immediately: %#v, ok=%v", observed, ok)
 	}
 	active := api.getAllActiveSessions()
 	if len(active) != 2 {

@@ -6611,6 +6611,7 @@ func (api *StreamingAPI) cleanupInactiveSessionsAt(now time.Time) {
 
 	sessionsToEvictEventBuffer := make([]string, 0)
 	sessionsToEvictRuntime := make([]string, 0)
+	sessionsMarkedInactive := make([]string, 0)
 	api.activeSessionsMux.Lock()
 	for sessionID, session := range api.activeSessions {
 		age := now.Sub(session.LastActivity)
@@ -6619,6 +6620,7 @@ func (api *StreamingAPI) cleanupInactiveSessionsAt(now time.Time) {
 			normalizeSessionLifecycleStatus(session.Status) == sessionLifecycleRunning {
 			session.Status = string(sessionLifecycleInactive)
 			session.LastActivity = now
+			sessionsMarkedInactive = append(sessionsMarkedInactive, sessionID)
 			age = 0
 			log.Printf("[ACTIVE_SESSION] Marked session %s inactive after verified idle timeout", sessionID)
 		}
@@ -6638,6 +6640,10 @@ func (api *StreamingAPI) cleanupInactiveSessionsAt(now time.Time) {
 		}
 	}
 	api.activeSessionsMux.Unlock()
+
+	for _, sessionID := range sessionsMarkedInactive {
+		api.observeRuntimeSnapshot(sessionID, nil)
+	}
 
 	for _, sessionID := range sessionsToEvictRuntime {
 		if api.runtimeCoordinator != nil {

@@ -31,7 +31,7 @@ type queryAPIResponse struct {
 // keyed by column name. The connection is opened read-only server-side.
 func (c *Client) QueryWorkflowDB(ctx context.Context, params QueryWorkflowDBParams) ([]map[string]interface{}, error) {
 	// Read operation against the db file — validate the path against the read guard.
-	if err := c.ValidatePath(params.DBPath, false); err != nil {
+	if err := c.ValidatePathWithContext(ctx, params.DBPath, false); err != nil {
 		return nil, err
 	}
 

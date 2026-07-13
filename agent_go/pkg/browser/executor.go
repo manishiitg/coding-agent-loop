@@ -324,7 +324,8 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	}
 
 	// Folder guard priority: session config > context system 1 > context system 2
-	if sessionCfg != nil && len(sessionCfg.WritePaths) > 0 {
+	if sessionCfg != nil && (sessionCfg.FolderGuardSet || len(sessionCfg.ReadPaths) > 0 || len(sessionCfg.WritePaths) > 0 ||
+		len(sessionCfg.BlockedPaths) > 0 || len(sessionCfg.BlockedWritePaths) > 0) {
 		readPaths := sessionCfg.WritePaths
 		if len(sessionCfg.ReadPaths) > 0 {
 			readPaths = common.DeduplicateStrings(append(sessionCfg.ReadPaths, sessionCfg.WritePaths...))
@@ -333,9 +334,10 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			Enabled:           true,
 			WritePaths:        sessionCfg.WritePaths,
 			ReadPaths:         readPaths,
+			BlockedPaths:      sessionCfg.BlockedPaths,
 			BlockedWritePaths: sessionCfg.BlockedWritePaths,
 		}
-	} else if allowedWrites, ok := ctx.Value(common.FolderGuardAllowedWriteFolderKey).([]string); ok && len(allowedWrites) > 0 {
+	} else if allowedWrites, ok := ctx.Value(common.FolderGuardAllowedWriteFolderKey).([]string); ok {
 		// Context System 1: chat/plan/prototype mode
 		ctxReads, hasCtxReads := ctx.Value(common.FolderGuardReadPathsKey).([]string)
 		readPaths := allowedWrites
@@ -343,11 +345,13 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			readPaths = common.DeduplicateStrings(append(ctxReads, allowedWrites...))
 		}
 		folderGuard = &FolderGuardConfig{
-			Enabled:    true,
-			WritePaths: allowedWrites,
-			ReadPaths:  readPaths,
+			Enabled:           true,
+			WritePaths:        allowedWrites,
+			ReadPaths:         readPaths,
+			BlockedPaths:      browserContextGuardPaths(ctx, common.FolderGuardBlockedPathsKey),
+			BlockedWritePaths: browserContextGuardPaths(ctx, common.FolderGuardBlockedWritePathsKey),
 		}
-	} else if ctxWrites, ok := ctx.Value(common.FolderGuardWritePathsKey).([]string); ok && len(ctxWrites) > 0 {
+	} else if ctxWrites, ok := ctx.Value(common.FolderGuardWritePathsKey).([]string); ok {
 		// Context System 2: workflow orchestrator
 		ctxReads, hasCtxReads := ctx.Value(common.FolderGuardReadPathsKey).([]string)
 		readPaths := ctxWrites
@@ -355,10 +359,15 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			readPaths = common.DeduplicateStrings(append(ctxReads, ctxWrites...))
 		}
 		folderGuard = &FolderGuardConfig{
-			Enabled:    true,
-			WritePaths: ctxWrites,
-			ReadPaths:  readPaths,
+			Enabled:           true,
+			WritePaths:        ctxWrites,
+			ReadPaths:         readPaths,
+			BlockedPaths:      browserContextGuardPaths(ctx, common.FolderGuardBlockedPathsKey),
+			BlockedWritePaths: browserContextGuardPaths(ctx, common.FolderGuardBlockedWritePathsKey),
 		}
+	}
+	if folderGuard != nil && len(folderGuard.ReadPaths) == 0 && len(folderGuard.WritePaths) == 0 {
+		return "", fmt.Errorf("ACCESS DENIED: agent_browser has no granted workspace paths")
 	}
 
 	// Execute via client
@@ -559,6 +568,11 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	}
 
 	return output, nil
+}
+
+func browserContextGuardPaths(ctx context.Context, key common.ContextKey) []string {
+	paths, _ := ctx.Value(key).([]string)
+	return append([]string(nil), paths...)
 }
 
 func (e *Executor) listCDPTabs(ctx context.Context, session, cdpURL string, opts *ExecuteOptions) (string, error) {

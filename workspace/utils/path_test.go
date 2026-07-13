@@ -291,3 +291,36 @@ func TestIsValidFilePath(t *testing.T) {
 		})
 	}
 }
+
+func TestIsValidFilePathRejectsSymlinkEscape(t *testing.T) {
+	docsDir := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(docsDir, "escape")); err != nil {
+		t.Fatal(err)
+	}
+
+	if IsValidFilePath(filepath.Join(docsDir, "escape", "secret.txt"), docsDir) {
+		t.Fatal("existing file through an escaping symlink must be rejected")
+	}
+	if IsValidFilePath(filepath.Join(docsDir, "escape", "new.txt"), docsDir) {
+		t.Fatal("new file under an escaping symlink must be rejected")
+	}
+}
+
+func TestIsValidFilePathAllowsSymlinkInsideWorkspace(t *testing.T) {
+	docsDir := t.TempDir()
+	target := filepath.Join(docsDir, "target")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(docsDir, "inside")); err != nil {
+		t.Fatal(err)
+	}
+
+	if !IsValidFilePath(filepath.Join(docsDir, "inside", "new.txt"), docsDir) {
+		t.Fatal("symlink that remains inside the workspace should be allowed")
+	}
+}

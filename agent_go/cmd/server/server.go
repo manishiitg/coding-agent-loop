@@ -6646,6 +6646,7 @@ func (api *StreamingAPI) cleanupInactiveSessionsAt(now time.Time) {
 	}
 
 	for _, sessionID := range sessionsToEvictRuntime {
+		workspace.ClearSessionShellConfig(sessionID)
 		if api.runtimeCoordinator != nil {
 			api.runtimeCoordinator.Evict(sessionID)
 		}

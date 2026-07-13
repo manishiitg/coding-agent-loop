@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"log"
 	"mcp-agent-builder-go/agent_go/pkg/browser"
+	"mcp-agent-builder-go/agent_go/pkg/workspace"
 	"net/http"
 	"os"
 	"strings"
@@ -342,6 +343,11 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// Permission state is scoped to the lifetime of the chat session. Keeping it
+	// after stop can leak stale workspace roots, secrets, or browser grants into a
+	// later session that reuses the same ID.
+	workspace.ClearSessionShellConfig(sessionID)
+
 	// Note: Conversation history and orchestrator state are preserved to allow resuming the conversation
 	// Use /api/session/clear if you want to clear conversation history
 
@@ -415,6 +421,7 @@ func (api *StreamingAPI) handleClearSession(w http.ResponseWriter, r *http.Reque
 
 	// Kill headless browser processes for this session
 	api.cleanupBrowserSessions(sessionID)
+	workspace.ClearSessionShellConfig(sessionID)
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Session cleared (conversation history and orchestrator state removed)"))

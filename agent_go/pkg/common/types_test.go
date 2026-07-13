@@ -79,3 +79,56 @@ func TestSetSessionShellEnvMergesAndCopies(t *testing.T) {
 		t.Fatal("nil env should be a no-op")
 	}
 }
+
+func TestSessionShellConfigIsImmutableAcrossCallers(t *testing.T) {
+	sessionID := "immutable-shell-config"
+	defer ClearSessionShellConfig(sessionID)
+	reads := []string{"Workflow/demo"}
+	writes := []string{"Workflow/demo/output"}
+	SetSessionFolderGuard(sessionID, reads, writes)
+	SetSessionFolderGuardBlockedPaths(sessionID, []string{"Workflow/demo/secrets"})
+	SetSessionFolderGuardBlockedWritePaths(sessionID, []string{"Workflow/demo/planning"})
+
+	reads[0] = "Workflow/other"
+	writes[0] = "Workflow/other/output"
+	first := GetSessionShellConfig(sessionID)
+	first.ReadPaths[0] = "mutated-read"
+	first.WritePaths[0] = "mutated-write"
+	first.BlockedPaths[0] = "mutated-block"
+	first.BlockedWritePaths[0] = "mutated-write-block"
+
+	second := GetSessionShellConfig(sessionID)
+	if got := second.ReadPaths[0]; got != "Workflow/demo" {
+		t.Fatalf("stored read path mutated: %q", got)
+	}
+	if got := second.WritePaths[0]; got != "Workflow/demo/output" {
+		t.Fatalf("stored write path mutated: %q", got)
+	}
+	if got := second.BlockedPaths[0]; got != "Workflow/demo/secrets" {
+		t.Fatalf("stored blocked path mutated: %q", got)
+	}
+	if got := second.BlockedWritePaths[0]; got != "Workflow/demo/planning" {
+		t.Fatalf("stored blocked-write path mutated: %q", got)
+	}
+}
+
+func TestCopySessionFolderGuardPreservesDenyOnlyGuard(t *testing.T) {
+	const source = "deny-only-source"
+	const target = "deny-only-target"
+	defer ClearSessionShellConfig(source)
+	defer ClearSessionShellConfig(target)
+
+	SetSessionFolderGuardBlockedPaths(source, []string{"Workflow/demo/secrets"})
+	SetSessionFolderGuardBlockedWritePaths(source, []string{"Workflow/demo/planning"})
+	if !CopySessionFolderGuard(source, target) {
+		t.Fatal("deny-only guard should be copied")
+	}
+
+	copied := GetSessionShellConfig(target)
+	if copied == nil || len(copied.BlockedPaths) != 1 || copied.BlockedPaths[0] != "Workflow/demo/secrets" {
+		t.Fatalf("blocked paths not copied: %+v", copied)
+	}
+	if len(copied.BlockedWritePaths) != 1 || copied.BlockedWritePaths[0] != "Workflow/demo/planning" {
+		t.Fatalf("blocked write paths not copied: %+v", copied)
+	}
+}

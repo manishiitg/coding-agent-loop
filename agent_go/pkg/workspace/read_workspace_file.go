@@ -29,7 +29,7 @@ type documentAPIResponse struct {
 // ReadWorkspaceFile reads a file using the REST API: GET /api/documents/*filepath
 func (c *Client) ReadWorkspaceFile(ctx context.Context, params ReadWorkspaceFileParams) (ReadFileResult, error) {
 	// Validate path against folder guard (read operation)
-	if err := c.ValidatePath(params.Filepath, false); err != nil {
+	if err := c.ValidatePathWithContext(ctx, params.Filepath, false); err != nil {
 		return ReadFileResult{}, err
 	}
 

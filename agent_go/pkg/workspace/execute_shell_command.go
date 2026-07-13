@@ -30,6 +30,11 @@ func SetSessionFolderGuard(sessionID string, readPaths, writePaths []string) {
 	common.SetSessionFolderGuard(sessionID, readPaths, writePaths)
 }
 
+// SetSessionFolderGuardBlockedPaths delegates to the common hard-deny policy.
+func SetSessionFolderGuardBlockedPaths(sessionID string, blockedPaths []string) {
+	common.SetSessionFolderGuardBlockedPaths(sessionID, blockedPaths)
+}
+
 // SetSessionFolderGuardBlockedWritePaths delegates to the common version.
 // BlockedWritePaths are the authoritative write-only deny list — they flow
 // through to the isolator's FolderGuardConfig.BlockedWritePaths and are enforced
@@ -297,7 +302,7 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 	// Populate folder guard configuration for the Isolator.
 	// params.FolderGuard is never set by callers — it's always nil on entry.
 	// Priority: session config > context keys > client-level fallback.
-	if sessionCfg != nil && (len(sessionCfg.ReadPaths) > 0 || len(sessionCfg.WritePaths) > 0) {
+	if sessionConfigHasFolderGuard(sessionCfg) {
 		// Session config: set by SetSessionFolderGuard() — highest priority.
 		// Covers CLI/Gemini providers that bypass the Go folder guard context wrappers.
 		// BlockedWritePaths flow through as the write-only deny list enforced by the
@@ -311,10 +316,11 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 			Enabled:           true,
 			WritePaths:        sessionCfg.WritePaths,
 			ReadPaths:         readPaths,
+			BlockedPaths:      sessionCfg.BlockedPaths,
 			BlockedWritePaths: sessionCfg.BlockedWritePaths,
 		}
 		log.Printf("[FOLDER_GUARD_RESOLVE] SessionConfig: session=%s WritePaths=%v ReadPaths=%v BlockedWritePaths=%v cmd=%s", sessionID, sessionCfg.WritePaths, readPaths, sessionCfg.BlockedWritePaths, redactedCommandForLog)
-	} else if allowedWrites, ok := ctx.Value(common.FolderGuardAllowedWriteFolderKey).([]string); ok && len(allowedWrites) > 0 {
+	} else if allowedWrites, ok := ctx.Value(common.FolderGuardAllowedWriteFolderKey).([]string); ok {
 		// Context System 1: chat/plan/prototype mode
 		ctxReads, hasCtxReads := ctx.Value(common.FolderGuardReadPathsKey).([]string)
 		readPaths := allowedWrites
@@ -322,35 +328,39 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 			readPaths = deduplicateStrings(append(ctxReads, allowedWrites...))
 		}
 		params.FolderGuard = &FolderGuardConfig{
-			Enabled:    true,
-			WritePaths: allowedWrites,
-			ReadPaths:  readPaths,
+			Enabled:           true,
+			WritePaths:        allowedWrites,
+			ReadPaths:         readPaths,
+			BlockedPaths:      contextPathList(ctx, common.FolderGuardBlockedPathsKey),
+			BlockedWritePaths: contextPathList(ctx, common.FolderGuardBlockedWritePathsKey),
 		}
 		log.Printf("[FOLDER_GUARD_RESOLVE] System1 (chat/plan/prototype): URL=%s WritePaths=%v ReadPaths=%v cmd=%s", c.BaseURL, allowedWrites, readPaths, redactedCommandForLog)
 	} else if ctxWrites, ok := ctx.Value(common.FolderGuardWritePathsKey).([]string); ok {
 		// Context System 2: workflow orchestrator
 		ctxReads, hasCtxReads := ctx.Value(common.FolderGuardReadPathsKey).([]string)
-		if len(ctxWrites) == 0 && (!hasCtxReads || len(ctxReads) == 0) {
-			log.Printf("[FOLDER_GUARD_RESOLVE] NO folder guard at all: URL=%s cmd=%s", c.BaseURL, redactedCommandForLog)
-		} else {
-			readPaths := ctxWrites
-			if hasCtxReads && len(ctxReads) > 0 {
-				readPaths = deduplicateStrings(append(ctxReads, ctxWrites...))
-			}
-			params.FolderGuard = &FolderGuardConfig{
-				Enabled:    true,
-				WritePaths: ctxWrites,
-				ReadPaths:  readPaths,
-			}
-			log.Printf("[FOLDER_GUARD_RESOLVE] System2 (workflow): URL=%s WritePaths=%v ReadPaths=%v cmd=%s", c.BaseURL, ctxWrites, readPaths, redactedCommandForLog)
+		readPaths := ctxWrites
+		if hasCtxReads && len(ctxReads) > 0 {
+			readPaths = deduplicateStrings(append(ctxReads, ctxWrites...))
 		}
+		params.FolderGuard = &FolderGuardConfig{
+			Enabled:           true,
+			WritePaths:        ctxWrites,
+			ReadPaths:         readPaths,
+			BlockedPaths:      contextPathList(ctx, common.FolderGuardBlockedPathsKey),
+			BlockedWritePaths: contextPathList(ctx, common.FolderGuardBlockedWritePathsKey),
+		}
+		log.Printf("[FOLDER_GUARD_RESOLVE] System2 (workflow): URL=%s WritePaths=%v ReadPaths=%v cmd=%s", c.BaseURL, ctxWrites, readPaths, redactedCommandForLog)
 	} else if c.FolderGuard != nil && c.FolderGuard.Enabled {
 		// Client-level fallback — no session config, no context keys.
-		params.FolderGuard = c.FolderGuard
+		params.FolderGuard = cloneFolderGuard(c.FolderGuard)
 		log.Printf("[FOLDER_GUARD_RESOLVE] FALLBACK to client-level guard: URL=%s ReadPaths=%v WritePaths=%v BlockedPaths=%v cmd=%s",
 			c.BaseURL, c.FolderGuard.ReadPaths, c.FolderGuard.WritePaths, c.FolderGuard.BlockedPaths, redactedCommandForLog)
 	} else {
 		log.Printf("[FOLDER_GUARD_RESOLVE] NO folder guard at all: URL=%s cmd=%s", c.BaseURL, redactedCommandForLog)
+	}
+	if params.FolderGuard != nil && params.FolderGuard.Enabled &&
+		len(params.FolderGuard.ReadPaths) == 0 && len(params.FolderGuard.WritePaths) == 0 {
+		return ShellCommandResult{}, fmt.Errorf("ACCESS DENIED: execute_shell_command has no granted workspace paths")
 	}
 
 	// Block absolute host paths when folder guard is active.

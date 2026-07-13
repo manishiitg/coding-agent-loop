@@ -353,6 +353,47 @@ func TestExecuteShellCommand_PassesCDPHostDownloadsReadOnlyGuard(t *testing.T) {
 	}
 }
 
+func TestExecuteShellCommandPreservesReadOnlySessionGuard(t *testing.T) {
+	sessionID := "test-read-only-shell-guard"
+	common.SetSessionFolderGuard(sessionID, []string{"Workflow/demo"}, nil)
+	defer ClearSessionShellConfig(sessionID)
+
+	var got ExecuteShellCommandParams
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"data":    map[string]interface{}{"stdout": "ok", "exit_code": 0},
+		})
+	}))
+	defer server.Close()
+
+	ctx := context.WithValue(context.Background(), common.ChatSessionIDKey, sessionID)
+	if _, err := NewClient(server.URL).ExecuteShellCommand(ctx, ExecuteShellCommandParams{
+		Command: "cat Workflow/demo/report.html",
+	}); err != nil {
+		t.Fatalf("read-only shell command failed: %v", err)
+	}
+	if got.FolderGuard == nil || len(got.FolderGuard.ReadPaths) != 1 || len(got.FolderGuard.WritePaths) != 0 {
+		t.Fatalf("read-only guard was not preserved: %#v", got.FolderGuard)
+	}
+}
+
+func TestExecuteShellCommandRejectsExplicitEmptySessionGuard(t *testing.T) {
+	sessionID := "test-empty-shell-guard"
+	common.SetSessionFolderGuard(sessionID, []string{}, []string{})
+	defer ClearSessionShellConfig(sessionID)
+
+	ctx := context.WithValue(context.Background(), common.ChatSessionIDKey, sessionID)
+	_, err := NewClient("http://127.0.0.1:1").ExecuteShellCommand(ctx, ExecuteShellCommandParams{
+		Command: "pwd",
+	})
+	if err == nil || !strings.Contains(err.Error(), "no granted workspace paths") {
+		t.Fatalf("explicit empty guard should fail before HTTP, got %v", err)
+	}
+}
+
 func containsString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

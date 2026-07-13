@@ -1,8 +1,10 @@
 package workspace
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -55,5 +57,20 @@ func TestEncodeWorkspaceDocumentPath(t *testing.T) {
 	want := "Workflow/my%20flow/learnings/file%20%231.md"
 	if got != want {
 		t.Fatalf("encoded path = %q, want %q", got, want)
+	}
+}
+
+func TestDiffPatchWorkspaceFileValidatesInternally(t *testing.T) {
+	client := NewClient("http://127.0.0.1:1", WithFolderGuard(&FolderGuardConfig{
+		Enabled:    true,
+		WritePaths: []string{"Workflow/allowed"},
+	}))
+
+	_, err := client.DiffPatchWorkspaceFile(context.Background(), DiffPatchWorkspaceFileParams{
+		Filepath: "Workflow/blocked/report.html",
+		Diff:     "--- a/report.html\n+++ b/report.html\n@@ -0,0 +1 @@\n+hello\n",
+	})
+	if err == nil || !strings.Contains(err.Error(), "ACCESS DENIED") {
+		t.Fatalf("diff patch should be denied before making an HTTP request, got %v", err)
 	}
 }

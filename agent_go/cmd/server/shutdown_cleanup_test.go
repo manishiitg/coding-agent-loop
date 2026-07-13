@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	agent "mcp-agent-builder-go/agent_go/pkg/agentwrapper"
+	"mcp-agent-builder-go/agent_go/pkg/workspace"
 )
 
 type shutdownTestWorkshopSession struct {
@@ -95,6 +96,9 @@ func TestCancelActiveWorkForShutdown(t *testing.T) {
 }
 
 func TestHandleStopSessionCancelsActiveWorkAndPreventsPaneReuse(t *testing.T) {
+	workspace.SetSessionFolderGuard("session-1", []string{"Workflow/test"}, []string{"Workflow/test"})
+	defer workspace.ClearSessionShellConfig("session-1")
+
 	agentCanceled := false
 	workflowCanceled := false
 	backgroundCanceled := false
@@ -223,6 +227,9 @@ func TestHandleStopSessionCancelsActiveWorkAndPreventsPaneReuse(t *testing.T) {
 	}
 	if _, ok := api.workflowObjectives["session-1"]; ok {
 		t.Fatalf("workflow objective was not cleared")
+	}
+	if got := workspace.GetSessionShellConfig("session-1"); got != nil {
+		t.Fatalf("session shell config was not cleared: %+v", got)
 	}
 	if body := rec.Body.String(); !strings.Contains(body, "Session stopped") {
 		t.Fatalf("unexpected stop response body: %q", body)

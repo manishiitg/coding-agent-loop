@@ -10,10 +10,11 @@ import (
 
 // FolderGuardConfig represents folder access restrictions
 type FolderGuardConfig struct {
-	Enabled      bool     `json:"enabled"`
-	ReadPaths    []string `json:"read_paths"`
-	WritePaths   []string `json:"write_paths"`
-	BlockedPaths []string `json:"blocked_paths"`
+	Enabled           bool     `json:"enabled"`
+	ReadPaths         []string `json:"read_paths"`
+	WritePaths        []string `json:"write_paths"`
+	BlockedPaths      []string `json:"blocked_paths"`
+	BlockedWritePaths []string `json:"blocked_write_paths,omitempty"`
 }
 
 // ContextKey is a custom type for context keys to avoid collisions
@@ -26,6 +27,8 @@ const (
 	FolderGuardWritePathsKey ContextKey = "folder_guard_write_paths"
 	// FolderGuardBlockedPathsKey is the context key for blocked paths (deny list)
 	FolderGuardBlockedPathsKey ContextKey = "folder_guard_blocked_paths"
+	// FolderGuardBlockedWritePathsKey is the context key for write-only deny paths.
+	FolderGuardBlockedWritePathsKey ContextKey = "folder_guard_blocked_write_paths"
 	// FolderGuardAllowedWriteFolderKey is the context key for allowed write folders ([]string) in chat/plan mode
 	FolderGuardAllowedWriteFolderKey ContextKey = "folder_guard_allowed_write_folder"
 	// UserIDKey is the context key for the user ID (used for auth/database scoping)
@@ -100,15 +103,10 @@ func GrantSessionCDPHostDownloadsReadOnly(sessionID, browserMode string) string 
 	if strings.TrimSpace(sessionID) == "" || hostDownloads == "" {
 		return ""
 	}
-	sessionShellConfigsMu.Lock()
-	defer sessionShellConfigsMu.Unlock()
-	cfg := sessionShellConfigs[sessionID]
-	if cfg == nil {
-		cfg = &SessionShellConfig{}
-		sessionShellConfigs[sessionID] = cfg
-	}
-	cfg.ReadPaths = DeduplicateStrings(append(cfg.ReadPaths, hostDownloads))
-	cfg.BlockedWritePaths = DeduplicateStrings(append(cfg.BlockedWritePaths, hostDownloads))
+	updateSessionShellConfig(sessionID, func(cfg *SessionShellConfig) {
+		cfg.ReadPaths = DeduplicateStrings(append(cfg.ReadPaths, hostDownloads))
+		cfg.BlockedWritePaths = DeduplicateStrings(append(cfg.BlockedWritePaths, hostDownloads))
+	})
 	log.Printf("[SHELL] Granted read-only host Downloads for CDP session %s: %s", sessionID, hostDownloads)
 	return hostDownloads
 }
@@ -148,8 +146,10 @@ func PopulateMCPBridgeShortEnv(env map[string]string) {
 // agent can read plan.json but not raw-write it.
 type SessionShellConfig struct {
 	WorkingDir        string   // Default working directory (relative to workspace-docs)
+	FolderGuardSet    bool     // An explicit guard exists; empty capabilities must fail closed
 	ReadPaths         []string // Folder guard read paths for Isolator
 	WritePaths        []string // Folder guard write paths for Isolator
+	BlockedPaths      []string // Deny reads and writes
 	BlockedWritePaths []string // Deny writes; reads allowed (flows to FolderGuardConfig.BlockedWritePaths)
 	BrowserMode       string   // Resolved browser mode: "playwright", "headless", "cdp", ""
 	BrowserSessionID  string   // Shared browser identity for browser tools when "default" session is used
@@ -165,16 +165,50 @@ var (
 	sessionShellConfigsMu sync.RWMutex
 )
 
-// SetSessionWorkingDir sets the default working directory for a session.
-func SetSessionWorkingDir(sessionID, dir string) {
+func cloneStrings(values []string) []string {
+	if values == nil {
+		return nil
+	}
+	return append([]string(nil), values...)
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if values == nil {
+		return nil
+	}
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneSessionShellConfig(cfg *SessionShellConfig) *SessionShellConfig {
+	if cfg == nil {
+		return &SessionShellConfig{}
+	}
+	copy := *cfg
+	copy.ReadPaths = cloneStrings(cfg.ReadPaths)
+	copy.WritePaths = cloneStrings(cfg.WritePaths)
+	copy.BlockedPaths = cloneStrings(cfg.BlockedPaths)
+	copy.BlockedWritePaths = cloneStrings(cfg.BlockedWritePaths)
+	copy.Env = cloneStringMap(cfg.Env)
+	return &copy
+}
+
+func updateSessionShellConfig(sessionID string, update func(*SessionShellConfig)) {
 	sessionShellConfigsMu.Lock()
 	defer sessionShellConfigsMu.Unlock()
-	cfg := sessionShellConfigs[sessionID]
-	if cfg == nil {
-		cfg = &SessionShellConfig{}
-		sessionShellConfigs[sessionID] = cfg
-	}
-	cfg.WorkingDir = dir
+	cfg := cloneSessionShellConfig(sessionShellConfigs[sessionID])
+	update(cfg)
+	sessionShellConfigs[sessionID] = cfg
+}
+
+// SetSessionWorkingDir sets the default working directory for a session.
+func SetSessionWorkingDir(sessionID, dir string) {
+	updateSessionShellConfig(sessionID, func(cfg *SessionShellConfig) {
+		cfg.WorkingDir = dir
+	})
 	log.Printf("[SHELL] Set default working dir for session %s: %s", sessionID, dir)
 }
 
@@ -183,16 +217,21 @@ func SetSessionWorkingDir(sessionID, dir string) {
 // to set those independently, so existing callers don't need updating when a
 // session adds a deny prefix later.
 func SetSessionFolderGuard(sessionID string, readPaths, writePaths []string) {
-	sessionShellConfigsMu.Lock()
-	defer sessionShellConfigsMu.Unlock()
-	cfg := sessionShellConfigs[sessionID]
-	if cfg == nil {
-		cfg = &SessionShellConfig{}
-		sessionShellConfigs[sessionID] = cfg
-	}
-	cfg.ReadPaths = readPaths
-	cfg.WritePaths = writePaths
+	updateSessionShellConfig(sessionID, func(cfg *SessionShellConfig) {
+		cfg.FolderGuardSet = true
+		cfg.ReadPaths = cloneStrings(readPaths)
+		cfg.WritePaths = cloneStrings(writePaths)
+	})
 	log.Printf("[SHELL] Set folder guard for session %s: read=%v write=%v", sessionID, readPaths, writePaths)
+}
+
+// SetSessionFolderGuardBlockedPaths sets hard deny prefixes for both reads and writes.
+func SetSessionFolderGuardBlockedPaths(sessionID string, blockedPaths []string) {
+	updateSessionShellConfig(sessionID, func(cfg *SessionShellConfig) {
+		cfg.FolderGuardSet = true
+		cfg.BlockedPaths = cloneStrings(blockedPaths)
+	})
+	log.Printf("[SHELL] Set folder guard blocked paths for session %s: %v", sessionID, blockedPaths)
 }
 
 // SetSessionFolderGuardBlockedWritePaths sets the write-denied prefix list for
@@ -203,14 +242,10 @@ func SetSessionFolderGuard(sessionID string, readPaths, writePaths []string) {
 // #workflow setup to grant `Workflow/<name>/` as a broad write prefix while
 // denying writes to `Workflow/<name>/planning/`.
 func SetSessionFolderGuardBlockedWritePaths(sessionID string, blockedWritePaths []string) {
-	sessionShellConfigsMu.Lock()
-	defer sessionShellConfigsMu.Unlock()
-	cfg := sessionShellConfigs[sessionID]
-	if cfg == nil {
-		cfg = &SessionShellConfig{}
-		sessionShellConfigs[sessionID] = cfg
-	}
-	cfg.BlockedWritePaths = blockedWritePaths
+	updateSessionShellConfig(sessionID, func(cfg *SessionShellConfig) {
+		cfg.FolderGuardSet = true
+		cfg.BlockedWritePaths = cloneStrings(blockedWritePaths)
+	})
 	log.Printf("[SHELL] Set folder guard blocked-write paths for session %s: %v", sessionID, blockedWritePaths)
 }
 
@@ -222,21 +257,14 @@ func SetSessionShellEnv(sessionID string, env map[string]string) {
 	if len(env) == 0 {
 		return
 	}
-	sessionShellConfigsMu.Lock()
-	defer sessionShellConfigsMu.Unlock()
-	cfg := sessionShellConfigs[sessionID]
-	if cfg == nil {
-		cfg = &SessionShellConfig{}
-		sessionShellConfigs[sessionID] = cfg
-	}
-	merged := make(map[string]string, len(cfg.Env)+len(env))
-	for k, v := range cfg.Env {
-		merged[k] = v
-	}
-	for k, v := range env {
-		merged[k] = v
-	}
-	cfg.Env = merged
+	updateSessionShellConfig(sessionID, func(cfg *SessionShellConfig) {
+		if cfg.Env == nil {
+			cfg.Env = make(map[string]string, len(env))
+		}
+		for key, value := range env {
+			cfg.Env[key] = value
+		}
+	})
 	log.Printf("[SHELL] Set %d shell env var(s) for session %s", len(env), sessionID)
 }
 
@@ -259,14 +287,9 @@ func GetSessionShellEnv(sessionID string) map[string]string {
 // SetSessionBrowserMode stores the resolved browser mode for a session.
 // Used by execute_shell_command to show context-aware error messages when blocking agent-browser CLI calls.
 func SetSessionBrowserMode(sessionID, mode string) {
-	sessionShellConfigsMu.Lock()
-	defer sessionShellConfigsMu.Unlock()
-	cfg := sessionShellConfigs[sessionID]
-	if cfg == nil {
-		cfg = &SessionShellConfig{}
-		sessionShellConfigs[sessionID] = cfg
-	}
-	cfg.BrowserMode = mode
+	updateSessionShellConfig(sessionID, func(cfg *SessionShellConfig) {
+		cfg.BrowserMode = mode
+	})
 	log.Printf("[SHELL] Set browser mode for session %s: %s", sessionID, mode)
 }
 
@@ -286,14 +309,9 @@ func GetSessionBrowserMode(sessionID string) string {
 // Browser tools can use this to converge on a stable browser state while keeping tool routing
 // scoped to the original chat/workflow session.
 func SetSessionBrowserSessionID(sessionID, browserSessionID string) {
-	sessionShellConfigsMu.Lock()
-	defer sessionShellConfigsMu.Unlock()
-	cfg := sessionShellConfigs[sessionID]
-	if cfg == nil {
-		cfg = &SessionShellConfig{}
-		sessionShellConfigs[sessionID] = cfg
-	}
-	cfg.BrowserSessionID = browserSessionID
+	updateSessionShellConfig(sessionID, func(cfg *SessionShellConfig) {
+		cfg.BrowserSessionID = browserSessionID
+	})
 	log.Printf("[SHELL] Set browser session ID for session %s: %s", sessionID, browserSessionID)
 }
 
@@ -304,13 +322,14 @@ func SetSessionBrowserSessionID(sessionID, browserSessionID string) {
 // write restrictions AND the same blocked-write exceptions. Returns true if a
 // guard was copied.
 func CopySessionFolderGuard(fromSessionID, toSessionID string) bool {
-	sessionShellConfigsMu.RLock()
-	src := sessionShellConfigs[fromSessionID]
-	sessionShellConfigsMu.RUnlock()
-	if src == nil || (len(src.ReadPaths) == 0 && len(src.WritePaths) == 0) {
+	src := GetSessionShellConfig(fromSessionID)
+	if src == nil || (!src.FolderGuardSet && len(src.ReadPaths) == 0 && len(src.WritePaths) == 0 && len(src.BlockedPaths) == 0 && len(src.BlockedWritePaths) == 0) {
 		return false
 	}
 	SetSessionFolderGuard(toSessionID, src.ReadPaths, src.WritePaths)
+	if len(src.BlockedPaths) > 0 {
+		SetSessionFolderGuardBlockedPaths(toSessionID, src.BlockedPaths)
+	}
 	if len(src.BlockedWritePaths) > 0 {
 		SetSessionFolderGuardBlockedWritePaths(toSessionID, src.BlockedWritePaths)
 	}
@@ -329,7 +348,11 @@ func ClearSessionShellConfig(sessionID string) {
 func GetSessionShellConfig(sessionID string) *SessionShellConfig {
 	sessionShellConfigsMu.RLock()
 	defer sessionShellConfigsMu.RUnlock()
-	return sessionShellConfigs[sessionID]
+	cfg := sessionShellConfigs[sessionID]
+	if cfg == nil {
+		return nil
+	}
+	return cloneSessionShellConfig(cfg)
 }
 
 // ResolveBrowserSessionID returns the effective browser session to use for browser tools.

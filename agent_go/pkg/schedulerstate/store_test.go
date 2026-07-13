@@ -102,6 +102,41 @@ func TestRejectsInvalidAndTerminalRegression(t *testing.T) {
 	}
 }
 
+func TestPulseGateCanCompleteWithoutSelectedModules(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	run := Run{RunID: "run-no-modules", ScopeType: "workflow", ScopeID: "Workflow/demo", LockKey: "workflow:Workflow/demo", ScheduleID: "schedule-1"}
+	if err := store.BeginRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	for _, transition := range []Transition{
+		{RunID: run.RunID, To: StateWorkflowRunning},
+		{RunID: run.RunID, To: StateWorkflowFinished},
+		{RunID: run.RunID, To: StatePulseGate},
+		{RunID: run.RunID, To: StateCompleted},
+	} {
+		if err := store.Transition(ctx, transition); err != nil {
+			t.Fatalf("transition to %s: %v", transition.To, err)
+		}
+	}
+}
+
+func TestForceTerminalReleasesStuckLease(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	first := Run{RunID: "run-stuck", ScopeType: "workflow", ScopeID: "Workflow/demo", LockKey: "workflow:Workflow/demo", ScheduleID: "schedule-1"}
+	if err := store.BeginRun(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ForceTerminal(ctx, Transition{RunID: first.RunID, To: StateCompleted, Reason: "recover lease"}); err != nil {
+		t.Fatalf("force terminal: %v", err)
+	}
+	second := Run{RunID: "run-next", ScopeType: "workflow", ScopeID: "Workflow/demo", LockKey: first.LockKey, ScheduleID: "schedule-2"}
+	if err := store.BeginRun(ctx, second); err != nil {
+		t.Fatalf("lease remained stuck: %v", err)
+	}
+}
+
 func TestInterruptActiveRunsReleasesLeases(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
@@ -175,5 +210,30 @@ func TestFireDecisionsAreDurableAndScoped(t *testing.T) {
 	}
 	if len(decisions) != 2 || decisions[0].Decision != "started" || decisions[1].Decision != "skipped_busy" {
 		t.Fatalf("unexpected decisions: %+v", decisions)
+	}
+}
+
+func TestFireDecisionRetentionIsBoundedPerSchedule(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	for i := 0; i < fireDecisionRetentionPerSchedule+5; i++ {
+		if err := store.RecordFireDecision(ctx, FireDecision{
+			DecisionID: fmt.Sprintf("decision-%03d", i), ScopeType: "workflow", ScopeID: "Workflow/demo",
+			ScheduleID: "frequent", TriggerSource: "cron", Decision: "skipped_paused",
+			FiredAt: now.Add(time.Duration(i) * time.Second),
+		}); err != nil {
+			t.Fatalf("record decision %d: %v", i, err)
+		}
+	}
+	decisions, err := store.ListFireDecisions(ctx, "workflow", "Workflow/demo", "frequent", fireDecisionRetentionPerSchedule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decisions) != fireDecisionRetentionPerSchedule {
+		t.Fatalf("retained decisions = %d, want %d", len(decisions), fireDecisionRetentionPerSchedule)
+	}
+	if got := decisions[len(decisions)-1].DecisionID; got != "decision-005" {
+		t.Fatalf("oldest retained decision = %q, want decision-005", got)
 	}
 }

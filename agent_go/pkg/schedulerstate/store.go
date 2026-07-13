@@ -46,10 +46,10 @@ var allowedTransitions = map[State]map[State]bool{
 		StatePulseGate: true, StateCompleted: true, StatePartial: true, StateFailed: true, StateStopped: true, StateInterrupted: true,
 	},
 	StatePulseGate: {
-		StatePulseModules: true, StatePulseFinalizing: true, StatePartial: true, StateFailed: true, StateStopped: true, StateInterrupted: true,
+		StatePulseModules: true, StatePulseFinalizing: true, StateCompleted: true, StatePartial: true, StateFailed: true, StateStopped: true, StateInterrupted: true,
 	},
 	StatePulseModules: {
-		StatePulseFinalizing: true, StatePartial: true, StateFailed: true, StateStopped: true, StateInterrupted: true,
+		StatePulseFinalizing: true, StateCompleted: true, StatePartial: true, StateFailed: true, StateStopped: true, StateInterrupted: true,
 	},
 	StatePulseFinalizing: {
 		StateCompleted: true, StatePartial: true, StateFailed: true, StateStopped: true, StateInterrupted: true,
@@ -116,6 +116,8 @@ type Event struct {
 type Store struct {
 	db *sql.DB
 }
+
+const fireDecisionRetentionPerSchedule = 500
 
 func Open(path string) (*Store, error) {
 	path = strings.TrimSpace(path)
@@ -326,15 +328,102 @@ func (s *Store) Transition(ctx context.Context, transition Transition) error {
 	return tx.Commit()
 }
 
+// ForceTerminal releases an active run lease after ordinary terminal
+// transition retries fail. It never changes one terminal state into another.
+func (s *Store) ForceTerminal(ctx context.Context, transition Transition) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("schedule state store is unavailable")
+	}
+	if !IsTerminal(transition.To) {
+		return fmt.Errorf("forced transition must be terminal: %s", transition.To)
+	}
+	if transition.At.IsZero() {
+		transition.At = time.Now().UTC()
+	}
+	transition.At = transition.At.UTC()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var current string
+	if err := tx.QueryRowContext(ctx, `SELECT state FROM schedule_runs WHERE run_id = ?`, transition.RunID).Scan(&current); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: %s", ErrRunNotFound, transition.RunID)
+		}
+		return err
+	}
+	from := State(current)
+	if IsTerminal(from) {
+		if from == transition.To {
+			return tx.Commit()
+		}
+		return fmt.Errorf("%w: %s -> %s", ErrInvalidTransition, from, transition.To)
+	}
+
+	completedAt := formatTime(transition.At)
+	if _, err := tx.ExecContext(ctx, `UPDATE schedule_runs SET
+		state = ?, updated_at = ?, completed_at = ?,
+		active_session_id = CASE WHEN ? <> '' THEN ? ELSE active_session_id END,
+		run_folder = CASE WHEN ? <> '' THEN ? ELSE run_folder END,
+		error_message = CASE WHEN ? <> '' THEN ? ELSE error_message END
+		WHERE run_id = ?`,
+		transition.To, completedAt, completedAt,
+		transition.SessionID, transition.SessionID, transition.RunFolder, transition.RunFolder,
+		transition.ErrorMessage, transition.ErrorMessage, transition.RunID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO schedule_run_events (run_id, from_state, to_state, reason, created_at)
+		VALUES (?, ?, ?, ?, ?)`, transition.RunID, from, transition.To, "recovered terminal transition: "+transition.Reason, completedAt); err != nil {
+		return err
+	}
+	if transition.SessionID != "" {
+		sessionKind := transition.SessionKind
+		if sessionKind == "" {
+			sessionKind = "main"
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schedule_run_sessions (
+			run_id, session_id, session_kind, status, started_at, ended_at
+		) VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(run_id, session_id) DO UPDATE SET
+			session_kind = excluded.session_kind,
+			status = excluded.status,
+			ended_at = excluded.ended_at`, transition.RunID, transition.SessionID, sessionKind,
+			transition.To, completedAt, completedAt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *Store) RecordFireDecision(ctx context.Context, decision FireDecision) error {
 	if decision.FiredAt.IsZero() {
 		decision.FiredAt = time.Now().UTC()
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO schedule_fire_decisions (
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO schedule_fire_decisions (
 		decision_id, scope_type, scope_id, schedule_id, trigger_source, decision, reason, run_id, fired_at
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, decision.DecisionID, decision.ScopeType, decision.ScopeID,
-		decision.ScheduleID, decision.TriggerSource, decision.Decision, decision.Reason, decision.RunID, formatTime(decision.FiredAt))
-	return err
+		decision.ScheduleID, decision.TriggerSource, decision.Decision, decision.Reason, decision.RunID, formatTime(decision.FiredAt)); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM schedule_fire_decisions
+		WHERE scope_type = ? AND scope_id = ? AND schedule_id = ?
+		AND decision_id NOT IN (
+			SELECT decision_id FROM schedule_fire_decisions
+			WHERE scope_type = ? AND scope_id = ? AND schedule_id = ?
+			ORDER BY fired_at DESC, decision_id DESC LIMIT ?
+		)`, decision.ScopeType, decision.ScopeID, decision.ScheduleID,
+		decision.ScopeType, decision.ScopeID, decision.ScheduleID, fireDecisionRetentionPerSchedule); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ListFireDecisions(ctx context.Context, scopeType, scopeID, scheduleID string, limit int) ([]FireDecision, error) {

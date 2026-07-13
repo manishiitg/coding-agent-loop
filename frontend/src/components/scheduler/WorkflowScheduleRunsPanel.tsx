@@ -1522,7 +1522,10 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                 </div>
 
                 {isScheduleIssueStatus(job.last_status) && job.last_error && (
-                  <div className="mt-1 truncate text-xs text-red-500" title={job.last_error}>
+                  <div
+                    className={`mt-1 truncate text-xs ${isSchedulePartialStatus(job.last_status) ? 'text-amber-600 dark:text-amber-400' : 'text-red-500'}`}
+                    title={job.last_error}
+                  >
                     {job.last_error}
                   </div>
                 )}

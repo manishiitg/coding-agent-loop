@@ -265,6 +265,44 @@ func TestScheduleRunPublicationRegistersCancelBeforeUnlock(t *testing.T) {
 	}
 }
 
+func TestStopBetweenReservationAndDurableClaimPreventsExecution(t *testing.T) {
+	store, err := schedulerstate.Open(filepath.Join(t.TempDir(), "schedule-state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	svc := NewSchedulerService(nil)
+	svc.stateStore = store
+	sctx := buildScheduleContext("Workflow/demo", &WorkflowManifest{ID: "demo"}, WorkflowSchedule{ID: "daily"})
+	runtimeKey := scheduleRuntimeKey(sctx)
+	runID := "stop-during-claim"
+	startedAt := time.Now().UTC()
+
+	svc.runtimeStatesMu.Lock()
+	state := svc.getRuntimeStateLocked(runtimeKey)
+	runCtx := svc.activateScheduleRunLocked(state, runID, startedAt)
+	svc.runtimeStatesMu.Unlock()
+
+	// This is the historical race window: Stop sees the reservation before the
+	// SQLite run row exists.
+	svc.stopRunningJob(runtimeKey, sctx.Schedule.ID)
+	if err := svc.claimScheduleRun(context.Background(), sctx, runID, startedAt); err != nil {
+		t.Fatalf("durable claim after stop: %v", err)
+	}
+	if !svc.abortCanceledScheduleRunBeforeStart(runCtx, sctx, runtimeKey, runID) {
+		t.Fatal("canceled reservation was allowed to start")
+	}
+
+	run, err := store.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.State != schedulerstate.StateStopped {
+		t.Fatalf("durable state = %s, want stopped", run.State)
+	}
+}
+
 func TestTriggerMultiAgentNowFindsBuiltinWithoutScheduleFile(t *testing.T) {
 	workspace := httptest.NewServer(&mockWorkspaceAPI{files: map[string]string{}})
 	defer workspace.Close()
@@ -370,6 +408,45 @@ func TestLoadScheduleReplacesCalendarRegistrations(t *testing.T) {
 	}
 	if matching != 1 {
 		t.Fatalf("calendar registrations = %d, want 1", matching)
+	}
+}
+
+func TestLoadScheduleDoesNotRememberInvalidCronFingerprint(t *testing.T) {
+	svc := NewSchedulerService(nil)
+	sctx := buildMultiAgentScheduleContext("user-1", WorkflowSchedule{
+		ID: "daily", Enabled: true, CronExpression: "not-a-cron", Timezone: "UTC",
+	}, WorkflowCapabilities{})
+	runtimeKey := scheduleRuntimeKey(sctx)
+	if err := svc.LoadSchedule(sctx); err == nil {
+		t.Fatal("invalid cron unexpectedly loaded")
+	}
+	if _, ok := svc.scheduleFingerprints[runtimeKey]; ok {
+		t.Fatal("invalid cron fingerprint should not suppress the next rescan")
+	}
+
+	sctx.Schedule.CronExpression = "0 9 * * *"
+	if err := svc.LoadSchedule(sctx); err != nil {
+		t.Fatalf("corrected cron was not retried: %v", err)
+	}
+	if _, ok := svc.scheduleFingerprints[runtimeKey]; !ok {
+		t.Fatal("valid schedule fingerprint was not recorded")
+	}
+}
+
+func TestRemoveJobDropsInactiveRuntimeState(t *testing.T) {
+	svc := NewSchedulerService(nil)
+	runtimeKey := workflowScheduleRuntimeKey("Workflow/demo", "daily")
+	svc.updateRuntimeState(runtimeKey, func(state *ScheduleRuntimeState) {
+		state.LastStatus = "success"
+	})
+	if err := svc.removeJobByKey(runtimeKey); err != nil {
+		t.Fatal(err)
+	}
+	svc.runtimeStatesMu.RLock()
+	_, exists := svc.runtimeStates[runtimeKey]
+	svc.runtimeStatesMu.RUnlock()
+	if exists {
+		t.Fatal("removed schedule retained inactive runtime state")
 	}
 }
 

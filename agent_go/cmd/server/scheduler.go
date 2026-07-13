@@ -129,6 +129,7 @@ type SchedulerService struct {
 	// schedule, including disabled and calendar schedules with no future items.
 	scheduleFingerprints map[string]string
 
+	stateStoreMu sync.RWMutex
 	stateStore   *schedulerstate.Store
 	runCancelsMu sync.Mutex
 	runCancels   map[string]context.CancelFunc
@@ -210,19 +211,23 @@ func (s *SchedulerService) InvalidateWorkflowManifestCache() {
 // and starts the wall-clock tick loop.
 func (s *SchedulerService) Start(ctx context.Context) error {
 	scheduleLogf("[SCHEDULER] Starting manifest-based scheduler service...")
+	s.stateStoreMu.Lock()
 	if s.stateStore == nil {
 		storePath := filepath.Join(fsutil.WorkspaceDocsRoot(), "_system", "schedule-state.sqlite")
 		store, err := schedulerstate.Open(storePath)
 		if err != nil {
+			s.stateStoreMu.Unlock()
 			return fmt.Errorf("initialize schedule state store: %w", err)
 		}
 		s.stateStore = store
 	}
 	if interrupted, err := s.stateStore.InterruptActiveRuns(ctx, "interrupted: server restarted", time.Now().UTC()); err != nil {
+		s.stateStoreMu.Unlock()
 		return fmt.Errorf("reconcile interrupted schedule runs: %w", err)
 	} else if interrupted > 0 {
 		scheduleLogf("[SCHEDULER] Marked %d durable schedule run(s) interrupted after restart", interrupted)
 	}
+	s.stateStoreMu.Unlock()
 
 	// Discover all workflows by scanning workspace-docs/Workflow/*/workflow.json
 	workflows := s.discoverWorkflows(ctx)
@@ -507,12 +512,14 @@ func (s *SchedulerService) Stop() {
 	s.jobs = make(map[string]*registeredJob)
 	s.scheduleFingerprints = make(map[string]string)
 	s.mu.Unlock()
+	s.stateStoreMu.Lock()
 	if s.stateStore != nil {
 		if err := s.stateStore.Close(); err != nil {
 			scheduleLogf("[SCHEDULER] Failed to close schedule state store: %v", err)
 		}
 		s.stateStore = nil
 	}
+	s.stateStoreMu.Unlock()
 	scheduleLogf("[SCHEDULER] Stopped")
 }
 
@@ -526,7 +533,6 @@ func (s *SchedulerService) LoadSchedule(sctx *ScheduleContext) error {
 	if s.scheduleFingerprints == nil {
 		s.scheduleFingerprints = make(map[string]string)
 	}
-	s.scheduleFingerprints[runtimeKey] = scheduleConfigFingerprint(sctx)
 
 	// Remove existing registration if any.
 	delete(s.jobs, runtimeKey)
@@ -556,6 +562,7 @@ func (s *SchedulerService) LoadSchedule(sctx *ScheduleContext) error {
 	}
 
 	if !sched.Enabled {
+		s.scheduleFingerprints[runtimeKey] = scheduleConfigFingerprint(sctx)
 		return nil
 	}
 
@@ -613,6 +620,7 @@ func (s *SchedulerService) LoadSchedule(sctx *ScheduleContext) error {
 	s.updateRuntimeState(runtimeKey, func(state *ScheduleRuntimeState) {
 		state.NextRunAt = nextRun
 	})
+	s.scheduleFingerprints[runtimeKey] = scheduleConfigFingerprint(sctx)
 
 	nextRunStr := "unknown"
 	if nextRun != nil {
@@ -687,6 +695,12 @@ func (s *SchedulerService) removeJobByKey(key string) error {
 	s.userIndexMu.Lock()
 	delete(s.userIndex, key)
 	s.userIndexMu.Unlock()
+
+	s.runtimeStatesMu.Lock()
+	if state := s.runtimeStates[key]; state == nil || state.ActiveRunID == "" {
+		delete(s.runtimeStates, key)
+	}
+	s.runtimeStatesMu.Unlock()
 
 	return nil
 }
@@ -1026,7 +1040,8 @@ func (s *SchedulerService) TriggerNow(workspacePath string, scheduleID string) (
 		return "", err
 	}
 
-	// Prevent concurrent runs — check and mark atomically under the write lock
+	// Reserve the in-memory run and cancellation handle atomically, then claim
+	// the durable lease without holding the global runtime-state mutex.
 	runtimeKey := workflowScheduleRuntimeKey(workspacePath, scheduleID)
 	runID := uuid.NewString()
 	s.runtimeStatesMu.Lock()
@@ -1036,13 +1051,17 @@ func (s *SchedulerService) TriggerNow(workspacePath string, scheduleID string) (
 		s.recordScheduleFireDecision(ctx, sctx, "skipped_busy", "schedule is already running", "", startTime)
 		return "", fmt.Errorf("job is already running (session: %s)", state.LastSessionID)
 	}
+	previousState := *state
+	runCtx := s.activateScheduleRunLocked(state, runID, startTime)
+	s.runtimeStatesMu.Unlock()
 	if err := s.claimScheduleRun(ctx, sctx, runID, startTime); err != nil {
-		s.runtimeStatesMu.Unlock()
+		s.rollbackScheduleRunActivation(runtimeKey, runID, previousState)
 		s.recordScheduleFireDecision(ctx, sctx, "skipped_busy", err.Error(), "", startTime)
 		return "", err
 	}
-	runCtx := s.activateScheduleRunLocked(state, runID, startTime)
-	s.runtimeStatesMu.Unlock()
+	if s.abortCanceledScheduleRunBeforeStart(runCtx, sctx, runtimeKey, runID) {
+		return "", context.Canceled
+	}
 	s.recordScheduleFireDecision(ctx, sctx, "started", "manual trigger accepted", runID, startTime)
 
 	if err := RecordWorkflowScheduleExecution(context.Background(), workspacePath, *sched, startTime); err != nil {
@@ -1091,13 +1110,17 @@ func (s *SchedulerService) TriggerMultiAgentNow(userID string, scheduleID string
 		s.recordScheduleFireDecision(ctx, sctx, "skipped_busy", "schedule is already running", "", startTime)
 		return "", fmt.Errorf("job is already running (session: %s)", state.LastSessionID)
 	}
+	previousState := *state
+	runCtx := s.activateScheduleRunLocked(state, runID, startTime)
+	s.runtimeStatesMu.Unlock()
 	if err := s.claimScheduleRun(ctx, sctx, runID, startTime); err != nil {
-		s.runtimeStatesMu.Unlock()
+		s.rollbackScheduleRunActivation(runtimeKey, runID, previousState)
 		s.recordScheduleFireDecision(ctx, sctx, "skipped_busy", err.Error(), "", startTime)
 		return "", err
 	}
-	runCtx := s.activateScheduleRunLocked(state, runID, startTime)
-	s.runtimeStatesMu.Unlock()
+	if s.abortCanceledScheduleRunBeforeStart(runCtx, sctx, runtimeKey, runID) {
+		return "", context.Canceled
+	}
 
 	s.recordScheduleFireDecision(ctx, sctx, "started", "manual trigger accepted", runID, startTime)
 
@@ -1136,11 +1159,16 @@ func (s *SchedulerService) stopRunningJob(runtimeKey, scheduleID string) {
 	state.LastError = "stopped by user"
 	state.ActiveRunID = ""
 	s.runtimeStatesMu.Unlock()
-	if runID == "" && s.stateStore != nil {
+	if runID == "" {
 		lockKey := scheduleStateLockKeyFromRuntimeKey(runtimeKey)
-		if active, err := s.stateStore.ActiveRunByLockKey(context.Background(), lockKey); err == nil {
-			runID = active.RunID
+		s.stateStoreMu.RLock()
+		store := s.stateStore
+		if store != nil {
+			if active, err := store.ActiveRunByLockKey(context.Background(), lockKey); err == nil {
+				runID = active.RunID
+			}
 		}
+		s.stateStoreMu.RUnlock()
 	}
 	if runID != "" {
 		s.cancelScheduleRunContext(runID)
@@ -1396,11 +1424,14 @@ func (s *SchedulerService) triggerSchedule(sctx *ScheduleContext) {
 		}
 	}
 
-	// Prevent concurrent runs — check and mark atomically under the write lock
+	// Reserve in memory before the durable claim so Stop can cancel even while
+	// SQLite is claiming the lease. The database call itself runs without the
+	// global runtime-state mutex.
 	startTime := time.Now().UTC()
 	runID := uuid.NewString()
+	runtimeKey = scheduleRuntimeKey(freshCtx)
 	s.runtimeStatesMu.Lock()
-	state := s.getRuntimeStateLocked(scheduleRuntimeKey(freshCtx))
+	state := s.getRuntimeStateLocked(runtimeKey)
 	if state.LastStatus == "running" {
 		s.runtimeStatesMu.Unlock()
 		s.sessionLogf(freshCtx, state.LastSessionID, "[SCHEDULER] ⏭️ Schedule %s is already running (session: %s), skipping", schedID, state.LastSessionID)
@@ -1420,14 +1451,18 @@ func (s *SchedulerService) triggerSchedule(sctx *ScheduleContext) {
 			return
 		}
 	}
+	previousState := *state
+	runCtx := s.activateScheduleRunLocked(state, runID, startTime)
+	s.runtimeStatesMu.Unlock()
 	if err := s.claimScheduleRun(ctx, freshCtx, runID, startTime); err != nil {
-		s.runtimeStatesMu.Unlock()
+		s.rollbackScheduleRunActivation(runtimeKey, runID, previousState)
 		s.recordScheduleFireDecision(ctx, freshCtx, "skipped_busy", err.Error(), "", startTime)
 		s.logf(freshCtx, "[SCHEDULER] ⏭️ Durable run lease rejected schedule %s: %v", schedID, err)
 		return
 	}
-	runCtx := s.activateScheduleRunLocked(state, runID, startTime)
-	s.runtimeStatesMu.Unlock()
+	if s.abortCanceledScheduleRunBeforeStart(runCtx, freshCtx, runtimeKey, runID) {
+		return
+	}
 	s.recordScheduleFireDecision(ctx, freshCtx, "started", "cron fire accepted", runID, startTime)
 
 	if freshCtx.SourceType == "workflow" {
@@ -1623,6 +1658,7 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 		RunID: runID, To: terminalState, Reason: "scheduled run finished with status " + status,
 		SessionID: sessionID, ErrorMessage: errMsg, At: time.Now().UTC(),
 	})
+	s.cleanupRemovedScheduleRuntimeState(runtimeKey)
 
 	return sessionID, execErr
 }
@@ -3235,6 +3271,50 @@ func (s *SchedulerService) activateScheduleRunLocked(state *ScheduleRuntimeState
 	return s.registerScheduleRunContext(runID)
 }
 
+func (s *SchedulerService) rollbackScheduleRunActivation(runtimeKey, runID string, previous ScheduleRuntimeState) {
+	s.runtimeStatesMu.Lock()
+	if current := s.runtimeStates[runtimeKey]; current != nil && current.ActiveRunID == runID {
+		*current = previous
+	}
+	s.runtimeStatesMu.Unlock()
+	s.releaseScheduleRunContext(runID)
+}
+
+func (s *SchedulerService) abortCanceledScheduleRunBeforeStart(ctx context.Context, sctx *ScheduleContext, runtimeKey, runID string) bool {
+	if ctx.Err() == nil {
+		return false
+	}
+	s.updateRuntimeState(runtimeKey, func(state *ScheduleRuntimeState) {
+		if state.ActiveRunID != runID {
+			return
+		}
+		state.ActiveRunID = ""
+		state.LastStatus = "stopped"
+		state.LastError = "stopped before execution started"
+	})
+	s.transitionScheduleRun(context.Background(), sctx, schedulerstate.Transition{
+		RunID: runID, To: schedulerstate.StateStopped, Reason: "stopped before execution started",
+		ErrorMessage: "stopped before execution started", At: time.Now().UTC(),
+	})
+	s.releaseScheduleRunContext(runID)
+	s.cleanupRemovedScheduleRuntimeState(runtimeKey)
+	return true
+}
+
+func (s *SchedulerService) cleanupRemovedScheduleRuntimeState(runtimeKey string) {
+	s.mu.Lock()
+	_, known := s.scheduleFingerprints[runtimeKey]
+	s.mu.Unlock()
+	if known {
+		return
+	}
+	s.runtimeStatesMu.Lock()
+	if state := s.runtimeStates[runtimeKey]; state == nil || state.ActiveRunID == "" {
+		delete(s.runtimeStates, runtimeKey)
+	}
+	s.runtimeStatesMu.Unlock()
+}
+
 func (s *SchedulerService) registerScheduleRunContext(runID string) context.Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.runCancelsMu.Lock()
@@ -3269,6 +3349,8 @@ func (s *SchedulerService) releaseScheduleRunContext(runID string) {
 }
 
 func (s *SchedulerService) claimScheduleRun(ctx context.Context, sctx *ScheduleContext, runID string, startedAt time.Time) error {
+	s.stateStoreMu.RLock()
+	defer s.stateStoreMu.RUnlock()
 	if s.stateStore == nil {
 		return nil
 	}
@@ -3289,20 +3371,65 @@ func (s *SchedulerService) claimScheduleRun(ctx context.Context, sctx *ScheduleC
 }
 
 func (s *SchedulerService) transitionScheduleRun(ctx context.Context, sctx *ScheduleContext, transition schedulerstate.Transition) {
-	if s.stateStore == nil || strings.TrimSpace(transition.RunID) == "" {
+	if strings.TrimSpace(transition.RunID) == "" {
 		return
 	}
-	if err := s.stateStore.Transition(ctx, transition); err != nil {
+	s.stateStoreMu.RLock()
+	defer s.stateStoreMu.RUnlock()
+	if s.stateStore == nil {
+		return
+	}
+	transitionCtx := ctx
+	if transitionCtx == nil {
+		transitionCtx = context.Background()
+	}
+	attempts := 1
+	if schedulerstate.IsTerminal(transition.To) {
+		transitionCtx = context.WithoutCancel(transitionCtx)
+		attempts = 3
+	}
+	var transitionErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		attemptCtx, cancel := context.WithTimeout(transitionCtx, 5*time.Second)
+		transitionErr = s.stateStore.Transition(attemptCtx, transition)
+		cancel()
+		if transitionErr == nil {
+			return
+		}
+		if attempt+1 < attempts {
+			time.Sleep(time.Duration(attempt+1) * 50 * time.Millisecond)
+		}
+	}
+	if schedulerstate.IsTerminal(transition.To) {
+		recoveryCtx, cancel := context.WithTimeout(transitionCtx, 5*time.Second)
+		recoveryErr := s.stateStore.ForceTerminal(recoveryCtx, transition)
+		cancel()
+		if recoveryErr == nil {
+			if sctx != nil {
+				s.logf(sctx, "[SCHEDULER_STATE] recovered terminal transition run=%s to=%s after error: %v", transition.RunID, transition.To, transitionErr)
+			} else {
+				scheduleLogf("[SCHEDULER_STATE] recovered terminal transition run=%s to=%s after error: %v", transition.RunID, transition.To, transitionErr)
+			}
+			return
+		}
+		transitionErr = errors.Join(transitionErr, recoveryErr)
+	}
+	if transitionErr != nil {
 		if sctx != nil {
-			s.logf(sctx, "[SCHEDULER_STATE] transition run=%s to=%s failed: %v", transition.RunID, transition.To, err)
+			s.logf(sctx, "[SCHEDULER_STATE] transition run=%s to=%s failed: %v", transition.RunID, transition.To, transitionErr)
 		} else {
-			scheduleLogf("[SCHEDULER_STATE] transition run=%s to=%s failed: %v", transition.RunID, transition.To, err)
+			scheduleLogf("[SCHEDULER_STATE] transition run=%s to=%s failed: %v", transition.RunID, transition.To, transitionErr)
 		}
 	}
 }
 
 func (s *SchedulerService) recordScheduleFireDecision(ctx context.Context, sctx *ScheduleContext, decision, reason, runID string, firedAt time.Time) {
-	if s.stateStore == nil || sctx == nil {
+	if sctx == nil {
+		return
+	}
+	s.stateStoreMu.RLock()
+	defer s.stateStoreMu.RUnlock()
+	if s.stateStore == nil {
 		return
 	}
 	scopeType, scopeID, _ := scheduleStateScope(sctx)

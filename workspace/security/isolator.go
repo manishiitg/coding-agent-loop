@@ -79,6 +79,38 @@ func (iso *Isolator) sandboxPath(path string) string {
 	return canonicalPath(path)
 }
 
+func pathWithin(path, root string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// sandboxAllowedPath resolves an allow-list entry without letting a path that
+// was granted inside the workspace escape through a symlink. Absolute paths
+// outside BaseDir remain valid because callers use them for explicit host
+// grants such as Downloads access.
+func (iso *Isolator) sandboxAllowedPath(path string) (string, bool) {
+	baseDir := filepath.Clean(iso.getBaseDir())
+	canonicalBaseDir := canonicalPath(baseDir)
+	workspaceScoped := !filepath.IsAbs(path)
+
+	resolvedPath := path
+	if workspaceScoped {
+		resolvedPath = filepath.Join(baseDir, strings.TrimSuffix(path, "/"))
+	} else {
+		resolvedPath = filepath.Clean(path)
+		workspaceScoped = pathWithin(resolvedPath, baseDir) || pathWithin(resolvedPath, canonicalBaseDir)
+	}
+
+	canonicalAllowedPath := canonicalPath(resolvedPath)
+	if workspaceScoped && !pathWithin(canonicalAllowedPath, canonicalBaseDir) {
+		return "", false
+	}
+	return canonicalAllowedPath, true
+}
+
 // ExecuteIsolated runs a command with filesystem restrictions
 // Uses unshare on Linux, sandbox-exec on macOS
 // Returns the command, a cleanup function, and an error
@@ -210,7 +242,10 @@ func (iso *Isolator) generateSandboxProfile() string {
 		sb.WriteString("; Allowed read paths\n")
 		sb.WriteString("(allow file-read*\n")
 		for _, path := range iso.ReadPaths {
-			fullPath := iso.sandboxPath(path)
+			fullPath, ok := iso.sandboxAllowedPath(path)
+			if !ok {
+				continue
+			}
 			sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", sandboxQuoted(fullPath)))
 		}
 		sb.WriteString(")\n\n")
@@ -221,7 +256,10 @@ func (iso *Isolator) generateSandboxProfile() string {
 		sb.WriteString("; Allowed write paths\n")
 		sb.WriteString("(allow file-read* file-write*\n")
 		for _, path := range iso.WritePaths {
-			fullPath := iso.sandboxPath(path)
+			fullPath, ok := iso.sandboxAllowedPath(path)
+			if !ok {
+				continue
+			}
 			sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", sandboxQuoted(fullPath)))
 		}
 		sb.WriteString(")\n\n")

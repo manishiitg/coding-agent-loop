@@ -463,6 +463,107 @@ func TestDownloadsRequiresExplicitPermission(t *testing.T) {
 	}
 }
 
+func TestSandboxAllowPathsRejectWorkspaceSymlinkEscapes(t *testing.T) {
+	root := t.TempDir()
+	baseDir := filepath.Join(root, "workspace-docs")
+	outsideDir := filepath.Join(root, "repo-secrets")
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	if err := os.MkdirAll(outsideDir, 0755); err != nil {
+		t.Fatalf("mkdir outside target: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(outsideDir, "secret.txt"), []byte("secret"), 0644); err != nil {
+		t.Fatalf("write outside secret: %v", err)
+	}
+	if err := os.Symlink(outsideDir, filepath.Join(baseDir, "escaped-read")); err != nil {
+		t.Fatalf("create read symlink: %v", err)
+	}
+	if err := os.Symlink(outsideDir, filepath.Join(baseDir, "escaped-write")); err != nil {
+		t.Fatalf("create write symlink: %v", err)
+	}
+
+	iso := &Isolator{
+		ReadPaths:  []string{"escaped-read"},
+		WritePaths: []string{filepath.Join(baseDir, "escaped-write")},
+		WorkDir:    baseDir,
+		BaseDir:    baseDir,
+	}
+
+	profile := iso.generateSandboxProfile()
+	canonicalOutside := canonicalPath(outsideDir)
+	if strings.Contains(profile, fmt.Sprintf("(subpath \"%s\")", canonicalOutside)) {
+		t.Fatalf("workspace symlink escape was re-allowed in sandbox profile:\n%s", profile)
+	}
+
+	if path, ok := iso.sandboxAllowedPath("escaped-read"); ok || path != "" {
+		t.Fatalf("relative workspace symlink escape accepted: path=%q ok=%v", path, ok)
+	}
+	if path, ok := iso.sandboxAllowedPath(filepath.Join(baseDir, "escaped-write")); ok || path != "" {
+		t.Fatalf("absolute workspace symlink escape accepted: path=%q ok=%v", path, ok)
+	}
+
+	if runtime.GOOS == "darwin" {
+		t.Run("RealSandboxBlocksEscapedRead", func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			cmd, cleanup, err := iso.ExecuteIsolated(ctx, "cat", []string{filepath.Join(baseDir, "escaped-read", "secret.txt")})
+			if cleanup != nil {
+				defer cleanup()
+			}
+			if err != nil {
+				t.Fatalf("prepare isolated read: %v", err)
+			}
+			if output, err := cmd.CombinedOutput(); err == nil {
+				t.Fatalf("sandbox read escaped through workspace symlink: %s", output)
+			}
+		})
+
+		t.Run("RealSandboxBlocksEscapedWrite", func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			createdPath := filepath.Join(baseDir, "escaped-write", "created.txt")
+			cmd, cleanup, err := iso.ExecuteIsolated(ctx, "touch", []string{createdPath})
+			if cleanup != nil {
+				defer cleanup()
+			}
+			if err != nil {
+				t.Fatalf("prepare isolated write: %v", err)
+			}
+			if output, err := cmd.CombinedOutput(); err == nil {
+				t.Fatalf("sandbox write escaped through workspace symlink: %s", output)
+			}
+			if _, err := os.Stat(filepath.Join(outsideDir, "created.txt")); !os.IsNotExist(err) {
+				t.Fatalf("escaped write created outside file: %v", err)
+			}
+		})
+	}
+}
+
+func TestSandboxAllowPathsPreserveExplicitExternalGrant(t *testing.T) {
+	root := t.TempDir()
+	baseDir := filepath.Join(root, "workspace-docs")
+	externalDir := filepath.Join(t.TempDir(), "Downloads")
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	if err := os.MkdirAll(externalDir, 0755); err != nil {
+		t.Fatalf("mkdir external grant: %v", err)
+	}
+
+	iso := &Isolator{BaseDir: baseDir, WorkDir: baseDir, ReadPaths: []string{externalDir}}
+	allowedPath, ok := iso.sandboxAllowedPath(externalDir)
+	if !ok {
+		t.Fatal("explicit external absolute grant was rejected")
+	}
+	if allowedPath != canonicalPath(externalDir) {
+		t.Fatalf("external grant canonicalized incorrectly: got %q want %q", allowedPath, canonicalPath(externalDir))
+	}
+	if !strings.Contains(iso.generateSandboxProfile(), fmt.Sprintf("(subpath \"%s\")", sandboxQuoted(allowedPath))) {
+		t.Fatal("explicit external absolute grant missing from sandbox profile")
+	}
+}
+
 // TestDenyListSymlinkFixup tests that Mode 1 (deny-list) preserves symlinks
 // pointing into blocked paths by generating fixup mount/allow commands.
 func TestDenyListSymlinkFixup(t *testing.T) {

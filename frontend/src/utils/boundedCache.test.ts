@@ -24,4 +24,16 @@ describe('createBoundedCache', () => {
     expect(cache.get('key')).toBe(2)
     expect(cache.size()).toBe(1)
   })
+
+  it('refreshes an intentionally undefined value', () => {
+    const cache = createBoundedCache<string, number | undefined>(2)
+    cache.set('undefined', undefined)
+    cache.set('second', 2)
+
+    expect(cache.get('undefined')).toBeUndefined()
+    cache.set('third', 3)
+
+    expect(cache.get('second')).toBeUndefined()
+    expect(cache.size()).toBe(2)
+  })
 })

@@ -12,19 +12,19 @@ export function createBoundedCache<K, V>(limit: number): BoundedCache<K, V> {
 
   return {
     get: (key) => {
+      if (!entries.has(key)) return undefined
       const value = entries.get(key)
-      if (value === undefined) return undefined
       entries.delete(key)
-      entries.set(key, value)
+      entries.set(key, value as V)
       return value
     },
     set: (key, value) => {
       entries.delete(key)
       entries.set(key, value)
       while (entries.size > limit) {
-        const oldestKey = entries.keys().next().value as K | undefined
-        if (oldestKey === undefined) break
-        entries.delete(oldestKey)
+        const oldest = entries.keys().next()
+        if (oldest.done) break
+        entries.delete(oldest.value)
       }
     },
     delete: key => entries.delete(key),

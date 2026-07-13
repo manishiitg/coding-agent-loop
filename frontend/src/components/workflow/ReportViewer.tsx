@@ -146,7 +146,10 @@ function getReportViewUiState(key: string): ReportViewUiState {
 
 function setReportViewScrollTop(key: string, scrollTop: number): void {
   const state = getReportViewUiState(key)
-  state.scrollTop = Math.max(0, scrollTop)
+  reportViewUiStateCache.set(key, {
+    ...state,
+    scrollTop: Math.max(0, scrollTop),
+  })
 }
 
 function reportSectionTabStateKey(section: ReportSection, sectionIndex: number): string {
@@ -160,7 +163,13 @@ function getReportSectionTabKey(viewStateKey: string, sectionStateKey: string): 
 
 function setReportSectionTabKey(viewStateKey: string, sectionStateKey: string, tabKey: string): void {
   const state = getReportViewUiState(viewStateKey)
-  state.tabsBySection[sectionStateKey] = tabKey
+  reportViewUiStateCache.set(viewStateKey, {
+    ...state,
+    tabsBySection: {
+      ...state.tabsBySection,
+      [sectionStateKey]: tabKey,
+    },
+  })
 }
 
 function renderReportElementToSvg(reportElement: HTMLElement): string {

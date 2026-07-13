@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { FileText, Folder, AlertCircle, Loader2, ChevronRight, ChevronDown, Trash2, MessageSquare, Upload, Plus, Image, MoreHorizontal, Move, Download, Archive, CheckSquare, Edit2, Link, Check } from 'lucide-react'
 import type { PlannerFile } from '../../services/api-types'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../ui/tooltip'
@@ -140,6 +140,26 @@ export default function PlannerFileList({
       container.removeEventListener('scroll', scheduleViewportUpdate)
     }
   }, [scrollContainerRef])
+
+  useLayoutEffect(() => {
+    const container = scrollContainerRef?.current
+    const list = listRef.current
+    if (!container || !list) return
+
+    const containerTop = container.getBoundingClientRect().top
+    const next = {
+      scrollTop: container.scrollTop,
+      height: container.clientHeight,
+      listTop: list.getBoundingClientRect().top - containerTop + container.scrollTop,
+    }
+    setViewport(current => (
+      current.scrollTop === next.scrollTop &&
+      current.height === next.height &&
+      current.listTop === next.listTop
+        ? current
+        : next
+    ))
+  }, [loading, scrollContainerRef, visibleRows.length])
 
   useEffect(() => {
     const container = scrollContainerRef?.current

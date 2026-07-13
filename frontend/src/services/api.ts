@@ -1,5 +1,6 @@
 console.log('Cache bust: 2026-02-08-150000');
 import axios from 'axios'
+import { createRequestCoalescer } from './requestCoalescer'
 import type { AxiosInstance, InternalAxiosRequestConfig } from 'axios'
 import { useChatStore } from '../stores/useChatStore'
 import { useModeStore } from '../stores/useModeStore'
@@ -597,6 +598,8 @@ workspaceApi.interceptors.response.use(
 )
 
 
+const coalesceRuntimeRead = createRequestCoalescer()
+
 export const agentApi = {
   // Observer APIs removed - no longer needed
 
@@ -647,8 +650,11 @@ export const agentApi = {
   ): Promise<ListTerminalsResponse> => {
     const params: Record<string, string | number | boolean> = sessionId ? { session_id: sessionId, content } : { content }
     if (options?.activeOnly) params.active_only = 1
-    const response = await api.get('/api/terminals', { params, timeout: 15000 })
-    return response.data
+    const requestKey = `terminals:${sessionId || '*'}:${content}:${options?.activeOnly ? 'active' : 'all'}`
+    return coalesceRuntimeRead(requestKey, async () => {
+      const response = await api.get('/api/terminals', { params, timeout: 15000 })
+      return response.data
+    })
   },
 
   getTerminal: async (
@@ -782,8 +788,10 @@ export const agentApi = {
   // Active Session Management
   // Get all active sessions
   getActiveSessions: async (): Promise<GetActiveSessionsResponse> => {
-    const response = await api.get('/api/sessions/active')
-    return response.data
+    return coalesceRuntimeRead('active-sessions', async () => {
+      const response = await api.get('/api/sessions/active')
+      return response.data
+    })
   },
 
   getChatHistoryConversation: async (sessionId: string, workspacePath?: string): Promise<ChatHistoryConversation> => {
@@ -1612,8 +1620,10 @@ export const agentApi = {
   },
 
   listRunningWorkflows: async (): Promise<{ running: RunningWorkflowInfo[] }> => {
-    const response = await api.get('/api/workflow/running')
-    return response.data
+    return coalesceRuntimeRead('running-workflows', async () => {
+      const response = await api.get('/api/workflow/running')
+      return response.data
+    })
   },
 
   updateRunningWorkflow: async (sessionId: string, patch: UpdateRunningWorkflowRequest): Promise<RunningWorkflowInfo> => {

@@ -418,12 +418,16 @@ export const GlobalActivityMonitor: React.FC = () => {
   const workflowPresets = useGlobalPresetStore(state => state.workflowPresets)
 
   useEffect(() => {
+    let disposed = false
+    let refreshPromise: Promise<void> | null = null
+
     const refresh = async () => {
       const [activeResult, runningResult, terminalsResult] = await Promise.allSettled([
-        getActiveSessions(true),
+        getActiveSessions(),
         agentApi.listRunningWorkflows(),
         agentApi.listTerminals(undefined, 'none', { activeOnly: true }),
       ])
+      if (disposed) return
       const active = activeResult.status === 'fulfilled' ? activeResult.value : []
       const running = runningResult.status === 'fulfilled' ? (runningResult.value.running || []) : []
 
@@ -484,17 +488,29 @@ export const GlobalActivityMonitor: React.FC = () => {
           }
         }),
       )
+      if (disposed) return
       setCurrentExecutionBySession(Object.fromEntries(
         treeResults
           .flatMap(result => result.status === 'fulfilled' && result.value ? [result.value] : []),
       ))
     }
 
-    refresh()
-    const interval = window.setInterval(() => {
-      refresh()
-    }, ACTIVITY_DETAILS_POLL_MS)
-    return () => window.clearInterval(interval)
+    const requestRefresh = () => {
+      if (document.hidden || refreshPromise) return
+      refreshPromise = refresh().finally(() => {
+        refreshPromise = null
+      })
+    }
+    const handleVisibilityChange = () => requestRefresh()
+
+    requestRefresh()
+    const interval = window.setInterval(requestRefresh, ACTIVITY_DETAILS_POLL_MS)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      disposed = true
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
   }, [getActiveSessions, workflowPresets])
 
   useEffect(() => {

@@ -45,7 +45,15 @@ export function createBufferedPersistStorage<S>(
       lastInputState = value.state
 
       const serialized = JSON.stringify(value)
-      if (serialized === lastPersistedValue || serialized === pending?.serialized) return
+      if (serialized === lastPersistedValue) {
+        if (timer !== null) {
+          clearTimeout(timer)
+          timer = null
+        }
+        pending = null
+        return
+      }
+      if (serialized === pending?.serialized) return
 
       pending = { name, serialized }
       if (timer !== null) clearTimeout(timer)

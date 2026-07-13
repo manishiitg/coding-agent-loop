@@ -56,6 +56,23 @@ describe('createBufferedPersistStorage', () => {
     expect(setItem).toHaveBeenCalledTimes(1)
   })
 
+  it('cancels a pending write when state reverts to the persisted value', () => {
+    vi.useFakeTimers()
+    const { storage, values } = createMemoryStorage()
+    storage.setItem('chat-store', JSON.stringify({ state: { mode: 'tree' }, version: 0 }))
+    const setItem = vi.spyOn(storage, 'setItem')
+    const buffered = createBufferedPersistStorage<{ mode: string }>(storage, { delayMs: 250 })
+
+    buffered.getItem('chat-store')
+    buffered.setItem('chat-store', { state: { mode: 'terminal' }, version: 0 })
+    buffered.setItem('chat-store', { state: { mode: 'tree' }, version: 0 })
+    vi.advanceTimersByTime(250)
+
+    expect(setItem).not.toHaveBeenCalled()
+    expect(JSON.parse(values.get('chat-store') || '{}').state.mode).toBe('tree')
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('flushes pending state before disposal', () => {
     vi.useFakeTimers()
     const { storage, values } = createMemoryStorage()

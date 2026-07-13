@@ -517,7 +517,7 @@ func applyDiffPatchFlexible(currentContent, diffContent string) (string, error) 
 	correctedDiff := correctAgentGeneratedDiff(diffContent, currentContent)
 	if correctedDiff != diffContent {
 		fmt.Printf("🔧 Applied automatic corrections to agent-generated diff\n")
-		fmt.Printf("🔍 Corrected diff:\n%s\n", correctedDiff)
+		fmt.Printf("🔍 Corrected diff:\n%s\n", diffPatchErrorPreview(correctedDiff))
 		// Try the corrected diff first
 		result, err = applyDiffPatch(currentContent, correctedDiff)
 		if err == nil {
@@ -716,6 +716,7 @@ func applyAgentGeneratedDiffFallback(currentContent, diffContent string) (string
 		// Fuzzy match: find position with minimum mismatches
 
 		bestMatchIndex := -1
+		exactMatchCount := 0
 
 		minMismatches := len(expectedLines) + 1
 
@@ -744,6 +745,10 @@ func applyAgentGeneratedDiffFallback(currentContent, diffContent string) (string
 
 			}
 
+			if mismatches == 0 {
+				exactMatchCount++
+			}
+
 			if mismatches < minMismatches {
 
 				minMismatches = mismatches
@@ -752,12 +757,9 @@ func applyAgentGeneratedDiffFallback(currentContent, diffContent string) (string
 
 			}
 
-			if mismatches == 0 {
-
-				break // Perfect match!
-
-			}
-
+		}
+		if exactMatchCount > 1 {
+			return "", fmt.Errorf("fallback hunk context is ambiguous: %d exact matches; provide current line numbers or more unique context", exactMatchCount)
 		}
 
 		if minMismatches <= maxAllowedMismatches {

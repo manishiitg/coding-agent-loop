@@ -225,6 +225,22 @@ func TestApplyDiffPatchFlexible(t *testing.T) {
 			expectedError: true,
 		},
 		{
+			name: "Duplicate exact fallback context is rejected",
+			currentContent: `## Section
+same value
+
+## Section
+same value`,
+			diffContent: `--- a/todo.md
++++ b/todo.md
+@@ -100,2 +100,3 @@
+ ## Section
+ same value
++new value
+`,
+			expectedError: true,
+		},
+		{
 			name: "Real agent-generated diff pattern (should be auto-corrected)",
 			currentContent: `## Notes
 - Each todo builds on previous research to create comprehensive analysis

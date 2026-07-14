@@ -238,10 +238,7 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 	}
 
 	// Look up per-session shell config (working dir + folder guard)
-	sessionID := ""
-	if sid, ok := ctx.Value(common.ChatSessionIDKey).(string); ok && sid != "" {
-		sessionID = sid
-	}
+	sessionID := c.sessionIDFromContext(ctx)
 	sessionCfg := GetSessionShellConfig(sessionID)
 
 	// Block agent-browser browser-driving CLI calls via shell — catches direct calls,

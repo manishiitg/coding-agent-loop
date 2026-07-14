@@ -131,6 +131,21 @@ func NewClient(baseURL string, opts ...ClientOption) *Client {
 	return c
 }
 
+// sessionIDFromContext returns the trusted session identity used for
+// session-scoped workspace policy. HTTP bridge calls normally carry it in the
+// context; session-aware clients also retain it in MCP_SESSION_ID so policy is
+// not silently lost if an intermediary rebuilds the request context.
+func (c *Client) sessionIDFromContext(ctx context.Context) string {
+	if ctx != nil {
+		if sid, ok := ctx.Value(common.ChatSessionIDKey).(string); ok {
+			if sid = strings.TrimSpace(sid); sid != "" {
+				return sid
+			}
+		}
+	}
+	return strings.TrimSpace(c.ExtraEnv["MCP_SESSION_ID"])
+}
+
 // resolveEffectiveFolderGuard returns the effective folder guard for the current request.
 // Priority: session config (SetSessionFolderGuard) > context keys > client-level fallback.
 // This mirrors the resolution logic in ExecuteShellCommand so that all tools (diff_patch,
@@ -138,10 +153,7 @@ func NewClient(baseURL string, opts ...ClientOption) *Client {
 func (c *Client) resolveEffectiveFolderGuard(ctx context.Context) *FolderGuardConfig {
 	// 1. Session config: set by SetSessionFolderGuard() — highest priority.
 	//    Covers CLI/Gemini providers that bypass the Go folder guard context wrappers.
-	sessionID := ""
-	if sid, ok := ctx.Value(common.ChatSessionIDKey).(string); ok && sid != "" {
-		sessionID = sid
-	}
+	sessionID := c.sessionIDFromContext(ctx)
 	if sessionID != "" {
 		sessionCfg := GetSessionShellConfig(sessionID)
 		if sessionCfg != nil && sessionConfigHasFolderGuard(sessionCfg) {

@@ -1480,6 +1480,13 @@ func runServer(cmd *cobra.Command, args []string) {
 	// call them all via /tools/mcp/{server}/{tool}. The routeMCPRequest helper detects these
 	// categories and redirects to the correct handler (custom or virtual).
 	routeMCPRequest := func(w http.ResponseWriter, r *http.Request, server, tool string) {
+		// Global bridge URLs carry the session in X-Session-ID. Preserve it in
+		// context as well as the request header so workspace tools can resolve
+		// session-scoped folder guards, working directories, and read-only host
+		// grants (for example the native Chrome Downloads directory).
+		if sid := strings.TrimSpace(r.Header.Get("X-Session-ID")); sid != "" {
+			r = r.WithContext(context.WithValue(r.Context(), common.ChatSessionIDKey, sid))
+		}
 		if isMCPBridgeCustomToolCategory(server) {
 			log.Printf("[ROUTE] Redirecting /tools/mcp/%s/%s → custom tool handler", server, tool)
 			executorHandlers.HandlePerToolCustomRequest(w, r, tool)
@@ -1502,6 +1509,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	toolsRouter.HandleFunc("/custom/{tool}", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		log.Printf("[GLOBAL_ROUTE_DEBUG] Global custom tool request: tool=%s url=%s x-session-id=%s", vars["tool"], r.URL.Path, r.Header.Get("X-Session-ID"))
+		if sid := strings.TrimSpace(r.Header.Get("X-Session-ID")); sid != "" {
+			r = r.WithContext(context.WithValue(r.Context(), common.ChatSessionIDKey, sid))
+		}
 		executorHandlers.HandlePerToolCustomRequest(w, r, vars["tool"])
 	}).Methods("POST", "OPTIONS")
 	toolsRouter.HandleFunc("/virtual/{tool}", func(w http.ResponseWriter, r *http.Request) {

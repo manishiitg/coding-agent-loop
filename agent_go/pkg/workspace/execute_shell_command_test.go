@@ -353,6 +353,53 @@ func TestExecuteShellCommand_PassesCDPHostDownloadsReadOnlyGuard(t *testing.T) {
 	}
 }
 
+func TestExecuteShellCommand_UsesClientSessionIDForCDPHostDownloadsGuard(t *testing.T) {
+	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/coding-agent-loop/workspace-docs")
+	t.Setenv("PI_HOST_DOWNLOADS_PATH", "/Users/mipl/Downloads")
+
+	sessionID := "test-cdp-downloads-client-session"
+	common.SetSessionFolderGuard(
+		sessionID,
+		[]string{"Workflow/testing"},
+		[]string{"Workflow/testing/Downloads"},
+	)
+	common.GrantSessionCDPHostDownloadsReadOnly(sessionID, "cdp")
+	defer ClearSessionShellConfig(sessionID)
+
+	var got ExecuteShellCommandParams
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"data":    map[string]interface{}{"stdout": "ok", "exit_code": 0},
+		})
+	}))
+	defer server.Close()
+
+	// This reproduces the code-execution bridge path: the session-aware client
+	// has MCP_SESSION_ID, but an HTTP intermediary supplied no context value.
+	client := NewClient(server.URL, WithExtraEnv(map[string]string{"MCP_SESSION_ID": sessionID}))
+	if _, err := client.ExecuteShellCommand(context.Background(), ExecuteShellCommandParams{
+		Command: `cat '/Users/mipl/Downloads/statement.pdf'`,
+	}); err != nil {
+		t.Fatalf("ExecuteShellCommand error: %v", err)
+	}
+
+	if got.FolderGuard == nil {
+		t.Fatal("expected session folder guard in execute request")
+	}
+	if !containsString(got.FolderGuard.ReadPaths, "/Users/mipl/Downloads") {
+		t.Fatalf("expected host Downloads in read paths, got %v", got.FolderGuard.ReadPaths)
+	}
+	if containsString(got.FolderGuard.WritePaths, "/Users/mipl/Downloads") {
+		t.Fatalf("host Downloads must remain read-only, got write paths %v", got.FolderGuard.WritePaths)
+	}
+	if !containsString(got.FolderGuard.BlockedWritePaths, "/Users/mipl/Downloads") {
+		t.Fatalf("expected host Downloads in blocked-write paths, got %v", got.FolderGuard.BlockedWritePaths)
+	}
+}
+
 func TestExecuteShellCommandPreservesReadOnlySessionGuard(t *testing.T) {
 	sessionID := "test-read-only-shell-guard"
 	common.SetSessionFolderGuard(sessionID, []string{"Workflow/demo"}, nil)

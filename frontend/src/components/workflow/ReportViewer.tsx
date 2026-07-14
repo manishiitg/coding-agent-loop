@@ -3,13 +3,12 @@
 // interaction widgets persist configured responses through backend-owned APIs.
 // See docs/workflow/persistent_stores_design.md.
 
-import { createElement, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createElement, lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { FileListWidget, FileWidget } from './reportWidgets/FileWidget'
 import { FilePreviewModal } from './reportWidgets/FilePreviewModal'
-import { InteractionWidget } from './reportWidgets/InteractionWidget'
 import { ReportEmbedProvider, type ReportDataApi } from './reportWidgets/reportEmbedContext'
 import {
   WidgetError,
@@ -39,6 +38,10 @@ import type {
   ReportWidget,
   ReportWidgetKind,
 } from '../../services/api-types'
+
+const InteractionWidget = lazy(() =>
+  import('./reportWidgets/InteractionWidget').then(module => ({ default: module.InteractionWidget })),
+)
 
 export const REPORT_PREVIEW_PREFERENCE_KEY = 'workflow_report_preview_preference'
 export const REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT = 'workflow-report-preview-preference-changed'
@@ -1698,7 +1701,9 @@ function WidgetCard({
   if (widget.kind === 'interaction') {
     return (
       <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>
-        <InteractionWidget widget={widget} workspacePath={workspacePath} />
+        <Suspense fallback={<div className="flex min-h-24 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}>
+          <InteractionWidget widget={widget} workspacePath={workspacePath} />
+        </Suspense>
       </WidgetShell>
     )
   }

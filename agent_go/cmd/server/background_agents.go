@@ -1768,7 +1768,15 @@ func compactScheduledAutoNotificationResult(sessionID string, snap BackgroundAge
 	if stepID != "" {
 		inspectHint = fmt.Sprintf("Use query_step(step_id=%q, execution_id=%q) or inspect its persisted run artifacts for the complete result.", stepID, snap.ID)
 	}
-	return string(runes[:scheduledAutoNotificationResultMaxRunes]) + "\n... [scheduled auto-notification result truncated] " + inspectHint
+	// Large coding-agent results are often full terminal/tool transcripts rather
+	// than final prose. Pasting their prefix into the parent CLI exposes escaped
+	// JSON, partial TUI frames, and wrapped command arguments. Keep the parent
+	// pane readable and point it at the authoritative execution instead.
+	return fmt.Sprintf(
+		"Detailed result omitted from this scheduled notification because it exceeds %d characters. %s",
+		scheduledAutoNotificationResultMaxRunes,
+		inspectHint,
+	)
 }
 
 func autoNotificationInlineContext(meta map[string]string) string {

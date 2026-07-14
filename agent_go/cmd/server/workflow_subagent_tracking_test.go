@@ -252,12 +252,15 @@ func TestScheduledAutoNotificationBoundsCompletionResult(t *testing.T) {
 
 	scheduled := (&StreamingAPI{}).buildAutoNotificationMessage("schedule-cron--abc123_100", snap)
 	for _, want := range []string{
-		"scheduled auto-notification result truncated",
+		"Detailed result omitted from this scheduled notification",
 		`query_step(step_id="long-result", execution_id="workflow-step-long")`,
 	} {
 		if !strings.Contains(scheduled, want) {
 			t.Fatalf("scheduled completion missing %q:\n%s", want, scheduled)
 		}
+	}
+	if strings.Contains(scheduled, strings.Repeat("x", 100)) {
+		t.Fatal("scheduled completion leaked the oversized raw result into the parent CLI")
 	}
 	interactive := (&StreamingAPI{}).buildAutoNotificationMessage("interactive-session", snap)
 	if !strings.Contains(interactive, strings.Repeat("x", scheduledAutoNotificationResultMaxRunes+500)) {

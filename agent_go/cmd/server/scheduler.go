@@ -1729,6 +1729,8 @@ Before doing the task, read pulse/task.html if it exists. Use only prior .task-e
 
 After the task finishes, stop normally. The scheduler will send a separate report-update turn to write this run's summary and key findings back into pulse/task.html.
 
+If progress requires a non-blocking user decision, clarification, or approval, do not guess and do not wait in real time. Call create_human_input_request(source="chief_of_staff", workspace_path="pulse" for an org-wide question or the affected Workflow/<name> path for a workflow-specific question). Continue any independent work that remains safe. A future Chief of Staff or workflow Pulse run will receive the saved answer and must record what it did with mark_human_input_consumed.
+
 Scheduled task:
 %s`, sctx.Schedule.ID, query)
 }
@@ -2609,8 +2611,21 @@ func (s *SchedulerService) executeMultiAgentJob(ctx context.Context, sctx *Sched
 	if len(messages) == 0 && query == "" {
 		return "", "", fmt.Errorf("multi-agent schedule %s has no messages or query", sctx.Schedule.ID)
 	}
+	chiefInputWorkspaces := []string{"pulse"}
+	if workflows, err := s.DiscoverWorkflowManifestsCached(ctx, 5*time.Second); err != nil {
+		s.logf(sctx, "[CHIEF_INPUT] Could not discover workflow scopes for answered questions: %v", err)
+	} else {
+		for _, workflow := range workflows {
+			chiefInputWorkspaces = append(chiefInputWorkspaces, workflow.WorkspacePath)
+		}
+	}
+	answeredChiefInputs := formatAnsweredChiefOfStaffInputsForAgent(ctx, chiefInputWorkspaces)
+	chiefInputNote := ""
+	if answeredChiefInputs != "" {
+		chiefInputNote = "\n\n" + answeredChiefInputs
+	}
 	if query != "" {
-		query = withChiefTaskRunContext(sctx, query)
+		query = withChiefTaskRunContext(sctx, query) + chiefInputNote
 	}
 
 	sessionID := s.newScheduleSessionID(sctx)
@@ -2677,7 +2692,7 @@ func (s *SchedulerService) executeMultiAgentJob(ctx context.Context, sctx *Sched
 				stepReq[k] = v
 			}
 			if i == 0 {
-				msg = withChiefTaskRunContext(sctx, msg)
+				msg = withChiefTaskRunContext(sctx, msg) + chiefInputNote
 			}
 			stepReq["query"] = msg
 

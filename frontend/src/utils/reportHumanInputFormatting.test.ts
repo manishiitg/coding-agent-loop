@@ -1,5 +1,25 @@
 import { describe, expect, it } from 'vitest'
-import { parseReportHumanInputContext } from './reportHumanInputFormatting'
+import type { ReportHumanInput } from '../services/api-types'
+import {
+  parseReportHumanInputContext,
+  reportHumanInputHistory,
+  reportHumanInputStatusLabel,
+} from './reportHumanInputFormatting'
+
+function input(status: ReportHumanInput['status'], id = status): ReportHumanInput {
+  return {
+    id,
+    workspace_path: 'Workflow/example',
+    source: 'pulse',
+    priority: 'medium',
+    question: `Question ${id}`,
+    options: [],
+    allow_free_text: true,
+    status,
+    created_at: '2026-07-14T08:00:00Z',
+    updated_at: '2026-07-14T09:00:00Z',
+  }
+}
 
 describe('report human input context formatting', () => {
   it('turns compact proposal text into readable sections and a numbered list', () => {
@@ -21,5 +41,23 @@ describe('report human input context formatting', () => {
     expect(parseReportHumanInputContext('A short explanation.')).toEqual([
       { label: '', body: 'A short explanation.', items: [] },
     ])
+  })
+
+  it('keeps consumed inputs in decision history so their outcome remains visible', () => {
+    const consumed = {
+      ...input('consumed'),
+      outcome_summary: 'Updated the publishing schedule from weekly to daily.',
+    }
+
+    expect(reportHumanInputHistory([input('pending'), input('answered'), consumed, input('dismissed')]))
+      .toEqual([input('answered'), consumed, input('dismissed')])
+  })
+
+  it('uses lifecycle labels that distinguish waiting from completed action', () => {
+    expect(reportHumanInputStatusLabel(input('pending'))).toBe('Needs answer')
+    expect(reportHumanInputStatusLabel(input('answered'))).toBe('Waiting for Pulse')
+    expect(reportHumanInputStatusLabel({ ...input('answered'), source: 'chief_of_staff' })).toBe('Waiting for Chief of Staff')
+    expect(reportHumanInputStatusLabel(input('consumed'))).toBe('Action completed')
+    expect(reportHumanInputStatusLabel(input('dismissed'))).toBe('Dismissed')
   })
 })

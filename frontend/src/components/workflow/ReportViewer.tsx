@@ -1,6 +1,6 @@
 // Dynamic report viewer — parses reports/report_plan.json. HTML file widgets
-// fetch their `source` file directly; HTML documents read live
-// data through the window.report API injected into their iframe.
+// fetch their `source` and read live data through window.report. Native
+// interaction widgets persist configured responses through backend-owned APIs.
 // See docs/workflow/persistent_stores_design.md.
 
 import { createElement, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -9,6 +9,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { FileListWidget, FileWidget } from './reportWidgets/FileWidget'
 import { FilePreviewModal } from './reportWidgets/FilePreviewModal'
+import { InteractionWidget } from './reportWidgets/InteractionWidget'
 import { ReportEmbedProvider, type ReportDataApi } from './reportWidgets/reportEmbedContext'
 import {
   WidgetError,
@@ -643,6 +644,7 @@ function resolveWidgetSourceInput(widget: ReportWidget, sources: SourceCache): W
 }
 
 function widgetRawForVisibility(widget: ReportWidget, sources: SourceCache): unknown {
+  if (widget.kind === 'interaction') return {}
   const input = resolveWidgetSourceInput(widget, sources)
   if (input.status === 'ok') return input.value
   if (input.status === 'loading') return undefined
@@ -658,6 +660,8 @@ function widgetInstanceKey(
     ids.entryIndex,
     ids.widgetIndex,
     widget.kind,
+    widget.id ?? '',
+    widget.instanceKey ?? '',
     widget.source ?? '',
     widget.db ?? '',
     widget.sql ?? '',
@@ -668,6 +672,7 @@ function widgetInstanceKey(
 
 function widgetShouldRender(widget: ReportWidget, raw: unknown) {
   if (widget.hidden) return false
+  if (widget.kind === 'interaction') return true
   if (isFileArtifactWidget(widget)) return Boolean(widget.source)
   if (raw === undefined || raw === null) return true
   if (!evaluateShowIf(raw, widget.showIf)) return false
@@ -1689,6 +1694,14 @@ function WidgetCard({
   const wrapNotice = (content: React.ReactNode) => (
     <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>{content}</WidgetShell>
   )
+
+  if (widget.kind === 'interaction') {
+    return (
+      <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>
+        <InteractionWidget widget={widget} workspacePath={workspacePath} />
+      </WidgetShell>
+    )
+  }
 
   // file / file-list widgets render a stored artifact (or list a folder) directly.
   if (isFileArtifactWidget(widget)) {

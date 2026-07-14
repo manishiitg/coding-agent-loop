@@ -121,12 +121,49 @@ function parseReportPlanJSONWidget(raw: unknown): ReportWidget | null {
     hidden: source.hidden === true ? true : undefined,
     path: normalizePath(typeof source.path === 'string' ? source.path : ''),
   }
+  if (typeof source.id === 'string' && source.id.trim() !== '') widget.id = source.id.trim()
   if (typeof source.source === 'string' && source.source) widget.source = source.source
   if (typeof source.db === 'string' && source.db) widget.db = source.db
   if (typeof source.sql === 'string' && source.sql) widget.sql = source.sql
-  // Report plans render stored files only. HTML reports read db/db.sqlite
-  // themselves through window.report.query(...), not through report-plan widgets.
-  if (!widget.source) return null
+
+  if (widget.kind === 'interaction') {
+    if (typeof source.question === 'string' && source.question.trim() !== '') widget.question = source.question.trim()
+    if (!widget.question && typeof source.title === 'string' && source.title.trim() !== '') widget.question = source.title.trim()
+    const responseKind = typeof source.responseKind === 'string' ? source.responseKind.toLowerCase() : ''
+    if (responseKind === 'choice' || responseKind === 'text' || responseKind === 'choice-with-text') {
+      widget.responseKind = responseKind
+    } else {
+      widget.responseKind = Array.isArray(source.options) && source.options.length > 0 ? 'choice' : 'text'
+    }
+    if (Array.isArray(source.options)) {
+      const options = source.options.flatMap(rawOption => {
+        if (!rawOption || typeof rawOption !== 'object' || Array.isArray(rawOption)) return []
+        const option = rawOption as Record<string, unknown>
+        if (typeof option.id !== 'string' || option.id.trim() === '') return []
+        if (typeof option.title !== 'string' || option.title.trim() === '') return []
+        return [{
+          id: option.id.trim(),
+          title: option.title.trim(),
+          ...(typeof option.description === 'string' && option.description.trim() !== ''
+            ? { description: option.description.trim() }
+            : {}),
+        }]
+      })
+      if (options.length > 0) widget.options = options
+    }
+    widget.allowFreeText = source.allowFreeText === true || widget.responseKind === 'text' || widget.responseKind === 'choice-with-text'
+    if (typeof source.placeholder === 'string') widget.placeholder = source.placeholder
+    widget.instanceKey = typeof source.instanceKey === 'string' && source.instanceKey.trim() !== '' ? source.instanceKey.trim() : 'default'
+    if (typeof source.subjectId === 'string') widget.subjectId = source.subjectId.trim()
+    if (typeof source.subjectVersion === 'string') widget.subjectVersion = source.subjectVersion.trim()
+    if (typeof source.subjectHash === 'string') widget.subjectHash = source.subjectHash.trim()
+    if (!widget.question) return null
+    if ((widget.responseKind === 'choice' || widget.responseKind === 'choice-with-text') && (!widget.options || widget.options.length === 0)) return null
+  } else {
+    // File report widgets render stored artifacts. HTML reports read db/db.sqlite
+    // themselves through window.report.query(...).
+    if (!widget.source) return null
+  }
 
   if (typeof source.filter === 'string') widget.filter = source.filter
   if (typeof source.title === 'string') widget.title = source.title
@@ -188,7 +225,7 @@ function parseWidgetLayout(raw: unknown): { span?: number; minWidth?: number } |
 }
 
 function isWidgetKind(kind: string): kind is ReportWidgetKind {
-  return kind === 'file' || kind === 'file-list'
+  return kind === 'file' || kind === 'file-list' || kind === 'interaction'
 }
 
 // Treats JSONPath-style root selectors as "whole source" so users can write

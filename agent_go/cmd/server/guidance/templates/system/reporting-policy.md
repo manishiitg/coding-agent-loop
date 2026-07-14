@@ -1,14 +1,15 @@
 ## Reporting Policy
 
 The workflow has a **live frontend report viewer** at the top toolbar's
-"Report" tab. It reads `reports/report_plan.json` and renders the **HTML
-document(s)** registered there — each an HTML file under `db/reports/`. HTML
-documents read `db/db.sqlite` live via the `window.report` API and render their
-own visuals. The viewer is always available — there is **NO separate "generate
-report" phase**: you author the document **once** and it reads live data on view.
+"Report" tab. It reads `reports/report_plan.json` and renders HTML documents
+plus explicitly user-configured native `interaction` widgets. HTML documents
+read `db/db.sqlite` via `window.report`; interaction answers are stored in the
+framework-owned `report_widget_responses` table for later workflow runs. The
+viewer is always available — there is **NO separate "generate report" phase**.
 
-There is no widget grammar and no second format — a report is HTML document(s)
-that read the db live via `window.report`. The canonical report model, the full
+HTML remains the authored report format. The only native control is an
+`interaction` widget that the user explicitly asks Workshop to configure; do
+not create these automatically from Pulse or agent findings. The canonical report model, the full
 `window.report` API, and the content + formatting + design guide all live in
 `get_reference_doc(kind="report-plan")` — load it before authoring or editing a
 report. This policy only covers when/where reports apply and the mode boundary.
@@ -42,6 +43,13 @@ unless the user also asked for workflow behavior or eval changes.
 - When creating or improving a report for a routed workflow, first inspect the
   route list and decide the report structure (which tabs, what each shows) from
   that route map.
+- When the user explicitly asks to configure a persistent question, choice, or
+  decision in the Report page, add `upsert_report_widget(kind="interaction")`.
+  Give it a stable widget id, `question`, `responseKind`, optional `options`, and
+  optional `instanceKey` / subject version/hash. The current run never blocks.
+  If the response should affect execution, also edit the intended consumer step
+  so it reads the matching `report_widget_responses` row from `$DB_PATH` on a
+  later run. This is not the dynamic Pulse `report_human_inputs` flow.
 
 ### Live data + how to author
 

@@ -16,12 +16,6 @@ import (
 	"sync"
 	"time"
 
-	mcpagent "github.com/manishiitg/mcpagent/agent"
-	"github.com/manishiitg/mcpagent/agent/prompt"
-	baseevents "github.com/manishiitg/mcpagent/events"
-	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
-	"github.com/manishiitg/mcpagent/mcpclient"
-	"github.com/manishiitg/mcpagent/observability"
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/guidance"
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
@@ -32,6 +26,12 @@ import (
 	orchestrator_events "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/skills"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	"github.com/manishiitg/mcpagent/agent/prompt"
+	baseevents "github.com/manishiitg/mcpagent/events"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/mcpclient"
+	"github.com/manishiitg/mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	_ "modernc.org/sqlite"
@@ -2007,9 +2007,9 @@ Users may reach this workflow through Slack, WhatsApp, or another bot channel. T
 
 ## Reporting
 
-The workflow has a **live frontend report viewer** at the top toolbar's "Report" tab. It reads `+"`reports/report_plan.json`"+` and renders the **HTML document(s)** registered there — each an HTML file under `+"`db/reports/`"+`. There is no widget grammar and no other format: a report is HTML. It reads `+"`db/db.sqlite`"+` live via the `+"`window.report`"+` API and renders its own charts/tables/branded visuals. **No separate "generate report" phase** — author the document **once**; HTML reads live data on view, so there is nothing to regenerate per run.
+The workflow has a **live frontend report viewer** at the top toolbar's "Report" tab. It reads `+"`reports/report_plan.json`"+` and renders the **HTML document(s)** registered there — each an HTML file under `+"`db/reports/`"+`. It may also render native `+"`interaction`"+` widgets only when the user explicitly configures a durable question/control in the Report page. HTML reads `+"`db/db.sqlite`"+` live via the `+"`window.report`"+` API; interaction answers are stored in the same workflow DB table `+"`report_widget_responses`"+` for later runs. **No separate "generate report" phase** — author the document/widget definition **once** and it remains live.
 
-{{if eq .WorkshopMode "workshop"}}**Workshop owns `+"`reports/report_plan.json`"+`** — author the HTML document(s) and register them with the report-plan tools (`+"`get_report_plan`"+` / `+"`upsert_report_widget`"+` (kind `+"`file`"+`, `+"`renderFormat`"+` `+"`html`"+`) / etc.). Keep report edits presentation-only unless the user also asked for workflow reliability/eval changes. A report is HTML: it reads `+"`db/db.sqlite`"+` live via `+"`window.report.query(sql)`"+` and renders its own visuals — start from the `+"`html-output`"+` skeleton so even a simple narrative report is quick and consistent. Author the file ONCE and wire it to read data live — do NOT add a step that regenerates the report each run, and do NOT bake live data into the HTML as static text. For per-entity reports (per-PAN, per-route) use a tabbed section: one HTML document per entity via `+"`set_section_layout(mode=\"tabs\")`"+` + `+"`tab`"+`. For the full policy (`+"`window.report`"+` API, tabbed layout, "No report yet" diagnosis, auto-refresh discipline): `+"`get_reference_doc(kind=\"reporting-policy\")`"+`.
+{{if eq .WorkshopMode "workshop"}}**Workshop owns `+"`reports/report_plan.json`"+`** — author HTML documents with `+"`upsert_report_widget(kind=\"file\", renderFormat=\"html\")`"+`. When the user explicitly asks for a persistent report-page input, add a native `+"`interaction`"+` widget with a stable widget id, question, responseKind, options, and optional subject/version/hash; do not create it automatically from Pulse findings. Also configure the intended workflow consumer step to query the framework-owned `+"`report_widget_responses`"+` rows through `+"`$DB_PATH`"+`. Keep report edits presentation-only unless the user also asked for workflow behavior changes. HTML reads `+"`db/db.sqlite`"+` live via `+"`window.report.query(sql)`"+`; author it once and never regenerate it per run. For the full policy: `+"`get_reference_doc(kind=\"reporting-policy\")`"+`.
 {{else}}**Run mode does not author reports.** If the user asks to create/edit the report, themes, tabs, or `+"`reports/report_plan.json`"+`, tell them to switch to Workshop. Do not edit `+"`reports/report_plan.json`"+` via shell from Run mode. For policy details: `+"`get_reference_doc(kind=\"reporting-policy\")`"+`.
 {{end}}
 
@@ -2026,7 +2026,7 @@ The workflow has a **live frontend report viewer** at the top toolbar's "Report"
 
 You may maintain the live frontend report (`+"`reports/report_plan.json`"+`) so it stays aligned with current outputs, metrics, and evaluation evidence. Use report-plan tools for report edits; use workshop tools only when the underlying workflow behavior or eval coverage actually needs to change.
 
-**Core toolchain:** `+"`get_report_plan`"+` (read IDs) → author the HTML document under `+"`db/reports/`"+` (start from the `+"`html-output`"+` skeleton) → register it with `+"`upsert_report_widget`"+` (kind `+"`file`"+`, `+"`renderFormat`"+` `+"`html`"+`, `+"`source`"+` = the file path) / `+"`move_report_widget`"+` / `+"`toggle_report_widget`"+` / `+"`remove_report_widget`"+` → `+"`validate_report_plan`"+` after every edit → `+"`preview_report_render`"+` when you want to see the rendered result. HTML reports read `+"`db/db.sqlite`"+` live via `+"`window.report.query(sql)`"+` (do joins/aggregation/sort/limit in SQL). If an HTML report is empty because the table isn't populated, run the producing step (`+"`execute_step`"+`) or the full workflow before editing.
+**Core toolchain:** `+"`get_report_plan`"+` (read IDs) → author/register HTML with `+"`upsert_report_widget(kind=\"file\", renderFormat=\"html\")`"+`, or add an explicitly requested native `+"`interaction`"+` widget → `+"`move_report_widget`"+` / `+"`toggle_report_widget`"+` / `+"`remove_report_widget`"+` → `+"`validate_report_plan`"+` after every edit → `+"`preview_report_render`"+`. HTML reads the DB via `+"`window.report.query(sql)`"+`; workflow steps read configured interaction answers from `+"`report_widget_responses`"+` through `+"`$DB_PATH`"+`.
 
 **For the full toolchain (the two formats, `+"`window.report`"+` API, tabs, per-report themes, the good-document + design-quality guide, missing-data triage, full workflow), call:**
 `+"`get_reference_doc(kind=\"report-plan\")`"+` — load before authoring or editing `+"`reports/report_plan.json`"+`.

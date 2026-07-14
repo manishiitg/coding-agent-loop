@@ -332,14 +332,18 @@ Decision-worthy changes — a workflow broke or recovered, a goal started drifti
 problem appeared, or a high-value suggestion needs attention — affect severity and ordering,
 not whether you send the digest.
 
-If a recommendation needs a user decision for a specific workflow, do not leave that question only
-in email/chat. Call `create_human_input_request(workspace_path="<workflow path>", source="chief_of_staff", ...)`
-so the request is stored in that workflow's `db/db.sqlite` table `report_human_inputs`. The
-request is rendered at the top of both Chief of Staff Org Pulse and the affected workflow's Pulse,
-using the same answer controls. Keep the recommendation summary itself in `pulse/org-pulse.html`;
-use the structured request only when an answer is genuinely needed. When a later Chief of Staff or
-workflow pass uses the answer, it must call `mark_human_input_consumed` and remove or replace the
-matching visible question card in that workflow's Pulse HTML with a short outcome.
+If a recommendation needs a real user decision, clarification, or approval, do not leave that
+question only in email/chat and do not block waiting for a real-time response. Call
+`create_human_input_request(workspace_path="pulse", source="chief_of_staff", ...)` for an org-wide
+decision, or use `workspace_path="<workflow path>"` for a workflow-specific decision. Org-wide
+requests are stored in `pulse/db/db.sqlite`; workflow-specific requests are stored in that
+workflow's `db/db.sqlite`. Runloop renders both at the top of Chief of Staff Org Pulse and Tasks,
+and renders workflow-specific requests in the affected workflow's Pulse too. Keep the recommendation
+summary itself in `pulse/org-pulse.html`; use the structured request only when an answer is genuinely
+needed. The next Chief of Staff run receives answered Chief questions automatically. When Chief of
+Staff or a workflow pass completes the requested action—or makes a concrete no-action, deferred, or
+stale decision—it must call `mark_human_input_consumed` with a truthful outcome summary. Never mark
+an answer consumed merely because it was read.
 
 - `message_for_user`: one terse line for chat channels, formatted as
   `<emoji> Org Pulse — daily digest · <workflow health> · <goal metric> · <top decision or all healthy> · <url>`.

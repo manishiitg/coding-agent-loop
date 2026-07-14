@@ -480,11 +480,11 @@ func createReportHumanInputTools() ([]llmtypes.Tool, map[string]interface{}, map
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "create_human_input_request",
-			Description: "Create or refresh a structured non-blocking question for the user in this workflow's db/db.sqlite. Use this only from Pulse, Goal Advisor, or Chief of Staff when a decision/clarification would help the workflow. The user answers inside Runloop's Pulse/report panel; published static reports should only show the question and tell the user to open Runloop to answer. For Goal Advisor plan-change proposals, use source=\"goal_advisor\", a stable input_id prefixed with \"plan-proposal-\", options approve/reject/defer, and put the exact proposed plan changes, rationale, expected impact, risk, and evidence in context so a later Pulse pass can apply an approved proposal with normal plan tools.",
+			Description: "Create or refresh a structured non-blocking question for the user. Pulse and Goal Advisor store workflow questions in that workflow's db/db.sqlite; Chief of Staff may use workspace_path=\"pulse\" for an org-wide question, stored in pulse/db/db.sqlite, or a Workflow/<name> path for a workflow-specific question. The user answers inside Runloop's Pulse/report panel; published static reports should only show the question and tell the user to open Runloop to answer. For Goal Advisor plan-change proposals, use source=\"goal_advisor\", a stable input_id prefixed with \"plan-proposal-\", options approve/reject/defer, and put the exact proposed plan changes, rationale, expected impact, risk, and evidence in context so a later Pulse pass can apply an approved proposal with normal plan tools.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"workspace_path": map[string]interface{}{"type": "string", "description": "Workflow-relative path, for example Workflow/social-media. Required; requests are stored in that workflow's db/db.sqlite."},
+					"workspace_path": map[string]interface{}{"type": "string", "description": "Workflow-relative path, for example Workflow/social-media. Chief of Staff may use pulse for an org-wide question. Required; requests are stored in that scope's db/db.sqlite."},
 					"input_id":       map[string]interface{}{"type": "string", "description": "Optional stable id. Reuse this for the same still-open question so Pulse refreshes it instead of duplicating it."},
 					"source":         map[string]interface{}{"type": "string", "enum": []string{"pulse", "goal_advisor", "chief_of_staff"}, "description": "Who is asking. Defaults to pulse."},
 					"priority":       map[string]interface{}{"type": "string", "enum": []string{"low", "medium", "high"}, "description": "How important the answer is. Defaults to medium."},
@@ -720,16 +720,7 @@ func formatAnsweredReportHumanInputsForAgent(ctx context.Context, workspacePath 
 	var b strings.Builder
 	b.WriteString("Answered human input requests waiting for this workflow pass:\n")
 	for _, input := range inputs {
-		answer := input.Note
-		if input.SelectedOptionID != "" {
-			answer = fmt.Sprintf("option=%s", input.SelectedOptionID)
-			if title := reportHumanInputOptionTitle(input.Options, input.SelectedOptionID); title != "" {
-				answer += fmt.Sprintf(" (%s)", title)
-			}
-			if input.Note != "" {
-				answer += "; note=" + input.Note
-			}
-		}
+		answer := reportHumanInputAnswerForAgent(input)
 		context := strings.TrimSpace(input.Context)
 		if context != "" {
 			context = " context=" + strconv.Quote(context)
@@ -739,6 +730,61 @@ func formatAnsweredReportHumanInputsForAgent(ctx context.Context, workspacePath 
 	}
 	b.WriteString("If an answered Goal Advisor plan proposal is approved, apply it only with normal plan modification/config/eval/report tools, then call mark_human_input_consumed with the concrete outcome. If it is rejected or deferred, record that outcome and consume it. After consuming any answer, remove or replace the matching visible Human input requested card in builder/improve.html so Pulse no longer shows it as an active question; keep only a short outcome Decision/Note when useful. Do not edit the SQLite table directly.\n")
 	return strings.TrimSpace(b.String())
+}
+
+// formatAnsweredChiefOfStaffInputsForAgent gathers only Chief of Staff answers
+// across the org-level pulse scope and discovered workflow scopes. Unlike a
+// workflow Pulse pass, Chief of Staff has no single workspace DB, so each line
+// carries the workspace_path required to record the outcome in the same scope.
+func formatAnsweredChiefOfStaffInputsForAgent(ctx context.Context, workspacePaths []string) string {
+	seen := make(map[string]struct{}, len(workspacePaths))
+	inputs := make([]ReportHumanInput, 0)
+	for _, workspacePath := range workspacePaths {
+		workspacePath = strings.TrimSpace(workspacePath)
+		if workspacePath == "" {
+			continue
+		}
+		if _, exists := seen[workspacePath]; exists {
+			continue
+		}
+		seen[workspacePath] = struct{}{}
+		workspaceInputs, err := listReportHumanInputs(ctx, workspacePath, "answered", "chief_of_staff")
+		if err != nil {
+			continue
+		}
+		inputs = append(inputs, workspaceInputs...)
+	}
+	if len(inputs) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("Answered Chief of Staff questions waiting for this run:\n")
+	for _, input := range inputs {
+		context := strings.TrimSpace(input.Context)
+		if context != "" {
+			context = " context=" + strconv.Quote(context)
+		}
+		b.WriteString(fmt.Sprintf("- workspace_path=%s input_id=%s priority=%s question=%q answer=%q answered_at=%s evidence=%q%s\n",
+			input.WorkspacePath, input.ID, input.Priority, input.Question, reportHumanInputAnswerForAgent(input), input.AnsweredAt, input.Evidence, context))
+	}
+	b.WriteString("Use each answer when it is still relevant. Do not mark an answer consumed merely because you read it. After the requested action or a concrete no-action/deferred/stale decision is complete, call mark_human_input_consumed with the same workspace_path and input_id plus a truthful outcome_summary. If the action cannot be completed safely in this run, leave the answer unconsumed so a later Chief of Staff or workflow Pulse pass can handle it.\n")
+	return strings.TrimSpace(b.String())
+}
+
+func reportHumanInputAnswerForAgent(input ReportHumanInput) string {
+	answer := input.Note
+	if input.SelectedOptionID == "" {
+		return answer
+	}
+	answer = fmt.Sprintf("option=%s", input.SelectedOptionID)
+	if title := reportHumanInputOptionTitle(input.Options, input.SelectedOptionID); title != "" {
+		answer += fmt.Sprintf(" (%s)", title)
+	}
+	if input.Note != "" {
+		answer += "; note=" + input.Note
+	}
+	return answer
 }
 
 func normalizeReportHumanInputSource(source string) string {

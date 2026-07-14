@@ -207,13 +207,18 @@ const ChiefOfStaffQuestions: React.FC = () => {
 
   return (
     <div>
+      <ReportHumanInputPanel
+        workspacePath="pulse"
+        workspaceLabel="Organization"
+        source="chief_of_staff"
+        className="mx-3 mt-3"
+      />
       {workflows.map(workflow => (
         <ReportHumanInputPanel
           key={workflow.workspace_path}
           workspacePath={workflow.workspace_path}
           workspaceLabel={workflow.manifest.label || workflow.workspace_path.split('/').pop() || workflow.workspace_path}
           source="chief_of_staff"
-          pendingOnly
           className="mx-3 mt-3"
         />
       ))}
@@ -261,5 +266,6 @@ export const ChiefTasksPanel: React.FC<{ toolbarLeading?: React.ReactNode; onClo
     onClosePanel={onClosePanel}
     fixedDevice={fixedDevice}
     hideHeader={hideHeader}
+    leadingContent={<ChiefOfStaffQuestions />}
   />
 )

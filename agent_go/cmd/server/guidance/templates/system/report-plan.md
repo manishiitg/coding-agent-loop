@@ -2,9 +2,9 @@
 
 Workshop may maintain the live frontend report defined by `reports/report_plan.json` so the report stays aligned with current outputs and evaluation evidence. Use report-plan tools for report edits; use workshop tools only when the underlying workflow behavior or eval coverage actually needs to change.
 
-### The report model — an HTML document
+### The report model — HTML plus explicit native interactions
 
-A report is one or more **HTML documents**. There is no widget grammar and no second format: every report is HTML. The viewer renders each document in a sandboxed iframe and hands it the live data via the `window.report` API; the HTML renders its own visuals (charts, tables, KPI tiles, branded CSS — whatever) with full styling control.
+A report is one or more **HTML documents**. The viewer renders each document in a sandboxed iframe and hands it live data via `window.report`; the HTML renders its own visuals with full styling control. The one native non-document kind is `interaction`: a user-configured question/control rendered by Runloop and backed by workflow SQLite. Never add an interaction automatically because an agent or Pulse happens to want input; use it only when the user explicitly asks to configure that control in the report.
 
 HTML is a superset of anything a plain document needs — prose, headings, tables, links — AND it can read the db live and draw charts. Start every report from the shipped HTML skeleton so even a simple narrative report is quick to author and looks consistent: load `get_reference_doc(kind="html-output")` for the layout baseline, dark-mode styles, and inline chart pattern.
 
@@ -16,11 +16,49 @@ HTML is a superset of anything a plain document needs — prose, headings, table
   { "kind": "file", "source": "db/reports/<name>.html", "renderFormat": "html" }
   ```
   Use `upsert_report_widget` (kind `file`, `renderFormat` `html`) to create/update, `move_report_widget` to reposition, `toggle_report_widget` to hide/show, and `remove_report_widget` to delete. Document files live under `db/reports/` and may reference `db/`, `knowledgebase/`, or `docs/` assets.
+- A configured report interaction is registered as a native widget, for example:
+  ```json
+  {
+    "kind": "interaction",
+    "id": "linkedin-draft-review",
+    "question": "What should happen to this draft?",
+    "responseKind": "choice-with-text",
+    "options": [
+      { "id": "approve", "title": "Approve" },
+      { "id": "request_changes", "title": "Request changes" },
+      { "id": "reject", "title": "Reject" }
+    ],
+    "instanceKey": "draft-123-v1",
+    "subjectId": "draft-123",
+    "subjectVersion": "1",
+    "subjectHash": "sha256:..."
+  }
+  ```
+  Use `choice`, `text`, or `choice-with-text`. `instanceKey` defaults to `default`; set subject metadata when the response must bind to a specific artifact. The app validates choices against this configured allowlist before storing them.
 - **Author the document once; wire it to read data LIVE. Do NOT add a workflow step whose job is to (re)generate the report file each run.** An HTML report reads `db/db.sqlite` live via `window.report` (below), so the workflow's normal steps write the data and the report just reads it — always current, zero per-run work. Steps that populate the `db/db.sqlite` tables the report queries are correct and required; the anti-pattern is re-emitting the report document itself, or baking live data into the HTML as static text (it goes stale and costs tokens every run).
 - For a multi-entity report (per-PAN, per-account, per-route), put one document per entity into a **tabbed** section: call `set_section_layout(mode="tabs")`, then pass `tab: "<entity name>"` to `upsert_report_widget` for each document so they render under one tabbed area instead of many sections.
 - For per-report color palettes: call `set_report_theme` with `brand` / `warm` / `cool` for bundled themes, or pass `colors: { primary, accent, card, muted, border, chart: [...] }` (hex strings) for an inline custom palette. Omit fields you don't want to override; pass null/empty to clear.
 - After every edit to `reports/report_plan.json`, call `validate_report_plan`.
 - When you need to inspect what the final report will actually show with current data, call `preview_report_render`.
+
+### Consuming configured interaction answers
+
+Interaction answers are framework-owned rows in the workflow's `db/db.sqlite` table `report_widget_responses`; the report page is only the UI. They are asynchronous: creating or displaying a widget never pauses a run, and the user may answer days later.
+
+If the user wants an answer to affect future execution, configure the intended consumer step (and give it DB read access) to query `$DB_PATH`, for example:
+
+```sql
+SELECT instance_key, selected_option_id, note,
+       subject_id, subject_version, subject_hash, revision
+FROM report_widget_responses
+WHERE widget_id = 'linkedin-draft-review'
+  AND status = 'answered'
+ORDER BY updated_at DESC;
+```
+
+The step must handle no row as "no answer yet" and continue its safe normal behavior. For a critical action, verify the stored subject version/hash against the current artifact and use an idempotency key before causing an external side effect. After the configured workflow action succeeds, update that exact row to `status='consumed'` with `consumed_by`, `outcome_summary`, `consumed_at`, and `updated_at`; do not consume before success. If the user later updates the widget response, the framework changes it back to `answered` and increments `revision`.
+
+Do not make unrelated steps understand the widget JSON. The builder wires only the explicit consumer step to this stable table contract. Dynamic Pulse/Goal Advisor questions remain in the separate `report_human_inputs` flow.
 
 ### HTML reports get LIVE data via `window.report`
 

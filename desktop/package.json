@@ -12,7 +12,8 @@
   },
   "build": {
     "appId": "com.mcp-agent-builder.desktop",
-    "productName": "Runloop",
+    "productName": "AgentWorks",
+    "artifactName": "Runloop-${version}-${arch}-mac.${ext}",
     "publish": [
       "github"
     ],
@@ -24,6 +25,9 @@
         "dmg",
         "zip"
       ]
+    },
+    "dmg": {
+      "artifactName": "Runloop-${version}-${arch}.${ext}"
     },
     "extraResources": [
       {

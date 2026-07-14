@@ -53,7 +53,7 @@ CSC_IDENTITY_AUTO_DISCOVERY=false \
   npx electron-builder --mac dmg --publish never
 ```
 
-Artifacts currently keep the legacy `Runloop-<version>-arm64.dmg` filename for updater compatibility during the AgentWorks rename. Install: `open desktop/dist/Runloop-*.dmg` → drag the app to Applications. First launch: right-click → Open to bypass Gatekeeper.
+Artifacts keep the legacy `Runloop-<version>-arm64.dmg` filename for updater compatibility, but the bundle inside is `AgentWorks.app`. Install: `open desktop/dist/Runloop-*.dmg` → drag AgentWorks to Applications. First launch: right-click → Open to bypass Gatekeeper.
 
 ### Cutting a release via the release script
 
@@ -101,7 +101,10 @@ Right-click the menu bar icon and choose **Quit AgentWorks (Stop Servers)**, or 
 
 ### Data & Logs
 The app stores data in the system's Application Support directory:
-`~/Library/Application Support/Runloop/`
+`~/Library/Application Support/runloop-desktop/`
+
+The historical data-directory name is retained deliberately so upgrading from
+`Runloop.app` to `AgentWorks.app` does not create an empty workspace.
 
 The data path is still legacy-compatible while the rename is in progress. Do not rename it blindly without a migration.
 

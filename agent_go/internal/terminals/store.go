@@ -311,12 +311,26 @@ func (s *Store) ListRaw(sessionID string) []Snapshot {
 // last-refreshed pane snapshot (the frontend probe refreshes inactive tmux
 // terminals every few seconds), so this is an in-memory read, no tmux capture.
 func (s *Store) SessionHasBusyCodingTmux(sessionID string) bool {
+	return s.sessionHasBusyCodingTmux(sessionID, false)
+}
+
+// SessionHasBusyMainCodingTmux applies the same live-pane busy check but only
+// to the session's main coding agent. Child workflow/background terminals must
+// not make chat input steerable when the main pane is absent.
+func (s *Store) SessionHasBusyMainCodingTmux(sessionID string) bool {
+	return s.sessionHasBusyCodingTmux(sessionID, true)
+}
+
+func (s *Store) sessionHasBusyCodingTmux(sessionID string, mainOnly bool) bool {
 	if s == nil {
 		return false
 	}
 	// Dismissal only hides a terminal from the UI. A dismissed live pane still
 	// owns runtime work and must remain visible to busy/input routing.
 	for _, snapshot := range s.ListRaw(sessionID) {
+		if mainOnly && !currentTerminalIsMainAgent(snapshot) {
+			continue
+		}
 		if strings.TrimSpace(snapshot.TmuxSession) == "" {
 			continue
 		}
@@ -1304,7 +1318,11 @@ func currentTerminalIsMainAgent(snapshot Snapshot) bool {
 		return false
 	}
 	kind := strings.ToLower(strings.TrimSpace(firstNonEmpty(snapshot.ExecutionKind, snapshot.Scope)))
-	return kind == "main_agent" || kind == "main" || kind == "chat"
+	if kind != "" {
+		return kind == "main_agent" || kind == "main" || kind == "chat"
+	}
+	owner := strings.TrimSpace(snapshot.OwnerID)
+	return owner != "" && (owner == snapshot.SessionID || strings.HasPrefix(owner, "main:"))
 }
 
 func shouldPreferTerminalSnapshot(candidate, existing Snapshot) bool {

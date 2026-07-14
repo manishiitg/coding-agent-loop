@@ -194,16 +194,22 @@ func TestCodingTmuxWatchdogRateLimitedMainStopsSession(t *testing.T) {
 	oldCapture := captureTmuxPanePlainForWatchdog
 	oldKill := runTmuxKill
 	oldClose := closeCodingCLITmuxForWatchdog
+	oldCloseAllRuntime := closeAllCodingCLISessionsForRuntimeCancel
+	oldCloseRuntime := closeCodingAgentTmuxForRuntimeCancel
 	t.Cleanup(func() {
 		runTerminalTmuxOutputCommand = oldOutput
 		captureTmuxPanePlainForWatchdog = oldCapture
 		runTmuxKill = oldKill
 		closeCodingCLITmuxForWatchdog = oldClose
+		closeAllCodingCLISessionsForRuntimeCancel = oldCloseAllRuntime
+		closeCodingAgentTmuxForRuntimeCancel = oldCloseRuntime
 	})
 	runTerminalTmuxOutputCommand = func(context.Context, ...string) (string, error) { return "0", nil }
 	captureTmuxPanePlainForWatchdog = func(string) string { return "You've hit your usage limit" }
 	runTmuxKill = func(context.Context, string) error { return nil }
 	closeCodingCLITmuxForWatchdog = func(string, string) bool { return true }
+	closeAllCodingCLISessionsForRuntimeCancel = func(string, string) {}
+	closeCodingAgentTmuxForRuntimeCancel = func(string, string) bool { return true }
 
 	store := terminals.NewStore()
 	sessionID := "main-rate-limited"
@@ -222,8 +228,8 @@ func TestCodingTmuxWatchdogRateLimitedMainStopsSession(t *testing.T) {
 	api.reapRateLimitedCodingSessionsOnce(streak)
 	api.reapRateLimitedCodingSessionsOnce(streak)
 
-	if got := api.activeSessions[sessionID].Status; got != "failed" {
-		t.Fatalf("main session status = %q, want failed", got)
+	if got := api.activeSessions[sessionID].Status; got != "error" {
+		t.Fatalf("main session status = %q, want error", got)
 	}
 	if !api.isSessionMarkedStopped(sessionID) {
 		t.Fatal("main rate limit did not stop the session")

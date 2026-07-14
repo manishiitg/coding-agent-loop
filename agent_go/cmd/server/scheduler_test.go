@@ -2340,6 +2340,25 @@ func TestWaitForWorkshopIdleTreatsTmuxRefreshFailureAsInactivity(t *testing.T) {
 	}
 }
 
+func TestWaitForWorkshopIdleReportsRuntimeFailureBeforeStopGuard(t *testing.T) {
+	sessionID := "session-runtime-failed"
+	api := &StreamingAPI{
+		activeSessions: map[string]*ActiveSessionInfo{
+			sessionID: {SessionID: sessionID, Status: "error"},
+		},
+		stoppedSessions: map[string]bool{sessionID: true},
+	}
+	svc := &SchedulerService{api: api}
+
+	err := svc.waitForWorkshopIdleWithInactivityTimeout(context.Background(), sessionID, time.Minute)
+	if !errors.Is(err, errWorkshopSessionFailed) {
+		t.Fatalf("error = %v, want errWorkshopSessionFailed", err)
+	}
+	if errors.Is(err, errWorkshopSequenceInterrupted) {
+		t.Fatalf("runtime failure was misclassified as user interruption: %v", err)
+	}
+}
+
 func TestWaitForWorkshopIdleAllowsLongRunningTmuxWithProgress(t *testing.T) {
 	oldInterval := schedulerWorkshopIdlePollInterval
 	schedulerWorkshopIdlePollInterval = time.Millisecond

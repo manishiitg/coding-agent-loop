@@ -5,16 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
-	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
-	"github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
-	agent "github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentwrapper"
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
+	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
+	agent "github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentwrapper"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	unifiedevents "github.com/manishiitg/mcpagent/events"
@@ -862,9 +863,9 @@ func (api *StreamingAPI) autoNotificationSessionUnreachable(sessionID string) bo
 	}
 }
 
-// markSessionStopped records that a user explicitly stopped this session.
-// In-flight goroutines check this before spawning new workshop sessions or
-// step execution processes. See stoppedSessions field comment for full bug description.
+// markSessionStopped records that this session must not spawn more work. User
+// stops are the common case; fatal runtime cancellation also uses this guard
+// while preserving an error lifecycle status.
 func (api *StreamingAPI) markSessionStopped(sessionID string) {
 	api.stoppedSessionsMu.Lock()
 	api.stoppedSessions[sessionID] = true
@@ -879,8 +880,8 @@ func (api *StreamingAPI) clearSessionStopped(sessionID string) {
 	api.stoppedSessionsMu.Unlock()
 }
 
-// isSessionMarkedStopped returns true if the user explicitly stopped this session
-// and no new user message has reactivated it yet.
+// isSessionMarkedStopped returns true while the session has a hard cancellation
+// guard and no new user message has explicitly reactivated it.
 func (api *StreamingAPI) isSessionMarkedStopped(sessionID string) bool {
 	api.stoppedSessionsMu.RLock()
 	defer api.stoppedSessionsMu.RUnlock()

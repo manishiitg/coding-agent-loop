@@ -120,10 +120,14 @@ func (api *StreamingAPI) reapRateLimitedCodingSessionsOnce(streak map[string]cod
 
 		isMainAgent := codingAgentSnapshotIsMainAgent(snap)
 		if isMainAgent {
-			log.Printf("[CODING_WATCHDOG] main session %s tmux %s parked on a usage/rate-limit wall - force-stopping session",
+			log.Printf("[CODING_WATCHDOG] main session %s tmux %s parked on a usage/rate-limit wall - failing and canceling session runtime",
 				sessionID, tmux)
-			api.markSessionStopped(sessionID)
-			api.updateSessionStatus(sessionID, "failed")
+			// Persist failure before closing panes: stream goroutines may unwind as
+			// soon as cancellation starts and must not overwrite this as completed.
+			api.updateSessionStatus(sessionID, "error")
+			api.cancelSessionRuntimeWork(sessionID, "provider usage/rate limit reached")
+			delete(streak, watchdogKey)
+			continue
 		} else {
 			log.Printf("[CODING_WATCHDOG] child terminal %s session %s tmux %s parked on a usage/rate-limit wall - closing child only",
 				snap.TerminalID, sessionID, tmux)

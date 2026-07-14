@@ -415,19 +415,34 @@ func TestSessionHasLiveCodingTmuxTracksReap(t *testing.T) {
 	store := terminals.NewStore()
 	sessionID := "idle-active-session"
 	tmuxSession := "mlp-pi-cli-active"
-	store.HandleEvent(sessionID, codingAgentTmuxReaperChunkEvent(time.Now(), sessionID, "main:"+sessionID, tmuxSession))
+	store.HandleEvent(sessionID, codingAgentTmuxReaperChunkEvent(time.Now(), sessionID, "workflow-step:child", "mlp-pi-cli-child"))
 	api := &StreamingAPI{terminalStore: store}
 
 	if !api.sessionHasLiveCodingTmux(sessionID) {
+		t.Fatal("expected child pane to count as aggregate live session work")
+	}
+	if api.sessionHasLiveMainCodingTmux(sessionID) {
+		t.Fatal("child pane must not count as a live main chat terminal")
+	}
+
+	store.HandleEvent(sessionID, codingAgentTmuxReaperChunkEvent(time.Now(), sessionID, "main:"+sessionID, tmuxSession))
+
+	if !api.sessionHasLiveCodingTmux(sessionID) {
 		t.Fatal("expected a live coding tmux while the pane is Active with a tmux_session")
+	}
+	if !api.sessionHasLiveMainCodingTmux(sessionID) {
+		t.Fatal("expected a live main coding tmux for the main-agent pane")
 	}
 
 	// Reap the pane (the 3h idle path): MarkStale clears Active + TmuxSession.
 	if _, ok := store.MarkStale(sessionID + ":main:" + sessionID); !ok {
 		t.Fatal("expected to mark the terminal stale")
 	}
+	if _, ok := store.MarkStale(sessionID + ":workflow-step:child"); !ok {
+		t.Fatal("expected to mark the child terminal stale")
+	}
 	if api.sessionHasLiveCodingTmux(sessionID) {
-		t.Fatal("expected no live coding tmux after the pane was reaped/stale")
+		t.Fatal("expected no live coding tmux after all panes were reaped/stale")
 	}
 
 	// A nil store / unknown session must be safe (no panic, false).
@@ -436,6 +451,27 @@ func TestSessionHasLiveCodingTmuxTracksReap(t *testing.T) {
 	}
 	if api.sessionHasLiveCodingTmux("never-seen") {
 		t.Fatal("expected false for an unknown session")
+	}
+}
+
+func TestCodingAgentSnapshotIsMainAgentRequiresOwnershipEvidence(t *testing.T) {
+	tests := []struct {
+		name     string
+		snapshot terminals.Snapshot
+		want     bool
+	}{
+		{name: "unknown metadata", snapshot: terminals.Snapshot{SessionID: "session-1"}, want: false},
+		{name: "explicit main kind", snapshot: terminals.Snapshot{SessionID: "session-1", ExecutionKind: "main_agent"}, want: true},
+		{name: "explicit child kind overrides owner", snapshot: terminals.Snapshot{SessionID: "session-1", ExecutionKind: "workflow_step", OwnerID: "main:session-1"}, want: false},
+		{name: "legacy main owner", snapshot: terminals.Snapshot{SessionID: "session-1", OwnerID: "main:session-1"}, want: true},
+		{name: "child owner", snapshot: terminals.Snapshot{SessionID: "session-1", OwnerID: "workflow-step:collect"}, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := codingAgentSnapshotIsMainAgent(test.snapshot); got != test.want {
+				t.Fatalf("codingAgentSnapshotIsMainAgent() = %v, want %v", got, test.want)
+			}
+		})
 	}
 }
 

@@ -2333,6 +2333,41 @@ func TestSessionHasBusyCodingTmuxIgnoresCompletedTerminal(t *testing.T) {
 	}
 }
 
+func TestSessionHasBusyMainCodingTmuxIgnoresBusyChild(t *testing.T) {
+	store := NewStore()
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"workflow-step:collect-data",
+		cursorBusyPaneFixture,
+		0,
+		map[string]interface{}{
+			"tmux_session":   "mlp-cursor-cli-child",
+			"execution_kind": "workflow_step",
+		},
+		time.Now(),
+	))
+
+	if !store.SessionHasBusyCodingTmux("session-1") {
+		t.Fatal("busy child should count as aggregate session activity")
+	}
+	if store.SessionHasBusyMainCodingTmux("session-1") {
+		t.Fatal("busy child must not make the main chat agent steerable")
+	}
+
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"main:session-1",
+		cursorBusyPaneFixture,
+		0,
+		map[string]interface{}{
+			"tmux_session":   "mlp-cursor-cli-main",
+			"execution_kind": "main_agent",
+		},
+		time.Now(),
+	))
+	if !store.SessionHasBusyMainCodingTmux("session-1") {
+		t.Fatal("busy main pane should make the main chat agent steerable")
+	}
+}
+
 func TestSessionHasRetainedCodingTmuxDoesNotRequireBusyContent(t *testing.T) {
 	store := NewStore()
 	store.HandleEvent("session-1", terminalEventWithMetadata(

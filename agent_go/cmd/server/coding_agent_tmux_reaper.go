@@ -338,11 +338,11 @@ func piCLIConflictStatusShouldStop(status string) bool {
 }
 
 func codingAgentSnapshotIsMainAgent(snapshot terminals.Snapshot) bool {
-	if kind := strings.TrimSpace(snapshot.ExecutionKind); kind != "" && kind != "main_agent" {
-		return false
+	if kind := strings.ToLower(strings.TrimSpace(snapshot.ExecutionKind)); kind != "" {
+		return kind == "main_agent" || kind == "main" || kind == "chat"
 	}
 	owner := strings.TrimSpace(snapshot.OwnerID)
-	return owner == "" || owner == snapshot.SessionID || strings.HasPrefix(owner, "main:")
+	return owner != "" && (owner == snapshot.SessionID || strings.HasPrefix(owner, "main:"))
 }
 
 func codingAgentSnapshotWorkingDir(snapshot terminals.Snapshot) string {

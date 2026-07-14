@@ -10,7 +10,7 @@ func shellToolDef() llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "execute_shell_command",
-			Description: "Execute a shell command and return stdout, stderr, and exit code. Runs via shell (`sh -c`) with the working directory set to the workspace docs root. Both relative paths (resolved against the docs root) and absolute paths under the docs root are accepted. Other host paths are rejected unless the current session explicitly grants one read-only, such as the native Chrome Downloads directory. Copy a granted host file into a writable workspace folder before modifying it.",
+			Description: "Execute a shell command and return stdout, stderr, and exit code. Runs via shell (`sh -c`) with the working directory set to the workspace docs root. Both relative paths (resolved against the docs root) and absolute paths under the docs root are accepted. Other host paths are rejected unless the current session explicitly grants one read-only. With Local Chrome (CDP), use a supplied `~/Downloads/...` or `/Users/<user>/Downloads/...` path directly: the workspace `Downloads/` folder is separate and must not be substituted for the host path. Copy a granted host file into a writable workspace folder before modifying it.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

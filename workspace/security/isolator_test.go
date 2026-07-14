@@ -550,8 +550,16 @@ func TestSandboxAllowPathsPreserveExplicitExternalGrant(t *testing.T) {
 	if err := os.MkdirAll(externalDir, 0755); err != nil {
 		t.Fatalf("mkdir external grant: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(externalDir, "profile.json"), []byte(`{"external":true}`), 0644); err != nil {
+		t.Fatalf("write external file: %v", err)
+	}
 
-	iso := &Isolator{BaseDir: baseDir, WorkDir: baseDir, ReadPaths: []string{externalDir}}
+	iso := &Isolator{
+		BaseDir:           baseDir,
+		WorkDir:           filepath.Dir(root),
+		ReadPaths:         []string{externalDir},
+		BlockedWritePaths: []string{externalDir},
+	}
 	allowedPath, ok := iso.sandboxAllowedPath(externalDir)
 	if !ok {
 		t.Fatal("explicit external absolute grant was rejected")
@@ -561,6 +569,39 @@ func TestSandboxAllowPathsPreserveExplicitExternalGrant(t *testing.T) {
 	}
 	if !strings.Contains(iso.generateSandboxProfile(), fmt.Sprintf("(subpath \"%s\")", sandboxQuoted(allowedPath))) {
 		t.Fatal("explicit external absolute grant missing from sandbox profile")
+	}
+	if runtime.GOOS == "darwin" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		cmd, cleanup, err := iso.ExecuteIsolated(ctx, "cat", []string{filepath.Join(externalDir, "profile.json")})
+		if cleanup != nil {
+			defer cleanup()
+		}
+		if err != nil {
+			t.Fatalf("prepare isolated external read: %v", err)
+		}
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("read explicitly granted external file: %v\n%s", err, output)
+		}
+		if string(output) != `{"external":true}` {
+			t.Fatalf("unexpected external content: %q", output)
+		}
+
+		writePath := filepath.Join(externalDir, "must-not-write.txt")
+		writeCmd, writeCleanup, err := iso.ExecuteIsolated(ctx, "touch", []string{writePath})
+		if writeCleanup != nil {
+			defer writeCleanup()
+		}
+		if err != nil {
+			t.Fatalf("prepare isolated external write: %v", err)
+		}
+		if output, err := writeCmd.CombinedOutput(); err == nil {
+			t.Fatalf("write to read-only external grant succeeded: %s", output)
+		}
+		if _, err := os.Stat(writePath); !os.IsNotExist(err) {
+			t.Fatalf("read-only external grant created a file: %v", err)
+		}
 	}
 }
 

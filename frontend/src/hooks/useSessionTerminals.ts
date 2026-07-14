@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { agentApi } from '../services/api'
 import type { ListTerminalsResponse } from '../services/api-types'
 import { TERMINAL_REFRESH_REQUEST_EVENT } from '../utils/terminalRefresh'
+import { isLiveWorkflowTerminal } from '../utils/workflowTerminalActivity'
 
 /**
  * Terminal-presence probe for a session. Used by ChatArea's chat-surface
@@ -34,10 +35,13 @@ export function useSessionTerminals(sessionId?: string | null, enabled: boolean 
     queryFn: () => agentApi.listTerminals(sessionId!, 'none'),
     enabled: enabled && !!sessionId,
     refetchInterval: (query) => {
-      // A resume reattaches its terminal asynchronously — keep polling until one
-      // appears, then stop (presence is all the resolver needs).
+      // A startup placeholder can appear before the provider has attached its
+      // tmux session. Stopping on that provisional row freezes a non-live
+      // snapshot in this presence cache; when streaming later settles, the chat
+      // surface then incorrectly falls back to Previous chats. Keep polling
+      // until a terminal has an authoritative live/retained backing pane.
       const data = query.state.data
-      if (data && (data.terminals?.length ?? 0) > 0) return false
+      if (data?.terminals?.some(isLiveWorkflowTerminal)) return false
       return 3000
     },
     staleTime: 1000,

@@ -774,6 +774,8 @@ func getExecutionFolderPathForLogs(validationWorkspacePath string, stepID string
 	return fmt.Sprintf("%s/logs/%s/execution", validationWorkspacePath, getArtifactFolderName(stepID, stepPath))
 }
 
+const finalExecutionSummaryFilename = "execution-final-summary.json"
+
 // getLearningFolderPathByStepID returns the RELATIVE learning folder path using step ID.
 // All steps (regular, branch, sub-agent, evaluation) share the "learnings/{stepID}/"
 // namespace; validateCrossPlanStepIDUniqueness guarantees no collision between
@@ -968,6 +970,40 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveExecutionConversationLogs(
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("💾 Saved execution logs for step %d (%s) attempt %d", stepIndex+1, stepPath, retryAttempt))
+	return nil
+}
+
+// saveFinalExecutionSummary persists the authoritative compact result after all
+// execution, validation, KB, and learnings turns have finished. Attempt logs stay
+// immutable diagnostic evidence; Pulse reads this stable file for completed steps.
+func (hcpo *StepBasedWorkflowOrchestrator) saveFinalExecutionSummary(stepID, stepPath, executionResult string) error {
+	trimmed := strings.TrimSpace(executionResult)
+	if trimmed == "" {
+		return nil
+	}
+
+	validationWorkspacePath := hcpo.GetWorkspacePath()
+	if hcpo.selectedRunFolder != "" {
+		validationWorkspacePath = fmt.Sprintf("%s/runs/%s", validationWorkspacePath, hcpo.selectedRunFolder)
+	}
+	logDir := getExecutionFolderPathForLogs(validationWorkspacePath, stepID, stepPath)
+	resultPath := filepath.Join(logDir, finalExecutionSummaryFilename)
+	resultData := map[string]interface{}{
+		"schema_version":   1,
+		"step_id":          stepID,
+		"step_path":        stepPath,
+		"run_folder":       hcpo.selectedRunFolder,
+		"status":           "completed",
+		"execution_result": trimmed,
+		"completed_at":     formatRFC3339UTC(time.Now().UTC()),
+	}
+	resultJSON, err := json.MarshalIndent(resultData, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal final execution summary %s: %w", resultPath, err)
+	}
+	if err := hcpo.WriteWorkspaceFile(context.Background(), resultPath, string(resultJSON)); err != nil {
+		return fmt.Errorf("write final execution summary %s: %w", resultPath, err)
+	}
 	return nil
 }
 
@@ -2395,6 +2431,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 								})
 								if reviewErr != nil {
 									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ KB self-review continuation failed for step %d: %v (accepting step anyway)", stepIndex+1, reviewErr))
+									directKBReviewSummary = fmt.Sprintf("CONCERNS: knowledgebase contribution review failed for this run: %v\nSTATUS: COMPLETED", reviewErr)
 									hcpo.recordWorkflowContinuationPhase(context.Background(), artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseKBReview, workflowContinuationStatusFailed, reviewErr.Error(), executionAgent)
 								} else {
 									directKBReviewSummary = summarizeExecutionResultForNotification(reviewResult)
@@ -2470,6 +2507,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 										})
 										if learnErr != nil {
 											hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Direct-learnings continuation failed for step %d: %v (accepting step anyway)", stepIndex+1, learnErr))
+											directLearningsSummary = fmt.Sprintf("CONCERNS: learnings contribution failed for this run: %v\nSTATUS: COMPLETED", learnErr)
 											hcpo.recordWorkflowContinuationPhase(context.Background(), artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseDirectLearning, workflowContinuationStatusFailed, learnErr.Error(), executionAgent)
 										} else {
 											directLearningsSummary = summarizeExecutionResultForNotification(learnResult)
@@ -2778,6 +2816,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 	contextOutput := step.GetContextOutput().String()
 	if contextOutput != "" {
 		updatedContextFiles = append(updatedContextFiles, contextOutput)
+	}
+	finalExecutionResult := executionResult
+	if strings.TrimSpace(finalExecutionResult) == "" {
+		finalExecutionResult = "STATUS: COMPLETED"
+	}
+	if persistErr := hcpo.saveFinalExecutionSummary(artifactStepID, artifactStepPath, finalExecutionResult); persistErr != nil {
+		hcpo.recordRunPersistenceError(context.Background(), artifactStepID, persistErr)
+		hcpo.GetLogger().Warn(fmt.Sprintf("Step %s completed, but its final execution summary could not be persisted: %v", artifactStepID, persistErr))
 	}
 
 	// step_finished (status="end") is emitted by the defer at the top of this

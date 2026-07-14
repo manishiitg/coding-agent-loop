@@ -50,8 +50,12 @@ a reported concern.
 Use the durable compact results for the current `run_folder`, rather than relying
 only on resumed chat context:
 
-- regular and todo-task steps: the latest applicable
-  `runs/<run_folder>/logs/<step>/execution-attempt-*.json` `execution_result`
+- regular and todo-task steps: prefer
+  `runs/<run_folder>/logs/<step>/execution/execution-final-summary.json`
+  `execution_result`; for failed, incomplete, or legacy runs where that file is
+  absent, use the latest applicable
+  `runs/<run_folder>/logs/<step>/execution/execution-attempt-*.json`
+  `execution_result`
 - message-sequence steps: `runs/<run_folder>/execution/<step>/session.json`
   `entries[].summary`
 
@@ -226,7 +230,7 @@ runtime errors. When compact evidence makes a step suspicious, inspect that
 step's latest applicable observable trace:
 
 - regular and todo-task steps:
-  `runs/<run_folder>/logs/<step>/execution-attempt-*-iteration-*-conversation.json`
+  `runs/<run_folder>/logs/<step>/execution/execution-attempt-*-iteration-*-conversation.json`
   (`conversation_history`, `tool_calls`, and `llm_calls`)
 - message-sequence steps:
   `runs/<run_folder>/execution/<step>/session.json` (`conversation_history`,

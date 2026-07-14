@@ -1,11 +1,44 @@
 package step_based_workflow
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
+
+func TestExecutionEvidencePathsMatchPulseContract(t *testing.T) {
+	logsRoot := getExecutionFolderPathForLogs("Workflow/demo/runs/iteration-0/default", "collect-price", "step-1")
+	got := filepath.Join(logsRoot, finalExecutionSummaryFilename)
+	want := "Workflow/demo/runs/iteration-0/default/logs/collect-price/execution/execution-final-summary.json"
+	if got != want {
+		t.Fatalf("final summary path = %q, want %q", got, want)
+	}
+}
+
+func TestTodoTaskExecutionLogFilenamePreservesRetryIdentity(t *testing.T) {
+	if got, want := todoTaskExecutionLogFilename(3, 0), "execution-attempt-3-iteration-0.json"; got != want {
+		t.Fatalf("filename = %q, want %q", got, want)
+	}
+}
+
+func TestFinalExecutionSummaryPreservesContributionConcerns(t *testing.T) {
+	got := buildDirectModeCompletionSummary(
+		"Produced the report.\nSTATUS: COMPLETED",
+		"CONCERNS: knowledgebase write failed.\nSTATUS: COMPLETED",
+		"CONCERNS: learnings write failed.\nSTATUS: COMPLETED",
+	)
+	for _, want := range []string{
+		"Execution: Produced the report.",
+		"KB review: CONCERNS: knowledgebase write failed.",
+		"Learnings: CONCERNS: learnings write failed.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("final summary missing %q: %s", want, got)
+		}
+	}
+}
 
 func TestSummarizeExecutionResultPreservesOutcomeConcernsAndStatus(t *testing.T) {
 	result := "Published 12 records to db/db.sqlite.\n" +

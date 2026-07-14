@@ -928,7 +928,8 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		"data-review-after",
 		"explicitly inspect every executed step/item's compact final result",
 		"CONCERNS:",
-		"execution-attempt-*.json execution_result",
+		"execution/execution-final-summary.json execution_result",
+		"execution/execution-attempt-*.json execution_result",
 		"session.json entries[].summary",
 		"not an automatic run failure or automatic Bug verdict",
 	} {

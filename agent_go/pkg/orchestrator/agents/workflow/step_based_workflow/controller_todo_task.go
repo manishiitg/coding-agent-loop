@@ -387,7 +387,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		conversationHistory = updatedHistory
 
 		// Log execution
-		hcpo.saveTodoTaskExecutionLog(ctx, step.GetID(), todoTaskStepPath, retryAttempt-1, executionLLM, updatedHistory, capturedToolCalls, capturedLLMCalls, attemptStartedAt, attemptCompletedAt, attemptDuration)
+		hcpo.saveTodoTaskExecutionLog(ctx, step.GetID(), todoTaskStepPath, retryAttempt, 0, executionLLM, updatedHistory, capturedToolCalls, capturedLLMCalls, attemptStartedAt, attemptCompletedAt, attemptDuration)
 
 		// Drive the optional scripted message sequence through the SAME orchestrator
 		// conversation. First attempt only — retries continue the conversation with
@@ -405,7 +405,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 
 			if preValidationPassed {
 				hcpo.GetLogger().Info("✅ Todo task step complete (pre-validation passed)")
-				hcpo.runTodoTaskContributionTurns(ctx, todoTaskStep, stepIndex, todoTaskAgent, &conversationHistory)
+				hcpo.persistCompletedTodoTaskSummary(ctx, todoTaskStep, stepIndex, todoTaskStepPath, todoTaskAgent, &conversationHistory)
 				hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, 1, nil, "Pre-validation passed", todoTaskStep.NextStepID)
 				hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
 				return true, todoTaskStep.NextStepID, nil
@@ -434,7 +434,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 
 		// No validation schema — execution completion is the signal
 		hcpo.GetLogger().Info("✅ Todo task step complete (execution finished)")
-		hcpo.runTodoTaskContributionTurns(ctx, todoTaskStep, stepIndex, todoTaskAgent, &conversationHistory)
+		hcpo.persistCompletedTodoTaskSummary(ctx, todoTaskStep, stepIndex, todoTaskStepPath, todoTaskAgent, &conversationHistory)
 		hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, 1, nil, "Execution completed", todoTaskStep.NextStepID)
 		hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
 		return true, todoTaskStep.NextStepID, nil
@@ -444,32 +444,52 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	return false, todoTaskStep.NextStepID, nil
 }
 
+func (hcpo *StepBasedWorkflowOrchestrator) persistCompletedTodoTaskSummary(
+	ctx context.Context,
+	step *TodoTaskPlanStep,
+	stepIndex int,
+	stepPath string,
+	agent orchestratoragents.OrchestratorAgent,
+	conversationHistory *[]llmtypes.MessageContent,
+) {
+	mainSummary := latestAssistantExecutionSummary(*conversationHistory)
+	learningsSummary, knowledgebaseSummary := hcpo.runTodoTaskContributionTurns(ctx, step, stepIndex, agent, conversationHistory)
+	finalSummary := buildDirectModeCompletionSummary(mainSummary, knowledgebaseSummary, learningsSummary)
+	if strings.TrimSpace(finalSummary) == "" {
+		finalSummary = "STATUS: COMPLETED"
+	}
+	if err := hcpo.saveFinalExecutionSummary(step.GetID(), stepPath, finalSummary); err != nil {
+		hcpo.recordRunPersistenceError(context.Background(), step.GetID(), err)
+		hcpo.GetLogger().Warn(fmt.Sprintf("Todo task step %s completed, but its final execution summary could not be persisted: %v", step.GetID(), err))
+	}
+}
+
 // runTodoTaskContributionTurns runs a trailing learnings turn and/or KB turn on
 // the orchestrator's own conversation after its work completes — the same
 // contribution model regular steps and message_sequence steps use, so learnings/KB
 // are handled identically across all step types. The orchestrator already holds
 // learnings/_global and notes/ write access via its folder guard, so the turn can
 // write. Both turns are best-effort: a failure is logged, never fatal.
-func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskContributionTurns(ctx context.Context, step *TodoTaskPlanStep, stepIndex int, agent orchestratoragents.OrchestratorAgent, conversationHistory *[]llmtypes.MessageContent) {
+func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskContributionTurns(ctx context.Context, step *TodoTaskPlanStep, stepIndex int, agent orchestratoragents.OrchestratorAgent, conversationHistory *[]llmtypes.MessageContent) (learningsSummary, knowledgebaseSummary string) {
 	cfg := step.AgentConfigs
 	if cfg == nil {
-		return
+		return "", ""
 	}
 	ba := agent.GetBaseAgent()
 	if ba == nil {
-		return
+		return "", ""
 	}
-	runTurn := func(label, msg string) {
+	runTurn := func(label, msg string) string {
 		msg = strings.TrimSpace(msg)
 		if msg == "" {
-			return
+			return ""
 		}
 		if label == "learnings" {
 			restoreDirectLearningTurn := hcpo.prepareDirectLearningTurn(agent, []string{filepath.Join(hcpo.GetWorkspacePath(), LearningsFolderName, GlobalLearningID)})
 			defer restoreDirectLearningTurn()
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("📝 Todo task %s contribution turn for step %d", label, stepIndex+1))
-		_, updated, err := hcpo.withWorkshopMessageTarget(ctx, step.GetID(), "todo-"+label, agent, func() (string, []llmtypes.MessageContent, error) {
+		result, updated, err := hcpo.withWorkshopMessageTarget(ctx, step.GetID(), "todo-"+label, agent, func() (string, []llmtypes.MessageContent, error) {
 			return ba.Execute(ctx, msg, *conversationHistory, "", false)
 		})
 		if err != nil {
@@ -480,13 +500,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskContributionTurns(ctx cont
 			errMsg := fmt.Sprintf("%s contribution turn failed — %s write was lost for this run (step still completes): %v", label, label, err)
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Todo task step %d: %s", stepIndex+1, errMsg))
 			hcpo.EmitOrchestratorAgentError(ctx, "workflow", fmt.Sprintf("todo-task-%s-contribution", label), fmt.Sprintf("Write %s for step: %s", label, step.GetTitle()), errMsg, stepIndex, 0)
-			return
+			return fmt.Sprintf("CONCERNS: %s\nSTATUS: COMPLETED", errMsg)
 		}
 		*conversationHistory = updated
+		return summarizeExecutionResultForNotification(result)
 	}
 
 	if shouldDirectWriteLearnings(cfg, step, hcpo.isEvaluationMode) && !hcpo.shouldSkipDirectLearningsDueToLock(ctx, cfg, stepIndex) {
-		runTurn("learnings", hcpo.buildLearningsContributionTurn(step.GetID(), step.GetDescription(), strings.TrimSpace(cfg.LearningObjective), false))
+		learningsSummary = runTurn("learnings", hcpo.buildLearningsContributionTurn(step.GetID(), step.GetDescription(), strings.TrimSpace(cfg.LearningObjective), false))
 	}
 
 	if contribution := strings.TrimSpace(kbContributionForPrompt(cfg)); contribution != "" && kbAccessAllowsWrite(cfg.KnowledgebaseAccess) {
@@ -496,8 +517,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskContributionTurns(ctx cont
 		b.WriteString("**Contribution instruction:**\n")
 		b.WriteString(contribution)
 		b.WriteString("\n\nWrite durable, deduplicated notes under `knowledgebase/notes/`. If there is nothing new worth recording, say so explicitly and write nothing.")
-		runTurn("knowledgebase", b.String())
+		knowledgebaseSummary = runTurn("knowledgebase", b.String())
 	}
+	return learningsSummary, knowledgebaseSummary
 }
 
 // runTodoTaskMessageSequence drives a todo_task step's optional scripted message sequence.
@@ -548,7 +570,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskMessageSequence(
 			return err
 		}
 		*conversationHistory = updated
-		hcpo.saveTodoTaskExecutionLog(ctx, step.GetID(), stepPath, logSeq, executionLLM, updated, toolCalls, llmCalls, startedAt, completedAt, completedAt.Sub(startedAt))
+		hcpo.saveTodoTaskExecutionLog(ctx, step.GetID(), stepPath, 1, logSeq, executionLLM, updated, toolCalls, llmCalls, startedAt, completedAt, completedAt.Sub(startedAt))
 		logSeq++
 		return nil
 	}
@@ -1599,12 +1621,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitTodoTaskStepCompletedEvent(
 	}
 }
 
+func todoTaskExecutionLogFilename(retryAttempt, iteration int) string {
+	return fmt.Sprintf("execution-attempt-%d-iteration-%d.json", retryAttempt, iteration)
+}
+
 // saveTodoTaskExecutionLog saves the execution log for a todo task iteration
 // This allows the UI to show the full execution history (conversation, tool calls) for each iteration
 func (hcpo *StepBasedWorkflowOrchestrator) saveTodoTaskExecutionLog(
 	ctx context.Context,
 	stepID string,
 	stepPath string,
+	retryAttempt int,
 	iteration int,
 	executionLLM string,
 	conversationHistory []llmtypes.MessageContent,
@@ -1657,9 +1684,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveTodoTaskExecutionLog(
 		"breakdown":   timingBreakdown,
 	}
 
-	// Create filename: execution-attempt-1-iteration-{iteration}.json
-	// Use attempt=1 since todo task orchestrator doesn't have retry attempts like regular steps
-	filename := fmt.Sprintf("execution-attempt-1-iteration-%d.json", iteration)
+	filename := todoTaskExecutionLogFilename(retryAttempt, iteration)
 	filePath := fmt.Sprintf("%s/%s", executionLogsFolderPath, filename)
 	conversationPath := strings.TrimSuffix(filePath, ".json") + "-conversation.json"
 
@@ -1672,7 +1697,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveTodoTaskExecutionLog(
 	// Build execution log entry
 	executionLog := map[string]interface{}{
 		"step_path":                     stepPath,
-		"attempt":                       1,
+		"attempt":                       retryAttempt,
 		"iteration":                     iteration,
 		"model":                         executionLLM,
 		"execution_result":              executionSummary,

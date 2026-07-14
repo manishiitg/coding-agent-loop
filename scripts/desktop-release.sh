@@ -284,6 +284,7 @@ expected_assets=(
   "AgentWorks-$version-arm64-mac.zip.blockmap"
   "AgentWorks-$version-arm64.dmg"
   "AgentWorks-$version-arm64.dmg.blockmap"
+  "Runloop-$version-arm64.dmg"
 )
 
 release_assets="$(gh release view "$tag" --repo "$REPO" --json assets --jq '.assets[].name')"

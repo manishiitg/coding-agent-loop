@@ -229,5 +229,11 @@ jobs:
           fi
 
           npm run dist -- --arm64 --publish always
+
+          # Versions through v1.25.111 construct the updater URL with the old
+          # product name. Keep this alias so those installations can jump
+          # directly to the latest AgentWorks release.
+          cp "dist/AgentWorks-${VERSION}-arm64.dmg" "dist/Runloop-${VERSION}-arm64.dmg"
+          gh release upload "v${VERSION}" "dist/Runloop-${VERSION}-arm64.dmg" --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

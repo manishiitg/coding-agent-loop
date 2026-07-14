@@ -7,6 +7,12 @@ const detect = require('detect-port');
 const fs = require('fs');
 const crypto = require('crypto');
 
+// Keep the historical data path while presenting the AgentWorks name to macOS.
+// Changing userData would make existing installs appear empty after the rename.
+const COMPAT_USER_DATA_PATH = path.join(app.getPath('appData'), 'runloop-desktop');
+app.setName('AgentWorks');
+app.setPath('userData', COMPAT_USER_DATA_PATH);
+
 // Dynamic ports (assigned at runtime)
 let dynamicAgentPort = 0;
 let dynamicWorkspacePort = 0;
@@ -268,24 +274,24 @@ if (process.env.ELECTRON_REMOTE_DEBUG_PORT) {
 
 function migrateLegacyUserData() {
   const userDataPath = app.getPath('userData');
-  const legacyProductName = ['Agent', 'Forge'].join('');
-  const legacyUserDataPath = path.join(path.dirname(userDataPath), legacyProductName);
-
-  if (legacyUserDataPath === userDataPath || !fs.existsSync(legacyUserDataPath)) {
-    return;
-  }
-
   const hasCurrentData = fs.existsSync(userDataPath) && fs.readdirSync(userDataPath).length > 0;
   if (hasCurrentData) {
     return;
   }
 
-  try {
-    fs.mkdirSync(userDataPath, { recursive: true });
-    fs.cpSync(legacyUserDataPath, userDataPath, { recursive: true, errorOnExist: false });
-    console.log(`[main] Migrated legacy user data from ${legacyUserDataPath} to ${userDataPath}`);
-  } catch (error) {
-    console.warn('[main] Failed to migrate legacy AgentWorks user data:', error);
+  const legacyProductNames = [['Agent', 'Forge'].join(''), 'Runloop'];
+  for (const legacyProductName of legacyProductNames) {
+    const legacyUserDataPath = path.join(path.dirname(userDataPath), legacyProductName);
+    if (legacyUserDataPath === userDataPath || !fs.existsSync(legacyUserDataPath)) continue;
+
+    try {
+      fs.mkdirSync(userDataPath, { recursive: true });
+      fs.cpSync(legacyUserDataPath, userDataPath, { recursive: true, errorOnExist: false });
+      console.log(`[main] Migrated legacy user data from ${legacyUserDataPath} to ${userDataPath}`);
+      return;
+    } catch (error) {
+      console.warn(`[main] Failed to migrate legacy user data from ${legacyUserDataPath}:`, error);
+    }
   }
 }
 

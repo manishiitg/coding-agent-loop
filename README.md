@@ -53,7 +53,7 @@ The high-level loop is documented in [Workflow self-improvement & reporting](doc
 
 A standalone macOS app is available — no Docker, no manual server setup. Each release is published at [Releases](https://github.com/manishiitg/coding-agent-loop/releases/latest).
 
-Rename note: the public product is **AgentWorks** and the GitHub repository is now `coding-agent-loop`. Some release assets and compatibility identifiers still use the historical `Runloop` name so existing installs and update checks remain compatible. The former `mcp-agent-builder-go` repository URL redirects to this repository but should not be used in new documentation.
+Rename note: the public product and macOS bundle are **AgentWorks** and the GitHub repository is `coding-agent-loop`. Release asset filenames and compatibility identifiers still use the historical `Runloop` name so existing installs and update checks remain compatible. The installer upgrades and removes the former `Runloop.app` bundle after `AgentWorks.app` is copied successfully. The former `mcp-agent-builder-go` repository URL redirects to this repository but should not be used in new documentation.
 
 ### Install (one-liner — recommended)
 
@@ -65,7 +65,7 @@ Downloads the latest dmg, installs the Mac app to `/Applications`, ensures the M
 
 ### Install manually
 
-1. Download the macOS dmg from the latest release. During the rename transition, the file may still be named `Runloop-<version>-arm64.dmg`.
+1. Download the macOS dmg from the latest release. During the rename transition, the file remains named `Runloop-<version>-arm64.dmg` so older app versions can update.
 2. Open the dmg, drag the app to Applications.
 
 ### First-launch error: *"AgentWorks is damaged and can't be opened"*
@@ -74,11 +74,11 @@ The current build is **unsigned and not notarized**, so macOS Gatekeeper flags i
 
 **Recommended — Terminal (works on all macOS versions):**
 ```bash
-xattr -cr /Applications/Runloop.app
-```
-If your installed app is already named AgentWorks, use:
-```bash
 xattr -cr /Applications/AgentWorks.app
+```
+For an older release that is still installed under the legacy name, use:
+```bash
+xattr -cr /Applications/Runloop.app
 ```
 Then double-click the app. If macOS still complains, also strip the dmg you downloaded:
 ```bash

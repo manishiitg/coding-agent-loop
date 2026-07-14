@@ -15,7 +15,9 @@ import (
 //
 // Ordering matters: more specific provider-prefixed patterns come
 // first so we attribute correctly. Generic fallback patterns at the
-// end catch any provider that prints a recognizable phrase.
+// end catch any provider that prints a recognizable phrase. Callers that take
+// destructive action must add recency and repeated-observation checks; this
+// matcher also powers a non-destructive UI status badge.
 var rateLimitPatterns = []*regexp.Regexp{
 	// Claude Code: prints messages like "5-hour limit reached", "Your
 	// usage limit will reset at <time>", "You have run out of credits",

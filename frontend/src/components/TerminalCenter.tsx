@@ -12,6 +12,7 @@ import { normalizeEventViewMode, useChatStore } from '../stores/useChatStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { TERMINAL_REFRESH_REQUEST_EVENT } from '../utils/terminalRefresh'
 import { terminalReconnectDelayMs, terminalSnapshotCanReconnect } from '../utils/terminalReconnect'
+import { terminalPayloadHasVisibleContent } from '../utils/terminalVisibleContent'
 import { useTheme } from '../hooks/useTheme'
 import type { Theme } from '../contexts/ThemeContext'
 import { normalizeAnsiForEmbeddedXterm } from '../utils/ansiSanitize'
@@ -1837,7 +1838,7 @@ const LiveAttachXtermPaneInner: React.FC<{
   const onViewportStickChangeRef = useRef(onViewportStickChange)
   const onOutputTextRef = useRef(onOutputText)
   const lastVisibleReseedRef = useRef<{ content: string; at: number }>({ content: '', at: 0 })
-  const receivedLiveSeedRef = useRef(false)
+  const receivedVisibleOutputRef = useRef(false)
   const wroteConnectingSnapshotRef = useRef(false)
 
   useEffect(() => {
@@ -2020,13 +2021,14 @@ const LiveAttachXtermPaneInner: React.FC<{
         const data = ev.data
         if (seedPending) {
           seedPending = false
-          receivedLiveSeedRef.current = true
           clearSeedTimer()
           failedAttempts = 0
-          setConnectionState('connected')
           const text = data instanceof ArrayBuffer
             ? decoder.decode(new Uint8Array(data))
             : String(data)
+          const hasVisibleContent = terminalPayloadHasVisibleContent(text)
+          receivedVisibleOutputRef.current = hasVisibleContent
+          setConnectionState(hasVisibleContent ? 'connected' : 'connecting')
           clearXtermSelection(term)
           term.write(normalizeAnsiForEmbeddedXterm(text))
           onOutputTextRef.current?.(text)
@@ -2035,11 +2037,18 @@ const LiveAttachXtermPaneInner: React.FC<{
         if (data instanceof ArrayBuffer) {
           const bytes = new Uint8Array(data)
           term.write(bytes)
-          if (onOutputTextRef.current) {
-            onOutputTextRef.current(decoder.decode(bytes, { stream: true }))
+          const text = decoder.decode(bytes, { stream: true })
+          if (!receivedVisibleOutputRef.current && terminalPayloadHasVisibleContent(text)) {
+            receivedVisibleOutputRef.current = true
+            setConnectionState('connected')
           }
+          onOutputTextRef.current?.(text)
         } else if (typeof data === 'string') {
           term.write(data)
+          if (!receivedVisibleOutputRef.current && terminalPayloadHasVisibleContent(data)) {
+            receivedVisibleOutputRef.current = true
+            setConnectionState('connected')
+          }
           onOutputTextRef.current?.(data)
         }
       }
@@ -2127,9 +2136,10 @@ const LiveAttachXtermPaneInner: React.FC<{
     // its authoritative seed. The first live seed starts with a terminal reset,
     // so it replaces this temporary frame without mixing snapshot and live bytes.
     if (reconnectOnCloseRef.current) {
-      if (!term || !content.trim() || receivedLiveSeedRef.current || wroteConnectingSnapshotRef.current) return
+      if (!term || !content.trim() || receivedVisibleOutputRef.current || wroteConnectingSnapshotRef.current) return
       wroteConnectingSnapshotRef.current = true
       lastVisibleReseedRef.current = { content, at: Date.now() }
+      setConnectionState('snapshot')
       clearXtermSelection(term)
       term.write(buildVisibleScreenReseed(content), () => {
         term.scrollToBottom()
@@ -2192,7 +2202,7 @@ const LiveAttachXtermPaneInner: React.FC<{
           <span>
             {connectionState === 'connecting' && 'Connecting terminal...'}
             {connectionState === 'reconnecting' && 'Reconnecting terminal...'}
-            {connectionState === 'snapshot' && 'Showing latest snapshot · reconnecting'}
+            {connectionState === 'snapshot' && 'Showing latest snapshot · connecting'}
             {connectionState === 'settled' && 'Terminal session ended'}
           </span>
         </div>
@@ -3170,6 +3180,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
   const terminalsRef = useRef<TerminalSnapshot[]>([])
   const terminalDetailCacheRef = useRef<Record<string, TerminalSnapshot>>({})
   const selectedDetailFetchKeysRef = useRef<Set<string>>(new Set())
+  const selectedLivePreviewFetchKeysRef = useRef<Set<string>>(new Set())
   const selectedSettledScreenProbeKeysRef = useRef<Set<string>>(new Set())
   const emptyResponseCountRef = useRef(0)
   const lastFetchScopeRef = useRef<string | null>(null)
@@ -3187,6 +3198,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     terminalAutoScrollRef.current = true
     terminalManualScrollLockRef.current = false
     selectedSettledScreenProbeKeysRef.current.clear()
+    selectedLivePreviewFetchKeysRef.current.clear()
   }, [currentSessionId])
 
   useEffect(() => {
@@ -3793,6 +3805,33 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
   }, [liveAttachTerminalId, liveAttachStreamKey, selectedTerminalView])
   const stableLiveAttachId = stableLiveAttach?.terminalId ?? null
   const stableLiveAttachKey = stableLiveAttach?.streamKey ?? null
+
+  useEffect(() => {
+    if (!selectedTerminalView || !useLiveAttachForSelected || !selectedTerminalView.tmux_session) return
+    if (selectedTerminalView.content?.trim()) return
+
+    const previewKey = `${selectedTerminalView.terminal_id}:${selectedTerminalView.tmux_session}`
+    if (selectedLivePreviewFetchKeysRef.current.has(previewKey)) return
+    selectedLivePreviewFetchKeysRef.current.add(previewKey)
+
+    void agentApi.getTerminal(selectedTerminalView.terminal_id, {
+      content: 'screen',
+      lines: LIVE_ATTACH_SNAPSHOT_LINES,
+      debugSource: 'selected-live-preview',
+    })
+      .then(detail => {
+        if (!detail.content?.trim()) return
+        cacheTerminalDetail(detail)
+      })
+      .catch(err => {
+        selectedLivePreviewFetchKeysRef.current.delete(previewKey)
+        console.warn('Failed to load live terminal preview', selectedTerminalView.terminal_id, err)
+      })
+  }, [
+    selectedTerminalView,
+    useLiveAttachForSelected,
+    cacheTerminalDetail,
+  ])
 
   useEffect(() => {
     if (!selectedTerminalView || useLiveAttachForSelected) return

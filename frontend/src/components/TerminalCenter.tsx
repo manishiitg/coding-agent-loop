@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ArrowDownToLine, ArrowRightToLine, Braces, Bug, Check, ChevronDown, ChevronsLeft, ChevronsRight, ChevronUp, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Minus, Plus, Power, RefreshCw, Square, Terminal, Trash2, X } from 'lucide-react'
+import { AlertTriangle, ArrowDownToLine, ArrowRightToLine, Braces, Bug, Check, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, ChevronUp, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Minus, Plus, Power, RefreshCw, Search, Square, Terminal, Trash2, X } from 'lucide-react'
 import { AnsiUp } from 'ansi_up'
 import { Terminal as XTerm, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -17,6 +17,12 @@ import { useTheme } from '../hooks/useTheme'
 import type { Theme } from '../contexts/ThemeContext'
 import { normalizeAnsiForEmbeddedXterm } from '../utils/ansiSanitize'
 import { preserveTerminalContinuity } from '../utils/terminalContinuity'
+import {
+  organizeTerminalRail,
+  terminalRailGroupSearchText,
+  type TerminalRailLogicalGroup,
+  type TerminalRailSection,
+} from '../utils/terminalRailOrganization'
 import { MarkdownRenderer } from './ui/MarkdownRenderer'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 
@@ -120,7 +126,7 @@ const TERMINAL_SETTLED_CAPTURE_MAX_ATTEMPTS = 8
 
 type TerminalColorScheme = 'neon' | 'mono' | 'homebrew' | 'catppuccin' | 'nord' | 'gruvbox' | 'solarized' | 'tokyo'
 type TerminalDebugKey = 'enter' | 'esc' | 'ctrl-c' | 'ctrl-o' | 'tab' | 'up' | 'down'
-type TerminalRailFilter = 'all' | 'running' | 'non-running'
+type TerminalRailFilter = 'all' | 'running' | 'attention' | 'non-running'
 type TerminalDetailOptions = { content?: 'stored' | 'screen' | 'history' | 'tmux' | 'deep'; lines?: number; debug?: boolean; debugSource?: string }
 
 const DEFAULT_TERMINAL_COLOR_SCHEME: TerminalColorScheme = 'homebrew'
@@ -609,10 +615,6 @@ interface RoutingDecision {
   reasoning?: string
   timestamp?: string
 }
-
-type TerminalRailItem =
-  | { kind: 'terminal'; terminal: TerminalSnapshot; depth: number }
-  | { kind: 'route'; decision: RoutingDecision; depth: number }
 
 function isOpaqueID(value?: string): boolean {
   if (!value) return false
@@ -1265,13 +1267,6 @@ function isRailVisibleTerminal(terminal: TerminalSnapshot): boolean {
   return !(isArchivedTurnTerminal(terminal) && isMainAgentTerminal(terminal))
 }
 
-function terminalMatchesRailFilter(terminal: TerminalSnapshot, filter: TerminalRailFilter): boolean {
-  if (isMainAgentTerminal(terminal)) return true
-  if (filter === 'all') return true
-  const isRunning = terminalState(terminal) === 'running'
-  return filter === 'running' ? isRunning : !isRunning
-}
-
 // turnIndexFromTerminalID parses ":turn-N" out of an archived-turn terminal_id.
 // Returns 0 for terminals that don't carry a turn marker so the caller can
 // safely sort mixed lists.
@@ -1480,32 +1475,6 @@ function dedupeTerminalsByID(terminals: TerminalSnapshot[]): TerminalSnapshot[] 
     }
   }
   return Array.from(byID.values())
-}
-
-function terminalStartTime(terminal: TerminalSnapshot): number {
-  return new Date(terminal.created_at || terminal.updated_at || '').getTime() || 0
-}
-
-function resolveRailParentKey(
-  terminal: TerminalSnapshot,
-  terminalsByStepID: Map<string, TerminalSnapshot[]>,
-): string {
-  const parentStepID = terminal.parent_step_id || ''
-  if (!parentStepID || (terminal.step_id && terminal.step_id === parentStepID)) return ''
-
-  const candidates = (terminalsByStepID.get(parentStepID) || [])
-    .filter(candidate => candidate.terminal_id !== terminal.terminal_id)
-  if (candidates.length === 0) return ''
-
-  const terminalTime = terminalStartTime(terminal) || terminalUpdatedTime(terminal)
-  const priorCandidates = candidates
-    .filter(candidate => {
-      const candidateTime = terminalStartTime(candidate) || terminalUpdatedTime(candidate)
-      return candidateTime <= terminalTime
-    })
-    .sort((a, b) => (terminalStartTime(b) || terminalUpdatedTime(b)) - (terminalStartTime(a) || terminalUpdatedTime(a)))
-
-  return (priorCandidates[0] || candidates[candidates.length - 1]).terminal_id
 }
 
 // ---------------------------------------------------------------------------
@@ -3047,11 +3016,10 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
   // A toggle in the rail controls lets the user resize it themselves.
   const [railManualNarrow, setRailManualNarrow] = useState<boolean | null>(true)
   const railNarrow = railManualNarrow !== null ? railManualNarrow : slimAgentRail
-  const [terminalRailFilter, setTerminalRailFilter] = useState<TerminalRailFilter>('running')
-  // Sub-agent terminals are shown by default (the +/- toggle hides them on
-  // demand). In the narrow report/plan rail the cards are *slimmed* (see
-  // slimAgentRail) rather than hidden.
-  const [terminalRailMinimized, setTerminalRailMinimized] = useState(false)
+  const [terminalRailFilter, setTerminalRailFilter] = useState<TerminalRailFilter>('all')
+  const [terminalRailSearch, setTerminalRailSearch] = useState('')
+  const [expandedRailGroupKeys, setExpandedRailGroupKeys] = useState<Set<string>>(() => new Set())
+  const [collapsedRailSections, setCollapsedRailSections] = useState<Set<TerminalRailSection>>(() => new Set(['other']))
   const [error, setError] = useState<string | null>(null)
   const [terminalActionBusy, setTerminalActionBusy] = useState<string | null>(null)
   const [debugPanelOpenForID, setDebugPanelOpenForID] = useState<string | null>(null)
@@ -3492,109 +3460,41 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     })
   }, [clearableNonRunningTerminals, dismissTerminal])
 
-  // buildTree turns a flat list of terminals into a parent → children
-  // tree. parent_step_id is a logical workflow edge, but terminal_id is
-  // the actual node identity; this keeps repeated runs of the same
-  // workflow from collapsing terminals that share a step_id.
-  const buildTree = (
-    list: TerminalSnapshot[],
-    routeByNextStepID: Map<string, RoutingDecision>,
-    routeDecisions: RoutingDecision[],
-  ): TerminalRailItem[] => {
-    const byParent = new Map<string, TerminalSnapshot[]>()
-    const terminalsByStepID = new Map<string, TerminalSnapshot[]>()
-    for (const t of list) {
-      if (!t.step_id) continue
-      const bucket = terminalsByStepID.get(t.step_id) || []
-      bucket.push(t)
-      terminalsByStepID.set(t.step_id, bucket)
-    }
-    for (const t of list) {
-      const parent = resolveRailParentKey(t, terminalsByStepID)
-      const bucket = byParent.get(parent) || []
-      bucket.push(t)
-      byParent.set(parent, bucket)
-    }
-    const out: TerminalRailItem[] = []
-    const visited = new Set<string>()
-    const renderedRoutes = new Set<string>()
-    const walk = (parent: string, depth: number) => {
-      // Defense in depth against cycles + degenerate-deep trees.
-      if (depth > 32) return
-      for (const t of byParent.get(parent) || []) {
-        const nodeKey = terminalPaneKey(t)
-        if (visited.has(nodeKey)) continue
-        visited.add(nodeKey)
-        const routeDecision = t.step_id ? routeByNextStepID.get(t.step_id) : undefined
-        const terminalDepth = routeDecision ? depth + 1 : depth
-        if (routeDecision && !renderedRoutes.has(routeDecision.id)) {
-          out.push({
-            kind: 'route',
-            decision: routeDecision.nextStepType || !t.step_type
-              ? routeDecision
-              : { ...routeDecision, nextStepType: t.step_type },
-            depth,
-          })
-          renderedRoutes.add(routeDecision.id)
-        }
-        out.push({ kind: 'terminal', terminal: t, depth: terminalDepth })
-        walk(nodeKey, terminalDepth + 1)
-      }
-    }
-    walk('', 0)
-    for (const decision of routeDecisions) {
-      if (decision.nextStepId && terminalsByStepID.has(decision.nextStepId)) continue
-      if (!renderedRoutes.has(decision.id)) {
-        out.push({ kind: 'route', decision, depth: 0 })
-      }
-    }
-    return out
-  }
-
   const groupedTerminals = useMemo(() => {
     const uniqueTerminals = dedupeTerminalsByID(terminals)
     const railTerminals = uniqueTerminals.filter(isRailVisibleTerminal)
-    const filteredRailTerminals = terminalRailMinimized
-      ? railTerminals.filter(isMainAgentTerminal)
-      : railTerminals.filter(terminal => terminalMatchesRailFilter(terminal, terminalRailFilter))
-    const visibleRouteByNextStepID = terminalRailFilter === 'all' && !terminalRailMinimized ? routingDecisionByNextStepID : new Map<string, RoutingDecision>()
-    const visibleRouteDecisions = terminalRailFilter === 'all' && !terminalRailMinimized ? routingDecisions : []
-    // Build a single tree from the rail-visible terminals after applying
-    // the user's running/non-running filter.
-    // Splitting them was breaking the parent→child relationship when
-    // a child step finished while its parent was still running — the
-    // child got displaced into the "Finished" group, losing its
-    // visual nesting under the parent. One tree keeps lineage intact;
-    // the colored dot on each rail row already conveys per-row state.
-    const allTerminals = sortTerminalsForRail(filteredRailTerminals)
-    // Derive active/finished from the same stable order used by the rail. The
-    // selected terminal fallback uses activeTerminals[0]; if this follows the raw
-    // polling order, duplicate logical steps with different tmux sessions can
-    // trade places between polls and force live-attach remount/reconnect loops.
+    // Selection always sees the complete terminal set. Rail filters only affect
+    // navigation, so changing a filter cannot make the active pane jump.
+    const allTerminals = sortTerminalsForRail(railTerminals)
     const activeTerminals = allTerminals.filter(terminal => terminalState(terminal) === 'running')
     const finishedTerminals = allTerminals.filter(terminal => terminalState(terminal) !== 'running')
-    const currentTerminals = sortTerminalsNewestFirst(filteredRailTerminals.filter(terminal => !isArchivedTurnTerminal(terminal)))
-    const allRunningCount = railTerminals.filter(terminal => !isMainAgentTerminal(terminal) && terminalState(terminal) === 'running').length
-    const allNonRunningCount = railTerminals.filter(terminal => !isMainAgentTerminal(terminal) && terminalState(terminal) !== 'running').length
-    const clearableNonRunningCount = railTerminals.filter(terminal => !isMainAgentTerminal(terminal) && canDismissTerminal(terminal)).length
-    // Stable number map: assign #1, #2, #3… based on all rail terminals
-    // sorted by creation time. Never changes as terminals are filtered or dismissed.
-    const stableNumberMap = new Map<string, number>()
-    sortTerminalsForRail(railTerminals).forEach((t, i) => {
-      stableNumberMap.set(terminalPaneKey(t), i + 1)
+    const currentTerminals = sortTerminalsNewestFirst(railTerminals.filter(terminal => !isArchivedTurnTerminal(terminal)))
+    const logicalGroups = organizeTerminalRail(allTerminals, {
+      getState: terminalState,
+      isMainAgent: isMainAgentTerminal,
     })
+    const normalizedSearch = terminalRailSearch.trim().toLowerCase()
+    const visibleGroups = logicalGroups.filter(group => {
+      const matchesFilter = terminalRailFilter === 'all' ||
+        (terminalRailFilter === 'running' && group.section === 'active') ||
+        (terminalRailFilter === 'attention' && group.section === 'attention') ||
+        (terminalRailFilter === 'non-running' && group.section !== 'active' && group.section !== 'attention')
+      return matchesFilter && (!normalizedSearch || terminalRailGroupSearchText(group).includes(normalizedSearch))
+    })
+    const sectionCounts = logicalGroups.reduce<Record<TerminalRailSection, number>>((counts, group) => {
+      counts[group.section] += 1
+      return counts
+    }, { active: 0, attention: 0, workflow: 0, review: 0, other: 0 })
     return {
       activeTerminals,
       finishedTerminals,
       currentTerminals,
       orderedTerminals: allTerminals,
-      tree: buildTree(allTerminals, visibleRouteByNextStepID, visibleRouteDecisions),
-      allRunningCount,
-      allNonRunningCount,
-      clearableNonRunningCount,
-      stableNumberMap,
+      logicalGroups,
+      visibleGroups,
+      sectionCounts,
     }
-  }, [terminals, terminalRailFilter, terminalRailMinimized, routingDecisionByNextStepID, routingDecisions])
+  }, [terminals, terminalRailFilter, terminalRailSearch])
   const terminalFocusActive = activeEventViewMode === 'terminal'
   const currentMainTerminal = useMemo(
     () => groupedTerminals.currentTerminals.find(terminal => isMainAgentTerminal(terminal)) || null,
@@ -4132,138 +4032,107 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     }
   }, [measureTerminalElementSize, sendTerminalSizeHint])
 
-  // Rail item — one row in the left rail. Compact vertical layout:
-  // dot + step title (top line), transport chip + closing countdown
-  // (bottom line). Click → select; hover → highlight.
-  // depth controls left padding so child terminals nest under their
-  // parent without drawing noisy repeated text guides.
-  const renderRouteRailItem = (decision: RoutingDecision, depth: number = 0) => (
-    <div
-      key={`route-${decision.id}`}
-      className={`group block w-full py-1.5 pl-2.5 pr-2.5 text-left ${terminalTheme.railText} ${terminalTheme.routeRail}`}
-      title={routeDecisionTitle(decision)}
-      style={{ paddingLeft: terminalRailPadding(depth) }}
-    >
-      <div className="flex items-center gap-1.5">
-        <TerminalRailBranchMarker depth={depth} />
-        <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded ${terminalTheme.routeIcon}`}>
-          <GitBranch className="h-3 w-3" />
-        </span>
-        <span className="min-w-0 flex-1 truncate font-semibold">
-          Routing: {routeDecisionLabel(decision)}
-        </span>
-        <button
-          type="button"
-          onClick={event => {
-            event.stopPropagation()
-            setDismissedRouteIDs(current => {
-              const next = new Set(current)
-              next.add(decision.id)
-              return next
-            })
-          }}
-          className={`shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 focus:opacity-100 ${terminalTheme.routeClose}`}
-          title="Remove routing marker from UI"
-          aria-label="Remove routing marker from UI"
-        >
-          <X className="h-3 w-3" />
-        </button>
-      </div>
-      <div className={`mt-0.5 flex items-center gap-1.5 ${terminalTheme.railMetaText} ${terminalTheme.routeMeta}`}>
-        {decision.nextStepType && (
-          <StepTypeIcon stepType={decision.nextStepType} labelPrefix="Next step type: " />
-        )}
-        <span className="min-w-0 truncate">
-          {decision.nextStepId ? `next ${decision.nextStepId}` : decision.stepTitle || decision.stepId || 'route selected'}
-        </span>
-        {decision.routeCount > 1 && (
-          <span className="shrink-0">· {decision.routeCount} routes</span>
-        )}
-      </div>
-    </div>
-  )
-
   const renderRailControls = () => {
-    // Active filter uses the theme's prompt color (consistent with the
-    // colored `$ ` prompts in the pane). Inactive uses a dim neutral that
-    // reads as "muted" across every dark theme; hover lifts to the rail's
-    // standard text color so the cue is theme-coherent on rollover.
     const filterButtonClass = (filter: TerminalRailFilter) => (
-      `px-1 py-0.5 font-mono leading-4 transition-colors ${
+      `inline-flex min-w-0 items-center justify-center gap-1 rounded px-1.5 py-1 text-[10px] font-medium leading-none transition-colors ${
         terminalRailFilter === filter
-          ? terminalTheme.prompt
-          : `text-neutral-500 hover:text-neutral-200`
+          ? 'bg-neutral-800 text-neutral-100 shadow-sm'
+          : 'text-neutral-500 hover:bg-neutral-900 hover:text-neutral-200'
       }`
     )
-    const filterLabel = (filter: TerminalRailFilter, label: string) => (
-      terminalRailFilter === filter ? `[${label}]` : label
-    )
+    const completedCount = groupedTerminals.sectionCounts.workflow + groupedTerminals.sectionCounts.review + groupedTerminals.sectionCounts.other
+    const filters: Array<{ key: TerminalRailFilter; label: string; narrowLabel: string; count: number }> = [
+      { key: 'all', label: 'All', narrowLabel: 'A', count: groupedTerminals.logicalGroups.length },
+      { key: 'running', label: 'Live', narrowLabel: 'L', count: groupedTerminals.sectionCounts.active },
+      { key: 'attention', label: 'Issues', narrowLabel: '!', count: groupedTerminals.sectionCounts.attention },
+      { key: 'non-running', label: 'Done', narrowLabel: 'D', count: completedCount },
+    ]
 
     return (
-      <div key="terminal-rail-controls" className="border-y border-neutral-800/80 bg-[#0b0d0c] px-2 py-1 font-mono">
-        <div className={`flex min-w-0 items-center gap-0.5 text-[10px] leading-4 ${terminalTheme.microText}`}>
+      <div key="terminal-rail-controls" className="border-y border-neutral-800/80 bg-[#0b0d0c] p-2">
+        <div className="flex min-w-0 items-center gap-1">
           <button
             type="button"
             onClick={() => setRailManualNarrow(!railNarrow)}
-            className="inline-flex h-4 w-4 shrink-0 items-center justify-center text-neutral-500 transition-colors hover:text-emerald-300"
-            title={railNarrow ? 'Widen agent tree' : 'Narrow agent tree'}
-            aria-label={railNarrow ? 'Widen agent tree' : 'Narrow agent tree'}
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-neutral-500 transition-colors hover:bg-neutral-900 hover:text-emerald-300"
+            title={railNarrow ? 'Expand agents' : 'Collapse agents'}
+            aria-label={railNarrow ? 'Expand agents' : 'Collapse agents'}
           >
-            {railNarrow ? <ChevronsRight className="h-2.5 w-2.5" /> : <ChevronsLeft className="h-2.5 w-2.5" />}
+            {railNarrow ? <ChevronsRight className="h-3 w-3" /> : <ChevronsLeft className="h-3 w-3" />}
           </button>
-          <button
-            type="button"
-            onClick={() => setTerminalRailFilter('all')}
-            disabled={terminalRailMinimized}
-            className={filterButtonClass('all')}
-            title="Show all agents"
-          >
-            {filterLabel('all', 'all')}
-          </button>
-          <button
-            type="button"
-            onClick={() => setTerminalRailFilter('running')}
-            disabled={terminalRailMinimized}
-            className={filterButtonClass('running')}
-            title="Show running agents"
-          >
-            {filterLabel('running', `run:${groupedTerminals.allRunningCount}`)}
-          </button>
-          <button
-            type="button"
-            onClick={() => setTerminalRailFilter('non-running')}
-            disabled={terminalRailMinimized}
-            className={filterButtonClass('non-running')}
-            title="Show non-running agents"
-          >
-            {filterLabel('non-running', `done:${groupedTerminals.allNonRunningCount}`)}
-          </button>
+          <div className={`grid min-w-0 flex-1 grid-cols-4 gap-0.5 rounded bg-neutral-950/70 p-0.5 ${railNarrow ? 'hidden' : ''}`}>
+            {filters.map(filter => (
+              <button
+                key={filter.key}
+                type="button"
+                onClick={() => setTerminalRailFilter(filter.key)}
+                className={filterButtonClass(filter.key)}
+                title={`Show ${filter.label.toLowerCase()} agents`}
+              >
+                <span>{railNarrow ? filter.narrowLabel : filter.label}</span>
+                {!railNarrow && <span className="text-neutral-500">{filter.count}</span>}
+              </button>
+            ))}
+          </div>
           <button
             type="button"
             onClick={clearNonRunningTerminals}
             disabled={clearableNonRunningTerminals.length === 0}
-            className="ml-auto inline-flex h-4 w-4 shrink-0 items-center justify-center text-neutral-500 transition-colors hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:text-neutral-500"
-            title="Clear all non-running agents"
-            aria-label="Clear all non-running agents"
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-neutral-500 transition-colors hover:bg-neutral-900 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:text-neutral-500"
+            title="Clear completed agents"
+            aria-label="Clear completed agents"
           >
-            <Trash2 className="h-2.5 w-2.5" />
+            <Trash2 className="h-3 w-3" />
           </button>
         </div>
+        {!railNarrow && (
+          <label className="mt-2 flex h-7 items-center gap-1.5 rounded border border-neutral-800 bg-[#121413] px-2 text-neutral-500 focus-within:border-neutral-600 focus-within:text-neutral-300">
+            <Search className="h-3 w-3 shrink-0" aria-hidden />
+            <input
+              type="search"
+              value={terminalRailSearch}
+              onChange={event => setTerminalRailSearch(event.target.value)}
+              placeholder="Find agent"
+              className="min-w-0 flex-1 bg-transparent text-[11px] text-neutral-200 outline-none placeholder:text-neutral-600"
+              aria-label="Find agent"
+            />
+            {terminalRailSearch && (
+              <button
+                type="button"
+                onClick={() => setTerminalRailSearch('')}
+                className="rounded p-0.5 text-neutral-600 hover:text-neutral-200"
+                title="Clear search"
+                aria-label="Clear search"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </label>
+        )}
       </div>
     )
   }
 
-  const renderRailItem = (terminal: TerminalSnapshot, depth: number = 0, index?: number) => (
+  const renderRailItem = (
+    terminal: TerminalSnapshot,
+    depth: number = 0,
+    options?: {
+      title?: string
+      selected?: boolean
+      attemptCount?: number
+      expanded?: boolean
+      onToggleAttempts?: (event: React.MouseEvent<HTMLButtonElement>) => void
+    },
+  ) => (
     (() => {
       const preValidationChip = terminalPreValidationChip(terminal, terminalTheme)
       const state = terminalState(terminal)
       const isRunning = state === 'running'
-      const startedTimestamp = formatStartedTimestamp(terminal)
       const railAge = formatRailAge(terminal)
-      const stepTypeLabel = terminalRailStepTypeLabel(terminal)
       const railTransport = formatRailTransportChip(terminal)
       const terminalErrors = terminalErrorsByID.get(terminalPaneKey(terminal)) || []
       const latestTerminalError = terminalErrors[0]
+      const selected = options?.selected ?? terminalPaneKey(terminal) === selectedTerminalKey
       return (
         <div
           key={terminalPaneKey(terminal)}
@@ -4279,7 +4148,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
             }
           }}
           className={`group block w-full cursor-pointer border-l-2 py-1.5 pl-2.5 pr-2.5 text-left transition-colors ${terminalTheme.railText} ${
-            terminalPaneKey(terminal) === selectedTerminalKey
+            selected
               ? terminalTheme.railSelected
               : 'border-l-transparent text-neutral-400 hover:bg-[#1b1f1d] hover:text-neutral-200'
           }`}
@@ -4306,14 +4175,29 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
             {isArchivedTurnTerminal(terminal) && (
               <TerminalArchivedTurnIcon />
             )}
-            <span className="min-w-0 flex-1 truncate font-medium">{formatTerminalTitle(terminal)}</span>
+            <span className="min-w-0 flex-1 truncate font-medium" title={options?.title || formatTerminalTitle(terminal)}>
+              {options?.title || formatTerminalTitle(terminal)}
+            </span>
             {latestTerminalError && (
               <AlertTriangle
                 className="h-3.5 w-3.5 shrink-0 text-red-300"
                 aria-label="Terminal error"
               />
             )}
-            {canDismissTerminal(terminal) && (
+            {(options?.attemptCount || 0) > 1 && options?.onToggleAttempts && (
+              <button
+                type="button"
+                onClick={options.onToggleAttempts}
+                className="inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-[9px] text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
+                title={options.expanded ? 'Hide earlier attempts' : `Show ${options.attemptCount} attempts`}
+                aria-label={options.expanded ? 'Hide earlier attempts' : `Show ${options.attemptCount} attempts`}
+                aria-expanded={options.expanded}
+              >
+                {options.expanded ? <ChevronDown className="h-2.5 w-2.5" /> : <ChevronRight className="h-2.5 w-2.5" />}
+                {!railNarrow && <span>{options.attemptCount}</span>}
+              </button>
+            )}
+            {canDismissTerminal(terminal) && (options?.attemptCount || 0) <= 1 && (
               <button
                 type="button"
                 onClick={event => {
@@ -4334,9 +4218,6 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
               chat is given more room). */}
           {!railNarrow && (
           <div className={`mt-0.5 flex items-center gap-1.5 opacity-70 ${terminalTheme.railMetaText}`}>
-            {index !== undefined && (
-              <span className="shrink-0 font-mono text-[9px] text-neutral-600">#{index}</span>
-            )}
             {railTransport && (
               <span className="min-w-0 truncate text-neutral-500" title={formatTransportChip(terminal)}>
                 {railTransport}
@@ -4373,6 +4254,81 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
       )
     })()
   )
+
+  const toggleRailGroup = (key: string) => {
+    setExpandedRailGroupKeys(current => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  const toggleRailSection = (section: TerminalRailSection) => {
+    setCollapsedRailSections(current => {
+      const next = new Set(current)
+      if (next.has(section)) next.delete(section)
+      else next.add(section)
+      return next
+    })
+  }
+
+  const renderRailGroup = (group: TerminalRailLogicalGroup) => {
+    const expanded = expandedRailGroupKeys.has(group.key)
+    const groupSelected = group.terminals.some(terminal => terminalPaneKey(terminal) === selectedTerminalKey)
+    const isSequence = group.key.startsWith('sequence:')
+    const earlierTerminals = group.terminals.filter(
+      terminal => terminalPaneKey(terminal) !== terminalPaneKey(group.representative),
+    )
+    return (
+      <div key={group.key}>
+        {renderRailItem(group.representative, 0, {
+          title: group.title,
+          selected: groupSelected,
+          attemptCount: group.terminals.length,
+          expanded,
+          onToggleAttempts: event => {
+            event.stopPropagation()
+            toggleRailGroup(group.key)
+          },
+        })}
+        {expanded && earlierTerminals.map((terminal, index) => renderRailItem(terminal, 1, {
+          title: isSequence
+            ? `Earlier turn ${earlierTerminals.length - index}`
+            : `Attempt ${terminal.step_attempt || earlierTerminals.length - index}`,
+        }))}
+      </div>
+    )
+  }
+
+  const sectionLabels: Record<TerminalRailSection, string> = {
+    active: 'Active',
+    attention: 'Needs attention',
+    workflow: 'Workflow steps',
+    review: 'Pulse reviewers',
+    other: 'Other agents',
+  }
+
+  const renderRailSection = (section: TerminalRailSection) => {
+    const groups = groupedTerminals.visibleGroups.filter(group => group.section === section)
+    if (groups.length === 0) return null
+    const collapsed = terminalRailSearch ? false : collapsedRailSections.has(section)
+    return (
+      <section key={section} className="border-b border-neutral-800/60">
+        <button
+          type="button"
+          onClick={() => toggleRailSection(section)}
+          className="flex h-7 w-full items-center gap-1.5 px-2 text-left text-[10px] font-semibold uppercase text-neutral-500 hover:bg-neutral-900/70 hover:text-neutral-300"
+          aria-expanded={!collapsed}
+        >
+          {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          {!railNarrow && <span className="min-w-0 flex-1 truncate">{sectionLabels[section]}</span>}
+          <span className="ml-auto rounded bg-neutral-900 px-1.5 py-0.5 text-[9px] font-medium text-neutral-500">{groups.length}</span>
+        </button>
+        {!collapsed && groups.map(renderRailGroup)}
+      </section>
+    )
+  }
 
   return (
     <div ref={terminalCenterRef} className={`flex min-h-0 min-w-0 flex-col bg-[#191a18] text-neutral-100 ${compact ? '' : 'flex-1 overflow-hidden'}`}>
@@ -4455,27 +4411,19 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
           <div className={`relative flex min-h-0 min-w-0 flex-1 gap-0 overflow-hidden bg-[#101211] ${
             terminalFocusActive ? 'border-y border-neutral-800/70' : 'border border-neutral-700/70'
           }`}>
-            {/* Left rail — vertical list of all terminals. Scrolls
-                independently of the right pane so the user can navigate
-                a long list without losing the selected terminal's
-                content. Hidden below sm breakpoint to save space. */}
-            <div className={`hidden shrink-0 flex-col overflow-y-auto overflow-x-hidden border-r border-neutral-700/70 bg-[#141615] sm:flex ${railNarrow ? 'w-14' : 'w-48'}`}>
-              {(() => {
-                let controlsRendered = false
-                const rows = groupedTerminals.tree.flatMap(item => {
-                  if (item.kind === 'route') return [renderRouteRailItem(item.decision, item.depth)]
-
-                  const rendered = renderRailItem(item.terminal, item.depth, groupedTerminals.stableNumberMap.get(terminalPaneKey(item.terminal)))
-                  if (!controlsRendered && isMainAgentTerminal(item.terminal) && !isArchivedTurnTerminal(item.terminal)) {
-                    controlsRendered = true
-                    return [rendered, renderRailControls()]
-                  }
-                  return [rendered]
-                })
-
-                if (!controlsRendered) rows.unshift(renderRailControls())
-                return rows
-              })()}
+            {/* The main agent and controls stay pinned. Logical task sections
+                scroll independently, with retries hidden under each task. */}
+            <div className={`hidden shrink-0 flex-col overflow-hidden border-r border-neutral-700/70 bg-[#141615] sm:flex ${railNarrow ? 'w-14' : 'w-56'}`}>
+              {currentMainTerminal && renderRailItem(currentMainTerminal, 0, { title: 'Main agent' })}
+              {renderRailControls()}
+              <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+                {(['active', 'attention', 'workflow', 'review', 'other'] as TerminalRailSection[]).map(renderRailSection)}
+                {groupedTerminals.visibleGroups.length === 0 && (
+                  <div className={`px-3 py-5 text-center text-[11px] leading-4 text-neutral-600 ${railNarrow ? 'hidden' : ''}`}>
+                    {terminalRailSearch ? 'No agents match this search.' : 'No agents in this view.'}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Right pane — the selected terminal's content. Header

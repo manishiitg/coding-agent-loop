@@ -175,7 +175,7 @@ func (s *Store) handleEvent(sessionID string, event storeevents.Event) bool {
 		if !isTerminalMetadata(metadata) {
 			return false
 		}
-		s.markInactive(sessionID, terminalOwnerID(sessionID, event, metadata), metadata)
+		s.markInactive(sessionID, terminalOwnerID(sessionID, event, metadata), metadata, event.Timestamp)
 		return true
 	case string(agentevents.ToolCallStart), string(agentevents.ToolCallEnd), string(agentevents.ToolCallError):
 		metadata := metadataForEvent(event)
@@ -734,7 +734,8 @@ func (s *Store) refreshContent(terminalID, content, contentSource string) (Snaps
 		} else if snapshot.State == "stale" {
 			snapshot.Active = terminalStateFromContent(lifecycleContent, true) == "running" && !terminalContentLooksIdle(lifecycleContent)
 			snapshot.State = terminalStateFromContent(lifecycleContent, snapshot.Active)
-		} else if contentChanged && snapshot.State == "completed" && terminalContentLooksBusy(lifecycleContent) {
+		} else if contentChanged && snapshot.State == "completed" && terminalContentLooksBusy(lifecycleContent) &&
+			!terminalHasSettledPromptAfterBusy(lifecycleContent, nil) {
 			// tmux session restarted inside the same terminal (e.g. Claude Code
 			// context compaction: /exit then a fresh process in the same pane).
 			// The content changed and now looks busy — re-activate so the UI
@@ -744,7 +745,8 @@ func (s *Store) refreshContent(terminalID, content, contentSource string) (Snaps
 		} else if terminalStateFromContent(lifecycleContent, false) == "failed" {
 			snapshot.State = "failed"
 		}
-	} else if contentChanged && snapshot.State == "completed" && terminalContentLooksBusy(lifecycleContent) {
+	} else if contentChanged && snapshot.State == "completed" && terminalContentLooksBusy(lifecycleContent) &&
+		!terminalHasSettledPromptAfterBusy(lifecycleContent, nil) {
 		// Even force-completed terminals should restart when the tmux pane shows a
 		// new process running (e.g. after Claude Code compaction). Clear the
 		// forcedInactive entry so the terminal can participate in normal lifecycle.
@@ -1366,7 +1368,7 @@ func (snapshot Snapshot) WithContext(ctx Context) Snapshot {
 	return snapshot
 }
 
-func (s *Store) markInactive(sessionID, ownerID string, metadata map[string]interface{}) {
+func (s *Store) markInactive(sessionID, ownerID string, metadata map[string]interface{}, completedAt time.Time) {
 	terminalID := terminalIDFor(sessionID, ownerID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1379,9 +1381,25 @@ func (s *Store) markInactive(sessionID, ownerID string, metadata map[string]inte
 		}
 		terminalID = resolvedID
 	}
-	state := terminalStateFromContent(snapshot.Content, false)
-	now := time.Now()
-	if state == "running" {
+	// A delayed end event from an older turn must not close a newer turn that
+	// has already produced terminal output under the same persistent pane.
+	if !completedAt.IsZero() && !snapshot.UpdatedAt.IsZero() &&
+		snapshot.UpdatedAt.After(completedAt.Add(250*time.Millisecond)) {
+		return
+	}
+	now := completedAt
+	if now.IsZero() {
+		now = time.Now()
+	}
+	// streaming_end is the provider's authoritative turn boundary once the pane
+	// has settled. Historical spinner text can remain in tmux scrollback after
+	// Codex/Claude is back at its prompt, so compare the latest spinner/prompt
+	// order instead of letting any old busy line override completion. A pane whose
+	// latest visible state is still an active spinner remains running; some CLIs
+	// emit an intermediate end event before their TUI has actually settled.
+	explicitOutcome := terminalLatestExplicitOutcome(snapshot.Content)
+	if terminalContentLooksBusy(snapshot.Content) && explicitOutcome == "" &&
+		!terminalHasSettledPromptAfterBusy(snapshot.Content, metadata) {
 		snapshot.Active = true
 		snapshot.State = "running"
 		snapshot.ProcessState = "live"
@@ -1393,9 +1411,16 @@ func (s *Store) markInactive(sessionID, ownerID string, metadata map[string]inte
 		s.byID[terminalID] = snapshot
 		return
 	}
+	state := "completed"
+	if terminalContentLooksFatal(snapshot.Content) || explicitOutcome == "failed" {
+		state = "failed"
+	}
 	snapshot.Active = false
 	if strings.TrimSpace(snapshot.TmuxSession) != "" {
-		snapshot.ProcessState = "closing"
+		// Persistent main-agent panes remain alive for resume even though this
+		// execution is complete. Transient panes switch to closing below when a
+		// retention window is present.
+		snapshot.ProcessState = "live"
 		snapshot.SnapshotKind = "live"
 	}
 	// Retention is caller-decided: whoever emits the streaming events
@@ -1408,6 +1433,7 @@ func (s *Store) markInactive(sessionID, ownerID string, metadata map[string]inte
 		closesAt := now.Add(time.Duration(retentionSeconds) * time.Second)
 		snapshot.ClosesAt = &closesAt
 		snapshot.RetentionSeconds = retentionSeconds
+		snapshot.ProcessState = "closing"
 		if state != "failed" {
 			state = "closing"
 		}
@@ -1433,6 +1459,31 @@ func (s *Store) markInactive(sessionID, ownerID string, metadata map[string]inte
 		snapshot.Status.DurationMs = dur
 	}
 	s.byID[terminalID] = snapshot
+	s.forcedInactive[terminalID] = now
+}
+
+func terminalHasSettledPromptAfterBusy(content string, metadata map[string]interface{}) bool {
+	lines := cleanedLines(content)
+	if len(lines) == 0 {
+		return false
+	}
+	provider := providerLabel(content, metadata)
+	// Cursor's follow-up prompt remains visible while it is composing, so it
+	// cannot disambiguate an intermediate end event from a settled pane.
+	if provider != "Codex CLI" && provider != "Claude Code" {
+		return false
+	}
+	lastBusy := -1
+	lastPrompt := -1
+	for i, line := range lines {
+		if isTerminalBusyLine(line) {
+			lastBusy = i
+		}
+		if isProviderIdlePromptLine(provider, line, true) {
+			lastPrompt = i
+		}
+	}
+	return lastPrompt > lastBusy
 }
 
 func (s *Store) findInactiveTargetLocked(sessionID, ownerID string, metadata map[string]interface{}) (string, Snapshot, bool) {

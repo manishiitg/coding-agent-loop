@@ -30,7 +30,10 @@ export function InteractionWidget({
   workspacePath: string
 }) {
   const widgetID = widget.id || ''
-  const instanceKey = widget.instanceKey || 'default'
+	const instanceKey = widget.instanceKey || 'default'
+	const subjectID = widget.subjectId || ''
+	const subjectVersion = widget.subjectVersion || ''
+	const subjectHash = widget.subjectHash || ''
   const responseKind = widget.responseKind || (widget.options?.length ? 'choice' : 'text')
   const showsOptions = responseKind === 'choice' || responseKind === 'choice-with-text'
   const showsText = responseKind === 'text' || responseKind === 'choice-with-text' || widget.allowFreeText === true
@@ -81,7 +84,7 @@ export function InteractionWidget({
         if (!cancelled) setLoading(false)
       })
     return () => { cancelled = true }
-  }, [instanceKey, reloadNonce, widgetID, workspacePath])
+	}, [instanceKey, reloadNonce, subjectHash, subjectID, subjectVersion, widgetID, workspacePath])
 
   const canSubmit = useMemo(() => {
     if (submitting || !widgetID) return false
@@ -97,9 +100,12 @@ export function InteractionWidget({
     setError(null)
     try {
       const result = await agentApi.answerReportWidgetResponse(workspacePath, widgetID, {
-        instance_key: instanceKey,
-        selected_option_id: selectedOptionID,
-        note: note.trim(),
+			instance_key: instanceKey,
+			selected_option_id: selectedOptionID,
+			note: note.trim(),
+			expected_subject_id: subjectID,
+			expected_subject_version: subjectVersion,
+			expected_subject_hash: subjectHash,
       })
       setResponse(result.response)
       setSelectedOptionID(result.response.selected_option_id || '')
@@ -174,17 +180,24 @@ export function InteractionWidget({
 
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="min-w-0 text-xs text-muted-foreground">
-              {response ? (
-                <span className="inline-flex items-center gap-1.5">
-                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-                  {response.status === 'consumed' ? 'Applied' : 'Saved'}
+				{response && response.status !== 'pending' ? (
+					<span className="inline-flex items-center gap-1.5">
+						<CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+						{response.status === 'completed'
+							? 'Applied'
+							: response.status === 'executing'
+								? 'Applying'
+								: response.status === 'failed'
+									? 'Action failed'
+									: 'Saved'}
                   {response.selected_option_id ? ` · ${responseOptionTitle(widget, response.selected_option_id)}` : ''}
                   {responseTime(response.updated_at) ? ` · ${responseTime(response.updated_at)}` : ''}
                 </span>
               ) : (
                 'No response yet. The workflow continues normally until you answer.'
               )}
-              {response?.outcome_summary && <span className="mt-1 block">Outcome: {response.outcome_summary}</span>}
+				{response?.outcome_summary && <span className="mt-1 block">Outcome: {response.outcome_summary}</span>}
+				{response?.failure_summary && <span className="mt-1 block text-destructive">Failure: {response.failure_summary}</span>}
             </div>
             <button
               type="button"
@@ -193,7 +206,7 @@ export function InteractionWidget({
               className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity disabled:cursor-not-allowed disabled:opacity-45"
             >
               {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              {response ? 'Update response' : 'Save response'}
+				{response && response.status !== 'pending' ? 'Update response' : 'Save response'}
             </button>
           </div>
         </>

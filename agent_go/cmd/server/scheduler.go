@@ -2611,6 +2611,7 @@ func (s *SchedulerService) executeMultiAgentJob(ctx context.Context, sctx *Sched
 	if len(messages) == 0 && query == "" {
 		return "", "", fmt.Errorf("multi-agent schedule %s has no messages or query", sctx.Schedule.ID)
 	}
+	sessionID := s.newScheduleSessionID(sctx)
 	chiefInputWorkspaces := []string{"pulse"}
 	if workflows, err := s.DiscoverWorkflowManifestsCached(ctx, 5*time.Second); err != nil {
 		s.logf(sctx, "[CHIEF_INPUT] Could not discover workflow scopes for answered questions: %v", err)
@@ -2619,7 +2620,12 @@ func (s *SchedulerService) executeMultiAgentJob(ctx context.Context, sctx *Sched
 			chiefInputWorkspaces = append(chiefInputWorkspaces, workflow.WorkspacePath)
 		}
 	}
-	answeredChiefInputs := formatAnsweredChiefOfStaffInputsForAgent(ctx, chiefInputWorkspaces)
+	answeredChiefInputs := claimAnsweredChiefOfStaffInputsForAgent(ctx, chiefInputWorkspaces, sessionID)
+	defer func() {
+		releaseCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		releaseChiefOfStaffInputClaims(releaseCtx, chiefInputWorkspaces, sessionID)
+	}()
 	chiefInputNote := ""
 	if answeredChiefInputs != "" {
 		chiefInputNote = "\n\n" + answeredChiefInputs
@@ -2627,8 +2633,6 @@ func (s *SchedulerService) executeMultiAgentJob(ctx context.Context, sctx *Sched
 	if query != "" {
 		query = withChiefTaskRunContext(sctx, query) + chiefInputNote
 	}
-
-	sessionID := s.newScheduleSessionID(sctx)
 
 	s.updateRuntimeState(scheduleRuntimeKey(sctx), func(state *ScheduleRuntimeState) {
 		state.LastSessionID = sessionID

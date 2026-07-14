@@ -339,7 +339,7 @@ export interface ReportHumanInput {
   context?: string
   options: ReportHumanInputOption[]
   allow_free_text: boolean
-  status: 'pending' | 'answered' | 'consumed' | 'dismissed' | string
+	status: 'pending' | 'answered' | 'claimed' | 'consumed' | 'dismissed' | string
   selected_option_id?: string
   note?: string
   run_id?: string
@@ -352,7 +352,10 @@ export interface ReportHumanInput {
   updated_at: string
   answered_at?: string
   consumed_at?: string
-  dismissed_at?: string
+	dismissed_at?: string
+	claim_token?: string
+	claimed_at?: string
+	claim_expires_at?: string
 }
 
 export interface ReportHumanInputsResponse {
@@ -1797,12 +1800,19 @@ export interface ReportWidgetResponse {
   subject_id?: string;
   subject_version?: string;
   subject_hash?: string;
-  status: 'answered' | 'consumed' | string;
+	status: 'pending' | 'answered' | 'executing' | 'completed' | 'failed' | 'expired' | 'cancelled' | string;
   selected_option_id?: string;
   note?: string;
   answered_by?: string;
   consumed_by?: string;
-  outcome_summary?: string;
+	outcome_summary?: string;
+	execution_key?: string;
+	execution_revision?: number;
+	claimed_by?: string;
+	claim_started_at?: string;
+	completed_at?: string;
+	failed_at?: string;
+	failure_summary?: string;
   revision: number;
   answered_at?: string;
   consumed_at?: string;

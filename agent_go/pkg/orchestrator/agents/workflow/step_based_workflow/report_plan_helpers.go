@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/reportinteraction"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
@@ -1153,12 +1154,40 @@ func writeReportPlanDocument(
 	doc *reportPlanDocument,
 ) error {
 	doc = normalizeReportPlanDocument(doc)
+	if reportPlanDocumentHasInteraction(doc) {
+		dbPath := filepath.Join(GetPromptDocsRoot(), filepath.FromSlash(workspacePath), DBFolderName, "db.sqlite")
+		db, err := reportinteraction.OpenDatabase(ctx, dbPath)
+		if err != nil {
+			return fmt.Errorf("initialize report interaction storage: %w", err)
+		}
+		if err := db.Close(); err != nil {
+			return fmt.Errorf("close report interaction storage: %w", err)
+		}
+	}
 	content, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal report plan: %w", err)
 	}
 	path := normalizePathForWorkspaceAPI(filepath.Join("reports", "report_plan.json"), workspacePath)
 	return writeFile(ctx, path, string(content)+"\n")
+}
+
+func reportPlanDocumentHasInteraction(doc *reportPlanDocument) bool {
+	for _, section := range doc.Sections {
+		for _, entry := range section.Entries {
+			if entry.Widget != nil && entry.Widget.Kind == "interaction" {
+				return true
+			}
+			if entry.Row != nil {
+				for _, widget := range entry.Row.Widgets {
+					if widget.Kind == "interaction" {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
 }
 
 func reportPlanWidgetToMap(widget reportPlanDocumentWidget) (map[string]interface{}, error) {

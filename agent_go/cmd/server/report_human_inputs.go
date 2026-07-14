@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -53,6 +54,9 @@ type ReportHumanInput struct {
 	AnsweredAt       string                   `json:"answered_at,omitempty"`
 	ConsumedAt       string                   `json:"consumed_at,omitempty"`
 	DismissedAt      string                   `json:"dismissed_at,omitempty"`
+	ClaimToken       string                   `json:"claim_token,omitempty"`
+	ClaimedAt        string                   `json:"claimed_at,omitempty"`
+	ClaimExpiresAt   string                   `json:"claim_expires_at,omitempty"`
 }
 
 type ReportHumanInputCreateRequest struct {
@@ -141,11 +145,9 @@ func openReportHumanInputDB(ctx context.Context, workspacePath string, create bo
 		_ = db.Close()
 		return "", nil, err
 	}
-	if create {
-		if err := ensureReportHumanInputSchema(ctx, db); err != nil {
-			_ = db.Close()
-			return "", nil, err
-		}
+	if err := ensureReportHumanInputSchema(ctx, db); err != nil {
+		_ = db.Close()
+		return "", nil, err
 	}
 	return normalized, db, nil
 }
@@ -174,7 +176,10 @@ func ensureReportHumanInputSchema(ctx context.Context, db *sql.DB) error {
 			updated_at TEXT NOT NULL,
 			answered_at TEXT NOT NULL DEFAULT '',
 			consumed_at TEXT NOT NULL DEFAULT '',
-			dismissed_at TEXT NOT NULL DEFAULT ''
+			dismissed_at TEXT NOT NULL DEFAULT '',
+			claim_token TEXT NOT NULL DEFAULT '',
+			claimed_at TEXT NOT NULL DEFAULT '',
+			claim_expires_at TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_report_human_inputs_status ON report_human_inputs(status, updated_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_report_human_inputs_source ON report_human_inputs(source, status, updated_at)`,
@@ -184,7 +189,45 @@ func ensureReportHumanInputSchema(ctx context.Context, db *sql.DB) error {
 			return err
 		}
 	}
+	for name, definition := range map[string]string{
+		"claim_token":      "TEXT NOT NULL DEFAULT ''",
+		"claimed_at":       "TEXT NOT NULL DEFAULT ''",
+		"claim_expires_at": "TEXT NOT NULL DEFAULT ''",
+	} {
+		if err := ensureReportHumanInputColumn(ctx, db, name, definition); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func ensureReportHumanInputColumn(ctx context.Context, db *sql.DB, column, definition string) error {
+	rows, err := db.QueryContext(ctx, "PRAGMA table_info(report_human_inputs)")
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid int
+		var name, kind string
+		var notNull, primaryKey int
+		var defaultValue interface{}
+		if err := rows.Scan(&cid, &name, &kind, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if strings.EqualFold(name, column) {
+			found = true
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	_, err = db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE report_human_inputs ADD COLUMN %s %s", column, definition))
+	return err
 }
 
 func createReportHumanInput(ctx context.Context, workspacePath string, req ReportHumanInputCreateRequest) (*ReportHumanInput, error) {
@@ -287,9 +330,9 @@ func listReportHumanInputs(ctx context.Context, workspacePath, status, source st
 	}
 	query := `SELECT id, workspace_path, source, priority, question, context, options_json, allow_free_text, status,
 		selected_option_id, note, run_id, evidence, created_by, answered_by, consumed_by, outcome_summary,
-		created_at, updated_at, answered_at, consumed_at, dismissed_at
+		created_at, updated_at, answered_at, consumed_at, dismissed_at, claim_token, claimed_at, claim_expires_at
 		FROM report_human_inputs WHERE ` + strings.Join(clauses, " AND ") + `
-		ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'answered' THEN 1 WHEN 'dismissed' THEN 2 ELSE 3 END,
+		ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'answered' THEN 1 WHEN 'claimed' THEN 2 WHEN 'dismissed' THEN 3 ELSE 4 END,
 			datetime(updated_at) DESC, id DESC`
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -331,7 +374,7 @@ func answerReportHumanInput(ctx context.Context, workspacePath, inputID string, 
 	if input == nil {
 		return nil, fmt.Errorf("input_id %q not found", inputID)
 	}
-	if input.Status == "consumed" || input.Status == "dismissed" {
+	if input.Status == "consumed" || input.Status == "dismissed" || input.Status == "claimed" {
 		return nil, fmt.Errorf("input_id %q is %s", inputID, input.Status)
 	}
 
@@ -384,8 +427,8 @@ func dismissReportHumanInput(ctx context.Context, workspacePath, inputID, answer
 	if input == nil {
 		return nil, fmt.Errorf("input_id %q not found", inputID)
 	}
-	if input.Status == "consumed" {
-		return nil, fmt.Errorf("input_id %q is already consumed", inputID)
+	if input.Status == "consumed" || input.Status == "claimed" {
+		return nil, fmt.Errorf("input_id %q is %s and cannot be dismissed", inputID, input.Status)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err = db.ExecContext(ctx, `UPDATE report_human_inputs
@@ -418,8 +461,8 @@ func consumeReportHumanInput(ctx context.Context, workspacePath, inputID string,
 	if input == nil {
 		return nil, fmt.Errorf("input_id %q not found", inputID)
 	}
-	if input.Status != "answered" {
-		return nil, fmt.Errorf("input_id %q must be answered before it can be consumed; current status=%q", inputID, input.Status)
+	if input.Status != "answered" && input.Status != "claimed" {
+		return nil, fmt.Errorf("input_id %q must be answered or claimed before it can be consumed; current status=%q", inputID, input.Status)
 	}
 	outcome := strings.TrimSpace(req.OutcomeSummary)
 	if outcome == "" {
@@ -427,8 +470,9 @@ func consumeReportHumanInput(ctx context.Context, workspacePath, inputID string,
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err = db.ExecContext(ctx, `UPDATE report_human_inputs
-		SET status='consumed', consumed_by=?, outcome_summary=?, consumed_at=?, updated_at=?
-		WHERE id=? AND workspace_path=?`,
+		SET status='consumed', consumed_by=?, outcome_summary=?, consumed_at=?, updated_at=?,
+		    claim_token='', claimed_at='', claim_expires_at=''
+		WHERE id=? AND workspace_path=? AND status IN ('answered', 'claimed')`,
 		strings.TrimSpace(req.ConsumedBy), outcome, now, now, input.ID, normalized)
 	if err != nil {
 		return nil, err
@@ -439,7 +483,7 @@ func consumeReportHumanInput(ctx context.Context, workspacePath, inputID string,
 func getReportHumanInputByID(ctx context.Context, db *sql.DB, workspacePath, inputID string) (*ReportHumanInput, error) {
 	row := db.QueryRowContext(ctx, `SELECT id, workspace_path, source, priority, question, context, options_json, allow_free_text, status,
 		selected_option_id, note, run_id, evidence, created_by, answered_by, consumed_by, outcome_summary,
-		created_at, updated_at, answered_at, consumed_at, dismissed_at
+		created_at, updated_at, answered_at, consumed_at, dismissed_at, claim_token, claimed_at, claim_expires_at
 		FROM report_human_inputs WHERE workspace_path=? AND id=?`, workspacePath, strings.TrimSpace(inputID))
 	input, err := scanReportHumanInput(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -464,6 +508,7 @@ func scanReportHumanInput(row reportHumanInputScanner) (*ReportHumanInput, error
 		&optionsJSON, &allowFreeText, &input.Status, &input.SelectedOptionID, &input.Note, &input.RunID,
 		&input.Evidence, &input.CreatedBy, &input.AnsweredBy, &input.ConsumedBy, &input.OutcomeSummary,
 		&input.CreatedAt, &input.UpdatedAt, &input.AnsweredAt, &input.ConsumedAt, &input.DismissedAt,
+		&input.ClaimToken, &input.ClaimedAt, &input.ClaimExpiresAt,
 	); err != nil {
 		return nil, err
 	}
@@ -615,6 +660,45 @@ func (api *StreamingAPI) handleListReportHumanInputs(w http.ResponseWriter, r *h
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "inputs": inputs})
 }
 
+func (api *StreamingAPI) handleListReportHumanInputsAggregate(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	workspacePaths := r.URL.Query()["workspace_path"]
+	if len(workspacePaths) == 0 {
+		workspacePaths = strings.Split(r.URL.Query().Get("workspace_paths"), ",")
+	}
+	seen := make(map[string]struct{}, len(workspacePaths))
+	inputs := make([]ReportHumanInput, 0)
+	for _, workspacePath := range workspacePaths {
+		workspacePath = strings.TrimSpace(workspacePath)
+		if workspacePath == "" {
+			continue
+		}
+		normalized, err := normalizeReportHumanInputWorkspacePath(workspacePath)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if _, exists := seen[normalized]; exists {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		workspaceInputs, err := listReportHumanInputs(r.Context(), normalized, r.URL.Query().Get("status"), r.URL.Query().Get("source"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		inputs = append(inputs, workspaceInputs...)
+	}
+	sort.SliceStable(inputs, func(i, j int) bool {
+		return inputs[i].UpdatedAt > inputs[j].UpdatedAt
+	})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "inputs": inputs})
+}
+
 func (api *StreamingAPI) handleCreateReportHumanInput(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
@@ -736,28 +820,10 @@ func formatAnsweredReportHumanInputsForAgent(ctx context.Context, workspacePath 
 // across the org-level pulse scope and discovered workflow scopes. Unlike a
 // workflow Pulse pass, Chief of Staff has no single workspace DB, so each line
 // carries the workspace_path required to record the outcome in the same scope.
-func formatAnsweredChiefOfStaffInputsForAgent(ctx context.Context, workspacePaths []string) string {
-	seen := make(map[string]struct{}, len(workspacePaths))
-	inputs := make([]ReportHumanInput, 0)
-	for _, workspacePath := range workspacePaths {
-		workspacePath = strings.TrimSpace(workspacePath)
-		if workspacePath == "" {
-			continue
-		}
-		if _, exists := seen[workspacePath]; exists {
-			continue
-		}
-		seen[workspacePath] = struct{}{}
-		workspaceInputs, err := listReportHumanInputs(ctx, workspacePath, "answered", "chief_of_staff")
-		if err != nil {
-			continue
-		}
-		inputs = append(inputs, workspaceInputs...)
-	}
+func formatChiefOfStaffInputsForAgent(inputs []ReportHumanInput) string {
 	if len(inputs) == 0 {
 		return ""
 	}
-
 	var b strings.Builder
 	b.WriteString("Answered Chief of Staff questions waiting for this run:\n")
 	for _, input := range inputs {
@@ -770,6 +836,107 @@ func formatAnsweredChiefOfStaffInputsForAgent(ctx context.Context, workspacePath
 	}
 	b.WriteString("Use each answer when it is still relevant. Do not mark an answer consumed merely because you read it. After the requested action or a concrete no-action/deferred/stale decision is complete, call mark_human_input_consumed with the same workspace_path and input_id plus a truthful outcome_summary. If the action cannot be completed safely in this run, leave the answer unconsumed so a later Chief of Staff or workflow Pulse pass can handle it.\n")
 	return strings.TrimSpace(b.String())
+}
+
+func claimAnsweredChiefOfStaffInputsForAgent(ctx context.Context, workspacePaths []string, claimToken string) string {
+	claimToken = strings.TrimSpace(claimToken)
+	if claimToken == "" {
+		return ""
+	}
+	seen := make(map[string]struct{}, len(workspacePaths))
+	claimed := make([]ReportHumanInput, 0)
+	for _, workspacePath := range workspacePaths {
+		workspacePath = strings.TrimSpace(workspacePath)
+		if workspacePath == "" {
+			continue
+		}
+		if _, exists := seen[workspacePath]; exists {
+			continue
+		}
+		seen[workspacePath] = struct{}{}
+		_ = releaseExpiredChiefOfStaffInputClaims(ctx, workspacePath)
+		inputs, err := listReportHumanInputs(ctx, workspacePath, "answered", "chief_of_staff")
+		if err != nil {
+			continue
+		}
+		for _, input := range inputs {
+			claimedInput, ok := claimReportHumanInput(ctx, workspacePath, input.ID, claimToken)
+			if ok {
+				claimed = append(claimed, *claimedInput)
+			}
+		}
+	}
+	return formatChiefOfStaffInputsForAgent(claimed)
+}
+
+func claimReportHumanInput(ctx context.Context, workspacePath, inputID, claimToken string) (*ReportHumanInput, bool) {
+	reportHumanInputStoreMu.Lock()
+	defer reportHumanInputStoreMu.Unlock()
+
+	normalized, db, err := openReportHumanInputDB(ctx, workspacePath, false)
+	if err != nil || db == nil {
+		return nil, false
+	}
+	defer db.Close()
+	now := time.Now().UTC()
+	expiresAt := now.Add(6 * time.Hour)
+	result, err := db.ExecContext(ctx, `UPDATE report_human_inputs
+		SET status='claimed', claim_token=?, claimed_at=?, claim_expires_at=?, updated_at=?
+		WHERE id=? AND workspace_path=? AND source='chief_of_staff' AND status='answered'`,
+		claimToken, now.Format(time.RFC3339), expiresAt.Format(time.RFC3339), now.Format(time.RFC3339),
+		strings.TrimSpace(inputID), normalized)
+	if err != nil {
+		return nil, false
+	}
+	affected, _ := result.RowsAffected()
+	if affected != 1 {
+		return nil, false
+	}
+	input, err := getReportHumanInputByID(ctx, db, normalized, inputID)
+	return input, err == nil && input != nil
+}
+
+func releaseExpiredChiefOfStaffInputClaims(ctx context.Context, workspacePath string) error {
+	reportHumanInputStoreMu.Lock()
+	defer reportHumanInputStoreMu.Unlock()
+	normalized, db, err := openReportHumanInputDB(ctx, workspacePath, false)
+	if err != nil || db == nil {
+		return err
+	}
+	defer db.Close()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err = db.ExecContext(ctx, `UPDATE report_human_inputs
+		SET status='answered', claim_token='', claimed_at='', claim_expires_at='', updated_at=?
+		WHERE workspace_path=? AND status='claimed' AND claim_expires_at<>'' AND claim_expires_at<?`, now, normalized, now)
+	return err
+}
+
+func releaseChiefOfStaffInputClaims(ctx context.Context, workspacePaths []string, claimToken string) {
+	claimToken = strings.TrimSpace(claimToken)
+	if claimToken == "" {
+		return
+	}
+	seen := make(map[string]struct{}, len(workspacePaths))
+	for _, workspacePath := range workspacePaths {
+		workspacePath = strings.TrimSpace(workspacePath)
+		if workspacePath == "" {
+			continue
+		}
+		if _, exists := seen[workspacePath]; exists {
+			continue
+		}
+		seen[workspacePath] = struct{}{}
+		reportHumanInputStoreMu.Lock()
+		normalized, db, err := openReportHumanInputDB(ctx, workspacePath, false)
+		if err == nil && db != nil {
+			now := time.Now().UTC().Format(time.RFC3339)
+			_, _ = db.ExecContext(ctx, `UPDATE report_human_inputs
+				SET status='answered', claim_token='', claimed_at='', claim_expires_at='', updated_at=?
+				WHERE workspace_path=? AND status='claimed' AND claim_token=?`, now, normalized, claimToken)
+			_ = db.Close()
+		}
+		reportHumanInputStoreMu.Unlock()
+	}
 }
 
 func reportHumanInputAnswerForAgent(input ReportHumanInput) string {

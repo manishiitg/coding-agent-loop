@@ -43,7 +43,7 @@ HTML is a superset of anything a plain document needs — prose, headings, table
 
 ### Consuming configured interaction answers
 
-Interaction answers are framework-owned rows in the workflow's `db/db.sqlite` table `report_widget_responses`; the report page is only the UI. They are asynchronous: creating or displaying a widget never pauses a run, and the user may answer days later.
+Interaction answers are framework-owned rows in the workflow's `db/db.sqlite` table `report_widget_responses`; the report page is only the UI. They are asynchronous: creating or displaying a widget never pauses a run, and the user may answer days later. The framework creates the table when the interaction is configured, so a consumer may safely treat an absent `answered` row as "no answer yet."
 
 If the user wants an answer to affect future execution, configure the intended consumer step (and give it DB read access) to query `$DB_PATH`, for example:
 
@@ -56,7 +56,15 @@ WHERE widget_id = 'linkedin-draft-review'
 ORDER BY updated_at DESC;
 ```
 
-The step must handle no row as "no answer yet" and continue its safe normal behavior. For a critical action, verify the stored subject version/hash against the current artifact and use an idempotency key before causing an external side effect. After the configured workflow action succeeds, update that exact row to `status='consumed'` with `consumed_by`, `outcome_summary`, `consumed_at`, and `updated_at`; do not consume before success. If the user later updates the widget response, the framework changes it back to `answered` and increments `revision`.
+The step must handle no row as "no answer yet" and continue its safe normal behavior. Before any external side effect, verify the stored subject id/version/hash against the immutable artifact and atomically claim that exact revision:
+
+1. Build a deterministic `execution_key` from widget id + instance key + revision + consumer step.
+2. Run one conditional update from `status='answered'` to `status='executing'`, setting `execution_key`, `execution_revision=revision`, `claimed_by`, `claim_started_at`, and `updated_at`, with `WHERE revision=<the revision read> AND subject_hash=<the hash read>`. Check `changes()=1`; if it is zero, do not perform the action because another execution or a newer answer won.
+3. If the row already says `executing` or `completed` with the same `execution_key`, do not repeat the side effect.
+4. After success, update only that claimed row from `executing` to `completed`, matching both revision and execution key, and write `consumed_by`, `outcome_summary`, `completed_at`, `consumed_at`, and `updated_at`.
+5. After a terminal failure, update only that claim to `failed` with `failure_summary` and `failed_at`. The user can revise the answer to create a new revision for retry.
+
+Never jump directly from `answered` to `completed`. Every answer, claim, completion, and failure is copied into `report_widget_response_events` for audit history. If the user updates a response, the framework changes it back to `answered`, increments `revision`, and clears the prior execution claim.
 
 Do not make unrelated steps understand the widget JSON. The builder wires only the explicit consumer step to this stable table contract. Dynamic Pulse/Goal Advisor questions remain in the separate `report_human_inputs` flow.
 

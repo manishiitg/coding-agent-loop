@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { CheckCircle2, ChevronDown, ChevronRight, Clock3, Loader2, MessageSquareText, RefreshCw, Send, X } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { ReportHumanInput } from '../../services/api-types'
@@ -52,8 +52,8 @@ function answerHandlerLabel(input: ReportHumanInput): string {
 }
 
 function statusTone(input: ReportHumanInput): string {
-  if (input.status === 'consumed') return 'text-emerald-300'
-  if (input.status === 'answered') return 'text-amber-200'
+	if (input.status === 'consumed') return 'text-emerald-300'
+	if (input.status === 'answered' || input.status === 'claimed') return 'text-amber-200'
   return 'text-muted-foreground'
 }
 
@@ -81,17 +81,25 @@ function HumanInputContext({ value }: { value: string }) {
 }
 
 interface ReportHumanInputPanelProps {
-  workspacePath: string
-  className?: string
-  source?: string
-  workspaceLabel?: string
+	workspacePath: string
+	className?: string
+	source?: string
+	workspaceLabel?: string
+	providedInputs?: ReportHumanInput[]
+	providedLoading?: boolean
+	providedError?: string | null
+	onRequestRefresh?: () => void
 }
 
 export function ReportHumanInputPanel({
   workspacePath,
-  className = '',
-  source,
-  workspaceLabel,
+	className = '',
+	source,
+	workspaceLabel,
+	providedInputs,
+	providedLoading,
+	providedError,
+	onRequestRefresh,
 }: ReportHumanInputPanelProps) {
   const [inputs, setInputs] = useState<ReportHumanInput[]>([])
   const [loading, setLoading] = useState(false)
@@ -101,7 +109,11 @@ export function ReportHumanInputPanel({
   const [historyOpen, setHistoryOpen] = useState(false)
   const [expandedHistoryIds, setExpandedHistoryIds] = useState<Record<string, boolean>>({})
   const [panelRef, sizeTier] = useContainerSizeTier(560, 900)
-  const compactOptions = sizeTier === 'phone'
+	const compactOptions = sizeTier === 'phone'
+	const externallyManaged = providedInputs !== undefined
+	const visibleInputs = providedInputs ?? inputs
+	const visibleLoading = externallyManaged ? Boolean(providedLoading) : loading
+	const visibleError = externallyManaged ? (providedError || null) : error
 
   const loadInputs = useCallback(async (cancelled?: () => boolean) => {
     if (!workspacePath) return
@@ -121,24 +133,26 @@ export function ReportHumanInputPanel({
     }
   }, [source, workspacePath])
 
-  useEffect(() => {
-    let cancelled = false
+	useEffect(() => {
+		if (externallyManaged) return
+		let cancelled = false
     void loadInputs(() => cancelled)
     return () => { cancelled = true }
-  }, [loadInputs, refreshNonce])
+	}, [externallyManaged, loadInputs, refreshNonce])
 
-  useEffect(() => {
-    const onRefresh = () => { void loadInputs() }
+	useEffect(() => {
+		if (externallyManaged) return
+		const onRefresh = () => { void loadInputs() }
     window.addEventListener(WORKFLOW_LOG_REFRESH_EVENT, onRefresh)
     return () => window.removeEventListener(WORKFLOW_LOG_REFRESH_EVENT, onRefresh)
-  }, [loadInputs])
+	}, [externallyManaged, loadInputs])
 
-  const waitingForPulse = inputs.some(input => input.status === 'answered')
-  useEffect(() => {
-    if (!waitingForPulse) return
+	const waitingForPulse = visibleInputs.some(input => input.status === 'answered' || input.status === 'claimed')
+	useEffect(() => {
+		if (externallyManaged || !waitingForPulse) return
     const timer = window.setInterval(() => { void loadInputs() }, 5000)
     return () => window.clearInterval(timer)
-  }, [loadInputs, waitingForPulse])
+	}, [externallyManaged, loadInputs, waitingForPulse])
 
   useEffect(() => {
     setDrafts({})
@@ -146,9 +160,17 @@ export function ReportHumanInputPanel({
     setExpandedHistoryIds({})
   }, [workspacePath])
 
-  const pending = inputs.filter(input => input.status === 'pending')
-  const history = reportHumanInputHistory(inputs)
-  if (!loading && !error && pending.length === 0 && history.length === 0) return null
+	const pending = visibleInputs.filter(input => input.status === 'pending')
+	const history = reportHumanInputHistory(visibleInputs)
+	if (!visibleLoading && !visibleError && pending.length === 0 && history.length === 0) return null
+
+	const requestRefresh = () => {
+		if (onRequestRefresh) {
+			onRequestRefresh()
+			return
+		}
+		setRefreshNonce(prev => prev + 1)
+	}
 
   const updateDraft = (id: string, patch: Partial<ReportHumanInputDraft>) => {
     setDrafts(prev => {
@@ -176,7 +198,7 @@ export function ReportHumanInputPanel({
       })
       useChatStore.getState().addToast(`Answer saved for the next ${answerHandlerLabel(input)} run.`, 'success')
       setHistoryOpen(false)
-      setRefreshNonce(prev => prev + 1)
+		requestRefresh()
     } catch (err) {
       useChatStore.getState().addToast(err instanceof Error ? err.message : 'Failed to save answer.', 'error')
     } finally {
@@ -190,7 +212,7 @@ export function ReportHumanInputPanel({
       await agentApi.dismissReportHumanInput(workspacePath, input.id)
       useChatStore.getState().addToast('Question dismissed.', 'success')
       setHistoryOpen(false)
-      setRefreshNonce(prev => prev + 1)
+		requestRefresh()
     } catch (err) {
       useChatStore.getState().addToast(err instanceof Error ? err.message : 'Failed to dismiss question.', 'error')
     } finally {
@@ -214,7 +236,7 @@ export function ReportHumanInputPanel({
               {expanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
               {input.status === 'consumed'
                 ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-300" />
-                : input.status === 'answered'
+				: input.status === 'answered' || input.status === 'claimed'
                   ? <Clock3 className="h-3.5 w-3.5 shrink-0 text-amber-200" />
                   : null}
               <span className={`shrink-0 font-medium ${statusTone(input)}`}>{reportHumanInputStatusLabel(input)}</span>
@@ -235,10 +257,10 @@ export function ReportHumanInputPanel({
                     <span>{input.note}</span>
                   </div>
                 )}
-                {input.status === 'answered' && (
+			{(input.status === 'answered' || input.status === 'claimed') && (
                   <div className="flex items-center gap-1.5 rounded-md border border-amber-400/20 bg-amber-400/[0.06] px-2 py-1.5 text-amber-100">
                     <Clock3 className="h-3.5 w-3.5 shrink-0" />
-                    <span>Answer received — waiting for {answerHandlerLabel(input)} to act.</span>
+				<span>{input.status === 'claimed' ? `${answerHandlerLabel(input)} is working on this answer.` : `Answer received — waiting for ${answerHandlerLabel(input)} to act.`}</span>
                   </div>
                 )}
                 {input.outcome_summary && (
@@ -292,11 +314,11 @@ export function ReportHumanInputPanel({
           <div className="flex shrink-0 items-center gap-1.5">
             <button
               type="button"
-              onClick={() => setRefreshNonce(prev => prev + 1)}
+				onClick={requestRefresh}
               className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground"
               aria-label="Refresh questions"
             >
-              {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+				{visibleLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
             </button>
             <button
               type="button"
@@ -335,14 +357,14 @@ export function ReportHumanInputPanel({
         </div>
         <button
           type="button"
-          onClick={() => setRefreshNonce(prev => prev + 1)}
+			onClick={requestRefresh}
           className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
         >
-          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+			{visibleLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
           Refresh
         </button>
       </div>
-      {error && <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">{error}</div>}
+		{visibleError && <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">{visibleError}</div>}
       <div className="mt-3 flex flex-col gap-2">
         {pending.map(input => {
           const draft = drafts[input.id] || { selectedOptionId: '', note: '' }
@@ -447,6 +469,91 @@ export function ReportHumanInputPanel({
       )}
     </section>
   )
+}
+
+export type ReportHumanInputScope = {
+	workspacePath: string
+	workspaceLabel: string
+}
+
+export function ReportHumanInputCollection({
+	scopes,
+	source,
+	className = '',
+}: {
+	scopes: ReportHumanInputScope[]
+	source?: string
+	className?: string
+}) {
+	const scopeKey = scopes.map(scope => `${scope.workspacePath}\u0000${scope.workspaceLabel}`).join('\u0001')
+	const stableScopes = useMemo(() => scopeKey.split('\u0001').filter(Boolean).map(value => {
+		const [workspacePath, workspaceLabel] = value.split('\u0000')
+		return { workspacePath, workspaceLabel }
+	}), [scopeKey])
+	const [inputs, setInputs] = useState<ReportHumanInput[]>([])
+	const [loading, setLoading] = useState(false)
+	const [error, setError] = useState<string | null>(null)
+	const [refreshNonce, setRefreshNonce] = useState(0)
+
+	const loadInputs = useCallback(async (cancelled?: () => boolean) => {
+		const paths = stableScopes.map(scope => scope.workspacePath).filter(Boolean)
+		if (paths.length === 0) {
+			setInputs([])
+			return
+		}
+		setLoading(true)
+		setError(null)
+		try {
+			const result = await agentApi.listReportHumanInputsAggregate(paths, undefined, source)
+			if (cancelled?.()) return
+			if (!result.success) throw new Error(result.error || 'Failed to load questions.')
+			setInputs(result.inputs || [])
+		} catch (err) {
+			if (cancelled?.()) return
+			setError(err instanceof Error ? err.message : 'Failed to load questions.')
+			setInputs([])
+		} finally {
+			if (!cancelled?.()) setLoading(false)
+		}
+	}, [source, stableScopes])
+
+	useEffect(() => {
+		let cancelled = false
+		void loadInputs(() => cancelled)
+		return () => { cancelled = true }
+	}, [loadInputs, refreshNonce])
+
+	useEffect(() => {
+		const onRefresh = () => { void loadInputs() }
+		window.addEventListener(WORKFLOW_LOG_REFRESH_EVENT, onRefresh)
+		return () => window.removeEventListener(WORKFLOW_LOG_REFRESH_EVENT, onRefresh)
+	}, [loadInputs])
+
+	const waitingForAgent = inputs.some(input => input.status === 'answered' || input.status === 'claimed')
+	useEffect(() => {
+		if (!waitingForAgent) return
+		const timer = window.setInterval(() => { void loadInputs() }, 5000)
+		return () => window.clearInterval(timer)
+	}, [loadInputs, waitingForAgent])
+
+	if (loading && inputs.length === 0 && !error) return null
+
+	return (
+		<div className={className}>
+			{stableScopes.map((scope, index) => (
+				<ReportHumanInputPanel
+					key={scope.workspacePath}
+					workspacePath={scope.workspacePath}
+					workspaceLabel={scope.workspaceLabel}
+					source={source}
+					providedInputs={inputs.filter(input => input.workspace_path === scope.workspacePath)}
+					providedLoading={loading}
+					providedError={index === 0 ? error : null}
+					onRequestRefresh={() => setRefreshNonce(value => value + 1)}
+				/>
+			))}
+		</div>
+	)
 }
 
 export default ReportHumanInputPanel

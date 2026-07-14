@@ -7,9 +7,10 @@ export type ReportHumanInputContextSection = {
 }
 
 export function reportHumanInputStatusLabel(input: ReportHumanInput): string {
-  if (input.status === 'answered') {
-    return input.source === 'chief_of_staff' ? 'Waiting for Chief of Staff' : 'Waiting for Pulse'
-  }
+	if (input.status === 'answered') {
+		return input.source === 'chief_of_staff' ? 'Waiting for Chief of Staff' : 'Waiting for Pulse'
+	}
+	if (input.status === 'claimed') return 'Chief of Staff is working'
   if (input.status === 'consumed') return 'Action completed'
   if (input.status === 'dismissed') return 'Dismissed'
   return 'Needs answer'

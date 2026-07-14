@@ -2,7 +2,9 @@ package step_based_workflow
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -145,6 +147,46 @@ func TestValidateReportPlanAcceptsConfiguredInteractionWidget(t *testing.T) {
 	}
 	if !result.Valid || result.Widgets != 1 {
 		t.Fatalf("expected interaction widget to validate; result=%+v", result)
+	}
+}
+
+func TestWriteReportPlanInitializesInteractionStorage(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+	workspacePath := "Workflow/interactive-report"
+	doc := &reportPlanDocument{
+		Version: 1,
+		Sections: []reportPlanDocumentSection{{
+			Heading: "Review",
+			Entries: []reportPlanDocumentEntry{{
+				Kind: "single",
+				Widget: &reportPlanDocumentWidget{
+					ID: "approval", Kind: "interaction", Question: "Approve?", ResponseKind: "choice",
+					Options: []reportPlanDocumentInteractionOption{{ID: "yes", Title: "Yes"}},
+				},
+			}},
+		}},
+	}
+	var writtenPath string
+	if err := writeReportPlanDocument(ctx, workspacePath, func(_ context.Context, path, _ string) error {
+		writtenPath = path
+		return nil
+	}, doc); err != nil {
+		t.Fatalf("write report plan: %v", err)
+	}
+	if writtenPath != "Workflow/interactive-report/reports/report_plan.json" {
+		t.Fatalf("written report plan path = %q", writtenPath)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(root, "Workflow", "interactive-report", "db", "db.sqlite"))
+	if err != nil {
+		t.Fatalf("open initialized workflow db: %v", err)
+	}
+	defer db.Close()
+	var table string
+	if err := db.QueryRowContext(ctx, `SELECT name FROM sqlite_master
+		WHERE type='table' AND name='report_widget_responses'`).Scan(&table); err != nil {
+		t.Fatalf("interaction response table was not initialized: %v", err)
 	}
 }
 

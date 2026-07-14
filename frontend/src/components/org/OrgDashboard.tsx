@@ -17,7 +17,7 @@ import {
 import { agentApi } from '../../services/api'
 import type { ReportHumanInput } from '../../services/api-types'
 import ModalPortal from '../ui/ModalPortal'
-import { ReportHumanInputPanel } from '../workflow/ReportHumanInputPanel'
+import { ReportHumanInputCollection } from '../workflow/ReportHumanInputPanel'
 
 type HealthStatus = 'healthy' | 'bug' | 'critical' | 'idle'
 type ProgressStatus = 'on-track' | 'at-risk' | 'off-goal' | 'idle'
@@ -314,27 +314,29 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows, onOpenDec
 
   const load = useCallback(async () => {
     setLoading(true)
-    setError(null)
-    try {
-      const results = await Promise.all(
+	setError(null)
+	try {
+		const humanInputs = await agentApi.listReportHumanInputsAggregate(
+			workflows.map(workflow => workflow.workspacePath),
+			'pending',
+		).catch(() => ({ success: false, inputs: [] as ReportHumanInput[] }))
+		const results = await Promise.all(
         workflows.map(async (wf): Promise<WorkflowDashEntry> => {
           try {
-            const [health, progress, cost, humanInputs] = await Promise.all([
-              agentApi.getBuilderDoc(wf.workspacePath, 'card-health'),
-              agentApi.getBuilderDoc(wf.workspacePath, 'card-progress'),
-              agentApi.getBuilderDoc(wf.workspacePath, 'card-cost'),
-              agentApi.listReportHumanInputs(wf.workspacePath, 'pending').catch(() => ({
-                success: false,
-                inputs: [],
-              })),
-            ])
+			const [health, progress, cost] = await Promise.all([
+				agentApi.getBuilderDoc(wf.workspacePath, 'card-health'),
+				agentApi.getBuilderDoc(wf.workspacePath, 'card-progress'),
+				agentApi.getBuilderDoc(wf.workspacePath, 'card-cost'),
+			])
             return {
               workspacePath: wf.workspacePath,
               label: wf.label,
               health: health.success && health.exists ? parseCard(health.content) : null,
               progress: progress.success && progress.exists ? parseCard(progress.content) : null,
               cost: cost.success && cost.exists ? parseCard(cost.content) : null,
-              pendingInputs: humanInputs.success && Array.isArray(humanInputs.inputs) ? humanInputs.inputs : [],
+				pendingInputs: humanInputs.success && Array.isArray(humanInputs.inputs)
+					? humanInputs.inputs.filter(input => input.workspace_path === wf.workspacePath)
+					: [],
               failed: !humanInputs.success,
             }
           } catch {
@@ -460,23 +462,16 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows, onOpenDec
     </div>
   )
 
-  const chiefDecisionPanels = (
-    <div className="space-y-3" aria-label="Chief of Staff decisions">
-      <ReportHumanInputPanel
-        workspacePath="pulse"
-        workspaceLabel="Organization"
-        source="chief_of_staff"
-      />
-      {workflows.map(workflow => (
-        <ReportHumanInputPanel
-          key={workflow.workspacePath}
-          workspacePath={workflow.workspacePath}
-          workspaceLabel={workflow.label}
-          source="chief_of_staff"
-        />
-      ))}
-    </div>
-  )
+	const chiefDecisionPanels = (
+		<ReportHumanInputCollection
+			className="space-y-3"
+			source="chief_of_staff"
+			scopes={[
+				{ workspacePath: 'pulse', workspaceLabel: 'Organization' },
+				...workflows.map(workflow => ({ workspacePath: workflow.workspacePath, workspaceLabel: workflow.label })),
+			]}
+		/>
+	)
 
   // Loading
   if (loading && entries.length === 0) {

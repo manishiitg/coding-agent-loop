@@ -113,6 +113,10 @@ const LIVE_ATTACH_RESEED_DEBOUNCE_MS = 150
 const LIVE_ATTACH_RESEED_MIN_INTERVAL_MS = 2500
 const LIVE_ATTACH_SEED_TIMEOUT_MS = 5000
 const LIVE_ATTACH_SNAPSHOT_LINES = 200
+const TERMINAL_SETTLED_CAPTURE_INTERVAL_MS = 400
+const TERMINAL_SETTLED_CAPTURE_MIN_WINDOW_MS = 1200
+const TERMINAL_SETTLED_CAPTURE_STABLE_SAMPLES = 2
+const TERMINAL_SETTLED_CAPTURE_MAX_ATTEMPTS = 8
 
 type TerminalColorScheme = 'neon' | 'mono' | 'homebrew' | 'catppuccin' | 'nord' | 'gruvbox' | 'solarized' | 'tokyo'
 type TerminalDebugKey = 'enter' | 'esc' | 'ctrl-c' | 'ctrl-o' | 'tab' | 'up' | 'down'
@@ -3883,11 +3887,17 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
 
     let cancelled = false
     let inFlight = false
+    let timer: number | undefined
+    let attempts = 0
+    let stableSamples = 0
+    let previousContent: string | null = null
+    const startedAt = Date.now()
     const terminalId = selectedTerminalView.terminal_id
 
     const probeSelectedSettledHistory = () => {
       if (cancelled || inFlight) return
       inFlight = true
+      attempts += 1
       const detailOptions = withTerminalScrollDebug({
         content: 'history',
         lines: TERMINAL_ACTIVE_DISPLAY_HISTORY_LINES,
@@ -3898,6 +3908,12 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
           logTerminalScrollDebug('selected-settled-history', selectedTerminalView, detailOptions, detail)
           cacheTerminalDetail(detail)
           applyTerminalSnapshotUpdate(detail)
+
+          const content = detail.content || ''
+          stableSamples = previousContent !== null && content === previousContent
+            ? stableSamples + 1
+            : 0
+          previousContent = content
         })
         .catch(err => {
           if (!cancelled) {
@@ -3906,12 +3922,20 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
         })
         .finally(() => {
           inFlight = false
+          if (cancelled) return
+          const observedLongEnough = Date.now() - startedAt >= TERMINAL_SETTLED_CAPTURE_MIN_WINDOW_MS
+          const contentIsStable = stableSamples >= TERMINAL_SETTLED_CAPTURE_STABLE_SAMPLES
+          if (attempts >= TERMINAL_SETTLED_CAPTURE_MAX_ATTEMPTS || (observedLongEnough && contentIsStable)) {
+            return
+          }
+          timer = window.setTimeout(probeSelectedSettledHistory, TERMINAL_SETTLED_CAPTURE_INTERVAL_MS)
         })
     }
 
     probeSelectedSettledHistory()
     return () => {
       cancelled = true
+      if (timer !== undefined) window.clearTimeout(timer)
     }
   }, [
     isSelectedTerminalStreaming,

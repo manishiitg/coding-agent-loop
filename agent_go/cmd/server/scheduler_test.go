@@ -721,6 +721,10 @@ func TestWithChiefTaskRunContextAddsPriorTaskReportInstruction(t *testing.T) {
 		"key findings",
 		"durable context",
 		"Do not use or update Chief of Staff memory tools/files",
+		`create_human_input_request(source="chief_of_staff"`,
+		`workspace_path="pulse"`,
+		"do not wait in real time",
+		"mark_human_input_consumed",
 		"Prepare a cross-workflow recommendation report.",
 	} {
 		if !strings.Contains(msg, want) {

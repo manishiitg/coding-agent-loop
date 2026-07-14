@@ -1630,10 +1630,16 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Human Feedback API
 	apiRouter.HandleFunc("/human-feedback/submit", api.handleSubmitHumanFeedback).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/report-human-inputs", api.handleListReportHumanInputs).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/report-human-inputs/aggregate", api.handleListReportHumanInputsAggregate).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/report-human-inputs", api.handleCreateReportHumanInput).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/report-human-inputs/{input_id}/answer", api.handleAnswerReportHumanInput).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/report-human-inputs/{input_id}/dismiss", api.handleDismissReportHumanInput).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/report-human-inputs/{input_id}/consume", api.handleConsumeReportHumanInput).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/report-widget-responses", api.handleListReportWidgetResponses).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/report-widget-responses/{widget_id}/answer", api.handleAnswerReportWidgetResponse).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/report-widget-responses/{widget_id}/claim", api.handleClaimReportWidgetResponse).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/report-widget-responses/{widget_id}/consume", api.handleConsumeReportWidgetResponse).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/report-widget-responses/{widget_id}/fail", api.handleFailReportWidgetResponse).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/pulse-module-state", api.handleGetPulseModuleState).Methods("GET", "OPTIONS")
 
 	// Workflow running-session API (decoupled from chat session storage).

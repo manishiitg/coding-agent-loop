@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/reportinteraction"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
@@ -35,11 +36,21 @@ func reportPlanIsPlausibleColor(v string) bool {
 }
 
 type reportPlanWidget struct {
-	Kind   string // "file" | "file-list"
-	Source string // file/file-list widgets: a file path under db/, knowledgebase/, docs/
-	Path   string
-	Filter string
-	Fields map[string]string // raw optional fields, lowercase keys
+	ID             string
+	Kind           string // "file" | "file-list" | "interaction"
+	Source         string // file/file-list widgets: a file path under db/, knowledgebase/, docs/
+	Path           string
+	Filter         string
+	Question       string
+	ResponseKind   string
+	Options        []reportPlanDocumentInteractionOption
+	AllowFreeText  bool
+	Placeholder    string
+	InstanceKey    string
+	SubjectID      string
+	SubjectVersion string
+	SubjectHash    string
+	Fields         map[string]string // raw optional fields, lowercase keys
 	// Location info for error messages
 	Section  string
 	LineNum  int
@@ -108,30 +119,44 @@ type reportPlanDocumentDefaultSort struct {
 	Direction string `json:"direction,omitempty" jsonschema:"enum=asc,enum=desc"`
 }
 
-// Reports are HTML-only: register a `file` widget that points at an HTML
-// document under db/reports/ with renderFormat=html. `file-list` remains
-// available for durable evidence/assets folders. Legacy markdown and data-viz
-// widget kinds are intentionally not supported; Pulse/workflow-version
-// migrations upgrade old workflows before they reach the viewer.
+type reportPlanDocumentInteractionOption struct {
+	ID          string `json:"id" jsonschema:"required"`
+	Title       string `json:"title" jsonschema:"required"`
+	Description string `json:"description,omitempty"`
+}
+
+// Reports use HTML `file` widgets for their authored documents and may add
+// native `interaction` widgets for user-configured, database-backed inputs.
+// `file-list` remains available for durable evidence/assets folders. Legacy
+// markdown and data-viz widget kinds are intentionally not supported.
 type reportPlanDocumentWidget struct {
-	ID           string                          `json:"id,omitempty"`
-	Hidden       bool                            `json:"hidden,omitempty"`
-	Kind         string                          `json:"kind" jsonschema:"required,enum=file,enum=file-list"`
-	Source       string                          `json:"source,omitempty"`
-	DB           string                          `json:"db,omitempty"`
-	SQL          string                          `json:"sql,omitempty"`
-	Path         string                          `json:"path,omitempty"`
-	Filter       string                          `json:"filter,omitempty"`
-	Title        string                          `json:"title,omitempty"`
-	Description  string                          `json:"description,omitempty"`
-	Height       int                             `json:"height,omitempty"`
-	ShowIf       string                          `json:"showIf,omitempty"`
-	RenderFormat string                          `json:"renderFormat,omitempty" jsonschema:"enum=auto,enum=html,enum=text,enum=code,enum=json,enum=image,enum=video,enum=audio,enum=pdf,enum=link"`
-	ListFormat   string                          `json:"listFormat,omitempty" jsonschema:"enum=list,enum=cards,enum=table,enum=gallery"`
-	Recursive    *bool                           `json:"recursive,omitempty"`
-	Extensions   []string                        `json:"extensions,omitempty"`
-	MaxItems     int                             `json:"maxItems,omitempty"`
-	Layout       *reportPlanDocumentWidgetLayout `json:"layout,omitempty"`
+	ID             string                                `json:"id,omitempty"`
+	Hidden         bool                                  `json:"hidden,omitempty"`
+	Kind           string                                `json:"kind" jsonschema:"required,enum=file,enum=file-list,enum=interaction"`
+	Source         string                                `json:"source,omitempty"`
+	DB             string                                `json:"db,omitempty"`
+	SQL            string                                `json:"sql,omitempty"`
+	Path           string                                `json:"path,omitempty"`
+	Filter         string                                `json:"filter,omitempty"`
+	Title          string                                `json:"title,omitempty"`
+	Description    string                                `json:"description,omitempty"`
+	Height         int                                   `json:"height,omitempty"`
+	ShowIf         string                                `json:"showIf,omitempty"`
+	RenderFormat   string                                `json:"renderFormat,omitempty" jsonschema:"enum=auto,enum=html,enum=text,enum=code,enum=json,enum=image,enum=video,enum=audio,enum=pdf,enum=link"`
+	ListFormat     string                                `json:"listFormat,omitempty" jsonschema:"enum=list,enum=cards,enum=table,enum=gallery"`
+	Recursive      *bool                                 `json:"recursive,omitempty"`
+	Extensions     []string                              `json:"extensions,omitempty"`
+	MaxItems       int                                   `json:"maxItems,omitempty"`
+	Question       string                                `json:"question,omitempty"`
+	ResponseKind   string                                `json:"responseKind,omitempty" jsonschema:"enum=choice,enum=text,enum=choice-with-text"`
+	Options        []reportPlanDocumentInteractionOption `json:"options,omitempty"`
+	AllowFreeText  bool                                  `json:"allowFreeText,omitempty"`
+	Placeholder    string                                `json:"placeholder,omitempty"`
+	InstanceKey    string                                `json:"instanceKey,omitempty"`
+	SubjectID      string                                `json:"subjectId,omitempty"`
+	SubjectVersion string                                `json:"subjectVersion,omitempty"`
+	SubjectHash    string                                `json:"subjectHash,omitempty"`
+	Layout         *reportPlanDocumentWidgetLayout       `json:"layout,omitempty"`
 }
 
 // Public aliases for schema generation. The package-private types above are
@@ -141,15 +166,16 @@ type reportPlanDocumentWidget struct {
 // callsite. Type aliases are zero-cost — they refer to the same underlying
 // type — so no runtime or memory implications.
 type (
-	ReportPlanDocument              = reportPlanDocument
-	ReportPlanDocumentSection       = reportPlanDocumentSection
-	ReportPlanDocumentSectionLayout = reportPlanDocumentSectionLayout
-	ReportPlanDocumentEntry         = reportPlanDocumentEntry
-	ReportPlanDocumentRow           = reportPlanDocumentRow
-	ReportPlanDocumentWidget        = reportPlanDocumentWidget
-	ReportPlanDocumentWidgetLayout  = reportPlanDocumentWidgetLayout
-	ReportPlanDocumentDefaultSort   = reportPlanDocumentDefaultSort
-	ReportPlanDocumentThemeColors   = reportPlanDocumentThemeColors
+	ReportPlanDocument                  = reportPlanDocument
+	ReportPlanDocumentSection           = reportPlanDocumentSection
+	ReportPlanDocumentSectionLayout     = reportPlanDocumentSectionLayout
+	ReportPlanDocumentEntry             = reportPlanDocumentEntry
+	ReportPlanDocumentRow               = reportPlanDocumentRow
+	ReportPlanDocumentWidget            = reportPlanDocumentWidget
+	ReportPlanDocumentInteractionOption = reportPlanDocumentInteractionOption
+	ReportPlanDocumentWidgetLayout      = reportPlanDocumentWidgetLayout
+	ReportPlanDocumentDefaultSort       = reportPlanDocumentDefaultSort
+	ReportPlanDocumentThemeColors       = reportPlanDocumentThemeColors
 )
 
 type reportPlanReadResult struct {
@@ -276,7 +302,7 @@ func parseReportPlanJSONDocument(raw string) (*reportPlanDocument, error) {
 }
 
 func reportPlanDocumentWidgetKindAllowed(kind string) bool {
-	return kind == "file" || kind == "file-list"
+	return kind == "file" || kind == "file-list" || kind == "interaction"
 }
 
 func normalizeReportPlanDocument(doc *reportPlanDocument) *reportPlanDocument {
@@ -350,6 +376,19 @@ func normalizeReportPlanDocumentWidget(widget reportPlanDocumentWidget, sectionI
 			widget.ID = fmt.Sprintf("%s-widget-%02d", sectionID, entryIndex)
 		}
 	}
+	if widget.Kind == "interaction" {
+		widget.ResponseKind = strings.ToLower(strings.TrimSpace(widget.ResponseKind))
+		if widget.ResponseKind == "" {
+			if len(widget.Options) > 0 {
+				widget.ResponseKind = "choice"
+			} else {
+				widget.ResponseKind = "text"
+			}
+		}
+		if strings.TrimSpace(widget.InstanceKey) == "" {
+			widget.InstanceKey = "default"
+		}
+	}
 	return &widget
 }
 
@@ -408,15 +447,35 @@ func reportPlanLegacyWidgetFromDocumentWidget(widget reportPlanDocumentWidget, s
 	if widget.Hidden {
 		fields["hidden"] = "true"
 	}
+	add("question", widget.Question)
+	add("response_kind", widget.ResponseKind)
+	add("placeholder", widget.Placeholder)
+	add("instance_key", widget.InstanceKey)
+	add("subject_id", widget.SubjectID)
+	add("subject_version", widget.SubjectVersion)
+	add("subject_hash", widget.SubjectHash)
+	if widget.AllowFreeText {
+		fields["allow_free_text"] = "true"
+	}
 	return &reportPlanWidget{
-		Kind:     widget.Kind,
-		Source:   widget.Source,
-		Path:     widget.Path,
-		Filter:   widget.Filter,
-		Fields:   fields,
-		Section:  section,
-		InRow:    inRow,
-		RowIndex: rowIndex,
+		ID:             widget.ID,
+		Kind:           widget.Kind,
+		Source:         widget.Source,
+		Path:           widget.Path,
+		Filter:         widget.Filter,
+		Question:       widget.Question,
+		ResponseKind:   widget.ResponseKind,
+		Options:        widget.Options,
+		AllowFreeText:  widget.AllowFreeText,
+		Placeholder:    widget.Placeholder,
+		InstanceKey:    widget.InstanceKey,
+		SubjectID:      widget.SubjectID,
+		SubjectVersion: widget.SubjectVersion,
+		SubjectHash:    widget.SubjectHash,
+		Fields:         fields,
+		Section:        section,
+		InRow:          inRow,
+		RowIndex:       rowIndex,
 	}
 }
 
@@ -547,6 +606,9 @@ func reportPlanWidgetSourceLabel(w *reportPlanWidget) string {
 	if w == nil {
 		return ""
 	}
+	if w.Kind == "interaction" {
+		return w.ID
+	}
 	return w.Source
 }
 
@@ -576,9 +638,8 @@ func validateReportPlan(
 		return result, nil
 	}
 
-	// Reports are HTML documents registered as file widgets. file-list remains
-	// available for durable assets/evidence folders. Legacy markdown and data-viz
-	// widget kinds are dropped during normalization before we get here.
+	// Reports are HTML documents registered as file widgets. Native interaction
+	// widgets are user-configured input surfaces backed by db/db.sqlite.
 	for _, section := range sections {
 		for _, w := range section.Widgets {
 			result.Widgets++
@@ -586,6 +647,11 @@ func validateReportPlan(
 			locator := fmt.Sprintf("%s@%s", w.Kind, sourceLabel)
 			if w.InRow {
 				locator = fmt.Sprintf("row[%d]:%s", w.RowIndex, locator)
+			}
+
+			if w.Kind == "interaction" {
+				validateReportPlanInteractionWidget(w, section.Heading, locator, result)
+				continue
 			}
 
 			// File/file-list widgets point `source` at a file under db/,
@@ -620,7 +686,7 @@ func validateReportPlan(
 
 	// Global advice for builder on how to read the result.
 	if len(result.Errors) == 0 && len(result.Warnings) == 0 && result.Widgets > 0 {
-		result.Suggestions = append(result.Suggestions, "All widgets resolved against real data. Open the Report tab to preview layout.")
+		result.Suggestions = append(result.Suggestions, "All widgets are valid. Open the Report tab to preview layout and any saved interaction state.")
 	} else {
 		if len(result.Errors) > 0 {
 			result.Valid = false
@@ -628,6 +694,64 @@ func validateReportPlan(
 		result.Suggestions = append(result.Suggestions, "Fix errors first. Review warnings too — some still degrade rendering even when the report remains technically valid.")
 	}
 	return result, nil
+}
+
+func validateReportPlanInteractionWidget(
+	w *reportPlanWidget, section, locator string, result *reportPlanValidationResult,
+) {
+	question := strings.TrimSpace(w.Question)
+	if question == "" {
+		question = strings.TrimSpace(w.Fields["title"])
+	}
+	if question == "" {
+		result.Valid = false
+		result.Errors = append(result.Errors, reportPlanDiagnostic{
+			Severity: "error", Section: section, Widget: locator,
+			Message: "interaction widget requires a question.",
+			Hint:    "Set config.question to the exact user-facing prompt.",
+		})
+	}
+	responseKind := strings.ToLower(strings.TrimSpace(w.ResponseKind))
+	switch responseKind {
+	case "choice", "text", "choice-with-text":
+	default:
+		result.Valid = false
+		result.Errors = append(result.Errors, reportPlanDiagnostic{
+			Severity: "error", Section: section, Widget: locator,
+			Message: fmt.Sprintf("interaction widget has unsupported responseKind %q.", w.ResponseKind),
+			Hint:    "Use choice, text, or choice-with-text.",
+		})
+	}
+	if responseKind == "choice" || responseKind == "choice-with-text" {
+		if len(w.Options) == 0 {
+			result.Valid = false
+			result.Errors = append(result.Errors, reportPlanDiagnostic{
+				Severity: "error", Section: section, Widget: locator,
+				Message: "choice interaction widget requires at least one option.",
+			})
+			return
+		}
+		seen := map[string]bool{}
+		for _, option := range w.Options {
+			id := strings.TrimSpace(option.ID)
+			if id == "" || strings.TrimSpace(option.Title) == "" {
+				result.Valid = false
+				result.Errors = append(result.Errors, reportPlanDiagnostic{
+					Severity: "error", Section: section, Widget: locator,
+					Message: "each interaction option requires id and title.",
+				})
+				continue
+			}
+			if seen[id] {
+				result.Valid = false
+				result.Errors = append(result.Errors, reportPlanDiagnostic{
+					Severity: "error", Section: section, Widget: locator,
+					Message: fmt.Sprintf("interaction option id %q is duplicated.", id),
+				})
+			}
+			seen[id] = true
+		}
+	}
 }
 
 // Small helper mirroring parseBool in reportPlanParser.ts. Only treats 'true'
@@ -888,6 +1012,18 @@ func buildReportPlanWidgetPreview(w *reportPlanWidget) reportPlanPreviewWidget {
 		out.Summary = "hidden"
 		return out
 	}
+	if w.Kind == "interaction" {
+		out.Summary = fmt.Sprintf("configured %s response stored in db/db.sqlite", w.ResponseKind)
+		out.DataPreview = map[string]interface{}{
+			"widget_id":       w.ID,
+			"question":        w.Question,
+			"response_kind":   w.ResponseKind,
+			"instance_key":    w.InstanceKey,
+			"allow_free_text": w.AllowFreeText,
+			"options":         w.Options,
+		}
+		return out
+	}
 
 	// File / file-list widgets render durable files.
 	if !reportPlanValidFileWidgetSource(w.Source) {
@@ -1018,12 +1154,40 @@ func writeReportPlanDocument(
 	doc *reportPlanDocument,
 ) error {
 	doc = normalizeReportPlanDocument(doc)
+	if reportPlanDocumentHasInteraction(doc) {
+		dbPath := filepath.Join(GetPromptDocsRoot(), filepath.FromSlash(workspacePath), DBFolderName, "db.sqlite")
+		db, err := reportinteraction.OpenDatabase(ctx, dbPath)
+		if err != nil {
+			return fmt.Errorf("initialize report interaction storage: %w", err)
+		}
+		if err := db.Close(); err != nil {
+			return fmt.Errorf("close report interaction storage: %w", err)
+		}
+	}
 	content, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal report plan: %w", err)
 	}
 	path := normalizePathForWorkspaceAPI(filepath.Join("reports", "report_plan.json"), workspacePath)
 	return writeFile(ctx, path, string(content)+"\n")
+}
+
+func reportPlanDocumentHasInteraction(doc *reportPlanDocument) bool {
+	for _, section := range doc.Sections {
+		for _, entry := range section.Entries {
+			if entry.Widget != nil && entry.Widget.Kind == "interaction" {
+				return true
+			}
+			if entry.Row != nil {
+				for _, widget := range entry.Row.Widgets {
+					if widget.Kind == "interaction" {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
 }
 
 func reportPlanWidgetToMap(widget reportPlanDocumentWidget) (map[string]interface{}, error) {
@@ -1070,6 +1234,46 @@ func reportPlanWidgetFromMap(payload map[string]interface{}) (*reportPlanDocumen
 			widget.ListFormat = lf
 		default:
 			return nil, fmt.Errorf("unsupported listFormat %q (use list, cards, table, or gallery)", widget.ListFormat)
+		}
+	}
+	if widget.Kind == "interaction" {
+		widget.ResponseKind = strings.ToLower(strings.TrimSpace(widget.ResponseKind))
+		if widget.ResponseKind == "" {
+			if len(widget.Options) > 0 {
+				widget.ResponseKind = "choice"
+			} else {
+				widget.ResponseKind = "text"
+			}
+		}
+		switch widget.ResponseKind {
+		case "choice", "text", "choice-with-text":
+		default:
+			return nil, fmt.Errorf("unsupported responseKind %q (use choice, text, or choice-with-text)", widget.ResponseKind)
+		}
+		if strings.TrimSpace(widget.Question) == "" && strings.TrimSpace(widget.Title) == "" {
+			return nil, fmt.Errorf("interaction widget requires question")
+		}
+		if (widget.ResponseKind == "choice" || widget.ResponseKind == "choice-with-text") && len(widget.Options) == 0 {
+			return nil, fmt.Errorf("interaction widget responseKind %q requires options", widget.ResponseKind)
+		}
+		seen := map[string]bool{}
+		for index := range widget.Options {
+			widget.Options[index].ID = strings.TrimSpace(widget.Options[index].ID)
+			widget.Options[index].Title = strings.TrimSpace(widget.Options[index].Title)
+			widget.Options[index].Description = strings.TrimSpace(widget.Options[index].Description)
+			if widget.Options[index].ID == "" || widget.Options[index].Title == "" {
+				return nil, fmt.Errorf("each interaction option requires id and title")
+			}
+			if seen[widget.Options[index].ID] {
+				return nil, fmt.Errorf("duplicate interaction option id %q", widget.Options[index].ID)
+			}
+			seen[widget.Options[index].ID] = true
+		}
+		if widget.ResponseKind == "text" || widget.ResponseKind == "choice-with-text" {
+			widget.AllowFreeText = true
+		}
+		if strings.TrimSpace(widget.InstanceKey) == "" {
+			widget.InstanceKey = "default"
 		}
 	}
 	return &widget, nil
@@ -1248,7 +1452,7 @@ func registerReportPlanValidationTools(
 
 	mcpAgent.RegisterCustomTool(
 		"validate_report_plan",
-		"Validate reports/report_plan.json after editing it. It parses every widget and checks: file-source path allowlist (db/, knowledgebase/, docs/) and option validity (render_format, list_format). Returns structured per-widget errors + warnings + suggestions plus a parsed dump showing exactly what the validator saw.",
+		"Validate reports/report_plan.json after editing it. It checks file-source path allowlists and formats plus interaction questions, response kinds, and option IDs. Returns structured per-widget errors + warnings + suggestions plus a parsed dump showing exactly what the validator saw.",
 		params,
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			res, err := validateReportPlan(ctx, workspacePath, readFile)
@@ -1316,7 +1520,7 @@ func registerReportPlanManagementTools(
 		"properties": {
 			"id": { "type": "string" },
 			"hidden": { "type": "boolean" },
-			"source": { "type": "string", "description": "File path under db/, knowledgebase/, or docs/. For reports use a file widget pointing at an HTML document under db/reports/; file-list points at a durable assets/evidence folder." },
+			"source": { "type": "string", "description": "file/file-list only. File path under db/, knowledgebase/, or docs/. For reports use a file widget pointing at an HTML document under db/reports/; file-list points at a durable assets/evidence folder." },
 			"title": { "type": "string" },
 			"description": { "type": "string" },
 			"height": { "type": "integer" },
@@ -1326,6 +1530,28 @@ func registerReportPlanManagementTools(
 			"recursive": { "type": "boolean", "description": "file-list widget only. Whether to include nested folder files." },
 			"extensions": { "type": "array", "items": { "type": "string" }, "description": "file-list widget only. Optional extension allowlist, e.g. [\"png\", \"jpg\", \"pdf\"]." },
 			"maxItems": { "type": "integer", "description": "file-list widget only. Caps displayed files." },
+			"question": { "type": "string", "description": "interaction only. Exact persistent question shown to the user in the Report page." },
+			"responseKind": { "type": "string", "enum": ["choice", "text", "choice-with-text"], "description": "interaction only. Native response control to render." },
+			"options": {
+				"type": "array",
+				"description": "interaction choice options. IDs are the durable values workflow steps read from report_widget_responses.selected_option_id.",
+				"items": {
+					"type": "object",
+					"properties": {
+						"id": { "type": "string" },
+						"title": { "type": "string" },
+						"description": { "type": "string" }
+					},
+					"required": ["id", "title"],
+					"additionalProperties": false
+				}
+			},
+			"allowFreeText": { "type": "boolean", "description": "interaction choice only. Allow a note or a note-only custom response." },
+			"placeholder": { "type": "string", "description": "interaction text box placeholder." },
+			"instanceKey": { "type": "string", "description": "interaction response instance. Defaults to default; change it when the configured widget intentionally represents a different durable subject." },
+			"subjectId": { "type": "string", "description": "interaction optional subject/artifact id stored with the response." },
+			"subjectVersion": { "type": "string", "description": "interaction optional subject/artifact version stored with the response." },
+			"subjectHash": { "type": "string", "description": "interaction optional immutable artifact hash stored with the response." },
 			"layout": {
 				"type": "object",
 				"properties": {
@@ -1346,7 +1572,7 @@ func registerReportPlanManagementTools(
 			"row_id": { "type": "string" },
 			"widget_id": { "type": "string" },
 			"tab": { "type": "string", "description": "Optional tab label for this widget entry when the section layout mode is tabs. Use the user-facing route name, e.g. \"Happy path\" or \"Fallback route\". Updating an existing widget with tab sets or clears the containing entry tab." },
-			"kind": { "type": "string", "enum": ["file", "file-list"], "description": "Use file for HTML reports. file-list is for durable assets/evidence folders." },
+			"kind": { "type": "string", "enum": ["file", "file-list", "interaction"], "description": "Use file for HTML reports, file-list for durable assets/evidence, and interaction for a user-configured database-backed input widget." },
 			"index": { "type": "integer" },
 			"config": %s
 		},
@@ -1357,9 +1583,9 @@ func registerReportPlanManagementTools(
 
 	mcpAgent.RegisterCustomTool(
 		"upsert_report_widget",
-		"Create or update one report widget in reports/report_plan.json. Reports are documents only. If widget_id exists, this merges the provided config into the existing widget. If widget_id is omitted, it creates a new widget in the target section; pass row_id to insert into an existing row entry.\n\n"+
-			"Report authoring is HTML-only: create an HTML document under `db/reports/` and register it with `kind:\"file\"`, `renderFormat:\"html\"`, and `source` set to that file. Markdown report widgets are not supported; old workflows must be upgraded through Pulse/workflow-version migration.\n\n"+
-			"Binding: every widget points `source` at a path under db/, knowledgebase/, or docs/. For multiple images/videos/PDFs use `kind:\"file-list\"` with a source folder plus `listFormat`, `recursive`, `extensions`, and `maxItems`.\n\n"+
+		"Create or update one report widget in reports/report_plan.json. If widget_id exists, this merges the provided config into the existing widget. If widget_id is omitted, it creates a new widget in the target section; pass row_id to insert into an existing row entry.\n\n"+
+			"Report documents remain HTML: create an HTML document under `db/reports/` and register it with `kind:\"file\"`, `renderFormat:\"html\"`, and `source` set to that file. Add `kind:\"interaction\"` only when the user explicitly asks to configure a durable input/decision control in the Report page. Interaction widgets are native app controls, not agent-authored JavaScript; their answers are stored in db/db.sqlite table report_widget_responses for later workflow steps.\n\n"+
+			"Binding: file/file-list widgets point `source` at a path under db/, knowledgebase/, or docs/. For multiple images/videos/PDFs use `kind:\"file-list\"` with a source folder plus `listFormat`, `recursive`, `extensions`, and `maxItems`. Interaction widgets use question/responseKind/options and do not need source.\n\n"+
 			"Per-widget grid layout: when the parent section has section.layout.columns set, pass `layout: { span: N, minWidth: 320 }` in config to span N grid columns. For route dashboards, prefer set_section_layout(mode=\"tabs\") on one shared conceptual section and pass `tab: \"Route name\"` so entries with the same route label render together.",
 		upsertParams,
 		func(ctx context.Context, args map[string]interface{}) (string, error) {

@@ -2,7 +2,9 @@ package step_based_workflow
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -79,8 +81,8 @@ func TestNormalizeReportPlanPreservesThemeAndLayout(t *testing.T) {
 	}
 }
 
-// Normalization drops legacy data-viz and markdown widget kinds since reports
-// are HTML file documents only.
+// Normalization drops legacy data-viz and markdown widget kinds while keeping
+// HTML documents and configured native interaction widgets.
 func TestNormalizeReportPlanDropsLegacyWidgetKinds(t *testing.T) {
 	t.Parallel()
 
@@ -92,6 +94,10 @@ func TestNormalizeReportPlanDropsLegacyWidgetKinds(t *testing.T) {
 				{Kind: "single", Widget: &reportPlanDocumentWidget{Kind: "stat", Source: "db/summary.json"}},
 				{Kind: "single", Widget: &reportPlanDocumentWidget{Kind: "markdown", Source: "docs/intro.md"}},
 				{Kind: "single", Widget: &reportPlanDocumentWidget{Kind: "file", Source: "db/reports/report.html", RenderFormat: "html"}},
+				{Kind: "single", Widget: &reportPlanDocumentWidget{
+					ID: "review", Kind: "interaction", Question: "Approve?", ResponseKind: "choice",
+					Options: []reportPlanDocumentInteractionOption{{ID: "yes", Title: "Yes"}},
+				}},
 			},
 		}},
 	}
@@ -100,11 +106,87 @@ func TestNormalizeReportPlanDropsLegacyWidgetKinds(t *testing.T) {
 	if len(out.Sections) != 1 {
 		t.Fatalf("expected 1 section, got %d", len(out.Sections))
 	}
-	if got := len(out.Sections[0].Entries); got != 1 {
-		t.Fatalf("expected only the HTML file widget to survive, got %d entries", got)
+	if got := len(out.Sections[0].Entries); got != 2 {
+		t.Fatalf("expected the HTML and interaction widgets to survive, got %d entries", got)
 	}
 	if widget := out.Sections[0].Entries[0].Widget; widget.Kind != "file" || widget.RenderFormat != "html" {
 		t.Fatalf("expected surviving widget to be file/html, got %+v", widget)
+	}
+	if widget := out.Sections[0].Entries[1].Widget; widget.Kind != "interaction" || widget.InstanceKey != "default" {
+		t.Fatalf("expected normalized interaction widget, got %+v", widget)
+	}
+}
+
+func TestValidateReportPlanAcceptsConfiguredInteractionWidget(t *testing.T) {
+	t.Parallel()
+	workspacePath := "Workflow/interactive-report"
+	files := map[string]string{
+		"Workflow/interactive-report/reports/report_plan.json": `{
+		  "version": 1,
+		  "sections": [{
+		    "heading": "Review",
+		    "entries": [{
+		      "kind": "single",
+		      "widget": {
+		        "id": "linkedin-review",
+		        "kind": "interaction",
+		        "question": "What should happen to this draft?",
+		        "responseKind": "choice-with-text",
+		        "options": [
+		          {"id": "approve", "title": "Approve"},
+		          {"id": "request_changes", "title": "Request changes"}
+		        ]
+		      }
+		    }]
+		  }]
+		}`,
+	}
+	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files))
+	if err != nil {
+		t.Fatalf("validateReportPlan returned error: %v", err)
+	}
+	if !result.Valid || result.Widgets != 1 {
+		t.Fatalf("expected interaction widget to validate; result=%+v", result)
+	}
+}
+
+func TestWriteReportPlanInitializesInteractionStorage(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+	workspacePath := "Workflow/interactive-report"
+	doc := &reportPlanDocument{
+		Version: 1,
+		Sections: []reportPlanDocumentSection{{
+			Heading: "Review",
+			Entries: []reportPlanDocumentEntry{{
+				Kind: "single",
+				Widget: &reportPlanDocumentWidget{
+					ID: "approval", Kind: "interaction", Question: "Approve?", ResponseKind: "choice",
+					Options: []reportPlanDocumentInteractionOption{{ID: "yes", Title: "Yes"}},
+				},
+			}},
+		}},
+	}
+	var writtenPath string
+	if err := writeReportPlanDocument(ctx, workspacePath, func(_ context.Context, path, _ string) error {
+		writtenPath = path
+		return nil
+	}, doc); err != nil {
+		t.Fatalf("write report plan: %v", err)
+	}
+	if writtenPath != "Workflow/interactive-report/reports/report_plan.json" {
+		t.Fatalf("written report plan path = %q", writtenPath)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(root, "Workflow", "interactive-report", "db", "db.sqlite"))
+	if err != nil {
+		t.Fatalf("open initialized workflow db: %v", err)
+	}
+	defer db.Close()
+	var table string
+	if err := db.QueryRowContext(ctx, `SELECT name FROM sqlite_master
+		WHERE type='table' AND name='report_widget_responses'`).Scan(&table); err != nil {
+		t.Fatalf("interaction response table was not initialized: %v", err)
 	}
 }
 

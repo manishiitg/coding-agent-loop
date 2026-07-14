@@ -164,7 +164,7 @@ improvement uses normal Run mode plus Pulse.
   - `ls runs/`
   - `cat variables/variables.json`
 - **`human_feedback`** — Ask the user a question during a run.
-- **`create_human_input_request`** — Non-blocking Pulse/goal-advisor/Chief of Staff question stored in the workflow's `db/db.sqlite` table `report_human_inputs`; the user answers in the Runloop Pulse/report panel.
+- **`create_human_input_request`** — Non-blocking Pulse/goal-advisor/Chief of Staff question. Workflow questions are stored in the workflow's `db/db.sqlite`; Chief of Staff may use `workspace_path="pulse"` for org-wide questions stored in `pulse/db/db.sqlite`. The user answers in the Runloop Pulse/Chief of Staff report panel.
 - **`mark_human_input_consumed`** — Mark an answered report question consumed after using it and recording the outcome; then clear the matching visible question card from the Pulse HTML so it no longer appears actionable.
 
 ## Skills

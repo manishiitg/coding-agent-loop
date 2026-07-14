@@ -1,7 +1,25 @@
+import type { ReportHumanInput } from '../services/api-types'
+
 export type ReportHumanInputContextSection = {
   label: string
   body: string
   items: string[]
+}
+
+export function reportHumanInputStatusLabel(input: ReportHumanInput): string {
+	if (input.status === 'answered') {
+		return input.source === 'chief_of_staff' ? 'Waiting for Chief of Staff' : 'Waiting for Pulse'
+	}
+	if (input.status === 'claimed') return 'Chief of Staff is working'
+  if (input.status === 'consumed') return 'Action completed'
+  if (input.status === 'dismissed') return 'Dismissed'
+  return 'Needs answer'
+}
+
+export function reportHumanInputHistory(inputs: ReportHumanInput[], limit = 4): ReportHumanInput[] {
+  return inputs
+    .filter(input => input.status !== 'pending')
+    .slice(0, limit)
 }
 
 const CONTEXT_MARKER_PATTERN = /(?:^|\s)(Proposal|Exact intended edits(?: if approved)?|Rationale|Expected impact|Risk|Evidence):\s*/gi

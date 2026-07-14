@@ -1,9 +1,9 @@
 // Dynamic report viewer — parses reports/report_plan.json. HTML file widgets
-// fetch their `source` file directly; HTML documents read live
-// data through the window.report API injected into their iframe.
+// fetch their `source` and read live data through window.report. Native
+// interaction widgets persist configured responses through backend-owned APIs.
 // See docs/workflow/persistent_stores_design.md.
 
-import { createElement, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createElement, lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -38,6 +38,10 @@ import type {
   ReportWidget,
   ReportWidgetKind,
 } from '../../services/api-types'
+
+const InteractionWidget = lazy(() =>
+  import('./reportWidgets/InteractionWidget').then(module => ({ default: module.InteractionWidget })),
+)
 
 export const REPORT_PREVIEW_PREFERENCE_KEY = 'workflow_report_preview_preference'
 export const REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT = 'workflow-report-preview-preference-changed'
@@ -643,6 +647,7 @@ function resolveWidgetSourceInput(widget: ReportWidget, sources: SourceCache): W
 }
 
 function widgetRawForVisibility(widget: ReportWidget, sources: SourceCache): unknown {
+  if (widget.kind === 'interaction') return {}
   const input = resolveWidgetSourceInput(widget, sources)
   if (input.status === 'ok') return input.value
   if (input.status === 'loading') return undefined
@@ -658,6 +663,8 @@ function widgetInstanceKey(
     ids.entryIndex,
     ids.widgetIndex,
     widget.kind,
+    widget.id ?? '',
+    widget.instanceKey ?? '',
     widget.source ?? '',
     widget.db ?? '',
     widget.sql ?? '',
@@ -668,6 +675,7 @@ function widgetInstanceKey(
 
 function widgetShouldRender(widget: ReportWidget, raw: unknown) {
   if (widget.hidden) return false
+  if (widget.kind === 'interaction') return true
   if (isFileArtifactWidget(widget)) return Boolean(widget.source)
   if (raw === undefined || raw === null) return true
   if (!evaluateShowIf(raw, widget.showIf)) return false
@@ -1689,6 +1697,16 @@ function WidgetCard({
   const wrapNotice = (content: React.ReactNode) => (
     <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>{content}</WidgetShell>
   )
+
+  if (widget.kind === 'interaction') {
+    return (
+      <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>
+        <Suspense fallback={<div className="flex min-h-24 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}>
+          <InteractionWidget widget={widget} workspacePath={workspacePath} />
+        </Suspense>
+      </WidgetShell>
+    )
+  }
 
   // file / file-list widgets render a stored artifact (or list a folder) directly.
   if (isFileArtifactWidget(widget)) {

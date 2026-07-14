@@ -26,13 +26,15 @@ similar scheduled work.
 - Design it as a **task dashboard**, not a transcript. Prefer status tiles, action lanes,
   key-finding widgets, evidence chips, and compact cards over paragraphs. Each task entry should
   be skimmable in 10 seconds.
-- If the task needs a user decision for a specific workflow, call
-  `create_human_input_request(workspace_path="<workflow path>", source="chief_of_staff", ...)`
-  and mention the request id in `pulse/task.html`. Do not store answers in this HTML page; the
-  source of truth is that workflow's `db/db.sqlite` table `report_human_inputs`, and the user
-  answers in the Runloop report/Pulse panel. When a later pass uses the answer, it must call
-  `mark_human_input_consumed` and remove or replace the matching visible question card in the
-  workflow's Pulse HTML with a short outcome.
+- If the task needs a non-blocking user decision, clarification, or approval, call
+  `create_human_input_request(workspace_path="pulse", source="chief_of_staff", ...)` for an
+  org-wide question, or use the affected `Workflow/<name>` path for a workflow-specific question.
+  Mention the request id in `pulse/task.html`. Do not store answers in this HTML page; the source
+  of truth is the scoped `db/db.sqlite` table `report_human_inputs`, and the user answers in the
+  Runloop Chief of Staff/Pulse panel. The next Chief of Staff run receives the answer automatically.
+  After completing the requested action or recording a concrete no-action/deferred/stale decision,
+  call `mark_human_input_consumed` with a truthful outcome. Do not consume an answer merely because
+  it was read.
 
 ### What Each Entry Must Capture
 

@@ -135,6 +135,130 @@ func TestAnsweredGoalAdvisorPlanProposalCarriesContext(t *testing.T) {
 	}
 }
 
+func TestAnsweredChiefOfStaffInputsAreAggregatedAcrossOrgAndWorkflowScopes(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
+
+	_, err := createReportHumanInput(ctx, "pulse", ReportHumanInputCreateRequest{
+		InputID:  "org-budget-decision",
+		Source:   "chief_of_staff",
+		Priority: "high",
+		Question: "Should the organization prioritize retention this week?",
+		Options: []ReportHumanInputOption{
+			{ID: "retention", Title: "Prioritize retention"},
+			{ID: "acquisition", Title: "Prioritize acquisition"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create org question: %v", err)
+	}
+	_, err = answerReportHumanInput(ctx, "pulse", "org-budget-decision", ReportHumanInputAnswerRequest{
+		SelectedOptionID: "retention",
+		AnsweredBy:       "user",
+	})
+	if err != nil {
+		t.Fatalf("answer org question: %v", err)
+	}
+
+	_, err = createReportHumanInput(ctx, "Workflow/sales", ReportHumanInputCreateRequest{
+		InputID:       "sales-follow-up",
+		Source:        "chief_of_staff",
+		Question:      "What should Sales test next?",
+		AllowFreeText: true,
+	})
+	if err != nil {
+		t.Fatalf("create workflow question: %v", err)
+	}
+	_, err = answerReportHumanInput(ctx, "Workflow/sales", "sales-follow-up", ReportHumanInputAnswerRequest{
+		Note:       "Test a shorter follow-up sequence.",
+		AnsweredBy: "user",
+	})
+	if err != nil {
+		t.Fatalf("answer workflow question: %v", err)
+	}
+
+	_, err = createReportHumanInput(ctx, "Workflow/sales", ReportHumanInputCreateRequest{
+		InputID:       "pulse-only-question",
+		Source:        "pulse",
+		Question:      "Should workflow Pulse retry?",
+		AllowFreeText: true,
+	})
+	if err != nil {
+		t.Fatalf("create pulse question: %v", err)
+	}
+	_, err = answerReportHumanInput(ctx, "Workflow/sales", "pulse-only-question", ReportHumanInputAnswerRequest{
+		Note:       "Retry once.",
+		AnsweredBy: "user",
+	})
+	if err != nil {
+		t.Fatalf("answer pulse question: %v", err)
+	}
+
+	contextBlock := claimAnsweredChiefOfStaffInputsForAgent(ctx, []string{"pulse", "Workflow/sales", "pulse"}, "test-chief-run")
+	defer releaseChiefOfStaffInputClaims(context.Background(), []string{"pulse", "Workflow/sales"}, "test-chief-run")
+	for _, want := range []string{
+		"Answered Chief of Staff questions waiting for this run",
+		"workspace_path=pulse input_id=org-budget-decision",
+		"option=retention (Prioritize retention)",
+		"workspace_path=Workflow/sales input_id=sales-follow-up",
+		"Test a shorter follow-up sequence.",
+		"mark_human_input_consumed",
+		"Do not mark an answer consumed merely because you read it",
+	} {
+		if !strings.Contains(contextBlock, want) {
+			t.Fatalf("Chief of Staff answer context missing %q:\n%s", want, contextBlock)
+		}
+	}
+	if strings.Contains(contextBlock, "pulse-only-question") {
+		t.Fatalf("Chief of Staff context included a workflow Pulse answer:\n%s", contextBlock)
+	}
+	if count := strings.Count(contextBlock, "input_id=org-budget-decision"); count != 1 {
+		t.Fatalf("duplicate workspace scope produced %d copies, want 1:\n%s", count, contextBlock)
+	}
+}
+
+func TestChiefOfStaffAnswersAreLeasedToOneSchedule(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
+	workspacePath := "Workflow/sales"
+	_, err := createReportHumanInput(ctx, workspacePath, ReportHumanInputCreateRequest{
+		InputID:       "sales-decision",
+		Source:        "chief_of_staff",
+		Question:      "Which sales experiment should run?",
+		AllowFreeText: true,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := answerReportHumanInput(ctx, workspacePath, "sales-decision", ReportHumanInputAnswerRequest{Note: "Test referrals."}); err != nil {
+		t.Fatalf("answer: %v", err)
+	}
+
+	first := claimAnsweredChiefOfStaffInputsForAgent(ctx, []string{workspacePath}, "schedule-run-1")
+	if !strings.Contains(first, "sales-decision") {
+		t.Fatalf("first schedule did not claim answer:\n%s", first)
+	}
+	if second := claimAnsweredChiefOfStaffInputsForAgent(ctx, []string{workspacePath}, "schedule-run-2"); second != "" {
+		t.Fatalf("second schedule received an already claimed answer:\n%s", second)
+	}
+
+	releaseChiefOfStaffInputClaims(ctx, []string{workspacePath}, "schedule-run-1")
+	third := claimAnsweredChiefOfStaffInputsForAgent(ctx, []string{workspacePath}, "schedule-run-3")
+	if !strings.Contains(third, "sales-decision") {
+		t.Fatalf("unhandled answer was not released for a later schedule:\n%s", third)
+	}
+	if _, err := consumeReportHumanInput(ctx, workspacePath, "sales-decision", ReportHumanInputConsumeRequest{
+		OutcomeSummary: "Queued the referral experiment.",
+		ConsumedBy:     "schedule-run-3",
+	}); err != nil {
+		t.Fatalf("consume claimed answer: %v", err)
+	}
+	releaseChiefOfStaffInputClaims(ctx, []string{workspacePath}, "schedule-run-3")
+	if later := claimAnsweredChiefOfStaffInputsForAgent(ctx, []string{workspacePath}, "schedule-run-4"); later != "" {
+		t.Fatalf("consumed answer was delivered again:\n%s", later)
+	}
+}
+
 func TestReportHumanInputAllowsFreeTextInsteadOfOption(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())

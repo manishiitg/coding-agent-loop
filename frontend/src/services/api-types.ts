@@ -339,7 +339,7 @@ export interface ReportHumanInput {
   context?: string
   options: ReportHumanInputOption[]
   allow_free_text: boolean
-  status: 'pending' | 'answered' | 'consumed' | 'dismissed' | string
+	status: 'pending' | 'answered' | 'claimed' | 'consumed' | 'dismissed' | string
   selected_option_id?: string
   note?: string
   run_id?: string
@@ -352,7 +352,10 @@ export interface ReportHumanInput {
   updated_at: string
   answered_at?: string
   consumed_at?: string
-  dismissed_at?: string
+	dismissed_at?: string
+	claim_token?: string
+	claimed_at?: string
+	claim_expires_at?: string
 }
 
 export interface ReportHumanInputsResponse {
@@ -1751,7 +1754,7 @@ import type {
 // consuming field, so these are independently useful where callsites need
 // to name an enum (function args, switch exhaustiveness checks, etc.). They
 // must mirror the Go enum tags; if these drift, callsites will break.
-export type ReportWidgetKind = 'file' | 'file-list';
+export type ReportWidgetKind = 'file' | 'file-list' | 'interaction';
 export type ReportFileRenderFormat = 'auto' | 'html' | 'text' | 'code' | 'json' | 'image' | 'video' | 'audio' | 'pdf' | 'link';
 export type ReportFileListFormat = 'list' | 'cards' | 'table' | 'gallery';
 export type ReportFormatterName =
@@ -1776,15 +1779,58 @@ export type ReportSectionLayout = ReportPlanDocumentSectionLayout;
 // can rely on it being defined — the schema makes it optional because Go's
 // omitempty allows it to be absent on the wire.
 //
-// Reports render stored artifacts only. HTML reports read db/db.sqlite live via
-// the injected window.report API; `source` points at a file or folder under db/,
-// knowledgebase/, or docs/.
+// HTML report documents render stored artifacts and read db/db.sqlite live via
+// window.report. Native interaction widgets have no `source`; they persist
+// configured user responses to the workflow database.
 export type ReportWidget = ReportPlanDocumentWidget & {
   source?: string;
   db?: string;
   sql?: string;
   path: string;
 };
+
+export interface ReportWidgetResponse {
+  workspace_path: string;
+  widget_id: string;
+  instance_key: string;
+  question: string;
+  response_kind: 'choice' | 'text' | 'choice-with-text' | string;
+  options: ReportHumanInputOption[];
+  allow_free_text: boolean;
+  subject_id?: string;
+  subject_version?: string;
+  subject_hash?: string;
+	status: 'pending' | 'answered' | 'executing' | 'completed' | 'failed' | 'expired' | 'cancelled' | string;
+  selected_option_id?: string;
+  note?: string;
+  answered_by?: string;
+  consumed_by?: string;
+	outcome_summary?: string;
+	execution_key?: string;
+	execution_revision?: number;
+	claimed_by?: string;
+	claim_started_at?: string;
+	completed_at?: string;
+	failed_at?: string;
+	failure_summary?: string;
+  revision: number;
+  answered_at?: string;
+  consumed_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ReportWidgetResponsesResponse {
+  success: boolean;
+  responses: ReportWidgetResponse[];
+  error?: string;
+}
+
+export interface ReportWidgetResponseResponse {
+  success: boolean;
+  response: ReportWidgetResponse;
+  error?: string;
+}
 
 // Narrowed row — widgets is a ReportWidget[] (with source/path defined),
 // not the looser ReportPlanDocumentWidget[] from the raw schema.

@@ -35,7 +35,7 @@ export interface ReportPlanDocumentEntry {
 export interface ReportPlanDocumentWidget {
   id?: string;
   hidden?: boolean;
-  kind: "file" | "file-list";
+  kind: "file" | "file-list" | "interaction";
   source?: string;
   db?: string;
   sql?: string;
@@ -50,7 +50,21 @@ export interface ReportPlanDocumentWidget {
   recursive?: boolean;
   extensions?: string[];
   maxItems?: number;
+  question?: string;
+  responseKind?: "choice" | "text" | "choice-with-text";
+  options?: ReportPlanDocumentInteractionOption[];
+  allowFreeText?: boolean;
+  placeholder?: string;
+  instanceKey?: string;
+  subjectId?: string;
+  subjectVersion?: string;
+  subjectHash?: string;
   layout?: ReportPlanDocumentWidgetLayout;
+}
+export interface ReportPlanDocumentInteractionOption {
+  id: string;
+  title: string;
+  description?: string;
 }
 export interface ReportPlanDocumentWidgetLayout {
   span?: number;

@@ -6,7 +6,7 @@ import { agentApi } from '../../services/api'
 import { useTheme } from '../../hooks/useTheme'
 import { useWorkflowManifestStore } from '../../stores/useWorkflowManifestStore'
 import { HtmlRenderer } from '../ui/HtmlRenderer'
-import { ReportHumanInputPanel } from '../workflow/ReportHumanInputPanel'
+import { ReportHumanInputCollection } from '../workflow/ReportHumanInputPanel'
 import {
   ORG_HTML_PREVIEW_PREFERENCE_CHANGED_EVENT,
   getOrgHtmlPreviewDevice,
@@ -205,20 +205,19 @@ const ChiefOfStaffQuestions: React.FC = () => {
     if (lastRefreshed === null) void refreshWorkflows()
   }, [lastRefreshed, refreshWorkflows])
 
-  return (
-    <div>
-      {workflows.map(workflow => (
-        <ReportHumanInputPanel
-          key={workflow.workspace_path}
-          workspacePath={workflow.workspace_path}
-          workspaceLabel={workflow.manifest.label || workflow.workspace_path.split('/').pop() || workflow.workspace_path}
-          source="chief_of_staff"
-          pendingOnly
-          className="mx-3 mt-3"
-        />
-      ))}
-    </div>
-  )
+	return (
+		<ReportHumanInputCollection
+			className="mx-3 mt-3 space-y-3"
+			source="chief_of_staff"
+			scopes={[
+				{ workspacePath: 'pulse', workspaceLabel: 'Organization' },
+				...workflows.map(workflow => ({
+					workspacePath: workflow.workspace_path,
+					workspaceLabel: workflow.manifest.label || workflow.workspace_path.split('/').pop() || workflow.workspace_path,
+				})),
+			]}
+		/>
+	)
 }
 
 export const OrgGoalsPanel: React.FC<{ toolbarLeading?: React.ReactNode; onClosePanel?: () => void; fixedDevice?: OrgHtmlPreviewDevice; hideHeader?: boolean }> = ({ toolbarLeading, onClosePanel, fixedDevice, hideHeader }) => (
@@ -261,5 +260,6 @@ export const ChiefTasksPanel: React.FC<{ toolbarLeading?: React.ReactNode; onClo
     onClosePanel={onClosePanel}
     fixedDevice={fixedDevice}
     hideHeader={hideHeader}
+    leadingContent={<ChiefOfStaffQuestions />}
   />
 )

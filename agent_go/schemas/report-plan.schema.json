@@ -29,6 +29,25 @@
         "kind"
       ]
     },
+    "reportPlanDocumentInteractionOption": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "title"
+      ]
+    },
     "reportPlanDocumentRow": {
       "properties": {
         "widgets": {
@@ -126,7 +145,8 @@
           "type": "string",
           "enum": [
             "file",
-            "file-list"
+            "file-list",
+            "interaction"
           ]
         },
         "source": {
@@ -191,6 +211,41 @@
         },
         "maxItems": {
           "type": "integer"
+        },
+        "question": {
+          "type": "string"
+        },
+        "responseKind": {
+          "type": "string",
+          "enum": [
+            "choice",
+            "text",
+            "choice-with-text"
+          ]
+        },
+        "options": {
+          "items": {
+            "$ref": "#/$defs/reportPlanDocumentInteractionOption"
+          },
+          "type": "array"
+        },
+        "allowFreeText": {
+          "type": "boolean"
+        },
+        "placeholder": {
+          "type": "string"
+        },
+        "instanceKey": {
+          "type": "string"
+        },
+        "subjectId": {
+          "type": "string"
+        },
+        "subjectVersion": {
+          "type": "string"
+        },
+        "subjectHash": {
+          "type": "string"
         },
         "layout": {
           "$ref": "#/$defs/reportPlanDocumentWidgetLayout"

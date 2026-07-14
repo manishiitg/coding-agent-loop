@@ -17,6 +17,7 @@ import {
 import { agentApi } from '../../services/api'
 import type { ReportHumanInput } from '../../services/api-types'
 import ModalPortal from '../ui/ModalPortal'
+import { ReportHumanInputCollection } from '../workflow/ReportHumanInputPanel'
 
 type HealthStatus = 'healthy' | 'bug' | 'critical' | 'idle'
 type ProgressStatus = 'on-track' | 'at-risk' | 'off-goal' | 'idle'
@@ -313,27 +314,29 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows, onOpenDec
 
   const load = useCallback(async () => {
     setLoading(true)
-    setError(null)
-    try {
-      const results = await Promise.all(
+	setError(null)
+	try {
+		const humanInputs = await agentApi.listReportHumanInputsAggregate(
+			workflows.map(workflow => workflow.workspacePath),
+			'pending',
+		).catch(() => ({ success: false, inputs: [] as ReportHumanInput[] }))
+		const results = await Promise.all(
         workflows.map(async (wf): Promise<WorkflowDashEntry> => {
           try {
-            const [health, progress, cost, humanInputs] = await Promise.all([
-              agentApi.getBuilderDoc(wf.workspacePath, 'card-health'),
-              agentApi.getBuilderDoc(wf.workspacePath, 'card-progress'),
-              agentApi.getBuilderDoc(wf.workspacePath, 'card-cost'),
-              agentApi.listReportHumanInputs(wf.workspacePath, 'pending').catch(() => ({
-                success: false,
-                inputs: [],
-              })),
-            ])
+			const [health, progress, cost] = await Promise.all([
+				agentApi.getBuilderDoc(wf.workspacePath, 'card-health'),
+				agentApi.getBuilderDoc(wf.workspacePath, 'card-progress'),
+				agentApi.getBuilderDoc(wf.workspacePath, 'card-cost'),
+			])
             return {
               workspacePath: wf.workspacePath,
               label: wf.label,
               health: health.success && health.exists ? parseCard(health.content) : null,
               progress: progress.success && progress.exists ? parseCard(progress.content) : null,
               cost: cost.success && cost.exists ? parseCard(cost.content) : null,
-              pendingInputs: humanInputs.success && Array.isArray(humanInputs.inputs) ? humanInputs.inputs : [],
+				pendingInputs: humanInputs.success && Array.isArray(humanInputs.inputs)
+					? humanInputs.inputs.filter(input => input.workspace_path === wf.workspacePath)
+					: [],
               failed: !humanInputs.success,
             }
           } catch {
@@ -420,11 +423,13 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows, onOpenDec
   const pendingDecisions = useMemo(() => {
     const priorityRank: Record<string, number> = { high: 0, medium: 1, low: 2 }
     return entries
-      .flatMap(entry => (entry.pendingInputs ?? []).map(input => ({
-        input,
-        workspacePath: entry.workspacePath,
-        workflowLabel: entry.label,
-      })))
+      .flatMap(entry => (entry.pendingInputs ?? [])
+        .filter(input => input.source !== 'chief_of_staff')
+        .map(input => ({
+          input,
+          workspacePath: entry.workspacePath,
+          workflowLabel: entry.label,
+        })))
       .sort((a, b) => {
         const priorityDiff = (priorityRank[a.input.priority] ?? 3) - (priorityRank[b.input.priority] ?? 3)
         if (priorityDiff !== 0) return priorityDiff
@@ -447,6 +452,27 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows, onOpenDec
     </button>
   )
 
+  const header = (
+    <div className="flex items-center justify-between gap-3 px-4 pt-4">
+      <div className="flex items-center gap-2">
+        <LayoutDashboard className="h-5 w-5 text-primary" />
+        <h2 className="text-base font-semibold tracking-tight text-foreground">Org Dashboard</h2>
+      </div>
+      {refreshButton}
+    </div>
+  )
+
+	const chiefDecisionPanels = (
+		<ReportHumanInputCollection
+			className="space-y-3"
+			source="chief_of_staff"
+			scopes={[
+				{ workspacePath: 'pulse', workspaceLabel: 'Organization' },
+				...workflows.map(workflow => ({ workspacePath: workflow.workspacePath, workspaceLabel: workflow.label })),
+			]}
+		/>
+	)
+
   // Loading
   if (loading && entries.length === 0) {
     return (
@@ -460,29 +486,24 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows, onOpenDec
   // No workflows at all
   if (workflows.length === 0) {
     return (
-      <div className="flex h-full min-h-[320px] flex-col items-center justify-center gap-3 px-6 text-center text-muted-foreground">
-        <LayoutDashboard className="h-10 w-10 text-muted-foreground/50" />
-        <p className="text-sm font-medium text-foreground">No automations yet</p>
-        <p className="max-w-sm text-xs">No automations yet — create a workflow to see it here.</p>
+      <div className="flex h-full min-h-[320px] flex-col">
+        {header}
+        <div className="mx-4 mt-3">{chiefDecisionPanels}</div>
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center text-muted-foreground">
+          <LayoutDashboard className="h-10 w-10 text-muted-foreground/50" />
+          <p className="text-sm font-medium text-foreground">No automations yet</p>
+          <p className="max-w-sm text-xs">No automations yet — create a workflow to see it here.</p>
+        </div>
       </div>
     )
   }
-
-  const header = (
-    <div className="flex items-center justify-between gap-3 px-4 pt-4">
-      <div className="flex items-center gap-2">
-        <LayoutDashboard className="h-5 w-5 text-primary" />
-        <h2 className="text-base font-semibold tracking-tight text-foreground">Org Dashboard</h2>
-      </div>
-      {refreshButton}
-    </div>
-  )
 
   // Workflows exist but no cards yet
   if (!hasDashboardContent) {
     return (
       <div className="flex h-full flex-col">
         {header}
+        <div className="mx-4 mt-3">{chiefDecisionPanels}</div>
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-12 text-center text-muted-foreground">
           <Activity className="h-10 w-10 text-muted-foreground/50" />
           <p className="text-sm font-medium text-foreground">Org dashboard is warming up</p>
@@ -531,6 +552,8 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows, onOpenDec
 
       {/* Status groups */}
       <div className="flex-1 space-y-5 overflow-auto px-4 py-4">
+        {chiefDecisionPanels}
+
         {pendingDecisions.length > 0 && (
           <section className="space-y-2" aria-labelledby="org-decisions-heading">
             <div className="flex items-center gap-2">

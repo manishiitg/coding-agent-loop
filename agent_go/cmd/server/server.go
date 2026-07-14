@@ -5472,7 +5472,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					// "no live tmux" so a genuinely live session is never disrupted by a
 					// spurious relaunch (its existing pane keeps streaming via the seeded
 					// PiSessionID/--resume without a re-launch).
-					if currentRuntime != nil && !api.sessionHasLiveCodingTmux(sessionID) {
+					if currentRuntime != nil && !api.sessionHasLiveMainCodingTmux(sessionID) {
 						restoredRuntime = currentRuntime
 						logfWithContext(queryLogCtx, "[CHAT_HISTORY] Active-tab auto-resume: session %s tmux is gone; routing through --resume re-launch + materialize", sessionID)
 					}
@@ -5495,7 +5495,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// AND "no live tmux" so a genuinely live session is never disrupted by a
 			// spurious relaunch.
 			if !restoredNativeCodingResume && !modeChangedThisTurn && restoredRuntime == nil &&
-				codingAgentHasNativeResume(finalProvider, underlyingAgent) && !api.sessionHasLiveCodingTmux(sessionID) {
+				codingAgentHasNativeResume(finalProvider, underlyingAgent) && !api.sessionHasLiveMainCodingTmux(sessionID) {
 				if runtime, ok, err := ReadChatHistoryRuntimeForSession(currentUserID, sessionID, workflowPhaseFolder); err != nil {
 					logfWithContext(queryLogCtx, "[CHAT_HISTORY] Materialize guard: failed to read runtime for session %s: %v", sessionID, err)
 				} else if ok && runtime != nil && restoredRuntimeUsesLaunchableTerminalTransport(runtime) {
@@ -5829,6 +5829,27 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[BG AGENT] Stored agent for session %s for synthetic turn reuse", sessionID)
 		}
 
+		// A stop or runtime failure may close the stream while this goroutine is
+		// still unwinding. Preserve that terminal state instead of resurrecting the
+		// session as successfully completed.
+		if activeSession, exists := api.getActiveSession(sessionID); exists {
+			switch normalizeSessionLifecycleStatus(activeSession.Status) {
+			case sessionLifecycleFailed, sessionLifecycleStopped:
+				log.Printf("[COMPLETION] Preserving terminal status %q for session %s", activeSession.Status, sessionID)
+				tracer.EndTrace(traceID, map[string]interface{}{
+					"status": activeSession.Status,
+				})
+				return
+			}
+		}
+		if api.isSessionMarkedStopped(sessionID) {
+			log.Printf("[COMPLETION] Session %s has a cancellation guard; skipping completed status", sessionID)
+			tracer.EndTrace(traceID, map[string]interface{}{
+				"status": "stopped",
+			})
+			return
+		}
+
 		// Update active session status to completed
 		log.Printf("[COMPLETION] Updating session %s status to completed", sessionID)
 		api.updateSessionStatus(sessionID, "completed")
@@ -6093,6 +6114,21 @@ func (api *StreamingAPI) sessionHasLiveCodingTmux(sessionID string) bool {
 	}
 	for _, snapshot := range api.terminalStore.ListRaw(sessionID) {
 		if snapshot.Active && strings.TrimSpace(snapshot.TmuxSession) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// sessionHasLiveMainCodingTmux reports whether the main chat agent has a live
+// tmux pane. A child workflow/background pane is aggregate session activity,
+// but it cannot receive or preserve main-chat input.
+func (api *StreamingAPI) sessionHasLiveMainCodingTmux(sessionID string) bool {
+	if api == nil || api.terminalStore == nil {
+		return false
+	}
+	for _, snapshot := range api.terminalStore.ListRaw(sessionID) {
+		if snapshot.Active && strings.TrimSpace(snapshot.TmuxSession) != "" && codingAgentSnapshotIsMainAgent(snapshot) {
 			return true
 		}
 	}
@@ -6872,7 +6908,7 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 		return false
 	}
 	hasActiveForegroundTurn := api.hasActiveTurnCancel(sessionID)
-	if !hasActiveForegroundTurn && !api.sessionHasLiveCodingTmux(sessionID) {
+	if !hasActiveForegroundTurn && !api.sessionHasLiveMainCodingTmux(sessionID) {
 		log.Printf("[QUERY→LIVE] Retained CLI agent for session %s has no active turn and no live tmux; starting a new turn", sessionID)
 		return false
 	}
@@ -6984,7 +7020,7 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 		return
 	}
 	hasActiveForegroundTurn := api.hasActiveTurnCancel(sessionID)
-	if !hasActiveForegroundTurn && agentSupportsLiveInputDelivery(runningAgent) && !api.sessionHasLiveCodingTmux(sessionID) {
+	if !hasActiveForegroundTurn && agentSupportsLiveInputDelivery(runningAgent) && !api.sessionHasLiveMainCodingTmux(sessionID) {
 		log.Printf("[LIVE INPUT] Retained CLI agent for session %s has no active turn and no live tmux; starting next turn", sessionID)
 		api.setSessionBusy(sessionID, false)
 		if api.startNextTurnFromLiveInput(w, r, sessionID, req.Message, runningAgent) {

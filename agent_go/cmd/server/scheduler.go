@@ -14,11 +14,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/robfig/cron/v3"
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/fsutil"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/schedulerstate"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
+	"github.com/robfig/cron/v3"
 )
 
 const scheduledBackgroundNoPollingInstruction = "After launching background workflow or step work, do not babysit it with sleep/list_executions/query_step polling loops. Use at most one immediate query_step if you need to confirm the execution_id/status, then stop; [AUTO-NOTIFICATION] messages will resume the conversation when background work completes."
@@ -1216,88 +1216,7 @@ func (s *SchedulerService) cancelScheduledSessionWork(sessionID, closeReason str
 	if s == nil || s.api == nil || strings.TrimSpace(sessionID) == "" {
 		return
 	}
-	// Make every scheduler-level stop visible to the sequence waiter before
-	// clearing busy state. This prevents the next workflow/Pulse/Org Pulse
-	// message from starting after either a user stop or timeout recovery.
-	s.api.markSessionStopped(sessionID)
-
-	// Cancel agent execution context
-	s.api.agentCancelMux.Lock()
-	if cancelFunc, exists := s.api.agentCancelFuncs[sessionID]; exists {
-		cancelFunc()
-		delete(s.api.agentCancelFuncs, sessionID)
-	}
-	s.api.agentCancelMux.Unlock()
-
-	// Cancel workflow orchestrator contexts
-	s.api.sessionQueryIDMux.Lock()
-	queryIDs := s.api.sessionQueryIDs[sessionID]
-	delete(s.api.sessionQueryIDs, sessionID)
-	s.api.sessionQueryIDMux.Unlock()
-
-	if len(queryIDs) > 0 {
-		s.api.workflowOrchestratorContextMux.Lock()
-		for _, qid := range queryIDs {
-			if cancelFunc, exists := s.api.workflowOrchestratorContexts[qid]; exists {
-				cancelFunc()
-				delete(s.api.workflowOrchestratorContexts, qid)
-			}
-		}
-		s.api.workflowOrchestratorContextMux.Unlock()
-	}
-
-	// Cancel background agents
-	if s.api.bgAgentRegistry != nil {
-		s.api.bgAgentRegistry.CancelAll(sessionID)
-	}
-	s.api.cancelTrackedExecutionsForSession(sessionID)
-	s.api.setSyntheticTurn(sessionID, false)
-	s.api.setSessionBusy(sessionID, false)
-	s.api.pendingMu.Lock()
-	delete(s.api.pendingCompletions, sessionID)
-	delete(s.api.completionRetryScheduled, sessionID)
-	s.api.pendingMu.Unlock()
-	s.api.pendingStartMu.Lock()
-	delete(s.api.pendingStartNotifications, sessionID)
-	delete(s.api.startNotificationRetryScheduled, sessionID)
-	s.api.pendingStartMu.Unlock()
-	s.api.lastQueryMu.Lock()
-	delete(s.api.lastQueryRequests, sessionID)
-	s.api.lastQueryMu.Unlock()
-
-	// Close tmux-backed coding-CLI sessions. Canceling the Go contexts above tears
-	// down the streaming/orchestration server-side, but the CLI processes inside
-	// the tmux panes (the scheduled run's main agent + any step sub-agents) keep
-	// running their current turn until they finish naturally — so the job showed
-	// "stopped" in the UI while the main agent kept going. Mirror handleStopSession:
-	// gracefully close the main-agent session by owner, then enumerate this
-	// session's terminals and tear down each sub-agent pane by name (a scheduled
-	// stop is a hard, full stop — always cancel sub-agents).
-	closeAllCodingCLIInteractiveSessionsForOwner(sessionID, closeReason)
-	if s.api.terminalStore != nil {
-		closedTmux := make(map[string]struct{})
-		for _, snap := range s.api.terminalStore.ListRaw(sessionID) {
-			tmux := strings.TrimSpace(snap.TmuxSession)
-			if tmux == "" {
-				continue
-			}
-			if _, seen := closedTmux[tmux]; !seen {
-				if !closeCodingAgentTmuxSessionByName(tmux, closeReason) {
-					scheduleLogf("[SCHEDULER] failed to close tmux %q (owner %s)", tmux, strings.TrimSpace(snap.OwnerID))
-					continue
-				}
-				closedTmux[tmux] = struct{}{}
-				if registry := s.api.ensureTerminalLeaseRegistry(); registry != nil {
-					registry.MarkClosed(tmux, closeReason, time.Now())
-				}
-			}
-			if snap.Active {
-				s.api.terminalStore.MarkFailed(snap.TerminalID)
-			}
-			s.api.terminalStore.MarkProcessClosed(snap.TerminalID, closeReason)
-		}
-	}
-
+	s.api.cancelSessionRuntimeWork(sessionID, closeReason)
 }
 
 // triggerSchedule is called by the tick loop when a schedule is due.
@@ -3092,6 +3011,7 @@ var schedulerWorkshopMaxInactivity = 10 * time.Minute
 var schedulerGoalAdvisorMaxInactivity = 30 * time.Minute
 var errWorkshopIdleWaitTimeout = errors.New("workshop idle wait timed out")
 var errWorkshopSequenceInterrupted = errors.New("workshop sequence interrupted by user")
+var errWorkshopSessionFailed = errors.New("workshop session failed")
 
 const schedulerWorkshopIdleConsecutiveChecks = 2
 
@@ -3109,6 +3029,10 @@ func (s *SchedulerService) waitForWorkshopIdleWithInactivityTimeout(ctx context.
 	lastObservedProgress := s.workshopLastProgressAt(sessionID)
 	lastProgressAt := time.Now()
 	checkUserInterruption := func() error {
+		if activeSession, exists := s.api.getActiveSession(sessionID); exists &&
+			normalizeSessionLifecycleStatus(activeSession.Status) == sessionLifecycleFailed {
+			return fmt.Errorf("%w: session %s status is %s", errWorkshopSessionFailed, sessionID, activeSession.Status)
+		}
 		if s.api.isSessionMarkedStopped(sessionID) {
 			return fmt.Errorf("%w: session %s was stopped", errWorkshopSequenceInterrupted, sessionID)
 		}

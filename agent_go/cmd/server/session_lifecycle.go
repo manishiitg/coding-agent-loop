@@ -7,17 +7,21 @@ import (
 	"context"
 	"encoding/json"
 	"log"
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
+
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 )
+
+var closeAllCodingCLISessionsForRuntimeCancel = closeAllCodingCLIInteractiveSessionsForOwner
+var closeCodingAgentTmuxForRuntimeCancel = closeCodingAgentTmuxSessionByName
 
 // handleCancelCurrentTurn cancels only the currently running LLM turn for a session.
 // It must not mark the session stopped or tear down workshop/background state.
@@ -54,6 +58,85 @@ func (api *StreamingAPI) handleCancelCurrentTurn(w http.ResponseWriter, r *http.
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// cancelSessionRuntimeWork stops all runtime work owned by a session. The
+// stopped guard prevents in-flight goroutines from spawning more work after
+// cancellation; callers remain responsible for recording whether the terminal
+// lifecycle is stopped, failed, or another final state.
+func (api *StreamingAPI) cancelSessionRuntimeWork(sessionID, closeReason string) {
+	if api == nil || strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	api.markSessionStopped(sessionID)
+
+	api.agentCancelMux.Lock()
+	if cancelFunc, exists := api.agentCancelFuncs[sessionID]; exists {
+		cancelFunc()
+		delete(api.agentCancelFuncs, sessionID)
+	}
+	api.agentCancelMux.Unlock()
+
+	api.sessionQueryIDMux.Lock()
+	queryIDs := api.sessionQueryIDs[sessionID]
+	delete(api.sessionQueryIDs, sessionID)
+	api.sessionQueryIDMux.Unlock()
+
+	if len(queryIDs) > 0 {
+		api.workflowOrchestratorContextMux.Lock()
+		for _, queryID := range queryIDs {
+			if cancelFunc, exists := api.workflowOrchestratorContexts[queryID]; exists {
+				cancelFunc()
+				delete(api.workflowOrchestratorContexts, queryID)
+			}
+		}
+		api.workflowOrchestratorContextMux.Unlock()
+	}
+
+	if api.bgAgentRegistry != nil {
+		api.bgAgentRegistry.CancelAll(sessionID)
+	}
+	api.cancelTrackedExecutionsForSession(sessionID)
+	api.setSyntheticTurn(sessionID, false)
+	api.setSessionBusy(sessionID, false)
+
+	api.pendingMu.Lock()
+	delete(api.pendingCompletions, sessionID)
+	delete(api.completionRetryScheduled, sessionID)
+	api.pendingMu.Unlock()
+	api.pendingStartMu.Lock()
+	delete(api.pendingStartNotifications, sessionID)
+	delete(api.startNotificationRetryScheduled, sessionID)
+	api.pendingStartMu.Unlock()
+	api.lastQueryMu.Lock()
+	delete(api.lastQueryRequests, sessionID)
+	api.lastQueryMu.Unlock()
+
+	closeAllCodingCLISessionsForRuntimeCancel(sessionID, closeReason)
+	if api.terminalStore == nil {
+		return
+	}
+	closedTmux := make(map[string]struct{})
+	for _, snapshot := range api.terminalStore.ListRaw(sessionID) {
+		tmuxSession := strings.TrimSpace(snapshot.TmuxSession)
+		if tmuxSession == "" {
+			continue
+		}
+		if _, seen := closedTmux[tmuxSession]; !seen {
+			if !closeCodingAgentTmuxForRuntimeCancel(tmuxSession, closeReason) {
+				log.Printf("[SESSION CANCEL] failed to close tmux %q (owner %s)", tmuxSession, strings.TrimSpace(snapshot.OwnerID))
+				continue
+			}
+			closedTmux[tmuxSession] = struct{}{}
+			if registry := api.ensureTerminalLeaseRegistry(); registry != nil {
+				registry.MarkClosed(tmuxSession, closeReason, time.Now())
+			}
+		}
+		if snapshot.Active {
+			api.terminalStore.MarkFailed(snapshot.TerminalID)
+		}
+		api.terminalStore.MarkProcessClosed(snapshot.TerminalID, closeReason)
+	}
 }
 
 // closeAllCodingCLIInteractiveSessionsForOwner tears down the persistent

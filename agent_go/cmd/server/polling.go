@@ -49,7 +49,7 @@ func (api *StreamingAPI) canSteerSession(sessionID string) bool {
 	// pane currently looks busy — the busy-content heuristic stands in for the
 	// missing turn-cancel proof, so foreground control goes to a working agent
 	// rather than treating the turn as complete.
-	return api.terminalStore != nil && api.terminalStore.SessionHasBusyCodingTmux(sessionID)
+	return api.terminalStore != nil && api.terminalStore.SessionHasBusyMainCodingTmux(sessionID)
 }
 
 func (api *StreamingAPI) shouldCompleteIdleForegroundSession(sessionID, status string, hasRunningBackgroundAgents bool) bool {

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
@@ -47,13 +48,16 @@ func TestCodingTmuxWatchdogReconcilesFromActualPaneState(t *testing.T) {
 	originalOutput := runTerminalTmuxOutputCommand
 	originalCapture := captureTmuxPanePlainForWatchdog
 	originalKill := runTmuxKill
+	originalClose := closeCodingCLITmuxForWatchdog
 	t.Cleanup(func() {
 		runTerminalTmuxOutputCommand = originalOutput
 		captureTmuxPanePlainForWatchdog = originalCapture
 		runTmuxKill = originalKill
+		closeCodingCLITmuxForWatchdog = originalClose
 	})
 	captureTmuxPanePlainForWatchdog = func(string) string { return "" }
 	runTmuxKill = func(context.Context, string) error { return nil }
+	closeCodingCLITmuxForWatchdog = func(string, string) bool { return true }
 
 	tests := []struct {
 		name       string
@@ -80,7 +84,7 @@ func TestCodingTmuxWatchdogReconcilesFromActualPaneState(t *testing.T) {
 			runTerminalTmuxOutputCommand = func(context.Context, ...string) (string, error) {
 				return tc.paneState, tc.paneErr
 			}
-			api.reapRateLimitedCodingSessionsOnce(map[string]int{})
+			api.reapRateLimitedCodingSessionsOnce(map[string]codingWatchdogObservation{})
 
 			snapshot, ok := store.Get(terminalID)
 			if !ok {
@@ -120,14 +124,165 @@ func TestCodingTmuxWatchdogRequiresDistinctTicksPerTerminal(t *testing.T) {
 			sessionID: {SessionID: sessionID, Status: "running"},
 		},
 	}
-	streak := map[string]int{}
+	streak := map[string]codingWatchdogObservation{}
 
 	api.reapRateLimitedCodingSessionsOnce(streak)
 
 	if got := api.activeSessions[sessionID].Status; got != "running" {
 		t.Fatalf("session stopped after one tick across two terminals: %q", got)
 	}
-	if streak["mlp-codex-cli-int-one"] != 1 || streak["mlp-codex-cli-int-two"] != 1 {
+	if streak["mlp-codex-cli-int-one"].count != 1 || streak["mlp-codex-cli-int-two"].count != 1 {
 		t.Fatalf("terminal streaks = %#v, want one observation each", streak)
+	}
+}
+
+func TestCodingTmuxWatchdogRateLimitedChildDoesNotStopParent(t *testing.T) {
+	oldOutput := runTerminalTmuxOutputCommand
+	oldCapture := captureTmuxPanePlainForWatchdog
+	oldKill := runTmuxKill
+	oldClose := closeCodingCLITmuxForWatchdog
+	t.Cleanup(func() {
+		runTerminalTmuxOutputCommand = oldOutput
+		captureTmuxPanePlainForWatchdog = oldCapture
+		runTmuxKill = oldKill
+		closeCodingCLITmuxForWatchdog = oldClose
+	})
+	runTerminalTmuxOutputCommand = func(context.Context, ...string) (string, error) { return "0", nil }
+	captureTmuxPanePlainForWatchdog = func(string) string { return "You've hit your usage limit" }
+	runTmuxKill = func(context.Context, string) error { return nil }
+	closeCodingCLITmuxForWatchdog = func(string, string) bool { return true }
+
+	store := terminals.NewStore()
+	sessionID := "scheduled-parent"
+	terminalID := sessionID + ":workflow-step:collect-insider"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(
+		sessionID,
+		"workflow-step:collect-insider",
+		"mlp-claude-code-child",
+		"limited",
+		1,
+	))
+	api := &StreamingAPI{
+		terminalStore: store,
+		activeSessions: map[string]*ActiveSessionInfo{
+			sessionID: {SessionID: sessionID, Status: "running"},
+		},
+		stoppedSessions: make(map[string]bool),
+	}
+	streak := map[string]codingWatchdogObservation{}
+
+	api.reapRateLimitedCodingSessionsOnce(streak)
+	api.reapRateLimitedCodingSessionsOnce(streak)
+
+	if got := api.activeSessions[sessionID].Status; got != "running" {
+		t.Fatalf("parent status = %q, want running", got)
+	}
+	if api.isSessionMarkedStopped(sessionID) {
+		t.Fatal("child rate limit marked the parent session stopped")
+	}
+	snapshot, ok := store.Get(terminalID)
+	if !ok {
+		t.Fatal("child terminal snapshot missing")
+	}
+	if snapshot.State != "failed" || snapshot.Active {
+		t.Fatalf("child state/active = %q/%v, want failed/false", snapshot.State, snapshot.Active)
+	}
+}
+
+func TestCodingTmuxWatchdogRateLimitedMainStopsSession(t *testing.T) {
+	oldOutput := runTerminalTmuxOutputCommand
+	oldCapture := captureTmuxPanePlainForWatchdog
+	oldKill := runTmuxKill
+	oldClose := closeCodingCLITmuxForWatchdog
+	oldCloseAllRuntime := closeAllCodingCLISessionsForRuntimeCancel
+	oldCloseRuntime := closeCodingAgentTmuxForRuntimeCancel
+	t.Cleanup(func() {
+		runTerminalTmuxOutputCommand = oldOutput
+		captureTmuxPanePlainForWatchdog = oldCapture
+		runTmuxKill = oldKill
+		closeCodingCLITmuxForWatchdog = oldClose
+		closeAllCodingCLISessionsForRuntimeCancel = oldCloseAllRuntime
+		closeCodingAgentTmuxForRuntimeCancel = oldCloseRuntime
+	})
+	runTerminalTmuxOutputCommand = func(context.Context, ...string) (string, error) { return "0", nil }
+	captureTmuxPanePlainForWatchdog = func(string) string { return "You've hit your usage limit" }
+	runTmuxKill = func(context.Context, string) error { return nil }
+	closeCodingCLITmuxForWatchdog = func(string, string) bool { return true }
+	closeAllCodingCLISessionsForRuntimeCancel = func(string, string) {}
+	closeCodingAgentTmuxForRuntimeCancel = func(string, string) bool { return true }
+
+	store := terminals.NewStore()
+	sessionID := "main-rate-limited"
+	event := terminalRouteChunkEvent(sessionID, "main:"+sessionID, "mlp-claude-code-main", "limited", 1)
+	event.ExecutionKind = "main_agent"
+	store.HandleEvent(sessionID, event)
+	api := &StreamingAPI{
+		terminalStore: store,
+		activeSessions: map[string]*ActiveSessionInfo{
+			sessionID: {SessionID: sessionID, Status: "running"},
+		},
+		stoppedSessions: make(map[string]bool),
+	}
+	streak := map[string]codingWatchdogObservation{}
+
+	api.reapRateLimitedCodingSessionsOnce(streak)
+	api.reapRateLimitedCodingSessionsOnce(streak)
+
+	if got := api.activeSessions[sessionID].Status; got != "error" {
+		t.Fatalf("main session status = %q, want error", got)
+	}
+	if !api.isSessionMarkedStopped(sessionID) {
+		t.Fatal("main rate limit did not stop the session")
+	}
+}
+
+func TestCodingTmuxWatchdogRequiresStableEvidence(t *testing.T) {
+	oldOutput := runTerminalTmuxOutputCommand
+	oldCapture := captureTmuxPanePlainForWatchdog
+	t.Cleanup(func() {
+		runTerminalTmuxOutputCommand = oldOutput
+		captureTmuxPanePlainForWatchdog = oldCapture
+	})
+	runTerminalTmuxOutputCommand = func(context.Context, ...string) (string, error) { return "0", nil }
+	contents := []string{
+		"You've hit your usage limit · resets at 10:00\nretrying request",
+		"You've hit your usage limit · resets at 10:00\nrequest resumed",
+	}
+	captureTmuxPanePlainForWatchdog = func(string) string {
+		content := contents[0]
+		contents = contents[1:]
+		return content
+	}
+
+	store := terminals.NewStore()
+	sessionID := "main-session"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "main:"+sessionID, "mlp-claude-main", "limited", 1))
+	api := &StreamingAPI{
+		terminalStore: store,
+		activeSessions: map[string]*ActiveSessionInfo{
+			sessionID: {SessionID: sessionID, Status: "running"},
+		},
+		stoppedSessions: make(map[string]bool),
+	}
+	streak := map[string]codingWatchdogObservation{}
+
+	api.reapRateLimitedCodingSessionsOnce(streak)
+	api.reapRateLimitedCodingSessionsOnce(streak)
+
+	if got := streak["mlp-claude-main"].count; got != 1 {
+		t.Fatalf("changing evidence count = %d, want reset to 1", got)
+	}
+	if got := api.activeSessions[sessionID].Status; got != "running" {
+		t.Fatalf("session status = %q, want running", got)
+	}
+}
+
+func TestCodingWatchdogRateLimitEvidenceIgnoresOldScrollback(t *testing.T) {
+	lines := []string{"You've hit your usage limit"}
+	for i := 0; i < codingWatchdogRateLimitTailLines; i++ {
+		lines = append(lines, "current progress")
+	}
+	if got := codingWatchdogRateLimitEvidence(strings.Join(lines, "\n")); got != "" {
+		t.Fatalf("old scrollback evidence = %q, want empty", got)
 	}
 }

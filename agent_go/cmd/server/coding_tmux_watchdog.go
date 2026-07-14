@@ -23,9 +23,18 @@ const (
 	// codingWatchdogConfirmChecks is how many consecutive rate-limited
 	// observations are required before force-stopping.
 	codingWatchdogConfirmChecks = 2
+	// Only inspect the current tail. Rate-limit text can remain in tmux scrollback
+	// after a provider has recovered and resumed useful work.
+	codingWatchdogRateLimitTailLines = 40
 )
 
 var captureTmuxPanePlainForWatchdog = captureTmuxPanePlain
+var closeCodingCLITmuxForWatchdog = gracefulCloseCodingCLITmuxByName
+
+type codingWatchdogObservation struct {
+	evidence string
+	count    int
+}
 
 func (api *StreamingAPI) startCodingTmuxRateLimitWatchdog() {
 	if api == nil || api.terminalStore == nil {
@@ -34,7 +43,7 @@ func (api *StreamingAPI) startCodingTmuxRateLimitWatchdog() {
 	go func() {
 		ticker := time.NewTicker(codingWatchdogInterval)
 		defer ticker.Stop()
-		streak := make(map[string]int)
+		streak := make(map[string]codingWatchdogObservation)
 		for range ticker.C {
 			api.reapRateLimitedCodingSessionsOnce(streak)
 		}
@@ -43,7 +52,7 @@ func (api *StreamingAPI) startCodingTmuxRateLimitWatchdog() {
 		codingWatchdogInterval, codingWatchdogConfirmChecks)
 }
 
-func (api *StreamingAPI) reapRateLimitedCodingSessionsOnce(streak map[string]int) {
+func (api *StreamingAPI) reapRateLimitedCodingSessionsOnce(streak map[string]codingWatchdogObservation) {
 	// Metadata listing deliberately avoids Store's content reconciliation. Actual
 	// tmux pane state below is authoritative for whether a terminal is still live.
 	// Process supervision must include terminals dismissed from presentation.
@@ -91,22 +100,39 @@ func (api *StreamingAPI) reapRateLimitedCodingSessionsOnce(streak map[string]int
 			continue
 		}
 		captured := captureTmuxPanePlainForWatchdog(tmux)
-		if !terminals.DetectRateLimit(captured) {
+		evidence := codingWatchdogRateLimitEvidence(captured)
+		if evidence == "" {
 			continue
 		}
 		stillLimited[watchdogKey] = true
-		streak[watchdogKey]++
-		if streak[watchdogKey] < codingWatchdogConfirmChecks {
+		observation := streak[watchdogKey]
+		if observation.evidence == evidence {
+			observation.count++
+		} else {
+			observation = codingWatchdogObservation{evidence: evidence, count: 1}
+		}
+		streak[watchdogKey] = observation
+		if observation.count < codingWatchdogConfirmChecks {
 			log.Printf("[CODING_WATCHDOG] session %s tmux %s looks rate-limited (%d/%d) - waiting to confirm",
-				sessionID, tmux, streak[watchdogKey], codingWatchdogConfirmChecks)
+				sessionID, tmux, observation.count, codingWatchdogConfirmChecks)
 			continue
 		}
 
-		log.Printf("[CODING_WATCHDOG] session %s tmux %s parked on a usage/rate-limit wall - force-stopping",
-			sessionID, tmux)
-		api.markSessionStopped(sessionID)
-		api.updateSessionStatus(sessionID, "failed")
-		gracefulCloseCodingCLITmuxByName(tmux, "provider usage/rate limit reached")
+		isMainAgent := codingAgentSnapshotIsMainAgent(snap)
+		if isMainAgent {
+			log.Printf("[CODING_WATCHDOG] main session %s tmux %s parked on a usage/rate-limit wall - failing and canceling session runtime",
+				sessionID, tmux)
+			// Persist failure before closing panes: stream goroutines may unwind as
+			// soon as cancellation starts and must not overwrite this as completed.
+			api.updateSessionStatus(sessionID, "error")
+			api.cancelSessionRuntimeWork(sessionID, "provider usage/rate limit reached")
+			delete(streak, watchdogKey)
+			continue
+		} else {
+			log.Printf("[CODING_WATCHDOG] child terminal %s session %s tmux %s parked on a usage/rate-limit wall - closing child only",
+				snap.TerminalID, sessionID, tmux)
+		}
+		closeCodingCLITmuxForWatchdog(tmux, "provider usage/rate limit reached")
 		killCtx, cancel := context.WithTimeout(context.Background(), terminalTmuxActionTimeout)
 		_ = runTmuxKill(killCtx, tmux)
 		cancel()
@@ -123,6 +149,31 @@ func (api *StreamingAPI) reapRateLimitedCodingSessionsOnce(streak map[string]int
 			delete(streak, watchdogKey)
 		}
 	}
+}
+
+// codingWatchdogRateLimitEvidence returns the normalized visible tail when it
+// contains a rate-limit marker. The watchdog confirms this entire value across
+// polls, so any new output proves the pane is progressing and resets the check.
+// Old rate-limit text outside the current tail is ignored.
+func codingWatchdogRateLimitEvidence(content string) string {
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	if len(lines) > codingWatchdogRateLimitTailLines {
+		lines = lines[len(lines)-codingWatchdogRateLimitTailLines:]
+	}
+	normalized := make([]string, 0, len(lines))
+	hasRateLimit := false
+	for _, line := range lines {
+		line = strings.Join(strings.Fields(line), " ")
+		if line == "" {
+			continue
+		}
+		normalized = append(normalized, strings.ToLower(line))
+		hasRateLimit = hasRateLimit || terminals.DetectRateLimit(line)
+	}
+	if !hasRateLimit {
+		return ""
+	}
+	return strings.Join(normalized, "\n")
 }
 
 type codingTmuxPaneState int

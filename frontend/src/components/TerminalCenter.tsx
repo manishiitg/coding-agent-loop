@@ -1837,6 +1837,8 @@ const LiveAttachXtermPaneInner: React.FC<{
   const onViewportStickChangeRef = useRef(onViewportStickChange)
   const onOutputTextRef = useRef(onOutputText)
   const lastVisibleReseedRef = useRef<{ content: string; at: number }>({ content: '', at: 0 })
+  const receivedLiveSeedRef = useRef(false)
+  const wroteConnectingSnapshotRef = useRef(false)
 
   useEffect(() => {
     reconnectOnCloseRef.current = reconnectOnClose
@@ -2018,6 +2020,7 @@ const LiveAttachXtermPaneInner: React.FC<{
         const data = ev.data
         if (seedPending) {
           seedPending = false
+          receivedLiveSeedRef.current = true
           clearSeedTimer()
           failedAttempts = 0
           setConnectionState('connected')
@@ -2119,7 +2122,21 @@ const LiveAttachXtermPaneInner: React.FC<{
     // The stream already starts with a backend backfill and then sends raw
     // control-mode bytes; reseeding from snapshots here duplicates in-place TUI
     // redraws like spinners and status separators.
-    if (reconnectOnCloseRef.current) return
+    // One exception is the initial connection window: showing the already-known
+    // snapshot avoids a blank pane while the backend resizes tmux and captures
+    // its authoritative seed. The first live seed starts with a terminal reset,
+    // so it replaces this temporary frame without mixing snapshot and live bytes.
+    if (reconnectOnCloseRef.current) {
+      if (!term || !content.trim() || receivedLiveSeedRef.current || wroteConnectingSnapshotRef.current) return
+      wroteConnectingSnapshotRef.current = true
+      lastVisibleReseedRef.current = { content, at: Date.now() }
+      clearXtermSelection(term)
+      term.write(buildVisibleScreenReseed(content), () => {
+        term.scrollToBottom()
+        onViewportStickChangeRef.current?.(true)
+      })
+      return
+    }
     if (!term || !content.trim()) return
     if (content === lastVisibleReseedRef.current.content) return
 
@@ -4756,7 +4773,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
                       sessionId={selectedTerminalView?.session_id}
                       contentRef={terminalOutputRef as React.RefObject<HTMLDivElement | null>}
                       xtermTheme={rawXtermTheme}
-                      authoritativeContent={!isSelectedTerminalStreaming && selectedTerminalView?.terminal_id === stableLiveAttachId ? selectedTerminalDisplayContent : ''}
+                      authoritativeContent={selectedTerminalView?.terminal_id === stableLiveAttachId ? selectedTerminalDisplayContent : ''}
                       authoritativeVersion={selectedTerminalView?.terminal_id === stableLiveAttachId
                         ? `${selectedTerminalView.terminal_id}:${selectedTerminalView.chunk_index ?? 'x'}:${selectedTerminalView.updated_at || ''}:${selectedTerminalDisplayContent.length}`
                         : stableLiveAttachKey}

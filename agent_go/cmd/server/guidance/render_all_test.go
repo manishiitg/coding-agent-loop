@@ -49,6 +49,21 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 		"confirm every module marked",
 		"Never silently treat a",
 		"missing result as skipped or successful",
+		"Step concerns are first-class run evidence",
+		"`CONCERNS: <brief evidence-backed concern>`",
+		"runs/<run_folder>/logs/<step>/execution-attempt-*.json",
+		"runs/<run_folder>/execution/<step>/session.json",
+		"Never silently drop a concern",
+		"Observable execution-trace review",
+		"semantic execution defects",
+		"execution-attempt-*-iteration-*-conversation.json",
+		"Judge observable decisions and evidence, not hidden chain-of-thought",
+		"`correctness_bug`",
+		"`efficiency_or_coaching`",
+		"`insufficient_evidence`",
+		"Route `efficiency_or_coaching` findings",
+		"successful step may have chosen the wrong",
+		"prior Bug Review recorded `efficiency_or_coaching` trace evidence",
 	} {
 		if !strings.Contains(postRun, want) {
 			t.Fatalf("post-run-monitor missing %q", want)

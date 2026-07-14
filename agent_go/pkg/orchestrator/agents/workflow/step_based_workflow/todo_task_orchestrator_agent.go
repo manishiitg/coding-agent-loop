@@ -6,11 +6,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/observability"
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -213,6 +213,19 @@ Do not guess tool names. If your provider explicitly lists direct sub-agent tool
 - get_sub_agent_conversation(todo_id, from_last_x, offset_last_x)
 - execute_shell_command(command)
 {{end}}
+
+## Completion
+
+Continue making tool calls until the step is complete or blocked. When done,
+give a short outcome summary. If the step completed but encountered a non-fatal
+problem that a later step or operator should know about, add one Markdown line
+immediately before the final status in this exact form:
+
+`+"`"+`CONCERNS: <brief evidence-backed concern; include the affected artifact or operation>`+"`"+`
+
+Use `+"`"+`CONCERNS:`+"`"+` only for unresolved or consequential run evidence, not routine
+progress. A concern does not make the step fail. End with exactly one final
+status line: `+"`"+`STATUS: COMPLETED`+"`"+` or `+"`"+`STATUS: FAILED — <exact blocker and what would unblock it>`+"`"+`.
 
 `)
 

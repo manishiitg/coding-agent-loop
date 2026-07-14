@@ -854,6 +854,42 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		"llm_ops_review":       llmOps,
 		"goal_advisor":         goalAdvisor,
 	}
+	for _, want := range []string{
+		"semantic execution defects as Bugs too",
+		"Observable execution-trace review",
+		"*-conversation.json",
+		"wrong tool/source",
+		"ignored or misinterpreted tool results",
+		"unsupported conclusions",
+		"Do not request or infer hidden chain-of-thought",
+		"correctness_bug",
+		"efficiency_or_coaching",
+		"insufficient_evidence",
+		"future LLM/Ops pass",
+	} {
+		if !strings.Contains(bugReview, want) {
+			t.Fatalf("bug-review step missing observable trace contract %q:\n%s", want, bugReview)
+		}
+	}
+	for _, want := range []string{
+		"targeted observable trace review",
+		"ignored or misinterpreted returned evidence",
+		"do not audit every conversation",
+	} {
+		if !strings.Contains(gate, want) {
+			t.Fatalf("gate step missing semantic trace trigger %q:\n%s", want, gate)
+		}
+	}
+	for _, want := range []string{
+		"efficiency_or_coaching execution-trace findings",
+		"avoidable model/tool overkill",
+		"unnecessary retries or brittle execution shape",
+		"must not reclassify a correctness defect as coaching",
+	} {
+		if !strings.Contains(llmOps, want) {
+			t.Fatalf("llm-ops step missing trace coaching handoff %q:\n%s", want, llmOps)
+		}
+	}
 	for module, prompt := range modulePrompts {
 		for _, want := range []string{
 			"PULSE CONSOLIDATED REVIEW PROTOCOL",
@@ -890,6 +926,11 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		"Once that headroom checkpoint arrives",
 		"Never allow more than one active advisor experiment",
 		"data-review-after",
+		"explicitly inspect every executed step/item's compact final result",
+		"CONCERNS:",
+		"execution-attempt-*.json execution_result",
+		"session.json entries[].summary",
+		"not an automatic run failure or automatic Bug verdict",
 	} {
 		if !strings.Contains(gate, want) {
 			t.Fatalf("gate step missing %q:\n%s", want, gate)

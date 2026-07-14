@@ -1390,10 +1390,33 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveMessageSequenceSession(ctx contex
 
 func (hcpo *StepBasedWorkflowOrchestrator) summarizeMessageSequenceSession(session *messageSequenceSession) string {
 	completed := 0
+	var concerns []string
 	for _, entry := range session.Entries {
 		if entry.Status == "completed" {
 			completed++
 		}
+		for _, line := range strings.Split(entry.Summary, "\n") {
+			line = strings.TrimSpace(line)
+			if !strings.HasPrefix(strings.ToUpper(line), "CONCERNS:") {
+				continue
+			}
+			concern := strings.TrimSpace(line[len("CONCERNS:"):])
+			if concern == "" {
+				continue
+			}
+			itemID := strings.TrimSpace(entry.ItemID)
+			if itemID == "" {
+				itemID = strings.TrimSpace(entry.EntryID)
+			}
+			if itemID != "" {
+				concern = fmt.Sprintf("%s: %s", itemID, concern)
+			}
+			concerns = append(concerns, concern)
+		}
 	}
-	return fmt.Sprintf("Message sequence %s completed: %d item(s) completed", session.StepID, completed)
+	summary := fmt.Sprintf("Message sequence %s completed: %d item(s) completed", session.StepID, completed)
+	if len(concerns) > 0 {
+		summary += "\nCONCERNS: " + strings.Join(concerns, "; ")
+	}
+	return summary
 }

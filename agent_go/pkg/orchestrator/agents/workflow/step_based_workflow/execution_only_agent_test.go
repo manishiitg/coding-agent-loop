@@ -37,6 +37,22 @@ func TestExecutionOnlyPromptIncludesCodeExecutionInstructions(t *testing.T) {
 	}
 }
 
+func TestExecutionOnlyPromptRequiresDurableConcernHandoff(t *testing.T) {
+	agent := &WorkflowExecutionOnlyAgent{}
+	prompt := agent.executionOnlySystemPromptProcessor(map[string]string{})
+
+	for _, want := range []string{
+		"CONCERNS: <brief evidence-backed concern; include the affected artifact or operation>",
+		"immediately before the STATUS line",
+		"unresolved or consequential run evidence",
+		"completion notification and the durable run summary",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("execution prompt missing concern handoff %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func TestExecutionOnlyPromptUsesAbsoluteDBPathEnv(t *testing.T) {
 	agent := &WorkflowExecutionOnlyAgent{}
 

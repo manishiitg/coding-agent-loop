@@ -23,7 +23,8 @@ Gate decides what the next Pulse modules should do. Read `builder/improve.html` 
 
 Gate uses a **progressive evidence scan**. Start with compact state and metadata:
 
-- latest run metadata/summary and run status, not every long log
+- latest run metadata/summary and run status, including the compact final
+  execution results for every step that actually ran
 - `builder/improve.html` current dashboard, open items, recent timeline, and cadence
 - `soul/soul.md`
 - `planning/plan.json`, `planning/step_config.json`, and `planning/changelog/`
@@ -36,6 +37,51 @@ Gate uses a **progressive evidence scan**. Start with compact state and metadata
 - Chief of Staff recommendation cards in `builder/improve.html`
 - compact cost/timing availability and change signals when present
 - workflow version, compact resolved LLM/tier/fallback signature, and backup/publish/notification readiness metadata
+
+### Step concerns are first-class run evidence
+
+Execution agents use a plain Markdown handoff, not a separate findings schema:
+`CONCERNS: <brief evidence-backed concern>`, immediately before their final
+`STATUS:` line. Gate must inspect these markers for every step/item that actually
+ran, even when the overall run and the step both completed successfully. A
+successful status means the primary work completed; it does not resolve or erase
+a reported concern.
+
+Use the durable compact results for the current `run_folder`, rather than relying
+only on resumed chat context:
+
+- regular and todo-task steps: the latest applicable
+  `runs/<run_folder>/logs/<step>/execution-attempt-*.json` `execution_result`
+- message-sequence steps: `runs/<run_folder>/execution/<step>/session.json`
+  `entries[].summary`
+
+A targeted search for the literal `CONCERNS:` marker is sufficient. Do not open
+the corresponding `*-conversation.json`, prompt, tool-call, or other long logs
+unless a selected reviewer later needs them. If a step retried, use its latest
+successful/final attempt; do not revive concerns from an earlier attempt when a
+later attempt explicitly resolved them.
+
+For every current concern, preserve the step/item and evidence path, deduplicate
+it against open `builder/improve.html` findings, and make one explicit Gate
+decision:
+
+- operational correctness, runtime, stale-input, or unsupported-success signal:
+  mark `bug_review` due
+- report, evaluation, learning, knowledgebase, DB, artifact, cost, or LLM/ops
+  concern: mark the matching module due
+- strategy or outcome concern: mark `goal_advisor` due when its normal evidence
+  threshold is met
+- user judgment is genuinely required: route it to a due module whose Pulse
+  Fixer can use `create_human_input_request`; Gate itself does not create the
+  question
+- already resolved, superseded, or informational: record a compact reviewed/no
+  action disposition with the evidence
+
+Keep unresolved concerns visible in the Gate timeline entry and compact agent
+handoff until the selected module records a verified resolution, blocker, or
+durable human-input request. Never silently drop a concern merely because the
+run status is successful. Conversely, the presence of `CONCERNS:` is evidence
+to classify, not an automatic run failure or an automatic Bug verdict.
 
 Do not load full report HTML, full KB/learnings, broad DB rows, every cost file, or long run logs merely to decide cadence. Open large evidence only when a compact signal makes that module plausibly due or one targeted fact is needed to justify a decision. The selected module performs the deep inspection later; Gate only selects the evidence-backed worklist. When Gate sees a plausible bug signal, mark Bug Review due so its read-only reviewer can investigate and the Pulse Fixer can repair and verify it.
 
@@ -90,6 +136,9 @@ evidence guidance only; do not execute their nested-agent calls.
    workflow path, Pulse run id, module name, Gate evidence pointers, relevant
    reference guidance, and a compact response contract: verdict, findings,
    evidence, bounded recommended fix, and whether user judgment is required.
+   For Bug Review, also include the suspect step ids/attempts and the observable
+   execution-trace contract below whenever Gate evidence points to a specific
+   step.
    Explicitly forbid file edits, config or plan changes, publishing,
    notification, user questions, mutation tools, `builder/improve.html` writes,
    and `mark_pulse_module_result`.
@@ -159,12 +208,81 @@ Mark due for real Bug findings:
 - broken eval/report layers that make evidence untrustworthy
 - selector/API/runtime breakage
 - stale guards, validation, retry, or defaulting behavior
+- compact evidence that a successful step may have chosen the wrong
+  tool/source/route, used stale inputs, ignored returned evidence, or made an
+  unsupported decision; this makes targeted trace review due, not a full-run
+  conversation audit
 - Chief of Staff recommendations that are operational bugs
 
 The read-only reviewer identifies and scopes the defect from run/eval evidence,
 execution logs, validation, prompts/config, stale artifacts, and evidence-chain
 breakage. It returns exact findings and verification steps. The Pulse Fixer
 applies and verifies the bounded repair directly.
+
+#### Observable execution-trace review
+
+Bug Review is responsible for semantic execution defects, not only explicit
+runtime errors. When compact evidence makes a step suspicious, inspect that
+step's latest applicable observable trace:
+
+- regular and todo-task steps:
+  `runs/<run_folder>/logs/<step>/execution-attempt-*-iteration-*-conversation.json`
+  (`conversation_history`, `tool_calls`, and `llm_calls`)
+- message-sequence steps:
+  `runs/<run_folder>/execution/<step>/session.json` (`conversation_history`,
+  item entries, and their summaries), plus a targeted item artifact when needed
+
+This is targeted escalation, not a mandatory audit of every conversation. Start
+from Gate evidence and open only the step/attempt needed to test the suspected
+problem. Valid triggers include:
+
+- evaluation, validation, report, DB, or artifact evidence contradicts the
+  step's claimed success
+- the final result is empty, unsupported, stale, from the wrong run/group, or
+  inconsistent with a dependency
+- a `CONCERNS:` marker names a tool, source, route, fallback, or decision problem
+- a route/fallback choice is inconsistent with its configured condition
+- a producing step changed behavior after a plan/config/tool/model change
+- repeated retries, surprising tool usage, or an implausibly low-evidence
+  conclusion may have affected correctness
+
+Judge observable decisions and evidence, not hidden chain-of-thought. For the
+selected trace, check whether the agent:
+
+- chose a tool/source appropriate for the step objective and authoritative data
+- supplied the correct workspace, run folder, group, table, endpoint, ids,
+  filters, time window, and side-effect destination
+- used current dependency artifacts instead of stale or unrelated evidence
+- interpreted tool results correctly rather than ignoring, contradicting, or
+  inventing facts beyond them
+- followed configured routing, fallback, retry, validation, and stop conditions
+- gathered enough evidence before stopping or claiming success
+- verified a recovery/fallback actually repaired the original problem
+- grounded its final conclusion and produced artifacts in the observable results
+
+Return each trace finding with: `classification`, step/item id, attempt, the
+observable decision/tool call, exact result/evidence, impact, bounded fix, and
+verification. Use exactly these classifications:
+
+- `correctness_bug` — wrong tool/source/arguments/route/interpretation/fallback,
+  stale evidence, unsupported conclusion, or wrong side effect that can change
+  the workflow outcome
+- `efficiency_or_coaching` — outcome remains correct, but tool choice, retries,
+  model/tier use, or execution shape wastes cost/time or is unnecessarily brittle
+- `no_issue` — the trace supports the result, including a recovered transient
+  failure whose final evidence is sound
+- `insufficient_evidence` — the observable trace cannot establish whether the
+  decision was wrong; name the missing evidence and do not invent a defect
+
+The Pulse Fixer may repair and verify only `correctness_bug` findings under Bug
+Review. It must not rewrite a step merely because another tool might have been
+faster or stylistically preferable. Route `efficiency_or_coaching` findings to
+the `llm_ops_review` evidence set: if that module is due in the current worklist,
+pass the finding to its reviewer; otherwise record one deduplicated evidence
+pointer and next-check trigger in `builder/improve.html` so the next Gate makes
+LLM/Ops due. Record `no_issue` as reviewed with no action. Keep
+`insufficient_evidence` visible only when it is consequential, with a concrete
+way to obtain the missing evidence.
 
 ### artifact_review
 
@@ -272,7 +390,7 @@ Do not change model tiers, prompts, schedules, or agent allocation from this mod
 
 ### llm_ops_review
 
-This is a low-frequency coaching pass, not telemetry and not Goal Advisor. Mark it due when it has never completed, its planned checkpoint arrives, resolved model/tier/fallback configuration changes, cost evidence suggests avoidable overkill, an answered `llm-ops-*` request is waiting, or publish/notify/backup/version readiness materially changes. Otherwise schedule a meaningful later checkpoint instead of running it every Pulse.
+This is a low-frequency coaching pass, not telemetry and not Goal Advisor. Mark it due when it has never completed, its planned checkpoint arrives, resolved model/tier/fallback configuration changes, cost evidence suggests avoidable overkill, an answered `llm-ops-*` request is waiting, a prior Bug Review recorded `efficiency_or_coaching` trace evidence for follow-up, or publish/notify/backup/version readiness materially changes. Otherwise schedule a meaningful later checkpoint instead of running it every Pulse.
 
 Inspect resolved provider/model/options/fallback configuration and actual step/eval tier use. Check whether high, medium, and low are configured and used sensibly; whether repeated low-risk validation, extraction, formatting, or summarization uses an unnecessarily expensive tier; whether eval/verification would benefit from provider diversity; whether Pulse and Maintenance models are sensible; and whether fallbacks exist. Also check report publishing/password protection, notification instructions/setup, backup status, and workflow-version readiness.
 

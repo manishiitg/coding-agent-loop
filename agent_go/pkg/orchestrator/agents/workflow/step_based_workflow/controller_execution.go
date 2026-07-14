@@ -2803,8 +2803,19 @@ func summarizeExecutionResultForNotification(result string) string {
 	if trimmed == "" {
 		return ""
 	}
-	if summary := lastNonEmptyLine(trimmed); summary != "" {
-		return summary
+
+	// The execution prompt deliberately puts the human-readable outcome and any
+	// non-fatal CONCERNS immediately before the final STATUS line. Keeping only
+	// the last line therefore turns a useful completion into little more than
+	// "STATUS: COMPLETED" and drops the evidence that downstream steps and Pulse
+	// need. Preserve the final response as the compact notification summary. The
+	// prompt already limits it to a few sentences; the defensive tail cap keeps a
+	// misbehaving provider response from making notifications unbounded while
+	// retaining the contractually important final lines.
+	const maxSummaryRunes = 4000
+	runes := []rune(trimmed)
+	if len(runes) > maxSummaryRunes {
+		return "… (earlier response omitted)\n" + string(runes[len(runes)-maxSummaryRunes:])
 	}
 	return trimmed
 }

@@ -75,6 +75,23 @@ func TestTodoTaskOrchestratorPromptDocumentsMessageSequenceRoutes(t *testing.T) 
 	}
 }
 
+func TestTodoTaskOrchestratorPromptRequiresDurableConcernHandoff(t *testing.T) {
+	agent := &WorkflowTodoTaskOrchestratorAgent{}
+	prompt := agent.todoTaskOrchestratorSystemPromptProcessor(map[string]string{})
+
+	for _, want := range []string{
+		"## Completion",
+		"CONCERNS: <brief evidence-backed concern; include the affected artifact or operation>",
+		"unresolved or consequential run evidence",
+		"STATUS: COMPLETED",
+		"STATUS: FAILED",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("todo-task prompt missing concern handoff %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func TestFormatMessageSequenceRoutePromptBlock(t *testing.T) {
 	block := formatMessageSequenceRoutePromptBlock(&MessageSequencePlanStep{})
 

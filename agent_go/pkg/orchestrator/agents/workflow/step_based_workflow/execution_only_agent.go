@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/observability"
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -134,7 +134,7 @@ You are running as an **evaluation agent** — your job is to **verify and asses
 
 **If the framework blocks you** — a file write is denied by the folder guard / permissions, a required tool is unavailable, or required input/access is missing — do NOT keep retrying or silently work around it. Stop and end with STATUS: FAILED, naming the exact blocker and what would unblock it. Example: "STATUS: FAILED — cannot write the session_health table in db/db.sqlite: this item has no db write access; grant write_access.db on the item." A write you are not allowed to perform is a terminal failure to report, not something to loop on.
 
-If the step COMPLETED but you hit **non-fatal concerns** worth flagging — a learnings or knowledgebase write that didn't go through, a partial/failed read from db/learnings/kb, stale or conflicting data, or anything the next step or operator should know — add a CONCERNS: line just before the STATUS line, listing them briefly in your own words. The step still counts as completed; this surfaces the concern in the completion notification instead of it being lost.
+If the step COMPLETED but you hit **non-fatal concerns** worth flagging — a learnings or knowledgebase write that didn't go through, a partial/failed read from db/learnings/kb, stale or conflicting data, or anything the next step or operator should know — add one Markdown line immediately before the STATUS line in this exact form: `+"`"+`CONCERNS: <brief evidence-backed concern; include the affected artifact or operation>`+"`"+`. Use it only for unresolved or consequential run evidence, not routine progress. The step still counts as completed; this surfaces the concern in the completion notification and the durable run summary instead of it being lost.
 
 On the lines BEFORE the STATUS line, give a short summary (1-3 sentences) of what you actually did and produced — the key outcome and any notable findings, not a play-by-play. This summary is what the orchestrator sees in the completion notification, so a bare "STATUS: COMPLETED" with nothing else is not enough.
 

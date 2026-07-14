@@ -1663,20 +1663,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveTodoTaskExecutionLog(
 	filePath := fmt.Sprintf("%s/%s", executionLogsFolderPath, filename)
 	conversationPath := strings.TrimSuffix(filePath, ".json") + "-conversation.json"
 
-	// Extract execution summary from conversation history
-	var executionSummary string
-	for _, msg := range conversationHistory {
-		if msg.Role == llmtypes.ChatMessageTypeAI {
-			// Get assistant's text content from Parts
-			for _, part := range msg.Parts {
-				if textContent, ok := part.(llmtypes.TextContent); ok {
-					if len(executionSummary) < 2000 { // Limit summary size
-						executionSummary += textContent.Text + "\n"
-					}
-				}
-			}
-		}
-	}
+	// Persist the latest assistant response as the compact execution result. The
+	// old implementation concatenated assistant narration from the beginning of
+	// the conversation and stopped at 2,000 bytes, which could omit the final
+	// outcome and its CONCERNS line entirely.
+	executionSummary := latestAssistantExecutionSummary(conversationHistory)
 
 	// Build execution log entry
 	executionLog := map[string]interface{}{
@@ -1757,6 +1748,27 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveTodoTaskExecutionLog(
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("⏱️ Todo task timing log saved to: %s", timingPath))
 	}
+}
+
+func latestAssistantExecutionSummary(conversationHistory []llmtypes.MessageContent) string {
+	for i := len(conversationHistory) - 1; i >= 0; i-- {
+		msg := conversationHistory[i]
+		if msg.Role != llmtypes.ChatMessageTypeAI {
+			continue
+		}
+		var parts []string
+		for _, part := range msg.Parts {
+			if textContent, ok := part.(llmtypes.TextContent); ok {
+				if text := strings.TrimSpace(textContent.Text); text != "" {
+					parts = append(parts, text)
+				}
+			}
+		}
+		if len(parts) > 0 {
+			return summarizeExecutionResultForNotification(strings.Join(parts, "\n"))
+		}
+	}
+	return ""
 }
 
 // runTodoTaskPreValidation runs pre-validation for a todo task step if validation schema exists

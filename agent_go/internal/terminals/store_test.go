@@ -710,6 +710,108 @@ func TestStoreMarksTerminalInactiveOnStreamingEnd(t *testing.T) {
 	}
 }
 
+func TestStoreStreamingEndOverridesHistoricalBusyScrollback(t *testing.T) {
+	store := NewStore()
+	now := time.Now()
+	content := `>_ OpenAI Codex
+
+• Called api-bridge.execute_shell_command
+
+• Working (43s • esc to interrupt)
+
+• Finished the bounded maintenance pass.
+
+› Improve documentation in @filename`
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"main:session-1",
+		content,
+		14,
+		map[string]interface{}{
+			"tmux_session":   "mlp-codex-cli-retained",
+			"execution_kind": "main_agent",
+			"provider":       "codex-cli",
+		},
+		now,
+	))
+	store.HandleEvent("session-1", storeevents.Event{
+		Type:        "streaming_end",
+		Timestamp:   now.Add(time.Second),
+		SessionID:   "session-1",
+		ExecutionID: "main:session-1",
+		Data: &agentevents.AgentEvent{
+			Type: agentevents.StreamingEnd,
+			Data: &agentevents.StreamingEndEvent{
+				BaseEventData: agentevents.BaseEventData{Metadata: map[string]interface{}{
+					"kind":           "terminal",
+					"tmux_session":   "mlp-codex-cli-retained",
+					"execution_kind": "main_agent",
+				}},
+			},
+		},
+	})
+
+	snapshot, ok := store.Get("session-1:main:session-1")
+	if !ok {
+		t.Fatal("expected terminal snapshot")
+	}
+	if snapshot.Active || snapshot.State != "completed" {
+		t.Fatalf("terminal active/state = %v/%q, want false/completed", snapshot.Active, snapshot.State)
+	}
+	if snapshot.ProcessState != "live" || snapshot.TmuxSession == "" {
+		t.Fatalf("retained process state/tmux = %q/%q, want live/non-empty", snapshot.ProcessState, snapshot.TmuxSession)
+	}
+
+	// A harmless retained-pane redraw after completion must not resurrect the
+	// turn merely because historical spinner text remains in scrollback.
+	redrawn := content + "\n"
+	store.RefreshContentWithSource(snapshot.TerminalID, redrawn, "tmux_capture")
+	refreshed, ok := store.Get(snapshot.TerminalID)
+	if !ok {
+		t.Fatal("expected refreshed terminal snapshot")
+	}
+	if refreshed.Active || refreshed.State != "completed" {
+		t.Fatalf("redrawn terminal active/state = %v/%q, want false/completed", refreshed.Active, refreshed.State)
+	}
+}
+
+func TestStoreIgnoresDelayedStreamingEndFromOlderTurn(t *testing.T) {
+	store := NewStore()
+	oldTurn := time.Now()
+	newTurn := oldTurn.Add(2 * time.Second)
+	metadata := map[string]interface{}{
+		"tmux_session":   "mlp-codex-cli-retained",
+		"execution_kind": "main_agent",
+		"provider":       "codex-cli",
+	}
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"main:session-1", "• Working (2s • esc to interrupt)", 1, metadata, newTurn,
+	))
+	store.HandleEvent("session-1", storeevents.Event{
+		Type:        "streaming_end",
+		Timestamp:   oldTurn,
+		SessionID:   "session-1",
+		ExecutionID: "main:session-1",
+		Data: &agentevents.AgentEvent{
+			Type: agentevents.StreamingEnd,
+			Data: &agentevents.StreamingEndEvent{
+				BaseEventData: agentevents.BaseEventData{Metadata: map[string]interface{}{
+					"kind":           "terminal",
+					"tmux_session":   "mlp-codex-cli-retained",
+					"execution_kind": "main_agent",
+				}},
+			},
+		},
+	})
+
+	snapshot, ok := store.Get("session-1:main:session-1")
+	if !ok {
+		t.Fatal("expected terminal snapshot")
+	}
+	if !snapshot.Active || snapshot.State != "running" {
+		t.Fatalf("terminal active/state = %v/%q, want true/running", snapshot.Active, snapshot.State)
+	}
+}
+
 func TestStoreMarksTerminalClosingWithRetention(t *testing.T) {
 	store := NewStore()
 	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", "screen", 1))

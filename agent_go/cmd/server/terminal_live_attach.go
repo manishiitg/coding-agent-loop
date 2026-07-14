@@ -61,6 +61,13 @@ const (
 	// so old spinner/status redraws remain scrollback-only and cannot corrupt
 	// the live screen.
 	liveAttachBackfillHistoryLines = 2000
+	// A resize reply only confirms that tmux changed the pane geometry; the CLI
+	// still needs a brief event-loop turn to handle SIGWINCH and repaint. Seeding
+	// before that repaint captures the previous width and permanently replays
+	// broken wrapping into the browser terminal.
+	liveAttachResizeNoOutputGrace = 180 * time.Millisecond
+	liveAttachResizeQuietWindow   = 75 * time.Millisecond
+	liveAttachResizeMaxWait       = 600 * time.Millisecond
 	// Minimum tmux version for the control-mode attach transport. `window-size`
 	// window-size was added in tmux 2.9. The live transport uses explicit
 	// resize-window plus window-size manual; control mode (-CC) has existed since
@@ -171,12 +178,13 @@ type liveAttachStream struct {
 	mgr         *liveAttachManager
 	tmuxSession string
 
-	mu          sync.Mutex
-	subs        map[chan []byte]struct{}
-	cancel      context.CancelFunc
-	done        chan struct{}
-	appliedCols int
-	appliedRows int
+	mu           sync.Mutex
+	subs         map[chan []byte]struct{}
+	cancel       context.CancelFunc
+	done         chan struct{}
+	appliedCols  int
+	appliedRows  int
+	lastOutputAt time.Time
 	// seeding counts viewers between seedViewer entry and splice/abandon, so
 	// idle-stop logic does not kill the attach under a viewer that has not
 	// reached the subs map yet.
@@ -354,6 +362,7 @@ func (st *liveAttachStream) broadcast(b []byte) {
 	copy(cp, b)
 	dropped := false
 	st.mu.Lock()
+	st.lastOutputAt = time.Now()
 	for ch := range st.subs {
 		select {
 		case ch <- cp:
@@ -452,25 +461,70 @@ func (st *liveAttachStream) deliverReply(reply liveattach.Reply) {
 // resize-window. The app's live pane must be the same grid as browser xterm;
 // window-size manual (pinned at attach) makes these calls authoritative.
 func (st *liveAttachStream) setSize(cols, rows int) {
+	st.setSizeThen(cols, rows, nil)
+}
+
+// setSizeThen applies a geometry change and invokes ready only after tmux has
+// acknowledged it and the CLI has had time to repaint at that width. ready is
+// asynchronous so the control-mode scanner remains free to consume repaint
+// output while the settle detector waits.
+func (st *liveAttachStream) setSizeThen(cols, rows int, ready func()) {
 	if cols < terminalMinResizeCols || rows < terminalMinResizeRows {
+		if ready != nil {
+			go ready()
+		}
 		return
 	}
 	st.mu.Lock()
 	if st.appliedCols == cols && st.appliedRows == rows {
 		st.mu.Unlock()
+		if ready != nil {
+			go ready()
+		}
 		return
 	}
-	// Optimistic: FIFO ordering means the last sent resize is the one that
-	// sticks; a failed reply just allows a redundant retry later.
-	st.appliedCols, st.appliedRows = cols, rows
 	st.mu.Unlock()
-	if _, err := st.sendCommand(fmt.Sprintf("resize-window -t %s -x %d -y %d", st.tmuxSession, cols, rows), nil); err != nil {
-		log.Printf("[live-attach] resize-window session=%s %dx%d: %v", st.tmuxSession, cols, rows, err)
-		st.mu.Lock()
-		if st.appliedCols == cols && st.appliedRows == rows {
-			st.appliedCols, st.appliedRows = 0, 0
+	resizeStartedAt := time.Now()
+	onReply := func(reply liveattach.Reply) {
+		if !reply.Err {
+			st.mu.Lock()
+			st.appliedCols, st.appliedRows = cols, rows
+			st.mu.Unlock()
 		}
+		if ready != nil {
+			go st.waitForResizeRepaint(resizeStartedAt, ready)
+		}
+	}
+	if _, err := st.sendCommand(fmt.Sprintf("resize-window -t %s -x %d -y %d", st.tmuxSession, cols, rows), onReply); err != nil {
+		log.Printf("[live-attach] resize-window session=%s %dx%d: %v", st.tmuxSession, cols, rows, err)
+		if ready != nil {
+			go ready()
+		}
+	}
+}
+
+func (st *liveAttachStream) waitForResizeRepaint(resizeStartedAt time.Time, ready func()) {
+	started := time.Now()
+	ticker := time.NewTicker(15 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		st.mu.Lock()
+		lastOutputAt := st.lastOutputAt
 		st.mu.Unlock()
+
+		elapsed := time.Since(started)
+		sawRepaint := lastOutputAt.After(resizeStartedAt)
+		if (sawRepaint && time.Since(lastOutputAt) >= liveAttachResizeQuietWindow) ||
+			(!sawRepaint && elapsed >= liveAttachResizeNoOutputGrace) ||
+			elapsed >= liveAttachResizeMaxWait {
+			ready()
+			return
+		}
+		select {
+		case <-ticker.C:
+		case <-st.done:
+			return
+		}
 	}
 }
 
@@ -496,8 +550,6 @@ func (st *liveAttachStream) seedViewer(ctx context.Context, cols, rows int) (ch 
 	if err := liveAttachValidTarget(st.tmuxSession); err != nil {
 		return nil, nil, err
 	}
-	st.setSize(cols, rows)
-
 	ch = make(chan []byte, liveAttachSubBuffer)
 	var seedMu sync.Mutex
 	abandoned := false
@@ -552,38 +604,45 @@ func (st *liveAttachStream) seedViewer(ctx context.Context, cols, rows int) (ch 
 		st.mu.Unlock()
 		resultCh <- buildLiveAttachSeed(history, screen, cursor)
 	}
-	_, err = st.sendCommand(
-		fmt.Sprintf("display-message -p -t %s '#{history_size}'", st.tmuxSession),
-		func(sizeReply liveattach.Reply) {
-			historySize := 0
-			if !sizeReply.Err && len(sizeReply.Lines) > 0 {
-				if n, err := strconv.Atoi(strings.TrimSpace(sizeReply.Lines[0])); err == nil {
-					historySize = n
+	startSeed := func() {
+		_, sendErr := st.sendCommand(
+			fmt.Sprintf("display-message -p -t %s '#{history_size}'", st.tmuxSession),
+			func(sizeReply liveattach.Reply) {
+				historySize := 0
+				if !sizeReply.Err && len(sizeReply.Lines) > 0 {
+					if n, err := strconv.Atoi(strings.TrimSpace(sizeReply.Lines[0])); err == nil {
+						historySize = n
+					}
 				}
-			}
-			if historySize > liveAttachBackfillHistoryLines {
-				historySize = liveAttachBackfillHistoryLines
-			}
-			var sendErr error
-			if historySize > 0 {
-				historyCmd, sendErr = st.sendCommand(fmt.Sprintf("capture-pane -t %s -p -e -S -%d -E -1", st.tmuxSession, historySize), nil)
+				if historySize > liveAttachBackfillHistoryLines {
+					historySize = liveAttachBackfillHistoryLines
+				}
+				var sendErr error
+				if historySize > 0 {
+					historyCmd, sendErr = st.sendCommand(fmt.Sprintf("capture-pane -t %s -p -e -S -%d -E -1", st.tmuxSession, historySize), nil)
+					if sendErr != nil {
+						return // stream dying; the seed waiter unblocks via st.done
+					}
+				}
+				cursorCmd, sendErr = st.sendCommand(fmt.Sprintf("display-message -p -t %s '#{cursor_x},#{cursor_y}'", st.tmuxSession), nil)
 				if sendErr != nil {
-					return // stream dying; the seed waiter unblocks via st.done
+					return
 				}
+				// Screen capture LAST; finish() splices the viewer on its %end.
+				if _, sendErr = st.sendCommand(fmt.Sprintf("capture-pane -t %s -p -e", st.tmuxSession), finish); sendErr != nil {
+					return
+				}
+			},
+		)
+		if sendErr != nil {
+			select {
+			case <-st.done:
+			default:
+				log.Printf("[live-attach] seed start session=%s: %v", st.tmuxSession, sendErr)
 			}
-			cursorCmd, sendErr = st.sendCommand(fmt.Sprintf("display-message -p -t %s '#{cursor_x},#{cursor_y}'", st.tmuxSession), nil)
-			if sendErr != nil {
-				return
-			}
-			// Screen capture LAST; finish() splices the viewer on its %end.
-			if _, sendErr = st.sendCommand(fmt.Sprintf("capture-pane -t %s -p -e", st.tmuxSession), finish); sendErr != nil {
-				return
-			}
-		},
-	)
-	if err != nil {
-		return nil, nil, err
+		}
 	}
+	st.setSizeThen(cols, rows, startSeed)
 
 	abandon := func() {
 		seedMu.Lock()

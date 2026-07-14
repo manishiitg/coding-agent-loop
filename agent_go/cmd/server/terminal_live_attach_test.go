@@ -260,6 +260,43 @@ func TestLiveAttachAddViewerSeedsAndStreams(t *testing.T) {
 	waitStreamDone(t, st)
 }
 
+func TestLiveAttachSeedWaitsForResizeRepaintGrace(t *testing.T) {
+	var resizeRepliedAt time.Time
+	var firstCaptureAt time.Time
+	installFakeAttach(t, func(cmd string) liveattach.Reply {
+		switch {
+		case strings.HasPrefix(cmd, "resize-window"):
+			resizeRepliedAt = time.Now()
+			return liveattach.Reply{}
+		case strings.Contains(cmd, "#{history_size}"):
+			firstCaptureAt = time.Now()
+			return liveattach.Reply{Lines: []string{"0"}}
+		case strings.Contains(cmd, "#{cursor_x}"):
+			return liveattach.Reply{Lines: []string{"0,0"}}
+		case strings.HasPrefix(cmd, "capture-pane"):
+			return liveattach.Reply{Lines: []string{"repainted-screen"}}
+		default:
+			return liveattach.Reply{}
+		}
+	})
+	m := newLiveAttachManager()
+	st, ch, seed, err := m.addViewer(context.Background(), "resizeGrace", 117, 35)
+	if err != nil {
+		t.Fatalf("addViewer: %v", err)
+	}
+	if resizeRepliedAt.IsZero() || firstCaptureAt.IsZero() {
+		t.Fatalf("missing resize/capture timestamps: resize=%v capture=%v", resizeRepliedAt, firstCaptureAt)
+	}
+	if delay := firstCaptureAt.Sub(resizeRepliedAt); delay < liveAttachResizeNoOutputGrace-40*time.Millisecond {
+		t.Fatalf("seed capture started %v after resize reply; want repaint grace near %v", delay, liveAttachResizeNoOutputGrace)
+	}
+	if !strings.Contains(string(seed), "repainted-screen") {
+		t.Fatalf("seed = %q, want repainted screen", string(seed))
+	}
+	st.unsubscribe(ch)
+	waitStreamDone(t, st)
+}
+
 func TestLiveAttachSeedSpliceExcludesPreSeedOutput(t *testing.T) {
 	// Output broadcast BEFORE the seed's final reply must not reach the viewer:
 	// it is, by protocol order, already contained in the screen capture. The

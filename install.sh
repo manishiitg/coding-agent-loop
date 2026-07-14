@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # AgentWorks installer — downloads the latest macOS dmg from GitHub Releases,
-# upgrades either the legacy Runloop.app or AgentWorks.app installation, and
-# strips the quarantine flag so Gatekeeper does not reject the unsigned build.
+# installs AgentWorks.app, and strips the quarantine flag so Gatekeeper does
+# not reject the unsigned build.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/install.sh | bash
@@ -12,8 +12,6 @@ set -euo pipefail
 
 REPO="manishiitg/coding-agent-loop"
 APP_NAME="AgentWorks"
-LEGACY_APP_NAME="Runloop"
-RELEASE_ASSET_NAME="Runloop"
 INSTALL_DIR="/Applications"
 
 log()  { printf '\033[1;34m[agentworks]\033[0m %s\n' "$*"; }
@@ -142,20 +140,18 @@ log "Installing version $VERSION"
 
 # ---- Quit running app -------------------------------------------------------
 
-for running_app in "$APP_NAME" "$LEGACY_APP_NAME"; do
-  if pgrep -fq "${running_app}.app/Contents/MacOS"; then
-    log "Quitting running ${running_app}…"
-    osascript -e "tell application \"${running_app}\" to quit" 2>/dev/null || true
-    sleep 1
-    # Force-kill anything still alive (helpers, leftover servers).
-    pkill -f "${running_app}.app" 2>/dev/null || true
-  fi
-done
+if pgrep -fq "${APP_NAME}.app/Contents/MacOS"; then
+  log "Quitting running ${APP_NAME}…"
+  osascript -e "tell application \"${APP_NAME}\" to quit" 2>/dev/null || true
+  sleep 1
+  # Force-kill anything still alive (helpers, leftover servers).
+  pkill -f "${APP_NAME}.app" 2>/dev/null || true
+fi
 
 # ---- Download dmg -----------------------------------------------------------
 
 VERSION_NO_V="${VERSION#v}"
-DMG_NAME="${RELEASE_ASSET_NAME}-${VERSION_NO_V}-arm64.dmg"
+DMG_NAME="${APP_NAME}-${VERSION_NO_V}-arm64.dmg"
 DMG_URL="https://github.com/${REPO}/releases/download/${VERSION}/${DMG_NAME}"
 
 TMP_DIR="$(mktemp -d -t runloop-install)"
@@ -188,13 +184,9 @@ detach_mount() { hdiutil detach -quiet "$MOUNT_POINT" 2>/dev/null || true; }
 trap 'detach_mount; rm -rf "$TMP_DIR"' EXIT
 
 SOURCE_APP="${MOUNT_POINT}/${APP_NAME}.app"
-if [ ! -d "$SOURCE_APP" ]; then
-  SOURCE_APP="${MOUNT_POINT}/${LEGACY_APP_NAME}.app"
-fi
-[ -d "$SOURCE_APP" ] || die "Could not find ${APP_NAME}.app or ${LEGACY_APP_NAME}.app inside the dmg."
+[ -d "$SOURCE_APP" ] || die "Could not find ${APP_NAME}.app inside the dmg."
 
 DEST_APP="${INSTALL_DIR}/${APP_NAME}.app"
-LEGACY_DEST_APP="${INSTALL_DIR}/${LEGACY_APP_NAME}.app"
 if [ -e "$DEST_APP" ]; then
   log "Removing existing ${DEST_APP}…"
   rm -rf "$DEST_APP" || die "Could not remove existing app. Try: sudo rm -rf '$DEST_APP'"
@@ -202,13 +194,6 @@ fi
 
 log "Copying ${APP_NAME}.app to ${INSTALL_DIR}…"
 cp -R "$SOURCE_APP" "$DEST_APP" || die "Copy failed. Make sure $INSTALL_DIR is writable, or run with sudo."
-
-# Remove the old bundle only after the new copy succeeds. The app keeps its
-# historical bundle id and user-data path, so workflows and settings remain.
-if [ "$LEGACY_DEST_APP" != "$DEST_APP" ] && [ -e "$LEGACY_DEST_APP" ]; then
-  log "Removing legacy ${LEGACY_DEST_APP}…"
-  rm -rf "$LEGACY_DEST_APP" || warn "Could not remove the legacy app. Remove it manually after confirming AgentWorks opens."
-fi
 
 ensure_mcpbridge
 

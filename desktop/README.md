@@ -53,7 +53,7 @@ CSC_IDENTITY_AUTO_DISCOVERY=false \
   npx electron-builder --mac dmg --publish never
 ```
 
-Artifacts keep the legacy `Runloop-<version>-arm64.dmg` filename for updater compatibility, but the bundle inside is `AgentWorks.app`. Install: `open desktop/dist/Runloop-*.dmg` → drag AgentWorks to Applications. First launch: right-click → Open to bypass Gatekeeper.
+Artifacts use the `AgentWorks-<version>-arm64.dmg` filename and contain `AgentWorks.app`. Install: `open desktop/dist/AgentWorks-*.dmg` → drag AgentWorks to Applications. First launch: right-click → Open to bypass Gatekeeper.
 
 ### Cutting a release via the release script
 

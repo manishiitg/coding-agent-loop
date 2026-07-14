@@ -272,10 +272,10 @@ gh api "repos/$REPO/releases?per_page=100" \
 echo "==> Verifying assets"
 expected_assets=(
   "latest-mac.yml"
-  "Runloop-$version-arm64-mac.zip"
-  "Runloop-$version-arm64-mac.zip.blockmap"
-  "Runloop-$version-arm64.dmg"
-  "Runloop-$version-arm64.dmg.blockmap"
+  "AgentWorks-$version-arm64-mac.zip"
+  "AgentWorks-$version-arm64-mac.zip.blockmap"
+  "AgentWorks-$version-arm64.dmg"
+  "AgentWorks-$version-arm64.dmg.blockmap"
 )
 
 release_assets="$(gh release view "$tag" --repo "$REPO" --json assets --jq '.assets[].name')"

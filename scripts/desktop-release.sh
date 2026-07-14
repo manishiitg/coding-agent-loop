@@ -206,7 +206,15 @@ if [[ "$package_version" != "$version" || "$lock_version" != "$version" ]]; then
   [[ "$updated_package_version" == "$version" && "$updated_lock_version" == "$version" ]] ||
     die "npm did not update both desktop version files to $version"
   git add desktop/package.json desktop/package-lock.json
-  git commit -m "Bump desktop version to $version"
+  staged_files="$(git diff --cached --name-only | sort)"
+  expected_staged_files=$'desktop/package-lock.json\ndesktop/package.json'
+  [[ "$staged_files" == "$expected_staged_files" ]] ||
+    die "version bump staged unexpected files: $staged_files"
+  # The isolated release worktree intentionally has no sibling Go dependency
+  # checkouts or node_modules. The developer pre-commit hook requires both, so
+  # it cannot run there. This commit is restricted to the two validated version
+  # files above; the tag workflow performs the complete clean build and tests.
+  git -c core.hooksPath=/dev/null commit -m "Bump desktop version to $version"
 fi
 
 [[ -z "$(git status --porcelain)" ]] || die "working tree became dirty while preparing release"

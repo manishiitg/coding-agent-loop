@@ -438,12 +438,10 @@ export const ModePresetBar: React.FC = () => {
             llm_config: llmConfig || undefined,
           },
         }
-        await agentApi.updateWorkflowManifest(payload)
-        // Refresh manifests and rebuild workflow presets in zustand (triggers re-renders)
-        await refreshPresets()
-        setShowPresetModal(false)
-        setEditingPreset(null)
-        return true
+		await agentApi.updateWorkflowManifest(payload)
+		// Refresh manifests and rebuild workflow presets in zustand (triggers re-renders)
+		await refreshPresets()
+		return true
       }
 
       // Multi-agent mode: save the user's chat capability profile.

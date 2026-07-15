@@ -512,8 +512,9 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       return;
     }
 
-    setIsSavingPreset(true);
-    try {
+	setIsSavingPreset(true);
+	let manifestSaved = false;
+	try {
       
       // Debug: Log what we're sending
       console.log('[PresetModal] Saving preset with:', {
@@ -603,8 +604,9 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         selectedGlobalSecrets, // Per-preset global secret selection (null=all)
         browserMode, // Browser mode: none|auto|headless|cdp
         cdpPorts
-      );
-      if (saved === false) return;
+	  );
+	  if (saved === false) return;
+	  manifestSaved = true;
       if (effectiveAgentMode === 'workflow' && usesClaudeCode && claudeCodeToken.trim() && selectedFolder?.filepath) {
         await secretsApi.storeWorkflowClaudeCodeCredential(selectedFolder.filepath, claudeCodeToken.trim());
         setClaudeCredentialConfigured(true);
@@ -617,7 +619,10 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       const detail = typeof serverDetail === 'string' && serverDetail.trim() !== ''
         ? serverDetail.trim()
         : error instanceof Error ? error.message : 'Unknown error';
-      useChatStore.getState().addToast(`Failed to save automation: ${detail}`, 'error');
+	  const message = manifestSaved
+	    ? `Automation configuration was saved, but the Claude Code token was not saved: ${detail}`
+	    : `Failed to save automation: ${detail}`;
+	  useChatStore.getState().addToast(message, 'error');
     } finally {
       setIsSavingPreset(false);
     }

@@ -465,6 +465,9 @@ Configuration changes require the existing human-input flow. Use `create_human_i
 
 Mark due when strategic judgment is needed:
 
+- a defined, measurable success criterion is below its target in the latest
+  trustworthy current-run or retained cross-run evidence, and no active advisor
+  experiment is already waiting for its planned measurement checkpoint
 - Goal drift persists even when execution is clean
 - the current strategy appears capped or too narrow
 - a user answered a strategic question
@@ -483,6 +486,14 @@ Mark due when strategic judgment is needed:
 - a material success criterion or active experiment is `Not measured`, and Goal
   Advisor must propose a bounded metric definition plus a normal `regular`
   collection step before Report Health can visualize it
+
+An unmet measured goal is a direct Goal Advisor trigger, not merely a signal for
+a later cadence check. Do not skip Goal Advisor just because execution is clean,
+the eval passed, or the module ran recently. If an active experiment already
+addresses that miss, preserve the experiment and use its `data-review-after`
+checkpoint instead of proposing another strategy. If the criterion has no usable
+target or was not measured, label that explicitly and use the measurement-design
+path rather than claiming that the goal was missed.
 
 Goal Advisor is a Pulse-selected module, not a separate recurring schedule. Its
 expensive thinking stays outside the parent context through a read-only strategy

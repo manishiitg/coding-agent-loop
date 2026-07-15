@@ -88,6 +88,29 @@ def browser(command, args=None, session="main"):
 core = browser("skills", ["get", "core"])
 ` + "```" + `
 
+### Installing a CDP Browser on macOS
+
+If the user wants CDP and no authorized endpoint is available, tell them to
+install the default visible Chrome launcher with:
+
+` + "```bash" + `
+curl -fsSL 'https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/scripts/install-chrome-cdp-macOS.sh' | bash
+` + "```" + `
+
+For a specialized additional login identity, the same installer accepts a
+port and creates a separate app and Chrome profile:
+
+` + "```bash" + `
+curl -fsSL 'https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/scripts/install-chrome-cdp-macOS.sh' | bash -s -- --port 9333
+curl http://127.0.0.1:9333/json/version
+` + "```" + `
+
+Do not run the installer yourself unless the user explicitly asks you to
+install and open a visible local browser. After the endpoint is reachable, the
+workflow builder must add it to ` + "`cdp_ports`" + `; the current run cannot
+invent or use a port that its prompt did not authorize. Extra profiles are for
+specialized multi-login testing, not ordinary workflow concurrency.
+
 Tab handling is mandatory in shared CDP mode:
 
 1. Call ` + "`browser(\"tab\", [])`" + ` first to inspect the current tab list.

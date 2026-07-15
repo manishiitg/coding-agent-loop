@@ -393,6 +393,18 @@ curl -fsSL 'https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/
 
 The installer downloads `Chrome CDP.app`, installs it into `/Applications`, clears quarantine attributes, applies a local ad-hoc signature when possible, opens the app, and checks that CDP is reachable on port `9222`.
 
+To install another independent CDP browser on a different port, pass the port
+to the same installer. It creates a separate app and Chrome profile instead of
+overwriting the default launcher:
+
+```bash
+curl -fsSL 'https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/scripts/install-chrome-cdp-macOS.sh' | bash -s -- --port 9333
+```
+
+This installs `Chrome CDP 9333.app`, launches Chrome on port `9333`, and uses
+`~/.chrome-cdp-profile-9333`. Repeat with another unused port when a specialized
+workflow needs another login identity.
+
 macOS may still ask for approval on first launch. If it blocks the app, open **System Settings → Privacy & Security**, allow `Chrome CDP`, then run:
 
 ```bash
@@ -400,8 +412,8 @@ open -a 'Chrome CDP'
 ```
 
 For the specialized case where one workflow must test the same site with a
-second login identity, launch another Chrome process on a different port **and
-a different profile directory**:
+second login identity, use the installer command above or launch another Chrome
+process manually on a different port **and a different profile directory**:
 
 ```bash
 SECOND_CDP_PORT=9333

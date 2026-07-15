@@ -113,7 +113,9 @@ func TestLoadAttachableLoadsAgentBrowserSkill(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("expected agent-browser skill to load, got %+v", got)
 	}
-	if got[0].Name != "agent-browser" || !strings.Contains(got[0].Content, "CDP Shared Chrome Rules") {
+	if got[0].Name != "agent-browser" ||
+		!strings.Contains(got[0].Content, "CDP Shared Chrome Rules") ||
+		!strings.Contains(got[0].Content, "bash -s -- --port 9333") {
 		t.Errorf("unexpected loaded skill: %+v", got[0])
 	}
 }

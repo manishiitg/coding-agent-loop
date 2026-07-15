@@ -90,6 +90,27 @@ For exhaustive command docs call `browser("skills", ["get", "core", "--full"])`.
 - Keep diagnostics inside `agent_browser`; raw CDP bypasses the shared-tab
   lock and is not allowed for normal navigation or debugging.
 
+### Installing a CDP browser on macOS
+
+When the user wants CDP but no configured endpoint is available, provide the
+dedicated installer command. Do not run it yourself unless the user explicitly
+asks you to install and open a visible local browser:
+
+```bash
+curl -fsSL 'https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/scripts/install-chrome-cdp-macOS.sh' | bash
+```
+
+For a specialized additional login identity, pass an unused port to the same
+installer. It creates a separate app and `--user-data-dir`:
+
+```bash
+curl -fsSL 'https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/scripts/install-chrome-cdp-macOS.sh' | bash -s -- --port 9333
+curl http://127.0.0.1:9333/json/version
+```
+
+After it is reachable, configure the workflow with that port, for example
+`cdp_ports=[9222,9333]`. Do not add profiles for ordinary workflow concurrency.
+
 ### QA evidence and network debugging
 
 - Requests: `browser("network", ["tab", "<label>", "requests"])`.

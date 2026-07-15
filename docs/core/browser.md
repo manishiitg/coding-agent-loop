@@ -18,8 +18,20 @@ The workflow manifest stores the mode under
 
 ## Starting a CDP browser
 
-The repository README contains the platform-specific launch command. Each CDP
-profile must use its own port and `--user-data-dir`. The usual port is `9222`.
+On macOS, install the default launcher on port `9222` with:
+
+```bash
+curl -fsSL 'https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/scripts/install-chrome-cdp-macOS.sh' | bash
+```
+
+Install another independent launcher/profile by passing a port:
+
+```bash
+curl -fsSL 'https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/scripts/install-chrome-cdp-macOS.sh' | bash -s -- --port 9333
+```
+
+Each CDP profile must use its own port and `--user-data-dir`. The usual port is
+`9222`; the port-specific installer creates a separate application and profile.
 
 For a specialized workflow that needs multiple login identities, launch more
 profiles on different ports, for example `9222` and `9333`, then configure:

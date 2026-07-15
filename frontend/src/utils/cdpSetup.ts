@@ -33,6 +33,8 @@ export function chromeCdpVerifyCommand(port: number): string {
   return `curl http://127.0.0.1:${safeCdpPort(port)}/json/version`
 }
 
-export function chromeCdpInstallCommand(): string {
-  return `curl -fsSL ${shellQuote(chromeCdpInstallerUrl)} | bash`
+export function chromeCdpInstallCommand(port = defaultCdpPort): string {
+  const resolvedPort = safeCdpPort(port)
+  const portArgs = resolvedPort === defaultCdpPort ? '' : ` -s -- --port ${resolvedPort}`
+  return `curl -fsSL ${shellQuote(chromeCdpInstallerUrl)} | bash${portArgs}`
 }

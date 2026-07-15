@@ -207,7 +207,7 @@ func TestProviderManifestPublishesCodexGPT56Defaults(t *testing.T) {
 			"medium":         {model: "gpt-5.6-terra", effort: "medium"},
 			"low":            {model: "gpt-5.6-luna", effort: "low"},
 			"maintenance":    {model: "gpt-5.6-sol", effort: "xhigh"},
-			"pulse":          {model: "gpt-5.6-terra", effort: "high"},
+			"pulse":          {model: "gpt-5.6-terra", effort: "xhigh"},
 			"chief_of_staff": {model: "gpt-5.6-sol", effort: "xhigh"},
 		} {
 			got := provider.DefaultTierModels[tier]

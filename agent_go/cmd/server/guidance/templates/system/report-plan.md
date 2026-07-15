@@ -159,16 +159,21 @@ The content section above decides WHAT to show; these make it READABLE when you 
 - **Responsive design (raw HTML is YOUR job).** The report renders at three widths: **mobile ≈ 480px, tablet ≈ 880px, desktop full (content ≈ 1024px)**. Author HTML that flows at all three: use **fluid widths** (`%` / `max-width: 100%`, never fixed `px` page widths), make wide tables wrap or scroll (`overflow-x:auto`), **stack multi-column layouts on narrow screens** with `@media (max-width: 640px)` and `(max-width: 960px)`, use relative font sizes, and never assume a desktop width. A quick check: it must read with no horizontal overflow at ~480px.
 - **Optional visual review.** If the user asks you to review the report visually, critique the design, or verify screenshots, render it and look. Otherwise do not spend time/tokens on browser screenshots just because you authored or changed an HTML report. When reviewing, use the dedicated frontend report URL so the app renders the same live report the user sees:
   1. Build the URL: `/report?path=<base64url UTF-8 workspace path>`, where the decoded path is the workflow root, e.g. `Workflow/My Workflow`.
-  2. Open that short URL with **`agent-browser`** at desktop/tablet/mobile widths and screenshot only as needed. **Always screenshot with `--full`** (e.g. `screenshot --full report.png`) so the capture covers the report's ENTIRE scroll height — a report is usually taller than the viewport, and a plain screenshot clips everything below the fold. Optionally `set viewport <w> <h> 2` first for a sharper 2× capture. **Do NOT paste base64 HTML or a long `data:` URL into a tool call** — it bloats the transcript and can dominate token usage. Also do not use `file://`; agent-browser may run away from the host filesystem and open `about:blank`.
+  2. Open that short URL with the managed **`agent_browser` tool** at desktop/tablet/mobile widths and screenshot only as needed. Never execute `agent-browser` through shell. **Always screenshot with `--full`** so the capture covers the report's ENTIRE scroll height — a report is usually taller than the viewport, and a plain screenshot clips everything below the fold. Use `set viewport <w> <h> 2` first for a sharper 2× capture. In CDP mode, include the exact authorized `--cdp` prefix announced in the system prompt on every call. **Do NOT paste base64 HTML or a long `data:` URL into a tool call** — it bloats the transcript and can dominate token usage. Also do not use `file://`; agent-browser may run away from the host filesystem and open `about:blank`.
+     First use `execute_shell_command` only to calculate the path value:
      ```bash
-     encoded_path="$(python3 - <<'PY'
+     python3 - <<'PY'
      import base64
      print(base64.urlsafe_b64encode("Workflow/My Workflow".encode()).decode().rstrip("="))
      PY
-     )"
-     agent-browser open "http://localhost:<app-port>/report?path=${encoded_path}"
-     agent-browser viewport 1280 900 && agent-browser screenshot /tmp/desktop.png
-     agent-browser viewport 480 900  && agent-browser screenshot /tmp/mobile.png
+     ```
+     Then substitute that returned value into managed tool calls:
+     ```text
+     agent_browser(command="open", args=["http://localhost:<app-port>/report?path=<encoded-path>"])
+     agent_browser(command="set", args=["viewport", "1280", "900", "2"])
+     agent_browser(command="screenshot", args=["--full", "/tmp/desktop.png"])
+     agent_browser(command="set", args=["viewport", "480", "900", "2"])
+     agent_browser(command="screenshot", args=["--full", "/tmp/mobile.png"])
      ```
      If `localhost` is unreachable because the browser daemon is in a different network namespace, retry the same app URL with `host.docker.internal`. Use a `data:` URL only as a last-resort fallback for a tiny standalone HTML file; never inline a large base64 payload in a browser/tool argument.
   3. **Match what the app shows — set the theme.** The app renders the report in **dark mode** when the user is in dark mode, by putting `class="dark" data-theme="dark"` on the iframe `<html>`. Your standalone render won't have that, so it looks light even though the app shows dark. To review faithfully, render BOTH: once with `<html>` plain (light) and once with `<html class="dark" data-theme="dark">` (dark) — screenshot each. `read_image` and **critique against the design bar above** — hierarchy, spacing, **contrast in BOTH light and dark**, alignment, no clipping/overflow, chart legibility.

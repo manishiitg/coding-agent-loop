@@ -411,7 +411,8 @@ export const ModePresetBar: React.FC = () => {
     useCodeExecutionMode?: boolean,
     selectedSecrets?: string[],
     selectedGlobalSecretNames?: string[] | null,
-    browserMode?: 'none' | 'auto' | 'headless' | 'cdp'
+    browserMode?: 'none' | 'auto' | 'headless' | 'cdp',
+    cdpPorts?: number[]
   ) => {
     try {
       const effectiveMode = editingPreset ? editingPreset.agentMode : agentMode
@@ -432,7 +433,7 @@ export const ModePresetBar: React.FC = () => {
             selected_secrets: selectedSecrets || [],
             selected_global_secret_names: globalSecretNamesForBackend,
             browser_mode: browserMode || 'none',
-            cdp_ports: browserMode === 'cdp' || browserMode === 'auto' ? (editingPreset.cdpPorts || []) : [],
+            cdp_ports: browserMode === 'cdp' || browserMode === 'auto' ? (cdpPorts || []) : [],
             use_code_execution_mode: useCodeExecutionMode || false,
             llm_config: llmConfig || undefined,
           },
@@ -459,7 +460,8 @@ export const ModePresetBar: React.FC = () => {
         editingPreset?.id,
         selectedSecrets,
         selectedGlobalSecretNames,
-        browserMode
+        browserMode,
+        cdpPorts
       )
 
       // Apply the preset immediately if it's a new one

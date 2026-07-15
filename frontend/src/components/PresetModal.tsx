@@ -22,12 +22,12 @@ import type { LLMOption } from '../types/llm';
 import ModalPortal from './ui/ModalPortal';
 import { getWorkflowLLMOptions, getWorkflowLLMTierDefaults, getWorkflowProviderOptions } from '../utils/workflowLLMTierDefaults';
 import { llmOptionMatchesRef, llmOptionsKey } from '../utils/llmConfigDisplay';
-import { chromeCdpInstallCommand, chromeCdpLaunchCommand, chromeCdpVerifyCommand, chromeCdpZipUrl } from '../utils/cdpSetup';
+import { chromeCdpInstallCommand, chromeCdpLaunchCommand, chromeCdpVerifyCommand, chromeCdpZipUrl, mergeCdpPorts } from '../utils/cdpSetup';
 
 interface PresetModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'multi-agent' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, browserMode?: 'none' | 'auto' | 'headless' | 'cdp') => void;
+  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'multi-agent' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, browserMode?: 'none' | 'auto' | 'headless' | 'cdp', cdpPorts?: number[]) => void;
   editingPreset?: CustomPreset | null;
   availableServers?: string[];
   hideAgentModeSelection?: boolean;
@@ -310,6 +310,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
           setBrowserModeState('none');
         }
       }
+      setCdpPort(editingPreset.cdpPorts?.[0] || 9222);
       // Load agent-specific configs if available
       setBuilderLLM(presetLLM.builder_llm || null);
       setMaintenanceLLM(presetLLM.maintenance_llm || null);
@@ -343,6 +344,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       };
       setLlmConfig(defaultLLM);
       setBrowserModeState('auto'); // Prefer connected CDP, otherwise headless
+      setCdpPort(9222);
       // Initialize agent-specific configs to null (will use legacy default)
       setBuilderLLM(null);
       setMaintenanceLLM(null);
@@ -483,6 +485,9 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         effectiveTier3LLM: effectiveTier3LLM || undefined,
         finalLLMConfig: finalLLMConfig,
       });
+      const cdpPorts = browserMode === 'auto' || browserMode === 'cdp'
+        ? mergeCdpPorts(cdpPort, editingPreset?.cdpPorts)
+        : [];
       onSave(
         label.trim(),
         effectiveAgentMode === 'workflow' ? '' : query.trim(),
@@ -495,11 +500,12 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         false, // useCodeExecutionMode — backend determines mode from browser selection
         selectedSecrets, // Secret names for workflow injection
         selectedGlobalSecrets, // Per-preset global secret selection (null=all)
-        browserMode // Browser mode: none|auto|headless|cdp
+        browserMode, // Browser mode: none|auto|headless|cdp
+        cdpPorts
       );
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, builderLLM, effectiveBuilderLLM, maintenanceLLM, effectiveMaintenanceLLM, pulseLLM, effectivePulseLLM, browserMode, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, defaultAgentLLM, effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM, showWorkflowLLMAdvanced]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, builderLLM, effectiveBuilderLLM, maintenanceLLM, effectiveMaintenanceLLM, pulseLLM, effectivePulseLLM, browserMode, cdpPort, editingPreset?.cdpPorts, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, defaultAgentLLM, effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM, showWorkflowLLMAdvanced]);
 
   // Close modal on escape key
   useEffect(() => {

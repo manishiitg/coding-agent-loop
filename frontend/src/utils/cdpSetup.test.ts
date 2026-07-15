@@ -4,6 +4,7 @@ import {
   chromeCdpInstallCommand,
   chromeCdpLaunchCommand,
   chromeCdpVerifyCommand,
+  mergeCdpPorts,
 } from './cdpSetup'
 
 describe('CDP setup commands', () => {
@@ -20,5 +21,13 @@ describe('CDP setup commands', () => {
     expect(chromeCdpLaunchCommand(9333, 'MacIntel')).toContain('.chrome-cdp-profile-9333')
     expect(chromeCdpLaunchCommand(9333, 'MacIntel')).toContain('--remote-debugging-port=9333')
     expect(chromeCdpVerifyCommand(9333)).toBe('curl http://127.0.0.1:9333/json/version')
+  })
+
+  it('persists the edited primary port while preserving valid additional profiles', () => {
+    expect(mergeCdpPorts(9444, [9222, 9333, 9444, 9555, 9666])).toEqual([9444, 9222, 9333, 9555])
+  })
+
+  it('uses the default port when the edited primary port is invalid', () => {
+    expect(mergeCdpPorts(Number.NaN, [9333])).toEqual([9222, 9333])
   })
 })

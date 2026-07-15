@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { LLMConfiguration, ExtendedLLMConfiguration, APIKeyValidationRequest, AgentLLMConfiguration, SavedLLM, LLMModel, DelegationTierConfig, LLMProvider } from '../services/api-types'
+import type { DelegationTierDefaultsStatus } from '../utils/llmOnboarding'
 import type { LLMOption } from '../types/llm'
 import type { StoreActions } from './types'
 import { llmConfigService, type ModelMetadata, type ProviderManifestEntry, type DynamicModelsResponse } from '../services/llm-config-api'
@@ -298,6 +299,7 @@ interface LLMState extends StoreActions {
 
   // Delegation tier configuration
   delegationTierConfig: DelegationTierConfig | null
+  delegationTierDefaultsStatus: DelegationTierDefaultsStatus
   setDelegationTierConfig: (config: DelegationTierConfig | null) => void
   loadDelegationTierDefaults: () => Promise<void>
 
@@ -542,6 +544,7 @@ export const useLLMStore = create<LLMState>()(
 
         // Delegation tier config
         delegationTierConfig: null,
+        delegationTierDefaultsStatus: 'idle',
 
         // Supported providers (always load fresh from backend, default to all)
         supportedProviders: SUPPORTED_PROVIDERS_FALLBACK,
@@ -688,6 +691,8 @@ export const useLLMStore = create<LLMState>()(
         },
 
         loadDelegationTierDefaults: async () => {
+          if (get().delegationTierDefaultsStatus === 'loading') return
+          set({ delegationTierDefaultsStatus: 'loading' })
           try {
             // Try to load saved config from workspace file first
             try {
@@ -695,7 +700,10 @@ export const useLLMStore = create<LLMState>()(
               const hasSaved = saved && (saved.provider || saved.main || saved.chief_of_staff || saved.high || saved.medium || saved.low ||
                 (saved.custom && Object.keys(saved.custom as object).length > 0))
               if (hasSaved) {
-                set({ delegationTierConfig: saved as unknown as DelegationTierConfig })
+                set({
+                  delegationTierConfig: saved as unknown as DelegationTierConfig,
+                  delegationTierDefaultsStatus: 'loaded',
+                })
                 return
               }
             } catch {
@@ -708,8 +716,10 @@ export const useLLMStore = create<LLMState>()(
             if (hasDefaults) {
               set({ delegationTierConfig: defaults })
             }
+            set({ delegationTierDefaultsStatus: 'loaded' })
           } catch (error) {
             console.warn('Failed to load delegation tier defaults:', error)
+            set({ delegationTierDefaultsStatus: 'error' })
           }
         },
 

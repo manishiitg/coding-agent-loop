@@ -8,6 +8,7 @@ import {
   markLLMDiscoveryOnboardingCleared,
   markLLMDiscoveryOnboardingOpen,
 } from '../../utils/onboarding'
+import { shouldAutoOpenDelegationTierModal } from '../../utils/llmOnboarding'
 
 const FORCE_LLM_DISCOVERY_ONBOARDING_FOR_TESTING = false
 
@@ -24,6 +25,7 @@ export function useLlmOnboarding() {
     showTierModal,
     setShowTierModal,
     delegationTierConfig,
+    delegationTierDefaultsStatus,
     savedLLMs,
     defaultsLoaded,
     primaryConfig,
@@ -101,17 +103,31 @@ export function useLlmOnboarding() {
       return
     }
     if (selectedModeCategory !== 'multi-agent') return
+    if (!defaultsLoaded || delegationTierDefaultsStatus !== 'loaded') return
     if (!hasConfiguredLLM) {
       if (!isLLMDiscoveryOnboardingDismissed()) {
         openLLMOnboarding()
       }
       return
     }
-    const hasTiers = delegationTierConfig && (delegationTierConfig.high || delegationTierConfig.medium || delegationTierConfig.low)
-    if (!hasTiers) {
+    if (shouldAutoOpenDelegationTierModal({
+      selectedModeCategory,
+      defaultsLoaded,
+      delegationTierDefaultsStatus,
+      hasConfiguredLLM,
+      delegationTierConfig,
+    })) {
       setShowTierModal(true)
     }
-  }, [selectedModeCategory, delegationTierConfig, hasConfiguredLLM, openLLMOnboarding, setShowTierModal])
+  }, [
+    selectedModeCategory,
+    defaultsLoaded,
+    delegationTierDefaultsStatus,
+    delegationTierConfig,
+    hasConfiguredLLM,
+    openLLMOnboarding,
+    setShowTierModal,
+  ])
 
   return {
     llmCount,

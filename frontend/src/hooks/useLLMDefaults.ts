@@ -6,14 +6,25 @@ import { useLLMStore } from '../stores/useLLMStore'
  * This replaces hardcoded defaults with backend configuration
  */
 export function useLLMDefaults() {
-  const { defaultsLoaded, loadDefaultsFromBackend, loadDelegationTierDefaults, error } = useLLMStore()
+  const {
+    defaultsLoaded,
+    delegationTierDefaultsStatus,
+    loadDefaultsFromBackend,
+    loadDelegationTierDefaults,
+    error,
+  } = useLLMStore()
 
   useEffect(() => {
     if (!defaultsLoaded) {
-      loadDefaultsFromBackend()
+      void loadDefaultsFromBackend()
     }
-    loadDelegationTierDefaults()
-  }, [defaultsLoaded, loadDefaultsFromBackend, loadDelegationTierDefaults])
+  }, [defaultsLoaded, loadDefaultsFromBackend])
+
+  useEffect(() => {
+    if (delegationTierDefaultsStatus === 'idle') {
+      void loadDelegationTierDefaults()
+    }
+  }, [delegationTierDefaultsStatus, loadDelegationTierDefaults])
 
   return {
     defaultsLoaded,

@@ -428,6 +428,22 @@ func TestCDPActiveTabTracksPortSelection(t *testing.T) {
 	}
 }
 
+func TestIsCDPTabActiveResolvesOwnerAlias(t *testing.T) {
+	port := 19334
+	ownerID := "workflow-session"
+	t.Cleanup(func() { clearCDPTabSelectionsForPort(port) })
+
+	setCDPTabAlias(port, ownerID, "social-media", "t7")
+	setCDPActiveTab(port, "t7")
+
+	if !isCDPTabActive(port, ownerID, "social-media") {
+		t.Fatal("expected the selected label to match its active resolved tab id")
+	}
+	if isCDPTabActive(port, "other-workflow", "social-media") {
+		t.Fatal("tab aliases must remain scoped to their owning workflow")
+	}
+}
+
 func TestAcquireSharedCDPLockHonorsContext(t *testing.T) {
 	port := 19922
 	unlock, err := acquireSharedCDPLock(context.Background(), port)

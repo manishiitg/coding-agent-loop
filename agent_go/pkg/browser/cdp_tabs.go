@@ -294,6 +294,22 @@ func setCDPActiveTab(port int, tab string) {
 	cdpActiveTabs[port] = tab
 }
 
+func isCDPTabActive(port int, ownerID, tab string) bool {
+	tab = strings.TrimSpace(tab)
+	if tab == "" {
+		return false
+	}
+
+	activeTab := getCDPActiveTab(port)
+	if activeTab == tab {
+		return true
+	}
+
+	// Tab selections are usually supplied by agents as stable labels, while
+	// agent-browser reports the active tab as its resolved t<N> id.
+	return activeTab != "" && activeTab == getCDPTabAlias(port, ownerID, tab)
+}
+
 func clearCDPActiveTab(port int, tab string) {
 	tab = strings.TrimSpace(tab)
 	cdpTabSelectionsMu.Lock()

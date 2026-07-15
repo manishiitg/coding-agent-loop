@@ -1454,7 +1454,7 @@ func (s *Store) markInactive(sessionID, ownerID string, metadata map[string]inte
 	if out := intValue(metadata["output_tokens"]); out > 0 {
 		snapshot.Status.OutputTokens = out
 	}
-	if cost := floatValue(metadata["cost_usd_estimated"]); cost > 0 {
+	if cost := floatValue(metadata["cost_usd_estimated"]); cost > 0 && !hasProviderCumulativeCost(snapshot.Status) {
 		snapshot.Status.CostUSD = cost
 	}
 	if dur := int64Value(metadata["duration_ms"]); dur > 0 {
@@ -1758,7 +1758,9 @@ func preserveEphemeralStatusFields(status *Status, previous Status) {
 	if status.TotalOutputTokens == 0 {
 		status.TotalOutputTokens = previous.TotalOutputTokens
 	}
-	if status.CostUSD == 0 {
+	if cumulativeCost, ok := providerCumulativeCost(previous); ok {
+		status.CostUSD = cumulativeCost
+	} else if status.CostUSD == 0 {
 		status.CostUSD = previous.CostUSD
 	}
 	if status.StatusMeta == nil {
@@ -1774,6 +1776,26 @@ func preserveEphemeralStatusFields(status *Status, previous Status) {
 		(previous.ProviderLabel != "" && hasModelDetail(previous.ProviderLabel) && !hasModelDetail(status.ProviderLabel)) {
 		status.ProviderLabel = previous.ProviderLabel
 	}
+}
+
+func hasProviderCumulativeCost(status Status) bool {
+	_, ok := providerCumulativeCost(status)
+	return ok
+}
+
+func providerCumulativeCost(status Status) (float64, bool) {
+	if status.StatusMeta == nil {
+		return 0, false
+	}
+	if cost, ok := status.StatusMeta["cost"].(map[string]interface{}); ok {
+		if total := floatValue(cost["total_cost_usd"]); total > 0 {
+			return total, true
+		}
+	}
+	if total := floatValue(status.StatusMeta["total_cost_usd"]); total > 0 {
+		return total, true
+	}
+	return 0, false
 }
 
 func ownerMatchesTerminal(ownerID string, snapshot Snapshot) bool {

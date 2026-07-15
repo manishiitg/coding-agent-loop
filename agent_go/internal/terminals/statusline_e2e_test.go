@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	agentevents "github.com/manishiitg/mcpagent/events"
 	storeevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
+	agentevents "github.com/manishiitg/mcpagent/events"
 )
 
 // TestStatusLineE2EThroughEventStore wires the store to the EventStore exactly
@@ -112,4 +112,31 @@ func intFromAny(v interface{}) int {
 		return int(n)
 	}
 	return 0
+}
+
+func TestProviderCumulativeCostSurvivesTurnEstimate(t *testing.T) {
+	previous := Status{
+		CostUSD: 13.7510215,
+		StatusMeta: map[string]interface{}{
+			"cost": map[string]interface{}{"total_cost_usd": 13.7510215},
+		},
+	}
+	derived := Status{CostUSD: 0.1223}
+
+	preserveEphemeralStatusFields(&derived, previous)
+
+	if derived.CostUSD != previous.CostUSD {
+		t.Fatalf("cost = %.7f, want cumulative provider cost %.7f", derived.CostUSD, previous.CostUSD)
+	}
+}
+
+func TestTurnEstimateRemainsWhenProviderHasNoCumulativeCost(t *testing.T) {
+	previous := Status{CostUSD: 0.08}
+	derived := Status{CostUSD: 0.1223}
+
+	preserveEphemeralStatusFields(&derived, previous)
+
+	if derived.CostUSD != 0.1223 {
+		t.Fatalf("cost = %.4f, want latest turn estimate 0.1223", derived.CostUSD)
+	}
 }

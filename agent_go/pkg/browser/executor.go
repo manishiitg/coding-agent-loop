@@ -673,7 +673,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 				}
 				return "", missingCDPPageActionTabError(cdpPort, command, commandArgs, selectedCDPTabMessage(cdpPort, cdpOwner))
 			}
-			if getCDPActiveTab(cdpPort) == tabForCommand {
+			if isCDPTabActive(cdpPort, cdpOwner, tabForCommand) {
 				log.Printf("[BROWSER] CDP: tab %q already active before %q; skipping select", tabForCommand, command)
 			} else {
 				selectedTab, err := e.selectCDPTabForCommand(ctx, session, cdpURL, opts, cdpPort, cdpOwner, tabForCommand, command)

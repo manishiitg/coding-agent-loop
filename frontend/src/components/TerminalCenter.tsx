@@ -4844,8 +4844,8 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
                   )}
                   {selectedTerminalView && (() => {
                     const st = selectedTerminalView.status || {}
-                    const tokensIn = formatTokens(st.input_tokens)
-                    const tokensOut = formatTokens(st.output_tokens)
+                    const tokensIn = formatTokens(st.total_input_tokens || st.input_tokens)
+                    const tokensOut = formatTokens(st.total_output_tokens || st.output_tokens)
                     const cost = formatStatusFooterCost(st.cost_usd)
                     // Surface cache read/write tokens when the provider reports
                     // them, so this real-time telemetry isn't silently dropped.

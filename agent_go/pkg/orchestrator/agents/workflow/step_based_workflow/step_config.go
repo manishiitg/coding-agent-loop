@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
 // StepConfig represents a single step's configuration in step_config.json
@@ -241,12 +241,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) WriteStepConfigsToSubdir(ctx context.
 		return fmt.Errorf("failed to marshal step_config.json: %w", err)
 	}
 
+	// planning/ is protected from raw file writes. This method is the typed,
+	// validated step-config writer, so grant it access to this exact managed file
+	// without exposing the rest of planning/ to agents or general file tools.
+	writeCtx := withStepConfigMutationWriteAccess(ctx, hcpo.GetWorkspacePath(), configSubdir)
+
 	// WriteWorkspaceFile will automatically create the directory structure via the workspace API
-	if err := hcpo.WriteWorkspaceFile(ctx, configPath, string(jsonData)); err != nil {
+	if err := hcpo.WriteWorkspaceFile(writeCtx, configPath, string(jsonData)); err != nil {
 		return fmt.Errorf("failed to write step_config.json: %w", err)
 	}
 
 	return nil
+}
+
+func withStepConfigMutationWriteAccess(ctx context.Context, workspacePath, configSubdir string) context.Context {
+	if filepath.Clean(configSubdir) != "planning" {
+		return ctx
+	}
+	return withPlanningFileMutationWriteAccess(ctx, workspacePath, "step_config.json")
 }
 
 // ReadStepOverrides reads step overrides from workflow.json execution_defaults.

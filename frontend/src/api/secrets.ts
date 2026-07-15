@@ -72,6 +72,29 @@ export const secretsApi = {
     });
     return response.data;
   },
+
+  getWorkflowClaudeCodeCredentialStatus: async (workspacePath: string): Promise<{ configured: boolean; updated_at?: string }> => {
+    const response = await api.get('/api/workflow-provider-credentials/claude-code', {
+      params: { workspace_path: workspacePath },
+    });
+    return response.data;
+  },
+
+  storeWorkflowClaudeCodeCredential: async (workspacePath: string, token: string): Promise<{ success: boolean }> => {
+    const encrypted = await secretsApi.encrypt(token);
+    const response = await api.put('/api/workflow-provider-credentials/claude-code', {
+      workspace_path: workspacePath,
+      encrypted_value: encrypted.encrypted,
+    });
+    return response.data;
+  },
+
+  deleteWorkflowClaudeCodeCredential: async (workspacePath: string): Promise<{ success: boolean }> => {
+    const response = await api.delete('/api/workflow-provider-credentials/claude-code', {
+      params: { workspace_path: workspacePath },
+    });
+    return response.data;
+  },
 };
 
 export default secretsApi;

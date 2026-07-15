@@ -24,6 +24,7 @@ import (
 //	config/bot-connectors.json          — operator-level bot connector configs
 //	_users/<userID>/secrets.json                         — per-user encrypted secret blobs
 //	_users/<userID>/workflow_secrets/<workflow-hash>.json - per-workflow encrypted secret blobs
+//	_users/<userID>/workflow_provider_credentials/<workflow-hash>.json - private provider auth
 //
 // Both are loaded into memory on first access and mutated under narrow
 // mutexes. The store is built for single-instance deployments.
@@ -37,8 +38,9 @@ type FilesystemStore struct {
 	botCfgLegacyFile string
 
 	// Secrets mutexes, created on-demand.
-	secretsMu         sync.Map // userID -> *sync.Mutex
-	workflowSecretsMu sync.Map // userID + workflow path -> *sync.Mutex
+	secretsMu                     sync.Map // userID -> *sync.Mutex
+	workflowSecretsMu             sync.Map // userID + workflow path -> *sync.Mutex
+	workflowProviderCredentialsMu sync.Map // userID + workflow path -> *sync.Mutex
 }
 
 // sanitizeUserID returns a safe folder segment for a user ID. Empty or
@@ -222,6 +224,11 @@ type workflowSecretsDocument struct {
 	Secrets      map[string]*userSecretRecord `json:"secrets"`
 }
 
+type workflowProviderCredentialsDocument struct {
+	WorkflowPath string                       `json:"workflow_path"`
+	Credentials  map[string]*userSecretRecord `json:"credentials"`
+}
+
 func normalizeWorkflowSecretPath(workflowPath string) (string, error) {
 	workflowPath = strings.TrimSpace(filepath.ToSlash(workflowPath))
 	workflowPath = strings.Trim(workflowPath, "/")
@@ -256,6 +263,14 @@ func (s *FilesystemStore) workflowSecretsFile(userID, workflowPath string) (stri
 	return filepath.Join(s.rootDir, "_users", sanitizeUserID(userID), "workflow_secrets", workflowSecretPathHash(normalized)+".json"), normalized, nil
 }
 
+func (s *FilesystemStore) workflowProviderCredentialsFile(userID, workflowPath string) (string, string, error) {
+	normalized, err := normalizeWorkflowSecretPath(workflowPath)
+	if err != nil {
+		return "", "", err
+	}
+	return filepath.Join(s.rootDir, "_users", sanitizeUserID(userID), "workflow_provider_credentials", workflowSecretPathHash(normalized)+".json"), normalized, nil
+}
+
 // secretsLock returns a per-user mutex, created on demand.
 func (s *FilesystemStore) secretsLock(userID string) *sync.Mutex {
 	key := sanitizeUserID(userID)
@@ -278,6 +293,20 @@ func (s *FilesystemStore) workflowSecretsLock(userID, workflowPath string) *sync
 	}
 	m := &sync.Mutex{}
 	actual, _ := s.workflowSecretsMu.LoadOrStore(key, m)
+	return actual.(*sync.Mutex)
+}
+
+func (s *FilesystemStore) workflowProviderCredentialsLock(userID, workflowPath string) *sync.Mutex {
+	normalized, err := normalizeWorkflowSecretPath(workflowPath)
+	if err != nil {
+		normalized = strings.TrimSpace(workflowPath)
+	}
+	key := sanitizeUserID(userID) + ":" + workflowSecretPathHash(normalized)
+	if m, ok := s.workflowProviderCredentialsMu.Load(key); ok {
+		return m.(*sync.Mutex)
+	}
+	m := &sync.Mutex{}
+	actual, _ := s.workflowProviderCredentialsMu.LoadOrStore(key, m)
 	return actual.(*sync.Mutex)
 }
 
@@ -481,6 +510,110 @@ func (s *FilesystemStore) ListWorkflowSecrets(ctx context.Context, userID, workf
 		})
 	}
 	return out, nil
+}
+
+func (s *FilesystemStore) loadWorkflowProviderCredentialsLocked(userID, workflowPath string) (string, map[string]*userSecretRecord, error) {
+	path, normalized, err := s.workflowProviderCredentialsFile(userID, workflowPath)
+	if err != nil {
+		return "", nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return normalized, make(map[string]*userSecretRecord), nil
+		}
+		return "", nil, err
+	}
+	if len(data) == 0 {
+		return normalized, make(map[string]*userSecretRecord), nil
+	}
+	var doc workflowProviderCredentialsDocument
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return "", nil, fmt.Errorf("chathistory: parse %s: %w", path, err)
+	}
+	if doc.Credentials == nil {
+		doc.Credentials = make(map[string]*userSecretRecord)
+	}
+	return normalized, doc.Credentials, nil
+}
+
+func (s *FilesystemStore) saveWorkflowProviderCredentialsLocked(userID, workflowPath string, credentials map[string]*userSecretRecord) error {
+	path, normalized, err := s.workflowProviderCredentialsFile(userID, workflowPath)
+	if err != nil {
+		return err
+	}
+	doc := workflowProviderCredentialsDocument{WorkflowPath: normalized, Credentials: credentials}
+	return fsutil.WriteJSONAtomic(path, doc, 0600)
+}
+
+func (s *FilesystemStore) UpsertWorkflowProviderCredential(ctx context.Context, userID, workflowPath, provider, encryptedValue string) error {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" {
+		return fmt.Errorf("chathistory: provider is required")
+	}
+	mux := s.workflowProviderCredentialsLock(userID, workflowPath)
+	mux.Lock()
+	defer mux.Unlock()
+
+	normalized, credentials, err := s.loadWorkflowProviderCredentialsLocked(userID, workflowPath)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	if existing, ok := credentials[provider]; ok {
+		existing.EncryptedValue = encryptedValue
+		existing.UpdatedAt = now
+	} else {
+		credentials[provider] = &userSecretRecord{EncryptedValue: encryptedValue, CreatedAt: now, UpdatedAt: now}
+	}
+	return s.saveWorkflowProviderCredentialsLocked(userID, normalized, credentials)
+}
+
+func (s *FilesystemStore) GetWorkflowProviderCredential(ctx context.Context, userID, workflowPath, provider string) (*WorkflowProviderCredential, error) {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" {
+		return nil, fmt.Errorf("chathistory: provider is required")
+	}
+	mux := s.workflowProviderCredentialsLock(userID, workflowPath)
+	mux.Lock()
+	defer mux.Unlock()
+
+	normalized, credentials, err := s.loadWorkflowProviderCredentialsLocked(userID, workflowPath)
+	if err != nil {
+		return nil, err
+	}
+	rec, ok := credentials[provider]
+	if !ok {
+		return nil, nil
+	}
+	return &WorkflowProviderCredential{
+		UserID:         sanitizeUserID(userID),
+		WorkflowPath:   normalized,
+		Provider:       provider,
+		EncryptedValue: rec.EncryptedValue,
+		CreatedAt:      rec.CreatedAt,
+		UpdatedAt:      rec.UpdatedAt,
+	}, nil
+}
+
+func (s *FilesystemStore) DeleteWorkflowProviderCredential(ctx context.Context, userID, workflowPath, provider string) error {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" {
+		return fmt.Errorf("chathistory: provider is required")
+	}
+	mux := s.workflowProviderCredentialsLock(userID, workflowPath)
+	mux.Lock()
+	defer mux.Unlock()
+
+	normalized, credentials, err := s.loadWorkflowProviderCredentialsLocked(userID, workflowPath)
+	if err != nil {
+		return err
+	}
+	if _, ok := credentials[provider]; !ok {
+		return nil
+	}
+	delete(credentials, provider)
+	return s.saveWorkflowProviderCredentialsLocked(userID, normalized, credentials)
 }
 
 // Compile-time check that FilesystemStore satisfies Store.

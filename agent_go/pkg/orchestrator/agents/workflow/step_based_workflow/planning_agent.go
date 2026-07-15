@@ -1002,7 +1002,8 @@ func writePlanChangelogEntry(
 	if err != nil {
 		return fmt.Errorf("marshal plan changelog: %w", err)
 	}
-	if err := writeFile(ctx, changelogPath, string(data)); err != nil {
+	writeCtx := withPlanningFileMutationWriteAccess(ctx, workspacePath, filepath.Join("changelog", planChangelogSessionFile))
+	if err := writeFile(writeCtx, changelogPath, string(data)); err != nil {
 		return fmt.Errorf("write plan changelog: %w", err)
 	}
 	logger.Info(fmt.Sprintf("📝 Plan changelog: %s — %s", entry.Tool, entry.Reason))

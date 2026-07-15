@@ -65,6 +65,18 @@ type UserSecret struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
+// WorkflowProviderCredential is an encrypted provider-runtime credential
+// scoped to one user and workflow. Unlike UserSecret, it is never exposed to
+// workflow tools or injected into the step environment.
+type WorkflowProviderCredential struct {
+	UserID         string    `json:"user_id"`
+	WorkflowPath   string    `json:"workflow_path"`
+	Provider       string    `json:"provider"`
+	EncryptedValue string    `json:"encrypted_value"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
 // Store is the persistence interface for bot connector configs and per-user
 // secrets. Everything else (chat sessions, events, bot conversations) is
 // in-memory on StreamingAPI / BotConversationManager and has no durable form.
@@ -83,6 +95,11 @@ type Store interface {
 	UpsertWorkflowSecret(ctx context.Context, userID, workflowPath, name, encryptedValue string) error
 	DeleteWorkflowSecret(ctx context.Context, userID, workflowPath, name string) error
 	ListWorkflowSecrets(ctx context.Context, userID, workflowPath string) ([]UserSecret, error)
+
+	// Workflow provider credentials (private runtime auth, never tool secrets).
+	UpsertWorkflowProviderCredential(ctx context.Context, userID, workflowPath, provider, encryptedValue string) error
+	GetWorkflowProviderCredential(ctx context.Context, userID, workflowPath, provider string) (*WorkflowProviderCredential, error)
+	DeleteWorkflowProviderCredential(ctx context.Context, userID, workflowPath, provider string) error
 
 	Close() error
 }

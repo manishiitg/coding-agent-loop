@@ -3,12 +3,11 @@ import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { Textarea } from './ui/Textarea';
 import { Card } from './ui/Card';
-import { Folder, Plus, X, Settings, Info, Download, Trash2, SlidersHorizontal } from 'lucide-react';
+import { CheckCircle2, ChevronDown, Download, Folder, KeyRound, Loader2, Plus, Settings, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { FolderSelectionDialog } from './FolderSelectionDialog';
 import { ToolSelectionSection } from './ToolSelectionSection';
 import { SkillSelectionSection } from './skills/SkillSelectionSection';
 import { SecretSelectionSection } from './secrets/SecretSelectionSection';
-import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from './ui/tooltip';
 import ConfirmationDialog from './ui/ConfirmationDialog';
 import type { CustomPreset } from '../types/preset';
 import type { PlannerFile, PresetLLMConfig, AgentLLMConfig, AgentLLMFallback, LLMProvider } from '../services/api-types';
@@ -23,11 +22,38 @@ import ModalPortal from './ui/ModalPortal';
 import { getWorkflowLLMOptions, getWorkflowLLMTierDefaults, getWorkflowProviderOptions } from '../utils/workflowLLMTierDefaults';
 import { llmOptionMatchesRef, llmOptionsKey } from '../utils/llmConfigDisplay';
 import { chromeCdpInstallCommand, chromeCdpLaunchCommand, chromeCdpVerifyCommand, chromeCdpZipUrl, mergeCdpPorts } from '../utils/cdpSetup';
+import { secretsApi } from '../api/secrets';
+import { useChatStore } from '../stores/useChatStore';
+
+type WorkflowLLMRoleKey = 'tier1' | 'tier2' | 'tier3' | 'builder' | 'maintenance' | 'pulse';
+
+type WorkflowLLMRoleRow = {
+  key: WorkflowLLMRoleKey;
+  label: string;
+  description: string;
+  value: AgentLLMConfig | null;
+  defaultValue: AgentLLMConfig | null;
+  onSelect: (llm: LLMOption) => void;
+  onReset: () => void;
+  fallbacks?: AgentLLMFallback[];
+  setFallbacks?: React.Dispatch<React.SetStateAction<AgentLLMFallback[]>>;
+};
+
+function agentLLMUsesProvider(config: AgentLLMConfig | null | undefined, provider: string): boolean {
+  return config?.provider === provider || Boolean(config?.fallbacks?.some(fallback => fallback.provider === provider));
+}
+
+function sameAgentLLM(left: AgentLLMConfig | null | undefined, right: AgentLLMConfig | null | undefined): boolean {
+  if (!left || !right) return left === right;
+  return left.provider === right.provider
+    && left.model_id === right.model_id
+    && llmOptionsKey(left.options) === llmOptionsKey(right.options);
+}
 
 interface PresetModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'multi-agent' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, browserMode?: 'none' | 'auto' | 'headless' | 'cdp', cdpPorts?: number[]) => void;
+  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'multi-agent' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, browserMode?: 'none' | 'auto' | 'headless' | 'cdp', cdpPorts?: number[]) => boolean | void | Promise<boolean | void>;
   editingPreset?: CustomPreset | null;
   availableServers?: string[];
   hideAgentModeSelection?: boolean;
@@ -83,6 +109,12 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [tier2Fallbacks, setTier2Fallbacks] = useState<AgentLLMFallback[]>([]);
   const [tier3Fallbacks, setTier3Fallbacks] = useState<AgentLLMFallback[]>([]);
   const [showWorkflowLLMAdvanced, setShowWorkflowLLMAdvanced] = useState(false);
+  const [expandedWorkflowLLMRole, setExpandedWorkflowLLMRole] = useState<WorkflowLLMRoleKey | null>(null);
+  const [claudeCodeToken, setClaudeCodeToken] = useState('');
+  const [claudeCredentialConfigured, setClaudeCredentialConfigured] = useState(false);
+  const [isLoadingClaudeCredential, setIsLoadingClaudeCredential] = useState(false);
+  const [isDeletingClaudeCredential, setIsDeletingClaudeCredential] = useState(false);
+  const [isSavingPreset, setIsSavingPreset] = useState(false);
 
   const { selectedModeCategory, getAgentModeFromCategory } = useModeStore();
   const primaryConfig = useLLMStore(state => state.primaryConfig);
@@ -252,13 +284,16 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
     return `${config.provider}/${config.model_id}`;
   }, []);
 
-  const getEffectiveTierLLM = useCallback((tierNum: number) => {
-    if (tierNum === 1) return effectiveTier1LLM;
-    if (tierNum === 2) return effectiveTier2LLM;
-    return effectiveTier3LLM;
-  }, [effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM]);
   // Draft create paths can collide with existing workflows, so only load scoped secrets for persisted workflows.
   const workflowSecretPath = editingPreset ? selectedFolder?.filepath : undefined;
+  const workflowCredentialPath = editingPreset ? selectedFolder?.filepath : undefined;
+
+  const usesClaudeCode = useMemo(() => {
+    return selectedWorkflowLLMOption?.provider === 'claude-code'
+      || [effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM, effectiveBuilderLLM, effectiveMaintenanceLLM, effectivePulseLLM]
+        .some(config => agentLLMUsesProvider(config, 'claude-code'))
+      || [...tier1Fallbacks, ...tier2Fallbacks, ...tier3Fallbacks].some(fallback => fallback.provider === 'claude-code');
+  }, [effectiveBuilderLLM, effectiveMaintenanceLLM, effectivePulseLLM, effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM, selectedWorkflowLLMOption?.provider, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks]);
 
   const hasAdvancedWorkflowLLMConfig = useCallback((presetLLM?: PresetLLMConfig | null) => {
     return presetLLM?.mode === 'explicit';
@@ -276,7 +311,53 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
     setTier1Fallbacks([]);
     setTier2Fallbacks([]);
     setTier3Fallbacks([]);
+    setExpandedWorkflowLLMRole(null);
   }, [providerManifest]);
+
+  const useManagedWorkflowLLMDefaults = useCallback(() => {
+    const provider = selectedWorkflowLLMOption?.provider || currentLLMOption?.provider;
+    if (provider) {
+      setLlmConfig({ schema_version: 2, mode: 'provider_profile', provider: provider as LLMProvider });
+    }
+    setShowWorkflowLLMAdvanced(false);
+    setExpandedWorkflowLLMRole(null);
+    setBuilderLLM(null);
+    setMaintenanceLLM(null);
+    setPulseLLM(null);
+    setTier1LLM(null);
+    setTier2LLM(null);
+    setTier3LLM(null);
+    setTier1Fallbacks([]);
+    setTier2Fallbacks([]);
+    setTier3Fallbacks([]);
+  }, [currentLLMOption?.provider, selectedWorkflowLLMOption?.provider]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setExpandedWorkflowLLMRole(null);
+    setClaudeCodeToken('');
+  }, [editingPreset?.id, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || effectiveAgentMode !== 'workflow' || !workflowCredentialPath) {
+      setClaudeCredentialConfigured(false);
+      setIsLoadingClaudeCredential(false);
+      return;
+    }
+    let cancelled = false;
+    setIsLoadingClaudeCredential(true);
+    void secretsApi.getWorkflowClaudeCodeCredentialStatus(workflowCredentialPath)
+      .then(status => {
+        if (!cancelled) setClaudeCredentialConfigured(status.configured);
+      })
+      .catch(() => {
+        if (!cancelled) setClaudeCredentialConfigured(false);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingClaudeCredential(false);
+      });
+    return () => { cancelled = true; };
+  }, [effectiveAgentMode, isOpen, workflowCredentialPath]);
 
   useEffect(() => {
     if (editingPreset) {
@@ -405,14 +486,34 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
     setSelectedFolder(makeWorkflowFolder(folderName));
   }, [makeWorkflowFolder, sanitizeWorkflowFolderName]);
 
-  const handleSubmit = useCallback((e: React.FormEvent) => {
+  const handleDeleteClaudeCredential = useCallback(async () => {
+    const workspacePath = selectedFolder?.filepath;
+    if (!workspacePath) return;
+    setIsDeletingClaudeCredential(true);
+    try {
+      await secretsApi.deleteWorkflowClaudeCodeCredential(workspacePath);
+      setClaudeCredentialConfigured(false);
+      setClaudeCodeToken('');
+      useChatStore.getState().addToast('Workflow Claude Code token removed; saved Claude login will be used.', 'success');
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Unknown error';
+      useChatStore.getState().addToast(`Failed to remove Claude Code token: ${detail}`, 'error');
+    } finally {
+      setIsDeletingClaudeCredential(false);
+    }
+  }, [selectedFolder?.filepath]);
+
+  const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     const isQueryRequired = effectiveAgentMode !== 'workflow';
-    if (label.trim() && (!isQueryRequired || query.trim())) {
-      if (effectiveAgentMode === 'workflow' && !selectedFolder) {
-        alert('Folder selection is required for workflow presets');
-        return;
-      }
+    if (!label.trim() || (isQueryRequired && !query.trim())) return;
+    if (effectiveAgentMode === 'workflow' && !selectedFolder) {
+      alert('Folder selection is required for workflow presets');
+      return;
+    }
+
+    setIsSavingPreset(true);
+    try {
       
       // Debug: Log what we're sending
       console.log('[PresetModal] Saving preset with:', {
@@ -488,7 +589,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       const cdpPorts = browserMode === 'auto' || browserMode === 'cdp'
         ? mergeCdpPorts(cdpPort, editingPreset?.cdpPorts)
         : [];
-      onSave(
+      const saved = await onSave(
         label.trim(),
         effectiveAgentMode === 'workflow' ? '' : query.trim(),
         selectedServers,
@@ -503,9 +604,24 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         browserMode, // Browser mode: none|auto|headless|cdp
         cdpPorts
       );
+      if (saved === false) return;
+      if (effectiveAgentMode === 'workflow' && usesClaudeCode && claudeCodeToken.trim() && selectedFolder?.filepath) {
+        await secretsApi.storeWorkflowClaudeCodeCredential(selectedFolder.filepath, claudeCodeToken.trim());
+        setClaudeCredentialConfigured(true);
+        setClaudeCodeToken('');
+        useChatStore.getState().addToast('Workflow Claude Code token saved.', 'success');
+      }
       onClose();
+    } catch (error) {
+      const serverDetail = (error as { response?: { data?: unknown } })?.response?.data;
+      const detail = typeof serverDetail === 'string' && serverDetail.trim() !== ''
+        ? serverDetail.trim()
+        : error instanceof Error ? error.message : 'Unknown error';
+      useChatStore.getState().addToast(`Failed to save automation: ${detail}`, 'error');
+    } finally {
+      setIsSavingPreset(false);
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, builderLLM, effectiveBuilderLLM, maintenanceLLM, effectiveMaintenanceLLM, pulseLLM, effectivePulseLLM, browserMode, cdpPort, editingPreset?.cdpPorts, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, defaultAgentLLM, effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM, showWorkflowLLMAdvanced]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, builderLLM, effectiveBuilderLLM, maintenanceLLM, effectiveMaintenanceLLM, pulseLLM, effectivePulseLLM, browserMode, cdpPort, editingPreset?.cdpPorts, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, defaultAgentLLM, effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM, showWorkflowLLMAdvanced, usesClaudeCode, claudeCodeToken]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -539,6 +655,132 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setDeletingWorkflow(false);
     }
   }, [editingPreset, onDeleteWorkflow]);
+
+  const executionLLMRows: WorkflowLLMRoleRow[] = [
+    {
+      key: 'tier1', label: 'High reasoning', description: 'First runs and complex execution.',
+      value: effectiveTier1LLM, defaultValue: workflowDefaultTierLLMs?.tier1 || defaultAgentLLM,
+      onSelect: llm => setTier1LLM(toAgentLLMConfig(llm)),
+      onReset: () => { setTier1LLM(null); setTier1Fallbacks([]); },
+      fallbacks: tier1Fallbacks, setFallbacks: setTier1Fallbacks,
+    },
+    {
+      key: 'tier2', label: 'Medium reasoning', description: 'Execution after useful learnings exist.',
+      value: effectiveTier2LLM, defaultValue: workflowDefaultTierLLMs?.tier2 || defaultAgentLLM,
+      onSelect: llm => setTier2LLM(toAgentLLMConfig(llm)),
+      onReset: () => { setTier2LLM(null); setTier2Fallbacks([]); },
+      fallbacks: tier2Fallbacks, setFallbacks: setTier2Fallbacks,
+    },
+    {
+      key: 'tier3', label: 'Low reasoning', description: 'Validation and mature learned tasks.',
+      value: effectiveTier3LLM, defaultValue: workflowDefaultTierLLMs?.tier3 || defaultAgentLLM,
+      onSelect: llm => setTier3LLM(toAgentLLMConfig(llm)),
+      onReset: () => { setTier3LLM(null); setTier3Fallbacks([]); },
+      fallbacks: tier3Fallbacks, setFallbacks: setTier3Fallbacks,
+    },
+  ];
+  const supportLLMRows: WorkflowLLMRoleRow[] = [
+    {
+      key: 'builder', label: 'Builder', description: 'Chat, planning, evaluation design, and coordination.',
+      value: effectiveBuilderLLM, defaultValue: workflowDefaultTierLLMs?.builder || workflowDefaultTierLLMs?.tier1 || defaultAgentLLM,
+      onSelect: llm => setBuilderLLM(toAgentLLMConfig(llm)), onReset: () => setBuilderLLM(null),
+    },
+    {
+      key: 'maintenance', label: 'Maintenance', description: 'Harden, Goal Advisor, and deeper health reviews.',
+      value: effectiveMaintenanceLLM, defaultValue: workflowDefaultTierLLMs?.maintenance || workflowDefaultTierLLMs?.tier1 || defaultAgentLLM,
+      onSelect: llm => setMaintenanceLLM(toAgentLLMConfig(llm)), onReset: () => setMaintenanceLLM(null),
+    },
+    {
+      key: 'pulse', label: 'Pulse', description: 'Scheduled post-run QA and routine coordination.',
+      value: effectivePulseLLM, defaultValue: workflowDefaultTierLLMs?.pulse || defaultAgentLLM,
+      onSelect: llm => setPulseLLM(toAgentLLMConfig(llm)), onReset: () => setPulseLLM(null),
+    },
+  ];
+  const allWorkflowLLMRows = [...executionLLMRows, ...supportLLMRows];
+  const isWorkflowLLMRoleCustomized = (row: WorkflowLLMRoleRow) => !sameAgentLLM(row.value, row.defaultValue) || Boolean(row.fallbacks?.length);
+  const customizedWorkflowLLMRoleCount = allWorkflowLLMRows.filter(isWorkflowLLMRoleCustomized).length;
+
+  const renderWorkflowLLMRoleRow = (row: WorkflowLLMRoleRow) => {
+    const expanded = expandedWorkflowLLMRole === row.key;
+    const customized = isWorkflowLLMRoleCustomized(row);
+    const fallbacks = row.fallbacks ?? [];
+    const setFallbacks = row.setFallbacks;
+    return (
+      <div key={row.key} className="border-t border-gray-200 first:border-t-0 dark:border-gray-700">
+        <button
+          type="button"
+          onClick={() => setExpandedWorkflowLLMRole(expanded ? null : row.key)}
+          className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/70"
+          aria-expanded={expanded}
+        >
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium text-gray-800 dark:text-gray-100">{row.label}</span>
+              <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${customized
+                ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300'
+                : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
+              }`}>
+                {customized ? 'Customized' : 'Provider default'}
+              </span>
+            </div>
+            <div className="mt-0.5 truncate text-[11px] text-gray-500 dark:text-gray-400">{row.description}</div>
+          </div>
+          <div className="min-w-0 max-w-[45%] text-right">
+            <div className="truncate font-mono text-[11px] text-gray-700 dark:text-gray-200" title={formatAgentLLMConfig(row.value)}>
+              {formatAgentLLMConfig(row.value)}
+            </div>
+            {fallbacks.length > 0 && <div className="text-[10px] text-gray-400">{fallbacks.length} fallback{fallbacks.length === 1 ? '' : 's'}</div>}
+          </div>
+          <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+        </button>
+        {expanded && (
+          <div className="space-y-3 border-t border-gray-100 bg-white px-3 py-3 dark:border-gray-700 dark:bg-gray-900/40">
+            <LLMRoleSelector
+              availableLLMs={workflowLLMOptions}
+              value={row.value}
+              onLLMSelect={row.onSelect}
+              disabled={false}
+            />
+            {customized && (
+              <button type="button" onClick={row.onReset} className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400">
+                Reset this role to provider default
+              </button>
+            )}
+            {setFallbacks && (
+              <details className="rounded-md border border-gray-200 bg-gray-50 px-2.5 py-2 dark:border-gray-700 dark:bg-gray-800/60">
+                <summary className="cursor-pointer text-xs font-medium text-gray-600 dark:text-gray-300">
+                  Fallbacks{fallbacks.length > 0 ? ` (${fallbacks.length})` : ''}
+                </summary>
+                <div className="mt-2 space-y-2">
+                  {fallbacks.map((fallback, index) => (
+                    <span key={`${row.key}-fallback-${index}`} className="mr-1 inline-flex items-center gap-1 rounded-full bg-white px-2 py-0.5 text-xs dark:bg-gray-700">
+                      {fallback.provider}/{fallback.model_id.split('/').pop()}
+                      <button type="button" onClick={() => setFallbacks(previous => previous.filter((_, itemIndex) => itemIndex !== index))} className="text-gray-400 hover:text-red-500" aria-label={`Remove ${row.label} fallback`}>
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+                  <LLMSelectionDropdown
+                    availableLLMs={workflowLLMOptions.filter(llm => {
+                      const key = llmOptionKey(llm);
+                      return !(row.value && llmConfigKey(row.value) === key) && !fallbacks.some(fallback => llmConfigKey(fallback) === key);
+                    })}
+                    selectedLLM={null}
+                    onLLMSelect={llm => setFallbacks(previous => [...previous, toAgentLLMFallback(llm)])}
+                    onRefresh={loadDefaultsFromBackend}
+                    disabled={false}
+                    inModal={true}
+                    openDirection="down"
+                    placeholder="+ Add fallback"
+                  />
+                </div>
+              </details>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   if (!isOpen) return null;
 
@@ -576,8 +818,9 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
               form="preset-form"
               variant="outline"
               size="sm"
-              disabled={!label.trim() || (effectiveAgentMode !== 'workflow' && !query.trim()) || (effectiveAgentMode === 'workflow' && !selectedFolder)}
+              disabled={isSavingPreset || !label.trim() || (effectiveAgentMode !== 'workflow' && !query.trim()) || (effectiveAgentMode === 'workflow' && !selectedFolder)}
             >
+              {isSavingPreset && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
               {editingPreset ? 'Update' : 'Save'} {effectiveAgentMode === 'workflow' ? 'Automation' : 'Preset'}
             </Button>
             <Button
@@ -655,209 +898,92 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
 
                     {showWorkflowLLMAdvanced && (
                       <>
-                        <div className="flex justify-end">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="text-xs font-medium text-gray-800 dark:text-gray-100">Customize only what you need</div>
+                            <div className="mt-0.5 text-[11px] leading-snug text-gray-500 dark:text-gray-400">
+                              All roles keep the coding-agent defaults until you change one. Open a row to edit it.
+                            </div>
+                          </div>
                           <button
                             type="button"
-                            onClick={() => {
-                              setShowWorkflowLLMAdvanced(false);
-                              setMaintenanceLLM(null);
-                              setPulseLLM(null);
-                            }}
-                            className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                            onClick={useManagedWorkflowLLMDefaults}
+                            className="shrink-0 text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
                           >
-                            Use simple setup
+                            Use managed defaults
                           </button>
                         </div>
-                    {[
-                          { label: 'Tier 1 - High Reasoning', tooltip: 'Used for first-time execution (no learnings yet) and initial learning extraction.', desc: 'Most capable model for complex first-time tasks.', llm: tier1LLM, setLLM: setTier1LLM, fallbacks: tier1Fallbacks, setFallbacks: setTier1Fallbacks, num: 1 },
-                          { label: 'Tier 2 - Medium Reasoning', tooltip: 'Used for execution with existing learnings and learning refinement.', desc: 'Balanced model for tasks with existing learnings.', llm: tier2LLM, setLLM: setTier2LLM, fallbacks: tier2Fallbacks, setFallbacks: setTier2Fallbacks, num: 2 },
-                          { label: 'Tier 3 - Low Reasoning', tooltip: 'Used for validation (always) and mature learning refinement (2+ runs).', desc: 'Cost-efficient model for validation and mature learnings.', llm: tier3LLM, setLLM: setTier3LLM, fallbacks: tier3Fallbacks, setFallbacks: setTier3Fallbacks, num: 3 },
-                        ].map((tier) => {
-                          const effectiveTierLLM = getEffectiveTierLLM(tier.num);
-                          return (
-                        <div key={tier.num}>
-                          <div className="flex items-center gap-1.5 mb-2">
-                            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
-                              {tier.label}
-                            </label>
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
-                                </TooltipTrigger>
-                                <TooltipContent className="max-w-xs">
-                                  <p className="text-xs">{tier.tooltip}</p>
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                          </div>
-                          <LLMRoleSelector
-                            availableLLMs={workflowLLMOptions}
-                            value={effectiveTierLLM}
-                            onLLMSelect={(llm) => tier.setLLM(toAgentLLMConfig(llm))}
-                            disabled={false}
-                          />
-                          <div className="mt-1 font-mono text-[11px] text-gray-700 dark:text-gray-300" title={formatAgentLLMConfig(effectiveTierLLM)}>
-                            {formatAgentLLMConfig(effectiveTierLLM)}
-                          </div>
-                          <div className="mt-1.5">
-                            {tier.fallbacks.map((fb, i) => (
-                              <span key={`t${tier.num}-fb-${i}`} className="inline-flex items-center gap-1 mr-1 mb-1 px-2 py-0.5 bg-gray-100 dark:bg-gray-700 text-xs rounded-full">
-                                {fb.provider}/{fb.model_id.split('/').pop()}
-                                <button type="button" onClick={() => tier.setFallbacks(prev => prev.filter((_, idx) => idx !== i))} className="text-gray-400 hover:text-red-500">
-                                  <X className="w-3 h-3" />
-                                </button>
-                              </span>
-                            ))}
-                            <LLMSelectionDropdown
-                              availableLLMs={workflowLLMOptions.filter(llm => {
-                                const key = llmOptionKey(llm);
-                                return !(
-                                  effectiveTierLLM &&
-                                  llmConfigKey(effectiveTierLLM) === key
-                                ) && !tier.fallbacks.some(fb => llmConfigKey(fb) === key);
-                              })}
-                              selectedLLM={null}
-                              onLLMSelect={(llm) => tier.setFallbacks(prev => [...prev, toAgentLLMFallback(llm)])}
-                              onRefresh={loadDefaultsFromBackend}
-                              disabled={false}
-                              inModal={true}
-                              openDirection="down"
-                              placeholder="+ Add fallback"
-                            />
-                          </div>
-                          <div className="text-xs text-gray-500 mt-1">
-                            {tier.desc}
-                          </div>
-                        </div>
-                          );
-                        })}
-                        {/* Builder LLM */}
-                        <div>
-                          <div className="flex items-center gap-1.5 mb-2">
-                            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
-                              Builder LLM
-                            </label>
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
-                                </TooltipTrigger>
-                                <TooltipContent className="max-w-xs">
-                                  <p className="text-xs">Runs the workflow Builder chat, planning, evaluation design, and coordination.</p>
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                          </div>
-                          <LLMRoleSelector
-                            availableLLMs={workflowLLMOptions}
-                            value={effectiveBuilderLLM}
-                            onLLMSelect={(llm) => setBuilderLLM(toAgentLLMConfig(llm))}
-                            disabled={false}
-                          />
-                          <div className="mt-1 font-mono text-[11px] text-gray-700 dark:text-gray-300" title={formatAgentLLMConfig(effectiveBuilderLLM)}>
-                            {formatAgentLLMConfig(effectiveBuilderLLM)}
-                          </div>
-                          <div className="text-xs text-gray-500 mt-1">
-                            Used for chat, planning, evaluation design, and workflow coordination.
-                          </div>
-                        </div>
-                        {/* Maintenance LLM */}
-                        <div>
-                          <div className="flex items-center justify-between gap-2 mb-2">
-                            <div className="flex items-center gap-1.5">
-                              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
-                                Maintenance LLM
-                              </label>
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
-                                  </TooltipTrigger>
-                                  <TooltipContent className="max-w-xs">
-                                    <p className="text-xs">Used by Harden, Goal Advisor, and deeper report, eval, knowledge-base, and database reviews.</p>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
+                        <div className="space-y-3">
+                          <div>
+                            <div className="mb-1.5 flex items-center justify-between px-1">
+                              <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Execution</span>
+                              <span className="text-[10px] text-gray-400">The workflow chooses the tier automatically</span>
                             </div>
-                            {maintenanceLLM && (
-                              <button
-                                type="button"
-                                onClick={() => setMaintenanceLLM(null)}
-                                className="text-xs text-red-400 hover:text-red-600"
-                              >
-                                Clear
-                              </button>
-                            )}
-                          </div>
-                          <LLMRoleSelector
-                            availableLLMs={workflowLLMOptions}
-                            value={effectiveMaintenanceLLM}
-                            onLLMSelect={(llm) => setMaintenanceLLM(toAgentLLMConfig(llm))}
-                            disabled={false}
-                          />
-                          <div className="mt-1 font-mono text-[11px] text-gray-700 dark:text-gray-300" title={formatAgentLLMConfig(effectiveMaintenanceLLM)}>
-                            {formatAgentLLMConfig(effectiveMaintenanceLLM)}
-                          </div>
-                          <div className="text-xs text-gray-500 mt-1">
-                            Used for expensive maintenance and strategic review work selected by Pulse.
-                          </div>
-                        </div>
-                        {/* Pulse LLM */}
-                        <div>
-                          <div className="flex items-center justify-between gap-2 mb-2">
-                            <div className="flex items-center gap-1.5">
-                              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
-                                Pulse LLM
-                              </label>
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
-                                  </TooltipTrigger>
-                                  <TooltipContent className="max-w-xs">
-                                    <p className="text-xs">Optional override used only by scheduled Pulse/post-run QA. Leave empty to use the provider Pulse default when available.</p>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
+                            <div className="overflow-hidden rounded-md border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900/40">
+                              {executionLLMRows.map(renderWorkflowLLMRoleRow)}
                             </div>
-                            {pulseLLM && (
-                              <button
-                                type="button"
-                                onClick={() => setPulseLLM(null)}
-                                className="text-xs text-red-400 hover:text-red-600"
-                              >
-                                Clear
-                              </button>
-                            )}
                           </div>
-                          <LLMRoleSelector
-                            availableLLMs={workflowLLMOptions}
-                            value={effectivePulseLLM}
-                            onLLMSelect={(llm) => setPulseLLM(toAgentLLMConfig(llm))}
-                            disabled={false}
-                          />
-                          <div className="mt-1 font-mono text-[11px] text-gray-700 dark:text-gray-300" title={formatAgentLLMConfig(effectivePulseLLM)}>
-                            {formatAgentLLMConfig(effectivePulseLLM)}
+                          <div>
+                            <div className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Workflow agents</div>
+                            <div className="overflow-hidden rounded-md border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900/40">
+                              {supportLLMRows.map(renderWorkflowLLMRoleRow)}
+                            </div>
                           </div>
-                          <div className="text-xs text-gray-500 mt-1">
-                            Used only for scheduled Pulse after normal runs. Empty means Pulse uses the provider Pulse default when available.
+                          <div className="text-[11px] text-gray-500 dark:text-gray-400">
+                            {customizedWorkflowLLMRoleCount === 0
+                              ? 'No custom roles yet. Everything follows the current provider defaults.'
+                              : `${customizedWorkflowLLMRoleCount} customized role${customizedWorkflowLLMRoleCount === 1 ? '' : 's'}; all other roles use provider defaults.`}
                           </div>
-                        </div>
-                        {/* Info panel */}
-                        <div className="text-xs text-gray-500 pt-2 border-t border-gray-200 dark:border-gray-700 space-y-1">
-                          <div className="font-medium text-gray-600 dark:text-gray-400">Auto-selection rules:</div>
-                          <div>Execution: Tier 1 → Tier 2 (after first learning)</div>
-                          <div>Learning: Tier 2 → Tier 3 (after 2+ runs)</div>
-                          <div>Validation: Always Tier 3</div>
-                          <div>Builder LLM: Chat, planning, evaluation design, and coordination</div>
-                          <div>Maintenance LLM: Harden, Goal Advisor, and deeper health reviews</div>
-                          <div>Pulse LLM: Optional post-run QA override; empty uses the provider Pulse default when available</div>
                         </div>
                       </>
                     )}
                   </div>
                 </div>
+
+                {usesClaudeCode && (
+                  <div>
+                    <label className="mb-2 flex items-center gap-2 text-sm font-medium">
+                      <KeyRound className="h-4 w-4" />
+                      Claude Code login for this automation
+                    </label>
+                    <div className="rounded-md border border-violet-200 bg-violet-50/60 p-3 dark:border-violet-800 dark:bg-violet-950/20">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="text-xs leading-relaxed text-gray-600 dark:text-gray-300">
+                          Optional. Paste a long-lived token from <code className="font-mono">claude setup-token</code>. It is private to this user and workflow. If empty, Claude Code uses its saved login.
+                        </div>
+                        {isLoadingClaudeCredential ? (
+                          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-gray-400" />
+                        ) : claudeCredentialConfigured ? (
+                          <span className="inline-flex shrink-0 items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400">
+                            <CheckCircle2 className="h-3.5 w-3.5" /> Configured
+                          </span>
+                        ) : null}
+                      </div>
+                      <input
+                        type="password"
+                        autoComplete="off"
+                        value={claudeCodeToken}
+                        onChange={event => setClaudeCodeToken(event.target.value)}
+                        placeholder={claudeCredentialConfigured ? 'Paste a replacement token' : 'Paste Claude Code token'}
+                        className="mt-3 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-mono text-gray-900 outline-none focus:border-violet-500 dark:border-slate-600 dark:bg-slate-900 dark:text-gray-100"
+                      />
+                      <div className="mt-2 flex items-center justify-between gap-3">
+                        <span className="text-[11px] text-gray-500 dark:text-gray-400">Terminal Anthropic API keys are not used for this Claude Code session.</span>
+                        {claudeCredentialConfigured && (
+                          <button
+                            type="button"
+                            onClick={handleDeleteClaudeCredential}
+                            disabled={isDeletingClaudeCredential || isSavingPreset}
+                            className="inline-flex shrink-0 items-center gap-1 text-xs text-red-600 hover:text-red-700 disabled:opacity-50 dark:text-red-400"
+                          >
+                            {isDeletingClaudeCredential ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                            Remove token
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Right Column - Folder, Tools, and Options */}

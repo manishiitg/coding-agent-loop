@@ -1591,6 +1591,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/secrets/workflow/store", api.handleStoreWorkflowSecret).Methods("PUT", "OPTIONS")
 	apiRouter.HandleFunc("/secrets/workflow/store/{name}", api.handleDeleteWorkflowSecret).Methods("DELETE", "OPTIONS")
 	apiRouter.HandleFunc("/secrets/workflow/stored", api.handleListStoredWorkflowSecrets).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow-provider-credentials/claude-code", api.handleGetWorkflowClaudeCodeCredential).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow-provider-credentials/claude-code", api.handleStoreWorkflowClaudeCodeCredential).Methods("PUT", "OPTIONS")
+	apiRouter.HandleFunc("/workflow-provider-credentials/claude-code", api.handleDeleteWorkflowClaudeCodeCredential).Methods("DELETE", "OPTIONS")
 
 	// Provider API keys (encrypted file storage for scheduled runs)
 	apiRouter.HandleFunc("/provider-keys", api.handleSaveProviderKeys).Methods("PUT", "OPTIONS")
@@ -3188,7 +3191,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		if workflowLLMConfig == nil {
 			workflowLLMConfig = &orchestrator.LLMConfig{}
 		}
-		workflowLLMConfig.APIKeys = MergedProviderAPIKeys(r.Context())
+		workflowKeys, credentialErr := api.workflowProviderAPIKeys(r.Context(), currentUserID, manifestWorkspacePath, MergedProviderAPIKeys(r.Context()))
+		if credentialErr != nil {
+			http.Error(w, "Failed to load workflow provider credentials", http.StatusInternalServerError)
+			return
+		}
+		workflowLLMConfig.APIKeys = workflowKeys
 
 		// Create workflow orchestrator for this request.
 		// Note: req.MaxTurns is already normalized earlier in the handler:
@@ -3728,6 +3736,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Load merged API keys (env + workspace) while r.Context() is still valid (before goroutine)
 	mergedAPIKeys := MergedProviderAPIKeys(r.Context())
+	if isWorkflowPhase && workflowPhaseFolder != "" {
+		var credentialErr error
+		mergedAPIKeys, credentialErr = api.workflowProviderAPIKeys(r.Context(), currentUserID, workflowPhaseFolder, mergedAPIKeys)
+		if credentialErr != nil {
+			logfWithContext(queryLogCtx.WithWorkflow(workflowPhaseFolder), "[WORKFLOW_AUTH] Failed to load provider credentials: %v", credentialErr)
+		}
+	}
 
 	queryInputLaneRelease := releaseInputLane
 	if queryInputLaneRelease != nil {
@@ -7390,11 +7405,15 @@ func (api *StreamingAPI) buildWorkshopConfig(
 	if workshopLLMConfig == nil {
 		workshopLLMConfig = &orchestrator.LLMConfig{}
 	}
+	baseAPIKeys := MergedProviderAPIKeys(ctx)
 	if len(apiKeys) > 0 && apiKeys[0] != nil {
-		workshopLLMConfig.APIKeys = apiKeys[0]
-	} else {
-		workshopLLMConfig.APIKeys = MergedProviderAPIKeys(ctx)
+		baseAPIKeys = apiKeys[0]
 	}
+	workshopAPIKeys, credentialErr := api.workflowProviderAPIKeys(ctx, currentUserID, workspacePath, baseAPIKeys)
+	if credentialErr != nil {
+		return nil, fmt.Errorf("load workflow provider credentials: %w", credentialErr)
+	}
+	workshopLLMConfig.APIKeys = workshopAPIKeys
 
 	cfg := &todo_creation_human.WorkshopConfig{
 		WorkspacePath:     workspacePath,

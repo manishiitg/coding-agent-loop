@@ -107,7 +107,7 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
       
       if (!newPreset) {
         console.error('Failed to create preset')
-        return
+        return false
       }
       
       // Close the modal
@@ -126,9 +126,11 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
         onPresetSelected(newPreset.id)
         onClose()
       }
+      return true
     } catch (error) {
       console.error('Failed to create preset:', error)
       // You might want to show an error message to the user here
+      return false
     }
   }
 

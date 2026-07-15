@@ -238,7 +238,7 @@ func (iwm *InteractiveWorkshopManager) ensureWorkshopBootstrapFilesExist(ctx con
 	if marshalErr != nil {
 		return fmt.Errorf("failed to marshal empty plan.json bootstrap: %w", marshalErr)
 	}
-	if writeErr := iwm.controller.WriteWorkspaceFile(ctx, "planning/plan.json", string(data)); writeErr != nil {
+	if writeErr := iwm.controller.writeManagedPlanningFile(ctx, "plan.json", string(data)); writeErr != nil {
 		return fmt.Errorf("failed to bootstrap empty planning/plan.json: %w", writeErr)
 	}
 
@@ -1611,7 +1611,7 @@ func (iwm *InteractiveWorkshopManager) markChangelogArtifactReviewed(ctx context
 		if err != nil {
 			return "", fmt.Errorf("marshal %s: %w", changelogPath, err)
 		}
-		if err := iwm.controller.WriteWorkspaceFile(ctx, changelogPath, string(data)); err != nil {
+		if err := iwm.controller.writeManagedPlanningFile(ctx, filepath.Join("changelog", file), string(data)); err != nil {
 			return "", fmt.Errorf("write %s: %w", changelogPath, err)
 		}
 		touchedFiles = append(touchedFiles, file)

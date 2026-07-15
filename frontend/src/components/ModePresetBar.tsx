@@ -438,12 +438,10 @@ export const ModePresetBar: React.FC = () => {
             llm_config: llmConfig || undefined,
           },
         }
-        await agentApi.updateWorkflowManifest(payload)
-        // Refresh manifests and rebuild workflow presets in zustand (triggers re-renders)
-        await refreshPresets()
-        setShowPresetModal(false)
-        setEditingPreset(null)
-        return
+		await agentApi.updateWorkflowManifest(payload)
+		// Refresh manifests and rebuild workflow presets in zustand (triggers re-renders)
+		await refreshPresets()
+		return true
       }
 
       // Multi-agent mode: save the user's chat capability profile.
@@ -471,6 +469,7 @@ export const ModePresetBar: React.FC = () => {
 
       setShowPresetModal(false)
       setEditingPreset(null)
+      return true
     } catch (error) {
       console.error('[ModePresetBar] Failed to save preset:', error)
       // Surface the failure — previously this was swallowed (no toast), so a
@@ -484,6 +483,7 @@ export const ModePresetBar: React.FC = () => {
             ? error.message
             : 'Unknown error'
       useChatStore.getState().addToast(`Failed to save configuration: ${detail}`, 'error')
+      return false
     }
   }, [editingPreset, savePreset, handlePresetClick, refreshPresets])
 

@@ -177,15 +177,31 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 	// Emit delegation_start event (after model and server resolution so we can include all info)
 	api.emitDelegationStartEvent(sessionID, delegationID, currentDepth, instruction, reasoningLevel, modelID, serversList, backgroundAgentID, agentTemplateName)
 
-	// Load merged API keys (env + workspace)
-	apiKeys := MergedProviderAPIKeys(ctx)
-
 	// Get user ID from context for per-user OAuth token isolation
-	subAgentUserID := ""
+	subAgentUserID := strings.TrimSpace(parentReq.userID)
 	if userID, ok := ctx.Value(common.UserIDKey).(string); ok {
 		subAgentUserID = userID
 	}
 	log.Printf("[USER_ID_DEBUGGING] Sub-agent: subAgentUserID=%q (from parent context UserIDKey)", subAgentUserID)
+
+	// Load provider keys and add the private workflow credential only for
+	// workflow-owned delegations. Normal multi-agent chats must not inherit a
+	// credential merely because they reference a workflow folder.
+	apiKeys := MergedProviderAPIKeys(ctx)
+	workflowOwnedDelegation := parentReq.AgentMode == "workflow" || parentReq.AgentMode == "workflow_phase" || strings.TrimSpace(parentReq.PhaseID) != ""
+	if workflowOwnedDelegation {
+		workflowPath := strings.TrimSpace(parentReq.SelectedFolder)
+		if workflowPath == "" && parentReq.PresetQueryID != "" {
+			if resolved, resolveErr := api.resolveWorkspacePathFromPreset(context.Background(), parentReq.PresetQueryID); resolveErr == nil {
+				workflowPath = resolved
+			}
+		}
+		var credentialErr error
+		apiKeys, credentialErr = api.workflowProviderAPIKeys(ctx, subAgentUserID, workflowPath, apiKeys)
+		if credentialErr != nil {
+			return "", fmt.Errorf("load delegated workflow provider credentials: %w", credentialErr)
+		}
+	}
 
 	// Determine sub-agent session ID: isolated when share_browser=false, shared otherwise
 	subAgentSessionID := sessionID

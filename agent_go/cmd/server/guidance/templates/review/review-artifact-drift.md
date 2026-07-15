@@ -25,11 +25,19 @@ Load `get_reference_doc(kind="assumption-audit")`. While tracing changed surface
    - report HTML/SQL/data contracts and `reports/report_plan.json` when present
    - `evaluation/evaluation_plan.json`, `evaluation/step_config.json`, and matching goal/success-criteria coverage
    - one representative recent run for changed runtime behavior when evidence exists
+   - for any changed status, strategy, feature flag, guard, routing rule, or
+     other control value, trace the exact changed record to the current runtime
+     reader and one resulting decision/output. If similarly named tables/files
+     carry the same logical IDs, compare them and identify the canonical owner
+     plus the required mirror rule. A clean changelog/file diff is not enough
+     when the runtime reads a different store.
 4. Record a finding only when evidence shows drift, including:
    - code, paths, fields, selectors, tool/API usage, or validation still implement an old contract
    - stale code/learning locks after a material change without review evidence
    - learnings or KB preserve obsolete behavior or agent-inferred policy
    - DB writers, report consumers, or eval consumers disagree on schema or semantics
+   - a change updated a plausible but non-canonical store, or duplicate control
+     stores disagree so the allocator/router/executor cannot observe the repair
    - report/eval checks use stale artifacts, fields, thresholds, or run identity
    - a changed success criterion lacks eval coverage, or an eval is orphaned/duplicative
    - deleted steps still have live references, or new steps lack required dependent wiring

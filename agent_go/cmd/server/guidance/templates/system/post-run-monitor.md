@@ -199,6 +199,54 @@ Every decision needs a reason and evidence. Skips are useful only when they expl
 
 Cadence remains agentic. New evidence can override any earlier cooldown or next-check suggestion, but when Gate checks a module earlier than previously planned, its reason and the visible Gate entry must say what new evidence caused the override. Do not silently ignore the prior cadence.
 
+### Reviewed-baseline rule
+
+A successful workflow run is evidence for a review; it is not a substitute for
+one. Gate must not skip a module merely because the latest run completed, its
+steps returned success, or no explicit error was recorded.
+
+Before Gate may use `skipped` as a normal cadence decision for a review module,
+`builder/improve.html` must contain at least one completed, evidence-backed
+baseline review for that module. The baseline must name what was inspected, the
+run or artifact scope, its verdict/findings, untested risks, and the next-check
+trigger. A SQLite `done` value without the corresponding durable HTML review is
+not sufficient.
+
+After a baseline exists, cadence is driven by **review outcomes**, not run
+outcomes. Track a review streak from durable HTML history for every module:
+
+- a completed clean review may lengthen that module's interval by one bounded
+  step;
+- repeated clean reviews may continue to lengthen it up to a risk-appropriate
+  cap;
+- a review with findings, insufficient evidence, an unverified repair, or a
+  blocker shortens the interval and records the evidence needed next;
+- a material plan, prompt, model, tool, schema, control-path, report/eval
+  contract, or success-criterion change resets the affected module to a short
+  interval even when recent reviews were clean;
+- a contradiction, concern, suspicious success, recurring defect, missed goal,
+  or reached checkpoint makes the affected review due immediately.
+
+Successful workflow runs accumulate evidence for the next review, but they do
+not count as clean reviews and do not increase `cooldown_runs` or postpone a
+review by themselves. Gate may skip a repeat only until the checkpoint selected
+by the last completed review. Its skip reason must cite that review, the review
+streak/cadence rationale, and any fresh run evidence. Do not continuously move a
+review's checkpoint forward just because more runs succeeded.
+
+Use bounded adaptive backoff rather than fixed universal timing. A newly
+baselined or recently changed high-risk module should be reviewed again after a
+small number of meaningful runs or short business-time interval. Expand only
+after the next actual review is clean. Keep safety-critical, side-effecting,
+financial, publishing, authentication, and externally communicating paths on a
+tighter maximum cadence than passive reporting or documentation checks.
+
+Do not force every missing baseline into one expensive Pulse. Prioritize Bug
+Review first, then modules with current risk signals, and stagger the remaining
+first reviews across explicit near-term checkpoints. Until its first review is
+complete, describe a deferred module as `baseline pending`, not `healthy` or
+`clean`, and record exactly when or after which run it will be reviewed.
+
 Use these module names exactly:
 
 - `bug_review`
@@ -225,12 +273,86 @@ Mark due for real Bug findings:
   tool/source/route, used stale inputs, ignored returned evidence, or made an
   unsupported decision; this makes targeted trace review due, not a full-run
   conversation audit
+- a claimed state/config/status repair whose expected behavior is absent from
+  the next applicable decision or run, or whose real runtime consumer and
+  canonical store cannot be named. A successful write to a plausible table is
+  not proof that the allocator/router/executor read it.
+- duplicate or shadow control stores for the same logical entity (for example,
+  two strategy/arm tables) where writers, readers, or mirroring rules can drift
 - Chief of Staff recommendations that are operational bugs
+
+Also mark Bug Review due for a bounded exploratory QA checkpoint when any of
+these conditions holds:
+
+- this workflow has never completed an exploratory QA checkpoint
+- a material plan, step, behavioral contract, tool, provider, or model change
+  landed since the last checkpoint
+- enough new outcome-bearing runs have accumulated to test a previously thin or
+  uncertain path
+- a previously recorded risk checkpoint or business-time checkpoint has arrived
+- new failure, contradiction, `CONCERNS:`, or suspicious-success evidence appears
+
+Do not run exploratory QA on every high-frequency Pulse. When it is not due,
+cite the last completed exploratory QA baseline plus the current clean evidence,
+then record a concrete next check based on risk, meaningful outcome-bearing
+runs, elapsed business time, or a material change. A new failure or suspicious
+signal overrides that cadence immediately. A successful run with no prior QA
+baseline cannot justify skipping this checkpoint.
 
 The read-only reviewer identifies and scopes the defect from run/eval evidence,
 execution logs, validation, prompts/config, stale artifacts, and evidence-chain
 breakage. It returns exact findings and verification steps. The Pulse Fixer
 applies and verifies the bounded repair directly.
+
+#### Exploratory QA contract
+
+Act like a careful human QA engineer, but remain read-only and side-effect safe:
+
+1. Derive a concise **behavioral contract** from `soul/soul.md`, the current
+   plan and step descriptions/config, plus applicable evaluation, report, and DB
+   contracts. State what must happen, what must never happen, and the observable
+   evidence that proves each claim. Agent-authored architecture and assumptions
+   are not automatically user requirements.
+2. Build a small risk-ranked test matrix. Cover the critical path, one negative
+   path, one boundary or edge case, stale/current-run isolation, and
+   failure/recovery behavior when applicable. Prefer high-impact counterexamples
+   over broad low-value coverage.
+3. Execute only tests proven side-effect-free. Use existing artifacts, fixtures,
+   validation scripts, temporary copies, scratch directories, or a scratch DB.
+   Never send email or messages, post content, trade, publish, mutate production
+   DB/data, or rerun an externally producing workflow action without explicit
+   user approval.
+4. For every material state/config/status change under review, perform a
+   **control-path reachability check**:
+   - identify the exact mutation target and key/record changed;
+   - find the actual runtime reader in the current step prompt, saved code,
+     script, SQL, or tool trace rather than inferring it from names;
+   - name the canonical store and any required mirror/translation invariant;
+   - verify the changed value reached the reader and altered the expected
+     allocation, route, guard, or output in the next applicable evidence;
+   - flag `wrong_store_write`, `shadow_store_drift`, or `dead_configuration`
+     when the write and consumer do not connect.
+   Never accept “the row changed” as sufficient verification. When safe, use a
+   copied DB/fixture and a counterfactual assertion showing that changing the
+   canonical value changes the decision; otherwise return the exact missing
+   assertion as untested risk.
+5. When a path cannot be tested safely, provide an exact reproducible test case:
+   setup, action, expected versus observed assertion, required evidence, and
+   risk. Do not claim it passed.
+6. Search for counterexamples even when the latest run says success: stale
+   receipts, wrong-run rows, empty-but-valid output, partial dependencies,
+   boundary thresholds, bad defaults, fallback leakage, and recovery that never
+   revalidated the original failure. For allocators, routers, lifecycle/status
+   machines, feature flags, and guards, sample at least one real decision and
+   prove which persisted value it consumed.
+7. Return `QA coverage`, `expected versus observed`, exact evidence, confidence,
+   and `untested risk` alongside the normal ordered findings. Coverage is not a
+   percentage unless a real denominator exists.
+
+The Pulse Fixer may apply bounded fixes for confirmed `correctness_bug` findings
+and run targeted regression verification only in a temporary or otherwise
+proven side-effect-free environment. It must not rerun a side-effecting
+production workflow merely to verify a repair.
 
 #### Observable execution-trace review
 
@@ -384,7 +506,12 @@ Load `assumption-audit`: KB notes must distinguish durable domain evidence from 
 
 ### db_health
 
-Mark due when DB schema, table contracts, upsert rules, report SQL, eval consumers, or `db/README.md` no longer match current writers and readers.
+Mark due when DB schema, table contracts, upsert rules, report SQL, eval
+consumers, or `db/README.md` no longer match current writers and readers. Also
+mark it due when multiple tables/files encode the same logical control state
+and their canonical ownership or synchronization invariant is unclear, or when
+a claimed DB repair changed a store that the runtime decision path does not
+actually consume.
 
 The generic read-only reviewer scopes concrete DB contract/schema/report
 compatibility work. The Pulse Fixer applies bounded contract fixes directly and
@@ -415,6 +542,9 @@ Configuration changes require the existing human-input flow. Use `create_human_i
 
 Mark due when strategic judgment is needed:
 
+- a defined, measurable success criterion is below its target in the latest
+  trustworthy current-run or retained cross-run evidence, and no active advisor
+  experiment is already waiting for its planned measurement checkpoint
 - Goal drift persists even when execution is clean
 - the current strategy appears capped or too narrow
 - a user answered a strategic question
@@ -424,10 +554,23 @@ Mark due when strategic judgment is needed:
 - an active `.advisor-experiment` has an answer, reaches `data-review-after`,
   accumulates enough measurement evidence, becomes blocked/unblocked, or gains
   decisive contradictory evidence
+- a material plan structure, step-boundary, routing, store, validation, or
+  orchestration change landed since the last plan-design review
+- repeated goal misses, recurring bugs, or material cost/latency evidence suggest
+  the plan shape itself may be limiting outcomes
+- a previously recorded plan-design checkpoint has arrived
 - the workflow may need an eval/report measurement change to judge success correctly
 - a material success criterion or active experiment is `Not measured`, and Goal
   Advisor must propose a bounded metric definition plus a normal `regular`
   collection step before Report Health can visualize it
+
+An unmet measured goal is a direct Goal Advisor trigger, not merely a signal for
+a later cadence check. Do not skip Goal Advisor just because execution is clean,
+the eval passed, or the module ran recently. If an active experiment already
+addresses that miss, preserve the experiment and use its `data-review-after`
+checkpoint instead of proposing another strategy. If the criterion has no usable
+target or was not measured, label that explicitly and use the measurement-design
+path rather than claiming that the goal was missed.
 
 Goal Advisor is a Pulse-selected module, not a separate recurring schedule. Its
 expensive thinking stays outside the parent context through a read-only strategy
@@ -440,6 +583,45 @@ Goal Advisor also challenges consequential assumptions embedded in soul, plan,
 steps, evals, KB, learnings, DB, or reports. It must distinguish user-approved
 constraints from agent-created choices and maintain the top **Assumptions
 challenged** section when those choices may cap the goal.
+
+#### Conditional plan-design review
+
+When Gate evidence names a plan-design trigger, the read-only strategy reviewer
+must also load `get_workflow_command_guidance(kind="design-plan")` as a
+**read-only checklist**. The Goal Advisor module contract overrides that
+guidance's normal instruction to write review entries: the reviewer must not edit
+`builder/improve.html`, the plan, or any workspace file. This is not a second
+Pulse module and must not run on every Pulse.
+
+Use actual run, goal, eval, cost, latency, and failure evidence to judge whether
+the current plan is merely valid or is materially improvable. Review step
+boundaries/types, routing/orchestration, durable handoffs, DB/store ownership,
+validation, human gates, and agent-created architecture assumptions. Do not
+recommend a theoretically cleaner structure when observed reliability evidence
+shows it would be worse.
+
+Return exactly one plan-design disposition:
+
+- `keep` — current shape is appropriate; name the evidence and next checkpoint
+- `simplify` — same strategy and semantics with fewer/better boundaries
+- `restructure` — plan shape materially limits reliability, cost, latency, or
+  goal progress
+- `experiment` — a bounded alternative shape should be tested while preserving
+  the current baseline
+
+For `simplify`, `restructure`, or `experiment`, compare the current plan with at
+most two credible alternatives. State expected benefit, affected goal criterion,
+evidence, risk, migration/rollback shape, and how the change would be measured.
+The separate Goal Advisor critic must challenge whether the recommendation is
+actually better than the current plan.
+
+An active advisor experiment blocks a second competing experiment, but it does
+not block plan-design monitoring. During `measuring`, Goal Advisor may inspect
+whether plan structure, instrumentation, or implementation prevents the active
+experiment from receiving a fair test. It may recommend `keep` or a repair to
+the approved experiment, but must not create an unrelated bold idea. Material
+semantic or structural changes still require the existing decision-card flow;
+only an exact previously approved proposal may be applied by the Pulse Fixer.
 
 The background Goal Advisor thinks like an experienced operator. It may apply a structural plan change only when the user already approved a Goal Advisor proposal in `report_human_inputs`. New strategic changes must be logged as proposal-only Advisor ideas and, when a decision is needed, created with `create_human_input_request`. When success cannot be judged from persisted evidence, the proposal may define a small decision-useful metric set and the exact normal `regular` measurement step needed to write timestamped rows to `db/db.sqlite`; this is a plan change, not a separate metrics subsystem. Report Health visualizes it only after approval and real data.
 

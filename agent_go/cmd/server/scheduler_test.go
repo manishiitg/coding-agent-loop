@@ -855,6 +855,18 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		"goal_advisor":         goalAdvisor,
 	}
 	for _, want := range []string{
+		"exploratory QA review",
+		"behavioral contract",
+		"risk-ranked exploratory QA matrix",
+		"critical path",
+		"negative path",
+		"boundary or edge case",
+		"stale/current-run isolation",
+		"side-effect-free",
+		"Never send email/messages, post content, trade, publish",
+		"expected versus observed",
+		"QA coverage",
+		"untested risk",
 		"semantic execution defects as Bugs too",
 		"Observable execution-trace review",
 		"*-conversation.json",
@@ -872,6 +884,10 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
+		"bounded exploratory QA checkpoint",
+		"QA has never completed",
+		"previously recorded risk checkpoint",
+		"Do not run exploratory QA on every high-frequency Pulse",
 		"targeted observable trace review",
 		"ignored or misinterpreted returned evidence",
 		"do not audit every conversation",
@@ -917,14 +933,22 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		"record_pulse_worklist exactly once",
 		"High-frequency workflows should normally roll up cost/time checks",
 		"Treat llm_ops_review as a low-frequency coaching pass",
+		"due immediately when a defined measurable success criterion is below target",
+		"An unmet measured goal is a direct trigger",
+		"do not skip it because execution is clean, eval passed, or Goal Advisor ran recently",
+		"use Goal Advisor's measurement-design path instead of claiming a miss",
 		"A correct abstention or green eval is execution evidence, not goal progress",
 		"mark both bug_review and goal_advisor due when appropriate",
 		"Do not use 'wait for a clean run' as an indefinite strategy cooldown",
 		"retained cross-run goal evidence",
 		"Meeting a target is not a permanent skip",
 		"optimization-headroom review",
+		"conditional plan-design review",
+		"planned plan-design checkpoint",
+		"active experiment does not block plan-design monitoring",
+		"do not create a competing experiment",
 		"meaningful outcome-bearing runs",
-		"Once that headroom checkpoint arrives",
+		"Once that headroom or plan-design checkpoint arrives",
 		"Never allow more than one active advisor experiment",
 		"data-review-after",
 		"explicitly inspect every executed step/item's compact final result",
@@ -960,7 +984,7 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		t.Fatalf("bug-review step should be the Bug Review module:\n%s", bugReview)
 	}
 	for _, want := range []string{
-		"read-only reliability review",
+		"read-only reliability and exploratory QA review",
 		"Pulse Fixer",
 		"applies safe fixes sequentially",
 		"Bug fix",
@@ -1093,6 +1117,13 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		"read-only strategy advisor",
 		"separate read-only critic",
 		"healthy 10x/headroom",
+		`get_workflow_command_guidance(kind="design-plan")`,
+		"read-only checklist",
+		"keep, simplify, restructure, or experiment",
+		"at most two credible alternatives",
+		"migration/rollback",
+		"blocks a competing experiment but not plan-design monitoring",
+		"must challenge whether the recommendation is materially better",
 		"one active advisor experiment",
 		"never turn operational correctness issues",
 		"route those findings to Bug Review or Eval Health",
@@ -1164,6 +1195,26 @@ func TestPulseEvalGuidanceSeparatesCorrectnessRepairsFromSemanticApproval(t *tes
 	} {
 		if !strings.Contains(advisorGuidance, want) {
 			t.Fatalf("goal-advisor guidance missing %q", want)
+		}
+	}
+}
+
+func TestDesignPlanGuidanceSupportsReadOnlyPulseChecklist(t *testing.T) {
+	repoRoot := findRepoRoot(t)
+	raw, err := os.ReadFile(filepath.Join(repoRoot, "agent_go/cmd/server/guidance/templates/builder/design-plan.md"))
+	if err != nil {
+		t.Fatalf("read design-plan guidance: %v", err)
+	}
+	guidance := string(raw)
+	for _, want := range []string{
+		"parent Pulse/Goal Advisor prompt",
+		"read-only checklist",
+		"overrides the REVIEW LOG write step",
+		"do not edit the plan",
+		"parent Pulse Fixer remains the only writer",
+	} {
+		if !strings.Contains(guidance, want) {
+			t.Fatalf("design-plan guidance missing Pulse read-only contract %q:\n%s", want, guidance)
 		}
 	}
 }

@@ -457,8 +457,6 @@ export const ModePresetBar: React.FC = () => {
         await agentApi.updateWorkflowManifest(payload)
         // Refresh manifests and rebuild workflow presets in zustand (triggers re-renders)
         await refreshPresets()
-        setShowPresetModal(false)
-        setEditingPreset(null)
         return true
       }
 

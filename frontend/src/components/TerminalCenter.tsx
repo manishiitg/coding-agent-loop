@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ArrowDownToLine, ArrowRightToLine, Braces, Bug, Check, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, ChevronUp, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Minus, Plus, Power, RefreshCw, Search, Square, Terminal, Trash2, X } from 'lucide-react'
+import { Activity, AlertTriangle, ArrowDownToLine, ArrowRightToLine, Braces, Bug, Check, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, ChevronUp, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Minus, Plus, Power, RefreshCw, Search, Square, Terminal, Trash2, X } from 'lucide-react'
 import { AnsiUp } from 'ansi_up'
 import { Terminal as XTerm, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -3014,7 +3014,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
   // A toggle in the rail controls lets the user resize it themselves.
   const [railManualNarrow, setRailManualNarrow] = useState<boolean | null>(true)
   const railNarrow = railManualNarrow !== null ? railManualNarrow : slimAgentRail
-  const [terminalRailFilter, setTerminalRailFilter] = useState<TerminalRailFilter>('all')
+  const [terminalRailFilter, setTerminalRailFilter] = useState<TerminalRailFilter>('running')
   const [terminalRailSearch, setTerminalRailSearch] = useState('')
   const [expandedRailGroupKeys, setExpandedRailGroupKeys] = useState<Set<string>>(() => new Set())
   const [collapsedRailSections, setCollapsedRailSections] = useState<Set<TerminalRailSection>>(() => new Set(['other']))
@@ -4308,21 +4308,41 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     other: 'Other agents',
   }
 
+  const sectionIcon = (section: TerminalRailSection) => {
+    const iconClass = 'h-3.5 w-3.5 shrink-0'
+    switch (section) {
+      case 'active':
+        return <Power className={iconClass} aria-hidden />
+      case 'attention':
+        return <AlertTriangle className={iconClass} aria-hidden />
+      case 'workflow':
+        return <Terminal className={iconClass} aria-hidden />
+      case 'review':
+        return <Activity className={iconClass} aria-hidden />
+      default:
+        return <Braces className={iconClass} aria-hidden />
+    }
+  }
+
   const renderRailSection = (section: TerminalRailSection) => {
     const groups = groupedTerminals.visibleGroups.filter(group => group.section === section)
     if (groups.length === 0) return null
     const collapsed = terminalRailSearch ? false : collapsedRailSections.has(section)
+    const sectionDescription = `${sectionLabels[section]}: ${groups.length} ${groups.length === 1 ? 'agent' : 'agents'}`
     return (
       <section key={section} className="border-b border-neutral-800/60">
         <button
           type="button"
           onClick={() => toggleRailSection(section)}
-          className="flex h-7 w-full items-center gap-1.5 px-2 text-left text-[10px] font-semibold uppercase text-neutral-500 hover:bg-neutral-900/70 hover:text-neutral-300"
+          className={`flex h-8 w-full items-center text-left text-[10px] font-semibold uppercase text-neutral-500 hover:bg-neutral-900/70 hover:text-neutral-300 ${railNarrow ? 'justify-center gap-2 px-1' : 'gap-1.5 px-2'}`}
           aria-expanded={!collapsed}
+          aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${sectionDescription}`}
+          title={railNarrow ? sectionDescription : undefined}
         >
           {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          {sectionIcon(section)}
           {!railNarrow && <span className="min-w-0 flex-1 truncate">{sectionLabels[section]}</span>}
-          <span className="ml-auto rounded bg-neutral-900 px-1.5 py-0.5 text-[9px] font-medium text-neutral-500">{groups.length}</span>
+          {!railNarrow && <span className="ml-auto rounded bg-neutral-900 px-1.5 py-0.5 text-[9px] font-medium text-neutral-500">{groups.length}</span>}
         </button>
         {!collapsed && groups.map(renderRailGroup)}
       </section>

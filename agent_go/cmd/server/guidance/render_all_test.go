@@ -86,6 +86,29 @@ func TestPulseGuidanceTracesStateChangesToRuntimeConsumers(t *testing.T) {
 	}
 }
 
+func TestPulseGuidanceRequiresReviewedBaselineBeforeCadenceSkip(t *testing.T) {
+	postRun, err := renderFromRegistry("post-run-monitor", tmplData{}, referenceKinds)
+	if err != nil {
+		t.Fatalf("render post-run-monitor: %v", err)
+	}
+	for _, want := range []string{
+		"Reviewed-baseline rule",
+		"successful workflow run is evidence for a review; it is not a substitute",
+		"completed, evidence-backed",
+		"baseline review for that module",
+		"**review outcomes**, not run",
+		"not count as clean reviews",
+		"review's checkpoint forward",
+		"bounded adaptive backoff",
+		"baseline pending",
+		"baseline cannot justify skipping",
+	} {
+		if !strings.Contains(postRun, want) {
+			t.Fatalf("post-run monitor missing reviewed-baseline contract %q", want)
+		}
+	}
+}
+
 func TestMigrateBrowserGuidanceIsScopedIdempotentAndNonExecuting(t *testing.T) {
 	rendered, err := renderFromRegistry("migrate-browser", tmplData{}, allKinds)
 	if err != nil {

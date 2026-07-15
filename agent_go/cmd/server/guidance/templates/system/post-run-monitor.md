@@ -199,6 +199,54 @@ Every decision needs a reason and evidence. Skips are useful only when they expl
 
 Cadence remains agentic. New evidence can override any earlier cooldown or next-check suggestion, but when Gate checks a module earlier than previously planned, its reason and the visible Gate entry must say what new evidence caused the override. Do not silently ignore the prior cadence.
 
+### Reviewed-baseline rule
+
+A successful workflow run is evidence for a review; it is not a substitute for
+one. Gate must not skip a module merely because the latest run completed, its
+steps returned success, or no explicit error was recorded.
+
+Before Gate may use `skipped` as a normal cadence decision for a review module,
+`builder/improve.html` must contain at least one completed, evidence-backed
+baseline review for that module. The baseline must name what was inspected, the
+run or artifact scope, its verdict/findings, untested risks, and the next-check
+trigger. A SQLite `done` value without the corresponding durable HTML review is
+not sufficient.
+
+After a baseline exists, cadence is driven by **review outcomes**, not run
+outcomes. Track a review streak from durable HTML history for every module:
+
+- a completed clean review may lengthen that module's interval by one bounded
+  step;
+- repeated clean reviews may continue to lengthen it up to a risk-appropriate
+  cap;
+- a review with findings, insufficient evidence, an unverified repair, or a
+  blocker shortens the interval and records the evidence needed next;
+- a material plan, prompt, model, tool, schema, control-path, report/eval
+  contract, or success-criterion change resets the affected module to a short
+  interval even when recent reviews were clean;
+- a contradiction, concern, suspicious success, recurring defect, missed goal,
+  or reached checkpoint makes the affected review due immediately.
+
+Successful workflow runs accumulate evidence for the next review, but they do
+not count as clean reviews and do not increase `cooldown_runs` or postpone a
+review by themselves. Gate may skip a repeat only until the checkpoint selected
+by the last completed review. Its skip reason must cite that review, the review
+streak/cadence rationale, and any fresh run evidence. Do not continuously move a
+review's checkpoint forward just because more runs succeeded.
+
+Use bounded adaptive backoff rather than fixed universal timing. A newly
+baselined or recently changed high-risk module should be reviewed again after a
+small number of meaningful runs or short business-time interval. Expand only
+after the next actual review is clean. Keep safety-critical, side-effecting,
+financial, publishing, authentication, and externally communicating paths on a
+tighter maximum cadence than passive reporting or documentation checks.
+
+Do not force every missing baseline into one expensive Pulse. Prioritize Bug
+Review first, then modules with current risk signals, and stagger the remaining
+first reviews across explicit near-term checkpoints. Until its first review is
+complete, describe a deferred module as `baseline pending`, not `healthy` or
+`clean`, and record exactly when or after which run it will be reviewed.
+
 Use these module names exactly:
 
 - `bug_review`
@@ -245,9 +293,11 @@ these conditions holds:
 - new failure, contradiction, `CONCERNS:`, or suspicious-success evidence appears
 
 Do not run exploratory QA on every high-frequency Pulse. When it is not due,
-record a concrete next check based on risk, meaningful outcome-bearing runs,
-elapsed business time, or a material change. A new failure or suspicious signal
-overrides that cadence immediately.
+cite the last completed exploratory QA baseline plus the current clean evidence,
+then record a concrete next check based on risk, meaningful outcome-bearing
+runs, elapsed business time, or a material change. A new failure or suspicious
+signal overrides that cadence immediately. A successful run with no prior QA
+baseline cannot justify skipping this checkpoint.
 
 The read-only reviewer identifies and scopes the defect from run/eval evidence,
 execution logs, validation, prompts/config, stale artifacts, and evidence-chain

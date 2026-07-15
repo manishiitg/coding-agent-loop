@@ -2110,8 +2110,8 @@ func TestApplyLLMAndSecretsToReqMapPreservesAutoImproveDefaultOptions(t *testing
 	if !ok {
 		t.Fatalf("options missing or wrong type: %#v", primary["options"])
 	}
-	if got := options["reasoning_effort"]; got != "xhigh" {
-		t.Fatalf("reasoning_effort = %#v, want xhigh", got)
+	if got := options["reasoning_effort"]; got != "high" {
+		t.Fatalf("reasoning_effort = %#v, want high", got)
 	}
 	if got := reqMap["llm_config_source"]; got != llmConfigSourceScheduledAutoImprove {
 		t.Fatalf("llm_config_source = %#v, want %q", got, llmConfigSourceScheduledAutoImprove)

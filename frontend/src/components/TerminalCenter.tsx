@@ -3014,7 +3014,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
   // A toggle in the rail controls lets the user resize it themselves.
   const [railManualNarrow, setRailManualNarrow] = useState<boolean | null>(true)
   const railNarrow = railManualNarrow !== null ? railManualNarrow : slimAgentRail
-  const [terminalRailFilter, setTerminalRailFilter] = useState<TerminalRailFilter>('all')
+  const [terminalRailFilter, setTerminalRailFilter] = useState<TerminalRailFilter>('running')
   const [terminalRailSearch, setTerminalRailSearch] = useState('')
   const [expandedRailGroupKeys, setExpandedRailGroupKeys] = useState<Set<string>>(() => new Set())
   const [collapsedRailSections, setCollapsedRailSections] = useState<Set<TerminalRailSection>>(() => new Set(['other']))

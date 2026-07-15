@@ -227,10 +227,60 @@ Mark due for real Bug findings:
   conversation audit
 - Chief of Staff recommendations that are operational bugs
 
+Also mark Bug Review due for a bounded exploratory QA checkpoint when any of
+these conditions holds:
+
+- this workflow has never completed an exploratory QA checkpoint
+- a material plan, step, behavioral contract, tool, provider, or model change
+  landed since the last checkpoint
+- enough new outcome-bearing runs have accumulated to test a previously thin or
+  uncertain path
+- a previously recorded risk checkpoint or business-time checkpoint has arrived
+- new failure, contradiction, `CONCERNS:`, or suspicious-success evidence appears
+
+Do not run exploratory QA on every high-frequency Pulse. When it is not due,
+record a concrete next check based on risk, meaningful outcome-bearing runs,
+elapsed business time, or a material change. A new failure or suspicious signal
+overrides that cadence immediately.
+
 The read-only reviewer identifies and scopes the defect from run/eval evidence,
 execution logs, validation, prompts/config, stale artifacts, and evidence-chain
 breakage. It returns exact findings and verification steps. The Pulse Fixer
 applies and verifies the bounded repair directly.
+
+#### Exploratory QA contract
+
+Act like a careful human QA engineer, but remain read-only and side-effect safe:
+
+1. Derive a concise **behavioral contract** from `soul/soul.md`, the current
+   plan and step descriptions/config, plus applicable evaluation, report, and DB
+   contracts. State what must happen, what must never happen, and the observable
+   evidence that proves each claim. Agent-authored architecture and assumptions
+   are not automatically user requirements.
+2. Build a small risk-ranked test matrix. Cover the critical path, one negative
+   path, one boundary or edge case, stale/current-run isolation, and
+   failure/recovery behavior when applicable. Prefer high-impact counterexamples
+   over broad low-value coverage.
+3. Execute only tests proven side-effect-free. Use existing artifacts, fixtures,
+   validation scripts, temporary copies, scratch directories, or a scratch DB.
+   Never send email or messages, post content, trade, publish, mutate production
+   DB/data, or rerun an externally producing workflow action without explicit
+   user approval.
+4. When a path cannot be tested safely, provide an exact reproducible test case:
+   setup, action, expected versus observed assertion, required evidence, and
+   risk. Do not claim it passed.
+5. Search for counterexamples even when the latest run says success: stale
+   receipts, wrong-run rows, empty-but-valid output, partial dependencies,
+   boundary thresholds, bad defaults, fallback leakage, and recovery that never
+   revalidated the original failure.
+6. Return `QA coverage`, `expected versus observed`, exact evidence, confidence,
+   and `untested risk` alongside the normal ordered findings. Coverage is not a
+   percentage unless a real denominator exists.
+
+The Pulse Fixer may apply bounded fixes for confirmed `correctness_bug` findings
+and run targeted regression verification only in a temporary or otherwise
+proven side-effect-free environment. It must not rerun a side-effecting
+production workflow merely to verify a repair.
 
 #### Observable execution-trace review
 

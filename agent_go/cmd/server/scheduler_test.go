@@ -855,6 +855,18 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		"goal_advisor":         goalAdvisor,
 	}
 	for _, want := range []string{
+		"exploratory QA review",
+		"behavioral contract",
+		"risk-ranked exploratory QA matrix",
+		"critical path",
+		"negative path",
+		"boundary or edge case",
+		"stale/current-run isolation",
+		"side-effect-free",
+		"Never send email/messages, post content, trade, publish",
+		"expected versus observed",
+		"QA coverage",
+		"untested risk",
 		"semantic execution defects as Bugs too",
 		"Observable execution-trace review",
 		"*-conversation.json",
@@ -872,6 +884,10 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
+		"bounded exploratory QA checkpoint",
+		"QA has never completed",
+		"previously recorded risk checkpoint",
+		"Do not run exploratory QA on every high-frequency Pulse",
 		"targeted observable trace review",
 		"ignored or misinterpreted returned evidence",
 		"do not audit every conversation",
@@ -960,7 +976,7 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		t.Fatalf("bug-review step should be the Bug Review module:\n%s", bugReview)
 	}
 	for _, want := range []string{
-		"read-only reliability review",
+		"read-only reliability and exploratory QA review",
 		"Pulse Fixer",
 		"applies safe fixes sequentially",
 		"Bug fix",

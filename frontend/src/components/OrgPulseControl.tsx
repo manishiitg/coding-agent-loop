@@ -32,7 +32,7 @@ const relTime = (iso?: string): string => {
 export const OrgPulseControl: React.FC = () => {
   const [job, setJob] = useState<ScheduledJob | null>(null)
   const [open, setOpen] = useState(false)
-  const [backupState, setBackupState] = useState('not_configured')
+  const [backupState, setBackupState] = useState('loading')
   const [publishState, setPublishState] = useState('not_configured')
   const activeTabId = useChatStore(s => s.activeTabId)
   const setTabConfig = useChatStore(s => s.setTabConfig)

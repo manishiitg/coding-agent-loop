@@ -15,8 +15,8 @@ interface WorkflowBackupPopupProps {
 const FALLBACK_SUPPORTED_STRATEGIES: WorkflowBackupStrategyInfo[] = [
   {
     id: 'git',
-    label: 'Git / GitHub (default)',
-    description: 'Default. A local git repo gives zero-config rollback; add a GitHub remote for off-box durability. Best for automation config, planning, knowledgebase, learnings, scripts, and small JSON.',
+    label: 'GitHub / remote Git (recommended)',
+    description: 'Recommended for off-device protection of automation config, planning, knowledgebase, learnings, scripts, and small JSON. Local Git alone is not a durable backup.',
     best_for: ['workflow', 'planning', 'knowledgebase', 'learnings']
   },
   {
@@ -42,7 +42,10 @@ const FALLBACK_SUPPORTED_STRATEGIES: WorkflowBackupStrategyInfo[] = [
 const getBackupSummary = (backupInfo: WorkflowBackupInfoResponse | null): string => {
   const state = backupInfo?.effective_state
   if (!backupInfo?.config?.enabled) {
-    return 'No remote backup strategy is enabled in workflow.json yet.'
+    return 'No off-device backup is configured. Add GitHub, another remote Git host, or an object store to protect this workflow if this laptop is lost.'
+  }
+  if (state === 'local_only') {
+    return 'This backup exists only on this laptop. Add GitHub, another remote Git host, or an object store for durable off-device recovery.'
   }
   if (backupInfo.status?.summary) return backupInfo.status.summary
   switch (state) {

@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
+	orchevents "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/events"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
-	orchevents "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 )
 
 // TokenPersister defines the interface for persisting token usage to file
@@ -614,6 +614,20 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 				if hasExecutionOwner {
 					newMeta["execution_owner_id"] = executionOwnerID
 					newMeta["background_agent_id"] = executionOwnerID
+					// Provider events are sometimes born with the parent turn's
+					// main_agent label. The explicit goroutine-local owner is the
+					// authoritative signal that this is a child execution.
+					existingKind, _ := newMeta["execution_kind"].(string)
+					existingKind = strings.ToLower(strings.TrimSpace(existingKind))
+					if existingKind == "" || existingKind == "main_agent" || existingKind == "main" || existingKind == "chat" {
+						if strings.HasPrefix(executionOwnerID, "workflow-step:") {
+							newMeta["execution_kind"] = "workflow_step"
+							newMeta["scope"] = "workflow_step"
+						} else {
+							newMeta["execution_kind"] = "background_agent"
+							newMeta["scope"] = "background_agent"
+						}
+					}
 				}
 
 				// Add current step ID (simple tracking - which step is running)

@@ -169,6 +169,14 @@ func TestMacOSSandboxProfile(t *testing.T) {
 	if !strings.Contains(profile, "(deny file-read* file-write*") {
 		t.Error("Sandbox profile missing project root denial")
 	}
+	canonicalProjectRoot := canonicalPath(filepath.Dir(env.TempDir))
+	projectRootMetadataGrant := fmt.Sprintf("(allow file-read-metadata (literal \"%s\"))", canonicalProjectRoot)
+	if !strings.Contains(profile, projectRootMetadataGrant) {
+		t.Error("sandbox profile must allow project-root metadata for canonical path resolution")
+	}
+	if strings.Contains(profile, fmt.Sprintf("(allow file-read* (subpath \"%s\"))", canonicalProjectRoot)) {
+		t.Error("sandbox profile must not grant project-root file reads")
+	}
 
 	// Verify paths are included
 	canonicalReadOnly := canonicalPath(env.ReadOnlyDir)

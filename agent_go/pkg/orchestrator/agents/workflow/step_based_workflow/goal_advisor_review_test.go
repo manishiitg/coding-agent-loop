@@ -37,6 +37,61 @@ func assertToolListDoesNotContain(t *testing.T, tools []string, tool string) {
 	}
 }
 
+func TestWorkshopStageAgentIdentityIsDistinctAndSafe(t *testing.T) {
+	first := newWorkshopStageAgentIdentity("Pulse reviewer - artifact review")
+	second := newWorkshopStageAgentIdentity("Pulse reviewer - artifact review")
+	if first == second {
+		t.Fatalf("stage identities must be unique, got %q", first)
+	}
+	for _, identity := range []string{first, second} {
+		if !strings.HasPrefix(identity, "pulse-reviewer-artifact-review-") {
+			t.Fatalf("unexpected sanitized stage identity %q", identity)
+		}
+		if strings.ContainsAny(identity, " _/") {
+			t.Fatalf("stage identity contains unsafe separators: %q", identity)
+		}
+	}
+}
+
+func TestCompletedPulseReviewerResultRequiresFinalMarker(t *testing.T) {
+	marker := pulseReviewerCompletionMarker("artifact-review-2026-07-14")
+	completed, err := completedPulseReviewerResult("Verdict: clean\n"+marker, marker)
+	if err != nil {
+		t.Fatalf("completed reviewer result rejected: %v", err)
+	}
+	if completed != "Verdict: clean" {
+		t.Fatalf("completed result = %q, want stripped findings", completed)
+	}
+
+	for name, result := range map[string]string{
+		"still thinking":   "I am still inspecting the evidence...",
+		"marker not final": marker + "\nmore progress text",
+		"empty findings":   marker,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := completedPulseReviewerResult(result, marker); err == nil {
+				t.Fatalf("expected incomplete reviewer output to be rejected: %q", result)
+			}
+		})
+	}
+}
+
+func TestBuildPulseReviewerInstructionMakesToolMarkerAuthoritative(t *testing.T) {
+	marker := pulseReviewerCompletionMarker("eval-health")
+	brief := "Return findings.\nEnd with exactly: REVIEW_COMPLETE eval_health"
+	instruction := buildPulseReviewerInstruction("Workflow/example", brief, marker)
+
+	if !strings.HasSuffix(instruction, marker) {
+		t.Fatalf("tool marker must be the final instruction, got:\n%s", instruction)
+	}
+	if strings.LastIndex(instruction, marker) <= strings.LastIndex(instruction, "REVIEW_COMPLETE eval_health") {
+		t.Fatalf("tool marker must override a conflicting marker from the caller, got:\n%s", instruction)
+	}
+	if !strings.Contains(instruction, "overrides any earlier response-ending instruction") {
+		t.Fatalf("instruction must explain marker precedence, got:\n%s", instruction)
+	}
+}
+
 func TestGoalAdvisorToolAllowlistsSeparateReadOnlyAndFinalizerActions(t *testing.T) {
 	readOnly := goalAdvisorReadOnlyToolAgentAllowedToolNames()
 	proposal := goalAdvisorFinalizerProposalToolAgentAllowedToolNames()

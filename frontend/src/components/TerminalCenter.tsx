@@ -2816,8 +2816,6 @@ const TERMINAL_ERROR_EVENT_TYPES = new Set<string>([
   'agent_error',
   'tool_call_error',
   'llm_generation_error',
-  'context_cancelled',
-  'batch_execution_canceled',
 ])
 
 interface TerminalErrorBannerEntry {
@@ -3094,9 +3092,10 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     }
     return byStep
   }, [routingDecisions])
-  // Surface error events (llm_generation_error, context_cancelled, etc.)
+  // Surface genuine error events (llm_generation_error, workflow_error, etc.)
   // on the terminal that caused them when the event carries enough
-  // identity. Only unscoped errors stay in the global banner.
+  // identity. Cancellation events are lifecycle state, not error banners.
+  // Only unscoped errors stay in the global banner.
   //
   // CAUTION: the zustand selector returns a value compared by reference.
   // Build the list with useMemo over a narrowly-selected events array

@@ -1269,6 +1269,53 @@ func TestStoreCanonicalizesCurrentMainAgentOwner(t *testing.T) {
 	}
 }
 
+func TestStoreChildReviewerCannotReplaceMainAgentTmux(t *testing.T) {
+	store := NewStore()
+	now := time.Now()
+	sessionID := "schedule-cron--pulse"
+	childOwnerID := "pulse-reviewer-cost-123"
+
+	store.HandleEvent(sessionID, terminalEventWithMetadata(
+		"main:"+sessionID,
+		"parent pulse screen",
+		1,
+		map[string]interface{}{
+			"execution_kind": "main_agent",
+			"tmux_session":   "mlp-parent",
+		},
+		now,
+	))
+	store.HandleEvent(sessionID, terminalEventWithMetadata(
+		"main:"+sessionID,
+		"child reviewer screen",
+		1,
+		map[string]interface{}{
+			"execution_owner_id":  childOwnerID,
+			"background_agent_id": childOwnerID,
+			"execution_kind":      "background_agent",
+			"scope":               "background_agent",
+			"tmux_session":        "mlp-reviewer",
+		},
+		now.Add(time.Second),
+	))
+
+	parent, ok := store.Get(sessionID + ":main:" + sessionID)
+	if !ok {
+		t.Fatalf("expected canonical parent terminal")
+	}
+	if parent.TmuxSession != "mlp-parent" || parent.Content != "parent pulse screen" {
+		t.Fatalf("child replaced parent terminal: tmux=%q content=%q", parent.TmuxSession, parent.Content)
+	}
+
+	child, ok := store.Get(sessionID + ":" + childOwnerID)
+	if !ok {
+		t.Fatalf("expected separate child reviewer terminal")
+	}
+	if child.TmuxSession != "mlp-reviewer" || child.ExecutionKind != "background_agent" {
+		t.Fatalf("child terminal = tmux %q kind %q", child.TmuxSession, child.ExecutionKind)
+	}
+}
+
 func TestStoreListDedupesLegacyCurrentMainAgentAliases(t *testing.T) {
 	store := NewStore()
 	oldUpdate := time.Now().Add(-time.Minute)

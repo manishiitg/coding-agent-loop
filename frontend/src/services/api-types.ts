@@ -2205,7 +2205,7 @@ export interface WorkflowBackupInfoResponse {
   success: boolean
   config?: WorkflowBackupConfig
   status?: WorkflowBackupStatus
-  effective_state: 'not_configured' | 'configured_not_verified' | 'running' | 'healthy' | 'stale' | 'partial' | 'failed' | string
+  effective_state: 'not_configured' | 'local_only' | 'configured_not_verified' | 'running' | 'healthy' | 'stale' | 'partial' | 'failed' | string
   current_source_hash?: string
   tracked_files_count?: number
   supported: WorkflowBackupStrategyInfo[]

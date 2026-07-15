@@ -185,16 +185,17 @@ func ExecuteShellCommand(c *gin.Context) {
 	// SECRET_* — user-provided credentials and secrets
 	// VAR_*    — workflow variables (non-secret config values like user IDs, sheet IDs)
 	// STEP_*   — per-step execution paths (STEP_OUTPUT_DIR, STEP_EXECUTION_DIR)
+	// DB_PATH  — absolute path to the workflow's SQLite database
 	// SCRIPT_* — script control flags (SCRIPT_VERBOSE)
 	// This applies to both isolated and non-isolated execution paths
 	extraEnvCount := 0
 	for k, v := range req.ExtraEnv {
-		if strings.HasPrefix(k, "MCP_") || strings.HasPrefix(k, "SECRET_") || strings.HasPrefix(k, "VAR_") || strings.HasPrefix(k, "STEP_") || strings.HasPrefix(k, "SCRIPT_") || strings.HasPrefix(k, "RUNLOOP_") || k == "PYTHONDONTWRITEBYTECODE" {
+		if isAllowedShellExtraEnvKey(k) {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
 			extraEnvCount++
 		}
 	}
-	log.Printf("[SHELL_ENV_DEBUG] ExtraEnv received: %d keys total, %d whitelisted (MCP_*/SECRET_*/VAR_*/STEP_*/RUNLOOP_*)", len(req.ExtraEnv), extraEnvCount)
+	log.Printf("[SHELL_ENV_DEBUG] ExtraEnv received: %d keys total, %d allowed (runtime prefixes plus DB_PATH/PYTHONDONTWRITEBYTECODE)", len(req.ExtraEnv), extraEnvCount)
 	if len(req.ExtraEnv) > 0 {
 		keys := make([]string, 0, len(req.ExtraEnv))
 		for k := range req.ExtraEnv {
@@ -308,6 +309,17 @@ func ExecuteShellCommand(c *gin.Context) {
 			Command:         fullCommand,
 		},
 	})
+}
+
+func isAllowedShellExtraEnvKey(key string) bool {
+	return strings.HasPrefix(key, "MCP_") ||
+		strings.HasPrefix(key, "SECRET_") ||
+		strings.HasPrefix(key, "VAR_") ||
+		strings.HasPrefix(key, "STEP_") ||
+		strings.HasPrefix(key, "SCRIPT_") ||
+		strings.HasPrefix(key, "RUNLOOP_") ||
+		key == "DB_PATH" ||
+		key == "PYTHONDONTWRITEBYTECODE"
 }
 
 // stripShellPrefix removes a leading "sh -c " wrapper from the command string.

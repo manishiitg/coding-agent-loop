@@ -9,6 +9,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 	agent "github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentwrapper"
@@ -20,10 +25,6 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/skills"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/subagents"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
-	"os"
-	"path/filepath"
-	"strings"
-	"time"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	unifiedevents "github.com/manishiitg/mcpagent/events"
@@ -749,12 +750,17 @@ func (n *workshopExecutionBgNotifier) OnExecutionStart(start todo_creation_human
 	}
 	n.api.completionLoopStartedMu.Unlock()
 
-	// Emit background_agent_started event so BackgroundAgentsStatusBar shows a pill
+	// Emit background_agent_started event so BackgroundAgentsStatusBar shows a pill.
+	// Synchronous reviewers are already awaited by their parent tool call, so they
+	// remain visible in the execution tree without injecting a duplicate start
+	// message back into the same parent conversation.
 	n.api.emitBackgroundAgentEvent(n.sessionID, start.ID, "background_agent_started", map[string]interface{}{
 		"agent_id": start.ID,
 		"name":     start.Name,
 	})
-	n.api.notifyBackgroundAgentStarted(n.sessionID, start.ID)
+	if metadata["suppress_auto_notification"] != "true" {
+		n.api.notifyBackgroundAgentStarted(n.sessionID, start.ID)
+	}
 }
 
 func isWorkflowStepTrackingExecution(id, name string, meta map[string]string) bool {
@@ -805,8 +811,11 @@ func (n *workshopExecutionBgNotifier) OnExecutionComplete(execID, name, result s
 			"error":    err.Error(),
 			"duration": duration.Truncate(time.Second).String(),
 		})
-		log.Printf("[BG AGENT] Background execution %s ended from context loss while still running; notifying parent as failed: %v", execID, err)
-		n.api.bgAgentRegistry.NotifyCompletion(n.sessionID, execID)
+		suppressNotification := agent.GetSnapshot().Metadata["suppress_auto_notification"] == "true"
+		log.Printf("[BG AGENT] Background execution %s ended from context loss while still running (suppress_auto_notification=%t): %v", execID, suppressNotification, err)
+		if !suppressNotification {
+			n.api.bgAgentRegistry.NotifyCompletion(n.sessionID, execID)
+		}
 		return
 	}
 
@@ -836,8 +845,11 @@ func (n *workshopExecutionBgNotifier) OnExecutionComplete(execID, name, result s
 		})
 	}
 
-	// Signal completion to the notification loop (triggers auto-notification synthetic turn).
-	n.api.bgAgentRegistry.NotifyCompletion(n.sessionID, execID)
+	// Signal completion to the notification loop unless the parent is already
+	// synchronously awaiting this execution's direct tool result.
+	if agent.GetSnapshot().Metadata["suppress_auto_notification"] != "true" {
+		n.api.bgAgentRegistry.NotifyCompletion(n.sessionID, execID)
+	}
 }
 
 func (n *workshopExecutionBgNotifier) OnExecutionTerminated(execID, name string) {

@@ -264,7 +264,7 @@ func evaluationOutputContentCandidates(evalExecutionPath, stepFolder string, ste
 		candidates = append(candidates, candidate)
 	}
 	if step != nil {
-		add(step.ContextOutput)
+		add(step.GetContextOutput().String())
 		if step.PreValidation != nil {
 			for _, file := range step.PreValidation.Files {
 				add(file.FileName)

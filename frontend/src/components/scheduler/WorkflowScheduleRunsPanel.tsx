@@ -24,6 +24,7 @@ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../ui/
 
 interface WorkflowScheduleRunsPanelProps {
   onClose: () => void
+  onJobsLoaded?: (jobs: ScheduledJob[]) => void
   workflowScope?: {
     presetQueryId?: string | null
     workspacePath?: string | null
@@ -601,7 +602,7 @@ function sortJobs(a: ScheduledJob, b: ScheduledJob): number {
   return bTime.localeCompare(aTime)
 }
 
-const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ onClose, workflowScope }) => {
+const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ onClose, onJobsLoaded, workflowScope }) => {
   const [jobs, setJobs] = useState<ScheduledJob[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -703,13 +704,14 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
         schedulerApi.getConfig().catch(() => null),
       ])
       setJobs(resp.jobs)
+      onJobsLoaded?.(resp.jobs)
       setSchedulerConfig(config)
     } catch {
       setError('Failed to load automation schedules')
     } finally {
       if (showLoading) setIsLoading(false)
     }
-  }, [])
+  }, [onJobsLoaded])
 
   useEffect(() => {
     loadJobs(true)
@@ -1724,6 +1726,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                 <button
                   onClick={() => loadJobs()}
                   className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                  aria-label="Refresh schedule status"
                 >
                   <RefreshCw className="w-4 h-4" />
                 </button>

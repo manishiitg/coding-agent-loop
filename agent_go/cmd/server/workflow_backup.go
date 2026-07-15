@@ -16,6 +16,7 @@ const (
 	workflowBackupStatusVersion = 1
 
 	workflowBackupStateNotConfigured         = "not_configured"
+	workflowBackupStateLocalOnly             = "local_only"
 	workflowBackupStateConfiguredNotVerified = "configured_not_verified"
 	workflowBackupStateRunning               = "running"
 	workflowBackupStateHealthy               = "healthy"
@@ -75,8 +76,8 @@ func supportedWorkflowBackupStrategies() []WorkflowBackupStrategyInfo {
 	return []WorkflowBackupStrategyInfo{
 		{
 			ID:          "git",
-			Label:       "Git / GitHub (default)",
-			Description: "Default. A local git repo gives zero-config rollback; add a GitHub remote for off-box durability. Best for workflow config, planning, knowledgebase, learnings, scripts, and small JSON.",
+			Label:       "GitHub / remote Git (recommended)",
+			Description: "Recommended for off-device protection of workflow config, planning, knowledgebase, learnings, scripts, and small JSON. A local Git repo alone is not a durable backup.",
 			BestFor:     []string{"workflow", "planning", "knowledgebase", "learnings", "small-db"},
 		},
 		{
@@ -119,6 +120,9 @@ func workflowBackupEffectiveState(config *WorkflowBackupConfig, status *Workflow
 	if config == nil || !config.Enabled {
 		return workflowBackupStateNotConfigured
 	}
+	if !workflowBackupHasRemoteDestination(config) {
+		return workflowBackupStateLocalOnly
+	}
 	if status == nil || strings.TrimSpace(status.State) == "" {
 		return workflowBackupStateConfiguredNotVerified
 	}
@@ -127,6 +131,34 @@ func workflowBackupEffectiveState(config *WorkflowBackupConfig, status *Workflow
 		return workflowBackupStateStale
 	}
 	return state
+}
+
+func workflowBackupHasRemoteDestination(config *WorkflowBackupConfig) bool {
+	if config == nil {
+		return false
+	}
+	for _, destination := range config.Destinations {
+		provider := strings.ToLower(strings.TrimSpace(destination.Provider))
+		destinationType := strings.NewReplacer("-", "_", " ", "_").Replace(
+			strings.ToLower(strings.TrimSpace(destination.Type)),
+		)
+		repo := strings.TrimSpace(destination.Repo)
+		bucket := strings.TrimSpace(destination.Bucket)
+		if strings.HasPrefix(provider, "local") || provider == "filesystem" ||
+			strings.HasPrefix(destinationType, "local") || destinationType == "git_bundle" {
+			continue
+		}
+		if provider == "git" && repo == "" {
+			continue
+		}
+		if provider != "" || repo != "" || bucket != "" {
+			return true
+		}
+		if destinationType == "object_store" || destinationType == "huggingface" || destinationType == "remote_git" {
+			return true
+		}
+	}
+	return false
 }
 
 var backupHashFiles = []string{

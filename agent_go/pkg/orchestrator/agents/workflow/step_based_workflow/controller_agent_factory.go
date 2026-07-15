@@ -10,18 +10,18 @@ import (
 	"sync"
 	"time"
 
-	mcpagent "github.com/manishiitg/mcpagent/agent"
-	"github.com/manishiitg/mcpagent/agent/codeexec"
-	mcpllm "github.com/manishiitg/mcpagent/llm"
-	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
-	"github.com/manishiitg/mcpagent/mcpclient"
-	"github.com/manishiitg/mcpagent/observability"
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents"
 	orchestrator_events "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	"github.com/manishiitg/mcpagent/agent/codeexec"
+	mcpllm "github.com/manishiitg/mcpagent/llm"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/mcpclient"
+	"github.com/manishiitg/mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -253,6 +253,31 @@ func injectStepEnvIntoShellExecutor(executors map[string]interface{}, stepOutput
 		args["extra_env"] = mergedEnv
 		return original(ctx, args)
 	}
+}
+
+func registerStepSessionShellEnv(sessionID, stepOutputAbsPath, stepExecutionAbsPath, dbAbsPath string) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return
+	}
+	env := map[string]string{
+		"STEP_OUTPUT_DIR":    stepOutputAbsPath,
+		"STEP_EXECUTION_DIR": stepExecutionAbsPath,
+	}
+	if strings.TrimSpace(dbAbsPath) != "" {
+		env["DB_PATH"] = dbAbsPath
+	}
+	common.SetSessionShellEnv(sessionID, env)
+}
+
+func resolveEffectiveDBAccess(stepConfig *AgentConfigs, evaluationMode, evaluationDBWrite bool) string {
+	if !evaluationMode {
+		return resolveDBAccess(stepConfig)
+	}
+	if evaluationDBWrite {
+		return DBAccessReadWrite
+	}
+	return DBAccessRead
 }
 
 // getWorkspaceDocsRoot returns the absolute path to the workspace-docs root directory.
@@ -545,7 +570,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
 	// Set folder guard paths:
 	// READ: execution folder (to read previous step results) + soul north-star file + builder review/improve logs
-	// + global learnings (if mode grants read) + knowledgebase folder (if mode grants read)
+	// + global and step-specific learnings (if mode grants read) + knowledgebase folder (if mode grants read)
 	// WRITE: only the specific step folder (execution/step-{X}/ or execution/step-{X}-{branch}/) + execution/Downloads folder to prevent writing to other steps
 	// NOTE: under kbWriteMethod=direct we add knowledgebase/notes/ to writePaths so the
 	// step can write per-topic markdown with diff_patch_workspace_file. Under
@@ -565,8 +590,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 		readPaths = []string{baseWorkspacePath}
 	}
 	if learningsAccess != LearningsAccessNone {
-		globalLearningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, GlobalLearningID)
-		readPaths = append(readPaths, globalLearningsPath)
+		readPaths = appendLearningReadPaths(readPaths, baseWorkspacePath, stepID)
 	}
 
 	// Generic agents (spawned via call_generic_agent) get write access to the entire
@@ -625,6 +649,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 
 	readPaths = hcpo.appendCDPHostDownloadsReadPath(readPaths)
 	return readPaths, writePaths
+}
+
+// appendLearningReadPaths grants a step its shared workflow guidance and its own
+// saved implementation/helpers. It deliberately does not grant the learnings root
+// or another step's folder, and it never grants write access.
+func appendLearningReadPaths(readPaths []string, baseWorkspacePath string, stepID string) []string {
+	readPaths = append(readPaths, filepath.Join(baseWorkspacePath, LearningsFolderName, GlobalLearningID))
+
+	stepID = strings.TrimSpace(stepID)
+	if stepID == "" || stepID == GlobalLearningID || filepath.Base(stepID) != stepID || stepID == "." || stepID == ".." {
+		return readPaths
+	}
+	return append(readPaths, filepath.Join(baseWorkspacePath, LearningsFolderName, stepID))
 }
 
 // getCodeExecutionMode determines code execution mode with priority: step config > workflow/preset default
@@ -1315,7 +1352,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyPostSetupToAgent(agent agents.Or
 // artifactFolderNameOverride: Optional execution/log folder name. This keeps logical step ID stable while isolating per-call artifacts.
 //
 //	When empty, the step ID will be derived from stepPath.
-func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.Context, phase string, stepPath string, agentName string, stepConfig *AgentConfigs, stepIDOverride string, artifactFolderNameOverride string) (agents.OrchestratorAgent, error) {
+func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.Context, phase string, stepPath string, agentName string, stepConfig *AgentConfigs, stepIDOverride string, artifactFolderNameOverride string, evaluationDBWrite bool) (agents.OrchestratorAgent, error) {
 	// 1. Resolve stepID first (needed for folder guard setup)
 	stepID := hcpo.resolveStepID(stepPath, stepIDOverride)
 	artifactStepID := stepID
@@ -1329,7 +1366,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	kbAccess := resolveKnowledgebaseAccess(stepConfig, hcpo.UseKnowledgebase())
 	kbWriteMethod := resolveKnowledgebaseWriteMethod(stepConfig)
 	learningsAccess := resolveLearningsAccess(stepConfig)
-	readPaths, writePaths := hcpo.setupExecutionFolderGuard(artifactStepPath, artifactStepID, kbAccess, learningsAccess, kbWriteMethod, resolveDBAccess(stepConfig))
+	dbAccess := resolveEffectiveDBAccess(stepConfig, hcpo.isEvaluationMode, evaluationDBWrite)
+	readPaths, writePaths := hcpo.setupExecutionFolderGuard(artifactStepPath, artifactStepID, kbAccess, learningsAccess, kbWriteMethod, dbAccess)
 	stepEnvOutputPathOverride := ""
 	if override, ok := ctx.Value(messageSequenceFolderGuardOverrideKey{}).(*messageSequenceFolderGuardOverride); ok && override != nil {
 		readPaths = append([]string{}, override.ReadPaths...)
@@ -1454,6 +1492,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 		stepOutputAbsPath := filepath.Join(GetPromptDocsRoot(), stepExecutionPath)
 		stepExecutionAbsPath := filepath.Dir(stepOutputAbsPath)
 		dbAbsPath := filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), DBFolderName, "db.sqlite")
+		registerStepSessionShellEnv(config.MCPSessionID, stepOutputAbsPath, stepExecutionAbsPath, dbAbsPath)
 		injectStepEnvIntoShellExecutor(executorsToUse, stepOutputAbsPath, stepExecutionAbsPath, dbAbsPath, config.MCPSessionID)
 		hcpo.GetLogger().Info(fmt.Sprintf("📂 Injecting step shell env into execute_shell_command for %s: STEP_OUTPUT_DIR=%s MCP_SESSION_ID=%s", stepID, stepOutputAbsPath, config.MCPSessionID))
 	}

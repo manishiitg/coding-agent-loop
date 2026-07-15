@@ -71,6 +71,44 @@ func TestExecutionOnlyPromptUsesAbsoluteDBPathEnv(t *testing.T) {
 	}
 }
 
+func TestEvaluationPromptsUseOnlyFileOutputContract(t *testing.T) {
+	agent := &WorkflowExecutionOnlyAgent{}
+	vars := map[string]string{
+		"WorkspacePath":           "/app/workspace-docs/Workflow/test/evaluation/runs/iteration-0/default/execution",
+		"WorkflowRoot":            "/app/workspace-docs/Workflow/test",
+		"StepExecutionPath":       "/app/workspace-docs/Workflow/test/evaluation/runs/iteration-0/default/execution/eval-result",
+		"StepContextOutput":       defaultEvaluationContextOutput,
+		"StepDescription":         "Score the source-grounded result.",
+		"StepContextDependencies": "",
+		"LearningHistory":         "",
+		"StepNumber":              "eval-result",
+		"KnowledgebasePath":       "/app/workspace-docs/Workflow/test/knowledgebase",
+		"FolderGuardReadPaths":    "/app/workspace-docs/Workflow/test/db",
+		"FolderGuardWritePaths":   "/app/workspace-docs/Workflow/test/evaluation/runs/iteration-0/default/execution/eval-result",
+		"IsEvaluationMode":        "true",
+		"IsCodeExecutionMode":     "false",
+		"IsScriptedMode":          "false",
+	}
+
+	systemPrompt := agent.executionOnlySystemPromptProcessor(vars)
+	userPrompt := agent.executionOnlyUserMessageProcessor(vars)
+	for _, prompt := range []string{systemPrompt, userPrompt} {
+		if !strings.Contains(prompt, defaultEvaluationContextOutput) {
+			t.Fatalf("evaluation prompt must name %q\n\nPrompt:\n%s", defaultEvaluationContextOutput, prompt)
+		}
+		for _, forbidden := range []string{"Output to the db", "persist your results to the workflow database", "No output file"} {
+			if strings.Contains(prompt, forbidden) {
+				t.Fatalf("evaluation prompt contains conflicting DB-output instruction %q\n\nPrompt:\n%s", forbidden, prompt)
+			}
+		}
+	}
+	for _, required := range []string{"READ-ONLY workflow evidence", "Evaluation findings are never persisted"} {
+		if !strings.Contains(systemPrompt, required) {
+			t.Fatalf("evaluation system prompt missing %q\n\nPrompt:\n%s", required, systemPrompt)
+		}
+	}
+}
+
 func TestExecutionOnlyUserPromptIncludesWorkshopHumanInput(t *testing.T) {
 	agent := &WorkflowExecutionOnlyAgent{}
 

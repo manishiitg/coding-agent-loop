@@ -40,7 +40,7 @@ Every plan-mod tool call is auto-written to `planning/changelog/changelog-*.json
 
 Do **not** edit or delete changelog files directly. The read-only Artifact Review agent returns exact inspected entries; the parent writer records the review in `builder/improve.html` and then marks those entries through the dedicated `mark_changelog_artifact_reviewed` tool. Pulse uses that metadata to skip future no-op review turns.
 
-This proactive check is one end of a loop; the **`review-artifact-drift` audit** uses the read-only `review_artifact_sync` tool as the agentic backstop that sweeps the changelog and catches anything the proactive pass missed. Its parent writer advances the **Artifact Sync Cursor** in `builder/improve.html` and calls `mark_changelog_artifact_reviewed` only for exact inspected entries. Pulse handles the same concern inside its consolidated reviewer/fixer pass.
+This proactive check is one end of a loop; the **`review-artifact-drift` audit** is the read-only checklist passed to a generic reviewer that sweeps the changelog and catches anything the proactive pass missed. Its parent writer advances the **Artifact Sync Cursor** in `builder/improve.html` and calls `mark_changelog_artifact_reviewed` only for exact inspected entries. Pulse handles the same concern inside its consolidated reviewer/fixer pass.
 
 ## Scope note
 The discipline **scales to the change**. A change that is purely internal to a step (same output contract, same db writes, same described behavior) has no blast radius — confirm that quickly and move on. A renamed output field touches downstream + report + eval + db; a reworded description that keeps the same contract may only touch learnings. Trace what the surface actually reaches, not a fixed checklist for its own sake.

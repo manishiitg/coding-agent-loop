@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	mcpagent "github.com/manishiitg/mcpagent/agent"
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents"
 	orchestratorevents "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 const workflowContinuationRecoveryScanLimit = 200
@@ -451,7 +451,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) startRecoveredDirectContinuation(
 			}()
 			hcpo.recordWorkflowContinuationPhaseForRunFolder(execCtx, state.RunFolder, state.StepID, state.StepPath, workflowContinuationOwnerStepExecution, phase, workflowContinuationStatusRunning, "", nil)
 			agentName := fmt.Sprintf("%s-recovery-%s", state.StepID, phase)
-			agent, err := hcpo.createExecutionOnlyAgent(execCtx, "execution_only", runtime.StepPath, agentName, getAgentConfigs(runtime.Step), state.StepID, "")
+			evaluationDBWrite := false
+			if evalStep, ok := runtime.Step.(*EvaluationStep); ok {
+				evaluationDBWrite = evalStep.DBWrite
+			}
+			agent, err := hcpo.createExecutionOnlyAgent(execCtx, "execution_only", runtime.StepPath, agentName, getAgentConfigs(runtime.Step), state.StepID, "", evaluationDBWrite)
 			if err != nil {
 				execErr = err
 				result = fmt.Sprintf("%s failed for %s: %v", labelPrefix, stepLabel, err)

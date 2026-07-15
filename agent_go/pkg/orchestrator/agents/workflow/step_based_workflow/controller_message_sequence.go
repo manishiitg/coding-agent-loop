@@ -847,7 +847,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) getMessageSequenceRuntime(ctx context
 	}
 
 	agentName := fmt.Sprintf("message-sequence-%s", step.GetID())
-	agent, err := hcpo.createExecutionOnlyAgent(agentCtx, "execution_only", stepPath, agentName, step.AgentConfigs, step.GetID(), "")
+	agent, err := hcpo.createExecutionOnlyAgent(agentCtx, "execution_only", stepPath, agentName, step.AgentConfigs, step.GetID(), "", false)
 	if err != nil {
 		return nil, agentCtx, err
 	}
@@ -1017,7 +1017,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupMessageSequenceFolderGuard(stepP
 		readPaths = append(readPaths, getKnowledgebasePath(baseWorkspacePath))
 	}
 	if learningsAccess != LearningsAccessNone {
-		readPaths = append(readPaths, filepath.Join(baseWorkspacePath, LearningsFolderName, GlobalLearningID))
+		readPaths = appendLearningReadPaths(readPaths, baseWorkspacePath, stepID)
 	}
 	writePaths = []string{stepFolderPath, downloadsPath}
 	if itemWriteAccess.DB && dbAccess == DBAccessReadWrite {
@@ -1087,7 +1087,7 @@ func buildMessageSequenceAccessNote(writeAccess MessageSequenceWriteAccess) stri
 	if writeAccess.Learnings {
 		grants = append(grants, "learnings/_global/")
 	}
-	return "Reads are available for execution outputs, soul, builder logs, db/, knowledgebase/, and learnings/_global/. Writes for this item are limited to: " + strings.Join(grants, ", ") + "."
+	return "Reads are available for execution outputs, soul, builder logs, db/, knowledgebase/, learnings/_global/, and this step's learnings folder. Writes for this item are limited to: " + strings.Join(grants, ", ") + "."
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) runMessageSequencePython(ctx context.Context, stepPath string, stepID string, stepConfig *AgentConfigs, item MessageSequenceItem, mainRel string, codeRel string, itemRel string) (string, int, error) {

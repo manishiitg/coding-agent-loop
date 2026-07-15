@@ -203,7 +203,7 @@ func TestProviderManifestPublishesCodexGPT56Defaults(t *testing.T) {
 			model  string
 			effort string
 		}{
-			"high":           {model: "gpt-5.6-sol", effort: "xhigh"},
+			"high":           {model: "gpt-5.6-terra", effort: "xhigh"},
 			"medium":         {model: "gpt-5.6-terra", effort: "medium"},
 			"low":            {model: "gpt-5.6-luna", effort: "low"},
 			"maintenance":    {model: "gpt-5.6-sol", effort: "xhigh"},

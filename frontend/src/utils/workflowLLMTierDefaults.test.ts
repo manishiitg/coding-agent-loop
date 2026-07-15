@@ -17,9 +17,9 @@ const codexManifest: ProviderManifestEntry = {
   supports_dynamic_models: false,
   default_model_id: 'gpt-5.6-terra',
   default_tier_models: {
-    builder: { provider: 'codex-cli', model_id: 'gpt-5.6-terra', options: { reasoning_effort: 'high' } },
-    high: { provider: 'codex-cli', model_id: 'gpt-5.6-sol', options: { reasoning_effort: 'xhigh' } },
-    medium: { provider: 'codex-cli', model_id: 'gpt-5.6-terra', options: { reasoning_effort: 'high' } },
+    builder: { provider: 'codex-cli', model_id: 'gpt-5.6-sol', options: { reasoning_effort: 'high' } },
+    high: { provider: 'codex-cli', model_id: 'gpt-5.6-terra', options: { reasoning_effort: 'xhigh' } },
+    medium: { provider: 'codex-cli', model_id: 'gpt-5.6-terra', options: { reasoning_effort: 'medium' } },
     low: { provider: 'codex-cli', model_id: 'gpt-5.6-luna', options: { reasoning_effort: 'medium' } },
     maintenance: { provider: 'codex-cli', model_id: 'gpt-5.6-sol', options: { reasoning_effort: 'xhigh' } },
     chief_of_staff: { provider: 'codex-cli', model_id: 'gpt-5.6-sol', options: { reasoning_effort: 'xhigh' } },
@@ -38,7 +38,7 @@ describe('resolveDelegationMainModel', () => {
 
     expect(resolveDelegationMainModel(config, [codexManifest])).toEqual({
       provider: 'codex-cli',
-      model_id: 'gpt-5.6-terra',
+      model_id: 'gpt-5.6-sol',
       options: { reasoning_effort: 'high' },
     })
   })

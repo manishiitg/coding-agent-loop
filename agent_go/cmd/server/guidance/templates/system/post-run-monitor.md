@@ -225,6 +225,12 @@ Mark due for real Bug findings:
   tool/source/route, used stale inputs, ignored returned evidence, or made an
   unsupported decision; this makes targeted trace review due, not a full-run
   conversation audit
+- a claimed state/config/status repair whose expected behavior is absent from
+  the next applicable decision or run, or whose real runtime consumer and
+  canonical store cannot be named. A successful write to a plausible table is
+  not proof that the allocator/router/executor read it.
+- duplicate or shadow control stores for the same logical entity (for example,
+  two strategy/arm tables) where writers, readers, or mirroring rules can drift
 - Chief of Staff recommendations that are operational bugs
 
 Also mark Bug Review due for a bounded exploratory QA checkpoint when any of
@@ -266,14 +272,30 @@ Act like a careful human QA engineer, but remain read-only and side-effect safe:
    Never send email or messages, post content, trade, publish, mutate production
    DB/data, or rerun an externally producing workflow action without explicit
    user approval.
-4. When a path cannot be tested safely, provide an exact reproducible test case:
+4. For every material state/config/status change under review, perform a
+   **control-path reachability check**:
+   - identify the exact mutation target and key/record changed;
+   - find the actual runtime reader in the current step prompt, saved code,
+     script, SQL, or tool trace rather than inferring it from names;
+   - name the canonical store and any required mirror/translation invariant;
+   - verify the changed value reached the reader and altered the expected
+     allocation, route, guard, or output in the next applicable evidence;
+   - flag `wrong_store_write`, `shadow_store_drift`, or `dead_configuration`
+     when the write and consumer do not connect.
+   Never accept “the row changed” as sufficient verification. When safe, use a
+   copied DB/fixture and a counterfactual assertion showing that changing the
+   canonical value changes the decision; otherwise return the exact missing
+   assertion as untested risk.
+5. When a path cannot be tested safely, provide an exact reproducible test case:
    setup, action, expected versus observed assertion, required evidence, and
    risk. Do not claim it passed.
-5. Search for counterexamples even when the latest run says success: stale
+6. Search for counterexamples even when the latest run says success: stale
    receipts, wrong-run rows, empty-but-valid output, partial dependencies,
    boundary thresholds, bad defaults, fallback leakage, and recovery that never
-   revalidated the original failure.
-6. Return `QA coverage`, `expected versus observed`, exact evidence, confidence,
+   revalidated the original failure. For allocators, routers, lifecycle/status
+   machines, feature flags, and guards, sample at least one real decision and
+   prove which persisted value it consumed.
+7. Return `QA coverage`, `expected versus observed`, exact evidence, confidence,
    and `untested risk` alongside the normal ordered findings. Coverage is not a
    percentage unless a real denominator exists.
 
@@ -434,7 +456,12 @@ Load `assumption-audit`: KB notes must distinguish durable domain evidence from 
 
 ### db_health
 
-Mark due when DB schema, table contracts, upsert rules, report SQL, eval consumers, or `db/README.md` no longer match current writers and readers.
+Mark due when DB schema, table contracts, upsert rules, report SQL, eval
+consumers, or `db/README.md` no longer match current writers and readers. Also
+mark it due when multiple tables/files encode the same logical control state
+and their canonical ownership or synchronization invariant is unclear, or when
+a claimed DB repair changed a store that the runtime decision path does not
+actually consume.
 
 The generic read-only reviewer scopes concrete DB contract/schema/report
 compatibility work. The Pulse Fixer applies bounded contract fixes directly and

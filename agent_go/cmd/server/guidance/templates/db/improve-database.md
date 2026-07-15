@@ -41,6 +41,20 @@ READ FIRST
 3. Read `reports/report_plan.json` if present. Map widgets to their `db: db/db.sqlite` + `sql` queries (and `source` for file/file-list widgets).
 4. Read `db/README.md` if present, then inspect the database: `sqlite3 db/db.sqlite ".tables"` and `.schema <table>` for each table; also note `db/assets/`.
 5. Sample each relevant table enough to understand shape. Do not dump whole tables; use `sqlite3 db/db.sqlite "SELECT * FROM <table> LIMIT 5"`, `SELECT COUNT(*)`, and targeted queries.
+6. Build a control-state ownership map for tables that affect allocation,
+   routing, lifecycle/status, feature flags, guards, retries, or other runtime
+   decisions. For each logical entity, name its canonical table/field, all
+   writers, the actual runtime reader, and any mirror/translation rule.
+7. Search specifically for source-of-truth collisions: similarly named tables,
+   JSON arrays, backup files, or report-only projections that carry the same
+   IDs/statuses. Join or compare a bounded sample by stable ID and flag values
+   that disagree. A write succeeding in one store is not evidence that the
+   runtime consumer observed it.
+8. For a recent claimed repair or status/config change, trace
+   `writer -> canonical record -> runtime reader -> decision/output`. Return
+   `wrong_store_write`, `shadow_store_drift`, or `dead_configuration` when that
+   chain breaks. Recommend a single canonical owner or an explicit tested
+   synchronization invariant; do not silently pick one and migrate rows.
 
 WHEN TO USE EACH MODE
 
@@ -66,6 +80,8 @@ Use `mode="cross_step"` when improving DB requires the plan, multiple writer/con
 - identify redundant tables that a report widget's `sql` (JOIN/GROUP BY) could replace
 - align tables with report widgets and downstream consumers
 - surface stale columns/tables whose writers no longer exist
+- reconcile shadow control tables that encode the same IDs/statuses and prove
+  which one the runtime allocator/router/guard actually reads
 
 If unsure, use `mode="auto"` or omit mode.
 
@@ -75,5 +91,7 @@ REVIEW OUTPUT
 2. Return the instruction and mode as `recommended_fix`.
 3. Name tables/contracts/indexes/assets affected, report/eval compatibility
    impact, whether a row migration would be required, and exact verification
-   commands such as `PRAGMA integrity_check`.
+   commands such as `PRAGMA integrity_check`. For control-state findings, also
+   include one bounded source-of-truth comparison query and one assertion that
+   proves the runtime decision consumed the canonical value.
 4. The Pulse Fixer owns every DB/file mutation and `builder/improve.html` update.

@@ -39,6 +39,53 @@ func TestEvaluationPlanGuidanceAcceptsSourceGroundedValidEmptyResults(t *testing
 	}
 }
 
+func TestPulseGuidanceTracesStateChangesToRuntimeConsumers(t *testing.T) {
+	postRun, err := renderFromRegistry("post-run-monitor", tmplData{}, referenceKinds)
+	if err != nil {
+		t.Fatalf("render post-run-monitor: %v", err)
+	}
+	for _, want := range []string{
+		"control-path reachability check",
+		"wrong_store_write",
+		"shadow_store_drift",
+		"successful write to a plausible table is",
+		"prove which persisted value it consumed",
+	} {
+		if !strings.Contains(postRun, want) {
+			t.Fatalf("post-run monitor missing control-path contract %q", want)
+		}
+	}
+
+	dbReview, err := renderFromRegistry("improve-database", tmplData{}, allKinds)
+	if err != nil {
+		t.Fatalf("render improve-database: %v", err)
+	}
+	for _, want := range []string{
+		"control-state ownership map",
+		"source-of-truth collisions",
+		"writer -> canonical record -> runtime reader -> decision/output",
+		"runtime decision consumed the canonical value",
+	} {
+		if !strings.Contains(dbReview, want) {
+			t.Fatalf("database review missing control-path contract %q", want)
+		}
+	}
+
+	artifactReview, err := renderFromRegistry("review-artifact-drift", tmplData{}, allKinds)
+	if err != nil {
+		t.Fatalf("render review-artifact-drift: %v", err)
+	}
+	for _, want := range []string{
+		"trace the exact changed record to the current runtime",
+		"clean changelog/file diff is not enough",
+		"plausible but non-canonical store",
+	} {
+		if !strings.Contains(artifactReview, want) {
+			t.Fatalf("artifact review missing control-path contract %q", want)
+		}
+	}
+}
+
 func TestMigrateBrowserGuidanceIsScopedIdempotentAndNonExecuting(t *testing.T) {
 	rendered, err := renderFromRegistry("migrate-browser", tmplData{}, allKinds)
 	if err != nil {

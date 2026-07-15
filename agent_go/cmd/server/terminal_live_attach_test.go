@@ -776,12 +776,12 @@ func TestLiveAttachRealTmuxEndToEnd(t *testing.T) {
 	// Collect the seed + ~1s of live stream.
 	var transcript strings.Builder
 	deadline := time.Now().Add(3 * time.Second)
+	_ = conn.SetReadDeadline(deadline)
 	for time.Now().Before(deadline) {
-		_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
 			if strings.Contains(err.Error(), "i/o timeout") {
-				continue
+				break
 			}
 			t.Fatalf("read stream: %v", err)
 		}

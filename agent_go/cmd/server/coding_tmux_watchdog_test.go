@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
+	agentevents "github.com/manishiitg/mcpagent/events"
 )
 
 func TestInspectCodingTmuxPaneStateUsesRealPaneState(t *testing.T) {
@@ -215,6 +216,8 @@ func TestCodingTmuxWatchdogRateLimitedMainStopsSession(t *testing.T) {
 	sessionID := "main-rate-limited"
 	event := terminalRouteChunkEvent(sessionID, "main:"+sessionID, "mlp-claude-code-main", "limited", 1)
 	event.ExecutionKind = "main_agent"
+	chunk := event.Data.Data.(*agentevents.StreamingChunkEvent)
+	chunk.Metadata["execution_kind"] = "main_agent"
 	store.HandleEvent(sessionID, event)
 	api := &StreamingAPI{
 		terminalStore: store,

@@ -827,7 +827,9 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	}
 
 	current.ExecutionID = firstNonEmpty(event.ExecutionID, stringValue(metadata, "execution_id"), stringValue(metadata, "execution_owner_id"), ownerID)
-	current.ExecutionKind = firstNonEmpty(event.ExecutionKind, stringValue(metadata, "execution_kind"))
+	// Enriched metadata can correct a provider event that inherited the parent
+	// main-agent kind. Prefer it so child reviewers remain separate terminals.
+	current.ExecutionKind = firstNonEmpty(stringValue(metadata, "execution_kind"), event.ExecutionKind)
 	current.Label = terminalLabel(event, metadata, ownerID)
 	current.Scope = terminalScope(event, metadata)
 	current.WorkflowPath = firstNonEmpty(stringValue(metadata, "workflow_path"), stringValue(metadata, "workspace_path"), stringValue(metadata, "working_directory"))
@@ -1868,17 +1870,19 @@ func isNonTmuxWorkflowTerminalMetadata(metadata map[string]interface{}) bool {
 }
 
 func terminalOwnerID(sessionID string, event storeevents.Event, metadata map[string]interface{}) string {
-	if terminalEventIsMainAgent(event, metadata) {
-		return "main:" + sessionID
-	}
 	if ownerID := workflowStepOwnerCandidate(event, metadata); validTerminalOwner(ownerID, sessionID) {
 		return ownerID
 	}
+	// An explicit execution owner is goroutine-local and therefore more
+	// authoritative than a provider event's inherited main_agent label.
 	if ownerID := firstValidTerminalOwner(sessionID,
 		stringValue(metadata, "execution_owner_id"),
 		stringValue(metadata, "owner_execution_id"),
 	); ownerID != "" {
 		return ownerID
+	}
+	if terminalEventIsMainAgent(event, metadata) {
+		return "main:" + sessionID
 	}
 	if ownerID := firstValidTerminalOwner(sessionID,
 		stringValue(metadata, "background_agent_id"),

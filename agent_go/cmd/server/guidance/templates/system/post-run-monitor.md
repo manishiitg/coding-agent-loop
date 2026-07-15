@@ -146,6 +146,11 @@ evidence guidance only; do not execute their nested-agent calls.
    Explicitly forbid file edits, config or plan changes, publishing,
    notification, user questions, mutation tools, `builder/improve.html` writes,
    and `mark_pulse_module_result`.
+   Keep each response under 6000 characters and avoid wide tables. Do not add
+   a reviewer-specific completion marker to the instructions:
+   `call_generic_agent` appends and enforces its own authoritative final marker.
+   The tool rejects a provider pane snapshot that does not contain that marker
+   and retries one incomplete result once.
    Use the existing specialist guidance as the reviewer brief: learning health
    uses `improve-learnings`, KB health uses `improve-knowledge`, DB health uses
    `improve-database`, report health uses `improve-report`, and eval health uses
@@ -153,7 +158,8 @@ evidence guidance only; do not execute their nested-agent calls.
    they return fixer instructions rather than applying them.
 4. Reviewer agents only inspect and advise. The parent waits naturally for the
    synchronous tool results; it must not use sleep, `list_executions`,
-   `query_step`, or a polling loop.
+   `query_step`, or a polling loop. These synchronous calls return their result
+   directly and do not send an auto-notification.
 5. For Goal Advisor, first obtain the read-only strategy review, then send that
    draft and its evidence to a separate read-only critic. The parent accepts,
    narrows, or rejects the proposal using both results.
@@ -161,8 +167,8 @@ evidence guidance only; do not execute their nested-agent calls.
    becomes the **Pulse Fixer**, the single writer for the batch. No reviewer may
    mutate the workflow.
 7. Apply bounded fixes sequentially. Do not launch nested mutating maintenance
-   agents such as `review_artifact_sync` or `run_goal_advisor_review`; those
-   would create multiple fixers. Load the read-only `improve-*` guidance as
+   agents such as `run_goal_advisor_review`; those would create multiple
+   fixers. Load the read-only artifact and `improve-*` guidance as
    needed and use the normal direct file, plan, config, eval, report, and
    human-input tools.
 8. Strategy changes and LLM/Ops changes remain proposal-only unless an exact
@@ -175,14 +181,17 @@ evidence guidance only; do not execute their nested-agent calls.
    handoff.
 10. Call `mark_pulse_module_result` exactly once for every due module, including
     clean, changed, blocked, or failed outcomes. A reviewer failure affects only
-    that module unless missing evidence makes a safe fix impossible.
+    that module unless missing evidence makes a safe fix impossible. Do not
+    replace a failed reviewer by improvising its deep audit in the parent; mark
+    the module failed or blocked with the exact reviewer error and continue the
+    independent safe modules.
 11. Return one concise combined result. Later module messages stop at step 1,
     and the normal Pulse finalizer performs backup, publish, and the single user
     notification after all due module results exist.
 
-This is an agent protocol, not a security boundary. Read-only behavior is enforced
-by reviewer prompts. The single-fixer rule prevents concurrent writes and
-duplicate `improve.html` updates without adding backend coordination.
+Read-only behavior is enforced by reviewer prompts, a read-only tool allowlist,
+and empty reviewer write paths. The single-fixer rule prevents concurrent writes
+and duplicate `improve.html` updates without adding backend coordination.
 
 ## Module Decisions
 

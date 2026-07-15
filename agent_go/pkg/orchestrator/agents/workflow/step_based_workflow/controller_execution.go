@@ -3269,6 +3269,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 
 			successCriteriaMet, nextStepID, err := hcpo.executeTodoTaskStep(ctx, step, i, progress, previousContextFiles, previousExecutionResults, iteration, execCtx, breakdownSteps, todoTaskStepPath)
 			if err != nil {
+				if isWorkflowCancellationErr(ctx, err) {
+					hcpo.GetLogger().Info(fmt.Sprintf("Todo task step %d canceled", i+1))
+					return err
+				}
 				hcpo.GetLogger().Error(fmt.Sprintf("❌ Todo task step %d execution failed: %v", i+1, err), nil)
 				// Emit error event using centralized method
 				hcpo.EmitOrchestratorAgentError(ctx, "workflow", "todo-task-step-execution", fmt.Sprintf("Execute todo task step: %s", step.GetTitle()), err.Error(), i, iteration)
@@ -3322,6 +3326,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			}
 			executionResult, _, err := hcpo.executeMessageSequenceStep(ctx, step, i, stepPath, progress, execCtx, breakdownSteps, callOptions)
 			if err != nil {
+				if isWorkflowCancellationErr(ctx, err) {
+					hcpo.GetLogger().Info(fmt.Sprintf("Message sequence step %d canceled", i+1))
+					return err
+				}
 				hcpo.GetLogger().Error(fmt.Sprintf("❌ Message sequence step %d execution failed: %v", i+1, err), nil)
 				hcpo.EmitOrchestratorAgentError(ctx, "workflow", "message-sequence-step-execution", fmt.Sprintf("Execute message sequence step: %s", step.GetTitle()), err.Error(), i, iteration)
 				return fmt.Errorf("message sequence step %d execution failed: %w", i+1, err)
@@ -3374,6 +3382,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 
 			_, err := hcpo.executeHumanInputStep(ctx, step, i, progress, previousContextFiles, execCtx, breakdownSteps)
 			if err != nil {
+				if isWorkflowCancellationErr(ctx, err) {
+					hcpo.GetLogger().Info(fmt.Sprintf("Human input step %d canceled", i+1))
+					return err
+				}
 				hcpo.GetLogger().Error(fmt.Sprintf("❌ Human input step %d execution failed: %v", i+1, err), nil)
 				// Emit error event using centralized method
 				hcpo.EmitOrchestratorAgentError(ctx, "workflow", "human-input-step-execution", fmt.Sprintf("Execute human input step: %s", step.GetTitle()), err.Error(), i, iteration)

@@ -39,7 +39,7 @@ func knownWorkshopRegisteredToolNamesOutsideWorkflowPool() map[string]string {
 	)
 	add("workshop review/maintenance tools",
 		"update_step_config", "get_step_prompts",
-		"review_plan", "review_artifact_sync", "mark_changelog_artifact_reviewed",
+		"review_plan", "mark_changelog_artifact_reviewed",
 		"review_workflow_timing", "review_workflow_costs", "review_step_code",
 		"get_cost_summary",
 		"run_full_evaluation", "validate_evaluation_plan",
@@ -164,7 +164,7 @@ func TestToolSetInvariants(t *testing.T) {
 			t.Fatalf("workshop allow-list missing expected tool %q", n)
 		}
 	}
-	for _, removed := range []string{"improve_learnings", "improve_kb", "improve_db"} {
+	for _, removed := range []string{"improve_learnings", "improve_kb", "improve_db", "review_artifact_sync"} {
 		if workshop[removed] {
 			t.Fatalf("workshop allow-list still exposes removed dedicated maintenance tool %q", removed)
 		}

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
 // TestMessageSequenceAbsPath_IncludesWorkflowRoot guards the forward-pipe bug:
@@ -140,6 +140,12 @@ func TestMessageSequenceTemplateVarsReflectItemWriteAccess(t *testing.T) {
 	}
 	readPaths, writePaths := hcpo.setupMessageSequenceFolderGuard("step-1", step.GetID(), getAgentConfigs(step), item.WriteAccess)
 	vars := hcpo.buildMessageSequenceTemplateVars(step, item, 0, "step-1", "write the durable notes", readPaths, writePaths, item.WriteAccess)
+	if !strings.Contains(vars["FolderGuardReadPaths"], filepath.Join("Workflow", "test-flow", "learnings", step.GetID())) {
+		t.Fatalf("message sequence cannot read its step-specific learnings: %q", vars["FolderGuardReadPaths"])
+	}
+	if strings.Contains(vars["FolderGuardWritePaths"], filepath.Join("Workflow", "test-flow", "learnings", step.GetID())) {
+		t.Fatalf("message sequence unexpectedly received step-learning write access: %q", vars["FolderGuardWritePaths"])
+	}
 
 	if got := vars["KbAccess"]; got != KBAccessReadWrite {
 		t.Fatalf("KbAccess = %q, want %q", got, KBAccessReadWrite)
@@ -180,7 +186,7 @@ func TestMessageSequenceTemplateVarsUseEffectiveWriteAccess(t *testing.T) {
 	readPaths, writePaths := hcpo.setupMessageSequenceFolderGuard("step-1", step.GetID(), getAgentConfigs(step), effectiveAccess)
 	vars := hcpo.buildMessageSequenceTemplateVars(step, item, 0, "step-1", "write the durable notes", readPaths, writePaths, effectiveAccess)
 
-	if note := vars["MessageSequenceAccessNote"]; strings.Contains(strings.TrimPrefix(note, "Reads are available for execution outputs, soul, builder logs, db/, knowledgebase/, and learnings/_global/. "), "learnings/_global/") {
+	if note := vars["MessageSequenceAccessNote"]; strings.Contains(strings.TrimPrefix(note, "Reads are available for execution outputs, soul, builder logs, db/, knowledgebase/, learnings/_global/, and this step's learnings folder. "), "learnings/_global/") {
 		t.Fatalf("write access note should reflect effective grants, not raw item grants: %q", note)
 	}
 	if writes := vars["FolderGuardWritePaths"]; strings.Contains(writes, "learnings/_global") {

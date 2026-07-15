@@ -224,6 +224,13 @@ func (iso *Isolator) generateSandboxProfile() string {
 	sb.WriteString("; Deny project root (source code, server configs, .env)\n")
 	sb.WriteString(fmt.Sprintf("(deny file-read* file-write* (subpath \"%s\"))\n\n", sandboxQuoted(projectRoot)))
 
+	// Homebrew SQLite resolves an absolute database path by reading metadata for
+	// every ancestor, including projectRoot. Without this literal metadata-only
+	// grant, sqlite3_open() returns EPERM even when the database itself is inside
+	// an allowed path. This does not permit listing or reading projectRoot files.
+	sb.WriteString("; Allow project root metadata for canonical path resolution\n")
+	sb.WriteString(fmt.Sprintf("(allow file-read-metadata (literal \"%s\"))\n\n", sandboxQuoted(projectRoot)))
+
 	// getcwd() only needs directory metadata. Granting file-read* on WorkDir
 	// would expose its entire subtree and bypass the allow-list.
 	workDir := canonicalPath(iso.WorkDir)

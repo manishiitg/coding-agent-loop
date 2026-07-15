@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
+	orchevents "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 	mcpagent_events "github.com/manishiitg/mcpagent/events"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
-	orchevents "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 )
 
 type captureEventListener struct {
@@ -34,7 +34,8 @@ func TestContextAwareBridgeTagsTerminalStreamWithExecutionOwner(t *testing.T) {
 			BaseEventData: mcpagent_events.BaseEventData{
 				Timestamp: time.Now(),
 				Metadata: map[string]interface{}{
-					"kind": "terminal",
+					"kind":           "terminal",
+					"execution_kind": "main_agent",
 				},
 			},
 			Content:    "terminal snapshot",
@@ -58,6 +59,12 @@ func TestContextAwareBridgeTagsTerminalStreamWithExecutionOwner(t *testing.T) {
 	}
 	if got := metadata["background_agent_id"]; got != "sub-exec-rds-evidence-123" {
 		t.Fatalf("background_agent_id = %v, want sub-exec-rds-evidence-123", got)
+	}
+	if got := metadata["execution_kind"]; got != "background_agent" {
+		t.Fatalf("execution_kind = %v, want background_agent", got)
+	}
+	if got := metadata["scope"]; got != "background_agent" {
+		t.Fatalf("scope = %v, want background_agent", got)
 	}
 	if got := metadata["current_step_id"]; got != "shared-step" {
 		t.Fatalf("current_step_id = %v, want shared-step", got)

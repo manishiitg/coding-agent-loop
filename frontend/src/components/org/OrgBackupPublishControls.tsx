@@ -24,7 +24,7 @@ Scope:
 - employee/org config files
 - multi-agent schedules/config
 
-If org backup is NOT configured yet: set up the zero-config local-git default, write pulse/backup.json, write pulse/backup/status.json with state "configured_not_verified" or "healthy" if you can complete the local backup now, and ask me before adding any remote destination or credentials.
+If org backup is NOT configured yet: recommend a private GitHub repository or another off-device destination first. Ask for the account/org, private visibility, and repository/bucket name before creating or connecting it. A local Git checkpoint may be used temporarily, but describe it as local-only and not durable; it must not be reported as a healthy off-device backup.
 
 If org backup IS configured: run a backup now, skip only if pulse/backup/status.json proves the current source hash is unchanged, and report the result.
 
@@ -48,8 +48,8 @@ Always write pulse/publish/status.json. Never publish secrets or raw task transc
 const FALLBACK_ORG_BACKUP_STRATEGIES: WorkflowBackupStrategyInfo[] = [
   {
     id: 'git',
-    label: 'Git / GitHub',
-    description: 'Default for org goals, pulse/task HTML, schedule/config snapshots, and small text artifacts.',
+    label: 'GitHub / remote Git (recommended)',
+    description: 'Recommended off-device protection for org goals, pulse/task HTML, schedule/config snapshots, and small text artifacts.',
     best_for: ['org-goals', 'org-pulse', 'tasks', 'schedules']
   },
   {
@@ -87,8 +87,9 @@ const OrgBackupPopup: React.FC<{
 
   const getSummary = useCallback((info: WorkflowBackupInfoResponse | null): string => {
     const state = info?.effective_state
+    if (!info?.config?.enabled) return 'No off-device org backup is configured. Add GitHub, another remote Git host, or an object store.'
+    if (state === 'local_only') return 'The org backup exists only on this laptop. Add an off-device destination for durable recovery.'
     if (info?.status?.summary) return info.status.summary
-    if (!info?.config?.enabled) return 'No org backup destination is configured yet.'
     if (state === 'stale') return 'Org goals or pulse changed since the last healthy backup.'
     return 'Org backup status is waiting for the Chief of Staff to update pulse/backup/status.json.'
   }, [])
@@ -101,7 +102,7 @@ const OrgBackupPopup: React.FC<{
       onStateLoaded={onStateLoaded}
       fallbackStrategies={FALLBACK_ORG_BACKUP_STRATEGIES}
       subtitle="Org goals, pulse, tasks, schedules, and config"
-      emptyDestinationsText="Use setup to configure the zero-config local git default or a remote destination."
+      emptyDestinationsText="Use setup to configure GitHub, another remote Git host, or an object store. Local-only copies are not durable backups."
       destinationsHelp="The Chief of Staff writes destination status after each backup."
       statusPathFallback="pulse/backup/status.json"
       setupAction={{
@@ -164,7 +165,7 @@ const OrgPublishPopup: React.FC<{
 }
 
 export const OrgBackupPublishControls: React.FC<{ onSubmitCommand?: (query: string) => void }> = ({ onSubmitCommand }) => {
-  const [backupState, setBackupState] = useState('not_configured')
+  const [backupState, setBackupState] = useState('loading')
   const [publishState, setPublishState] = useState('not_configured')
   const [showBackupPopup, setShowBackupPopup] = useState(false)
   const [showPublishPopup, setShowPublishPopup] = useState(false)

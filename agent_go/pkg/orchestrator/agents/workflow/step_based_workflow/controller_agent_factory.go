@@ -360,7 +360,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
 	// Set folder guard paths:
 	// READ: execution folder (to read previous step results) + soul north-star file + builder review/improve logs
-	// + global learnings (if mode grants read) + knowledgebase folder (if mode grants read)
+	// + global and step-specific learnings (if mode grants read) + knowledgebase folder (if mode grants read)
 	// WRITE: only the specific step folder (execution/step-{X}/ or execution/step-{X}-{branch}/) + execution/Downloads folder to prevent writing to other steps
 	// NOTE: under kbWriteMethod=direct we add knowledgebase/notes/ to writePaths so the
 	// step can write per-topic markdown with diff_patch_workspace_file. Under
@@ -380,8 +380,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 		readPaths = []string{baseWorkspacePath}
 	}
 	if learningsAccess != LearningsAccessNone {
-		globalLearningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, GlobalLearningID)
-		readPaths = append(readPaths, globalLearningsPath)
+		readPaths = appendLearningReadPaths(readPaths, baseWorkspacePath, stepID)
 	}
 
 	// Generic agents (spawned via call_generic_agent) get write access to the entire
@@ -440,6 +439,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 
 	readPaths = hcpo.appendCDPHostDownloadsReadPath(readPaths)
 	return readPaths, writePaths
+}
+
+// appendLearningReadPaths grants a step its shared workflow guidance and its own
+// saved implementation/helpers. It deliberately does not grant the learnings root
+// or another step's folder, and it never grants write access.
+func appendLearningReadPaths(readPaths []string, baseWorkspacePath string, stepID string) []string {
+	readPaths = append(readPaths, filepath.Join(baseWorkspacePath, LearningsFolderName, GlobalLearningID))
+
+	stepID = strings.TrimSpace(stepID)
+	if stepID == "" || stepID == GlobalLearningID || filepath.Base(stepID) != stepID || stepID == "." || stepID == ".." {
+		return readPaths
+	}
+	return append(readPaths, filepath.Join(baseWorkspacePath, LearningsFolderName, stepID))
 }
 
 // getCodeExecutionMode determines code execution mode with priority: step config > workflow/preset default

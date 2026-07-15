@@ -2,6 +2,7 @@ package step_based_workflow
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -64,6 +65,62 @@ func TestLatestSnapshotForStepFallsBackToCompletedExecution(t *testing.T) {
 	}
 	if snapshot.ID != "exec-step-a-new-failed" {
 		t.Fatalf("expected newest non-running execution, got %q", snapshot.ID)
+	}
+}
+
+func TestCancelRejectsCompletedExecution(t *testing.T) {
+	registry := NewWorkshopStepRegistry()
+	cancelCalled := false
+	exec := &WorkshopStepExecution{
+		ID:        "exec-done",
+		StepID:    "step-a",
+		Status:    WorkshopStepDone,
+		CreatedAt: time.Now(),
+		cancel:    func() { cancelCalled = true },
+	}
+	registry.Register(exec)
+
+	before := exec.Snapshot()
+	if before.CanCancel {
+		t.Fatal("completed execution must not be advertised as cancelable")
+	}
+
+	snapshot, err := registry.Cancel(exec.ID)
+	if !errors.Is(err, ErrWorkshopExecutionNotCancelable) {
+		t.Fatalf("expected ErrWorkshopExecutionNotCancelable, got %v", err)
+	}
+	if cancelCalled {
+		t.Fatal("completed execution cancel function must not be called")
+	}
+	if snapshot.Status != WorkshopStepDone {
+		t.Fatalf("completed status changed to %v", snapshot.Status)
+	}
+}
+
+func TestCancelRunningExecution(t *testing.T) {
+	registry := NewWorkshopStepRegistry()
+	cancelCalled := false
+	exec := &WorkshopStepExecution{
+		ID:        "exec-running",
+		StepID:    "step-a",
+		Status:    WorkshopStepRunning,
+		CreatedAt: time.Now(),
+		cancel:    func() { cancelCalled = true },
+	}
+	registry.Register(exec)
+
+	if !exec.Snapshot().CanCancel {
+		t.Fatal("running execution should be cancelable")
+	}
+	snapshot, err := registry.Cancel(exec.ID)
+	if err != nil {
+		t.Fatalf("cancel running execution: %v", err)
+	}
+	if !cancelCalled {
+		t.Fatal("running execution cancel function was not called")
+	}
+	if snapshot.Status != WorkshopStepCancelled || snapshot.CanCancel {
+		t.Fatalf("unexpected canceled snapshot: status=%v can_cancel=%v", snapshot.Status, snapshot.CanCancel)
 	}
 }
 

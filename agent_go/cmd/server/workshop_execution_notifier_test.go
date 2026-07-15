@@ -76,3 +76,36 @@ func TestWorkshopExecutionNotifierPreservesExplicitCancellation(t *testing.T) {
 	default:
 	}
 }
+
+func TestWorkshopExecutionNotifierDoesNotQueueSynchronousReviewerCompletion(t *testing.T) {
+	registry := NewBackgroundAgentRegistry()
+	api := &StreamingAPI{bgAgentRegistry: registry}
+	const (
+		sessionID = "pulse-review-session"
+		execID    = "pulse-review-learning-health"
+	)
+	agent := &BackgroundAgent{
+		ID:        execID,
+		Name:      "Pulse reviewer: learning health",
+		SessionID: sessionID,
+		Status:    BGAgentRunning,
+		CreatedAt: time.Now(),
+		Metadata: map[string]string{
+			"suppress_auto_notification": "true",
+		},
+	}
+	registry.Register(sessionID, agent)
+	completionCh := registry.GetNotificationChannel(sessionID)
+
+	notifier := &workshopExecutionBgNotifier{api: api, sessionID: sessionID}
+	notifier.OnExecutionComplete(execID, agent.Name, "review complete", agent.Metadata, nil)
+
+	if got := agent.GetStatus(); got != BGAgentCompleted {
+		t.Fatalf("status = %q, want completed", got)
+	}
+	select {
+	case got := <-completionCh:
+		t.Fatalf("unexpected auto-notification for synchronous reviewer: %q", got)
+	default:
+	}
+}

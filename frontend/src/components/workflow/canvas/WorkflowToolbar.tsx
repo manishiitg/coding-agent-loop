@@ -22,7 +22,7 @@ import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowSto
 import { useWorkflowManifestStore } from '../../../stores/useWorkflowManifestStore'
 import { useChatStore } from '../../../stores/useChatStore'
 import { useAuthStore } from '../../../stores/useAuthStore'
-import type { PulseFinalCommandState, PulseModuleState, VariablesManifest } from '../../../services/api-types'
+import type { PulseFinalCommandState, PulseModuleState, ScheduledJob, VariablesManifest } from '../../../services/api-types'
 import type { PlanningResponse } from '../../../utils/stepConfigMatching'
 import type { WorkflowExecutionStatus } from '../hooks/useWorkflowExecution'
 import type { ExecutionOptions } from '../../../services/api-types'
@@ -320,7 +320,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const [pulseStatusError, setPulseStatusError] = useState<string | null>(null)
   // Backup popup state
   const [showBackupPopup, setShowBackupPopup] = useState(false)
-  const [backupState, setBackupState] = useState<string>('not_configured')
+  const [backupState, setBackupState] = useState<string>('loading')
   const [showPublishPopup, setShowPublishPopup] = useState(false)
   const [publishState, setPublishState] = useState<string>('not_configured')
   const [showPlanEditsPopup, setShowPlanEditsPopup] = useState(false)
@@ -372,35 +372,39 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     return new Map(pulseFinalCommandStates.map(state => [state.command, state]))
   }, [pulseFinalCommandStates])
 
+  const updateWorkflowScheduleStats = useCallback((jobs: ScheduledJob[]) => {
+    const normalizedWorkspacePath = normalizeWorkspacePath(workspacePath)
+    const matchingJobs = jobs.filter((job) => {
+      if (presetQueryId && job.preset_query_id === presetQueryId) return true
+      if (!normalizedWorkspacePath) return false
+      return normalizeWorkspacePath(job.workspace_path) === normalizedWorkspacePath
+    })
+    setWorkflowScheduleStats({
+      total: matchingJobs.length,
+      running: matchingJobs.filter(job => job.last_status === 'running').length,
+      enabled: matchingJobs.filter(job => job.enabled).length,
+      paused: matchingJobs.filter(job => !job.enabled).length,
+      missed: matchingJobs.filter(job => job.enabled && (job.missed_run_count ?? 0) > 0).length,
+      issues: matchingJobs.filter(job => job.last_status === 'error').length,
+    })
+  }, [workspacePath, presetQueryId])
+
   const refreshWorkflowScheduleStats = useCallback(async () => {
     if (!workspacePath && !presetQueryId) {
       setWorkflowScheduleStats(EMPTY_WORKFLOW_SCHEDULE_STATS)
       return
     }
 
-    const normalizedWorkspacePath = normalizeWorkspacePath(workspacePath)
     try {
       const resp = await schedulerApi.listJobs({
         entity_type: 'workflow',
         limit: WORKFLOW_SCHEDULE_TOOLBAR_LIMIT,
       })
-      const matchingJobs = (resp.jobs || []).filter((job) => {
-        if (presetQueryId && job.preset_query_id === presetQueryId) return true
-        if (!normalizedWorkspacePath) return false
-        return normalizeWorkspacePath(job.workspace_path) === normalizedWorkspacePath
-      })
-      setWorkflowScheduleStats({
-        total: matchingJobs.length,
-        running: matchingJobs.filter(job => job.last_status === 'running').length,
-        enabled: matchingJobs.filter(job => job.enabled).length,
-        paused: matchingJobs.filter(job => !job.enabled).length,
-        missed: matchingJobs.filter(job => job.enabled && (job.missed_run_count ?? 0) > 0).length,
-        issues: matchingJobs.filter(job => job.last_status === 'error').length,
-      })
+      updateWorkflowScheduleStats(resp.jobs || [])
     } catch {
       setWorkflowScheduleStats(EMPTY_WORKFLOW_SCHEDULE_STATS)
     }
-  }, [workspacePath, presetQueryId])
+  }, [workspacePath, presetQueryId, updateWorkflowScheduleStats])
 
   useEffect(() => {
     refreshWorkflowScheduleStats()
@@ -421,7 +425,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   }, [workspacePath])
 
   useEffect(() => {
-    refreshBackupState()
+    setBackupState('loading')
+    void refreshBackupState()
   }, [refreshBackupState])
 
   const refreshPublishState = useCallback(async () => {
@@ -581,22 +586,37 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const isReportWorkspace = showWorkspacePane && canvasViewMode === 'report'
   const isFlowWorkspace = showWorkspacePane && canvasViewMode === 'flow'
   const scheduleTooltip = useMemo(() => {
-    if (workflowScheduleStats.total === 0) return 'No schedules for this workflow'
+    if (workflowScheduleStats.total === 0) return 'Schedules · None configured'
+    if (workflowScheduleStats.issues > 0 || workflowScheduleStats.missed > 0) {
+      const parts: string[] = []
+      if (workflowScheduleStats.issues > 0) {
+        parts.push(`${workflowScheduleStats.issues} failed`)
+      }
+      if (workflowScheduleStats.missed > 0) {
+        parts.push(`${workflowScheduleStats.missed} missed`)
+      }
+      if (workflowScheduleStats.running > 0) {
+        parts.push(`${workflowScheduleStats.running} running`)
+      }
+      return `Schedules · ${parts.join(' · ')}`
+    }
     if (workflowScheduleStats.running > 0) {
-      return `${workflowScheduleStats.running} active schedule${workflowScheduleStats.running === 1 ? '' : 's'}`
+      return `Schedules · ${workflowScheduleStats.running} running`
     }
     if (workflowScheduleStats.enabled > 0) {
-      return `${workflowScheduleStats.enabled} active of ${workflowScheduleStats.total} schedule${workflowScheduleStats.total === 1 ? '' : 's'}`
+      return `Schedules · ${workflowScheduleStats.enabled} enabled`
     }
-    return `${workflowScheduleStats.total} paused schedule${workflowScheduleStats.total === 1 ? '' : 's'}`
+    return `Schedules · ${workflowScheduleStats.total === 1 ? 'Paused' : `All ${workflowScheduleStats.total} paused`}`
   }, [workflowScheduleStats])
-  const scheduleStatusDotClass = workflowScheduleStats.issues > 0 || workflowScheduleStats.missed > 0
+  const scheduleStatusDotClass = workflowScheduleStats.issues > 0
     ? 'bg-red-500'
-    : workflowScheduleStats.running > 0
-      ? 'bg-green-500'
-      : workflowScheduleStats.enabled > 0
+    : workflowScheduleStats.missed > 0
         ? 'bg-amber-500'
-        : 'bg-muted-foreground/50'
+        : workflowScheduleStats.running > 0
+          ? 'bg-sky-500 animate-pulse'
+          : workflowScheduleStats.enabled > 0
+            ? 'bg-emerald-500'
+            : 'bg-muted-foreground/40'
 
   return (
     <>
@@ -656,19 +676,11 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowWorkflowSchedulesPanel(true)}
-                  className={`relative p-1.5 rounded-md transition-colors ${
-                    workflowScheduleStats.issues > 0 || workflowScheduleStats.missed > 0
-                      ? 'bg-muted text-red-600 hover:bg-accent dark:text-red-400'
-                      : workflowScheduleStats.running > 0
-                        ? 'bg-muted text-green-600 hover:bg-accent dark:text-green-400'
-                        : 'bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-                  }`}
+                  className="relative p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
                   aria-label={scheduleTooltip}
                 >
                   <CalendarClock className="w-3.5 h-3.5" />
-                  {workflowScheduleStats.total > 0 && (
-                    <span className={`absolute right-1 top-1 h-1.5 w-1.5 rounded-full ${scheduleStatusDotClass}`} />
-                  )}
+                  <span className={`absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full border border-background ${scheduleStatusDotClass}`} />
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom"><p>{scheduleTooltip}</p></TooltipContent>
@@ -682,6 +694,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 <button
                   onClick={() => setShowBackupPopup(true)}
                   className="relative p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+                  aria-label={`Backup · ${formatBackupStateLabel(backupState)}`}
                 >
                   <Cloud className="w-3.5 h-3.5" />
                   <span
@@ -700,6 +713,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 <button
                   onClick={() => setShowPublishPopup(true)}
                   className="relative p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+                  aria-label={`Publish · ${formatPublishStateLabel(publishState)}`}
                 >
                   <Globe className="w-3.5 h-3.5" />
                   <span
@@ -885,6 +899,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           setShowWorkflowSchedulesPanel(false)
           refreshWorkflowScheduleStats()
         }}
+        onJobsLoaded={updateWorkflowScheduleStats}
       />
     )}
 

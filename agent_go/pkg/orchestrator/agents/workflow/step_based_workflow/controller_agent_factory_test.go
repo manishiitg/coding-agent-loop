@@ -198,10 +198,10 @@ func TestApplyStepConfigToAgentConfigEnablesWorkspaceIsolation(t *testing.T) {
 // of CodingAgentWorkingDir. These factories live in two files:
 //   - controller_agent_factory.go (2): regular-step path (applyStepConfigToAgentConfig)
 //     and the todo-task orchestrator (createTodoTaskOrchestratorAgent).
-//   - interactive_workshop_manager.go (7): the workshop background agents — the
+//   - interactive_workshop_manager.go (6): the workshop background agents — the
 //     `run_in_background` task agent plus the Goal Advisor stage runner and
-//     the review-plan / review-artifact-sync / review-timing / review-costs /
-//     review-step-code agents — each spawns a coding-CLI
+//     the review-plan / review-timing / review-costs / review-step-code agents —
+//     each spawns a coding-CLI
 //     session for a workflow task and must isolate its workspace.
 //
 // Without isolation on any of these, an agy-cli orchestrator / workshop
@@ -218,7 +218,7 @@ func TestAllWorkflowAgentFactoriesEnableWorkspaceIsolation(t *testing.T) {
 		want int
 	}{
 		{path: "controller_agent_factory.go", want: 2},     // regular + todo-task orchestrator
-		{path: "interactive_workshop_manager.go", want: 7}, // run_in_background + goal-advisor + review workshop agents
+		{path: "interactive_workshop_manager.go", want: 6}, // run_in_background + goal-advisor + review workshop agents
 	}
 	const needle = "config.IsolateCodingAgentWorkspace = true"
 	for _, tc := range cases {
@@ -519,6 +519,7 @@ func TestSetupExecutionFolderGuardAddsOnlyConfiguredStores(t *testing.T) {
 
 	for _, expected := range []string{
 		"Workflow/testing/learnings/_global",
+		"Workflow/testing/learnings/kb-direct",
 		"Workflow/testing/knowledgebase",
 	} {
 		if !slices.Contains(readPaths, expected) {
@@ -530,6 +531,31 @@ func TestSetupExecutionFolderGuardAddsOnlyConfiguredStores(t *testing.T) {
 	}
 	if slices.Contains(writePaths, "Workflow/testing/learnings/_global") {
 		t.Fatalf("main execution should not write global learnings, got %v", writePaths)
+	}
+	if slices.Contains(writePaths, "Workflow/testing/learnings/kb-direct") {
+		t.Fatalf("main execution should not write step learnings, got %v", writePaths)
+	}
+}
+
+func TestAppendLearningReadPathsScopesAccessToCurrentStep(t *testing.T) {
+	got := appendLearningReadPaths(nil, "Workflow/testing", "score-and-plan")
+	for _, expected := range []string{
+		"Workflow/testing/learnings/_global",
+		"Workflow/testing/learnings/score-and-plan",
+	} {
+		if !slices.Contains(got, expected) {
+			t.Fatalf("expected learning read paths to include %q, got %v", expected, got)
+		}
+	}
+	if slices.Contains(got, "Workflow/testing/learnings/other-step") {
+		t.Fatalf("learning read paths unexpectedly include another step: %v", got)
+	}
+}
+
+func TestAppendLearningReadPathsRejectsNonSegmentStepID(t *testing.T) {
+	got := appendLearningReadPaths(nil, "Workflow/testing", "../other-workflow")
+	if len(got) != 1 || got[0] != "Workflow/testing/learnings/_global" {
+		t.Fatalf("unsafe step ID widened learning read scope: %v", got)
 	}
 }
 

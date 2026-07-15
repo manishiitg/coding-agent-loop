@@ -898,9 +898,10 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 			"one parallel tool-call batch",
 			"Pulse Fixer",
 			"only writer",
+			"Use review-artifact-drift",
 			"improve-learnings, improve-knowledge, improve-database, improve-report, and improve-evaluation",
 			"Do not use run_in_background",
-			"overrides any legacy nested-agent launcher wording",
+			"it must not launch another agent",
 		} {
 			if !strings.Contains(prompt, want) {
 				t.Fatalf("%s module missing consolidated review protocol %q:\n%s", module, want, prompt)
@@ -1628,7 +1629,7 @@ func TestWorkflowHasPendingPlanChangelogArtifactReview(t *testing.T) {
 		{
 			name: "reviewed changelog entries",
 			files: map[string]string{
-				"Workflow/demo/planning/changelog/changelog-2026-07-02-06-12-46.json": `{"entries":[{"timestamp":"2026-07-02T06:12:46Z","tool":"update_regular_step","reason":"test","step_ids":["step-a"],"artifact_review":{"done":true,"reviewed_at":"2026-07-02T06:20:00Z","reviewed_by":"review_artifact_sync","result":"clean"}}]}`,
+				"Workflow/demo/planning/changelog/changelog-2026-07-02-06-12-46.json": `{"entries":[{"timestamp":"2026-07-02T06:12:46Z","tool":"update_regular_step","reason":"test","step_ids":["step-a"],"artifact_review":{"done":true,"reviewed_at":"2026-07-02T06:20:00Z","reviewed_by":"pulse_fixer","result":"clean"}}]}`,
 			},
 			want: false,
 		},
@@ -1690,6 +1691,15 @@ func TestSelectedPostRunMonitorModuleStepsUsesGateWorklist(t *testing.T) {
 	want := []string{"pre-backup", "bug-review", "cost-llm-time", "llm-ops-review", "goal-advisor", "finalize"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("selected labels = %#v, want %#v", got, want)
+	}
+	for _, required := range []string{
+		"direct tool result is authoritative",
+		"rejects partial provider snapshots",
+		"do not perform that deep review in the parent",
+	} {
+		if !strings.Contains(steps[1].query, required) {
+			t.Fatalf("consolidated reviewer protocol missing %q", required)
+		}
 	}
 }
 

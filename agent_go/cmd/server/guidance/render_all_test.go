@@ -151,6 +151,13 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 
 func TestMaintenanceImproveGuidanceIsReadOnlyForPulseFixerHandoff(t *testing.T) {
 	cases := map[string][]string{
+		"review-artifact-drift": {
+			"read-only audit checklist",
+			"call_generic_agent",
+			"Never launch another reviewer",
+			"Pulse Fixer",
+			"mark_changelog_artifact_reviewed",
+		},
 		"improve-learnings": {
 			"READ-ONLY LEARNING HEALTH REVIEW",
 			"generic read-only reviewer",

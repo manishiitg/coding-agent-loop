@@ -221,7 +221,7 @@ export const builtinCommands: CommandDefinition[] = [
     source: 'builtin',
     execute: (ctx) => {
       const instruction = `Help me set up or run backup for this workflow. Call get_reference_doc(kind="backup-strategy"), then read workflow.json.backup and backup/status.json.
-- If backup is NOT configured yet: set it up — recommend the zero-config local-git default and ask me for any destination details or credentials you need. Write backup/status.json with state "configured_not_verified" and do not back up until I confirm.
+- If backup is NOT configured yet: recommend a private GitHub repository or another off-device destination first. Ask for the account/org, private visibility, and repository/bucket name before creating or connecting it. A local Git checkpoint is acceptable temporarily, but label it local-only and not durable; do not report it as a healthy backup.
 - If backup IS configured: run a backup now and report the result (destinations, commit/ref).
 - If I asked to restore: restore the tracked files from the latest backup (or a commit I name) instead.
 Always write backup/status.json; never write operational status into workflow.json.`
@@ -366,7 +366,7 @@ Scope:
 - employee/org config files
 - multi-agent schedules/config
 
-If org backup is NOT configured yet: set up the zero-config local-git default, write pulse/backup.json, write pulse/backup/status.json with state "configured_not_verified" or "healthy" if you can complete the local backup now, and ask me before adding any remote destination or credentials.
+If org backup is NOT configured yet: recommend a private GitHub repository or another off-device destination first. Ask for the account/org, private visibility, and repository/bucket name before creating or connecting it. A local Git checkpoint is acceptable temporarily, but label it local-only and not durable; do not report it as a healthy off-device backup.
 
 If org backup IS configured: run a backup now, skip only if pulse/backup/status.json proves the current source hash is unchanged, and report the result.
 

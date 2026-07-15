@@ -1,30 +1,50 @@
-Run the artifact drift review through the dedicated background tool. This command checks whether dependent artifacts drifted from recent plan/config changes: step config, learnings, saved main.py, KB notes, db files, reports, evaluation, and recent run outputs. It also flags eval-coverage drift with an `Eval fix` owner label. It is a review command, not a fix command. When Pulse calls it, it is separate from Bug Review; the parent Pulse Fixer applies verified repairs.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+Use this as the read-only audit checklist for artifact drift after plan or configuration changes. It checks whether step config, learnings, saved code, knowledge-base notes, database contracts, reports, evaluation, and recent run evidence still match the current workflow. It also flags missing or stale eval coverage with an `Eval fix` owner label.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
-The background reviewer is strictly read-only. After it returns, the parent workshop agent writes findings into `builder/improve.html` as "Artifact Review" / "Open finding" timeline entries with the `Artifact drift` action label. For the log format, one-time old Markdown migration, classification chips, and how open findings are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
+## Execution model
 
-Load `get_reference_doc(kind="assumption-audit")`. While tracing changed plan/config surfaces, check whether dependent learnings, KB, DB, report, eval, or code preserved an old architecture/tactic assumption after the plan evolved. Report that drift explicitly and keep a consequential unresolved restriction under Pulse's Assumptions challenged.
+- In Pulse, the parent passes this rendered checklist to one `call_generic_agent` reviewer in the consolidated parallel review batch.
+- Outside Pulse, the parent may call `call_generic_agent` once with this checklist as its instructions.
+- If you are already that generic reviewer, perform the audit directly. Never launch another reviewer, background tool, or nested maintenance agent.
+- `call_generic_agent` is synchronous. Its direct result is authoritative; do not poll, sleep, call `query_step`, or wait for an auto-notification.
+- The reviewer is strictly read-only. It must not edit files, mutate the plan/config, write `builder/improve.html`, mark changelog entries, or mark Pulse module state.
 
-PROCEDURE
+Load `get_reference_doc(kind="assumption-audit")`. While tracing changed surfaces, identify dependent artifacts that preserved an old architecture, tactic, schema, metric, or execution assumption after the plan evolved. Keep consequential unresolved restrictions under Pulse's Assumptions challenged.
 
-1. Call `review_artifact_sync(focus="{{.Focus}}")`.
-   - If the focus is clearly a single step id, call `review_artifact_sync(step_id="<step-id>", focus="{{.Focus}}")`.
-   - Do not call mutation or plan-modification tools from this review unless the user explicitly asks to fix findings afterward.
-2. Capture the returned `execution_id`.
-3. Do not babysit the review with `sleep`, repeated `list_executions`, or repeated `query_step` calls.
-   - Use `query_step(step_id="review-artifact-sync", execution_id="<returned execution_id>")` at most once for an immediate status/result check.
-   - If it is still running, stop and rely on `[AUTO-NOTIFICATION]` to resume when the review completes.
-   - Do not treat the immediate start response as the review output.
-4. When the background review completes via `[AUTO-NOTIFICATION]` or a one-off result check, summarize:
-   - changelog file/entry range inspected
-   - steps inspected
-   - findings count by severity
-   - the current and proposed `builder/improve.html` Artifact Sync Cursor
-   - exact changelog files and zero-based entry indexes proposed for marking
-   - recommended next owner for fixes: Workshop, Pulse Fixer, Goal Advisor, or deliberate eval/report improvement
-5. As the parent writer, verify the review package is internally consistent, then:
-   - append one compact Artifact Review item to `builder/improve.html`
-   - advance the Artifact Sync Cursor only through the last fully inspected entry
-   - call `mark_changelog_artifact_reviewed` for the exact inspected/cursor-backfilled entry indexes returned by the reviewer
-   - do not mark blocked, skipped, or inferred entries
+## Audit checklist
 
-`review_artifact_sync` owns only evidence collection and drift judgment. It cannot write files or mark state. The parent owns the human-facing report, Artifact Sync Cursor, and `mark_changelog_artifact_reviewed` call. Do not edit or delete changelog files directly, and do not create a separate cursor or state file. This command records review results but does not apply the artifact fixes it recommends.
+1. Read `builder/improve.html` and its Artifact Sync Cursor when present.
+2. List `planning/changelog/changelog-*.json` in filename order and select entries where `artifact_review.done` is not true.
+   - If reviewed markers are absent but the cursor proves older entries were covered, identify those exact entries as `cursor-backfill`; do not re-audit them.
+   - If no cursor exists and more than 100 entries are unreviewed, inspect only the latest 100 and report that the older entries remain unreviewed.
+   - Never advance the proposed cursor past an entry that was not fully inspected or safely cursor-backfilled.
+3. For each affected step, inspect only relevant current artifacts:
+   - `planning/plan.json` and `planning/step_config.json`
+   - `learnings/<step-id>/main.py`, script metadata, per-step learning metadata, and relevant `learnings/_global/` guidance
+   - relevant `knowledgebase/notes/` content and KB access/contribution settings; treat `knowledgebase/context/` as read-only user-owned context
+   - `db/README.md`, named DB tables/assets/contracts, and their writers/consumers
+   - report HTML/SQL/data contracts and `reports/report_plan.json` when present
+   - `evaluation/evaluation_plan.json`, `evaluation/step_config.json`, and matching goal/success-criteria coverage
+   - one representative recent run for changed runtime behavior when evidence exists
+4. Record a finding only when evidence shows drift, including:
+   - code, paths, fields, selectors, tool/API usage, or validation still implement an old contract
+   - stale code/learning locks after a material change without review evidence
+   - learnings or KB preserve obsolete behavior or agent-inferred policy
+   - DB writers, report consumers, or eval consumers disagree on schema or semantics
+   - report/eval checks use stale artifacts, fields, thresholds, or run identity
+   - a changed success criterion lacks eval coverage, or an eval is orphaned/duplicative
+   - deleted steps still have live references, or new steps lack required dependent wiring
+5. Include clean checks briefly. Do not manufacture drift merely because an artifact exists.
+
+## Reviewer result
+
+Return one compact review package containing:
+
+- cursor before and proposed cursor after
+- changelog files and zero-based entry indexes fully inspected
+- affected steps inspected
+- findings ordered by severity, with exact evidence and recommended owner
+- clean checks
+- exact proposed marks grouped as `clean`, `findings`, or `cursor-backfill`
+- any blocked entry that prevented further cursor advancement
+
+The parent Pulse Fixer/workshop agent validates this package, applies only bounded approved fixes, writes one compact Artifact Review item to `builder/improve.html`, advances the visible cursor, and calls `mark_changelog_artifact_reviewed` for only the exact verified entries. Do not edit or delete changelog JSON directly and do not create a second cursor or state file.

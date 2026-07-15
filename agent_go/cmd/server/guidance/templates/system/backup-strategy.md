@@ -6,9 +6,13 @@ This skill is the playbook for deciding what goes where, how to commit
 safely, and how to use a large-file backend like HuggingFace Hub when git
 is the wrong tool.
 
-If the workflow does not yet have a remote git repo configured, ask the
-operator before initialising one — repo creation is a one-time setup
-decision (account/org, visibility, naming).
+If the workflow does not yet have a remote git repo configured, recommend a
+private GitHub repository (or another off-device destination) first, then ask
+the operator before initialising one — repo creation is a one-time setup
+decision (account/org, visibility, naming). A local Git repo, bundle, ZIP, or
+copy is useful as a temporary rollback checkpoint, but it is not a durable
+backup because it is lost with the laptop. Never describe local-only backup as
+healthy off-device protection.
 
 ## App contract: config vs status
 
@@ -38,8 +42,9 @@ vs status contract, rooted under `pulse/`:
 - Back up `pulse/goals.html`, `pulse/org-pulse.html`, `pulse/task.html`, org config, and
   multi-agent schedule/config files. Do not back up secrets.
 - Do not write org backup status into any workflow's `workflow.json` or into the HTML files.
-- The zero-config default is a local git repo/commit covering these org-level text artifacts;
-  add a remote only after the user chooses one.
+- Recommend a private remote Git repository for these org-level text artifacts. A zero-config
+  local Git repo/commit may be created as a temporary checkpoint while remote setup awaits the
+  user's account/org, visibility, and naming decision, but it remains `local_only` in the app.
 
 Recommended backup config shape (`workflow.json.backup` for workflows, `pulse/backup.json`
 for org):
@@ -107,6 +112,8 @@ for org):
 
 Status values:
 
+- `local_only`: local Git, bundle, ZIP, or copy exists, but no off-device
+  destination is configured. The app intentionally shows this in red.
 - `healthy`: all required configured destinations succeeded.
 - `partial`: at least one configured destination succeeded and at least one
   failed or was skipped.

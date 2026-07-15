@@ -12,6 +12,7 @@ import {
 
 export type BackupState =
   | 'not_configured'
+  | 'local_only'
   | 'configured_not_verified'
   | 'running'
   | 'healthy'
@@ -23,8 +24,12 @@ export type BackupState =
 
 export const formatBackupStateLabel = (state?: string): string => {
   switch (state) {
+    case 'loading':
+      return 'Checking status'
     case 'not_configured':
       return 'Not configured'
+    case 'local_only':
+      return 'Local only'
     case 'configured_not_verified':
       return 'Needs verification'
     case 'running':
@@ -52,6 +57,13 @@ export interface BackupStateVisual {
 
 export const getBackupStateVisual = (state?: string): BackupStateVisual => {
   switch (state) {
+    case 'not_configured':
+    case 'local_only':
+      return {
+        Icon: AlertTriangle,
+        badge: 'border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300',
+        icon: 'text-red-600 dark:text-red-300'
+      }
     case 'healthy':
       return {
         Icon: CheckCircle2,
@@ -90,6 +102,9 @@ export const getBackupStateVisual = (state?: string): BackupStateVisual => {
 // Tailwind classes for the small status dot overlaid on the toolbar backup icon.
 export const getBackupDotClass = (state?: string): string => {
   switch (state) {
+    case 'not_configured':
+    case 'local_only':
+      return 'bg-red-500'
     case 'healthy':
       return 'bg-emerald-500'
     case 'running':

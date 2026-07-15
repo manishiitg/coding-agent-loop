@@ -25,6 +25,16 @@ var execCmd = exec.Command
 // ExecutorOption is a functional option for configuring an Executor
 type ExecutorOption func(*Executor)
 
+// WithBrowserRuntimeConfig gives an executor a live, thread-safe source of
+// configured browser intent. In auto mode the executor checks CDP reachability
+// at every status/action call instead of caching a resolved mode in a prompt or
+// chat runtime.
+func WithBrowserRuntimeConfig(config *BrowserRuntimeConfig) ExecutorOption {
+	return func(e *Executor) {
+		e.RuntimeConfig = config
+	}
+}
+
 // WithCdpPort configures the executor to connect to an existing Chrome via CDP on the given port
 func WithCdpPort(port int) ExecutorOption {
 	return func(e *Executor) {
@@ -50,9 +60,10 @@ func WithCdpPorts(ports ...int) ExecutorOption {
 
 // Executor handles the execution of browser tool commands
 type Executor struct {
-	Client   *Client
-	CdpPort  int   // Legacy primary port; first entry in CdpPorts when configured.
-	CdpPorts []int // Explicitly authorized CDP browsers. Empty means headless.
+	Client        *Client
+	CdpPort       int   // Legacy primary port; first entry in CdpPorts when configured.
+	CdpPorts      []int // Explicitly authorized CDP browsers. Empty means headless.
+	RuntimeConfig *BrowserRuntimeConfig
 }
 
 // NewExecutor creates a new browser executor
@@ -80,11 +91,117 @@ func normalizeCDPPorts(ports []int) []int {
 }
 
 func (e *Executor) configuredCDPPorts() []int {
+	if e.RuntimeConfig != nil {
+		_, ports := e.RuntimeConfig.Snapshot()
+		return normalizeCDPPorts(ports)
+	}
 	ports := append([]int{}, e.CdpPorts...)
 	if e.CdpPort > 0 {
 		ports = append([]int{e.CdpPort}, ports...)
 	}
 	return normalizeCDPPorts(ports)
+}
+
+func (e *Executor) configuredBrowserMode() string {
+	if e.RuntimeConfig != nil {
+		mode, _ := e.RuntimeConfig.Snapshot()
+		return mode
+	}
+	if len(e.configuredCDPPorts()) > 0 {
+		return "cdp"
+	}
+	return "headless"
+}
+
+type browserRuntimeStatus struct {
+	ConfiguredMode      string         `json:"configured_mode"`
+	EffectiveMode       string         `json:"effective_mode"`
+	ConfiguredCDPPorts  []int          `json:"configured_cdp_ports,omitempty"`
+	ReachableCDPPorts   []int          `json:"reachable_cdp_ports,omitempty"`
+	AuthorizedEndpoints []string       `json:"authorized_endpoints,omitempty"`
+	HeadlessAvailable   bool           `json:"headless_available"`
+	CheckErrors         map[int]string `json:"check_errors,omitempty"`
+	Instruction         string         `json:"instruction"`
+}
+
+func (e *Executor) liveBrowserStatus(ctx context.Context) browserRuntimeStatus {
+	mode := strings.ToLower(strings.TrimSpace(e.configuredBrowserMode()))
+	ports := e.configuredCDPPorts()
+	status := browserRuntimeStatus{
+		ConfiguredMode:     mode,
+		ConfiguredCDPPorts: append([]int(nil), ports...),
+		HeadlessAvailable:  mode == "auto" || mode == "headless",
+	}
+
+	switch mode {
+	case "auto", "cdp":
+		status.CheckErrors = make(map[int]string)
+		type result struct {
+			index     int
+			port      int
+			connected bool
+			message   string
+			err       error
+		}
+		results := make(chan result, len(ports))
+		for index, port := range ports {
+			go func(index, port int) {
+				connected, message, err := e.Client.CheckCDP(ctx, port)
+				results <- result{index: index, port: port, connected: connected, message: message, err: err}
+			}(index, port)
+		}
+		ordered := make([]result, len(ports))
+		for range ports {
+			item := <-results
+			ordered[item.index] = item
+		}
+		for _, item := range ordered {
+			if item.connected {
+				status.ReachableCDPPorts = append(status.ReachableCDPPorts, item.port)
+				continue
+			}
+			if item.err != nil {
+				status.CheckErrors[item.port] = item.err.Error()
+			} else if item.message != "" {
+				status.CheckErrors[item.port] = item.message
+			}
+		}
+		if len(status.CheckErrors) == 0 {
+			status.CheckErrors = nil
+		}
+	}
+
+	switch mode {
+	case "auto":
+		if len(status.ReachableCDPPorts) > 0 {
+			status.EffectiveMode = "cdp"
+			status.AuthorizedEndpoints = ConfiguredCDPEndpoints(status.ReachableCDPPorts)
+			status.Instruction = "Use one authorized --cdp endpoint on every subsequent agent_browser call."
+		} else {
+			status.EffectiveMode = "headless"
+			status.Instruction = "CDP is not currently reachable; call agent_browser without --cdp. Call status again if Chrome becomes available."
+		}
+	case "cdp":
+		if len(status.ReachableCDPPorts) > 0 {
+			status.EffectiveMode = "cdp"
+			status.AuthorizedEndpoints = ConfiguredCDPEndpoints(status.ReachableCDPPorts)
+			status.Instruction = "Use one authorized --cdp endpoint on every subsequent agent_browser call."
+		} else {
+			status.EffectiveMode = "unavailable"
+			status.Instruction = "Configured CDP is not currently reachable. Start the configured Chrome profile and call status again."
+		}
+	case "headless":
+		status.EffectiveMode = "headless"
+		status.Instruction = "Call agent_browser without --cdp."
+	case "none":
+		status.EffectiveMode = "none"
+		status.HeadlessAvailable = false
+		status.Instruction = "Browser access is disabled for this run."
+	default:
+		status.EffectiveMode = mode
+		status.Instruction = "Browser configuration is invalid; update the workflow browser_mode."
+	}
+	return status
 }
 
 func isBrowserOpenCommand(command string) bool {
@@ -204,6 +321,16 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	if !ok || command == "" {
 		return "", fmt.Errorf("command is required")
 	}
+	command = strings.ToLower(strings.TrimSpace(command))
+	// Status is a backend-owned live capability query. It never launches
+	// agent-browser and intentionally does not require or accept a --cdp value.
+	if command == "status" {
+		statusJSON, err := json.MarshalIndent(e.liveBrowserStatus(ctx), "", "  ")
+		if err != nil {
+			return "", err
+		}
+		return string(statusJSON), nil
+	}
 	argsArray := stringArgs(args["args"])
 	cdpArg, argsWithoutCDP, cdpArgErr := extractCDPArg(argsArray)
 	if cdpArgErr != nil {
@@ -218,7 +345,23 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	// while the executor remains authoritative for the actual endpoint. This keeps
 	// a headless run from switching itself to arbitrary CDP hosts/ports and rejects
 	// prompt/config drift instead of silently connecting somewhere unexpected.
-	cdpPort, cdpURL, cdpResolveErr := resolveCDPInvocation(e.configuredCDPPorts(), cdpArg)
+	configuredMode := strings.ToLower(strings.TrimSpace(e.configuredBrowserMode()))
+	configuredPorts := e.configuredCDPPorts()
+	if configuredMode == "none" {
+		return "", fmt.Errorf("BROWSER_DISABLED: browser access is disabled for this run")
+	}
+	if configuredMode == "auto" {
+		status := e.liveBrowserStatus(ctx)
+		if status.EffectiveMode == "cdp" {
+			configuredPorts = status.ReachableCDPPorts
+		} else {
+			configuredPorts = nil
+			if cdpArg.found {
+				return "", fmt.Errorf("CDP_UNAVAILABLE: no configured CDP endpoint is currently reachable; call agent_browser(command=\"status\", session=%q) and follow its live effective_mode", args["session"])
+			}
+		}
+	}
+	cdpPort, cdpURL, cdpResolveErr := resolveCDPInvocation(configuredPorts, cdpArg)
 	if cdpResolveErr != nil {
 		return "", cdpResolveErr
 	}
@@ -253,6 +396,17 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	// Fallback: if no workflow session set, use agent session (non-workflow/chat mode)
 	if workflowSessionID == "" {
 		workflowSessionID = agentSessionID
+	}
+	if isCdpMode {
+		// Auto mode may become CDP after the surrounding request was assembled.
+		// Grant the host Downloads read path at the moment CDP is actually used,
+		// rather than relying on a stale request-time effective mode.
+		if agentSessionID != "" {
+			common.GrantSessionCDPHostDownloadsReadOnly(agentSessionID, "cdp")
+		}
+		if workflowSessionID != "" && workflowSessionID != agentSessionID {
+			common.GrantSessionCDPHostDownloadsReadOnly(workflowSessionID, "cdp")
+		}
 	}
 
 	if isCdpMode {
@@ -476,6 +630,12 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	cdpOwner := ""
 	if isCdpMode && !isBrowserDocumentationCommand(command) {
 		cdpOwner = cdpOwnerID(workflowSessionID, agentSessionID, session)
+		// Keep delayed ownership cleanup aware of direct Builder/browser calls as
+		// well as orchestrated workflow runs. A surrounding run lease keeps the
+		// owner active; without one, this renews cleanup to one hour after the
+		// latest CDP command.
+		AcquireCDPTabOwnerLease(cdpOwner, []int{cdpPort})
+		defer ReleaseCDPTabOwnerLease(cdpOwner, []int{cdpPort}, e.Client, DefaultCDPTabCleanupDelay)
 		unlock, err := acquireSharedCDPLock(ctx, cdpPort)
 		if err != nil {
 			return "", err
@@ -694,20 +854,18 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	if isCdpMode && command == "tab" {
 		if tab, clear, parseErr := parseTabSelection(tabArgs); parseErr == nil {
 			if clear {
-				if tab == "" || tab == getCDPTabSelection(cdpPort, cdpOwner) {
-					clearCDPTabSelection(cdpPort, cdpOwner)
-					log.Printf("[BROWSER] CDP: cleared selected tab for owner=%q port=%d", cdpOwner, cdpPort)
-				}
-				aliasTabID := getCDPTabAlias(cdpPort, cdpOwner, tab)
-				clearCDPActiveTab(cdpPort, tab)
-				clearCDPActiveTab(cdpPort, aliasTabID)
-				clearCDPTabAlias(cdpPort, cdpOwner, tab)
+				clearCDPTabStateForOwner(cdpPort, cdpOwner, tab)
+				log.Printf("[BROWSER] CDP: cleared tab %q for owner=%q port=%d", tab, cdpOwner, cdpPort)
 			} else if tab != "" {
 				setCDPTabSelection(cdpPort, cdpOwner, tab)
 				activeTab := tab
 				if tabID := findCDPTabID(output, tab); tabID != "" {
 					setCDPTabAlias(cdpPort, cdpOwner, tab, tabID)
 					activeTab = tabID
+				}
+				if len(tabArgs) > 0 && tabArgs[0] == "new" {
+					markCDPTabOwned(cdpPort, cdpOwner, tab, activeTab)
+					log.Printf("[BROWSER] CDP: registered workflow-created tab %q (%s) for delayed cleanup owner=%q port=%d", tab, activeTab, cdpOwner, cdpPort)
 				}
 				setCDPActiveTab(cdpPort, activeTab)
 				log.Printf("[BROWSER] CDP: selected tab %q for owner=%q port=%d", activeTab, cdpOwner, cdpPort)
@@ -948,8 +1106,7 @@ func cdpUnavailableError(port int, cause error) error {
 		profileDir = fmt.Sprintf("$HOME/.chrome-cdp-profile-%d", port)
 	}
 	launch := fmt.Sprintf(`/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=%d --user-data-dir="%s" --no-first-run --no-default-browser-check`, port, profileDir)
-	verify := fmt.Sprintf("curl http://127.0.0.1:%d/json/version", port)
-	return fmt.Errorf("CDP_UNAVAILABLE: %s\nport: %d\nlaunch_command: %s\nverify_command: %s\ncause: %w", "the configured Chrome CDP browser is not reachable; do not silently switch this run to headless mode", port, launch, verify, cause)
+	return fmt.Errorf("CDP_UNAVAILABLE: %s\nport: %d\nlaunch_command: %s\nstatus_command: agent_browser(command=\"status\", session=\"default\")\ncause: %w", "the configured Chrome CDP browser is not reachable; do not probe Chrome directly from shell", port, launch, cause)
 }
 
 func isCDPRuntimeStartupError(err error) bool {

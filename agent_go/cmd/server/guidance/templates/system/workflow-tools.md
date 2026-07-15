@@ -36,7 +36,7 @@ returns the live JSON schema for the tool.
 ## Read-Only Info
 
 - **`get_step_prompts(step_id, attempt?, iteration?)`** — System prompt and user message for a step.
-- **`get_workflow_config`** — Inspect the workflow's current MCP servers, selected skills, available secrets, LLM config, and schedules. Use this instead of `cat workflow.json` when you need the full workflow config. For the global installed skill catalog, use `list_skills`.
+- **`get_workflow_config`** — Inspect the workflow's current MCP servers, selected skills, available secrets, one-way notification destinations, LLM config, and schedules. Use this instead of `cat workflow.json` when you need the full workflow config. For the global installed skill catalog, use `list_skills`.
 - **`get_llm_config`** — Per-step LLM overrides.
 - **`get_workflow_command_guidance(kind="review-artifact-drift", focus?)`** *(Workshop only)* — Canonical read-only artifact drift audit after material plan/config changes. In Pulse it is separate from Bug Review; the parent Pulse Fixer applies verified repairs and marks reviewed changelog entries.
 
@@ -46,6 +46,7 @@ returns the live JSON schema for the tool.
 - **Update steps**: `update_regular_step`, `update_message_sequence_step`, `update_human_input_step`, `update_routing_step`, `update_todo_task_step`.
 - **Todo task routes**: `add_todo_task_route`, `update_todo_task_route`, `delete_todo_task_route`. For todo_task routes, choose one pattern per route: inline `sub_agent_step` for a route-specific agent, or `orphan_step_ref` to reuse a shared orphan step already allowlisted via `shared_with.orchestrator_ids`. Do not set both.
 - **Validation**: `update_validation_schema`.
+- **Graph integrity is atomic**: every plan mutation validates all routing routes, todo/message-sequence `next_step_id` fields, and human-input branches before saving. `PLAN_GRAPH_INVALID` means nothing was saved. Repair every reference listed in the error with the appropriate `update_*_step` tool (target an existing step ID or `end`), then retry the original mutation. In particular, reroute inbound references before deleting their target step.
 
 ## Variables & Config
 
@@ -61,7 +62,12 @@ returns the live JSON schema for the tool.
   1. Pick the workflow mode with `update_workflow_config(browser_mode="none"|"auto"|"headless"|"cdp")`. Prefer `auto` unless the workflow must require an authenticated visible Chrome (`cdp`) or must stay isolated in the background (`headless`). For the specialized case where one workflow needs independent login identities, set `cdp_ports=[9222,9333]` (maximum four) and launch each port with a distinct Chrome `--user-data-dir`; ordinary workflow concurrency uses one shared CDP browser.
   2. For `agent_browser` steps, enable `workspace_browser:agent_browser` via `update_step_config(enabled_custom_tools=[...])` and attach the matching runtime skill with `enabled_skills=["agent-browser"]`.
   3. For browser steps, attach `enabled_skills=["agent-browser"]`; the runtime provides the managed `agent_browser` tool.
-- **`update_workflow_config(add_servers?, remove_servers?, add_tools?, remove_tools?, add_skills?, remove_skills?, add_secrets?, remove_secrets?, browser_mode?, cdp_ports?, run_retention_count?)`** — Update workflow MCP servers, workflow-level MCP tool allowlist, skills, secrets, browser mode/profile ports, or run/eval backup retention.
+- **Slack Incoming Webhook notifications** (one-way, per workflow):
+  1. Store the full URL with `set_workflow_secret(name="SLACK_NOTIFICATION_WEBHOOK_URL", value="https://hooks.slack.com/services/...")`. This encrypts and auto-attaches it; never write the URL into `workflow.json`.
+  2. Configure the safe reference with `update_workflow_config(slack_webhook_secret_name="SLACK_NOTIFICATION_WEBHOOK_URL")`.
+  3. Future `notify_user` calls from this workflow automatically send to the webhook in addition to enabled account-level channels. `human_feedback` never uses it because Incoming Webhooks cannot return an answer. Pass `slack_webhook_secret_name=""` to disable it without deleting the stored secret.
+  4. This is independent of the interactive Slack bot (Socket Mode, @mentions, threads, and replies).
+- **`update_workflow_config(add_servers?, remove_servers?, add_tools?, remove_tools?, add_skills?, remove_skills?, add_secrets?, remove_secrets?, slack_webhook_secret_name?, browser_mode?, cdp_ports?, run_retention_count?)`** — Update workflow MCP servers, workflow-level MCP tool allowlist, skills, secrets, one-way Slack webhook reference, browser mode/profile ports, or run/eval backup retention.
 
 ## Schedule Management (Workshop mode)
 

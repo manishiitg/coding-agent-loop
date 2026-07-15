@@ -1053,7 +1053,7 @@ func getDeletePlanStepsSchema() string {
 			"deleted_step_ids": {
 				"type": "array",
 				"items": { "type": "string" },
-				"description": "IDs of steps to delete from the plan. Use the step's id field from the plan."
+				"description": "IDs of steps to delete from the plan. Use the step's id field from the plan. The deletion is atomic and will be rejected if any remaining route, next_step_id, human-input branch, or message sequence still targets a deleted ID; reroute those references first, then retry."
 			},
 			"reason": {
 				"type": "string",
@@ -1918,6 +1918,18 @@ func getUpdateValidationSchemaSchema() string {
 // Uses normalizePathForWorkspaceAPI to build the full path, so the readFile function
 // does not need to auto-prepend the workspace path (works with both orchestrator and chat-mode readers).
 func readPlanFromFile(ctx context.Context, workspacePath string, readFile func(context.Context, string) (string, error)) (*PlanningResponse, error) {
+	return readPlanFromFileWithGraphValidation(ctx, workspacePath, readFile, true)
+}
+
+// readPlanForMutation permits a structurally valid plan with dangling graph
+// references to be loaded by the update tools that can repair those fields.
+// The invalid graph can never be persisted again because writePlanToFile runs
+// the complete ValidatePlanStructure check.
+func readPlanForMutation(ctx context.Context, workspacePath string, readFile func(context.Context, string) (string, error)) (*PlanningResponse, error) {
+	return readPlanFromFileWithGraphValidation(ctx, workspacePath, readFile, false)
+}
+
+func readPlanFromFileWithGraphValidation(ctx context.Context, workspacePath string, readFile func(context.Context, string) (string, error), validateGraph bool) (*PlanningResponse, error) {
 	planPath := normalizePathForWorkspaceAPI(filepath.Join("planning", "plan.json"), workspacePath)
 
 	planFileMutex.Lock()
@@ -1935,7 +1947,11 @@ func readPlanFromFile(ctx context.Context, workspacePath string, readFile func(c
 	if err := resolvePlanOrphanStepRefs(&plan); err != nil {
 		return nil, fmt.Errorf("failed to resolve orphan step references in plan.json: %w", err)
 	}
-	if err := validateLoadedPlanStructure(&plan); err != nil {
+	validate := validateLoadedPlanStructureCore
+	if validateGraph {
+		validate = validateLoadedPlanStructure
+	}
+	if err := validate(&plan); err != nil {
 		return nil, fmt.Errorf("plan.json uses an invalid or legacy format: %w", err)
 	}
 
@@ -1951,19 +1967,8 @@ func writePlanToFile(ctx context.Context, workspacePath string, plan *PlanningRe
 	planFileMutex.Lock()
 	defer planFileMutex.Unlock()
 
-	validationJSON, err := json.Marshal(plan)
-	if err != nil {
-		return fmt.Errorf("failed to marshal plan for validation: %w", err)
-	}
-	var validationPlan PlanningResponse
-	if err := json.Unmarshal(validationJSON, &validationPlan); err != nil {
-		return fmt.Errorf("failed to unmarshal plan for validation: %w", err)
-	}
-	if err := resolvePlanOrphanStepRefs(&validationPlan); err != nil {
-		return fmt.Errorf("plan validation failed: %w", err)
-	}
-	if err := validateLoadedPlanStructure(&validationPlan); err != nil {
-		return fmt.Errorf("plan validation failed: %w", err)
+	if err := ValidatePlanStructure(plan); err != nil {
+		return err
 	}
 
 	data, err := json.MarshalIndent(plan, "", "  ")
@@ -3401,7 +3406,7 @@ func createUpdateMessageSequenceStepExecutor(workspacePath string, logger logger
 		if err := json.Unmarshal(stepJSON, &partialUpdate); err != nil {
 			return "", fmt.Errorf("failed to parse step: %w", err)
 		}
-		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
+		plan, err := readPlanForMutation(ctx, workspacePath, readFile)
 		if err != nil {
 			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
@@ -3598,6 +3603,12 @@ func createDeletePlanStepsExecutor(workspacePath string, logger loggerv2.Logger,
 
 		newPlan := &PlanningResponse{Steps: filteredSteps, OrphanSteps: filteredOrphanSteps}
 
+		// Reject atomically before any plan/config/changelog side effect. This
+		// gives the Builder every inbound reference it must reroute first.
+		if err := ValidatePlanStructure(newPlan); err != nil {
+			return "", fmt.Errorf("step deletion rejected; the existing plan was left unchanged: %w", err)
+		}
+
 		// Write updated plan (creates backup automatically)
 		if err := writePlanToFile(ctx, workspacePath, newPlan, readFile, writeFile, logger); err != nil {
 			return "", fmt.Errorf("failed to write plan: %w", err)
@@ -3720,7 +3731,7 @@ func createUpdateHumanInputStepExecutor(workspacePath string, logger loggerv2.Lo
 		}
 
 		// Read current plan
-		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
+		plan, err := readPlanForMutation(ctx, workspacePath, readFile)
 		if err != nil {
 			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
@@ -3813,7 +3824,7 @@ func createUpdateTodoTaskStepExecutor(workspacePath string, logger loggerv2.Logg
 		}
 
 		// Read current plan
-		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
+		plan, err := readPlanForMutation(ctx, workspacePath, readFile)
 		if err != nil {
 			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
@@ -3966,7 +3977,7 @@ func createUpdateRoutingStepExecutor(workspacePath string, logger loggerv2.Logge
 			return "", fmt.Errorf("failed to parse step: %w", err)
 		}
 
-		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
+		plan, err := readPlanForMutation(ctx, workspacePath, readFile)
 		if err != nil {
 			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
@@ -4550,7 +4561,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"delete_plan_steps",
-		"Delete steps from the plan by providing their IDs. Use the step's id field from the plan. The plan.json file is updated immediately when this tool is called. Any matching entries in planning/step_config.json are also removed in the same call so a deleted step doesn't leave behind an orphan config.",
+		"Delete steps from the plan by providing their IDs. Use the step's id field from the plan. The mutation is atomic: before anything is saved, the complete plan graph is validated. If another route or next_step_id targets a deleted step, the tool returns PLAN_GRAPH_INVALID with every blocking reference; update those references to an existing step or end, then retry. Any matching planning/step_config.json entries are removed only after the plan deletion succeeds.",
 		deleteParams,
 		createDeletePlanStepsExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
 		"workflow",

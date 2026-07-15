@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/guidance"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 	todo_creation_human "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
@@ -128,6 +130,11 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 				} else if refreshFound {
 					caps := refreshManifest.Capabilities
 					selectedServers = caps.SelectedServers
+					configuredBrowserMode := strings.ToLower(strings.TrimSpace(caps.BrowserMode))
+					configuredBrowserPorts := configuredCDPPortsForMode(configuredBrowserMode, nil, caps.CDPPorts)
+					workshopSession.UpdateBrowserRuntime(configuredBrowserMode, configuredBrowserPorts)
+					common.SetSessionBrowserMode(sessionID, configuredBrowserMode)
+					log.Printf("[WORKFLOW_PHASE] Refreshed dynamic browser config: configured_mode=%s candidate_cdp_ports=%v", configuredBrowserMode, configuredBrowserPorts)
 
 					refreshedTools := caps.SelectedTools
 					toolsParsed := true

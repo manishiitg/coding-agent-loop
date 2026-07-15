@@ -1,491 +1,124 @@
 # Human Feedback System
 
-## 📋 Overview
+## Purpose
 
-The human feedback system is an interactive virtual tool that pauses LLM execution to request real-time input from users, enabling human-in-the-loop workflows. It provides browser notifications, real-time UI updates, and optional Slack integration for seamless feedback collection. The system supports 2FA/OTP input, confirmations, and clarifying questions through a thread-safe request/response coordination system.
+`human_feedback` is a short-lived, blocking tool for input that only a human can provide. Typical uses are:
 
-**Key Benefits:**
-- Enables human-in-the-loop workflows for critical decisions
-- Supports 2FA/OTP input, confirmations, and clarifying questions
-- Real-time notifications via browser push notifications
-- Optional Slack integration with smart delayed notifications (2-minute delay)
-- Thread-safe request/response coordination with timeout handling
-- Respond via Slack threads or UI (no UI required for Slack responses)
-- Integrates seamlessly with event-driven architecture
+- OTP or 2FA codes
+- CAPTCHA completion
+- Explicit approval before an irreversible action
+- A private value or subjective decision that another agent must not infer
 
----
+It is not a general agent-to-agent question mechanism and it is not intended for questions that may remain unanswered for hours or days. Long-lived workflow/report questions use the persistent report/Pulse human-input records instead.
 
-## 📁 Key Files & Locations
+The workflow waits, but the AgentWorks/Electron application does not block. The user receives an interactive card and submits the response directly to the backend. The Workflow Builder is not an intermediary and has no answer-submission tool.
 
-| Component | File | Key Functions |
-|-----------|------|---------------|
-| **Virtual Tool** | [`human_tools.go`](../../agent_go/cmd/server/virtual-tools/human_tools.go) | `CreateHumanTools()`, `handleHumanFeedback()` |
-| **Backend Store** | [`human_feedback_store.go`](../../agent_go/cmd/server/virtual-tools/human_feedback_store.go) | `CreateRequest()`, `CreateRequestWithSlack()`, `SubmitResponse()`, `WaitForResponse()`, `Cleanup()` |
-| **API Endpoint** | [`server.go`](../../agent_go/cmd/server/server.go) | `handleSubmitHumanFeedback()` (POST `/api/human-feedback/submit`) |
-| **Slack Service** | [`slack_service.go`](../../agent_go/cmd/server/services/slack_service.go) | `SendFeedbackNotification()`, `GetUniqueIDFromThread()`, `TestConnection()` |
-| **Slack API Routes** | [`slack_feedback_routes.go`](../../agent_go/cmd/server/slack_feedback_routes.go) | Configuration and test endpoints |
-| **Frontend UI** | [`HumanFeedbackToolCallDisplay.tsx`](../../frontend/src/components/events/tools/ToolCallSpecialRender/HumanFeedbackToolCallDisplay.tsx) | `HumanFeedbackToolCallDisplay` component |
-| **Slack Config UI** | [`SlackFeedbackConfig.tsx`](../../frontend/src/components/settings/SlackFeedbackConfig.tsx) | Configuration component |
-| **API Service** | [`api.ts`](../../frontend/src/services/api.ts) | `submitHumanFeedback()`, `getSlackFeedbackConfig()`, `updateSlackFeedbackConfig()`, `testSlackConnection()` |
-| **Event Data Structures** | [`data.go`](../../agent_go/pkg/orchestrator/events/data.go) | `BlockingHumanFeedbackEvent`, `RequestHumanFeedbackEvent` |
-| **Orchestrator Helpers** | [`base_orchestrator.go`](../../agent_go/pkg/orchestrator/base_orchestrator.go) | `RequestHumanFeedback()`, `RequestYesNoFeedback()`, `RequestMultipleChoiceFeedback()` |
+## Runtime flow
 
----
-
-## 🔄 How It Works
-
-### Core System Lifecycle
-
-1. **Tool Registration**
-   - `CreateHumanTools()` defines the `human_feedback` virtual tool
-   - Tool requires: `{"message_for_user": string, "unique_id": string (UUID)}`
-   - Executor: `handleHumanFeedback()` function
-
-2. **LLM Invokes Tool**
-   - LLM calls `human_feedback` with message and unique UUID
-   - `handleHumanFeedback()` receives the call
-
-3. **Backend Request Creation**
-   - Global `HumanFeedbackStore` singleton creates request entry
-   - Store maps `unique_id` → `HumanFeedbackRequest` struct
-   - Creates channel (`chan string`) for response coordination
-   - If Slack enabled, starts 2-minute delayed notification timer
-
-4. **Frontend Notification**
-   - Event system automatically notifies frontend
-   - `HumanFeedbackToolCallDisplay` component renders
-   - Browser push notification shown (if permissions granted)
-   - UI displays message + text input + submit button
-
-5. **Slack Notification (Optional, Delayed)**
-   - If Slack enabled and user hasn't responded within 2 minutes
-   - System checks if user already responded
-   - If no response, sends Slack notification to configured channel
-   - Message includes question, context, and unique request ID
-   - Maps Slack message timestamp to unique ID for thread replies
-
-6. **User Response**
-   - User responds via UI (types response, clicks "Submit Feedback" or Ctrl/Cmd+Enter)
-   - OR user replies in Slack thread
-   - Frontend sends POST to `/api/human-feedback/submit` (UI path)
-   - OR Slack Events API sends webhook to backend (Slack path)
-   - Backend verifies Slack webhook signature and extracts unique ID from thread
-
-7. **Backend Coordination**
-   - Response written to channel
-   - `WaitForResponse()` unblocks with user's response
-   - `handleHumanFeedback()` returns response to LLM
-
-8. **LLM Continuation**
-   - LLM receives user response as tool output
-   - Execution continues in same turn with user input
-
-### Timeout Handling
-
-- Default timeout: **5 minutes** (tool executor)
-- Orchestrator helpers: **10 minutes**
-- On timeout: Returns error, LLM handles gracefully
-
-### Delayed Notification Logic
-
-The Slack integration uses smart delayed notifications:
-1. **Immediate**: Feedback request appears in UI right away
-2. **2-Minute Delay**: System waits 2 minutes before sending Slack notification
-3. **Response Check**: Before sending, system checks if user already responded
-4. **Conditional Send**: Only sends Slack notification if user hasn't responded
-5. **Non-Blocking**: All notification logic runs asynchronously
-
----
-
-## 🏗️ Architecture
+1. The agent calls `human_feedback` with a unique request ID, a human-facing message, and an appropriate timeout.
+2. The backend registers the pending request before publishing any UI event. This prevents a fast UI answer from racing request creation.
+3. A `blocking_human_feedback` event renders an interactive card in AgentWorks.
+4. Browser/Electron and configured connector notifications are triggered immediately because these requests are short-lived.
+5. The user answers the card, or a supported interactive connector submits the correlated answer.
+6. `POST /api/human-feedback/submit` writes the response to `HumanFeedbackStore`, which wakes only the waiting workflow call.
+7. The tool returns the response to the calling agent, and the store deletes the pending request and answer.
+8. If the timeout expires first, the request is deleted and the tool returns an expiry error.
 
 ```mermaid
 sequenceDiagram
-    participant LLM
-    participant Tool as handleHumanFeedback
+    participant Agent
+    participant Tool as human_feedback
     participant Store as HumanFeedbackStore
-    participant Slack as SlackService
+    participant UI as AgentWorks UI
     participant API as /api/human-feedback/submit
-    participant Frontend as React UI
-    participant User
+    participant Human
 
-    LLM->>Tool: Call human_feedback(message, unique_id)
-    Tool->>Store: CreateRequestWithSlack(unique_id, message)
-    Store-->>Tool: Request created
-    Store->>Frontend: Event: tool_call_start
-    Frontend->>User: Show notification + UI
-    Store->>Store: Start 2-minute timer (async)
-    Tool->>Store: WaitForResponse(unique_id, 5min)
-    Note over Tool,Store: Tool blocks here
-    
-    alt User responds via UI (< 2 min)
-        User->>Frontend: Type response + submit
-        Frontend->>API: POST /api/human-feedback/submit
-        API->>Store: SubmitResponse(unique_id, response)
-        Store->>Tool: Channel receives response
-        Tool-->>LLM: Return user response
-    else User doesn't respond (< 2 min)
-        Store->>Store: Check if user responded
-        Store->>Slack: SendFeedbackNotification() (if enabled)
-        Slack->>User: Slack message in channel
-        User->>Slack: Reply in thread
-        Slack->>Store: Extract unique_id, SubmitResponse()
-        Store->>Tool: Channel receives response
-        Tool-->>LLM: Return user response
-    end
+    Agent->>Tool: message, unique_id, timeout_seconds
+    Tool->>Store: Register pending request
+    Tool->>UI: blocking_human_feedback event
+    UI->>Human: Card + immediate notification
+    Tool->>Store: Wait for bounded timeout
+    Human->>UI: Enter answer
+    UI->>API: Submit request ID + answer
+    API->>Store: SubmitResponse
+    Store-->>Tool: Wake with answer
+    Store->>Store: Delete request and answer
+    Tool-->>Agent: Tool result
 ```
 
----
+There is deliberately no Builder/chat hop in this sequence. A saved Builder session cannot answer, delay, rewrite, or retain the response.
 
-## 🧩 Example Usage
+## Tool contract
 
-### LLM Tool Call
-
-```json
-{
-  "tool_name": "human_feedback",
-  "arguments": {
-    "message_for_user": "Please enter the 2FA code sent to your email",
-    "unique_id": "550e8400-e29b-41d4-a716-446655440000"
-  }
-}
-```
-
-### Backend Tool Handler
-
-**File:** [`human_tools.go`](../../agent_go/cmd/server/virtual-tools/human_tools.go)
-
-```go
-func handleHumanFeedback(ctx context.Context, args map[string]interface{}) (string, error) {
-    messageForUser := args["message_for_user"].(string)
-    uniqueID := args["unique_id"].(string)
-    
-    feedbackStore := GetHumanFeedbackStore()
-    
-    if err := feedbackStore.CreateRequestWithSlack(ctx, uniqueID, messageForUser, "", nil); err != nil {
-        return "", fmt.Errorf("failed to create feedback request: %w", err)
-    }
-    
-    response, err := feedbackStore.WaitForResponse(uniqueID, 5*time.Minute)
-    if err != nil {
-        return "", fmt.Errorf("failed to get user feedback: %w", err)
-    }
-    
-    return response, nil
-}
-```
-
-### Orchestrator Helper Functions
-
-**File:** [`base_orchestrator.go`](../../agent_go/pkg/orchestrator/base_orchestrator.go)
-
-```go
-// Request human feedback with text input
-approved, feedback, err := orchestrator.RequestHumanFeedback(
-    ctx,
-    "approval_123",
-    "Please approve this plan",
-    "Additional context",
-    sessionID,
-    workflowID,
-)
-
-// Request yes/no feedback
-approved, err := orchestrator.RequestYesNoFeedback(
-    ctx,
-    "yesno_456",
-    "Do you want to proceed?",
-    "Approve",
-    "Reject",
-    "",
-    sessionID,
-    workflowID,
-)
-
-// Request multiple choice feedback
-choice, err := orchestrator.RequestMultipleChoiceFeedback(
-    ctx,
-    "choice_789",
-    "Select deployment environment",
-    []string{"Development", "Staging", "Production"},
-    "",
-    sessionID,
-    workflowID,
-)
-```
-
----
-
-## ⚙️ Configuration
-
-### Tool Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `message_for_user` | string | Yes | Message displayed to the user requesting feedback |
-| `unique_id` | string | Yes | Unique UUID identifying this request |
-
-### Timeout Configuration
-
-| Component | Timeout | Location |
-|-----------|---------|----------|
-| Tool executor | `5 * time.Minute` | [`human_tools.go`](../../agent_go/cmd/server/virtual-tools/human_tools.go) |
-| Orchestrator helpers | `10 * time.Minute` | [`base_orchestrator.go`](../../agent_go/pkg/orchestrator/base_orchestrator.go) |
-| Browser notification | 30 seconds (auto-close) | Frontend component |
-
-### Slack Configuration
-
-| Setting | Type | Description |
-|---------|------|-------------|
-| `enabled` | boolean | Whether Slack notifications are enabled |
-| `bot_token` | string | Slack bot token (starts with `xoxb-`) |
-| `app_token` | string | App-level token for Socket Mode (starts with `xapp-`) |
-| `channel_id` | string | Target Slack channel ID (starts with `C`) |
-| Notification delay | 2 minutes | Fixed delay before sending Slack notification |
-
-**Configuration Storage:**
-- Stored in `slack_feedback_config` database table
-- Managed via UI: Sidebar → Slack icon
-- API endpoints: `GET/POST /api/human-feedback/slack/config`
-
-### Browser Notifications
-
-**Permissions:**
-- Requested on component mount
-- Shown when `Notification.permission === 'granted'`
-- Properties: Title "Human Feedback Required", body from `message_for_user`, `requireInteraction: true`, `silent: false`
-
----
-
-## 🛠️ Common Issues & Solutions
-
-| Issue | Cause | Solution |
-|-------|-------|----------|
-| `timeout waiting for feedback` | User didn't respond within timeout period | Increase timeout in `handleHumanFeedback()` or orchestrator helper functions |
-| `feedback request already exists` | Duplicate `unique_id` used | Always generate fresh UUID: `fmt.Sprintf("feedback_%d", time.Now().UnixNano())` |
-| Browser notification not showing | Permission denied or not granted | Request permission via button in UI or browser settings |
-| Response not received | Frontend submit failed | Check browser console for errors; verify `/api/human-feedback/submit` endpoint accessible |
-| Tool blocks forever | Backend store channel deadlock | Check that `SubmitResponse()` is called; review channel handling in `WaitForResponse()` |
-| Slack connection test fails | Invalid credentials or scopes | Verify bot token (`xoxb-`), app token (`xapp-`), channel ID (`C`), bot has `chat:write` scope, bot is member of channel |
-| Slack notifications not sent | User responded quickly | Expected behavior - notifications only sent if no response after 2 minutes |
-| Thread replies not captured | Socket Mode misconfigured | Verify Socket Mode enabled, Events API enabled, `message.channels` event subscribed, App-Level Token has `connections:write` scope, bot has `channels:history` scope |
-
----
-
-## 🔍 For LLMs: Quick Reference
-
-### Constraints
-
-✅ **Allowed:**
-- Any user-facing message (questions, requests for OTP/2FA, confirmations)
-- UUID generation for `unique_id` parameter
-- Waiting synchronously for user response (blocks LLM execution)
-- Multiple feedback requests in sequence (different unique_ids)
-
-❌ **Forbidden:**
-- Reusing same `unique_id` for multiple requests
-- Not providing `unique_id` (required parameter)
-- Empty or missing `message_for_user`
-- Expecting instant response (users may take time)
-
-### Example Pattern
-
-**Simple feedback request:**
 ```json
 {
   "tool": "human_feedback",
   "arguments": {
-    "message_for_user": "Please confirm the database migration plan before I proceed",
-    "unique_id": "feedback_1701234567890"
+    "message_for_user": "Enter the six-digit code sent to your phone.",
+    "unique_id": "login-otp-1712345678",
+    "timeout_seconds": 120
   }
 }
 ```
 
-**2FA/OTP use case:**
-```json
+| Parameter | Type | Required | Behavior |
+|---|---|---:|---|
+| `unique_id` | string | Yes | Must uniquely identify this pending request. |
+| `message_for_user` | string | Yes | Short instruction shown to the human. |
+| `options` | string[] | No | Renders direct choice buttons rather than free text. |
+| `timeout_seconds` | integer | No | Agent-selected wait, bounded to 30–1800 seconds; default 300 seconds. |
+
+The agent should use an expiry supplied by the external service when available and otherwise choose the shortest realistic timeout.
+
+## Direct submission and UI behavior
+
+The frontend submits through `agentApi.submitHumanFeedback()` to:
+
+```text
+POST /api/human-feedback/submit
 {
-  "tool": "human_feedback",
-  "arguments": {
-    "message_for_user": "Enter the 6-digit verification code sent to your email",
-    "unique_id": "otp_1701234567891"
-  }
+  "unique_id": "login-otp-1712345678",
+  "response": "..."
 }
 ```
 
-**LLM receives:**
-```
-User response: "582491"
-```
+The API requires a currently pending request. A late response after expiry is rejected rather than being applied to another workflow turn.
 
-### Integration with Workflow Agents
+Potentially private response text is not included in server or browser console logs, OS notification previews, or the frontend's `localStorage`. The frontend persists only a short-lived boolean marker so a completed historical event does not reopen after a page refresh.
 
-**Planning agent pattern:**
-```go
-// 1. human_feedback - ask user for approval
-// 2. Receive yes/no response
-// 3. If approved: call update_plan_steps / add_plan_steps / delete_plan_steps
-```
+## Workflow `human_input` steps
 
-**Variable extraction agent pattern:**
-```go
-// 1. human_feedback - "I detected variable {{API_KEY}}. Should I extract it?"
-// 2. User responds: "Yes" or "No"
-// 3. If yes: call update_variable tool
-// 4. If no: don't modify variables
-```
+Configured `human_input` plan steps use the same direct request store, UI card, endpoint, and connector path. Text, yes/no, and multiple-choice steps no longer forward questions into the Workflow Builder. These configured steps currently retain their existing ten-minute wait; the agent-selected `timeout_seconds` field applies to explicit `human_feedback` tool calls.
 
----
+## Notification behavior
 
-## 🔌 API Endpoints
+- The AgentWorks response card is the primary interaction surface.
+- Browser/Electron notifications appear as soon as the card is available when notification permission is granted.
+- Notification previews use generic text and do not expose the question or answer.
+- The Electron dock badge stays active while the displayed request is pending.
+- Configured interactive connectors are notified immediately for these short-lived requests.
+- Workflow Slack Incoming Webhooks are not used here. They are one-way `notify_user` destinations and cannot submit the correlated answer this blocking flow requires.
+- The older `ScheduleNotification` helper still supports a two-minute reminder for legacy/non-urgent callers; direct human-input paths use `ScheduleNotificationAfter(..., 0)`.
 
-### Submit Human Feedback
+An app-wide durable Electron notification inbox is a separate capability. This flow uses the current event renderer, native notification, badge, and connector infrastructure.
 
-**POST** `/api/human-feedback/submit`
+## Key implementation files
 
-**Request:**
-```json
-{
-  "unique_id": "550e8400-e29b-41d4-a716-446655440000",
-  "response": "User's feedback text"
-}
-```
+| Component | File |
+|---|---|
+| Tool definition and handler | `agent_go/cmd/server/virtual-tools/human_tools.go` |
+| Pending request coordination | `agent_go/cmd/server/virtual-tools/human_feedback_store.go` |
+| Direct orchestrator helpers | `agent_go/pkg/orchestrator/base_orchestrator_feedback.go` |
+| Submit endpoint | `agent_go/cmd/server/server.go` |
+| Interactive event card | `frontend/src/components/events/BlockingHumanFeedbackDisplay.tsx` |
+| Frontend API client | `frontend/src/services/api.ts` |
+| Notification/submission dedup | `frontend/src/utils/notificationDedup.ts` |
 
-**Response:**
-```json
-{
-  "success": true
-}
-```
+## Operational rules
 
-### Slack Configuration
-
-**GET** `/api/human-feedback/slack/config`
-
-**Response:**
-```json
-{
-  "enabled": true,
-  "channel_id": "C1234567890",
-  "bot_token": "xoxb-...1234",
-  "app_token": "xapp-...5678"
-}
-```
-
-**POST** `/api/human-feedback/slack/config`
-
-**Request:**
-```json
-{
-  "enabled": true,
-  "bot_token": "xoxb-...",
-  "app_token": "xapp-...",
-  "channel_id": "C1234567890"
-}
-```
-
-**POST** `/api/human-feedback/slack/test`
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Slack connection test successful!"
-}
-```
-
----
-
-## 🔒 Security Model
-
-### Thread Safety
-
-**Global Singleton:**
-```go
-var (
-    globalHumanFeedbackStore *HumanFeedbackStore
-    humanFeedbackStoreOnce   sync.Once
-)
-```
-
-**Mutex Protection:**
-- `sync.RWMutex` protects concurrent access to request map and waiters
-- Write operations (CreateRequest, SubmitResponse) use `Lock()`
-- Read operations (WaitForResponse lookup) use `RLock()`
-
-### Socket Mode Security
-
-- WebSocket connection (no public webhook required)
-- App-Level Token separate from Bot Token
-- Automatic reconnection handling
-- Webhook signature verification for thread replies
-
-### Token Storage
-
-- Tokens stored in database (`slack_feedback_config` table)
-- Tokens masked in API responses (last 4 characters only)
-- **Recommendation:** Encrypt tokens in production environments
-
----
-
-## 📊 Database Schema
-
-### `slack_feedback_config` Table
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | TEXT | Primary key (always 'slack_config') |
-| `enabled` | BOOLEAN | Whether Slack notifications are enabled |
-| `bot_token` | TEXT | Slack bot token (encrypted in production) |
-| `app_token` | TEXT | App-level token for Socket Mode |
-| `channel_id` | TEXT | Target Slack channel ID |
-| `created_at` | DATETIME | Creation timestamp |
-| `updated_at` | DATETIME | Last update timestamp |
-
-### `slack_feedback_messages` Table
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | TEXT | Primary key |
-| `unique_id` | TEXT | Maps to `HumanFeedbackRequest.UniqueID` |
-| `slack_message_ts` | TEXT | Slack message timestamp |
-| `slack_channel_id` | TEXT | Slack channel ID |
-| `slack_thread_ts` | TEXT | Thread timestamp |
-| `created_at` | DATETIME | Creation timestamp |
-
-### Data Structures
-
-```go
-type HumanFeedbackRequest struct {
-    UniqueID       string
-    MessageForUser string
-    UserResponse   string
-    IsCompleted    bool
-    CreatedAt      time.Time
-}
-
-type HumanFeedbackStore struct {
-    requests map[string]*HumanFeedbackRequest
-    waiters  map[string]chan string
-    mu       sync.RWMutex
-}
-```
-
----
-
-## 🚀 Slack Setup Instructions
-
-1. **Create Slack App** at https://api.slack.com/apps
-2. **Configure Bot Token Scopes**: `chat:write`, `channels:read`, `channels:history`
-3. **Enable Socket Mode**: Generate App-Level Token with `connections:write` scope
-4. **Enable Events API**: Subscribe to `message.channels` event
-5. **Get Channel ID**: Right-click channel → View channel details
-6. **Configure in UI**: Sidebar → Slack icon → Enter tokens and channel ID → Test connection → Save
-
----
-
-## 📖 Related Documentation
-
-- [Workflow Monitoring](workflow_monitoring.md) - Reviews runs that may require human approval
-- [Todo Task Step Type](todo-task-step-type.md) - Uses human feedback for plan approval and variable confirmation
-- Virtual tools - See the backend tool handlers referenced above
-- [Event System](../core/event_system.md) - How events coordinate frontend/backend
+- Generate a fresh `unique_id` for every request.
+- Do not ask an agent-answerable clarification through `human_feedback`.
+- Do not use this tool for asynchronous questions that may be answered days later.
+- Do not put OTPs or private values in the question; the sensitive value belongs only in the response.
+- Handle timeout errors explicitly. Never assume approval when a request expires.
+- Never reintroduce a chat/Builder relay for these answers.

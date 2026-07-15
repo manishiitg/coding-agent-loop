@@ -4,8 +4,8 @@ import { playNotificationSound } from '../../utils/sound'
 import {
   hasBeenNotified,
   markNotified,
-  getSubmittedFeedback,
-  setSubmittedFeedback as persistSubmittedFeedback,
+  hasSubmittedFeedback,
+  markFeedbackSubmitted,
 } from '../../utils/notificationDedup'
 
 export interface BlockingHumanFeedbackEvent {
@@ -19,7 +19,7 @@ export interface BlockingHumanFeedbackEvent {
   yes_label?: string
   no_label?: string
   options?: string[] // Array of option labels for multiple choice
-  routed_to_parent_chat?: boolean // True when the question was forwarded to the builder chat session
+  routed_to_parent_chat?: boolean // Legacy field; direct UI submission is now always used
 }
 
 interface BlockingHumanFeedbackDisplayProps {
@@ -41,28 +41,14 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
   onFeedbackSubmitted,
   isApproving = false
 }) => {
-  // When the question was forwarded to the builder chat, show an informational
-  // status card instead of the interactive approval widget.
-  if (event.data.routed_to_parent_chat) {
-    return (
-      <div className="rounded-md border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20 p-3">
-        <div className="text-xs font-medium text-amber-700 dark:text-amber-300 mb-1">Waiting for human input</div>
-        {event.data.question && (
-          <div className="text-sm text-amber-900 dark:text-amber-100 whitespace-pre-wrap">{event.data.question}</div>
-        )}
-        <div className="mt-2 text-[11px] text-amber-600 dark:text-amber-400">
-          Answer this in the builder chat to continue the automation.
-        </div>
-      </div>
-    )
-  }
-
-  const cachedValue = event.data.request_id ? getSubmittedFeedback(event.data.request_id) : undefined
+  const cachedSubmission = event.data.request_id ? hasSubmittedFeedback(event.data.request_id) : false
   const [feedback, setFeedback] = useState<string>('')
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false)
-  const [hasSubmitted, setHasSubmitted] = useState(!!cachedValue)
-  const [submittedFeedback, setSubmittedFeedback] = useState<string>(cachedValue || '')
+  const [hasSubmitted, setHasSubmitted] = useState(cachedSubmission)
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default')
+  const electronAPI = (window as unknown as {
+    electronAPI?: { setDockBadge?: (badge: string) => void }
+  }).electronAPI
 
   // Use backend-provided content directly
   const question = event.data.question || 'Do you want to continue?'
@@ -87,45 +73,36 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
       }
     }
 
-    // Set Dock badge if running in Electron
-    if (!hasSubmitted && (window as any).electronAPI) {
-      (window as any).electronAPI.setDockBadge('1')
-    }
-
-    return () => {
-      // Clear dock badge on unmount
-      if ((window as any).electronAPI) {
-        (window as any).electronAPI.setDockBadge('')
-      }
-    }
   }, [])
 
-  // Clear dock badge when submitted
+  // Keep the Electron dock badge in sync with the pending request.
   React.useEffect(() => {
-    if (hasSubmitted && (window as any).electronAPI) {
-      (window as any).electronAPI.setDockBadge('')
-    }
-  }, [hasSubmitted])
+    if (!electronAPI?.setDockBadge) return
+    electronAPI.setDockBadge(hasSubmitted ? '' : '1')
+    return () => electronAPI.setDockBadge?.('')
+  }, [electronAPI, hasSubmitted])
 
-  // Show browser notification after 10s delay if user hasn't answered yet
+  // Human feedback is short-lived, so notify as soon as the direct response
+  // card is available. Keep potentially sensitive question text out of the OS
+  // notification preview; the user sees it after opening AgentWorks.
   React.useEffect(() => {
     const requestId = event.data.request_id || ''
     const enabled = localStorage.getItem('mcp_notifications_enabled') !== 'false'
     // Skip if already submitted, already notified (e.g. page refresh), or notifications disabled
     if (!enabled || hasSubmitted || (requestId && hasBeenNotified(requestId))) return
-    if (!('Notification' in window) || Notification.permission !== 'granted') return
+    if (!('Notification' in window) || notificationPermission !== 'granted') return
 
     let notificationRef: Notification | null = null
     const timer = setTimeout(() => {
-      // Re-check submitted state at fire time (user may have answered within 10s)
+      // Re-check submitted state in case submission won the scheduling race.
       if (hasSubmitted) return
 
       try {
         playNotificationSound()
         if (requestId) markNotified(requestId)
 
-        notificationRef = new Notification('Action Required', {
-          body: question,
+        notificationRef = new Notification('AgentWorks needs your input', {
+          body: 'A workflow is waiting for your response.',
           icon: '/logo.svg',
           tag: `blocking-feedback-${requestId || Date.now()}`,
           requireInteraction: true,
@@ -144,13 +121,13 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
       } catch (error) {
         console.error('[BLOCKING_FEEDBACK] Failed to create notification:', error)
       }
-    }, 10000) // 10 second delay
+    }, 0)
 
     return () => {
       clearTimeout(timer)
       notificationRef?.close()
     }
-  }, [question, event.data.request_id, hasSubmitted])
+  }, [event.data.request_id, hasSubmitted, notificationPermission])
 
   const triggerScrollCallback = () => {
     if (onFeedbackSubmitted) {
@@ -163,8 +140,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
       setIsSubmittingFeedback(true)
       try {
         await onSubmitFeedback(event.data.request_id, feedback.trim())
-        if (event.data.request_id) persistSubmittedFeedback(event.data.request_id, feedback.trim())
-        setSubmittedFeedback(feedback.trim())
+        if (event.data.request_id) markFeedbackSubmitted(event.data.request_id)
         setHasSubmitted(true)
         setFeedback('')
         triggerScrollCallback()
@@ -185,8 +161,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
         } else {
           onApprove(event.data.request_id, { ...event.data, feedback: "Approve" })
         }
-        if (event.data.request_id) persistSubmittedFeedback(event.data.request_id, yesLabel || "Approved")
-        setSubmittedFeedback(yesLabel || "Approved")
+        if (event.data.request_id) markFeedbackSubmitted(event.data.request_id)
         setHasSubmitted(true)
         triggerScrollCallback()
       } catch (error) {
@@ -206,8 +181,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
         } else {
           onApprove(event.data.request_id, { ...event.data, feedback: "Reject" })
         }
-        if (event.data.request_id) persistSubmittedFeedback(event.data.request_id, "Reject")
-        setSubmittedFeedback("Reject")
+        if (event.data.request_id) markFeedbackSubmitted(event.data.request_id)
         setHasSubmitted(true)
         triggerScrollCallback()
       } catch (error) {
@@ -225,8 +199,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
         // Send the actual option label text so the LLM clearly understands the user's choice
         const optionLabel = options[index] || `option${index}`
         await onSubmitFeedback(event.data.request_id, optionLabel)
-        if (event.data.request_id) persistSubmittedFeedback(event.data.request_id, optionLabel)
-        setSubmittedFeedback(optionLabel)
+        if (event.data.request_id) markFeedbackSubmitted(event.data.request_id)
         setHasSubmitted(true)
         triggerScrollCallback()
       } catch (error) {
@@ -259,9 +232,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
           <svg className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
           </svg>
-          <span className="text-xs font-medium text-green-800 dark:text-green-200">
-            {submittedFeedback}
-          </span>
+          <span className="text-xs font-medium text-green-800 dark:text-green-200">Response submitted</span>
         </div>
         {context && (
           <details className="mt-2 group">

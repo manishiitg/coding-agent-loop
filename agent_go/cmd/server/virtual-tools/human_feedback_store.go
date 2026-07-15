@@ -109,16 +109,25 @@ func (s *HumanFeedbackStore) CreateRequestWithNotification(ctx context.Context, 
 	return nil
 }
 
-// ScheduleNotification sends a delayed connector notification for an existing
-// pending request. It is useful when the caller first decides whether the
-// request was routed to a parent chat and only wants external fanout as the
-// fallback path.
+// ScheduleNotification sends the historical two-minute connector reminder for
+// an existing pending request.
 func (s *HumanFeedbackStore) ScheduleNotification(ctx context.Context, uniqueID, message, contextMsg string, buttonOptions *services.ButtonOptions, dest *services.NotificationDestination) {
+	s.ScheduleNotificationAfter(ctx, uniqueID, message, contextMsg, buttonOptions, dest, 2*time.Minute)
+}
+
+// ScheduleNotificationAfter is the delay-aware notification path. Normal
+// feedback requests keep the historical two-minute reminder through
+// ScheduleNotification; short-lived human-only tool calls pass zero so the
+// user is notified immediately.
+func (s *HumanFeedbackStore) ScheduleNotificationAfter(ctx context.Context, uniqueID, message, contextMsg string, buttonOptions *services.ButtonOptions, dest *services.NotificationDestination, delay time.Duration) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if delay < 0 {
+		delay = 0
+	}
 
-	// Start delayed notification: wait 2 minutes, then check if user responded
+	// Start delayed notification, then check if the user responded.
 	// If no response, send notification via connectors.
 	// For bot sessions, send immediately (the thread IS the primary interface).
 	go func() {
@@ -129,11 +138,10 @@ func (s *HumanFeedbackStore) ScheduleNotification(ctx context.Context, uniqueID,
 			isBotSession = s.botSessionChecker(uniqueID)
 		}
 
-		if !isBotSession {
-			// Standard delay: wait 2 minutes before sending external notification
-			time.Sleep(2 * time.Minute)
+		if !isBotSession && delay > 0 {
+			time.Sleep(delay)
 		} else {
-			log.Printf("[HUMAN_FEEDBACK_STORE] Bot session detected for %s, sending notification immediately", uniqueID)
+			log.Printf("[HUMAN_FEEDBACK_STORE] Sending notification immediately for %s", uniqueID)
 		}
 
 		// Check if user has already responded
@@ -148,12 +156,12 @@ func (s *HumanFeedbackStore) ScheduleNotification(ctx context.Context, uniqueID,
 		}
 
 		if hasResponded {
-			log.Printf("[HUMAN_FEEDBACK_STORE] User already responded to %s, skipping delayed connector notification", uniqueID)
+			log.Printf("[HUMAN_FEEDBACK_STORE] User already responded to %s, skipping connector notification", uniqueID)
 			return
 		}
 
-		// User hasn't responded after 2 minutes, send connector notification
-		log.Printf("[HUMAN_FEEDBACK_STORE] No response after 2 minutes for %s, sending connector notification", uniqueID)
+		// The user has not responded during the configured delay.
+		log.Printf("[HUMAN_FEEDBACK_STORE] No response after %s for %s, sending connector notification", delay, uniqueID)
 		notificationManager := services.GetNotificationManager()
 		if notificationManager == nil {
 			log.Printf("[HUMAN_FEEDBACK_STORE] Notification manager not available")
@@ -161,7 +169,7 @@ func (s *HumanFeedbackStore) ScheduleNotification(ctx context.Context, uniqueID,
 		}
 
 		if buttonOptions != nil {
-			log.Printf("[HUMAN_FEEDBACK_STORE] Sending delayed notification - buttonOptions: YesNoOnly=%v, YesLabel=%s, NoLabel=%s, Options=%v",
+			log.Printf("[HUMAN_FEEDBACK_STORE] Sending feedback notification - buttonOptions: YesNoOnly=%v, YesLabel=%s, NoLabel=%s, Options=%v",
 				buttonOptions.YesNoOnly, buttonOptions.YesLabel, buttonOptions.NoLabel, buttonOptions.Options)
 		}
 
@@ -169,9 +177,9 @@ func (s *HumanFeedbackStore) ScheduleNotification(ctx context.Context, uniqueID,
 		// This will send to all enabled connectors (Slack, WhatsApp)
 		if err := notificationManager.SendNotification(ctx, uniqueID, message, contextMsg, buttonOptions, dest); err != nil {
 			// Log error but don't fail - this is a reminder notification
-			log.Printf("[HUMAN_FEEDBACK_STORE] Failed to send delayed notification: %v", err)
+			log.Printf("[HUMAN_FEEDBACK_STORE] Failed to send connector notification: %v", err)
 		} else {
-			log.Printf("[HUMAN_FEEDBACK_STORE] ✅ Delayed connector notification sent for %s", uniqueID)
+			log.Printf("[HUMAN_FEEDBACK_STORE] ✅ Connector notification sent for %s", uniqueID)
 		}
 	}()
 }
@@ -233,6 +241,14 @@ func (s *HumanFeedbackStore) WaitForResponse(uniqueID string, timeout time.Durat
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+	defer func() {
+		// Answers can contain OTPs or other private input. Remove both the answer
+		// and waiter as soon as the waiting tool consumes or expires the request.
+		s.mu.Lock()
+		delete(s.requests, uniqueID)
+		delete(s.waiters, uniqueID)
+		s.mu.Unlock()
+	}()
 
 	select {
 	case response := <-waiter:

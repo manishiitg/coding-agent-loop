@@ -8,11 +8,20 @@ package services
 // A nil *NotificationDestination is equivalent to "no hints, do whatever your
 // configured default is" and preserves the pre-routing behavior.
 type NotificationDestination struct {
-	Slack    *SlackDest           // Slack channel/thread hint
-	WhatsApp *WhatsAppDest        // WhatsApp recipient hint
-	Gmail    *GmailDest           // Gmail recipient hint
-	UserID   string               // workspace user ID, used to look up per-user preferences
-	Content  *NotificationContent // optional typed per-channel content (nil = plain message only)
+	Slack        *SlackDest           // Slack bot channel/thread hint
+	SlackWebhook *SlackWebhookDest    // workflow-scoped one-way Incoming Webhook
+	WhatsApp     *WhatsAppDest        // WhatsApp recipient hint
+	Gmail        *GmailDest           // Gmail recipient hint
+	UserID       string               // workspace user ID, used to look up per-user preferences
+	Content      *NotificationContent // optional typed per-channel content (nil = plain message only)
+}
+
+// SlackWebhookDest is a workflow-scoped, one-way Slack Incoming Webhook.
+// SecretName is safe to report in configuration. URL is resolved from the
+// encrypted secret store only at run time and must never be logged or persisted.
+type SlackWebhookDest struct {
+	SecretName string
+	URL        string
 }
 
 // GmailDest is the Gmail-specific destination hint. Email is the recipient

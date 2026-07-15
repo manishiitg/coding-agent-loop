@@ -284,8 +284,10 @@ func GetSessionShellEnv(sessionID string) map[string]string {
 	return out
 }
 
-// SetSessionBrowserMode stores the resolved browser mode for a session.
-// Used by execute_shell_command to show context-aware error messages when blocking agent-browser CLI calls.
+// SetSessionBrowserMode stores configured browser intent for a session
+// (auto/cdp/headless/none), never a one-time auto-mode reachability result.
+// Used by execute_shell_command for context-aware guidance and by delegated
+// turns as the policy from which they perform their own live resolution.
 func SetSessionBrowserMode(sessionID, mode string) {
 	updateSessionShellConfig(sessionID, func(cfg *SessionShellConfig) {
 		cfg.BrowserMode = mode
@@ -293,9 +295,8 @@ func SetSessionBrowserMode(sessionID, mode string) {
 	log.Printf("[SHELL] Set browser mode for session %s: %s", sessionID, mode)
 }
 
-// GetSessionBrowserMode returns the resolved browser mode for a session, or "" if
-// none was set. Used to persist a session's runtime so a restore can replay the
-// same browser capability (and re-register agent_browser).
+// GetSessionBrowserMode returns configured browser intent, or "" if none was
+// set. CDP reachability must be queried live through agent_browser status.
 func GetSessionBrowserMode(sessionID string) string {
 	sessionShellConfigsMu.RLock()
 	defer sessionShellConfigsMu.RUnlock()

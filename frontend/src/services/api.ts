@@ -2038,11 +2038,23 @@ export const agentApi = {
     workspacePath: string,
     stepId: string
   ): Promise<{ success: boolean; message: string; data?: { deleted_step_id: string; deleted_config: boolean } }> => {
-    const response = await api.post('/api/workflow/plan/delete-step', {
-      workspace_path: workspacePath,
-      step_id: stepId
-    })
-    return response.data
+    try {
+      const response = await api.post('/api/workflow/plan/delete-step', {
+        workspace_path: workspacePath,
+        step_id: stepId
+      })
+      return response.data
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        const detail = typeof error.response?.data === 'string'
+          ? error.response.data.trim()
+          : error.response?.data?.message || error.response?.data?.error
+        if (detail) {
+          throw new Error(detail)
+        }
+      }
+      throw error
+    }
   },
 
   // Add a new step to the plan

@@ -783,7 +783,7 @@ Whenever the instructions above mention ` + "`execute_shell_command(...)`" + `, 
 The following tools are NOT available as direct function calls — call them via curl through ` + "`" + executeTool + "`" + `:
 
 - **Delegation tools**: delegate, query_agent, terminate_agent, list_agents
-- **Human tools**: notify_user, submit_human_answer
+- **Human tools**: notify_user
 - **LLM config tools**: list_published_llms, list_provider_models, test_llm, save_published_llm, set_provider_auth, list_llm_capabilities, estimate_llm_cost
 
 **Pattern:**

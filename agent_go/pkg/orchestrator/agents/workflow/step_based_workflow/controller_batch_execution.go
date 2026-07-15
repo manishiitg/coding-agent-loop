@@ -8,6 +8,7 @@ import (
 	"time"
 
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
@@ -342,12 +343,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 		// Also resolve the browser session ID so we can mark it as stopped too.
 		// The actual stateful MCP connection lives under this ID, not the group session ID.
 		browserSessionID := hcpo.resolveWorkshopBrowserSessionID(group.Name)
+		hcpo.bindWorkshopBrowserSession(groupSessionID, browserSessionID)
+		cdpPorts := hcpo.cdpPortsForCleanup()
+		browser.AcquireCDPTabOwnerLease(browserSessionID, cdpPorts)
 		defer func() {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔗 Closing MCP session for group %s: %s (browser=%s)", group.Name, groupSessionID, browserSessionID))
 			virtualtools.UnregisterParentChat(groupSessionID)
 			mcpagent.MarkSessionsStopped([]string{groupSessionID, browserSessionID})
 			mcpagent.CloseSession(groupSessionID)
 			mcpagent.CloseSession(browserSessionID)
+			browser.ReleaseCDPTabOwnerLease(browserSessionID, cdpPorts, browser.NewClient(getWorkspaceAPIURL()), browser.DefaultCDPTabCleanupDelay)
 		}()
 
 		// Update batch context for step_progress_updated events

@@ -28,6 +28,21 @@ const agentBrowserSkillContent = `# Agent Browser In Builder
 
 Use the Builder MCP tool ` + "`workspace_browser.agent_browser`" + `. Do not run the ` + "`agent-browser`" + ` CLI directly through shell. Builder's tool owns CDP validation, shared-tab locking, session isolation, and workspace file guards.
 
+## Query Live Mode First
+
+CDP reachability is runtime state. It is never taken from saved conversation
+history. Before the first browser action—and again after any availability
+error—query Builder's backend-owned status operation:
+
+` + "```python" + `
+status = agent_browser("status", [], session="main")
+` + "```" + `
+
+If ` + "`effective_mode`" + ` is ` + "`cdp`" + `, use one endpoint from
+` + "`authorized_endpoints`" + ` on every later call. If it is ` + "`headless`" + `,
+call without ` + "`--cdp`" + `. Do not probe Chrome's ` + "`/json/version`" + ` URL
+through shell.
+
 ## Load Version-Matched Agent-Browser Skills
 
 The installed CLI bundles skills that exactly match its command surface. Before the first browser action in a task, load the current core overview through the managed tool. In headless mode:
@@ -75,7 +90,7 @@ def agent_browser(command, args=None, session="main"):
 
 CDP mode controls the user's real Chrome. The user can see the browser and it may already be authenticated.
 
-Always include an endpoint authorized by the prompt, such as ` + "`--cdp http://localhost:9222`" + `. The prompt endpoint list is authoritative and the backend rejects a missing or unconfigured port. When the prompt lists multiple endpoints, they represent independent Chrome profiles/login identities for specialized multi-account testing within this workflow. Choose the intended profile on every call and keep distinct labeled tabs per account. Do not create extra CDP browsers merely because workflows or steps are concurrent.
+Always include an endpoint returned by the latest live status result, such as ` + "`--cdp http://localhost:9222`" + `. Workflow configuration limits which ports can be authorized; live status determines which configured ports are currently reachable. The backend rechecks every auto-mode action and rejects a missing, unavailable, or unconfigured port. When status returns multiple endpoints, they represent independent Chrome profiles/login identities for specialized multi-account testing within this workflow. Choose the intended profile on every call and keep distinct labeled tabs per account. Do not create extra CDP browsers merely because workflows or steps are concurrent.
 
 ` + "```python" + `
 CDP = ["--cdp", "http://localhost:9222"]

@@ -9,15 +9,29 @@ import (
 
 func resetCDPRegistryForTest(t *testing.T) {
 	t.Helper()
+	resetCDPTabCleanupForTest()
 	cdpOwnersMu.Lock()
 	cdpOwners = make(map[int]map[string]time.Time)
 	cdpExclusiveFeatureOwners = make(map[int]map[string]string)
 	cdpOwnersMu.Unlock()
+	cdpTabSelectionsMu.Lock()
+	cdpTabSelections = make(map[string]string)
+	cdpActiveTabs = make(map[int]string)
+	cdpTabAliases = make(map[string]string)
+	cdpOwnedTabs = make(map[string]cdpOwnedTab)
+	cdpTabSelectionsMu.Unlock()
 	t.Cleanup(func() {
+		resetCDPTabCleanupForTest()
 		cdpOwnersMu.Lock()
 		cdpOwners = make(map[int]map[string]time.Time)
 		cdpExclusiveFeatureOwners = make(map[int]map[string]string)
 		cdpOwnersMu.Unlock()
+		cdpTabSelectionsMu.Lock()
+		cdpTabSelections = make(map[string]string)
+		cdpActiveTabs = make(map[int]string)
+		cdpTabAliases = make(map[string]string)
+		cdpOwnedTabs = make(map[string]cdpOwnedTab)
+		cdpTabSelectionsMu.Unlock()
 	})
 }
 

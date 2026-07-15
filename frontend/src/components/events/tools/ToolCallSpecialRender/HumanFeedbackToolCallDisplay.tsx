@@ -77,7 +77,7 @@ export const HumanFeedbackToolCallDisplay: React.FC<HumanFeedbackToolCallDisplay
       if (uniqueId) markNotified(uniqueId)
 
       const notification = new Notification('Human Feedback Required', {
-        body: toolParams.message_for_user,
+        body: 'A workflow is waiting for your response in AgentWorks.',
         icon: '/logo.svg',
         tag: `human-feedback-${uniqueId}`,
         requireInteraction: true,

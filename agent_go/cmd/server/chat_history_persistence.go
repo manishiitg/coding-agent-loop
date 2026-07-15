@@ -51,27 +51,13 @@ type ChatHistoryAgentRuntime struct {
 	WorkshopMode       string                       `json:"workshop_mode,omitempty"`
 	CapturedAt         string                       `json:"captured_at,omitempty"`
 	AgentSessionHandle *mcpagent.AgentSessionHandle `json:"agent_session_handle,omitempty"`
-	// SystemPrompt and AppendedSystemPrompts capture the assembled prompt
-	// the agent was running with at chat-save time so a restore that has
-	// no live /api/query yet (e.g., the chat-history auto-restore path that
-	// only relaunches the tmux pane) can still SetSystemPrompt the right
-	// content. Without this, coding-CLI adapters project the agent's
-	// default mcpagent base prompt into .agents/rules/mlp-system.md /
-	// .cursor/rules/mlp-system.mdc / AGENTS.md / GEMINI.md / .claude/rules/
-	// instead of the workflow-builder workshop template, and the user sees
-	// "wrong content" in the rules file after a restart. Saved on every
-	// captureChatHistoryAgentRuntime; re-applied in
-	// seedCodingAgentRuntimeFromRestoredConversation before any launch.
-	SystemPrompt          string   `json:"system_prompt,omitempty"`
-	AppendedSystemPrompts []string `json:"appended_system_prompts,omitempty"`
-	// ServerName / SelectedTools / BrowserMode capture the agent's MCP server+tool
-	// selection and browser capability so a restore can replay the same bridge
-	// catalog (incl. agent_browser) instead of re-deriving it. Empty on sessions
-	// saved before this was persisted — restore falls back to the workflow
-	// manifest for those.
+	// Dynamic prompts and resolved browser availability are intentionally not
+	// persisted. A restored dead terminal is launched only after /api/query has
+	// rebuilt current instructions and capabilities from the workflow manifest.
+	// Persisting these values previously let a stale mode=headless snapshot
+	// overwrite live CDP availability during native-session resume.
 	ServerName    string   `json:"server_name,omitempty"`
 	SelectedTools []string `json:"selected_tools,omitempty"`
-	BrowserMode   string   `json:"browser_mode,omitempty"`
 }
 
 type ChatHistoryPreviewMessage struct {

@@ -2,6 +2,7 @@ package virtualtools
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -48,7 +49,7 @@ func resetHumanToolTestState() {
 	store.mu.Unlock()
 }
 
-func TestHandleHumanFeedbackRoutesToParentChat(t *testing.T) {
+func TestHandleHumanFeedbackWaitsForDirectHumanResponseWithoutParentRelay(t *testing.T) {
 	resetHumanToolTestState()
 	t.Cleanup(resetHumanToolTestState)
 
@@ -58,38 +59,95 @@ func TestHandleHumanFeedbackRoutesToParentChat(t *testing.T) {
 		GroupName:    "daily-bid",
 	})
 
-	var injected string
+	injected := make(chan string, 1)
 	SetChatInjector(func(ctx context.Context, sessionID, userID, message string) error {
-		if sessionID != "builder-session" {
-			t.Fatalf("unexpected parent session: %s", sessionID)
-		}
-		injected = message
-		if err := GetHumanFeedbackStore().SubmitResponse("req-1", "approve"); err != nil {
-			t.Fatalf("submit response: %v", err)
-		}
+		injected <- message
 		return nil
 	})
 
 	ctx := context.WithValue(context.Background(), BGAgentSessionIDKey, "workflow-session")
-	got, err := handleHumanFeedback(ctx, map[string]interface{}{
-		"unique_id":        "req-1",
-		"message_for_user": "Review the drafted cover letter.",
-		"options":          []interface{}{"approve", "decline"},
-	})
-	if err != nil {
-		t.Fatalf("handleHumanFeedback returned error: %v", err)
+	type result struct {
+		answer string
+		err    error
 	}
-	if got != "approve" {
-		t.Fatalf("unexpected response: %q", got)
+	done := make(chan result, 1)
+	go func() {
+		answer, err := handleHumanFeedback(ctx, map[string]interface{}{
+			"unique_id":        "req-1",
+			"message_for_user": "Review the drafted cover letter.",
+			"options":          []interface{}{"approve", "decline"},
+			"timeout_seconds":  float64(30),
+		})
+		done <- result{answer: answer, err: err}
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		GetHumanFeedbackStore().mu.RLock()
+		_, exists := GetHumanFeedbackStore().requests["req-1"]
+		GetHumanFeedbackStore().mu.RUnlock()
+		if exists {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("human feedback request was not registered")
+		}
+		time.Sleep(time.Millisecond)
 	}
-	if !strings.Contains(injected, "[WORKFLOW_HUMAN_FEEDBACK]") {
-		t.Fatalf("expected routed workflow feedback marker, got %q", injected)
+	if err := GetHumanFeedbackStore().SubmitResponse("req-1", "approve"); err != nil {
+		t.Fatalf("submit direct response: %v", err)
 	}
-	if !strings.Contains(injected, "Review the drafted cover letter.") {
-		t.Fatalf("expected question in injected message, got %q", injected)
+
+	select {
+	case got := <-done:
+		if got.err != nil {
+			t.Fatalf("handleHumanFeedback returned error: %v", got.err)
+		}
+		if got.answer != "approve" {
+			t.Fatalf("unexpected response: %q", got.answer)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("human_feedback did not return the direct human response")
 	}
-	if !strings.Contains(injected, "approve") || !strings.Contains(injected, "decline") {
-		t.Fatalf("expected options in injected message, got %q", injected)
+
+	select {
+	case message := <-injected:
+		t.Fatalf("human feedback was unexpectedly routed to the parent builder: %q", message)
+	default:
+	}
+
+	GetHumanFeedbackStore().mu.RLock()
+	_, requestRetained := GetHumanFeedbackStore().requests["req-1"]
+	_, waiterRetained := GetHumanFeedbackStore().waiters["req-1"]
+	GetHumanFeedbackStore().mu.RUnlock()
+	if requestRetained || waiterRetained {
+		t.Fatalf("consumed human response remained in memory: request=%v waiter=%v", requestRetained, waiterRetained)
+	}
+}
+
+func TestHumanFeedbackTimeoutFromArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  interface{}
+		want time.Duration
+	}{
+		{name: "default", want: 5 * time.Minute},
+		{name: "agent value", raw: float64(120), want: 2 * time.Minute},
+		{name: "minimum clamp", raw: float64(1), want: 30 * time.Second},
+		{name: "maximum clamp", raw: float64(7200), want: 30 * time.Minute},
+		{name: "invalid defaults", raw: "soon", want: 5 * time.Minute},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := map[string]interface{}{}
+			if tt.raw != nil {
+				args["timeout_seconds"] = tt.raw
+			}
+			if got := humanFeedbackTimeoutFromArgs(args); got != tt.want {
+				t.Fatalf("timeout = %s, want %s", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -121,6 +179,56 @@ func TestHandleNotifyUserUsesBotDestination(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("expected user notification")
+	}
+}
+
+func TestHandleNotifyUserSendsWorkflowSlackWebhook(t *testing.T) {
+	original := sendSlackIncomingWebhook
+	t.Cleanup(func() { sendSlackIncomingWebhook = original })
+
+	called := false
+	sendSlackIncomingWebhook = func(_ context.Context, webhookURL, message string) (string, error) {
+		called = true
+		if webhookURL != "https://hooks.slack.com/services/T123/B456/secret" {
+			t.Fatalf("unexpected webhook URL")
+		}
+		if message != "Workflow finished" {
+			t.Fatalf("message = %q", message)
+		}
+		return "webhook_ok", nil
+	}
+
+	ctx := context.WithValue(context.Background(), BotNotificationDestinationKey, &services.NotificationDestination{
+		SlackWebhook: &services.SlackWebhookDest{
+			SecretName: "SLACK_NOTIFICATION_WEBHOOK_URL",
+			URL:        "https://hooks.slack.com/services/T123/B456/secret",
+		},
+	})
+	raw, err := handleNotifyUser(ctx, map[string]interface{}{"message_for_user": "Workflow finished"})
+	if err != nil {
+		t.Fatalf("handleNotifyUser: %v", err)
+	}
+	if !called {
+		t.Fatal("workflow Slack webhook was not called")
+	}
+	var result struct {
+		Status    string   `json:"status"`
+		Delivered []string `json:"delivered"`
+	}
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	if result.Status != "delivered" {
+		t.Fatalf("status = %q, result=%s", result.Status, raw)
+	}
+	found := false
+	for _, channel := range result.Delivered {
+		if channel == "slack_webhook" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("slack_webhook missing from delivered: %v", result.Delivered)
 	}
 }
 

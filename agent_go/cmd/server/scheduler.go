@@ -2674,6 +2674,11 @@ func (s *SchedulerService) executeMultiAgentJob(ctx context.Context, sctx *Sched
 	if sctx.Capabilities.UseCodeExecutionMode {
 		reqMap["use_code_execution_mode"] = true
 	}
+	if sctx.Capabilities.Notifications != nil {
+		if secretName := strings.TrimSpace(sctx.Capabilities.Notifications.SlackWebhookSecretName); secretName != "" {
+			reqMap["notification_slack_webhook_secret_name"] = secretName
+		}
+	}
 
 	// Apply LLM config and secrets
 	s.applyLLMAndSecretsToReqMap(ctx, reqMap, sctx)
@@ -3012,6 +3017,11 @@ func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *Sched
 	}
 	if len(sctx.Capabilities.CDPPorts) > 0 {
 		reqMap["cdp_ports"] = append([]int(nil), sctx.Capabilities.CDPPorts...)
+	}
+	if sctx.Capabilities.Notifications != nil {
+		if secretName := strings.TrimSpace(sctx.Capabilities.Notifications.SlackWebhookSecretName); secretName != "" {
+			reqMap["notification_slack_webhook_secret_name"] = secretName
+		}
 	}
 
 	s.applyLLMAndSecretsToReqMap(ctx, reqMap, sctx)

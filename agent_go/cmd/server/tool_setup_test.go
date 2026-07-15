@@ -172,14 +172,11 @@ func TestCustomToolBundleIncludesHumanTools(t *testing.T) {
 			chatToolDefs[tool.Function.Name] = true
 		}
 	}
-	if !chatToolDefs["submit_human_answer"] {
-		t.Fatal("chat/workflow-builder bundle missing submit_human_answer resolver")
+	if chatToolDefs["submit_human_answer"] {
+		t.Fatal("chat/workflow-builder bundle must not expose removed submit_human_answer tool")
 	}
-	if _, ok := executors["submit_human_answer"]; !ok {
-		t.Fatal("chat/workflow-builder bundle missing submit_human_answer executor")
-	}
-	if got := categories["submit_human_answer"]; got != "human_tools" {
-		t.Fatalf("submit_human_answer category = %q, want human_tools", got)
+	if _, ok := executors["submit_human_answer"]; ok {
+		t.Fatal("chat/workflow-builder bundle must not include removed submit_human_answer executor")
 	}
 	if chatToolDefs["human_feedback"] {
 		t.Fatal("chat/workflow-builder bundle should not expose blocking human_feedback")
@@ -206,7 +203,7 @@ func TestCustomToolBundleIncludesHumanTools(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"human_feedback", "notify_user", "submit_human_answer"} {
+	for _, name := range []string{"human_feedback", "notify_user"} {
 		if !workflowToolDefs[name] {
 			t.Fatalf("workflow bundle tool definitions missing %q", name)
 		}
@@ -216,6 +213,12 @@ func TestCustomToolBundleIncludesHumanTools(t *testing.T) {
 		if got := workflowCategories[name]; got != "human_tools" {
 			t.Fatalf("workflow bundle category for %q = %q, want human_tools", name, got)
 		}
+	}
+	if workflowToolDefs["submit_human_answer"] {
+		t.Fatal("workflow bundle must not expose removed submit_human_answer tool")
+	}
+	if _, ok := workflowExecutors["submit_human_answer"]; ok {
+		t.Fatal("workflow bundle must not include removed submit_human_answer executor")
 	}
 }
 

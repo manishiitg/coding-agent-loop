@@ -107,7 +107,7 @@ if len(config.SelectedServers) > 0 {
 - `workspace_tools`: Backward-compatible alias for the current workspace registry.
 - `workspace_advanced`: Current workspace tools (`execute_shell_command`, `diff_patch_workspace_file`, `read_image`, `generate_text_llm`, `search_web_llm`, plus the media generators `image_gen` / `image_edit` / `generate_video` / `text_to_speech` / `speech_to_text` / `generate_music`)
 - Legacy basic file tools such as `list_workspace_files`, `read_workspace_file`, `update_workspace_file`, `delete_workspace_file`, and `move_workspace_file` are not part of the current workflow-builder registry. Use shell and diff tools instead.
-- `human_tools`: `human_feedback` (blocking ask-the-user), `notify_user` (non-blocking outbound push to Slack/WhatsApp/Gmail), `submit_human_answer` (resolves a launched workflow's human_input step)
+- `human_tools`: `human_feedback` (short-lived blocking input answered directly by the human), `notify_user` (non-blocking outbound push to configured Slack bot routing, WhatsApp, Gmail, and an optional workflow-scoped Slack Incoming Webhook). The webhook is one-way and is deliberately excluded from `human_feedback`. Workflow input cards submit directly to the backend rather than through an agent relay tool.
 - `workspace_browser`: `agent_browser`
 
 ### 🛠️ Common Issues & Solutions

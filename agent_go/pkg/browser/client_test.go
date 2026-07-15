@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -225,6 +226,76 @@ func TestParseCDPPortAcceptsURLAndBarePort(t *testing.T) {
 		if got := parseCDPPort(input); got != 9222 {
 			t.Fatalf("parseCDPPort(%q) = %d, want 9222", input, got)
 		}
+	}
+}
+
+func TestAgentBrowserStatusResolvesAutoModeLive(t *testing.T) {
+	var cdpReachable atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/cdp-check":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"connected": cdpReachable.Load(),
+			})
+		case "/api/execute":
+			_ = json.NewEncoder(w).Encode(APIResponse{
+				Success: true,
+				Data:    ShellExecuteResponse{Stdout: `{"success":true}`, ExitCode: 0},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	runtime := NewBrowserRuntimeConfig("auto", []int{9222})
+	executor := NewExecutor(NewClient(server.URL), WithBrowserRuntimeConfig(runtime))
+	status := func() browserRuntimeStatus {
+		t.Helper()
+		result, err := executor.HandleAgentBrowser(context.Background(), map[string]interface{}{
+			"command": "status",
+			"session": "default",
+		})
+		if err != nil {
+			t.Fatalf("status error: %v", err)
+		}
+		var got browserRuntimeStatus
+		if err := json.Unmarshal([]byte(result), &got); err != nil {
+			t.Fatalf("decode status %q: %v", result, err)
+		}
+		return got
+	}
+
+	if got := status(); got.ConfiguredMode != "auto" || got.EffectiveMode != "headless" || len(got.ReachableCDPPorts) != 0 {
+		t.Fatalf("unreachable status = %#v", got)
+	}
+
+	cdpReachable.Store(true)
+	if got := status(); got.EffectiveMode != "cdp" || len(got.ReachableCDPPorts) != 1 || got.ReachableCDPPorts[0] != 9222 || len(got.AuthorizedEndpoints) != 1 {
+		t.Fatalf("reachable status = %#v", got)
+	}
+
+	// The same executor must now require the live CDP endpoint; no session or
+	// prompt restart is involved in the headless -> CDP transition.
+	if _, err := executor.HandleAgentBrowser(context.Background(), map[string]interface{}{
+		"command": "open",
+		"args":    []string{"https://example.com"},
+		"session": "default",
+	}); err == nil || !strings.Contains(err.Error(), "requires an explicit --cdp") {
+		t.Fatalf("auto mode did not enforce newly reachable CDP: %v", err)
+	}
+}
+
+func TestBrowserRuntimeConfigUpdateDoesNotStoreResolvedAvailability(t *testing.T) {
+	runtime := NewBrowserRuntimeConfig("auto", []int{9222})
+	mode, ports := runtime.Snapshot()
+	if mode != "auto" || len(ports) != 1 || ports[0] != 9222 {
+		t.Fatalf("initial snapshot = mode=%q ports=%v", mode, ports)
+	}
+	runtime.Update("auto", []int{9333})
+	mode, ports = runtime.Snapshot()
+	if mode != "auto" || len(ports) != 1 || ports[0] != 9333 {
+		t.Fatalf("updated snapshot = mode=%q ports=%v", mode, ports)
 	}
 }
 

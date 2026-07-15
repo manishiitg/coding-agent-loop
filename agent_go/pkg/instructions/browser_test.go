@@ -19,3 +19,21 @@ func TestBuildBrowserInstructionsListsAuthorizedCDPProfiles(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildBrowserInstructionsKeepsAutoModeDynamic(t *testing.T) {
+	t.Setenv("CDP_HOST", "localhost")
+	got := BuildBrowserInstructions(BrowserConfig{
+		HasAgentBrowser: true,
+		Mode:            "auto",
+		CdpPort:         9222,
+		CdpPorts:        []int{9222},
+	})
+	for _, want := range []string{"agent_browser", "status", "effective_mode", "http://localhost:9222", "never taken from saved conversation"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("auto browser instructions missing %q", want)
+		}
+	}
+	if strings.Contains(got, "Browser Mode: Headless") || strings.Contains(got, "Browser Mode: CDP") {
+		t.Fatalf("auto browser instructions must not persist a resolved mode: %s", got)
+	}
+}

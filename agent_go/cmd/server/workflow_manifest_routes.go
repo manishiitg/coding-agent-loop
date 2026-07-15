@@ -157,6 +157,23 @@ type UpdateWorkflowManifestRequest struct {
 	PostRunMonitor    *bool                      `json:"post_run_monitor,omitempty"` // Opt-in to the post-run monitor pass
 }
 
+func mergeWorkflowCapabilitiesUpdate(existing WorkflowCapabilities, incoming *WorkflowCapabilities) WorkflowCapabilities {
+	if incoming == nil {
+		return existing
+	}
+	updated := *incoming
+	// Older frontend builds replace the full capabilities object and do not
+	// know about workflow notifications. Preserve the existing notification
+	// reference unless the caller explicitly sends that newer field.
+	if updated.Notifications == nil {
+		updated.Notifications = existing.Notifications
+	} else if strings.TrimSpace(updated.Notifications.SlackWebhookSecretName) == "" {
+		// An explicitly supplied empty object disables the workflow webhook.
+		updated.Notifications = nil
+	}
+	return updated
+}
+
 func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *http.Request) {
 	setCORS(w)
 	if r.Method == "OPTIONS" {
@@ -191,7 +208,7 @@ func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *
 		manifest.Label = *req.Label
 	}
 	if req.Capabilities != nil {
-		manifest.Capabilities = *req.Capabilities
+		manifest.Capabilities = mergeWorkflowCapabilitiesUpdate(manifest.Capabilities, req.Capabilities)
 	}
 	if req.ExecutionDefaults != nil {
 		manifest.ExecutionDefs = *req.ExecutionDefaults

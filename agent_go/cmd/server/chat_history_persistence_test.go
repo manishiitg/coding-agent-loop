@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	internalevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	agentevents "github.com/manishiitg/mcpagent/events"
@@ -1468,68 +1470,40 @@ func TestSeedCodingAgentRuntimeFromRestoredConversationRestoresPi(t *testing.T) 
 	}
 }
 
-// TestSeedCodingAgentRuntimeFromRestoredConversationAppliesPersistedSystemPrompt
-// locks in the fix for the "rules file shows wrong content after restart"
-// bug. Without this, the chat-restore path leaves the agent on its default
-// mcpagent base prompt and the coding-CLI adapter then projects that base
-// prompt into <workflow>/.agents/rules/mlp-system.md (etc.) instead of the
-// workflow-builder workshop template that was active at chat-save time.
-func TestSeedCodingAgentRuntimeFromRestoredConversationAppliesPersistedSystemPrompt(t *testing.T) {
+func TestSeedCodingAgentRuntimeFromRestoredConversationDoesNotRestoreLegacyPrompt(t *testing.T) {
 	api := &StreamingAPI{}
 	agent := &mcpagent.Agent{}
-	// Workshop template stand-in. The real one is 10K+ chars; this sentinel
-	// is enough to verify the restored prompt routes through SetSystemPrompt.
-	workshopPrompt := "<workshop-template>workflow-builder system prompt</workshop-template>"
-	capability := "<capability>browser available</capability>"
-	secretBlock := "<secrets>SECRET_FOO=$SECRET_FOO</secrets>"
-	runtime := &ChatHistoryAgentRuntime{
-		Kind:                  "coding_agent",
-		Provider:              "agy-cli",
-		ExternalSessionID:     "agy-conversation-restored",
-		ResumeSupported:       true,
-		SystemPrompt:          workshopPrompt,
-		AppendedSystemPrompts: []string{capability, secretBlock},
+	currentPrompt := "<current>mode=auto; query agent_browser status</current>"
+	agent.SetSystemPrompt(currentPrompt)
+
+	// Old conversation files may still contain persisted prompts and a resolved
+	// browser_mode. JSON decoding must ignore those legacy fields, and native
+	// resume must preserve the prompt assembled by the current /api/query.
+	runtime, err := chatHistoryRuntimeFromJSON([]byte(`{
+  "runtime": {
+    "kind": "coding_agent",
+    "provider": "agy-cli",
+    "external_session_id": "agy-conversation-restored",
+    "resume_supported": true,
+    "system_prompt": "<stale>mode=headless</stale>",
+    "appended_system_prompts": ["<stale-browser-state>"],
+    "browser_mode": "headless"
+  }
+}`))
+	if err != nil || runtime == nil {
+		t.Fatalf("decode legacy runtime: runtime=%#v err=%v", runtime, err)
 	}
 
 	if !api.seedCodingAgentRuntimeFromRestoredConversation("agy-ui-session", "agy-cli", "", runtime, agent) {
 		t.Fatal("expected Agy resume state to be seeded")
 	}
-
-	// AppendSystemPrompt mutates systemPrompt into the concatenated form, so
-	// GetSystemPrompt() now returns base + "\n\n" + each appended section.
-	// Verify all three pieces survived the restore.
-	got := agent.GetSystemPrompt()
-	if !strings.Contains(got, workshopPrompt) {
-		t.Fatalf("restored composite prompt must contain the workshop template\n  got:  %q\n  want substring: %q", got, workshopPrompt)
-	}
-	if !strings.Contains(got, capability) {
-		t.Fatalf("restored composite prompt must contain the capability append\n  got:  %q\n  want substring: %q", got, capability)
-	}
-	if !strings.Contains(got, secretBlock) {
-		t.Fatalf("restored composite prompt must contain the secret-block append\n  got:  %q\n  want substring: %q", got, secretBlock)
-	}
-	appended := agent.GetAppendedSystemPrompts()
-	if len(appended) != 2 || appended[0] != capability || appended[1] != secretBlock {
-		t.Fatalf("agent appended prompts = %q, want [%q %q]", appended, capability, secretBlock)
+	if got := agent.GetSystemPrompt(); got != currentPrompt {
+		t.Fatalf("native resume overwrote current prompt: got %q want %q", got, currentPrompt)
 	}
 }
 
-// TestCaptureChatHistoryAgentRuntimeDoesNotDuplicateAppendsAcrossRestores guards
-// against the prompt-bloat regression where every chat-restore cycle added
-// another copy of the supplementary appendix (capability / secrets / browser).
-// Cause: capture used to save GetSystemPrompt() (= base + all appends merged in)
-// AND the appendix list separately; restore then SetSystemPrompt(merged) +
-// re-AppendSystemPrompt each entry — so the appendix doubled per cycle and
-// .agents/rules/mlp-system.md ballooned linearly with chat resumes. Fix is to
-// strip the appendix from the saved SystemPrompt so the persisted base is
-// pre-append. This test runs 5 capture→restore cycles and verifies the
-// in-memory composite stays the same size as a single-cycle restore.
-func TestCaptureChatHistoryAgentRuntimeDoesNotDuplicateAppendsAcrossRestores(t *testing.T) {
+func TestCaptureChatHistoryAgentRuntimeOmitsPromptAndBrowserAvailability(t *testing.T) {
 	api := &StreamingAPI{}
-	workshopPrompt := "<workshop-template>workflow-builder system prompt</workshop-template>"
-	capability := "<capability>browser available</capability>"
-	secretBlock := "<secrets>SECRET_FOO=$SECRET_FOO</secrets>"
-
 	agent := &mcpagent.Agent{
 		CodingProviderSessionHandle: llmtypes.CodingProviderSessionHandle{
 			Provider:        "agy-cli",
@@ -1538,28 +1512,19 @@ func TestCaptureChatHistoryAgentRuntimeDoesNotDuplicateAppendsAcrossRestores(t *
 			Model:           "agy-cli",
 		},
 	}
-	agent.SetSystemPrompt(workshopPrompt)
-	agent.AppendSystemPrompt(capability)
-	agent.AppendSystemPrompt(secretBlock)
-	baselineLen := len(agent.GetSystemPrompt())
+	agent.SetSystemPrompt("<current>mode=cdp</current>")
+	agent.AppendSystemPrompt("<dynamic-browser-state>")
+	common.SetSessionBrowserMode("agy-ui-session", "cdp")
 
-	for i := 0; i < 5; i++ {
-		runtime := api.captureChatHistoryAgentRuntime("agy-ui-session", "agy-cli", "agy-cli", "Workflow/example", agent)
-		if runtime == nil {
-			t.Fatalf("cycle %d: expected runtime", i)
+	runtime := api.captureChatHistoryAgentRuntime("agy-ui-session", "agy-cli", "agy-cli", "Workflow/example", agent)
+	raw, err := json.Marshal(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"system_prompt", "appended_system_prompts", "browser_mode", "dynamic-browser-state"} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Fatalf("persisted runtime %s contains dynamic field/value %q", raw, forbidden)
 		}
-		// Stored SystemPrompt must be the base alone — no merged appendix.
-		if strings.Contains(runtime.SystemPrompt, capability) || strings.Contains(runtime.SystemPrompt, secretBlock) {
-			t.Fatalf("cycle %d: stored SystemPrompt must be base-only, got %q", i, runtime.SystemPrompt)
-		}
-		fresh := &mcpagent.Agent{}
-		if !api.seedCodingAgentRuntimeFromRestoredConversation("agy-ui-session", "agy-cli", "", runtime, fresh) {
-			t.Fatalf("cycle %d: expected restore to succeed", i)
-		}
-		if got := len(fresh.GetSystemPrompt()); got != baselineLen {
-			t.Fatalf("cycle %d: composite prompt grew from %d to %d chars (appendix duplication regressed)", i, baselineLen, got)
-		}
-		agent = fresh
 	}
 }
 

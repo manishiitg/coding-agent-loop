@@ -9,6 +9,7 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
 )
 
 // codingAgentToolExecutors is the executor-map shape used across the coding-agent
@@ -88,11 +89,12 @@ func registerCodingToolGroup(
 // browser-tool exposure can't drift between them; only the guard closure and the
 // caller's gating (fresh: enableBrowserAccess; resume: browser_mode headless/cdp)
 // differ.
-func registerCodingBrowserTools(ag *mcpagent.Agent, sessionID string, cdpPorts []int, guard codingToolGuard) error {
+func registerCodingBrowserTools(ag *mcpagent.Agent, sessionID, configuredMode string, cdpPorts []int, guard codingToolGuard) error {
 	if ag == nil {
 		return nil
 	}
-	execs := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, cdpPorts...)
+	runtime := browser.NewBrowserRuntimeConfig(configuredMode, cdpPorts)
+	execs := virtualtools.CreateWorkspaceBrowserToolExecutorsWithRuntime(sessionID, runtime)
 	if guard != nil {
 		execs = guard(execs)
 	}

@@ -21,6 +21,8 @@ The parent Workshop/Pulse agent must load `assumption-audit` and include the par
 
 Eval is the framework's goal-measurement layer: does a run satisfy the success criteria in `soul.md`? Operational quality — errored/skipped steps, empty or malformed artifacts, tool misuse, hallucinated successes — is owned by Pulse Gate/Bug Review and by `pre_validation`, not by eval steps. An eval step that would pass on any operationally clean run duplicates Pulse and inflates the score; treat such steps as retirement candidates.
 
+Do not treat every empty collection as a failed result. Distinguish missing or unverified collection from a trustworthy source proving a legitimate zero-cardinality business state. A valid zero should receive the score warranted by the success criterion; the rubric must name the evidence that proves it is real so fabricated or silently missing data still fails closed.
+
 The eval plan's completeness test is the two-way coverage matrix:
 - every important success criterion has an eval step measuring it (unmeasured criterion → add coverage), and
 - every eval step maps to a criterion (orphan step → retire it).

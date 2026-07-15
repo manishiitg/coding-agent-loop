@@ -2,7 +2,10 @@ package step_based_workflow
 
 import (
 	"encoding/json"
+	"strings"
 )
+
+const defaultEvaluationContextOutput = "context_output.json"
 
 // EvaluationStep represents a single step in an evaluation plan.
 // It implements PlanStepInterface to reuse existing execution infrastructure.
@@ -42,6 +45,9 @@ func (e *EvaluationStep) GetDescription() string           { return e.Descriptio
 func (e *EvaluationStep) GetSuccessCriteria() string       { return "" } // dropped — see struct doc
 func (e *EvaluationStep) GetContextDependencies() []string { return nil }
 func (e *EvaluationStep) GetContextOutput() FlexibleContextOutput {
+	if strings.TrimSpace(e.ContextOutput) == "" {
+		return FlexibleContextOutput(defaultEvaluationContextOutput)
+	}
 	return FlexibleContextOutput(e.ContextOutput)
 }
 func (e *EvaluationStep) GetValidationSchema() *ValidationSchema { return e.PreValidation }
@@ -53,7 +59,7 @@ func (e *EvaluationStep) GetCommonFields() CommonStepFields {
 		Title:            e.Title,
 		Description:      e.Description,
 		ValidationSchema: e.PreValidation,
-		ContextOutput:    FlexibleContextOutput(e.ContextOutput),
+		ContextOutput:    e.GetContextOutput(),
 	}
 }
 

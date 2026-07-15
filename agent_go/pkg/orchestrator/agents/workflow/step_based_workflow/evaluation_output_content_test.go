@@ -70,8 +70,8 @@ func TestEvaluationOutputContentCandidatesPreferDeclaredEvalArtifacts(t *testing
 
 	expected := []string{
 		"evaluation/runs/iteration-0/test-run/execution/eval-variety-coverage/output_content.json",
-		"evaluation/runs/iteration-0/test-run/execution/eval-variety-coverage/eval_result.json",
 		"evaluation/runs/iteration-0/test-run/execution/eval-variety-coverage/context_output.json",
+		"evaluation/runs/iteration-0/test-run/execution/eval-variety-coverage/eval_result.json",
 	}
 	if len(candidates) != len(expected) {
 		t.Fatalf("expected %d candidates, got %d: %#v", len(expected), len(candidates), candidates)
@@ -80,6 +80,16 @@ func TestEvaluationOutputContentCandidatesPreferDeclaredEvalArtifacts(t *testing
 		if candidates[i] != expected[i] {
 			t.Fatalf("candidate[%d]: expected %q, got %q", i, expected[i], candidates[i])
 		}
+	}
+}
+
+func TestEvaluationStepDefaultsContextOutput(t *testing.T) {
+	step := &EvaluationStep{ID: "eval-empty-output"}
+	if got := step.GetContextOutput().String(); got != defaultEvaluationContextOutput {
+		t.Fatalf("expected default evaluation output %q, got %q", defaultEvaluationContextOutput, got)
+	}
+	if got := step.GetCommonFields().ContextOutput.String(); got != defaultEvaluationContextOutput {
+		t.Fatalf("expected common fields to use default evaluation output %q, got %q", defaultEvaluationContextOutput, got)
 	}
 }
 

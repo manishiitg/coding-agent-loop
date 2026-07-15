@@ -1424,20 +1424,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 		// Get folder guard paths for template (so agent knows exact paths it can access)
 		learningsAccess := resolveLearningsAccess(agentConfigs)
-		folderGuardReadPaths, folderGuardWritePaths := hcpo.setupExecutionFolderGuard(artifactStepPath, artifactStepID, kbAccess, learningsAccess, kbWriteMethod, resolveDBAccess(agentConfigs))
-
-		// Evaluation steps: db/ read is always allowed, but db/ write is opt-in via DBWrite flag.
-		// Strip db/ from writePaths when the step is an eval step with DBWrite == false.
-		if evalStep, ok := step.(*EvaluationStep); ok && !evalStep.DBWrite {
-			dbPath := getDBPath(hcpo.GetWorkspacePath())
-			filtered := folderGuardWritePaths[:0]
-			for _, p := range folderGuardWritePaths {
-				if p != dbPath {
-					filtered = append(filtered, p)
-				}
-			}
-			folderGuardWritePaths = filtered
+		evaluationDBWrite := false
+		if evalStep, ok := step.(*EvaluationStep); ok {
+			evaluationDBWrite = evalStep.DBWrite
 		}
+		dbAccess := resolveEffectiveDBAccess(agentConfigs, hcpo.isEvaluationMode, evaluationDBWrite)
+		folderGuardReadPaths, folderGuardWritePaths := hcpo.setupExecutionFolderGuard(artifactStepPath, artifactStepID, kbAccess, learningsAccess, kbWriteMethod, dbAccess)
 
 		// Learn code mode: add code/ subdir to write paths so LLM can write main.py there
 		if isScriptedMode {
@@ -1911,7 +1903,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					// Pass stepPath to createExecutionOnlyAgent - it will determine the correct execution folder (supports branch and sub-agent steps)
 					// For learnings / metadata selection, use the concrete step ID so sub-agents align with their own learnings folder.
 					// allSteps is already []PlanStepInterface - no conversion needed
-					executionAgent, err = hcpo.createExecutionOnlyAgent(executionAgentCtx, "execution_only", stepPath, executionAgentName, agentConfigs, step.GetID(), getExecutionArtifactFolderOverride(execCtx))
+					executionAgent, err = hcpo.createExecutionOnlyAgent(executionAgentCtx, "execution_only", stepPath, executionAgentName, agentConfigs, step.GetID(), getExecutionArtifactFolderOverride(execCtx), evaluationDBWrite)
 					if err != nil {
 						return "", updatedContextFiles, fmt.Errorf("failed to create execution-only agent for step %d: %w", stepIndex+1, err)
 					}
@@ -2227,7 +2219,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						// Force Tier 1 (High) for repair agents — they need to fix a failure,
 						// so they should use at least the same tier as the original execution.
 						repairCtx := context.WithValue(ctx, WorkshopTierOverrideKey, int(TierHigh))
-						repairAgent, repairErr := hcpo.createExecutionOnlyAgent(repairCtx, "execution_only", stepPath, repairAgentName, agentConfigs, step.GetID(), getExecutionArtifactFolderOverride(execCtx))
+						repairAgent, repairErr := hcpo.createExecutionOnlyAgent(repairCtx, "execution_only", stepPath, repairAgentName, agentConfigs, step.GetID(), getExecutionArtifactFolderOverride(execCtx), evaluationDBWrite)
 						if repairErr != nil {
 							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] failed to create repair agent for step %d fix %d: %v", stepIndex+1, fixIter+1, repairErr))
 							break

@@ -23,6 +23,22 @@ func TestAllGuidanceTemplatesRender(t *testing.T) {
 	}
 }
 
+func TestEvaluationPlanGuidanceAcceptsSourceGroundedValidEmptyResults(t *testing.T) {
+	guidance, err := renderFromRegistry("evaluation-plan", tmplData{}, referenceKinds)
+	if err != nil {
+		t.Fatalf("render evaluation-plan: %v", err)
+	}
+	for _, want := range []string{
+		"Empty is not automatically missing",
+		"source-grounded legitimate zero-cardinality state",
+		"fabricated or silently missing data still fails closed",
+	} {
+		if !strings.Contains(guidance, want) {
+			t.Fatalf("evaluation guidance missing %q\n\nGuidance:\n%s", want, guidance)
+		}
+	}
+}
+
 func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T) {
 	postRun, err := renderFromRegistry("post-run-monitor", tmplData{}, referenceKinds)
 	if err != nil {

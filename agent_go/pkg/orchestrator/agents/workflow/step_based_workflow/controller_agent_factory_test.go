@@ -8,12 +8,70 @@ import (
 	"strings"
 	"testing"
 
-	mcpllm "github.com/manishiitg/mcpagent/llm"
-	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents"
+	mcpllm "github.com/manishiitg/mcpagent/llm"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
+
+func TestRegisterStepSessionShellEnvProvidesBridgeParity(t *testing.T) {
+	sessionID := "eval-shell-env-test"
+	defer common.ClearSessionShellConfig(sessionID)
+
+	registerStepSessionShellEnv(sessionID, "/workspace/eval/step", "/workspace/eval", "/workspace/db/db.sqlite")
+	env := common.GetSessionShellEnv(sessionID)
+	for key, want := range map[string]string{
+		"STEP_OUTPUT_DIR":    "/workspace/eval/step",
+		"STEP_EXECUTION_DIR": "/workspace/eval",
+		"DB_PATH":            "/workspace/db/db.sqlite",
+	} {
+		if got := env[key]; got != want {
+			t.Fatalf("%s: expected %q, got %q", key, want, got)
+		}
+	}
+}
+
+func TestResolveEffectiveDBAccessMakesEvaluationReadOnlyByDefault(t *testing.T) {
+	configuredReadWrite := &AgentConfigs{DBAccess: DBAccessReadWrite}
+	if got := resolveEffectiveDBAccess(configuredReadWrite, true, false); got != DBAccessRead {
+		t.Fatalf("evaluation without db_write must be read-only, got %q", got)
+	}
+	if got := resolveEffectiveDBAccess(configuredReadWrite, true, true); got != DBAccessReadWrite {
+		t.Fatalf("evaluation with explicit db_write must be read-write, got %q", got)
+	}
+	if got := resolveEffectiveDBAccess(configuredReadWrite, false, false); got != DBAccessReadWrite {
+		t.Fatalf("normal execution must preserve configured DB access, got %q", got)
+	}
+}
+
+func TestEvaluationFolderGuardReadsDBButCannotWriteIt(t *testing.T) {
+	base, err := orchestrator.NewBaseOrchestrator(
+		loggerv2.NewNoop(), nil, orchestrator.OrchestratorTypeWorkflow, "", 0,
+		"", nil, nil, false, &orchestrator.LLMConfig{}, 1, nil, nil, nil,
+	)
+	if err != nil {
+		t.Fatalf("NewBaseOrchestrator returned error: %v", err)
+	}
+	base.SetWorkspacePath("Workflow/testing")
+	hcpo := &StepBasedWorkflowOrchestrator{
+		BaseOrchestrator:  base,
+		selectedRunFolder: "evaluation/iteration-0/test-group",
+	}
+
+	readPaths, writePaths := hcpo.setupExecutionFolderGuard(
+		"step-1", "eval-result", KBAccessNone, LearningsAccessNone,
+		KBWriteMethodAgent, resolveEffectiveDBAccess(nil, true, false),
+	)
+	dbPath := "Workflow/testing/db"
+	if !slices.Contains(readPaths, dbPath) {
+		t.Fatalf("evaluation must be able to read %q, got %v", dbPath, readPaths)
+	}
+	if slices.Contains(writePaths, dbPath) {
+		t.Fatalf("evaluation must not be able to write %q, got %v", dbPath, writePaths)
+	}
+}
 
 func TestCreateStandardAgentConfigUsesWorkflowFolderForCodingAgentWorkingDir(t *testing.T) {
 	docsRoot := t.TempDir()

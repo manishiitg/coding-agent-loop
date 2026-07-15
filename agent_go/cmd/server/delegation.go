@@ -11,6 +11,7 @@ import (
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 	agent "github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentwrapper"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/fsutil"
 	browserinstructions "github.com/manishiitg/coding-agent-loop/agent_go/pkg/instructions"
@@ -267,7 +268,14 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 	// Resolve conditional folder-guard grants for the sub-agent once.
 	// Used by both nested scopes below (prompt assembly + workspace tool folder guard).
 	subResolvedGrants := resolveConditionalGrants(parentReq)
-	browserReq := api.withEffectiveBrowserMode(ctx, parentReq, sessionID)
+	// Preserve configured browser intent for the child. In auto mode the child
+	// queries agent_browser status and each action rechecks CDP live.
+	browserReq := parentReq
+	if mode := getBrowserMode(browserReq); mode == "none" {
+		if configured := strings.ToLower(strings.TrimSpace(common.GetSessionBrowserMode(sessionID))); configured != "" {
+			browserReq.BrowserMode = configured
+		}
+	}
 	subBrowserCfg := buildChatBrowserConfig(browserReq)
 
 	// Add event observers to sub-agent so its events appear in the UI and
@@ -348,7 +356,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		// its own toolArgTransformers map — the parent's transformer doesn't propagate.
 		if subBrowserPrompt := browserinstructions.BuildBrowserInstructions(subBrowserCfg); subBrowserPrompt != "" {
 			underlyingAgent.AppendSystemPrompt(subBrowserPrompt)
-			log.Printf("[BROWSER] Added agent-browser instructions to sub-agent (cdp=%v)", subBrowserCfg.CdpPort > 0)
+			log.Printf("[BROWSER] Added agent-browser instructions to sub-agent (configured_mode=%s candidate_cdp_ports=%v)", subBrowserCfg.Mode, subBrowserCfg.CdpPorts)
 		}
 
 		// Browser isolation: when share_browser=false, tell the sub-agent to use a unique
@@ -477,7 +485,8 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		// Register browser tools if enabled
 		if subBrowserCfg.HasAgentBrowser {
 			browserTools := virtualtools.CreateWorkspaceBrowserTools()
-			browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, getCdpPorts(browserReq)...)
+			browserRuntime := browser.NewBrowserRuntimeConfig(subBrowserCfg.Mode, subBrowserCfg.CdpPorts)
+			browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithRuntime(sessionID, browserRuntime)
 			browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
 
 			browserExtraFolders := append([]string{}, subResolvedGrants.WriteFolders...)

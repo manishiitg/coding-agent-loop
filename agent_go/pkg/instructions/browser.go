@@ -17,7 +17,8 @@ func cdpHost() string {
 	return "host.docker.internal"
 }
 
-// BrowserConfig holds the resolved browser state for prompt generation.
+// BrowserConfig holds configured browser intent for prompt generation.
+// Auto-mode reachability is queried live through agent_browser status.
 type BrowserConfig struct {
 	HasAgentBrowser bool
 	CdpPort         int   // Primary port (legacy compatibility).
@@ -35,9 +36,14 @@ func BuildBrowserInstructions(cfg BrowserConfig) string {
 
 	result := ""
 
-	// Use Mode as primary decision, fall back to legacy CdpPort/Has* flags
+	// Use Mode as primary decision, fall back to legacy CdpPort/Has* flags.
+	if cfg.Mode == "auto" {
+		result += "\n" + GetAutoBrowserInstructions(cfg.CdpPort, cfg.CdpPorts...)
+	}
 	isCdp := cfg.Mode == "cdp" || (cfg.Mode == "" && (cfg.CdpPort > 0 || len(cfg.CdpPorts) > 0))
-	if isCdp {
+	if cfg.Mode == "auto" {
+		// Added above; availability is deliberately not resolved here.
+	} else if isCdp {
 		result += "\n" + GetCdpBrowserInstructions(cfg.CdpPort, cfg.CdpPorts...)
 	} else {
 		result += "\n" + GetHeadlessBrowserInstructions()
@@ -48,6 +54,8 @@ func BuildBrowserInstructions(cfg BrowserConfig) string {
 	if isCdp {
 		// CDP connects to user's real browser — closing would kill their tab
 		closeRule = "- **Do NOT close the browser** when done — it is the user's real browser. Only close if the user explicitly asks."
+	} else if cfg.Mode == "auto" {
+		closeRule = "- Follow live status: in CDP mode do NOT close the user's browser; in headless mode close the session when done."
 	}
 	result += fmt.Sprintf("\n\n## Browser Session Limits\n"+
 		"- **Per agent:** max %d concurrent browser session(s). Do NOT open multiple browsers — use one at a time.\n"+
@@ -69,6 +77,31 @@ func BuildBrowserInstructions(cfg BrowserConfig) string {
 	}
 
 	return result
+}
+
+// GetAutoBrowserInstructions describes configured candidates without claiming
+// whether CDP is currently available. agent_browser status is authoritative.
+func GetAutoBrowserInstructions(cdpPort int, additionalPorts ...int) string {
+	ports := append([]int{cdpPort}, additionalPorts...)
+	if len(browser.ConfiguredCDPEndpoints(ports)) == 0 {
+		ports = []int{9222}
+	}
+	endpoints := browser.ConfiguredCDPEndpoints(ports)
+	return fmt.Sprintf(`## Browser Automation (Auto — Live Mode)
+
+Browser configuration is `+"`auto`"+`. The configured CDP candidate endpoint(s) are `+"`%s`"+`, but reachability is live state and is never taken from saved conversation or prompt state.
+
+Before the first browser action, and after any availability error, call:
+
+`+"```python"+`
+status = agent_browser(command="status", args=[], session="default")
+`+"```"+`
+
+- If `+"`effective_mode`"+` is `+"`cdp`"+`, prefix every later call with one endpoint from `+"`authorized_endpoints`"+` and follow shared-tab rules.
+- If it is `+"`headless`"+`, call without `+"`--cdp`"+`.
+- Never probe Chrome's `+"`/json/version`"+` endpoint through shell.
+- The backend rechecks auto-mode availability on every browser action.
+`, strings.Join(endpoints, "`, `"))
 }
 
 // GetBrowserUploadInstructions returns system prompt instructions for browser file upload.

@@ -144,7 +144,6 @@ type StepBasedWorkflowOrchestrator struct {
 	workshopSessionCtx        context.Context
 	workshopStepRegistry      *WorkshopStepRegistry
 	workshopExecutionNotifier WorkshopExecutionNotifier
-	routingDecisionNotifier   WorkshopExecutionNotifier
 }
 
 // SetSubAgentNotifier sets the notifier called on todo task sub-agent start/completion.
@@ -168,14 +167,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) SetWorkshopExecutionContext(sessionCt
 // so controller-managed background tasks keep the frontend polling/notification state updated.
 func (hcpo *StepBasedWorkflowOrchestrator) SetWorkshopExecutionNotifier(n WorkshopExecutionNotifier) {
 	hcpo.workshopExecutionNotifier = n
-	hcpo.routingDecisionNotifier = n
-}
-
-// SetRoutingDecisionNotifier wires notification tracking only for builder-routed
-// routing decisions. Full workflow runners use this to surface route-pick
-// completions without also auto-notifying for internal learning helpers.
-func (hcpo *StepBasedWorkflowOrchestrator) SetRoutingDecisionNotifier(n WorkshopExecutionNotifier) {
-	hcpo.routingDecisionNotifier = n
 }
 
 // NewStepBasedWorkflowOrchestrator creates a new human-controlled todo planner orchestrator
@@ -412,8 +403,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) switchWorkshopGroupSession(groupName 
 	if strings.Contains(hcpo.GetMCPSessionID(), "default-group") {
 		return nil, fmt.Errorf("workshop execution for group %q still has placeholder MCP session %q", groupName, hcpo.GetMCPSessionID())
 	}
+	cdpPorts := hcpo.cdpPortsForCleanup()
+	browser.AcquireCDPTabOwnerLease(browserSessionID, cdpPorts)
 	return func() {
 		hcpo.releaseWorkshopGroupSession(groupName)
+		browser.ReleaseCDPTabOwnerLease(browserSessionID, cdpPorts, browser.NewClient(getWorkspaceAPIURL()), browser.DefaultCDPTabCleanupDelay)
 	}, nil
 }
 
@@ -545,6 +539,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) SetCdpPorts(ports []int) {
 
 func (hcpo *StepBasedWorkflowOrchestrator) GetCdpPorts() []int {
 	return append([]int(nil), hcpo.cdpPorts...)
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) cdpPortsForCleanup() []int {
+	ports := append([]int(nil), hcpo.cdpPorts...)
+	if hcpo.cdpPort > 0 {
+		ports = append([]int{hcpo.cdpPort}, ports...)
+	}
+	seen := make(map[int]bool, len(ports))
+	normalized := make([]int, 0, len(ports))
+	for _, port := range ports {
+		if port < 1 || port > 65535 || seen[port] {
+			continue
+		}
+		seen[port] = true
+		normalized = append(normalized, port)
+	}
+	return normalized
 }
 
 // SetBrowserMode sets the browser mode for prompt instructions.

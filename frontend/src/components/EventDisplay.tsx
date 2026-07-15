@@ -221,7 +221,7 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
     // Submit feedback response to unblock the orchestrator
     // Let errors propagate so callers can handle failure (e.g. reset UI state)
     await agentApi.submitHumanFeedback(requestId, feedback)
-    console.log('Feedback submitted:', requestId, feedback)
+    console.log('Feedback submitted:', requestId)
   }, [])
 
   return (

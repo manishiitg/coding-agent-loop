@@ -48,16 +48,28 @@ export function markNotified(requestId: string): void {
   saveMap(NOTIFIED_KEY, map)
 }
 
-// --- Submitted feedback cache (persisted across page reloads) ---
+// --- Submitted feedback marker (persisted across page reloads) ---
+//
+// Human feedback can contain OTPs or other private input. Persist only the fact
+// that the request was answered so a replayed event stays closed; never persist
+// the response itself.
 
-export function getSubmittedFeedback(requestId: string): string | undefined {
-  const map = loadMap<string>(SUBMITTED_FEEDBACK_KEY)
-  return map.get(requestId)?.value
+export function hasSubmittedFeedback(requestId: string): boolean {
+  const map = loadMap<unknown>(SUBMITTED_FEEDBACK_KEY)
+  const entry = map.get(requestId)
+  if (!entry) return false
+
+  // Sanitize entries written by older builds, which cached the raw response.
+  if (entry.value !== true) {
+    map.set(requestId, { value: true, ts: entry.ts })
+    saveMap(SUBMITTED_FEEDBACK_KEY, map)
+  }
+  return true
 }
 
-export function setSubmittedFeedback(requestId: string, feedback: string): void {
-  const map = loadMap<string>(SUBMITTED_FEEDBACK_KEY)
-  map.set(requestId, { value: feedback, ts: Date.now() })
+export function markFeedbackSubmitted(requestId: string): void {
+  const map = loadMap<boolean>(SUBMITTED_FEEDBACK_KEY)
+  map.set(requestId, { value: true, ts: Date.now() })
   saveMap(SUBMITTED_FEEDBACK_KEY, map)
 }
 

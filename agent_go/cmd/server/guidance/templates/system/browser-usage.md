@@ -2,10 +2,9 @@
 
 Read this skill when you need to drive a real browser — open pages, click,
 fill forms, take screenshots, upload files, scrape interactive sites, or
-log into authenticated pages. The exact mode the session is in (CDP or
-headless) is announced in the inline browser block of your
-system prompt; skim that for the mode-specific behaviors, then use the
-unified API below.
+log into authenticated pages. Browser configuration is declared by the
+workflow, but CDP reachability is live state. Query `agent_browser status`
+before first use instead of relying on saved conversation or prompt state.
 
 ## Two modes
 
@@ -16,9 +15,15 @@ unified API below.
 
 ## Version-matched agent-browser skills
 
-For CDP/headless mode, the installed `agent-browser` CLI is the source of
-truth for commands and flags. Before the first browser action, load its current
-core overview through the managed tool:
+First call the managed live-status operation. It does not launch a browser and
+does not require `--cdp`:
+
+```python
+status = browser_raw("status", [])
+```
+
+Use `effective_mode` and `authorized_endpoints` from that response to set the
+prefix for later calls. Then load the installed CLI's current core overview:
 
 ```python
 browser("skills", ["get", "core"])
@@ -34,23 +39,31 @@ Upstream skill examples use shell syntax; translate them into managed
 
 ## `agent_browser` (CDP and headless)
 
-Call via HTTP API. CDP sessions also need the exact
-`--cdp http://<host>:<port>` endpoint announced in the inline system prompt on
-every call. The backend validates the port and canonicalizes the host; a
-headless run cannot switch itself to a model-selected CDP endpoint.
+Call via HTTP API. CDP sessions need an exact
+`--cdp http://<host>:<port>` endpoint returned by live status on every later
+call. The backend validates the configured port, rechecks auto-mode
+reachability, and canonicalizes the host; a headless run cannot switch itself
+to a model-selected CDP endpoint.
 
 ```python
-import requests, os
+import json, requests, os
 BROWSER = os.environ["MCP_API_URL"] + "/tools/mcp/workspace_browser/agent_browser"
 HEADERS = {"Authorization": f"Bearer {os.environ['MCP_API_TOKEN']}", "Content-Type": "application/json"}
-# Headless: []. CDP: use the exact ["--cdp", "<endpoint>"] announced in
-# the inline system prompt. Do not invent or probe another endpoint.
-BROWSER_PREFIX = []
-
-def browser(command, args=None, session="default"):
-    resp = requests.post(BROWSER, json={"command": command, "args": BROWSER_PREFIX + (args or []), "session": session}, headers=HEADERS, timeout=120)
+def browser_raw(command, args=None, session="default"):
+    resp = requests.post(BROWSER, json={"command": command, "args": args or [], "session": session}, headers=HEADERS, timeout=120)
     resp.raise_for_status()
     return resp.json().get("result", "")
+
+status = json.loads(browser_raw("status"))
+# Headless: []. CDP: ["--cdp", first live authorized endpoint].
+# Never invent or probe another endpoint.
+BROWSER_PREFIX = (
+    ["--cdp", status["authorized_endpoints"][0]]
+    if status["effective_mode"] == "cdp" else []
+)
+
+def browser(command, args=None, session="default"):
+    return browser_raw(command, BROWSER_PREFIX + (args or []), session)
 
 # Standard flow
 browser("open", ["https://example.com"])
@@ -105,8 +118,10 @@ installer. It creates a separate app and `--user-data-dir`:
 
 ```bash
 curl -fsSL 'https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/scripts/install-chrome-cdp-macOS.sh' | bash -s -- --port 9333
-curl http://127.0.0.1:9333/json/version
 ```
+
+After installation, agents verify reachability with `agent_browser status`;
+they must not probe Chrome's `/json/version` endpoint through shell.
 
 After it is reachable, configure the workflow with that port, for example
 `cdp_ports=[9222,9333]`. Do not add profiles for ordinary workflow concurrency.

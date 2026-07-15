@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	baseevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
+	baseevents "github.com/manishiitg/mcpagent/events"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -218,6 +219,20 @@ func validateLoadedPlanStep(typedStep PlanStepInterface, stepIndex int) error {
 }
 
 func validateLoadedPlanStructure(plan *PlanningResponse) error {
+	if err := validateLoadedPlanStructureCore(plan); err != nil {
+		return err
+	}
+	if err := validateNextStepIDReferences(plan); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateLoadedPlanStructureCore validates the plan representation while
+// deliberately excluding cross-step graph references. Mutation tools use this
+// read mode so they can load and repair a graph left dangling by older code;
+// every write still calls ValidatePlanStructure and therefore remains atomic.
+func validateLoadedPlanStructureCore(plan *PlanningResponse) error {
 	if plan == nil {
 		return fmt.Errorf("plan is nil")
 	}
@@ -237,8 +252,48 @@ func validateLoadedPlanStructure(plan *PlanningResponse) error {
 			return fmt.Errorf("orphan_steps[%d] (id=%s): %w", i, step.GetID(), err)
 		}
 	}
-	if err := validateNextStepIDReferences(plan); err != nil {
-		return err
+	return nil
+}
+
+// PlanValidationError identifies a plan mutation that was rejected before it
+// could persist an invalid workflow. Callers can use errors.As to distinguish
+// this from storage/transport failures and surface a repairable conflict.
+type PlanValidationError struct {
+	Cause error
+}
+
+func (e *PlanValidationError) Error() string {
+	if e == nil || e.Cause == nil {
+		return "workflow plan validation failed"
+	}
+	return "workflow plan validation failed: " + e.Cause.Error()
+}
+
+func (e *PlanValidationError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
+// ValidatePlanStructure validates the exact representation that would be
+// persisted. The JSON round-trip prevents in-memory interface values from
+// bypassing normal plan decoding, and orphan references are resolved before
+// graph validation just as they are during workflow loading.
+func ValidatePlanStructure(plan *PlanningResponse) error {
+	validationJSON, err := json.Marshal(plan)
+	if err != nil {
+		return &PlanValidationError{Cause: fmt.Errorf("failed to marshal plan: %w", err)}
+	}
+	var validationPlan PlanningResponse
+	if err := json.Unmarshal(validationJSON, &validationPlan); err != nil {
+		return &PlanValidationError{Cause: fmt.Errorf("failed to decode plan: %w", err)}
+	}
+	if err := resolvePlanOrphanStepRefs(&validationPlan); err != nil {
+		return &PlanValidationError{Cause: err}
+	}
+	if err := validateLoadedPlanStructure(&validationPlan); err != nil {
+		return &PlanValidationError{Cause: err}
 	}
 	return nil
 }
@@ -291,64 +346,57 @@ func collectKnownStepIDs(plan *PlanningResponse) map[string]struct{} {
 // that is hard to attribute back to the original mistake.
 func validateNextStepIDReferences(plan *PlanningResponse) error {
 	known := collectKnownStepIDs(plan)
-	ref := func(stepID, fieldDesc, nextID string) error {
+	issues := make([]string, 0)
+	ref := func(stepID, fieldDesc, nextID string) {
 		nextID = strings.TrimSpace(nextID)
 		if nextID == "" || nextID == nextStepIDSentinelEnd {
-			return nil
+			return
 		}
 		if _, ok := known[nextID]; !ok {
-			return fmt.Errorf("%s in step %q points to next_step_id=%q which is not a known step ID in the plan (use \"end\" to terminate the workflow, or fix the reference)", fieldDesc, stepID, nextID)
+			issues = append(issues, fmt.Sprintf("%s in step %q points to missing step %q", fieldDesc, stepID, nextID))
 		}
-		return nil
 	}
-	var walk func(steps []PlanStepInterface) error
-	walk = func(steps []PlanStepInterface) error {
+	var walk func(steps []PlanStepInterface)
+	walk = func(steps []PlanStepInterface) {
 		for _, step := range steps {
 			switch s := step.(type) {
 			case *RoutingPlanStep:
 				for _, route := range s.Routes {
-					if err := ref(s.GetID(), fmt.Sprintf("route %q.next_step_id", route.RouteID), route.NextStepID); err != nil {
-						return err
-					}
+					ref(s.GetID(), fmt.Sprintf("route %q.next_step_id", route.RouteID), route.NextStepID)
 				}
 			case *TodoTaskPlanStep:
-				if err := ref(s.GetID(), "next_step_id", s.NextStepID); err != nil {
-					return err
-				}
+				ref(s.GetID(), "next_step_id", s.NextStepID)
 				for _, route := range s.PredefinedRoutes {
 					if route.SubAgentStep != nil {
-						if err := walk([]PlanStepInterface{route.SubAgentStep}); err != nil {
-							return err
-						}
+						walk([]PlanStepInterface{route.SubAgentStep})
 					}
 				}
 			case *MessageSequencePlanStep:
-				if err := ref(s.GetID(), "next_step_id", s.NextStepID); err != nil {
-					return err
-				}
+				ref(s.GetID(), "next_step_id", s.NextStepID)
 			case *HumanInputPlanStep:
-				if err := ref(s.GetID(), "next_step_id", s.NextStepID); err != nil {
-					return err
+				ref(s.GetID(), "next_step_id", s.NextStepID)
+				ref(s.GetID(), "if_yes_next_step_id", s.IfYesNextStepID)
+				ref(s.GetID(), "if_no_next_step_id", s.IfNoNextStepID)
+				optionKeys := make([]string, 0, len(s.OptionRoutes))
+				for key := range s.OptionRoutes {
+					optionKeys = append(optionKeys, key)
 				}
-				if err := ref(s.GetID(), "if_yes_next_step_id", s.IfYesNextStepID); err != nil {
-					return err
-				}
-				if err := ref(s.GetID(), "if_no_next_step_id", s.IfNoNextStepID); err != nil {
-					return err
-				}
-				for key, target := range s.OptionRoutes {
-					if err := ref(s.GetID(), fmt.Sprintf("option_routes[%q]", key), target); err != nil {
-						return err
-					}
+				sort.Strings(optionKeys)
+				for _, key := range optionKeys {
+					ref(s.GetID(), fmt.Sprintf("option_routes[%q]", key), s.OptionRoutes[key])
 				}
 			}
 		}
+	}
+	walk(plan.Steps)
+	walk(plan.OrphanSteps)
+	if len(issues) == 0 {
 		return nil
 	}
-	if err := walk(plan.Steps); err != nil {
-		return err
-	}
-	return walk(plan.OrphanSteps)
+	return fmt.Errorf(
+		"PLAN_GRAPH_INVALID: %d next-step reference(s) point to missing steps:\n- %s\nNo changes were saved. Update every listed route/next-step reference to an existing step ID or \"end\", then retry the mutation",
+		len(issues), strings.Join(issues, "\n- "),
+	)
 }
 
 // validateHumanInputStepFieldsTyped enforces that a human_input step's

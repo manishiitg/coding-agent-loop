@@ -2441,6 +2441,12 @@ export interface WorkflowCapabilities {
   cdp_ports?: number[]
   use_code_execution_mode: boolean
   llm_config?: PresetLLMConfig
+  notifications?: WorkflowNotificationConfig
+}
+
+export interface WorkflowNotificationConfig {
+  // Name of an encrypted workflow/user/global secret; never the webhook URL.
+  slack_webhook_secret_name?: string
 }
 
 export interface WorkflowExecutionDefaults {

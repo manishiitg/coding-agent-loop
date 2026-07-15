@@ -64,7 +64,7 @@ type OrchestratorAgentStartEvent struct {
 	StepIndex            int               `json:"step_index,omitempty"`              // which step in the plan
 	Iteration            int               `json:"iteration,omitempty"`               // which iteration of the loop
 	UseCodeExecutionMode bool              `json:"use_code_execution_mode,omitempty"` // code execution mode enabled
-	UseScriptedMode     bool              `json:"use_learn_code_mode,omitempty"`     // scripted mode enabled (persistent main.py replayed across runs). Wire-format tag kept as use_learn_code_mode for back-compat; rename deferred.
+	UseScriptedMode      bool              `json:"use_learn_code_mode,omitempty"`     // scripted mode enabled (persistent main.py replayed across runs). Wire-format tag kept as use_learn_code_mode for back-compat; rename deferred.
 	UseToolSearchMode    bool              `json:"use_tool_search_mode,omitempty"`    // tool search mode enabled
 	SystemPrompt         string            `json:"system_prompt,omitempty"`           // full system prompt sent to LLM
 	UserMessage          string            `json:"user_message,omitempty"`            // user message sent to LLM
@@ -160,17 +160,17 @@ func (e *RequestHumanFeedbackEvent) GetEventType() events.EventType {
 
 type BlockingHumanFeedbackEvent struct {
 	events.BaseEventData
-	Question      string   `json:"question"`       // Question to ask user
-	AllowFeedback bool     `json:"allow_feedback"` // Whether to allow text feedback (defaults to true)
-	Context       string   `json:"context"`        // Additional context (e.g., validation results)
-	SessionID     string   `json:"session_id"`
-	WorkflowID    string   `json:"workflow_id"`
-	RequestID     string   `json:"request_id"`                    // Unique ID for this feedback request
-	YesNoOnly     bool     `json:"yes_no_only"`                   // If true, show only Approve/Reject buttons (no textarea)
-	YesLabel      string   `json:"yes_label,omitempty"`           // Custom label for Approve button (default: "Approve")
-	NoLabel       string   `json:"no_label,omitempty"`            // Custom label for Reject button (default: "Reject")
-	Options       []string `json:"options,omitempty"`             // Array of option labels for multiple choice (renders as buttons)
-	RoutedToParentChat bool `json:"routed_to_parent_chat,omitempty"` // True when question was forwarded to the builder chat session
+	Question           string   `json:"question"`       // Question to ask user
+	AllowFeedback      bool     `json:"allow_feedback"` // Whether to allow text feedback (defaults to true)
+	Context            string   `json:"context"`        // Additional context (e.g., validation results)
+	SessionID          string   `json:"session_id"`
+	WorkflowID         string   `json:"workflow_id"`
+	RequestID          string   `json:"request_id"`                      // Unique ID for this feedback request
+	YesNoOnly          bool     `json:"yes_no_only"`                     // If true, show only Approve/Reject buttons (no textarea)
+	YesLabel           string   `json:"yes_label,omitempty"`             // Custom label for Approve button (default: "Approve")
+	NoLabel            string   `json:"no_label,omitempty"`              // Custom label for Reject button (default: "Reject")
+	Options            []string `json:"options,omitempty"`               // Array of option labels for multiple choice (renders as buttons)
+	RoutedToParentChat bool     `json:"routed_to_parent_chat,omitempty"` // Legacy compatibility; new requests always use direct UI submission
 }
 
 func (e *BlockingHumanFeedbackEvent) GetEventType() events.EventType {

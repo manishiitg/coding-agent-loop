@@ -46,14 +46,14 @@ func (api *StreamingAPI) registerWorkflowCreatorTool(underlyingAgent *mcpagent.A
 			},
 			"plan_json": map[string]interface{}{
 				"type":                 "object",
-				"description":          "The full plan.json object. Required field: steps (array, at least 1 step). Each step needs type, id (kebab-case, unique), and title. Include steps/reporting/evaluation that capture the evidence needed by any linked org goal in pulse/goals.html.",
+				"description":          "The full plan.json object. Required field: steps (array, at least 1 step). Each step needs type, id (kebab-case, unique), and title. Every route and explicit next_step_id must target a declared step or end; the complete graph is validated atomically before the workflow is created. Include steps/reporting/evaluation that capture the evidence needed by any linked org goal in pulse/goals.html.",
 				"additionalProperties": true,
 			},
 		},
 		"required": []string{"folder_name", "workflow_json", "plan_json"},
 	}
 
-	description := "Create a new workflow at Workflow/<folder_name>/ with the given workflow.json and planning/plan.json. This is the ONLY way to write under Workflow/ — the multi-agent chat folder guard blocks direct shell writes there. folder_name must be kebab-case (shell-safe); the human-readable display name goes in workflow_json.label and can be any string. Before creating a workflow for an org goal, read pulse/goals.html and make the workflow's objective, success criteria, reports, and evaluation evidence align to that goal. The tool enforces required JSON fields and refuses to overwrite existing workflows. Returns the folder path on success."
+	description := "Create a new workflow at Workflow/<folder_name>/ with the given workflow.json and planning/plan.json. This is the ONLY way to write under Workflow/ — the multi-agent chat folder guard blocks direct shell writes there. folder_name must be kebab-case (shell-safe); the human-readable display name goes in workflow_json.label and can be any string. Before creating a workflow for an org goal, read pulse/goals.html and make the workflow's objective, success criteria, reports, and evaluation evidence align to that goal. The tool validates the complete plan graph before writing anything and refuses dangling route/next_step_id targets or overwriting an existing workflow. Returns the folder path on success."
 
 	return underlyingAgent.RegisterCustomTool(
 		"create_workflow",
@@ -109,7 +109,7 @@ func (api *StreamingAPI) handleWorkflowCreatorTool(ctx context.Context, args map
 	defaultWorkflowCreatorGlobalSecretsToNone(workflowMap)
 
 	// 4. Validate plan.json required fields
-	if err := validatePlanJSONRequiredFields(planMap); err != nil {
+	if err := validatePlanJSONStructure(planMap); err != nil {
 		return "", err
 	}
 
@@ -266,6 +266,24 @@ func validatePlanJSONRequiredFields(m map[string]interface{}) error {
 		if strings.TrimSpace(title) == "" {
 			return fmt.Errorf("plan_json.steps[%d].title is required (human-readable title)", i)
 		}
+	}
+	return nil
+}
+
+func validatePlanJSONStructure(m map[string]interface{}) error {
+	if err := validatePlanJSONRequiredFields(m); err != nil {
+		return err
+	}
+	planJSON, err := json.Marshal(m)
+	if err != nil {
+		return fmt.Errorf("failed to marshal plan_json for validation: %w", err)
+	}
+	var plan todo_creation_human.PlanningResponse
+	if err := json.Unmarshal(planJSON, &plan); err != nil {
+		return fmt.Errorf("plan_json is invalid: %w", err)
+	}
+	if err := todo_creation_human.ValidatePlanStructure(&plan); err != nil {
+		return fmt.Errorf("plan_json is invalid: %w", err)
 	}
 	return nil
 }

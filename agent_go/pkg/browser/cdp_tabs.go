@@ -23,7 +23,13 @@ var (
 	cdpTabSelections   = make(map[string]string)
 	cdpActiveTabs      = make(map[int]string)
 	cdpTabAliases      = make(map[string]string)
+	cdpOwnedTabs       = make(map[string]cdpOwnedTab)
 )
+
+type cdpOwnedTab struct {
+	Alias string
+	TabID string
+}
 
 func sharedCDPSessionName(port int) string {
 	return fmt.Sprintf("shared-cdp-%d", port)
@@ -129,6 +135,11 @@ func clearCDPTabSelectionsForPort(port int) {
 			delete(cdpTabAliases, key)
 		}
 	}
+	for key := range cdpOwnedTabs {
+		if strings.HasPrefix(key, prefix) {
+			delete(cdpOwnedTabs, key)
+		}
+	}
 	delete(cdpActiveTabs, port)
 }
 
@@ -191,7 +202,80 @@ func clearCDPTabAlias(port int, ownerID, alias string) {
 	}
 	cdpTabSelectionsMu.Lock()
 	defer cdpTabSelectionsMu.Unlock()
-	delete(cdpTabAliases, cdpTabAliasKey(port, ownerID, alias))
+	key := cdpTabAliasKey(port, ownerID, alias)
+	delete(cdpTabAliases, key)
+	delete(cdpOwnedTabs, key)
+}
+
+func markCDPTabOwned(port int, ownerID, alias, tabID string) {
+	ownerID = strings.TrimSpace(ownerID)
+	alias = strings.TrimSpace(alias)
+	tabID = strings.TrimSpace(tabID)
+	if ownerID == "" || alias == "" {
+		return
+	}
+	if tabID == "" {
+		tabID = alias
+	}
+	cdpTabSelectionsMu.Lock()
+	defer cdpTabSelectionsMu.Unlock()
+	cdpOwnedTabs[cdpTabAliasKey(port, ownerID, alias)] = cdpOwnedTab{Alias: alias, TabID: tabID}
+}
+
+func ownedCDPTabsForOwner(port int, ownerID string) []cdpOwnedTab {
+	prefix := fmt.Sprintf("cdp:%d:%s:", port, strings.TrimSpace(ownerID))
+	cdpTabSelectionsMu.RLock()
+	defer cdpTabSelectionsMu.RUnlock()
+	tabs := make([]cdpOwnedTab, 0)
+	for key, tab := range cdpOwnedTabs {
+		if strings.HasPrefix(key, prefix) {
+			tabs = append(tabs, tab)
+		}
+	}
+	return tabs
+}
+
+// clearCDPTabStateForOwner removes selection, alias, active-tab, and ownership
+// state for one tab. The caller may identify the tab by either its workflow
+// label or the agent-browser tab ID returned when it was created.
+func clearCDPTabStateForOwner(port int, ownerID, tab string) {
+	ownerID = strings.TrimSpace(ownerID)
+	tab = strings.TrimSpace(tab)
+	if ownerID == "" || tab == "" {
+		return
+	}
+	prefix := fmt.Sprintf("cdp:%d:%s:", port, ownerID)
+	selectionKey := cdpTabSelectionKey(port, ownerID)
+
+	cdpTabSelectionsMu.Lock()
+	defer cdpTabSelectionsMu.Unlock()
+	selected := cdpTabSelections[selectionKey]
+	for key, tabID := range cdpTabAliases {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		alias := strings.TrimPrefix(key, prefix)
+		if alias != tab && tabID != tab {
+			continue
+		}
+		delete(cdpTabAliases, key)
+		delete(cdpOwnedTabs, key)
+		if selected == alias || selected == tabID {
+			delete(cdpTabSelections, selectionKey)
+		}
+		if cdpActiveTabs[port] == alias || cdpActiveTabs[port] == tabID {
+			delete(cdpActiveTabs, port)
+		}
+	}
+	if selected == tab {
+		delete(cdpTabSelections, selectionKey)
+	}
+	if cdpActiveTabs[port] == tab {
+		delete(cdpActiveTabs, port)
+	}
+	// A tab ID can be used as the alias when agent-browser did not return a
+	// separate label mapping. Remove that direct ownership record as well.
+	delete(cdpOwnedTabs, cdpTabAliasKey(port, ownerID, tab))
 }
 
 func getCDPActiveTab(port int) string {

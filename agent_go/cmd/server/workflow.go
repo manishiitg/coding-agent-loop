@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -2115,6 +2116,9 @@ func readPlanFromWorkspace(ctx context.Context, workspacePath string) (*todo_cre
 // writePlanToWorkspace writes plan.json to workspace using workspace API
 func writePlanToWorkspace(ctx context.Context, workspacePath string, plan *todo_creation_human.PlanningResponse) error {
 	planPath := workspacePath + "/planning/plan.json"
+	if err := todo_creation_human.ValidatePlanStructure(plan); err != nil {
+		return err
+	}
 
 	// Marshal plan to JSON
 	planJSON, err := json.MarshalIndent(plan, "", "  ")
@@ -2163,6 +2167,15 @@ func writePlanToWorkspace(ctx context.Context, workspacePath string, plan *todo_
 	}
 
 	return nil
+}
+
+func writePlanHTTPError(w http.ResponseWriter, action string, err error) {
+	status := http.StatusInternalServerError
+	var validationErr *todo_creation_human.PlanValidationError
+	if errors.As(err, &validationErr) {
+		status = http.StatusConflict
+	}
+	http.Error(w, fmt.Sprintf("%s: %v", action, err), status)
 }
 
 // readStepConfigFromWorkspace reads step_config.json from workspace using workspace API
@@ -2549,7 +2562,7 @@ func (api *StreamingAPI) handleUpdatePlanStep(w http.ResponseWriter, r *http.Req
 
 	// Write updated plan
 	if err := writePlanToWorkspace(r.Context(), req.WorkspacePath, plan); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to write plan: %v", err), http.StatusInternalServerError)
+		writePlanHTTPError(w, "Failed to update plan", err)
 		return
 	}
 
@@ -2859,7 +2872,7 @@ func (api *StreamingAPI) handleBatchUpdateSteps(w http.ResponseWriter, r *http.R
 	// Write both files
 	if updatedStepsCount > 0 {
 		if err := writePlanToWorkspace(r.Context(), req.WorkspacePath, plan); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to write plan: %v", err), http.StatusInternalServerError)
+			writePlanHTTPError(w, "Failed to update plan", err)
 			return
 		}
 	}
@@ -2955,7 +2968,7 @@ func (api *StreamingAPI) handleDeleteStep(w http.ResponseWriter, r *http.Request
 	// Write updated plan if step was removed
 	if removedFromPlan {
 		if err := writePlanToWorkspace(r.Context(), req.WorkspacePath, plan); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to write plan: %v", err), http.StatusInternalServerError)
+			writePlanHTTPError(w, "Step deletion rejected", err)
 			return
 		}
 	}
@@ -3096,7 +3109,7 @@ func (api *StreamingAPI) handleAddStep(w http.ResponseWriter, r *http.Request) {
 
 	// Write updated plan
 	if err := writePlanToWorkspace(r.Context(), req.WorkspacePath, plan); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to write plan: %v", err), http.StatusInternalServerError)
+		writePlanHTTPError(w, "Failed to add step", err)
 		return
 	}
 

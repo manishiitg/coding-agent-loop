@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/guidance"
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
@@ -2212,7 +2213,7 @@ This is the one-line-per-category map. For full signatures, parameters, when-to-
 - **Read-only info**: `+"`get_step_prompts`"+`, `+"`get_workflow_config`"+`, `+"`get_llm_config`"+`{{if eq .WorkshopMode "workshop"}}, `+"`get_workflow_command_guidance(kind=\"review-artifact-drift\")`"+`{{else}}. Artifact drift reviews belong in Workshop — switch modes and run `+"`/review-artifact-drift`"+` if needed{{end}}.
 {{if eq .WorkshopMode "workshop"}}
 - **Plan modification**: `+"`create_plan`"+`, `+"`add_<type>_step`"+`, `+"`update_<type>_step`"+`, `+"`delete_plan_steps`"+`, `+"`cleanup_orphan_step_configs`"+`, todo-task route tools, `+"`update_validation_schema`"+`.
-- **Variables & config**: `+"`update_variable`"+`, `+"`add_group`"+`/`+"`update_group`"+`/`+"`delete_group`"+`, `+"`update_workflow_config`"+`. Use `+"`update_workflow_config`"+` for workflow MCP servers, workflow-level MCP tool allowlists, selected skills, selected secrets, browser_mode, KB lock, run retention, and the per-run monitor (`+"`post_run_monitor`"+`). Do NOT edit `+"`workflow.json`"+` manually.
+- **Variables & config**: `+"`update_variable`"+`, `+"`add_group`"+`/`+"`update_group`"+`/`+"`delete_group`"+`, `+"`update_workflow_config`"+`. Use `+"`update_workflow_config`"+` for workflow MCP servers, workflow-level MCP tool allowlists, selected skills, selected secrets, the one-way Slack webhook secret reference, browser_mode, KB lock, run retention, and the per-run monitor (`+"`post_run_monitor`"+`). Do NOT edit `+"`workflow.json`"+` manually.
 - **Schedule management**: `+"`list_schedules`"+`, `+"`create_schedule`"+`, `+"`create_calendar_schedule`"+`, `+"`update_schedule`"+`, `+"`delete_schedule`"+`, `+"`trigger_schedule`"+`, `+"`get_schedule_runs`"+`. Cron / message-authoring rules, normal Run schedules plus Pulse, the `+"`/goal-advisor`"+` setup path, and unattended-message discipline — all live in the `+"`workflow-tools`"+` ref doc. Workflow schedules always use the workshop path; do not create direct `+"`mode=\"workflow\"`"+` schedules. **Whenever you create a recurring schedule, also pair it with a backup** so unattended runs persist their state off-box — see `+"`get_reference_doc(kind=\"backup-strategy\")`"+`.
 {{end}}
 - **Shell & discovery**: `+"`execute_shell_command`"+`, `+"`diff_patch_workspace_file`"+`, `+"`read_image`"+`, `+"`generate_text_llm`"+`, `+"`search_web_llm`"+`.
@@ -5729,7 +5730,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: get_workflow_config — read-only view of workflow-level settings (MCP servers, skills, secrets, LLM config)
 	if err := mcpAgent.RegisterCustomTool(
 		"get_workflow_config",
-		"Show current workflow configuration: selected workflow MCP servers, selected workflow skills, secrets (names only, no values), run retention, LLM config (tiered allocation with fallbacks, preset defaults), and schedules.",
+		"Show current workflow configuration: selected workflow MCP servers, selected workflow skills, secrets (names only, no values), one-way notification destinations, run retention, LLM config (tiered allocation with fallbacks, preset defaults), and schedules.",
 		map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -5785,6 +5786,27 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				for _, s := range secrets {
 					sb.WriteString(fmt.Sprintf("- **%s**\n", s.Name))
 				}
+			}
+
+			// --- One-way notifications (secret references only) ---
+			sb.WriteString("\n### Notifications\n")
+			var slackWebhookSecretName string
+			if content, readErr := ctrl.ReadWorkspaceFile(ctx, "workflow.json"); readErr == nil {
+				var manifest struct {
+					Capabilities struct {
+						Notifications struct {
+							SlackWebhookSecretName string `json:"slack_webhook_secret_name"`
+						} `json:"notifications"`
+					} `json:"capabilities"`
+				}
+				if json.Unmarshal([]byte(content), &manifest) == nil {
+					slackWebhookSecretName = strings.TrimSpace(manifest.Capabilities.Notifications.SlackWebhookSecretName)
+				}
+			}
+			if slackWebhookSecretName == "" {
+				sb.WriteString("- Slack Incoming Webhook: not configured\n")
+			} else {
+				sb.WriteString(fmt.Sprintf("- Slack Incoming Webhook: configured via encrypted secret **%s** (one-way notify_user delivery; URL hidden)\n", slackWebhookSecretName))
 			}
 
 			// Show available secrets that can be added
@@ -5912,7 +5934,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: update_workflow_config — add/remove MCP servers, skills, secrets, and workflow-level knobs
 	if err := mcpAgent.RegisterCustomTool(
 		"update_workflow_config",
-		"Update workflow configuration: add/remove MCP servers, add/remove workflow-level tool allowlist entries, add/remove skills, enable/disable secrets, set browser mode and optional specialized multi-profile CDP ports, and set run retention. Use get_workflow_config to inspect current workflow settings and list_skills to discover installed skill folder names. Most changes take effect immediately for subsequent steps; changing cdp_ports takes effect on the next workflow execution because browser executors are authorized at run start.",
+		"Update workflow configuration: add/remove MCP servers, workflow-level tool allowlist entries, skills and secrets; configure a one-way Slack Incoming Webhook by encrypted secret name; set browser mode and optional specialized multi-profile CDP ports; and set run retention. Use get_workflow_config to inspect current workflow settings and list_skills to discover installed skill folder names. Most changes take effect immediately for subsequent steps; changing cdp_ports or Slack webhook configuration takes effect on the next workflow execution.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -5955,6 +5977,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
 					"description": "Secret names to remove/disable from the workflow",
+				},
+				"slack_webhook_secret_name": map[string]interface{}{
+					"type":        "string",
+					"description": "Encrypted secret name containing a complete Slack Incoming Webhook URL. The secret must already be selected for this workflow (set_workflow_secret auto-attaches it, or use add_secrets in this same call). notify_user sends to it automatically; human_feedback never does because webhooks are one-way. Pass an empty string to disable workflow webhook delivery. Never put the URL itself in workflow.json.",
 				},
 				"update_tier_fallbacks": map[string]interface{}{
 					"type":        "object",
@@ -6366,6 +6392,93 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}
 
+			// --- Workflow-scoped one-way Slack webhook ---
+			if raw, provided := args["slack_webhook_secret_name"]; provided && raw != nil {
+				secretName, isString := raw.(string)
+				if !isString {
+					return "Error: slack_webhook_secret_name must be a string.", nil
+				}
+				secretName = strings.TrimSpace(secretName)
+				if secretName != "" {
+					selected := false
+					for _, secret := range iwm.controller.GetSecrets() {
+						if secret.Name == secretName {
+							selected = true
+							break
+						}
+					}
+					if !selected {
+						return fmt.Sprintf("Error: Slack webhook secret %q is not selected for this workflow. Store it with set_workflow_secret (which auto-attaches it), or include add_secrets=[%q] in this update.", secretName, secretName), nil
+					}
+
+					var secretValue string
+					if iwm.resolveSecretValues != nil {
+						secretValue = iwm.resolveSecretValues(ctx, []string{secretName})[secretName]
+					}
+					if strings.TrimSpace(secretValue) == "" {
+						for _, secret := range iwm.controller.GetSecrets() {
+							if secret.Name == secretName {
+								secretValue = secret.Value
+								break
+							}
+						}
+					}
+					if strings.TrimSpace(secretValue) == "" {
+						return fmt.Sprintf("Error: Slack webhook secret %q has no stored value. Save the full Incoming Webhook URL with set_workflow_secret first.", secretName), nil
+					}
+					if validateErr := services.ValidateSlackIncomingWebhookURL(secretValue); validateErr != nil {
+						return fmt.Sprintf("Error: secret %q is not a valid Slack Incoming Webhook URL: %v", secretName, validateErr), nil
+					}
+				}
+
+				content, readErr := iwm.controller.ReadWorkspaceFile(ctx, "workflow.json")
+				if readErr != nil {
+					return fmt.Sprintf("Failed to read workflow.json: %v", readErr), nil
+				}
+				var manifest map[string]interface{}
+				if parseErr := json.Unmarshal([]byte(content), &manifest); parseErr != nil {
+					return fmt.Sprintf("Failed to parse workflow.json: %v", parseErr), nil
+				}
+				caps, _ := manifest["capabilities"].(map[string]interface{})
+				if caps == nil {
+					caps = make(map[string]interface{})
+				}
+				if secretName == "" {
+					if notifications, ok := caps["notifications"].(map[string]interface{}); ok {
+						delete(notifications, "slack_webhook_secret_name")
+						if len(notifications) == 0 {
+							delete(caps, "notifications")
+						} else {
+							caps["notifications"] = notifications
+						}
+					}
+				} else {
+					notifications, _ := caps["notifications"].(map[string]interface{})
+					if notifications == nil {
+						notifications = make(map[string]interface{})
+					}
+					notifications["slack_webhook_secret_name"] = secretName
+					caps["notifications"] = notifications
+				}
+				manifest["capabilities"] = caps
+				manifest["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+				updated, marshalErr := json.MarshalIndent(manifest, "", "  ")
+				if marshalErr != nil {
+					return fmt.Sprintf("Failed to marshal workflow.json: %v", marshalErr), nil
+				}
+				if writeErr := iwm.controller.WriteWorkspaceFile(ctx, "workflow.json", string(updated)); writeErr != nil {
+					return fmt.Sprintf("Failed to write workflow.json: %v", writeErr), nil
+				}
+
+				anyChanged = true
+				if secretName == "" {
+					sb.WriteString("\n### Slack Incoming Webhook (disabled)\nWorkflow notify_user calls no longer send to a dedicated Slack webhook. Interactive Slack bot behavior is unchanged.\n")
+				} else {
+					sb.WriteString(fmt.Sprintf("\n### Slack Incoming Webhook (configured)\n- Encrypted secret: %s\n- Applies automatically to notify_user on the next workflow run. It is one-way and is not used for human_feedback.\n", secretName))
+				}
+				logger.Info(fmt.Sprintf("Updated workflow Slack webhook secret reference: configured=%v", secretName != ""))
+			}
+
 			// --- Tier Fallbacks ---
 			if tierFallbacksRaw, ok := args["update_tier_fallbacks"]; ok && tierFallbacksRaw != nil {
 				if iwm.controller.tierResolver == nil || iwm.controller.tierResolver.config == nil {
@@ -6584,7 +6697,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			if !anyChanged {
-				return "No changes applied. Provide at least one of: add_servers, remove_servers, add_tools, remove_tools, add_skills, remove_skills, add_secrets, remove_secrets, update_tier_fallbacks, lock_knowledgebase, browser_mode, cdp_ports, run_retention_count, post_run_monitor.", nil
+				return "No changes applied. Provide at least one of: add_servers, remove_servers, add_tools, remove_tools, add_skills, remove_skills, add_secrets, remove_secrets, slack_webhook_secret_name, update_tier_fallbacks, lock_knowledgebase, browser_mode, cdp_ports, run_retention_count, post_run_monitor.", nil
 			}
 
 			// Persist config changes to workflow.json manifest (file-backed)

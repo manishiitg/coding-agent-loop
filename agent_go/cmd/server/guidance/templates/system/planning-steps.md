@@ -7,6 +7,14 @@ change behavior, safety, credentials, schedules, external side effects,
 or irreversible actions. State reasonable assumptions briefly and
 proceed.
 
+Every plan-tool mutation is an atomic graph transaction. Before saving,
+the backend verifies that every routing route and explicit
+`next_step_id`/human-input branch targets a step that still exists or
+`end`. If a tool returns `PLAN_GRAPH_INVALID`, no partial edit was saved:
+use the listed source step and field to reroute every dangling reference,
+then retry the original add/update/delete. Never delete a referenced step
+first and plan to repair the graph afterward.
+
 ## Step composition defaults
 
 **Default to `message_sequence`.** Modern agents do a lot in a single

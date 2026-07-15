@@ -135,7 +135,7 @@ UpdateCodeExecutionRegistry()  →  buildToolIndex()              <span class="c
 
   <!-- 06 -->
   <h2 id="bug"><span class="n">06</span>How this explains the bug</h2>
-  <p class="lead">Symptom: a tool (<code>notify_user</code>) is registered in the session, yet the CLI agent can't see or call it; <code>get_api_spec</code> shows <code>human_tools:[submit_human_answer]</code> only.</p>
+  <p class="lead">Symptom: a tool (<code>notify_user</code>) is registered in the session, yet the CLI agent can't see or call it; <code>get_api_spec</code> omits it from <code>human_tools</code>.</p>
   <ol class="seq">
     <li><b>The CLI sees one agent's registry.</b> <code>get_api_spec</code> is tagged with <code>X-Virtual-Scope-ID</code> → the Go server returns the <code>a.customTools</code> of <b>that one scoped instance</b> (the conversational/workshop "parent" agent), not the union of all agents in the session.</li>
     <li><b>The tool registered on a different instance.</b> Logs show <code>Registered custom tool … notify …</code> for the session — but on the <b>child / step-execution agents</b> (their default tool set is <code>workspace_advanced:* + human_tools:*</code>), not the scoped parent.</li>
@@ -147,7 +147,7 @@ UpdateCodeExecutionRegistry()  →  buildToolIndex()              <span class="c
   <!-- 07 -->
   <h2 id="fix"><span class="n">07</span>The fix</h2>
   <p class="lead">Register the human <i>notification</i> tool onto the workshop/phase (parent) agent's tool set, so it lands in that agent's <code>a.customTools</code> → appears in <code>get_api_spec</code> → callable.</p>
-  <p>The parent agent's tools come from <code>PreparePhaseAgentTools()</code> (<code>base_orchestrator_tools.go</code>), which selects <code>["workspace_advanced:execute_shell_command", "human_tools:*"]</code>. The fix ensures the phase-agent path actually carries <code>notify_user</code> through to registration on the parent (not only <code>submit_human_answer</code>), and that it is allow-listed for <code>workshop</code>/<code>run</code> modes.</p>
+  <p>The parent agent's tools come from <code>PreparePhaseAgentTools()</code> (<code>base_orchestrator_tools.go</code>), which selects <code>["workspace_advanced:execute_shell_command", "human_tools:*"]</code>. The fix ensures the phase-agent path actually carries <code>notify_user</code> through to registration on the parent and that it is allow-listed for <code>workshop</code>/<code>run</code> modes.</p>
   <div class="note ok"><b>Verify with the diagnostic, not the agent:</b> the temporary <code>🔬 [TOOLINDEX_DIAG]</code> log prints the scoped agent's full <code>a.customTools</code> with <code>agent_ptr</code>, category, and allow-state — confirming <code>notify_user</code> is present on the instance that serves <code>get_api_spec</code>. Then in a fresh chat: <code>get_api_spec</code> should list it under <code>human_tools</code>, and a call should execute.</p></div>
 
   <!-- 08 -->

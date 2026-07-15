@@ -77,10 +77,13 @@ func TestToolSetInvariants(t *testing.T) {
 			pool[tl.Function.Name] = true
 		}
 	}
-	for _, n := range []string{"human_feedback", "notify_user", "submit_human_answer", "create_human_input_request", "mark_human_input_consumed"} {
+	for _, n := range []string{"human_feedback", "notify_user", "create_human_input_request", "mark_human_input_consumed"} {
 		if !pool[n] || cats[n] != "human_tools" {
 			t.Fatalf("workflow pool missing human tool %q (in_pool=%v cat=%q)", n, pool[n], cats[n])
 		}
+	}
+	if pool["submit_human_answer"] {
+		t.Fatal("workflow pool still exposes removed submit_human_answer tool")
 	}
 
 	// human-tool name set (registerable human tools = source of truth)

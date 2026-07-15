@@ -155,6 +155,13 @@ type WorkflowCapabilities struct {
 	CDPPorts                  []int                          `json:"cdp_ports,omitempty"`
 	UseCodeExecutionMode      bool                           `json:"use_code_execution_mode"`
 	LLMConfig                 *workflowtypes.PresetLLMConfig `json:"llm_config,omitempty"`
+	Notifications             *WorkflowNotificationConfig    `json:"notifications,omitempty"`
+}
+
+// WorkflowNotificationConfig contains only safe references. Credential values
+// are kept in the encrypted secret store and resolved immediately before a run.
+type WorkflowNotificationConfig struct {
+	SlackWebhookSecretName string `json:"slack_webhook_secret_name,omitempty"`
 }
 
 // WorkflowExecutionDefaults stores toolbar-level defaults for workflow execution.

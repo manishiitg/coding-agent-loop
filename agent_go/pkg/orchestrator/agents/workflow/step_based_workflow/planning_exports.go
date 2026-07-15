@@ -12,6 +12,7 @@ import (
 	"time"
 
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/instructions"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 	orchestrator_events "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
@@ -460,6 +461,9 @@ type WorkshopConfig struct {
 	CustomTools          []llmtypes.Tool
 	CustomToolExecutors  map[string]interface{}
 	ToolCategories       map[string]string
+	// BrowserRuntime stores configured intent (auto/cdp/headless + candidate
+	// ports). The executor resolves live CDP reachability at tool-call time.
+	BrowserRuntime       *browser.BrowserRuntimeConfig
 	LLMConfig            *orchestrator.LLMConfig
 	PresetPhaseLLM       *AgentLLMConfig
 	PresetMaintenanceLLM *AgentLLMConfig
@@ -571,6 +575,11 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 	}
 
 	controller.SetWorkspacePath(cfg.WorkspacePath)
+	if cfg.BrowserRuntime != nil {
+		mode, ports := cfg.BrowserRuntime.Snapshot()
+		controller.SetBrowserMode(mode)
+		controller.SetCdpPorts(ports)
+	}
 
 	// Set evaluation mode if configured (uses evaluation/ paths for step_config, learnings, etc.)
 	if cfg.IsEvaluationMode {
@@ -782,6 +791,24 @@ func (s *WorkshopChatSession) UpdatePresetSettings(
 		s.config.LockKnowledgebase = lockKnowledgebase
 		s.config.Secrets = append([]orchestrator.SecretEntry(nil), secrets...)
 	}
+}
+
+// UpdateBrowserRuntime refreshes configured browser intent on a reused workshop
+// session. It does not resolve or cache CDP availability; the shared
+// agent_browser executor queries that live for status and every auto-mode action.
+func (s *WorkshopChatSession) UpdateBrowserRuntime(mode string, cdpPorts []int) {
+	if s == nil || s.controller == nil {
+		return
+	}
+	if s.config != nil {
+		if s.config.BrowserRuntime == nil {
+			s.config.BrowserRuntime = browser.NewBrowserRuntimeConfig(mode, cdpPorts)
+		} else {
+			s.config.BrowserRuntime.Update(mode, cdpPorts)
+		}
+	}
+	s.controller.SetBrowserMode(mode)
+	s.controller.SetCdpPorts(cdpPorts)
 }
 
 // UpdateEnabledGroupNames refreshes the toolbar-selected group names and reloads variable values.
@@ -1264,7 +1291,6 @@ func RegisterRunFullEvaluationTool(
 				defer evalController.CloseWorkshopGroupSessions()
 				evalController.SetSubAgentNotifier(session.combinedSubAgentNotifier())
 				evalController.SetWorkshopExecutionContext(execCtx, session.StepRegistry)
-				evalController.SetRoutingDecisionNotifier(session.executionNotifier)
 				// Wire the direct execution notifier so message_sequence items,
 				// kb-update, and continuation recovery notify during eval too
 				// (these emit via workshopExecutionNotifier, which the bridge skips).
@@ -1283,6 +1309,8 @@ func RegisterRunFullEvaluationTool(
 				if cfg.WorkspaceEnvRef != nil {
 					evalController.SetWorkspaceEnvRef(cfg.WorkspaceEnvRef)
 				}
+				evalController.SetBrowserMode(session.controller.GetBrowserMode())
+				evalController.SetCdpPorts(session.controller.GetCdpPorts())
 
 				result, execErr = evalController.ExecuteEvaluationOnly(
 					execCtx,
@@ -1877,17 +1905,13 @@ func RegisterRunFullWorkflowTool(
 				// nil inside controller_todo_task.go and sub-agent tracking is silently skipped.
 				workflowController.SetSubAgentNotifier(session.combinedSubAgentNotifier())
 				workflowController.SetWorkshopExecutionContext(execCtx, session.StepRegistry)
-				workflowController.SetRoutingDecisionNotifier(session.executionNotifier)
 				// Wire the workshop execution notifier so step types that emit their
 				// own lifecycle notifications directly (message_sequence items,
 				// kb-update, continuation recovery) actually reach the main agent
 				// during a full-workflow run. Without this the notifier is nil and
 				// those notifications silently no-op — e.g. a message_sequence step
 				// (login/discovery/retrieval phases) ran for many minutes with the
-				// main agent never told it started, progressed, or finished. Routing
-				// is unaffected: startRoutingPickNotification prefers
-				// routingDecisionNotifier (set above), and the workflowProgressBridge
-				// already excludes message-sequence-* agents, so no double-notify.
+				// main agent never told it started, progressed, or finished.
 				workflowController.SetWorkshopExecutionNotifier(session.executionNotifier)
 
 				// Propagate session context
@@ -1908,6 +1932,7 @@ func RegisterRunFullWorkflowTool(
 				} else if session.controller.GetCdpPort() > 0 {
 					workflowController.SetCdpPort(session.controller.GetCdpPort())
 				}
+				workflowController.SetBrowserMode(session.controller.GetBrowserMode())
 
 				// Set execution options
 				execOpts := &ExecutionOptions{

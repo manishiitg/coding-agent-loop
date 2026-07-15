@@ -24,7 +24,7 @@ func CreateHumanTools() []llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "human_feedback",
-			Description: "Use this tool when you need to get human input, confirmation, or feedback. This tool will pause execution until the user provides input via the UI. You can present multiple options as buttons for the user to choose from, or use free-text input. The tool returns the user's response as text. Ideal for asking clarifying questions, presenting choices, requesting confirmation, or any situation requiring human decision-making.",
+			Description: "Request short-lived input that only a human can provide, such as an OTP/2FA code, CAPTCHA completion, explicit approval, a subjective decision, or private information. This tool pauses only the calling workflow until the human answers directly in the AgentWorks UI; it does not route the question through the Workflow Builder. Do not use it for questions another agent can answer or for questions that may wait hours or days. Choose the shortest realistic timeout_seconds; use an expiry shown by the external service when available. The tool returns the human's response as text.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -42,6 +42,13 @@ func CreateHumanTools() []llmtypes.Tool {
 							"type": "string",
 						},
 						"description": "Optional list of choices to present as buttons. When provided, the user clicks a button instead of typing. Use for multiple-choice questions (e.g. ['Option A: Use REST API', 'Option B: Use GraphQL', 'Option C: Use gRPC']). Omit for free-text input.",
+					},
+					"timeout_seconds": map[string]interface{}{
+						"type":        "integer",
+						"minimum":     30,
+						"maximum":     1800,
+						"default":     300,
+						"description": "How long to wait for the human before the request expires. Choose the shortest realistic duration. Defaults to 300 seconds and is bounded to 30-1800 seconds.",
 					},
 				},
 				"required": []string{"unique_id", "message_for_user"},
@@ -105,32 +112,6 @@ func CreateHumanTools() []llmtypes.Tool {
 	}
 	humanTools = append(humanTools, notifyUserTool)
 
-	// submit_human_answer — used by a builder agent to resolve a human_input
-	// step that was routed into this chat session (via run_workflow). The chat
-	// message from the workflow will include the request_id to pass here.
-	submitHumanAnswerTool := llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "submit_human_answer",
-			Description: "Resolve a pending workflow decision. Use this ONLY in response to a [WORKFLOW_HUMAN_INPUT], [WORKFLOW_HUMAN_FEEDBACK], or [WORKFLOW_ROUTING] message from a workflow you launched. Pass the request_id from that message and the answer. For human_input yes/no steps, answer with 'yes' or 'no'. For multiple-choice, answer with 'option0', 'option1', ... (or the exact option text). For text or human_feedback prompts, pass the user's free-text answer. For routing steps, answer with the exact route_id (or route name) from the message. The workflow resumes as soon as you call this.",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"request_id": map[string]interface{}{
-						"type":        "string",
-						"description": "The request_id from the [WORKFLOW_HUMAN_INPUT] message (e.g. 'human_input_step_2_1714171234567').",
-					},
-					"answer": map[string]interface{}{
-						"type":        "string",
-						"description": "The answer to submit. Format depends on the response type given in the workflow message.",
-					},
-				},
-				"required": []string{"request_id", "answer"},
-			}),
-		},
-	}
-	humanTools = append(humanTools, submitHumanAnswerTool)
-
 	return humanTools
 }
 
@@ -142,12 +123,14 @@ var channelLabels = map[string]string{
 	"gmail":    "Gmail (email)",
 }
 
+var sendSlackIncomingWebhook = services.SendSlackIncomingWebhook
+
 // buildNotifyDescription renders the notify_user description with the set of
 // channels enabled when the tool list is built (per session/run), so the agent
 // knows where its message will actually land. The always-on web UI connector is
 // not framed as an external channel.
 func buildNotifyDescription() string {
-	base := "Send a non-blocking notification to the human. Use this for FYIs, progress updates, alerts, and completion notices when you do not need to wait for a reply. If you need the human to answer before continuing, use human_feedback instead. Returns a JSON delivery result — status (delivered|partial|failed|no_recipient|no_channels_configured) plus delivered/skipped/failed channel lists. Report it honestly to the user: do NOT claim the message was sent if status is failed or no_channels_configured."
+	base := "Send a non-blocking notification to the human. Use this for FYIs, progress updates, alerts, and completion notices when you do not need to wait for a reply. If the workflow has a Slack Incoming Webhook configured, this tool automatically sends there in addition to enabled account-level channels; the webhook cannot receive replies. If you need the human to answer before continuing, use human_feedback instead. Returns a JSON delivery result — status (delivered|partial|failed|no_recipient|no_channels_configured) plus delivered/skipped/failed channel lists. Report it honestly to the user: do NOT claim the message was sent if status is failed or no_channels_configured."
 
 	var labels []string
 	gmailOn := false
@@ -168,7 +151,7 @@ func buildNotifyDescription() string {
 	}
 
 	if len(labels) == 0 {
-		return base + " NOTE: No external channels (Slack/WhatsApp/Gmail) are currently enabled, so the message only appears in the web UI."
+		return base + " NOTE: No account-level channels (Slack bot/WhatsApp/Gmail) are currently enabled. The message still uses a workflow Slack webhook when one is configured; otherwise it appears only in the web UI."
 	}
 	desc := base + " Currently enabled delivery channels: " + strings.Join(labels, ", ") + ". The message is delivered to all enabled channels — you do not choose which."
 	if gmailOn {
@@ -301,12 +284,11 @@ func GetHumanToolCategory() string {
 //
 // human_feedback is intentionally excluded: the builder is already in a chat and
 // asks the user directly rather than blocking. notify_user is the non-blocking
-// outbound push (Slack/WhatsApp/Gmail); submit_human_answer resolves human_input
-// steps from launched workflows. create_human_input_request and
+// outbound push (Slack/WhatsApp/Gmail). create_human_input_request and
 // mark_human_input_consumed are non-blocking Pulse/report questions stored in
 // the workflow-local db/db.sqlite.
 func WorkshopHumanToolNames() []string {
-	return []string{"notify_user", "submit_human_answer", "create_human_input_request", "mark_human_input_consumed"}
+	return []string{"notify_user", "create_human_input_request", "mark_human_input_consumed"}
 }
 
 // CreateHumanToolExecutors creates the execution functions for human tools
@@ -315,32 +297,8 @@ func CreateHumanToolExecutors() map[string]func(ctx context.Context, args map[st
 
 	executors["human_feedback"] = handleHumanFeedback
 	executors["notify_user"] = handleNotifyUser
-	executors["submit_human_answer"] = handleSubmitHumanAnswer
 
 	return executors
-}
-
-// handleSubmitHumanAnswer resolves a pending workflow human_input step by
-// forwarding the answer to the HumanFeedbackStore, unblocking the workflow
-// goroutine that's parked on WaitForResponse.
-func handleSubmitHumanAnswer(ctx context.Context, args map[string]interface{}) (string, error) {
-	requestID, _ := args["request_id"].(string)
-	if requestID == "" {
-		return "", fmt.Errorf("request_id is required")
-	}
-	answer, _ := args["answer"].(string)
-	// Note: empty answer is allowed (e.g., "Approve" with no text for text-type steps).
-
-	feedbackStore := GetHumanFeedbackStore()
-	if err := feedbackStore.SubmitResponse(requestID, answer); err != nil {
-		return "", fmt.Errorf("failed to submit answer: %w", err)
-	}
-	result := map[string]interface{}{
-		"status":     "submitted",
-		"request_id": requestID,
-	}
-	b, _ := json.Marshal(result)
-	return string(b), nil
 }
 
 func handleNotifyUser(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -376,6 +334,18 @@ func handleNotifyUser(ctx context.Context, args map[string]interface{}) (string,
 	// Synchronous send so we can report real per-channel delivery to the agent
 	// (and so the send isn't killed when this turn's context is canceled).
 	results := notificationManager.SendUserNotificationSync(ctx, messageForUser, "", dest)
+	if dest != nil && dest.SlackWebhook != nil {
+		msgID, sendErr := sendSlackIncomingWebhook(ctx, dest.SlackWebhook.URL, messageForUser)
+		result := services.ConnectorResult{
+			Channel: "slack_webhook",
+			OK:      sendErr == nil,
+			MsgID:   msgID,
+		}
+		if sendErr != nil {
+			result.Err = sendErr.Error()
+		}
+		results = append(results, result)
+	}
 
 	delivered := []string{}
 	skipped := []string{}
@@ -424,9 +394,11 @@ func handleHumanFeedback(ctx context.Context, args map[string]interface{}) (stri
 	}
 
 	uniqueID, ok := args["unique_id"].(string)
-	if !ok {
+	uniqueID = strings.TrimSpace(uniqueID)
+	if !ok || uniqueID == "" {
 		return "", fmt.Errorf("unique_id is required and must be a string")
 	}
+	waitTimeout := humanFeedbackTimeoutFromArgs(args)
 
 	// Extract optional options array
 	var options []string
@@ -436,12 +408,6 @@ func handleHumanFeedback(ctx context.Context, args map[string]interface{}) (stri
 				options = append(options, s)
 			}
 		}
-	}
-
-	// Emit blocking_human_feedback event so the frontend renders the proper UI
-	if emitter, ok := ctx.Value(SessionEventEmitterKey).(SessionEventEmitter); ok && emitter != nil {
-		hasOptions := len(options) > 0
-		emitter.EmitBlockingHumanFeedback(uniqueID, messageForUser, "", hasOptions, "", "", options...)
 	}
 
 	// Build button options for notifications (Slack, etc.)
@@ -455,61 +421,78 @@ func handleHumanFeedback(ctx context.Context, args map[string]interface{}) (stri
 	// Get global feedback store
 	feedbackStore := GetHumanFeedbackStore()
 
-	sessionID, _ := ctx.Value(BGAgentSessionIDKey).(string)
-	if sessionID != "" {
-		if pc := GetParentChat(sessionID); pc != nil && pc.SessionID != "" && HasChatInjector() {
-			if err := feedbackStore.CreateRequestWithoutNotification(uniqueID, messageForUser); err != nil {
-				return "", fmt.Errorf("failed to create feedback request: %w", err)
-			}
-
-			var msg strings.Builder
-			msg.WriteString("[WORKFLOW_HUMAN_FEEDBACK] The workflow you launched is waiting on a human_feedback tool call. ")
-			msg.WriteString("If you already know the answer from the conversation so far, answer directly by calling submit_human_answer. ")
-			msg.WriteString("Otherwise, ask the user for what you need, then submit their reply.\n\n")
-			if pc.WorkflowPath != "" {
-				msg.WriteString(fmt.Sprintf("Workflow: %s\n", pc.WorkflowPath))
-			}
-			if pc.GroupName != "" {
-				msg.WriteString(fmt.Sprintf("Group: %s\n", pc.GroupName))
-			}
-			msg.WriteString(fmt.Sprintf("Request ID: %s\n", uniqueID))
-			msg.WriteString(fmt.Sprintf("Question: %s\n", messageForUser))
-			if len(options) > 0 {
-				msg.WriteString("Options:\n")
-				for i, opt := range options {
-					msg.WriteString(fmt.Sprintf("  %d. %s\n", i, opt))
-				}
-				msg.WriteString("Submit the user's choice as the exact option text.\n")
-			} else {
-				msg.WriteString("Submit the user's free-text answer as the answer.\n")
-			}
-
-			if err := InjectChatMessage(ctx, pc.SessionID, pc.UserID, msg.String()); err != nil {
-				return "", fmt.Errorf("failed to inject feedback into parent chat: %w", err)
-			}
-
-			response, err := feedbackStore.WaitForResponse(uniqueID, 5*time.Minute)
-			if err != nil {
-				return "", fmt.Errorf("failed to get user feedback: %w", err)
-			}
-			return response, nil
-		}
-	}
-
 	dest := NotificationDestinationFromContext(ctx)
 
-	// Create feedback request (automatically sends notifications via notification manager)
-	if err := feedbackStore.CreateRequestWithNotification(ctx, uniqueID, messageForUser, "", buttonOptions, dest); err != nil {
+	// Register the request before emitting UI/notification events so an immediate
+	// Electron response can never race the store registration.
+	if err := feedbackStore.CreateRequestWithoutNotification(uniqueID, messageForUser); err != nil {
 		return "", fmt.Errorf("failed to create feedback request: %w", err)
 	}
 
-	// Wait for user response (with timeout)
-	response, err := feedbackStore.WaitForResponse(uniqueID, 5*time.Minute)
+	// Emit blocking_human_feedback so the frontend renders a direct response UI.
+	// The expiry is informational here; the store owns the authoritative timer.
+	if emitter, ok := ctx.Value(SessionEventEmitterKey).(SessionEventEmitter); ok && emitter != nil {
+		hasOptions := len(options) > 0
+		expiryContext := fmt.Sprintf("This request expires in %d seconds.", int(waitTimeout/time.Second))
+		emitter.EmitBlockingHumanFeedback(uniqueID, messageForUser, expiryContext, hasOptions, "", "", options...)
+	}
+
+	// Human-only interruptions are urgent and short-lived, so notify immediately
+	// rather than using the normal two-minute reminder delay.
+	feedbackStore.ScheduleNotificationAfter(ctx, uniqueID, messageForUser, "", buttonOptions, dest, 0)
+
+	// Wait only for the bounded duration selected by the agent.
+	response, err := feedbackStore.WaitForResponse(uniqueID, waitTimeout)
 	if err != nil {
-		return "", fmt.Errorf("failed to get user feedback: %w", err)
+		return "", fmt.Errorf("human feedback request %s expired after %s: %w", uniqueID, waitTimeout, err)
 	}
 
 	return response, nil
+}
+
+const (
+	defaultHumanFeedbackTimeout = 5 * time.Minute
+	minHumanFeedbackTimeout     = 30 * time.Second
+	maxHumanFeedbackTimeout     = 30 * time.Minute
+)
+
+func humanFeedbackTimeoutFromArgs(args map[string]interface{}) time.Duration {
+	raw, ok := args["timeout_seconds"]
+	if !ok {
+		return defaultHumanFeedbackTimeout
+	}
+
+	var seconds int64
+	switch value := raw.(type) {
+	case int:
+		seconds = int64(value)
+	case int32:
+		seconds = int64(value)
+	case int64:
+		seconds = value
+	case float32:
+		seconds = int64(value)
+	case float64:
+		seconds = int64(value)
+	case json.Number:
+		parsed, err := value.Int64()
+		if err != nil {
+			return defaultHumanFeedbackTimeout
+		}
+		seconds = parsed
+	default:
+		return defaultHumanFeedbackTimeout
+	}
+
+	minSeconds := int64(minHumanFeedbackTimeout / time.Second)
+	maxSeconds := int64(maxHumanFeedbackTimeout / time.Second)
+	if seconds < minSeconds {
+		return minHumanFeedbackTimeout
+	}
+	if seconds > maxSeconds {
+		return maxHumanFeedbackTimeout
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 // NotificationDestinationFromContext returns the best notification destination
@@ -537,6 +520,13 @@ func ScheduleHumanFeedbackNotification(ctx context.Context, requestID, message, 
 	GetHumanFeedbackStore().ScheduleNotification(ctx, requestID, message, contextMsg, buttonOptions, NotificationDestinationFromContext(ctx))
 }
 
+// ScheduleHumanFeedbackNotificationAfter sends a correlated human-input
+// notification after the requested delay. Direct, short-lived human actions
+// use zero; legacy reminder flows can keep using ScheduleHumanFeedbackNotification.
+func ScheduleHumanFeedbackNotificationAfter(ctx context.Context, requestID, message, contextMsg string, buttonOptions *services.ButtonOptions, delay time.Duration) {
+	GetHumanFeedbackStore().ScheduleNotificationAfter(ctx, requestID, message, contextMsg, buttonOptions, NotificationDestinationFromContext(ctx), delay)
+}
+
 func cloneNotificationDestination(dest *services.NotificationDestination) *services.NotificationDestination {
 	if dest == nil {
 		return nil
@@ -546,6 +536,12 @@ func cloneNotificationDestination(dest *services.NotificationDestination) *servi
 		clone.Slack = &services.SlackDest{
 			ChannelID: dest.Slack.ChannelID,
 			ThreadTS:  dest.Slack.ThreadTS,
+		}
+	}
+	if dest.SlackWebhook != nil {
+		clone.SlackWebhook = &services.SlackWebhookDest{
+			SecretName: dest.SlackWebhook.SecretName,
+			URL:        dest.SlackWebhook.URL,
 		}
 	}
 	if dest.WhatsApp != nil {
@@ -569,6 +565,7 @@ func notificationDestinationEmpty(dest *services.NotificationDestination) bool {
 	return dest == nil ||
 		(dest.UserID == "" &&
 			(dest.Slack == nil || dest.Slack.ChannelID == "") &&
+			(dest.SlackWebhook == nil || (dest.SlackWebhook.SecretName == "" && dest.SlackWebhook.URL == "")) &&
 			(dest.WhatsApp == nil || (dest.WhatsApp.ChannelID == "" && dest.WhatsApp.PhoneE164 == "")) &&
 			(dest.Gmail == nil || dest.Gmail.Email == ""))
 }

@@ -569,6 +569,9 @@ type QueryRequest struct {
 	// conversation so human tools can notify the same Slack/WhatsApp thread.
 	BotChannelID string `json:"bot_channel_id,omitempty"`
 	BotThreadTS  string `json:"bot_thread_ts,omitempty"`
+	// Internal workflow wire field: name of the selected encrypted secret that
+	// contains a Slack Incoming Webhook URL. The URL itself is never serialized.
+	NotificationSlackWebhookSecretName string `json:"notification_slack_webhook_secret_name,omitempty"`
 	// Delegation tier configuration: Maps reasoning levels (high/medium/low) to specific provider/model pairs
 	DelegationTierConfig *virtualtools.DelegationTierConfig `json:"delegation_tier_config,omitempty"`
 	// Decrypted secrets to inject into agent system prompt
@@ -626,7 +629,20 @@ func notificationDestinationFromQuery(req QueryRequest, userID string) *services
 			}
 		}
 	}
-	if dest.UserID == "" && dest.Slack == nil && dest.WhatsApp == nil {
+	if secretName := strings.TrimSpace(req.NotificationSlackWebhookSecretName); secretName != "" {
+		var secretValue string
+		for _, secret := range mergeGlobalSecrets(req.DecryptedSecrets, req.SelectedGlobalSecrets) {
+			if secret.Name == secretName {
+				secretValue = secret.Value
+				break
+			}
+		}
+		dest.SlackWebhook = &services.SlackWebhookDest{
+			SecretName: secretName,
+			URL:        secretValue,
+		}
+	}
+	if dest.UserID == "" && dest.Slack == nil && dest.SlackWebhook == nil && dest.WhatsApp == nil {
 		return nil
 	}
 	return dest
@@ -720,13 +736,21 @@ func getBrowserMode(req QueryRequest) string {
 // into the standardized BrowserConfig used by BuildBrowserInstructions.
 func buildChatBrowserConfig(req QueryRequest) browserinstructions.BrowserConfig {
 	mode := getBrowserMode(req)
+	ports := getCdpPorts(req)
+	if mode == "auto" {
+		ports = configuredCDPPortsForMode(mode, req.CdpPort, req.CdpPorts)
+	}
+	primary := 0
+	if len(ports) > 0 {
+		primary = ports[0]
+	}
 	cfg := browserinstructions.BrowserConfig{
-		CdpPort:  getCdpPort(req),
-		CdpPorts: getCdpPorts(req),
+		CdpPort:  primary,
+		CdpPorts: ports,
 		Mode:     mode,
 	}
 	hasBrowserAccess := req.EnableBrowserAccess != nil && *req.EnableBrowserAccess
-	if hasBrowserAccess || mode == "headless" || mode == "cdp" {
+	if hasBrowserAccess || mode == "auto" || mode == "headless" || mode == "cdp" {
 		cfg.HasAgentBrowser = true
 	}
 	return cfg
@@ -748,43 +772,6 @@ func cdpPromptEndpoints(ports []int, primary int) (string, string) {
 	return endpoints[0], guidance
 }
 
-func (api *StreamingAPI) withEffectiveBrowserMode(ctx context.Context, req QueryRequest, sessionID string) QueryRequest {
-	// Any non-empty request value is explicit, including "none". This lets a
-	// user disable a browser for one run without an older session/manifest mode
-	// silently re-enabling it.
-	if mode := strings.ToLower(strings.TrimSpace(req.BrowserMode)); mode != "" {
-		req.BrowserMode = mode
-		return applyRuntimeBrowserMode(ctx, req)
-	}
-	if sessionMode := strings.ToLower(strings.TrimSpace(common.GetSessionBrowserMode(sessionID))); sessionMode != "" && sessionMode != "none" {
-		req.BrowserMode = sessionMode
-		return applyRuntimeBrowserMode(ctx, req)
-	}
-
-	workspacePath := strings.TrimSpace(req.SelectedFolder)
-	if workspacePath == "" && req.PresetQueryID != "" && api != nil {
-		if resolved, err := api.resolveWorkspacePathFromPreset(ctx, req.PresetQueryID); err == nil {
-			workspacePath = strings.TrimSpace(resolved)
-		}
-	}
-	if workspacePath == "" {
-		return req
-	}
-	if caps, found, err := LoadManifestForExecution(ctx, workspacePath); err == nil && found {
-		mode := strings.ToLower(strings.TrimSpace(caps.BrowserMode))
-		if mode != "" && mode != "none" {
-			req.BrowserMode = mode
-			req.CdpPorts = append([]int(nil), caps.CDPPorts...)
-			req = applyRuntimeBrowserMode(ctx, req)
-			// Preserve the configured policy in session state. Storing the
-			// one-run resolution (for example headless) would prevent an auto
-			// session from detecting Chrome when CDP becomes available later.
-			common.SetSessionBrowserMode(sessionID, mode)
-		}
-	}
-	return req
-}
-
 func applyMultiAgentCapabilitiesToRequest(req *QueryRequest, caps WorkflowCapabilities) {
 	if req == nil {
 		return
@@ -797,6 +784,9 @@ func applyMultiAgentCapabilitiesToRequest(req *QueryRequest, caps WorkflowCapabi
 	req.UseCodeExecutionMode = caps.UseCodeExecutionMode
 	req.BrowserMode = strings.ToLower(strings.TrimSpace(caps.BrowserMode))
 	req.CdpPorts = append([]int(nil), caps.CDPPorts...)
+	if caps.Notifications != nil {
+		req.NotificationSlackWebhookSecretName = strings.TrimSpace(caps.Notifications.SlackWebhookSecretName)
+	}
 	if req.BrowserMode == "" {
 		req.BrowserMode = "none"
 	}
@@ -1729,11 +1719,9 @@ func runServer(cmd *cobra.Command, args []string) {
 		}
 		return out
 	})
-	// Install a chat injector so workflows launched from a builder chat session
-	// can route human_input questions back as a synthetic turn on that session
-	// (instead of the blocking popup UI). The builder agent receives the
-	// question, decides whether to answer it from its own context or ask the
-	// user, and resolves the workflow via submit_human_answer.
+	// Install the chat injector used by background-agent and workflow lifecycle
+	// messages. Human-input requests are intentionally not relayed through this
+	// path; users answer those directly in the correlated UI card.
 	virtualtools.SetChatInjector(func(ctx context.Context, sessionID, userID, message string) error {
 		api.executeSyntheticTurn(sessionID, message)
 		return nil
@@ -2645,9 +2633,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	logfWithContext(queryLogCtx, "[USER_ID_DEBUGGING] HTTP handler: currentUserID=%q (from auth context)", currentUserID)
 
 	api.applySavedMultiAgentChatConfig(r.Context(), &req, currentUserID)
-	if req.AgentMode != "workflow" && req.AgentMode != "workflow_phase" {
-		req = applyRuntimeBrowserMode(r.Context(), req)
-	}
+	common.SetSessionBrowserMode(sessionID, getBrowserMode(req))
+	// Keep configured browser intent on the request. In auto mode,
+	// agent_browser queries current CDP reachability at tool-call time.
 
 	// Default maxTurns only when omitted (0). Negative values are preserved to mean "no turn cap".
 	// Multi-agent chat and the workflow builder run uncapped by default.
@@ -2822,7 +2810,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		logfWithContext(queryLogCtx, "[SESSION] Warning: could not pre-create per-user folder %s: %v", perUserChatsFolder, err)
 	}
 
-	enableBrowserAccess := req.EnableBrowserAccess != nil && *req.EnableBrowserAccess
+	configuredRequestBrowserMode := getBrowserMode(req)
+	enableBrowserAccess := (req.EnableBrowserAccess != nil && *req.EnableBrowserAccess) ||
+		configuredRequestBrowserMode == "auto" || configuredRequestBrowserMode == "headless" || configuredRequestBrowserMode == "cdp"
 	cdpPort := 0
 	if req.CdpPort != nil {
 		cdpPort = *req.CdpPort
@@ -2984,6 +2974,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				// Manifest is the source of truth for workflow-selected user secrets too.
 				req.DecryptedSecrets = api.loadSelectedSecrets(context.Background(), currentUserID, resolvedWPath, manifest.Capabilities.SelectedSecrets)
+				if manifest.Capabilities.Notifications != nil {
+					req.NotificationSlackWebhookSecretName = strings.TrimSpace(manifest.Capabilities.Notifications.SlackWebhookSecretName)
+				}
 
 				// Manifest is the source of truth for servers and browser mode.
 				if len(manifest.Capabilities.SelectedServers) > 0 {
@@ -2993,7 +2986,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if manifest.Capabilities.BrowserMode != "" {
 					req.BrowserMode = manifest.Capabilities.BrowserMode
 					req.CdpPorts = append([]int(nil), manifest.Capabilities.CDPPorts...)
-					req = applyRuntimeBrowserMode(r.Context(), req)
 				}
 			}
 		}
@@ -3090,12 +3082,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				// User-stored secrets from manifest are authoritative for workflow UI edits.
 				req.DecryptedSecrets = api.loadSelectedSecrets(context.Background(), currentUserID, manifestWorkspacePath, caps.SelectedSecrets)
+				if caps.Notifications != nil {
+					req.NotificationSlackWebhookSecretName = strings.TrimSpace(caps.Notifications.SlackWebhookSecretName)
+				}
 				req.CdpPorts = append([]int(nil), caps.CDPPorts...)
 
 				// Browser mode from manifest
 				if caps.BrowserMode != "" && caps.BrowserMode != "none" && (req.BrowserMode == "" || req.BrowserMode == "none") {
 					req.BrowserMode = caps.BrowserMode
-					req = applyRuntimeBrowserMode(r.Context(), req)
 				}
 			}
 		}
@@ -3115,12 +3109,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		if workflowBrowserMode != "" {
 			common.SetSessionBrowserMode(sessionID, workflowBrowserMode)
 		}
-		if workflowBrowserMode == "headless" || workflowBrowserMode == "cdp" {
+		if workflowBrowserMode == "auto" || workflowBrowserMode == "headless" || workflowBrowserMode == "cdp" {
 			wfCdpPorts := getCdpPorts(req)
+			if workflowBrowserMode == "auto" {
+				wfCdpPorts = configuredCDPPortsForMode(workflowBrowserMode, req.CdpPort, req.CdpPorts)
+			}
 
 			browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
 			browserTools := virtualtools.CreateWorkspaceBrowserTools()
-			browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, wfCdpPorts...)
+			browserRuntime := browser.NewBrowserRuntimeConfig(workflowBrowserMode, wfCdpPorts)
+			browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithRuntime(sessionID, browserRuntime)
 
 			allTools = append(allTools, browserTools...)
 			for name, executor := range browserExecutors {
@@ -3274,7 +3272,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Propagate authorized CDP profiles for browser prompts and execution agents.
-		if cdpPorts := getCdpPorts(req); len(cdpPorts) > 0 {
+		orchestratorCDPPorts := getCdpPorts(req)
+		if workflowBrowserMode == "auto" {
+			orchestratorCDPPorts = configuredCDPPortsForMode(workflowBrowserMode, req.CdpPort, req.CdpPorts)
+		}
+		if cdpPorts := orchestratorCDPPorts; len(cdpPorts) > 0 {
 			workflowOrchestrator.SetCdpPorts(cdpPorts)
 			log.Printf("[WORKFLOW] Set CDP ports on orchestrator: %v (browser_mode=%s)", cdpPorts, req.BrowserMode)
 		}
@@ -4330,7 +4332,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					browserExtraFolders = append(browserExtraFolders, fileContextWriteFolders...)
 					return wrapExecutorsWithWorkflowPhaseFolderGuard(execs, workflowPhaseFolder, workflowReadOnlyFolders, fileContextBlockedWriteFolders, browserExtraFolders...)
 				}
-				if err := registerCodingBrowserTools(underlyingAgent, sessionID, getCdpPorts(req), browserGuard); err != nil {
+				browserPorts := getCdpPorts(req)
+				if getBrowserMode(req) == "auto" {
+					browserPorts = configuredCDPPortsForMode(getBrowserMode(req), req.CdpPort, req.CdpPorts)
+				}
+				if err := registerCodingBrowserTools(underlyingAgent, sessionID, getBrowserMode(req), browserPorts, browserGuard); err != nil {
 					log.Printf("[BROWSER TOOLS ERROR] %v", err)
 				} else {
 					log.Printf("[BROWSER TOOLS] Successfully registered browser tools for %s", workspaceToolModeLabel)
@@ -4543,8 +4549,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Add custom agent instructions based on agent mode
 		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
 			// Create custom tools for the agent. Workflow-phase (workshop) agents need
-			// the FULL human-tool set registered — notably notify_user — not just
-			// submit_human_answer. Chat mode stays minimal (workflowMode=false). Without
+			// the full applicable human-tool set registered — notably notify_user.
+			// Chat mode stays minimal (workflowMode=false). Without
 			// this, notify_user was never registered as a custom tool, so it never landed
 			// in a.customTools and was invisible to CLI agents via get_api_spec.
 			allTools, allExecutors, toolCategories := createCustomTools(isWorkflowPhase, currentUserID, sessionID) // session-aware
@@ -4781,17 +4787,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// single turn.
 			chatBrowserCfg := buildChatBrowserConfig(req)
 			if chatBrowserCfg.HasAgentBrowser {
-				browserPrompt := "\n## Browser\n\nThis session has a browser tool available (mode=" + chatBrowserCfg.Mode + "). " +
-					"Read `get_reference_doc(kind=\"browser-usage\")` for Builder-specific mode, tab, file, and safety rules. "
-				if chatBrowserCfg.CdpPort > 0 {
-					endpoint, endpointGuidance := cdpPromptEndpoints(chatBrowserCfg.CdpPorts, chatBrowserCfg.CdpPort)
-					browserPrompt += endpointGuidance + " Every agent_browser call must explicitly include one authorized `--cdp <endpoint>`; the backend validates it. Before the first browser action, load the version-matched core skill from the intended profile with `agent_browser(command=\"skills\", args=[\"--cdp\", \"" + endpoint + "\", \"get\", \"core\"], session=\"default\")`. The docs call does not require a selected tab.\n"
-				} else {
-					browserPrompt += "Before the first browser action, load the version-matched core skill with `agent_browser(command=\"skills\", args=[\"get\", \"core\"], session=\"default\")`.\n"
+				browserPrompt := "\n## Browser\n\nThis session has a browser tool configured (mode=" + chatBrowserCfg.Mode + "). " +
+					"CDP availability is live state and is not stored in this prompt. Before first use, call `agent_browser(command=\"status\", session=\"default\")` and follow its `effective_mode` and authorized endpoints. Read `get_reference_doc(kind=\"browser-usage\")` for tab, file, and safety rules. "
+				if chatBrowserCfg.Mode == "auto" || chatBrowserCfg.Mode == "cdp" {
+					_, endpointGuidance := cdpPromptEndpoints(chatBrowserCfg.CdpPorts, chatBrowserCfg.CdpPort)
+					browserPrompt += endpointGuidance + " These endpoints are configured candidates; live status is authoritative.\n"
 				}
 				underlyingAgent.AppendSystemPrompt(browserPrompt)
-				log.Printf("[BROWSER] Added browser-skill pointer to system prompt (agent-browser=%v, cdp=%v)",
-					chatBrowserCfg.HasAgentBrowser, chatBrowserCfg.CdpPort > 0)
+				log.Printf("[BROWSER] Added dynamic browser pointer to system prompt (configured_mode=%s candidate_cdp_ports=%v)",
+					chatBrowserCfg.Mode, chatBrowserCfg.CdpPorts)
 			}
 			// 5. REFERENCE DOCS — detailed config schemas, workflow structure, workflow creation.
 			//    Only for worker agents (workflow phase). The orchestrator delegates all file
@@ -5080,18 +5084,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					if phaseWorkspacePath != "" {
 						phaseManifest, phaseFound, phaseMErr := ReadWorkflowManifest(context.Background(), phaseWorkspacePath)
 						if phaseMErr == nil && phaseFound {
-							phaseRequestedPorts := configuredCDPPorts(req.CdpPort, append(append([]int{}, req.CdpPorts...), phaseManifest.Capabilities.CDPPorts...))
-							effectiveBrowserMode, resolvedPhaseCDPPorts := resolveRuntimeBrowserModeWithPorts(r.Context(), phaseManifest.Capabilities.BrowserMode, phaseRequestedPorts)
+							configuredBrowserMode := strings.ToLower(strings.TrimSpace(phaseManifest.Capabilities.BrowserMode))
+							phaseConfiguredCDPPorts := configuredCDPPortsForMode(configuredBrowserMode, req.CdpPort, append(append([]int{}, req.CdpPorts...), phaseManifest.Capabilities.CDPPorts...))
 
-							// Build browser config from preset's browser mode
+							// Browser mode is configured intent. In auto mode the executor
+							// checks CDP live; no resolved cdp/headless result is persisted
+							// in the prompt or chat runtime.
 							phaseBrowserCfg := browserinstructions.BrowserConfig{}
-							if len(resolvedPhaseCDPPorts) > 0 {
-								phaseBrowserCfg.CdpPort = resolvedPhaseCDPPorts[0]
+							if len(phaseConfiguredCDPPorts) > 0 {
+								phaseBrowserCfg.CdpPort = phaseConfiguredCDPPorts[0]
 							}
-							switch effectiveBrowserMode {
-							case "cdp":
-								phaseBrowserCfg.HasAgentBrowser = true
-							case "headless":
+							switch configuredBrowserMode {
+							case "auto", "cdp", "headless":
 								phaseBrowserCfg.HasAgentBrowser = true
 							}
 							if phaseBrowserCfg.HasAgentBrowser {
@@ -5099,32 +5103,24 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 								// one-line pointer. The full guide (API + per-mode behaviors,
 								// upload rules, session limits) lives in the workflow-reference
 								// mega-skill as `browser-usage` and is fetched on demand.
-								browserPrompt := "\n## Browser\n\nThis phase has a browser tool available (mode=" + effectiveBrowserMode +
-									"). Read `get_reference_doc(kind=\"browser-usage\")` for Builder-specific mode, tab, file, and safety rules.\n"
-								if effectiveBrowserMode == "cdp" {
-									endpoint, endpointGuidance := cdpPromptEndpoints(resolvedPhaseCDPPorts, phaseBrowserCfg.CdpPort)
-									browserPrompt += endpointGuidance + " Every agent_browser call must explicitly include one authorized `--cdp <endpoint>`. Before the first browser action, load the version-matched core skill from the intended profile with `agent_browser(command=\"skills\", args=[\"--cdp\", \"" + endpoint + "\", \"get\", \"core\"], session=\"default\")`. The docs call does not require a selected tab.\n"
-								} else if effectiveBrowserMode == "headless" {
-									browserPrompt += "Before the first browser action, load the version-matched core skill with `agent_browser(command=\"skills\", args=[\"get\", \"core\"], session=\"default\")`.\n"
-								}
-								if hostDownloads := common.CDPHostDownloadsReadPath(effectiveBrowserMode); hostDownloads != "" {
-									browserPrompt += "In CDP mode, Chrome-native downloads can land in the host Downloads folder " + fmt.Sprintf("%q", hostDownloads) + ". That host folder is read-only: copy needed files into the workflow/workspace Downloads folder before processing them, and never write, move, or delete files under host Downloads.\n"
+								browserPrompt := "\n## Browser\n\nThis phase has a browser tool configured (mode=" + configuredBrowserMode +
+									"). CDP availability is live state and is never stored in this prompt. Before the first browser action, call `agent_browser(command=\"status\", session=\"default\")`, then follow its `effective_mode` and authorized endpoints. Read `get_reference_doc(kind=\"browser-usage\")` for Builder-specific tab, file, and safety rules.\n"
+								if configuredBrowserMode == "auto" || configuredBrowserMode == "cdp" {
+									_, endpointGuidance := cdpPromptEndpoints(phaseConfiguredCDPPorts, phaseBrowserCfg.CdpPort)
+									browserPrompt += endpointGuidance + " These are configured candidates only; `agent_browser status` is authoritative for current reachability.\n"
 								}
 								underlyingAgent.AppendSystemPrompt(browserPrompt)
-								log.Printf("[WORKFLOW_PHASE] Appended browser-skill pointer to %s (mode=%s, agent-browser=%v)",
-									workflowPhaseID, effectiveBrowserMode, phaseBrowserCfg.HasAgentBrowser)
+								log.Printf("[WORKFLOW_PHASE] Appended dynamic browser pointer to %s (configured_mode=%s, candidate_cdp_ports=%v)",
+									workflowPhaseID, configuredBrowserMode, phaseConfiguredCDPPorts)
 							}
 
 							// Register agent_browser tool on the chat agent for headless/CDP modes.
 							// Without this, the MCP bridge can't find agent_browser and the LLM
 							// falls back to calling agent-browser via execute_shell_command (which bypasses CDP resolution).
 							if phaseBrowserCfg.HasAgentBrowser {
-								phaseCdpPorts := []int(nil)
-								if effectiveBrowserMode == "cdp" {
-									phaseCdpPorts = resolvedPhaseCDPPorts
-								}
+								phaseBrowserRuntime := browser.NewBrowserRuntimeConfig(configuredBrowserMode, phaseConfiguredCDPPorts)
 								phaseBrowserTools := virtualtools.CreateWorkspaceBrowserTools()
-								phaseBrowserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, phaseCdpPorts...)
+								phaseBrowserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithRuntime(sessionID, phaseBrowserRuntime)
 								phaseBrowserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
 								for _, tool := range phaseBrowserTools {
 									if tool.Function == nil {
@@ -5146,7 +5142,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 											); err != nil {
 												log.Printf("[WORKFLOW_PHASE] Warning: Failed to register browser tool %s: %v", tool.Function.Name, err)
 											} else {
-												log.Printf("[WORKFLOW_PHASE] Registered browser tool: %s (category: %s, cdp_ports=%v)", tool.Function.Name, phaseBrowserCategory, phaseCdpPorts)
+												log.Printf("[WORKFLOW_PHASE] Registered browser tool: %s (category: %s, configured_mode=%s, candidate_cdp_ports=%v)", tool.Function.Name, phaseBrowserCategory, configuredBrowserMode, phaseConfiguredCDPPorts)
 											}
 										}
 									}
@@ -5941,34 +5937,6 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 	}
 
 	if underlyingAgent != nil {
-		// Capture the assembled phase system prompt + appended supplementary
-		// prompts so chat restore can SetSystemPrompt the right content
-		// before any launch — otherwise the coding-CLI rule file is written
-		// from the agent's default mcpagent base prompt instead of the
-		// workflow-builder workshop template. See ChatHistoryAgentRuntime
-		// SystemPrompt field docs in chat_history_persistence.go.
-		//
-		// On restore we SetSystemPrompt(SystemPrompt) and then re-AppendSystemPrompt
-		// each AppendedSystemPrompts entry. So we must persist the CLEAN base
-		// prompt (without the appendix) separately from the appended list —
-		// otherwise the appendix lands twice and accumulates on every
-		// save/restore cycle.
-		//
-		// Use the agent's tracked base (GetBaseSystemPrompt) rather than
-		// string-stripping the assembled prompt. The old TrimSuffix approach
-		// broke whenever the assembled tail was altered — TrimSpace eating the
-		// trailing newline of the last block, or AppendSystemPrompt's
-		// RemoveAIStaffEngineerText mutation — leaving the appendix embedded in
-		// SystemPrompt. That doubled the capability snapshot / secrets / browser
-		// sections in the coding-CLI rule file (CLAUDE.md) on each resume.
-		base := strings.TrimSpace(underlyingAgent.GetBaseSystemPrompt())
-		appended := underlyingAgent.GetAppendedSystemPrompts()
-		if base != "" {
-			runtime.SystemPrompt = base
-		}
-		if len(appended) > 0 {
-			runtime.AppendedSystemPrompts = append([]string(nil), appended...)
-		}
 		if handle := underlyingAgent.CurrentAgentSessionHandle(); handle != nil && !handle.Empty() {
 			runtime.AgentSessionHandle = handle
 			if handle.Provider.Provider != "" && runtime.Provider == "" {
@@ -6034,12 +6002,10 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 				log.Printf("[PI CLI] Saved session ID %s for session %s", sid, sessionID)
 			}
 		}
-		// Persist the agent's MCP server+tool selection and browser capability so
-		// a restore can replay the same bridge catalog (incl. agent_browser)
-		// instead of re-deriving it (or coming up empty).
+		// Persist stable MCP server/tool selection only. Current prompts and
+		// browser availability are rebuilt for each request.
 		runtime.ServerName = strings.TrimSpace(underlyingAgent.GetConfiguredServerName())
 		runtime.SelectedTools = underlyingAgent.GetSelectedTools()
-		runtime.BrowserMode = strings.TrimSpace(common.GetSessionBrowserMode(sessionID))
 	}
 	normalizeChatHistoryRuntime(runtime)
 
@@ -6186,25 +6152,10 @@ func (api *StreamingAPI) seedCodingAgentRuntimeFromRestoredConversation(sessionI
 		return false
 	}
 
-	// Re-apply the assembled phase system prompt + appended supplementary
-	// prompts captured at chat-save time. Without this, the auto-restore
-	// path (which doesn't go through /api/query before launching the tmux
-	// pane) leaves the agent on its default mcpagent base prompt, and
-	// coding-CLI adapters then project that base prompt into
-	// .agents/rules/mlp-system.md / .cursor/rules/mlp-system.mdc /
-	// AGENTS.md / GEMINI.md instead of the workflow-builder workshop
-	// template — visible to the user as "wrong content" in the rules
-	// file after a restart.
-	if sp := strings.TrimSpace(runtime.SystemPrompt); sp != "" {
-		underlyingAgent.ClearAppendedSystemPrompts()
-		underlyingAgent.SetSystemPrompt(sp)
-		for _, appended := range runtime.AppendedSystemPrompts {
-			if strings.TrimSpace(appended) != "" {
-				underlyingAgent.AppendSystemPrompt(appended)
-			}
-		}
-		log.Printf("[CHAT_HISTORY] Restored system prompt (%d chars + %d appended) for session %s provider=%s", len(sp), len(runtime.AppendedSystemPrompts), sessionID, provider)
-	}
+	// Restore provider-native conversation state only. The current /api/query
+	// path has already rebuilt the prompt, tools, browser intent, secrets, and
+	// permissions. Re-applying persisted instructions here would overwrite live
+	// state with a stale snapshot.
 
 	switch provider {
 	case "claude-code":
@@ -7314,7 +7265,9 @@ func (api *StreamingAPI) handleSubmitHumanFeedback(w http.ResponseWriter, r *htt
 		return
 	}
 
-	log.Printf("[HUMAN_FEEDBACK] Submitted response for unique_id %s: %s", req.UniqueID, req.Response)
+	// Responses may contain OTPs or other private input; never include the value
+	// in application logs.
+	log.Printf("[HUMAN_FEEDBACK] Submitted response for unique_id %s", req.UniqueID)
 
 	response := HumanFeedbackResponse{
 		UniqueID: req.UniqueID,
@@ -7460,21 +7413,18 @@ func (api *StreamingAPI) buildWorkshopConfig(
 				presetGlobalSecretNames = caps.SelectedGlobalSecretNames
 			}
 
-			// Browser mode from manifest capabilities. Additional ports are an
-			// explicit multi-profile opt-in for one workflow.
-			workshopRequestedPorts := configuredCDPPorts(req.CdpPort, append(append([]int{}, req.CdpPorts...), caps.CDPPorts...))
-			effectiveBrowserMode, resolvedWorkshopCDPPorts := resolveRuntimeBrowserModeWithPorts(ctx, caps.BrowserMode, workshopRequestedPorts)
-			if effectiveBrowserMode != "" {
-				common.SetSessionBrowserMode(sessionID, effectiveBrowserMode)
+			// Store configured browser intent only. Auto mode is resolved live by
+			// agent_browser status/actions, never persisted as cdp or headless.
+			configuredBrowserMode := strings.ToLower(strings.TrimSpace(caps.BrowserMode))
+			workshopConfiguredCDPPorts := configuredCDPPortsForMode(configuredBrowserMode, req.CdpPort, append(append([]int{}, req.CdpPorts...), caps.CDPPorts...))
+			cfg.BrowserRuntime = browser.NewBrowserRuntimeConfig(configuredBrowserMode, workshopConfiguredCDPPorts)
+			if configuredBrowserMode != "" {
+				common.SetSessionBrowserMode(sessionID, configuredBrowserMode)
 			}
-			if effectiveBrowserMode == "headless" || effectiveBrowserMode == "cdp" {
-				cdpPortsForBrowser := []int(nil)
-				if effectiveBrowserMode == "cdp" {
-					cdpPortsForBrowser = resolvedWorkshopCDPPorts
-				}
+			if configuredBrowserMode == "auto" || configuredBrowserMode == "headless" || configuredBrowserMode == "cdp" {
 				browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
 				browserTools := virtualtools.CreateWorkspaceBrowserTools()
-				browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, cdpPortsForBrowser...)
+				browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithRuntime(sessionID, cfg.BrowserRuntime)
 				allTools = append(allTools, browserTools...)
 				for name, executor := range browserExecutors {
 					allExecutors[name] = executor
@@ -7484,7 +7434,7 @@ func (api *StreamingAPI) buildWorkshopConfig(
 						toolCategories[tool.Function.Name] = browserCategory
 					}
 				}
-				log.Printf("[WORKSHOP] Added browser tools (mode=%s, cdp_ports=%v)", effectiveBrowserMode, cdpPortsForBrowser)
+				log.Printf("[WORKSHOP] Added dynamic browser tools (configured_mode=%s, candidate_cdp_ports=%v)", configuredBrowserMode, workshopConfiguredCDPPorts)
 			}
 
 			// LLM config from manifest

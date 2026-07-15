@@ -1,72 +1,23 @@
 package server
 
 import (
-	"context"
-	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"testing"
 
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
 
-func TestApplyRuntimeBrowserModeUsesCDPWhenReachable(t *testing.T) {
-	resetRuntimeCDPReachabilityCacheForTest()
-	workspace := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/cdp-check" || r.URL.Query().Get("port") != "9333" {
-			t.Fatalf("unexpected CDP check URL: %s", r.URL.String())
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"connected":true}`))
-	}))
-	defer workspace.Close()
-	t.Setenv("WORKSPACE_API_URL", workspace.URL)
-	port := 9333
-
-	req := applyRuntimeBrowserMode(context.Background(), QueryRequest{BrowserMode: "auto", CdpPort: &port})
-	if req.BrowserMode != "cdp" || req.CdpPort == nil || *req.CdpPort != port {
-		t.Fatalf("auto resolution = mode %q port %v, want cdp:%d", req.BrowserMode, req.CdpPort, port)
+func TestConfiguredCDPPortsForAutoRemainCandidates(t *testing.T) {
+	ports := configuredCDPPortsForMode("auto", nil, nil)
+	if !reflect.DeepEqual(ports, []int{9222}) {
+		t.Fatalf("default auto candidates = %v, want [9222]", ports)
 	}
-	if req.EnableBrowserAccess == nil || !*req.EnableBrowserAccess {
-		t.Fatalf("auto CDP should enable browser access")
+	ports = configuredCDPPortsForMode("auto", nil, []int{9222, 9333})
+	if !reflect.DeepEqual(ports, []int{9222, 9333}) {
+		t.Fatalf("configured auto candidates = %v", ports)
 	}
-}
-
-func TestApplyRuntimeBrowserModeFallsBackToHeadlessWhenCDPUnavailable(t *testing.T) {
-	resetRuntimeCDPReachabilityCacheForTest()
-	workspace := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"connected":false}`))
-	}))
-	defer workspace.Close()
-	t.Setenv("WORKSPACE_API_URL", workspace.URL)
-
-	req := applyRuntimeBrowserMode(context.Background(), QueryRequest{BrowserMode: "auto"})
-	if req.BrowserMode != "headless" || req.CdpPort != nil {
-		t.Fatalf("auto resolution = mode %q port %v, want headless with no CDP port", req.BrowserMode, req.CdpPort)
-	}
-	if req.EnableBrowserAccess == nil || !*req.EnableBrowserAccess {
-		t.Fatalf("auto headless fallback should enable browser access")
-	}
-}
-
-func TestApplyRuntimeBrowserModeKeepsReachableConfiguredProfiles(t *testing.T) {
-	resetRuntimeCDPReachabilityCacheForTest()
-	workspace := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		port := r.URL.Query().Get("port")
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"connected":` + map[bool]string{true: "true", false: "false"}[port == "9333"] + `}`))
-	}))
-	defer workspace.Close()
-	t.Setenv("WORKSPACE_API_URL", workspace.URL)
-
-	req := applyRuntimeBrowserMode(context.Background(), QueryRequest{BrowserMode: "auto", CdpPorts: []int{9222, 9333}})
-	if req.BrowserMode != "cdp" || req.CdpPort == nil || *req.CdpPort != 9333 {
-		t.Fatalf("auto multi-profile resolution = mode %q primary %v, want cdp:9333", req.BrowserMode, req.CdpPort)
-	}
-	if len(req.CdpPorts) != 1 || req.CdpPorts[0] != 9333 {
-		t.Fatalf("reachable CDP ports = %v, want [9333]", req.CdpPorts)
+	if ports := configuredCDPPortsForMode("headless", nil, []int{9222}); len(ports) != 0 {
+		t.Fatalf("headless must not retain CDP candidates: %v", ports)
 	}
 }
 
@@ -104,30 +55,6 @@ func TestBuildChatBrowserConfigUsesBrowserModeCDPWithoutEnableBrowserAccess(t *t
 	}
 	if cfg.CdpPort != 9222 {
 		t.Fatalf("cdp port = %d, want default 9222", cfg.CdpPort)
-	}
-}
-
-func TestWithEffectiveBrowserModeUsesSessionModeWhenRequestIsUnspecified(t *testing.T) {
-	sessionID := "test-effective-browser-mode-session"
-	common.SetSessionBrowserMode(sessionID, "cdp")
-
-	var api *StreamingAPI
-	req := api.withEffectiveBrowserMode(context.Background(), QueryRequest{}, sessionID)
-
-	if req.BrowserMode != "cdp" {
-		t.Fatalf("browser mode = %q, want cdp", req.BrowserMode)
-	}
-}
-
-func TestWithEffectiveBrowserModeHonorsExplicitNone(t *testing.T) {
-	sessionID := "test-effective-browser-mode-explicit-none"
-	common.SetSessionBrowserMode(sessionID, "cdp")
-
-	var api *StreamingAPI
-	req := api.withEffectiveBrowserMode(context.Background(), QueryRequest{BrowserMode: "none"}, sessionID)
-
-	if req.BrowserMode != "none" {
-		t.Fatalf("browser mode = %q, want explicit none", req.BrowserMode)
 	}
 }
 

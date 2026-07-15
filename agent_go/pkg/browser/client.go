@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -23,6 +25,41 @@ func NewClient(workspaceAPIURL string) *Client {
 		WorkspaceAPIURL: strings.TrimRight(workspaceAPIURL, "/"),
 		HTTPClient:      &http.Client{},
 	}
+}
+
+// CheckCDP asks the host workspace API whether Chrome DevTools is reachable on
+// a configured local port. Agents must use this path instead of probing
+// /json/version directly so browser safety and topology stay backend-owned.
+func (c *Client) CheckCDP(ctx context.Context, port int) (bool, string, error) {
+	if c == nil {
+		return false, "", fmt.Errorf("browser client is nil")
+	}
+	if port < 1 || port > 65535 {
+		return false, "", fmt.Errorf("invalid CDP port %d", port)
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	endpoint := c.WorkspaceAPIURL + "/api/cdp-check?port=" + url.QueryEscape(strconv.Itoa(port))
+	req, err := http.NewRequestWithContext(checkCtx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return false, "", err
+	}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return false, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false, "", fmt.Errorf("CDP status check returned HTTP %d", resp.StatusCode)
+	}
+	var payload struct {
+		Connected bool   `json:"connected"`
+		Error     string `json:"error,omitempty"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
+		return false, "", err
+	}
+	return payload.Connected, strings.TrimSpace(payload.Error), nil
 }
 
 // ExecuteOptions contains optional configuration for command execution

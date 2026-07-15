@@ -30,15 +30,26 @@ func CreateWorkspaceBrowserToolExecutors(cdpPort ...int) map[string]func(ctx con
 // Multiple ports are an explicit opt-in for separate login identities within
 // one run; normal workflow concurrency should continue sharing one CDP port.
 func CreateWorkspaceBrowserToolExecutorsWithSession(sessionID string, cdpPort ...int) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
+	mode := "headless"
+	if len(cdpPort) > 0 {
+		mode = "cdp"
+	}
+	return CreateWorkspaceBrowserToolExecutorsWithRuntime(
+		sessionID,
+		browser.NewBrowserRuntimeConfig(mode, cdpPort),
+	)
+}
+
+// CreateWorkspaceBrowserToolExecutorsWithRuntime creates an executor backed by
+// configured browser intent. In auto mode the shared runtime performs a live
+// CDP status check for every status/action call; resolved availability is never
+// copied into chat history or cached workshop prompts.
+func CreateWorkspaceBrowserToolExecutorsWithRuntime(sessionID string, runtime *browser.BrowserRuntimeConfig) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
 	executors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
 
 	// Wire up the browser executor from the pkg/browser package
 	browserClient := browser.NewClient(getWorkspaceAPIURL())
-	var opts []browser.ExecutorOption
-	if len(cdpPort) > 0 {
-		opts = append(opts, browser.WithCdpPorts(cdpPort...))
-	}
-	browserExecutor := browser.NewExecutor(browserClient, opts...)
+	browserExecutor := browser.NewExecutor(browserClient, browser.WithBrowserRuntimeConfig(runtime))
 
 	// Wrap executor to inject session IDs into context.
 	// - ChatSessionIDKey = agent-level ID (isolated for share_browser=false, parent otherwise)

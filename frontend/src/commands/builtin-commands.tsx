@@ -1,5 +1,5 @@
 import React from 'react'
-import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, GitBranch, CheckCircle, Search, BookOpen, Activity, Cloud, Globe, Target } from 'lucide-react'
+import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, GitBranch, CheckCircle, Search, BookOpen, Activity, BellRing, Cloud, Globe, Target } from 'lucide-react'
 import type { CommandContext, CommandDefinition } from './types'
 
 function submitGuidedWorkflowCommand(
@@ -242,6 +242,26 @@ Always write backup/status.json; never write operational status into workflow.js
 - If publish IS configured: publish now. Publish BOTH artifacts — bake the report dashboard to static HTML AND publish the Pulse log (builder/improve.html); deploy dashboard.html + pulse.html + the nav index.html wrapper per the reference doc. If publish.targets only lists one, update it to include both first. Force every page to **DARK only** (matching the app) — set BOTH class="dark" and data-theme="dark" on the html element per the reference doc; no toggle, do NOT use prefers-color-scheme. Stage the files in a /tmp dir; if visibility is private, encrypt them with StatiCrypt ($SECRET_PUBLISH_PASSWORD) and apply the Runloop dark password-gate styling before deploying; run the deploy CLI from /tmp. Then give me the URL and confirm visibility + what's public.
 CRITICAL — after deploying, come BACK to the workflow folder and persist state there (never in the /tmp staging dir): set workflow.json.publish.enabled=true with the destination + top-level url, AND write publish/status.json with state "published", the url, and last_source_hash (= the current_source_hash the backend reports; leave empty if unknown). A deploy that doesn't write these shows a grey "not configured" dot even though the site is live.
 Always write publish/status.json.`
+      ctx.onSubmit(ctx.beforeSlash ? `${ctx.beforeSlash}\n\n${instruction}` : instruction)
+    }
+  },
+  {
+    command: 'notify',
+    description: 'Set up, review, or test agentic notifications for this automation',
+    icon: <BellRing className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'workshop',
+    source: 'builtin',
+    execute: (ctx) => {
+      const instruction = `Help me set up or review notifications for this workflow.
+- First read the current workflow configuration and soul/soul.md. Explain the current effective destinations and whether the Slack webhook secret reference is healthy. Never reveal or write a webhook URL to workflow.json, prompts, logs, or ordinary files.
+- Notifications are agentic: the agent decides when a non-blocking FYI, alert, progress update, or completion notice is useful and chooses the content. Delivery is deterministic: the agent calls notify_user and the backend automatically applies the workflow Slack webhook plus enabled account-level notification channels. Do not add a routing step merely to choose a notification channel.
+- Ask what events should notify and what a useful message should contain. Put only explicit, durable user-approved notification preferences in soul/soul.md; do not store temporary choices or credentials there.
+- To configure a workflow Slack Incoming Webhook, use list_secrets first. If I provide a new URL, store it with set_workflow_secret(name="SLACK_NOTIFICATION_WEBHOOK_URL", value=<url>), then call update_workflow_config(slack_webhook_secret_name="SLACK_NOTIFICATION_WEBHOOK_URL"). The configuration tool validates that the selected encrypted secret exists and contains an official Slack Incoming Webhook URL. To disable workflow webhook delivery, call update_workflow_config(slack_webhook_secret_name="").
+- Gmail is an inherited account-level notification channel. The agent may set email_to/email_cc only when an explicit workflow preference names those recipients; otherwise it uses the configured account default.
+- If I asked to test delivery, call notify_user once with a clearly labeled test message and report its returned delivered/skipped/failed channels honestly. Do not send a test unless I requested one.
+- human_feedback is separate: use it only for short-lived input that must block this run, such as OTP, CAPTCHA, or immediate approval.`
       ctx.onSubmit(ctx.beforeSlash ? `${ctx.beforeSlash}\n\n${instruction}` : instruction)
     }
   },

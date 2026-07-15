@@ -11,6 +11,7 @@ import {
   Table2,
   ShieldCheck,
   Activity,
+  BellRing,
   CalendarClock,
   GitCommitVertical,
   RefreshCw,
@@ -38,6 +39,9 @@ import WorkflowBackupPopup from '../WorkflowBackupPopup'
 import { getBackupDotClass, formatBackupStateLabel } from '../backupStatus'
 import WorkflowPublishPopup from '../WorkflowPublishPopup'
 import { getPublishDotClass, formatPublishStateLabel } from '../publishStatus'
+import WorkflowNotificationPopup from '../WorkflowNotificationPopup'
+import { formatNotificationStateLabel, getNotificationDotClass } from '../notificationStatus'
+import { loadWorkflowNotificationInfo, type WorkflowNotificationState } from '../../../services/workflow-notifications'
 import WorkflowAccessPopup from '../WorkflowAccessPopup'
 import WorkflowScheduleRunsPanel from '../../scheduler/WorkflowScheduleRunsPanel'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
@@ -323,6 +327,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const [backupState, setBackupState] = useState<string>('loading')
   const [showPublishPopup, setShowPublishPopup] = useState(false)
   const [publishState, setPublishState] = useState<string>('not_configured')
+  const [showNotifications, setShowNotifications] = useState(false)
+  const [notificationState, setNotificationState] = useState<WorkflowNotificationState | 'loading'>('loading')
   const [showPlanEditsPopup, setShowPlanEditsPopup] = useState(false)
   const [showAccessPopup, setShowAccessPopup] = useState(false)
   const [showWorkflowSchedulesPanel, setShowWorkflowSchedulesPanel] = useState(false)
@@ -446,6 +452,23 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     refreshPublishState()
   }, [refreshPublishState])
 
+  const refreshNotificationState = useCallback(async () => {
+    if (!workspacePath) {
+      setNotificationState('not_configured')
+      return
+    }
+    try {
+      const info = await loadWorkflowNotificationInfo(workspacePath)
+      setNotificationState(info.effectiveState)
+    } catch {
+      setNotificationState('not_configured')
+    }
+  }, [workspacePath])
+
+  useEffect(() => {
+    void refreshNotificationState()
+  }, [refreshNotificationState])
+
   const closeAllPopups = useCallback(() => {
     setShowLearningsPopup(false)
     setShowKBPopup(false)
@@ -454,6 +477,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     setShowCostsPopup(false)
     setShowBackupPopup(false)
     setShowPublishPopup(false)
+    setShowNotifications(false)
     setShowPlanEditsPopup(false)
     setShowWorkflowSchedulesPanel(false)
     setShowMonitorHelp(false)
@@ -722,6 +746,27 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom"><p>Publish &middot; {formatPublishStateLabel(publishState)}</p></TooltipContent>
+            </Tooltip>
+          )}
+
+          {/* Notify - agentic trigger/content with deterministic workflow delivery */}
+          {workspacePath && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => setShowNotifications(true)}
+                  data-testid="workflow-notification-settings-button"
+                  className="relative p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+                  aria-label={`Notify · ${formatNotificationStateLabel(notificationState)}`}
+                >
+                  <BellRing className="w-3.5 h-3.5" />
+                  <span
+                    className={`absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full border border-background ${getNotificationDotClass(notificationState)}`}
+                  />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom"><p>Notify &middot; {formatNotificationStateLabel(notificationState)}</p></TooltipContent>
             </Tooltip>
           )}
 
@@ -1062,6 +1107,14 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       onClose={() => { setShowPublishPopup(false); refreshPublishState() }}
       workspacePath={workspacePath || null}
       onStateLoaded={setPublishState}
+    />
+
+    {/* Agentic notification status + builder-driven setup */}
+    <WorkflowNotificationPopup
+      isOpen={showNotifications}
+      onClose={() => { setShowNotifications(false); void refreshNotificationState() }}
+      workspacePath={workspacePath || null}
+      onStateLoaded={setNotificationState}
     />
 
     {/* Plan edits Popup (planning/changelog audit trail) */}

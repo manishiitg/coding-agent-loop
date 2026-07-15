@@ -4,23 +4,18 @@ import {
   AlertTriangle,
   BellRing,
   CheckCircle,
-  Eye,
-  EyeOff,
   Loader2,
   Mail,
   RotateCcw,
   SlidersHorizontal,
-  Webhook,
   X,
 } from 'lucide-react'
-import { secretsApi } from '../../api/secrets'
-import { agentApi, workflowManifestApi } from '../../services/api'
+import { agentApi } from '../../services/api'
 import type {
   GmailConfigRequest,
   GmailConfigResponse,
   GmailTestResponse,
   NotificationPreference,
-  WorkflowManifest,
 } from '../../services/api-types'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
@@ -29,13 +24,9 @@ import ModalPortal from '../ui/ModalPortal'
 interface NotificationPreferencesModalProps {
   isOpen: boolean
   onClose: () => void
-  workflowWorkspacePath?: string
-  workflowLabel?: string
 }
 
-type Section = 'slack-webhook' | 'gmail' | 'routing'
-
-const WORKFLOW_SLACK_WEBHOOK_SECRET = 'SLACK_NOTIFICATION_WEBHOOK_URL'
+type Section = 'gmail' | 'routing'
 
 const emptyPreference: NotificationPreference = {
   slack_channel_id: '',
@@ -66,28 +57,9 @@ const normalizeEmails = (values: string | string[] | undefined): string[] => {
   return result
 }
 
-const isSlackWebhookURL = (value: string): boolean => {
-  try {
-    const parsed = new URL(value.trim())
-    const validHost = parsed.hostname === 'hooks.slack.com' || parsed.hostname === 'hooks.slack-gov.com'
-    return parsed.protocol === 'https:'
-      && validHost
-      && parsed.port === ''
-      && parsed.username === ''
-      && parsed.password === ''
-      && parsed.search === ''
-      && parsed.hash === ''
-      && /^\/services\/[^/]+\/[^/]+\/[^/]+/.test(parsed.pathname)
-  } catch {
-    return false
-  }
-}
-
 export default function NotificationPreferencesModal({
   isOpen,
   onClose,
-  workflowWorkspacePath,
-  workflowLabel,
 }: NotificationPreferencesModalProps) {
   const [activeSection, setActiveSection] = useState<Section>('gmail')
   const [preference, setPreference] = useState<NotificationPreference>(emptyPreference)
@@ -107,16 +79,6 @@ export default function NotificationPreferencesModal({
   const [gmailSuccess, setGmailSuccess] = useState<string | null>(null)
   const [gmailTestResult, setGmailTestResult] = useState<GmailTestResponse | null>(null)
   const [gmailTestedTo, setGmailTestedTo] = useState<string | null>(null)
-
-  const [workflowManifest, setWorkflowManifest] = useState<WorkflowManifest | null>(null)
-  const [webhookEnabled, setWebhookEnabled] = useState(false)
-  const [webhookSecretName, setWebhookSecretName] = useState(WORKFLOW_SLACK_WEBHOOK_SECRET)
-  const [webhookURL, setWebhookURL] = useState('')
-  const [showWebhookURL, setShowWebhookURL] = useState(false)
-  const [webhookLoading, setWebhookLoading] = useState(false)
-  const [webhookSaving, setWebhookSaving] = useState(false)
-  const [webhookError, setWebhookError] = useState<string | null>(null)
-  const [webhookSuccess, setWebhookSuccess] = useState<string | null>(null)
 
   const loadRouting = useCallback(async () => {
     try {
@@ -153,41 +115,14 @@ export default function NotificationPreferencesModal({
     }
   }, [])
 
-  const loadWorkflowWebhook = useCallback(async () => {
-    if (!workflowWorkspacePath) {
-      setWorkflowManifest(null)
-      setWebhookEnabled(false)
-      setWebhookURL('')
-      setWebhookSecretName(WORKFLOW_SLACK_WEBHOOK_SECRET)
-      return
-    }
-    try {
-      setWebhookLoading(true)
-      setWebhookError(null)
-      const response = await workflowManifestApi.getWorkflowManifest(workflowWorkspacePath)
-      const manifest = response.manifest
-      const configuredName = manifest.capabilities.notifications?.slack_webhook_secret_name?.trim() || ''
-      setWorkflowManifest(manifest)
-      setWebhookEnabled(configuredName !== '')
-      setWebhookSecretName(configuredName || WORKFLOW_SLACK_WEBHOOK_SECRET)
-      setWebhookURL('')
-    } catch (error) {
-      setWebhookError(error instanceof Error ? error.message : 'Failed to load workflow notification settings')
-    } finally {
-      setWebhookLoading(false)
-    }
-  }, [workflowWorkspacePath])
-
   useEffect(() => {
     if (!isOpen) return
-    setActiveSection(workflowWorkspacePath ? 'slack-webhook' : 'gmail')
+    setActiveSection('gmail')
     setRoutingSuccess(null)
     setGmailSuccess(null)
-    setWebhookSuccess(null)
     void loadRouting()
     void loadGmail()
-    void loadWorkflowWebhook()
-  }, [isOpen, workflowWorkspacePath, loadRouting, loadGmail, loadWorkflowWebhook])
+  }, [isOpen, loadRouting, loadGmail])
 
   const saveRouting = async () => {
     try {
@@ -256,53 +191,6 @@ export default function NotificationPreferencesModal({
     }
   }
 
-  const saveWorkflowWebhook = async () => {
-    if (!workflowWorkspacePath || !workflowManifest) return
-    try {
-      setWebhookSaving(true)
-      setWebhookError(null)
-      setWebhookSuccess(null)
-
-      const secretName = webhookSecretName.trim() || WORKFLOW_SLACK_WEBHOOK_SECRET
-      const enteredURL = webhookURL.trim()
-      const wasConfigured = !!workflowManifest.capabilities.notifications?.slack_webhook_secret_name
-      if (webhookEnabled && !enteredURL && !wasConfigured) {
-        throw new Error('Paste the complete Slack Incoming Webhook URL.')
-      }
-      if (enteredURL && !isSlackWebhookURL(enteredURL)) {
-        throw new Error('Use a complete official Slack Incoming Webhook URL: https://hooks.slack.com/services/...')
-      }
-      if (webhookEnabled && enteredURL) {
-        const { encrypted } = await secretsApi.encrypt(enteredURL)
-        await secretsApi.storeWorkflowSecret(workflowWorkspacePath, secretName, encrypted)
-      }
-
-      const selectedSecrets = webhookEnabled
-        ? Array.from(new Set([...(workflowManifest.capabilities.selected_secrets || []), secretName]))
-        : workflowManifest.capabilities.selected_secrets || []
-      const nextCapabilities = {
-        ...workflowManifest.capabilities,
-        selected_secrets: selectedSecrets,
-        notifications: webhookEnabled
-          ? { ...(workflowManifest.capabilities.notifications || {}), slack_webhook_secret_name: secretName }
-          : {},
-      }
-      await workflowManifestApi.updateWorkflowManifest({
-        workspace_path: workflowWorkspacePath,
-        capabilities: nextCapabilities,
-      })
-      setWebhookURL('')
-      setWebhookSuccess(webhookEnabled
-        ? 'Slack webhook saved. notify_user will send to it on the next workflow run.'
-        : 'Workflow Slack webhook notifications disabled. The encrypted secret was retained.')
-      await loadWorkflowWebhook()
-    } catch (error) {
-      setWebhookError(error instanceof Error ? error.message : 'Failed to save Slack webhook')
-    } finally {
-      setWebhookSaving(false)
-    }
-  }
-
   if (!isOpen) return null
 
   return (
@@ -325,13 +213,6 @@ export default function NotificationPreferencesModal({
                 One-way delivery
               </div>
               <div className="flex-1 space-y-1 overflow-y-auto py-1">
-                {workflowWorkspacePath && (
-                  <button onClick={() => setActiveSection('slack-webhook')} className={`flex w-full items-center gap-2.5 px-3 py-2 text-sm transition-colors ${activeSection === 'slack-webhook' ? 'bg-accent font-medium text-accent-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
-                    <Webhook className="h-4 w-4" />
-                    <span className="min-w-0 flex-1 truncate text-left">Slack Webhook</span>
-                    {webhookEnabled && <span className="h-1.5 w-1.5 rounded-full bg-green-500" />}
-                  </button>
-                )}
                 <button onClick={() => setActiveSection('gmail')} className={`flex w-full items-center gap-2.5 px-3 py-2 text-sm transition-colors ${activeSection === 'gmail' ? 'bg-accent font-medium text-accent-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
                   <Mail className="h-4 w-4" />
                   <span className="flex-1 text-left">Gmail</span>
@@ -345,66 +226,6 @@ export default function NotificationPreferencesModal({
             </div>
 
             <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-              {activeSection === 'slack-webhook' && (
-                <>
-                  <div className="flex-1 space-y-4 overflow-y-auto p-4">
-                    {webhookLoading ? (
-                      <div className="flex justify-center py-12"><Loader2 className="h-7 w-7 animate-spin text-primary" /></div>
-                    ) : (
-                      <>
-                        <div>
-                          <h3 className="text-sm font-semibold text-foreground">Slack Incoming Webhook</h3>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            One-way delivery for <strong>{workflowLabel || workflowWorkspacePath}</strong>. Every notify_user call from this workflow sends here automatically. It is never used for OTPs, approvals, or human_feedback because a webhook cannot return an answer.
-                          </p>
-                        </div>
-                        {webhookError && <Card className="border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-300"><AlertCircle className="mr-2 inline h-4 w-4" />{webhookError}</Card>}
-                        {webhookSuccess && <Card className="border-green-300 bg-green-50 p-3 text-sm text-green-700 dark:border-green-700 dark:bg-green-900/20 dark:text-green-300"><CheckCircle className="mr-2 inline h-4 w-4" />{webhookSuccess}</Card>}
-                        <Card className="p-4">
-                          <div className="flex items-center justify-between gap-3">
-                            <div>
-                              <h4 className="text-sm font-medium">Enable for this workflow</h4>
-                              <p className="mt-0.5 text-xs text-muted-foreground">Independent of the interactive Slack bot and its Socket Mode session.</p>
-                            </div>
-                            <label className="relative inline-flex cursor-pointer items-center">
-                              <input type="checkbox" checked={webhookEnabled} onChange={event => setWebhookEnabled(event.target.checked)} className="peer sr-only" />
-                              <div className="h-6 w-11 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-blue-600 peer-checked:after:translate-x-full peer-checked:after:border-white dark:bg-gray-700" />
-                            </label>
-                          </div>
-                        </Card>
-                        {webhookEnabled && (
-                          <Card className="space-y-3 p-4">
-                            <div>
-                              <label className="mb-2 block text-sm font-medium">Incoming Webhook URL</label>
-                              <div className="relative">
-                                <input
-                                  type={showWebhookURL ? 'text' : 'password'}
-                                  value={webhookURL}
-                                  onChange={event => setWebhookURL(event.target.value)}
-                                  placeholder={workflowManifest?.capabilities.notifications?.slack_webhook_secret_name ? 'Configured — paste only to replace' : 'https://hooks.slack.com/services/...'}
-                                  className="w-full rounded-md border border-border bg-background px-3 py-2 pr-10 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                                />
-                                <button type="button" onClick={() => setShowWebhookURL(value => !value)} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" aria-label={showWebhookURL ? 'Hide webhook URL' : 'Show webhook URL'}>
-                                  {showWebhookURL ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                                </button>
-                              </div>
-                              <p className="mt-1 text-xs text-muted-foreground">Stored encrypted as <code>{webhookSecretName}</code>. The URL is never written to workflow.json, prompts, or logs.</p>
-                            </div>
-                            <Card className="border-blue-300 bg-blue-50 p-3 text-xs text-blue-800 dark:border-blue-700 dark:bg-blue-900/20 dark:text-blue-200">
-                              In Slack: App settings → Incoming Webhooks → Activate → Add New Webhook to Workspace → choose the destination channel → copy the full URL.
-                            </Card>
-                          </Card>
-                        )}
-                      </>
-                    )}
-                  </div>
-                  <div className="flex flex-shrink-0 justify-end gap-2 border-t border-border px-4 py-3">
-                    <Button variant="ghost" onClick={onClose}>Cancel</Button>
-                    <Button onClick={saveWorkflowWebhook} disabled={webhookLoading || webhookSaving || !workflowManifest}>{webhookSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</> : 'Save'}</Button>
-                  </div>
-                </>
-              )}
-
               {activeSection === 'gmail' && (
                 <>
                   <div className="flex-1 space-y-4 overflow-y-auto p-4">

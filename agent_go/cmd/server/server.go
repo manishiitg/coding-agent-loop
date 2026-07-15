@@ -1892,6 +1892,7 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	apiRouter.HandleFunc("/workflow/backup", api.handleGetWorkflowBackup).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/publish", api.handleGetWorkflowPublish).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/notifications", api.handleGetWorkflowNotifications).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/publish/secret", requireWorkflowWriteAccess(api.handleGetWorkflowPublishSecret)).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/org/backup", api.handleGetOrgBackup).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/org/publish", api.handleGetOrgPublish).Methods("GET", "OPTIONS")

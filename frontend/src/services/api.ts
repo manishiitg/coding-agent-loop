@@ -78,6 +78,7 @@ import type {
   StartRestoredTerminalResponse,
   WorkflowCapabilities,
   WorkflowBackupInfoResponse,
+  WorkflowNotificationInfoResponse,
   WorkflowPublishSecretResponse,
   ReportHumanInputResponse,
   ReportHumanInputsResponse,
@@ -2086,6 +2087,11 @@ export const agentApi = {
 
   getWorkflowPublish: async (workspacePath: string): Promise<import('./api-types').WorkflowPublishInfoResponse> => {
     const response = await api.get('/api/workflow/publish', { params: { workspace_path: workspacePath } })
+    return response.data
+  },
+
+  getWorkflowNotifications: async (workspacePath: string): Promise<WorkflowNotificationInfoResponse> => {
+    const response = await api.get('/api/workflow/notifications', { params: { workspace_path: workspacePath } })
     return response.data
   },
 

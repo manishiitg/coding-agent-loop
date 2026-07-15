@@ -1,6 +1,6 @@
 import React, { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Workflow, Users, Settings, Copy, Keyboard, Bot, Building2, HelpCircle, BellRing } from 'lucide-react'
+import { Workflow, Users, Settings, Copy, Keyboard, Bot, Building2, HelpCircle } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { useGlobalPresetStore, usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
@@ -8,7 +8,6 @@ import type { PlannerFile, PresetLLMConfig, ScheduledJob, WorkflowManifest } fro
 import PresetModal from './PresetModal'
 import WorkflowScheduleRunsPanel from './scheduler/WorkflowScheduleRunsPanel'
 import BotConnectorModal from './settings/BotConnectorModal'
-import NotificationPreferencesModal from './settings/NotificationPreferencesModal'
 import { schedulerApi } from '../api/scheduler'
 import { agentApi, workflowManifestApi } from '../services/api'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from './ui/tooltip'
@@ -188,8 +187,6 @@ export const ModePresetBar: React.FC = () => {
   const [workflowScheduleSummary, setWorkflowScheduleSummary] = useState<WorkflowScheduleSummary>(EMPTY_WORKFLOW_SCHEDULE_SUMMARY)
   const [showBotConnector, setShowBotConnector] = useState(false)
   const [restoreWorkspaceAfterBotConnector, setRestoreWorkspaceAfterBotConnector] = useState(false)
-  const [showNotifications, setShowNotifications] = useState(false)
-  const [restoreWorkspaceAfterNotifications, setRestoreWorkspaceAfterNotifications] = useState(false)
   const [showWorkflowsPopup, setShowWorkflowsPopup] = useState(false)
   const [showWorkflowWalkthrough, setShowWorkflowWalkthrough] = useState(false)
   const [workflowWalkthroughOpenToken, setWorkflowWalkthroughOpenToken] = useState(0)
@@ -331,19 +328,6 @@ export const ModePresetBar: React.FC = () => {
     if (restoreWorkspaceAfterBotConnector) setWorkspaceMinimized(false)
     setRestoreWorkspaceAfterBotConnector(false)
   }, [restoreWorkspaceAfterBotConnector, setWorkspaceMinimized])
-
-  const openNotifications = useCallback(() => {
-    const shouldRestore = !workspaceMinimized
-    setRestoreWorkspaceAfterNotifications(shouldRestore)
-    if (shouldRestore) setWorkspaceMinimized(true)
-    setShowNotifications(true)
-  }, [workspaceMinimized, setWorkspaceMinimized])
-
-  const closeNotifications = useCallback(() => {
-    setShowNotifications(false)
-    if (restoreWorkspaceAfterNotifications) setWorkspaceMinimized(false)
-    setRestoreWorkspaceAfterNotifications(false)
-  }, [restoreWorkspaceAfterNotifications, setWorkspaceMinimized])
 
   const handleEditWorkflowPreset = useCallback(async (preset: CustomPreset) => {
     const workspacePath = preset.selectedFolder?.filepath
@@ -872,23 +856,6 @@ export const ModePresetBar: React.FC = () => {
                 </Tooltip>
               )}
 
-              {shouldShowBotConnector && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      onClick={openNotifications}
-                      data-testid="notification-settings-button"
-                      aria-label="Notifications"
-                      title="Notifications"
-                      className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-                    >
-                      <BellRing className="w-4 h-4" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">Notifications</TooltipContent>
-                </Tooltip>
-              )}
-
               {shouldShowScheduleHeader && (
                 <>
                   <Tooltip>
@@ -1049,15 +1016,6 @@ export const ModePresetBar: React.FC = () => {
         <BotConnectorModal
           isOpen={showBotConnector}
           onClose={closeBotConnector}
-        />
-      )}
-
-      {showNotifications && (
-        <NotificationPreferencesModal
-          isOpen={showNotifications}
-          onClose={closeNotifications}
-          workflowWorkspacePath={selectedModeCategory === 'workflow' ? activePreset?.selectedFolder?.filepath : undefined}
-          workflowLabel={selectedModeCategory === 'workflow' ? activePreset?.label : undefined}
         />
       )}
 

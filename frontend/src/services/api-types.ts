@@ -2292,6 +2292,34 @@ export interface WorkflowPublishSecretResponse {
   value: string
 }
 
+export type WorkflowNotificationState = 'not_configured' | 'missing_secret' | 'invalid_secret' | 'ready'
+
+export interface WorkflowNotificationDestinationInfo {
+  id: string
+  type: string
+  label: string
+  state: WorkflowNotificationState
+  secret_name?: string
+  summary?: string
+}
+
+export interface WorkflowNotificationAccountChannelInfo {
+  id: string
+  label: string
+  state: 'ready' | 'not_ready' | string
+  default_recipient?: string
+  summary?: string
+}
+
+export interface WorkflowNotificationInfoResponse {
+  success: boolean
+  agentic: boolean
+  workflow_label: string
+  effective_state: WorkflowNotificationState
+  destinations: WorkflowNotificationDestinationInfo[]
+  account_channels: WorkflowNotificationAccountChannelInfo[]
+}
+
 // Scheduled Jobs
 export interface ScheduledJob {
   id: string

@@ -128,8 +128,6 @@ workspace/workspace
 agent_go/whatsapp-session.db
 whatsapp-session.db
 
-# Playwright MCP artifacts (custom filenames can bypass --output-dir and land at repo/agent_go root; see docs/playwright_artifacts.md)
-.playwright-mcp/
 agent_go/page-*.png
 agent_go/snapshot*.html
 agent_go/screenshot*.png
@@ -151,4 +149,3 @@ terraform.rc
 gws-credentials.json
 agent_go/migrate-mode-names
 diff.txt
-

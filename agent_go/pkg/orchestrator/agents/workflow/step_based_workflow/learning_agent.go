@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/observability"
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -39,9 +39,9 @@ Every piece of knowledge you capture should contribute toward this objective. As
 4. **Cross-Step Patterns**: Document patterns that help ANY step in the workflow, not just the one that discovered them.
 
 {{if .HasBrowserAccess}}## BROWSER-AUTOMATION STEPS — REQUIRED LEARNINGS SHAPE
-This workflow has a browser MCP configured (playwright / agent_browser). For steps that used a browser tool, the skill MUST include — typically as `+"`"+`references/site-profile.md`+"`"+` and `+"`"+`references/selectors.md`+"`"+`:
+This workflow has agent_browser configured. For steps that used a browser tool, the skill MUST include — typically as `+"`"+`references/site-profile.md`+"`"+` and `+"`"+`references/selectors.md`+"`"+`:
 
-1. **Site access preconditions**: Anything required BEFORE navigation works. Examples: "site blocks Playwright-launched browsers — use CDP attach", "Cloudflare interstitial on apex domain, use subdomain X", "native alert() must be dismissed via dialog handler". Capture the failure signature ("Permission Denied" text, blank page, frozen browser) so future steps can detect-and-switch automatically.
+1. **Site access preconditions**: Anything required BEFORE navigation works. Examples: "site blocks headless browsers — use CDP attach", "Cloudflare interstitial on apex domain, use subdomain X", "native alert() must be dismissed via dialog handler". Capture the failure signature ("Permission Denied" text, blank page, frozen browser) so future steps can detect-and-switch automatically.
 
 2. **Stable-hook inventory (once per site)**: One-time profile of what durable attributes exist site-wide. Example shape:
    `+"```"+`

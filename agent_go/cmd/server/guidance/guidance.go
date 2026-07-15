@@ -59,6 +59,9 @@ type kindMeta struct {
 // not allowed in the caller's mode and tells the agent to suggest a mode
 // switch.
 var allKinds = map[string]kindMeta{
+	// One-time compatibility migrations — mutate only the active workflow.
+	"migrate-browser": {Group: "builder", Description: "One-time migration of active legacy Playwright browser wiring to managed agent-browser", Modes: []string{"workshop"}},
+
 	// Design audits (only meaningful before run evidence accumulates)
 	"design-plan": {Group: "builder", Description: "Review whether the plan follows design best practices (step types, stores, validation, flow)", Modes: []string{"workshop"}},
 
@@ -149,7 +152,7 @@ var referenceKinds = map[string]kindMeta{
 	// adding them as skills lets the agent load deep details on-demand and
 	// sets up the eventual prompt-trim.
 	"html-output":           {Group: "system", Description: "High-quality self-contained HTML report guide: when to use HTML vs JSON vs Markdown, layout baseline with dark-mode styles, summary box, sticky nav, inline bar chart (no CDN), badge classes for pass/fail/warn, quality checklist. Load before writing any .html output file.", Modes: []string{"multi-agent", "workshop", "run"}},
-	"browser-usage":         {Group: "system", Description: "Browser automation deep guide: agent_browser HTTP API, CDP vs headless vs Playwright modes, snapshot/click/fill workflow, tab management, file uploads, session limits, common mistakes. Load when driving a browser, scraping pages, automating logins, or uploading files via a web form.", Modes: []string{"multi-agent", "workshop", "run"}},
+	"browser-usage":         {Group: "system", Description: "Browser automation deep guide: agent_browser HTTP API, CDP vs headless modes, macOS CDP installation and additional port/profile setup, snapshot/click/fill workflow, tab management, file uploads, session limits, common mistakes. Load when installing or driving a CDP browser, scraping pages, automating logins, or uploading files via a web form.", Modes: []string{"multi-agent", "workshop", "run"}},
 	"mcp-bridge":            {Group: "system", Description: "MCP HTTP bridge mechanics: $MCP_API_URL / $MCP_API_TOKEN env vars, curl pattern for calling MCP tools, response envelope, $VAR_* / $SECRET_* variable rules, single-call discipline. Load before writing scripts that call MCP tools via the bridge, or when debugging bridge errors.", Modes: []string{"multi-agent", "workshop", "run"}},
 	"workflow-tools":        {Group: "system", Description: "Full reference for workshop / workflow tools: step execution & inspection (execute_step, query_step, debug_step, run_full_workflow), step config and read-only review tools, plan modification (add/update/delete step tools, todo_task routes, versioning), Goal Advisor proposal workflow, variables & MCP server config, schedule management, shell, skills, and secrets. Load when you need a tool's exact signature, parameters, or when-to-use rules and the inline cheat sheet doesn't suffice.", Modes: []string{"workshop"}},
 	"workspace-media-tools": {Group: "system", Description: "Workspace-level provider-backed tools: text generation (generate_text_llm, search_web_llm), image generation + editing (image_gen, image_edit), video generation (generate_video — Vertex AI vs Gemini API model routing), audio + music (text_to_speech, speech_to_text, generate_music), image reading (read_image), capability discovery (list_llm_capabilities, estimate_llm_cost, set_provider_auth). Full path / provider / model_id contracts, default providers per capability, provider-setup discipline. Load before generating media, reading non-text files, or wiring provider auth.", Modes: []string{"multi-agent", "workshop", "run"}},

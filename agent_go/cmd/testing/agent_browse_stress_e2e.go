@@ -233,12 +233,12 @@ func runAgentBrowseStressWorker(ctx context.Context, client *codingAgentChatE2EC
 	readStep, expectedCommand := agentBrowseStressReadStep(tc)
 	query := fmt.Sprintf(`This is Builder agent_browser shared-CDP stress worker %02d.
 
-Use only the Builder agent_browser MCP tool directly. Do not call execute_shell_command. Do not run curl. Do not use raw CDP or Playwright directly.
+Use only the Builder agent_browser MCP tool directly. Do not call execute_shell_command. Do not run curl. Do not use raw CDP directly.
 
 Scenario: %s
 
 Task:
-1. Create a new CDP tab with label %q by calling command "tab" with args exactly ["new", "--label", "%s", "%s"]. Do not reorder these args.
+1. Create a new CDP tab with label %q by calling command "tab". Begin args with the exact configured ["--cdp", "<endpoint>"] prefix from the system prompt, followed by ["new", "--label", "%s", "%s"]. Do not reorder these args.
 2. %s
 3. Find the exact visible marker text %q.
 

@@ -2,6 +2,7 @@ package instructions
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
@@ -18,36 +19,32 @@ func cdpHost() string {
 
 // BrowserConfig holds the resolved browser state for prompt generation.
 type BrowserConfig struct {
-	HasPlaywright   bool
 	HasAgentBrowser bool
-	CdpPort         int    // >0 means CDP mode, 0 means headless (legacy, use Mode when set)
-	Mode            string // "cdp", "headless", "playwright", "" (empty = fallback to CdpPort)
-	IsIsolated      bool   // true when running in a share_browser=false sub-agent
+	CdpPort         int   // Primary port (legacy compatibility).
+	CdpPorts        []int // Authorized independent Chrome profiles for this run.
+	Mode            string
+	IsIsolated      bool // true when running in a share_browser=false sub-agent
 }
 
 // BuildBrowserInstructions returns the complete browser system prompt
 // (upload + mode-specific) for the given config, or "" if no browser tool is active.
 func BuildBrowserInstructions(cfg BrowserConfig) string {
-	if !cfg.HasPlaywright && !cfg.HasAgentBrowser {
+	if !cfg.HasAgentBrowser {
 		return ""
 	}
 
 	result := ""
 
 	// Use Mode as primary decision, fall back to legacy CdpPort/Has* flags
-	isCdp := cfg.Mode == "cdp" || (cfg.Mode == "" && cfg.CdpPort > 0)
-	isPlaywright := cfg.Mode == "playwright" || (cfg.Mode == "" && cfg.HasPlaywright)
-
-	if isPlaywright {
-		result += "\n" + GetPlaywrightModeInstructions()
-	} else if isCdp {
-		result += "\n" + GetCdpBrowserInstructions()
+	isCdp := cfg.Mode == "cdp" || (cfg.Mode == "" && (cfg.CdpPort > 0 || len(cfg.CdpPorts) > 0))
+	if isCdp {
+		result += "\n" + GetCdpBrowserInstructions(cfg.CdpPort, cfg.CdpPorts...)
 	} else {
 		result += "\n" + GetHeadlessBrowserInstructions()
 	}
 
 	// Add session limits — applies to all browser types
-	closeRule := "- Always **close the browser** when done (agent_browser command=\"close\" or browser_close) to free the session slot."
+	closeRule := "- Always **close the browser** when done (agent_browser command=\"close\") to free the session slot."
 	if isCdp {
 		// CDP connects to user's real browser — closing would kill their tab
 		closeRule = "- **Do NOT close the browser** when done — it is the user's real browser. Only close if the user explicitly asks."
@@ -75,11 +72,8 @@ func BuildBrowserInstructions(cfg BrowserConfig) string {
 }
 
 // GetBrowserUploadInstructions returns system prompt instructions for browser file upload.
-// Appended to the agent's system prompt when browser access or Playwright is active.
-// Tells the LLM to use workspace-relative paths (e.g. "Downloads/file.pdf") — these are
-// automatically resolved to absolute host paths by the toolArgTransformer before reaching
-// the Playwright MCP server. For agent_browser (headless/CDP), relative paths work natively
-// since the CLI runs inside the Docker container with workspace as its working directory.
+// Appended to the agent's system prompt when browser access is active.
+// agent_browser resolves workspace-relative paths from the configured working directory.
 func GetBrowserUploadInstructions() string {
 	return `
 
@@ -87,13 +81,9 @@ func GetBrowserUploadInstructions() string {
 
 When a website has a file upload input (e.g. file picker, drag-and-drop zone), use these tools to upload workspace files:
 
-### Using agent_browser (Headless/CDP mode)
+### Using agent_browser
 1. In CDP mode, list/select a tab and include it inline on each page action: agent_browser(command="snapshot", args=["tab", "t1", "-i"])
 2. Upload using the ref. In CDP mode include the tab inline: agent_browser(command="upload", args=["tab", "t1", "@ref", "Downloads/report.pdf"])
-
-### Using browser_file_upload (Playwright mode)
-1. First use browser_snapshot to find the file input element
-2. Upload: browser_file_upload(paths=["Downloads/report.pdf"], selector="input[type=file]")
 
 ### Path Rules
 - Always use **workspace-relative paths** (e.g. "Downloads/report.pdf", "Chats/output.csv")
@@ -151,31 +141,6 @@ You are controlling a **headless Chromium browser** running inside a container.
 `
 }
 
-// GetPlaywrightModeInstructions returns instructions specific to Playwright MCP mode.
-func GetPlaywrightModeInstructions() string {
-	return `
-## Browser Mode: Playwright (MCP Server)
-
-You are using the Playwright MCP tools (browser_* functions), not agent_browser.
-
-**Key behaviors:**
-- Use browser_snapshot to inspect the current page and discover element refs/selectors.
-- Prefer browser_click/browser_type/browser_press for interactions.
-- Use browser_screenshot when visual proof is needed.
-- Keep interactions deterministic: snapshot -> act -> snapshot.
-
-**File uploads:**
-- Use browser_file_upload with workspace-relative paths (e.g. "Downloads/file.pdf").
-- Do not construct absolute filesystem paths manually.
-
-**Best practices:**
-- Re-check page state after every navigation or major interaction.
-- If an element is missing, refresh snapshot before retrying.
-
-**Important:** Do NOT use agent_browser tool or the agent-browser CLI via shell. Only use the Playwright browser_* tools listed above.
-`
-}
-
 // GetAgentBrowserQuickStartInstructions returns inline instructions for using the agent-browser tool.
 // Appended to the agent's system prompt when browser access (agent-browser skill) is enabled.
 func GetAgentBrowserQuickStartInstructions() string {
@@ -185,26 +150,46 @@ Call agent_browser via HTTP API:
 
 ` + "```python\nimport requests, os\nBROWSER = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nHEADERS = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\n\ndef browser(command, args=None, session=\"default\"):\n    resp = requests.post(BROWSER, json={\"command\": command, \"args\": args or [], \"session\": session}, headers=HEADERS, timeout=120)\n    resp.raise_for_status()\n    return resp.json().get(\"result\", \"\")\n\n# Basic workflow\nbrowser(\"open\", [\"https://example.com\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # see interactive elements with refs like @e1\nbrowser(\"click\", [\"@e1\"])\nbrowser(\"fill\", [\"@e2\", \"search query\"])\nbrowser(\"press\", [\"Enter\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # re-snapshot after each interaction\nbrowser(\"screenshot\", [\"page.png\"])\n\n# If the browser daemon is genuinely broken, reset and retry:\nbrowser(\"reset\")                      # force-kills daemon, clears session state\nbrowser(\"open\", [\"https://example.com\"])  # fresh start\n```" + `
 
-Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload, reset.
+Key commands: skills (version-matched docs), open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload, reset.
 
-For version-matched usage docs, run: execute_shell_command(command="agent-browser skills get core")`)
+Before the first browser action, load the version-matched core skill with agent_browser(command="skills", args=["get", "core"], session="default"). Use args=["list"] to discover specialized skills and load only those relevant to the task.`)
 }
 
 // GetCdpBrowserInstructions returns a single merged section for CDP mode (agent_browser + CDP behaviors).
-func GetCdpBrowserInstructions() string {
-	host := cdpHost()
-	cdpURL := fmt.Sprintf("http://%s:9222", host)
+func GetCdpBrowserInstructions(cdpPort int, additionalPorts ...int) string {
+	ports := append([]int{cdpPort}, additionalPorts...)
+	seen := make(map[int]bool, len(ports))
+	endpoints := make([]string, 0, len(ports))
+	for _, port := range ports {
+		if port <= 0 || seen[port] {
+			continue
+		}
+		seen[port] = true
+		endpoints = append(endpoints, browser.ConfiguredCDPEndpoint(port))
+	}
+	if len(endpoints) == 0 {
+		endpoints = []string{browser.ConfiguredCDPEndpoint(9222)}
+	}
+	cdpURL := endpoints[0]
+	profileGuidance := "This run authorizes one CDP browser: `" + cdpURL + "`."
+	if len(endpoints) > 1 {
+		profileGuidance = "This run explicitly authorizes multiple independently-profiled CDP browsers: `" + strings.Join(endpoints, "`, `") + "`. Choose the endpoint for the intended login/account on every call. Keep a distinct labeled tab per account. Multiple ports are for multi-login testing inside this workflow, not for ordinary workflow concurrency."
+	}
 	return fmt.Sprintf(`## Browser Automation (CDP — Connected to User's Chrome)
 
 You have the `+"`agent_browser`"+` tool controlling the **user's real Chrome browser** via Chrome DevTools Protocol.
 
 Call agent_browser via HTTP API. Always include `+"`--cdp %[1]s`"+` in args.
 
+%[2]s
+
 In shared CDP mode, choose an explicit tab before browsing, then keep using that tab. `+"`browser(\"tab\", [])`"+` tries to refresh the real tab list for up to 15 seconds; if Chrome/CDP is stuck, it falls back to the currently selected tab hint for this workflow. If no tab is selected yet, create one stable labeled workflow tab. Important: `+"`open`"+` is URL-only; do not pass `+"`[\"tab\", \"t1\", url]`"+` to `+"`open`"+`. Use the `+"`tab`"+` command to choose/create the tab first, then call `+"`open`"+` with only the URL:
 
 `+"```python\nimport requests, os\nBROWSER = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nHEADERS = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\n\ndef browser(command, args=None, session=\"default\"):\n    resp = requests.post(BROWSER, json={\"command\": command, \"args\": [\"--cdp\", \"%[1]s\"] + (args or []), \"session\": session}, headers=HEADERS, timeout=120)\n    resp.raise_for_status()\n    return resp.json().get(\"result\", \"\")\n\n# Try the real tab list. If it times out, use the selected-tab fallback.\nselected = browser(\"tab\", [])\nprint(selected)\n# browser(\"tab\", [\"existing-tab-or-label\"])  # only if you already know it\n# browser(\"tab\", [\"new\", \"--label\", \"my-workflow-tab\", \"https://example.com\"])\nbrowser(\"open\", [\"https://example.com\"])\n\n# Use the chosen tab inline on page actions after open. The tab token is removed before the action runs.\nsnap = browser(\"snapshot\", [\"tab\", \"t1\", \"-i\"])\nbrowser(\"click\", [\"tab\", \"t1\", \"@e1\"])\nbrowser(\"fill\", [\"tab\", \"t1\", \"@e2\", \"text\"])\nbrowser(\"wait\", [\"tab\", \"t1\", \"6000\"])\nbrowser(\"wait\", [\"tab\", \"t1\", \"--load\", \"networkidle\"])\nsnap = browser(\"snapshot\", [\"tab\", \"my-workflow-tab\", \"-i\"])  # re-snapshot after each interaction\n```"+`
 
-Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload, reset.
+Key commands: skills (version-matched docs), open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, eval, network, console, errors, record, trace, profiler, back, forward, reload, close, reset.
+
+Before the first browser action, load the core skill with `+"`browser(\"skills\", [\"get\", \"core\"])`"+`. Documentation calls do not require a selected tab but still carry the configured `+"`--cdp`"+` prefix. Use `+"`browser(\"skills\", [\"list\"])`"+` to discover specialized skills and load only those relevant to the task (for example `+"`dogfood`"+` for exploratory QA).
 
 ### CDP-Specific Behaviors
 - The user can **see everything you do** in their browser — actions are visible in real-time
@@ -221,16 +206,16 @@ Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, s
 - Sessions **persist across tool calls** — you don't need to re-open pages between interactions
 - If a site requires login and the user is already logged in, navigate directly to the target page
 - Native Chrome downloads may land in the host Downloads folder. If the prompt grants a read-only host Downloads path, copy the needed file into the workspace/run Downloads folder before reading or parsing it. Never write, move, or delete files in host Downloads.
-- Python/browser code must call this HTTP `+"`agent_browser`"+` tool. Do not connect directly to CDP or use Playwright `+"`connect_over_cdp`"+` for actions unless the task explicitly requires raw CDP and you target a specific tab.
+- Python/browser code must call this HTTP `+"`agent_browser`"+` tool. Do not connect directly to raw CDP for actions.
 
-### Advanced: Direct CDP WebSocket Access
-Prefer `+"`agent_browser eval`"+` with an inline tab for complex JavaScript. It uses the shared CDP command lock and prevents another workflow from changing the active tab mid-action.
+### QA, Network Debugging, and Video Evidence
+- Keep diagnostics inside `+"`agent_browser`"+` so tab selection and the shared-CDP lock remain enforced.
+- Inspect requests with `+"`browser(\"network\", [\"tab\", \"<label>\", \"requests\"])`"+`. HAR files can contain credentials and response bodies; create/share one only when requested and review it before sharing.
+- Read page console output with `+"`browser(\"console\", [\"tab\", \"<label>\"])`"+` and page errors with `+"`browser(\"errors\", [\"tab\", \"<label>\"])`"+`.
+- For automatic QA video evidence, start `+"`browser(\"record\", [\"tab\", \"<label>\", \"start\", \"qa-run.webm\"])`"+` before the reproduction and always call `+"`browser(\"record\", [\"tab\", \"<label>\", \"stop\"])`"+` afterward, including when a step fails. Videos may capture sensitive visible data; do not record unless the user/workflow requested it.
+- Prefer `+"`agent_browser eval`"+` with an inline tab for complex JavaScript. Raw direct-CDP connections bypass the shared-tab lock and are not allowed for normal browser work.
 
-Use direct CDP WebSocket access only for read-only diagnostics that cannot be done through `+"`agent_browser`"+`:
-`+"```python\nimport json, websocket\n\n# 1. List open tabs and reuse a matching tab if possible\nimport requests\ntabs = requests.get('%[1]s/json/list', headers={'Host': 'localhost'}).json()\nfor t in tabs:\n    print(f\"{t['id']}: {t['title']} - {t['url']}\")\n\n# 2. Connect to a specific tab (use suppress_origin=True)\ntarget_id = next((t['id'] for t in tabs if 'x.com' in t.get('url', '')), tabs[0]['id'])\nws = websocket.create_connection(\n    f'ws://%[2]s:9222/devtools/page/{target_id}',\n    header=['Host: localhost'], suppress_origin=True\n)\n\n# 3. Run JS on the page\nws.send(json.dumps({'id': 1, 'method': 'Runtime.evaluate', 'params': {'expression': 'document.title', 'returnByValue': True}}))\nresult = json.loads(ws.recv())\nprint(result['result']['result']['value'])\nws.close()\n```"+`
-**Rules for direct CDP:** Always use `+"`Host: localhost`"+` header and `+"`suppress_origin=True`"+` for WebSocket. Reuse existing targets from `+"`/json/list`"+`. Direct CDP bypasses the `+"`agent_browser`"+` tab lock, so do not use it for navigation, clicking, filling, scrolling, uploads, or multi-page loops. Do not call `+"`window.location`"+`, `+"`element.click()`"+`, `+"`Target.createTarget`"+`, `+"`/json/new`"+`, `+"`Target.closeTarget`"+`, or `+"`/json/close`"+` unless the task explicitly requires disposable raw-CDP control and the user accepts that it bypasses shared-browser locking.
-
-For version-matched usage docs, run: execute_shell_command(command="agent-browser skills get core")`, cdpURL, host)
+For an exact command or flag not covered by the core overview, load `+"`browser(\"skills\", [\"get\", \"core\", \"--full\"])`"+`.`, cdpURL, profileGuidance)
 }
 
 // GetHeadlessBrowserInstructions returns a single merged section for headless mode (agent_browser + headless behaviors).
@@ -243,7 +228,9 @@ Call agent_browser via HTTP API:
 
 ` + "```python\nimport requests, os\nBROWSER = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nHEADERS = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\n\ndef browser(command, args=None, session=\"default\"):\n    resp = requests.post(BROWSER, json={\"command\": command, \"args\": args or [], \"session\": session}, headers=HEADERS, timeout=120)\n    resp.raise_for_status()\n    return resp.json().get(\"result\", \"\")\n\nbrowser(\"open\", [\"https://example.com\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # see interactive elements with refs like @e1\nbrowser(\"click\", [\"@e1\"])\nbrowser(\"fill\", [\"@e2\", \"search query\"])\nbrowser(\"press\", [\"Enter\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # re-snapshot after each interaction\n\n# If the headless browser daemon is genuinely broken, reset and retry:\nbrowser(\"reset\")                      # force-kills daemon, clears headless state\nbrowser(\"open\", [\"https://example.com\"])  # fresh start\n```" + `
 
-Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload, reset.
+Key commands: skills (version-matched docs), open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload, reset.
+
+Before the first browser action, load the core skill with agent_browser(command="skills", args=["get", "core"], session="default"). Use args=["list"] to discover specialized skills and load only those relevant to the task (for example dogfood for exploratory QA).
 
 ### Headless-Specific Behaviors
 - The browser is **fresh** — no existing cookies, sessions, or tabs. You must login from scratch if needed.
@@ -252,5 +239,5 @@ Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, s
 - Browser state is **ephemeral** — it resets between sessions
 - Handle login flows explicitly (fill credentials, handle 2FA via human_feedback if needed)
 
-For version-matched usage docs, run: execute_shell_command(command="agent-browser skills get core")`)
+For an exact command or flag not covered by the core overview, load agent_browser(command="skills", args=["get", "core", "--full"], session="default").`)
 }

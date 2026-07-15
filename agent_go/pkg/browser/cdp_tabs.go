@@ -277,10 +277,11 @@ func isTabListRequest(args []string) bool {
 }
 
 func selectedCDPTabMessage(port int, ownerID string) string {
+	cdpURL := resolveCdpURL(port)
 	if tab := getCDPTabSelectionForPrompt(port, ownerID); tab != "" {
-		return fmt.Sprintf("Selected CDP tab: %s\nUse it inline on page actions, for example: args=[\"tab\", %q, \"-i\"] for snapshot.", tab, tab)
+		return fmt.Sprintf("Selected CDP tab: %s\nUse the configured CDP endpoint and tab inline on page actions, for example: args=[\"--cdp\", %q, \"tab\", %q, \"-i\"] for snapshot.", tab, cdpURL, tab)
 	}
-	return "No selected CDP tab for this workflow yet. Create a stable labeled tab instead of listing every browser tab, for example: agent_browser(command=\"tab\", args=[\"new\", \"--label\", \"<workflow-label>\", \"https://target.example\"], session=\"<session>\"). Then use that label or returned tab id inline on page actions."
+	return fmt.Sprintf("No selected CDP tab for this workflow yet. Create a stable labeled tab instead of listing every browser tab, for example: agent_browser(command=\"tab\", args=[\"--cdp\", %q, \"new\", \"--label\", \"<workflow-label>\", \"https://target.example\"], session=\"<session>\"). Then use that label or returned tab id inline on page actions.", cdpURL)
 }
 
 func fallbackCDPTabListMessage(port int, ownerID string, err error) string {

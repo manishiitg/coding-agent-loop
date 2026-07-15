@@ -23,7 +23,6 @@ These docs describe platform subsystems that cut across workflow and multi-agent
 - `folder_guard_system.md`
 - `llm_configuration_and_resilience.md`
 - `mcp_bridge_layer.md`
-- `mcp_session_id_propagation.md`
 - `multi_user_authentication.md`
 - `native_workspace_mode.md`
 - `oauth.md`

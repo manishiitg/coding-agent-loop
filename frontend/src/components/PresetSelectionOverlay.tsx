@@ -89,7 +89,7 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
     useCodeExecutionMode?: boolean,
     selectedSecrets?: string[],
     selectedGlobalSecretNames?: string[] | null,
-    browserMode?: 'none' | 'headless' | 'cdp' | 'playwright'
+    browserMode?: 'none' | 'auto' | 'headless' | 'cdp'
   ) => {
     // Set the agent mode based on the mode category
     const presetAgentMode = getAgentModeFromCategory(modeCategory as ModeCategory) as 'multi-agent' | 'workflow'

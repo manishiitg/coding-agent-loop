@@ -86,7 +86,7 @@ func expandHomePath(path string) string {
 }
 
 // CDPHostDownloadsReadPath returns the host Downloads read path only for CDP
-// mode. Headless and Playwright downloads should stay inside workspace folders.
+// mode. Headless browser downloads should stay inside workspace folders.
 func CDPHostDownloadsReadPath(browserMode string) string {
 	if strings.EqualFold(strings.TrimSpace(browserMode), "cdp") {
 		return HostDownloadsPath()
@@ -151,7 +151,7 @@ type SessionShellConfig struct {
 	WritePaths        []string // Folder guard write paths for Isolator
 	BlockedPaths      []string // Deny reads and writes
 	BlockedWritePaths []string // Deny writes; reads allowed (flows to FolderGuardConfig.BlockedWritePaths)
-	BrowserMode       string   // Resolved browser mode: "playwright", "headless", "cdp", ""
+	BrowserMode       string   // Resolved browser mode: "headless", "cdp", ""
 	BrowserSessionID  string   // Shared browser identity for browser tools when "default" session is used
 	// Env is extra environment variables exported into this session's shell
 	// (bridge execute_shell_command). Lets per-step values like DB_PATH and

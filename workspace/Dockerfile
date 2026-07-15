@@ -44,16 +44,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Install agent-browser globally for browser automation
-# PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 prevents downloading extra Chromium binaries
-# We use the system-installed chromium instead via AGENT_BROWSER_EXECUTABLE_PATH
-ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-RUN npm install -g agent-browser skills && \
-    rm -rf /root/.cache/ms-playwright /tmp/.cache/ms-playwright
+# Install agent-browser globally for browser automation. It uses the
+# system-installed Chromium through AGENT_BROWSER_EXECUTABLE_PATH.
+RUN npm install -g agent-browser@latest
 
-# Set Chromium path for agent-browser and Playwright (system chromium on Debian)
+# Set Chromium path for agent-browser (system Chromium on Debian).
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
-ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
 # Configure pip: allow installs when Python is "externally managed" (PEP 668)
 RUN pip3 install --break-system-packages pandas requests beautifulsoup4 lxml pyyaml python-dotenv Pillow openpyxl

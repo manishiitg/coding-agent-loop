@@ -41,6 +41,18 @@ function submitGuidedWorkflowCommand(
 
 export const builtinCommands: CommandDefinition[] = [
   {
+    command: 'migrate-browser',
+    description: 'One-time migration of legacy browser steps to agent-browser',
+    icon: <RefreshCw className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'workshop',
+    source: 'builtin',
+    execute: (ctx) => {
+      submitGuidedWorkflowCommand(ctx, 'migrate-browser')
+    }
+  },
+  {
     command: 'design-plan',
     description: 'Review whether the plan follows design best practices',
     icon: <GitBranch className="w-4 h-4" />,

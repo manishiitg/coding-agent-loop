@@ -106,11 +106,11 @@ For steps in scripted mode, the saved Python script at `learnings/{step-id}/main
 - Check pre-validation results: `cat runs/{iteration}/{group}/logs/{step-id}/pre_validation.json`
 - Use `debug_step(step_id)` for a comprehensive analysis including the script metadata
 
-**1b. Live diagnosis with MCP tools** — You share the same browser session and MCP tools as the step execution. You can directly call Playwright/browser tools and other MCP servers to investigate issues interactively:
-- Use `browser_snapshot` to see the current browser state (page content, DOM structure, visible elements)
-- Use `browser_navigate` to reproduce the step's navigation flow manually
-- Use `browser_run_code` to test JavaScript selectors, check element visibility, or inspect page state
-- Use `browser_click`, `browser_type` etc. to step through the UI flow interactively and find where it breaks
+**1b. Live diagnosis with MCP tools** — You share the same agent-browser session and MCP tools as the step execution. You can directly call browser tools and other MCP servers to investigate issues interactively:
+- Use `agent_browser(command="snapshot", args=["-i"])` to see the current browser state
+- Use `agent_browser(command="open", args=[url])` to reproduce navigation
+- Use `agent_browser(command="eval", args=[read_only_javascript])` to inspect page state when snapshots are insufficient
+- Use `agent_browser` commands such as `click`, `fill`, and `press` to step through the UI flow and find where it breaks
 - You can also call any other MCP tools the step uses (e.g., google-sheets) to verify API behavior
 - This is the fastest way to diagnose issues like changed selectors, timing problems, unexpected page states, or API response changes — you see exactly what the script would see at runtime
 
@@ -123,7 +123,7 @@ For steps in scripted mode, the saved Python script at `learnings/{step-id}/main
 **3. Test** — Run the patched script:
 - Use `execute_step(step_id, group_name, fast_path_only=true)` to test the fix directly — this runs ONLY the saved script with no LLM fallback, so you see exactly what your patch does
 - Or use `execute_step(step_id, group_name)` to run with normal LLM fallback if the script fails
-- After running, you can use MCP tools again to verify the result — e.g., `browser_snapshot` to confirm the page is in the expected state, or read output files to check correctness
+- After running, use `agent_browser(command="snapshot", args=["-i"])` to confirm the expected page state, or read output files to check correctness
 - Check the output files and logs to confirm the fix
 
 **4. Validate across groups** — If the workflow has multiple groups, test the fix against other groups too. Check `script_metadata.json` group_stats to see which groups were failing.

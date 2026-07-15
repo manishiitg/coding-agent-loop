@@ -1694,8 +1694,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			templateVars["MaxIterations"] = ""
 			templateVars["PreviousIterationOutput"] = ""
 
-			// Signal whether this workflow has any browser MCP available (playwright /
-			// agent_browser / Playwright / CDP). Downstream prompt builders use this to gate
+			// Signal whether this workflow has agent-browser or CDP available. Downstream prompt builders use this to gate
 			// the browser-specific main.py authoring rules + DOM probe so non-browser workflows
 			// don't pay the prompt tax. Note: empty browserMode means "auto-detect", NOT "no
 			// browser" — HasBrowserCapability() checks registered servers+skills directly.
@@ -1768,6 +1767,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 			// Track if validation failed after exhausting all retry attempts
 			validationFailedAfterMaxRetries := false
+			var validationFailures []validationFailureConcern
 
 			// Track which LLM model was used for execution (to be stored in learning metadata)
 			var executionLLM string
@@ -2006,15 +2006,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					// Execution errors
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step %d execution failed (attempt %d): %v", stepIndex+1, retryAttempt, err))
 					hcpo.recordWorkflowContinuationPhase(context.Background(), artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseMainExecution, workflowContinuationStatusFailed, err.Error(), executionAgent)
-					if adaptiveTierEnabled && attemptTier == TierMedium {
-						failureReason := fmt.Sprintf("execution error on attempt %d: %v", retryAttempt, err)
-						if metaErr := hcpo.recordAdaptiveExecutionTierFailure(ctx, learningPathIdentifier, stepPath, attemptTier, currentDescriptionHash, failureReason); metaErr != nil {
-							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to record adaptive tier failure for step %d: %v", stepIndex+1, metaErr))
-						}
-						adaptiveTier = TierHigh
-						adaptiveTierReason = "high (medium-tier execution failed in this run)"
-					}
-
 					// Save partial conversation history on failure/cancellation so users can inspect
 					// tool responses from interrupted executions via debug_step or log files.
 					if len(executionConversationHistory) > 0 {
@@ -2035,6 +2026,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				}
 
 				hcpo.GetLogger().Info(fmt.Sprintf("✅ Step %d execution completed successfully (attempt %d)", stepIndex+1, retryAttempt))
+				// Carry validation failures from earlier attempts into every later
+				// execution result. Pulse Gate intentionally reads the latest/final
+				// attempt, so keeping the concern only on the failed attempt would
+				// hide a recovered validation failure.
+				executionResult = withValidationFailureConcern(executionResult, validationFailures, 0, false)
 				mainExecutionSummary = summarizeExecutionResultForNotification(executionResult)
 				hcpo.recordWorkflowContinuationPhase(context.Background(), artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseMainExecution, workflowContinuationStatusCompleted, "", executionAgent)
 
@@ -2326,7 +2322,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							ExecutionStatus:      "FAILED",
 							Reasoning:            fallbackGuidance,
 						}
-						if retryAttempt >= maxRetryAttempts {
+						validationFailures = append(validationFailures, newValidationFailureConcern(retryAttempt, validationResponse))
+						exhausted := retryAttempt >= maxRetryAttempts
+						executionResult = withValidationFailureConcern(executionResult, validationFailures, 0, exhausted)
+						mainExecutionSummary = summarizeExecutionResultForNotification(executionResult)
+						if logErr := hcpo.saveExecutionConversationLogs(stepIndex, artifactStepID, artifactStepPath, retryAttempt, 0,
+							executionResult, executionLLM, executionConversationHistory, executionAgent, capturedToolCalls, capturedLLMCalls, attemptStartedAt, attemptCompletedAt, attemptDuration); logErr != nil {
+							hcpo.recordRunPersistenceError(context.Background(), artifactStepID, logErr)
+						}
+						if exhausted {
 							validationFailedAfterMaxRetries = true
 						}
 						continue
@@ -2642,6 +2646,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				// Check if success criteria was met
 				// Check IsSuccessCriteriaMet instead of just ExecutionStatus - PARTIAL/INCOMPLETE can also mean criteria not met
 				if validationResponse != nil && validationResponse.IsSuccessCriteriaMet {
+					if len(validationFailures) > 0 {
+						executionResult = withValidationFailureConcern(executionResult, validationFailures, retryAttempt, false)
+						mainExecutionSummary = summarizeExecutionResultForNotification(executionResult)
+						if logErr := hcpo.saveExecutionConversationLogs(stepIndex, artifactStepID, artifactStepPath, retryAttempt, 0,
+							executionResult, executionLLM, executionConversationHistory, executionAgent, capturedToolCalls, capturedLLMCalls, attemptStartedAt, attemptCompletedAt, attemptDuration); logErr != nil {
+							hcpo.recordRunPersistenceError(context.Background(), artifactStepID, logErr)
+						}
+					}
 					if adaptiveTierEnabled {
 						if metaErr := hcpo.recordAdaptiveExecutionTierSuccess(ctx, learningPathIdentifier, stepPath, attemptTier, currentDescriptionHash); metaErr != nil {
 							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to record adaptive tier success for step %d: %v", stepIndex+1, metaErr))
@@ -2656,13 +2668,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						statusStr = validationResponse.ExecutionStatus
 					}
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step %d failed validation - success criteria not met (Status: %s, attempt %d/%d)", stepIndex+1, statusStr, retryAttempt, maxRetryAttempts))
-					if adaptiveTierEnabled && attemptTier == TierMedium {
-						failureReason := fmt.Sprintf("validation failed on attempt %d (status=%s)", retryAttempt, statusStr)
-						if metaErr := hcpo.recordAdaptiveExecutionTierFailure(ctx, learningPathIdentifier, stepPath, attemptTier, currentDescriptionHash, failureReason); metaErr != nil {
-							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to record adaptive tier failure for step %d: %v", stepIndex+1, metaErr))
-						}
-						adaptiveTier = TierHigh
-						adaptiveTierReason = "high (medium-tier validation failed in this run)"
+					validationFailures = append(validationFailures, newValidationFailureConcern(retryAttempt, validationResponse))
+					exhausted := retryAttempt >= maxRetryAttempts
+					executionResult = withValidationFailureConcern(executionResult, validationFailures, 0, exhausted)
+					mainExecutionSummary = summarizeExecutionResultForNotification(executionResult)
+					if logErr := hcpo.saveExecutionConversationLogs(stepIndex, artifactStepID, artifactStepPath, retryAttempt, 0,
+						executionResult, executionLLM, executionConversationHistory, executionAgent, capturedToolCalls, capturedLLMCalls, attemptStartedAt, attemptCompletedAt, attemptDuration); logErr != nil {
+						hcpo.recordRunPersistenceError(context.Background(), artifactStepID, logErr)
 					}
 
 					// Increment validation failure count for UI display
@@ -2670,7 +2682,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to increment validation failure count for %s: %v", stepPath, err))
 					}
 
-					if retryAttempt >= maxRetryAttempts {
+					if exhausted {
 						hcpo.GetLogger().Error(fmt.Sprintf("❌ Step %d failed validation after %d attempts", stepIndex+1, maxRetryAttempts), nil)
 						// Mark that validation failed after exhausting all retries
 						validationFailedAfterMaxRetries = true
@@ -2834,6 +2846,93 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 func isHumanInputStep(step PlanStepInterface) bool {
 	_, ok := step.(*HumanInputPlanStep)
 	return ok
+}
+
+const validationConcernLinePrefix = "CONCERNS: Validation history:"
+
+type validationFailureConcern struct {
+	Attempt int
+	Detail  string
+}
+
+func newValidationFailureConcern(attempt int, response *ValidationResponse) validationFailureConcern {
+	detail := "success criteria were not met"
+	if response != nil {
+		switch {
+		case strings.TrimSpace(response.Reasoning) != "":
+			detail = compactValidationConcernText(response.Reasoning, 360)
+		case len(response.Feedback) > 0:
+			parts := make([]string, 0, len(response.Feedback))
+			for _, feedback := range response.Feedback {
+				if description := strings.TrimSpace(feedback.Description); description != "" {
+					parts = append(parts, description)
+				}
+			}
+			if len(parts) > 0 {
+				detail = compactValidationConcernText(strings.Join(parts, "; "), 360)
+			}
+		case strings.TrimSpace(response.ExecutionStatus) != "":
+			detail = "validator returned status " + strings.TrimSpace(response.ExecutionStatus)
+		}
+	}
+	return validationFailureConcern{Attempt: attempt, Detail: detail}
+}
+
+func compactValidationConcernText(value string, maxRunes int) string {
+	compact := strings.Join(strings.Fields(value), " ")
+	if compact == "" || maxRunes <= 0 {
+		return compact
+	}
+	runes := []rune(compact)
+	if len(runes) <= maxRunes {
+		return compact
+	}
+	return string(runes[:maxRunes]) + "..."
+}
+
+// withValidationFailureConcern adds one controller-owned concern immediately
+// before the terminal STATUS line. It replaces an earlier controller validation
+// line so the same attempt can first be persisted as retry-pending and later as
+// corrected or unresolved without accumulating duplicate concerns.
+func withValidationFailureConcern(result string, failures []validationFailureConcern, resolvedAttempt int, exhausted bool) string {
+	trimmed := strings.TrimSpace(result)
+	if len(failures) == 0 {
+		return trimmed
+	}
+
+	parts := make([]string, 0, len(failures))
+	for _, failure := range failures {
+		parts = append(parts, fmt.Sprintf("attempt %d failed - %s", failure.Attempt, failure.Detail))
+	}
+	outcome := "retry pending"
+	if resolvedAttempt > 0 {
+		outcome = fmt.Sprintf("corrected on attempt %d", resolvedAttempt)
+	} else if exhausted {
+		outcome = fmt.Sprintf("unresolved after %d attempt(s)", failures[len(failures)-1].Attempt)
+	}
+	concernLine := validationConcernLinePrefix + " " + compactValidationConcernText(strings.Join(parts, "; ")+"; "+outcome+".", 1200)
+
+	lines := strings.Split(trimmed, "\n")
+	kept := make([]string, 0, len(lines)+1)
+	validationPrefixUpper := strings.ToUpper(validationConcernLinePrefix)
+	for _, line := range lines {
+		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(line)), validationPrefixUpper) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+
+	insertAt := len(kept)
+	for i := len(kept) - 1; i >= 0; i-- {
+		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(kept[i])), "STATUS:") {
+			insertAt = i
+			break
+		}
+	}
+	kept = append(kept, "")
+	copy(kept[insertAt+1:], kept[insertAt:])
+	kept[insertAt] = concernLine
+	return strings.TrimSpace(strings.Join(kept, "\n"))
 }
 
 func summarizeExecutionResultForNotification(result string) string {

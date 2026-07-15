@@ -892,11 +892,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedScriptedScript(
 	inputArgs := hcpo.buildScriptedInputArgs(ctx, step, stepIndex, stepPath, allSteps, executionWorkspacePath, docsRoot, hcpo.variableValues)
 
 	// Saved-script fast path bypasses execution-agent startup, so prime browser-capable
-	// MCP server configs here to preserve the same Playwright session + override
+	// MCP server configs here to preserve the same stateful MCP session and runtime overrides.
 	// behavior as a normal workflow run.
 	// Without this, the first browser tool call can fall through to default mcpcache
 	// creation and lose run-specific settings like Downloads/output-dir.
-	hcpo.primeBrowserServerConfigsForSavedScript(ctx, getAgentConfigs(step))
 
 	// Clean previous output files before running saved script — fresh slate for this execution.
 	// Preserve code/ — it may contain an LLM-fixed main.py from a previous attempt.
@@ -1475,10 +1474,9 @@ func GetScriptedModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRel
 	if hasBrowser {
 		sb.WriteString("**Browser automation — execution-mode tool call examples (Python):**\n")
 		sb.WriteString("- CDP mode: select/create a tab first with `command='tab'`. `command='open'` is URL-only, e.g. `args=['https://example.com']`; do not pass `['tab', 't1', url]` to open. After open, every page action must include an inline tab, e.g. `args=['tab', 't1', '-i']` for snapshot or `args=['tab', 't1', ref_parsed_from_snapshot]` for click.\n")
-		sb.WriteString("- Snapshot: `call_mcp('playwright', 'browser_snapshot', {})` or, in CDP mode, `call_mcp('workspace_browser', 'agent_browser', {'command': 'snapshot', 'args': ['tab', 't1', '-i'], 'session': 'main'})`\n")
-		sb.WriteString("- Click (via runtime-parsed ref — the literal `'abc123'` / `'@e1'` below are PLACEHOLDERS; the actual value must be parsed from the snapshot variable each run, NEVER hardcoded): `call_mcp('playwright', 'browser_click', {'ref': ref_parsed_from_snapshot})` or, in CDP mode, `call_mcp('workspace_browser', 'agent_browser', {'command': 'click', 'args': ['tab', 't1', ref_parsed_from_snapshot], 'session': 'main'})`\n")
-		sb.WriteString("- Click (via durable selector — preferred for readability when the tool accepts it): `call_mcp('playwright', 'browser_click', {'selector': '#panAdhaarUserId'})` or, in CDP mode, `agent_browser` `args=['tab', 't1', '[aria-label=\"Sign in\"]']`\n")
-		sb.WriteString("- Click (via Playwright locator API — most durable for multi-step flows): `call_mcp('playwright', 'browser_run_code', {'code': \"await page.getByRole('button', { name: 'Continue' }).click()\"})`\n")
+		sb.WriteString("- Snapshot: `call_mcp('workspace_browser', 'agent_browser', {'command': 'snapshot', 'args': ['tab', 't1', '-i'], 'session': 'main'})`\n")
+		sb.WriteString("- Click with a runtime-parsed ref (never persist a literal snapshot ref): `call_mcp('workspace_browser', 'agent_browser', {'command': 'click', 'args': ['tab', 't1', ref_parsed_from_snapshot], 'session': 'main'})`\n")
+		sb.WriteString("- Click with a durable selector: `call_mcp('workspace_browser', 'agent_browser', {'command': 'click', 'args': ['tab', 't1', '[aria-label=\"Sign in\"]'], 'session': 'main'})`\n")
 		sb.WriteString("- Always `get_api_spec` first to see exact parameter schemas. Do NOT guess parameter names.\n\n")
 	}
 

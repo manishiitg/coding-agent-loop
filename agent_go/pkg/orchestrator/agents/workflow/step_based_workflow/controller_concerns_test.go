@@ -115,3 +115,60 @@ func TestMessageSequenceSummaryPropagatesItemConcerns(t *testing.T) {
 		}
 	}
 }
+
+func TestValidationFailureConcernSurvivesSuccessfulRetry(t *testing.T) {
+	failures := []validationFailureConcern{{Attempt: 1, Detail: "published receipt was missing"}}
+	result := "Published the post.\nCONCERNS: analytics were delayed.\nSTATUS: COMPLETED"
+
+	pending := withValidationFailureConcern(result, failures, 0, false)
+	if !strings.Contains(pending, "CONCERNS: Validation history: attempt 1 failed - published receipt was missing; retry pending.") {
+		t.Fatalf("pending result missing validation concern: %s", pending)
+	}
+
+	resolved := withValidationFailureConcern(pending, failures, 2, false)
+	if strings.Count(resolved, validationConcernLinePrefix) != 1 {
+		t.Fatalf("resolved result duplicated validation concern: %s", resolved)
+	}
+	for _, want := range []string{
+		"CONCERNS: analytics were delayed.",
+		"CONCERNS: Validation history: attempt 1 failed - published receipt was missing; corrected on attempt 2.",
+		"STATUS: COMPLETED",
+	} {
+		if !strings.Contains(resolved, want) {
+			t.Fatalf("resolved result missing %q: %s", want, resolved)
+		}
+	}
+	if strings.Index(resolved, validationConcernLinePrefix) > strings.Index(resolved, "STATUS: COMPLETED") {
+		t.Fatalf("validation concern must precede terminal status: %s", resolved)
+	}
+}
+
+func TestValidationFailureConcernMarksExhaustedRetries(t *testing.T) {
+	failures := []validationFailureConcern{
+		{Attempt: 1, Detail: "receipt was missing"},
+		{Attempt: 2, Detail: "receipt was still missing"},
+		{Attempt: 3, Detail: "receipt was still missing"},
+	}
+
+	got := withValidationFailureConcern("STATUS: FAILED", failures, 0, true)
+	for _, want := range []string{
+		"attempt 1 failed - receipt was missing",
+		"attempt 3 failed - receipt was still missing",
+		"unresolved after 3 attempt(s).",
+		"STATUS: FAILED",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("exhausted result missing %q: %s", want, got)
+		}
+	}
+}
+
+func TestNewValidationFailureConcernCompactsReasoning(t *testing.T) {
+	got := newValidationFailureConcern(2, &ValidationResponse{
+		ExecutionStatus: "FAILED",
+		Reasoning:       "receipt\n\nwas   missing",
+	})
+	if got.Attempt != 2 || got.Detail != "receipt was missing" {
+		t.Fatalf("concern = %+v, want compact attempt 2 detail", got)
+	}
+}

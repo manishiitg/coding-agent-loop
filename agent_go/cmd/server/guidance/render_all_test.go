@@ -39,6 +39,27 @@ func TestEvaluationPlanGuidanceAcceptsSourceGroundedValidEmptyResults(t *testing
 	}
 }
 
+func TestMigrateBrowserGuidanceIsScopedIdempotentAndNonExecuting(t *testing.T) {
+	rendered, err := renderFromRegistry("migrate-browser", tmplData{}, allKinds)
+	if err != nil {
+		t.Fatalf("render migrate-browser: %v", err)
+	}
+	for _, want := range []string{
+		"CURRENT workflow",
+		"Already migrated",
+		"migration-backups/browser-",
+		"browser_mode=\"auto\"",
+		"workspace_browser:agent_browser",
+		"Do not mechanically rename",
+		"do not claim success",
+		"no workflow or browser action was run",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("migrate-browser guidance missing %q", want)
+		}
+	}
+}
+
 func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T) {
 	postRun, err := renderFromRegistry("post-run-monitor", tmplData{}, referenceKinds)
 	if err != nil {

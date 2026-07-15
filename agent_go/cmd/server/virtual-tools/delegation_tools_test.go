@@ -160,7 +160,7 @@ func TestHandleDelegateBuildsChildSpec(t *testing.T) {
 		"instruction":     "do the thing",
 		"reasoning_level": "low",
 		"skills":          []interface{}{"pdf-extract", "agent-browser"},
-		"servers":         []interface{}{"playwright"},
+		"servers":         []interface{}{"github"},
 		"share_browser":   false,
 	})
 	if err != nil {
@@ -170,8 +170,8 @@ func TestHandleDelegateBuildsChildSpec(t *testing.T) {
 	if len(captured.Skills) != 2 || captured.Skills[0] != "pdf-extract" || captured.Skills[1] != "agent-browser" {
 		t.Errorf("expected skills [pdf-extract agent-browser], got %v", captured.Skills)
 	}
-	if len(captured.Servers) != 1 || captured.Servers[0] != "playwright" {
-		t.Errorf("expected servers [playwright], got %v", captured.Servers)
+	if len(captured.Servers) != 1 || captured.Servers[0] != "github" {
+		t.Errorf("expected servers [github], got %v", captured.Servers)
 	}
 	if captured.ShareBrowser {
 		t.Error("share_browser=false should produce ShareBrowser=false in the child spec")
@@ -249,7 +249,7 @@ func TestSubAgentSpecContextRoundTrip(t *testing.T) {
 		Depth:          2,
 		ReasoningLevel: "high",
 		AgentTemplate:  "researcher",
-		Servers:        []string{"playwright"},
+		Servers:        []string{"github"},
 		Skills:         []string{"pdf-extract"},
 		ShareBrowser:   false,
 	}

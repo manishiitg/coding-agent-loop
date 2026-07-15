@@ -50,13 +50,14 @@ type LearningMetadata struct {
 	LastDetectionConfidence float64                 `json:"last_detection_confidence,omitempty"`
 	DetectionHistory        []DetectionHistoryEntry `json:"detection_history,omitempty"`
 	// Adaptive execution tiering (Tier 1 High vs Tier 2 Medium) for execution agents.
-	// The step starts on High, may promote to Medium after stable successful runs,
-	// and falls back to High immediately if a Medium attempt fails.
+	// The step starts on High and may promote to Medium after stable successful runs.
+	// Validation failures stay on the selected tier and are surfaced to Pulse as
+	// concerns rather than silently changing model allocation.
 	PreferredExecutionTier              string `json:"preferred_execution_tier,omitempty"`                 // "high" | "medium"
 	LastExecutionTier                   string `json:"last_execution_tier,omitempty"`                      // Last execution tier actually used ("high" | "medium")
 	MediumSuccessStreak                 int    `json:"medium_success_streak,omitempty"`                    // Consecutive successful executions on Medium
-	HighSuccessStreakSinceMediumFailure int    `json:"high_success_streak_since_medium_failure,omitempty"` // Recovery successes required before retrying Medium
-	LastMediumFailureAt                 string `json:"last_medium_failure_at,omitempty"`                   // Timestamp of the last Medium-tier failure
+	HighSuccessStreakSinceMediumFailure int    `json:"high_success_streak_since_medium_failure,omitempty"` // Deprecated compatibility field; cleared on read
+	LastMediumFailureAt                 string `json:"last_medium_failure_at,omitempty"`                   // Deprecated compatibility field; cleared on read
 	LastTierDecisionReason              string `json:"last_tier_decision_reason,omitempty"`                // Human-readable reason for current preference
 	LastTierChangeAt                    string `json:"last_tier_change_at,omitempty"`                      // Timestamp when PreferredExecutionTier last changed
 	// Global learning: per-step contribution tracking (only used when StepID == "_global")

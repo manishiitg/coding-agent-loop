@@ -177,8 +177,6 @@ import { skillsApi } from '../api/skills'
 import type { Skill } from '../types/skills'
 import { chatHistorySupportsNativeResume, chatHistoryUsesTerminalRestore } from './PreviousChatHistoryPanel'
 
-// MCP servers managed by dedicated toolbar buttons — excluded from the general server dropdown.
-const DEDICATED_MCP_SERVERS = new Set(['playwright'])
 const AUTO_NOTIFICATION_PREFIX = '[AUTO-NOTIFICATION]'
 const FALLBACK_CODING_AGENT_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli'])
 const FALLBACK_LIVE_INPUT_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli'])
@@ -721,9 +719,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const canShowSteer = useMemo(() => canSteer && !isCLIProvider, [canSteer, isCLIProvider])
   // CLI providers always require code execution mode
   const useCodeExecutionMode = useMemo(() => isCLIProvider ? true : (tabConfig?.useCodeExecutionMode ?? false), [isCLIProvider, tabConfig?.useCodeExecutionMode])
-  const browserMode = useMemo(() => tabConfig?.browserMode ?? 'none', [tabConfig?.browserMode])
-  const enableBrowserAccess = useMemo(() => browserMode === 'headless' || browserMode === 'cdp', [browserMode])
-  const useCdp = useMemo(() => browserMode === 'cdp', [browserMode])
+  const browserMode = useMemo(() => tabConfig?.browserMode ?? 'auto', [tabConfig?.browserMode])
   const cdpPort = useMemo(() => tabConfig?.cdpPort ?? 9222, [tabConfig?.cdpPort])
   const isLocalMode = useCapabilitiesStore(state => state.capabilities?.local_mode ?? false)
   const workspaceActiveFolder = useWorkspaceStore(state => state.activeFolder)
@@ -734,18 +730,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [showReasoningPopup, setShowReasoningPopup] = useState(false)
   const [isUploadingFiles, setIsUploadingFiles] = useState(false)
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
-  // Playwright MCP availability: check if 'playwright' server exists in toolList
-  const toolList = useMCPStore(state => state.toolList)
-  const playwrightServerStatus = useMemo(() => {
-    const entry = toolList.find(t => t.server === 'playwright')
-    if (!entry) return 'not_found' as const
-    if (entry.status === 'ok') return 'ok' as const
-    if (entry.status === 'error') return 'error' as const
-    return 'loading' as const
-  }, [toolList])
-
   const isCdpDisconnected = browserMode === 'cdp' && cdpConnected === false
-  const isPlaywrightMissing = browserMode === 'playwright' && playwrightServerStatus === 'not_found'
 
   // File context operations (always update tab config)
   const removeFileFromContext = useCallback((path: string) => {
@@ -856,52 +841,28 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   })))
 
   const availableServers = useMemo(
-    () => [...new Set(mcpToolList.filter(t => t.status === 'ok').map(t => t.server).filter((s): s is string => typeof s === 'string' && !DEDICATED_MCP_SERVERS.has(s)))],
+    () => [...new Set(mcpToolList.filter(t => t.status === 'ok').map(t => t.server).filter((s): s is string => typeof s === 'string'))],
     [mcpToolList]
   )
 
-  const setBrowserMode = useCallback((mode: 'none' | 'headless' | 'cdp' | 'playwright') => {
+  const setBrowserMode = useCallback((mode: 'none' | 'auto' | 'headless' | 'cdp') => {
     if (!activeTabId) return
 
-    if (mode === 'playwright') {
-      // Playwright: no virtual tool, add 'playwright' to selectedServers, enable workspace
-      const currentServers = tabConfig?.selectedServers || []
-      const newServers = [...currentServers.filter(s => s !== 'playwright'), 'playwright']
-      setTabConfig(activeTabId, {
-        browserMode: 'playwright',
-        enableBrowserAccess: false,
-        useCdp: false,
-
-        selectedServers: newServers
-      })
-      setChatSelectedServers(newServers)
-      if (!showCdpPopup) setWorkspaceMinimized(false)
-    } else if (mode === 'headless' || mode === 'cdp') {
-      // Headless/CDP: use agent_browser virtual tool, remove Playwright from servers
-      const currentServers = tabConfig?.selectedServers || []
-      const newServers = currentServers.filter(s => s !== 'playwright')
+    if (mode === 'auto' || mode === 'headless' || mode === 'cdp') {
       setTabConfig(activeTabId, {
         browserMode: mode,
         enableBrowserAccess: true,
         useCdp: mode === 'cdp',
-
-        selectedServers: newServers
       })
-      setChatSelectedServers(newServers)
       if (!showCdpPopup) setWorkspaceMinimized(false)
     } else {
-      // None: disable everything, remove Playwright from servers
-      const currentServers = tabConfig?.selectedServers || []
-      const newServers = currentServers.filter(s => s !== 'playwright')
       setTabConfig(activeTabId, {
         browserMode: 'none',
         enableBrowserAccess: false,
         useCdp: false,
-        selectedServers: newServers
       })
-      setChatSelectedServers(newServers)
     }
-  }, [activeTabId, tabConfig?.selectedServers, setTabConfig, setChatSelectedServers, setWorkspaceMinimized, showCdpPopup])
+  }, [activeTabId, setTabConfig, setWorkspaceMinimized, showCdpPopup])
 
   const setCdpPort = useCallback((port: number) => {
     if (activeTabId) {
@@ -925,9 +886,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [])
 
-  // Auto-check CDP connection when CDP mode is active or port changes
+  // Auto-check CDP connection when automatic/CDP mode is active or port changes.
+  // In automatic mode this is informational: an unavailable CDP browser falls
+  // back to headless at runtime instead of blocking the chat.
   useEffect(() => {
-    if (browserMode !== 'cdp') {
+    if (browserMode !== 'auto' && browserMode !== 'cdp') {
       setCdpConnected(null)
       setCdpError(null)
       return
@@ -949,7 +912,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
 
       if (browserMode === 'none') {
-        setBrowserMode('headless')
+        setBrowserMode('auto')
       }
       setShowCdpPopup(true)
       setWorkspaceMinimized(true)
@@ -1122,9 +1085,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const manualSelectedServers = useMemo(() => tabConfig?.selectedServers || [], [tabConfig?.selectedServers])
   // Server operations (always update tab config AND sync to chat-specific MCP store)
   // This ensures new chat tabs inherit the user's manual server selection
-  // Browser servers are mutually exclusive — only one can be active at a time
-  const BROWSER_SERVERS = ['playwright'] as const
-
   const onManualServerToggle = useCallback((server: string) => {
     if (activeTabId) {
       // Remove "NO_SERVERS" if it exists (when selecting a real server)
@@ -1136,48 +1096,23 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         // Toggling off — just remove it
         newServers = serversWithoutNoServers.filter(s => s !== server)
       } else {
-        // Toggling on — if it's a browser server, remove the other browser servers
-        const isBrowserServer = (BROWSER_SERVERS as readonly string[]).includes(server)
-        const base = isBrowserServer
-          ? serversWithoutNoServers.filter(s => !(BROWSER_SERVERS as readonly string[]).includes(s))
-          : serversWithoutNoServers
-        newServers = [...base, server]
-
-        // If enabling a browser server via MCP dropdown, also sync browserMode
-        if (server === 'playwright') {
-          setTabConfig(activeTabId, {
-            selectedServers: newServers,
-            browserMode: 'playwright',
-            enableBrowserAccess: false,
-            useCdp: false,
-    
-          })
-          setChatSelectedServers(newServers)
-          setWorkspaceMinimized(false)
-          return
-        }
+        newServers = [...serversWithoutNoServers, server]
       }
 
       setTabConfig(activeTabId, { selectedServers: newServers })
       // Sync to chat-specific MCP store so new chat tabs inherit this selection
       setChatSelectedServers(newServers)
     }
-  }, [activeTabId, manualSelectedServers, setTabConfig, setChatSelectedServers, setWorkspaceMinimized])
+  }, [activeTabId, manualSelectedServers, setTabConfig, setChatSelectedServers])
   
   const onSelectAllServers = useCallback(() => {
     if (activeTabId) {
-      // Select all servers, but only keep one browser server (mutual exclusivity)
-      // Keep whichever browser server is already selected; if none, exclude both
-      const currentBrowser = manualSelectedServers.find(s => (BROWSER_SERVERS as readonly string[]).includes(s))
-      const allServers = availableServers.filter(s => {
-        if (!(BROWSER_SERVERS as readonly string[]).includes(s)) return true
-        return s === currentBrowser // only keep the currently active browser server
-      })
+      const allServers = availableServers
       setTabConfig(activeTabId, { selectedServers: allServers })
       // Sync to chat-specific MCP store so new chat tabs inherit this selection
       setChatSelectedServers(allServers)
     }
-  }, [activeTabId, availableServers, manualSelectedServers, setTabConfig, setChatSelectedServers])
+  }, [activeTabId, availableServers, setTabConfig, setChatSelectedServers])
 
   const onClearAllServers = useCallback(() => {
     if (activeTabId) {
@@ -2481,11 +2416,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     if (!queryToSubmit?.trim()) return null
     if (isViewOnly) return 'This conversation is view only.'
     if (isCdpDisconnected) return 'CDP browser mode is selected, but the browser is not connected yet.'
-    if (isPlaywrightMissing) return 'Playwright browser support is not available right now.'
     if (isStreaming && !tabSessionId) return 'This chat is still initializing. Please wait a moment.'
     if (!isStreaming && !hasSubmitTarget) return 'This chat is still initializing. Please wait a moment.'
     return null
-  }, [queryToSubmit, isViewOnly, isCdpDisconnected, isPlaywrightMissing, isStreaming, tabSessionId, hasSubmitTarget])
+  }, [queryToSubmit, isViewOnly, isCdpDisconnected, isStreaming, tabSessionId, hasSubmitTarget])
 
   // routeSubmit is the single send-routing decision shared by Enter (handleKeyDown)
   // and the Send button (handleSubmit).
@@ -3191,7 +3125,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Check if query is valid (view-only tabs cannot submit)
   const hasValidQuery = Boolean(inputText?.trim())
   const inputDisabled = isSummarizing || isViewOnly || (!tabSessionId && !canBootstrapMultiAgentTab && !canBootstrapWorkflowPhaseTab)
-  const submitButtonDisabled = !hasValidQuery || !hasSubmitTarget || isViewOnly || isCdpDisconnected || isPlaywrightMissing
+  const submitButtonDisabled = !hasValidQuery || !hasSubmitTarget || isViewOnly || isCdpDisconnected
   
   // Memoized placeholder
   const placeholder = useMemo(() => {
@@ -3565,8 +3499,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       data-testid="tour-chat-browser-tools"
                       onClick={() => {
                         if (browserMode === 'none') {
-                          // Enabling browser: show config popup and default to headless
-                          setBrowserMode('headless')
+                          // Enabling browser: prefer connected CDP, otherwise use headless.
+                          setBrowserMode('auto')
                           setShowCdpPopup(true)
                           setWorkspaceMinimized(true)
                         } else {
@@ -3583,13 +3517,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             : cdpChecking || cdpConnected === null
                               ? 'bg-yellow-900/40 border-yellow-600 text-yellow-400'
                               : 'bg-green-900/40 border-green-600 text-green-400'
-                          : browserMode === 'playwright'
-                            ? playwrightServerStatus === 'not_found'
-                              ? 'bg-red-900/40 border-red-600 text-red-400'
-                              : 'bg-purple-900/40 border-purple-600 text-purple-400'
-                            : browserMode === 'headless'
-                              ? 'bg-blue-900/40 border-blue-600 text-blue-400'
-                              : 'bg-gray-800 border-gray-600 text-gray-500'
+                          : browserMode === 'auto'
+                              ? 'bg-cyan-900/40 border-cyan-600 text-cyan-300'
+                              : browserMode === 'headless'
+                                ? 'bg-blue-900/40 border-blue-600 text-blue-400'
+                                : 'bg-gray-800 border-gray-600 text-gray-500'
                       } ${(isStreaming || isSummarizing) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
                     >
                       <Globe className="w-4 h-4 flex-shrink-0" />
@@ -3601,13 +3533,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                               : cdpChecking || cdpConnected === null
                                 ? 'bg-yellow-800 text-yellow-200'
                                 : 'bg-green-800 text-green-200'
-                            : browserMode === 'playwright'
-                              ? playwrightServerStatus === 'not_found'
-                                ? 'bg-red-800 text-red-200'
-                                : 'bg-purple-800 text-purple-200'
-                              : 'bg-blue-800 text-blue-200'
+                            : browserMode === 'auto'
+                                ? 'bg-cyan-800 text-cyan-100'
+                                : 'bg-blue-800 text-blue-200'
                         }`}>
-                          {browserMode === 'cdp' ? 'CDP' : browserMode === 'playwright' ? 'Playwright' : 'Headless'}
+                          {browserMode === 'cdp' ? 'CDP' : browserMode === 'auto' ? 'Auto' : 'Headless'}
                         </span>
                       ) : (
                         <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[60px] transition-all duration-200">
@@ -3643,6 +3573,32 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
                         {/* Mode options */}
                         <div className="grid gap-3 md:grid-cols-3">
+                          {/* Automatic */}
+                          <label className={`flex min-h-[132px] cursor-pointer flex-col gap-3 rounded-lg border p-3 transition-colors ${
+                            browserMode === 'auto'
+                              ? 'border-cyan-500 bg-cyan-500/10 ring-1 ring-cyan-500/20'
+                              : 'border-border bg-card/40 hover:bg-muted/50'
+                          }`}>
+                            <input
+                              type="radio"
+                              name="browserMode"
+                              checked={browserMode === 'auto'}
+                              onChange={() => setBrowserMode('auto')}
+                              className="sr-only"
+                            />
+                            <div className="flex items-center gap-2">
+                              <span className={`h-3 w-3 rounded-full border ${browserMode === 'auto' ? 'border-cyan-400 bg-cyan-400 ring-4 ring-cyan-400/20' : 'border-muted-foreground/50'}`} />
+                              <div className="text-sm font-medium">Automatic</div>
+                            </div>
+                            <div className="text-xs leading-5 text-muted-foreground">
+                              Uses Local Chrome through CDP when reachable; otherwise uses headless agent-browser.
+                            </div>
+                            <div className={`mt-auto inline-flex w-fit items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${cdpChecking || cdpConnected === null ? 'bg-amber-500/10 text-amber-300' : cdpConnected ? 'bg-emerald-500/10 text-emerald-300' : 'bg-blue-500/10 text-blue-300'}`}>
+                              <span className={`h-1.5 w-1.5 rounded-full ${cdpConnected ? 'bg-emerald-400' : cdpChecking || cdpConnected === null ? 'bg-amber-400' : 'bg-blue-400'}`} />
+                              {cdpChecking || cdpConnected === null ? 'Checking CDP' : cdpConnected ? 'Will use CDP' : 'Will use headless'}
+                            </div>
+                          </label>
+
                           {/* Headless */}
                           <label className={`flex min-h-[132px] cursor-pointer flex-col gap-3 rounded-lg border p-3 transition-colors ${
                             browserMode === 'headless'
@@ -3709,47 +3665,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             )}
                           </label>
 
-                          {/* Playwright */}
-                          <label className={`flex min-h-[132px] flex-col gap-3 rounded-lg border p-3 transition-colors ${
-                            playwrightServerStatus === 'not_found'
-                              ? 'cursor-not-allowed border-border bg-card/30 opacity-55'
-                              : browserMode === 'playwright'
-                                ? 'cursor-pointer border-violet-500 bg-violet-500/10 ring-1 ring-violet-500/20'
-                                : 'cursor-pointer border-border bg-card/40 hover:bg-muted/50'
-                          }`}>
-                            <input
-                              type="radio"
-                              name="browserMode"
-                              checked={browserMode === 'playwright'}
-                              onChange={() => setBrowserMode('playwright')}
-                              disabled={playwrightServerStatus === 'not_found'}
-                              className="sr-only"
-                            />
-                            <div className="flex items-center gap-2">
-                              <span className={`h-3 w-3 rounded-full border ${browserMode === 'playwright' ? 'border-violet-400 bg-violet-400 ring-4 ring-violet-400/20' : 'border-muted-foreground/50'}`} />
-                              <div className="text-sm font-medium">Playwright MCP</div>
-                            </div>
-                            <div className="text-xs leading-5 text-muted-foreground">Opens a visible browser window through the Playwright MCP server.</div>
-                            {playwrightServerStatus === 'not_found' && (
-                              <div className="mt-auto inline-flex w-fit items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 text-[11px] font-medium text-red-300">
-                                <span className="h-1.5 w-1.5 rounded-full bg-red-400" />
-                                Server missing
-                              </div>
-                            )}
-                            {playwrightServerStatus === 'loading' && (
-                              <div className="mt-auto inline-flex w-fit items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-300">
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                                Discovering
-                              </div>
-                            )}
-                            {playwrightServerStatus === 'error' && (
-                              <div className="mt-auto inline-flex w-fit items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-300">
-                                <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-                                Check settings
-                              </div>
-                            )}
-                          </label>
-
                         </div>
 
                         {/* Context panel */}
@@ -3811,7 +3726,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                                     <p className="text-xs font-medium">macOS launcher</p>
                                     <p className="mt-1 text-xs text-muted-foreground">Install a dedicated Chrome CDP app profile.</p>
                                     <code className="mt-2 block rounded-md border border-border bg-black/30 px-2 py-1.5 text-[10px] text-emerald-300 break-all">
-                                      {chromeCdpInstallCommand()}
+                                      {chromeCdpInstallCommand(cdpPort)}
                                     </code>
                                     <p className="mt-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-1.5 text-[11px] leading-snug text-amber-200">
                                       The installer clears quarantine, signs locally, opens the app, and checks port {cdpPort}. If macOS still blocks first launch, allow Chrome CDP in Privacy &amp; Security and open it again.
@@ -3858,25 +3773,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                                 </a>
                                 {' '}by Vercel, running inside a Docker container. The agent navigates Chromium in the background with no visible browser window.
                               </p>
-                            </div>
-                          )}
-
-                          {browserMode === 'playwright' && (
-                            <div className="space-y-2">
-                              <p className="text-sm font-medium">Playwright MCP</p>
-                              <p className="text-xs leading-5 text-muted-foreground">
-                                Uses the official{' '}
-                                <a
-                                  href="https://github.com/microsoft/playwright-mcp"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-violet-300 hover:underline"
-                                >
-                                  microsoft/playwright-mcp
-                                </a>
-                                {' '}server. Each session opens a new Chrome instance; existing browser windows are not reused.
-                              </p>
-                              <p className="text-xs text-muted-foreground">Requires the <code className="rounded bg-black/30 px-1 text-[10px]">playwright</code> MCP server to be configured in MCP Settings.</p>
                             </div>
                           )}
 
@@ -4059,9 +3955,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                                   ? 'Type a message to send'
                                   : isCdpDisconnected
                                     ? 'Chrome CDP not reachable. Check connection.'
-                                    : isPlaywrightMissing
-                                      ? 'Playwright MCP server not found. Add it in MCP Settings.'
-                                      : !tabSessionId && !canBootstrapWorkflowPhaseTab && !canBootstrapMultiAgentTab
+                                    : !tabSessionId && !canBootstrapWorkflowPhaseTab && !canBootstrapMultiAgentTab
                                         ? 'Session not ready yet'
                                         : 'Send message'
                               }

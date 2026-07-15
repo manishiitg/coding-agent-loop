@@ -103,13 +103,14 @@ func TestNormalizeAgentBrowserCommandArgs(t *testing.T) {
 }
 
 func TestMissingCDPPageActionTabErrorShowsWaitRetry(t *testing.T) {
-	err := missingCDPPageActionTabError("wait", []string{"wait", "6s"}, "Selected CDP tab: t12")
+	t.Setenv("CDP_HOST", "localhost")
+	err := missingCDPPageActionTabError(9222, "wait", []string{"wait", "6s"}, "Selected CDP tab: t12")
 	if err == nil {
 		t.Fatalf("expected error")
 	}
 	msg := err.Error()
 	for _, want := range []string{
-		`agent_browser(command="wait", args=["tab","<tab-id-or-label>","6000"])`,
+		`agent_browser(command="wait", args=["--cdp","http://localhost:9222","tab","<tab-id-or-label>","6000"])`,
 		"Do not put the command name inside args",
 		"Selected CDP tab: t12",
 	} {
@@ -121,6 +122,7 @@ func TestMissingCDPPageActionTabErrorShowsWaitRetry(t *testing.T) {
 
 func TestSelectedCDPTabMessageUsesKnownSelection(t *testing.T) {
 	port := 22922
+	t.Setenv("CDP_HOST", "localhost")
 	owner := "owner-for-selected-message-test"
 	clearCDPTabSelectionsForPort(port)
 	t.Cleanup(func() { clearCDPTabSelectionsForPort(port) })
@@ -132,7 +134,7 @@ func TestSelectedCDPTabMessageUsesKnownSelection(t *testing.T) {
 	setCDPTabSelection(port, owner, "upwork")
 	setCDPTabAlias(port, owner, "upwork", "t23")
 	got := selectedCDPTabMessage(port, owner)
-	for _, want := range []string{"Selected CDP tab: t23", `args=["tab", "t23", "-i"]`} {
+	for _, want := range []string{"Selected CDP tab: t23", `args=["--cdp", "http://localhost:22922", "tab", "t23", "-i"]`} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("selectedCDPTabMessage() missing %q:\n%s", want, got)
 		}

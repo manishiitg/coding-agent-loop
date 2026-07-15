@@ -159,7 +159,7 @@ See the [public roadmap](ROADMAP.md) for upcoming work on onboarding, memory-awa
 ### Channels, Tools, and Connectors
 
 - **Slack**, **WhatsApp**, and custom webhook-based chat surfaces
-- **Browser automation** through Vercel Agent-Browser, Playwright, and local CDP bridging
+- **Browser automation** through Vercel Agent-Browser with headless and local CDP modes
 - **MCP servers**, local tools, workspace files, and custom connectors
 
 ## Why Teams Choose It
@@ -393,11 +393,44 @@ curl -fsSL 'https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/
 
 The installer downloads `Chrome CDP.app`, installs it into `/Applications`, clears quarantine attributes, applies a local ad-hoc signature when possible, opens the app, and checks that CDP is reachable on port `9222`.
 
+To install another independent CDP browser on a different port, pass the port
+to the same installer. It creates a separate app and Chrome profile instead of
+overwriting the default launcher:
+
+```bash
+curl -fsSL 'https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/scripts/install-chrome-cdp-macOS.sh' | bash -s -- --port 9333
+```
+
+This installs `Chrome CDP 9333.app`, launches Chrome on port `9333`, and uses
+`~/.chrome-cdp-profile-9333`. Repeat with another unused port when a specialized
+workflow needs another login identity.
+
 macOS may still ask for approval on first launch. If it blocks the app, open **System Settings → Privacy & Security**, allow `Chrome CDP`, then run:
 
 ```bash
 open -a 'Chrome CDP'
 ```
+
+For the specialized case where one workflow must test the same site with a
+second login identity, use the installer command above or launch another Chrome
+process manually on a different port **and a different profile directory**:
+
+```bash
+SECOND_CDP_PORT=9333
+open -na 'Google Chrome' --args \
+  --remote-debugging-port="$SECOND_CDP_PORT" \
+  --user-data-dir="$HOME/.chrome-cdp-profile-$SECOND_CDP_PORT" \
+  --no-first-run \
+  --no-default-browser-check
+curl "http://127.0.0.1:$SECOND_CDP_PORT/json/version"
+```
+
+Configure that workflow through the builder with
+`update_workflow_config(browser_mode="cdp", cdp_ports=[9222, 9333])`. Every `agent_browser` call must explicitly select
+one authorized `--cdp` endpoint. The two profiles can stay logged in as
+different accounts. Do not reuse the same `--user-data-dir` for two ports, and
+do not add ports merely to run normal workflows concurrently—the shared
+single-port tab isolation already handles that.
 
 ## 📄 License & Architecture Foundations
 

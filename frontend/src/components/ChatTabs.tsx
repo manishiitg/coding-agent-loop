@@ -28,8 +28,6 @@ interface ChatTabsProps {
   onSubmitOrgCommand?: (query: string) => void
 }
 
-const DEDICATED_MCP_SERVERS = new Set(['playwright'])
-
 // Compact model id for the delegation-tier summary tooltip (mirrors ModePresetBar).
 function shortModelName(modelId: string): string {
   const name = modelId.split('/').pop() || modelId
@@ -131,7 +129,7 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
       mcpToolList
         .filter(tool => tool.status === 'ok')
         .map(tool => tool.server)
-        .filter((server): server is string => typeof server === 'string' && !DEDICATED_MCP_SERVERS.has(server))
+        .filter((server): server is string => typeof server === 'string')
     )],
     [mcpToolList]
   )
@@ -190,8 +188,8 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
     ? 'Browser access'
     : browserMode === 'cdp'
       ? 'Browser access: CDP'
-      : browserMode === 'playwright'
-        ? 'Browser access: Playwright'
+      : browserMode === 'auto'
+        ? 'Browser access: Automatic'
         : 'Browser access: Headless'
 
   // Use prop if provided, otherwise use store value

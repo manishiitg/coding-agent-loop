@@ -256,18 +256,6 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 	if containsAgentBrowserInvocation(cmdTrimmed) {
 		log.Printf("[SHELL] Blocked agent-browser CLI call. Command: %s", redactShellCommandForLog(params.Command))
 
-		// Context-aware error: guide LLM to the correct browser tool
-		browserMode := ""
-		if sessionCfg != nil {
-			browserMode = sessionCfg.BrowserMode
-		}
-		if browserMode == "playwright" {
-			toolName := "Playwright browser_* tools (browser_snapshot, browser_click, browser_type, etc.)"
-			return ShellCommandResult{
-				Stderr:   "ERROR: Do not call agent-browser via execute_shell_command. Use the " + toolName + " for browser automation.\n\nThe agent-browser CLI is not the correct tool for this workflow. Start with browser_snapshot to see the current page state, then use the appropriate browser_* tool for interactions.",
-				ExitCode: 1,
-			}, nil
-		}
 		return ShellCommandResult{
 			Stderr:   "ERROR: Do not call agent-browser directly via execute_shell_command for browser actions. Use the agent_browser tool instead.\n\nAllowed shell exception for docs only:\n  agent-browser skills list\n  agent-browser skills get core\n  agent-browser skills get core --full\n\nFor direct tool call mode:\n  agent_browser(command=\"open\", args=[\"https://example.com\"], session=\"default\")\n\nFor code execution mode (MCP bridge):\n  Call get_api_spec(server_name=\"agent_browser\") to get the HTTP API spec,\n  then POST to the agent_browser endpoint via HTTP.\n\nThe agent_browser tool handles CDP connection, session management, and folder sandboxing automatically. Calling agent-browser CLI directly for browser actions bypasses CDP URL resolution and will fail inside Docker.",
 			ExitCode: 1,

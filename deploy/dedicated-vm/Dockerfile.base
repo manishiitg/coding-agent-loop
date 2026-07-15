@@ -28,8 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get install -y --no-install-recommends gcc libc6-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g agent-browser
-ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
+RUN npm install -g agent-browser@latest && agent-browser --version
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 
 RUN pip3 install --break-system-packages uv

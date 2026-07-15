@@ -2081,7 +2081,7 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) bo
 		}
 
 		// A stopped/canceled synthetic turn must not "complete" afterward, otherwise
-		// it can resurrect the stored agent and reopen Playwright after Esc/stop.
+		// it can resurrect the stored agent and reopen stateful MCP connections after Esc/stop.
 		if agentCtx.Err() != nil || api.isSessionStoppedOrInactive(sessionID) {
 			log.Printf("[BG AGENT] Synthetic turn aborted for session %s after stream end (ctx_err=%v stopped=%v)",
 				sessionID, agentCtx.Err(), api.isSessionStoppedOrInactive(sessionID))

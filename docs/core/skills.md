@@ -76,8 +76,8 @@ PresetQuery.selected_skills (workflow-wide default)
     {
       "id": "research-step",
       "agent_configs": {
-        "selected_servers": ["playwright"],
-        "enabled_skills": ["lead-research-assistant"]
+        "selected_servers": ["parallel-search"],
+        "enabled_skills": ["lead-research-assistant", "agent-browser"]
       }
     },
     {
@@ -104,7 +104,7 @@ agent_go/pkg/skills/
 ├── github.go                  # Download skill folders from GitHub URLs
 ├── workspace_api.go           # Workspace file operations
 ├── runtime_loader.go          # LoadAttachable / LoadGlobalSkill — build attachable skills for agents
-├── builtin_browser_skills.go  # Builtin agent-browser / playwright skills (served from code, never on disk)
+├── builtin_browser_skills.go  # Builtin agent-browser skill (served from code, never on disk)
 ├── cli.go                     # skills CLI integration (npx skills), lock-file update detection
 └── zip.go                     # Zip import/export of skill folders
 ```
@@ -171,7 +171,7 @@ surfacing lives in the transport layer:
    library injects a progressive-disclosure skill listing into the outgoing
    system prompt at `ensureSystemPrompt()` time; CLI transports additionally
    project the skill folder to disk via the SkillProjector contract.
-3. **Builtin skills**: `agent-browser` and `playwright` are served from code
+3. **Builtin skills**: `agent-browser` is served from code
    (`builtin_browser_skills.go`), not from the skills/ folder. The loader
    checks builtins first, so a disk folder with the same name would be
    silently shadowed — never create one.

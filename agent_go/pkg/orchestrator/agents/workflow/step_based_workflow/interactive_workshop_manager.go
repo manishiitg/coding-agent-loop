@@ -18,6 +18,7 @@ import (
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/guidance"
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/fsutil"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/instructions"
@@ -36,6 +37,8 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	_ "modernc.org/sqlite"
 )
+
+const maxCDPPortsPerWorkflow = 4
 
 const workshopFixedIteration = "iteration-0"
 
@@ -920,6 +923,11 @@ func (iwm *InteractiveWorkshopManager) persistWorkflowConfigToManifest(ctx conte
 		caps["browser_mode"] = mode
 	} else if _, exists := caps["browser_mode"]; !exists {
 		caps["browser_mode"] = "none"
+	}
+	if ports := iwm.controller.GetCdpPorts(); len(ports) > 0 {
+		caps["cdp_ports"] = ports
+	} else {
+		delete(caps, "cdp_ports")
 	}
 
 	// Persist lock_knowledgebase under capabilities.llm_config
@@ -2310,12 +2318,26 @@ func (agent *WorkflowInteractiveWorkshopAgent) Execute(ctx context.Context, temp
 	// `browser-usage` and is fetched on demand. Mirrors the pattern at
 	// server.go:5024 (workflow_phase path).
 	browserCfg := iwm.controller.resolveBrowserConfig(iwm.controller.GetSelectedServers(), iwm.controller.GetSelectedSkills())
-	if browserCfg.HasPlaywright || browserCfg.HasAgentBrowser {
+	if browserCfg.HasAgentBrowser {
 		systemPrompt.WriteString("\n\n## Browser\n\nThis workflow has a browser tool available (mode=")
 		systemPrompt.WriteString(browserCfg.Mode)
-		systemPrompt.WriteString("). For the full agent_browser HTTP API + per-mode behaviors (CDP / headless / Playwright), tab discipline, file uploads, and session limits, call `get_reference_doc(kind=\"browser-usage\")` before driving the browser.\n")
-		logger.Info(fmt.Sprintf("🌐 Added browser-skill pointer to workflow builder system prompt (mode=%s, playwright=%v, agent-browser=%v)",
-			browserCfg.Mode, browserCfg.HasPlaywright, browserCfg.HasAgentBrowser))
+		systemPrompt.WriteString("). Read `get_reference_doc(kind=\"browser-usage\")` for Builder-specific mode, tab, file, and safety rules. ")
+		if browserCfg.HasAgentBrowser && browserCfg.Mode == "cdp" {
+			ports := append([]int{browserCfg.CdpPort}, browserCfg.CdpPorts...)
+			endpoints := browser.ConfiguredCDPEndpoints(ports)
+			endpoint := browser.ConfiguredCDPEndpoint(browserCfg.CdpPort)
+			if len(endpoints) > 0 {
+				endpoint = endpoints[0]
+			}
+			if len(endpoints) > 1 {
+				systemPrompt.WriteString("This workflow explicitly authorizes independently-profiled Chrome browsers at `" + strings.Join(endpoints, "`, `") + "`. Choose the endpoint matching the intended login/account on every call; multiple ports are for specialized multi-login testing, not normal workflow concurrency. ")
+			}
+			systemPrompt.WriteString("Every agent_browser call must explicitly include one authorized `--cdp <endpoint>`. Before the first browser action, load the version-matched core skill with `agent_browser(command=\"skills\", args=[\"--cdp\", \"" + endpoint + "\", \"get\", \"core\"], session=\"default\")`; this docs call does not require a selected tab.\n")
+		} else if browserCfg.HasAgentBrowser {
+			systemPrompt.WriteString("Before the first browser action, load the version-matched core skill with `agent_browser(command=\"skills\", args=[\"get\", \"core\"], session=\"default\")`.\n")
+		}
+		logger.Info(fmt.Sprintf("🌐 Added browser-skill pointer to workflow builder system prompt (mode=%s, agent-browser=%v)",
+			browserCfg.Mode, browserCfg.HasAgentBrowser))
 	}
 
 	// NOTE: Secrets are injected by the server-level handler (server.go) via AppendSystemPrompt
@@ -5775,6 +5797,19 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}
 
+			// --- Browser ---
+			sb.WriteString("\n### Browser\n")
+			mode := strings.ToLower(strings.TrimSpace(ctrl.GetBrowserMode()))
+			if mode == "" {
+				mode = "none"
+			}
+			sb.WriteString(fmt.Sprintf("- browser_mode: %s\n", mode))
+			if ports := ctrl.GetCdpPorts(); len(ports) > 0 {
+				sb.WriteString(fmt.Sprintf("- cdp_ports: %v (independent Chrome profiles/login identities)\n", ports))
+			} else {
+				sb.WriteString("- cdp_ports: (default single port when CDP is selected)\n")
+			}
+
 			// --- Secrets (names only) ---
 			secrets := ctrl.GetSecrets()
 			sb.WriteString("\n### Secrets\n")
@@ -5912,7 +5947,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: update_workflow_config — add/remove MCP servers, skills, secrets, and workflow-level knobs
 	if err := mcpAgent.RegisterCustomTool(
 		"update_workflow_config",
-		"Update workflow configuration: add/remove MCP servers, add/remove workflow-level tool allowlist entries, add/remove skills, enable/disable secrets, set browser mode, set run retention. Use get_workflow_config to inspect current workflow settings and list_skills to discover installed skill folder names. Changes take effect immediately for subsequent step executions.",
+		"Update workflow configuration: add/remove MCP servers, add/remove workflow-level tool allowlist entries, add/remove skills, enable/disable secrets, set browser mode and optional specialized multi-profile CDP ports, and set run retention. Use get_workflow_config to inspect current workflow settings and list_skills to discover installed skill folder names. Most changes take effect immediately for subsequent steps; changing cdp_ports takes effect on the next workflow execution because browser executors are authorized at run start.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -5980,8 +6015,15 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"browser_mode": map[string]interface{}{
 					"type":        "string",
-					"enum":        []interface{}{"none", "headless", "cdp", "playwright"},
-					"description": "Workflow-level browser automation mode. 'none' disables browser capability; 'headless' enables isolated agent_browser; 'cdp' enables agent_browser against the operator's shared Chrome; 'playwright' uses Playwright MCP tools. For steps that actually drive the browser, also set update_step_config(enabled_custom_tools=[...]) and enabled_skills=['agent-browser'] or ['playwright'] as appropriate.",
+					"enum":        []interface{}{"none", "auto", "headless", "cdp"},
+					"description": "Workflow-level browser automation mode. 'none' disables browser capability; 'auto' uses the operator's shared Chrome through CDP when reachable and otherwise headless agent_browser; 'headless' forces isolated agent_browser; 'cdp' requires the operator's shared Chrome. For steps that actually drive the browser, also set update_step_config(enabled_custom_tools=[...]) and enabled_skills=['agent-browser'].",
+				},
+				"cdp_ports": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 65535},
+					"maxItems":    maxCDPPortsPerWorkflow,
+					"uniqueItems": true,
+					"description": "Optional specialized CDP browser ports (maximum 4). Use multiple ports only when one workflow needs independent Chrome profiles/login identities, such as testing two accounts on the same site. Each port must be launched with a distinct --user-data-dir. Normal concurrent workflows should share the default single CDP browser.",
 				},
 				"run_retention_count": map[string]interface{}{
 					"type":        "integer",
@@ -6449,14 +6491,50 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if raw, ok := args["browser_mode"]; ok && raw != nil {
 				mode, _ := raw.(string)
 				mode = strings.ToLower(strings.TrimSpace(mode))
-				validModes := map[string]bool{"none": true, "headless": true, "cdp": true, "playwright": true}
+				validModes := map[string]bool{"none": true, "auto": true, "headless": true, "cdp": true}
 				if !validModes[mode] {
-					return "Error: browser_mode must be one of: none, headless, cdp, playwright.", nil
+					return "Error: browser_mode must be one of: none, auto, headless, cdp.", nil
 				}
 				iwm.controller.SetBrowserMode(mode)
+				if mode != "cdp" && mode != "auto" {
+					iwm.controller.SetCdpPorts(nil)
+				}
 				anyChanged = true
 				sb.WriteString(fmt.Sprintf("\n### Browser Mode (updated)\n- %s\n", mode))
 				logger.Info(fmt.Sprintf("Updated workflow browser_mode=%s", mode))
+			}
+
+			// --- Specialized multi-profile CDP ports ---
+			if raw, ok := args["cdp_ports"]; ok && raw != nil {
+				arr, ok := raw.([]interface{})
+				if !ok {
+					return "Error: cdp_ports must be an array of integer ports.", nil
+				}
+				if len(arr) > maxCDPPortsPerWorkflow {
+					return fmt.Sprintf("Error: cdp_ports supports at most %d ports.", maxCDPPortsPerWorkflow), nil
+				}
+				ports := make([]int, 0, len(arr))
+				seen := make(map[int]bool, len(arr))
+				for _, item := range arr {
+					value, ok := item.(float64)
+					if !ok || value != float64(int(value)) || value < 1 || value > 65535 {
+						return "Error: every cdp_ports entry must be an integer between 1 and 65535.", nil
+					}
+					port := int(value)
+					if seen[port] {
+						return fmt.Sprintf("Error: duplicate cdp_ports entry %d.", port), nil
+					}
+					seen[port] = true
+					ports = append(ports, port)
+				}
+				mode := strings.ToLower(strings.TrimSpace(iwm.controller.GetBrowserMode()))
+				if len(ports) > 0 && mode != "cdp" && mode != "auto" {
+					return "Error: non-empty cdp_ports requires browser_mode='cdp' or browser_mode='auto'. Set both in the same update_workflow_config call if needed.", nil
+				}
+				iwm.controller.SetCdpPorts(ports)
+				anyChanged = true
+				sb.WriteString(fmt.Sprintf("\n### CDP Profiles (updated)\n- Authorized ports: %v\n- Each port must use a distinct Chrome --user-data-dir. The change applies to the next workflow execution.\n", ports))
+				logger.Info(fmt.Sprintf("Updated workflow cdp_ports=%v", ports))
 			}
 
 			// --- Run Retention ---
@@ -6541,7 +6619,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			if !anyChanged {
-				return "No changes applied. Provide at least one of: add_servers, remove_servers, add_tools, remove_tools, add_skills, remove_skills, add_secrets, remove_secrets, update_tier_fallbacks, lock_knowledgebase, browser_mode, run_retention_count, post_run_monitor.", nil
+				return "No changes applied. Provide at least one of: add_servers, remove_servers, add_tools, remove_tools, add_skills, remove_skills, add_secrets, remove_secrets, update_tier_fallbacks, lock_knowledgebase, browser_mode, cdp_ports, run_retention_count, post_run_monitor.", nil
 			}
 
 			// Persist config changes to workflow.json manifest (file-backed)
@@ -7977,15 +8055,14 @@ This is a **read-only review** — do not modify any files.
 5. **Check output contract**: Verify that main.py produces the exact output files, field names, and formats specified in the validation schema.
 6. **Check data authenticity**: Verify that every value written to output files traces back to a real data source (MCP tool call, API response, or input file). Flag any hardcoded/fabricated data in output construction.
 7. **Check MCP tool usage**: Verify that call_mcp() calls use consistent server/tool naming. Flag suspicious tool names that look guessed rather than discovered via get_api_spec.
-8. **Check browser automation quality**: For scripts using playwright / agent_browser tools, verify:
+8. **Check browser automation quality**: For scripts using agent_browser, verify:
    - **Browser-heavy scripted is usually the wrong fit.** If a browser-enabled step has a saved `+"`main.py`"+`, flag it unless the user explicitly requested scripted browser execution AND the script uses durable selectors, state-driven waits, fresh snapshots, and has evidence of stability across runs. Browser/UI automation should generally remain `+"`agentic`"+` so the agent can adapt to live UI state, auth, dynamic selectors, pagination, and third-party page timing.
    - **agentic must not keep main.py.** If a step is declared `+"`agentic`"+` but still has `+"`learnings/{step-id}/main.py`"+`, flag the file as stale artifact debt. Recommend deleting it and clearing `+"`lock_code`"+`; agentic does not run or maintain persistent scripts.
    - **Selectors are DURABLE, not refs.** Hardcoded string refs like `+"`'abc123'`"+` or `+"`'@e1'`"+` in main.py are BUGS — refs are session-local. The durable alternatives are (in priority order): data-testid / hand-written id / aria-label / role+name / get_by_label|placeholder|text. Flag any ref that appears as a literal string (not a variable parsed from a current-run snapshot).
-   - Uses browser_snapshot before interacting — never clicks or types blindly
-   - Ref-based interaction is acceptable ONLY when the ref value is parsed from a snapshot taken earlier in the SAME run (`+"`ref = extract_ref(snapshot, role=..., name=...)` then `browser_click({'ref': ref})`"+`). Hardcoded refs in main.py must be flagged.
-   - `+"`browser_run_code`"+` with Playwright's locator API (`+"`page.getByRole(...)`"+`, `+"`page.locator('#stable-id')`"+`) is an acceptable alternative — the selector inside the JS is durable.
-   - Does NOT use `+"`browser_evaluate`"+` for ACTIONS when a dedicated tool exists (browser_click/browser_type/browser_select_option/browser_navigate). Read-only browser_evaluate for DISCOVERY is fine.
-   - Uses wait loops that check page state via browser_snapshot, not hardcoded time.sleep()
+   - Uses agent_browser `+"`snapshot`"+` before interacting — never clicks or types blindly
+   - Ref-based interaction is acceptable ONLY when the ref value is parsed from a snapshot taken earlier in the SAME run (`+"`ref = extract_ref(snapshot, role=..., name=...)` then `browser('click', [ref])`"+`). Hardcoded refs in main.py must be flagged.
+   - Does NOT use raw page JavaScript for actions when a dedicated agent_browser command exists. Read-only eval for discovery is fine.
+   - Uses wait loops that check page state via agent_browser `+"`snapshot`"+`, not hardcoded time.sleep()
    - Prints diagnostic snapshots/state on failure so the fix loop can debug what went wrong
    - Avoids structural CSS selectors (nth-child chains, deep descendant paths) — flag those in favor of durable hooks
 
@@ -7997,51 +8074,7 @@ Deterministic selectors that survive future runs (in descending durability): dat
 
 Refs are fine *in-session* (parse a snapshot, use the ref for the next call in the same run). They are never fine *persisted*. Flag any saved script where the ref is a hardcoded string.
 
-### Option A: Playwright MCP (server='playwright')
-
-**Correct patterns — durable selectors via tool args OR Playwright's locator API:**
-`+"```"+`python
-# CORRECT: Snapshot, parse for the element you want, use the ref THIS run only
-snapshot = call_mcp('playwright', 'browser_snapshot', {})
-ref = extract_ref_by_role_and_name(snapshot, role='button', name='Continue')  # your helper
-call_mcp('playwright', 'browser_click', {'ref': ref})
-
-# CORRECT: Playwright's locator API via browser_run_code — durable selector expressed inline
-call_mcp('playwright', 'browser_run_code', {'code': """
-    await page.getByRole('button', { name: 'Continue' }).click();
-    await page.getByLabel('Email').fill(email);
-    await page.locator('#panAdhaarUserId').fill(pan);
-"""})
-
-# CORRECT: Durable CSS selector (testid / hand-written id / aria-label) if the tool accepts it
-call_mcp('playwright', 'browser_click', {'selector': '[data-testid="submit-btn"]'})
-call_mcp('playwright', 'browser_click', {'selector': '[aria-label="Sign in"]'})
-
-# CORRECT: Wait by polling snapshots (state-driven, not time.sleep)
-for i in range(10):
-    snapshot = call_mcp('playwright', 'browser_snapshot', {})
-    if 'Dashboard' in snapshot:
-        break
-    time.sleep(2)
-`+"```"+`
-
-**Anti-patterns to flag (WRONG):**
-`+"```"+`python
-# WRONG: Hardcoded ref value in main.py — this ref is session-local; next run will click wrong element
-call_mcp('playwright', 'browser_click', {'ref': 'abc123'})
-call_mcp('playwright', 'browser_type', {'ref': 'def456', 'text': 'hello'})
-
-# WRONG: browser_evaluate for ACTIONS (runs JS in the page, not Playwright locators — bypasses durability)
-call_mcp('playwright', 'browser_evaluate', {'function': '() => { document.querySelector("button").click() }'})
-
-# WRONG: Structural-CSS selector that relies on DOM shape (nth-child, deep descendant chains)
-call_mcp('playwright', 'browser_click', {'selector': 'form > div:nth-child(3) > button'})
-
-# WRONG: Hardcoded time.sleep instead of polling
-time.sleep(15)  # Should poll with browser_snapshot instead
-`+"```"+`
-
-### Option B: Agent Browser (tool='agent_browser')
+### Agent Browser (tool='agent_browser')
 
 Direct tool call (NOT via call_mcp). Uses command + args pattern.
 
@@ -8120,7 +8153,7 @@ For each step listed above, carefully compare the description with the script an
 4. Would the script work correctly for a different group/user?
 5. Does the script actually fetch/compute data from real sources, or does it fabricate/hardcode output values?
 6. Are MCP tool calls using correct server names, tool names, and parameters?
-7. For browser automation: does the script use browser_snapshot + ref-based clicks, or does it blindly inject JavaScript?`)
+7. For browser automation: does the script use agent_browser snapshots plus fresh refs or durable selectors, or does it blindly inject JavaScript?`)
 
 // ============================================================================
 // Background Task Agent — standalone agent for run_in_background tool
@@ -9566,9 +9599,23 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgent(ctx context.Contex
 	// block. Background-task agents fetch the full guide on demand.
 	bgBrowserCfg := iwm.controller.resolveBrowserConfig(config.ServerNames, effectiveSkills)
 	browserPrompt := ""
-	if bgBrowserCfg.HasPlaywright || bgBrowserCfg.HasAgentBrowser {
+	if bgBrowserCfg.HasAgentBrowser {
 		browserPrompt = "\n## Browser\n\nThis task has a browser tool available (mode=" + bgBrowserCfg.Mode +
-			"). For the full agent_browser HTTP API + per-mode behaviors (CDP / headless / Playwright), tab discipline, file uploads, and session limits, call `get_reference_doc(kind=\"browser-usage\")` before driving the browser.\n"
+			"). Read `get_reference_doc(kind=\"browser-usage\")` for Builder-specific mode, tab, file, and safety rules. "
+		if bgBrowserCfg.HasAgentBrowser && bgBrowserCfg.Mode == "cdp" {
+			ports := append([]int{bgBrowserCfg.CdpPort}, bgBrowserCfg.CdpPorts...)
+			endpoints := browser.ConfiguredCDPEndpoints(ports)
+			endpoint := browser.ConfiguredCDPEndpoint(bgBrowserCfg.CdpPort)
+			if len(endpoints) > 0 {
+				endpoint = endpoints[0]
+			}
+			if len(endpoints) > 1 {
+				browserPrompt += "This workflow explicitly authorizes independently-profiled Chrome browsers at `" + strings.Join(endpoints, "`, `") + "`. Choose the endpoint matching the intended login/account on every call. "
+			}
+			browserPrompt += "Every agent_browser call must explicitly include one authorized `--cdp <endpoint>`. Before the first browser action, load the version-matched core skill with `agent_browser(command=\"skills\", args=[\"--cdp\", \"" + endpoint + "\", \"get\", \"core\"], session=\"default\")`; this docs call does not require a selected tab.\n"
+		} else {
+			browserPrompt += "Before the first browser action, load the version-matched core skill with `agent_browser(command=\"skills\", args=[\"get\", \"core\"], session=\"default\")`.\n"
+		}
 	}
 
 	// Apply post-setup configuration (folder guard + registry for code execution mode)

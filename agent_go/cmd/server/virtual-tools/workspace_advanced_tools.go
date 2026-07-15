@@ -10,13 +10,13 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/llm"
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
 )
 
 // GetWorkspaceAdvancedToolCategory returns the category name for workspace advanced tools
@@ -98,7 +98,7 @@ func CreateSearchWebLLMProviderTestExecutor(workspaceURL string) func(ctx contex
 // CreateWorkspaceAdvancedToolExecutorsWithSession creates workspace advanced tool executors
 // with an explicit user ID and session ID. The session ID is injected as MCP_SESSION_ID
 // env var so that code execution mode HTTP tool calls can include it for connection reuse
-// (e.g., sharing the same Playwright browser across calls within a session).
+// (e.g., sharing a stateful MCP connection across calls within a session).
 // Returns (executors, envMap) — the envMap is the same map reference used by the workspace
 // client, so callers can update MCP_API_URL/MCP_SESSION_ID dynamically when the session changes.
 func CreateWorkspaceAdvancedToolExecutorsWithSession(userID, sessionID string) (map[string]func(ctx context.Context, args map[string]any) (string, error), map[string]string) {

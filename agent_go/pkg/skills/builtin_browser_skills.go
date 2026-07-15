@@ -15,15 +15,8 @@ func builtinAttachableSkill(folderName string) *llmtypes.Skill {
 	case "agent-browser":
 		return &llmtypes.Skill{
 			Name:        "agent-browser",
-			Description: "Builder-specific agent_browser automation rules for CDP/shared Chrome, tab selection, authenticated browser checks, screenshots, scraping, form fills, and downloads.",
+			Description: "Use agent-browser through Builder's managed tool. Load version-matched core/specialized skills from the installed CLI, then follow Builder-specific CDP tab ownership, locking, file, and safety rules.",
 			Content:     agentBrowserSkillContent,
-			Source:      llmtypes.SkillSource{Origin: "builtin"},
-		}
-	case "playwright":
-		return &llmtypes.Skill{
-			Name:        "playwright",
-			Description: "Builder-specific Playwright MCP automation rules for deterministic browser automation, run-scoped Downloads, and shared-vs-isolated browser handling.",
-			Content:     playwrightSkillContent,
 			Source:      llmtypes.SkillSource{Origin: "builtin"},
 		}
 	default:
@@ -33,7 +26,21 @@ func builtinAttachableSkill(folderName string) *llmtypes.Skill {
 
 const agentBrowserSkillContent = `# Agent Browser In Builder
 
-Use the Builder MCP tool ` + "`workspace_browser.agent_browser`" + `. Do not run the ` + "`agent-browser`" + ` CLI directly through shell for browser actions unless the task is explicitly documentation/debug discovery such as ` + "`agent-browser skills get core`" + `.
+Use the Builder MCP tool ` + "`workspace_browser.agent_browser`" + `. Do not run the ` + "`agent-browser`" + ` CLI directly through shell. Builder's tool owns CDP validation, shared-tab locking, session isolation, and workspace file guards.
+
+## Load Version-Matched Agent-Browser Skills
+
+The installed CLI bundles skills that exactly match its command surface. Before the first browser action in a task, load the current core overview through the managed tool. In headless mode:
+
+` + "```python" + `
+agent_browser("skills", ["get", "core"])
+` + "```" + `
+
+In CDP mode, include the configured ` + "`--cdp`" + ` prefix as shown in the CDP wrapper below. Documentation calls do not require a selected tab.
+
+Use ` + "`agent_browser(\"skills\", [\"get\", \"core\", \"--full\"])`" + ` only when the overview does not contain the exact command or flag. Use ` + "`agent_browser(\"skills\", [\"list\"])`" + ` to discover specialized skills and load one only when the task needs it, for example ` + "`dogfood`" + ` for exploratory QA/bug hunts or ` + "`electron`" + ` for desktop Electron apps.
+
+Treat upstream shell examples as logical agent-browser commands. Translate ` + "`agent-browser <command> <args...>`" + ` into ` + "`agent_browser(\"<command>\", [\"<args>\", ...])`" + `; never copy those examples into ` + "`execute_shell_command`" + `.
 
 ## HTTP Tool Call Pattern
 
@@ -61,20 +68,48 @@ def agent_browser(command, args=None, session="main"):
     if not payload.get("success", False):
         raise RuntimeError(payload.get("error") or payload)
     return payload.get("result")
+
 ` + "```" + `
 
 ## CDP Shared Chrome Rules
 
 CDP mode controls the user's real Chrome. The user can see the browser and it may already be authenticated.
 
-Always include ` + "`--cdp http://localhost:9222`" + ` in args unless the prompt gives a different CDP endpoint.
+Always include an endpoint authorized by the prompt, such as ` + "`--cdp http://localhost:9222`" + `. The prompt endpoint list is authoritative and the backend rejects a missing or unconfigured port. When the prompt lists multiple endpoints, they represent independent Chrome profiles/login identities for specialized multi-account testing within this workflow. Choose the intended profile on every call and keep distinct labeled tabs per account. Do not create extra CDP browsers merely because workflows or steps are concurrent.
 
 ` + "```python" + `
 CDP = ["--cdp", "http://localhost:9222"]
 
 def browser(command, args=None, session="main"):
     return agent_browser(command, CDP + (args or []), session=session)
+
+# Documentation calls are read-only and do not need a selected tab, but still
+# carry --cdp so the tool trace remains explicit about this run's mode.
+core = browser("skills", ["get", "core"])
 ` + "```" + `
+
+### Installing a CDP Browser on macOS
+
+If the user wants CDP and no authorized endpoint is available, tell them to
+install the default visible Chrome launcher with:
+
+` + "```bash" + `
+curl -fsSL 'https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/scripts/install-chrome-cdp-macOS.sh' | bash
+` + "```" + `
+
+For a specialized additional login identity, the same installer accepts a
+port and creates a separate app and Chrome profile:
+
+` + "```bash" + `
+curl -fsSL 'https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/scripts/install-chrome-cdp-macOS.sh' | bash -s -- --port 9333
+curl http://127.0.0.1:9333/json/version
+` + "```" + `
+
+Do not run the installer yourself unless the user explicitly asks you to
+install and open a visible local browser. After the endpoint is reachable, the
+workflow builder must add it to ` + "`cdp_ports`" + `; the current run cannot
+invent or use a port that its prompt did not authorize. Extra profiles are for
+specialized multi-login testing, not ordinary workflow concurrency.
 
 Tab handling is mandatory in shared CDP mode:
 
@@ -112,6 +147,21 @@ If a command says shared-browser mode requires selecting or creating a tab, do n
 
 Do not call ` + "`close`" + ` in CDP mode unless the user explicitly asks. It can close the user's real tab.
 
+## QA Evidence and Network Debugging
+
+Keep these operations inside the Builder ` + "`agent_browser`" + ` tool so CDP tab selection and locking remain enforced:
+
+` + "```python" + `
+browser("network", ["tab", "t1", "requests"])
+browser("console", ["tab", "t1"])
+browser("errors", ["tab", "t1"])
+browser("record", ["tab", "t1", "start", "qa-run.webm"])
+# reproduce the issue
+browser("record", ["tab", "t1", "stop"])
+` + "```" + `
+
+HAR files and videos can capture credentials or other visible secrets. Create them only when the user or workflow requested QA evidence and review before sharing.
+
 ## Headless Rules
 
 Headless mode uses an isolated container browser. It usually has no user cookies or saved login state. Use it for unattended automation when user-authenticated Chrome is not needed.
@@ -137,67 +187,4 @@ After every navigation or major action, re-snapshot before the next action.
 ## Auth Checks
 
 For authenticated sites, verify by page content, not just URL load. For X/Twitter, ` + "`https://x.com/home`" + ` loading is not enough; confirm the authenticated home feed or account UI is visible. A sign-in page means connected but not authenticated.
-`
-
-const playwrightSkillContent = `# Playwright In Builder
-
-Use the Playwright MCP server tools. Do not use ` + "`agent_browser`" + ` in a Playwright step unless the task explicitly asks to switch browser backends.
-
-Typical tools: ` + "`browser_snapshot`" + `, ` + "`browser_click`" + `, ` + "`browser_type`" + `, ` + "`browser_press`" + `, ` + "`browser_evaluate`" + `, ` + "`browser_run_code`" + `, ` + "`browser_screenshot`" + `, ` + "`browser_file_upload`" + `, and ` + "`browser_close`" + `.
-
-## Core Workflow
-
-Use a tight loop:
-
-1. ` + "`browser_snapshot`" + ` to inspect current page state.
-2. Act with Playwright MCP tools or ` + "`browser_run_code`" + `.
-3. Re-snapshot after navigation, modal opens, form submission, or DOM changes.
-4. Save screenshots when visual proof helps.
-
-## Deterministic Selectors
-
-Snapshot refs are session-local. Use them only for immediate actions in the same run. Never save refs into ` + "`main.py`" + `, learnings, db, or KB.
-
-For saved scripts and durable learnings, use deterministic selectors: test ids, stable id/name, aria-label, role plus accessible name, label, placeholder, visible text, or structural CSS only as a last resort.
-
-Prefer Playwright locator APIs in ` + "`browser_run_code`" + ` for durable actions:
-
-` + "```javascript" + `
-await page.getByRole('button', { name: 'Continue' }).click()
-await page.getByLabel('Email').fill(email)
-await page.getByPlaceholder('Search').fill(query)
-` + "```" + `
-
-Avoid brittle generated classes and rotating ids such as Radix ids, React ` + "`:r...:`" + ` ids, Angular Material generated ids, or UUID-like ids.
-
-## Downloads Folder
-
-Builder configures Playwright's download/output directory to the workflow run-scoped ` + "`Downloads/`" + ` folder. Use that folder for all browser downloads, screenshots, generated upload files, and cleanup.
-
-In CDP mode, a browser-native download may still go to the host ` + "`~/Downloads`" + ` folder. When the prompt grants a read-only host Downloads path, import the file by copying it into the run-scoped ` + "`Downloads/`" + ` folder, then work from the copied file.
-
-Use workspace-relative paths when calling tools:
-
-` + "```text" + `
-Downloads/input.csv
-Downloads/proof.png
-` + "```" + `
-
-Do not manually construct absolute host paths unless the step prompt explicitly requires it. Do not use the root workspace ` + "`Downloads/`" + ` folder when the step prompt provides a run-scoped downloads folder.
-
-## Shared Browser Vs Isolated Browser
-
-` + "`share_browser=true`" + ` means a sub-agent reuses the parent browser context. Use this when the sub-agent needs the same logged-in session or page state.
-
-` + "`share_browser=false`" + ` gives the sub-agent an isolated browser session. Use this for parallel browser work, different accounts, unrelated sites, or any task where two agents might navigate/click at the same time.
-
-Do not run multiple parallel agents against the same shared page unless the workflow explicitly coordinates them. They can steal focus, navigate away, or invalidate each other's refs.
-
-Close isolated browser sessions when done. For shared parent browser sessions, close only when the workflow/sub-agent owns the browser lifecycle or the user explicitly asks.
-
-## Page State Checks
-
-Verify real page state after every important action: expected URL, visible required element, success/failure state, and authenticated UI for login-gated pages.
-
-For login-gated sites, a loaded sign-in page is not success.
 `

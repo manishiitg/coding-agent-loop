@@ -4034,7 +4034,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
 
   const renderRailControls = () => {
     const filterButtonClass = (filter: TerminalRailFilter) => (
-      `inline-flex min-w-0 items-center justify-center gap-1 rounded px-1.5 py-1 text-[10px] font-medium leading-none transition-colors ${
+      `inline-flex min-w-0 flex-col items-center justify-center gap-0.5 overflow-hidden rounded px-0.5 py-1.5 text-[10px] font-medium leading-none transition-colors ${
         terminalRailFilter === filter
           ? 'bg-neutral-800 text-neutral-100 shadow-sm'
           : 'text-neutral-500 hover:bg-neutral-900 hover:text-neutral-200'
@@ -4069,8 +4069,8 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
                 className={filterButtonClass(filter.key)}
                 title={`Show ${filter.label.toLowerCase()} agents`}
               >
-                <span>{railNarrow ? filter.narrowLabel : filter.label}</span>
-                {!railNarrow && <span className="text-neutral-500">{filter.count}</span>}
+                <span className="max-w-full truncate whitespace-nowrap">{railNarrow ? filter.narrowLabel : filter.label}</span>
+                {!railNarrow && <span className="text-[9px] tabular-nums text-neutral-500">{filter.count}</span>}
               </button>
             ))}
           </div>

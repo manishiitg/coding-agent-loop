@@ -3,8 +3,8 @@ package server
 import (
 	"testing"
 
-	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
+	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 )
 
 func TestWorkshopConvertTieredLLMConfigHandlesPartialTiers(t *testing.T) {
@@ -115,8 +115,14 @@ func TestWorkshopResolveLLMConfigExpandsCodingAgentMode(t *testing.T) {
 	if tiered.Tier1.Provider != defaults.High.Provider || tiered.Tier1.ModelID != defaults.High.ModelID {
 		t.Fatalf("unexpected high tier: %+v", tiered.Tier1)
 	}
+	if got := tiered.Tier1.Options["reasoning_effort"]; got != "high" {
+		t.Fatalf("high reasoning_effort = %#v, want high", got)
+	}
 	if tiered.Tier2.Provider != defaults.Medium.Provider || tiered.Tier2.ModelID != defaults.Medium.ModelID {
 		t.Fatalf("unexpected medium tier: %+v", tiered.Tier2)
+	}
+	if got := tiered.Tier2.Options["reasoning_effort"]; got != "medium" {
+		t.Fatalf("medium reasoning_effort = %#v, want medium", got)
 	}
 	if tiered.Tier3.Provider != defaults.Low.Provider || tiered.Tier3.ModelID != defaults.Low.ModelID {
 		t.Fatalf("unexpected low tier: %+v", tiered.Tier3)

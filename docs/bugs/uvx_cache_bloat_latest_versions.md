@@ -10,7 +10,7 @@ The `~/.cache/uv/` directory grows unbounded (10GB+ observed) over time due to r
 
 ### 1. `@latest` prevents venv reuse
 
-7 uvx servers and 2 npx servers in `mcp_servers_clean_user.json` use `@latest`:
+7 uvx servers and 1 npx server in `mcp_servers_clean_user.json` use `@latest`:
 - `awslabs.aws-api-mcp-server@latest`
 - `awslabs.aws-pricing-mcp-server@latest`
 - `awslabs.cost-explorer-mcp-server@latest`
@@ -18,7 +18,6 @@ The `~/.cache/uv/` directory grows unbounded (10GB+ observed) over time due to r
 - `awslabs.billing-cost-management-mcp-server@latest`
 - `awslabs.aws-documentation-mcp-server@latest`
 - `awslabs.eks-mcp-server@latest`
-- `@playwright/mcp@latest` (npx)
 - `kubernetes-mcp-server@latest` (npx)
 
 `uvx package@latest` creates a new ephemeral virtual environment each time it runs because it cannot guarantee the cached venv has the latest version. Pinned versions (`uvx package==0.4.2`) allow uvx to reuse cached venvs.
@@ -91,7 +90,7 @@ One change covers all paths. Original config args are never mutated (copy is mad
 ### Pinned arg format
 - uvx: `package==0.4.2` (PyPI convention)
 - npx: `package@0.4.2` (npm convention)
-- Scoped npm: `@playwright/mcp@1.2.3`
+- Scoped npm: `@scope/package@1.2.3`
 
 ### Graceful degradation
 - If PyPI/npm is unreachable: 10s timeout, warning logged, `@latest` kept

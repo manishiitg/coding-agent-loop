@@ -117,7 +117,7 @@ type BaseOrchestrator struct {
 	// Reference to the workspace executor env map (from CreateWorkspaceAdvancedToolExecutorsWithSession*)
 	// When the MCP session ID changes (e.g., per-group in batch execution), we update
 	// MCP_API_URL and MCP_SESSION_ID in this map so that code execution mode shell commands
-	// use the correct session-scoped URL (preventing new browser tabs per Playwright call).
+	// use the correct session-scoped URL for stateful MCP connection reuse.
 	workspaceEnvRef map[string]string
 	// Mutex protecting concurrent writes to workspaceEnvRef (parallel sub-agents)
 	workspaceEnvMu sync.Mutex
@@ -290,7 +290,7 @@ func getMapKeys(m map[string]string) []string {
 // Also updates MCP_API_URL and MCP_SESSION_ID in the workspace executor env map
 // (if SetWorkspaceEnvRef was called). This ensures code execution mode shell commands
 // use the correct session-scoped URL, preventing session registry misses that cause
-// new browser instances per Playwright call.
+// duplicate stateful MCP connections across calls.
 func (bo *BaseOrchestrator) SetMCPSessionID(sessionID string) {
 	previousSessionID := bo.mcpSessionID
 	bo.mcpSessionID = sessionID

@@ -83,8 +83,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) appendSupplementaryPrompts(
 	browserCfg.IsIsolated = isolatedSessionID != ""
 	if browserPrompt := browserinstructions.BuildBrowserInstructions(browserCfg); browserPrompt != "" {
 		mcpAgent.AppendSystemPrompt(browserPrompt)
-		hcpo.GetLogger().Info(fmt.Sprintf("🌐 Added browser instructions to agent (playwright=%v, agent-browser=%v, cdp=%v)",
-			browserCfg.HasPlaywright, browserCfg.HasAgentBrowser, browserCfg.CdpPort > 0))
+		hcpo.GetLogger().Info(fmt.Sprintf("🌐 Added browser instructions to agent (agent-browser=%v, cdp=%v)",
+			browserCfg.HasAgentBrowser, browserCfg.CdpPort > 0))
 	}
 
 	// 4b. Workflow-specific browser downloads guidance.
@@ -108,14 +108,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) appendSupplementaryPrompts(
 // Uses orchestrator-level browserMode as primary, falls back to auto-detection from servers/skills.
 func (hcpo *StepBasedWorkflowOrchestrator) resolveBrowserConfig(serverNames []string, skills []string) browserinstructions.BrowserConfig {
 	cfg := browserinstructions.BrowserConfig{
-		CdpPort: hcpo.GetCdpPort(),
+		CdpPort:  hcpo.GetCdpPort(),
+		CdpPorts: hcpo.GetCdpPorts(),
 	}
 
 	// Detect browser capabilities from server names and skills
 	for _, s := range serverNames {
 		switch s {
-		case "playwright":
-			cfg.HasPlaywright = true
 		case "workspace_browser":
 			cfg.HasAgentBrowser = true
 		}
@@ -124,27 +123,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveBrowserConfig(serverNames []st
 		switch skill {
 		case "agent-browser":
 			cfg.HasAgentBrowser = true
-		case "playwright":
-			cfg.HasPlaywright = true
 		}
 	}
 
 	// Resolve mode: explicit setting > auto-detect from capabilities
 	if mode := hcpo.GetBrowserMode(); mode != "" {
 		cfg.Mode = mode
-	} else if cfg.HasPlaywright {
-		cfg.Mode = "playwright"
-	} else if cfg.CdpPort > 0 {
+	} else if cfg.CdpPort > 0 || len(cfg.CdpPorts) > 0 {
 		cfg.Mode = "cdp"
 	} else if cfg.HasAgentBrowser {
 		cfg.Mode = "headless"
-	}
-
-	// Safety net: if a dedicated browser MCP server is present, force its mode and
-	// suppress agent_browser to prevent LLM tool confusion.
-	if cfg.HasPlaywright {
-		cfg.Mode = "playwright"
-		cfg.HasAgentBrowser = false
 	}
 
 	return cfg

@@ -1,15 +1,5 @@
 {
   "mcpServers": {
-    "playwright": {
-      "command": "npx",
-      "args": [
-        "@playwright/mcp@latest",
-        "--output-dir",
-        "../workspace-docs/Downloads",
-        "--isolated"
-      ],
-      "working_dir": "../workspace-docs/Downloads"
-    },
     "Parallel Search MCP": {
       "url": "https://search.parallel.ai/mcp"
     }

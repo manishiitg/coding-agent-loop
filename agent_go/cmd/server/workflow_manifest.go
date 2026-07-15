@@ -152,6 +152,7 @@ type WorkflowCapabilities struct {
 	SelectedSecrets           []string                       `json:"selected_secrets"`
 	SelectedGlobalSecretNames *[]string                      `json:"selected_global_secret_names"` // nil = all, [] = none
 	BrowserMode               string                         `json:"browser_mode"`
+	CDPPorts                  []int                          `json:"cdp_ports,omitempty"`
 	UseCodeExecutionMode      bool                           `json:"use_code_execution_mode"`
 	LLMConfig                 *workflowtypes.PresetLLMConfig `json:"llm_config,omitempty"`
 }
@@ -225,11 +226,27 @@ func ValidateManifest(m *WorkflowManifest) error {
 	// Validate browser mode if set
 	if m.Capabilities.BrowserMode != "" {
 		validModes := map[string]bool{
-			"none": true, "headless": true, "cdp": true, "playwright": true,
+			"none": true, "auto": true, "headless": true, "cdp": true,
 		}
 		if !validModes[m.Capabilities.BrowserMode] {
 			return fmt.Errorf("invalid browser_mode: %s", m.Capabilities.BrowserMode)
 		}
+	}
+	if len(m.Capabilities.CDPPorts) > maxCDPPortsPerRun {
+		return fmt.Errorf("capabilities.cdp_ports supports at most %d ports", maxCDPPortsPerRun)
+	}
+	if len(m.Capabilities.CDPPorts) > 0 && m.Capabilities.BrowserMode != "cdp" && m.Capabilities.BrowserMode != "auto" {
+		return fmt.Errorf("capabilities.cdp_ports requires browser_mode %q or %q", "cdp", "auto")
+	}
+	seenCDPPorts := make(map[int]bool, len(m.Capabilities.CDPPorts))
+	for _, port := range m.Capabilities.CDPPorts {
+		if port < 1 || port > 65535 {
+			return fmt.Errorf("invalid capabilities.cdp_ports entry %d: port must be between 1 and 65535", port)
+		}
+		if seenCDPPorts[port] {
+			return fmt.Errorf("duplicate capabilities.cdp_ports entry: %d", port)
+		}
+		seenCDPPorts[port] = true
 	}
 
 	// Validate LLM config if present
@@ -347,7 +364,7 @@ func NewWorkflowManifest(label string) *WorkflowManifest {
 			SelectedSkills:            []string{},
 			SelectedSecrets:           []string{},
 			SelectedGlobalSecretNames: &noGlobalSecrets,
-			BrowserMode:               "none",
+			BrowserMode:               "auto",
 		},
 		ExecutionDefs: WorkflowExecutionDefaults{},
 		Schedules:     []WorkflowSchedule{},

@@ -307,6 +307,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	maxRetryAttempts := 3
 	validationSchema := step.GetValidationSchema()
 	var validationResponse *ValidationResponse
+	var validationFailures []validationFailureConcern
 	var todoTaskAgent orchestratoragents.OrchestratorAgent
 	defer func() {
 		if todoTaskAgent != nil {
@@ -386,8 +387,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		}
 		conversationHistory = updatedHistory
 
-		// Log execution
-		hcpo.saveTodoTaskExecutionLog(ctx, step.GetID(), todoTaskStepPath, retryAttempt, 0, executionLLM, updatedHistory, capturedToolCalls, capturedLLMCalls, attemptStartedAt, attemptCompletedAt, attemptDuration)
+		// Log execution. Carry earlier validation failures forward because Pulse
+		// Gate reads the latest/final attempt rather than every retry.
+		executionSummary := withValidationFailureConcern(latestAssistantExecutionSummary(updatedHistory), validationFailures, 0, false)
+		hcpo.saveTodoTaskExecutionLog(ctx, step.GetID(), todoTaskStepPath, retryAttempt, 0, executionLLM, updatedHistory, capturedToolCalls, capturedLLMCalls, attemptStartedAt, attemptCompletedAt, attemptDuration, executionSummary)
 
 		// Drive the optional scripted message sequence through the SAME orchestrator
 		// conversation. First attempt only — retries continue the conversation with
@@ -405,6 +408,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 
 			if preValidationPassed {
 				hcpo.GetLogger().Info("✅ Todo task step complete (pre-validation passed)")
+				if len(validationFailures) > 0 {
+					executionSummary = withValidationFailureConcern(latestAssistantExecutionSummary(conversationHistory), validationFailures, retryAttempt, false)
+					hcpo.saveTodoTaskExecutionLog(ctx, step.GetID(), todoTaskStepPath, retryAttempt, 0, executionLLM, conversationHistory, capturedToolCalls, capturedLLMCalls, attemptStartedAt, attemptCompletedAt, attemptDuration, executionSummary)
+				}
 				hcpo.persistCompletedTodoTaskSummary(ctx, todoTaskStep, stepIndex, todoTaskStepPath, todoTaskAgent, &conversationHistory)
 				hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, 1, nil, "Pre-validation passed", todoTaskStep.NextStepID)
 				hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
@@ -422,8 +429,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 					Severity:    "HIGH",
 				}},
 			}
+			validationFailures = append(validationFailures, newValidationFailureConcern(retryAttempt, validationResponse))
+			exhausted := retryAttempt >= maxRetryAttempts
+			executionSummary = withValidationFailureConcern(latestAssistantExecutionSummary(conversationHistory), validationFailures, 0, exhausted)
+			hcpo.saveTodoTaskExecutionLog(ctx, step.GetID(), todoTaskStepPath, retryAttempt, 0, executionLLM, conversationHistory, capturedToolCalls, capturedLLMCalls, attemptStartedAt, attemptCompletedAt, attemptDuration, executionSummary)
 
-			if retryAttempt >= maxRetryAttempts {
+			if exhausted {
 				hcpo.GetLogger().Error(fmt.Sprintf("❌ Todo task step %d pre-validation failed after %d attempts", stepIndex+1, maxRetryAttempts), nil)
 				return false, todoTaskStep.NextStepID, nil
 			}
@@ -570,7 +581,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskMessageSequence(
 			return err
 		}
 		*conversationHistory = updated
-		hcpo.saveTodoTaskExecutionLog(ctx, step.GetID(), stepPath, 1, logSeq, executionLLM, updated, toolCalls, llmCalls, startedAt, completedAt, completedAt.Sub(startedAt))
+		hcpo.saveTodoTaskExecutionLog(ctx, step.GetID(), stepPath, 1, logSeq, executionLLM, updated, toolCalls, llmCalls, startedAt, completedAt, completedAt.Sub(startedAt), "")
 		logSeq++
 		return nil
 	}
@@ -1640,6 +1651,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveTodoTaskExecutionLog(
 	attemptStartedAt time.Time,
 	attemptCompletedAt time.Time,
 	attemptDuration time.Duration,
+	executionSummaryOverride string,
 ) {
 	// Use background context so logs are persisted even if execution was canceled.
 	saveCtx := context.Background()
@@ -1693,6 +1705,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveTodoTaskExecutionLog(
 	// the conversation and stopped at 2,000 bytes, which could omit the final
 	// outcome and its CONCERNS line entirely.
 	executionSummary := latestAssistantExecutionSummary(conversationHistory)
+	if strings.TrimSpace(executionSummaryOverride) != "" {
+		executionSummary = strings.TrimSpace(executionSummaryOverride)
+	}
 
 	// Build execution log entry
 	executionLog := map[string]interface{}{

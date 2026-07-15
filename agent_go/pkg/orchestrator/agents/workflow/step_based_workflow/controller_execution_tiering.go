@@ -16,7 +16,6 @@ const (
 	executionTierPreferenceMedium = "medium"
 
 	executionTierPromotionThreshold = 3
-	executionTierRecoveryThreshold  = 2
 )
 
 type adaptiveExecutionTierDecision struct {
@@ -143,7 +142,8 @@ func resetAdaptiveExecutionTierState(metadata *LearningMetadata, reason string) 
 //
 //   - First run on a new step (or after the description changes) → HIGH
 //   - 3 consecutive successful runs on the same description → promote to MEDIUM
-//   - MEDIUM failure → revert to HIGH; 2 successful HIGH runs recover MEDIUM
+//   - Validation/execution failure → keep the current tier and preserve the
+//     failure as evidence for Pulse; retries continue the same agent session.
 //
 // Learning content (SKILL.md, references/*) is intentionally NOT consulted.
 // Direct-mode learning rewrites SKILL.md after almost every successful step,
@@ -168,6 +168,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) decideAdaptiveExecutionTier(
 
 	dirty := false
 	metadata.PreferredExecutionTier = normalizeExecutionTierPreference(metadata.PreferredExecutionTier)
+	// Retire failure-driven tier recovery state written by older versions. A
+	// validation failure is execution evidence, not permission to silently
+	// change the user's/runtime's model tier.
+	if metadata.LastMediumFailureAt != "" || metadata.HighSuccessStreakSinceMediumFailure != 0 {
+		metadata.LastMediumFailureAt = ""
+		metadata.HighSuccessStreakSinceMediumFailure = 0
+		dirty = true
+	}
 
 	if currentDescriptionHash != "" && metadata.LastDescriptionHash != "" && metadata.LastDescriptionHash != currentDescriptionHash {
 		resetAdaptiveExecutionTierState(metadata, fmt.Sprintf("description changed (%s -> %s) — reverting to Tier 1 (High)", metadata.LastDescriptionHash[:8], currentDescriptionHash[:8]))
@@ -187,19 +195,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) decideAdaptiveExecutionTier(
 			decision.Reason = "medium (stable learnings + successful history)"
 		}
 	default:
-		if metadata.LastMediumFailureAt != "" {
-			if metadata.HighSuccessStreakSinceMediumFailure >= executionTierRecoveryThreshold {
-				metadata.PreferredExecutionTier = executionTierPreferenceMedium
-				metadata.HighSuccessStreakSinceMediumFailure = 0
-				metadata.LastTierDecisionReason = fmt.Sprintf("promoting back to Tier 2 (Medium) after %d high-tier recovery success(es)", executionTierRecoveryThreshold)
-				metadata.LastTierChangeAt = time.Now().Format(time.RFC3339)
-				dirty = true
-				decision.Tier = TierMedium
-				decision.Reason = metadata.LastTierDecisionReason
-			} else {
-				decision.Reason = fmt.Sprintf("high (recovering after medium failure: %d/%d high-tier success(es))", metadata.HighSuccessStreakSinceMediumFailure, executionTierRecoveryThreshold)
-			}
-		} else if metadata.DescriptionHashRuns >= executionTierPromotionThreshold {
+		if metadata.DescriptionHashRuns >= executionTierPromotionThreshold {
 			metadata.PreferredExecutionTier = executionTierPreferenceMedium
 			metadata.LastTierDecisionReason = fmt.Sprintf("promoting to Tier 2 (Medium) after %d stable successful run(s)", metadata.DescriptionHashRuns)
 			metadata.LastTierChangeAt = time.Now().Format(time.RFC3339)
@@ -251,41 +247,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) recordAdaptiveExecutionTierSuccess(
 		if metadata.PreferredExecutionTier == "" {
 			metadata.PreferredExecutionTier = executionTierPreferenceHigh
 		}
-		if metadata.LastMediumFailureAt != "" {
-			metadata.HighSuccessStreakSinceMediumFailure++
-			metadata.LastTierDecisionReason = fmt.Sprintf("high-tier recovery success %d/%d after medium failure", metadata.HighSuccessStreakSinceMediumFailure, executionTierRecoveryThreshold)
-		}
-	}
-
-	return hcpo.writeLearningMetadataForExecutionTiering(ctx, learningPathIdentifier, metadata)
-}
-
-func (hcpo *StepBasedWorkflowOrchestrator) recordAdaptiveExecutionTierFailure(
-	ctx context.Context,
-	learningPathIdentifier string,
-	stepPath string,
-	failedTier TierLevel,
-	currentDescriptionHash string,
-	reason string,
-) error {
-	if failedTier != TierMedium {
-		return nil
-	}
-
-	metadata, err := hcpo.loadLearningMetadataForExecutionTiering(ctx, learningPathIdentifier, stepPath)
-	if err != nil {
-		return err
-	}
-
-	metadata.PreferredExecutionTier = executionTierPreferenceHigh
-	metadata.LastExecutionTier = executionTierPreferenceFromLevel(failedTier)
-	metadata.MediumSuccessStreak = 0
-	metadata.HighSuccessStreakSinceMediumFailure = 0
-	metadata.LastMediumFailureAt = time.Now().Format(time.RFC3339)
-	metadata.LastTierChangeAt = metadata.LastMediumFailureAt
-	metadata.LastTierDecisionReason = fmt.Sprintf("medium tier failed: %s — reverting to Tier 1 (High)", reason)
-	if currentDescriptionHash != "" {
-		metadata.LastDescriptionHash = currentDescriptionHash
 	}
 
 	return hcpo.writeLearningMetadataForExecutionTiering(ctx, learningPathIdentifier, metadata)

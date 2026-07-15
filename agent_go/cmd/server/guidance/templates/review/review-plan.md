@@ -49,9 +49,9 @@ LENS B — Hardcoded Values
 - **Hardcoded credentials/secrets**: API keys, tokens, passwords, auth headers. Should reference `SECRET_*` environment variables.
 - **Hardcoded IDs/URLs/user-specific values**: spreadsheet IDs, database names, API endpoints, user IDs, email addresses, phone numbers, account numbers. Should use variable placeholders (e.g., `{USER_ID}`, `{SHEET_ID}`, `{EMAIL}`) in descriptions, with actual values in `variables/variables.json` / variable groups.
 
-LENS C — Browser Anti-Patterns (only for steps that use playwright/browser/agent_browser)
-- **Prescribes browser_evaluate for interactions**: description tells the LLM to use `browser_evaluate`/`eval` to click, fill, or navigate. Should say "take a snapshot, find the element, click/type using its ref" instead.
-- **Prescribes CSS selectors**: patterns like `browser_click({'selector': '...'})` or `browser_type({'selector': '...'})`. Use ref-based interaction from snapshots.
+LENS C — Browser Anti-Patterns (only for steps that use agent_browser)
+- **Prescribes eval for interactions**: description tells the LLM to use `agent_browser(command="eval", ...)` to click, fill, or navigate. Should say "take a snapshot, find the element, click/fill using a fresh ref or durable selector" instead.
+- **Prescribes fragile CSS selectors**: patterns like `agent_browser(command="click", args=[".generated-class > div:nth-child(2)"])`. Use fresh refs from snapshots or durable semantic hooks.
 - **Prescribes hardcoded element references**: specific DOM selectors, iframe indices, or element IDs that may change. Describe intent ("find the password field", "click the login button") and let the LLM discover elements via snapshot.
 - **Over-specifies implementation**: description dictates exact tool calls and parameters instead of describing WHAT to accomplish. For scripted steps, the description should focus on the goal and let the LLM figure out the implementation using `get_api_spec` and snapshots.
 

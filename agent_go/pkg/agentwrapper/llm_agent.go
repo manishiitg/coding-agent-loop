@@ -228,14 +228,14 @@ type LLMAgentConfig struct {
 
 	// MCP session management for connection reuse
 	// When set, MCP connections are shared via session registry instead of creating new connections
-	// This enables browser reuse in Playwright and other stateful MCP servers
+	// This enables connection reuse in stateful MCP servers.
 	SessionID string
 
 	// User ID for per-user OAuth token isolation
 	UserID string
 
 	// RuntimeOverrides allows runtime modification of MCP server configuration per-agent.
-	// Used to dynamically set Playwright's working_dir and --output-dir.
+	// Used to dynamically configure stateful MCP server runtimes.
 	RuntimeOverrides mcpclient.RuntimeOverrides
 }
 
@@ -459,7 +459,7 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 		agentOptions = append(agentOptions, mcpagent.WithForceStructuredCodingAgent(true))
 		logger.Info("🔧 Coding-agent CLI: forcing structured (JSON / --print) transport for this agent")
 	}
-	// Add session ID for MCP connection reuse (e.g., Playwright browser sharing)
+	// Add session ID for stateful MCP connection reuse.
 	if config.SessionID != "" {
 		agentOptions = append(agentOptions, mcpagent.WithSessionID(config.SessionID))
 		logger.Info(fmt.Sprintf("🔗 MCP session ID configured for connection reuse: %s", config.SessionID))
@@ -472,7 +472,7 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	}
 
 	// Pass runtime overrides to mcpagent so it can modify MCP server config at startup.
-	// For Playwright: overrides working_dir and --output-dir for the shared workspace.
+	// Apply any runtime overrides required by shared workspace MCP servers.
 	if len(config.RuntimeOverrides) > 0 {
 		agentOptions = append(agentOptions, mcpagent.WithRuntimeOverrides(config.RuntimeOverrides))
 		logger.Info(fmt.Sprintf("[BROWSER_UPLOAD] Runtime overrides configured for %d servers", len(config.RuntimeOverrides)))

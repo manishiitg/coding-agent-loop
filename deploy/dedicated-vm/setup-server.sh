@@ -167,7 +167,7 @@ fi
 echo "==> Installing CLI tools (agent-browser, claude, pi)..."
 npm install -g agent-browser@latest @anthropic-ai/claude-code@latest @earendil-works/pi-coding-agent@latest
 
-# Google Chrome — required for browser automation via agent-browser/playwright.
+# Google Chrome — required for browser automation via agent-browser.
 # Some tools (and shell-exec calls like `which google-chrome`) look for
 # google-chrome specifically; chromium alone is not a drop-in replacement.
 if ! command -v google-chrome &>/dev/null; then

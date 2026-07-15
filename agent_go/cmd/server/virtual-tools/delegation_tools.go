@@ -275,7 +275,7 @@ func CreateDelegationTools(tierConfig *DelegationTierConfig, requireReasoningLev
 					},
 					"share_browser": map[string]interface{}{
 						"type":        "boolean",
-						"description": "Whether the sub-agent shares the parent's browser session (Playwright) or gets an isolated browser. Default: true (shared). Set to false for parallel browsing, different auth contexts, or to avoid state interference.",
+						"description": "Whether the sub-agent shares the parent's agent-browser session or gets an isolated browser. Default: true (shared). Set to false for parallel browsing, different auth contexts, or to avoid state interference.",
 					},
 					"skills": map[string]interface{}{
 						"type": "array",

@@ -50,5 +50,5 @@ func filesystemSkills(skills []string) []string {
 }
 
 func isBrowserAutomationSkill(skill string) bool {
-	return skill == "agent-browser" || skill == "playwright"
+	return skill == "agent-browser"
 }

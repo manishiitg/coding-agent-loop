@@ -280,105 +280,9 @@ func resolveEffectiveDBAccess(stepConfig *AgentConfigs, evaluationMode, evaluati
 	return DBAccessRead
 }
 
-// getWorkspaceDocsRoot returns the absolute path to the workspace-docs root directory.
-// This is used specifically for resolving absolute paths for Playwright Downloads.
-//
-// CRITICAL FIX (Jan 2026): This function was added to fix a long-standing bug where
-// Playwright downloads were being saved to the wrong location (agent_go/Downloads instead
-// of workspace-docs/Workflow/.../execution/Downloads).
-//
-// Root Cause:
-//   - workspacePath is relative to workspace-docs root (e.g., "Workflow/ICICI...")
-//   - When using filepath.Abs() on a relative path, it resolves relative to the current
-//     working directory (which is agent_go/), not relative to workspace-docs root
-//   - This caused paths like "Workflow/..." to resolve to "agent_go/Workflow/..." instead
-//     of "workspace-docs/Workflow/..."
-//
-// Solution:
-// - Explicitly find the workspace-docs root directory
-// - Resolve all Downloads paths relative to workspace-docs root, not CWD
-// - This ensures paths are always correct regardless of where the process runs from
-//
-// It checks DOCS_DIR environment variable first, then falls back to calculating
-// relative to the current working directory (../workspace-docs from agent_go).
-func getWorkspaceDocsRoot() string {
-	// Check environment variable first
-	if docsDir := os.Getenv("DOCS_DIR"); docsDir != "" {
-		if absPath, err := filepath.Abs(docsDir); err == nil {
-			return absPath
-		}
-	}
-
-	// Fallback: calculate relative to current working directory
-	// Assuming agent_go is at github.com/manishiitg/coding-agent-loop/agent_go, workspace-docs is at ../workspace-docs
-	cwd, err := os.Getwd()
-	if err != nil {
-		// If we can't get CWD, return empty and let caller handle it
-		return ""
-	}
-
-	// Try to find workspace-docs relative to current directory
-	// Common locations: ../workspace-docs (from agent_go) or ./workspace-docs (from root)
-	possiblePaths := []string{
-		filepath.Join(cwd, "..", "workspace-docs"),
-		filepath.Join(cwd, "workspace-docs"),
-	}
-
-	for _, path := range possiblePaths {
-		if absPath, err := filepath.Abs(path); err == nil {
-			// Check if directory exists
-			if info, err := os.Stat(absPath); err == nil && info.IsDir() {
-				return absPath
-			}
-		}
-	}
-
-	// Last resort: return calculated path even if it doesn't exist yet
-	if absPath, err := filepath.Abs(filepath.Join(cwd, "..", "workspace-docs")); err == nil {
-		return absPath
-	}
-
-	return ""
-}
-
 // setupBrowserDownloadsPathOverride configures the Downloads path for browser automation tools.
-// This shared function is used by both execution agents and orchestrator agents to ensure
-// browser downloads go to the correct group-specific folder.
-//
-// Supports both:
-// - Playwright MCP server (checked via selectedServers)
-// - agent-browser skill/virtual tool (checked via selectedSkills)
-//
-// The function:
-// 1. Checks if any browser tool is available (Playwright server OR agent-browser skill)
-// 2. Validates that selectedRunFolder is set (logs error if not)
-// 3. Creates the Downloads folder via API
-// 4. Resolves the absolute path relative to workspace-docs root (not CWD)
-// 5. Sets the runtime override on the config before agent creation (for Playwright)
-//
-// This ensures the first agent that creates a browser connection will use the correct
-// Downloads path, and all subsequent agents will reuse it.
-func (hcpo *StepBasedWorkflowOrchestrator) setupBrowserDownloadsPathOverride(ctx context.Context, config *agents.OrchestratorAgentConfig, stepConfig *AgentConfigs) {
-	// Check if any browser tool is available (Playwright server OR agent-browser skill)
-	// Downloads folder is needed for any browser automation tool
-
-	// Check effective servers (step config intersected with workflow — workflow is the hard cap)
-	var effectiveServers []string
-	if stepConfig != nil && stepConfig.SelectedServers != nil && len(stepConfig.SelectedServers) > 0 {
-		effectiveServers = filterServersByWorkflow(stepConfig.SelectedServers, hcpo.GetSelectedServers())
-	} else {
-		effectiveServers = hcpo.GetSelectedServers()
-	}
-
-	// Check for Playwright MCP server
-	hasPlaywright := false
-	for _, server := range effectiveServers {
-		if server == "playwright" {
-			hasPlaywright = true
-		}
-	}
-
-	// Check for agent-browser skill
+// Execution and orchestrator agents share this run-specific agent_browser folder.
+func (hcpo *StepBasedWorkflowOrchestrator) setupBrowserDownloadsPathOverride(ctx context.Context, _ *agents.OrchestratorAgentConfig, _ *AgentConfigs) {
 	hasAgentBrowser := false
 	for _, skill := range hcpo.GetSelectedSkills() {
 		if skill == "agent-browser" {
@@ -387,20 +291,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupBrowserDownloadsPathOverride(ctx
 		}
 	}
 
-	if !hasPlaywright && !hasAgentBrowser {
+	if !hasAgentBrowser {
 		return // No browser tool, nothing to configure
-	}
-
-	// Track which browser tool triggered this for later use
-	browserToolType := "agent-browser"
-	if hasPlaywright {
-		browserToolType = "playwright"
 	}
 
 	// CRITICAL: Ensure selectedRunFolder is set before configuring Downloads path
 	// If it's empty, all agents in this group will share a connection with wrong Downloads path
 	if hcpo.selectedRunFolder == "" {
-		hcpo.GetLogger().Error(fmt.Sprintf("❌ [CRITICAL] selectedRunFolder is EMPTY when configuring %s Downloads path! This will cause all downloads to go to the wrong location. Ensure ApplyExecutionContext is called before creating agents.", browserToolType), nil)
+		hcpo.GetLogger().Error("❌ [CRITICAL] selectedRunFolder is EMPTY when configuring agent-browser Downloads path! Ensure ApplyExecutionContext is called before creating agents.", nil)
 		// Don't return error - continue with default path but log the issue
 	}
 
@@ -426,45 +324,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupBrowserDownloadsPathOverride(ctx
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create downloads directory via API %s: %v", downloadsRelativePath, err))
 	}
 
-	// Resolve Downloads path to host absolute path for Playwright MCP server configuration.
-	// Playwright runs on the host (not in Docker), so it needs the real host filesystem path.
-	// All other prompt-facing paths use GetPromptDocsRoot() (/app/workspace-docs).
-	absDownloadsPath := filepath.Clean(filepath.Join(getWorkspaceDocsRoot(), workspacePath, downloadsRelativePath))
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Resolved Downloads path: %s", absDownloadsPath))
-
-	// Configure Playwright runtime override (only needed for Playwright MCP server, not agent-browser)
-	// agent-browser uses its own download handling via workspace-api
-	if hasPlaywright {
-		// IMPORTANT: This override is set on the config BEFORE agent creation, so it will be
-		// applied when the MCP connection is created.
-		//
-		// CRITICAL: If a Playwright connection already exists for this session, it will be REUSED
-		// without applying the new override. This can happen if:
-		// 1. Another agent in the same group already created the connection (this is OK - they should share)
-		// 2. A connection exists from a previous run that wasn't cleaned up (this is BAD)
-		//
-		// To ensure the first agent in a group creates the connection with the correct override,
-		// we rely on:
-		// - Closing the previous session before starting a new group (in batch execution)
-		// - Setting selectedRunFolder before setting session ID
-		// - Setting the override before agent creation
-		if config.RuntimeOverrides == nil {
-			config.RuntimeOverrides = make(mcpclient.RuntimeOverrides)
-		}
-		playwrightOverride := config.RuntimeOverrides["playwright"]
-		if playwrightOverride.ArgsReplace == nil {
-			playwrightOverride.ArgsReplace = make(map[string]string)
-		}
-		playwrightOverride.ArgsReplace["--output-dir"] = absDownloadsPath
-		playwrightOverride.WorkingDir = absDownloadsPath
-		config.RuntimeOverrides["playwright"] = playwrightOverride
-
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Configured Playwright downloads path to: %s (override will be applied when connection is created)", absDownloadsPath))
-		hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Runtime override for playwright: ArgsReplace=%+v, WorkingDir=%s", playwrightOverride.ArgsReplace, playwrightOverride.WorkingDir))
-	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Created Downloads folder for agent-browser: %s", absDownloadsPath))
-	}
-
 	// Store the workspace-relative downloads path for agent-browser.
 	// The browser executor reads this from context and passes it as WorkingDirectory
 	// to the workspace API, so it needs to be relative to workspace root (workspacePath + downloadsRelativePath).
@@ -472,76 +331,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupBrowserDownloadsPathOverride(ctx
 	hcpo.SetBrowserDownloadsPath(browserRelPath)
 	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Set browser downloads path on orchestrator: %s", browserRelPath))
 
-	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Browser tool: %s, Session ID: %s, selectedRunFolder: '%s', absDownloadsPath: '%s'", browserToolType, hcpo.getSessionID(), hcpo.selectedRunFolder, absDownloadsPath))
-}
-
-// primeBrowserServerConfigsForSavedScript registers browser-capable MCP server configs
-// for the current tool session before running a saved main.py fast path.
-//
-// Why this is needed:
-//   - Normal execution agents preload lazy-connect server configs (with runtime overrides)
-//     during agent startup, so the first Playwright tool call uses the workflow's
-//     run-specific browser settings.
-//   - Saved-script fast path skips execution-agent startup and goes straight to main.py.
-//   - Without this priming, the first browser call falls through to mcpcache and creates
-//     a connection from the default MCP config (e.g. global Downloads/), bypassing the
-//     workflow's run-specific override.
-func (hcpo *StepBasedWorkflowOrchestrator) primeBrowserServerConfigsForSavedScript(ctx context.Context, stepConfig *AgentConfigs) {
-	sessionID := strings.TrimSpace(hcpo.GetMCPSessionID())
-	if sessionID == "" {
-		return
-	}
-
-	// Reuse the same browser/download setup logic as normal execution-agent creation.
-	config := agents.NewOrchestratorAgentConfig("saved-script-browser-prime")
-	config.MCPConfigPath = hcpo.GetMCPConfigPath()
-	config.MCPSessionID = sessionID
-	if stepConfig != nil && len(stepConfig.SelectedServers) > 0 {
-		config.ServerNames = filterServersByWorkflow(stepConfig.SelectedServers, hcpo.GetSelectedServers())
-	} else {
-		config.ServerNames = hcpo.GetSelectedServers()
-	}
-	hcpo.setupBrowserDownloadsPathOverride(ctx, config, stepConfig)
-
-	registry := mcpclient.GetSessionRegistry()
-	mergedConfig, err := mcpclient.LoadMergedConfig(config.MCPConfigPath, hcpo.GetLogger())
-	if err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to load MCP config for saved-script browser priming: %v", err))
-		return
-	}
-
-	var primed []string
-	for _, serverName := range config.ServerNames {
-		if serverName != "playwright" {
-			continue
-		}
-		serverConfig, err := mergedConfig.GetServer(serverName)
-		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to get %s config for saved-script browser priming: %v", serverName, err))
-			continue
-		}
-		if override, ok := config.RuntimeOverrides[serverName]; ok {
-			serverConfig = serverConfig.ApplyOverride(override)
-		}
-		// Store the config on the logical tool session. The executor will later resolve
-		// browser-capable servers onto the shared browser session before connecting.
-		registry.StoreServerConfig(sessionID, serverName, serverConfig)
-		// Also store under the shared browser session ID so that ANY session sharing
-		// this browser (e.g. the chat session) can lazy-reconnect to playwright.
-		connSessionID := registry.ResolveConnectionSessionID(sessionID, serverName)
-		if connSessionID != sessionID {
-			registry.StoreServerConfig(connSessionID, serverName, serverConfig)
-		}
-		primed = append(primed, fmt.Sprintf("%s->%s", serverName, connSessionID))
-	}
-
-	if len(primed) > 0 {
-		hcpo.GetLogger().Info(fmt.Sprintf(
-			"🌐 Primed saved-script browser server configs for session %s: %s",
-			sessionID,
-			strings.Join(primed, ", "),
-		))
-	}
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Browser tool: agent-browser, Session ID: %s, selectedRunFolder: '%s', downloadsPath: '%s'", hcpo.getSessionID(), hcpo.selectedRunFolder, browserRelPath))
 }
 
 // isGenericAgentStep reports whether a step was spawned via call_generic_agent.
@@ -1435,7 +1225,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	config.FolderGuardReadPaths = readPaths
 	config.FolderGuardWritePaths = writePaths
 
-	// Setup Downloads folder for browser tools (Playwright or agent-browser)
+	// Setup Downloads folder for agent-browser.
 	// Use shared function to ensure both execution and orchestrator agents set the override correctly
 	hcpo.setupBrowserDownloadsPathOverride(ctx, config, stepConfig)
 
@@ -1742,7 +1532,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific context offloading setting: %v", *stepConfig.EnableContextOffloading))
 	}
 
-	// Setup Downloads folder for browser tools (Playwright or agent-browser)
+	// Setup Downloads folder for agent-browser.
 	hcpo.setupBrowserDownloadsPathOverride(ctx, config, stepConfig)
 
 	// Prepare custom tools and executors
@@ -2041,7 +1831,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutePredefinedSubAgentFunc(
 			ctx = context.WithValue(ctx, virtualtools.SubAgentIsolatedSessionIDKey, isolatedSessionID)
 			hcpo.GetLogger().Info(fmt.Sprintf("Browser isolation: sub-agent gets session %s", isolatedSessionID))
 			defer func() {
-				// Close the MCP session (Playwright connection)
+				// Close the MCP session and its stateful connections.
 				mcpagent.CloseSession(isolatedSessionID)
 				// Close agent-browser processes and remove from tracker
 				tracker := browser.GetSessionTracker()
@@ -2148,7 +1938,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecuteGenericAgentFunc(
 			ctx = context.WithValue(ctx, virtualtools.SubAgentIsolatedSessionIDKey, isolatedSessionID)
 			hcpo.GetLogger().Info(fmt.Sprintf("Browser isolation: sub-agent gets session %s", isolatedSessionID))
 			defer func() {
-				// Close the MCP session (Playwright connection)
+				// Close the MCP session and its stateful connections.
 				mcpagent.CloseSession(isolatedSessionID)
 				// Close agent-browser processes and remove from tracker
 				tracker := browser.GetSessionTracker()

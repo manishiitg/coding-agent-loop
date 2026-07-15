@@ -95,11 +95,11 @@ Use the Builder browser MCP tool directly. Depending on the provider it may appe
 
 Task:
 1. Use agent_browser in CDP mode to create a new tab with this exact label: %s
-2. Create that tab by calling command "tab" with args exactly ["new", "--label", "%s", "%s"]. Do not reorder these args.
+2. Create that tab by calling command "tab". Begin args with the exact configured ["--cdp", "<endpoint>"] prefix from the system prompt, followed by ["new", "--label", "%s", "%s"]. Do not reorder these args.
 3. Use agent_browser snapshot or get on that labeled tab to read the page.
 4. Find one visible current news headline or page title from the site.
 
-Do not call execute_shell_command. Do not run curl. Do not use raw CDP or Playwright directly.
+Do not call execute_shell_command. Do not run curl. Do not use raw CDP directly.
 
 When done, reply with exactly two lines:
 %s

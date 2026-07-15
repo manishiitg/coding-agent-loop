@@ -14,7 +14,12 @@ function shellQuote(value: string): string {
 
 export function chromeCdpLaunchCommand(port: number, platform?: string): string {
   const resolvedPort = safeCdpPort(port)
-  const userDataDir = '$HOME/.chrome-cdp-profile'
+  // Chrome requires a distinct user-data-dir for each concurrent CDP process.
+  // Keep the legacy default profile path for 9222 and make additional ports
+  // deterministic so they represent independent login identities.
+  const userDataDir = resolvedPort === defaultCdpPort
+    ? '$HOME/.chrome-cdp-profile'
+    : `$HOME/.chrome-cdp-profile-${resolvedPort}`
   const args = `--remote-debugging-port=${resolvedPort} --user-data-dir="${userDataDir}" --no-first-run --no-default-browser-check`
 
   if (platform?.includes('Mac')) {

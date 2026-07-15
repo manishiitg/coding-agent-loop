@@ -11,12 +11,37 @@ func resetCDPRegistryForTest(t *testing.T) {
 	t.Helper()
 	cdpOwnersMu.Lock()
 	cdpOwners = make(map[int]map[string]time.Time)
+	cdpExclusiveFeatureOwners = make(map[int]map[string]string)
 	cdpOwnersMu.Unlock()
 	t.Cleanup(func() {
 		cdpOwnersMu.Lock()
 		cdpOwners = make(map[int]map[string]time.Time)
+		cdpExclusiveFeatureOwners = make(map[int]map[string]string)
 		cdpOwnersMu.Unlock()
 	})
+}
+
+func TestCDPExclusiveFeatureOwnership(t *testing.T) {
+	resetCDPRegistryForTest(t)
+	if claimed, err := claimCDPExclusiveFeature(9222, "workflow-a", "video recording"); err != nil || !claimed {
+		t.Fatalf("first owner should claim recording: %v", err)
+	}
+	if _, err := claimCDPExclusiveFeature(9222, "workflow-b", "video recording"); err == nil || !strings.Contains(err.Error(), "workflow-a") {
+		t.Fatalf("second owner should be blocked, got: %v", err)
+	}
+	if err := guardCDPExclusiveFeatureStop(9222, "workflow-b", "video recording"); err == nil {
+		t.Fatal("another workflow must not stop the active recording")
+	}
+	if err := guardCDPExclusiveFeatureStop(9222, "workflow-a", "video recording"); err != nil {
+		t.Fatalf("recording owner should be allowed to stop: %v", err)
+	}
+	releaseCDPExclusiveFeature(9222, "workflow-a", "video recording")
+	if claimed, err := claimCDPExclusiveFeature(9222, "workflow-b", "video recording"); err != nil || !claimed {
+		t.Fatalf("released feature should be claimable: %v", err)
+	}
+	if err := guardCDPAutomaticRecovery(9222, "workflow-b"); err == nil || !strings.Contains(err.Error(), "video recording") {
+		t.Fatalf("automatic recovery must not destroy an active recording, got: %v", err)
+	}
 }
 
 func TestGuardCDPResetSoleOwnerAllowed(t *testing.T) {

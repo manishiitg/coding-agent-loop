@@ -11,15 +11,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	mcpagent "github.com/manishiitg/mcpagent/agent"
-	baseevents "github.com/manishiitg/mcpagent/events"
-	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/instructions"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 	orchestrator_events "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	baseevents "github.com/manishiitg/mcpagent/events"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 var workflowExecutionIDCounter atomic.Uint64
@@ -577,27 +577,12 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 		controller.isEvaluationMode = true
 	}
 
-	// Propagate HTTP session ID for chat history, but NOT the MCP session ID.
-	//
-	// WHY: Each controller creates its own unique MCP session ID (e.g. "session-group-default-group-...")
-	// during initialization. This MCP session ID determines which Playwright/browser connection
-	// is reused. When a step agent executes, it applies runtime overrides like --output-dir
-	// (to redirect downloads to execution/Downloads/) on the MCP connection keyed by this ID.
-	//
-	// BUG FIX: Previously we called controller.SetMCPSessionID(cfg.SessionID) here, which
-	// overwrote the controller's MCP session ID with the chat's session ID. This caused all
-	// step agents to share the chat session's Playwright connection — which was created WITHOUT
-	// the --output-dir override. Result: downloads went to the browser's default location
-	// instead of execution/Downloads/.
-	//
-	// FIX: Only propagate HTTP session ID (used for chat history / REST endpoints).
-	// The controller keeps its own MCP session ID for isolated Playwright connections.
+	// Propagate the HTTP session ID for chat history, but keep the controller's
+	// independently generated MCP session ID for stateful connection isolation.
 	if cfg.SessionID != "" {
 		controller.SetHTTPSessionID(cfg.SessionID)
-		logger.Debug(fmt.Sprintf("[WORKSHOP] Session ID propagation: HTTP=%s, MCP=%s (kept separate for Playwright isolation)",
+		logger.Debug(fmt.Sprintf("[WORKSHOP] Session ID propagation: HTTP=%s, MCP=%s (kept separate for stateful connection isolation)",
 			cfg.SessionID, controller.GetMCPSessionID()))
-		logger.Debug(fmt.Sprintf("[WORKSHOP] MCP session %s will get its own Playwright connection with --output-dir override",
-			controller.GetMCPSessionID()))
 	}
 
 	// Propagate secrets for step execution
@@ -1285,16 +1270,12 @@ func RegisterRunFullEvaluationTool(
 				// (these emit via workshopExecutionNotifier, which the bridge skips).
 				evalController.SetWorkshopExecutionNotifier(session.executionNotifier)
 
-				// Propagate HTTP session ID only — do NOT overwrite MCP session ID.
-				// Same reasoning as main controller above: eval controller needs its own
-				// MCP session ID so its step agents get isolated Playwright connections
-				// with correct --output-dir overrides for download path resolution.
+				// Propagate HTTP session ID only; keep an independent MCP session for
+				// stateful connection isolation.
 				if cfg.SessionID != "" {
 					evalController.SetHTTPSessionID(cfg.SessionID)
-					logger.Debug(fmt.Sprintf("[WORKSHOP-EVAL] Session ID propagation: HTTP=%s, MCP=%s (kept separate for Playwright isolation)",
+					logger.Debug(fmt.Sprintf("[WORKSHOP-EVAL] Session ID propagation: HTTP=%s, MCP=%s (kept separate for stateful connection isolation)",
 						cfg.SessionID, evalController.GetMCPSessionID()))
-					logger.Debug(fmt.Sprintf("[WORKSHOP-EVAL] MCP session %s will get its own Playwright connection with --output-dir override",
-						evalController.GetMCPSessionID()))
 				}
 				if len(cfg.Secrets) > 0 {
 					evalController.SetSecrets(cfg.Secrets)
@@ -1922,7 +1903,9 @@ func RegisterRunFullWorkflowTool(
 				if skills := session.controller.GetSelectedSkills(); len(skills) > 0 {
 					workflowController.SetSelectedSkills(skills)
 				}
-				if session.controller.GetCdpPort() > 0 {
+				if ports := session.controller.GetCdpPorts(); len(ports) > 0 {
+					workflowController.SetCdpPorts(ports)
+				} else if session.controller.GetCdpPort() > 0 {
 					workflowController.SetCdpPort(session.controller.GetCdpPort())
 				}
 

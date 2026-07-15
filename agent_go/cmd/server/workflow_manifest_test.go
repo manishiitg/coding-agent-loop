@@ -2,6 +2,25 @@ package server
 
 import "testing"
 
+func TestValidateManifestCDPPorts(t *testing.T) {
+	manifest := NewWorkflowManifest("Multi-profile browser")
+	manifest.Capabilities.BrowserMode = "cdp"
+	manifest.Capabilities.CDPPorts = []int{9222, 9333}
+	if err := ValidateManifest(manifest); err != nil {
+		t.Fatalf("valid multi-profile CDP ports rejected: %v", err)
+	}
+
+	manifest.Capabilities.CDPPorts = []int{9222, 9222}
+	if err := ValidateManifest(manifest); err == nil {
+		t.Fatal("duplicate CDP ports should be rejected")
+	}
+
+	manifest.Capabilities.CDPPorts = []int{9222, 9333, 9444, 9555, 9666}
+	if err := ValidateManifest(manifest); err == nil {
+		t.Fatal("more than four CDP ports should be rejected")
+	}
+}
+
 func TestNewWorkflowManifestDefaultsGlobalSecretsToNone(t *testing.T) {
 	manifest := NewWorkflowManifest("Test workflow")
 	if manifest.Version != WorkflowContractCurrentVersion {

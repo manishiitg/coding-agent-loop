@@ -14,7 +14,6 @@ import type { CustomPreset } from '../types/preset';
 import type { PlannerFile, PresetLLMConfig, AgentLLMConfig, AgentLLMFallback, LLMProvider } from '../services/api-types';
 import { useLLMStore } from '../stores/useLLMStore';
 import { useModeStore } from '../stores/useModeStore';
-import { useMCPStore } from '../stores/useMCPStore';
 import { agentApi } from '../services/api';
 import LLMSelectionDropdown from './LLMSelectionDropdown';
 import LLMRoleSelector from './LLMRoleSelector';
@@ -28,7 +27,7 @@ import { chromeCdpInstallCommand, chromeCdpLaunchCommand, chromeCdpVerifyCommand
 interface PresetModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'multi-agent' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, browserMode?: 'none' | 'headless' | 'cdp' | 'playwright') => void;
+  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'multi-agent' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, browserMode?: 'none' | 'auto' | 'headless' | 'cdp') => void;
   editingPreset?: CustomPreset | null;
   availableServers?: string[];
   hideAgentModeSelection?: boolean;
@@ -62,40 +61,16 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [showFolderDialog, setShowFolderDialog] = useState(false);
   const [folderDialogPosition, setFolderDialogPosition] = useState({ top: 0, left: 0 });
   const [llmConfig, setLlmConfig] = useState<PresetLLMConfig | null>(null);
-  const [browserMode, setBrowserModeState] = useState<'none' | 'headless' | 'cdp' | 'playwright'>('none');
-  const enableBrowserAccess = browserMode === 'headless' || browserMode === 'cdp';
-  const [useCdp, setUseCdp] = useState(false);
+  const [browserMode, setBrowserModeState] = useState<'none' | 'auto' | 'headless' | 'cdp'>('auto');
+  const enableBrowserAccess = browserMode === 'auto' || browserMode === 'headless' || browserMode === 'cdp';
   const [cdpPort, setCdpPort] = useState(9222);
   const [cdpConnected, setCdpConnected] = useState<boolean | null>(null);
   const [cdpError, setCdpError] = useState<string | null>(null);
   const [cdpChecking, setCdpChecking] = useState(false);
   const [showDeleteWorkflowConfirm, setShowDeleteWorkflowConfirm] = useState(false);
   const [deletingWorkflow, setDeletingWorkflow] = useState(false);
-  const toolList = useMCPStore(state => state.toolList);
-
-  // Playwright MCP availability: check if 'playwright' server exists in toolList
-  const playwrightServerStatus = useMemo(() => {
-    const entry = toolList.find(t => t.server === 'playwright')
-    if (!entry) return 'not_found' as const
-    if (entry.status === 'ok') return 'ok' as const
-    if (entry.status === 'error') return 'error' as const
-    return 'loading' as const
-  }, [toolList])
-
-  // Browser mode setter that also syncs selectedServers
-  const setBrowserMode = useCallback((mode: 'none' | 'headless' | 'cdp' | 'playwright') => {
+  const setBrowserMode = useCallback((mode: 'none' | 'auto' | 'headless' | 'cdp') => {
     setBrowserModeState(mode)
-    setSelectedServers(prev => {
-      const cleaned = prev.filter(s => s !== 'playwright')
-      if (mode === 'playwright') return [...cleaned, 'playwright']
-      return cleaned
-    })
-    // Reset CDP when switching away
-    if (mode !== 'cdp') {
-      setUseCdp(false)
-    } else {
-      setUseCdp(true)
-    }
   }, [])
 
   const [builderLLM, setBuilderLLM] = useState<AgentLLMConfig | null>(null);
@@ -171,9 +146,9 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
     }
   }, []);
 
-  // Auto-check CDP connection when CDP is enabled or port changes
+  // Auto-check CDP for both automatic and required-CDP modes.
   useEffect(() => {
-    if (!useCdp || !enableBrowserAccess) {
+    if ((browserMode !== 'auto' && browserMode !== 'cdp') || !enableBrowserAccess) {
       setCdpConnected(null);
       setCdpError(null);
       return;
@@ -182,7 +157,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       checkCdpConnection(cdpPort);
     }, 500); // debounce
     return () => clearTimeout(timer);
-  }, [useCdp, cdpPort, enableBrowserAccess, checkCdpConnection]);
+  }, [browserMode, cdpPort, enableBrowserAccess, checkCdpConnection]);
 
   const hasLLMOptions = (options?: Record<string, unknown>) => Boolean(options && Object.keys(options).length > 0);
   const toAgentLLMConfig = useCallback((llm: LLMOption): AgentLLMConfig => ({
@@ -325,15 +300,11 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       };
       setLlmConfig(presetLLM);
       // Load browser mode: prefer explicit browserMode, fall back to legacy derivation
-      if (editingPreset.browserMode && editingPreset.browserMode !== 'none') {
+      if (editingPreset.browserMode) {
         setBrowserModeState(editingPreset.browserMode);
-        if (editingPreset.browserMode === 'cdp') setUseCdp(true);
       } else {
         // Legacy fallback for presets saved before browserMode was added
-        const presetServers = editingPreset.selectedServers || [];
-        if (presetServers.includes('playwright')) {
-          setBrowserModeState('playwright');
-        } else if (editingPreset.enableBrowserAccess) {
+        if (editingPreset.enableBrowserAccess) {
           setBrowserModeState('headless');
         } else {
           setBrowserModeState('none');
@@ -371,7 +342,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         provider: primaryConfig.provider as PresetLLMConfig['provider'],
       };
       setLlmConfig(defaultLLM);
-      setBrowserModeState('none'); // Default no browser
+      setBrowserModeState('auto'); // Prefer connected CDP, otherwise headless
       // Initialize agent-specific configs to null (will use legacy default)
       setBuilderLLM(null);
       setMaintenanceLLM(null);
@@ -524,7 +495,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         false, // useCodeExecutionMode — backend determines mode from browser selection
         selectedSecrets, // Secret names for workflow injection
         selectedGlobalSecrets, // Per-preset global secret selection (null=all)
-        browserMode // Browser mode: none|headless|cdp|playwright
+        browserMode // Browser mode: none|auto|headless|cdp
       );
       onClose();
     }
@@ -1001,6 +972,26 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                         </div>
                       </label>
 
+                      {/* Automatic */}
+                      <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                        browserMode === 'auto'
+                          ? 'border-cyan-500 dark:border-cyan-500 bg-cyan-50 dark:bg-cyan-950/40'
+                          : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800/40'
+                      }`}>
+                        <input type="radio" name="presetBrowserMode" checked={browserMode === 'auto'} onChange={() => setBrowserMode('auto')} className="mt-0.5 w-4 h-4 text-cyan-500 accent-cyan-500" />
+                        <div className="flex-1">
+                          <div className="text-sm font-medium text-gray-900 dark:text-gray-100">Automatic (Recommended)</div>
+                          <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                            Uses Local Chrome through CDP when it is reachable; otherwise runs with headless agent-browser.
+                          </div>
+                          {browserMode === 'auto' && (
+                            <div className={`mt-1.5 text-xs ${cdpChecking || cdpConnected === null ? 'text-amber-500' : cdpConnected ? 'text-emerald-500' : 'text-blue-500'}`}>
+                              {cdpChecking || cdpConnected === null ? 'Checking CDP…' : cdpConnected ? 'CDP connected — workflow will use Local Chrome.' : 'CDP unavailable — workflow will use headless mode.'}
+                            </div>
+                          )}
+                        </div>
+                      </label>
+
                       {/* Headless */}
                       <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
                         browserMode === 'headless'
@@ -1031,46 +1022,10 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                         </div>
                       </label>
 
-                      {/* Playwright MCP */}
-                      <label className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
-                        playwrightServerStatus === 'not_found'
-                          ? 'border-gray-200 dark:border-gray-700 opacity-50 cursor-not-allowed'
-                          : browserMode === 'playwright'
-                            ? 'border-purple-500 dark:border-purple-500 bg-purple-50 dark:bg-purple-950/40 cursor-pointer'
-                            : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800/40 cursor-pointer'
-                      }`}>
-                        <input
-                          type="radio"
-                          name="presetBrowserMode"
-                          checked={browserMode === 'playwright'}
-                          onChange={() => setBrowserMode('playwright')}
-                          disabled={playwrightServerStatus === 'not_found'}
-                          className="mt-0.5 w-4 h-4 text-purple-500 accent-purple-500"
-                        />
-                        <div className="flex-1">
-                          <div className="text-sm font-medium text-gray-900 dark:text-gray-100">Playwright MCP</div>
-                          <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                            Opens a new visible browser window per session. Uses Playwright MCP server.
-                          </div>
-                          {playwrightServerStatus === 'not_found' && (
-                            <div className="text-xs text-red-500 dark:text-red-400 mt-1.5 flex items-center gap-1">
-                              <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
-                              &quot;playwright&quot; server not found in MCP config &mdash; add it in MCP Settings
-                            </div>
-                          )}
-                          {playwrightServerStatus === 'error' && (
-                            <div className="text-xs text-amber-500 dark:text-amber-400 mt-1.5 flex items-center gap-1">
-                              <span className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
-                              Playwright server has errors &mdash; check MCP Settings
-                            </div>
-                          )}
-                        </div>
-                      </label>
-
                     </div>
 
                     {/* CDP configuration sub-panel */}
-                    {browserMode === 'cdp' && (
+                    {(browserMode === 'auto' || browserMode === 'cdp') && (
                       <div className="p-3 rounded-lg bg-gray-100 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700">
                         <div className="mb-3 rounded-md border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
                           CDP drives visible Chrome and can steal keyboard focus. Use headless mode for background runs, or use a dedicated automation Chrome/profile/port for schedules.

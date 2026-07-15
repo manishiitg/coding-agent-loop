@@ -10,13 +10,13 @@ import (
 	"sync"
 	"time"
 
-	mcpagent "github.com/manishiitg/mcpagent/agent"
-	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
-	"github.com/manishiitg/mcpagent/observability"
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -65,8 +65,9 @@ type StepBasedWorkflowOrchestrator struct {
 	sessionID     string // For human feedback tracking
 	workflowID    string // For human feedback tracking
 	httpSessionID string // HTTP session ID for MCP cleanup scoping
-	cdpPort       int    // CDP port for browser mode detection (0 = headless, >0 = CDP)
-	browserMode   string // Browser mode: "playwright", "cdp", "headless", "" (auto-detect)
+	cdpPort       int    // Primary CDP port for backward compatibility.
+	cdpPorts      []int  // Authorized independent Chrome profiles for this workflow.
+	browserMode   string // Browser mode: "cdp", "headless", "" (auto-detect)
 
 	// Workshop MCP session cache: one reusable MCP session per group name within a
 	// workshop session. This preserves browser/login state when the user runs
@@ -300,15 +301,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) bindWorkshopBrowserSession(toolSessio
 	if toolSessionID == "" || browserSessionID == "" {
 		return
 	}
-	// Clear stopped status for deterministic browser session IDs that may have been
-	// marked stopped by a previous run. Without this, the zombie prevention logic
-	// permanently blocks the reused browser session ID from accepting new connections.
-	mcpagent.ClearSessionsStopped([]string{browserSessionID})
-	mcpagent.RegisterBrowserSessionOverride(toolSessionID, browserSessionID)
 	common.SetSessionBrowserSessionID(toolSessionID, browserSessionID)
-	if hcpo.httpSessionID != "" {
-		mcpagent.RegisterHTTPSession(hcpo.httpSessionID, browserSessionID)
-	}
 }
 
 // switchWorkshopGroupSession ensures workshop step execution uses a stable MCP
@@ -350,7 +343,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) switchWorkshopGroupSession(groupName 
 				activeGroups := hcpo.activeWorkshopGroupsLocked()
 				hcpo.workshopGroupSessionsMu.Unlock()
 				return nil, fmt.Errorf(
-					"cannot open workshop browser session for group %q: session already has %d active Playwright group sessions (max %d): %s",
+					"cannot open workshop browser session for group %q: session already has %d active browser group sessions (max %d): %s",
 					groupName,
 					len(activeGroups),
 					browser.MaxBrowserSessionsPerWorkflow,
@@ -523,16 +516,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) closeWorkshopGroupSessions(sessionsBy
 		virtualtools.UnregisterParentChat(sessionID)
 		// Mark all sessions as stopped BEFORE closing to prevent in-flight tool calls
 		// from resurrecting connections via broken pipe handlers.
-		mcpagent.MarkSessionsStopped([]string{sessionID, browserSessionID})
+		mcpagent.MarkSessionsStopped([]string{sessionID})
 		mcpagent.CloseSession(sessionID)
-		mcpagent.CloseSession(browserSessionID)
 		tracker.CloseSession(browserSessionID, browserClient)
 	}
 }
 
 // SetCdpPort sets the CDP port for browser mode detection.
 func (hcpo *StepBasedWorkflowOrchestrator) SetCdpPort(port int) {
-	hcpo.cdpPort = port
+	hcpo.SetCdpPorts([]int{port})
 }
 
 // GetCdpPort returns the CDP port (0 = headless, >0 = CDP mode).
@@ -540,8 +532,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) GetCdpPort() int {
 	return hcpo.cdpPort
 }
 
+// SetCdpPorts configures explicitly authorized, independently-profiled Chrome
+// browsers. Multiple ports are for specialized multi-login testing, not normal
+// workflow concurrency.
+func (hcpo *StepBasedWorkflowOrchestrator) SetCdpPorts(ports []int) {
+	hcpo.cdpPorts = append([]int(nil), ports...)
+	hcpo.cdpPort = 0
+	if len(hcpo.cdpPorts) > 0 {
+		hcpo.cdpPort = hcpo.cdpPorts[0]
+	}
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) GetCdpPorts() []int {
+	return append([]int(nil), hcpo.cdpPorts...)
+}
+
 // SetBrowserMode sets the browser mode for prompt instructions.
-// Valid values: "playwright", "cdp", "headless", "" (auto-detect from servers/skills).
+// Valid values: "cdp", "headless", "" (auto-detect from skills).
 func (hcpo *StepBasedWorkflowOrchestrator) SetBrowserMode(mode string) {
 	hcpo.browserMode = mode
 }
@@ -551,26 +558,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) GetBrowserMode() string {
 	return hcpo.browserMode
 }
 
-// HasBrowserCapability reports whether this workflow has any browser MCP available —
-// a registered browser server (playwright), a browser runtime skill, a
-// configured CDP port, or an explicit non-"none" browserMode. Use this (not
+// HasBrowserCapability reports whether this workflow has browser automation available —
+// the agent-browser runtime skill, a configured CDP port, or an explicit
+// non-"none" browserMode. Use this (not
 // GetBrowserMode directly) when deciding whether to emit browser-specific prompt
 // content — an empty browserMode means "auto-detect", NOT "no browser".
-//
-// Real signals (see controller_agent_factory.go): browser MCP servers are
-// "playwright"; agent-browser/playwright may also be listed as built-in
-// runtime skills via GetSelectedSkills; CDP attach is driven by CdpPort.
 func (hcpo *StepBasedWorkflowOrchestrator) HasBrowserCapability() bool {
 	if mode := hcpo.browserMode; mode != "" && mode != "none" {
 		return true
 	}
 	if hcpo.GetCdpPort() > 0 {
 		return true
-	}
-	for _, s := range hcpo.GetSelectedServers() {
-		if s == "playwright" {
-			return true
-		}
 	}
 	for _, s := range hcpo.GetSelectedSkills() {
 		if isBrowserAutomationSkill(s) {

@@ -52,7 +52,7 @@ const STEPS: WalkthroughStep[] = [
   {
     selector: '[data-tour="chat-browser-tools"]',
     title: 'Browser access',
-    body: 'Enable headless browser, Chrome CDP, or Playwright when the agent needs to inspect or operate web pages.',
+    body: 'Enable automatic browser routing, headless Chromium, or Chrome CDP when the agent needs to inspect or operate web pages.',
   },
   {
     selector: '[data-tour="chat-send-controls"]',

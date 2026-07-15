@@ -246,7 +246,7 @@ For `learn_code`, the prompt also emphasizes:
 
 - maintaining a reusable `main.py` and repairing it incrementally
 - **no fabricated data**: every output value must trace to a real data source (MCP tool call, API response, or input file)
-- **browser automation rules**: snapshot-first, ref-based interaction, no JavaScript injection via `browser_evaluate`, no CSS selectors — applies to both playwright MCP and agent_browser tools
+- **browser automation rules**: snapshot-first agent_browser interaction, fresh refs, and durable persisted selectors
 - **tool discovery**: call `get_api_spec` before writing browser/MCP code to learn exact parameter schemas instead of guessing
 - `script_metadata.json` is referenced by path (not inlined) so the LLM reads it on demand
 

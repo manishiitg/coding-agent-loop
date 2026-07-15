@@ -137,9 +137,11 @@ export interface AgentQueryRequest {
   // Browser automation access configuration
   enable_browser_access?: boolean // Enable/disable browser automation tool (auto-enables workspace when true)
   // Explicit browser mode for prompt/runtime selection
-  browser_mode?: 'none' | 'headless' | 'cdp' | 'playwright'
+  browser_mode?: 'none' | 'auto' | 'headless' | 'cdp'
   // CDP port for connecting to an existing Chrome browser (local mode only)
   cdp_port?: number
+  // Specialized multi-profile CDP testing. Each port uses a distinct Chrome profile.
+  cdp_ports?: number[]
   // Context editing configuration
   enable_context_editing?: boolean // Enable context editing (dynamic context reduction)
   // Selected skills to include in the chat context
@@ -2436,6 +2438,7 @@ export interface WorkflowCapabilities {
   selected_secrets: string[]
   selected_global_secret_names: string[] | null // null = all, [] = none
   browser_mode: string
+  cdp_ports?: number[]
   use_code_execution_mode: boolean
   llm_config?: PresetLLMConfig
 }

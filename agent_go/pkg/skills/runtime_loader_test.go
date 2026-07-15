@@ -1,8 +1,8 @@
 package skills
 
 import (
-	"fmt"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -114,16 +114,6 @@ func TestLoadAttachableLoadsAgentBrowserSkill(t *testing.T) {
 		t.Fatalf("expected agent-browser skill to load, got %+v", got)
 	}
 	if got[0].Name != "agent-browser" || !strings.Contains(got[0].Content, "CDP Shared Chrome Rules") {
-		t.Errorf("unexpected loaded skill: %+v", got[0])
-	}
-}
-
-func TestLoadAttachableLoadsPlaywrightSkill(t *testing.T) {
-	got := LoadAttachable("http://unused.example", []string{"playwright"})
-	if len(got) != 1 {
-		t.Fatalf("expected playwright skill to load, got %+v", got)
-	}
-	if got[0].Name != "playwright" || !strings.Contains(got[0].Content, "Shared Browser Vs Isolated Browser") {
 		t.Errorf("unexpected loaded skill: %+v", got[0])
 	}
 }

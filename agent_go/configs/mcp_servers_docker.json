@@ -1,14 +1,3 @@
 {
-  "mcpServers": {
-    "playwright": {
-      "command": "npx",
-      "args": [
-        "@playwright/mcp@latest",
-        "--output-dir",
-        "/app/workspace-docs/Downloads",
-        "--isolated"
-      ],
-      "working_dir": "/app/workspace-docs/Downloads"
-    }
-  }
+  "mcpServers": {}
 }

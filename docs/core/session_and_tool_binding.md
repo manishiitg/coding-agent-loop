@@ -54,7 +54,7 @@ This is the connection-sharing session used by MCP agents and code-exec HTTP too
 Its job is:
 
 - reuse MCP server connections across agents
-- preserve stateful MCP servers like Playwright
+- preserve stateful MCP connections when a server requires them
 - let workflow group runs use different tool sessions while still belonging to one parent HTTP session
 
 Relevant code:
@@ -177,7 +177,7 @@ Every agent created by an orchestrator receives the orchestrator's MCP session I
 
 That is how:
 
-- one workflow shares Playwright/browser/server connections across steps
+- one workflow shares its configured server connections across steps
 - one group run can keep its own MCP state
 - sub-agents can share or isolate MCP state depending on the session ID passed to them
 
@@ -357,7 +357,6 @@ And:
 ## Related Docs
 
 - [mcp_bridge_layer.md](./mcp_bridge_layer.md)
-- [mcp_session_id_propagation.md](./mcp_session_id_propagation.md)
 - [folder_guard_system.md](./folder_guard_system.md)
 - [browser.md](./browser.md)
 - [workflow_builder_interactive.md](../workflow/workflow_builder_interactive.md)

@@ -219,8 +219,8 @@ go mod tidy
 
 MCP server connections are shared globally across all chat sessions to prevent OOM from duplicate subprocesses:
 
-- **Stateless servers** (all except `playwright`/`agent-browser`) use a fixed `"global"` session ID — one subprocess per server regardless of how many tabs/agents are active
-- **Stateful servers** (`playwright`, `agent-browser`) keep per-session connections for browser state isolation
+- MCP servers use a fixed `"global"` connection session — one subprocess per server regardless of how many tabs or agents are active.
+- Agent-browser sessions are managed separately by the Builder browser runtime, including CDP tab isolation and headless session limits.
 - The `SessionConnectionRegistry` in `mcpagent/mcpclient/session_registry.go` manages this with per-key mutexes to prevent race conditions
 - If any code path creates an agent without setting `SessionID`, it defaults to `"global"` automatically (see `agent.go`)
 

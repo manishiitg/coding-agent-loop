@@ -96,8 +96,8 @@ When delegating to a sub-agent, pass the exact output file paths and required st
 ## Sub-Agent Tools
 
 ### call_sub_agent(route_id, todo_id, instructions, success_criteria, preferred_tier, message_sequence_restart{{if .HasBrowserAccess}}, share_browser{{end}})
-Execute a predefined route.{{if .HasBrowserAccess}} Set share_browser=false for parallel browser sessions — this gives each sub-agent its own isolated browser session (separate Playwright connection or separate agent-browser process), preventing them from interfering with each other.
-**Browser session limits:** Max **{{.MaxBrowserSessionsPerWorkflow}}** concurrent isolated browser sessions per workflow (applies to all browser types — agent-browser and Playwright). If you need more than {{.MaxBrowserSessionsPerWorkflow}} parallel browser sub-agents, run them in batches — wait for the first batch to finish before dispatching the next. Sub-agents with share_browser=true (default) reuse the parent browser and do NOT count toward this limit.{{end}}
+Execute a predefined route.{{if .HasBrowserAccess}} Set share_browser=false for parallel browser sessions — this gives each sub-agent its own isolated agent-browser session, preventing them from interfering with each other.
+**Browser session limits:** Max **{{.MaxBrowserSessionsPerWorkflow}}** concurrent isolated agent-browser sessions per workflow. If you need more than {{.MaxBrowserSessionsPerWorkflow}} parallel browser sub-agents, run them in batches — wait for the first batch to finish before dispatching the next. Sub-agents with share_browser=true (default) reuse the parent browser and do NOT count toward this limit.{{end}}
 
 **Message sequence routes**:
 Some predefined routes may be message_sequence routes. get_route_description(route_id) will mark them with "Step type: message_sequence" when applicable.

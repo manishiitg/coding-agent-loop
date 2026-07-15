@@ -38,6 +38,7 @@ The returned guidance is the source of truth for the command. Mode validation li
 Current guidance kinds:
 
 ```text
+migrate-browser
 design-plan
 ready-to-optimize
 review-plan
@@ -58,6 +59,7 @@ improve-report
 
 | Command | Mode | Purpose |
 |---|---|---|
+| `/migrate-browser` | Builder | One-time migration of active legacy browser wiring to managed agent-browser; does not execute the workflow. |
 | `/design-plan` | Builder | Design step flow and context handoffs. |
 | `/ready-to-optimize` | Builder | Check whether the workflow is ready to hand to Optimizer. |
 | `/review-plan` | Builder, Optimizer, Run | Structural and artifact-sync review through `review_plan`. |

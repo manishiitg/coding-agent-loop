@@ -8,7 +8,7 @@ func TestBrowserAutomationSkillsAreFilesystemAttachable(t *testing.T) {
 	// Browser automation skill names also trigger runtime prompt/tool setup, but
 	// they are still real workspace skills. Do not filter them out of SKILL.md
 	// loading or folder guards.
-	browserSkills := []string{"agent-browser", "playwright"}
+	browserSkills := []string{"agent-browser"}
 	if got := filesystemSkills(browserSkills); len(got) != len(browserSkills) {
 		t.Fatalf("expected browser skills to remain filesystem skills, got %v", got)
 	}
@@ -16,7 +16,6 @@ func TestBrowserAutomationSkillsAreFilesystemAttachable(t *testing.T) {
 	readPaths, writePaths := BuildSkillFolderGuardPaths(browserSkills)
 	want := []string{
 		"skills/agent-browser/", "skills/agent-browser",
-		"skills/playwright/", "skills/playwright",
 	}
 	if len(writePaths) != 0 {
 		t.Fatalf("expected no write folder guard paths for skills, got %v", writePaths)
@@ -32,10 +31,9 @@ func TestBrowserAutomationSkillsAreFilesystemAttachable(t *testing.T) {
 }
 
 func TestBrowserRuntimeSkillsDoNotFilterOtherSkills(t *testing.T) {
-	readPaths, _ := BuildSkillFolderGuardPaths([]string{"agent-browser", "playwright", "custom-skill"})
+	readPaths, _ := BuildSkillFolderGuardPaths([]string{"agent-browser", "custom-skill"})
 	want := []string{
 		"skills/agent-browser/", "skills/agent-browser",
-		"skills/playwright/", "skills/playwright",
 		"skills/custom-skill/", "skills/custom-skill",
 	}
 	if len(readPaths) != len(want) {

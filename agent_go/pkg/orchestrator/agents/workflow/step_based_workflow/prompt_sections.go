@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	prompt "github.com/manishiitg/mcpagent/agent/prompt"
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/guidance"
+	prompt "github.com/manishiitg/mcpagent/agent/prompt"
 )
 
 // BuildStepFilesListing enumerates files in a single step-associated folder (step output
@@ -155,31 +155,28 @@ func BuildMainPyAuthoringRules() string {
 }
 
 // BuildBrowserAuthoringRules returns the browser-automation-specific main.py rules.
-// Append to BuildMainPyAuthoringRules() ONLY when the step has a browser MCP available
-// (playwright, agent_browser, etc.). Non-browser steps get no benefit from
+// Append to BuildMainPyAuthoringRules() ONLY when the step has agent-browser available.
+// Non-browser steps get no benefit from
 // these ~60 lines and paying the token tax on every step prompt is wasteful.
 //
 // Callers: gate with templateVars["HasBrowserAccess"] == "true" or equivalent signal.
 func BuildBrowserAuthoringRules() string {
 	var sb strings.Builder
-	sb.WriteString("## Browser automation rules (this step has playwright / agent_browser)\n\n")
+	sb.WriteString("## Browser automation rules (this step has agent_browser)\n\n")
 	sb.WriteString("**The ONE rule that matters: selectors persisted to main.py must be DETERMINISTIC across future runs.**\n")
 	sb.WriteString("A deterministic selector resolves to the same element on every replay — across browser restarts, page rebuilds, deploys that rename auto-generated classes, React key changes, re-hydration. **Refs (`@e1`, `e68`, `\"ref\": \"abc123\"`) are session-local identifiers** the browser tools generate per snapshot; they're reassigned on the next run, so hardcoded refs are the opposite of deterministic. **NEVER write a ref-based selector into main.py, learnings, or any other saved artifact** — the replay will silently click the wrong thing.\n\n")
 	sb.WriteString("**Finding deterministic selectors — two paths, both valid:**\n")
-	sb.WriteString("- **Path A — `browser_snapshot` then act.** Snapshot gives you role + accessible name + state. Use that to pick a deterministic locator (see priority list below), then use individual tool calls (`browser_click`, `browser_type`, `browser_select`, `browser_navigate`) or Playwright code (`browser_run_code` with `page.getByRole(...)` / `page.locator(...)`). Both tool-call styles are fine; the rule is that the SELECTOR must be deterministic.\n")
-	sb.WriteString("- **Path B — DOM probe via `browser_evaluate` / `agent-browser eval` / `browser_run_code`.** Run the canonical read-only probe (below) to get a structured inventory of the DOM, including pre-filtered deterministic `cssPath` entries (auto-generated ids are filtered out). Use the probe when the a11y snapshot is missing elements (custom `<div>` buttons, portal/popover children, form inputs the tree skips). Eval-for-DISCOVERY is allowed; eval-for-ACTIONS is fine too as long as the action uses a deterministic locator — the page.getByRole/click/fill pattern through Playwright's locator API is deterministic; `document.querySelector('.css-8xy3zb')` baked into a saved script is not.\n\n")
+	sb.WriteString("- **Path A — `agent_browser` snapshot then act.** Snapshot gives you role + accessible name + state. Parse a live ref from each run's snapshot or choose a deterministic selector (see priority list below), then use `agent_browser` commands such as `click`, `fill`, `select`, and `open`.\n")
+	sb.WriteString("- **Path B — DOM probe via `agent_browser` `eval`.** Run the canonical read-only probe (below) to get a structured inventory of the DOM, including pre-filtered deterministic `cssPath` entries (auto-generated ids are filtered out). Use the probe when the accessibility snapshot misses elements (custom `<div>` buttons, portal/popover children, form inputs the tree skips). Eval for discovery is allowed; an action persisted to a saved script must still use a deterministic selector. `document.querySelector('.css-8xy3zb')` is not deterministic.\n\n")
 	sb.WriteString("**Deterministic-selector priority for main.py** (pick the highest that uniquely identifies the element and will resolve to the same element on every future run):\n")
 	sb.WriteString("  1. `data-testid` / `data-test` / `data-cy` / `data-qa`  (ideal — rare on production sites)\n")
 	sb.WriteString("  2. Hand-written, semantic `id` or `name` attribute  (e.g. `#panAdhaarUserId`, `#loginPasswordField`). **Skip auto-generated ids**: `radix-_rN_`, `mat-mdc-*`, `:rNN:`, any UUID-shaped id — these rotate across rebuilds.\n")
 	sb.WriteString("  3. `aria-label`  (very durable when present)\n")
-	sb.WriteString("  4. Role + accessible name  (`page.get_by_role(\"button\", name=\"Sign in\")`)\n")
-	sb.WriteString("  5. `get_by_label(...)`, `get_by_placeholder(...)`, `get_by_text(...)`\n")
+	sb.WriteString("  4. Role + accessible name from a fresh snapshot, resolving its live ref at runtime\n")
+	sb.WriteString("  5. Label, placeholder, or visible text that is unique and stable\n")
 	sb.WriteString("  6. Structural CSS / XPath with nth-child chains  (last resort; flag in learnings)\n")
-	sb.WriteString("- **Discovery when a11y snapshot is insufficient**: custom `<div>` buttons, dropdowns inside portals, autocomplete options, form inputs missing from the a11y tree. Run a READ-ONLY DOM probe that returns a JSON inventory of the page (role, id, aria-label, data-testid, visible text, stable `cssPath`). One probe tells you the site's hook strategy (e.g. \"38 aria-labels, 0 testids → use aria-label + role+name\"). Then act via Path A (snapshot + tool calls) or Path B (Playwright locator API via `browser_run_code`) — as long as the locator you persist is durable.\n")
-	sb.WriteString("- **Probe invocation depends on which browser tool is active** — pick the matching form:\n")
-	sb.WriteString("  - Playwright MCP: `call_mcp('playwright', 'browser_evaluate', {'function': '<JS below>'})`\n")
-	sb.WriteString("  - agent-browser CLI (shell): `agent-browser eval \"<JS below>\"` — returns JSON on stdout; pipe to a file if the payload is large\n")
-	sb.WriteString("  The JS body is identical across backends — only the invocation wrapper differs.\n")
+	sb.WriteString("- **Discovery when the accessibility snapshot is insufficient**: custom `<div>` buttons, dropdowns inside portals, autocomplete options, form inputs missing from the tree. Run a READ-ONLY DOM probe that returns a JSON inventory of the page (role, id, aria-label, data-testid, visible text, stable `cssPath`). One probe tells you the site's hook strategy (e.g. \"38 aria-labels, 0 testids → use aria-label + role+name\"). Then act through `agent_browser` using a live ref or durable selector.\n")
+	sb.WriteString("- **Probe invocation**: call `agent_browser` with `command='eval'` and the JavaScript below as its argument. In CDP mode include the configured endpoint and tab arguments required by the browser instructions. Never invoke the CLI through the shell.\n")
 	sb.WriteString("- **Canonical DOM probe** — copy this verbatim. Do NOT reinvent it per step; one source of truth keeps results comparable across runs, and the auto-id filtering (radix/mat-mdc/React-useId/UUID) is already tuned:\n")
 	sb.WriteString("```javascript\n")
 	sb.WriteString("(() => {\n")
@@ -214,7 +211,7 @@ func BuildBrowserAuthoringRules() string {
 	sb.WriteString("})()\n")
 	sb.WriteString("```\n")
 	sb.WriteString("  Returns `{url, framework, stableHookInventory, popoverItems, actionableItems}`. Save `stableHookInventory` + `framework` to learnings as the site profile. Use `actionableItems[i].cssPath` directly in main.py when it's non-null (filtered against auto-generated ids). If `cssPath` is null, fall back to role+name from the a11y snapshot.\n")
-	sb.WriteString("- **Site-access resilience**: if `browser_navigate` returns \"Permission Denied\" / blank / native alert freeze, the site blocks Playwright-launched browsers. Switch to CDP attach against an existing Chrome (`agent-browser --cdp <port>` / `--auto-connect`) and document this as a preamble in learnings. Register a dialog handler before interacting if the page shows native alerts.\n")
+	sb.WriteString("- **Site-access resilience**: if a headless `open` returns \"Permission Denied\", a blank page, or a native-alert freeze, switch the workflow to CDP mode against an existing Chrome and document the precondition in learnings. Register a dialog handler before interacting if the page shows native alerts.\n")
 	sb.WriteString("- Wait by polling snapshots in a loop checking for expected content / expected widget state (e.g. disabled→enabled). NOT `time.sleep(N)` for UI state (use short sleeps 1-2s only between polls).\n")
 	sb.WriteString("- On failure (element missing, navigation stuck), print **both** the current snapshot AND the last probe result (if any) so the fix loop sees both views.\n")
 	sb.WriteString("- Call `get_api_spec` to discover exact parameter schemas — don't guess parameter names.\n")
@@ -231,8 +228,7 @@ type browserCapabilityProvider interface {
 }
 
 // browserAuthoringRulesIfBrowserEnabled returns BuildBrowserAuthoringRules() when the
-// workflow has any browser MCP configured (playwright, workspace_browser/
-// agent-browser skill, or CDP port), else "". Use at call sites that have access to
+// workflow has the agent-browser skill or a CDP port, else "". Use at call sites that have access to
 // the orchestrator (e.g. workshop manager, planning exports).
 func browserAuthoringRulesIfBrowserEnabled(p browserCapabilityProvider) string {
 	if p == nil || !p.HasBrowserCapability() {

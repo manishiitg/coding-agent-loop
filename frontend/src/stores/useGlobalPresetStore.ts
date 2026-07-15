@@ -36,6 +36,7 @@ function buildWorkflowPresetsFromManifests(): CustomPreset[] {
       selectedSecrets: caps?.selected_secrets || [],
       selectedGlobalSecretNames: caps?.selected_global_secret_names ?? null,
       browserMode: (caps?.browser_mode || 'none') as CustomPreset['browserMode'],
+      cdpPorts: caps?.cdp_ports || [],
       useCodeExecutionMode: caps?.use_code_execution_mode || false,
       llmConfig: caps?.llm_config ? { ...caps.llm_config } : undefined,
     }
@@ -72,7 +73,7 @@ interface GlobalPresetState {
 
   // Actions for manifest management
   refreshPresets: () => Promise<void>
-  savePreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'multi-agent' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, browserMode?: 'none' | 'headless' | 'cdp' | 'playwright') => Promise<CustomPreset | null>
+  savePreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'multi-agent' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, browserMode?: 'none' | 'auto' | 'headless' | 'cdp', cdpPorts?: number[]) => Promise<CustomPreset | null>
   duplicatePreset: (presetId: string) => Promise<CustomPreset | null>
 
   // Actions for preset application
@@ -155,9 +156,10 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         return refreshPromise
       },
       
-      savePreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, id, selectedSecrets, selectedGlobalSecretNames, browserMode) => {
+      savePreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, id, selectedSecrets, selectedGlobalSecretNames, browserMode, cdpPorts) => {
         const toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
         const existingPreset = id ? get().workflowPresets.find(p => p.id === id) : undefined
+        const effectiveCDPPorts = cdpPorts ?? existingPreset?.cdpPorts ?? []
         const globalSecretNamesForBackend = selectedGlobalSecretNames === undefined
           ? (existingPreset?.selectedGlobalSecretNames === undefined ? [] : existingPreset.selectedGlobalSecretNames)
           : selectedGlobalSecretNames
@@ -178,6 +180,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             selected_secrets: secretNamesForBackend,
             selected_global_secret_names: globalSecretNamesForBackend,
             browser_mode: browserMode || 'none',
+            cdp_ports: browserMode === 'cdp' || browserMode === 'auto' ? effectiveCDPPorts : [],
             use_code_execution_mode: useCodeExecutionMode ?? false,
             llm_config: llmConfig || undefined,
           })
@@ -194,6 +197,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             selectedSecrets: secretNamesForBackend,
             selectedGlobalSecretNames: globalSecretNamesForBackend,
             browserMode: (browserMode || 'none') as CustomPreset['browserMode'],
+            cdpPorts: browserMode === 'cdp' || browserMode === 'auto' ? effectiveCDPPorts : [],
             useCodeExecutionMode: useCodeExecutionMode ?? false,
             llmConfig: llmConfig || undefined,
           }
@@ -223,6 +227,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                 selected_secrets: secretNamesForBackend,
                 selected_global_secret_names: globalSecretNamesForBackend,
                 browser_mode: browserMode || 'none',
+                cdp_ports: browserMode === 'cdp' || browserMode === 'auto' ? effectiveCDPPorts : [],
                 use_code_execution_mode: useCodeExecutionMode ?? false,
                 llm_config: llmConfig || undefined,
               },
@@ -239,6 +244,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                 selected_secrets: secretNamesForBackend,
                 selected_global_secret_names: globalSecretNamesForBackend,
                 browser_mode: browserMode || 'none',
+                cdp_ports: browserMode === 'cdp' || browserMode === 'auto' ? effectiveCDPPorts : [],
                 use_code_execution_mode: useCodeExecutionMode ?? false,
                 llm_config: llmConfig || undefined,
               },
@@ -415,7 +421,9 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             originalPreset.useCodeExecutionMode,
             undefined, // id (new preset)
             originalPreset.selectedSecrets, // Copy secret selections
-            originalPreset.selectedGlobalSecretNames // Copy global secret selection
+            originalPreset.selectedGlobalSecretNames, // Copy global secret selection
+            originalPreset.browserMode,
+            originalPreset.cdpPorts
           )
           
           // If original preset had a workflow, create a new workflow for the duplicated preset

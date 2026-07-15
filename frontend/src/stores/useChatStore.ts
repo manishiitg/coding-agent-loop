@@ -299,7 +299,7 @@ export interface ChatTabConfig {
   llmConfig: ExtendedLLMConfiguration  // LLM configuration (provider, model, etc.)
   fileContext: FileContextItem[]  // Files/folders in context
   enableContextSummarization?: boolean  // Context summarization setting
-  browserMode?: 'none' | 'headless' | 'cdp' | 'playwright'  // Browser access mode (default: 'none')
+  browserMode?: 'none' | 'auto' | 'headless' | 'cdp'  // Browser access mode (default: 'auto')
   enableBrowserAccess?: boolean  // Enable/disable browser automation tool (auto-enables workspace when true)
   useCdp?: boolean  // Whether CDP mode is enabled (connect to local Chrome)
   cdpPort?: number  // CDP port (default 9222)
@@ -412,8 +412,8 @@ const getDefaultTabConfig = (mode: 'workflow' | 'multi-agent' = 'multi-agent'): 
     // Workflow mode uses global chatFileContext, but chat mode uses tab-specific fileContext
     fileContext: [],
     enableContextSummarization: false,
-    browserMode: appStore?.lastBrowserMode ?? 'none',
-    enableBrowserAccess: (appStore?.lastBrowserMode === 'headless' || appStore?.lastBrowserMode === 'cdp') ?? false,
+    browserMode: appStore?.lastBrowserMode ?? 'auto',
+    enableBrowserAccess: ['auto', 'headless', 'cdp'].includes(appStore?.lastBrowserMode ?? 'auto'),
     enableImageGeneration: appStore?.lastEnableImageGeneration ?? false,
     selectedSkills: appStore?.lastSelectedSkills ?? [],
     delegationTierConfig: undefined,
@@ -2593,7 +2593,7 @@ export const useChatStore = create<ChatState>()(
         if (tabMode === 'multi-agent') {
           type SyncUpdate = {
             lastSelectedSkills?: string[]
-            lastBrowserMode?: 'none' | 'headless' | 'cdp' | 'playwright'
+            lastBrowserMode?: 'none' | 'auto' | 'headless' | 'cdp'
             lastEnableImageGeneration?: boolean
           }
           const sync: SyncUpdate = {}

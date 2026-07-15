@@ -1654,6 +1654,9 @@ func (s *SchedulerService) runChiefTaskReportUpdate(ctx context.Context, sctx *S
 	if sctx.Capabilities.BrowserMode != "" && sctx.Capabilities.BrowserMode != "none" {
 		reqMap["browser_mode"] = sctx.Capabilities.BrowserMode
 	}
+	if len(sctx.Capabilities.CDPPorts) > 0 {
+		reqMap["cdp_ports"] = append([]int(nil), sctx.Capabilities.CDPPorts...)
+	}
 	if sctx.Capabilities.UseCodeExecutionMode {
 		reqMap["use_code_execution_mode"] = true
 	}
@@ -2665,6 +2668,9 @@ func (s *SchedulerService) executeMultiAgentJob(ctx context.Context, sctx *Sched
 	if sctx.Capabilities.BrowserMode != "" && sctx.Capabilities.BrowserMode != "none" {
 		reqMap["browser_mode"] = sctx.Capabilities.BrowserMode
 	}
+	if len(sctx.Capabilities.CDPPorts) > 0 {
+		reqMap["cdp_ports"] = append([]int(nil), sctx.Capabilities.CDPPorts...)
+	}
 	if sctx.Capabilities.UseCodeExecutionMode {
 		reqMap["use_code_execution_mode"] = true
 	}
@@ -3003,6 +3009,9 @@ func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *Sched
 		"browser_mode":                sctx.Capabilities.BrowserMode,
 		"use_code_execution_mode":     sctx.Capabilities.UseCodeExecutionMode,
 		"disable_live_input_delivery": true,
+	}
+	if len(sctx.Capabilities.CDPPorts) > 0 {
+		reqMap["cdp_ports"] = append([]int(nil), sctx.Capabilities.CDPPorts...)
 	}
 
 	s.applyLLMAndSecretsToReqMap(ctx, reqMap, sctx)

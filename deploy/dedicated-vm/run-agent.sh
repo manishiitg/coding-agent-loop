@@ -45,7 +45,6 @@ export AGENT_PROVIDER="${AGENT_PROVIDER:-azure}"
 export AGENT_MODEL="${AGENT_MODEL:-gpt-5.2}"
 
 # Chromium for browser tools
-export PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH="/usr/bin/chromium-browser"
 export AGENT_BROWSER_EXECUTABLE_PATH="/usr/bin/chromium-browser"
 
 # Create required dirs

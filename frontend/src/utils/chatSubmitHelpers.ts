@@ -130,24 +130,19 @@ export function buildQueryRequestPayload(params: {
   const rawBrowserMode = currentTab?.config?.browserMode
   const legacyUseCdp = currentTab?.config?.useCdp === true
   const legacyEnableBrowser = currentTab?.config?.enableBrowserAccess === true
-  const selectedServers = currentTab?.config?.selectedServers || []
-  let effectiveBrowserMode: 'none' | 'headless' | 'cdp' | 'playwright' =
+  let effectiveBrowserMode: 'none' | 'auto' | 'headless' | 'cdp' =
     rawBrowserMode
       ? rawBrowserMode
       : (legacyEnableBrowser
           ? (legacyUseCdp ? 'cdp' : 'headless')
-          : (selectedServers.includes('playwright') ? 'playwright' : 'none'))
+          : 'none')
 
   // Guard against stale/migrated config where browserMode says headless
   // but useCdp is actually enabled in tab config.
   if (effectiveBrowserMode === 'headless' && legacyUseCdp) {
     effectiveBrowserMode = 'cdp'
   }
-
-  const isBrowserAccessMode = effectiveBrowserMode === 'headless' || effectiveBrowserMode === 'cdp'
-  const payloadServers = isBrowserAccessMode
-    ? effectiveServers.filter(s => s !== 'playwright')
-    : effectiveServers
+  const isBrowserAccessMode = effectiveBrowserMode !== 'none'
 
   return {
     query: queryWithContext,
@@ -156,7 +151,7 @@ export function buildQueryRequestPayload(params: {
         : correctAgentMode) as AgentQueryRequest['agent_mode'],
     phase_id: isWorkflowPhaseChat ? currentTab.metadata!.phaseId : undefined,
     enabled_tools: enabledTools.map(tool => tool.name),
-    enabled_servers: payloadServers,
+    enabled_servers: effectiveServers,
     selected_tools: hasActivePreset ? filteredPresetTools : undefined,
     provider: effectiveLLMConfig.provider as AgentQueryRequest['provider'],
     model_id: effectiveLLMConfig.model_id,
@@ -173,7 +168,7 @@ export function buildQueryRequestPayload(params: {
     browser_mode: isChatWithExtras
       ? effectiveBrowserMode
       : undefined,
-    cdp_port: isChatWithExtras && effectiveBrowserMode === 'cdp'
+    cdp_port: isChatWithExtras && (effectiveBrowserMode === 'auto' || effectiveBrowserMode === 'cdp')
       ? (currentTab?.config?.cdpPort || 9222)
       : undefined,
     delegation_tier_config: undefined,

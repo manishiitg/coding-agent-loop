@@ -18,7 +18,7 @@ func TestMCPBridgeCategoryRouting(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"google_sheets", "playwright", "gmail", "memory"} {
+	for _, name := range []string{"google_sheets", "github", "gmail", "memory"} {
 		if isMCPBridgeCustomToolCategory(name) || isMCPBridgeVirtualToolCategory(name) {
 			t.Fatalf("real MCP server %q must not be redirected as a built-in category", name)
 		}

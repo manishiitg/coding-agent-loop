@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	mcpagent "github.com/manishiitg/mcpagent/agent"
-	baseevents "github.com/manishiitg/mcpagent/events"
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	baseevents "github.com/manishiitg/mcpagent/events"
 )
 
 // BatchExecutionResult contains the result of batch execution
@@ -293,7 +293,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 
 		// CRITICAL FIX: Close entire previous session before starting new group
 		// This ensures the new session ID gets fresh connections with the correct Downloads path
-		// We must close the entire session (not just playwright) to ensure all connections are released
+		// Close the entire session to ensure all connections are released.
 		if groupIndex > 0 {
 			if previousSessionID != "" {
 				hcpo.GetLogger().Info(fmt.Sprintf("🔗 Closing entire previous session before starting group %s (session: %s)", group.Name, previousSessionID))
@@ -307,7 +307,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 		hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] After ApplyExecutionContext - selectedRunFolder: '%s', runFolder: '%s'", hcpo.selectedRunFolder, runFolder))
 
 		// CRITICAL FIX: Generate a unique session ID for each workflow group
-		// This ensures each group gets its own MCP connections (e.g., Playwright browser)
+		// This ensures each group gets its own stateful MCP connections.
 		// with the correct Downloads path. Without this, all groups share the same session ID
 		// and reuse connections created with the first group's Downloads path.
 		//
@@ -340,7 +340,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 		// (from code-exec agents still running in Docker) from resurrecting connections
 		// via broken pipe handlers or mcpcache fallback.
 		// Also resolve the browser session ID so we can mark it as stopped too.
-		// The actual playwright connection lives under this ID, not the group session ID.
+		// The actual stateful MCP connection lives under this ID, not the group session ID.
 		browserSessionID := hcpo.resolveWorkshopBrowserSessionID(group.Name)
 		defer func() {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔗 Closing MCP session for group %s: %s (browser=%s)", group.Name, groupSessionID, browserSessionID))

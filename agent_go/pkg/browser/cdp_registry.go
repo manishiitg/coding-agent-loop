@@ -30,6 +30,11 @@ var (
 
 	cdpOwnersMu sync.Mutex
 	cdpOwners   = make(map[int]map[string]time.Time) // port → ownerID → lastUsed
+
+	// Some diagnostics are daemon/session-wide rather than scoped to the
+	// selected page. An owner lease prevents one workflow from replacing or
+	// stopping another workflow's recording or capture.
+	cdpExclusiveFeatureOwners = make(map[int]map[string]string) // port → feature → ownerID
 )
 
 func init() {
@@ -67,6 +72,88 @@ func removeCDPOwner(port int, ownerID string) {
 			delete(cdpOwners, port)
 		}
 	}
+	if features := cdpExclusiveFeatureOwners[port]; features != nil {
+		for feature, owner := range features {
+			if owner == ownerID {
+				delete(features, feature)
+			}
+		}
+		if len(features) == 0 {
+			delete(cdpExclusiveFeatureOwners, port)
+		}
+	}
+}
+
+func claimCDPExclusiveFeature(port int, ownerID, feature string) (bool, error) {
+	if ownerID == "" || feature == "" {
+		return false, nil
+	}
+	cdpOwnersMu.Lock()
+	defer cdpOwnersMu.Unlock()
+	features := cdpExclusiveFeatureOwners[port]
+	if features == nil {
+		features = make(map[string]string)
+		cdpExclusiveFeatureOwners[port] = features
+	}
+	if owner := features[feature]; owner != "" && owner != ownerID {
+		return false, fmt.Errorf("cannot start %s on shared CDP port %d: another workflow (%s) owns the active capture. Wait for it to stop or use a different CDP browser/port", feature, port, owner)
+	} else if owner == ownerID {
+		return false, nil
+	}
+	features[feature] = ownerID
+	return true, nil
+}
+
+func guardCDPExclusiveFeatureStop(port int, ownerID, feature string) error {
+	cdpOwnersMu.Lock()
+	defer cdpOwnersMu.Unlock()
+	if owner := cdpExclusiveFeatureOwners[port][feature]; owner != "" && owner != ownerID {
+		return fmt.Errorf("cannot stop %s on shared CDP port %d: it is owned by another workflow (%s)", feature, port, owner)
+	}
+	return nil
+}
+
+func releaseCDPExclusiveFeature(port int, ownerID, feature string) {
+	cdpOwnersMu.Lock()
+	defer cdpOwnersMu.Unlock()
+	features := cdpExclusiveFeatureOwners[port]
+	if features == nil {
+		return
+	}
+	if ownerID == "" || features[feature] == ownerID {
+		delete(features, feature)
+	}
+	if len(features) == 0 {
+		delete(cdpExclusiveFeatureOwners, port)
+	}
+}
+
+func clearCDPExclusiveFeaturesForPort(port int) {
+	cdpOwnersMu.Lock()
+	defer cdpOwnersMu.Unlock()
+	delete(cdpExclusiveFeatureOwners, port)
+}
+
+func activeCDPExclusiveFeatures(port int) []string {
+	cdpOwnersMu.Lock()
+	defer cdpOwnersMu.Unlock()
+	features := cdpExclusiveFeatureOwners[port]
+	active := make([]string, 0, len(features))
+	for feature, owner := range features {
+		active = append(active, fmt.Sprintf("%s (%s)", feature, owner))
+	}
+	sort.Strings(active)
+	return active
+}
+
+// guardCDPAutomaticRecovery is stricter than an explicit user-requested reset:
+// a timeout should not silently destroy an in-progress recording/capture, even
+// when it belongs to the workflow that observed the timeout.
+func guardCDPAutomaticRecovery(port int, ownerID string) error {
+	if active := activeCDPExclusiveFeatures(port); len(active) > 0 {
+		return fmt.Errorf("shared CDP port %d has active diagnostic capture(s): %v", port, active)
+	}
+	return guardCDPReset(port, ownerID)
 }
 
 // otherActiveCDPOwners returns owners (excluding ownerID) that used the port
@@ -131,8 +218,8 @@ func guardCDPReset(port int, ownerID string) error {
 	return fmt.Errorf(
 		"refusing to reset shared CDP browser on port %d: %d other workflow(s) used it in the last %s (%v). "+
 			"A reset kills the shared browser daemon and clears their tab state. "+
-			"Instead, close your own tab with agent_browser(command=\"tab\", args=[\"close\", \"<your-tab-label>\"]) "+
-			"or create a fresh labeled tab with agent_browser(command=\"tab\", args=[\"new\", \"--label\", \"<label>\", \"<url>\"]).",
+			"Instead, close your own tab with agent_browser(command=\"tab\", args=[\"--cdp\", \"<configured-endpoint>\", \"close\", \"<your-tab-label>\"]) "+
+			"or create a fresh labeled tab with agent_browser(command=\"tab\", args=[\"--cdp\", \"<configured-endpoint>\", \"new\", \"--label\", \"<label>\", \"<url>\"]).",
 		port, len(others), cdpOwnerActiveWindow, others)
 }
 
@@ -145,6 +232,6 @@ func guardCDPTabCreation(port int, ownerID string) error {
 	}
 	return fmt.Errorf(
 		"cannot create another tab in the shared CDP browser: this workflow already has %d labeled tab(s) (max %d). "+
-			"Reuse an existing tab by label, or close one first with agent_browser(command=\"tab\", args=[\"close\", \"<label>\"]).",
+			"Reuse an existing tab by label, or close one first with agent_browser(command=\"tab\", args=[\"--cdp\", \"<configured-endpoint>\", \"close\", \"<label>\"]).",
 		count, MaxCDPTabsPerOwner)
 }

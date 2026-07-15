@@ -159,7 +159,7 @@ See the [public roadmap](ROADMAP.md) for upcoming work on onboarding, memory-awa
 ### Channels, Tools, and Connectors
 
 - **Slack**, **WhatsApp**, and custom webhook-based chat surfaces
-- **Browser automation** through Vercel Agent-Browser, Playwright, and local CDP bridging
+- **Browser automation** through Vercel Agent-Browser with headless and local CDP modes
 - **MCP servers**, local tools, workspace files, and custom connectors
 
 ## Why Teams Choose It
@@ -398,6 +398,27 @@ macOS may still ask for approval on first launch. If it blocks the app, open **S
 ```bash
 open -a 'Chrome CDP'
 ```
+
+For the specialized case where one workflow must test the same site with a
+second login identity, launch another Chrome process on a different port **and
+a different profile directory**:
+
+```bash
+SECOND_CDP_PORT=9333
+open -na 'Google Chrome' --args \
+  --remote-debugging-port="$SECOND_CDP_PORT" \
+  --user-data-dir="$HOME/.chrome-cdp-profile-$SECOND_CDP_PORT" \
+  --no-first-run \
+  --no-default-browser-check
+curl "http://127.0.0.1:$SECOND_CDP_PORT/json/version"
+```
+
+Configure that workflow through the builder with
+`update_workflow_config(browser_mode="cdp", cdp_ports=[9222, 9333])`. Every `agent_browser` call must explicitly select
+one authorized `--cdp` endpoint. The two profiles can stay logged in as
+different accounts. Do not reuse the same `--user-data-dir` for two ports, and
+do not add ports merely to run normal workflows concurrently—the shared
+single-port tab isolation already handles that.
 
 ## 📄 License & Architecture Foundations
 

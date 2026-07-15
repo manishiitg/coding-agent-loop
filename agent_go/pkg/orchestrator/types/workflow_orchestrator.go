@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	mcpagent "github.com/manishiitg/mcpagent/agent"
-	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
-	"github.com/manishiitg/mcpagent/observability"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -139,10 +139,12 @@ type WorkflowOrchestrator struct {
 	// HTTP session ID (from the frontend/API layer) for scoped MCP cleanup
 	httpSessionID string
 
-	// CDP port for browser mode detection (0 = headless, >0 = CDP mode)
-	cdpPort int
+	// Explicit CDP ports for browser mode detection and specialized
+	// multi-profile/login testing. cdpPort remains the primary compatibility value.
+	cdpPort  int
+	cdpPorts []int
 
-	// Browser mode for prompt instructions ("playwright", "headless", "cdp", or "none").
+	// Browser mode for prompt instructions ("headless", "cdp", or "none").
 	browserMode string
 
 	// toolCallQueryFunc provides live tool call query capability for workshop sessions.
@@ -532,7 +534,9 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 	}
 
 	// Propagate CDP port for browser mode detection
-	if wo.cdpPort > 0 {
+	if len(wo.cdpPorts) > 0 {
+		todoPlannerAgent.SetCdpPorts(wo.cdpPorts)
+	} else if wo.cdpPort > 0 {
 		todoPlannerAgent.SetCdpPort(wo.cdpPort)
 	}
 	if wo.browserMode != "" {
@@ -642,7 +646,9 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 	}
 
 	// Propagate CDP port for browser mode detection
-	if wo.cdpPort > 0 {
+	if len(wo.cdpPorts) > 0 {
+		todoPlannerAgent.SetCdpPorts(wo.cdpPorts)
+	} else if wo.cdpPort > 0 {
 		todoPlannerAgent.SetCdpPort(wo.cdpPort)
 	}
 	if wo.browserMode != "" {
@@ -707,7 +713,16 @@ func (wo *WorkflowOrchestrator) SetHTTPSessionID(httpSessionID string) {
 // SetCdpPort sets the CDP port for browser mode detection.
 // 0 = headless mode, >0 = CDP mode (connected to user's Chrome).
 func (wo *WorkflowOrchestrator) SetCdpPort(port int) {
-	wo.cdpPort = port
+	wo.SetCdpPorts([]int{port})
+}
+
+// SetCdpPorts authorizes independent Chrome profiles for this workflow.
+func (wo *WorkflowOrchestrator) SetCdpPorts(ports []int) {
+	wo.cdpPorts = append([]int(nil), ports...)
+	wo.cdpPort = 0
+	if len(wo.cdpPorts) > 0 {
+		wo.cdpPort = wo.cdpPorts[0]
+	}
 }
 
 // SetBrowserMode sets the browser mode for prompt instructions.

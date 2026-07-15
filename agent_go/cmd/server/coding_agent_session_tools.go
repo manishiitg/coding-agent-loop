@@ -88,11 +88,11 @@ func registerCodingToolGroup(
 // browser-tool exposure can't drift between them; only the guard closure and the
 // caller's gating (fresh: enableBrowserAccess; resume: browser_mode headless/cdp)
 // differ.
-func registerCodingBrowserTools(ag *mcpagent.Agent, sessionID string, cdpPort int, guard codingToolGuard) error {
+func registerCodingBrowserTools(ag *mcpagent.Agent, sessionID string, cdpPorts []int, guard codingToolGuard) error {
 	if ag == nil {
 		return nil
 	}
-	execs := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, cdpPort)
+	execs := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, cdpPorts...)
 	if guard != nil {
 		execs = guard(execs)
 	}

@@ -91,15 +91,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get install -y --no-install-recommends gcc libc6-dev \
     && rm -rf /var/lib/apt/lists/*
 # docker-ce-cli: MCP configs can use "command": "docker", "args": ["run", "-i", "--rm", "mcp/sonarqube"] (mount /var/run/docker.sock in deployment).
-# nodejs 20+: required for npx MCPs (mcp-remote/undici, @sylphx/pdf-reader-mcp, etc.). chromium: agent-browser/Playwright. gcc/libc6-dev: CGO and native Python deps.
+# nodejs 20+: required for npx MCPs (mcp-remote/undici, @sylphx/pdf-reader-mcp, etc.). chromium: agent-browser. gcc/libc6-dev: CGO and native Python deps.
 
-# agent-browser: CLI used by pkg/browser/executor.go to drive Playwright sessions.
-# On the workspace and dedicated-vm images this is installed alongside Chromium;
-# the agent calls workspace-api as a proxy today, but installing it here lets the
-# agent execute browser commands directly without that hop.
-RUN npm install -g agent-browser && which agent-browser
+# agent-browser: version-matched CLI and bundled skills used by the managed
+# workspace_browser tool. Native deployments execute it locally; container
+# deployments also install it in the workspace image below.
+RUN npm install -g agent-browser@latest && which agent-browser && agent-browser --version
 
-# Install Google Chrome (stable, amd64). agent-browser/Playwright will use this
+# Install Google Chrome (stable, amd64). agent-browser will use this
 # binary instead of the Chromium installed via apt above. We keep chromium too
 # so any code path that hardcodes /usr/bin/chromium still works.
 RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-linux-signing-keyring.gpg && \
@@ -109,8 +108,7 @@ RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor
     rm -rf /var/lib/apt/lists/* && \
     google-chrome --version
 
-# Point Playwright + agent-browser at the real Chrome binary by default.
-ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/google-chrome
+# Point agent-browser at the real Chrome binary by default.
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/google-chrome
 
 # AWS CLI v2 (single static binary, no Python deps). Pod credentials come from

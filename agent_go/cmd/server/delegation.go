@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 	agent "github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentwrapper"
@@ -20,8 +19,8 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/skills"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/subagents"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
+	"log"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -333,37 +332,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		// its own toolArgTransformers map — the parent's transformer doesn't propagate.
 		if subBrowserPrompt := browserinstructions.BuildBrowserInstructions(subBrowserCfg); subBrowserPrompt != "" {
 			underlyingAgent.AppendSystemPrompt(subBrowserPrompt)
-			log.Printf("[BROWSER] Added browser instructions to sub-agent (playwright=%v, agent-browser=%v, cdp=%v)",
-				subBrowserCfg.HasPlaywright, subBrowserCfg.HasAgentBrowser, subBrowserCfg.CdpPort > 0)
-		}
-
-		// Register file path transformer for browser file uploads on sub-agent
-		hasBrowserAccess := subBrowserCfg.HasAgentBrowser
-		hasPlaywright := subBrowserCfg.HasPlaywright
-		for _, s := range browserReq.EnabledServers {
-			if s == "playwright" {
-				hasPlaywright = true
-			}
-		}
-		if hasBrowserAccess || hasPlaywright {
-			wsAbsPath := fsutil.WorkspaceShellRoot()
-			underlyingAgent.SetToolArgTransformer("browser_file_upload", func(args map[string]interface{}) {
-				paths, ok := args["paths"].([]interface{})
-				if !ok || len(paths) == 0 {
-					log.Printf("[BROWSER_UPLOAD] Sub-agent: no paths in args, skipping transform")
-					return
-				}
-				for i, p := range paths {
-					pathStr, ok := p.(string)
-					if !ok || pathStr == "" || filepath.IsAbs(pathStr) {
-						continue
-					}
-					resolved := filepath.Join(wsAbsPath, pathStr)
-					log.Printf("[BROWSER_UPLOAD] Sub-agent resolved path[%d]: %q -> %q", i, pathStr, resolved)
-					paths[i] = resolved
-				}
-			})
-			log.Printf("[BROWSER_UPLOAD] Registered sub-agent browser_file_upload transformer, workspace=%s", wsAbsPath)
+			log.Printf("[BROWSER] Added agent-browser instructions to sub-agent (cdp=%v)", subBrowserCfg.CdpPort > 0)
 		}
 
 		// Browser isolation: when share_browser=false, tell the sub-agent to use a unique
@@ -492,7 +461,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		// Register browser tools if enabled
 		if subBrowserCfg.HasAgentBrowser {
 			browserTools := virtualtools.CreateWorkspaceBrowserTools()
-			browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, getCdpPort(browserReq))
+			browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, getCdpPorts(browserReq)...)
 			browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
 
 			browserExtraFolders := append([]string{}, subResolvedGrants.WriteFolders...)

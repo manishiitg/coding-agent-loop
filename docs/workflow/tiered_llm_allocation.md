@@ -24,10 +24,15 @@ The current resolver lives in `agent_go/pkg/orchestrator/agents/workflow/step_ba
 | Learning | Tier 2 (Medium) |
 | Conditional | Tier 1 (High) |
 
-Learning-maturity-based auto-downgrade has been removed. Tier selection no longer
-looks at the contents of the learnings folder. To run a step on a cheaper tier,
-use one of the explicit overrides below (`preferred_tier`, workshop `tier`
-argument, or the per-step `execution_llm` override).
+Regular execution steps can adapt from High to Medium after three successful
+runs with the same step-description hash. Tier selection does not inspect the
+contents of the learnings folder, and Low is never selected automatically.
+
+A validation or execution failure does **not** change the selected tier. Normal
+validation retries continue the same agent conversation with validator feedback,
+and the controller carries the failure into the final `CONCERNS:` summary for
+Pulse. Persistent model/tier changes belong to Pulse `llm_ops_review` and the
+existing approval flow.
 
 `disable_tier_optimization=true` still forces execution and conditional agents
 to Tier 1.

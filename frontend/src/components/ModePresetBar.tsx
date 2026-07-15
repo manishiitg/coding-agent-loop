@@ -120,6 +120,7 @@ const workflowManifestToPreset = (manifest: WorkflowManifest, workspacePath: str
     selectedSecrets: caps?.selected_secrets || [],
     selectedGlobalSecretNames: caps?.selected_global_secret_names ?? null,
     browserMode: (caps?.browser_mode || 'none') as CustomPreset['browserMode'],
+    cdpPorts: caps?.cdp_ports || [],
     useCodeExecutionMode: caps?.use_code_execution_mode || false,
     llmConfig: caps?.llm_config ? { ...caps.llm_config } : undefined,
     employee_id: manifest.ownership?.employee_id ?? undefined,
@@ -410,7 +411,7 @@ export const ModePresetBar: React.FC = () => {
     useCodeExecutionMode?: boolean,
     selectedSecrets?: string[],
     selectedGlobalSecretNames?: string[] | null,
-    browserMode?: 'none' | 'headless' | 'cdp' | 'playwright'
+    browserMode?: 'none' | 'auto' | 'headless' | 'cdp'
   ) => {
     try {
       const effectiveMode = editingPreset ? editingPreset.agentMode : agentMode
@@ -431,6 +432,7 @@ export const ModePresetBar: React.FC = () => {
             selected_secrets: selectedSecrets || [],
             selected_global_secret_names: globalSecretNamesForBackend,
             browser_mode: browserMode || 'none',
+            cdp_ports: browserMode === 'cdp' || browserMode === 'auto' ? (editingPreset.cdpPorts || []) : [],
             use_code_execution_mode: useCodeExecutionMode || false,
             llm_config: llmConfig || undefined,
           },

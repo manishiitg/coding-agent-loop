@@ -474,6 +474,11 @@ Mark due when strategic judgment is needed:
 - an active `.advisor-experiment` has an answer, reaches `data-review-after`,
   accumulates enough measurement evidence, becomes blocked/unblocked, or gains
   decisive contradictory evidence
+- a material plan structure, step-boundary, routing, store, validation, or
+  orchestration change landed since the last plan-design review
+- repeated goal misses, recurring bugs, or material cost/latency evidence suggest
+  the plan shape itself may be limiting outcomes
+- a previously recorded plan-design checkpoint has arrived
 - the workflow may need an eval/report measurement change to judge success correctly
 - a material success criterion or active experiment is `Not measured`, and Goal
   Advisor must propose a bounded metric definition plus a normal `regular`
@@ -490,6 +495,45 @@ Goal Advisor also challenges consequential assumptions embedded in soul, plan,
 steps, evals, KB, learnings, DB, or reports. It must distinguish user-approved
 constraints from agent-created choices and maintain the top **Assumptions
 challenged** section when those choices may cap the goal.
+
+#### Conditional plan-design review
+
+When Gate evidence names a plan-design trigger, the read-only strategy reviewer
+must also load `get_workflow_command_guidance(kind="design-plan")` as a
+**read-only checklist**. The Goal Advisor module contract overrides that
+guidance's normal instruction to write review entries: the reviewer must not edit
+`builder/improve.html`, the plan, or any workspace file. This is not a second
+Pulse module and must not run on every Pulse.
+
+Use actual run, goal, eval, cost, latency, and failure evidence to judge whether
+the current plan is merely valid or is materially improvable. Review step
+boundaries/types, routing/orchestration, durable handoffs, DB/store ownership,
+validation, human gates, and agent-created architecture assumptions. Do not
+recommend a theoretically cleaner structure when observed reliability evidence
+shows it would be worse.
+
+Return exactly one plan-design disposition:
+
+- `keep` — current shape is appropriate; name the evidence and next checkpoint
+- `simplify` — same strategy and semantics with fewer/better boundaries
+- `restructure` — plan shape materially limits reliability, cost, latency, or
+  goal progress
+- `experiment` — a bounded alternative shape should be tested while preserving
+  the current baseline
+
+For `simplify`, `restructure`, or `experiment`, compare the current plan with at
+most two credible alternatives. State expected benefit, affected goal criterion,
+evidence, risk, migration/rollback shape, and how the change would be measured.
+The separate Goal Advisor critic must challenge whether the recommendation is
+actually better than the current plan.
+
+An active advisor experiment blocks a second competing experiment, but it does
+not block plan-design monitoring. During `measuring`, Goal Advisor may inspect
+whether plan structure, instrumentation, or implementation prevents the active
+experiment from receiving a fair test. It may recommend `keep` or a repair to
+the approved experiment, but must not create an unrelated bold idea. Material
+semantic or structural changes still require the existing decision-card flow;
+only an exact previously approved proposal may be applied by the Pulse Fixer.
 
 The background Goal Advisor thinks like an experienced operator. It may apply a structural plan change only when the user already approved a Goal Advisor proposal in `report_human_inputs`. New strategic changes must be logged as proposal-only Advisor ideas and, when a decision is needed, created with `create_human_input_request`. When success cannot be judged from persisted evidence, the proposal may define a small decision-useful metric set and the exact normal `regular` measurement step needed to write timestamped rows to `db/db.sqlite`; this is a plan change, not a separate metrics subsystem. Report Health visualizes it only after approval and real data.
 

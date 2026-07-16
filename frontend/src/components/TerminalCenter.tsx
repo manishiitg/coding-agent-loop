@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Activity, AlertTriangle, ArrowDownToLine, ArrowRightToLine, Braces, Bug, Check, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, ChevronUp, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Minus, Plus, Power, RefreshCw, Search, Square, Terminal, Trash2, X } from 'lucide-react'
+import { Activity, AlertTriangle, ArrowDownToLine, ArrowRightToLine, Braces, Bug, Check, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, ChevronUp, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Power, RefreshCw, Search, Square, Terminal, Trash2, X } from 'lucide-react'
 import { AnsiUp } from 'ansi_up'
 import { Terminal as XTerm, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -51,14 +51,12 @@ function stripAnsi(s: string): string {
 // Used to decide whether to take the colored-render path or fall back to the
 // existing plain text path.
 function hasAnsiCodes(s: string): boolean {
-  // eslint-disable-next-line no-control-regex
   return s.includes('\x1B[')
 }
 
 function hasTerminalRedrawControls(s: string): boolean {
   if (!s) return false
   if (hasAnsiCodes(s)) return true
-  // eslint-disable-next-line no-control-regex
   if (s.includes('\x1B]') || s.includes('\x07') || s.includes('\x0f')) return true
   // Some persisted tmux pipe snapshots have the OSC introducer stripped but
   // still carry the title-control payload (`]0;...`) and carriage-return redraws.
@@ -617,11 +615,6 @@ interface RoutingDecision {
   timestamp?: string
 }
 
-function isOpaqueID(value?: string): boolean {
-  if (!value) return false
-  return /^[a-z]+:[0-9a-f-]{16,}$/i.test(value) || /^[0-9a-f-]{24,}$/i.test(value)
-}
-
 function humanizeIdentifier(value?: string): string {
   if (!value) return ''
   const cleaned = value
@@ -712,16 +705,6 @@ function routingDecisionTime(decision: RoutingDecision): number {
   return decision.timestamp ? new Date(decision.timestamp).getTime() || 0 : 0
 }
 
-function workflowNameFromPath(path?: string): string {
-  if (!path) return ''
-  const parts = path.split('/').filter(Boolean)
-  const workflowIndex = parts.findIndex(part => part === 'Workflow')
-  if (workflowIndex >= 0 && parts[workflowIndex + 1]) {
-    return humanizeIdentifier(parts[workflowIndex + 1])
-  }
-  return humanizeIdentifier(parts[parts.length - 1])
-}
-
 function formatExecutionKind(kind?: string): string {
   switch (kind) {
     case 'main_agent':
@@ -747,22 +730,6 @@ function formatTerminalKindLabel(terminal: TerminalSnapshot): string {
     return `${humanizeIdentifier(terminal.step_type)} step`
   }
   return formatExecutionKind(terminal.execution_kind)
-}
-
-function terminalWorkflowLabel(terminal: TerminalSnapshot): string {
-  return terminal.workflow_label || terminal.workflow_name || workflowNameFromPath(terminal.workflow_path)
-}
-
-function terminalTaskLabel(terminal: TerminalSnapshot): string {
-  const rawLabel = terminal.label || terminal.execution_id || terminal.owner_id || ''
-  const kind = terminal.execution_kind || terminal.scope
-  if (kind === 'workflow_step' || kind === 'step' || kind === 'execution_only') {
-    // Prefer the human step title / agent name over the raw step_id. The ID
-    // (e.g. "_global" for the global-learnings skill) is a folder/lookup key,
-    // not a display name; it remains the last-resort fallback.
-    return terminal.step_name || terminal.agent_name || terminal.step_id || (isOpaqueID(rawLabel) ? '' : humanizeIdentifier(rawLabel))
-  }
-  return terminal.step_name || terminal.agent_name || visibleStepID(terminal) || (isOpaqueID(rawLabel) ? '' : humanizeIdentifier(rawLabel))
 }
 
 function formatTerminalTitle(terminal: TerminalSnapshot): string {
@@ -811,50 +778,6 @@ function formatRailTransportChip(terminal: TerminalSnapshot): string {
     .replace(/^Codex CLI\b/, 'Codex')
 }
 
-// extractDoneStats parses the synthetic terminal's "[done · 1240ms · 412 in
-// · 28 out · $0.000089]" trailer out of the pane content, so we can
-// surface duration / tokens / cost in the meta row without needing
-// dedicated backend fields. Returns empty when the trailer is absent —
-// tmux providers don't emit a Done line, only real pane scrapes.
-function extractDoneStats(content: string): { duration?: string; tokensIn?: string; tokensOut?: string; cost?: string } {
-  if (!content) return {}
-  const match = content.match(/\[done · ([^\]]+)\][^\[]*$/)
-  if (!match) return {}
-  const parts = match[1].split('·').map(p => p.trim())
-  const out: { duration?: string; tokensIn?: string; tokensOut?: string; cost?: string } = {}
-  for (const p of parts) {
-    // Backend now emits duration in human-readable form already
-    // ("234ms", "30.7s", "2m 14s", "1h 5m") — accept any non-token,
-    // non-cost segment as the duration.
-    if (p.endsWith(' in')) {
-      out.tokensIn = p.replace(' in', '')
-    } else if (p.endsWith(' out')) {
-      out.tokensOut = p.replace(' out', '')
-    } else if (p.startsWith('$')) {
-      out.cost = p
-    } else if (!out.duration && /\d/.test(p)) {
-      out.duration = p
-    }
-  }
-  return out
-}
-
-// humanizeMs mirrors the Go-side humanizeDuration: "234ms", "30.7s",
-// "2m 14s", "1h 5m". Used when surfacing duration_ms from terminal.status.
-function humanizeMs(ms: number): string {
-  if (!ms || ms < 0) return ''
-  if (ms < 1000) return `${ms}ms`
-  const sec = ms / 1000
-  if (sec < 60) return `${sec.toFixed(1)}s`
-  const secs = Math.floor(ms / 1000)
-  const mins = Math.floor(secs / 60)
-  const rem = secs % 60
-  if (mins < 60) return `${mins}m ${rem}s`
-  const hours = Math.floor(mins / 60)
-  const remMin = mins % 60
-  return `${hours}h ${remMin}m`
-}
-
 // formatCost matches the Go-side formatUSD scale: cheap calls keep
 // six decimals so a $0.000089 haiku call doesn't render as "$0.0000".
 function formatCost(cost: number): string {
@@ -865,8 +788,7 @@ function formatCost(cost: number): string {
 }
 
 function formatTerminalModelLabel(terminal: TerminalSnapshot): string {
-  const lines = (terminal.content || '')
-    .replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '')
+  const lines = stripAnsi(terminal.content || '')
     .split(/\r?\n/)
     .slice(0, 30)
     .map(line => line.replace(/\s+/g, ' ').trim())
@@ -893,12 +815,6 @@ function stepTypeLabel(stepType?: string): string {
 
 function terminalStepTypeLabel(terminal: TerminalSnapshot): string {
   return stepTypeLabel(terminal.step_type)
-}
-
-function terminalRailStepTypeLabel(terminal: TerminalSnapshot): string {
-  const type = (terminal.step_type || '').trim().toLowerCase()
-  if (!type || type === 'regular') return ''
-  return terminalStepTypeLabel(terminal)
 }
 
 function displayMetaWithoutStepType(terminal: TerminalSnapshot): string {
@@ -1083,25 +999,6 @@ function terminalDotClass(terminal: TerminalSnapshot, theme: TerminalTheme): str
   }
 }
 
-function terminalStateTextClass(terminal: TerminalSnapshot, theme: TerminalTheme): string {
-  switch (terminalState(terminal)) {
-    case 'running':
-      return theme.stateRunning
-    case 'completed':
-      return theme.stateCompleted
-    case 'archived':
-      return theme.stateCompleted
-    case 'failed':
-      return 'text-red-300'
-    case 'stale':
-      return 'text-zinc-300'
-    case 'closing':
-      return theme.stateClosing
-    default:
-      return 'text-neutral-500'
-  }
-}
-
 function canDismissTerminal(terminal: TerminalSnapshot): boolean {
   if (isMainAgentTerminal(terminal)) return false
   const state = terminalState(terminal)
@@ -1150,12 +1047,6 @@ function ctrlODebugTitle(terminal: TerminalSnapshot): string {
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
-}
-
-function shortDebugID(value?: string): string {
-  if (!value) return ''
-  if (value.length <= 18) return value
-  return `${value.slice(0, 10)}...${value.slice(-6)}`
 }
 
 function terminalDebugText(terminal: TerminalSnapshot): string {
@@ -1208,25 +1099,6 @@ function formatUpdatedAge(terminal: TerminalSnapshot): string {
   if (minutes < 60) return `updated ${minutes}m ago`
   const hours = Math.floor(minutes / 60)
   return `updated ${hours}h ago`
-}
-
-function formatStartedTimestamp(terminal: TerminalSnapshot): { label: string; title: string } | null {
-  const startedAt = terminalCreatedTime(terminal)
-  if (!startedAt) return null
-  const date = new Date(startedAt)
-  const now = new Date()
-  const sameDay = date.toDateString() === now.toDateString()
-  const time = date.toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-  const label = sameDay
-    ? `start ${time}`
-    : `start ${date.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}`
-  return {
-    label,
-    title: `Started ${date.toLocaleString()}`,
-  }
 }
 
 function formatRailAge(terminal: TerminalSnapshot): { label: string; title: string } | null {
@@ -1516,7 +1388,7 @@ function formatToolDetail(value: string): { text: string; isJson: boolean } {
   const direct = tryFormatJson(trimmed)
   if (direct) return { text: direct, isJson: true }
 
-  const firstObject = trimmed.search(/[{\[]/)
+  const firstObject = trimmed.search(/[[{]/)
   if (firstObject > 0) {
     const prefix = trimmed.slice(0, firstObject).trimEnd()
     const formatted = tryFormatJson(trimmed.slice(firstObject))
@@ -2975,7 +2847,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
   // adds every workflow-step event under the chat tab's sessionID, so
   // filtering by currentSessionId surfaces this chat's workflow steps
   // without leaking terminals from other chat tabs / unrelated workflows.
-  const [viewAll, setViewAll] = useState(false)
+  const viewAll = false
   const [terminals, setTerminals] = useState<TerminalSnapshot[]>([])
   // archivedTurnContents caches `:turn-N` snapshot bodies so we can stitch
   // prior turns into the live synthetic terminal's scrollback without
@@ -2988,7 +2860,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
   const [copiedTerminalID, setCopiedTerminalID] = useState<string | null>(null)
   const [expandedTelemetryTerminalID, setExpandedTelemetryTerminalID] = useState<string | null>(null)
   const [dismissedTerminalIDs, setDismissedTerminalIDs] = useState<Set<string>>(() => new Set())
-  const [dismissedRouteIDs, setDismissedRouteIDs] = useState<Set<string>>(() => new Set())
+  const [dismissedRouteIDs] = useState<Set<string>>(() => new Set())
   const [dismissedErrorIDs, setDismissedErrorIDs] = useState<Set<string>>(() => readDismissedTerminalErrorIDs(currentSessionId))
   const [expandedErrorIDs, setExpandedErrorIDs] = useState<Set<string>>(() => new Set())
   const terminalColorScheme = DEFAULT_TERMINAL_COLOR_SCHEME
@@ -3755,21 +3627,24 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     applyTerminalSnapshotUpdate,
   ])
 
+  const selectedTerminalIDForSettledProbe = selectedTerminalView?.terminal_id
+  const selectedTerminalTmuxForSettledProbe = selectedTerminalView?.tmux_session
+
   useEffect(() => {
-    if (!selectedTerminalView || selectedTerminalIsSynthetic || !selectedTerminalView.tmux_session) return
+    if (!selectedTerminalIDForSettledProbe || selectedTerminalIsSynthetic || !selectedTerminalTmuxForSettledProbe) return
     // The selected live tmux pane is rendered from the WebSocket byte stream.
     // Polling capture-pane in parallel reseeds xterm and makes in-place TUI
     // redraws look like the whole screen is refreshing. Once the pane is no
     // longer streaming, take one final history snapshot for the settled view so
     // Claude/Codex transcript text above the final screen remains scrollable.
-    const probePrefix = `${selectedTerminalView.terminal_id}:${selectedTerminalView.tmux_session}:`
+    const probePrefix = `${selectedTerminalIDForSettledProbe}:${selectedTerminalTmuxForSettledProbe}:`
     if (isSelectedTerminalStreaming) {
       for (const key of Array.from(selectedSettledScreenProbeKeysRef.current)) {
         if (key.startsWith(probePrefix)) selectedSettledScreenProbeKeysRef.current.delete(key)
       }
       return
     }
-    const probeKey = `${probePrefix}${selectedTerminalView.state || 'unknown'}`
+    const probeKey = `${probePrefix}${selectedTerminalState || 'unknown'}`
     if (selectedSettledScreenProbeKeysRef.current.has(probeKey)) return
     selectedSettledScreenProbeKeysRef.current.add(probeKey)
 
@@ -3780,7 +3655,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     let stableSamples = 0
     let previousContent: string | null = null
     const startedAt = Date.now()
-    const terminalId = selectedTerminalView.terminal_id
+    const terminalId = selectedTerminalIDForSettledProbe
 
     const probeSelectedSettledHistory = () => {
       if (cancelled || inFlight) return
@@ -3793,7 +3668,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
       void agentApi.getTerminal(terminalId, detailOptions)
         .then(detail => {
           if (cancelled) return
-          logTerminalScrollDebug('selected-settled-history', selectedTerminalView, detailOptions, detail)
+          logTerminalScrollDebug('selected-settled-history', detail, detailOptions, detail)
           cacheTerminalDetail(detail)
           applyTerminalSnapshotUpdate(detail)
 
@@ -3827,9 +3702,9 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     }
   }, [
     isSelectedTerminalStreaming,
-    selectedTerminalView?.terminal_id,
-    selectedTerminalView?.tmux_session,
-    selectedTerminalView?.state,
+    selectedTerminalIDForSettledProbe,
+    selectedTerminalTmuxForSettledProbe,
+    selectedTerminalState,
     selectedTerminalIsSynthetic,
     cacheTerminalDetail,
     applyTerminalSnapshotUpdate,

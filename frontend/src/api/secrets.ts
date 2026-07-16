@@ -85,7 +85,7 @@ export const secretsApi = {
     const response = await api.put('/api/workflow-provider-credentials/claude-code', {
       workspace_path: workspacePath,
       encrypted_value: encrypted.encrypted,
-    });
+    }, { timeout: 20_000 });
     return response.data;
   },
 

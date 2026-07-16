@@ -3,7 +3,7 @@ import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { Textarea } from './ui/Textarea';
 import { Card } from './ui/Card';
-import { CheckCircle2, ChevronDown, Folder, KeyRound, Loader2, Plus, Settings, SlidersHorizontal, Trash2, X } from 'lucide-react';
+import { CheckCircle2, ChevronDown, Eye, EyeOff, Folder, KeyRound, Loader2, Plus, Settings, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { FolderSelectionDialog } from './FolderSelectionDialog';
 import { ToolSelectionSection } from './ToolSelectionSection';
 import { SkillSelectionSection } from './skills/SkillSelectionSection';
@@ -114,7 +114,10 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [claudeCodeToken, setClaudeCodeToken] = useState('');
   const [claudeCredentialConfigured, setClaudeCredentialConfigured] = useState(false);
   const [isLoadingClaudeCredential, setIsLoadingClaudeCredential] = useState(false);
+  const [isSavingClaudeCredential, setIsSavingClaudeCredential] = useState(false);
   const [isDeletingClaudeCredential, setIsDeletingClaudeCredential] = useState(false);
+  const [showClaudeCodeToken, setShowClaudeCodeToken] = useState(false);
+  const [claudeCredentialError, setClaudeCredentialError] = useState<string | null>(null);
   const [isSavingPreset, setIsSavingPreset] = useState(false);
 
   const { selectedModeCategory, getAgentModeFromCategory } = useModeStore();
@@ -337,6 +340,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
     if (!isOpen) return;
     setExpandedWorkflowLLMRole(null);
     setClaudeCodeToken('');
+    setShowClaudeCodeToken(false);
+    setClaudeCredentialError(null);
   }, [editingPreset?.id, isOpen]);
 
   useEffect(() => {
@@ -504,12 +509,42 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
     }
   }, [selectedFolder?.filepath]);
 
+  const handleSaveClaudeCredential = useCallback(async () => {
+    const workspacePath = workflowCredentialPath;
+    const token = claudeCodeToken.trim();
+    if (!workspacePath || !token) return;
+
+    setIsSavingClaudeCredential(true);
+    setClaudeCredentialError(null);
+    try {
+      await secretsApi.storeWorkflowClaudeCodeCredential(workspacePath, token);
+      setClaudeCredentialConfigured(true);
+      setClaudeCodeToken('');
+      setShowClaudeCodeToken(false);
+      useChatStore.getState().addToast('Workflow Claude Code token saved.', 'success');
+    } catch (error) {
+      const serverDetail = (error as { response?: { data?: unknown } })?.response?.data;
+      const detail = typeof serverDetail === 'string' && serverDetail.trim() !== ''
+        ? serverDetail.trim()
+        : error instanceof Error ? error.message : 'Unable to save this token';
+      setClaudeCredentialError(detail);
+      useChatStore.getState().addToast(`Failed to save Claude Code token: ${detail}`, 'error');
+    } finally {
+      setIsSavingClaudeCredential(false);
+    }
+  }, [claudeCodeToken, workflowCredentialPath]);
+
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     const isQueryRequired = effectiveAgentMode !== 'workflow';
     if (!label.trim() || (isQueryRequired && !query.trim())) return;
     if (effectiveAgentMode === 'workflow' && !selectedFolder) {
       alert('Folder selection is required for workflow presets');
+      return;
+    }
+    if (editingPreset && usesClaudeCode && claudeCodeToken.trim()) {
+      setClaudeCredentialError('Save or clear the token before updating the automation.');
+      document.getElementById('claude-code-token')?.focus();
       return;
     }
 
@@ -608,7 +643,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       );
       if (saved === false) return;
       manifestSaved = true;
-      if (effectiveAgentMode === 'workflow' && usesClaudeCode && claudeCodeToken.trim() && selectedFolder?.filepath) {
+      if (!editingPreset && effectiveAgentMode === 'workflow' && usesClaudeCode && claudeCodeToken.trim() && selectedFolder?.filepath) {
         await secretsApi.storeWorkflowClaudeCodeCredential(selectedFolder.filepath, claudeCodeToken.trim());
         setClaudeCredentialConfigured(true);
         setClaudeCodeToken('');
@@ -627,7 +662,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
     } finally {
       setIsSavingPreset(false);
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, builderLLM, effectiveBuilderLLM, maintenanceLLM, effectiveMaintenanceLLM, pulseLLM, effectivePulseLLM, browserMode, cdpPort, editingPreset?.cdpPorts, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, defaultAgentLLM, effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM, showWorkflowLLMAdvanced, usesClaudeCode, claudeCodeToken]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, builderLLM, effectiveBuilderLLM, maintenanceLLM, effectiveMaintenanceLLM, pulseLLM, effectivePulseLLM, browserMode, cdpPort, editingPreset, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, defaultAgentLLM, effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM, showWorkflowLLMAdvanced, usesClaudeCode, claudeCodeToken]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -955,34 +990,73 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                       <KeyRound className="h-4 w-4" />
                       Claude Code login for this automation
                     </label>
-                    <div className="rounded-md border border-violet-200 bg-violet-50/60 p-3 dark:border-violet-800 dark:bg-violet-950/20">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="text-xs leading-relaxed text-gray-600 dark:text-gray-300">
-                          Optional. Paste a long-lived token from <code className="font-mono">claude setup-token</code>. It is private to this user and workflow. If empty, Claude Code uses its saved login.
-                        </div>
-                        {isLoadingClaudeCredential ? (
-                          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-gray-400" />
-                        ) : claudeCredentialConfigured ? (
-                          <span className="inline-flex shrink-0 items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400">
-                            <CheckCircle2 className="h-3.5 w-3.5" /> Configured
-                          </span>
-                        ) : null}
+                    <div className="rounded-md border border-border bg-muted/30 p-3 text-foreground">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs leading-relaxed text-muted-foreground">
+                          Use a token from <code className="rounded bg-background px-1 py-0.5 font-mono text-foreground">claude setup-token</code>, or leave this empty to use the saved Claude login.
+                        </p>
+                        <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                          {isLoadingClaudeCredential ? (
+                            <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking</>
+                          ) : claudeCredentialConfigured ? (
+                            <><CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> Saved</>
+                          ) : (
+                            'Using saved login'
+                          )}
+                        </span>
                       </div>
-                      <input
-                        type="password"
-                        autoComplete="off"
-                        value={claudeCodeToken}
-                        onChange={event => setClaudeCodeToken(event.target.value)}
-                        placeholder={claudeCredentialConfigured ? 'Paste a replacement token' : 'Paste Claude Code token'}
-                        className="mt-3 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-mono text-gray-900 outline-none focus:border-violet-500 dark:border-slate-600 dark:bg-slate-900 dark:text-gray-100"
-                      />
-                      <div className="mt-2 flex items-center justify-between gap-3">
-                        <span className="text-[11px] text-gray-500 dark:text-gray-400">Terminal Anthropic API keys are not used for this Claude Code session.</span>
+
+                      {editingPreset ? (
+                        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                          <div className="relative min-w-0 flex-1">
+                            <input
+                              id="claude-code-token"
+                              type={showClaudeCodeToken ? 'text' : 'password'}
+                              autoComplete="off"
+                              value={claudeCodeToken}
+                              onChange={event => {
+                                setClaudeCodeToken(event.target.value);
+                                setClaudeCredentialError(null);
+                              }}
+                              placeholder={claudeCredentialConfigured ? 'Paste a replacement token' : 'Paste Claude Code token'}
+                              className="h-9 w-full rounded-md border border-input bg-background px-3 pr-10 font-mono text-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowClaudeCodeToken(previous => !previous)}
+                              className="absolute inset-y-0 right-0 flex w-9 items-center justify-center text-muted-foreground hover:text-foreground"
+                              aria-label={showClaudeCodeToken ? 'Hide token' : 'Show token'}
+                              title={showClaudeCodeToken ? 'Hide token' : 'Show token'}
+                            >
+                              {showClaudeCodeToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                            </button>
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={handleSaveClaudeCredential}
+                            disabled={!claudeCodeToken.trim() || isSavingClaudeCredential || isSavingPreset}
+                            className="h-9 shrink-0"
+                          >
+                            {isSavingClaudeCredential && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+                            {isSavingClaudeCredential ? 'Verifying...' : 'Save token'}
+                          </Button>
+                        </div>
+                      ) : (
+                        <p className="mt-3 text-xs text-muted-foreground">Create the automation first, then edit it to add a workflow-specific token.</p>
+                      )}
+
+                      {claudeCredentialError && (
+                        <p role="alert" className="mt-2 text-xs text-red-600 dark:text-red-400">{claudeCredentialError}</p>
+                      )}
+
+                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-[11px] text-muted-foreground">This token is private to the current user and automation.</span>
                         {claudeCredentialConfigured && (
                           <button
                             type="button"
                             onClick={handleDeleteClaudeCredential}
-                            disabled={isDeletingClaudeCredential || isSavingPreset}
+                            disabled={isDeletingClaudeCredential || isSavingClaudeCredential || isSavingPreset}
                             className="inline-flex shrink-0 items-center gap-1 text-xs text-red-600 hover:text-red-700 disabled:opacity-50 dark:text-red-400"
                           >
                             {isDeletingClaudeCredential ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}

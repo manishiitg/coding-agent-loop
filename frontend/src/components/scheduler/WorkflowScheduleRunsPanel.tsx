@@ -19,7 +19,6 @@ import ExecutionLogsPopup from '../workflow/ExecutionLogsPopup'
 import EvaluationPopup from '../workflow/EvaluationPopup'
 import { ReportViewer } from '../workflow/ReportViewer'
 import SchedulePresetPopup from '../SchedulePresetPopup'
-import ScheduleLiveEventsPopup from './ScheduleLiveEventsPopup'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../ui/tooltip'
 
 interface WorkflowScheduleRunsPanelProps {
@@ -32,7 +31,7 @@ interface WorkflowScheduleRunsPanelProps {
   }
 }
 
-type ActivePopup = 'costs' | 'logs' | 'eval' | 'report' | 'live' | null
+type ActivePopup = 'costs' | 'logs' | 'eval' | 'report' | null
 type JobFilter = 'running' | 'enabled' | 'paused' | 'missed' | 'issues' | 'all'
 type SchedulePanelView = 'overview' | 'calendar' | 'by-workflow' | 'schedules'
 
@@ -69,14 +68,10 @@ type CalendarEntry = {
 }
 
 interface JobPopupState {
-  jobId: string
-  jobName: string
   workspacePath: string
   runFolders: string[]
   popup: ActivePopup
   selectedRunFolder?: string
-  sessionId?: string
-  presetQueryId?: string
   startedAt?: string
 }
 
@@ -1398,9 +1393,9 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
           selectedRunFolder = groupFolders[0]
         }
       }
-      setPopupState({ jobId: job.id, jobName: job.name, workspacePath, runFolders, popup, selectedRunFolder, startedAt: resolveStartedAt(selectedRunFolder) })
+      setPopupState({ workspacePath, runFolders, popup, selectedRunFolder, startedAt: resolveStartedAt(selectedRunFolder) })
     } catch {
-      setPopupState({ jobId: job.id, jobName: job.name, workspacePath, runFolders: [], popup, selectedRunFolder, startedAt: resolveStartedAt(selectedRunFolder) })
+      setPopupState({ workspacePath, runFolders: [], popup, selectedRunFolder, startedAt: resolveStartedAt(selectedRunFolder) })
     }
   }
 
@@ -2747,29 +2742,6 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
 
                                   {/* Action buttons */}
                                   <div className="flex items-center gap-2 ml-auto flex-shrink-0">
-                                    {/* Live view button for running jobs with session_id */}
-                                    {run.status === 'running' && currentSessionId && (
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <button
-                                            onClick={() => setPopupState({
-                                              jobId: job.id,
-                                              jobName: job.name,
-                                              workspacePath: job.workspace_path || '',
-                                              runFolders: [],
-                                              popup: 'live',
-                                              sessionId: currentSessionId,
-                                              presetQueryId: job.preset_query_id,
-                                              startedAt: run.started_at,
-                                            })}
-                                            className="p-1 text-green-500 hover:text-green-400 animate-pulse transition-colors"
-                                          >
-                                            <Radio className="w-3 h-3" />
-                                          </button>
-                                        </TooltipTrigger>
-                                        <TooltipContent side="left">Live execution view</TooltipContent>
-                                      </Tooltip>
-                                    )}
                                     {/* Open the scheduled run itself as a read-only chat tab. */}
                                     {currentSessionId && (
                                       <Tooltip>
@@ -2882,23 +2854,6 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
           workspacePath={popupState.workspacePath}
           runFolder={popupState.selectedRunFolder ?? popupState.runFolders[popupState.runFolders.length - 1] ?? null}
           runFolders={popupState.runFolders}
-          startedAt={popupState.startedAt}
-        />
-      )}
-
-      {/* Live events popup */}
-      {popupState?.popup === 'live' && popupState.sessionId && (
-        <ScheduleLiveEventsPopup
-          sessionId={popupState.sessionId}
-          jobName={popupState.jobName}
-          onClose={() => setPopupState(null)}
-          onOpenInChat={() => {
-            const sid = popupState.sessionId!
-            const name = popupState.jobName
-            const pid = popupState.presetQueryId
-            setPopupState(null)
-            openScheduledRunInChat(sid, name, pid)
-          }}
           startedAt={popupState.startedAt}
         />
       )}

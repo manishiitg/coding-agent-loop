@@ -234,7 +234,7 @@ Goal: remove hidden Python execution from message_sequence. Deterministic code m
    - every migrated script exists at learnings/<step-id>/main.py;
    - every migrated regular step has declared_execution_mode="scripted";
    - durable context_dependencies/context_output and validation preserve the old sequence ordering and output contract.
-6. Only after those checks pass, update workflow.json "version" to "1.0.10". Do not change schema_version. Do not run the workflow, notify the user, publish, or make unrelated plan improvements.
+6. Do not edit workflow.json. After this turn, the scheduler independently verifies that no legacy code item remains and stamps version "1.0.10" through its trusted manifest writer. Do not change schema_version, run the workflow, notify the user, publish, or make unrelated plan improvements.
 
 Report migrated sequence ids, new scripted step ids, copied script paths, validation/context handoffs, no-op decisions, and blockers, then stop.`,
 	},

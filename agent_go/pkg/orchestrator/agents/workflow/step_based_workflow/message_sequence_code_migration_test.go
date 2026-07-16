@@ -31,6 +31,34 @@ func TestPlanMessageSequenceCodeMigrationsRejectsMixedSequence(t *testing.T) {
 	}
 }
 
+func TestValidateMessageSequenceCodeMigrationCompleteAcceptsNoOpPlan(t *testing.T) {
+	plan := `{
+		"steps":[{
+			"id":"plain-sequence",
+			"type":"message_sequence",
+			"items":[{"id":"review","type":"user_message","message":"Review the result."}]
+		}],
+		"orphan_steps":[]
+	}`
+	if err := ValidateMessageSequenceCodeMigrationComplete(plan); err != nil {
+		t.Fatalf("no-op plan should satisfy v1.0.10 postcondition: %v", err)
+	}
+}
+
+func TestValidateMessageSequenceCodeMigrationCompleteRejectsRemainingCode(t *testing.T) {
+	plan := `{
+		"steps":[{
+			"id":"legacy",
+			"type":"message_sequence",
+			"items":[{"id":"run","type":"code","script_path":"scripts/run.py","output_files":["db/result.json"]}]
+		}]
+	}`
+	err := ValidateMessageSequenceCodeMigrationComplete(plan)
+	if err == nil || !strings.Contains(err.Error(), "legacy") {
+		t.Fatalf("validation error = %v, want remaining sequence id", err)
+	}
+}
+
 func TestConvertLegacyCodeSequenceCreatesStandaloneScriptedSteps(t *testing.T) {
 	raw := json.RawMessage(`{
 		"id":"legacy",

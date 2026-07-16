@@ -1713,7 +1713,9 @@ func TestPostRunMonitorPrependsMessageSequenceCodeMigrationForVersion109Manifest
 		"migrate_message_sequence_code_items",
 		"standalone regular scripted step",
 		"do not guess and do not stamp the workflow version",
-		`workflow.json "version" to "1.0.10"`,
+		"Do not edit workflow.json",
+		"scheduler independently verifies",
+		`stamps version "1.0.10"`,
 	} {
 		if !strings.Contains(steps[0].query, want) {
 			t.Fatalf("message-sequence code migration missing %q:\n%s", want, steps[0].query)
@@ -1721,6 +1723,55 @@ func TestPostRunMonitorPrependsMessageSequenceCodeMigrationForVersion109Manifest
 	}
 	if got := steps[1].label; got != "gate" {
 		t.Fatalf("second step label = %q, want gate", got)
+	}
+}
+
+func TestFinalizeCurrentWorkflowUpgradeStampsVerifiedNoOpPlan(t *testing.T) {
+	workspacePath := "Workflow/instagram"
+	workspaceState := &mockWorkspaceAPI{files: map[string]string{
+		workspacePath + "/planning/plan.json": `{"steps":[{"id":"review","type":"message_sequence","items":[{"id":"inspect","type":"user_message","message":"Inspect the result."}]}]}`,
+	}}
+	workspace := httptest.NewServer(workspaceState)
+	defer workspace.Close()
+	t.Setenv("WORKSPACE_API_URL", workspace.URL)
+
+	manifest := &WorkflowManifest{
+		SchemaVersion: 1,
+		ID:            "instagram",
+		Version:       "1.0.9",
+		Label:         "Instagram",
+	}
+	if err := finalizeCurrentWorkflowUpgrade(context.Background(), workspacePath, manifest); err != nil {
+		t.Fatalf("finalize verified no-op upgrade: %v", err)
+	}
+
+	workspaceState.mu.Lock()
+	stored := workspaceState.files[workspacePath+"/workflow.json"]
+	workspaceState.mu.Unlock()
+	var written WorkflowManifest
+	if err := json.Unmarshal([]byte(stored), &written); err != nil {
+		t.Fatalf("decode stamped workflow.json: %v", err)
+	}
+	if written.Version != WorkflowContractCurrentVersion {
+		t.Fatalf("stamped version = %q, want %q", written.Version, WorkflowContractCurrentVersion)
+	}
+}
+
+func TestFinalizeCurrentWorkflowUpgradeRejectsRemainingLegacyCode(t *testing.T) {
+	workspacePath := "Workflow/legacy"
+	workspace := httptest.NewServer(&mockWorkspaceAPI{files: map[string]string{
+		workspacePath + "/planning/plan.json": `{"steps":[{"id":"legacy","type":"message_sequence","items":[{"id":"run","type":"code","script_path":"scripts/run.py","output_files":["db/result.json"]}]}]}`,
+	}})
+	defer workspace.Close()
+	t.Setenv("WORKSPACE_API_URL", workspace.URL)
+
+	manifest := &WorkflowManifest{SchemaVersion: 1, ID: "legacy", Version: "1.0.9", Label: "Legacy"}
+	err := finalizeCurrentWorkflowUpgrade(context.Background(), workspacePath, manifest)
+	if err == nil || !strings.Contains(err.Error(), "legacy") {
+		t.Fatalf("finalize error = %v, want remaining legacy sequence blocker", err)
+	}
+	if manifest.Version != "1.0.9" {
+		t.Fatalf("manifest version changed on failed validation: %q", manifest.Version)
 	}
 }
 

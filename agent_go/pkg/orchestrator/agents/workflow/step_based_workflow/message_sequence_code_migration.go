@@ -46,6 +46,41 @@ type messageSequenceMigrationResult struct {
 	CopiedScripts []string `json:"copied_scripts"`
 }
 
+// ValidateMessageSequenceCodeMigrationComplete verifies the v1.0.10 plan
+// postcondition without trusting an agent-authored success message. It accepts
+// both migrated plans and genuine no-op plans, and rejects every remaining
+// legacy code item, including ambiguous nested and orphan usages.
+func ValidateMessageSequenceCodeMigrationComplete(planContent string) error {
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(planContent), &document); err != nil {
+		return fmt.Errorf("parse planning/plan.json: %w", err)
+	}
+
+	var rawSteps []json.RawMessage
+	if err := json.Unmarshal(document["steps"], &rawSteps); err != nil {
+		return fmt.Errorf("parse planning/plan.json steps: %w", err)
+	}
+
+	migrations, blockers, err := planMessageSequenceCodeMigrations(rawSteps, document["orphan_steps"])
+	if err != nil {
+		return err
+	}
+	if len(blockers) > 0 {
+		sort.Strings(blockers)
+		return fmt.Errorf("legacy message_sequence code migration is incomplete: %s", strings.Join(blockers, "; "))
+	}
+	if len(migrations) > 0 {
+		sequenceIDs := make([]string, 0, len(migrations))
+		for _, migration := range migrations {
+			sequenceIDs = append(sequenceIDs, migration.stepID)
+		}
+		sort.Strings(sequenceIDs)
+		return fmt.Errorf("legacy message_sequence code migration is incomplete for sequence(s): %s", strings.Join(sequenceIDs, ", "))
+	}
+
+	return nil
+}
+
 func createMigrateMessageSequenceCodeItemsExecutor(
 	workspacePath string,
 	logger loggerv2.Logger,

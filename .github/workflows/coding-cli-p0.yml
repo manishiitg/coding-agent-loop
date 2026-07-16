@@ -1,0 +1,96 @@
+name: Coding CLI P0
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "agent_go/**"
+      - "scripts/run-coding-cli-p0.sh"
+      - ".github/workflows/coding-cli-p0.yml"
+  pull_request:
+    paths:
+      - "agent_go/**"
+      - "scripts/run-coding-cli-p0.sh"
+      - ".github/workflows/coding-cli-p0.yml"
+  workflow_dispatch:
+    inputs:
+      providers:
+        description: "Comma-separated real CLI providers, or all"
+        required: false
+        default: "all"
+      run_real:
+        description: "Run authenticated CLI and workflow P0 E2Es on the self-hosted macOS runner"
+        type: boolean
+        required: false
+        default: false
+  schedule:
+    - cron: "30 20 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  fast-contract:
+    name: P0 contract (fast)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout coding-agent-loop
+        uses: actions/checkout@v6
+        with:
+          path: coding-agent-loop
+      - name: Checkout mcpagent
+        uses: actions/checkout@v6
+        with:
+          repository: manishiitg/mcpagent
+          path: mcpagent
+      - name: Checkout llm-provider-mcp
+        uses: actions/checkout@v6
+        with:
+          repository: manishiitg/llm-provider-mcp
+          path: multi-llm-provider-go
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.12"
+          cache-dependency-path: |
+            coding-agent-loop/agent_go/go.sum
+            multi-llm-provider-go/go.sum
+      - name: Verify P0 registry and compile workflow gate
+        working-directory: coding-agent-loop
+        run: ./scripts/run-coding-cli-p0.sh
+
+  real-contract:
+    name: P0 real CLI + workflow
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.run_real) ||
+      (github.event_name == 'schedule' && vars.CODING_CLI_P0_NIGHTLY_ENABLED == 'true')
+    runs-on: [self-hosted, macOS, agentworks-coding-cli]
+    timeout-minutes: 240
+    steps:
+      - name: Checkout coding-agent-loop
+        uses: actions/checkout@v6
+        with:
+          path: coding-agent-loop
+      - name: Checkout mcpagent
+        uses: actions/checkout@v6
+        with:
+          repository: manishiitg/mcpagent
+          path: mcpagent
+      - name: Checkout llm-provider-mcp
+        uses: actions/checkout@v6
+        with:
+          repository: manishiitg/llm-provider-mcp
+          path: multi-llm-provider-go
+      - name: Run authenticated P0 matrix
+        working-directory: coding-agent-loop
+        env:
+          RUN_CODING_CLI_P0_REAL: "1"
+          CODING_CLI_P0_PROVIDERS: ${{ github.event_name == 'workflow_dispatch' && inputs.providers != 'all' && inputs.providers || 'claude-code,codex-cli,cursor-cli,pi-cli' }}
+          WORKSPACE_API_URL: ${{ vars.CODING_CLI_P0_WORKSPACE_API_URL }}
+          WORKSPACE_DOCS_PATH: ${{ vars.CODING_CLI_P0_WORKSPACE_DOCS_PATH }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CODEX_API_KEY: ${{ secrets.CODEX_API_KEY }}
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          PI_API_KEY: ${{ secrets.PI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        run: ./scripts/run-coding-cli-p0.sh

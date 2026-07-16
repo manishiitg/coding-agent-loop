@@ -1,6 +1,11 @@
 package server
 
-import "testing"
+import (
+	"context"
+	"encoding/json"
+	"net/http/httptest"
+	"testing"
+)
 
 func TestValidateManifestCDPPorts(t *testing.T) {
 	manifest := NewWorkflowManifest("Multi-profile browser")
@@ -66,5 +71,45 @@ func TestWorkflowCreatorDefaultsGlobalSecretsToNone(t *testing.T) {
 				t.Fatalf("selected_global_secret_names length = %d, want 0", len(names))
 			}
 		})
+	}
+}
+
+func TestReadWorkflowManifestMigratesMissingLabelFromWorkspacePath(t *testing.T) {
+	const workspacePath = "Workflow/instagram"
+	manifestJSON, err := json.Marshal(map[string]interface{}{
+		"schema_version": 1,
+		"id":             "wf_instagram",
+		"version":        "1.0.9",
+		"capabilities":   map[string]interface{}{},
+		"schedules":      []interface{}{},
+	})
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+
+	workspace := &mockWorkspaceAPI{files: map[string]string{
+		workspacePath + "/workflow.json": string(manifestJSON),
+	}}
+	server := httptest.NewServer(workspace)
+	defer server.Close()
+	t.Setenv("WORKSPACE_API_URL", server.URL)
+
+	manifest, found, err := ReadWorkflowManifest(context.Background(), workspacePath)
+	if err != nil || !found {
+		t.Fatalf("ReadWorkflowManifest() found=%v err=%v", found, err)
+	}
+	if manifest.Label != "instagram" {
+		t.Fatalf("Label = %q, want instagram", manifest.Label)
+	}
+
+	workspace.mu.Lock()
+	persistedJSON := workspace.files[workspacePath+"/workflow.json"]
+	workspace.mu.Unlock()
+	var persisted WorkflowManifest
+	if err := json.Unmarshal([]byte(persistedJSON), &persisted); err != nil {
+		t.Fatalf("unmarshal persisted manifest: %v", err)
+	}
+	if persisted.Label != "instagram" {
+		t.Fatalf("persisted Label = %q, want instagram", persisted.Label)
 	}
 }

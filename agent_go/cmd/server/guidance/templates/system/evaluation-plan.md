@@ -24,12 +24,13 @@ Auto-eval runs after every successful execution, so every eval step's cost recur
 ### Eval plan rules
 
 - Each eval step in `evaluation/evaluation_plan.json` must have: `id`, `title`, `description`.
-- Optional per-step field: `pre_validation`.
+- Optional per-step field: `validation_schema` (`pre_validation` is accepted only for legacy plans).
 - Optional route gating field: `applies_to_routes`. Use it for workflows with routing so eval only runs checks for the path the target run actually took. Example: `applies_to_routes: [{"routing_step_id":"workflow-mode-router","route_ids":["route-bid"]}]`.
 - Eval step IDs must be globally unique across both the execution plan and the eval plan (enforced at write time by `validateCrossPlanStepIDUniqueness`) — both share the `learnings/{stepID}/` namespace, and a collision clobbers saved scripts and metadata.
 - Focus eval steps on workflow outcomes, not intermediate files, unless a file check is truly the outcome.
-- `pre_validation` checks files inside the eval step execution folder, not the original run folder.
+- `validation_schema` checks files inside the eval step execution folder, not the original run folder.
 - Eval step descriptions may reference `{{"{{TARGET_RUN_PATH}}"}}`, which resolves to the absolute path of the original execution folder being scored. Use that placeholder when the eval needs to inspect original run artifacts directly; never hardcode iteration paths.
+- `{{"{{TARGET_RUN_PATH}}"}}` is the execution root, not an artifact directory. Execution outputs normally live below their producer step folder. Name the exact producer-relative path (for example `{{"{{TARGET_RUN_PATH}}"}}/score-and-plan/trade_plan_summary.json`) or an explicit single-match pattern for generated sub-step folders. Never say only "the artifact under TARGET_RUN_PATH," and never require a root-level copy unless the producer contract explicitly creates one.
 - For eval step config in `evaluation/step_config.json`:
   - **split each eval into scripted extraction + judged verdict.** Compute the facts (counts, totals, diffs vs the source artifact, fixed samples) in code so they are identical run-to-run; judge the verdict against the success criterion on top of those facts.
   - use `declared_execution_mode=scripted` when the WHOLE check is mechanical AND anchored to a stable contract (a `db/README.md` schema, the report contract, a fixed output format). Never script against incidental artifact shapes — plan changes alter those, and every shape-coupled eval script becomes a recurring reliability bug. (Unlike an execution step's `main.py`, eval scripting has no 10-run gate — script an objective, contract-anchored check anytime; the explicit-user-request + coverage bar applies only to LOCKING a saved script.)

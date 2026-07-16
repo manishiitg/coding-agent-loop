@@ -83,6 +83,7 @@ Classify every candidate change before acting. The classification controls wheth
 **CORRECTNESS REPAIR — recommend automatic application by the Pulse Fixer; no user question.** A repair is correctness-preserving when the intended success criterion and score semantics stay unchanged and the edit only makes the existing check tell the truth. This includes:
 - binding evidence to the current run/group instead of accepting an older receipt, report, DB row, or artifact
 - fixing `TARGET_RUN_PATH`, route scoping, file paths, parsing, or validation-schema wiring
+- replacing ambiguous "under TARGET_RUN_PATH" artifact references with exact producer-relative paths or narrow single-match patterns
 - making missing, null, empty, stale, malformed, or provider-unconfirmed evidence fail closed
 - correcting deterministic extraction so the existing rubric receives the right facts
 - fixing an eval/report mismatch that is unambiguously contradicted by the current plan/output contract

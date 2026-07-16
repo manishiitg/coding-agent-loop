@@ -17,6 +17,7 @@ const api = axios.create({
 })
 
 api.interceptors.request.use((config) => {
+  config.baseURL = getApiBaseUrl()
   const token = getAuthToken()
   if (token && config.headers) {
     config.headers['Authorization'] = `Bearer ${token}`

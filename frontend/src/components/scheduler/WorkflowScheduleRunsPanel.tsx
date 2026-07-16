@@ -1208,7 +1208,19 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     try {
       await schedulerApi.deleteJob(job.id)
       setJobs(prev => prev.filter(j => j.id !== job.id))
-    } catch { /* ignore */ }
+      useChatStore.getState().addToast(`Removed schedule "${job.name}"`, 'success')
+    } catch (error) {
+      const responseData = (error as { response?: { data?: unknown } })?.response?.data
+      const detail = typeof responseData === 'string'
+        ? responseData
+        : typeof responseData === 'object' && responseData !== null && 'error' in responseData
+          ? String((responseData as { error: unknown }).error)
+          : error instanceof Error
+            ? error.message
+            : 'Unknown error'
+      console.error('Failed to remove schedule:', error)
+      useChatStore.getState().addToast(`Failed to remove schedule: ${detail}`, 'error')
+    }
   }
 
   const handleTrigger = async (job: ScheduledJob) => {

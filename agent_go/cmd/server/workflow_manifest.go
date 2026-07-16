@@ -419,6 +419,10 @@ func ReadWorkflowManifest(ctx context.Context, workspacePath string) (*WorkflowM
 	}
 
 	// Track whether any schedule IDs need auto-assignment before applying defaults.
+	hadMissingLabel := strings.TrimSpace(m.Label) == ""
+	if hadMissingLabel {
+		m.Label = workflowLabelFromWorkspacePath(workspacePath)
+	}
 	hadEmptyScheduleID := false
 	for _, s := range m.Schedules {
 		if s.ID == "" {
@@ -434,12 +438,26 @@ func ReadWorkflowManifest(ctx context.Context, workspacePath string) (*WorkflowM
 	// Persist auto-assigned schedule IDs so subsequent lookups find the same UUID.
 	// Skip the write-back when we had to drop a malformed config block on read —
 	// rewriting now would silently erase the user's backup/publish config from disk.
-	if (hadEmptyScheduleID || llmConfigMigrated) && len(m.MalformedConfig) == 0 {
+	if (hadMissingLabel || hadEmptyScheduleID || llmConfigMigrated) && len(m.MalformedConfig) == 0 {
 		if err := WriteWorkflowManifest(ctx, workspacePath, &m); err != nil {
 			log.Printf("[WARN] ReadWorkflowManifest: failed to persist manifest migrations for %s: %v", workspacePath, err)
 		}
 	}
 	return &m, true, nil
+}
+
+func workflowLabelFromWorkspacePath(workspacePath string) string {
+	normalized := strings.Trim(strings.ReplaceAll(strings.TrimSpace(workspacePath), "\\", "/"), "/")
+	if normalized == "" {
+		return "Workflow"
+	}
+	if separator := strings.LastIndex(normalized, "/"); separator >= 0 {
+		normalized = normalized[separator+1:]
+	}
+	if normalized == "" {
+		return "Workflow"
+	}
+	return normalized
 }
 
 // stripOptionalConfigBlocks removes the agent-authored optional config blocks

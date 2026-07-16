@@ -115,6 +115,7 @@ This is why the code uses:
 Current behavior:
 - the runtime injects `TARGET_RUN_PATH` as the absolute path to the original execution folder
 - eval steps are expected to read the original run artifacts through that variable
+- execution artifacts normally remain inside their producer step folder; they are not copied to the execution root
 
 For example, the original run might be:
 - `runs/iteration-12/production/execution`
@@ -123,6 +124,11 @@ The eval step runs in the eval sandbox, but reads the original artifacts through
 - `{{TARGET_RUN_PATH}}`
 
 This is the correct way to reference original execution outputs in eval steps.
+
+Eval descriptions must name the producer-relative artifact path, for example:
+- `{{TARGET_RUN_PATH}}/score-and-plan/trade_plan_summary.json`
+
+When a generated sub-step folder makes the exact name variable, declare a narrow single-match pattern under the current `TARGET_RUN_PATH`. Do not use ambiguous wording such as "the file under TARGET_RUN_PATH," because it can be misread as requiring a direct child of the execution root.
 
 ## Report Phase
 

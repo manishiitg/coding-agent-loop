@@ -17,7 +17,7 @@ type EvaluationStep struct {
 	ID              string                         `json:"id"`
 	Title           string                         `json:"title"`
 	Description     string                         `json:"description"`
-	PreValidation   *ValidationSchema              `json:"pre_validation,omitempty"`
+	PreValidation   *ValidationSchema              `json:"validation_schema,omitempty"`
 	AgentConfigs    *AgentConfigs                  `json:"-"`                        // runtime config
 	ContextOutput   string                         `json:"context_output,omitempty"` // Filename of output produced by the step
 	AppliesToRoutes []EvaluationRouteApplicability `json:"applies_to_routes,omitempty"`
@@ -61,6 +61,25 @@ func (e *EvaluationStep) GetCommonFields() CommonStepFields {
 		ValidationSchema: e.PreValidation,
 		ContextOutput:    e.GetContextOutput(),
 	}
+}
+
+// UnmarshalJSON accepts the canonical validation_schema field while preserving
+// compatibility with evaluation plans that still use pre_validation.
+func (e *EvaluationStep) UnmarshalJSON(data []byte) error {
+	type Alias EvaluationStep
+	decoded := struct {
+		*Alias
+		LegacyPreValidation *ValidationSchema `json:"pre_validation,omitempty"`
+	}{
+		Alias: (*Alias)(e),
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if e.PreValidation == nil {
+		e.PreValidation = decoded.LegacyPreValidation
+	}
+	return nil
 }
 
 // MarshalJSON ensures the type field is always set when marshaling (if needed by frontend)

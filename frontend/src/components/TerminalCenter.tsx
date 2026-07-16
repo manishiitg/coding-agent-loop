@@ -2998,6 +2998,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
   const [selectedID, setSelectedID] = useState<string | null>(null)
   const [userSelectedID, setUserSelectedID] = useState<string | null>(null)
   const [copiedTerminalID, setCopiedTerminalID] = useState<string | null>(null)
+  const [expandedTelemetryTerminalID, setExpandedTelemetryTerminalID] = useState<string | null>(null)
   const [dismissedTerminalIDs, setDismissedTerminalIDs] = useState<Set<string>>(() => new Set())
   const [dismissedRouteIDs, setDismissedRouteIDs] = useState<Set<string>>(() => new Set())
   const [dismissedErrorIDs, setDismissedErrorIDs] = useState<Set<string>>(() => readDismissedTerminalErrorIDs(currentSessionId))
@@ -4866,23 +4867,49 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
                     const extraSegs = Array.isArray(rawExtras)
                       ? rawExtras.filter((x): x is string => typeof x === 'string')
                       : []
-                    const segments = [
-                      st.provider_label || selectedTerminalView.label || selectedTerminalView.execution_kind || 'pane',
+                    const provider = st.provider_label || selectedTerminalView.label || selectedTerminalView.execution_kind || 'pane'
+                    const context = extraSegs.find(segment => /^ctx\b/i.test(segment)) || ''
+                    const compactSegments = [provider, cost, context, dur].filter(Boolean)
+                    const detailSegments = [
                       tools,
                       tokensIn !== '–' || tokensOut !== '–' ? `${tokensIn} in · ${tokensOut} out` : '',
                       cacheSeg,
-                      cost,
-                      dur,
-                      ...extraSegs,
+                      ...extraSegs.filter(segment => segment !== context),
                     ].filter(Boolean)
+                    const paneID = terminalPaneKey(selectedTerminalView)
+                    const detailsExpanded = expandedTelemetryTerminalID === paneID
                     return (
-                      <div className={`flex items-center gap-2 border-t border-neutral-700/70 bg-[#101211] font-mono text-neutral-500 ${terminalTheme.footerText} ${
+                      <div className={`border-t border-neutral-700/70 bg-[#101211] font-mono text-neutral-500 ${terminalTheme.footerText} ${
                         terminalFocusActive ? 'px-2 py-0.5' : 'px-3 py-1'
                       }`}>
-                        <span className={isSelectedTerminalStreaming ? terminalTheme.streaming : 'text-neutral-600'}>
-                          {isSelectedTerminalStreaming ? selectedTerminalSpinner : '·'}
-                        </span>
-                        <span className="truncate">{segments.join('  ·  ')}</span>
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span className={isSelectedTerminalStreaming ? terminalTheme.streaming : 'text-neutral-600'}>
+                            {isSelectedTerminalStreaming ? selectedTerminalSpinner : '·'}
+                          </span>
+                          <span
+                            className="min-w-0 flex-1 truncate"
+                            title={[...compactSegments, ...detailSegments].join(' · ')}
+                          >
+                            {compactSegments.join('  ·  ')}
+                          </span>
+                          {detailSegments.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setExpandedTelemetryTerminalID(detailsExpanded ? null : paneID)}
+                              className="inline-flex shrink-0 items-center justify-center rounded p-0.5 text-neutral-600 hover:bg-neutral-800/80 hover:text-neutral-300"
+                              title={detailsExpanded ? 'Hide usage details' : 'Show usage details'}
+                              aria-label={detailsExpanded ? 'Hide terminal usage details' : 'Show terminal usage details'}
+                              aria-expanded={detailsExpanded}
+                            >
+                              {detailsExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
+                            </button>
+                          )}
+                        </div>
+                        {detailsExpanded && detailSegments.length > 0 && (
+                          <div className="mt-0.5 truncate pl-4 text-neutral-600" title={detailSegments.join(' · ')}>
+                            usage · {detailSegments.join('  ·  ')}
+                          </div>
+                        )}
                       </div>
                     )
                   })()}

@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	mcpagent "github.com/manishiitg/mcpagent/agent"
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 	internalevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
 
 	pkgevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/llm"
@@ -582,6 +582,77 @@ func TestLiveInputDoesNotWaitForQueryLaunchLane(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("live input blocked behind the long-running query launch lane")
+	}
+}
+
+func TestStartNextTurnFromLiveInputAcknowledgesBeforeQueuedTurnRuns(t *testing.T) {
+	const sessionID = "queued-next-turn"
+	handlerStarted := make(chan *http.Request, 1)
+	releaseHandler := make(chan struct{})
+	handlerDone := make(chan struct{})
+
+	api := &StreamingAPI{
+		lastQueryRequests: map[string]QueryRequest{
+			sessionID: {
+				AgentMode: "multi-agent",
+				Provider:  string(llm.ProviderCodexCLI),
+				ModelID:   "gpt-5.6-sol",
+			},
+		},
+		internalQueryHandler: func(w http.ResponseWriter, req *http.Request) {
+			handlerStarted <- req
+			<-releaseHandler
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(QueryResponse{QueryID: "queued-query"})
+			close(handlerDone)
+		},
+	}
+
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/live-input", nil).WithContext(requestCtx)
+	req.Header.Set("X-Session-ID", sessionID)
+	rr := httptest.NewRecorder()
+
+	returned := make(chan bool, 1)
+	go func() {
+		returned <- api.startNextTurnFromLiveInput(rr, req, sessionID, "send after this turn", nil)
+	}()
+
+	select {
+	case handled := <-returned:
+		if !handled {
+			t.Fatal("startNextTurnFromLiveInput returned false")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("live-input acknowledgement waited for the queued next turn")
+	}
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var response LiveInputResponse
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.DeliveryStatus != "next_turn_started" || response.MessageID == "" {
+		t.Fatalf("response = %#v, want accepted next turn with message ID", response)
+	}
+
+	var queuedReq *http.Request
+	select {
+	case queuedReq = <-handlerStarted:
+	case <-time.After(time.Second):
+		t.Fatal("queued next-turn handler did not start")
+	}
+	cancelRequest()
+	if err := queuedReq.Context().Err(); err != nil {
+		t.Fatalf("queued next-turn context inherited live-input cancellation: %v", err)
+	}
+	close(releaseHandler)
+	select {
+	case <-handlerDone:
+	case <-time.After(time.Second):
+		t.Fatal("queued next-turn handler did not finish")
 	}
 }
 

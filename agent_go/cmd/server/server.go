@@ -244,6 +244,10 @@ type ActiveSessionInfo struct {
 type StreamingAPI struct {
 	config ServerConfig
 
+	// internalQueryHandler is a narrow test seam for server-owned follow-up
+	// turns. Production dispatch falls back to handleQuery.
+	internalQueryHandler func(http.ResponseWriter, *http.Request)
+
 	// Note: Removed session management - fresh agents created per request
 
 	// Agent cancel functions for proper context cancellation: sessionID -> context.CancelFunc
@@ -7101,7 +7105,12 @@ func (api *StreamingAPI) startNextTurnFromLiveInput(w http.ResponseWriter, r *ht
 		return true
 	}
 
-	nextReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, "/api/query", bytes.NewReader(payload))
+	// The live-input request must be free to return as soon as the next turn is
+	// accepted. The queued turn can legitimately outlive that request while it
+	// waits for the current per-session input lane, so preserve request values
+	// without inheriting its cancellation or deadline.
+	nextTurnCtx := context.WithoutCancel(r.Context())
+	nextReq, err := http.NewRequestWithContext(nextTurnCtx, http.MethodPost, "/api/query", bytes.NewReader(payload))
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to prepare next turn request: %v", err), http.StatusInternalServerError)
 		return true
@@ -7110,23 +7119,6 @@ func (api *StreamingAPI) startNextTurnFromLiveInput(w http.ResponseWriter, r *ht
 	nextReq.Header.Set("Content-Type", "application/json")
 	nextReq.Header.Set("X-Session-ID", sessionID)
 
-	recorder := &internalResponseCapture{header: make(http.Header)}
-	api.handleQuery(recorder, nextReq)
-	status := recorder.status
-	if status == 0 {
-		status = http.StatusOK
-	}
-	if status >= http.StatusBadRequest {
-		body := strings.TrimSpace(recorder.body.String())
-		if body == "" {
-			body = http.StatusText(status)
-		}
-		http.Error(w, body, status)
-		return true
-	}
-
-	var queryResp QueryResponse
-	_ = json.Unmarshal(recorder.body.Bytes(), &queryResp)
 	provider := ""
 	if runningAgent != nil {
 		provider = string(runningAgent.GetProvider())
@@ -7134,6 +7126,37 @@ func (api *StreamingAPI) startNextTurnFromLiveInput(w http.ResponseWriter, r *ht
 	if provider == "" {
 		provider = baseReq.Provider
 	}
+	messageID := newSteerMessageID()
+
+	// handleQuery takes ownership of the session input lane for the lifetime of
+	// a turn. Calling it inline here made POST /live-input wait for the previous
+	// turn to finish (73 seconds in the observed regression), leaving the draft
+	// stuck on "Sending" and allowing duplicate submissions. Dispatch the
+	// server-owned continuation independently and acknowledge it immediately.
+	go func() {
+		recorder := &internalResponseCapture{header: make(http.Header)}
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				log.Printf("[LIVE INPUT] Queued next turn panicked for session %s message_id=%s: %v", sessionID, messageID, recovered)
+			}
+		}()
+		if api.internalQueryHandler != nil {
+			api.internalQueryHandler(recorder, nextReq)
+		} else {
+			api.handleQuery(recorder, nextReq)
+		}
+		status := recorder.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		if status >= http.StatusBadRequest {
+			body := strings.TrimSpace(recorder.body.String())
+			if body == "" {
+				body = http.StatusText(status)
+			}
+			log.Printf("[LIVE INPUT] Queued next turn failed for session %s message_id=%s status=%d: %s", sessionID, messageID, status, body)
+		}
+	}()
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(LiveInputResponse{
@@ -7141,8 +7164,7 @@ func (api *StreamingAPI) startNextTurnFromLiveInput(w http.ResponseWriter, r *ht
 		Message:        "Started next turn",
 		DeliveryStatus: "next_turn_started",
 		Provider:       provider,
-		MessageID:      newSteerMessageID(),
-		QueryID:        queryResp.QueryID,
+		MessageID:      messageID,
 	})
 	return true
 }

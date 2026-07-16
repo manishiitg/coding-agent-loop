@@ -26,6 +26,7 @@ run_required_go_tests() {
 }
 
 go -C "$MULTI_LLM_DIR" test . -run 'TestActiveCodingAgentProvidersSatisfyP0Contract|TestCodingAgentCertificationReferencesExistingTests' -count=1
+go -C "$ROOT_DIR/agent_go" test ./cmd/server -run 'TestStartNextTurnFromLiveInputAcknowledgesBeforeQueuedTurnRuns$' -count=1
 go -C "$ROOT_DIR/agent_go" test ./pkg/orchestrator/types -run 'TestCodingCLIWorkflowP0(ProviderMatrix|CompletionAdvancesNextStep)$' -count=1
 
 if [[ "${RUN_CODING_CLI_P0_REAL:-}" != "1" ]]; then

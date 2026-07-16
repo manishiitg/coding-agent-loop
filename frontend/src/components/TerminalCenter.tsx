@@ -4869,12 +4869,16 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
                       : []
                     const provider = st.provider_label || selectedTerminalView.label || selectedTerminalView.execution_kind || 'pane'
                     const context = extraSegs.find(segment => /^ctx\b/i.test(segment)) || ''
-                    const compactSegments = [provider, cost, context, dur].filter(Boolean)
+                    const usageLimitSegments = extraSegs.filter(segment => (
+                      segment !== context && /\b\d+(?:\.\d+)?%\b/.test(segment)
+                    ))
+                    const compactSegments = [provider, cost, ...usageLimitSegments, context].filter(Boolean)
                     const detailSegments = [
                       tools,
                       tokensIn !== '–' || tokensOut !== '–' ? `${tokensIn} in · ${tokensOut} out` : '',
                       cacheSeg,
-                      ...extraSegs.filter(segment => segment !== context),
+                      dur,
+                      ...extraSegs.filter(segment => segment !== context && !usageLimitSegments.includes(segment)),
                     ].filter(Boolean)
                     const paneID = terminalPaneKey(selectedTerminalView)
                     const detailsExpanded = expandedTelemetryTerminalID === paneID

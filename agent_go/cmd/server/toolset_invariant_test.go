@@ -16,7 +16,7 @@ func knownWorkshopRegisteredToolNamesOutsideWorkflowPool() map[string]string {
 	}
 
 	add("mcpagent virtual tools", "get_api_spec", "get_prompt", "get_resource")
-	add("execution sub-agent/session tools", "call_sub_agent", "call_generic_agent", "get_sub_agent_conversation", "get_route_description")
+	add("execution sub-agent/session tools", "call_sub_agent", "call_generic_agent", "query_sub_agent", "stop_sub_agent", "get_sub_agent_conversation", "get_route_description")
 	add("conditional workspace browser tools", "agent_browser")
 	add("server secret management tools",
 		"list_secrets", "set_workflow_secret", "delete_workflow_secret",
@@ -24,7 +24,7 @@ func knownWorkshopRegisteredToolNamesOutsideWorkflowPool() map[string]string {
 	)
 	add("auto-improvement context tools", "capture_context")
 	add("workshop plan tools",
-		"create_plan",
+		"create_plan", "migrate_message_sequence_code_items",
 		"add_regular_step", "add_message_sequence_step", "add_routing_step",
 		"add_human_input_step", "add_todo_task_step", "add_todo_task_route",
 		"update_regular_step", "update_message_sequence_step", "update_routing_step",
@@ -154,7 +154,7 @@ func TestToolSetInvariants(t *testing.T) {
 		workshop[n] = true
 	}
 	for _, n := range []string{
-		"create_plan", "add_regular_step", "add_routing_step", "add_human_input_step",
+		"create_plan", "migrate_message_sequence_code_items", "add_regular_step", "add_routing_step", "add_human_input_step",
 		"update_regular_step", "delete_plan_steps",
 		"execute_step", "create_human_input_request",
 		"update_workflow_config", "update_step_config", "get_report_plan",

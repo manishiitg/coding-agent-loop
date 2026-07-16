@@ -104,7 +104,7 @@ export interface MessageSequenceNodeData extends Record<string, unknown> {
   id: string
   title: string
   description?: string
-  items?: MessageSequenceItem[]   // Ordered queue of user_message / code / prevalidation / foreach items
+  items?: MessageSequenceItem[]   // Ordered queue of user_message / prevalidation / foreach items
   status: 'pending' | 'running' | 'completed' | 'failed' | 'executing'
   stepIndex: number
   step: PlanStep
@@ -377,10 +377,7 @@ function estimateNodeHeight(node: WorkflowNode): number {
       const itemReferenceText = [
         item.title,
         item.message,
-        item.script_path,
-        item.source,
-        ...(item.input_files || []),
-        ...(item.output_files || [])
+        item.source
       ].filter((value): value is string => typeof value === 'string' && value.length > 0).join('\n')
 
       return (

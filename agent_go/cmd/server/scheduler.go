@@ -2290,6 +2290,40 @@ func compactScheduleMessages(messages []string) []string {
 	return out
 }
 
+type scheduledWorkshopTurn struct {
+	label         string
+	query         string
+	upgradeTarget string
+}
+
+func scheduledWorkshopTurns(manifest *WorkflowManifest, messages []string) ([]scheduledWorkshopTurn, error) {
+	upgradePlan := workflowVersionUpgradePlan(manifest)
+	manifestVersion := workflowContractVersionForUpgrade(manifest)
+	if manifestVersion != WorkflowContractCurrentVersion && (len(upgradePlan) == 0 || upgradePlan[len(upgradePlan)-1].to != WorkflowContractCurrentVersion) {
+		return nil, fmt.Errorf(
+			"workflow upgrade preflight has no complete upgrade path from version %q to %q; normal schedule message was not started",
+			manifestVersion,
+			WorkflowContractCurrentVersion,
+		)
+	}
+
+	turns := make([]scheduledWorkshopTurn, 0, len(upgradePlan)+len(messages))
+	for _, upgrade := range upgradePlan {
+		turns = append(turns, scheduledWorkshopTurn{
+			label:         upgrade.label,
+			query:         upgrade.query,
+			upgradeTarget: upgrade.to,
+		})
+	}
+	for i, message := range messages {
+		turns = append(turns, scheduledWorkshopTurn{
+			label: fmt.Sprintf("schedule-message-%d", i+1),
+			query: message,
+		})
+	}
+	return turns, nil
+}
+
 // executeJob builds a session request from the manifest and runs it.
 // Returns (sessionID, runFolder, error).
 func (s *SchedulerService) executeJob(ctx context.Context, sctx *ScheduleContext, runID string) (string, string, error) {
@@ -2341,14 +2375,39 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 
 	baseReqMap := s.buildWorkshopRequest(ctx, sctx)
 
-	for i, msg := range messages {
-		s.sessionLogf(sctx, sessionID, "[SCHEDULER] Workshop message %d/%d: %q", i+1, len(messages), msg)
+	// Workflow contract upgrades are a blocking preflight, not post-run cleanup.
+	// A breaking runtime migration (for example message_sequence code items to
+	// standalone scripted steps) must finish before the schedule's first normal
+	// message can execute. The same builder session is reused so the upgrade is
+	// visible in the schedule terminal and the normal run starts only after the
+	// on-disk manifest confirms each target version.
+	manifest, found, err := ReadWorkflowManifest(ctx, sctx.WorkspacePath)
+	if err != nil {
+		return sessionID, runFolder, fmt.Errorf("workflow upgrade preflight could not read manifest: %w", err)
+	}
+	if !found {
+		return sessionID, runFolder, fmt.Errorf("workflow upgrade preflight: workflow manifest not found at %s", sctx.WorkspacePath)
+	}
+	turns, err := scheduledWorkshopTurns(manifest, messages)
+	if err != nil {
+		return sessionID, runFolder, err
+	}
+	upgradeCount := len(turns) - len(messages)
+	if upgradeCount > 0 {
+		s.sessionLogf(sctx, sessionID, "[SCHEDULER] Running %d blocking workflow upgrade preflight turn(s) before %d schedule message(s)", upgradeCount, len(messages))
+	}
+
+	for i, turn := range turns {
+		s.sessionLogf(sctx, sessionID, "[SCHEDULER] Workshop turn %d/%d (%s): %q", i+1, len(turns), turn.label, turn.query)
 
 		reqMap := make(map[string]interface{})
 		for k, v := range baseReqMap {
 			reqMap[k] = v
 		}
-		reqMap["query"] = msg
+		reqMap["query"] = turn.query
+		if turn.upgradeTarget != "" {
+			s.applyPulseLLMToReqMap(reqMap, sctx, sessionID)
+		}
 
 		// Resume the workflow's latest thread (same CLI) on the first message
 		// only — later messages already share this run's live session.
@@ -2359,7 +2418,7 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 		}
 
 		if err := s.api.startSessionInternal(ctx, reqMap, sessionID, "", nil); err != nil {
-			return sessionID, runFolder, fmt.Errorf("workshop message %d/%d failed: %w", i+1, len(messages), err)
+			return sessionID, runFolder, fmt.Errorf("workshop turn %d/%d (%s) failed: %w", i+1, len(turns), turn.label, err)
 		}
 
 		// First message of the workshop sequence — stamp schedule name on
@@ -2368,10 +2427,29 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 		s.stampScheduleNameOnSession(sessionID, sctx)
 
 		if err := s.waitForWorkshopIdle(ctx, sessionID); err != nil {
-			return sessionID, runFolder, fmt.Errorf("workshop idle wait failed after message %d: %w", i+1, err)
+			return sessionID, runFolder, fmt.Errorf("workshop idle wait failed after turn %d (%s): %w", i+1, turn.label, err)
 		}
 
-		s.sessionLogf(sctx, sessionID, "[SCHEDULER] Workshop message %d/%d completed", i+1, len(messages))
+		if turn.upgradeTarget != "" {
+			updatedManifest, updatedFound, readErr := ReadWorkflowManifest(ctx, sctx.WorkspacePath)
+			if readErr != nil {
+				return sessionID, runFolder, fmt.Errorf("workflow upgrade preflight %s completed but manifest could not be re-read: %w", turn.label, readErr)
+			}
+			if !updatedFound || workflowContractVersionForUpgrade(updatedManifest) != turn.upgradeTarget {
+				actual := "missing"
+				if updatedFound {
+					actual = workflowContractVersionForUpgrade(updatedManifest)
+				}
+				return sessionID, runFolder, fmt.Errorf(
+					"workflow upgrade preflight %s did not stamp required version %q (found %q); normal schedule message was not started",
+					turn.label,
+					turn.upgradeTarget,
+					actual,
+				)
+			}
+		}
+
+		s.sessionLogf(sctx, sessionID, "[SCHEDULER] Workshop turn %d/%d (%s) completed", i+1, len(turns), turn.label)
 	}
 
 	// Note: backup-on-completion is not appended here as a message turn. Backup is

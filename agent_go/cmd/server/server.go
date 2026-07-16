@@ -293,7 +293,6 @@ type StreamingAPI struct {
 
 	// Global immutable cost event repository (SQLite in production).
 	costLedger *costledger.Ledger
-
 	// In-memory inspector event store. Holds the rolling debug-event
 	// timeline per session for the inspector panel. Per-session ring
 	// buffer; not persisted. Sessions opt in via
@@ -2175,9 +2174,7 @@ func (api *StreamingAPI) cancelActiveWorkForShutdown() {
 	api.sessionQueryIDMux.Unlock()
 
 	for _, sessionID := range sessionIDs {
-		if api.bgAgentRegistry != nil {
-			api.bgAgentRegistry.CancelAll(sessionID)
-		}
+		api.cancelBackgroundAgents(sessionID)
 		api.cancelTrackedExecutionsForSession(sessionID)
 		api.setSessionBusy(sessionID, false)
 		api.setSyntheticTurn(sessionID, false)

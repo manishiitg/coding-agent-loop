@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	orchevents "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
@@ -45,6 +46,45 @@ type orchestratorContext struct {
 	executionMode string
 	transport     string
 	triggeredBy   string
+}
+
+type eventContextOverrideKey struct{}
+
+type eventContextOverride struct {
+	phase     string
+	step      int
+	stepID    string
+	agentName string
+	rich      RichStepContext
+}
+
+// WithEventContextOverride binds workflow-step metadata to one execution
+// context. Parallel child agents must use this instead of mutating the
+// bridge's process-wide context stack.
+func WithEventContextOverride(ctx context.Context, phase string, step int, stepID, agentName string, rich RichStepContext) context.Context {
+	return context.WithValue(ctx, eventContextOverrideKey{}, eventContextOverride{
+		phase:     phase,
+		step:      step,
+		stepID:    stepID,
+		agentName: agentName,
+		rich:      rich,
+	})
+}
+
+// HasEventContextOverride reports whether events emitted with ctx already
+// carry an execution-local orchestrator context.
+func HasEventContextOverride(ctx context.Context) bool {
+	_, ok := ctx.Value(eventContextOverrideKey{}).(eventContextOverride)
+	return ok
+}
+
+type timingCaptureContextKey struct{}
+
+type timingCaptureState struct {
+	toolCalls      map[string]*ToolCallEntry
+	toolCallOrder  []string
+	llmCalls       []*LLMCallEntry
+	activeLLMCalls []*LLMCallEntry
 }
 
 // ToolCallEntry represents a captured tool call for logging purposes.
@@ -124,11 +164,8 @@ type ContextAwareEventBridge struct {
 	// Context stack for nested agent execution (e.g., orchestrator -> sub-agent)
 	contextStack []orchestratorContext
 	// Timing collector — captures tool and LLM timing events for workspace logging
-	toolCalls       map[string]*ToolCallEntry // keyed by ToolCallID
-	toolCallOrder   []string                  // insertion order
-	llmCalls        []*LLMCallEntry
-	activeLLMCalls  []*LLMCallEntry
-	toolCallCapture bool // whether to capture tool calls
+	timingCaptures  map[string]*timingCaptureState
+	timingCaptureID atomic.Uint64
 	mu              sync.RWMutex
 	logger          loggerv2.Logger
 	tokenPersistWG  sync.WaitGroup
@@ -561,6 +598,25 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 	currentTriggeredBy := c.currentTriggeredBy
 	c.mu.RUnlock()
 
+	// Parallel child executions share one bridge, so the bridge's mutable
+	// process-wide context cannot identify them safely. Prefer the immutable
+	// context carried by the emitting goroutine when present.
+	if override, ok := ctx.Value(eventContextOverrideKey{}).(eventContextOverride); ok {
+		currentPhase = override.phase
+		currentStep = override.step
+		currentStepID = override.stepID
+		currentStepType = strings.TrimSpace(override.rich.StepType)
+		currentAgentName = override.agentName
+		currentStepName = override.rich.StepName
+		currentStepIndex = override.rich.StepIndex
+		currentStepTotal = override.rich.StepTotal
+		currentParentStepID = override.rich.ParentStepID
+		currentAttempt = override.rich.Attempt
+		currentExecutionMode = override.rich.ExecutionMode
+		currentTransport = override.rich.Transport
+		currentTriggeredBy = override.rich.TriggeredBy
+	}
+
 	// Check what context we have
 	hasOrchestratorContext := currentPhase != ""
 	hasBatchContext := totalGroups > 0
@@ -807,12 +863,10 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 		}
 	}
 
-	// Capture tool call events when capture is enabled
-	c.mu.RLock()
-	capture := c.toolCallCapture
-	c.mu.RUnlock()
-	if capture && event.Data != nil {
-		c.captureToolCallEvent(event)
+	// Capture tool/LLM timing in the execution-local collector. This prevents
+	// parallel children from draining or resetting each other's timing data.
+	if event.Data != nil {
+		c.captureToolCallEvent(ctx, event, currentStepID)
 	}
 
 	if c.underlyingBridge == nil {
@@ -826,49 +880,83 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 	return err
 }
 
-// StartTimingCapture enables per-attempt timing capture. Call DrainTimingCapture to retrieve and reset.
-func (c *ContextAwareEventBridge) StartTimingCapture() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.toolCallCapture = true
-	c.toolCalls = make(map[string]*ToolCallEntry)
-	c.toolCallOrder = nil
-	c.llmCalls = nil
-	c.activeLLMCalls = nil
+const defaultTimingCaptureID = "default"
+
+func timingCaptureIDFromContext(ctx context.Context) string {
+	if ctx != nil {
+		if captureID, ok := ctx.Value(timingCaptureContextKey{}).(string); ok && captureID != "" {
+			return captureID
+		}
+	}
+	return defaultTimingCaptureID
 }
 
-// DrainTimingCapture returns all captured timing data in order and resets the collector.
-func (c *ContextAwareEventBridge) DrainTimingCapture() TimingCaptureSnapshot {
+func (c *ContextAwareEventBridge) startTimingCapture(captureID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.toolCallCapture = false
+	if c.timingCaptures == nil {
+		c.timingCaptures = make(map[string]*timingCaptureState)
+	}
+	c.timingCaptures[captureID] = &timingCaptureState{
+		toolCalls: make(map[string]*ToolCallEntry),
+	}
+}
+
+// StartTimingCapture enables the legacy single-lane timing collector.
+// Parallel execution paths should use StartTimingCaptureFor.
+func (c *ContextAwareEventBridge) StartTimingCapture() {
+	c.startTimingCapture(defaultTimingCaptureID)
+}
+
+// StartTimingCaptureFor creates a collector owned by the returned context.
+// Events emitted with another context cannot enter or drain this collector.
+func (c *ContextAwareEventBridge) StartTimingCaptureFor(ctx context.Context) context.Context {
+	captureID := fmt.Sprintf("capture-%d", c.timingCaptureID.Add(1))
+	c.startTimingCapture(captureID)
+	return context.WithValue(ctx, timingCaptureContextKey{}, captureID)
+}
+
+func (c *ContextAwareEventBridge) drainTimingCapture(captureID string) TimingCaptureSnapshot {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	state := c.timingCaptures[captureID]
+	if state == nil {
+		return TimingCaptureSnapshot{}
+	}
 
 	result := TimingCaptureSnapshot{
-		ToolCalls: make([]ToolCallEntry, 0, len(c.toolCallOrder)),
-		LLMCalls:  make([]LLMCallEntry, 0, len(c.llmCalls)),
+		ToolCalls: make([]ToolCallEntry, 0, len(state.toolCallOrder)),
+		LLMCalls:  make([]LLMCallEntry, 0, len(state.llmCalls)),
 	}
-	for _, id := range c.toolCallOrder {
-		if tc, ok := c.toolCalls[id]; ok {
+	for _, id := range state.toolCallOrder {
+		if tc, ok := state.toolCalls[id]; ok {
 			result.ToolCalls = append(result.ToolCalls, *tc)
 		}
 	}
-	for _, llmCall := range c.llmCalls {
+	for _, llmCall := range state.llmCalls {
 		if llmCall != nil {
 			result.LLMCalls = append(result.LLMCalls, *llmCall)
 		}
 	}
-
-	c.toolCalls = nil
-	c.toolCallOrder = nil
-	c.llmCalls = nil
-	c.activeLLMCalls = nil
+	delete(c.timingCaptures, captureID)
 	return result
 }
 
-func (c *ContextAwareEventBridge) captureToolCallEvent(event *events.AgentEvent) {
+// DrainTimingCapture returns the legacy single-lane timing data.
+func (c *ContextAwareEventBridge) DrainTimingCapture() TimingCaptureSnapshot {
+	return c.drainTimingCapture(defaultTimingCaptureID)
+}
+
+// DrainTimingCaptureFor returns only timing data owned by ctx.
+func (c *ContextAwareEventBridge) DrainTimingCaptureFor(ctx context.Context) TimingCaptureSnapshot {
+	return c.drainTimingCapture(timingCaptureIDFromContext(ctx))
+}
+
+func (c *ContextAwareEventBridge) captureToolCallEvent(ctx context.Context, event *events.AgentEvent, stepID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.toolCalls == nil && c.llmCalls == nil {
+	state := c.timingCaptures[timingCaptureIDFromContext(ctx)]
+	if state == nil {
 		return
 	}
 
@@ -885,13 +973,13 @@ func (c *ContextAwareEventBridge) captureToolCallEvent(event *events.AgentEvent)
 			Status:    "running",
 			StartedAt: eventTime,
 		}
-		c.llmCalls = append(c.llmCalls, entry)
-		c.activeLLMCalls = append(c.activeLLMCalls, entry)
+		state.llmCalls = append(state.llmCalls, entry)
+		state.activeLLMCalls = append(state.activeLLMCalls, entry)
 	case *events.StreamingChunkEvent:
-		if len(c.activeLLMCalls) == 0 || d.Content == "" {
+		if len(state.activeLLMCalls) == 0 || d.Content == "" {
 			return
 		}
-		current := c.activeLLMCalls[0]
+		current := state.activeLLMCalls[0]
 		if current.FirstResponseAt.IsZero() {
 			current.FirstResponseAt = eventTime
 			current.TimeToFirstResponse = eventTime.Sub(current.StartedAt)
@@ -901,19 +989,19 @@ func (c *ContextAwareEventBridge) captureToolCallEvent(event *events.AgentEvent)
 			current.TimeToFirstContent = eventTime.Sub(current.StartedAt)
 		}
 	case *events.ToolCallStartEvent:
-		if _, exists := c.toolCalls[d.ToolCallID]; !exists {
-			c.toolCallOrder = append(c.toolCallOrder, d.ToolCallID)
+		if _, exists := state.toolCalls[d.ToolCallID]; !exists {
+			state.toolCallOrder = append(state.toolCallOrder, d.ToolCallID)
 		}
-		c.toolCalls[d.ToolCallID] = &ToolCallEntry{
+		state.toolCalls[d.ToolCallID] = &ToolCallEntry{
 			ToolCallID: d.ToolCallID,
 			ToolName:   d.ToolName,
 			Args:       d.ToolParams.Arguments,
-			StepID:     c.currentStepID,
+			StepID:     stepID,
 			Timestamp:  eventTime,
 			StartedAt:  eventTime,
 		}
-		if len(c.activeLLMCalls) > 0 {
-			current := c.activeLLMCalls[0]
+		if len(state.activeLLMCalls) > 0 {
+			current := state.activeLLMCalls[0]
 			if current.FirstResponseAt.IsZero() {
 				current.FirstResponseAt = eventTime
 				current.TimeToFirstResponse = eventTime.Sub(current.StartedAt)
@@ -924,49 +1012,49 @@ func (c *ContextAwareEventBridge) captureToolCallEvent(event *events.AgentEvent)
 			}
 		}
 	case *events.ToolCallEndEvent:
-		if tc, ok := c.toolCalls[d.ToolCallID]; ok {
+		if tc, ok := state.toolCalls[d.ToolCallID]; ok {
 			tc.Result = d.Result
 			tc.Duration = d.Duration
 			tc.CompletedAt = eventTime
 		} else {
-			c.toolCallOrder = append(c.toolCallOrder, d.ToolCallID)
-			c.toolCalls[d.ToolCallID] = &ToolCallEntry{
+			state.toolCallOrder = append(state.toolCallOrder, d.ToolCallID)
+			state.toolCalls[d.ToolCallID] = &ToolCallEntry{
 				ToolCallID:  d.ToolCallID,
 				ToolName:    d.ToolName,
 				Result:      d.Result,
 				Duration:    d.Duration,
-				StepID:      c.currentStepID,
+				StepID:      stepID,
 				Timestamp:   eventTime,
 				StartedAt:   eventTime.Add(-d.Duration),
 				CompletedAt: eventTime,
 			}
 		}
 	case *events.ToolCallErrorEvent:
-		if tc, ok := c.toolCalls[d.ToolCallID]; ok {
+		if tc, ok := state.toolCalls[d.ToolCallID]; ok {
 			tc.Error = d.Error
 			tc.Duration = d.Duration
 			tc.CompletedAt = eventTime
 		} else {
-			c.toolCallOrder = append(c.toolCallOrder, d.ToolCallID)
-			c.toolCalls[d.ToolCallID] = &ToolCallEntry{
+			state.toolCallOrder = append(state.toolCallOrder, d.ToolCallID)
+			state.toolCalls[d.ToolCallID] = &ToolCallEntry{
 				ToolCallID:  d.ToolCallID,
 				ToolName:    d.ToolName,
 				Error:       d.Error,
 				Duration:    d.Duration,
-				StepID:      c.currentStepID,
+				StepID:      stepID,
 				Timestamp:   eventTime,
 				StartedAt:   eventTime.Add(-d.Duration),
 				CompletedAt: eventTime,
 			}
 		}
 	case *events.LLMGenerationEndEvent:
-		entry := c.consumeActiveLLMCall()
+		entry := consumeActiveLLMCall(state)
 		if entry == nil {
 			entry = &LLMCallEntry{
 				Status:    "success",
 				StartedAt: eventTime.Add(-d.Duration),
 			}
-			c.llmCalls = append(c.llmCalls, entry)
+			state.llmCalls = append(state.llmCalls, entry)
 		}
 		entry.Status = "success"
 		if d.Turn != 0 {
@@ -988,12 +1076,12 @@ func (c *ContextAwareEventBridge) captureToolCallEvent(event *events.AgentEvent)
 		entry.ModelContextWindow = extractIntMetadata(d.Metadata, "model_context_window")
 		c.finalizeLLMEntryTiming(entry)
 	case *events.LLMGenerationErrorEvent:
-		entry := c.consumeActiveLLMCall()
+		entry := consumeActiveLLMCall(state)
 		if entry == nil {
 			entry = &LLMCallEntry{
 				StartedAt: eventTime.Add(-d.Duration),
 			}
-			c.llmCalls = append(c.llmCalls, entry)
+			state.llmCalls = append(state.llmCalls, entry)
 		}
 		entry.Status = "error"
 		if d.Turn != 0 {
@@ -1007,7 +1095,7 @@ func (c *ContextAwareEventBridge) captureToolCallEvent(event *events.AgentEvent)
 		entry.Duration = d.Duration
 		c.finalizeLLMEntryTiming(entry)
 	case *events.ContextCancelledEvent:
-		entry := c.consumeActiveLLMCall()
+		entry := consumeActiveLLMCall(state)
 		if entry == nil {
 			return
 		}
@@ -1022,12 +1110,12 @@ func (c *ContextAwareEventBridge) captureToolCallEvent(event *events.AgentEvent)
 	}
 }
 
-func (c *ContextAwareEventBridge) consumeActiveLLMCall() *LLMCallEntry {
-	if len(c.activeLLMCalls) == 0 {
+func consumeActiveLLMCall(state *timingCaptureState) *LLMCallEntry {
+	if state == nil || len(state.activeLLMCalls) == 0 {
 		return nil
 	}
-	entry := c.activeLLMCalls[0]
-	c.activeLLMCalls = c.activeLLMCalls[1:]
+	entry := state.activeLLMCalls[0]
+	state.activeLLMCalls = state.activeLLMCalls[1:]
 	return entry
 }
 

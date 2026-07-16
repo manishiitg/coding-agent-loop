@@ -101,7 +101,7 @@ Sub-agents inherit most configuration from the parent request:
 |---|---|---|
 | Temperature | Parent request | 0.7 |
 | MaxTurns | Parent request | 100 |
-| ToolTimeout | `TOOL_EXECUTION_TIMEOUT` env var | 5 minutes |
+| ToolTimeout | `TOOL_EXECUTION_TIMEOUT` env var | No library default; desktop runtime sets a 90-minute final backstop |
 | Summarization | All parent summarization fields | Parent defaults |
 | Context Editing | All parent context-editing fields | Parent defaults |
 | LargeOutputThreshold | `LARGE_OUTPUT_THRESHOLD` env var | Default |

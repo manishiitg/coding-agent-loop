@@ -183,7 +183,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) checkExistingPlan(ctx context.Context
 	return true, &planResponse, nil
 }
 
-func validateLoadedPlanStep(typedStep PlanStepInterface, stepIndex int) error {
+func validateLoadedPlanStepWithOptions(typedStep PlanStepInterface, stepIndex int, allowLegacyMessageSequenceCode bool) error {
 	switch step := typedStep.(type) {
 	case *RegularPlanStep, *EvaluationStep:
 		return nil
@@ -192,7 +192,7 @@ func validateLoadedPlanStep(typedStep PlanStepInterface, stepIndex int) error {
 		return validateHumanInputStepFieldsTyped(step)
 
 	case *MessageSequencePlanStep:
-		return validateMessageSequenceStepFieldsTyped(step)
+		return validateMessageSequenceStepFieldsTypedWithOptions(step, allowLegacyMessageSequenceCode)
 
 	case *RoutingPlanStep:
 		if err := validateRoutingStepTyped(step, stepIndex); err != nil {
@@ -206,7 +206,7 @@ func validateLoadedPlanStep(typedStep PlanStepInterface, stepIndex int) error {
 		}
 		for i, route := range step.PredefinedRoutes {
 			if route.SubAgentStep != nil {
-				if err := validateLoadedPlanStep(route.SubAgentStep, i); err != nil {
+				if err := validateLoadedPlanStepWithOptions(route.SubAgentStep, i, allowLegacyMessageSequenceCode); err != nil {
 					return fmt.Errorf("predefined_route[%d] (route_id: %s): %w", i, route.RouteID, err)
 				}
 			}
@@ -219,7 +219,19 @@ func validateLoadedPlanStep(typedStep PlanStepInterface, stepIndex int) error {
 }
 
 func validateLoadedPlanStructure(plan *PlanningResponse) error {
-	if err := validateLoadedPlanStructureCore(plan); err != nil {
+	return validateLoadedPlanStructureWithOptions(plan, false)
+}
+
+// validateLoadedPlanStructureAllowLegacyMessageSequenceCode exists only so a
+// workflow-version preflight can open a pre-v1.0.10 plan and call the trusted
+// migration tool. Execution and every persisted plan write use the strict
+// validator above, so a legacy code item can never execute or be saved again.
+func validateLoadedPlanStructureAllowLegacyMessageSequenceCode(plan *PlanningResponse) error {
+	return validateLoadedPlanStructureWithOptions(plan, true)
+}
+
+func validateLoadedPlanStructureWithOptions(plan *PlanningResponse, allowLegacyMessageSequenceCode bool) error {
+	if err := validateLoadedPlanStructureCoreWithOptions(plan, allowLegacyMessageSequenceCode); err != nil {
 		return err
 	}
 	if err := validateNextStepIDReferences(plan); err != nil {
@@ -233,6 +245,10 @@ func validateLoadedPlanStructure(plan *PlanningResponse) error {
 // read mode so they can load and repair a graph left dangling by older code;
 // every write still calls ValidatePlanStructure and therefore remains atomic.
 func validateLoadedPlanStructureCore(plan *PlanningResponse) error {
+	return validateLoadedPlanStructureCoreWithOptions(plan, false)
+}
+
+func validateLoadedPlanStructureCoreWithOptions(plan *PlanningResponse, allowLegacyMessageSequenceCode bool) error {
 	if plan == nil {
 		return fmt.Errorf("plan is nil")
 	}
@@ -243,12 +259,12 @@ func validateLoadedPlanStructureCore(plan *PlanningResponse) error {
 		return err
 	}
 	for i, step := range plan.Steps {
-		if err := validateLoadedPlanStep(step, i); err != nil {
+		if err := validateLoadedPlanStepWithOptions(step, i, allowLegacyMessageSequenceCode); err != nil {
 			return fmt.Errorf("steps[%d] (id=%s): %w", i, step.GetID(), err)
 		}
 	}
 	for i, step := range plan.OrphanSteps {
-		if err := validateLoadedPlanStep(step, i); err != nil {
+		if err := validateLoadedPlanStepWithOptions(step, i, allowLegacyMessageSequenceCode); err != nil {
 			return fmt.Errorf("orphan_steps[%d] (id=%s): %w", i, step.GetID(), err)
 		}
 	}

@@ -124,3 +124,104 @@ func TestContextAwareBridgePushContextRichTagsTerminalStreamWithStepType(t *test
 		t.Fatalf("plan_step_type = %v, want message_sequence", got)
 	}
 }
+
+func TestContextAwareBridgeUsesExecutionLocalContextForParallelChildren(t *testing.T) {
+	listener := &captureEventListener{}
+	bridge := NewContextAwareEventBridge(listener, loggerv2.NewNoop())
+	bridge.SetOrchestratorContext("execution", 0, "global-parent", "parent")
+
+	ctxA := WithEventContextOverride(context.Background(), "execution", 1, "child-a", "Child A", RichStepContext{
+		StepName:     "Child A",
+		StepType:     "regular",
+		ParentStepID: "todo-parent",
+		TriggeredBy:  "todo_task_route",
+	})
+	ctxB := WithEventContextOverride(context.Background(), "execution", 1, "child-b", "Child B", RichStepContext{
+		StepName:     "Child B",
+		StepType:     "message_sequence",
+		ParentStepID: "nested-todo",
+		TriggeredBy:  "todo_task_route",
+	})
+
+	assertContext := func(ctx context.Context, wantID, wantType, wantParent string) {
+		t.Helper()
+		event := &mcpagent_events.AgentEvent{
+			Type:      mcpagent_events.StreamingChunk,
+			Timestamp: time.Now(),
+			Data: &mcpagent_events.StreamingChunkEvent{
+				BaseEventData: mcpagent_events.BaseEventData{Timestamp: time.Now()},
+				Content:       "child output",
+			},
+		}
+		if err := bridge.HandleEvent(ctx, event); err != nil {
+			t.Fatalf("HandleEvent returned error: %v", err)
+		}
+		metadata := listener.event.Data.(*mcpagent_events.StreamingChunkEvent).GetBaseEventData().Metadata
+		if got := metadata["current_step_id"]; got != wantID {
+			t.Fatalf("current_step_id = %v, want %s", got, wantID)
+		}
+		if got := metadata["current_step_type"]; got != wantType {
+			t.Fatalf("current_step_type = %v, want %s", got, wantType)
+		}
+		if got := metadata["parent_step_id"]; got != wantParent {
+			t.Fatalf("parent_step_id = %v, want %s", got, wantParent)
+		}
+	}
+
+	// Interleave the two contexts. Neither event may inherit the mutable global
+	// bridge state or the other child's metadata.
+	assertContext(ctxA, "child-a", "regular", "todo-parent")
+	bridge.SetOrchestratorContext("execution", 9, "unrelated-global", "other")
+	assertContext(ctxB, "child-b", "message_sequence", "nested-todo")
+	assertContext(ctxA, "child-a", "regular", "todo-parent")
+}
+
+func TestContextAwareBridgeTimingCaptureIsExecutionLocal(t *testing.T) {
+	bridge := NewContextAwareEventBridge(&captureEventListener{}, loggerv2.NewNoop())
+	ctxA := WithEventContextOverride(context.Background(), "execution", 0, "child-a", "Child A", RichStepContext{})
+	ctxB := WithEventContextOverride(context.Background(), "execution", 0, "child-b", "Child B", RichStepContext{})
+	ctxA = bridge.StartTimingCaptureFor(ctxA)
+	ctxB = bridge.StartTimingCaptureFor(ctxB)
+
+	emitTool := func(ctx context.Context, id string) {
+		t.Helper()
+		start := &mcpagent_events.AgentEvent{
+			Type:      mcpagent_events.ToolCallStart,
+			Timestamp: time.Now(),
+			Data: &mcpagent_events.ToolCallStartEvent{
+				BaseEventData: mcpagent_events.BaseEventData{Timestamp: time.Now()},
+				ToolCallID:    id,
+				ToolName:      "execute_shell_command",
+				ToolParams:    mcpagent_events.ToolParams{Arguments: id},
+			},
+		}
+		if err := bridge.HandleEvent(ctx, start); err != nil {
+			t.Fatalf("start HandleEvent returned error: %v", err)
+		}
+		end := &mcpagent_events.AgentEvent{
+			Type:      mcpagent_events.ToolCallEnd,
+			Timestamp: time.Now(),
+			Data: &mcpagent_events.ToolCallEndEvent{
+				BaseEventData: mcpagent_events.BaseEventData{Timestamp: time.Now()},
+				ToolCallID:    id,
+				ToolName:      "execute_shell_command",
+				Result:        id + "-result",
+			},
+		}
+		if err := bridge.HandleEvent(ctx, end); err != nil {
+			t.Fatalf("end HandleEvent returned error: %v", err)
+		}
+	}
+
+	emitTool(ctxA, "tool-a")
+	emitTool(ctxB, "tool-b")
+	captureB := bridge.DrainTimingCaptureFor(ctxB)
+	captureA := bridge.DrainTimingCaptureFor(ctxA)
+
+	if len(captureA.ToolCalls) != 1 || captureA.ToolCalls[0].ToolCallID != "tool-a" || captureA.ToolCalls[0].StepID != "child-a" {
+		t.Fatalf("capture A = %+v, want only tool-a for child-a", captureA.ToolCalls)
+	}
+	if len(captureB.ToolCalls) != 1 || captureB.ToolCalls[0].ToolCallID != "tool-b" || captureB.ToolCalls[0].StepID != "child-b" {
+		t.Fatalf("capture B = %+v, want only tool-b for child-b", captureB.ToolCalls)
+	}
+}

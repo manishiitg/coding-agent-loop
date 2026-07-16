@@ -93,9 +93,7 @@ func (api *StreamingAPI) cancelSessionRuntimeWork(sessionID, closeReason string)
 		api.workflowOrchestratorContextMux.Unlock()
 	}
 
-	if api.bgAgentRegistry != nil {
-		api.bgAgentRegistry.CancelAll(sessionID)
-	}
+	api.cancelBackgroundAgents(sessionID)
 	api.cancelTrackedExecutionsForSession(sessionID)
 	api.setSyntheticTurn(sessionID, false)
 	api.setSessionBusy(sessionID, false)
@@ -224,7 +222,7 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 	// When called before sending a new message, cancelAgents is NOT set so agents survive
 	// across turns and synthetic turns can still fire when they complete.
 	if r.URL.Query().Get("cancelAgents") == "true" {
-		api.bgAgentRegistry.CancelAll(sessionID)
+		api.cancelBackgroundAgents(sessionID)
 		log.Printf("[SESSION DEBUG] Canceled all background agents for session %s", sessionID)
 	}
 
@@ -322,7 +320,7 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 		// When workflow contexts are canceled, sub-agent goroutines will eventually
 		// fail with "context canceled" and call OnExecutionComplete. Without marking
 		// them as canceled first, they'd fire stale AUTO-NOTIFICATION synthetic turns.
-		api.bgAgentRegistry.CancelAll(sessionID)
+		api.cancelBackgroundAgents(sessionID)
 		log.Printf("[SESSION DEBUG] Canceled all background agents for session %s (workflow stop)", sessionID)
 
 		api.workflowOrchestratorContextMux.Lock()
@@ -441,6 +439,15 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Session stopped (conversation history and orchestrator state preserved)"))
+}
+
+func (api *StreamingAPI) cancelBackgroundAgents(sessionID string) {
+	if api == nil || strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	if api.bgAgentRegistry != nil {
+		api.bgAgentRegistry.CancelAll(sessionID)
+	}
 }
 
 // handleGetBrowserSessions returns the tracked browser sessions with their owning chat session IDs.

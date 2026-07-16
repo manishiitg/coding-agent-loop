@@ -182,6 +182,36 @@ TodoTaskPlanStep (single step, single ID)
     └── No prevalidation (DisableValidation=true)
 ```
 
+### Async Sub-Agent Lifecycle
+
+Normal LLM-driven todo-task orchestration does not keep the provider tool call
+open while a child agent runs:
+
+1. `call_sub_agent` or `call_generic_agent` starts the child and immediately
+   returns a unique `execution_id`.
+2. Independent calls made in the same orchestrator turn run concurrently.
+3. The workflow controller waits outside the LLM/MCP request until every child
+   owned by that turn is terminal.
+4. It sends one authoritative completion batch back into the same orchestrator
+   conversation, including successes and failures.
+5. Validation and parent-step completion cannot run while an owned child is
+   pending. Parent cancellation propagates to every child.
+
+Child ownership is held by the live orchestrator execution. Provider/tmux
+completion closes the child lifecycle and triggers an `[AUTO-NOTIFICATION]
+SUB-AGENT COMPLETION BATCH`; there is no second SQLite lifecycle store.
+`query_sub_agent(execution_id)` provides explicit, non-polling inspection and
+`stop_sub_agent(execution_id)` cancels one owned child. Saved scripted todo-task
+fast paths remain synchronous because the script consumes each tool result in
+the same process invocation.
+
+A predefined child may itself be a `message_sequence` or a nested `todo_task`.
+A sequence is one child execution: it stays running until its full message queue
+or resumed turn finishes, and stopping it cancels the entire sequence. Nested
+orchestrators recursively wait for and reconcile their own children before they
+report completion to their parent. Each nesting level has a distinct custom-tool
+session so parallel levels cannot overwrite each other's route/query/stop tools.
+
 ### Tool Access Matrix
 
 | Agent | Workspace | Todo Tools | MCP | Learning | Prevalidation |

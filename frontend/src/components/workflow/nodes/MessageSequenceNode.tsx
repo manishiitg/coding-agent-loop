@@ -1,6 +1,6 @@
 import { memo, useEffect, type ReactElement } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { BookOpen, CheckCircle, Database, FileText, XCircle, Loader2, Plus, RefreshCw, ListOrdered, MessageSquare, Code2, ShieldCheck, Repeat } from 'lucide-react'
+import { BookOpen, CheckCircle, Database, FileText, XCircle, Loader2, Plus, RefreshCw, ListOrdered, MessageSquare, ShieldCheck, Repeat } from 'lucide-react'
 import type { MessageSequenceNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
 import type { MessageSequenceItem } from '../../../utils/stepConfigMatching'
@@ -62,12 +62,6 @@ function itemPresentation(item: MessageSequenceItem): { label: string; badge: st
         badge: 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300',
         icon: <MessageSquare className="w-3 h-3 flex-shrink-0" />
       }
-    case 'code':
-      return {
-        label: 'code',
-        badge: 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300',
-        icon: <Code2 className="w-3 h-3 flex-shrink-0" />
-      }
     case 'prevalidation':
       return {
         label: 'prevalidation',
@@ -90,7 +84,7 @@ function itemPresentation(item: MessageSequenceItem): { label: string; badge: st
 }
 
 function itemPrimaryText(item: MessageSequenceItem): string {
-  const raw = item.title || item.message || item.script_path || item.source || item.id || ''
+  const raw = item.title || item.message || item.source || item.id || ''
   const flat = raw.replace(/\s+/g, ' ').trim()
   return flat.length > 52 ? flat.substring(0, 49) + '…' : flat
 }
@@ -127,10 +121,7 @@ export const MessageSequenceNode = memo(({ data, selected }: MessageSequenceNode
     ...seqItems.flatMap(item => [
       item.title,
       item.message,
-      item.script_path,
       item.source,
-      ...(item.input_files || []),
-      ...(item.output_files || []),
       ...(item.validation_schema?.files?.map(file => file.file_name) || []),
       ...(item.prevalidation?.files?.map(file => file.file_name) || [])
     ])

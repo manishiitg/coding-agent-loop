@@ -888,11 +888,15 @@ export LOG_AGENT_PROMPTS="true"
 # Enable split execution learning feature (separates learning reading from execution)
 export SPLIT_EXECUTION_LEARNING="true"
 
-# Set tool execution timeout to 90 minutes to match call_sub_agent's per-tool
-# budget. In code-exec-only mode, orchestrator Python scripts call sub-agents
-# over HTTP via execute_shell_command, so the script must be allowed to wait
-# as long as the sub-agent itself is allowed to run.
+# Final server-side safety backstop for a tool that never returns. Durable
+# sub-agents return an execution ID immediately; this mainly protects direct
+# shell/custom calls without imposing a shorter workflow deadline.
 export TOOL_EXECUTION_TIMEOUT="90m"
+
+# Shared coding-CLI MCP client / mcpbridge HTTP safety backstop. Claude and
+# Codex consume this through their supported client controls; Cursor and Pi
+# currently rely on request cancellation plus the bridge's HTTP backstop.
+export CODING_AGENT_MCP_TOOL_TIMEOUT="90m"
 
 # Set MCP cache TTL to 7 days (10080 minutes)
 export MCP_CACHE_TTL_MINUTES="10080"
@@ -1037,8 +1041,14 @@ rotate_log_file() {
     if [ -f "$file_path" ]; then
         lines=$(wc -l < "$file_path" 2>/dev/null)
         if [ "$lines" -gt "$LOG_ROTATE_LINES" ]; then
-            excess=$((lines - LOG_ROTATE_LINES))
-            sed -i '' "1,${excess}d" "$file_path"
+            # Keep the existing inode: the Go server has stdout/stderr open to
+            # this file. BSD sed -i replaces the file, leaving the live process
+            # writing to an unlinked inode while the visible log goes stale.
+            local rotate_tmp="${file_path}.rotate.$$"
+            if tail -n "$LOG_ROTATE_LINES" "$file_path" > "$rotate_tmp"; then
+                cat "$rotate_tmp" > "$file_path"
+            fi
+            rm -f "$rotate_tmp"
         fi
     fi
 }

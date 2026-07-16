@@ -222,6 +222,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 			Progress:              progress,
 			StepConfig:            stepConfig,
 			WorkshopCorrelationID: workshopCorrelationID,
+			ParentContext:         ctx,
+			ToolSessionID:         hcpo.getSessionID(),
 		}
 		hcpo.restoreSubAgentToolExecutors(fastPathExecCtx)
 
@@ -309,7 +311,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	var validationResponse *ValidationResponse
 	var validationFailures []validationFailureConcern
 	var todoTaskAgent orchestratoragents.OrchestratorAgent
+	var subAgentExecCtx *SubAgentExecutionContext
 	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := subAgentExecCtx.cancelOutstandingAndWait(cleanupCtx); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Todo task step %s could not fully stop owned sub-agents during cleanup: %v", step.GetID(), err))
+		}
 		if todoTaskAgent != nil {
 			_ = todoTaskAgent.Close()
 		}
@@ -333,8 +341,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		}
 
 		hcpo.GetLogger().Info(fmt.Sprintf("🎯 Executing todo task orchestrator (attempt %d/%d)", retryAttempt, maxRetryAttempts))
+		attemptCtx := ctx
 		if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
-			cab.StartTimingCapture()
+			attemptCtx = cab.StartTimingCaptureFor(attemptCtx)
 		}
 		attemptStartedAt := time.Now().UTC()
 
@@ -349,8 +358,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 				_ = todoTaskAgent.Close()
 				todoTaskAgent = nil
 			}
-			_, updatedHistory, executionLLM, _, todoTaskAgent, err = hcpo.executeTodoTaskOrchestratorAgent(
-				ctx,
+			_, updatedHistory, executionLLM, subAgentExecCtx, todoTaskAgent, err = hcpo.executeTodoTaskOrchestratorAgent(
+				attemptCtx,
 				todoTaskStep,
 				stepIndex,
 				todoTaskStepPath,
@@ -368,8 +377,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 			if ba == nil {
 				return false, "", fmt.Errorf("todo task orchestrator has no base agent for continuation on attempt %d", retryAttempt)
 			}
-			_, updatedHistory, err = hcpo.withWorkshopMessageTarget(ctx, step.GetID(), "todo-validation-retry", todoTaskAgent, func() (string, []llmtypes.MessageContent, error) {
-				return ba.Execute(ctx, feedbackUserMsg, conversationHistory, "", false)
+			_, updatedHistory, err = hcpo.withWorkshopMessageTarget(attemptCtx, step.GetID(), "todo-validation-retry", todoTaskAgent, func() (string, []llmtypes.MessageContent, error) {
+				return ba.Execute(attemptCtx, feedbackUserMsg, conversationHistory, "", false)
 			})
 		}
 		attemptCompletedAt := time.Now().UTC()
@@ -377,7 +386,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 
 		// Drain captured tool calls regardless of error
 		if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
-			timingCapture := cab.DrainTimingCapture()
+			timingCapture := cab.DrainTimingCaptureFor(attemptCtx)
 			capturedToolCalls = timingCapture.ToolCalls
 			capturedLLMCalls = timingCapture.LLMCalls
 		}
@@ -386,6 +395,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 			return false, "", fmt.Errorf("todo task orchestrator failed: %w", err)
 		}
 		conversationHistory = updatedHistory
+		if err := hcpo.reconcileAsyncSubAgentCalls(ctx, step.GetID(), todoTaskAgent, subAgentExecCtx, &conversationHistory); err != nil {
+			return false, "", fmt.Errorf("todo task sub-agent reconciliation failed: %w", err)
+		}
+		updatedHistory = conversationHistory
 
 		// Log execution. Carry earlier validation failures forward because Pulse
 		// Gate reads the latest/final attempt rather than every retry.
@@ -396,7 +409,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		// conversation. First attempt only — retries continue the conversation with
 		// validation feedback and must not replay the scripted messages.
 		if retryAttempt == 1 && len(todoTaskStep.Messages) > 0 {
-			if msErr := hcpo.runTodoTaskMessageSequence(ctx, todoTaskStep, stepIndex, todoTaskStepPath, stepExecutionPath, todoTaskAgent, &conversationHistory); msErr != nil {
+			if msErr := hcpo.runTodoTaskMessageSequence(ctx, todoTaskStep, stepIndex, todoTaskStepPath, stepExecutionPath, todoTaskAgent, subAgentExecCtx, &conversationHistory); msErr != nil {
 				return false, "", fmt.Errorf("todo task message sequence failed: %w", msErr)
 			}
 		}
@@ -412,7 +425,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 					executionSummary = withValidationFailureConcern(latestAssistantExecutionSummary(conversationHistory), validationFailures, retryAttempt, false)
 					hcpo.saveTodoTaskExecutionLog(ctx, step.GetID(), todoTaskStepPath, retryAttempt, 0, executionLLM, conversationHistory, capturedToolCalls, capturedLLMCalls, attemptStartedAt, attemptCompletedAt, attemptDuration, executionSummary)
 				}
-				hcpo.persistCompletedTodoTaskSummary(ctx, todoTaskStep, stepIndex, todoTaskStepPath, todoTaskAgent, &conversationHistory)
+				if summaryErr := hcpo.persistCompletedTodoTaskSummary(ctx, todoTaskStep, stepIndex, todoTaskStepPath, todoTaskAgent, subAgentExecCtx, &conversationHistory); summaryErr != nil {
+					return false, "", fmt.Errorf("todo task completion summary failed: %w", summaryErr)
+				}
 				hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, 1, nil, "Pre-validation passed", todoTaskStep.NextStepID)
 				hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
 				return true, todoTaskStep.NextStepID, nil
@@ -445,7 +460,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 
 		// No validation schema — execution completion is the signal
 		hcpo.GetLogger().Info("✅ Todo task step complete (execution finished)")
-		hcpo.persistCompletedTodoTaskSummary(ctx, todoTaskStep, stepIndex, todoTaskStepPath, todoTaskAgent, &conversationHistory)
+		if summaryErr := hcpo.persistCompletedTodoTaskSummary(ctx, todoTaskStep, stepIndex, todoTaskStepPath, todoTaskAgent, subAgentExecCtx, &conversationHistory); summaryErr != nil {
+			return false, "", fmt.Errorf("todo task completion summary failed: %w", summaryErr)
+		}
 		hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, 1, nil, "Execution completed", todoTaskStep.NextStepID)
 		hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
 		return true, todoTaskStep.NextStepID, nil
@@ -461,10 +478,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) persistCompletedTodoTaskSummary(
 	stepIndex int,
 	stepPath string,
 	agent orchestratoragents.OrchestratorAgent,
+	subAgentExecCtx *SubAgentExecutionContext,
 	conversationHistory *[]llmtypes.MessageContent,
-) {
+) error {
 	mainSummary := latestAssistantExecutionSummary(*conversationHistory)
-	learningsSummary, knowledgebaseSummary := hcpo.runTodoTaskContributionTurns(ctx, step, stepIndex, agent, conversationHistory)
+	learningsSummary, knowledgebaseSummary, reconcileErr := hcpo.runTodoTaskContributionTurns(ctx, step, stepIndex, agent, subAgentExecCtx, conversationHistory)
+	if reconcileErr != nil {
+		return reconcileErr
+	}
 	finalSummary := buildDirectModeCompletionSummary(mainSummary, knowledgebaseSummary, learningsSummary)
 	if strings.TrimSpace(finalSummary) == "" {
 		finalSummary = "STATUS: COMPLETED"
@@ -473,6 +494,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) persistCompletedTodoTaskSummary(
 		hcpo.recordRunPersistenceError(context.Background(), step.GetID(), err)
 		hcpo.GetLogger().Warn(fmt.Sprintf("Todo task step %s completed, but its final execution summary could not be persisted: %v", step.GetID(), err))
 	}
+	return nil
 }
 
 // runTodoTaskContributionTurns runs a trailing learnings turn and/or KB turn on
@@ -481,19 +503,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) persistCompletedTodoTaskSummary(
 // are handled identically across all step types. The orchestrator already holds
 // learnings/_global and notes/ write access via its folder guard, so the turn can
 // write. Both turns are best-effort: a failure is logged, never fatal.
-func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskContributionTurns(ctx context.Context, step *TodoTaskPlanStep, stepIndex int, agent orchestratoragents.OrchestratorAgent, conversationHistory *[]llmtypes.MessageContent) (learningsSummary, knowledgebaseSummary string) {
+func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskContributionTurns(ctx context.Context, step *TodoTaskPlanStep, stepIndex int, agent orchestratoragents.OrchestratorAgent, subAgentExecCtx *SubAgentExecutionContext, conversationHistory *[]llmtypes.MessageContent) (learningsSummary, knowledgebaseSummary string, reconcileErr error) {
 	cfg := step.AgentConfigs
 	if cfg == nil {
-		return "", ""
+		return "", "", nil
 	}
 	ba := agent.GetBaseAgent()
 	if ba == nil {
-		return "", ""
+		return "", "", nil
 	}
-	runTurn := func(label, msg string) string {
+	runTurn := func(label, msg string) (string, error) {
 		msg = strings.TrimSpace(msg)
 		if msg == "" {
-			return ""
+			return "", nil
 		}
 		if label == "learnings" {
 			restoreDirectLearningTurn := hcpo.prepareDirectLearningTurn(agent, []string{filepath.Join(hcpo.GetWorkspacePath(), LearningsFolderName, GlobalLearningID)})
@@ -503,6 +525,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskContributionTurns(ctx cont
 		result, updated, err := hcpo.withWorkshopMessageTarget(ctx, step.GetID(), "todo-"+label, agent, func() (string, []llmtypes.MessageContent, error) {
 			return ba.Execute(ctx, msg, *conversationHistory, "", false)
 		})
+		if len(updated) > 0 {
+			*conversationHistory = updated
+		}
+		if childErr := hcpo.reconcileAsyncSubAgentCalls(ctx, step.GetID(), agent, subAgentExecCtx, conversationHistory); childErr != nil {
+			return "", fmt.Errorf("reconcile children launched by %s contribution: %w", label, childErr)
+		}
 		if err != nil {
 			// Non-fatal by design (the step's main work already succeeded and
 			// pre-validation passed), but the loss of a learnings/KB write must
@@ -511,14 +539,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskContributionTurns(ctx cont
 			errMsg := fmt.Sprintf("%s contribution turn failed — %s write was lost for this run (step still completes): %v", label, label, err)
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Todo task step %d: %s", stepIndex+1, errMsg))
 			hcpo.EmitOrchestratorAgentError(ctx, "workflow", fmt.Sprintf("todo-task-%s-contribution", label), fmt.Sprintf("Write %s for step: %s", label, step.GetTitle()), errMsg, stepIndex, 0)
-			return fmt.Sprintf("CONCERNS: %s\nSTATUS: COMPLETED", errMsg)
+			return fmt.Sprintf("CONCERNS: %s\nSTATUS: COMPLETED", errMsg), nil
 		}
-		*conversationHistory = updated
-		return summarizeExecutionResultForNotification(result)
+		return summarizeExecutionResultForNotification(result), nil
 	}
 
 	if shouldDirectWriteLearnings(cfg, step, hcpo.isEvaluationMode) && !hcpo.shouldSkipDirectLearningsDueToLock(ctx, cfg, stepIndex) {
-		learningsSummary = runTurn("learnings", hcpo.buildLearningsContributionTurn(step.GetID(), step.GetDescription(), strings.TrimSpace(cfg.LearningObjective), false))
+		learningsSummary, reconcileErr = runTurn("learnings", hcpo.buildLearningsContributionTurn(step.GetID(), step.GetDescription(), strings.TrimSpace(cfg.LearningObjective), false))
+		if reconcileErr != nil {
+			return learningsSummary, knowledgebaseSummary, reconcileErr
+		}
 	}
 
 	if contribution := strings.TrimSpace(kbContributionForPrompt(cfg)); contribution != "" && kbAccessAllowsWrite(cfg.KnowledgebaseAccess) {
@@ -528,9 +558,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskContributionTurns(ctx cont
 		b.WriteString("**Contribution instruction:**\n")
 		b.WriteString(contribution)
 		b.WriteString("\n\nWrite durable, deduplicated notes under `knowledgebase/notes/`. If there is nothing new worth recording, say so explicitly and write nothing.")
-		knowledgebaseSummary = runTurn("knowledgebase", b.String())
+		knowledgebaseSummary, reconcileErr = runTurn("knowledgebase", b.String())
+		if reconcileErr != nil {
+			return learningsSummary, knowledgebaseSummary, reconcileErr
+		}
 	}
-	return learningsSummary, knowledgebaseSummary
+	return learningsSummary, knowledgebaseSummary, nil
 }
 
 // runTodoTaskMessageSequence drives a todo_task step's optional scripted message sequence.
@@ -546,6 +579,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskMessageSequence(
 	stepPath string,
 	stepExecutionPath string,
 	agent orchestratoragents.OrchestratorAgent,
+	subAgentExecCtx *SubAgentExecutionContext,
 	conversationHistory *[]llmtypes.MessageContent,
 ) error {
 	ba := agent.GetBaseAgent()
@@ -562,26 +596,32 @@ func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskMessageSequence(
 		if text == "" {
 			return nil
 		}
+		turnCtx := ctx
 		if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
-			cab.StartTimingCapture()
+			turnCtx = cab.StartTimingCaptureFor(turnCtx)
 		}
 		startedAt := time.Now().UTC()
-		_, updated, err := hcpo.withWorkshopMessageTarget(ctx, step.GetID(), "todo-message-sequence", agent, func() (string, []llmtypes.MessageContent, error) {
-			return ba.Execute(ctx, text, *conversationHistory, "", false)
+		_, updated, err := hcpo.withWorkshopMessageTarget(turnCtx, step.GetID(), "todo-message-sequence", agent, func() (string, []llmtypes.MessageContent, error) {
+			return ba.Execute(turnCtx, text, *conversationHistory, "", false)
 		})
 		completedAt := time.Now().UTC()
 		var toolCalls []orchestrator.ToolCallEntry
 		var llmCalls []orchestrator.LLMCallEntry
 		if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
-			tc := cab.DrainTimingCapture()
+			tc := cab.DrainTimingCaptureFor(turnCtx)
 			toolCalls = tc.ToolCalls
 			llmCalls = tc.LLMCalls
+		}
+		if len(updated) > 0 {
+			*conversationHistory = updated
+		}
+		if reconcileErr := hcpo.reconcileAsyncSubAgentCalls(ctx, step.GetID(), agent, subAgentExecCtx, conversationHistory); reconcileErr != nil {
+			return fmt.Errorf("reconcile children launched by scripted message: %w", reconcileErr)
 		}
 		if err != nil {
 			return err
 		}
-		*conversationHistory = updated
-		hcpo.saveTodoTaskExecutionLog(ctx, step.GetID(), stepPath, 1, logSeq, executionLLM, updated, toolCalls, llmCalls, startedAt, completedAt, completedAt.Sub(startedAt), "")
+		hcpo.saveTodoTaskExecutionLog(ctx, step.GetID(), stepPath, 1, logSeq, executionLLM, *conversationHistory, toolCalls, llmCalls, startedAt, completedAt, completedAt.Sub(startedAt), "")
 		logSeq++
 		return nil
 	}
@@ -650,10 +690,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskMessageSequence(
 				_, updated, exErr := hcpo.withWorkshopMessageTarget(ctx, step.GetID(), "todo-prevalidation-repair", agent, func() (string, []llmtypes.MessageContent, error) {
 					return ba.Execute(ctx, feedback, *conversationHistory, "", false)
 				})
+				if len(updated) > 0 {
+					*conversationHistory = updated
+				}
+				if reconcileErr := hcpo.reconcileAsyncSubAgentCalls(ctx, step.GetID(), agent, subAgentExecCtx, conversationHistory); reconcileErr != nil {
+					return fmt.Errorf("reconcile children launched by gate correction %d: %w", i+1, reconcileErr)
+				}
 				if exErr != nil {
 					return fmt.Errorf("todo task gate %d correction turn failed: %w", i+1, exErr)
 				}
-				*conversationHistory = updated
 			}
 			if !passed {
 				return fmt.Errorf("todo task prevalidation gate (messages[%d]) did not pass after %d correction(s)", i, maxCorr)
@@ -995,6 +1040,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskOrchestratorAgent(
 		Progress:              progress,
 		StepConfig:            stepConfig, // Pass step config for sub_agent_llm override
 		WorkshopCorrelationID: workshopCorrelationID,
+		ParentContext:         ctx,
+		AsyncEnabled:          true,
 	}
 
 	// Use factory method to create agent with proper event bridge connection
@@ -1124,41 +1171,46 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 	}
 
 	// Notify sub-agent start
-	agentID := fmt.Sprintf("todo-generic-%s-%s-%d", stepPath, todoIDPart, time.Now().UnixNano())
+	agentID := asyncSubAgentExecutionID(ctx)
+	if agentID == "" {
+		agentID = fmt.Sprintf("todo-generic-%s-%s-%d", stepPath, todoIDPart, time.Now().UnixNano())
+	}
 	agentName := fmt.Sprintf("%s -> Generic (%s)", parentTodoTitle, taskTitle)
 	subAgentCtx, subAgentCancel := context.WithCancel(ctx)
 	defer subAgentCancel()
-	parentExecutionID := virtualtools.SubAgentSpecFromContext(ctx).BackgroundAgentID
+	parentExecutionID := subAgentParentExecutionID(ctx)
 	if hcpo.subAgentNotifier != nil {
 		hcpo.subAgentNotifier.OnSubAgentStart(WorkshopExecutionStart{
 			ID:                agentID,
 			ParentExecutionID: parentExecutionID,
 			Name:              agentName,
 			Kind:              "workflow_generic_agent",
-			Cancel:            subAgentCancel,
+			Metadata: map[string]string{
+				"async_parent_reconciles":    fmt.Sprintf("%t", asyncSubAgentExecutionID(ctx) != ""),
+				"suppress_auto_notification": fmt.Sprintf("%t", asyncSubAgentExecutionID(ctx) != ""),
+			},
+			Cancel: subAgentCancel,
 		})
 	}
 	subAgentCtx = virtualtools.WithBackgroundAgentID(subAgentCtx, agentID)
 	subAgentCtx = context.WithValue(subAgentCtx, events.ParentExecutionIDKey, agentID)
 
-	// Push context before sub-agent execution (preserve orchestrator context).
-	// Use the rich variant so the terminal pane / inspector show step name,
-	// parent step, and "triggered by" instead of just the bare step id.
-	if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
-		cab.PushContextRich(
-			"execution",
-			stepIndex,
-			genericStep.GetID(),
-			genericStep.GetTitle(),
-			orchestrator.RichStepContext{
-				StepName:     genericStep.GetTitle(),
-				StepType:     string(genericStep.StepType()),
-				StepIndex:    stepIndex + 1, // 1-based for UI
-				ParentStepID: cab.GetCurrentStepID(),
-				TriggeredBy:  "todo_task",
-			},
-		)
-	}
+	// Keep child event identity on its goroutine-local context. Parallel agents
+	// cannot safely push/pop one shared bridge stack.
+	subAgentCtx = orchestrator.WithEventContextOverride(
+		subAgentCtx,
+		"execution",
+		stepIndex,
+		genericStep.GetID(),
+		genericStep.GetTitle(),
+		orchestrator.RichStepContext{
+			StepName:     genericStep.GetTitle(),
+			StepType:     string(genericStep.StepType()),
+			StepIndex:    stepIndex + 1,
+			ParentStepID: step.GetID(),
+			TriggeredBy:  "todo_task",
+		},
+	)
 
 	// Execute using executeSingleStep (reuses standard execution infrastructure)
 	executionResult, _, err := hcpo.executeSingleStep(
@@ -1177,11 +1229,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 		[]string{response.InstructionsToSubAgent}, // previousExecutionResults - pass instructions
 		nil, // orchestrationRoutes - none for generic agent
 	)
-
-	// Pop context after sub-agent execution (restore orchestrator context)
-	if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
-		cab.PopContext()
-	}
 
 	// Notify sub-agent completion
 	if hcpo.subAgentNotifier != nil {
@@ -1422,41 +1469,46 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 	}
 
 	// Notify sub-agent start
-	subAgentNotifID := fmt.Sprintf("todo-sub-%s-%d", subAgentStepPath, time.Now().UnixNano())
+	subAgentNotifID := asyncSubAgentExecutionID(ctx)
+	if subAgentNotifID == "" {
+		subAgentNotifID = fmt.Sprintf("todo-sub-%s-%d", subAgentStepPath, time.Now().UnixNano())
+	}
 	subAgentNotifName := fmt.Sprintf("%s -> %s (%s)", parentTodoTitle, route.RouteName, response.TodoIDToExecute)
 	subAgentCtx, subAgentCancel := context.WithCancel(ctx)
 	defer subAgentCancel()
-	parentExecutionID := virtualtools.SubAgentSpecFromContext(ctx).BackgroundAgentID
+	parentExecutionID := subAgentParentExecutionID(ctx)
 	if hcpo.subAgentNotifier != nil {
 		hcpo.subAgentNotifier.OnSubAgentStart(WorkshopExecutionStart{
 			ID:                subAgentNotifID,
 			ParentExecutionID: parentExecutionID,
 			Name:              subAgentNotifName,
 			Kind:              "workflow_sub_agent",
-			Cancel:            subAgentCancel,
+			Metadata: map[string]string{
+				"async_parent_reconciles":    fmt.Sprintf("%t", asyncSubAgentExecutionID(ctx) != ""),
+				"suppress_auto_notification": fmt.Sprintf("%t", asyncSubAgentExecutionID(ctx) != ""),
+			},
+			Cancel: subAgentCancel,
 		})
 	}
 	subAgentCtx = virtualtools.WithBackgroundAgentID(subAgentCtx, subAgentNotifID)
 	subAgentCtx = context.WithValue(subAgentCtx, events.ParentExecutionIDKey, subAgentNotifID)
 
-	// Push context before sub-agent execution (preserve orchestrator context).
-	// Rich envelope: surface step title, parent step, and triggered-by so
-	// the terminal pane shows the sub-agent in human-readable form.
-	if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
-		cab.PushContextRich(
-			"execution",
-			stepIndex,
-			route.SubAgentStep.GetID(),
-			route.SubAgentStep.GetTitle(),
-			orchestrator.RichStepContext{
-				StepName:     route.SubAgentStep.GetTitle(),
-				StepType:     string(route.SubAgentStep.StepType()),
-				StepIndex:    stepIndex + 1,
-				ParentStepID: cab.GetCurrentStepID(),
-				TriggeredBy:  "todo_task_route",
-			},
-		)
-	}
+	// Bind this route's event identity to its own execution context. This also
+	// composes correctly when the route itself is a nested todo_task.
+	subAgentCtx = orchestrator.WithEventContextOverride(
+		subAgentCtx,
+		"execution",
+		stepIndex,
+		stepToExecute.GetID(),
+		stepToExecute.GetTitle(),
+		orchestrator.RichStepContext{
+			StepName:     stepToExecute.GetTitle(),
+			StepType:     string(stepToExecute.StepType()),
+			StepIndex:    stepIndex + 1,
+			ParentStepID: step.GetID(),
+			TriggeredBy:  "todo_task_route",
+		},
+	)
 
 	executionResult, capturedHistory, err := hcpo.executeRoutedSubAgentStep(
 		subAgentCtx,
@@ -1468,11 +1520,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 		allSteps,
 		orchestrationRoutesForSubAgent,
 	)
-
-	// Pop context after sub-agent execution (restore orchestrator context)
-	if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
-		cab.PopContext()
-	}
 
 	// Notify sub-agent completion
 	if hcpo.subAgentNotifier != nil {

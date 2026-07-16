@@ -1273,8 +1273,7 @@ function ReadOnlyStepDetailPanel({
                 const chipClass =
                   kind === 'prevalidation' ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
                     : kind === 'foreach' ? 'bg-violet-500/15 text-violet-600 dark:text-violet-400'
-                      : kind === 'code' ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
-                        : 'bg-blue-500/15 text-blue-600 dark:text-blue-400'
+                      : 'bg-blue-500/15 text-blue-600 dark:text-blue-400'
                 const writes = item.write_access
                 const accessBits = [
                   writes?.db ? 'db' : null,
@@ -1290,7 +1289,6 @@ function ReadOnlyStepDetailPanel({
                       {item.title && <span className="truncate text-xs font-medium text-foreground">{item.title}</span>}
                     </div>
                     {item.message && <div className="text-xs leading-relaxed text-foreground/85">{item.message}</div>}
-                    {item.script_path && <div className="mt-1 font-mono text-[10px] text-muted-foreground">script: {item.script_path}{item.runtime ? ` (${item.runtime})` : ''}</div>}
                     {kind === 'foreach' && (
                       <div className="mt-1 text-xs text-foreground/80">
                         for each row in <span className="font-mono text-foreground">{item.source || '—'}</span>
@@ -1298,12 +1296,6 @@ function ReadOnlyStepDetailPanel({
                         {item.max_iterations ? <> (max {item.max_iterations})</> : null}
                       </div>
                     )}
-                    {(item.input_files?.length || item.output_files?.length) ? (
-                      <div className="mt-1 space-y-0.5 text-[10px] text-muted-foreground">
-                        {item.input_files?.length ? <div>reads: <span className="font-mono">{item.input_files.join(', ')}</span></div> : null}
-                        {item.output_files?.length ? <div>writes: <span className="font-mono">{item.output_files.join(', ')}</span></div> : null}
-                      </div>
-                    ) : null}
                     {accessBits.length > 0 && (
                       <div className="mt-1 text-[10px] text-muted-foreground">write access: {accessBits.join(', ')}</div>
                     )}

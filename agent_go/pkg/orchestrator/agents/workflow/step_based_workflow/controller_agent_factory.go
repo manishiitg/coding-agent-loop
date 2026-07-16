@@ -1372,11 +1372,31 @@ type SubAgentExecutionContext struct {
 	// WorkshopCorrelationID is the correlation ID from the workshop's execute_step call.
 	// Propagated to sub-agent contexts so their events are tagged with the workshop step's ID.
 	WorkshopCorrelationID string
+	// ParentContext owns every asynchronously launched child. It comes from the
+	// workflow execution, not the detached HTTP/MCP request used to invoke the
+	// custom tool, so stopping the workflow cancels its children deterministically.
+	ParentContext context.Context
+	// AsyncEnabled makes call_sub_agent/call_generic_agent return immediately and
+	// lets the controller reconcile owned children outside the provider tool call.
+	// Saved scripted fast paths remain synchronous because their scripts consume
+	// the tool result in the same process invocation.
+	AsyncEnabled bool
+	// ToolSessionID identifies the session-scoped custom-tool registry owned by
+	// this orchestrator. Nested todo_task orchestrators receive a distinct ID so
+	// their call/query/stop handlers cannot replace the parent's handlers.
+	ToolSessionID string
 
 	// CallHistory records every sub-agent call made during this todo task step.
 	// Protected by callHistoryMu for concurrent tool calls.
 	CallHistory   []SubAgentCallRecord
 	callHistoryMu sync.Mutex
+
+	// Async calls return an execution ID to the LLM immediately. The controller
+	// waits for these calls outside the provider tool request, then feeds one
+	// completion batch back into the same orchestrator conversation.
+	asyncCalls map[string]*asyncSubAgentCall
+	asyncOrder []string
+	asyncMu    sync.Mutex
 }
 
 // serializeConversationHistory converts raw llmtypes conversation history into a flat list of ConversationEntry
@@ -1496,6 +1516,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 	todoReadPaths, todoWritePaths := hcpo.GetFolderGuardPaths()
 	todoSessionID := hcpo.setupSubAgentSessionGuard("todo", stepID, todoReadPaths, todoWritePaths)
 	config.MCPSessionID = todoSessionID
+	if subAgentExecCtx != nil {
+		subAgentExecCtx.ToolSessionID = todoSessionID
+	}
 	sharedBrowserSessionID := hcpo.resolveWorkshopBrowserSessionID(hcpo.currentGroupName)
 	hcpo.bindWorkshopBrowserSession(todoSessionID, sharedBrowserSessionID)
 	config.FolderGuardReadPaths = todoReadPaths
@@ -1627,13 +1650,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 		subAgentExecutors := virtualtools.CreateSubAgentToolExecutors()
 		subAgentCategory := virtualtools.GetSubAgentToolCategory()
 
-		// Add sub-agent tools to the tools list and register their category
+		// Categories for built-in delegation tools are registered once when the
+		// BaseOrchestrator is constructed; the map stays immutable so nested
+		// orchestrators can be created in parallel safely.
 		for _, tool := range subAgentTools {
 			toolsToRegister = append(toolsToRegister, tool)
-			// CRITICAL: Add to ToolCategories map so the tool passes validation
-			if hcpo.ToolCategories != nil {
-				hcpo.ToolCategories[tool.Function.Name] = subAgentCategory
-			}
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Added sub-agent tool '%s' to todo task orchestrator (category: %s)", tool.Function.Name, subAgentCategory))
 		}
 
@@ -1686,13 +1707,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 	return agent, nil
 }
 
-// restoreSubAgentToolExecutors re-registers the outer todo_task's sub-agent executors in the
-// session-scoped code execution registry. This is called after a nested todo_task sub-agent
-// completes, because the nested todo_task overwrites the session registry entry for call_sub_agent
-// with its own inner routes. Without this restore, any subsequent call_sub_agent calls in the
-// same LLM turn (code execution mode) would incorrectly route to the inner execCtx's routes.
+// restoreSubAgentToolExecutors re-registers a todo_task's handlers in that
+// orchestrator's own session-scoped registry. Nested orchestrators use distinct
+// ToolSessionIDs, so restoring one level cannot replace another level's routes.
 func (hcpo *StepBasedWorkflowOrchestrator) restoreSubAgentToolExecutors(execCtx *SubAgentExecutionContext) {
-	sessionID := hcpo.getSessionID()
+	if execCtx == nil {
+		return
+	}
+	sessionID := strings.TrimSpace(execCtx.ToolSessionID)
+	if sessionID == "" {
+		sessionID = hcpo.getSessionID()
+	}
 	if sessionID == "" {
 		return
 	}
@@ -1702,7 +1727,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) restoreSubAgentToolExecutors(execCtx 
 		wrappedExecutors[toolName] = hcpo.wrapSubAgentToolExecutor(executor, execCtx)
 	}
 	codeexec.InitRegistryForSession(sessionID, wrappedExecutors, hcpo.GetLogger())
-	hcpo.GetLogger().Info("🔄 Restored outer sub-agent tool executors in session registry after nested todo_task completion")
+	hcpo.GetLogger().Info(fmt.Sprintf("🔄 Restored sub-agent tool executors in orchestrator session %s", sessionID))
 }
 
 // wrapSubAgentToolExecutor wraps a sub-agent tool executor to inject execution functions
@@ -1726,6 +1751,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 		// Inject execute_generic_agent function
 		executeGenericFunc := hcpo.createExecuteGenericAgentFunc(execCtx)
 		ctx = context.WithValue(ctx, virtualtools.ExecuteGenericAgentKey, executeGenericFunc)
+
+		ctx = context.WithValue(ctx, virtualtools.QuerySubAgentKey, virtualtools.QuerySubAgentFunc(
+			func(_ context.Context, executionID string) (string, error) {
+				return execCtx.queryAsyncCall(executionID)
+			},
+		))
+		ctx = context.WithValue(ctx, virtualtools.StopSubAgentKey, virtualtools.StopSubAgentFunc(
+			func(_ context.Context, executionID string) (string, error) {
+				return execCtx.stopAsyncCall(executionID)
+			},
+		))
 
 		// Inject predefined routes for route lookup
 		if execCtx.TodoTaskStep != nil {
@@ -1803,7 +1839,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 
 // createExecutePredefinedSubAgentFunc creates a function that executes predefined sub-agents
 // This function is injected into context for the call_sub_agent tool to use
-func (hcpo *StepBasedWorkflowOrchestrator) createExecutePredefinedSubAgentFunc(
+func (hcpo *StepBasedWorkflowOrchestrator) createExecutePredefinedSubAgentSyncFunc(
 	execCtx *SubAgentExecutionContext,
 ) virtualtools.ExecutePredefinedSubAgentFunc {
 	return func(ctx context.Context, routeID, todoID, instructions string) (string, error) {
@@ -1930,7 +1966,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutePredefinedSubAgentFunc(
 // This function is injected into context for the call_generic_agent tool to use
 // Sub-agents get all their input from the tool parameters (instructions)
 // They do NOT read the tasks.md file - the orchestrator provides everything via the tool call
-func (hcpo *StepBasedWorkflowOrchestrator) createExecuteGenericAgentFunc(
+func (hcpo *StepBasedWorkflowOrchestrator) createExecuteGenericAgentSyncFunc(
 	execCtx *SubAgentExecutionContext,
 ) virtualtools.ExecuteGenericAgentFunc {
 	return func(ctx context.Context, todoID, instructions string) (string, error) {

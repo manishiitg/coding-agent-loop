@@ -82,8 +82,9 @@ type StepBasedWorkflowOrchestrator struct {
 	// holds each route's conversation so it remembers prior calls WITHOUT reading back from
 	// disk. Scoped to this orchestrator instance (one workflow run). Standalone
 	// message_sequence steps never use this — they always run a fixed queue.
-	msgSeqRoutesMu sync.Mutex
-	msgSeqRoutes   map[string]*messageSequenceSession
+	msgSeqRoutesMu   sync.Mutex
+	msgSeqRoutes     map[string]*messageSequenceSession
+	msgSeqRouteLocks map[string]*sync.Mutex
 
 	// Variable management
 	variablesManifest *VariablesManifest // Extracted variables

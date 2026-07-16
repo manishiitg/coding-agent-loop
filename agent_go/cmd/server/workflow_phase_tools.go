@@ -237,7 +237,7 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 					return len(api.pendingCompletions[sessionID]) > 0
 				},
 				func() bool { return api.bgAgentRegistry.HasRunningAgents(sessionID) },
-				func() { api.bgAgentRegistry.CancelAll(sessionID) },
+				func() { api.cancelBackgroundAgents(sessionID) },
 				func() []todo_creation_human.ServerAgentInfo {
 					agents := api.bgAgentRegistry.GetAll(sessionID)
 					result := make([]todo_creation_human.ServerAgentInfo, 0, len(agents))
@@ -369,7 +369,7 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 					return len(api.pendingCompletions[sessionID]) > 0
 				},
 				func() bool { return api.bgAgentRegistry.HasRunningAgents(sessionID) },
-				func() { api.bgAgentRegistry.CancelAll(sessionID) },
+				func() { api.cancelBackgroundAgents(sessionID) },
 				func() []todo_creation_human.ServerAgentInfo {
 					agents := api.bgAgentRegistry.GetAll(sessionID)
 					result := make([]todo_creation_human.ServerAgentInfo, 0, len(agents))

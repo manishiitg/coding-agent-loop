@@ -472,37 +472,15 @@ func (w *MessageSequenceWriteAccess) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-type MessageSequenceFailurePolicy struct {
-	Action     string `json:"action,omitempty"` // "stop_step" | "repair_with_llm" | "repair_same_session"
-	MaxRetries int    `json:"max_retries,omitempty"`
-}
-
-func (p *MessageSequenceFailurePolicy) UnmarshalJSON(data []byte) error {
-	var action string
-	if err := json.Unmarshal(data, &action); err == nil {
-		p.Action = action
-		return nil
-	}
-	type alias MessageSequenceFailurePolicy
-	return json.Unmarshal(data, (*alias)(p))
-}
-
 type MessageSequenceItem struct {
-	ID               string                       `json:"id"`
-	Type             string                       `json:"type"` // "user_message" | "code" | "prevalidation"
-	Kind             string                       `json:"kind,omitempty"`
-	Title            string                       `json:"title,omitempty"`
-	Message          string                       `json:"message,omitempty"`
-	Runtime          string                       `json:"runtime,omitempty"`
-	ScriptPath       string                       `json:"script_path,omitempty"`
-	InputFiles       []string                     `json:"input_files,omitempty"`
-	InputJSON        map[string]interface{}       `json:"input_json,omitempty"`
-	OutputFiles      []string                     `json:"output_files,omitempty"`
-	WriteAccess      MessageSequenceWriteAccess   `json:"write_access,omitempty"`
-	OnFailure        MessageSequenceFailurePolicy `json:"on_failure,omitempty"`
-	SaveRepaired     bool                         `json:"save_repaired_script,omitempty"`
-	ValidationSchema *ValidationSchema            `json:"validation_schema,omitempty"`
-	Prevalidation    *ValidationSchema            `json:"prevalidation,omitempty"`
+	ID               string                     `json:"id"`
+	Type             string                     `json:"type"` // "user_message" | "prevalidation" | "foreach"
+	Kind             string                     `json:"kind,omitempty"`
+	Title            string                     `json:"title,omitempty"`
+	Message          string                     `json:"message,omitempty"`
+	WriteAccess      MessageSequenceWriteAccess `json:"write_access,omitempty"`
+	ValidationSchema *ValidationSchema          `json:"validation_schema,omitempty"`
+	Prevalidation    *ValidationSchema          `json:"prevalidation,omitempty"`
 	// foreach items: iterate db/db.sqlite table rows, one templated user_message
 	// per row. source_sql is a read-only query; each result row binds to '.'.
 	SourceSQL     string `json:"source_sql,omitempty"`     // read-only SQL against db/db.sqlite
@@ -1165,20 +1143,15 @@ func getAddMessageSequenceStepSchema() string {
 			"context_output": {"type": "string", "description": "OPTIONAL: Summary/result file for later steps. Omit when the step writes its result to the db (validate via validation_schema.db)."},
 			"items": {
 				"type": "array",
-				"description": "REQUIRED: Ordered queue of follow-up turns (turns 1..N; the step description is turn 0). Prefer multiple short user_message items over one large prompt. Use prevalidation items between turns as hard gates. Use kind=\"learning\" or write_access.learnings=true only for an intentional in-sequence learning write to learnings/_global/; the normal learning phase still runs only after the whole step based on step_config.",
+				"description": "REQUIRED: Ordered queue of follow-up turns (turns 1..N; the step description is turn 0). Prefer multiple short user_message items over one large prompt. Use prevalidation items between turns as hard gates. Deterministic code must be a standalone regular scripted step, never a sequence item. Use kind=\"learning\" or write_access.learnings=true only for an intentional in-sequence learning write to learnings/_global/; the normal learning phase still runs only after the whole step based on step_config.",
 				"items": {
 					"type": "object",
 					"properties": {
 						"id": {"type": "string"},
-						"type": {"type": "string", "description": "user_message, code, prevalidation, or foreach"},
-						"kind": {"type": "string", "description": "Drives item-scoped write access. One of: learning, knowledgebase, db, or code (when code, db/kb/learnings write access is auto-inferred from output_files paths). Omit for a plain user_message item with no extra write access. Explicit write_access overrides kind."},
+						"type": {"type": "string", "enum": ["user_message", "prevalidation", "foreach"], "description": "user_message, prevalidation, or foreach"},
+						"kind": {"type": "string", "description": "Drives item-scoped write access. One of: learning, knowledgebase, or db. Omit for a plain user_message item with no extra write access. Explicit write_access overrides kind."},
 						"title": {"type": "string"},
 						"message": {"type": "string", "description": "For user_message items: concise instruction for one turn, run in the same persistent conversation. Use plain work turns, or self-validation/interrogation turns (e.g. \"Did you actually call X? Quote its exact output. Did you actually produce Y?\") to make the step check its own work before a prevalidation gate. For foreach items: a Go text/template rendered once per row of source, with the row bound to '.' (e.g. 'Process {{.id}}: {{.task}}')."},
-						"runtime": {"type": "string", "description": "For code items: python."},
-						"script_path": {"type": "string", "description": "For code items: workspace-relative source script to execute."},
-						"input_files": {"type": "array", "items": {"type": "string"}},
-						"input_json": {"type": "object"},
-						"output_files": {"type": "array", "items": {"type": "string"}},
 						"write_access": {
 							"type": "object",
 							"description": "Item-scoped writes only. Reads for kb/db/learnings are always open. Folder-level booleans only — NO per-file path scoping (a \"paths\" list is rejected); db:true grants the whole db/ folder. Use learnings:true sparingly for deliberate in-sequence writes to learnings/_global/; prefer normal step-level learning for automatic post-step extraction.",
@@ -1188,14 +1161,6 @@ func getAddMessageSequenceStepSchema() string {
 								"learnings": {"type": "boolean"}
 							}
 						},
-						"on_failure": {
-							"type": "object",
-							"properties": {
-								"action": {"type": "string", "description": "CODE ITEMS ONLY (ignored for user_message/prevalidation items): stop_step (default), repair_with_llm, or repair_same_session."},
-								"max_retries": {"type": "number"}
-							}
-						},
-						"save_repaired_script": {"type": "boolean"},
 						"validation_schema": {"type": "object", "description": "For prevalidation items: backend validation schema (a hard gate). Interleave prevalidation items with DIFFERENT schemas between turns to gate distinct claims one at a time."},
 						"prevalidation": {"type": "object", "description": "Alias for validation_schema on a prevalidation item."},
 						"source_sql": {"type": "string", "description": "For foreach items: a read-only SQL query against db/db.sqlite (e.g. \"SELECT id, name FROM tasks WHERE status='pending'\"). The runtime runs it and sends one user_message turn per result row, with the row (an object keyed by column) bound to '.' in the message template. Use this to reliably process every row a prior step wrote to the db."},
@@ -4134,6 +4099,10 @@ func validateTodoTaskStepFieldsTyped(step *TodoTaskPlanStep) error {
 }
 
 func validateMessageSequenceStepFieldsTyped(step *MessageSequencePlanStep) error {
+	return validateMessageSequenceStepFieldsTypedWithOptions(step, false)
+}
+
+func validateMessageSequenceStepFieldsTypedWithOptions(step *MessageSequencePlanStep, allowLegacyCode bool) error {
 	if step == nil {
 		return fmt.Errorf("message_sequence step is nil")
 	}
@@ -4168,12 +4137,10 @@ func validateMessageSequenceStepFieldsTyped(step *MessageSequencePlanStep) error
 				return fmt.Errorf("message_sequence step %q item %q is a user_message but message is empty", step.ID, item.ID)
 			}
 		case "code":
-			if strings.TrimSpace(item.ScriptPath) == "" {
-				return fmt.Errorf("message_sequence step %q item %q is code but script_path is empty", step.ID, item.ID)
+			if allowLegacyCode {
+				continue
 			}
-			if item.Runtime != "" && item.Runtime != "python" && item.Runtime != "python3" {
-				return fmt.Errorf("message_sequence step %q item %q has unsupported runtime %q; only python is supported", step.ID, item.ID, item.Runtime)
-			}
+			return fmt.Errorf("message_sequence step %q item %q uses removed type \"code\"; upgrade this workflow to contract v1.0.10 so migrate_message_sequence_code_items can convert it to a standalone scripted regular step", step.ID, item.ID)
 		case "prevalidation":
 			if item.ValidationSchema == nil && item.Prevalidation == nil && step.ValidationSchema == nil {
 				return fmt.Errorf("message_sequence step %q item %q is prevalidation but no validation_schema/prevalidation exists", step.ID, item.ID)
@@ -4196,7 +4163,7 @@ func validateMessageSequenceStepFieldsTyped(step *MessageSequencePlanStep) error
 		// gate plans on a guess. Enforcement lives at the runtime folder guard
 		// (the source of truth — it blocks the write and emits an actionable
 		// "grant write_access.db" failure), and structured signals (kind /
-		// output_files) auto-grant via resolveMessageSequenceItemWriteAccess. The
+		// item kind can auto-grant via resolveMessageSequenceItemWriteAccess. The
 		// authoring contract is carried by guidance, not a prose regex.
 	}
 	return nil
@@ -4496,6 +4463,7 @@ func registerPlanModificationTools(
 	agentName string, // e.g., "planning agent" or "plan improvement agent"
 	unlockLearningsFunc func(context.Context, string, int) error, // Optional: function to unlock learnings after plan modifications
 ) error {
+	rawWriteFile := writeFile
 	writeFile = withPlanMutationWriteAccess(workspacePath, writeFile)
 
 	// Note: human_feedback is already registered via WorkspaceTools (created by createCustomTools in server.go)
@@ -4516,6 +4484,20 @@ func registerPlanModificationTools(
 		"workflow",
 	); err != nil {
 		return fmt.Errorf("failed to register create_plan tool: %w", err)
+	}
+
+	migrateSequenceCodeParams, err := parseSchemaForToolParameters(`{"type":"object","properties":{}}`)
+	if err != nil {
+		return fmt.Errorf("failed to parse migrate_message_sequence_code_items schema: %w", err)
+	}
+	if err := mcpAgent.RegisterCustomTool(
+		"migrate_message_sequence_code_items",
+		"Product-managed workflow-version migration for issue #170. Converts only unambiguous top-level message_sequence steps containing code + prevalidation items into visible standalone scripted regular steps. It copies scripts to learnings/<step-id>/main.py, preserves durable dependencies/outputs/validation, and updates plan/config with rollback on a config-write failure. Mixed conversational/code or nested sequences are rejected without changing plan/config. Call only during the v1.0.10 workflow preflight.",
+		migrateSequenceCodeParams,
+		createMigrateMessageSequenceCodeItemsExecutor(workspacePath, logger, readFile, rawWriteFile),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register migrate_message_sequence_code_items tool: %w", err)
 	}
 
 	// Register workflow-specific plan update tools with "workflow" category
@@ -4610,7 +4592,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"add_message_sequence_step",
-		"Add a message_sequence step to the plan. Use this only when the user asks for a persistent single-agent conversation with an ordered queue of short user messages, optional prevalidation items, and optional Python code items. As a todo_task predefined route, use message_sequence when the orchestrator should reuse the same specialist conversation for critique, test feedback, validation feedback, or follow-up work; restart is controlled at execution time with message_sequence_restart. Reads for KB/db/learnings are always open; writes are item-scoped through write_access. Prefer small focused user messages, and add reference-check, hallucination-check, critique, or self-validation messages where helpful.",
+		"Add a message_sequence step to the plan. Use this only when the user asks for a persistent single-agent conversation with an ordered queue of short user messages, optional foreach turns, and optional prevalidation gates. Deterministic code belongs in a standalone regular scripted step. As a todo_task predefined route, use message_sequence when the orchestrator should reuse the same specialist conversation for critique, test feedback, validation feedback, or follow-up work; restart is controlled at execution time with message_sequence_restart. Reads for KB/db/learnings are always open; writes are item-scoped through write_access. Prefer small focused user messages, and add reference-check, hallucination-check, critique, or self-validation messages where helpful.",
 		messageSequenceParams,
 		createAddMessageSequenceStepExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
 		"workflow",

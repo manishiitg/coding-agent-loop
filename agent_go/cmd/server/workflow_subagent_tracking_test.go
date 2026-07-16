@@ -64,6 +64,38 @@ func TestWorkflowSubAgentTrackingNotifierSignalsCompletion(t *testing.T) {
 	}
 }
 
+func TestWorkflowSubAgentTrackingNotifierTracksParentReconciledChildWithoutSyntheticNotification(t *testing.T) {
+	eventStore := internalevents.NewEventStore(10)
+	defer eventStore.Stop()
+
+	const sessionID = "session-parent-reconciles"
+	const agentID = "child-review-1"
+	api := &StreamingAPI{
+		bgAgentRegistry: NewBackgroundAgentRegistry(),
+		eventStore:      eventStore,
+	}
+	notifier := &workflowSubAgentTrackingNotifier{api: api, sessionID: sessionID}
+	notifier.OnSubAgentStart(todo_creation_human.WorkshopExecutionStart{
+		ID: agentID, ParentExecutionID: "parent-fixer", Name: "Read-only review", Kind: "workflow_sub_agent",
+		Metadata: map[string]string{"suppress_auto_notification": "true", "async_parent_reconciles": "true"},
+	})
+	notifier.OnSubAgentComplete(agentID, "Read-only review", "review complete", nil)
+
+	tracked := api.bgAgentRegistry.Get(sessionID, agentID)
+	if tracked == nil {
+		t.Fatal("expected parent-owned child to remain in the execution registry")
+	}
+	snapshot := tracked.GetSnapshot()
+	if snapshot.Status != BGAgentCompleted || snapshot.ParentExecutionID != "parent-fixer" || snapshot.Result != "review complete" {
+		t.Fatalf("unexpected tracked child: %#v", snapshot)
+	}
+	select {
+	case got := <-api.bgAgentRegistry.GetNotificationChannel(sessionID):
+		t.Fatalf("parent-reconciled child leaked synthetic root notification for %q", got)
+	case <-time.After(30 * time.Millisecond):
+	}
+}
+
 func TestWorkflowSubAgentTrackingNotifierSignalsStart(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	defer store.Stop()

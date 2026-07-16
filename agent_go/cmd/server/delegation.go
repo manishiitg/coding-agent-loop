@@ -897,37 +897,39 @@ func (n *workflowSubAgentTrackingNotifier) OnSubAgentStart(start todo_creation_h
 		Kind:              kind,
 		Status:            BGAgentRunning,
 		CreatedAt:         time.Now(),
+		Metadata:          start.Metadata,
 		cancel:            start.Cancel,
 	}
 	n.api.bgAgentRegistry.Register(n.sessionID, bgAgent)
-
-	// Pre-create the completion channel and loop so a fast sub-agent completion
-	// cannot drop its auto-notification. This is only plumbing; no synthetic
-	// turn is emitted until OnSubAgentComplete calls NotifyCompletion.
-	n.api.bgAgentRegistry.GetNotificationChannel(n.sessionID)
-	n.api.completionLoopStartedMu.Lock()
-	if n.api.completionLoopStarted == nil {
-		n.api.completionLoopStarted = make(map[string]bool)
+	suppressAutoNotification := start.Metadata["suppress_auto_notification"] == "true"
+	if !suppressAutoNotification {
+		// Pre-create the completion channel and loop so a fast sub-agent completion
+		// cannot drop its auto-notification. Parent-reconciled children skip this
+		// path because their result returns to the owning orchestrator conversation.
+		n.api.bgAgentRegistry.GetNotificationChannel(n.sessionID)
+		n.api.completionLoopStartedMu.Lock()
+		if n.api.completionLoopStarted == nil {
+			n.api.completionLoopStarted = make(map[string]bool)
+		}
+		if !n.api.completionLoopStarted[n.sessionID] {
+			n.api.completionLoopStarted[n.sessionID] = true
+			go n.api.backgroundCompletionLoop(n.sessionID)
+		}
+		n.api.completionLoopStartedMu.Unlock()
 	}
-	if !n.api.completionLoopStarted[n.sessionID] {
-		n.api.completionLoopStarted[n.sessionID] = true
-		go n.api.backgroundCompletionLoop(n.sessionID)
-	}
-	n.api.completionLoopStartedMu.Unlock()
 
 	n.api.emitBackgroundAgentEvent(n.sessionID, start.ID, "background_agent_started", map[string]interface{}{
 		"agent_id":            start.ID,
 		"name":                start.Name,
 		"parent_execution_id": start.ParentExecutionID,
 	})
-	n.api.notifyBackgroundAgentStarted(n.sessionID, start.ID)
+	if !suppressAutoNotification {
+		n.api.notifyBackgroundAgentStarted(n.sessionID, start.ID)
+	}
 }
 
 func (n *workflowSubAgentTrackingNotifier) OnSubAgentComplete(agentID, name string, result string, err error) {
 	if n == nil || n.api == nil || strings.TrimSpace(agentID) == "" {
-		return
-	}
-	if n.api.autoNotificationSessionUnreachable(n.sessionID) {
 		return
 	}
 	agent := n.api.bgAgentRegistry.Get(n.sessionID, agentID)
@@ -937,6 +939,7 @@ func (n *workflowSubAgentTrackingNotifier) OnSubAgentComplete(agentID, name stri
 	if agent.GetStatus() == BGAgentCanceled {
 		return
 	}
+	suppressAutoNotification := agent.GetSnapshot().Metadata["suppress_auto_notification"] == "true"
 	if err != nil {
 		if strings.Contains(err.Error(), "context canceled") || strings.Contains(err.Error(), "context deadline exceeded") {
 			agent.SetCanceled()
@@ -950,7 +953,9 @@ func (n *workflowSubAgentTrackingNotifier) OnSubAgentComplete(agentID, name stri
 						"name":     name,
 						"status":   "canceled",
 					})
-					n.api.bgAgentRegistry.NotifyCompletion(n.sessionID, agentID)
+					if !suppressAutoNotification {
+						n.api.bgAgentRegistry.NotifyCompletion(n.sessionID, agentID)
+					}
 				}
 			}
 			return
@@ -967,7 +972,9 @@ func (n *workflowSubAgentTrackingNotifier) OnSubAgentComplete(agentID, name stri
 			"error":    err.Error(),
 			"duration": duration.Truncate(time.Second).String(),
 		})
-		n.api.bgAgentRegistry.NotifyCompletion(n.sessionID, agentID)
+		if !suppressAutoNotification {
+			n.api.bgAgentRegistry.NotifyCompletion(n.sessionID, agentID)
+		}
 		return
 	}
 	agent.SetResult(result)
@@ -982,7 +989,9 @@ func (n *workflowSubAgentTrackingNotifier) OnSubAgentComplete(agentID, name stri
 		"result":   truncateForToolResponse(result, 500),
 		"duration": duration.Truncate(time.Second).String(),
 	})
-	n.api.bgAgentRegistry.NotifyCompletion(n.sessionID, agentID)
+	if !suppressAutoNotification {
+		n.api.bgAgentRegistry.NotifyCompletion(n.sessionID, agentID)
+	}
 }
 
 // truncateForToolResponse truncates a string for inclusion in tool responses

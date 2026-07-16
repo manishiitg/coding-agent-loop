@@ -1276,11 +1276,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 	// dependency/agent errors, context cancellations) — without this defer they'd
 	// skip the finished event and the UI would show the step stuck on "running"
 	// even after it completed or pre-validation failed. Emit "failed" on an error
-	// return, "end" otherwise. Use a background context so a cancellation-driven
-	// return still reaches the bridge. (Replaces the single success-path emit that
-	// used to live at the end of the function.)
+	// return, "end" otherwise. WithoutCancel preserves execution-local event
+	// ownership while allowing a cancellation-driven return to reach the bridge.
 	defer func() {
-		emitCtx := context.Background()
+		emitCtx := context.WithoutCancel(ctx)
 		if err != nil {
 			hcpo.emitStepFailedEvent(emitCtx, step, stepIndex, stepPath, isBranchStep, err.Error())
 		} else {
@@ -1295,7 +1294,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 	// session guard would otherwise let a step in iteration-N read/write other iterations
 	// via `cat`/`cp`. Snapshot and restore the prior config so the builder's out-of-step
 	// chat shell commands keep their broader access.
-	if sessionID := hcpo.GetMCPSessionID(); sessionID != "" {
+	// Sub-agents receive a dedicated session-level guard when their execution
+	// agent is created. Mutating the parent's shared session here would make
+	// parallel children overwrite and restore one another's access policy.
+	if sessionID := hcpo.GetMCPSessionID(); sessionID != "" && !isSubAgent {
 		narrowAgentCfg := getAgentConfigs(step)
 		narrowKBAccess := resolveKnowledgebaseAccess(narrowAgentCfg, hcpo.UseKnowledgebase())
 		narrowKBWriteMethod := resolveKnowledgebaseWriteMethod(narrowAgentCfg)
@@ -1860,6 +1862,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				var attemptStartedAt time.Time
 				var attemptCompletedAt time.Time
 				var attemptDuration time.Duration
+				var timingCaptureCtx context.Context
 
 				// Track scripted presence to poison continuation in future attempts.
 				if isScriptedMode {
@@ -1892,6 +1895,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [ADAPTIVE] Step %d attempt %d/%d forcing Tier %d (%s): %s",
 						stepIndex+1, retryAttempt, maxRetryAttempts, int(attemptTier), TierLevelLabel(attemptTier), adaptiveTierReason))
 				}
+				timingCaptureCtx = executionAgentCtx
 
 				if !shouldContinue {
 					// Fresh-agent path: close prior (if any) and create a new execution agent.
@@ -1947,13 +1951,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					}
 
 					if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
-						cab.StartTimingCapture()
+						timingCaptureCtx = cab.StartTimingCaptureFor(timingCaptureCtx)
 					}
 					attemptStartedAt = time.Now().UTC()
 					hcpo.recordWorkflowContinuationPhase(ctx, artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseMainExecution, workflowContinuationStatusRunning, "", executionAgent)
 					// Execute execution-only agent with learning history (reused from learning reading above)
-					executionResult, executionConversationHistory, err = hcpo.withWorkshopMessageTarget(ctx, step.GetID(), "execution", executionAgent, func() (string, []llmtypes.MessageContent, error) {
-						return executionAgent.Execute(ctx, templateVars, []llmtypes.MessageContent{})
+					executionResult, executionConversationHistory, err = hcpo.withWorkshopMessageTarget(timingCaptureCtx, step.GetID(), "execution", executionAgent, func() (string, []llmtypes.MessageContent, error) {
+						return executionAgent.Execute(timingCaptureCtx, templateVars, []llmtypes.MessageContent{})
 					})
 				} else {
 					// Continuation path: send validation feedback as a follow-up user
@@ -1969,18 +1973,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						return "", updatedContextFiles, fmt.Errorf("execution agent has no base agent for continuation on step %d attempt %d", stepIndex+1, retryAttempt)
 					}
 					if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
-						cab.StartTimingCapture()
+						timingCaptureCtx = cab.StartTimingCaptureFor(timingCaptureCtx)
 					}
 					attemptStartedAt = time.Now().UTC()
 					hcpo.recordWorkflowContinuationPhase(ctx, artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseMainExecution, workflowContinuationStatusRunning, "", executionAgent)
-					executionResult, executionConversationHistory, err = hcpo.withWorkshopMessageTarget(ctx, step.GetID(), "validation-retry", executionAgent, func() (string, []llmtypes.MessageContent, error) {
-						return ba.Execute(ctx, feedbackUserMsg, executionConversationHistory, "", false)
+					executionResult, executionConversationHistory, err = hcpo.withWorkshopMessageTarget(timingCaptureCtx, step.GetID(), "validation-retry", executionAgent, func() (string, []llmtypes.MessageContent, error) {
+						return ba.Execute(timingCaptureCtx, feedbackUserMsg, executionConversationHistory, "", false)
 					})
 				}
 				attemptCompletedAt = time.Now().UTC()
 				attemptDuration = attemptCompletedAt.Sub(attemptStartedAt)
 				if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
-					timingCapture := cab.DrainTimingCapture()
+					timingCapture := cab.DrainTimingCaptureFor(timingCaptureCtx)
 					capturedToolCalls = timingCapture.ToolCalls
 					capturedLLMCalls = timingCapture.LLMCalls
 				}

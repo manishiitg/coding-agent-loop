@@ -246,25 +246,13 @@ export interface MessageSequenceWriteAccess {
   learnings?: boolean;
 }
 
-export interface MessageSequenceFailurePolicy {
-  action?: 'stop_step' | 'repair_with_llm' | 'repair_same_session' | string;
-  max_retries?: number;
-}
-
 export interface MessageSequenceItem {
   id: string;
-  type: 'user_message' | 'code' | 'prevalidation' | 'foreach' | string;
+  type: 'user_message' | 'prevalidation' | 'foreach' | string;
   kind?: 'execution' | 'learning' | 'knowledgebase' | 'db' | 'check' | 'critique' | 'self_validation' | 'reference_check' | 'hallucination_check' | 'code_review' | string;
   title?: string;
   message?: string;
-  runtime?: 'python' | 'python3' | string;
-  script_path?: string;
-  input_files?: string[];
-  input_json?: Record<string, unknown>;
-  output_files?: string[];
   write_access?: MessageSequenceWriteAccess;
-  on_failure?: MessageSequenceFailurePolicy | string;
-  save_repaired_script?: boolean;
   validation_schema?: ValidationSchema;
   prevalidation?: ValidationSchema;
   source?: string;            // foreach items: workspace-relative JSON array file (e.g. db/tasks.json)

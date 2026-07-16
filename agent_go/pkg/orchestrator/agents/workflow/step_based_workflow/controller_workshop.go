@@ -51,7 +51,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) LoadPlanForWorkshop(ctx context.Conte
 		return fmt.Errorf("cannot resolve orphan step references in plan.json: %w", err)
 	}
 	if err := validateLoadedPlanStructure(&plan); err != nil {
-		return fmt.Errorf("plan.json uses an invalid or legacy format: %w", err)
+		if compatibilityErr := validateLoadedPlanStructureAllowLegacyMessageSequenceCode(&plan); compatibilityErr != nil {
+			return fmt.Errorf("plan.json uses an invalid or legacy format: %w", err)
+		}
+		hcpo.GetLogger().Warn("[WORKSHOP] Loaded a plan containing removed message_sequence code items only for the v1.0.10 migration preflight; execution remains blocked until migration succeeds")
 	}
 	hcpo.approvedPlan = &plan
 	hcpo.GetLogger().Debug(fmt.Sprintf("[WORKSHOP_DEBUG] LoadPlanForWorkshop: loaded plan with %d steps", len(plan.Steps)))

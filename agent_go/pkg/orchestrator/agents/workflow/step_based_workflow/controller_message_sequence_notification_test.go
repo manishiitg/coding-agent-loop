@@ -22,7 +22,7 @@ func TestMessageSequenceItemNotificationStartAndComplete(t *testing.T) {
 	}
 	item := MessageSequenceItem{
 		ID:   "write-note",
-		Type: "code",
+		Type: "user_message",
 		Kind: "execution",
 	}
 
@@ -39,7 +39,7 @@ func TestMessageSequenceItemNotificationStartAndComplete(t *testing.T) {
 	if notifier.starts[0].Kind != "message_sequence_item" {
 		t.Fatalf("start kind = %q, want message_sequence_item", notifier.starts[0].Kind)
 	}
-	if !strings.Contains(name, "Morning sequence / write-note (code)") {
+	if !strings.Contains(name, "Morning sequence / write-note (user_message)") {
 		t.Fatalf("unexpected notification name: %q", name)
 	}
 	for key, want := range map[string]string{
@@ -49,7 +49,7 @@ func TestMessageSequenceItemNotificationStartAndComplete(t *testing.T) {
 		"step_index":     "2",
 		"step_path":      "step-3",
 		"item_id":        "write-note",
-		"item_type":      "code",
+		"item_type":      "user_message",
 		"item_kind":      "execution",
 		"source":         "configured_queue",
 		"run_folder":     "iteration-0",
@@ -60,14 +60,14 @@ func TestMessageSequenceItemNotificationStartAndComplete(t *testing.T) {
 		}
 	}
 
-	orchestrator.completeMessageSequenceItemNotification(context.Background(), execID, name, "code item write-note succeeded", meta, active, nil)
+	orchestrator.completeMessageSequenceItemNotification(context.Background(), execID, name, "message write-note succeeded", meta, active, nil)
 	if len(notifier.completes) != 1 {
 		t.Fatalf("expected one completion, got %d", len(notifier.completes))
 	}
 	if notifier.completes[0].id != execID {
 		t.Fatalf("completion ID = %q, want %q", notifier.completes[0].id, execID)
 	}
-	if notifier.completes[0].result != "code item write-note succeeded" {
+	if notifier.completes[0].result != "message write-note succeeded" {
 		t.Fatalf("completion result = %q", notifier.completes[0].result)
 	}
 	if notifier.completes[0].err != nil {

@@ -59,6 +59,7 @@ func TestTodoTaskOrchestratorPromptDocumentsMessageSequenceRoutes(t *testing.T) 
 	})
 
 	requiredSnippets := []string{
+		"[AUTO-NOTIFICATION] SUB-AGENT COMPLETION BATCH",
 		"**Message sequence routes**:",
 		"Step type: message_sequence",
 		"First call starts the route conversation",
@@ -67,6 +68,9 @@ func TestTodoTaskOrchestratorPromptDocumentsMessageSequenceRoutes(t *testing.T) 
 		"instructions become the re-entry user message",
 		"message_sequence_restart=true",
 		"configured queue is replayed from the beginning",
+		"query_sub_agent(execution_id)",
+		"stop_sub_agent(execution_id)",
+		"never poll it to detect normal completion",
 	}
 	for _, snippet := range requiredSnippets {
 		if !strings.Contains(prompt, snippet) {

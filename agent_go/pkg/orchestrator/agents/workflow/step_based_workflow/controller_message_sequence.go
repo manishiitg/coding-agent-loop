@@ -1,20 +1,17 @@
 package step_based_workflow
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents"
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
 
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -230,6 +227,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceStep(
 	isRoute := opts.Source == "orchestrator_reentry"
 	routeKey := hcpo.msgSeqRouteKey(stepPath, sequenceStep.GetID())
 	sessionRelPath := hcpo.messageSequenceSessionPath(stepPath, sequenceStep.GetID())
+	if isRoute {
+		unlockRoute := hcpo.lockMsgSeqRoute(routeKey)
+		defer unlockRoute()
+	}
 
 	if isRoute && opts.Restart {
 		hcpo.clearMsgSeqRouteSession(routeKey)
@@ -477,7 +478,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceItem(ctx contex
 	case "foreach":
 		return hcpo.executeMessageSequenceForeachItem(ctx, step, item, stepIndex, stepPath, session)
 	case "code":
-		return hcpo.executeMessageSequenceCodeItem(ctx, step, item, stepPath, session)
+		return "", fmt.Errorf("message_sequence step %q item %q uses removed type \"code\"; upgrade the workflow to contract v1.0.10 before running it", step.ID, item.ID)
 	case "prevalidation":
 		schema := item.ValidationSchema
 		if schema == nil {
@@ -709,121 +710,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceForeachItem(ctx
 	return fmt.Sprintf("foreach %s: processed %d row(s)", item.ID, len(messages)), nil
 }
 
-func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceCodeItem(ctx context.Context, step *MessageSequencePlanStep, item MessageSequenceItem, stepPath string, session *messageSequenceSession) (string, error) {
-	if strings.TrimSpace(item.ScriptPath) == "" {
-		return "", fmt.Errorf("code item %q missing script_path", item.ID)
-	}
-	source, err := hcpo.ReadWorkspaceFile(ctx, item.ScriptPath)
-	if err != nil {
-		return "", fmt.Errorf("read code item script %q: %w", item.ScriptPath, err)
-	}
-	itemRel := hcpo.messageSequenceItemRelPath(stepPath, step.GetID(), item.ID)
-	codeRel := filepath.Join(itemRel, "code")
-	mainRel := filepath.Join(codeRel, "main.py")
-	if err := hcpo.WriteWorkspaceFile(ctx, mainRel, source); err != nil {
-		return "", fmt.Errorf("write code item working copy: %w", err)
-	}
-
-	inputContract := map[string]interface{}{
-		"input_json":   item.InputJSON,
-		"input_files":  item.InputFiles,
-		"output_files": item.OutputFiles,
-		"read_access": map[string]bool{
-			"knowledgebase": true,
-			"db":            true,
-			"learnings":     true,
-		},
-		"write_access": resolveMessageSequenceItemWriteAccess(item),
-	}
-	inputBytes, _ := json.MarshalIndent(inputContract, "", "  ")
-	if err := hcpo.WriteWorkspaceFile(ctx, filepath.Join(itemRel, "input.json"), string(inputBytes)); err != nil {
-		return "", fmt.Errorf("write code item input contract: %w", err)
-	}
-
-	maxRepairAttempts := 0
-	if item.OnFailure.Action == "repair_with_llm" || item.OnFailure.Action == "repair_same_session" {
-		maxRepairAttempts = item.OnFailure.MaxRetries
-		if maxRepairAttempts <= 0 {
-			maxRepairAttempts = 1
-		}
-	}
-
-	var output string
-	var exitCode int
-	for attempt := 0; attempt <= maxRepairAttempts; attempt++ {
-		output, exitCode, err = hcpo.runMessageSequencePython(ctx, stepPath, step.GetID(), getAgentConfigs(step), item, mainRel, codeRel, itemRel)
-		hcpo.writeMessageSequenceCodeResult(ctx, item, itemRel, mainRel, output, exitCode, err)
-		if err == nil && exitCode == 0 {
-			if item.SaveRepaired && attempt > 0 {
-				if repairedSource, readErr := hcpo.ReadWorkspaceFile(ctx, mainRel); readErr == nil {
-					_ = hcpo.WriteWorkspaceFile(ctx, item.ScriptPath, repairedSource)
-				}
-			}
-			session.LastRuntimeContext = hcpo.buildCodeItemRuntimeContext(item, mainRel, output, exitCode)
-			return fmt.Sprintf("code item %s succeeded", item.ID), nil
-		}
-		if attempt >= maxRepairAttempts {
-			break
-		}
-		failureContext := hcpo.buildCodeItemFailureContext(item, itemRel, mainRel, output, exitCode, err)
-		if repairErr := hcpo.executeMessageSequenceCodeRepair(ctx, step, item, stepPath, session, itemRel, codeRel, failureContext, attempt+1); repairErr != nil {
-			return "", repairErr
-		}
-	}
-	if err != nil {
-		return "", err
-	}
-	return "", fmt.Errorf("code item %q failed with exit code %d", item.ID, exitCode)
-}
-
-func (hcpo *StepBasedWorkflowOrchestrator) writeMessageSequenceCodeResult(ctx context.Context, item MessageSequenceItem, itemRel string, scriptPath string, output string, exitCode int, execErr error) {
-	result := map[string]interface{}{
-		"item_id":      item.ID,
-		"status":       "success",
-		"exit_code":    exitCode,
-		"script_path":  scriptPath,
-		"stdout_path":  filepath.Join(itemRel, "stdout.txt"),
-		"stderr_path":  filepath.Join(itemRel, "stderr.txt"),
-		"output_files": item.OutputFiles,
-	}
-	if execErr != nil || exitCode != 0 {
-		result["status"] = "failed"
-		if execErr != nil {
-			result["error"] = execErr.Error()
-		}
-	}
-	if strings.TrimSpace(output) != "" {
-		result["log_excerpt"] = truncateMessageSequenceLog(output, 2000)
-	}
-	resultBytes, _ := json.MarshalIndent(result, "", "  ")
-	_ = hcpo.WriteWorkspaceFile(ctx, filepath.Join(itemRel, "result.json"), string(resultBytes))
-}
-
-func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceCodeRepair(ctx context.Context, step *MessageSequencePlanStep, item MessageSequenceItem, stepPath string, session *messageSequenceSession, itemRel string, codeRel string, failureContext string, attempt int) error {
-	writeAccess := hcpo.constrainMessageSequenceWriteAccess(getAgentConfigs(step), resolveMessageSequenceItemWriteAccess(item))
-	readPaths, writePaths := hcpo.setupMessageSequenceFolderGuard(stepPath, step.GetID(), getAgentConfigs(step), writeAccess)
-	readPaths = append(readPaths, itemRel, codeRel)
-	writePaths = append(writePaths, itemRel, codeRel)
-	override := &messageSequenceFolderGuardOverride{
-		ReadPaths:  common.DeduplicateStrings(append(readPaths, writePaths...)),
-		WritePaths: common.DeduplicateStrings(writePaths),
-	}
-	runtime, agentCtx, err := hcpo.getMessageSequenceRuntime(ctx, step, stepPath, session, override.ReadPaths, override.WritePaths)
-	if err != nil {
-		return err
-	}
-	message := failureContext + "\n\nRepair the working copy at " + hcpo.messageSequenceAbsPath(filepath.Join(codeRel, "main.py")) + ". Keep the fix narrowly scoped. Do not announce success; the runtime will rerun the script after your edit."
-	templateVars := hcpo.buildMessageSequenceTemplateVars(step, item, 0, stepPath, message, override.ReadPaths, override.WritePaths, writeAccess)
-	_, history, err := hcpo.withWorkshopMessageTarget(agentCtx, step.GetID(), "message-sequence-repair:"+item.ID, runtime.Agent, func() (string, []llmtypes.MessageContent, error) {
-		return runtime.Agent.Execute(agentCtx, templateVars, session.ConversationHistory)
-	})
-	if err != nil {
-		return err
-	}
-	session.ConversationHistory = history
-	return nil
-}
-
 func (hcpo *StepBasedWorkflowOrchestrator) getMessageSequenceRuntime(ctx context.Context, step *MessageSequencePlanStep, stepPath string, session *messageSequenceSession, readPaths, writePaths []string) (*messageSequenceRuntime, context.Context, error) {
 	if session == nil {
 		return nil, ctx, fmt.Errorf("message_sequence session is nil")
@@ -967,16 +853,6 @@ func resolveMessageSequenceItemWriteAccess(item MessageSequenceItem) MessageSequ
 		access.Knowledgebase = true
 	case "db":
 		access.DB = true
-	case "code":
-		for _, output := range item.OutputFiles {
-			clean := filepath.ToSlash(filepath.Clean(output))
-			if clean == DBFolderName || strings.HasPrefix(clean, DBFolderName+"/") || strings.Contains(clean, "/"+DBFolderName+"/") {
-				access.DB = true
-			}
-			if strings.HasPrefix(clean, KnowledgebaseFolderName+"/notes/") || strings.Contains(clean, "/"+KnowledgebaseFolderName+"/notes/") {
-				access.Knowledgebase = true
-			}
-		}
 	}
 	return access
 }
@@ -1090,157 +966,6 @@ func buildMessageSequenceAccessNote(writeAccess MessageSequenceWriteAccess) stri
 	return "Reads are available for execution outputs, soul, builder logs, db/, knowledgebase/, learnings/_global/, and this step's learnings folder. Writes for this item are limited to: " + strings.Join(grants, ", ") + "."
 }
 
-func (hcpo *StepBasedWorkflowOrchestrator) runMessageSequencePython(ctx context.Context, stepPath string, stepID string, stepConfig *AgentConfigs, item MessageSequenceItem, mainRel string, codeRel string, itemRel string) (string, int, error) {
-	writeAccess := resolveMessageSequenceItemWriteAccess(item)
-	readPaths, writePaths := hcpo.setupMessageSequenceFolderGuard(stepPath, stepID, stepConfig, writeAccess)
-	itemAbs := hcpo.messageSequenceAbsPath(itemRel)
-	codeAbs := hcpo.messageSequenceAbsPath(codeRel)
-	mainAbs := hcpo.messageSequenceAbsPath(mainRel)
-	// Guard paths are docs-root-relative (workflow-root-inclusive), matching the
-	// other entries from setupMessageSequenceFolderGuard — so prefix the
-	// workflow-root-relative item/code rels with the workflow root.
-	itemGuard := filepath.Join(hcpo.GetWorkspacePath(), itemRel)
-	codeGuard := filepath.Join(hcpo.GetWorkspacePath(), codeRel)
-	readPaths = append(readPaths, itemGuard, codeGuard)
-	writePaths = append(writePaths, itemGuard, codeGuard)
-
-	var cmd strings.Builder
-	cmd.WriteString("python3 -B ")
-	cmd.WriteString(shellQuotePath(mainAbs))
-	for _, input := range item.InputFiles {
-		cmd.WriteString(" ")
-		cmd.WriteString(shellQuotePath(hcpo.messageSequenceAbsPath(input)))
-	}
-	timeout := 0
-	useShell := true
-	extraEnv := map[string]string{
-		"STEP_OUTPUT_DIR":                    itemAbs,
-		"STEP_EXECUTION_DIR":                 itemAbs,
-		"DB_PATH":                            filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), DBFolderName, "db.sqlite"),
-		"MESSAGE_SEQUENCE_STEP_ID":           stepID,
-		"MESSAGE_SEQUENCE_ITEM_ID":           item.ID,
-		"MESSAGE_SEQUENCE_ITEM_DIR":          itemAbs,
-		"MESSAGE_SEQUENCE_INPUT_JSON":        filepath.Join(itemAbs, "input.json"),
-		"MESSAGE_SEQUENCE_OUTPUT_FILES_JSON": strings.Join(item.OutputFiles, ","),
-		"PYTHONDONTWRITEBYTECODE":            "1",
-		"SCRIPT_VERBOSE":                     "1",
-	}
-	if envRef := hcpo.GetWorkspaceEnvRef(); envRef != nil {
-		hcpo.LockWorkspaceEnv()
-		for k, v := range envRef {
-			if _, reserved := extraEnv[k]; reserved {
-				continue
-			}
-			extraEnv[k] = v
-		}
-		hcpo.UnlockWorkspaceEnv()
-	}
-	reqParams := workspace.ExecuteShellCommandParams{
-		Command:          cmd.String(),
-		WorkingDirectory: strings.TrimPrefix(codeAbs, GetPromptDocsRoot()+"/"),
-		Timeout:          &timeout,
-		UseShell:         &useShell,
-		FolderGuard: &workspace.FolderGuardConfig{
-			Enabled:    true,
-			ReadPaths:  common.DeduplicateStrings(append(readPaths, writePaths...)),
-			WritePaths: common.DeduplicateStrings(writePaths),
-		},
-		ExtraEnv: extraEnv,
-	}
-
-	jsonBody, err := json.Marshal(reqParams)
-	if err != nil {
-		return "", -1, err
-	}
-	req, err := http.NewRequestWithContext(ctx, "POST", getWorkspaceAPIURL()+"/api/execute", bytes.NewBuffer(jsonBody))
-	if err != nil {
-		return "", -1, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", -1, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", -1, err
-	}
-	var apiResp struct {
-		Success bool   `json:"success"`
-		Error   string `json:"error"`
-		Data    struct {
-			Stdout   string `json:"stdout"`
-			Stderr   string `json:"stderr"`
-			ExitCode int    `json:"exit_code"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return "", -1, fmt.Errorf("parse shell response: %w", err)
-	}
-	_ = hcpo.WriteWorkspaceFile(ctx, filepath.Join(itemRel, "stdout.txt"), apiResp.Data.Stdout)
-	_ = hcpo.WriteWorkspaceFile(ctx, filepath.Join(itemRel, "stderr.txt"), apiResp.Data.Stderr)
-	combined := strings.TrimSpace(apiResp.Data.Stdout)
-	if strings.TrimSpace(apiResp.Data.Stderr) != "" {
-		combined = strings.TrimSpace(combined + "\n" + apiResp.Data.Stderr)
-	}
-	if !apiResp.Success && apiResp.Data.ExitCode == 0 {
-		return combined, -1, fmt.Errorf("workspace shell execute: %s", apiResp.Error)
-	}
-	return combined, apiResp.Data.ExitCode, nil
-}
-
-func (hcpo *StepBasedWorkflowOrchestrator) buildCodeItemRuntimeContext(item MessageSequenceItem, scriptPath string, output string, exitCode int) string {
-	snippet := truncateMessageSequenceLog(output, 2000)
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## Runtime context from previous code item: %s\n", item.ID))
-	sb.WriteString("Status: success\n")
-	sb.WriteString(fmt.Sprintf("Exit code: %d\n", exitCode))
-	sb.WriteString(fmt.Sprintf("Executed script:\n%s\n", scriptPath))
-	if len(item.OutputFiles) > 0 {
-		sb.WriteString("Outputs:\n")
-		for _, outputFile := range item.OutputFiles {
-			sb.WriteString("- " + outputFile + "\n")
-		}
-	}
-	if snippet != "" {
-		sb.WriteString("Stdout/stderr summary:\n")
-		sb.WriteString(snippet + "\n")
-	}
-	return sb.String()
-}
-
-func (hcpo *StepBasedWorkflowOrchestrator) buildCodeItemFailureContext(item MessageSequenceItem, itemRel string, scriptPath string, output string, exitCode int, execErr error) string {
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## Code item failed: %s\n", item.ID))
-	sb.WriteString(fmt.Sprintf("Exit code: %d\n", exitCode))
-	if execErr != nil {
-		sb.WriteString(fmt.Sprintf("Runtime error: %s\n", execErr.Error()))
-	}
-	sb.WriteString(fmt.Sprintf("Working script:\n%s\n", scriptPath))
-	sb.WriteString(fmt.Sprintf("Input contract:\n%s\n", hcpo.messageSequenceAbsPath(filepath.Join(itemRel, "input.json"))))
-	if len(item.OutputFiles) > 0 {
-		sb.WriteString("Expected outputs:\n")
-		for _, outputFile := range item.OutputFiles {
-			sb.WriteString("- " + outputFile + "\n")
-		}
-	}
-	if snippet := truncateMessageSequenceLog(output, 4000); snippet != "" {
-		sb.WriteString("Stdout/stderr excerpt:\n")
-		sb.WriteString(snippet + "\n")
-	}
-	return sb.String()
-}
-
-func truncateMessageSequenceLog(output string, maxChars int) string {
-	snippet := strings.TrimSpace(output)
-	if maxChars <= 0 || len(snippet) <= maxChars {
-		return snippet
-	}
-	half := maxChars / 2
-	return snippet[:half] + "\n... (truncated) ...\n" + snippet[len(snippet)-half:]
-}
-
 // messageSequenceAbsPath lifts a WORKFLOW-ROOT-RELATIVE path (e.g.
 // "runs/<run>/execution/<stepID>", as returned by messageSequenceExecutionRelPath
 // and friends) to the absolute on-disk path the step agent uses:
@@ -1270,10 +995,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceAbsPath(workflowRel st
 // file to later steps.)
 func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceExecutionRelPath(stepPath string, stepID string) string {
 	return filepath.Join("runs", hcpo.selectedRunFolder, "execution", getArtifactFolderName(stepID, stepPath))
-}
-
-func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceItemRelPath(stepPath string, stepID string, itemID string) string {
-	return filepath.Join(hcpo.messageSequenceExecutionRelPath(stepPath, stepID), "items", itemID)
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceSessionPath(stepPath string, stepID string) string {
@@ -1319,8 +1040,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) cleanupMessageSequenceStepPathsForSte
 	return nil
 }
 
-// cleanupMessageSequenceRuntime wipes a route's on-disk execution artifacts (working code
-// copies, stdout, the session.json log). Called on restart so a fresh attempt starts clean.
+// cleanupMessageSequenceRuntime wipes a route's on-disk execution artifacts
+// (item state, output snapshots, and session.json). Called on restart so a fresh attempt starts clean.
 func (hcpo *StepBasedWorkflowOrchestrator) cleanupMessageSequenceRuntime(ctx context.Context, stepPath string, stepID string) error {
 	relPath := hcpo.messageSequenceExecutionRelPath(stepPath, stepID)
 	hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Cleaning message_sequence runtime: %s", relPath))
@@ -1333,6 +1054,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) cleanupMessageSequenceRuntime(ctx con
 // msgSeqRouteKey identifies a message_sequence route's in-memory conversation within a run.
 func (hcpo *StepBasedWorkflowOrchestrator) msgSeqRouteKey(stepPath, stepID string) string {
 	return stepPath + "/" + stepID
+}
+
+// lockMsgSeqRoute prevents concurrent calls from mutating the same stateful
+// route conversation. Different routes retain full parallelism.
+func (hcpo *StepBasedWorkflowOrchestrator) lockMsgSeqRoute(key string) func() {
+	hcpo.msgSeqRoutesMu.Lock()
+	if hcpo.msgSeqRouteLocks == nil {
+		hcpo.msgSeqRouteLocks = make(map[string]*sync.Mutex)
+	}
+	lock := hcpo.msgSeqRouteLocks[key]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		hcpo.msgSeqRouteLocks[key] = lock
+	}
+	hcpo.msgSeqRoutesMu.Unlock()
+
+	lock.Lock()
+	return lock.Unlock
 }
 
 // loadMsgSeqRouteSession returns a route's in-memory conversation if the orchestrator has
@@ -1373,6 +1112,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) clearAllMsgSeqRouteSessions(reason st
 	hcpo.msgSeqRoutesMu.Lock()
 	sessions := hcpo.msgSeqRoutes
 	hcpo.msgSeqRoutes = nil
+	hcpo.msgSeqRouteLocks = nil
 	hcpo.msgSeqRoutesMu.Unlock()
 	for key, session := range sessions {
 		hcpo.GetLogger().Info(fmt.Sprintf("🧹 Dropping message_sequence route session %q (%s)", key, reason))

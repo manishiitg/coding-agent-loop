@@ -2316,15 +2316,26 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   }, [])
 
   // Wrapper function to submit query with the current local query
-  const submitQueryImmediately = useCallback(async (query: string, executionOptions?: ExecutionOptions, options?: { isAutoNotification?: boolean; preferLiveInput?: boolean }) => {
+  const submitQueryImmediately = useCallback(async (
+    query: string,
+    executionOptions?: ExecutionOptions,
+    options?: { isAutoNotification?: boolean; preferLiveInput?: boolean; sourceTabId?: string },
+  ): Promise<boolean> => {
     // Mark that user has interacted — enables auto-notifications
     // (prevents stale notifications from SSE backfill on page load)
     hasUserSentMessageRef.current = true
 
     const trimmedQuery = query?.trim() || ''
+    const chatStore = useChatStore.getState()
+    const sourceTab = options?.sourceTabId ? chatStore.chatTabs[options.sourceTabId] : undefined
+    if (options?.sourceTabId && !sourceTab) {
+      logger.warn('ChatArea', `Submission source tab ${options.sourceTabId} no longer exists`)
+      return false
+    }
+    const submissionTab = sourceTab ?? activeTab
     const activeTabModeCategory =
-      activeTab?.metadata?.mode === 'workflow' || activeTab?.metadata?.mode === 'multi-agent'
-        ? activeTab.metadata.mode
+      submissionTab?.metadata?.mode === 'workflow' || submissionTab?.metadata?.mode === 'multi-agent'
+        ? submissionTab.metadata.mode
         : null
     const submitModeCategory = activeTabModeCategory ?? selectedModeCategory
     const submitAgentMode = submitModeCategory
@@ -2333,23 +2344,22 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     console.log('[ChatArea] submitQueryWithQuery called', { query: trimmedQuery.substring(0, 80), stack: new Error().stack?.split('\n').slice(1, 4).join(' <- ') })
 
     // Get fresh tab state from store to avoid stale closure issues
-    const chatStore = useChatStore.getState()
-    const freshActiveTab = activeTab?.tabId ? chatStore.chatTabs[activeTab.tabId] : activeTab
+    const freshActiveTab = submissionTab?.tabId ? chatStore.chatTabs[submissionTab.tabId] : submissionTab
 
     // Early validation
     if (!trimmedQuery) {
       logger.warn('ChatArea', 'Empty query, returning early')
-      return
+      return false
     }
 
     if (submitModeCategory === 'workflow' && !isRequiredFolderSelected) {
       logger.error('ChatArea', 'Workflow folder required for workflow mode')
-      return
+      return false
     }
 
     // Resolve or create tab
     const resolved = await resolveOrCreateTab({ freshActiveTab, selectedModeCategory: submitModeCategory })
-    if (!resolved) return
+    if (!resolved) return false
     let { tab: currentTab, sessionId: tabSessionId } = resolved
     chatSubmissionLane.link(currentTab.tabId, tabSessionId)
 
@@ -2393,7 +2403,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
               () => handleSSEFallback(tabSessionId),
             )
           }
-          return
+          return true
         }
       } catch (error) {
         // A stale/missing native session is expected after long idle periods.
@@ -2704,7 +2714,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         if (validationError) {
           chatStore.addToast(validationError, 'warning')
           resetStreamingState(currentTab.tabId)
-          return
+          return false
         }
       }
 
@@ -2738,7 +2748,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           console.log('[WF_DEBUG] ERROR: No sessionId in response')
           logger.error('ChatArea', 'No sessionId in response')
           resetStreamingState(currentTab.tabId)
-          return
+          return false
         }
 
         console.log('[WF_DEBUG] 3. Before updateTabSessionId', { old: tabSessionId, new: responseSessionId, changed: responseSessionId !== tabSessionId, oldEvents: chatStore.getTabEvents(tabSessionId).length, newEvents: chatStore.getTabEvents(responseSessionId).length })
@@ -2777,6 +2787,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             logger.error('ChatArea', 'Failed to refresh active sessions cache:', error)
             connectAfterRefresh()
           })
+        return true
       } else if (response.status === 'live_input_delivered') {
         // Single-entry routing (tmux-transport CLI): the backend steered this
         // message into the already-running coding-agent turn instead of starting a
@@ -2797,15 +2808,18 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             () => handleSSEFallback(sid)
           )
         }
+        return true
       } else {
         console.log('[WF_DEBUG] ERROR: Backend non-started response', { status: response.status, message: response.message, response })
         logger.error('ChatArea', 'Backend error:', response)
         resetStreamingState(currentTab.tabId)
+        return false
       }
     } catch (error) {
       console.log('[WF_DEBUG] ERROR: Submit exception', { error })
       logger.error('ChatArea', 'Failed to submit query:', error)
       resetStreamingState(currentTab.tabId)
+      return false
     }
 
   }, [correctAgentMode, selectedModeCategory, getAgentModeFromCategory, isRequiredFolderSelected, isStreaming, stopStreaming, finalResponse, startPolling, effectiveServers, enabledTools, selectedWorkflowPreset, activeWorkflowPreset, pollEvents, processedCompletionEventsRef, activeTab, scrollToBottom, getActiveSessions, resetStreamingState, connectSSE, handleSSEMessage, handleSSEStatus])
@@ -2814,10 +2828,13 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // can receive a new React tab ID while an older request is still preparing;
   // session-first keys preserve user order across that remount. New chats use
   // their tab ID until the backend assigns a session.
-  const submitQueryWithQuery = useCallback((query: string, executionOptions?: ExecutionOptions, options?: { isAutoNotification?: boolean; preferLiveInput?: boolean }) => {
-    const laneKey = activeTab?.sessionId || activeTab?.tabId || `${selectedModeCategory || 'unknown'}:pending-tab`
+  const submitQueryWithQuery = useCallback((query: string, executionOptions?: ExecutionOptions, options?: { isAutoNotification?: boolean; preferLiveInput?: boolean; sourceTabId?: string }) => {
+    const sourceTab = options?.sourceTabId
+      ? useChatStore.getState().chatTabs[options.sourceTabId]
+      : activeTab
+    const laneKey = sourceTab?.sessionId || sourceTab?.tabId || `${selectedModeCategory || 'unknown'}:pending-tab`
     return chatSubmissionLane.enqueue(laneKey, () => submitQueryImmediately(query, executionOptions, options))
-  }, [activeTab?.sessionId, activeTab?.tabId, selectedModeCategory, submitQueryImmediately])
+  }, [activeTab, selectedModeCategory, submitQueryImmediately])
 
   // If the active tab is stuck in streaming state, ChatInput queues the user's text
   // instead of calling /api/query. Force-refresh active sessions so the store can
@@ -3027,7 +3044,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     handleNewChat,
     resetChatState,
     refreshWorkflowPresets,
-    submitQuery: submitQueryWithQuery,
+    submitQuery: async (query, executionOptions) => {
+      await submitQueryWithQuery(query, executionOptions)
+    },
     getEvents: () => displayEvents,
     isStreaming,
     currentWorkflowPhase

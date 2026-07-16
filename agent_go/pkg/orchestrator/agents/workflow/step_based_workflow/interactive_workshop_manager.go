@@ -1172,6 +1172,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 	// Plan modification tools
 	planMod := []string{
 		"create_plan",
+		"migrate_message_sequence_code_items",
 		"add_regular_step", "add_message_sequence_step", "add_routing_step",
 		"add_human_input_step", "add_todo_task_step", "add_todo_task_route",
 		"update_regular_step", "update_message_sequence_step", "update_routing_step",

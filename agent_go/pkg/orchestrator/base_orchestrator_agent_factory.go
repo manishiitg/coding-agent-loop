@@ -8,15 +8,15 @@ import (
 	"strings"
 	"time"
 
-	mcpagent "github.com/manishiitg/mcpagent/agent"
-	baseevents "github.com/manishiitg/mcpagent/events"
-	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
-	"github.com/manishiitg/mcpagent/observability"
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/fsutil"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents"
 	orchEvents "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	baseevents "github.com/manishiitg/mcpagent/events"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -230,7 +230,9 @@ func (bo *BaseOrchestrator) setupStandardAgent(
 	// 🔗 Connect agent to orchestrator's main event bridge using existing bridge (reuse)
 	baseAgentName := baseAgent.GetName()
 	if cab, ok := eventBridge.(*ContextAwareEventBridge); ok {
-		cab.SetOrchestratorContext(phase, step, stepID, baseAgentName)
+		if !HasEventContextOverride(ctx) {
+			cab.SetOrchestratorContext(phase, step, stepID, baseAgentName)
+		}
 		// Ensure iteration folder is applied to bridge (for token persistence)
 		// This ensures all agents automatically get the iteration folder if it's been set
 		bo.applyIterationFolderToBridge()
@@ -238,18 +240,20 @@ func (bo *BaseOrchestrator) setupStandardAgent(
 		// Removed verbose logging
 	} else {
 		// Fallback for interface-based bridge
-		if cab, ok := eventBridge.(interface {
-			SetOrchestratorContext(phase string, step int, stepID string, agentName string)
-		}); ok {
+		if !HasEventContextOverride(ctx) {
+			cab, ok := eventBridge.(interface {
+				SetOrchestratorContext(phase string, step int, stepID string, agentName string)
+			})
+			if !ok {
+				return fmt.Errorf("context-aware bridge type mismatch for %s", agentName)
+			}
 			cab.SetOrchestratorContext(phase, step, stepID, baseAgentName)
-			// Ensure iteration folder is applied to bridge (for token persistence)
-			bo.applyIterationFolderToBridge()
-			mcpAgent.AddEventListener(eventBridge)
-			bo.GetLogger().Info(fmt.Sprintf("🔗 Reused context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName))
-			bo.GetLogger().Info(fmt.Sprintf("ℹ️ Skipping StartAgentSession for %s - handled at orchestrator level", phase))
-		} else {
-			return fmt.Errorf("context-aware bridge type mismatch for %s", agentName)
 		}
+		// Ensure iteration folder is applied to bridge (for token persistence)
+		bo.applyIterationFolderToBridge()
+		mcpAgent.AddEventListener(eventBridge)
+		bo.GetLogger().Info(fmt.Sprintf("🔗 Reused context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName))
+		bo.GetLogger().Info(fmt.Sprintf("ℹ️ Skipping StartAgentSession for %s - handled at orchestrator level", phase))
 	}
 
 	// Register custom tools (pass config to check agent-specific code execution mode)

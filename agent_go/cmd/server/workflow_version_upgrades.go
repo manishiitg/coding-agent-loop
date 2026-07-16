@@ -185,7 +185,7 @@ Report whether the date picker was removed or already absent, then stop.`,
 	},
 	{
 		from:  "1.0.8",
-		to:    WorkflowContractCurrentVersion,
+		to:    "1.0.9",
 		label: "upgrade-1.0.9",
 		query: `WORKFLOW VERSION UPGRADE v1.0.8 -> v1.0.9.
 
@@ -214,6 +214,29 @@ Goals:
 6. Only after the applicable checks/updates are complete, update workflow.json "version" to "1.0.9". Do not change schema_version. Do not run the workflow, alter schedules, notify the user, publish, or apply a strategy/plan change in this step.
 
 Report the files changed, soul sections retained/removed, challenged assumptions surfaced, Pulse sections upgraded, and any intentional no-op decisions, then stop.`,
+	},
+	{
+		from:  "1.0.9",
+		to:    WorkflowContractCurrentVersion,
+		label: "upgrade-1.0.10",
+		query: `WORKFLOW VERSION UPGRADE v1.0.9 -> v1.0.10.
+
+This is a product-managed workflow preflight. Do ONLY this message-sequence code migration, then stop and wait for the next preflight turn or the scheduled workflow message.
+
+Goal: remove hidden Python execution from message_sequence. Deterministic code must be a visible standalone scripted workflow step with durable file or DB inputs and outputs.
+
+1. Read workflow.json and planning/plan.json. Inventory every message_sequence item whose type is "code", including nested todo-task routes and orphan steps.
+2. If there are no code items, make no plan change.
+3. If code items exist, call migrate_message_sequence_code_items. This trusted migration tool converts only unambiguous top-level sequences made entirely of code items and their following prevalidation gates. It creates one standalone regular scripted step per code item, copies its source to learnings/<new-step-id>/main.py, carries forward cumulative file dependencies, attaches validation to the correct step, and creates scripted step_config entries.
+4. Inspect the tool result. If it reports an ambiguous mixed conversational/code sequence, nested usage, unsupported input_json, or another blocker, do not guess and do not stamp the workflow version. Report the exact sequence/item and required explicit split. The scheduler will block the normal workflow run so the old plan cannot fail halfway through execution.
+5. Re-read planning/plan.json and planning/step_config.json. Confirm:
+   - no message_sequence item has type "code";
+   - every migrated script exists at learnings/<step-id>/main.py;
+   - every migrated regular step has declared_execution_mode="scripted";
+   - durable context_dependencies/context_output and validation preserve the old sequence ordering and output contract.
+6. Only after those checks pass, update workflow.json "version" to "1.0.10". Do not change schema_version. Do not run the workflow, notify the user, publish, or make unrelated plan improvements.
+
+Report migrated sequence ids, new scripted step ids, copied script paths, validation/context handoffs, no-op decisions, and blockers, then stop.`,
 	},
 }
 

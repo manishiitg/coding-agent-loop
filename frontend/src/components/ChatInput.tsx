@@ -30,6 +30,7 @@ import { chromeCdpInstallCommand, chromeCdpLaunchCommand, chromeCdpVerifyCommand
 import { CHAT_TOOL_COMMAND_EVENT, chatToolCommandFromEvent } from '../utils/chatToolEvents'
 import { resolveDelegationMainModel } from '../utils/workflowLLMTierDefaults'
 import { hasActiveSessionWork } from '../utils/activitySessions'
+import { shouldClearAcceptedChatDraft } from '../utils/chatSubmissionDraft'
 
 const removePasteMarkersFromText = (text: string, markers: string[]) => {
   return markers.reduce((next, marker) => {
@@ -294,7 +295,10 @@ const getResumeSessionKind = (session: ChatHistorySession): ResumeSessionKind =>
 
 interface ChatInputProps {
   // Handlers (callbacks only)
-  onSubmit: (query: string, options?: { preferLiveInput?: boolean }) => void
+  onSubmit: (
+    query: string,
+    options?: { preferLiveInput?: boolean; sourceTabId?: string }
+  ) => boolean | void | Promise<boolean | void>
   onStopStreaming: () => void
   // Optional tab scope for embedded chat panes, such as WorkflowLayout. When
   // omitted, ChatInput uses the globally active chat tab.
@@ -629,18 +633,35 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Local state for immediate UI updates (prevents Zustand updates on every keystroke)
   const [localInputText, setLocalInputText] = useState(storedInputText)
   const inputText = localInputText
+  const inputOwnerTabIdRef = useRef(activeTabId)
 
   // Debounce ref for syncing to store
   const syncToStoreTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   // Sync local state FROM store when store changes externally (preset sync, etc.)
   useLayoutEffect(() => {
+    // A workflow/session switch can reuse this mounted input. Never let a draft
+    // from the previous tab become the next tab's submitted value, and never let
+    // its pending debounce suppress the new tab's store -> local sync.
+    if (inputOwnerTabIdRef.current !== activeTabId) {
+      const previousTabId = inputOwnerTabIdRef.current
+      if (syncToStoreTimeoutRef.current) {
+        clearTimeout(syncToStoreTimeoutRef.current)
+        syncToStoreTimeoutRef.current = null
+        if (previousTabId) {
+          useChatStore.getState().setTabConfig(previousTabId, { inputText: localInputText })
+        }
+      }
+      inputOwnerTabIdRef.current = activeTabId
+      setLocalInputText(storedInputText)
+      return
+    }
     // Only sync if store value differs and we're not in the middle of typing
     if (storedInputText !== localInputText && !syncToStoreTimeoutRef.current) {
       setLocalInputText(storedInputText)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storedInputText]) // Intentionally exclude localInputText to avoid loops
+  }, [activeTabId, storedInputText]) // Intentionally exclude localInputText to avoid loops
 
   // Cleanup timeout refs on unmount
   useEffect(() => {
@@ -1662,6 +1683,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const typed = inputText.trim()
     return typed ? `${blocks}\n\n${inputText}` : blocks
   }, [inputText, chatPastedAttachments])
+  const latestQueryToSubmitRef = useRef(queryToSubmit)
+  latestQueryToSubmitRef.current = queryToSubmit
 
   const canBootstrapMultiAgentTab = isMultiAgentMode && !showWorkflowsOverview && !isOrganizationAssistant
   // Workflow builder tabs are intentionally created before their backend session.
@@ -2431,14 +2454,54 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // or rejects it so ChatArea performs full turn setup. isStreaming remains UI-only.
   //
   // NON-tmux (API/LLM): isStreaming-based steer-vs-queue, unchanged.
-  const routeSubmit = useCallback((query: string) => {
+  const routeSubmit = useCallback(async (query: string) => {
     const trimmed = query?.trim() || ''
     if (!trimmed) return
 
     if (routeLiveInputToCLI) {
       if (hasSubmitTarget) {
-        clearInputState()
-        onSubmit(query, { preferLiveInput: true })
+        const submittedTabId = activeTabId || undefined
+        setLiveMessageDelivery({
+          status: 'sending',
+          message: query,
+          provider: effectiveProviderForSteer || undefined,
+        })
+        let accepted: boolean | void
+        try {
+          accepted = await onSubmit(query, {
+            preferLiveInput: true,
+            sourceTabId: submittedTabId,
+          })
+        } catch (error) {
+          console.error('[ChatInput] Live message submission failed', error)
+          accepted = false
+        }
+        if (accepted === false) {
+          setLiveMessageDelivery({
+            status: 'failed',
+            message: query,
+            provider: effectiveProviderForSteer || undefined,
+            detail: 'Not accepted; draft kept',
+          })
+          scheduleLiveMessageDeliveryClear()
+          return
+        }
+        // Do not erase text typed while this asynchronous send was in flight.
+        if (shouldClearAcceptedChatDraft({
+          accepted,
+          submittedTabId,
+          currentTabId: inputOwnerTabIdRef.current,
+          submittedMessage: query,
+          currentMessage: latestQueryToSubmitRef.current,
+        })) {
+          clearInputState()
+        }
+        setLiveMessageDelivery({
+          status: 'sent_to_cli',
+          message: query,
+          provider: effectiveProviderForSteer || undefined,
+        })
+        scheduleLiveMessageDeliveryClear()
         return
       }
       const reason = getSubmitBlockReason()
@@ -2447,8 +2510,25 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
 
     if (canSubmitImmediately) {
-      clearInputState()
-      onSubmit(query)
+      const submittedTabId = activeTabId || undefined
+      let accepted: boolean | void
+      try {
+        accepted = await onSubmit(query, { sourceTabId: submittedTabId })
+      } catch (error) {
+        console.error('[ChatInput] Message submission failed', error)
+        accepted = false
+      }
+      if (shouldClearAcceptedChatDraft({
+        accepted,
+        submittedTabId,
+        currentTabId: inputOwnerTabIdRef.current,
+        submittedMessage: query,
+        currentMessage: latestQueryToSubmitRef.current,
+      })) {
+        clearInputState()
+      } else if (accepted === false) {
+        addToast('Message was not accepted. Your draft was kept.', 'warning')
+      }
     } else if (canSubmit && isStreaming) {
       clearInputState()
       queueStreamingMessage(query)
@@ -2456,7 +2536,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       const reason = getSubmitBlockReason()
       if (reason) addToast(reason, 'info')
     }
-  }, [routeLiveInputToCLI, hasSubmitTarget, clearInputState, onSubmit, getSubmitBlockReason, addToast, canSubmitImmediately, canSubmit, isStreaming, queueStreamingMessage])
+  }, [routeLiveInputToCLI, hasSubmitTarget, activeTabId, effectiveProviderForSteer, onSubmit, scheduleLiveMessageDeliveryClear, clearInputState, getSubmitBlockReason, addToast, canSubmitImmediately, canSubmit, isStreaming, queueStreamingMessage])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // If any selection dialog is open, let it handle keyboard events
@@ -2522,7 +2602,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         return
       }
 
-      routeSubmit(queryToSubmit)
+      void routeSubmit(queryToSubmit)
     }
     // Handle CTRL+Enter (Windows/Linux) or CMD+Enter (Mac) to add new line
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
@@ -2555,7 +2635,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       return
     }
 
-    routeSubmit(queryToSubmit)
+    void routeSubmit(queryToSubmit)
   }, [queryToSubmit, executeSlashCommandFromQuery, routeSubmit])
 
   const handleSendButtonClick = useCallback(() => {
@@ -2564,7 +2644,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       return
     }
 
-    routeSubmit(queryToSubmit)
+    void routeSubmit(queryToSubmit)
   }, [queryToSubmit, executeSlashCommandFromQuery, routeSubmit])
 
   // Command selection handler - executes commands directly

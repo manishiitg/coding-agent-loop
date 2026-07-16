@@ -41,6 +41,10 @@ const (
 	SubAgentMessageSequenceRestartKey subAgentContextKey = "message_sequence_restart"
 	// GetSubAgentConversationKey is the context key for the get_sub_agent_conversation function
 	GetSubAgentConversationKey subAgentContextKey = "get_sub_agent_conversation"
+	// QuerySubAgentKey is the context key for querying one parent-owned sub-agent execution.
+	QuerySubAgentKey subAgentContextKey = "query_sub_agent"
+	// StopSubAgentKey is the context key for canceling one parent-owned sub-agent execution.
+	StopSubAgentKey subAgentContextKey = "stop_sub_agent"
 	// RouteDescriptionsKey is the context key for a map of route_id -> description string
 	RouteDescriptionsKey subAgentContextKey = "route_descriptions"
 )
@@ -49,6 +53,12 @@ const (
 // todoID identifies the sub-agent call, fromLastX is how many entries to return,
 // offsetLastX skips that many entries from the tail before applying fromLastX (for paging).
 type GetSubAgentConversationFunc func(ctx context.Context, todoID string, fromLastX, offsetLastX int) (string, error)
+
+// QuerySubAgentFunc returns the current state of one execution owned by this orchestrator.
+type QuerySubAgentFunc func(ctx context.Context, executionID string) (string, error)
+
+// StopSubAgentFunc requests cancellation of one execution owned by this orchestrator.
+type StopSubAgentFunc func(ctx context.Context, executionID string) (string, error)
 
 // SubAgentResult represents the result of a sub-agent execution
 type SubAgentResult struct {
@@ -117,7 +127,7 @@ func CreateSubAgentTools() []llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "call_sub_agent",
-			Description: "Execute a predefined sub-agent to perform a specific task. The sub-agent will run to completion and return its result. For message_sequence routes, repeated calls resume the route conversation unless message_sequence_restart is true.",
+			Description: "Start a predefined sub-agent for a specific task. The call returns an execution_id immediately; the workflow runtime waits outside this tool call and sends one authoritative completion batch back to this orchestrator. Launch independent calls together. For message_sequence routes, repeated calls resume the route conversation unless message_sequence_restart is true.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type":       "object",
 				"properties": callSubAgentProperties,
@@ -152,7 +162,7 @@ func CreateSubAgentTools() []llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "call_generic_agent",
-			Description: "Execute a generic agent for ad-hoc tasks that don't match predefined routes. The agent will use available tools to complete the task. Use this sparingly - prefer predefined routes when available.",
+			Description: "Start a generic agent for ad-hoc work that doesn't match predefined routes. The call returns an execution_id immediately; the workflow runtime waits outside this tool call and sends its terminal result back to this orchestrator. Use this sparingly and prefer predefined routes.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type":       "object",
 				"properties": callGenericAgentProperties,
@@ -161,6 +171,44 @@ func CreateSubAgentTools() []llmtypes.Tool {
 		},
 	}
 	tools = append(tools, callGenericAgentTool)
+
+	querySubAgentTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "query_sub_agent",
+			Description: "Read the current state of one sub-agent execution returned by call_sub_agent or call_generic_agent. This is for explicit inspection or debugging; do not poll it in a loop because the runtime automatically delivers completion results.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"execution_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Exact execution_id returned when the sub-agent started.",
+					},
+				},
+				"required": []string{"execution_id"},
+			}),
+		},
+	}
+	tools = append(tools, querySubAgentTool)
+
+	stopSubAgentTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "stop_sub_agent",
+			Description: "Cancel one currently running sub-agent owned by this orchestrator. Use only for an explicit stop request or a confirmed stuck/incorrect child. The runtime still waits for cancellation to finish before advancing.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"execution_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Exact running execution_id returned when the sub-agent started.",
+					},
+				},
+				"required": []string{"execution_id"},
+			}),
+		},
+	}
+	tools = append(tools, stopSubAgentTool)
 
 	// get_sub_agent_conversation tool - Query the internal conversation of a previous sub-agent call
 	getSubAgentConversationTool := llmtypes.Tool{
@@ -220,9 +268,37 @@ func CreateSubAgentToolExecutors() map[string]func(ctx context.Context, args map
 
 	executors["call_sub_agent"] = handleCallSubAgent
 	executors["call_generic_agent"] = handleCallGenericAgent
+	executors["query_sub_agent"] = handleQuerySubAgent
+	executors["stop_sub_agent"] = handleStopSubAgent
 	executors["get_sub_agent_conversation"] = handleGetSubAgentConversation
 	executors["get_route_description"] = handleGetRouteDescription
 	return executors
+}
+
+func handleQuerySubAgent(ctx context.Context, args map[string]interface{}) (string, error) {
+	executionID, _ := args["execution_id"].(string)
+	executionID = strings.TrimSpace(executionID)
+	if executionID == "" {
+		return "", fmt.Errorf("execution_id is required")
+	}
+	queryFunc, ok := ctx.Value(QuerySubAgentKey).(QuerySubAgentFunc)
+	if !ok || queryFunc == nil {
+		return "", fmt.Errorf("query_sub_agent function not available in context - this tool can only inspect sub-agents owned by the current todo task orchestrator")
+	}
+	return queryFunc(ctx, executionID)
+}
+
+func handleStopSubAgent(ctx context.Context, args map[string]interface{}) (string, error) {
+	executionID, _ := args["execution_id"].(string)
+	executionID = strings.TrimSpace(executionID)
+	if executionID == "" {
+		return "", fmt.Errorf("execution_id is required")
+	}
+	stopFunc, ok := ctx.Value(StopSubAgentKey).(StopSubAgentFunc)
+	if !ok || stopFunc == nil {
+		return "", fmt.Errorf("stop_sub_agent function not available in context - this tool can only stop sub-agents owned by the current todo task orchestrator")
+	}
+	return stopFunc(ctx, executionID)
 }
 
 // handleCallSubAgent executes a predefined sub-agent
@@ -271,6 +347,9 @@ func handleCallSubAgent(ctx context.Context, args map[string]interface{}) (strin
 
 	// Execute the sub-agent
 	result, err := executeFunc(ctx, routeID, todoID, instructions)
+	if err == nil && isAsyncSubAgentStart(result) {
+		return result, nil
+	}
 
 	executionTime := time.Since(startTime)
 
@@ -342,6 +421,9 @@ func handleCallGenericAgent(ctx context.Context, args map[string]interface{}) (s
 
 	// Execute the generic agent
 	result, err := executeFunc(ctx, todoID, instructions)
+	if err == nil && isAsyncSubAgentStart(result) {
+		return result, nil
+	}
 
 	executionTime := time.Since(startTime)
 
@@ -371,6 +453,14 @@ func handleCallGenericAgent(ctx context.Context, args map[string]interface{}) (s
 
 	resultJSON, _ := json.MarshalIndent(subAgentResult, "", "  ")
 	return string(resultJSON), nil
+}
+
+func isAsyncSubAgentStart(result string) bool {
+	var payload struct {
+		Async       bool   `json:"async"`
+		ExecutionID string `json:"execution_id"`
+	}
+	return json.Unmarshal([]byte(result), &payload) == nil && payload.Async && strings.TrimSpace(payload.ExecutionID) != ""
 }
 
 // isSubAgentResultFailure checks if a sub-agent result string indicates failure

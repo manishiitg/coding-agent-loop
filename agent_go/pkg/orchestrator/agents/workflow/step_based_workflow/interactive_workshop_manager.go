@@ -46,6 +46,18 @@ const workshopFixedIteration = "iteration-0"
 
 const pulseReviewerCompletionPrefix = "PULSE_REVIEW_COMPLETE"
 
+const statusPollWindow = 60 * time.Second
+
+const statusPollNextAction = `**NEXT ACTION: End the current agent turn now.**
+This execution sends an automatic completion notification. Do not call query_step or list_executions again unless the user explicitly requests another status check.`
+
+const statusPollWarning = `**POLLING WARNING:** This is a repeated status check while background work is still running. End the current agent turn now; the runtime will resume the session automatically when the execution changes or completes.`
+
+const statusPollSuppressed = `**POLLING SUPPRESSED**
+The background execution state has not changed since the previous status check. A completion notification will resume this session automatically.
+
+**NEXT ACTION: End the current agent turn now.** Do not call query_step or list_executions again unless the user explicitly requests another status check.`
+
 var workshopStageAgentIdentityCounter atomic.Uint64
 
 const workshopLearningScaffoldTemplate = `---
@@ -727,6 +739,19 @@ func finalizeExecStatus(exec *WorkshopStepExecution, ctx context.Context, result
 type WorkshopStepRegistry struct {
 	mu         sync.RWMutex
 	executions map[string]*WorkshopStepExecution
+
+	statusPollMu              sync.Mutex
+	statusPollWindowStartedAt time.Time
+	statusPollLastCalledAt    time.Time
+	statusPollFingerprint     string
+	statusPollCount           int
+}
+
+type statusPollDecision struct {
+	Count    int
+	Changed  bool
+	Warn     bool
+	Suppress bool
 }
 
 func newWorkshopStepRegistry() *WorkshopStepRegistry {
@@ -738,6 +763,37 @@ func newWorkshopStepRegistry() *WorkshopStepRegistry {
 // NewWorkshopStepRegistry creates a new empty WorkshopStepRegistry (exported for use in server.go chat mode).
 func NewWorkshopStepRegistry() *WorkshopStepRegistry {
 	return newWorkshopStepRegistry()
+}
+
+// observeStatusPoll applies one shared rapid-poll budget across query_step and
+// list_executions. The registry is session-scoped and survives tool
+// re-registration between agent turns, so alternating tools cannot bypass the
+// guard. Changed state is always returned, but it does not reset the rapid-poll
+// count; the next unchanged call is still suppressed.
+func (r *WorkshopStepRegistry) observeStatusPoll(now time.Time, fingerprint string) statusPollDecision {
+	r.statusPollMu.Lock()
+	defer r.statusPollMu.Unlock()
+
+	if r.statusPollLastCalledAt.IsZero() ||
+		now.Sub(r.statusPollLastCalledAt) > statusPollWindow ||
+		now.Sub(r.statusPollWindowStartedAt) > statusPollWindow {
+		r.statusPollWindowStartedAt = now
+		r.statusPollCount = 0
+		r.statusPollFingerprint = ""
+	}
+
+	changed := r.statusPollFingerprint != "" && r.statusPollFingerprint != fingerprint
+	r.statusPollCount++
+	r.statusPollLastCalledAt = now
+	r.statusPollFingerprint = fingerprint
+
+	decision := statusPollDecision{
+		Count:   r.statusPollCount,
+		Changed: changed,
+		Warn:    r.statusPollCount >= 2,
+	}
+	decision.Suppress = r.statusPollCount >= 3 && !changed
+	return decision
 }
 
 // Register adds a new execution entry to the registry
@@ -862,6 +918,34 @@ func (r *WorkshopStepRegistry) ListSnapshots() []WorkshopStepSnapshot {
 		list = append(list, e.Snapshot())
 	}
 	return list
+}
+
+func (iwm *InteractiveWorkshopManager) statusPollStateFingerprint() string {
+	parts := make([]string, 0)
+	for _, exec := range iwm.stepRegistry.ListSnapshots() {
+		parts = append(parts, fmt.Sprintf("registry:%s:%s", exec.ID, exec.Status))
+	}
+	if iwm.listServerAgents != nil {
+		for _, agent := range iwm.listServerAgents() {
+			parts = append(parts, fmt.Sprintf("server:%s:%s", agent.ID, agent.Status))
+		}
+	}
+	if iwm.hasPendingCompletions != nil && iwm.hasPendingCompletions() {
+		parts = append(parts, "pending-completions:true")
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "|")
+}
+
+func (iwm *InteractiveWorkshopManager) runningStatusPollGuidance() (string, bool) {
+	decision := iwm.stepRegistry.observeStatusPoll(time.Now(), iwm.statusPollStateFingerprint())
+	if decision.Suppress {
+		return statusPollSuppressed, true
+	}
+	if decision.Warn {
+		return statusPollWarning + "\n\n" + statusPollNextAction, false
+	}
+	return statusPollNextAction, false
 }
 
 // WorkshopExecutionNotifier is called when workshop step/background executions start and complete.
@@ -2185,7 +2269,7 @@ For the design playbook (8-step walkthrough, step-type trade-offs, validation de
 
 Workshop builder always uses `+"`iteration-0`"+`. Every `+"`execute_step`"+` re-reads the latest `+"`plan.json`"+`. Before running anything, read `+"`cat variables/variables.json`"+` for `+"`group_name`"+` values and ALWAYS pass an explicit `+"`group_name`"+`. {{if .AvailableGroups}}Available groups: **{{.AvailableGroups}}**.{{end}}
 
-Pass `+"`human_input`"+` to human-input steps inline (don't block on UI). **Always follow up** after execution; never fire-and-forget. **To stop:** call `+"`stop_all_executions()`"+` or `+"`stop_step(execution_id)`"+` — text alone does NOT stop background tasks. Auto-notifications arrive prefixed `+"`[AUTO-NOTIFICATION]`"+` and are system-generated, not user messages; don't poll `+"`query_step`"+` in a loop.
+Pass `+"`human_input`"+` to human-input steps inline (don't block on UI). **Always follow up after the automatic completion notification**; launching background work is not a completed final response. End the current agent turn while it runs—do not keep that turn open with `+"`query_step`"+` / `+"`list_executions`"+` polling. **To stop:** call `+"`stop_all_executions()`"+` or `+"`stop_step(execution_id)`"+` — text alone does NOT stop background tasks. Auto-notifications arrive prefixed `+"`[AUTO-NOTIFICATION]`"+` and are system-generated, not user messages.
 
 For the full 6-step execution procedure (run / handle human_input / wait / success-failure handling), iteration & groups rules, auto-notification semantics (may be delayed, recency check), and stopping discipline: `+"`get_reference_doc(kind=\"running-steps\")`"+`.
 
@@ -2836,7 +2920,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			// and can double-act — e.g. post the same tweet twice.
 			if existing, found, _ := iwm.stepRegistry.LatestSnapshotForStep(stepID); found && existing.Status == WorkshopStepRunning {
 				logger.Info(fmt.Sprintf("⏭️ Workshop: execute_step(%q) skipped — already running (execution_id=%q)", stepID, existing.ID))
-				return fmt.Sprintf("Step %q is ALREADY RUNNING (execution_id: %q) — not starting a duplicate. You'll be notified when it completes; use query_step(step_id=%q) to inspect it, or stop that execution first if you want a fresh run. (Concurrent runs of the same step race on shared state and can double-act.)", stepID, existing.ID, stepID), nil
+				return fmt.Sprintf("Step %q is ALREADY RUNNING (execution_id: %q) — not starting a duplicate. You'll be notified when it completes. End the current agent turn instead of polling; use query_step(step_id=%q) only if the user explicitly requests a live status check, or stop that execution first if the user wants a fresh run. (Concurrent runs of the same step race on shared state and can double-act.)", stepID, existing.ID, stepID), nil
 			}
 
 			isScriptedStep := false
@@ -3053,7 +3137,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				groupInfo = fmt.Sprintf(", group=%q", groupName)
 			}
 			logger.Info(fmt.Sprintf("🚀 Workshop: step %q started in background, execution_id=%q%s, fast_path_only=%v", stepID, execID, groupInfo, fastPathOnly))
-			return fmt.Sprintf("Step %q started in background.\nexecution_id: %q\nUse query_step(step_id=%q) to inspect live status. Use send_step_message(execution_id=%q, message=...) for a live correction while an agent turn is active.\nYou will be automatically notified when it completes.", stepID, execID, stepID, execID), nil
+			return fmt.Sprintf("Step %q started in background.\nexecution_id: %q\nYou will be automatically notified when it completes. End the current agent turn now instead of polling. Use query_step(step_id=%q) only if the user explicitly requests a live status check. Use send_step_message(execution_id=%q, message=...) only for a necessary live correction while an agent turn is active.", stepID, execID, stepID, execID), nil
 		},
 		"workflow",
 	); err != nil {
@@ -3334,7 +3418,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: run_goal_advisor_review — dedicated strategic review background pipeline.
 	if err := mcpAgent.RegisterCustomTool(
 		"run_goal_advisor_review",
-		"Start the dedicated background Goal Advisor pipeline. Use this for Pulse-selected strategic review: goal recovery, healthy 10x/headroom exploration, advancing or measuring the one active advisor experiment, approved proposal application, and Chief of Staff strategic recommendations. The pipeline runs advisor -> critic -> finalizer in separate background agents. The durable experiment lifecycle lives in builder/improve.html; the parent Pulse turn should capture the returned execution_id, wait with query_step(step_id=\"goal-advisor\", execution_id=\"<returned execution_id>\"), and then record mark_pulse_module_result.",
+		"Start the dedicated background Goal Advisor pipeline. Use this for Pulse-selected strategic review: goal recovery, healthy 10x/headroom exploration, advancing or measuring the one active advisor experiment, approved proposal application, and Chief of Staff strategic recommendations. The pipeline runs advisor -> critic -> finalizer in separate background agents. The durable experiment lifecycle lives in builder/improve.html; the parent Pulse turn should capture the returned execution_id and end its turn. Automatic completion notification will resume the session so it can record mark_pulse_module_result; do not poll query_step/list_executions while waiting.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -3463,7 +3547,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// When done/failed/cancelled: shows result
 	if err := mcpAgent.RegisterCustomTool(
 		"query_step",
-		"Check the status of a workflow step by step_id. The backend resolves the latest matching execution_id automatically, preferring a running execution. When running, shows registry status and structured MCP tool calls captured so far. Important: coding CLI providers can show terminal/TUI activity before structured tool_call events exist, so 'no tool calls observed yet' does NOT mean the step failed to start or is stuck. When the step is a coding-CLI provider running in tmux, query_step ALSO captures and inlines the latest lines of the live terminal pane, plus the tmux session name and a read-only `tmux capture-pane` command for deeper history (the same session shown in the UI terminal). Do not stop or re-run solely because query_step has no tool calls; wait for the completion notification unless the user explicitly asks to stop/retry. Pass tool_call_id to get full input/output for a specific tool call. Use debug_step for file-based insights.",
+		"One-off live status check for a workflow step by step_id. The backend resolves the latest matching execution_id automatically, preferring a running execution. When running, shows registry status and structured MCP tool calls captured so far. Important: coding CLI providers can show terminal/TUI activity before structured tool_call events exist, so 'no tool calls observed yet' does NOT mean the step failed to start or is stuck. When the step is a coding-CLI provider running in tmux, query_step ALSO captures and inlines the latest lines of the live terminal pane, plus the tmux session name and a read-only `tmux capture-pane` command for deeper history (the same session shown in the UI terminal). After one running-status check, end the current agent turn; automatic completion notification will resume the session. Never alternate query_step and list_executions as a polling loop. Do not stop or re-run solely because query_step has no tool calls. Pass tool_call_id to get full input/output for a specific tool call. Use debug_step for file-based insights.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -3553,6 +3637,14 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			switch status {
 			case WorkshopStepRunning:
+				pollGuidance := ""
+				if toolCallID == "" {
+					var suppressed bool
+					pollGuidance, suppressed = iwm.runningStatusPollGuidance()
+					if suppressed {
+						return pollGuidance, nil
+					}
+				}
 				messageHint := "\n\n**Live steering:** no active agent turn is currently available; the execution may be validating or running script-only work. Wait for the next phase or completion notification."
 				if exec.CanReceiveMessage {
 					messageHint = fmt.Sprintf("\n\n**Live steering:** send_step_message(execution_id=%q, message=...) can steer the active %s phase.", execID, exec.ActiveMessagePhase)
@@ -3597,9 +3689,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 
 				if toolCallInfo == "" {
-					return fmt.Sprintf("Step %q is registered and running.\nexecution_id: %s\n\nNo structured MCP tool calls have been captured for this execution yet. This is normal for coding CLI providers while they are booting, thinking, using terminal/TUI output, or before they make their first api-bridge call. It does not mean the step failed to start or is stuck.\n\nDo not stop or re-run this execution solely because no tool calls are listed; wait for the automatic completion notification unless the user explicitly asks you to stop/retry.%s%s%s", stepID, execID, messageHint, tmuxInfo, hint), nil
+					return fmt.Sprintf("Step %q is registered and running.\nexecution_id: %s\n\nNo structured MCP tool calls have been captured for this execution yet. This is normal for coding CLI providers while they are booting, thinking, using terminal/TUI output, or before they make their first api-bridge call. It does not mean the step failed to start or is stuck.\n\nDo not stop or re-run this execution solely because no tool calls are listed; wait for the automatic completion notification unless the user explicitly asks you to stop/retry.%s%s%s\n\n%s", stepID, execID, messageHint, tmuxInfo, hint, pollGuidance), nil
 				}
-				return fmt.Sprintf("Step %q is still running.\nexecution_id: %s%s%s%s%s", stepID, execID, messageHint, toolCallInfo, tmuxInfo, hint), nil
+				return fmt.Sprintf("Step %q is still running.\nexecution_id: %s%s%s%s%s\n\n%s", stepID, execID, messageHint, toolCallInfo, tmuxInfo, hint, pollGuidance), nil
 
 			case WorkshopStepDone:
 				// Background tasks get a generic completion response (no step-specific hints)
@@ -3817,7 +3909,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 2b: list_executions — list all tracked background executions
 	if err := mcpAgent.RegisterCustomTool(
 		"list_executions",
-		"List all background executions (for example execute_step and run_in_background). Shows execution_id, step_id, status (running/done/failed/cancelled), and whether a running execution currently accepts send_step_message. Useful when you need to find execution IDs for query_step, send_step_message, or stop_step.",
+		"One-off execution lookup for finding an execution_id or resolving ambiguity. Shows execution_id, step_id, status (running/done/failed/cancelled), and whether a running execution currently accepts send_step_message. Do not use it as a progress poll. After a result shows running work, end the current agent turn; automatic completion notification will resume the session. Never alternate list_executions and query_step as a polling loop.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -3848,6 +3940,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			var sb strings.Builder
 			count := 0
+			hasRunning := false
 			for _, exec := range allExecs {
 				status := string(exec.Status)
 				execErr := exec.Err
@@ -3857,6 +3950,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 
 				count++
+				if status == "running" {
+					hasRunning = true
+				}
 				sb.WriteString(fmt.Sprintf("- **%s** | step: %s | status: %s", exec.ID, exec.StepID, status))
 				if exec.CanReceiveMessage {
 					sb.WriteString(fmt.Sprintf(" | messageable: %s", exec.ActiveMessagePhase))
@@ -3877,6 +3973,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						continue
 					}
 					count++
+					if agent.Status == "running" {
+						hasRunning = true
+					}
 					sb.WriteString(fmt.Sprintf("- **%s** | step: %s | status: %s (server)\n", agent.ID, agent.Name, agent.Status))
 				}
 			}
@@ -3886,8 +3985,17 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				sb.WriteString("\n⚠️ Completions pending delivery (agents finished while session was busy).\n")
 			}
 
+			pollGuidance := ""
+			if (statusFilter == "" || statusFilter == "running") && (hasRunning || hasPending) {
+				var suppressed bool
+				pollGuidance, suppressed = iwm.runningStatusPollGuidance()
+				if suppressed {
+					return pollGuidance, nil
+				}
+			}
+
 			if count == 0 && hasPending {
-				return "No running executions, but **completions are pending delivery** — results will arrive shortly.\nDo NOT report \"all clear\".", nil
+				return "No running executions, but **completions are pending delivery** — results will arrive shortly.\nDo NOT report \"all clear\".\n\n" + pollGuidance, nil
 			}
 
 			if count == 0 {
@@ -3900,12 +4008,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return "No background executions tracked.", nil
 			}
 
-			return fmt.Sprintf("**%d execution(s)**%s:\n%s", count, func() string {
+			return fmt.Sprintf("**%d execution(s)**%s:\n%s\n%s", count, func() string {
 				if statusFilter != "" {
 					return fmt.Sprintf(" (filter: %s)", statusFilter)
 				}
 				return ""
-			}(), sb.String()), nil
+			}(), sb.String(), pollGuidance), nil
 		},
 		"workflow",
 	); err != nil {

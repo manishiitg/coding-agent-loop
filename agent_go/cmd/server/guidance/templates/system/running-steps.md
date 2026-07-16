@@ -75,8 +75,10 @@ All background agents **automatically notify you** when they complete:
 - Notifications arrive as messages prefixed with `[AUTO-NOTIFICATION]`
   — they are **system-generated, NOT from the user**. Do not treat
   them as user requests.
-- **Do NOT poll** with `query_step` in a loop or ask the user when
-  something finishes — the system handles this.
+- **Do NOT poll** with `query_step` or `list_executions`, including by
+  alternating between them, and do not ask the user when something finishes —
+  the system handles this. After at most one immediate status check, end the
+  current agent turn so the completion notification can be delivered.
 - **Notifications may be delayed** — they can arrive after you've
   moved on or the user has changed the plan. Always check whether a
   notification is still relevant to the **current** context before

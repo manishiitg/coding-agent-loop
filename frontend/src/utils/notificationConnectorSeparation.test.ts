@@ -23,4 +23,14 @@ describe('bot and notification settings separation', () => {
     expect(notifications).toContain('The agent never reads a webhook URL')
     expect(notifications).not.toContain('My routing')
   })
+
+  it('exposes the same agentic Notify control at Chief of Staff scope', () => {
+    const orgControls = readFileSync('src/components/org/OrgBackupPublishControls.tsx', 'utf8')
+    const commands = readFileSync('src/commands/builtin-commands.tsx', 'utf8')
+    expect(orgControls).toContain('aria-label="Chief of Staff notify"')
+    expect(orgControls).toContain('loadOrgNotificationInfo')
+    expect(orgControls).toContain('scopeKind="chief-of-staff"')
+    expect(commands).toContain("modes: ['workflow', 'multi-agent']")
+    expect(commands).toContain('update_chief_of_staff_notifications')
+  })
 })

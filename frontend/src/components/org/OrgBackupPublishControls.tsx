@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { Cloud, Globe } from 'lucide-react'
+import { BellRing, Cloud, Globe } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type {
   WorkflowBackupInfoResponse,
@@ -12,6 +12,9 @@ import { formatBackupStateLabel, getBackupDotClass } from '../workflow/backupSta
 import { formatPublishStateLabel, getPublishDotClass } from '../workflow/publishStatus'
 import BackupPopup from '../backup-publish/BackupPopup'
 import PublishPopup from '../backup-publish/PublishPopup'
+import WorkflowNotificationPopup from '../workflow/WorkflowNotificationPopup'
+import { loadOrgNotificationInfo, type WorkflowNotificationState } from '../../services/workflow-notifications'
+import { formatNotificationStateLabel, getNotificationDotClass } from '../workflow/notificationStatus'
 
 const ORG_BACKUP_COMMAND_MESSAGE = `Help me set up or run org-level backup.
 
@@ -44,6 +47,16 @@ If org publish is NOT configured: ask me which static host to use, default to pr
 If org publish IS configured and verified: publish now only if the org HTML changed since the last publish. Stage files outside the workspace, force dark mode, deploy, then come back and update pulse/publish/status.json with state "published", the url, and last_source_hash.
 
 Always write pulse/publish/status.json. Never publish secrets or raw task transcripts. Never write org publish state into any workflow.json or content HTML file.`
+
+const ORG_NOTIFY_COMMAND_MESSAGE = `Help me set up or review notifications for Chief of Staff.
+- First review the saved Chief of Staff notification configuration. Explain the effective destinations and whether the Slack webhook secret reference is healthy. Never reveal or write a webhook URL to config files, prompts, logs, or ordinary files.
+- Notifications are agentic: Chief of Staff decides when a non-blocking FYI, alert, progress update, or completion notice is useful and chooses the message. Delivery is deterministic: call notify_user and let the backend apply the configured Chief of Staff Slack webhook plus enabled account-level channels. This applies to interactive Chief chats and scheduled Chief/Org Pulse runs.
+- Ask what events should notify and what a useful message should contain. Treat those as agent guidance, not routing. If I explicitly want the preference remembered, confirm it and use the existing Chief of Staff memory mechanism; never put preferences or credentials in the capabilities JSON.
+- To connect Slack, call list_secrets first. If I provide a new Slack Incoming Webhook URL, store it with set_user_secret(name="SLACK_NOTIFICATION_WEBHOOK_URL", value=<url>), then call update_chief_of_staff_notifications(slack_webhook_secret_name="SLACK_NOTIFICATION_WEBHOOK_URL"). The configuration tool validates the encrypted secret and never exposes the URL. To disable the dedicated webhook, call update_chief_of_staff_notifications(slack_webhook_secret_name="").
+- Gmail is an inherited account-level notification channel.
+- Do not add a routing step or notification schedule merely to choose a channel.
+- If I ask to test delivery, call notify_user once with a clearly labeled test and report delivered/skipped/failed channels honestly. Do not test unless requested.
+- human_feedback is separate: use it only for short-lived input that must block this run, such as OTP, CAPTCHA, or immediate approval.`
 
 const FALLBACK_ORG_BACKUP_STRATEGIES: WorkflowBackupStrategyInfo[] = [
   {
@@ -167,19 +180,25 @@ const OrgPublishPopup: React.FC<{
 export const OrgBackupPublishControls: React.FC<{ onSubmitCommand?: (query: string) => void }> = ({ onSubmitCommand }) => {
   const [backupState, setBackupState] = useState('loading')
   const [publishState, setPublishState] = useState('not_configured')
+  const [notificationState, setNotificationState] = useState<WorkflowNotificationState | 'loading'>('loading')
   const [showBackupPopup, setShowBackupPopup] = useState(false)
   const [showPublishPopup, setShowPublishPopup] = useState(false)
+  const [showNotificationPopup, setShowNotificationPopup] = useState(false)
 
   const loadOrgOps = useCallback(async () => {
-    const [backup, publish] = await Promise.allSettled([
+    const [backup, publish, notifications] = await Promise.allSettled([
       agentApi.getOrgBackup(),
-      agentApi.getOrgPublish()
+      agentApi.getOrgPublish(),
+      loadOrgNotificationInfo()
     ])
     if (backup.status === 'fulfilled') {
       setBackupState(backup.value.effective_state || 'not_configured')
     }
     if (publish.status === 'fulfilled') {
       setPublishState(publish.value.effective_state || 'not_configured')
+    }
+    if (notifications.status === 'fulfilled') {
+      setNotificationState(notifications.value.effectiveState)
     }
   }, [])
 
@@ -224,6 +243,23 @@ export const OrgBackupPublishControls: React.FC<{ onSubmitCommand?: (query: stri
             <p>Publish &middot; {formatPublishStateLabel(publishState)}</p>
           </TooltipContent>
         </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={() => setShowNotificationPopup(true)}
+              title={`Notify - ${formatNotificationStateLabel(notificationState)}`}
+              aria-label="Chief of Staff notify"
+              className={buttonClass}
+            >
+              <BellRing className="h-3.5 w-3.5" />
+              <span className={`absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full border border-background ${getNotificationDotClass(notificationState)}`} />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>Notify &middot; {formatNotificationStateLabel(notificationState)}</p>
+          </TooltipContent>
+        </Tooltip>
       </div>
       <OrgBackupPopup
         isOpen={showBackupPopup}
@@ -236,6 +272,18 @@ export const OrgBackupPublishControls: React.FC<{ onSubmitCommand?: (query: stri
         onClose={() => setShowPublishPopup(false)}
         onSubmitCommand={onSubmitCommand}
         onStateLoaded={setPublishState}
+      />
+      <WorkflowNotificationPopup
+        isOpen={showNotificationPopup}
+        onClose={() => setShowNotificationPopup(false)}
+        workspacePath={null}
+        loadInfo={loadOrgNotificationInfo}
+        scopeKind="chief-of-staff"
+        onStateLoaded={setNotificationState}
+        onSetup={() => {
+          setShowNotificationPopup(false)
+          onSubmitCommand?.(ORG_NOTIFY_COMMAND_MESSAGE)
+        }}
       />
     </>
   )

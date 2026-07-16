@@ -2525,6 +2525,11 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 		if savedCaps.SelectedGlobalSecretNames != nil {
 			req["selected_global_secrets"] = savedCaps.SelectedGlobalSecretNames
 		}
+		if savedCaps.Notifications != nil {
+			if secretName := strings.TrimSpace(savedCaps.Notifications.SlackWebhookSecretName); secretName != "" {
+				req["notification_slack_webhook_secret_name"] = secretName
+			}
+		}
 		if savedCaps.BrowserMode != "" {
 			req["browser_mode"] = savedCaps.BrowserMode
 		}

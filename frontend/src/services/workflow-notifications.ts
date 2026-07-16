@@ -4,7 +4,7 @@ import { agentApi } from './api'
 export type { WorkflowNotificationState } from './api-types'
 
 export interface WorkflowNotificationInfo {
-  workflowLabel: string
+  scopeLabel: string
   effectiveState: WorkflowNotificationState
   slackWebhook: WorkflowNotificationDestinationInfo
   gmail: WorkflowNotificationAccountChannelInfo | null
@@ -19,7 +19,23 @@ export async function loadWorkflowNotificationInfo(workspacePath: string): Promi
     state: response.effective_state,
   }
   return {
-    workflowLabel: response.workflow_label,
+    scopeLabel: response.scope_label || response.workflow_label || workspacePath.split('/').filter(Boolean).pop() || 'Workflow',
+    effectiveState: response.effective_state,
+    slackWebhook,
+    gmail: response.account_channels.find(channel => channel.id === 'gmail') || null,
+  }
+}
+
+export async function loadOrgNotificationInfo(): Promise<WorkflowNotificationInfo> {
+  const response = await agentApi.getOrgNotifications()
+  const slackWebhook = response.destinations.find(destination => destination.type === 'slack_webhook') || {
+    id: 'chief-of-staff-slack-webhook',
+    type: 'slack_webhook',
+    label: 'Chief of Staff Slack webhook',
+    state: response.effective_state,
+  }
+  return {
+    scopeLabel: response.scope_label || 'Chief of Staff',
     effectiveState: response.effective_state,
     slackWebhook,
     gmail: response.account_channels.find(channel => channel.id === 'gmail') || null,

@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/gorilla/mux"
 )
@@ -59,6 +60,25 @@ func saveMultiAgentChatCapabilitiesHandler() http.HandlerFunc {
 		if err := json.NewDecoder(r.Body).Decode(&caps); err != nil {
 			http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
 			return
+		}
+		// The general Chief-of-Staff capability editor predates notifications and
+		// replaces the entire capabilities object. Preserve the dedicated Notify
+		// setting when an older/current editor omits that field; disabling Notify
+		// remains an explicit agent-tool action.
+		if caps.Notifications == nil {
+			if existing, found, readErr := ReadMultiAgentChatConfig(r.Context(), userID); readErr != nil {
+				http.Error(w, readErr.Error(), http.StatusInternalServerError)
+				return
+			} else if found && existing != nil {
+				caps.Notifications = existing.Capabilities.Notifications
+				if caps.Notifications != nil {
+					caps.SelectedSecrets = appendUniqueString(caps.SelectedSecrets, caps.Notifications.SlackWebhookSecretName)
+				}
+			}
+		} else if strings.TrimSpace(caps.Notifications.SlackWebhookSecretName) == "" {
+			caps.Notifications = nil
+		} else {
+			caps.SelectedSecrets = appendUniqueString(caps.SelectedSecrets, caps.Notifications.SlackWebhookSecretName)
 		}
 		if err := WriteMultiAgentChatConfig(r.Context(), userID, caps); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)

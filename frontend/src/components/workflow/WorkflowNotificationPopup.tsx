@@ -24,6 +24,9 @@ interface WorkflowNotificationPopupProps {
   onClose: () => void
   workspacePath: string | null
   onStateLoaded?: (state: WorkflowNotificationState) => void
+  loadInfo?: () => Promise<WorkflowNotificationInfo>
+  scopeKind?: 'workflow' | 'chief-of-staff'
+  onSetup?: () => void
 }
 
 const iconButtonClass = 'inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50'
@@ -41,16 +44,18 @@ const stateBadgeClass = (state: WorkflowNotificationState): string => {
   }
 }
 
-const summaryFor = (info: WorkflowNotificationInfo): string => {
+const summaryFor = (info: WorkflowNotificationInfo, scopeKind: 'workflow' | 'chief-of-staff'): string => {
+  const destination = scopeKind === 'chief-of-staff' ? 'Chief of Staff’s Slack webhook' : 'this workflow’s Slack webhook'
+  const unconfigured = scopeKind === 'chief-of-staff' ? 'Chief of Staff Slack destination' : 'workflow-specific Slack destination'
   switch (info.effectiveState) {
     case 'ready':
-      return 'The agent can decide when a notification is useful. Every notify_user call is delivered to this workflow’s Slack webhook by the backend.'
+      return `The agent can decide when a notification is useful. Every notify_user call is delivered to ${destination} by the backend.`
     case 'missing_secret':
       return 'A Slack webhook is referenced, but its selected encrypted secret is missing. Use /notify to repair or replace it.'
     case 'invalid_secret':
       return 'The referenced encrypted secret is not a valid Slack Incoming Webhook URL. Use /notify to replace it safely.'
     default:
-      return 'No workflow-specific Slack destination is configured. Use /notify to choose notification behavior and connect one if needed.'
+      return `No ${unconfigured} is configured. Use /notify to choose notification behavior and connect one if needed.`
   }
 }
 
@@ -59,17 +64,20 @@ export default function WorkflowNotificationPopup({
   onClose,
   workspacePath,
   onStateLoaded,
+  loadInfo,
+  scopeKind = 'workflow',
+  onSetup,
 }: WorkflowNotificationPopupProps) {
   const [loading, setLoading] = useState(false)
   const [info, setInfo] = useState<WorkflowNotificationInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
-    if (!workspacePath) return
+    if (!workspacePath && !loadInfo) return
     setLoading(true)
     setError(null)
     try {
-      const next = await loadWorkflowNotificationInfo(workspacePath)
+      const next = loadInfo ? await loadInfo() : await loadWorkflowNotificationInfo(workspacePath as string)
       setInfo(next)
       onStateLoaded?.(next.effectiveState)
     } catch (loadError) {
@@ -77,7 +85,7 @@ export default function WorkflowNotificationPopup({
     } finally {
       setLoading(false)
     }
-  }, [onStateLoaded, workspacePath])
+  }, [loadInfo, onStateLoaded, workspacePath])
 
   useEffect(() => {
     if (isOpen) void load()
@@ -88,7 +96,8 @@ export default function WorkflowNotificationPopup({
   const state = info?.effectiveState || 'not_configured'
   const StateIcon = state === 'ready' ? CheckCircle2 : state === 'missing_secret' || state === 'invalid_secret' ? AlertCircle : BellRing
   const gmailReady = info?.gmail?.state === 'ready'
-  const workflowName = info?.workflowLabel || workspacePath?.split('/').filter(Boolean).pop() || 'Workflow'
+  const scopeName = info?.scopeLabel || workspacePath?.split('/').filter(Boolean).pop() || (scopeKind === 'chief-of-staff' ? 'Chief of Staff' : 'Workflow')
+  const scopeLabel = scopeKind === 'chief-of-staff' ? 'Chief of Staff' : 'workflow'
 
   return (
     <ModalPortal>
@@ -100,7 +109,7 @@ export default function WorkflowNotificationPopup({
                 <BellRing className="h-4 w-4 text-primary" />
                 Notify
               </h2>
-              <p className="mt-0.5 truncate text-xs text-muted-foreground">Agentic, one-way notifications for {workflowName}</p>
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">Agentic, one-way notifications for {scopeName}</p>
             </div>
             <button onClick={onClose} className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Close">
               <X className="h-4 w-4" />
@@ -129,13 +138,17 @@ export default function WorkflowNotificationPopup({
                         </span>
                       </div>
                       <h3 className="mt-2 text-base font-semibold text-foreground">Agentic notification delivery</h3>
-                      <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{summaryFor(info)}</p>
+                      <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{summaryFor(info, scopeKind)}</p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <button onClick={() => { void load() }} disabled={loading} className={iconButtonClass} aria-label="Refresh notification status">
                         <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
                       </button>
-                      <span className={setupClass}>Set up · test in chat with <code className="rounded bg-background px-1 font-medium text-foreground">/notify</code></span>
+                      {onSetup ? (
+                        <button type="button" onClick={onSetup} className={`${setupClass} transition-colors hover:bg-muted hover:text-foreground`}>Set up · test in chat with <code className="rounded bg-background px-1 font-medium text-foreground">/notify</code></button>
+                      ) : (
+                        <span className={setupClass}>Set up · test in chat with <code className="rounded bg-background px-1 font-medium text-foreground">/notify</code></span>
+                      )}
                     </div>
                   </div>
 
@@ -165,12 +178,12 @@ export default function WorkflowNotificationPopup({
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <Webhook className="h-3.5 w-3.5 text-muted-foreground" />
-                          <span className="text-sm font-medium text-foreground">Workflow Slack webhook</span>
+                          <span className="text-sm font-medium text-foreground">{scopeKind === 'chief-of-staff' ? 'Chief of Staff Slack webhook' : 'Workflow Slack webhook'}</span>
                         </div>
                         <p className="mt-1 text-xs text-muted-foreground">
                           {info.slackWebhook.secret_name
                             ? <>Encrypted secret reference: <code>{info.slackWebhook.secret_name}</code></>
-                            : info.slackWebhook.summary || 'No workflow-specific webhook selected.'}
+                            : info.slackWebhook.summary || `No ${scopeLabel}-specific webhook selected.`}
                         </p>
                       </div>
                       <span className={`w-fit rounded-full border px-2 py-0.5 text-xs ${stateBadgeClass(state)}`}>{formatNotificationStateLabel(state)}</span>
@@ -185,7 +198,7 @@ export default function WorkflowNotificationPopup({
                         </div>
                         <p className="mt-1 text-xs text-muted-foreground">
                           {gmailReady
-                            ? `Available to this workflow${info.gmail?.default_recipient ? ` · default ${info.gmail.default_recipient}` : ''}. The agent may supply workflow-specific recipients when explicitly configured.`
+                            ? `Available to ${scopeKind === 'chief-of-staff' ? 'Chief of Staff' : 'this workflow'}${info.gmail?.default_recipient ? ` · default ${info.gmail.default_recipient}` : ''}. The agent may supply specific recipients when explicitly configured.`
                             : info.gmail?.summary || 'Not ready at account level. Configure and test Gmail from Notification channels.'}
                         </p>
                       </div>
@@ -197,7 +210,7 @@ export default function WorkflowNotificationPopup({
                 </section>
 
                 <div className="rounded-md border border-blue-500/20 bg-blue-500/5 px-4 py-3 text-xs text-muted-foreground">
-                  Configure notification intent and the Slack destination through <code className="text-foreground">/notify</code>. This does not add a routing step to the workflow. Short-lived questions that require an answer still use <code className="text-foreground">human_feedback</code> instead.
+                  Configure notification intent and the Slack destination through <code className="text-foreground">/notify</code>. This does not add a routing step. Short-lived questions that require an answer still use <code className="text-foreground">human_feedback</code> instead.
                 </div>
               </div>
             ) : null}

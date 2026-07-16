@@ -2095,6 +2095,11 @@ export const agentApi = {
     return response.data
   },
 
+  getOrgNotifications: async (): Promise<WorkflowNotificationInfoResponse> => {
+    const response = await api.get('/api/org/notifications')
+    return response.data
+  },
+
   getWorkflowPublishSecret: async (workspacePath: string, secretName: string): Promise<WorkflowPublishSecretResponse> => {
     const response = await api.get('/api/workflow/publish/secret', {
       params: { workspace_path: workspacePath, secret_name: secretName }

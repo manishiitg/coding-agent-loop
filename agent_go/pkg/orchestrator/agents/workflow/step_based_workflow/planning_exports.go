@@ -843,8 +843,8 @@ func (s *WorkshopChatSession) UpdateEnabledGroupNames(ctx context.Context, enabl
 	}
 }
 
-// RegisterWorkshopChatTools registers execute_step, query_step, stop_step, list_steps,
-// update_step_config, and get_step_prompts on the given agent using the session's controller.
+// RegisterWorkshopChatTools registers the complete workshop-only tool surface on
+// the given agent using the session's controller.
 func RegisterWorkshopChatTools(
 	mcpAgent *mcpagent.Agent,
 	session *WorkshopChatSession,
@@ -871,7 +871,7 @@ func RegisterWorkshopChatTools(
 		listServerAgents:       session.listServerAgents,
 		workshopModeOverride:   session.workshopModeOverride,
 	}
-	registerInteractiveWorkshopTools(iwm, mcpAgent, logger)
+	registerWorkshopAgentTools(iwm, mcpAgent, session.config.WorkspacePath, logger)
 }
 
 // Close cancels all background goroutines for this workshop session.

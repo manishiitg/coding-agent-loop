@@ -1524,6 +1524,17 @@ func (iwm *InteractiveWorkshopManager) registerMarkChangelogArtifactReviewedTool
 	)
 }
 
+// registerWorkshopAgentTools is the single registration path for tools that are
+// available only to a workshop/Pulse agent. Keep both the exported CLI wrapper
+// and the legacy in-process workshop executor on this path so their actual tool
+// registries cannot drift from one another.
+func registerWorkshopAgentTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagent.Agent, workspacePath string, logger loggerv2.Logger) {
+	registerInteractiveWorkshopTools(iwm, mcpAgent, logger)
+	if err := iwm.registerMarkChangelogArtifactReviewedTool(mcpAgent, workspacePath, logger); err != nil {
+		logger.Warn(fmt.Sprintf("Failed to register changelog artifact-review marker tool: %v", err))
+	}
+}
+
 func (iwm *InteractiveWorkshopManager) markChangelogArtifactReviewed(ctx context.Context, workspacePath string, args map[string]interface{}, logger loggerv2.Logger) (string, error) {
 	rawMarks, ok := args["marks"].([]interface{})
 	if !ok || len(rawMarks) == 0 {
@@ -2275,10 +2286,7 @@ func (agent *WorkflowInteractiveWorkshopAgent) Execute(ctx context.Context, temp
 	// are registered inside registerInteractiveWorkshopTools for both full and HAE modes.
 
 	// Register custom workshop tools (execute_step, query_step, send_step_message, stop_step, update_step_config)
-	registerInteractiveWorkshopTools(iwm, mcpAgentRef, logger)
-	if err := iwm.registerMarkChangelogArtifactReviewedTool(mcpAgentRef, workspacePath, logger); err != nil {
-		logger.Warn(fmt.Sprintf("Failed to register changelog artifact-review marker tool: %v", err))
-	}
+	registerWorkshopAgentTools(iwm, mcpAgentRef, workspacePath, logger)
 
 	// Update the code execution registry for CLI providers.
 	if agent.GetConfig().UseCodeExecutionMode {

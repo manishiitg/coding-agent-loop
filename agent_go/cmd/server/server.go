@@ -247,6 +247,10 @@ type StreamingAPI struct {
 	// internalQueryHandler is a narrow test seam for server-owned follow-up
 	// turns. Production dispatch falls back to handleQuery.
 	internalQueryHandler func(http.ResponseWriter, *http.Request)
+	// internalUserMessageDeliveryHandler lets routing contract tests observe
+	// delivery at the AgentWorks boundary. Production dispatch falls back to
+	// Agent.DeliverUserMessage.
+	internalUserMessageDeliveryHandler func(context.Context, *mcpagent.Agent, mcpagent.UserMessageDeliveryRequest) (mcpagent.UserMessageDeliveryResult, error)
 
 	// Note: Removed session management - fresh agents created per request
 
@@ -6856,7 +6860,7 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 
 	inputCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentInputTimeout)
 	defer cancel()
-	delivery, err := runningAgent.DeliverUserMessage(inputCtx, mcpagent.UserMessageDeliveryRequest{
+	delivery, err := api.deliverRunningAgentUserMessage(inputCtx, runningAgent, mcpagent.UserMessageDeliveryRequest{
 		SessionID: sessionID,
 		Message:   message,
 		Intent:    mcpagent.UserMessageDeliveryIntentLiveInput,
@@ -6996,7 +7000,7 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 
 	inputCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentInputTimeout)
 	defer cancel()
-	delivery, err := runningAgent.DeliverUserMessage(inputCtx, mcpagent.UserMessageDeliveryRequest{
+	delivery, err := api.deliverRunningAgentUserMessage(inputCtx, runningAgent, mcpagent.UserMessageDeliveryRequest{
 		SessionID: sessionID,
 		Message:   req.Message,
 		Intent:    mcpagent.UserMessageDeliveryIntentLiveInput,
@@ -7042,6 +7046,13 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 
 func newSteerMessageID() string {
 	return fmt.Sprintf("steer-message-%d", time.Now().UnixNano())
+}
+
+func (api *StreamingAPI) deliverRunningAgentUserMessage(ctx context.Context, runningAgent *mcpagent.Agent, req mcpagent.UserMessageDeliveryRequest) (mcpagent.UserMessageDeliveryResult, error) {
+	if api.internalUserMessageDeliveryHandler != nil {
+		return api.internalUserMessageDeliveryHandler(ctx, runningAgent, req)
+	}
+	return runningAgent.DeliverUserMessage(ctx, req)
 }
 
 type internalResponseCapture struct {

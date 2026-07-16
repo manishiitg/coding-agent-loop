@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState, type ForwardedRef } from 'react'
 import { useRenderLogger, useMemoLogger } from '../utils/renderLogger'
 import { chatSubmissionLane } from '../utils/promiseLane'
+import { liveInputSubmissionCoordinator } from '../utils/liveInputSubmission'
 import { isInternalAutoNotificationEvent } from '../utils/internalChatEvents'
 import { useShallow } from 'zustand/react/shallow'
 import { agentApi, resetSessionId, getSessionId } from '../services/api'
@@ -2833,7 +2834,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       ? useChatStore.getState().chatTabs[options.sourceTabId]
       : activeTab
     const laneKey = sourceTab?.sessionId || sourceTab?.tabId || `${selectedModeCategory || 'unknown'}:pending-tab`
-    return chatSubmissionLane.enqueue(laneKey, () => submitQueryImmediately(query, executionOptions, options))
+    const submit = () => chatSubmissionLane.enqueue(laneKey, () => submitQueryImmediately(query, executionOptions, options))
+    if (options?.preferLiveInput) {
+      return liveInputSubmissionCoordinator(laneKey, query, submit)
+    }
+    return submit()
   }, [activeTab, selectedModeCategory, submitQueryImmediately])
 
   // If the active tab is stuck in streaming state, ChatInput queues the user's text

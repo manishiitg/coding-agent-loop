@@ -55,6 +55,17 @@ jobs:
           cache-dependency-path: |
             coding-agent-loop/agent_go/go.sum
             multi-llm-provider-go/go.sum
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: coding-agent-loop/frontend/package-lock.json
+
+      - name: Install frontend test dependencies
+        run: npm ci --prefix coding-agent-loop/frontend
+
       - name: Verify P0 registry and compile workflow gate
         working-directory: coding-agent-loop
         run: ./scripts/run-coding-cli-p0.sh
@@ -63,7 +74,7 @@ jobs:
     name: P0 real CLI + workflow
     if: >-
       (github.event_name == 'workflow_dispatch' && inputs.run_real) ||
-      (github.event_name == 'schedule' && vars.CODING_CLI_P0_NIGHTLY_ENABLED == 'true')
+      github.event_name == 'schedule'
     runs-on: [self-hosted, macOS, agentworks-coding-cli]
     timeout-minutes: 240
     steps:
@@ -81,6 +92,25 @@ jobs:
         with:
           repository: manishiitg/llm-provider-mcp
           path: multi-llm-provider-go
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.12"
+          cache-dependency-path: |
+            coding-agent-loop/agent_go/go.sum
+            multi-llm-provider-go/go.sum
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: coding-agent-loop/frontend/package-lock.json
+
+      - name: Install frontend test dependencies
+        run: npm ci --prefix coding-agent-loop/frontend
+
       - name: Run authenticated P0 matrix
         working-directory: coding-agent-loop
         env:

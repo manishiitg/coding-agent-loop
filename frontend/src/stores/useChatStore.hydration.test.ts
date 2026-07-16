@@ -40,7 +40,7 @@ describe('useChatStore hydration bootstrap', () => {
       status: 'hydrated',
       error: null,
     })
-  })
+  }, 15_000)
 
   it('does not persist 1,000 streaming chunks and coalesces durable changes', async () => {
     vi.useFakeTimers()

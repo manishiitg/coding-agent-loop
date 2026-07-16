@@ -1871,7 +1871,7 @@ func (api *StreamingAPI) steerBackgroundAgentCompletion(sessionID, agentID strin
 
 	inputCtx, cancel := context.WithTimeout(context.Background(), liveCodingAgentInputTimeout)
 	defer cancel()
-	delivery, err := runningAgent.DeliverUserMessage(inputCtx, mcpagent.UserMessageDeliveryRequest{
+	delivery, err := api.deliverRunningAgentUserMessage(inputCtx, runningAgent, mcpagent.UserMessageDeliveryRequest{
 		SessionID: sessionID,
 		Message:   msg,
 		Intent:    mcpagent.UserMessageDeliveryIntentLiveInput,

@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -287,6 +289,206 @@ func TestHandleLiveInputMessageRoutesThroughAgentDelivery(t *testing.T) {
 	if len(queued) != 1 || queued[0] != "send this through delivery" {
 		t.Fatalf("queued messages = %#v", queued)
 	}
+}
+
+func TestHandleLiveInputMessageBusyCodingAgentDeliversExactlyOnce(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	defer store.Stop()
+
+	const sessionID = "busy-codex-live-input"
+	const message = "apply this follow-up while processing"
+	runningAgent := &mcpagent.Agent{ModelID: "gpt-5.6-sol"}
+	runningAgent.SetProvider(llm.ProviderCodexCLI)
+	var deliveryCalls atomic.Int32
+	var nextTurnCalls atomic.Int32
+	cancelCalled := false
+	api := &StreamingAPI{
+		eventStore:       store,
+		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
+		runningAgentsMux: sync.RWMutex{},
+		agentCancelFuncs: map[string]context.CancelFunc{sessionID: func() { cancelCalled = true }},
+		agentCancelMux:   sync.RWMutex{},
+		internalUserMessageDeliveryHandler: func(_ context.Context, gotAgent *mcpagent.Agent, req mcpagent.UserMessageDeliveryRequest) (mcpagent.UserMessageDeliveryResult, error) {
+			deliveryCalls.Add(1)
+			if gotAgent != runningAgent {
+				t.Fatalf("delivery agent = %p, want retained agent %p", gotAgent, runningAgent)
+			}
+			if req.SessionID != sessionID || req.Message != message || req.Intent != mcpagent.UserMessageDeliveryIntentLiveInput {
+				t.Fatalf("delivery request = %#v", req)
+			}
+			return mcpagent.UserMessageDeliveryResult{
+				Provider:       llm.ProviderCodexCLI,
+				DeliveryStatus: mcpagent.UserMessageDeliveryStatusSentToCLI,
+				Transport:      llm.CodingAgentTransportTmux,
+			}, nil
+		},
+		internalQueryHandler: func(http.ResponseWriter, *http.Request) {
+			nextTurnCalls.Add(1)
+		},
+	}
+
+	body := bytes.NewBufferString(`{"message":"` + message + `"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/live-input", body)
+	req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
+	rr := httptest.NewRecorder()
+	started := time.Now()
+
+	api.handleLiveInputMessage(rr, req)
+	if elapsed := time.Since(started); elapsed >= time.Second {
+		t.Fatalf("busy live-input acknowledgement took %s, want under 1s", elapsed)
+	}
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var response LiveInputResponse
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.DeliveryStatus != "sent_to_cli" || response.MessageID == "" {
+		t.Fatalf("response = %#v, want confirmed CLI delivery", response)
+	}
+	if got := deliveryCalls.Load(); got != 1 {
+		t.Fatalf("delivery calls = %d, want exactly 1", got)
+	}
+	if got := nextTurnCalls.Load(); got != 0 {
+		t.Fatalf("next-turn calls = %d, want 0 after confirmed live delivery", got)
+	}
+	if cancelCalled || !api.hasActiveTurnCancel(sessionID) {
+		t.Fatal("confirmed live delivery must keep the current foreground turn active")
+	}
+
+	events := store.GetAllEventsRaw(sessionID)
+	if len(events) != 1 {
+		t.Fatalf("recorded events = %d, want exactly 1", len(events))
+	}
+	payload, ok := events[0].Data.Data.(*pkgevents.UserMessageEvent)
+	if !ok {
+		t.Fatalf("event payload = %T, want *UserMessageEvent", events[0].Data.Data)
+	}
+	if payload.Content != message || payload.Metadata["message_id"] != response.MessageID || payload.Metadata["delivery_status"] != "sent_to_cli" {
+		t.Fatalf("recorded live-input payload = %#v", payload)
+	}
+}
+
+func TestHandleLiveInputMessageCompletionBoundaryChoosesExactlyOneRoute(t *testing.T) {
+	t.Run("completion during confirmed delivery stays live-only", func(t *testing.T) {
+		store := internalevents.NewEventStore(10)
+		defer store.Stop()
+
+		const sessionID = "completion-during-delivery"
+		runningAgent := &mcpagent.Agent{ModelID: "gpt-5.6-sol"}
+		runningAgent.SetProvider(llm.ProviderCodexCLI)
+		var deliveryCalls atomic.Int32
+		var nextTurnCalls atomic.Int32
+		var api *StreamingAPI
+		api = &StreamingAPI{
+			eventStore:       store,
+			runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
+			runningAgentsMux: sync.RWMutex{},
+			agentCancelFuncs: map[string]context.CancelFunc{sessionID: func() {}},
+			agentCancelMux:   sync.RWMutex{},
+			internalUserMessageDeliveryHandler: func(_ context.Context, _ *mcpagent.Agent, _ mcpagent.UserMessageDeliveryRequest) (mcpagent.UserMessageDeliveryResult, error) {
+				deliveryCalls.Add(1)
+				api.agentCancelMux.Lock()
+				delete(api.agentCancelFuncs, sessionID)
+				api.agentCancelMux.Unlock()
+				return mcpagent.UserMessageDeliveryResult{Provider: llm.ProviderCodexCLI, DeliveryStatus: mcpagent.UserMessageDeliveryStatusSentToCLI}, nil
+			},
+			internalQueryHandler: func(http.ResponseWriter, *http.Request) { nextTurnCalls.Add(1) },
+		}
+
+		body := bytes.NewBufferString(`{"message":"boundary follow-up"}`)
+		req := mux.SetURLVars(httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/live-input", body), map[string]string{"session_id": sessionID})
+		rr := httptest.NewRecorder()
+		api.handleLiveInputMessage(rr, req)
+
+		if rr.Code != http.StatusOK || deliveryCalls.Load() != 1 || nextTurnCalls.Load() != 0 {
+			t.Fatalf("status=%d delivery=%d next_turn=%d body=%s", rr.Code, deliveryCalls.Load(), nextTurnCalls.Load(), rr.Body.String())
+		}
+		if got := len(store.GetAllEventsRaw(sessionID)); got != 1 {
+			t.Fatalf("recorded events = %d, want exactly 1 live-input event", got)
+		}
+	})
+
+	t.Run("lost active session never also starts a fallback", func(t *testing.T) {
+		const sessionID = "completion-loses-delivery"
+		runningAgent := &mcpagent.Agent{ModelID: "gpt-5.6-sol"}
+		runningAgent.SetProvider(llm.ProviderCodexCLI)
+		var deliveryCalls atomic.Int32
+		var nextTurnCalls atomic.Int32
+		var api *StreamingAPI
+		api = &StreamingAPI{
+			runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
+			runningAgentsMux: sync.RWMutex{},
+			agentCancelFuncs: map[string]context.CancelFunc{sessionID: func() {}},
+			agentCancelMux:   sync.RWMutex{},
+			internalUserMessageDeliveryHandler: func(_ context.Context, _ *mcpagent.Agent, _ mcpagent.UserMessageDeliveryRequest) (mcpagent.UserMessageDeliveryResult, error) {
+				deliveryCalls.Add(1)
+				api.agentCancelMux.Lock()
+				delete(api.agentCancelFuncs, sessionID)
+				api.agentCancelMux.Unlock()
+				return mcpagent.UserMessageDeliveryResult{}, errors.New("tmux session completed during delivery")
+			},
+			internalQueryHandler: func(http.ResponseWriter, *http.Request) { nextTurnCalls.Add(1) },
+		}
+
+		body := bytes.NewBufferString(`{"message":"boundary follow-up"}`)
+		req := mux.SetURLVars(httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/live-input", body), map[string]string{"session_id": sessionID})
+		rr := httptest.NewRecorder()
+		api.handleLiveInputMessage(rr, req)
+
+		if rr.Code != http.StatusConflict || deliveryCalls.Load() != 1 || nextTurnCalls.Load() != 0 {
+			t.Fatalf("status=%d delivery=%d next_turn=%d body=%s", rr.Code, deliveryCalls.Load(), nextTurnCalls.Load(), rr.Body.String())
+		}
+	})
+
+	t.Run("completion before request queues only a next turn", func(t *testing.T) {
+		const sessionID = "completed-before-delivery"
+		runningAgent := &mcpagent.Agent{ModelID: "gpt-5.6-sol"}
+		runningAgent.SetProvider(llm.ProviderCodexCLI)
+		var deliveryCalls atomic.Int32
+		var nextTurnCalls atomic.Int32
+		nextTurnDone := make(chan struct{})
+		api := &StreamingAPI{
+			runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
+			runningAgentsMux: sync.RWMutex{},
+			agentCancelFuncs: map[string]context.CancelFunc{},
+			agentCancelMux:   sync.RWMutex{},
+			lastQueryRequests: map[string]QueryRequest{
+				sessionID: {AgentMode: "multi-agent", Provider: string(llm.ProviderCodexCLI), ModelID: "gpt-5.6-sol"},
+			},
+			internalUserMessageDeliveryHandler: func(_ context.Context, _ *mcpagent.Agent, _ mcpagent.UserMessageDeliveryRequest) (mcpagent.UserMessageDeliveryResult, error) {
+				deliveryCalls.Add(1)
+				return mcpagent.UserMessageDeliveryResult{}, nil
+			},
+			internalQueryHandler: func(w http.ResponseWriter, _ *http.Request) {
+				nextTurnCalls.Add(1)
+				_ = json.NewEncoder(w).Encode(QueryResponse{QueryID: "boundary-next-turn"})
+				close(nextTurnDone)
+			},
+		}
+
+		body := bytes.NewBufferString(`{"message":"boundary follow-up"}`)
+		req := mux.SetURLVars(httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/live-input", body), map[string]string{"session_id": sessionID})
+		rr := httptest.NewRecorder()
+		api.handleLiveInputMessage(rr, req)
+		select {
+		case <-nextTurnDone:
+		case <-time.After(time.Second):
+			t.Fatal("queued next turn did not start")
+		}
+
+		if rr.Code != http.StatusOK || deliveryCalls.Load() != 0 || nextTurnCalls.Load() != 1 {
+			t.Fatalf("status=%d delivery=%d next_turn=%d body=%s", rr.Code, deliveryCalls.Load(), nextTurnCalls.Load(), rr.Body.String())
+		}
+		var response LiveInputResponse
+		if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if response.DeliveryStatus != "next_turn_started" {
+			t.Fatalf("delivery status = %q, want next_turn_started", response.DeliveryStatus)
+		}
+	})
 }
 
 func TestHandleLiveInputMessageRejectsStaleRetainedCodingAgent(t *testing.T) {

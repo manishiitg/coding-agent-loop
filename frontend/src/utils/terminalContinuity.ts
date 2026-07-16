@@ -1,4 +1,5 @@
 import type { TerminalSnapshot } from '../services/api-types'
+import { isMainAgentTerminal } from './terminalIdentity'
 
 export interface TerminalContinuityOptions {
   sameScope: boolean
@@ -10,14 +11,6 @@ export interface TerminalContinuityOptions {
 export interface TerminalContinuityResult {
   terminals: TerminalSnapshot[]
   emptyPollCount: number
-}
-
-function isMainAgentTerminal(terminal: TerminalSnapshot): boolean {
-  const kind = (terminal.execution_kind || '').toLowerCase()
-  const ownerID = (terminal.owner_id || '').toLowerCase()
-  const terminalID = (terminal.terminal_id || '').toLowerCase()
-  return kind === 'main_agent' || kind === 'main' || kind === 'chat' ||
-    ownerID.startsWith('main:') || terminalID.includes(':main:')
 }
 
 function isRenderableTerminal(terminal: TerminalSnapshot): boolean {

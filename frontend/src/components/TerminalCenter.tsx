@@ -17,6 +17,7 @@ import { useTheme } from '../hooks/useTheme'
 import type { Theme } from '../contexts/ThemeContext'
 import { normalizeAnsiForEmbeddedXterm } from '../utils/ansiSanitize'
 import { preserveTerminalContinuity } from '../utils/terminalContinuity'
+import { isMainAgentTerminal } from '../utils/terminalIdentity'
 import {
   organizeTerminalRail,
   terminalRailGroupSearchText,
@@ -1240,19 +1241,6 @@ function formatRailAge(terminal: TerminalSnapshot): { label: string; title: stri
   if (minutes < 60) return { label: `${minutes}m ago`, title }
   const hours = Math.floor(minutes / 60)
   return { label: `${hours}h ago`, title }
-}
-
-// isMainAgentTerminal returns true for the persistent chat-session
-// terminal that the user keeps coming back to. We pin it to the top of
-// every list so it's the first thing the eye lands on when switching
-// to Debug view.
-function isMainAgentTerminal(terminal: TerminalSnapshot): boolean {
-  const kind = (terminal.execution_kind || '').toLowerCase()
-  const ownerID = (terminal.owner_id || '').toLowerCase()
-  const terminalID = (terminal.terminal_id || '').toLowerCase()
-  return kind === 'main_agent' || kind === 'main' || kind === 'chat' ||
-    ownerID.startsWith('main:') ||
-    terminalID.includes(':main:')
 }
 
 function isArchivedTurnTerminal(terminal: TerminalSnapshot): boolean {

@@ -1316,6 +1316,54 @@ func TestStoreChildReviewerCannotReplaceMainAgentTmux(t *testing.T) {
 	}
 }
 
+func TestStoreInheritedMainKindCannotReplaceMainAgentTmux(t *testing.T) {
+	store := NewStore()
+	now := time.Now()
+	sessionID := "schedule-cron--pulse"
+	childOwnerID := "pulse-reviewer-learning-456"
+
+	store.HandleEvent(sessionID, terminalEventWithMetadata(
+		"main:"+sessionID,
+		"parent pulse screen",
+		1,
+		map[string]interface{}{
+			"execution_kind": "main_agent",
+			"tmux_session":   "mlp-parent",
+		},
+		now,
+	))
+	childEvent := terminalEventWithMetadata(
+		childOwnerID,
+		"child reviewer screen",
+		1,
+		map[string]interface{}{
+			"execution_kind": "background_agent",
+			"scope":          "background_agent",
+			"tmux_session":   "mlp-reviewer",
+		},
+		now.Add(time.Second),
+	)
+	// Provider callbacks can inherit this parent field even though enriched
+	// metadata correctly identifies the background child.
+	childEvent.ExecutionKind = "main_agent"
+	store.HandleEvent(sessionID, childEvent)
+
+	parent, ok := store.Get(sessionID + ":main:" + sessionID)
+	if !ok {
+		t.Fatalf("expected canonical parent terminal")
+	}
+	if parent.TmuxSession != "mlp-parent" || parent.Content != "parent pulse screen" {
+		t.Fatalf("mislabelled child replaced parent terminal: tmux=%q content=%q", parent.TmuxSession, parent.Content)
+	}
+	child, ok := store.Get(sessionID + ":" + childOwnerID)
+	if !ok {
+		t.Fatalf("expected separate child reviewer terminal")
+	}
+	if child.ExecutionKind != "background_agent" || child.Scope != "background_agent" {
+		t.Fatalf("child identity = kind %q scope %q", child.ExecutionKind, child.Scope)
+	}
+}
+
 func TestStoreListDedupesLegacyCurrentMainAgentAliases(t *testing.T) {
 	store := NewStore()
 	oldUpdate := time.Now().Add(-time.Minute)
@@ -3086,5 +3134,55 @@ func TestStoreStatusLineCreatesLiveTerminalFromStatusMetadataTmux(t *testing.T) 
 	}
 	if snapshot.Status.StatusMeta == nil || snapshot.Status.StatusMeta["working_dir"] != "/tmp/chats" {
 		t.Fatalf("status metadata not preserved: %+v", snapshot.Status.StatusMeta)
+	}
+}
+
+func TestStoreStatusLineInheritedMainKindCannotReplaceMainAgentTmux(t *testing.T) {
+	store := NewStore()
+	now := time.Now()
+	sessionID := "schedule-cron--pulse"
+	childOwnerID := "pulse-reviewer-eval-789"
+
+	store.HandleEvent(sessionID, terminalEventWithMetadata(
+		"main:"+sessionID,
+		"parent pulse screen",
+		1,
+		map[string]interface{}{
+			"execution_kind": "main_agent",
+			"tmux_session":   "mlp-parent",
+		},
+		now,
+	))
+	store.HandleEvent(sessionID, storeevents.Event{
+		Type:          "status_line",
+		SessionID:     sessionID,
+		ExecutionID:   "main:" + sessionID,
+		ExecutionKind: "main_agent",
+		Timestamp:     now.Add(time.Second),
+		Data: &agentevents.AgentEvent{
+			Type: agentevents.StreamingStatusLine,
+			Data: &agentevents.StreamingStatusLineEvent{
+				Provider:    "claudecode",
+				Model:       "claude-opus-4-8",
+				TmuxSession: "mlp-reviewer",
+				Metadata: map[string]interface{}{
+					"background_agent_id": childOwnerID,
+					"execution_kind":      "background_agent",
+					"scope":               "background_agent",
+				},
+			},
+		},
+	})
+
+	parent, ok := store.Get(sessionID + ":main:" + sessionID)
+	if !ok || parent.TmuxSession != "mlp-parent" || parent.Content != "parent pulse screen" {
+		t.Fatalf("status line replaced parent terminal: found=%v parent=%+v", ok, parent)
+	}
+	child, ok := store.Get(sessionID + ":" + childOwnerID)
+	if !ok {
+		t.Fatalf("expected status line to create a separate child terminal")
+	}
+	if child.ExecutionKind != "background_agent" || child.Scope != "background_agent" {
+		t.Fatalf("child identity = kind %q scope %q", child.ExecutionKind, child.Scope)
 	}
 }

@@ -829,9 +829,9 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	current.ExecutionID = firstNonEmpty(event.ExecutionID, stringValue(metadata, "execution_id"), stringValue(metadata, "execution_owner_id"), ownerID)
 	// Enriched metadata can correct a provider event that inherited the parent
 	// main-agent kind. Prefer it so child reviewers remain separate terminals.
-	current.ExecutionKind = firstNonEmpty(stringValue(metadata, "execution_kind"), event.ExecutionKind)
+	current.ExecutionKind = terminalExecutionKind(sessionID, ownerID, event, metadata)
 	current.Label = terminalLabel(event, metadata, ownerID)
-	current.Scope = terminalScope(event, metadata)
+	current.Scope = normalizedTerminalScope(sessionID, ownerID, terminalScope(event, metadata), current.ExecutionKind)
 	current.WorkflowPath = firstNonEmpty(stringValue(metadata, "workflow_path"), stringValue(metadata, "workspace_path"), stringValue(metadata, "working_directory"))
 	current.WorkflowName = firstNonEmpty(stringValue(metadata, "workflow_name"), stringValue(metadata, "workflow_id"), workflowNameFromPath(current.WorkflowPath))
 	current.WorkflowLabel = firstNonEmpty(stringValue(metadata, "workflow_label"), stringValue(metadata, "preset_name"), current.WorkflowName)
@@ -919,7 +919,7 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 		s.bySession[sessionID] = make(map[string]struct{})
 	}
 	s.bySession[sessionID][terminalID] = struct{}{}
-	if currentTerminalIsMainAgent(current) {
+	if currentTerminalIsCanonicalMainAgent(current) {
 		s.removeCurrentMainAgentAliasesLocked(sessionID, terminalID)
 	}
 }
@@ -1327,6 +1327,10 @@ func currentTerminalIsMainAgent(snapshot Snapshot) bool {
 	}
 	owner := strings.TrimSpace(snapshot.OwnerID)
 	return owner != "" && (owner == snapshot.SessionID || strings.HasPrefix(owner, "main:"))
+}
+
+func currentTerminalIsCanonicalMainAgent(snapshot Snapshot) bool {
+	return currentTerminalIsMainAgent(snapshot) && terminalOwnerIsCanonicalMain(snapshot.SessionID, snapshot.OwnerID)
 }
 
 func shouldPreferTerminalSnapshot(candidate, existing Snapshot) bool {
@@ -1903,15 +1907,18 @@ func terminalOwnerID(sessionID string, event storeevents.Event, metadata map[str
 	); ownerID != "" {
 		return ownerID
 	}
-	if terminalEventIsMainAgent(event, metadata) {
-		return "main:" + sessionID
-	}
+	// Child identity is more specific than a provider-level execution kind.
+	// Provider events can inherit main_agent from their parent while carrying
+	// the real child owner in enriched metadata.
 	if ownerID := firstValidTerminalOwner(sessionID,
 		stringValue(metadata, "background_agent_id"),
 		stringValue(metadata, "delegation_id"),
 		stringValue(metadata, "agent_id"),
 	); ownerID != "" {
 		return ownerID
+	}
+	if terminalEventIsMainAgent(event, metadata) {
+		return "main:" + sessionID
 	}
 	if ownerID := firstValidTerminalOwner(sessionID,
 		stringValue(metadata, "execution_id"),
@@ -1927,11 +1934,85 @@ func terminalOwnerID(sessionID string, event storeevents.Event, metadata map[str
 	)
 }
 
+func terminalOwnerIsCanonicalMain(sessionID, ownerID string) bool {
+	sessionID = strings.TrimSpace(sessionID)
+	ownerID = strings.TrimSpace(ownerID)
+	return sessionID != "" && (ownerID == sessionID || ownerID == "main:"+sessionID)
+}
+
+func terminalExecutionKind(sessionID, ownerID string, event storeevents.Event, metadata map[string]interface{}) string {
+	kind := strings.ToLower(strings.TrimSpace(firstNonEmpty(
+		stringValue(metadata, "execution_kind"),
+		event.ExecutionKind,
+	)))
+	if terminalOwnerIsCanonicalMain(sessionID, ownerID) {
+		if kind == "" || terminalKindIsMain(kind) {
+			return "main_agent"
+		}
+		return kind
+	}
+	if !terminalKindIsMain(kind) {
+		return kind
+	}
+
+	scope := strings.ToLower(strings.TrimSpace(stringValue(metadata, "scope")))
+	switch scope {
+	case "workflow_step", "step", "execution_only":
+		return "workflow_step"
+	case "background_agent", "background":
+		return "background_agent"
+	case "delegation", "todo_task", "sub_agent":
+		return "delegation"
+	}
+	if workflowStepIDFromOwner(ownerID) != "" {
+		return "workflow_step"
+	}
+	if ownerID == stringValue(metadata, "background_agent_id") || ownerID == stringValue(metadata, "agent_id") {
+		return "background_agent"
+	}
+	if ownerID == stringValue(metadata, "delegation_id") {
+		return "delegation"
+	}
+	return "execution"
+}
+
+func normalizedTerminalScope(sessionID, ownerID, scope, executionKind string) string {
+	scope = strings.ToLower(strings.TrimSpace(scope))
+	if terminalOwnerIsCanonicalMain(sessionID, ownerID) {
+		if scope == "" || scope == "session" || terminalKindIsMain(scope) {
+			return "main_agent"
+		}
+		return scope
+	}
+	if scope != "" && scope != "session" && !terminalKindIsMain(scope) {
+		return scope
+	}
+	switch executionKind {
+	case "workflow_step", "step", "execution_only":
+		return "workflow_step"
+	case "background_agent", "background":
+		return "background_agent"
+	case "delegation", "todo_task", "sub_agent":
+		return "delegation"
+	default:
+		return "execution"
+	}
+}
+
+func terminalKindIsMain(kind string) bool {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "main_agent", "main", "chat":
+		return true
+	default:
+		return false
+	}
+}
+
 func terminalEventIsMainAgent(event storeevents.Event, metadata map[string]interface{}) bool {
 	kind := strings.ToLower(strings.TrimSpace(firstNonEmpty(
-		event.ExecutionKind,
 		stringValue(metadata, "execution_kind"),
 		stringValue(metadata, "scope"),
+		event.ExecutionKind,
 	)))
 	return kind == "main_agent" || kind == "main" || kind == "chat"
 }
@@ -2414,14 +2495,8 @@ func (s *Store) handleStatusLine(sessionID string, event storeevents.Event) {
 	if ownerID == "" {
 		ownerID = "main:" + sessionID
 	}
-	executionKind := firstNonEmpty(event.ExecutionKind, stringValue(statusMetadata, "execution_kind"))
-	if executionKind == "" && strings.HasPrefix(ownerID, "main:") {
-		executionKind = "main_agent"
-	}
-	scope := terminalScope(event, statusMetadata)
-	if scope == "session" && strings.HasPrefix(ownerID, "main:") {
-		scope = "main_agent"
-	}
+	executionKind := terminalExecutionKind(sessionID, ownerID, event, statusMetadata)
+	scope := normalizedTerminalScope(sessionID, ownerID, terminalScope(event, statusMetadata), executionKind)
 	label := terminalLabel(event, statusMetadata, ownerID)
 	if label == "Terminal" && providerLabel != "" {
 		label = providerLabel
@@ -2470,7 +2545,7 @@ func (s *Store) handleStatusLine(sessionID string, event storeevents.Event) {
 		s.bySession[sessionID] = make(map[string]struct{})
 	}
 	s.bySession[sessionID][snapshot.TerminalID] = struct{}{}
-	if currentTerminalIsMainAgent(snapshot) {
+	if currentTerminalIsCanonicalMainAgent(snapshot) {
 		s.removeCurrentMainAgentAliasesLocked(sessionID, snapshot.TerminalID)
 	}
 }

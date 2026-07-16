@@ -24,6 +24,12 @@ When running a step or the full workflow:
 1. User says "run step-X" → determine group → call
    `execute_step("step-id", group_name=group_name)` → get
    `execution_id`.
+   - Prefer the directly exposed `execute_step` tool. If you must call its
+     per-tool HTTP endpoint through `execute_shell_command`, do not pipe or
+     project the response before the shell tool can unwrap it. The HTTP
+     envelope uses `result` (and may also expose `data.execution_id`); a jq
+     projection that keeps only unrelated fields can discard a valid
+     execution ID after the step has already started.
 2. `execute_step` follows the step's persistent learnings config
    (`learnings_access`, `lock_learnings`).
 3. **Human input steps**: Pass `human_input` parameter with the

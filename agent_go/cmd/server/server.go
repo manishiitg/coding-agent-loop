@@ -2914,6 +2914,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	workflowPhaseID := req.PhaseID
 	workflowPhaseFolder := "" // The preset's SelectedFolder — used to auto-grant write access in FolderGuard
 	workflowPhaseRunFolder := ""
+	var workflowPhasePrimaryOptions map[string]interface{}
 	_ = workflowPhaseFolder // used later in the function
 	if isWorkflowPhase {
 		logfWithContext(queryLogCtx, "[WORKFLOW_PHASE] Phase chat mode detected: phase=%s preset=%s session=%s", workflowPhaseID, req.PresetQueryID, sessionID)
@@ -2964,6 +2965,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						} else {
 							finalProvider = phaseLLM.Provider
 							finalModelID = phaseLLM.ModelID
+							workflowPhasePrimaryOptions = phaseLLM.Options
 							logfWithContext(queryLogCtx.WithWorkflow(resolvedWPath), "[WORKFLOW_PHASE] Using workshop LLM from manifest: %s/%s", finalProvider, finalModelID)
 						}
 					}
@@ -3924,6 +3926,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		var resolvedPrimaryOptions map[string]interface{}
 		if req.LLMConfig != nil {
 			resolvedPrimaryOptions = req.LLMConfig.Primary.Options
+		}
+		if isWorkflowPhase && workflowPhasePrimaryOptions != nil {
+			resolvedPrimaryOptions = workflowPhasePrimaryOptions
 		}
 		if !isWorkflowPhase {
 			var appliedTier bool

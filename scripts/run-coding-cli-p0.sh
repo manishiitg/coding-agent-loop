@@ -40,19 +40,19 @@ for raw_provider in "${provider_list[@]}"; do
   case "$provider" in
     claude-code)
       RUN_CLAUDE_CODE_TMUX_INTEGRATION=1 run_required_go_tests go -C "$MULTI_LLM_DIR" test ./pkg/adapters/claudecode \
-        -run 'TestClaudeCodeTmux(RuntimeSelfCheckContract|IntegrationFreshPromptCarriesUserText|IntegrationHaikuWorkingDirectory|IntegrationHaikuMCPBridgeContract|IntegrationHaikuLiveInputAndEscape|RealFinalExtractionFromTmuxVertexJudgeE2E|IntegrationPersistentCancelDoesNotLeaveBusySessionReusable|IntegrationParallelIsolation)$' -count=1 -timeout=35m
+        -run 'TestClaudeCodeTmux(RuntimeSelfCheckContract|IntegrationFreshPromptCarriesUserText|IntegrationHaikuWorkingDirectory|IntegrationHaikuMCPBridgeContract|IntegrationHaikuLiveInputAndEscape|IntegrationLiveInputProcessesQueuedFollowup|RealFinalExtractionFromTmuxVertexJudgeE2E|IntegrationPersistentCancelDoesNotLeaveBusySessionReusable|IntegrationParallelIsolation)$' -count=1 -timeout=35m
       ;;
     codex-cli)
       RUN_CODEX_CLI_REAL_E2E=1 run_required_go_tests go -C "$MULTI_LLM_DIR" test ./pkg/adapters/codexcli \
-        -run 'TestCodexCLIReal(RuntimeSelfCheckContract|InteractiveTmuxFullContract|InteractiveWorkingDirectoryContract|InteractiveMCPBridgeContract|InteractiveQueuedValidationDoesNotCompleteDuringMCPTool|FinalExtractionFromTmuxVertexJudgeE2E|InteractiveLiveInputAndEscapeContract|InteractiveParallelIsolation)$' -count=1 -timeout=35m
+        -run 'TestCodexCLIReal(RuntimeSelfCheckContract|InteractiveTmuxFullContract|InteractiveWorkingDirectoryContract|InteractiveMCPBridgeContract|InteractiveQueuedValidationDoesNotCompleteDuringMCPTool|FinalExtractionFromTmuxVertexJudgeE2E|InteractiveLiveInputAndEscapeContract|InteractiveLiveInputSteersBusyTurnContract|InteractiveParallelIsolation)$' -count=1 -timeout=35m
       ;;
     cursor-cli)
       RUN_CURSOR_CLI_REAL_E2E=1 run_required_go_tests go -C "$MULTI_LLM_DIR" test ./pkg/adapters/cursorcli \
-        -run 'TestCursorCLIReal(RuntimeSelfCheckContract|InteractiveTmuxFullContract|IsolatedTmpDirDoesNotTouchOuterWorkspace|InteractiveMCPBridgeContractTmux|InteractiveQueuedValidationDoesNotCompleteDuringMCPTool|CompletionDetection|FinalExtractionFromTmuxVertexJudgeE2E|InteractiveLiveInputAndEscapeContract|InteractiveParallelIsolation)$' -count=1 -timeout=35m
+        -run 'TestCursorCLIReal(RuntimeSelfCheckContract|InteractiveTmuxFullContract|IsolatedTmpDirDoesNotTouchOuterWorkspace|InteractiveMCPBridgeContractTmux|InteractiveQueuedValidationDoesNotCompleteDuringMCPTool|CompletionDetection|FinalExtractionFromTmuxVertexJudgeE2E|InteractiveLiveInputAndEscapeContract|InteractiveLiveInputProcessesQueuedFollowupContract|InteractiveParallelIsolation)$' -count=1 -timeout=35m
       ;;
     pi-cli)
       RUN_PI_CLI_REAL_E2E=1 run_required_go_tests go -C "$MULTI_LLM_DIR" test ./pkg/adapters/picli \
-        -run 'TestPiCLIReal(RuntimeSelfCheckContract|TmuxFullContract|WorkingDirectoryMCPContract|MCPBridgeOnlyToolsContract|SlowMCPToolDoneDetectionContract|SlowToolLiveInputAndCancellationContract|ParallelIsolationContract)$' -count=1 -timeout=35m
+        -run 'TestPiCLIReal(RuntimeSelfCheckContract|TmuxFullContract|WorkingDirectoryMCPContract|MCPBridgeOnlyToolsContract|SlowMCPToolDoneDetectionContract|SlowToolLiveInputAndCancellationContract|InteractiveLiveInputProcessesQueuedFollowupContract|ParallelIsolationContract)$' -count=1 -timeout=35m
       ;;
     *)
       echo "Unknown coding CLI P0 provider: $provider" >&2

@@ -40,6 +40,7 @@ export interface CommandContext {
   getAppStore: () => any
   getWorkspaceStore: () => any
   getWorkflowStore: () => any
+  modeCategory?: ModeCategory
   workflowMode?: 'plan' | 'eval' | 'output'
   workshopMode?: WorkshopMode
   workflowPhaseId?: string

@@ -2314,7 +2314,8 @@ export interface WorkflowNotificationAccountChannelInfo {
 export interface WorkflowNotificationInfoResponse {
   success: boolean
   agentic: boolean
-  workflow_label: string
+  scope_label: string
+  workflow_label?: string
   effective_state: WorkflowNotificationState
   destinations: WorkflowNotificationDestinationInfo[]
   account_channels: WorkflowNotificationAccountChannelInfo[]

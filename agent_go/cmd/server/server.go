@@ -93,6 +93,7 @@ var mcpBridgeCustomToolCategories = map[string]bool{
 	"knowledgebase_tools":  true,
 	"llm_config_tools":     true,
 	"secret_tools":         true,
+	"notification_tools":   true,
 	"skill_tools":          true,
 	"mcp_server_tools":     true,
 	"activity_status":      true,
@@ -1896,6 +1897,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/publish/secret", requireWorkflowWriteAccess(api.handleGetWorkflowPublishSecret)).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/org/backup", api.handleGetOrgBackup).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/org/publish", api.handleGetOrgPublish).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/org/notifications", api.handleGetOrgNotifications).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/org/publish/secret", requireWorkflowWriteAccess(api.handleGetOrgPublishSecret)).Methods("GET", "OPTIONS")
 
 	// Manifest-backed workflow API routes (file-backed workflow definitions)
@@ -4688,6 +4690,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				logfWithContext(queryLogCtx, "[SECRET TOOLS] Registered multi-agent secret tools (list_secrets, set_user_secret, delete_user_secret; global names read-only)")
+
+				if err := api.registerMultiAgentNotificationTool(underlyingAgent, currentUserID); err != nil {
+					logfWithContext(queryLogCtx, "[NOTIFICATION TOOLS] Failed to register Chief of Staff notification tool: %v", err)
+					sendError(fmt.Sprintf("Failed to register Chief of Staff notification tool: %v", err), true)
+					return
+				}
+				logfWithContext(queryLogCtx, "[NOTIFICATION TOOLS] Registered update_chief_of_staff_notifications")
 			}
 
 			// Read session state early for guidance injection.

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -35,33 +36,34 @@ type WorkflowNotificationAccountChannelInfo struct {
 type WorkflowNotificationInfoResponse struct {
 	Success         bool                                     `json:"success"`
 	Agentic         bool                                     `json:"agentic"`
-	WorkflowLabel   string                                   `json:"workflow_label"`
+	ScopeLabel      string                                   `json:"scope_label"`
+	WorkflowLabel   string                                   `json:"workflow_label,omitempty"`
 	EffectiveState  string                                   `json:"effective_state"`
 	Destinations    []WorkflowNotificationDestinationInfo    `json:"destinations"`
 	AccountChannels []WorkflowNotificationAccountChannelInfo `json:"account_channels"`
 }
 
-func resolveWorkflowSlackNotificationState(manifest *WorkflowManifest, secretValue string, secretResolved bool) WorkflowNotificationDestinationInfo {
+func resolveSlackNotificationState(id, label string, capabilities WorkflowCapabilities, secretValue string, secretResolved bool) WorkflowNotificationDestinationInfo {
 	destination := WorkflowNotificationDestinationInfo{
-		ID:    "workflow-slack-webhook",
+		ID:    id,
 		Type:  "slack_webhook",
-		Label: "Workflow Slack webhook",
+		Label: label,
 		State: workflowNotificationStateNotConfigured,
 	}
-	if manifest == nil || manifest.Capabilities.Notifications == nil {
-		destination.Summary = "No workflow-specific webhook selected."
+	if capabilities.Notifications == nil {
+		destination.Summary = "No Slack webhook selected for this scope."
 		return destination
 	}
 
-	secretName := strings.TrimSpace(manifest.Capabilities.Notifications.SlackWebhookSecretName)
+	secretName := strings.TrimSpace(capabilities.Notifications.SlackWebhookSecretName)
 	destination.SecretName = secretName
 	if secretName == "" {
-		destination.Summary = "No workflow-specific webhook selected."
+		destination.Summary = "No Slack webhook selected for this scope."
 		return destination
 	}
 
 	selected := false
-	for _, name := range manifest.Capabilities.SelectedSecrets {
+	for _, name := range capabilities.SelectedSecrets {
 		if strings.TrimSpace(name) == secretName {
 			selected = true
 			break
@@ -81,6 +83,35 @@ func resolveWorkflowSlackNotificationState(manifest *WorkflowManifest, secretVal
 	destination.State = workflowNotificationStateReady
 	destination.Summary = "notify_user calls are delivered here automatically by the backend."
 	return destination
+}
+
+func resolveWorkflowSlackNotificationState(manifest *WorkflowManifest, secretValue string, secretResolved bool) WorkflowNotificationDestinationInfo {
+	if manifest == nil {
+		return resolveSlackNotificationState("workflow-slack-webhook", "Workflow Slack webhook", WorkflowCapabilities{}, secretValue, secretResolved)
+	}
+	return resolveSlackNotificationState("workflow-slack-webhook", "Workflow Slack webhook", manifest.Capabilities, secretValue, secretResolved)
+}
+
+func notificationAccountChannels(ctx context.Context) []WorkflowNotificationAccountChannelInfo {
+	accountChannels := []WorkflowNotificationAccountChannelInfo{}
+	if gmail, gmailErr := ensureGmailService(); gmailErr == nil {
+		config := gmail.GetConfig()
+		auth := gmail.AuthStatus(ctx)
+		gmailState := "not_ready"
+		gmailSummary := "Gmail is not ready at account level."
+		if config.Enabled && strings.TrimSpace(config.DefaultTo) != "" && auth.Authenticated && auth.HasGmailScope {
+			gmailState = "ready"
+			gmailSummary = "Available as an inherited account-level channel."
+		}
+		accountChannels = append(accountChannels, WorkflowNotificationAccountChannelInfo{
+			ID:               "gmail",
+			Label:            "Gmail account channel",
+			State:            gmailState,
+			DefaultRecipient: config.DefaultTo,
+			Summary:          gmailSummary,
+		})
+	}
+	return accountChannels
 }
 
 func (api *StreamingAPI) handleGetWorkflowNotifications(w http.ResponseWriter, r *http.Request) {
@@ -123,32 +154,14 @@ func (api *StreamingAPI) handleGetWorkflowNotifications(w http.ResponseWriter, r
 	}
 	slack := resolveWorkflowSlackNotificationState(manifest, secretValue, secretResolved)
 
-	accountChannels := []WorkflowNotificationAccountChannelInfo{}
-	if gmail, gmailErr := ensureGmailService(); gmailErr == nil {
-		config := gmail.GetConfig()
-		auth := gmail.AuthStatus(r.Context())
-		gmailState := "not_ready"
-		gmailSummary := "Gmail is not ready at account level."
-		if config.Enabled && strings.TrimSpace(config.DefaultTo) != "" && auth.Authenticated && auth.HasGmailScope {
-			gmailState = "ready"
-			gmailSummary = "Available to this workflow as an inherited account-level channel."
-		}
-		accountChannels = append(accountChannels, WorkflowNotificationAccountChannelInfo{
-			ID:               "gmail",
-			Label:            "Gmail account channel",
-			State:            gmailState,
-			DefaultRecipient: config.DefaultTo,
-			Summary:          gmailSummary,
-		})
-	}
-
 	response := WorkflowNotificationInfoResponse{
 		Success:         true,
 		Agentic:         true,
+		ScopeLabel:      manifest.Label,
 		WorkflowLabel:   manifest.Label,
 		EffectiveState:  slack.State,
 		Destinations:    []WorkflowNotificationDestinationInfo{slack},
-		AccountChannels: accountChannels,
+		AccountChannels: notificationAccountChannels(r.Context()),
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)

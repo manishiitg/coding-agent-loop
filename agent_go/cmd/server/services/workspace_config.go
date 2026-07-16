@@ -192,6 +192,11 @@ type MultiAgentChatCapabilities struct {
 	CDPPorts                  []int                          `json:"cdp_ports,omitempty"`
 	UseCodeExecutionMode      bool                           `json:"use_code_execution_mode"`
 	LLMConfig                 *workflowtypes.PresetLLMConfig `json:"llm_config,omitempty"`
+	Notifications             *MultiAgentNotificationConfig  `json:"notifications,omitempty"`
+}
+
+type MultiAgentNotificationConfig struct {
+	SlackWebhookSecretName string `json:"slack_webhook_secret_name,omitempty"`
 }
 
 // LoadMultiAgentChatCapabilities reads the user's saved multi-agent chat

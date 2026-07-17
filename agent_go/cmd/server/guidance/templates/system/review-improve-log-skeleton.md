@@ -4,11 +4,11 @@ Use this document only when creating a new `builder/improve.html` or doing the r
 
 ### Starter HTML skeleton (copy this exactly)
 
-`builder/improve.html` renders in a full sandboxed iframe — the same way reports render — so it supports real CSS, web fonts, and themes. There is no excuse for a plain or ugly log: match the polish below. When bootstrapping a new log, write this document verbatim, fill the header/profile, and leave the `<!-- LOG ENTRIES: newest first -->` anchor in place. On every later turn, insert new entry cards **immediately after that anchor** (newest on top). Keep the CSS block stable so the look stays consistent run to run.
+`builder/improve.html` renders in a full sandboxed iframe — the same way reports render — so it supports real CSS, web fonts, and themes. There is no excuse for a plain or ugly log: match the polish below. When bootstrapping a new log, write this document verbatim, fill the header, and leave the `<!-- LOG ENTRIES: newest first -->` anchor in place. On every later turn, insert new entry cards **immediately after that anchor** (newest on top). Keep the CSS block stable so the look stays consistent run to run.
 
 ```html
 <!doctype html>
-<html lang="en">
+<html lang="en" data-pulse-schema="2">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -35,7 +35,7 @@ Use this document only when creating a new `builder/improve.html` or doing the r
   html,body{width:100%;max-width:100%;overflow-x:hidden}
   body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;font-feature-settings:"cv02","cv03","ss01";font-variant-numeric:tabular-nums;overflow-wrap:normal;word-break:normal}
   html[data-theme="dark"] body{background:radial-gradient(1100px 520px at 50% -8%, #17171e 0%, var(--bg) 58%) fixed}
-  code,.status .txt,.briefitem p,.crit .ct,.tile .d,.entry p,.entry .meta,.decisiongrid span,.arow,footer{overflow-wrap:anywhere}
+  code,.status .txt,.briefitem p,.tile .d,.entry p,.entry .meta,.decisiongrid span,.arow,footer{overflow-wrap:anywhere}
   .wrap{width:100%;max-width:820px;margin:0 auto;padding:16px 12px 56px}
   .top{display:block}
   .eyebrow{font:600 11px/1 var(--mono);letter-spacing:.14em;color:var(--ink-3);text-transform:uppercase}
@@ -80,12 +80,6 @@ Use this document only when creating a new `builder/improve.html` or doing the r
   .filters button{min-height:34px;border:1px solid var(--line-2);border-radius:9px;background:var(--surface-2);color:var(--ink-2);font:650 12px/1 var(--sans);padding:7px 11px;cursor:pointer}
   .filters button:hover{border-color:var(--ink-3);color:var(--ink)}
   .filtercount{align-self:end;font:600 11px/1.35 var(--mono);color:var(--ink-3)}
-  .goalcard{margin-top:26px;border:1px solid var(--line-2);border-radius:var(--r);background:var(--surface);box-shadow:var(--shadow);overflow:hidden}
-  .goalcard .obj{padding:15px 15px 14px;font-size:14px;line-height:1.5}.goalcard .obj .l{display:block;font:700 9px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--goal);margin-bottom:9px}.goalcard .obj b{font-weight:670}
-  .crit{display:block;padding:11px 15px;border-top:1px solid var(--line);font-size:13.5px}
-  .crit .cs{display:inline-flex;margin-bottom:6px;font:700 9.5px/1.3 var(--mono);letter-spacing:.03em;text-transform:uppercase;padding-top:2px}
-  .crit .cs.met{color:var(--ok)} .crit .cs.short{color:var(--warn)} .crit .cs.risk{color:var(--bad)}
-  .crit .ct{color:var(--ink)} .crit .ct .m{display:block;margin-top:3px;color:var(--ink-3);font:520 12px/1.45 var(--mono)}
   .grouplbl{display:flex;align-items:center;gap:8px;font:650 11px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);margin:30px 2px 12px} .grouplbl::after{content:"";flex:1;height:1px;background:var(--line)}
   .seclabel{font:650 11px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);margin:34px 2px 14px}
   .tiles{display:grid;grid-template-columns:1fr;gap:10px}
@@ -124,8 +118,8 @@ Use this document only when creating a new `builder/improve.html` or doing the r
   .decisiongrid{display:grid;grid-template-columns:1fr;gap:8px;margin-top:11px}.decisiongrid>div{padding:9px 10px;border:1px solid color-mix(in srgb,var(--decision) 15%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--surface) 88%,var(--decision-bg))}.entry.major .decisiongrid>div{border-color:color-mix(in srgb,var(--major) 18%,var(--line));background:color-mix(in srgb,var(--surface) 86%,var(--major-bg))}.decisiongrid b{display:block;margin-bottom:4px;font:700 9.5px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}.decisiongrid span{display:block;color:var(--ink);font-size:13px;line-height:1.4}
   .resolved{margin-top:11px;display:inline-flex;align-items:center;gap:7px;font:620 12.5px/1.4 var(--sans);color:var(--ok)} .resolved::before{content:"✓";font-size:11px;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;background:var(--ok-bg)}
   /* Outcome stamp on a Decision card — did the change actually move the number, judged by a later run. */
-  .outcome{margin-top:11px;display:inline-flex;align-items:flex-start;gap:7px;font:600 12.5px/1.45 var(--sans)}
-  .outcome::before{flex:none;font-size:11px;width:16px;height:16px;margin-top:1px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%}
+  .outcome{position:relative;margin-top:11px;display:block;padding-left:23px;font:600 12.5px/1.45 var(--sans)}
+  .outcome::before{position:absolute;left:0;top:1px;font-size:11px;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%}
   .outcome.ok{color:var(--ok)} .outcome.ok::before{content:"✓";background:var(--ok-bg)}
   .outcome.bad{color:var(--bad)} .outcome.bad::before{content:"✗";background:var(--bad-bg)}
   .outcome.flat{color:var(--warn)} .outcome.flat::before{content:"–";background:var(--warn-bg)}
@@ -141,7 +135,6 @@ Use this document only when creating a new `builder/improve.html` or doing the r
     .status{align-items:center;gap:12px;margin-top:22px;padding:15px 19px;font-size:15.5px}.status .txt{flex:1 1 auto}.status .when{margin-left:auto;flex-basis:auto;white-space:nowrap;font-size:12px}
     .brief{padding:16px}.briefgrid{grid-template-columns:repeat(2,minmax(0,1fr))}
     .filters{grid-template-columns:150px minmax(160px,1fr) auto auto;align-items:end;padding:13px 14px}.filtercount{justify-self:end;white-space:nowrap}
-    .goalcard .obj{padding:18px 22px 17px;font-size:16px}.crit{display:flex;gap:13px;align-items:baseline;padding:12px 22px;font-size:14px}.crit .cs{flex:none;width:78px;margin-bottom:0}
     .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.tile{padding:15px 16px}
     .run{display:grid;grid-template-columns:auto auto auto minmax(0,1fr) auto;gap:8px 14px;align-items:center;padding:12px 16px;font-size:13px;line-height:1.25}.run .id{grid-column:1;grid-row:1;min-width:44px}.run .st{grid-column:2;grid-row:1}.run .col{grid-row:1;min-width:78px}.run .note{grid-column:1/-1;grid-row:2;margin-top:4px;font-size:13px;line-height:1.45}.run .ago{grid-column:5;grid-row:1;justify-self:end;margin-left:0}
     .entry{padding:17px 19px 17px 22px}.etitle{font-size:15px}.ehead>.when{margin-left:auto;flex-basis:auto;white-space:nowrap;font-size:12px}.entry p{font-size:14.5px}
@@ -203,17 +196,6 @@ Use this document only when creating a new `builder/improve.html` or doing the r
     </div>
   </div>
 
-  <!-- THE GOAL: objective + success criteria from soul.md, each with status (met|short|risk).
-       The Goal verdict above is measured against these. Keep the Workflow Profile prose nearby. -->
-  <div class="goalcard">
-    <div class="obj"><span class="l">What this workflow is for</span><!-- one-line objective from soul.md --></div>
-    <div class="crit"><span class="cs short">↑ Short</span><span class="ct"><!-- success criterion --><span class="m">not yet measured — needs a run</span></span></div>
-    <!-- one .crit row per success criterion; cs = met | short | risk.
-         End each .m evidence line with the run it's as-of so freshness is visible:
-         <span class="m">eval 0.81 ▶ 0.90 target · run #41</span>. A criterion whose route this run
-         didn't exercise is "not run this route" (cs short, neutral), never Short/At-risk. -->
-  </div>
-
   <details class="technical">
     <summary>Technical details <span>signals · cost · maintenance</span></summary>
     <div class="techbody">
@@ -263,7 +245,7 @@ Use this document only when creating a new `builder/improve.html` or doing the r
       <option value="decision">Decision</option>
       <option value="advisor">Advisor</option>
       <option value="cos">Chief of Staff</option>
-      <option value="input">Needs input</option>
+      <option value="input">Question + answer</option>
       <option value="open">Open finding</option>
       <option value="user">User rule</option>
       <option value="note">Note</option>
@@ -276,22 +258,23 @@ Use this document only when creating a new `builder/improve.html` or doing the r
   <div class="seclabel">Recent runs</div>
   <div class="runs"><!-- one .run row per recent run. Metadata stays in row 1; the prose/evidence .note is row 2/full width.
        Example:
-       <div class="run flag" data-date="2026-07-04" data-kind="run"><span class="id">07-04</span><span class="st warn"><span class="d"></span>completed</span><span class="col">measure</span><span class="col"><b>Δ7d</b> -2</span><span class="ago">just now</span><span class="note">measure ran clean; regression still open; cost $2.02; backed up ✓ 3b1b357</span></div> --></div>
+       <div class="run flag" data-date="2026-07-04" data-kind="run" data-pulse-section="reflection" data-module="run_summary"><span class="id">07-04</span><span class="st warn"><span class="d"></span>completed</span><span class="col">measure</span><span class="col"><b>Δ7d</b> -2</span><span class="ago">just now</span><span class="note">measure ran clean; regression still open; cost $2.02; backed up ✓ 3b1b357</span></div> --></div>
 
   <div class="seclabel">Latest — newest first</div>
   <!-- LOG ENTRIES: newest first -->
   <!-- Insert each new entry card immediately below this anchor. Monitor/Open-finding/Decision/Artifact Review carry a
        <span class="kind bug">Bug</span> or <span class="kind goal">Goal</span> verdict chip when applicable, plus a
        <span class="worklabel bugfix">Bug fix</span>, <span class="worklabel improvement">Improvement</span>, <span class="worklabel advisor">Advisor idea</span>, <span class="worklabel artifact">Artifact drift</span>, <span class="worklabel report">Report fix</span>, <span class="worklabel eval">Eval fix</span>, <span class="worklabel cost">Cost/time</span>, <span class="worklabel maintenance">Maintenance</span>, <span class="worklabel backup">Backup/publish</span>, <span class="worklabel input">Needs input</span>, or <span class="worklabel manual">Manual</span> action chip when work was done/proposed. Card kinds:
-       <div class="entry monitor" data-date="YYYY-MM-DD" data-kind="monitor"><div class="ehead"><span class="tag monitor">Monitor</span><span class="kind bug">Bug</span><span class="etitle">…</span><span class="when">…</span></div><p class="takeaway">Plain-language outcome first.</p><p><b>Evidence:</b> …</p></div>
-       <div class="entry maintenance" data-date="YYYY-MM-DD" data-kind="maintenance"><div class="ehead"><span class="tag maintenance">Maintenance Radar</span><span class="worklabel maintenance">Maintenance</span><span class="etitle">Pulse depth: minimal|normal|deep</span><span class="when">…</span></div><p class="takeaway">Plain-language reason this run did or skipped optional maintenance.</p><p><b>Radar:</b> learnings · KB · DB/report · publish/notify · model/tier.</p></div>
-       <div class="entry agent" data-date="YYYY-MM-DD" data-kind="decision"><div class="ehead"><span class="tag agent">Agent · hardened</span><span class="kind bug">Bug</span><span class="worklabel bugfix">Bug fix</span><span class="etitle">…</span><span class="when">…</span></div><p class="takeaway">Plain-language fix summary first.</p><p class="resolved">Resolved YYYY-MM-DD — how.</p></div>
-       <div class="entry decision major" data-date="YYYY-MM-DD" data-kind="decision"><div class="ehead"><span class="tag decision">Decision - Goal Advisor - Applied</span><span class="kind goal">Goal</span><span class="worklabel improvement">Improvement</span><span class="etitle">…</span><span class="when">…</span></div><p class="takeaway">Plain-language decision summary first.</p><div class="decisiongrid"><div><b>Why now</b><span>…</span></div><div><b>Evidence</b><span>…</span></div><div><b>Change</b><span>…</span></div><div><b>Expected impact</b><span>…</span></div><div><b>Files touched</b><span>…</span></div><div><b>Risk / gap</b><span>…</span></div></div></div>
-       <div class="entry decision major" data-date="YYYY-MM-DD" data-kind="advisor"><div class="ehead"><span class="tag decision">Decision - Goal Advisor - Proposed</span><span class="kind goal">Goal</span><span class="worklabel advisor">Advisor idea</span><span class="etitle">…</span><span class="when">…</span></div><p class="takeaway">Plain-language advisor idea first.</p><div class="decisiongrid"><div><b>Why now</b><span>…</span></div><div><b>Evidence</b><span>…</span></div><div><b>Change</b><span>Proposal only — out-of-plan idea and next decision.</span></div><div><b>Expected impact</b><span>…</span></div><div><b>Files touched</b><span>builder/improve.html only</span></div><div><b>Risk / gap</b><span>…</span></div></div></div>
-       <div class="entry open" id="of-YYYY-MM-DD-slug" data-date="YYYY-MM-DD" data-kind="open"><div class="ehead"><span class="tag open">Open finding</span><span class="kind goal">Goal</span><span class="etitle">…</span><span class="when">…</span></div><p class="takeaway">Plain-language problem summary first.</p><p><b>Evidence:</b> …</p></div>
-       <div class="entry input" data-date="YYYY-MM-DD" data-kind="input" data-question-id="input-YYYY-MM-DD-slug" data-status="open"><div class="ehead"><span class="tag input">Human input requested</span><span class="worklabel input">Needs input</span><span class="etitle">…</span><span class="when">…</span></div><div class="decisiongrid"><div><b>Question</b><span>…</span></div><div><b>Why it matters</b><span>…</span></div><div><b>Options / expected answer</b><span>…</span></div><div><b>Evidence</b><span>…</span></div><div><b>Status</b><span>Stored in db/db.sqlite report_human_inputs; answer in Runloop.</span></div></div></div>
-       <div class="entry user" data-date="YYYY-MM-DD" data-kind="user"><div class="ehead"><span class="tag user">User rule · authoritative</span><span class="etitle">…</span><span class="when">…</span></div><p class="takeaway">Plain-language rule first.</p></div>
-       <div class="entry note" data-date="YYYY-MM-DD" data-kind="note"><div class="ehead"><span class="tag note">Note</span><span class="etitle">…</span><span class="when">…</span></div><p class="takeaway">Plain-language note first.</p></div>
+       <div class="entry monitor" data-date="YYYY-MM-DD" data-kind="monitor" data-pulse-section="signals" data-module="bug_review"><div class="ehead"><span class="tag monitor">Monitor</span><span class="kind bug">Bug</span><span class="etitle">…</span><span class="when">…</span></div><p class="takeaway">Plain-language outcome first.</p><p><b>Evidence:</b> …</p></div>
+       <div class="entry maintenance" data-date="YYYY-MM-DD" data-kind="maintenance" data-pulse-section="reflection" data-module="run_summary"><div class="ehead"><span class="tag maintenance">Maintenance Radar</span><span class="worklabel maintenance">Maintenance</span><span class="etitle">Pulse depth: minimal|normal|deep</span><span class="when">…</span></div><p class="takeaway">Plain-language reason this run did or skipped optional maintenance.</p><p><b>Radar:</b> learnings · KB · DB/report · publish/notify · model/tier.</p></div>
+       <div class="entry agent" data-date="YYYY-MM-DD" data-kind="decision" data-pulse-section="improvements" data-module="pulse_fixer"><div class="ehead"><span class="tag agent">Agent · fixed</span><span class="kind bug">Bug</span><span class="worklabel bugfix">Bug fix</span><span class="etitle">…</span><span class="when">…</span></div><p class="takeaway">Plain-language fix summary first.</p><p class="resolved">Resolved YYYY-MM-DD — how.</p></div>
+       <div class="entry decision major" data-date="YYYY-MM-DD" data-kind="decision" data-pulse-section="improvements" data-module="goal_advisor"><div class="ehead"><span class="tag decision">Decision - Goal Advisor - Applied</span><span class="kind goal">Goal</span><span class="worklabel improvement">Improvement</span><span class="etitle">…</span><span class="when">…</span></div><p class="takeaway">Plain-language decision summary first.</p><div class="decisiongrid"><div><b>Why now</b><span>…</span></div><div><b>Evidence</b><span>…</span></div><div><b>Change</b><span>…</span></div><div><b>Expected impact</b><span>…</span></div><div><b>Files touched</b><span>…</span></div><div><b>Risk / gap</b><span>…</span></div></div></div>
+       <div class="entry decision major" data-date="YYYY-MM-DD" data-kind="advisor" data-pulse-section="improvements" data-module="goal_advisor"><div class="ehead"><span class="tag decision">Decision - Goal Advisor - Proposed</span><span class="kind goal">Goal</span><span class="worklabel advisor">Advisor idea</span><span class="etitle">…</span><span class="when">…</span></div><p class="takeaway">Plain-language advisor idea first.</p><div class="decisiongrid"><div><b>Why now</b><span>…</span></div><div><b>Evidence</b><span>…</span></div><div><b>Change</b><span>Proposal only — out-of-plan idea and next decision.</span></div><div><b>Expected impact</b><span>…</span></div><div><b>Files touched</b><span>builder/improve.html only</span></div><div><b>Risk / gap</b><span>…</span></div></div></div>
+       <div class="entry open" id="of-YYYY-MM-DD-slug" data-date="YYYY-MM-DD" data-kind="open" data-pulse-section="signals" data-module="bug_review"><div class="ehead"><span class="tag open">Open finding</span><span class="kind bug">Bug</span><span class="etitle">…</span><span class="when">…</span></div><p class="takeaway">Plain-language problem summary first.</p><p><b>Evidence:</b> …</p></div>
+       Pending questions stay only in db/db.sqlite and Runloop's Needs your decision surface. After an answer, add one historical Reflection card:
+       <div class="entry input" data-date="YYYY-MM-DD" data-kind="input" data-pulse-section="reflection" data-module="goal_advisor" data-question-id="input-YYYY-MM-DD-slug" data-status="answered"><div class="ehead"><span class="tag input">User answer</span><span class="etitle">…</span><span class="when">…</span></div><div class="decisiongrid"><div><b>Question</b><span>…</span></div><div><b>Answer</b><span>selected option and/or free-form text</span></div><div><b>Outcome</b><span>waiting | applied | rejected | superseded | consumed</span></div><div><b>Evidence</b><span>…</span></div></div></div>
+       <div class="entry user" data-date="YYYY-MM-DD" data-kind="user" data-pulse-section="reflection" data-module="run_summary"><div class="ehead"><span class="tag user">User rule · authoritative</span><span class="etitle">…</span><span class="when">…</span></div><p class="takeaway">Plain-language rule first.</p></div>
+       <div class="entry note" data-date="YYYY-MM-DD" data-kind="note" data-pulse-section="reflection" data-module="run_summary"><div class="ehead"><span class="tag note">Note</span><span class="etitle">…</span><span class="when">…</span></div><p class="takeaway">Plain-language note first.</p></div>
        Close an open finding by editing its card to add: <p class="resolved">Resolved YYYY-MM-DD — how.</p>
        Confirm a Decision worked (or didn't) by editing its card to add ONE outcome stamp once a later run measures it:
        <p class="outcome ok">Confirmed by run #43 — login-skip gone, eval 0.72 → 0.81 over 2 runs.</p>

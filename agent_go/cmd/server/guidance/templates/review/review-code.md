@@ -1,6 +1,6 @@
 {{if .Focus}}Run review_step_code(step_id="{{.Focus}}") to audit the saved main.py for step "{{.Focus}}".{{else}}Run review_step_code() to audit every saved main.py script across workflow steps and evaluation steps against its current description and best practices.{{end}} This is not a spell-check — it's a behavior audit.
 
-Write findings into `builder/improve.html` as "Open finding" timeline entries. For the log format, one-time old Markdown migration, and how open findings are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
+Write every finding into `builder/improve.html` as a **Signals / Kizuki** "Open finding" timeline entry using `data-pulse-section="signals"` and `data-module="bug_review"`. For the log format, one-time old Markdown migration, and how open findings are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
 
 Load `get_reference_doc(kind="assumption-audit")` and apply its code lens. Flag unjustified literals, fixed providers/channels/sources, and temporary workarounds that make a revisable design choice behave like a permanent constraint. Preserve verified platform constraints with evidence/freshness; parameterize or surface consequential assumptions rather than copying them into more code.
 
@@ -68,4 +68,4 @@ For each step audited:
 
 End with a cross-step summary: which steps are clean, which need work, which are CRITICAL.
 
-REVIEW LOG: record findings as "Open finding" timeline entries in builder/improve.html (read it first if it exists, create it if it does not — newest on top). Include: which step(s) reviewed, the drift findings, the shortcut/dynamism findings, the browser best-practice findings, the operational findings, severity verdicts, and items flagged for follow-up. Mark these as REVIEW (recommend; do NOT apply — fixes go through the Workshop owner or Pulse Fixer).
+REVIEW LOG: record every finding as a Signals / Kizuki "Open finding" timeline entry in builder/improve.html using `data-pulse-section="signals"` and `data-module="bug_review"` (read it first if it exists, create it if it does not — newest on top). Include: which step(s) reviewed, the drift findings, the shortcut/dynamism findings, the browser best-practice findings, the operational findings, severity verdicts, and items flagged for follow-up. Mark these as REVIEW (recommend; do NOT apply — fixes go through the Workshop owner or Pulse Fixer).

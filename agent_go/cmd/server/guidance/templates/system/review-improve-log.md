@@ -12,20 +12,31 @@ The workflow keeps a **single durable log** — `builder/improve.html` — the w
 - **monitor observations** (post-run regressions / drift the monitor caught),
 - **Maintenance Radar** (Pulse depth, hygiene watchpoints, and why optional maintenance ran or was skipped),
 - **Artifact Review reports** (plan-change artifact drift cursor, clean/no-pending result, or drift findings),
-- **human input requests** (questions or choices the user must answer, with status and fallback),
+- **answered human decisions** (the question, the user's answer, and the resulting outcome),
 - **user rules** (authoritative constraints the user stated),
 - **one active Goal Advisor experiment** (the durable 10x/headroom proposal,
   baseline, checkpoint, and measured outcome).
 
-Do not create a separate review document. All review findings, monitor notes, decisions, human input requests, user rules, Artifact Review entries, and run notes belong in `builder/improve.html`.
+Do not create a separate review document. All review findings, monitor notes, completed decisions, user rules, Artifact Review entries, and run notes belong in `builder/improve.html`. Pending questions are the one exception: store them with `create_human_input_request` in `db/db.sqlite`; Runloop renders them above the HTML.
 
-It is a **self-contained, human-readable HTML document — not Markdown, not a data dump.** This is the page the user opens to understand the workflow, so make it genuinely good to read. Call `get_reference_doc(kind="html-output")` for the style baseline. When creating or upgrading the file, also load `get_reference_doc(kind="review-improve-log-skeleton")` and copy that **Starter HTML skeleton** for the exact structure and polish. The Runloop Pulse view renders pending `report_human_inputs` first as **Needs your decision**. The HTML then reads: **two verdicts → status headline → active assumptions challenged (only when any exist) → Today's outcome → the goal → collapsed technical details → activity filters → recent runs → newest-first card timeline → collapsed Agent log → archive**. The first screen should read like a daily operator dashboard, not a raw ledger.
+It is a **self-contained, human-readable HTML document — not Markdown, not a data dump.** This is the page the user opens to understand the workflow, so make it genuinely good to read. Call `get_reference_doc(kind="html-output")` for the style baseline. When creating or upgrading the file, also load `get_reference_doc(kind="review-improve-log-skeleton")` and copy that **Starter HTML skeleton** for the exact structure and polish. The Runloop Pulse view renders pending `report_human_inputs` first as **Needs your decision**. The HTML then reads: **two verdicts → status headline → active assumptions challenged (only when any exist) → Today's outcome → collapsed technical details → activity filters → recent runs → newest-first card timeline → collapsed Agent log → archive**. The first screen should read like a daily operator dashboard, not a raw ledger.
 
 The Pulse log is opened in a narrow right panel by default. Design it **mobile-first**:
 the base CSS must work at 360-480px with stacked rows, no overlapping metadata, no
 desktop-only tables, and long workflow names/ids allowed to wrap. Add desktop/tablet
 enhancements with `@media (min-width: ...)`; do not make desktop the default and patch
 mobile as an afterthought.
+
+### Four-part Pulse model
+
+Every visible record has one owner in the Japanese-inspired review cycle:
+
+- **Goal — Ikigai:** purpose and success criteria. `soul/soul.md` is the source of truth and Runloop renders it directly. Do not copy a Goal/Profile card into `builder/improve.html`.
+- **Signals — Kizuki:** evidence-backed observations from read-only reviewers. State what was found, not what was fixed. Use `data-pulse-section="signals"` and that reviewer's canonical module id.
+- **Reflection — Hansei:** what the run means, cadence reasoning, assumptions challenged, and historical question/answer outcomes. Use `data-pulse-section="reflection"`.
+- **Improvements — Kaizen:** verified bounded fixes from Pulse Fixer plus Goal Advisor proposals or decisions. Link each improvement to its Signal evidence and verification. Use `data-pulse-section="improvements"` with `pulse_fixer` or `goal_advisor`.
+
+`builder/improve.html` remains one newest-first chronological journal. The Pulse popup groups that same history by these attributes; do not create separate HTML files or duplicate the same narrative across sections.
 
 ### The status headline (the 1-second read)
 
@@ -35,13 +46,13 @@ Directly under the verdicts, one `.status` banner carries a **single plain sente
 
 A verdict, a goal-criterion status, or a tile can silently go stale if no recent run measured it. So **stamp the run each status reflects**: the verdict pills carry a small `run #N`, each goal-criterion `.m` line ends with `· run #N`, and the status banner's `.when` shows the run + age. A 4-runs-old "Met" must read as 4-runs-old, not as current truth — this is how the reader tells a live verdict from a stale one.
 
-Different sections may use different evidence dates. The overall status headline reflects the latest run, while a Goal metric may correctly retain the last trustworthy measurement from an older run. In that case show `not measured this run · last measured run #N / YYYY-MM-DD` directly on the card or tile. Every `.briefitem`, `.crit`, and important `.tile` needs a visible freshness label; do not rely on nearby sections or buried evidence paths to imply the date. Never replace a known older value with `—` merely because the latest route did not measure it, and never present that older value as current.
+Different sections may use different evidence dates. The overall status headline reflects the latest run, while a Goal metric may correctly retain the last trustworthy measurement from an older run. In that case show `not measured this run · last measured run #N / YYYY-MM-DD` directly on the card or tile. Every important `.briefitem` and `.tile` needs a visible freshness label; do not rely on nearby sections or buried evidence paths to imply the date. Never replace a known older value with `—` merely because the latest route did not measure it, and never present that older value as current.
 
 ### Needs your decision — always first when present
 
-Pending decisions are the most actionable content, so the Runloop Pulse view renders the interactive `report_human_inputs` panel above `builder/improve.html`. Use `create_human_input_request`; never build custom form controls inside the static HTML. Title this surface **Needs your decision**. Ask only for a real user/business decision, credential, explicit durable constraint, or material strategy approval — never for a deterministic bug fix, stale path/receipt cleanup, schema wiring, or routine implementation choice.
+Pending decisions are the most actionable content, so the Runloop Pulse view renders only the currently unanswered `report_human_inputs` above `builder/improve.html`. Use `create_human_input_request`; never build custom form controls inside the static HTML. Title this surface **Needs your decision**. Ask only for a real user/business decision, credential, explicit durable constraint, or material strategy approval — never for a deterministic bug fix, stale path/receipt cleanup, schema wiring, or routine implementation choice.
 
-Keep the matching `Human input requested` timeline entry compact so it remains a durable audit record without repeating the full interactive card. When answered and consumed, remove the active visible ask and replace it with a short Decision/Note outcome.
+Do not add a second active-question card to `builder/improve.html`. On the first Pulse after an answer, add a short **Reflection** Decision/Note containing the actual question, the user's selected option and/or free-form answer, and whether the answer is waiting, applied, rejected, or superseded. When consumed, include the concrete outcome from `mark_human_input_consumed`. Historical question/answer detail belongs in Reflection, never in the active-question area.
 
 ### Assumptions challenged
 
@@ -86,17 +97,15 @@ Tag each entry with a **Bug** or **Goal** chip when applicable so the fix path i
 
 The header verdicts are stable current-state elements, not timeline entries. Update `#pulse-bug-verdict` and `#pulse-goal-verdict` in place on every Pulse; never append another verdict block. If an otherwise current-format `builder/improve.html` is missing either stable verdict element, insert the two-element `.verdicts` block beside the workflow title as a targeted repair. Do not rewrite the whole document or discard its timeline merely to repair missing verdict markup.
 
-### The goal card
+### Goal source and progress
 
-Below Today's outcome, show **what the workflow is for**: the one-line objective plus the success criteria from `soul.md`, each with a live status — **Met / Short / At risk** — and the eval/run evidence behind that status. This is what the **Goal** verdict is measured against; without it the verdict is opaque. Keep it current as criteria are met or slip. (The `/goal-advisor` setup seeds this from `soul.md` when it bootstraps the goal.)
-
-The goal card **reads from `soul.md`** — it does not replace it. `soul.md` stays Markdown (it's parsed for objective/success-criteria); **do not create a `soul.html`** or convert it. This Pulse log is the only HTML document; soul.md is its Markdown source.
+`soul/soul.md` is the only durable Goal definition. Runloop's Goal / Ikigai tab renders it directly, so do not duplicate its objective or success criteria as a Goal/Profile card in `builder/improve.html`. The HTML may show time-bound **Goal progress** in Today's outcome, verdicts, Signal evidence, and Reflection entries, each stamped with its evidence run. `/define-success` establishes the goal; Pulse measures and reflects on it without copying the source document.
 
 ### Signal tiles — grouped by verdict
 
 Render readable, color-coded signal tiles (value + movement in words: `eval 0.78 -> target 0.90`, `cost 19c -> from 12c`, `wall 4m12s · LLM 2m08s`), grouped into **Bug tiles** (did it run: tests executed, last-run status, runtime), **Goal tiles** (is it achieving: eval scores and output checks vs success criteria), and **Cost/time tiles** (what the run spent: total cost/tokens, wall/LLM/tool time, top-cost step/agent, slowest step/agent). Use `.tile.ok`, `.tile.warn`, `.tile.bad`, `.tile.info`, `.tile.goal`, or `.tile.cost` to make technical detail scannable, and add a visible `.asof` line to every important tile. Read every number from eval reports, run outputs/logs, cost ledgers under `costs/`, and timing summaries under `runs/<run_folder>/logs/<step-id>/execution/` — the deterministic source of truth. Never fabricate a value or a trend, and never use charts.
 
-These tiles, the Maintenance Radar, and detailed evidence live inside one collapsed `<details class="technical">` block labelled **Technical details**. Keep it closed by default so operational internals do not overwhelm the user; do not hide pending decisions, the outcome summary, the goal card, or important unresolved issues inside it.
+These tiles, the Maintenance Radar, and detailed evidence live inside one collapsed `<details class="technical">` block labelled **Technical details**. Keep it closed by default so operational internals do not overwhelm the user; do not hide pending decisions, the outcome summary, or important unresolved issues inside it.
 
 ### Cost/time readout — one compact operational report per run
 
@@ -135,6 +144,8 @@ Update this block in place on each Pulse. Never append historical copies. Do not
 
 New entries go at the **top** of the timeline, not appended at the bottom. The file carries a stable anchor comment `<!-- LOG ENTRIES: newest first -->` directly below the header/tiles; insert each new entry immediately after it with `diff_patch_workspace_file`. Never reorder or rewrite existing entries except to close out an open finding (below). **Always read the existing file first** so you continue its style and don't duplicate entries.
 
+Every dated recent-run or timeline record (`.run[data-date]`, `.entry[data-date]`, or `.pulse-record[data-date]`) must include an explicit `data-pulse-section` and `data-module`. Runloop uses these attributes to show the complete history for one review when the user clicks that review in the Pulse popup. Use only the canonical module ids: `run_summary`, `bug_review`, `artifact_review`, `learning_health`, `knowledgebase_health`, `db_health`, `eval_health`, `report_health`, `cost_llm_time`, `llm_ops_review`, `goal_advisor`, or `pulse_fixer`. Use `signals` for reviewer findings, `reflection` for run summaries/questions/measurement, and `improvements` for Goal Advisor or Pulse Fixer decisions. A Pulse batch may update the file once, but it still writes one attributed card per due module; never hide multiple review results inside one mixed card. Do not infer or invent a new module id.
+
 ### Entry kinds
 
 Each entry is a small card: a date, a kind tag, optional classification chips, a one-line title, and a short prose body (2–4 sentences, plain language — explain *what* and *why*, link the evidence file or changelog entry when relevant). The first body line must be a `<p class="takeaway">...</p>` that a non-technical operator can understand before reading the details. Use these kinds:
@@ -147,7 +158,7 @@ Each entry is a small card: a date, a kind tag, optional classification chips, a
 - **Advisor opportunity** — a proposal-only Goal Advisor entry for an out-of-plan idea the current workflow has not considered but an expert operator would raise because it could materially advance the goal. It should be grounded in `soul.md`, run/eval/report evidence, market/process reasoning, or a clearly stated assumption; never present speculation as fact. Record it as `Decision - Goal Advisor - Proposed` with the `Goal` chip and `Advisor idea` work label, and include why it is outside the current plan, what evidence/assumption supports it, the expected upside, and the risk/next decision. Do not auto-apply it from the advisor scan alone.
 - **Advisor experiment** — the single durable Goal Advisor 10x/headroom card. Use `class="entry decision major advisor-experiment"`, stable `data-advisor-experiment-id="advisor-exp-<slug>"`, matching `data-input-id="plan-proposal-<slug>"`, `data-status`, and `data-review-after`. Active statuses are `proposed`, `deferred`, `approved`, `running`, `measuring`, and `blocked`; terminal statuses are `adopted`, `rejected`, and `retired`. The visible card contains Current baseline, Current strategy ceiling, 10x thesis, Bounded experiment, Primary success metric, Measurement plan (existing evidence or proposed/applied regular step id + DB contract), Guardrails, Review checkpoint, Rollback condition, Evidence, and Outcome when measured. Update it in place for the full lifecycle. Never leave two active cards and never append a new card for each status transition.
 - **Chief of Staff recommendation** — an org-level recommendation written by Chief of Staff / Org Pulse after reading workflow evidence against org goals. Treat it like an external **Open finding**: verify its evidence, then choose the normal builder path (Bug → Pulse Bug Review/Fixer, Goal/strategy → Goal Advisor, measurement gap → eval/report fix, cost/ops → review/apply if safe).
-- **Human input requested** — a durable question whenever Pulse, Goal Advisor, or Chief of Staff needs the user to decide, clarify, approve, provide credentials, or choose between options. Do not ask only in email/chat. Create or refresh the request with `create_human_input_request`; it is stored in this workflow's `db/db.sqlite` table `report_human_inputs` and rendered by Runloop as the first **Needs your decision** section. Keep the matching HTML timeline marker compact. When a later pass uses the answer, call `mark_human_input_consumed` with the outcome summary instead of editing the SQLite row directly, then remove the matching visible question marker from `builder/improve.html` or replace it with a short outcome Decision/Note.
+- **Human answer** — after a structured question is answered, add one compact Reflection card containing the actual question, selected option and/or free-form answer, current outcome (`waiting`, `applied`, `rejected`, `superseded`, or `consumed`), and evidence. The unanswered request itself stays only in `report_human_inputs` and Runloop's **Needs your decision** surface. When a later pass uses the answer, call `mark_human_input_consumed` and update the Reflection outcome instead of editing SQLite directly.
 - **User rule** — a constraint the user stated. Mark it clearly as authoritative ("USER RULE — authoritative") so future agents treat it as a hard constraint, never silently override it. This replaces the old `source: "user"` field — say it in words.
 - **Note** — a freeform observation or watchpoint that explains weird runs ("staging UI is mid-redesign, expect selector churn through ~June 20 — not a workflow bug").
 - **Open finding** — something wrong that is not yet fixed. Give it a short stable anchor id (e.g. `id="of-2026-06-07-screenshots"`) **only so a later Decision can mark it resolved** — that is the one place an id earns its keep. No other entry kind needs an id.
@@ -311,11 +322,12 @@ An existing `builder/improve.html` is **old-format** — and must be upgraded, n
 - legacy Markdown improve logs;
 - its own ad-hoc CSS (`.summary` / `.badge` / `.stats`, system-ui body) instead of the skeleton's;
 - no `<meta name="viewport">`;
+- missing `data-pulse-schema="2"` on the root `<html>` element;
 - missing mobile-first stacked `.status` / `.run` / `.entry` layouts or prose-safe overflow rules;
 - an `.etitle` rule missing `flex:1 1 auto`, or an `.ehead > .when` rule that keeps `margin-left:auto` / `white-space:nowrap` in the base mobile CSS. That older skeleton collapses entry titles and body text into narrow columns beside timestamp metadata, leaving the card half-empty in the right panel.
 - any recent-runs table/flex/grid whose date/status/type/age metadata can shrink into one-character columns. This usually comes from global `overflow-wrap:anywhere` on `body`, `td`, or metadata cells. Rewrite those rows as stacked/mobile-first cards or keep metadata/chips non-wrapping (`white-space:nowrap; overflow-wrap:normal; word-break:normal`) while only prose/evidence fields use `overflow-wrap:anywhere`.
 - any recent-runs desktop layout that puts the long `.note`/evidence text beside date/status/type/age metadata. The note must sit on a full-width second row so the run list stays readable in both the right panel and a wide browser.
-- missing `.filters` UI or missing `data-date` / `data-kind` attributes on recent-run rows and timeline entries. Add the Kind/Search/Reset filter bar (no date picker) and backfill dates/kinds from visible dates, run folders, entry labels, or best available evidence.
+- missing `.filters` UI or missing `data-date`, `data-kind`, `data-pulse-section`, or `data-module` attributes on recent-run rows and timeline entries. Add the Kind/Search/Reset filter bar (no date picker) and backfill dates/kinds/modules/sections from visible dates, run folders, entry labels, or best available evidence. Do not silently default every unclassified historical card to Bug Review; preserve it as `run_summary`/`reflection` when no specific reviewer can be established.
 - missing `.worklabel` CSS/action-label examples. Current logs need action chips such as `Bug fix`, `Improvement`, `Advisor idea`, `Artifact drift`, `Report fix`, `Eval fix`, `Cost/time`, `Backup/publish`, `Needs input`, and `Manual` so the user can scan what kind of work happened.
 - a text-heavy first screen, a visible `What matters now` heading instead of `Today's outcome`, signal/cost/Maintenance tiles outside a closed-by-default `.technical` details block, no optional `.assumptions` support, no bottom `#pulse-agent-handoff`, or recent runs rendered as a dense table. Upgrade it to the current human-first dashboard shell before appending new entries.
 
@@ -324,7 +336,7 @@ Missing `#pulse-bug-verdict` or `#pulse-goal-verdict` alone does **not** require
 **Do NOT append your new entry into the old structure** — that produces good content in a stale, off-brand shell. Instead, **rewrite the entire document using `get_reference_doc(kind="review-improve-log-skeleton")`** as a one-time upgrade:
 
 1. Read the old file in full.
-2. Load `get_reference_doc(kind="review-improve-log-skeleton")` and write the skeleton fresh: header + two verdict pills, status headline, optional active Assumptions challenged section, the Today's outcome brief, the goal card (objective + success criteria from `soul.md`), collapsed Technical details, filter bar, the recent-runs strip, the `<!-- LOG ENTRIES: newest first -->` anchor, the collapsed Agent log, and the archive section.
+2. Load `get_reference_doc(kind="review-improve-log-skeleton")` and write the skeleton fresh: header + two verdict pills, status headline, optional active Assumptions challenged section, the Today's outcome brief, collapsed Technical details, filter bar, the recent-runs strip, the `<!-- LOG ENTRIES: newest first -->` anchor, the collapsed Agent log, and the archive section. Goal remains in `soul/soul.md` and is rendered by Runloop's Goal / Ikigai tab.
 3. Carry every **unresolved finding** and **still-relevant recent decision/run** forward as timeline **cards** (newest first), dropping the `<script>` JSON blocks and the `F-`/`I-` ids — write readable prose, give an open finding a short anchor id only.
 4. Delete any legacy `.md` (`execute_shell_command`) so nothing is duplicated.
 

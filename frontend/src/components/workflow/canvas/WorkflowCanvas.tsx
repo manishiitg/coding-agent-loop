@@ -10,7 +10,7 @@ import {
   type NodeChange,
   type OnNodeDrag
 } from '@xyflow/react'
-import { Braces, Download, FileText, GitBranch, Laptop, ListOrdered, Loader2, PanelRightClose, RefreshCw, Route, Settings, SlidersHorizontal, Smartphone, Tablet, X } from 'lucide-react'
+import { Braces, Download, FileText, GitBranch, Laptop, ListOrdered, PanelRightClose, RefreshCw, Route, Settings, SlidersHorizontal, Smartphone, Tablet, X } from 'lucide-react'
 import '@xyflow/react/dist/style.css'
 
 import { useModeStore } from '../../../stores/useModeStore'
@@ -28,7 +28,6 @@ import {
 } from '../ReportViewer'
 import { LogViewer } from '../LogViewer'
 import { WORKFLOW_LOG_REFRESH_EVENT } from '../workflowEvents'
-import { SoulViewer, WORKFLOW_SOUL_REFRESH_EVENT } from '../SoulViewer'
 import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
 import { useEvaluationPlanData } from '../hooks/useEvaluationPlanData'
 import { usePlanToFlow, type WorkflowNode, type WorkflowEdge, type WorkflowNodeData, type StepNodeData, type ConditionalNodeData, type EvaluationStepNodeData } from '../hooks/usePlanToFlow'
@@ -149,6 +148,8 @@ type PreviewDevice = 'mobile' | 'tablet' | 'desktop'
 // workspacePath). A workflow with no saved choice defaults to desktop so the
 // report/plan uses the available workspace unless the user explicitly chooses
 // the phone preview.
+// Exported for focused layout tests; this module also owns the production canvas.
+// eslint-disable-next-line react-refresh/only-export-components
 export function usePreviewDevice(scopeId?: string | null): PreviewDevice {
   const read = (): PreviewDevice => {
     try {
@@ -177,6 +178,7 @@ function setPreviewDevice(mode: PreviewDevice, scopeId?: string | null) {
   window.dispatchEvent(new CustomEvent(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, { detail: { preference: mode, scopeId: scopeId ?? null } }))
 }
 // Tailwind shell width for a device preview (centered, constrained).
+// eslint-disable-next-line react-refresh/only-export-components
 export function previewDeviceShellClass(device: PreviewDevice): string {
   return device === 'mobile'
     ? 'mx-auto w-full max-w-[480px]'
@@ -187,11 +189,11 @@ export function previewDeviceShellClass(device: PreviewDevice): string {
 
 function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: { hasPlan: boolean; onExportPlan?: () => void; onRefreshPlan?: () => void; scopeId?: string | null }) {
   const canvasViewMode = useWorkflowStore(state => state.canvasViewMode)
+  const visibleCanvasViewMode = canvasViewMode === 'soul' ? 'log' : canvasViewMode
   const workflowWorkspaceView = useWorkflowStore(state => state.workflowWorkspaceView)
   const isFiles = workflowWorkspaceView === 'files'
-  const isReport = !isFiles && canvasViewMode === 'report'
-  const isLog = !isFiles && canvasViewMode === 'log'
-  const isSoul = !isFiles && canvasViewMode === 'soul'
+  const isReport = !isFiles && visibleCanvasViewMode === 'report'
+  const isLog = !isFiles && visibleCanvasViewMode === 'log'
 
   // "New Pulse" dot — show a dot on the Pulse tab when builder/improve.html
   // changed since the user last viewed it. Per-workspace seen-timestamp persists
@@ -248,12 +250,6 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: 
     s.setWorkflowWorkspaceView('log')
     s.setCanvasViewMode('log')
   }
-  const showSoul = () => {
-    useAppStore.getState().setWorkspaceMinimized(true)
-    const s = useWorkflowStore.getState()
-    s.setWorkflowWorkspaceView('soul')
-    s.setCanvasViewMode('soul')
-  }
   const showFiles = () => {
     const s = useWorkflowStore.getState()
     s.setShowWorkspacePane(true)
@@ -271,11 +267,10 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: 
   const refresh = () => {
     if (isReport) window.dispatchEvent(new CustomEvent(WORKFLOW_REPORT_REFRESH_EVENT))
     else if (isLog) window.dispatchEvent(new CustomEvent(WORKFLOW_LOG_REFRESH_EVENT))
-    else if (isSoul) window.dispatchEvent(new CustomEvent(WORKFLOW_SOUL_REFRESH_EVENT))
     else onRefreshPlan?.()
   }
   const canDownload = !isFiles && (isReport || Boolean(onExportPlan))
-  const canRefresh = !isFiles && (isReport || isLog || isSoul || Boolean(onRefreshPlan))
+  const canRefresh = !isFiles && (isReport || isLog || Boolean(onRefreshPlan))
   const tabCls = (active: boolean) =>
     `rounded px-2.5 py-1 text-xs font-medium transition-colors ${
       active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
@@ -298,7 +293,7 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: 
           aria-label="View controls"
           className="relative inline-flex items-center gap-1.5 rounded-lg border border-border bg-background/90 px-2 py-1 text-xs font-medium text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground"
         >
-          <span>{isFiles ? 'Files' : isReport ? 'Report' : isLog ? 'Pulse' : isSoul ? 'Soul' : 'Plan'}</span>
+          <span>{isFiles ? 'Files' : isReport ? 'Report' : isLog ? 'Pulse' : 'Plan'}</span>
           <SlidersHorizontal className="h-3.5 w-3.5" />
           {hasUnseenPulse && !isLog && <span className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-primary ring-2 ring-background" aria-label="New Pulse update" />}
         </button>
@@ -321,14 +316,13 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan, scopeId }: 
     >
       <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/70 p-0.5 shadow-sm backdrop-blur-sm">
         {hasPlan && (
-          <button type="button" onClick={showPlan} className={tabCls(!isFiles && canvasViewMode === 'flow')}>Plan</button>
+          <button type="button" onClick={showPlan} className={tabCls(!isFiles && visibleCanvasViewMode === 'flow')}>Plan</button>
         )}
         <button type="button" onClick={showReport} className={tabCls(isReport)}>Report</button>
         <button type="button" onClick={showLog} className={`relative ${tabCls(isLog)}`} title={hasUnseenPulse ? 'Pulse — new update' : 'Pulse'}>
           Pulse
           {hasUnseenPulse && <span className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-primary ring-2 ring-background" aria-label="New Pulse update" />}
         </button>
-        <button type="button" onClick={showSoul} className={tabCls(isSoul)}>Soul</button>
         <button type="button" onClick={showFiles} className={tabCls(isFiles)}>Files</button>
       </div>
       {!isFiles && (
@@ -465,11 +459,9 @@ const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasPr
         {toolbarOnly ? null : (
           <div className="h-full min-h-0 relative">
             <PreviewPaneControls hasPlan={Boolean(plan?.steps?.length)} scopeId={workspacePath} />
-            {workspacePath && (paneMode === 'log'
+            {workspacePath && (paneMode === 'log' || paneMode === 'soul'
               ? <div className={documentPreviewShellClassName}><LogViewer workspacePath={workspacePath} /></div>
-              : paneMode === 'soul'
-                ? <div className={documentPreviewShellClassName}><SoulViewer workspacePath={workspacePath} /></div>
-                : <ReportView workspacePath={workspacePath} focusTier={reportFocusTier} reserveTopControlsSpace />)}
+              : <ReportView workspacePath={workspacePath} focusTier={reportFocusTier} reserveTopControlsSpace />)}
           </div>
         )}
       </div>
@@ -1743,7 +1735,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // React Flow state (need to define before usePlanToFlow to use in callbacks)
   const [nodes, setNodes, onNodesChangeBase] = useNodesState<WorkflowNode>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<WorkflowEdge>([])
-  const [isExportingImage, setIsExportingImage] = React.useState(false)
+  const [, setIsExportingImage] = React.useState(false)
   // Store latest nodes in ref to avoid dependency issues
   const nodesRef = React.useRef(nodes)
   React.useEffect(() => {
@@ -3075,7 +3067,8 @@ export const WorkflowCanvasWithProvider = React.memo(forwardRef<WorkflowCanvasRe
     return <WorkflowFilesCanvasInner {...props} ref={ref} />
   }
 
-  // Report, Pulse (log), and Soul are lightweight preview-pane views (no React Flow tree).
+  // Report and Pulse (log) are lightweight preview-pane views (no React Flow tree).
+  // Legacy saved Soul state opens Pulse; Soul now lives inside the Pulse Goal tab.
   if (effectiveCanvasViewMode === 'report' || effectiveCanvasViewMode === 'log' || effectiveCanvasViewMode === 'soul') {
     return <WorkflowReportCanvasInner {...props} ref={ref} />
   }

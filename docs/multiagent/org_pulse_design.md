@@ -39,9 +39,9 @@ lightweight (a minimal manifest + one-step plan). Keep that true.
 A **daily, opt-in pass on the CoS chat** — the chat-level parallel to the per-workflow
 Pulse toggle (`post_run_monitor`). When **on**, once a day the CoS:
 
-1. **Judges the endgame** — reads each workflow's Pulse verdicts (the Bug/Goal
-   pills + goal card in `builder/improve.html` and the `card.health.html` dashboard
-   card, written by the per-workflow Pulse) and rolls the Goal
+1. **Judges the endgame** — reads each workflow's Goal / Ikigai from
+   `soul/soul.md`, its time-stamped Pulse verdict/progress history from
+   `builder/improve.html`, and the `card.health.html` dashboard card, then rolls the Goal
    verdicts into an org-level "are we achieving our goals" view. Cheap — the per-workflow
    Pulse already did the judging.
 2. **Harvests** — reads each workflow's `reports/`, `knowledgebase/`, and

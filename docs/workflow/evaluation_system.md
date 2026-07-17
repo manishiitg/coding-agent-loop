@@ -22,7 +22,7 @@ It is separate from:
 - step learning
 - workflow execution itself
 
-Division of labor: **Pulse owns "did it run right"; evals own "did it achieve the goal."** Eval steps should map one-to-one to success criteria and never duplicate operational checks — see the `evaluation-plan` guidance template for the authoring contract. Pulse reads the eval report each run and maps verdicts onto the per-criterion goal card in `builder/improve.html`, which is the durable goal signal (there is no separate numeric metrics layer).
+Division of labor: **Pulse owns "did it run right"; evals own "did it achieve the goal."** Eval steps should map one-to-one to success criteria and never duplicate operational checks — see the `evaluation-plan` guidance template for the authoring contract. Pulse reads eval reports and records evidence-stamped goal progress in `builder/improve.html` Reflection history. The durable goal definition remains `soul/soul.md`; there is no separate numeric metrics layer or duplicate Goal/Profile card.
 
 ## Current Mental Model
 
@@ -144,7 +144,7 @@ The on-disk report contains:
   - `output_content` — the eval step's own structured output, attached from the first of: `output_content.json`, the step's `context_output` file, a `pre_validation` file, or `context_output.json` in the eval sandbox (`enrichEvaluationReportWithStepOutputs`)
 - eval steps skipped by `applies_to_routes` appear as skipped entries with `max_score: 0`, so a run is not penalized for route paths it did not take
 
-`output_content` is the source of truth for each eval step's verdict: the step should emit its own `score`, `max_score`, `reasoning`, and `evidence` (plus any domain-specific judgment dimensions) as structured output, enforced by the step's validation schema. Consumers — Pulse triage, the goal card in `builder/improve.html`, the scheduled improve loop, the UI — read the per-step verdicts; nothing numeric is aggregated downstream.
+`output_content` is the source of truth for each eval step's verdict: the step should emit its own `score`, `max_score`, `reasoning`, and `evidence` (plus any domain-specific judgment dimensions) as structured output, enforced by the step's validation schema. Consumers — Pulse, Goal Advisor, report review, and the UI — read the per-step verdicts; nothing numeric is aggregated downstream.
 
 ### Where the report lands
 
@@ -230,7 +230,7 @@ Current corrections:
 - evaluation costs come from the `costs/` ledger, not primarily from legacy per-run token files
 - the eval plan is edited and loaded directly from `evaluation/evaluation_plan.json`
 - the combined LLM scoring agent and the `__evaluation_scoring__` learn_code fast path were removed — the report is assembled in Go from per-step `output_content`
-- the numeric metrics layer (`planning/metrics.json`, `db/metrics_history.jsonl`, `propose_metric`/`retire_metric`) was removed (2026-07-01) — the goal signal is the per-criterion goal card in `builder/improve.html`, maintained agentically by Pulse from eval reports + `soul.md`
+- the numeric metrics layer (`planning/metrics.json`, `db/metrics_history.jsonl`, `propose_metric`/`retire_metric`) was removed (2026-07-01) — `soul/soul.md` defines the goal and Pulse records evidence-stamped progress over time in `builder/improve.html`
 
 ## Practical Summary
 

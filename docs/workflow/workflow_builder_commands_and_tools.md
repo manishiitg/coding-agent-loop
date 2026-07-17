@@ -7,8 +7,8 @@ This document is a compact reference for the current workflow-builder surface. T
 Workflow improvement has three layers:
 
 - **Intent + plan**: `soul/soul.md` defines stable objective/success criteria and explicit user constraints; `planning/plan.json` defines the current, revisable implementation attempt.
-- **Eval**: `evaluation/evaluation_plan.json` plus per-run reports. This measures success-criteria achievement (operational quality is Pulse triage's per-run job).
-- **Goal card**: the per-criterion Met/Short/At-risk card in `builder/improve.html`, maintained agentically by Pulse from eval reports + `soul.md`. It is the durable goal signal over runs; there is no separate numeric metrics layer.
+- **Eval**: `evaluation/evaluation_plan.json` plus per-run reports. This measures success-criteria achievement (operational correctness is Pulse Bug Review's job).
+- **Goal + progress**: `soul/soul.md` is the durable Goal / Ikigai definition and Runloop renders it directly. Evidence-stamped progress over time lives in `builder/improve.html` Reflection entries; there is no separate numeric metrics layer or duplicate Goal/Profile card.
 
 Optimizer actions are deliberately small in number:
 
@@ -38,10 +38,8 @@ The returned guidance is the source of truth for the command. Mode validation li
 Current guidance kinds:
 
 ```text
-migrate-browser
 design-plan
 ready-to-optimize
-review-plan
 review-speed
 review-cost
 review-code
@@ -59,10 +57,8 @@ improve-report
 
 | Command | Mode | Purpose |
 |---|---|---|
-| `/migrate-browser` | Builder | One-time migration of active legacy browser wiring to managed agent-browser; does not execute the workflow. |
-| `/design-plan` | Builder | Design step flow and context handoffs. |
+| `/design-plan` | Workshop, Run | Comprehensive structural, artifact, and design-quality review through the read-only `review_plan` engine. |
 | `/ready-to-optimize` | Builder | Check whether the workflow is ready to hand to Optimizer. |
-| `/review-plan` | Builder, Optimizer, Run | Structural and artifact-sync review through `review_plan`. |
 | `/review-code` | Optimizer | Review all saved code artifacts, including learn-code scripts and eval code. |
 | `/review-artifact-drift` | Builder, Optimizer | Audit whether learnings, code, KB, db, reports, and eval wiring drifted from recent plan changes. |
 | `/review-speed` | Optimizer | Review latency and safe speedups. |
@@ -70,7 +66,7 @@ improve-report
 | `/improve-knowledge` | Builder, Optimizer | Improve knowledgebase notes with targeted cleanup or cross-step consolidation. |
 | `/improve-learnings` | Builder, Optimizer | Improve global learnings with targeted cleanup or current-plan consolidation. |
 | `/improve-data` | Builder, Optimizer | Improve durable data contracts, schemas, and report compatibility. |
-| `/define-success` | Optimizer | Confirm the goal, write the workflow profile, and seed the Pulse goal card. |
+| `/define-success` | Workshop | Confirm and normalize the durable Goal / Ikigai in `soul/soul.md`; do not seed a duplicate Goal card. |
 | `/improve-evaluation` | Optimizer | Improve evaluation coverage and rubric quality. |
 | `/auto-improve` | Optimizer | Create/update frequent Run-mode and Optimizer-mode schedules. |
 | `/improve-report` | Builder, Optimizer | Improve report layout, color, density, and widget/data wiring. |

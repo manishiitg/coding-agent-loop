@@ -26,12 +26,12 @@ There are three practical scopes:
 
 The **Pulse** (`builder/improve.html`) is the primary workflow-level monitoring surface and the user's main window into a workflow. It is a single, self-contained HTML document the workflow's agents curate, rendered as a first-class right-panel view alongside Plan, Report, and Soul, and it follows the app's light/dark theme.
 
-When pending input exists, Runloop renders **Needs your decision** first. The HTML then reads: two verdicts → a one-line status headline → active **Assumptions challenged** (only when consequential assumptions exist) → **Today's outcome** → the goal card → collapsed technical detail → recent runs → a newest-first timeline → collapsed **Agent log** → archive. The Agent log contains only current handoff state, ids, cursors, cadence, and evidence pointers; it never duplicates the user narrative. Every workflow is judged on two independent axes, each stamped with the run it's as-of:
+When pending input exists, Runloop renders **Needs your decision** first. Goal / Ikigai renders `soul/soul.md` directly. The HTML history is newest-first and time-based: active **Assumptions challenged** when needed, **Today's outcome**, collapsed technical detail, recent runs, attributed Signal / Reflection / Improvement cards, a collapsed **Agent log**, and archive. The Pulse popup uses each card's section/module metadata to show that same history by review. The Agent log contains only current handoff state, ids, cursors, cadence, and evidence pointers; it never duplicates the user narrative. Every workflow is judged on two independent axes, each stamped with the run it's as-of:
 
 - **Bug** — did it run correctly (errors, skipped steps, missing/empty artifacts, regressions)? Fixed by hardening.
 - **Goal** — is it achieving its success criteria (eval scores and outcome metrics vs `soul.md`)? Fixed by refining or replanning.
 
-A **Pulse run** follows each scheduled workflow run. Pulse Gate selects only the due review modules, those reviewers return evidence without writing, and the parent Pulse Fixer applies bounded verified changes before the final dashboard/backup/publish/notify step. Enable it with the **Pulse** toolbar control. Questions are stored as structured human-input requests and shown in `builder/improve.html` before notification.
+A **Pulse run** follows each scheduled workflow run. Pulse Gate selects only the due review modules, those reviewers return evidence without writing, and the parent Pulse Fixer applies bounded verified changes before the final dashboard/backup/publish/notify step. Enable it with the **Pulse** toolbar control. Current questions are stored as structured human-input requests and rendered by Runloop; answered question/outcome history is preserved under Reflection / Hansei.
 
 ## Execution Logs
 

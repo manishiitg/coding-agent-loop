@@ -124,7 +124,7 @@ Workflow schedules always use the workshop builder execution path. Do not create
 
 **Default mode rule:** create workflow schedules with `mode="workshop"`. New schedules should never use `mode="workflow"`.
 
-**`/goal-advisor` rule**: When setting up continuous improvement, create or update the recurring execution schedule only: `mode="workshop", workshop_mode="run"` with a message that calls `run_full_workflow(group_name="...")` for each configured group, and enable Pulse with `update_workflow_config(post_run_monitor=true)`. Do not create a separate optimizer Goal Advisor schedule; Pulse Gate decides when the Goal Advisor module is due.
+**`/pulse-setup` rule**: When setting up recurring Pulse, create or update the recurring execution schedule only: `mode="workshop", workshop_mode="run"` with a message that calls `run_full_workflow(group_name="...")` for each configured group, and enable Pulse with `update_workflow_config(post_run_monitor=true)`. Do not create a separate optimizer Goal Advisor schedule; Pulse Gate decides when the Goal Advisor module is due. `/goal-advisor` is a one-off strategy review and must not change schedules or the Pulse toggle.
 
 ### Back up scheduled workflows
 
@@ -171,7 +171,7 @@ improvement uses normal Run mode plus Pulse.
   - `cat variables/variables.json`
 - **`human_feedback`** — Ask the user a question during a run.
 - **`create_human_input_request`** — Non-blocking Pulse/goal-advisor/Chief of Staff question. Workflow questions are stored in the workflow's `db/db.sqlite`; Chief of Staff may use `workspace_path="pulse"` for org-wide questions stored in `pulse/db/db.sqlite`. The user answers in the Runloop Pulse/Chief of Staff report panel.
-- **`mark_human_input_consumed`** — Mark an answered report question consumed after using it and recording the outcome; then clear the matching visible question card from the Pulse HTML so it no longer appears actionable.
+- **`mark_human_input_consumed`** — Mark an answered report question consumed after using it and recording the outcome; add/update the matching historical Reflection question-and-answer card in Pulse HTML. Pending questions are rendered directly from SQLite, not duplicated in HTML.
 
 ## Skills
 

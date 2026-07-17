@@ -29,14 +29,14 @@ The eval plan's completeness test is the two-way coverage matrix:
 
 Eval is also a per-run tax: auto-eval runs after every execution, so cost matters. Fewer, deeper steps; scripted fact-extraction; model judgment only on verdicts. Eval spend rivaling execution spend (see `costs/evaluation/`) is itself a finding.
 
-Eval changes are special-cased because they change what is measured, not the workflow's behavior. Handle them carefully and record rubric changes in `builder/improve.html` so future agents can interpret before/after runs honestly.{{if .Focus}}
+Eval changes are special-cased because they change what is measured, not the workflow's behavior. Handle them carefully and tell the parent Pulse Fixer to record rubric changes in `builder/improve.html` so future agents can interpret before/after runs honestly.{{if .Focus}}
 
 Focus on: {{.Focus}}.{{end}}
 
 PASS 0 - FRAMEWORK PRECHECK
-1. Read `builder/improve.html`: Workflow Profile, recent timeline entries, open findings, and archive rows. If it is short, read it in full. If an archive row references an older eval semantic change that affects a step you may edit, read that archive file.
-2. If there is no Workflow Profile block, return `blocked` with a recommendation that the parent load `define-success` and establish it from `soul.md` before applying eval changes. Goal Advisor is not the setup path.
-3. Read `soul/soul.md` and extract the objective and success criteria. These are the standard eval should measure against.
+1. Read `builder/improve.html`: recent timeline entries, open findings, answered decisions, and archive rows. If it is short, read it in full. If an archive row references an older eval semantic change that affects a step you may edit, read that archive file.
+2. Read `soul/soul.md` and extract the objective and success criteria. If those are missing or not checkable, return `blocked` and recommend `define-success`; Goal Advisor is not the setup path.
+3. Treat `soul/soul.md` as the Goal / Ikigai source of truth. `builder/improve.html` holds time-based Signal, Reflection, and Improvement history, not a duplicate Goal/Profile block.
 
 PASS 1 - STRUCTURAL VALIDATION REVIEW
 1. Inspect `evaluation/evaluation_plan.json` and `evaluation/step_config.json`
@@ -129,7 +129,11 @@ When you finish, return:
 - what you recommend and what is safe for the Pulse Fixer to apply
 - any proposed rubric-change Decision entry
 
-If you record a proposed but not-yet-applied eval change as an open finding, give it a short anchor id only so a later decision can mark it resolved.
+The parent records every evaluation-health result as a **Signals / Kizuki** card
+using `data-pulse-section="signals"` and `data-module="eval_health"`. A later
+verified repair is a separate Improvements / Kaizen Pulse Fixer card.
+
+If you recommend a proposed but not-yet-applied eval change as an open finding, give it a short anchor id only so the parent can record it and a later decision can mark it resolved.
 
 CLOSE-OUT RECOMMENDATIONS
 When preparing eval recommendations, scan `builder/improve.html` for open findings that the change would address. Match by intent, not exact wording.

@@ -59,18 +59,16 @@ type kindMeta struct {
 // not allowed in the caller's mode and tells the agent to suggest a mode
 // switch.
 var allKinds = map[string]kindMeta{
-	// One-time compatibility migrations — mutate only the active workflow.
-	"migrate-browser": {Group: "builder", Description: "One-time migration of active legacy Playwright browser wiring to managed agent-browser", Modes: []string{"workshop"}},
-
-	// Design audits (only meaningful before run evidence accumulates)
-	"design-plan": {Group: "builder", Description: "Review whether the plan follows design best practices (step types, stores, validation, flow)", Modes: []string{"workshop"}},
+	// Comprehensive plan review: critical artifact audit plus better-shape design guidance.
+	"design-plan": {Group: "builder", Description: "Comprehensive workflow plan and dependent-artifact review with better design recommendations", Modes: []string{"workshop", "run"}},
 
 	// Reviews — recommend, don't apply; appends to builder/improve.html
-	"review-plan":           {Group: "review", Description: "Comprehensive workflow audit: plan, step descriptions, learnings, KB, db/db.sqlite, reports, variables, and eval wiring", Modes: []string{"workshop", "run"}},
 	"review-speed":          {Group: "review", Description: "Latency analysis with safe-speedup recommendations", Modes: []string{"workshop"}},
 	"review-cost":           {Group: "review", Description: "Cost analysis with safe-reduction recommendations", Modes: []string{"workshop"}},
 	"review-code":           {Group: "review", Description: "Saved main.py vs current step descriptions drift check", Modes: []string{"workshop"}},
 	"review-artifact-drift": {Group: "review", Description: "Audit plan changelog entries against dependent artifacts: learnings, main.py, KB, db, reports, and eval wiring", Modes: []string{"workshop"}},
+	"bug-review":            {Group: "review", Description: "One-off read-only Pulse QA review for runtime, logic, evidence-chain, and suspicious-success defects", Modes: []string{"workshop"}},
+	"llm-ops-review":        {Group: "review", Description: "One-off read-only review of model tiers, cost, latency, fallbacks, backup, publish, notify, and version readiness", Modes: []string{"workshop"}},
 
 	// Knowledgebase maintenance — applies targeted or cross-step KB cleanup
 	"improve-knowledge": {Group: "kb", Description: "Read-only knowledgebase/notes health review with targeted or cross-step fixer recommendations", Modes: []string{"workshop"}},
@@ -82,9 +80,11 @@ var allKinds = map[string]kindMeta{
 	"improve-database": {Group: "db", Description: "Read-only db/db.sqlite contract, schema, integrity, and report-compatibility review", Modes: []string{"workshop"}},
 
 	// Improvements — evidence-driven reliability and strategy flows
-	"define-success":      {Group: "improve", Description: "One-time bootstrap of optimization success criteria and Workflow Profile", Modes: []string{"workshop"}},
+	"define-success":      {Group: "improve", Description: "Confirm the workflow Goal, success criteria, and operating model", Modes: []string{"workshop"}},
 	"improve-evaluation":  {Group: "improve", Description: "Read-only evaluation coverage and correctness review with fixer recommendations", Modes: []string{"workshop"}},
-	"goal-advisor-setup":  {Group: "improve", Description: "Set up recurring workflow runs with dynamic Pulse; Pulse Gate selects Goal Advisor when strategic review is due", Modes: []string{"workshop"}},
+	"pulse":               {Group: "improve", Description: "Run one complete manual Pulse against retained evidence without changing schedules or running the workflow", Modes: []string{"workshop"}},
+	"pulse-setup":         {Group: "improve", Description: "Enable Pulse and set up the normal recurring workflow run schedule", Modes: []string{"workshop"}},
+	"pulse-fixer":         {Group: "improve", Description: "Apply and verify bounded safe fixes from existing Pulse or standalone review findings", Modes: []string{"workshop"}},
 	"goal-advisor":        {Group: "improve", Description: "Expert strategy advisor module: recover drifting goals, run periodic healthy 10x/headroom reviews, and advance one approval-gated experiment in builder/improve.html from proposal through measured outcome", Modes: []string{"workshop"}},
 	"design-reporting-ui": {Group: "report", Description: "Design the reporting UI from scratch: author HTML document(s) (live data via window.report, single or tabbed per-entity) and register them in reports/report_plan.json", Modes: []string{"workshop"}},
 	"improve-report":      {Group: "report", Description: "Read-only report dashboard accuracy, goal tracking, live-data, layout, and responsive-design review", Modes: []string{"workshop"}},
@@ -300,7 +300,7 @@ func kindEnumWithDescriptionsFrom(registry map[string]kindMeta) string {
 func RegisterGuidanceTool(agent *mcpagent.Agent, currentMode string, logger loggerv2.Logger) {
 	desc := "Get the canonical guided-flow text for any workflow command. " +
 		"Call this tool — and follow the returned instructions verbatim — when (1) the user invokes a slash command " +
-		"like /review-plan or /improve-evaluation (the slash command will name the kind to pass; pass the surrounding " +
+		"like /design-plan or /improve-evaluation (the slash command will name the kind to pass; pass the surrounding " +
 		"conversation/request into focus when available), (2) the user describes " +
 		"the same intent in plain chat (\"help me improve this workflow\", \"review whether the goal is being met\", " +
 		"\"improve the eval plan\") — recognize the intent and pick the matching kind, or (3) you're running on a " +
@@ -429,7 +429,7 @@ func BuildSystemToolsSkill(mode string) *llmtypes.Skill {
 
 - ` + "`get_api_spec(server_name, tool_name)`" + ` — when you do not know an MCP tool's parameters or response shape, call this first.
 - ` + "`get_reference_doc(kind, focus?)`" + ` — system reference docs. Load the matching doc before any deep action (e.g. read ` + "`post-run-monitor`" + ` before Pulse review/fix work; read ` + "`code-authoring`" + ` before authoring ` + "`main.py`" + `; read ` + "`llm-selection`" + ` before ` + "`set_workflow_llm_config`" + `). Some tools refuse to run until their precondition doc has been loaded — the error will name the kind.
-- ` + "`get_workflow_command_guidance(kind, focus?)`" + ` — canonical procedural flows (review-plan, improve-evaluation, goal-advisor, define-success, etc.). The returned text is your instructions for that turn; follow it verbatim.
+- ` + "`get_workflow_command_guidance(kind, focus?)`" + ` — canonical procedural flows (design-plan, improve-evaluation, goal-advisor, define-success, etc.). The returned text is your instructions for that turn; follow it verbatim.
 - ` + "`run_goal_advisor_review(pulse_run_id?, focus?)`" + ` — when available, spawn Goal Advisor as a dedicated background agent instead of doing expensive strategic review inline in the parent Pulse/workshop turn.
 
 ## Configuration access

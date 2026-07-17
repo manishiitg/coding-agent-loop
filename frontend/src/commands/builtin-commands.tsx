@@ -1,5 +1,5 @@
 import React from 'react'
-import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, GitBranch, CheckCircle, Search, BookOpen, Activity, BellRing, Cloud, Globe, Target } from 'lucide-react'
+import { FileText, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, GitBranch, CheckCircle, Search, BookOpen, Activity, BellRing, Cloud, Globe, Target } from 'lucide-react'
 import type { CommandContext, CommandDefinition } from './types'
 
 function submitGuidedWorkflowCommand(
@@ -17,16 +17,18 @@ function submitGuidedWorkflowCommand(
   }
   const guidanceCall = `get_workflow_command_guidance(${args.join(', ')})`
 
-  // Read-only reviews run as a background task so the chat stays responsive: the
-  // background agent (same tools) does the heavy read→analyze→write builder/improve.html
-  // and auto-notifies on completion; the chat agent then surfaces the Top 3 for discussion.
+  // Read-only reviews run as a background task so the chat stays responsive. The
+  // parent presents the complete result after the completion notification.
   if (options.background) {
+    const outputContract = ctx.workshopMode === 'run'
+      ? 'Return findings in chat only; do not write or edit any workspace file.'
+      : 'Write recommendations to builder/improve.html as required by the returned guidance.'
     const instruction =
-      `Call ${guidanceCall} and follow the returned instructions verbatim — read the plan and artifacts and write your recommendations to builder/improve.html. ` +
+      `Call ${guidanceCall} and follow the returned instructions verbatim. ${outputContract} ` +
       `Treat focus as the request context before the slash command. The tool returns the canonical guided-flow text; do not paraphrase or skip its steps.`
     ctx.onSubmit(
       `Run the /${kind} review as a BACKGROUND task so this chat stays responsive. ` +
-      `If the run_in_background tool is available: call run_in_background(name=${JSON.stringify(kind + ' review')}, instruction=${JSON.stringify(instruction)}) and do NOT perform the review yourself this turn — you'll get a completion notification, then summarize its Top 3 recommendations here for discussion. ` +
+      `If the run_in_background tool is available: call run_in_background(name=${JSON.stringify(kind + ' review')}, instruction=${JSON.stringify(instruction)}) and do NOT perform the review yourself this turn — you'll get a completion notification, then present a short executive summary followed by every finding and recommendation in severity order. Do not truncate the result to a Top 3. ` +
       `If run_in_background is not available, perform the review inline this turn instead.`
     )
     return
@@ -41,39 +43,19 @@ function submitGuidedWorkflowCommand(
 
 export const builtinCommands: CommandDefinition[] = [
   {
-    command: 'migrate-browser',
-    description: 'One-time migration of legacy browser steps to agent-browser',
-    icon: <RefreshCw className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'workshop',
-    source: 'builtin',
-    execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'migrate-browser')
-    }
-  },
-  {
     command: 'design-plan',
-    description: 'Review whether the plan follows design best practices',
+    description: 'Comprehensively review the plan, dependent artifacts, and better design options',
     icon: <GitBranch className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'workshop',
-    source: 'builtin',
-    execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'design-plan', { background: true })
-    }
-  },
-  {
-    command: 'review-plan',
-    description: 'Critically analyze the automation plan and dependent artifacts',
-    icon: <Search className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
     requiredWorkshopMode: ['workshop', 'run'],
     source: 'builtin',
     execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'review-plan', { background: true })
+      // design-plan already delegates its expensive audit to the dedicated
+      // review_plan background tool. Keep the coordinating turn in the main
+      // conversation so its completion notification can resume synthesis and
+      // persist the final open findings.
+      submitGuidedWorkflowCommand(ctx, 'design-plan')
     }
   },
   {
@@ -188,15 +170,78 @@ export const builtinCommands: CommandDefinition[] = [
     }
   },
   {
+    command: 'pulse',
+    description: 'Run one complete Pulse now against the latest retained run',
+    icon: <Activity className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'workshop',
+    source: 'builtin',
+    execute: (ctx) => {
+      const runFolder = ctx.getWorkflowStore().selectedRunFolder
+      submitGuidedWorkflowCommand(ctx, 'pulse', { runFolder })
+    }
+  },
+  {
+    command: 'pulse-setup',
+    description: 'Enable Pulse and configure the recurring workflow run schedule',
+    icon: <RefreshCw className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'workshop',
+    source: 'builtin',
+    execute: (ctx) => {
+      submitGuidedWorkflowCommand(ctx, 'pulse-setup')
+    }
+  },
+  {
+    command: 'bug-review',
+    description: 'Run the Pulse QA and logic-bug review without applying fixes',
+    icon: <Search className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'workshop',
+    source: 'builtin',
+    execute: (ctx) => {
+      const runFolder = ctx.getWorkflowStore().selectedRunFolder
+      submitGuidedWorkflowCommand(ctx, 'bug-review', { runFolder, background: true })
+    }
+  },
+  {
+    command: 'llm-ops-review',
+    description: 'Review model tiers, cost, latency, fallbacks, backup, publish, and notify setup',
+    icon: <Cpu className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'workshop',
+    source: 'builtin',
+    execute: (ctx) => {
+      const runFolder = ctx.getWorkflowStore().selectedRunFolder
+      submitGuidedWorkflowCommand(ctx, 'llm-ops-review', { runFolder, background: true })
+    }
+  },
+  {
+    command: 'pulse-fixer',
+    description: 'Apply and verify safe fixes from existing Pulse review findings',
+    icon: <CheckCircle className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'workshop',
+    source: 'builtin',
+    execute: (ctx) => {
+      submitGuidedWorkflowCommand(ctx, 'pulse-fixer')
+    }
+  },
+  {
     command: 'goal-advisor',
-    description: 'Set up recurring runs with Pulse Gate and the Goal Advisor module',
+    description: 'Run a one-off strategic Goal Advisor review without changing Pulse setup',
     icon: <Bot className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
     requiredWorkshopMode: 'workshop',
     source: 'builtin',
     execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'goal-advisor-setup')
+      submitGuidedWorkflowCommand(ctx, 'goal-advisor', { background: true })
     }
   },
   {
@@ -276,29 +321,6 @@ Always write publish/status.json.`
 - If I asked to test delivery, call notify_user once with a clearly labeled test message and report its returned delivered/skipped/failed channels honestly. Do not send a test unless I requested one.
 - human_feedback is separate: use it only for short-lived input that must block this run, such as OTP, CAPTCHA, or immediate approval.`
       ctx.onSubmit(ctx.beforeSlash ? `${ctx.beforeSlash}\n\n${instruction}` : instruction)
-    }
-  },
-  {
-    command: 'build-skill',
-    description: 'Build a new skill using the skill-creator',
-    icon: <Lightbulb className="w-4 h-4" />,
-    modes: ['multi-agent'],
-    source: 'builtin',
-    execute: (ctx) => {
-      const currentSkills = ctx.tabConfig?.selectedSkills || []
-      if (!currentSkills.includes('skill-creator')) {
-        ctx.setTabConfig(ctx.activeTabId, { selectedSkills: [...currentSkills, 'skill-creator'] })
-      }
-      const wsStore = ctx.getWorkspaceStore()
-      const expanded = new Set(wsStore.expandedFolders)
-      expanded.add('skills')
-      expanded.add('skills/custom')
-      wsStore.setExpandedFolders(expanded)
-      const skillContext = 'Refer to the skill-creator skill at skills/custom/skill-creator/SKILL.md for instructions on how to build skills.'
-      const message = ctx.beforeSlash
-        ? `${ctx.beforeSlash}\n\n${skillContext}`
-        : `I want to build a skill based on our conversation. ${skillContext}`
-      ctx.onSubmit(message)
     }
   },
   {
@@ -435,49 +457,6 @@ If org publish IS configured and verified: publish now only if the org HTML chan
 Always write pulse/publish/status.json. Never publish secrets or raw task transcripts. Never write org publish state into any workflow.json or content HTML file.`
 
       ctx.onSubmit(focus ? `${focus}\n\n${instruction}` : instruction)
-    }
-  },
-  {
-    command: 'add-skill',
-    description: 'Import a skill from GitHub',
-    icon: <Download className="w-4 h-4" />,
-    modes: ['multi-agent'],
-    source: 'builtin',
-    execute: (ctx) => {
-      ctx.openDialog('skillImport')
-    }
-  },
-  {
-    command: 'mcp',
-    description: 'View MCP server details and tools',
-    icon: <Server className="w-4 h-4" />,
-    modes: ['multi-agent'],
-    source: 'builtin',
-    execute: (ctx) => {
-      ctx.getAppStore().setWorkspaceMinimized(true)
-      ctx.openDialog('mcpDetails')
-    }
-  },
-  {
-    command: 'mcp-add',
-    description: 'Add or edit MCP server configuration',
-    icon: <Server className="w-4 h-4" />,
-    modes: ['multi-agent'],
-    source: 'builtin',
-    execute: (ctx) => {
-      ctx.getAppStore().setWorkspaceMinimized(true)
-      ctx.openDialog('mcpConfig')
-    }
-  },
-  {
-    command: 'models',
-    description: 'Open LLM model configuration',
-    icon: <Cpu className="w-4 h-4" />,
-    modes: ['multi-agent'],
-    source: 'builtin',
-    execute: (ctx) => {
-      ctx.getAppStore().setWorkspaceMinimized(true)
-      ctx.openDialog('models')
     }
   },
   {

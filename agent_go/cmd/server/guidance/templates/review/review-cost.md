@@ -1,6 +1,6 @@
 Run review_workflow_costs() to analyze where workflow cost is going and how to reduce it without hurting results.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
-Write findings into `builder/improve.html` as "Open finding" timeline entries. For the log format, one-time old Markdown migration, and how open findings are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
+Write every finding into `builder/improve.html` as a **Signals / Kizuki** "Open finding" timeline entry using `data-pulse-section="signals"` and `data-module="cost_llm_time"`. For the log format, one-time old Markdown migration, and how open findings are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
 
 {{if .RunFolder}}Use the selected run folder "{{.RunFolder}}" as the primary evidence set.{{else}}If a meaningful prior run exists, use it as evidence; otherwise find the latest meaningful run first.{{end}}
 
@@ -19,4 +19,4 @@ Then give:
 - the best model/tool/config changes
 - the top next actions, with expected savings and risk to success criteria.
 
-REVIEW LOG: record findings as "Open finding" timeline entries in builder/improve.html (read it first if it exists, create it if it does not — newest on top) with the cost analysis, the top cost drivers, the recommendations (REVIEW = recommend; do NOT apply), and items flagged for follow-up.
+REVIEW LOG: record every finding as a Signals / Kizuki "Open finding" timeline entry in builder/improve.html using `data-pulse-section="signals"` and `data-module="cost_llm_time"` (read it first if it exists, create it if it does not — newest on top) with the cost analysis, the cost drivers, every recommendation (REVIEW = recommend; do NOT apply), priority, and follow-up. Never discard findings because they fall outside a top-N cap.

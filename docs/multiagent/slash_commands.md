@@ -15,7 +15,7 @@ All commands — built-in and user-defined — share a single `CommandDefinition
 
 ```typescript
 interface CommandDefinition {
-  command: string           // Slash command name (e.g. "review-plan")
+  command: string           // Slash command name (e.g. "design-plan")
   description: string       // Shown in the picker dialog
   icon: ReactNode           // Lucide icon
   modes?: ModeCategory[]    // If set, only visible in these modes (empty = all)
@@ -89,10 +89,8 @@ Workflow slash commands are wrappers around the backend `get_workflow_command_gu
 | Command | Description | Workshop Modes | Backend Kind |
 |---------|-------------|----------------|--------------|
 | `/resume` | Attach a previous chat conversation as context | Builder, Optimizer, Run | N/A |
-| `/migrate-browser` | One-time migration of active legacy browser wiring to managed agent-browser | Builder | `migrate-browser` |
-| `/design-plan` | Validate context dependency chain between steps | Builder | `design-plan` |
+| `/design-plan` | Comprehensively review plan structure, dependent artifacts, and better design options | Workshop, Run | `design-plan` |
 | `/ready-to-optimize` | Check if workflow is ready to move to optimizer mode | Builder | `ready-to-optimize` |
-| `/review-plan` | Critically analyze the workflow plan and dependent artifacts | Builder, Optimizer, Run | `review-plan` |
 | `/review-speed` | Review workflow latency and how to make it faster | Optimizer | `review-speed` |
 | `/review-cost` | Review workflow cost and how to reduce it safely | Optimizer | `review-cost` |
 | `/review-artifact-drift` | Check whether artifacts drifted from recent plan changes | Builder, Optimizer | `review-artifact-drift` |
@@ -101,7 +99,7 @@ Workflow slash commands are wrappers around the backend `get_workflow_command_gu
 | `/improve-learnings` | Improve global learnings with targeted cleanup or current-plan consolidation | Builder, Optimizer | `improve-learnings` |
 | `/improve-data` | Improve durable data contracts, schemas, and report compatibility | Builder, Optimizer | `improve-data` |
 | `/improve-report` | Validate `reports/report_plan.json` and suggest layout/color improvements | Builder, Optimizer, Reporting | `improve-report` |
-| `/define-success` | One-time setup: write the Workflow Profile to `builder/improve.md` and bootstrap metrics | Optimizer | `define-success` |
+| `/define-success` | Confirm Goal and success criteria in `soul/soul.md`; record the operating-model assessment in Pulse Reflection history | Workshop | `define-success` |
 | `/improve-evaluation` | Validate `evaluation/evaluation_plan.json` and improve goal/criteria coverage | Optimizer | `improve-evaluation` |
 | `/auto-improve` | Set up recurring workflow run + frequent lightweight optimizer improvement | Optimizer | `auto-improve` |
 

@@ -9,7 +9,7 @@ model — use it to investigate.
 1. Pick the action that matches the failure: if the workflow path is
    sound but reliability is broken, collect a read-only Bug Review and
    let the parent Pulse Fixer apply bounded verified repairs.
-   If eval verdicts or the goal card show a success-criteria strategy
+   If eval verdicts or Goal progress show a success-criteria strategy
    gap, create/apply a Goal Advisor plan-change proposal as appropriate.
    For local fixes (description, `validation_schema`, context wiring,
    step config), apply them directly with the matching update tool.

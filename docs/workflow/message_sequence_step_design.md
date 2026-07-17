@@ -104,6 +104,8 @@ Contract v1.0.10 removes legacy `type: "code"` items.
 
 Before a scheduled workflow sends its first normal message, the scheduler runs every missing workflow-version upgrade in order and verifies that each upgrade stamped its expected version. The v1.0.10 upgrade calls `migrate_message_sequence_code_items`.
 
+Contract v1.0.11 then upgrades `builder/improve.html` to the schema-2 Pulse history contract. It preserves the time-ordered history while adding canonical Signals / Reflection / Improvements attribution used by the Pulse popup. The v1.0.10 migration keeps its own trusted finalizer, so workflows on v1.0.9 can still traverse both upgrades safely.
+
 The migration automatically converts only unambiguous top-level sequences containing code items and their immediately following prevalidation gates. It:
 
 1. Copies each script to `learnings/<step-id>/main.py`.

@@ -217,7 +217,7 @@ Report the files changed, soul sections retained/removed, challenged assumptions
 	},
 	{
 		from:  "1.0.9",
-		to:    WorkflowContractCurrentVersion,
+		to:    workflowContractMessageSequenceCodeVersion,
 		label: "upgrade-1.0.10",
 		query: `WORKFLOW VERSION UPGRADE v1.0.9 -> v1.0.10.
 
@@ -237,6 +237,35 @@ Goal: remove hidden Python execution from message_sequence. Deterministic code m
 6. Do not edit workflow.json. After this turn, the scheduler independently verifies that no legacy code item remains and stamps version "1.0.10" through its trusted manifest writer. Do not change schema_version, run the workflow, notify the user, publish, or make unrelated plan improvements.
 
 Report migrated sequence ids, new scripted step ids, copied script paths, validation/context handoffs, no-op decisions, and blockers, then stop.`,
+	},
+	{
+		from:  "1.0.10",
+		to:    workflowContractPulseHistoryVersion,
+		label: "upgrade-1.0.11",
+		query: `WORKFLOW VERSION UPGRADE v1.0.10 -> v1.0.11.
+
+This is a product-managed Pulse report preflight. Do ONLY this builder/improve.html contract migration, then stop and wait for the next preflight turn or the scheduled workflow message.
+
+Goal: bring every workflow onto the current human-readable, responsive Pulse history contract. builder/improve.html remains the durable time-series source of truth. Runloop renders Goal / Ikigai directly from soul/soul.md and uses explicit section/module metadata to present the HTML history by Signals / Kizuki, Reflection / Hansei, and Improvements / Kaizen.
+
+1. Read workflow.json and builder/improve.html. Call get_reference_doc(kind="review-improve-log") and get_reference_doc(kind="review-improve-log-skeleton"). Do not run the workflow or invent fresh findings merely to complete this migration.
+2. If builder/improve.html is missing, create it from the current skeleton with an empty history and one concise migration entry. If it exists, upgrade it in place. Preserve every useful historical run, finding, decision, user rule, user answer, outcome, evidence pointer, archive link, and unresolved item. Do not discard old evidence because its markup is obsolete; move very old detail into the existing Archive only when needed for readability.
+3. Make the document conform to the current report contract:
+   - the root html element has data-pulse-schema="2", a viewport meta tag, responsive full-width layout, safe wrapping, no fixed-width text columns, and no horizontal overflow;
+   - builder/improve.html stays time-first and newest-first, with exactly one <!-- LOG ENTRIES: newest first --> anchor;
+   - remove any duplicated Goal/Profile card from builder/improve.html. Goal / Ikigai is sourced from soul/soul.md and rendered by Runloop, not repeated in the history document;
+   - keep the user-facing timeline concise, with raw continuity state in one closed-by-default #pulse-agent-handoff block near the bottom;
+   - keep Kind/Search/Reset filtering when present, but no date picker.
+4. Attribute every dated recent-run row and timeline card with data-date, data-kind, data-pulse-section, and one canonical data-module:
+   - Signals / Kizuki: bug_review, artifact_review, learning_health, knowledgebase_health, db_health, eval_health, report_health, cost_llm_time, or llm_ops_review. These cards state evidence-backed reviewer findings, not fixes;
+   - Reflection / Hansei: run_summary and historical question/answer outcomes. Preserve the actual question, selected option and/or free-form answer, outcome, and evidence. Current unanswered requests remain in report_human_inputs and must not be duplicated as hand-authored HTML cards;
+   - Improvements / Kaizen: pulse_fixer for verified bounded repairs and goal_advisor for proposals, approved decisions, experiments, and measured outcomes. Link improvements back to the Signal evidence they address.
+   When an old card cannot be attributed to a specific reviewer from real evidence, classify it as run_summary / reflection. Never guess a reviewer and never collapse several module results into one mixed card.
+5. Keep one concise v1.0.11 migration entry under Improvements / pulse_fixer that records the report-shell migration and confirms that historical evidence was preserved. Do not expose secrets.
+6. Validate the final HTML structurally: one schema-2 root, one newest-first anchor, no duplicated Goal card, no date picker, no active hand-authored pending-question card, required metadata on dated records, responsive wrapping, and a single #pulse-agent-handoff block.
+7. Do not edit workflow.json. After this turn, the scheduler independently verifies the schema marker, responsive shell, newest-first anchor, dated-record metadata, migration entry, absence of a date picker, and the single handoff block. It stamps version "1.0.11" through its trusted manifest writer only when those checks pass. Do not change schema_version, alter the plan or schedules, process pending human answers, notify the user, publish, or make unrelated workflow changes in this step.
+
+Report whether builder/improve.html was created or upgraded, how many historical records were preserved and attributed, any records retained as run_summary because their origin was unknown, validation results, and blockers, then stop.`,
 	},
 }
 

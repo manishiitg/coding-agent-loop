@@ -65,7 +65,7 @@ func referenceSkillSpecForMode(mode string) referenceSkillSpec {
 // MaterializeGuidanceSkill bundles every mode-allowed entry in allKinds into
 // ONE skill named "workflow-commands". Same Anthropic pattern: SKILL.md is
 // the TOC, references/<kind>.md is the procedural flow for each slash
-// command (review-plan, improve-evaluation, define-success, goal-advisor, ...).
+// command (design-plan, improve-evaluation, define-success, goal-advisor, ...).
 //
 // Procedural flows benefit from Focus/Iteration context when invoked via
 // get_workflow_command_guidance — the materialized version is the no-context
@@ -76,12 +76,12 @@ func MaterializeGuidanceSkill(mode string) *llmtypes.Skill {
 		Mode:     mode,
 		Registry: allKinds,
 		Name:     "workflow-commands",
-		Description: "Workflow workshop slash-command flows — canonical procedural guidance for migrate-browser, review-plan, improve-evaluation, " +
-			"review-speed/cost/code/artifact-drift, define-success, improve-evaluation, improve-knowledge, improve-learnings, " +
-			"improve-database, improve-report, goal-advisor, design-plan. Match this skill when the user " +
+		Description: "Workflow workshop slash-command flows — canonical procedural guidance for design-plan, improve-evaluation, " +
+			"review-speed/cost/code/artifact-drift, bug-review, llm-ops-review, define-success, pulse, pulse-setup, pulse-fixer, " +
+			"improve-knowledge, improve-learnings, improve-database, improve-report, goal-advisor, design-plan. Match this skill when the user " +
 			"invokes one of those slash commands or describes the same intent in chat, then read the matching file under " +
 			"references/.",
-		Intro:  "This skill bundles the workshop's canonical slash-command procedures. Match it when the user invokes one of these commands (e.g. `/review-plan`, `/improve-evaluation`) or describes the same intent in plain chat. Read the single matching file under `references/` — the prose there is your instructions for the turn, follow it verbatim.",
+		Intro:  "This skill bundles the workshop's canonical slash-command procedures. Match it when the user invokes one of these commands (e.g. `/design-plan`, `/improve-evaluation`) or describes the same intent in plain chat. Read the single matching file under `references/` — the prose there is your instructions for the turn, follow it verbatim.",
 		Render: renderKind,
 	})
 }

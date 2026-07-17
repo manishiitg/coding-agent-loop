@@ -6,7 +6,8 @@ import type { AgentConfigs } from '../utils/stepConfigMatching'
 // Interactive automation chats always use Workshop. Run remains a backend
 // execution mode for bot and scheduled routes, but is not selectable or
 // restored by the frontend.
-function migrateWorkshopMode(_raw: unknown): WorkshopMode {
+function migrateWorkshopMode(raw: unknown): WorkshopMode {
+  void raw
   return 'workshop'
 }
 
@@ -82,10 +83,11 @@ function normalizeWorkflowWorkspaceView(view: unknown): WorkflowWorkspaceView {
     case 'report':
     case 'flow':
     case 'log':
-    case 'soul':
     case 'files':
     case null:
       return view
+    case 'soul':
+      return 'log'
     case 'plan':
       return 'flow'
     default:
@@ -143,11 +145,12 @@ function loadWorkflowUIStateByPreset(): Record<string, PersistedWorkflowUIState>
         showWorkspacePane: typeof candidate.showWorkspacePane === 'boolean' ? candidate.showWorkspacePane : undefined,
         workflowWorkspaceView: normalizeWorkflowWorkspaceView(candidate.workflowWorkspaceView) ?? undefined,
         canvasViewMode:
-          candidate.canvasViewMode === 'flow' ||
-          candidate.canvasViewMode === 'report' ||
-          candidate.canvasViewMode === 'log' ||
           candidate.canvasViewMode === 'soul'
-            ? candidate.canvasViewMode as CanvasViewMode
+            ? 'log'
+            : candidate.canvasViewMode === 'flow' ||
+              candidate.canvasViewMode === 'report' ||
+              candidate.canvasViewMode === 'log'
+              ? candidate.canvasViewMode as CanvasViewMode
             : candidate.canvasViewMode === 'plan'
               ? 'flow'
             : undefined,
@@ -559,7 +562,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
       canvasViewMode: (() => {
         try {
           const saved = getWorkflowStorageItem(CANVAS_VIEW_MODE_KEY)
-          if (saved === 'flow' || saved === 'report' || saved === 'log' || saved === 'soul') {
+          if (saved === 'soul') return 'log'
+          if (saved === 'flow' || saved === 'report' || saved === 'log') {
             return saved
           }
           if (saved === 'plan') return 'flow'
@@ -1243,14 +1247,15 @@ export const useWorkflowStore = create<WorkflowStore>()(
       },
 
       setCanvasViewMode: (mode: CanvasViewMode) => {
+        const normalizedMode: CanvasViewMode = mode === 'soul' ? 'log' : mode
         try {
-          setWorkflowStorageItem(CANVAS_VIEW_MODE_KEY, mode)
+          setWorkflowStorageItem(CANVAS_VIEW_MODE_KEY, normalizedMode)
         } catch {
           // ignore
         }
         const presetId = useGlobalPresetStore.getState().activePresetIds.workflow ?? get()._currentPresetId
-        persistWorkflowUIStateForPreset(presetId ?? null, { canvasViewMode: mode })
-        set({ canvasViewMode: mode })
+        persistWorkflowUIStateForPreset(presetId ?? null, { canvasViewMode: normalizedMode })
+        set({ canvasViewMode: normalizedMode })
       },
 
       // Workflow chat tabs

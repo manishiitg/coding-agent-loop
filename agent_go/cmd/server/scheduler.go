@@ -2399,7 +2399,7 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 	}
 
 	for i, turn := range turns {
-		if turn.upgradeTarget == WorkflowContractCurrentVersion {
+		if hasTrustedWorkflowUpgradeFinalizer(turn.upgradeTarget) {
 			currentManifest, currentFound, currentErr := ReadWorkflowManifest(ctx, sctx.WorkspacePath)
 			if currentErr != nil {
 				return sessionID, runFolder, fmt.Errorf("workflow upgrade preflight %s could not inspect manifest: %w", turn.label, currentErr)
@@ -2409,7 +2409,7 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 				continue
 			}
 			if currentFound {
-				if finalizeErr := finalizeCurrentWorkflowUpgrade(ctx, sctx.WorkspacePath, currentManifest); finalizeErr == nil {
+				if finalizeErr := finalizeTrustedWorkflowUpgrade(ctx, sctx.WorkspacePath, turn.upgradeTarget, currentManifest); finalizeErr == nil {
 					s.sessionLogf(sctx, sessionID, "[SCHEDULER] Workshop turn %d/%d (%s) was a verified no-op; stamped %s without launching an LLM turn", i+1, len(turns), turn.label, turn.upgradeTarget)
 					continue
 				} else {
@@ -2455,8 +2455,8 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 			if readErr != nil {
 				return sessionID, runFolder, fmt.Errorf("workflow upgrade preflight %s completed but manifest could not be re-read: %w", turn.label, readErr)
 			}
-			if updatedFound && workflowContractVersionForUpgrade(updatedManifest) != turn.upgradeTarget && turn.upgradeTarget == WorkflowContractCurrentVersion {
-				if finalizeErr := finalizeCurrentWorkflowUpgrade(ctx, sctx.WorkspacePath, updatedManifest); finalizeErr != nil {
+			if updatedFound && workflowContractVersionForUpgrade(updatedManifest) != turn.upgradeTarget && hasTrustedWorkflowUpgradeFinalizer(turn.upgradeTarget) {
+				if finalizeErr := finalizeTrustedWorkflowUpgrade(ctx, sctx.WorkspacePath, turn.upgradeTarget, updatedManifest); finalizeErr != nil {
 					return sessionID, runFolder, fmt.Errorf("workflow upgrade preflight %s could not be finalized: %w", turn.label, finalizeErr)
 				}
 				updatedManifest, updatedFound, readErr = ReadWorkflowManifest(ctx, sctx.WorkspacePath)
@@ -2498,7 +2498,7 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 	return sessionID, runFolder, nil
 }
 
-func finalizeCurrentWorkflowUpgrade(ctx context.Context, workspacePath string, manifest *WorkflowManifest) error {
+func finalizeMessageSequenceCodeUpgrade(ctx context.Context, workspacePath string, manifest *WorkflowManifest) error {
 	if manifest == nil {
 		return errors.New("workflow manifest is missing")
 	}
@@ -2506,7 +2506,7 @@ func finalizeCurrentWorkflowUpgrade(ctx context.Context, workspacePath string, m
 		return fmt.Errorf("workflow manifest has malformed config block(s) %v; refusing to rewrite it", manifest.MalformedConfig)
 	}
 	if workflowContractVersionForUpgrade(manifest) != "1.0.9" {
-		return fmt.Errorf("expected workflow version 1.0.9 before finalizing %s, found %q", WorkflowContractCurrentVersion, workflowContractVersionForUpgrade(manifest))
+		return fmt.Errorf("expected workflow version 1.0.9 before finalizing 1.0.10, found %q", workflowContractVersionForUpgrade(manifest))
 	}
 
 	planContent, exists, err := readFileFromWorkspace(ctx, strings.TrimSuffix(workspacePath, "/")+"/planning/plan.json")
@@ -2520,9 +2520,9 @@ func finalizeCurrentWorkflowUpgrade(ctx context.Context, workspacePath string, m
 		return err
 	}
 
-	manifest.Version = WorkflowContractCurrentVersion
+	manifest.Version = workflowContractMessageSequenceCodeVersion
 	if err := WriteWorkflowManifest(ctx, workspacePath, manifest); err != nil {
-		return fmt.Errorf("stamp workflow version %s: %w", WorkflowContractCurrentVersion, err)
+		return fmt.Errorf("stamp workflow version 1.0.10: %w", err)
 	}
 	return nil
 }

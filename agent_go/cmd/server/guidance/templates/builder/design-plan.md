@@ -1,10 +1,22 @@
-Read planning/plan.json (+ step_config.json, variables/variables.json) and act as a senior workflow designer reviewing this plan WITH the user. Your job is to make the design better and to teach the user how to use each building block well — not just catch what's broken.
+Run one combined critical plan review and senior workflow-design review. Read `planning/plan.json` (+ `planning/step_config.json`, `variables/variables.json`) and review the plan WITH the user. Find what is broken, weak, risky, stale, or unjustified across the plan and its dependent artifacts, then explain the better design shape and teach the user how to use each building block well.
 
 When a parent Pulse/Goal Advisor prompt explicitly loads this guidance as a read-only checklist, that parent contract overrides the REVIEW LOG write step: return findings to the parent only and do not edit the plan, `builder/improve.html`, or any workspace file. The parent Pulse Fixer remains the only writer.
 
+## PHASE 1 — COMPREHENSIVE CRITICAL REVIEW
+
+Call `review_plan(focus=<the user's focus, when provided>)`. This is the read-only review engine for plan structure, step descriptions, context flow, validation, skills, learnings, saved scripts, knowledgebase notes, `db/db.sqlite` contracts, reports, variables, evaluation coverage, portability, and alignment with `soul/soul.md` objective and success criteria.
+
+`review_plan` returns an `execution_id`. Capture it. Do not babysit it with `sleep`, repeated `list_executions`, or repeated `query_step` calls. You may call `query_step(step_id="review-plan", execution_id="<returned execution_id>")` once for an immediate check. If it is still running, stop and rely on `[AUTO-NOTIFICATION]` to resume. Do not continue to Phase 2 or write the review log until the review completes and you have its findings.
+
+Treat the completed review as evidence, not as the final answer. Group its real findings by severity, preserve decisions it found sound, and use those findings in the design analysis below. Do not repeat the same artifact scan unless you need a specific fact to draw the map or explain a recommendation.
+
+The `review_plan` agent never writes `builder/improve.html`; that is deliberate. After its completion notification, the coordinating `/design-plan` turn MUST resume, complete Phase 2, and perform the Workshop review-log write below. Do not report the command complete merely because the read-only reviewer completed.
+
+## PHASE 2 — DESIGN SYNTHESIS
+
 Load `get_reference_doc(kind="assumption-audit")` and apply its plan/design lens. Challenge architecture, channels, sources, thresholds, cadence, routes, and step boundaries that were inferred or hardcoded without user approval/current evidence and may cap the goal. Preserve explicit user constraints; surface material uncertainty under Pulse's Assumptions challenged rather than silently designing around it forever.
 
-Write recommendations into `builder/improve.html` as "Open finding" timeline entries. Read `builder/improve.html` first and carry prior unresolved recommendations forward instead of duplicating them. For the log/HTML format and how open findings are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (+ `get_reference_doc(kind="html-output")` for HTML style). Canonical detail lives in the step-types / plan-design reference and `get_reference_doc(kind="stores")` — cite them; don't restate them in full.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+{{if eq .WorkshopMode "run"}}Run mode is read-only: return the combined findings and design recommendations in chat and do not write any workspace file.{{else}}Write every recommendation into `builder/improve.html` as a **Signals / Kizuki** "Open finding" timeline entry using `data-pulse-section="signals"` and `data-module="goal_advisor"`. Read `builder/improve.html` first and carry prior unresolved recommendations forward instead of duplicating them.{{end}} For the log/HTML format and how open findings are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (+ `get_reference_doc(kind="html-output")` for HTML style). Canonical detail lives in the step-types / plan-design reference and `get_reference_doc(kind="stores")` — cite them; don't restate them in full.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 ## The mental model to design against (current)
 
@@ -64,7 +76,7 @@ PART 6 — DESIGN LENSES (recommend the better shape, even when nothing is broke
 
 For each recommendation give: **what's there now** (one quoted sentence), **what to consider** (better shape + concrete example), **why** (which practice it serves).
 
-PART 7 — TOP 3
-Close with "if you change three things, change these" — the highest-impact recommendations, prioritized.
+PART 7 — PRIORITIES
+Close with a severity-ordered priority list across both the critical review and design synthesis. Include every evidence-backed finding; distinguish `now`, `next`, and `watch` so the user can act without losing lower-priority evidence. Also include a short "decisions that look sound" list so the user knows what not to churn.
 
-REVIEW LOG: record recommendations as "Open finding" timeline entries in `builder/improve.html` (read first; create if absent — newest on top). Include what was reviewed, integrity issues by severity, recommendations grouped by part, the top-3, and follow-ups. Mark as REVIEW (recommend; do NOT apply).
+{{if eq .WorkshopMode "run"}}RUN MODE OUTPUT: return the combined review in chat. If the user wants it persisted, tell them to switch to Workshop and rerun `/design-plan`.{{else}}REVIEW LOG: record every recommendation as a **Signals / Kizuki** "Open finding" timeline entry in `builder/improve.html` (read first; create if absent — newest on top) using `data-pulse-section="signals"` and `data-module="goal_advisor"`. Include what was reviewed, all `review_plan` findings by severity, decisions that look sound, recommendations grouped by part, explicit priority, and follow-ups. Prioritize findings visually, but never discard findings because they fall outside a top-N cap. Mark as REVIEW (recommend; do NOT apply).{{end}}

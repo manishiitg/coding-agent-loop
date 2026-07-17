@@ -8,7 +8,7 @@ Pulse Gate and Bug Review already inspect every run for operational breakage: er
 
 - Do NOT write eval steps for operational checks ("file exists", "step ran", "output non-empty", "JSON parses"). They duplicate Pulse/pre-validation, and because they pass on every clean run they inflate the score and mask real goal shortfall.
 - **Empty is not automatically missing.** A rubric must distinguish failed or unverified collection from a source-grounded legitimate zero-cardinality state. When trustworthy evidence proves that zero records is the correct business result, score semantic correctness normally; never deduct points merely because an array is empty. State the evidence required to prove a valid zero so fabricated or silently missing data still fails closed.
-- **Anchor every eval step to a success criterion.** One eval step per criterion (route-scoped where routes apply), and say in the description which criterion it measures. Pulse maps eval verdicts onto the per-criterion goal card in `builder/improve.html` — an eval step tied to no criterion has no consumer, and a criterion with no eval step is unmeasured.
+- **Anchor every eval step to a success criterion.** One eval step per criterion (route-scoped where routes apply), and say in the description which criterion it measures. Pulse maps eval verdicts to the Goal verdict/progress read from `soul/soul.md` — an eval step tied to no criterion has no consumer, and a criterion with no eval step is unmeasured.
 - **Evals are the ruler for both loops.** Pulse verifies reliability fixes and Goal Advisor judges strategy changes by comparing eval reports across runs. Keep the instrument stable — same steps, same scale, same rubric — so score movement means the workflow changed, not the measurement.
 
 ### Cost discipline — eval is a per-run tax
@@ -47,7 +47,7 @@ A good eval catches a bad run — including one that *looks* successful. Design 
 
 - **Deterministic facts, judged verdicts.** If a fact can be computed — "does the figure equal the sum from the source table?", "how many rows landed?" — compute it in code and let the verdict reason over the computed facts. Fully scripted only for contract-anchored mechanical checks; fully agentic only for subjective quality with a frozen rubric.
 - **Score outcomes, not artifacts.** Evaluate whether `soul.md` success criteria were actually met — not "did a file get written." A file existing ≠ success. Operational checks belong to Pulse/pre-validation, not here.
-- **One eval step per `soul.md` success criterion**, each emitting its own verdict and naming its criterion, so the goal card stays diagnosable — not one blob score.
+- **One eval step per `soul.md` success criterion**, each emitting its own verdict and naming its criterion, so Goal progress stays diagnosable — not one blob score.
 - **Anti-placeholder / anti-fabrication.** Score 0 when a value is empty, `N/A`, a placeholder, or a plausible-but-unsourced number. Non-empty ≠ correct.
 - **Cross-check against the source.** Verify the claimed result against the actual source artifact (the parsed PDF / file / db row), NOT the step's own summary of what it claims it did.
 - **Ground in real run evidence.** Inspect the actual run via `{{"{{TARGET_RUN_PATH}}"}}` and `db/db.sqlite`; never score from the agent's narrative or chat memory. Quote which file/row/value justified the score.

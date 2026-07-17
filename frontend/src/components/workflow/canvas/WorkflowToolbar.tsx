@@ -13,12 +13,18 @@ import {
   Activity,
   BellRing,
   CalendarClock,
-  GitCommitVertical,
+  ChevronLeft,
+  ChevronRight,
+  CircleAlert,
+  Radar,
   RefreshCw,
+  ScanSearch,
+  Search,
+  Sparkles,
+  Target,
   X,
 } from 'lucide-react'
 import ModalPortal from '../../ui/ModalPortal'
-import PlanChangelogFeed from '../PlanChangelogFeed'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
 import { useWorkflowManifestStore } from '../../../stores/useWorkflowManifestStore'
 import { useChatStore } from '../../../stores/useChatStore'
@@ -40,15 +46,27 @@ import { getBackupDotClass, formatBackupStateLabel } from '../backupStatus'
 import WorkflowPublishPopup from '../WorkflowPublishPopup'
 import { getPublishDotClass, formatPublishStateLabel } from '../publishStatus'
 import WorkflowNotificationPopup from '../WorkflowNotificationPopup'
+import { ReportHumanInputPanel } from '../ReportHumanInputPanel'
+import { PulseHtmlSectionViewer } from '../PulseHtmlSectionViewer'
 import { formatNotificationStateLabel, getNotificationDotClass } from '../notificationStatus'
 import { loadWorkflowNotificationInfo, type WorkflowNotificationState } from '../../../services/workflow-notifications'
 import WorkflowAccessPopup from '../WorkflowAccessPopup'
 import WorkflowScheduleRunsPanel from '../../scheduler/WorkflowScheduleRunsPanel'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
+import { SoulViewer, WORKFLOW_SOUL_REFRESH_EVENT } from '../SoulViewer'
+import { WORKFLOW_LOG_REFRESH_EVENT } from '../workflowEvents'
 import {
   resolveGroupFolderPath
 } from '../../../utils/workflowUtils'
 import { hasWorkflowWriteAccess, hasWorkflowOwnerAccess } from '../../../utils/workflowPermissions'
+import {
+  PULSE_FIXED_COMMANDS,
+  PULSE_FOOTER_COMMAND_IDS,
+  PULSE_HISTORY_ITEMS,
+  PULSE_MODULE_COMMANDS,
+  PULSE_SECTIONS,
+  type PulseSectionId,
+} from './pulseSections'
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
@@ -81,25 +99,19 @@ function formatWorkflowNameFromPath(path?: string | null): string {
   return name || 'Workflow'
 }
 
-const PULSE_MODULE_COMMANDS: Array<{ id: string; label: string; description: string }> = [
-  { id: 'bug_review', label: 'Bug review', description: 'Read-only reliability checks; Pulse Fixer applies safe fixes' },
-  { id: 'artifact_review', label: 'Artifact review', description: 'Plan-change artifact drift' },
-  { id: 'learning_health', label: 'Learning health', description: 'Learning freshness and quality' },
-  { id: 'knowledgebase_health', label: 'Knowledge base', description: 'KB freshness and contradictions' },
-  { id: 'db_health', label: 'Database health', description: 'DB/schema/data quality checks' },
-  { id: 'eval_health', label: 'Eval health', description: 'Rubric and eval wiring quality' },
-  { id: 'report_health', label: 'Report health', description: 'Dashboard/report accuracy' },
-  { id: 'cost_llm_time', label: 'Cost + time', description: 'Cost, model usage, and runtime telemetry' },
-  { id: 'llm_ops_review', label: 'LLM + operations', description: 'Model routing and workflow setup recommendations' },
-  { id: 'goal_advisor', label: 'Goal Advisor', description: 'Strategic review when goal evidence is weak' },
-]
+const PULSE_SECTION_ICONS: Record<PulseSectionId, React.ComponentType<{ className?: string }>> = {
+  goal: Target,
+  signals: Radar,
+  reflection: ScanSearch,
+  improvements: Sparkles,
+}
 
-const PULSE_FIXED_COMMANDS: Array<{ id: string; label: string; description: string }> = [
-  { id: 'dashboard', label: 'Dashboard + questions', description: 'Updates Pulse UI and asks for input if needed' },
-  { id: 'backup', label: 'Backup', description: 'Saves current workflow artifacts when changed' },
-  { id: 'publish', label: 'Publish', description: 'Refreshes a verified public report when stale' },
-  { id: 'notify', label: 'Notify', description: 'Sends the run summary after finalization' },
-]
+const PULSE_SECTION_ICON_CLASSES: Record<PulseSectionId, string> = {
+  goal: 'border-sky-500/25 bg-sky-500/10 text-sky-500',
+  signals: 'border-amber-500/25 bg-amber-500/10 text-amber-500',
+  reflection: 'border-rose-500/25 bg-rose-500/10 text-rose-400',
+  improvements: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-500',
+}
 
 function pulseStatusToneClass(status: string): string {
   const normalized = status.toLowerCase()
@@ -197,6 +209,56 @@ function getPulseFinalCommandStatus(state?: PulseFinalCommandState): { label: st
   }
 }
 
+function pulseStatusNeedsAttention(status: string): boolean {
+  return ['failed', 'blocked', 'timed out', 'timed_out', 'changed', 'due'].includes(status.trim().toLowerCase())
+}
+
+type PulseStatusRowProps = {
+  label: string
+  description: string
+  status: { label: string; detail: string; time: string }
+  runId?: string
+  nextCheck?: string
+  selected?: boolean
+  onSelect?: () => void
+}
+
+function PulseStatusRow({ label, description, status, runId, nextCheck, selected = false, onSelect }: PulseStatusRowProps) {
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      onClick={onSelect}
+      className={`grid w-full grid-cols-[minmax(0,1fr)_auto] gap-3 border-b px-3 py-3 text-left transition-colors last:border-b-0 sm:px-4 ${selected ? 'bg-primary/10' : 'hover:bg-muted/40'}`}
+    >
+      <div className="min-w-0">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="text-sm font-medium text-foreground">{label}</span>
+          {runId && (
+            <span className="max-w-48 truncate rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground" title={runId}>
+              {runId}
+            </span>
+          )}
+        </div>
+        <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground" title={status.detail || description}>
+          {status.detail || description}
+        </div>
+        {nextCheck && (
+          <div className="mt-1.5 line-clamp-2 text-[11px] font-medium text-primary/80" title={nextCheck}>
+            {nextCheck}
+          </div>
+        )}
+      </div>
+      <div className="flex shrink-0 flex-col items-end gap-1.5">
+        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-wide ${pulseStatusToneClass(status.label)}`}>
+          {status.label}
+        </span>
+        <span className="whitespace-nowrap text-[10px] text-muted-foreground">{status.time}</span>
+      </div>
+    </button>
+  )
+}
+
 interface WorkflowToolbarProps {
   status: WorkflowExecutionStatus
   hasPlan: boolean
@@ -222,15 +284,12 @@ interface WorkflowToolbarProps {
 
 export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   status,
-  hasPlan,
   plan,
   workspacePath,
   presetQueryId,
   runFolders,
   variablesManifest,
   isLoadingWorkspaceState = false,
-  onStartPhase,
-  showChatArea = false,
   chatTabsSlot,
   className = ''
 }) => {
@@ -247,24 +306,16 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     selectedRunFolder,
     selectedGroupIds,
     currentRunningGroupId,
-    buildExecutionOptions,
     loadSavedSettings,
     setSelectedGroupIds,
     restoreSelectionFromLocalStorage,
-    showWorkspacePane,
-    workflowWorkspaceView,
-    canvasViewMode,
   } = useWorkflowStore(useShallow(state => ({
     selectedRunFolder: state.selectedRunFolder,
     selectedGroupIds: state.selectedGroupIds,
     currentRunningGroupId: state.currentRunningGroupId,
-    buildExecutionOptions: state.buildExecutionOptions,
     loadSavedSettings: state.loadSavedSettings,
     setSelectedGroupIds: state.setSelectedGroupIds,
     restoreSelectionFromLocalStorage: state.restoreSelectionFromLocalStorage,
-    showWorkspacePane: state.showWorkspacePane,
-    workflowWorkspaceView: state.workflowWorkspaceView,
-    canvasViewMode: state.canvasViewMode,
   })))
 
   // Reset start point when switching away from plan mode
@@ -322,6 +373,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const [pulseFinalCommandStates, setPulseFinalCommandStates] = useState<PulseFinalCommandState[]>([])
   const [pulseStatusLoading, setPulseStatusLoading] = useState(false)
   const [pulseStatusError, setPulseStatusError] = useState<string | null>(null)
+  const [activePulseSection, setActivePulseSection] = useState<PulseSectionId>('goal')
+  const [activePulseTimeline, setActivePulseTimeline] = useState<{ module: string; label: string } | null>(null)
   // Backup popup state
   const [showBackupPopup, setShowBackupPopup] = useState(false)
   const [backupState, setBackupState] = useState<string>('loading')
@@ -329,10 +382,13 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const [publishState, setPublishState] = useState<string>('not_configured')
   const [showNotifications, setShowNotifications] = useState(false)
   const [notificationState, setNotificationState] = useState<WorkflowNotificationState | 'loading'>('loading')
-  const [showPlanEditsPopup, setShowPlanEditsPopup] = useState(false)
   const [showAccessPopup, setShowAccessPopup] = useState(false)
   const [showWorkflowSchedulesPanel, setShowWorkflowSchedulesPanel] = useState(false)
   const [workflowScheduleStats, setWorkflowScheduleStats] = useState<WorkflowScheduleStats>(EMPTY_WORKFLOW_SCHEDULE_STATS)
+
+  useEffect(() => {
+    setActivePulseTimeline(null)
+  }, [workspacePath])
 
   const workflowScheduleLabel = useMemo(
     () => formatWorkflowNameFromPath(workspacePath),
@@ -377,6 +433,98 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const pulseFinalCommandStateByCommand = useMemo(() => {
     return new Map(pulseFinalCommandStates.map(state => [state.command, state]))
   }, [pulseFinalCommandStates])
+
+  const pulseSectionSummaries = useMemo(() => {
+    return new Map(PULSE_SECTIONS.map((section) => {
+      let recorded = 0
+      let attention = 0
+
+      section.moduleIds.forEach((id) => {
+        const state = pulseModuleStateByModule.get(id)
+        if (!state) return
+        recorded += 1
+        if (pulseStatusNeedsAttention(getPulseModuleStatus(state).label)) attention += 1
+      })
+      section.commandIds.forEach((id) => {
+        const state = pulseFinalCommandStateByCommand.get(id)
+        if (!state) return
+        recorded += 1
+        if (pulseStatusNeedsAttention(getPulseFinalCommandStatus(state).label)) attention += 1
+      })
+
+      return [section.id, {
+        recorded,
+        attention,
+        total: section.moduleIds.length + section.commandIds.length,
+      }]
+    }))
+  }, [pulseFinalCommandStateByCommand, pulseModuleStateByModule])
+
+  const pulseOverview = useMemo(() => {
+    const timestamps = [
+      ...pulseModuleStates.map(state => state.updated_at || state.last_ran_at || state.last_checked_at),
+      ...pulseFinalCommandStates.map(state => state.updated_at || state.finished_at || state.started_at),
+    ].filter((value): value is string => !!value)
+    const latestTimestamp = timestamps.reduce((latest, value) => {
+      const time = new Date(value).getTime()
+      return Number.isNaN(time) || time <= latest ? latest : time
+    }, 0)
+    const summaries = [...pulseSectionSummaries.values()]
+    const footerStatuses = PULSE_FOOTER_COMMAND_IDS
+      .map(command => pulseFinalCommandStateByCommand.get(command))
+      .filter((state): state is PulseFinalCommandState => !!state)
+    return {
+      recorded: summaries.reduce((sum, summary) => sum + summary.recorded, 0) + footerStatuses.length,
+      attention: summaries.reduce((sum, summary) => sum + summary.attention, 0) + footerStatuses.filter(state => pulseStatusNeedsAttention(getPulseFinalCommandStatus(state).label)).length,
+      total: summaries.reduce((sum, summary) => sum + summary.total, 0) + PULSE_FOOTER_COMMAND_IDS.length,
+      latest: latestTimestamp > 0 ? formatPulseTimestamp(new Date(latestTimestamp).toISOString()) : '',
+    }
+  }, [pulseFinalCommandStateByCommand, pulseFinalCommandStates, pulseModuleStates, pulseSectionSummaries])
+
+  const activePulseSectionDefinition = useMemo(
+    () => PULSE_SECTIONS.find(section => section.id === activePulseSection) || PULSE_SECTIONS[0],
+    [activePulseSection]
+  )
+
+  const activePulseModuleCommands = useMemo(
+    () => activePulseSectionDefinition.moduleIds
+      .map(id => PULSE_MODULE_COMMANDS.find(command => command.id === id))
+      .filter((command): command is (typeof PULSE_MODULE_COMMANDS)[number] => !!command),
+    [activePulseSectionDefinition]
+  )
+
+  const activePulseFinalCommands = useMemo(
+    () => activePulseSectionDefinition.commandIds
+      .map(id => PULSE_FIXED_COMMANDS.find(command => command.id === id))
+      .filter((command): command is (typeof PULSE_FIXED_COMMANDS)[number] => !!command),
+    [activePulseSectionDefinition]
+  )
+
+  const activePulseHistoryItems = useMemo(
+    () => activePulseSectionDefinition.historyIds
+      .map(id => PULSE_HISTORY_ITEMS.find(item => item.id === id))
+      .filter((item): item is (typeof PULSE_HISTORY_ITEMS)[number] => !!item),
+    [activePulseSectionDefinition]
+  )
+
+  const activePulseCarouselItems = useMemo(() => [
+    ...activePulseModuleCommands.map(command => ({ module: command.id, label: command.label })),
+    ...activePulseFinalCommands.map(command => ({
+      module: command.id === 'dashboard' ? 'run_summary' : command.id,
+      label: command.label,
+    })),
+    ...activePulseHistoryItems.map(item => ({ module: item.id, label: item.label })),
+  ], [activePulseFinalCommands, activePulseHistoryItems, activePulseModuleCommands])
+
+  const activePulseTimelineIndex = activePulseTimeline
+    ? activePulseCarouselItems.findIndex(item => item.module === activePulseTimeline.module)
+    : -1
+
+  const movePulseTimeline = (offset: number) => {
+    if (activePulseTimelineIndex < 0 || activePulseCarouselItems.length < 2) return
+    const nextIndex = (activePulseTimelineIndex + offset + activePulseCarouselItems.length) % activePulseCarouselItems.length
+    setActivePulseTimeline(activePulseCarouselItems[nextIndex])
+  }
 
   const updateWorkflowScheduleStats = useCallback((jobs: ScheduledJob[]) => {
     const normalizedWorkspacePath = normalizeWorkspacePath(workspacePath)
@@ -478,9 +626,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     setShowBackupPopup(false)
     setShowPublishPopup(false)
     setShowNotifications(false)
-    setShowPlanEditsPopup(false)
     setShowWorkflowSchedulesPanel(false)
     setShowMonitorHelp(false)
+    setActivePulseTimeline(null)
   }, [])
   
   // Close popups only when switching between two concrete workflows.
@@ -603,12 +751,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // - variables_manifest (via setVariablesManifest)
   // This eliminates duplicate API calls on initial page load.
 
-  // View selection should follow the actual canvas/report renderer, not the
-  // higher-level workspace mode.
-  const isBuilderPaneVisible = showChatArea === true && !showWorkspacePane
-  const isBuilderModeActive = workflowWorkspaceView === 'builder' || isBuilderPaneVisible
-  const isReportWorkspace = showWorkspacePane && canvasViewMode === 'report'
-  const isFlowWorkspace = showWorkspacePane && canvasViewMode === 'flow'
   const scheduleTooltip = useMemo(() => {
     if (workflowScheduleStats.total === 0) return 'Schedules · None configured'
     if (workflowScheduleStats.issues > 0 || workflowScheduleStats.missed > 0) {
@@ -675,190 +817,139 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       {/* Right side - View controls */}
       <div data-tour="workflow-tools" data-testid="tour-workflow-tools" className="ml-auto flex shrink-0 items-center gap-1">
         <TooltipProvider delayDuration={150}>
-          {/* Pulse opens the Pulse popup. Goal Advisor appears inside the module
-              status list when Gate selects or skips it. */}
+          {/* Pulse is the operational hub for monitoring, schedules, backup,
+              publishing, and notifications. */}
           {workspacePath && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => setShowMonitorHelp(true)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background/90 px-2 py-1 text-[11px] font-medium text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted"
-                >
-                  <Activity className={`w-3.5 h-3.5 ${monitorOn ? 'text-primary' : ''}`} />
-                  <span className={monitorOn ? 'text-foreground' : ''}>Pulse</span>
-                  <span className={`text-[10px] font-semibold tracking-wide ${monitorOn ? 'text-primary' : 'text-muted-foreground/60'}`}>{monitorOn ? 'ON' : 'OFF'}</span>
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom"><p>Pulse — includes Goal Advisor when Pulse Gate decides strategy review is due</p></TooltipContent>
-            </Tooltip>
+            <div className="inline-flex h-8 items-center overflow-hidden rounded-lg border border-border bg-background/90 shadow-sm backdrop-blur-sm">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => setShowMonitorHelp(true)}
+                    className="inline-flex h-full items-center gap-1.5 px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted"
+                  >
+                    <Activity className={`h-3.5 w-3.5 ${monitorOn ? 'text-primary' : ''}`} />
+                    <span className={monitorOn ? 'text-foreground' : ''}>Pulse</span>
+                    <span className={`text-[10px] font-semibold tracking-wide ${monitorOn ? 'text-primary' : 'text-muted-foreground/60'}`}>{monitorOn ? 'ON' : 'OFF'}</span>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom"><p>Pulse status and module cadence</p></TooltipContent>
+              </Tooltip>
+              <span className="h-4 w-px bg-border" aria-hidden="true" />
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => setShowWorkflowSchedulesPanel(true)}
+                    className="relative flex h-full w-8 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    aria-label={scheduleTooltip}
+                  >
+                    <CalendarClock className="h-3.5 w-3.5" />
+                    <span className={`absolute right-1 top-1 h-1.5 w-1.5 rounded-full border border-background ${scheduleStatusDotClass}`} />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom"><p>{scheduleTooltip}</p></TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => setShowBackupPopup(true)}
+                    className="relative flex h-full w-8 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    aria-label={`Backup · ${formatBackupStateLabel(backupState)}`}
+                  >
+                    <Cloud className="h-3.5 w-3.5" />
+                    <span className={`absolute right-1 top-1 h-1.5 w-1.5 rounded-full border border-background ${getBackupDotClass(backupState)}`} />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom"><p>Backup &middot; {formatBackupStateLabel(backupState)}</p></TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => setShowPublishPopup(true)}
+                    className="relative flex h-full w-8 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    aria-label={`Publish · ${formatPublishStateLabel(publishState)}`}
+                  >
+                    <Globe className="h-3.5 w-3.5" />
+                    <span className={`absolute right-1 top-1 h-1.5 w-1.5 rounded-full border border-background ${getPublishDotClass(publishState)}`} />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom"><p>Publish &middot; {formatPublishStateLabel(publishState)}</p></TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => setShowNotifications(true)}
+                    data-testid="workflow-notification-settings-button"
+                    className="relative flex h-full w-8 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    aria-label={`Notify · ${formatNotificationStateLabel(notificationState)}`}
+                  >
+                    <BellRing className="h-3.5 w-3.5" />
+                    <span className={`absolute right-1 top-1 h-1.5 w-1.5 rounded-full border border-background ${getNotificationDotClass(notificationState)}`} />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom"><p>Notify &middot; {formatNotificationStateLabel(notificationState)}</p></TooltipContent>
+              </Tooltip>
+            </div>
           )}
 
           {workspacePath && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => setShowWorkflowSchedulesPanel(true)}
-                  className="relative p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-                  aria-label={scheduleTooltip}
-                >
-                  <CalendarClock className="w-3.5 h-3.5" />
-                  <span className={`absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full border border-background ${scheduleStatusDotClass}`} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom"><p>{scheduleTooltip}</p></TooltipContent>
-            </Tooltip>
+            <div className="inline-flex h-8 items-center overflow-hidden rounded-lg border border-border bg-background/90 shadow-sm backdrop-blur-sm">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex h-full items-center gap-1.5 px-2 text-[11px] font-medium text-muted-foreground">
+                    <Search className="h-3.5 w-3.5" />
+                    <span>Inspect</span>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="bottom"><p>Workflow evidence and history</p></TooltipContent>
+              </Tooltip>
+              <span className="h-4 w-px bg-border" aria-hidden="true" />
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button type="button" onClick={() => setShowCostsPopup(true)} className="flex h-full w-8 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Costs">
+                    <DollarSign className="h-3.5 w-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom"><p>Costs</p></TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button type="button" onClick={() => setShowExecutionLogsPopup(true)} className="flex h-full w-8 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Execution logs">
+                    <FileText className="h-3.5 w-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom"><p>Execution logs</p></TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button type="button" onClick={() => setShowLearningsPopup(true)} className="flex h-full w-8 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Learnings">
+                    <BookOpen className="h-3.5 w-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom"><p>Learnings</p></TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button type="button" onClick={() => setShowKBPopup(true)} className="flex h-full w-8 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Knowledge base">
+                    <Database className="h-3.5 w-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom"><p>Knowledge base</p></TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button type="button" onClick={() => setShowDatabasePopup(true)} className="flex h-full w-8 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Database">
+                    <Table2 className="h-3.5 w-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom"><p>Database</p></TooltipContent>
+              </Tooltip>
+            </div>
           )}
-
-          {/* Backup - dedicated remote backup status + strategy; status dot reflects health */}
-          {workspacePath && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => setShowBackupPopup(true)}
-                  className="relative p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-                  aria-label={`Backup · ${formatBackupStateLabel(backupState)}`}
-                >
-                  <Cloud className="w-3.5 h-3.5" />
-                  <span
-                    className={`absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full border border-background ${getBackupDotClass(backupState)}`}
-                  />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom"><p>Backup &middot; {formatBackupStateLabel(backupState)}</p></TooltipContent>
-            </Tooltip>
-          )}
-
-          {/* Publish - share the workflow's HTML (Pulse + report) to a public URL; dot reflects publish state */}
-          {workspacePath && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => setShowPublishPopup(true)}
-                  className="relative p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-                  aria-label={`Publish · ${formatPublishStateLabel(publishState)}`}
-                >
-                  <Globe className="w-3.5 h-3.5" />
-                  <span
-                    className={`absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full border border-background ${getPublishDotClass(publishState)}`}
-                  />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom"><p>Publish &middot; {formatPublishStateLabel(publishState)}</p></TooltipContent>
-            </Tooltip>
-          )}
-
-          {/* Notify - agentic trigger/content with deterministic workflow delivery */}
-          {workspacePath && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => setShowNotifications(true)}
-                  data-testid="workflow-notification-settings-button"
-                  className="relative p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-                  aria-label={`Notify · ${formatNotificationStateLabel(notificationState)}`}
-                >
-                  <BellRing className="w-3.5 h-3.5" />
-                  <span
-                    className={`absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full border border-background ${getNotificationDotClass(notificationState)}`}
-                  />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom"><p>Notify &middot; {formatNotificationStateLabel(notificationState)}</p></TooltipContent>
-            </Tooltip>
-          )}
-
-          {/* Plan edits - the per-change audit trail (planning/changelog): tool · reason · field diffs */}
-          {workspacePath && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => setShowPlanEditsPopup(true)}
-                  className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-                >
-                  <GitCommitVertical className="w-3.5 h-3.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom"><p>Plan edits</p></TooltipContent>
-            </Tooltip>
-          )}
-
-          {/* Show Costs - opens popup with cost analysis across all iterations */}
-          {workspacePath && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => setShowCostsPopup(true)}
-                className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-              >
-                <DollarSign className="w-3.5 h-3.5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom"><p>Costs</p></TooltipContent>
-          </Tooltip>
-        )}
-
-        {/* Show Execution Logs - opens popup with detailed execution logs */}
-        {workspacePath && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => setShowExecutionLogsPopup(true)}
-                className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-              >
-                <FileText className="w-3.5 h-3.5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom"><p>Execution logs</p></TooltipContent>
-          </Tooltip>
-        )}
-
-        {/* Show Learnings - opens popup with learning metadata (read-only safe) */}
-        {workspacePath && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => setShowLearningsPopup(true)}
-                className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-              >
-                <BookOpen className="w-3.5 h-3.5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom"><p>Learnings</p></TooltipContent>
-          </Tooltip>
-        )}
-
-        {/* Show Knowledgebase — entities/relationships accumulated by the KB update agent */}
-        {workspacePath && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => setShowKBPopup(true)}
-                className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-              >
-                <Database className="w-3.5 h-3.5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom"><p>Knowledgebase</p></TooltipContent>
-          </Tooltip>
-        )}
-
-        {/* Show Database - durable db/db.sqlite tables used by report widgets and steps */}
-        {workspacePath && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => setShowDatabasePopup(true)}
-                className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-              >
-                <Table2 className="w-3.5 h-3.5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom"><p>Database</p></TooltipContent>
-          </Tooltip>
-        )}
 
         {/* Workflow Access (multi-user mode only, owners only) */}
         {canManageAccess && (
@@ -948,145 +1039,283 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       />
     )}
 
-    {/* Pulse help */}
+    {/* Pulse cycle */}
     {showMonitorHelp && (
       <ModalPortal>
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowMonitorHelp(false)}>
-          <div className="max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto rounded-lg border bg-background shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between border-b px-5 py-3.5">
-              <div className="flex items-center gap-2">
-                <Activity className="h-4 w-4 text-primary" />
-                <h2 className="text-sm font-semibold">Pulse</h2>
-              </div>
-              <button onClick={() => setShowMonitorHelp(false)} className="rounded-md p-1 hover:bg-accent" aria-label="Close">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="space-y-3 px-5 py-4 text-sm text-muted-foreground">
-              <p>When <span className="font-medium text-foreground">on</span>, your workflow looks after itself after <span className="font-medium text-foreground">every run</span> and records what it does in the <span className="font-medium text-foreground">Pulse</span> log — so you catch problems the moment they happen, not days later.</p>
-              <p className="text-foreground font-medium">Each run it:</p>
-              <ul className="space-y-1.5 pl-1">
-                <li><span className="font-medium text-foreground">Backs up</span> — saves the workflow first, so any change is reversible.</li>
-                <li><span className="font-medium text-foreground">Reviews</span> — <span className="font-medium text-red-600 dark:text-red-400">Bug</span> (did it run correctly?) and <span className="font-medium text-purple-600 dark:text-purple-400">Goal</span> (is it hitting its success criteria?).</li>
-                <li><span className="font-medium text-foreground">Fixes the small stuff</span> — applies low-risk repairs for Bugs; flags bigger plan changes as proposals.</li>
-                <li><span className="font-medium text-foreground">Notifies</span> — sends a compact run summary, with stronger wording when something broke or recovered.</li>
-              </ul>
-              <p>If Publish is set up, it also re-publishes your report so the shared link stays current. Bigger strategy questions are handled by the Goal Advisor module when Pulse Gate decides enough evidence exists.</p>
-            </div>
-            {monitorOn && (
-              <div className="border-t px-5 py-4">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium text-foreground">Command status</div>
-                    <div className="text-xs text-muted-foreground">
-                      Latest Pulse Gate state from this workflow&apos;s <code className="rounded bg-muted px-1 py-0.5">db/db.sqlite</code>
-                    </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => { setShowMonitorHelp(false); setActivePulseTimeline(null) }}>
+          <div className="flex h-[calc(100vh-1rem)] w-[calc(100vw-1rem)] max-w-7xl flex-col overflow-hidden rounded-lg border bg-background shadow-xl sm:h-[calc(100vh-2rem)] sm:w-[calc(100vw-2rem)]" onClick={(e) => e.stopPropagation()}>
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3.5 sm:px-5">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-primary/25 bg-primary/10 text-primary">
+                  <Activity className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-sm font-semibold text-foreground">Pulse</h2>
+                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${monitorOn ? 'border-primary/25 bg-primary/10 text-primary' : 'border-border bg-muted text-muted-foreground'}`}>
+                      {monitorOn ? 'On' : 'Off'}
+                    </span>
                   </div>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground">
+                    {monitorOn && <span>{pulseOverview.recorded}/{pulseOverview.total} statuses recorded</span>}
+                    {pulseOverview.latest && <span>Updated {pulseOverview.latest}</span>}
+                  </div>
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                {monitorOn && pulseOverview.attention > 0 && (
+                  <span className="mr-1 hidden items-center gap-1.5 rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-600 dark:text-amber-300 sm:inline-flex">
+                    <CircleAlert className="h-3.5 w-3.5" />
+                    {pulseOverview.attention} need attention
+                  </span>
+                )}
+                {monitorOn && (
                   <button
                     type="button"
-                    onClick={() => { void refreshPulseModuleStates() }}
+                    onClick={() => {
+                      window.dispatchEvent(new CustomEvent(WORKFLOW_SOUL_REFRESH_EVENT))
+                      window.dispatchEvent(new CustomEvent(WORKFLOW_LOG_REFRESH_EVENT))
+                      void refreshPulseModuleStates()
+                    }}
                     disabled={pulseStatusLoading}
-                    className="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-muted disabled:opacity-60"
+                    className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-60"
+                    aria-label="Refresh Pulse status"
+                    title="Refresh Pulse status"
                   >
                     <RefreshCw className={`h-3.5 w-3.5 ${pulseStatusLoading ? 'animate-spin' : ''}`} />
-                    Refresh
                   </button>
-                </div>
-                {pulseStatusError && (
-                  <div className="mb-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-300">
-                    {pulseStatusError}
+                )}
+                <button onClick={() => { setShowMonitorHelp(false); setActivePulseTimeline(null) }} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Close">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            <div className="shrink-0 overflow-x-auto border-b px-2 py-2 sm:px-3" role="tablist" aria-label="Pulse cycle">
+              <div className="grid min-w-[600px] grid-cols-4 gap-1">
+                {PULSE_SECTIONS.map((section) => {
+                  const Icon = PULSE_SECTION_ICONS[section.id]
+                  const summary = pulseSectionSummaries.get(section.id)
+                  const active = activePulseSection === section.id
+                  return (
+                    <button
+                      key={section.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => {
+                        setActivePulseSection(section.id)
+                        setActivePulseTimeline(null)
+                      }}
+                      className={`group flex min-w-0 items-center gap-2 rounded-md border px-3 py-2 text-left transition-colors ${active ? 'border-border bg-muted text-foreground shadow-sm' : 'border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground'}`}
+                    >
+                      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border ${PULSE_SECTION_ICON_CLASSES[section.id]}`}>
+                        <Icon className="h-3.5 w-3.5" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-1.5">
+                          <span className="truncate text-xs font-semibold">{section.label}</span>
+                          {!!summary?.attention && (
+                            <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500/15 px-1 text-[9px] font-semibold text-amber-600 dark:text-amber-300">
+                              {summary.attention}
+                            </span>
+                          )}
+                        </span>
+                        <span className="block truncate text-[10px] text-muted-foreground">{section.concept}</span>
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <div className="p-3 sm:p-4">
+                {workspacePath && (
+                  <ReportHumanInputPanel
+                    workspacePath={workspacePath}
+                    contentMode="pending"
+                    className="mb-4 w-full"
+                  />
+                )}
+
+                {activePulseSection === 'goal' && workspacePath && (
+                  <section className="min-w-0 w-full" aria-label="Workflow goal">
+                    <SoulViewer workspacePath={workspacePath} embedded />
+                  </section>
+                )}
+
+                {activePulseSection !== 'goal' && (
+                  <div className="min-w-0">
+                    {activePulseSection === 'reflection' && workspacePath && (
+                      <ReportHumanInputPanel
+                        workspacePath={workspacePath}
+                        contentMode="history"
+                        historyMode="expanded"
+                        historyLimit={8}
+                        className="mb-4 w-full"
+                      />
+                    )}
+                    {pulseStatusError && (
+                      <div className="mb-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-300">
+                        {pulseStatusError}
+                      </div>
+                    )}
+
+                  {!monitorOn ? (
+                    <div className="flex min-h-48 flex-col items-center justify-center rounded-lg border border-dashed bg-muted/20 px-6 py-8 text-center">
+                      <Activity className="h-5 w-5 text-muted-foreground" />
+                      <div className="mt-3 text-sm font-medium text-foreground">Pulse is off</div>
+                      <div className="mt-1 max-w-sm text-xs leading-5 text-muted-foreground">Turn it on below to review future workflow runs.</div>
+                    </div>
+                  ) : activePulseTimeline ? (
+                    <div className="min-w-0 overflow-hidden rounded-lg border bg-background">
+                      <div className="border-b px-3 py-2.5 sm:px-4">
+                        <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setActivePulseTimeline(null)}
+                            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                            aria-label="Close timeline and return to all reviews"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                            All reviews
+                          </button>
+                          <div className="inline-flex shrink-0 items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => movePulseTimeline(-1)}
+                              disabled={activePulseCarouselItems.length < 2}
+                              className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-30"
+                              aria-label="Previous review"
+                              title="Previous review"
+                            >
+                              <ChevronLeft className="h-4 w-4" />
+                            </button>
+                            <span className="min-w-10 text-center text-[10px] tabular-nums text-muted-foreground">
+                              {activePulseTimelineIndex + 1} / {activePulseCarouselItems.length}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => movePulseTimeline(1)}
+                              disabled={activePulseCarouselItems.length < 2}
+                              className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-30"
+                              aria-label="Next review"
+                              title="Next review"
+                            >
+                              <ChevronRight className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="mt-2 min-w-0 px-1">
+                          <div className="truncate text-sm font-semibold text-foreground">{activePulseTimeline.label}</div>
+                          <div className="truncate text-[11px] text-muted-foreground">Timeline across all Pulse runs</div>
+                        </div>
+                      </div>
+                      <PulseHtmlSectionViewer
+                        workspacePath={workspacePath || ''}
+                        module={activePulseTimeline.module}
+                        label={activePulseTimeline.label}
+                      />
+                    </div>
+                  ) : (
+                    <div className="overflow-hidden rounded-lg border bg-background">
+                      {activePulseModuleCommands.map((command) => {
+                        const state = pulseModuleStateByModule.get(command.id)
+                        return (
+                          <PulseStatusRow
+                            key={command.id}
+                            label={command.label}
+                            description={command.description}
+                            status={getPulseModuleStatus(state)}
+                            runId={state?.last_pulse_run_id}
+                            nextCheck={formatPulseNextCheck(state)}
+                            onSelect={() => setActivePulseTimeline({ module: command.id, label: command.label })}
+                          />
+                        )
+                      })}
+                      {activePulseFinalCommands.map((command) => {
+                        const state = pulseFinalCommandStateByCommand.get(command.id)
+                        return (
+                          <PulseStatusRow
+                            key={command.id}
+                            label={command.label}
+                            description={command.description}
+                            status={getPulseFinalCommandStatus(state)}
+                            runId={state?.pulse_run_id}
+                            onSelect={() => setActivePulseTimeline({
+                              module: command.id === 'dashboard' ? 'run_summary' : command.id,
+                              label: command.label,
+                            })}
+                          />
+                        )
+                      })}
+                      {activePulseHistoryItems.map((item) => (
+                        <PulseStatusRow
+                          key={item.id}
+                          label={item.label}
+                          description={item.description}
+                          status={{ label: 'TIMELINE', detail: item.description, time: '' }}
+                          onSelect={() => setActivePulseTimeline({ module: item.id, label: item.label })}
+                        />
+                      ))}
+                    </div>
+                  )}
                   </div>
                 )}
-                <div className="max-h-[320px] overflow-y-auto rounded-lg border bg-muted/20">
-                  {PULSE_MODULE_COMMANDS.map((command) => {
-                    const state = pulseModuleStateByModule.get(command.id)
-                    const status = getPulseModuleStatus(state)
-                    const nextCheck = formatPulseNextCheck(state)
-                    return (
-                      <div key={command.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-b px-3 py-2.5 last:border-b-0">
-                        <div className="min-w-0">
-                          <div className="flex min-w-0 items-center gap-2">
-                            <span className="truncate text-sm font-medium text-foreground">{command.label}</span>
-                            {state?.last_pulse_run_id && (
-                              <span className="shrink-0 rounded bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                                {state.last_pulse_run_id}
-                              </span>
-                            )}
-                          </div>
-                          <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                            {status.detail || command.description}
-                          </div>
-                          {nextCheck && (
-                            <div className="mt-1 truncate text-[11px] font-medium text-primary/80" title={nextCheck}>
-                              {nextCheck}
-                            </div>
-                          )}
-                        </div>
-                        <div className="flex shrink-0 flex-col items-end gap-1">
-                          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-wide ${pulseStatusToneClass(status.label)}`}>
-                            {status.label}
-                          </span>
-                          <span className="text-[10px] text-muted-foreground">{status.time}</span>
-                        </div>
-                      </div>
-                    )
-                  })}
-                  <div className="border-t bg-background/40 px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                    Final commands
-                  </div>
-                  {PULSE_FIXED_COMMANDS.map((command) => {
-                    const state = pulseFinalCommandStateByCommand.get(command.id)
-                    const status = getPulseFinalCommandStatus(state)
-                    return (
-                      <div key={command.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-t px-3 py-2.5 first:border-t-0">
-                        <div className="min-w-0">
-                          <div className="flex min-w-0 items-center gap-2">
-                            <span className="truncate text-sm font-medium text-foreground">{command.label}</span>
-                            {state?.pulse_run_id && (
-                              <span className="shrink-0 rounded bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                                {state.pulse_run_id}
-                              </span>
-                            )}
-                          </div>
-                          <div className="mt-0.5 truncate text-xs text-muted-foreground" title={status.detail}>
-                            {status.detail || command.description}
-                          </div>
-                        </div>
-                        <div className="flex shrink-0 flex-col items-end gap-1">
-                          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-wide ${pulseStatusToneClass(status.label)}`}>
-                            {status.label}
-                          </span>
-                          <span className="text-[10px] text-muted-foreground">{status.time}</span>
-                        </div>
-                      </div>
-                    )
-                  })}
+              </div>
+            </div>
+
+            {/* Pulse control and related workflow operations */}
+            <div className="flex shrink-0 flex-col gap-3 border-t bg-background px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+              <div className="flex min-w-0 items-center gap-3">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={monitorOn}
+                  onClick={() => { void toggleMonitor() }}
+                  disabled={monitorSaving}
+                  className={`relative inline-flex h-5 w-9 flex-none items-center rounded-full p-0 transition-colors disabled:opacity-50 ${monitorOn ? 'bg-primary' : 'bg-muted-foreground/30'}`}
+                  aria-label="Toggle Pulse"
+                >
+                  <span className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${monitorOn ? 'translate-x-[18px]' : 'translate-x-[2px]'}`} />
+                </button>
+                <div className="min-w-0">
+                  <div className="text-xs font-medium text-foreground">{monitorOn ? 'Reviewing scheduled runs' : 'Scheduled review is off'}</div>
+                  <div className="truncate text-[11px] text-muted-foreground">The Pulse report remains in builder/improve.html.</div>
                 </div>
               </div>
-            )}
-            {/* enable / disable */}
-            <div className="flex items-center justify-between border-t px-5 py-3.5">
-              <div>
-                <div className="text-sm font-medium text-foreground">Pulse</div>
-                <div className="text-xs text-muted-foreground">{monitorOn ? 'On — reviewing every run' : 'Off — not reviewing runs'}</div>
+              <div className="inline-flex h-8 items-center overflow-hidden rounded-lg border border-border bg-muted/30">
+                <button
+                  type="button"
+                  onClick={() => { setShowMonitorHelp(false); setActivePulseTimeline(null); setShowBackupPopup(true) }}
+                  className="relative inline-flex h-full items-center gap-1.5 px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <Cloud className="h-3.5 w-3.5" />
+                  Backup
+                  <span className={`h-1.5 w-1.5 rounded-full ${getBackupDotClass(backupState)}`} />
+                </button>
+                <span className="h-4 w-px bg-border" aria-hidden="true" />
+                <button
+                  type="button"
+                  onClick={() => { setShowMonitorHelp(false); setActivePulseTimeline(null); setShowPublishPopup(true) }}
+                  className="relative inline-flex h-full items-center gap-1.5 px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <Globe className="h-3.5 w-3.5" />
+                  Publish
+                  <span className={`h-1.5 w-1.5 rounded-full ${getPublishDotClass(publishState)}`} />
+                </button>
+                <span className="h-4 w-px bg-border" aria-hidden="true" />
+                <button
+                  type="button"
+                  onClick={() => { setShowMonitorHelp(false); setActivePulseTimeline(null); setShowNotifications(true) }}
+                  className="relative inline-flex h-full items-center gap-1.5 px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <BellRing className="h-3.5 w-3.5" />
+                  Notify
+                  <span className={`h-1.5 w-1.5 rounded-full ${getNotificationDotClass(notificationState)}`} />
+                </button>
               </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={monitorOn}
-                onClick={() => { void toggleMonitor() }}
-                disabled={monitorSaving}
-                className={`relative inline-flex h-5 w-9 flex-none items-center rounded-full p-0 transition-colors disabled:opacity-50 ${monitorOn ? 'bg-primary' : 'bg-muted-foreground/30'}`}
-                aria-label="Toggle Pulse"
-              >
-                <span className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${monitorOn ? 'translate-x-[18px]' : 'translate-x-[2px]'}`} />
-              </button>
-            </div>
-            {/* scheduling note */}
-            <div className="border-t px-5 py-4">
-              <p className="rounded-md bg-muted/60 px-3 py-2.5 text-xs text-muted-foreground">
-                <span className="font-medium text-foreground">To run on a schedule:</span> Use <code className="rounded bg-background px-1 py-0.5 font-medium text-foreground">/goal-advisor</code> to enable Pulse and set the recurring run schedule. Pulse Gate decides which deeper modules run after each run.
-              </p>
             </div>
           </div>
         </div>
@@ -1116,28 +1345,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       workspacePath={workspacePath || null}
       onStateLoaded={setNotificationState}
     />
-
-    {/* Plan edits Popup (planning/changelog audit trail) */}
-    {showPlanEditsPopup && workspacePath && (
-      <ModalPortal>
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-2 backdrop-blur-sm sm:p-4" onClick={() => setShowPlanEditsPopup(false)}>
-          <div className="relative flex max-h-[calc(100dvh-1rem)] w-full max-w-2xl flex-col rounded-lg border border-border bg-background shadow-xl sm:max-h-[86vh]" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-              <div className="flex items-center gap-2">
-                <GitCommitVertical className="h-4.5 w-4.5 text-primary" />
-                <h2 className="text-sm font-semibold text-foreground">Plan edits</h2>
-              </div>
-              <button onClick={() => setShowPlanEditsPopup(false)} className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Close">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              <PlanChangelogFeed workspacePath={workspacePath} />
-            </div>
-          </div>
-        </div>
-      </ModalPortal>
-    )}
 
     {/* Workflow Access Popup (multi-user owners only) */}
     <WorkflowAccessPopup

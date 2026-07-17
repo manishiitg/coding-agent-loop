@@ -130,10 +130,14 @@ evidence guidance only; do not execute their nested-agent calls.
 1. Read `get_pulse_module_state` and the Gate/worklist in
    `builder/improve.html`. If every due module already has a current-run result,
    stop. This is how later fixed module messages become harmless no-ops.
-2. Create one reviewer task per due module and issue the independent
+2. Create one reviewer task for **every** due module and issue the independent
    `call_generic_agent` calls in the same tool-call batch so they can run in
-   parallel. Use bounded fan-out and the cheapest tier that can judge the module
-   reliably. Do not use `run_in_background`: the parent Pulse turn must remain
+   parallel. Never rank the due worklist and run only a "top 3" or other subset:
+   `due` means the review must receive a terminal result in this Pulse run. If a
+   provider/tool-call limit prevents one batch, split all due reviewers into the
+   fewest consecutive parallel batches without dropping any module. Use the
+   cheapest tier that can judge each module reliably. Do not use `run_in_background`:
+   the parent Pulse turn must remain
    active until reviewer calls return, so the fixed sequence cannot reach the
    finalizer early.
 3. Every reviewer prompt must start with **READ-ONLY REVIEW** and include the
@@ -176,9 +180,18 @@ evidence guidance only; do not execute their nested-agent calls.
    structured human-input request as required.
 9. Only the Pulse Fixer may update files, DB contracts, plan/config, report/eval
    artifacts, human-input state, changelog review state, or module state. Update
-   `builder/improve.html` once after all reviews and fixes with one
-   consolidated outcome. Preserve the user-first hierarchy and compact agent
-   handoff.
+   `builder/improve.html` in one atomic write after all reviews and fixes, but
+   emit one compact dated result card for every due module. Read-only reviewer
+   results are **Signals / Kizuki** cards (`data-pulse-section="signals"`), run
+   interpretation/cadence/answered decisions are **Reflection / Hansei**, and
+   verified fixes are **Improvements / Kaizen** (`data-module="pulse_fixer"`).
+   Goal Advisor proposals/decisions are Improvements with
+   `data-module="goal_advisor"`. Each card must carry
+   that module's canonical `data-module` and `data-pulse-section`, including
+   clean, changed, blocked, failed, and timed-out results. An optional separate
+   `run_summary` or `pulse_fixer` card may summarize the batch; it must not
+   replace the per-module cards. Preserve the user-first hierarchy and compact
+   agent handoff.
 10. Call `mark_pulse_module_result` exactly once for every due module, including
     clean, changed, blocked, or failed outcomes. A reviewer failure affects only
     that module unless missing evidence makes a safe fix impossible. Do not
@@ -649,9 +662,9 @@ For Goal Advisor plan-change proposals, use the existing interaction shape inste
 - options: `approve`, `reject`, and `defer`, each with a short title and description
 - `context`: proposal, exact intended plan/config/eval/report edits, rationale, expected impact, risk, and evidence paths
 
-On a later Pulse run, an approved proposal may be applied with normal plan/config/eval/report tools and then marked consumed with `mark_human_input_consumed`. Rejected or deferred proposals should be recorded and consumed, not silently retried. After consuming an answer, remove the matching visible question card from `builder/improve.html` or replace it with a short outcome Decision/Note; do not leave a consumed answer displayed as an active question.
+On a later Pulse run, an approved proposal may be applied with normal plan/config/eval/report tools and then marked consumed with `mark_human_input_consumed`. Rejected or deferred proposals should be recorded and consumed, not silently retried. After consuming an answer, add/update a short Reflection / Hansei question-and-answer outcome card; pending questions are not duplicated in HTML.
 
-Do not ask only in email or raw chat. Runloop renders the structured request first as **Needs your decision**; keep only a compact matching audit marker in `builder/improve.html`. When a later pass uses an answer, call `mark_human_input_consumed` and replace the visible marker with a short outcome.
+Do not ask only in email or raw chat. Runloop renders the structured request first as **Needs your decision** from SQLite. When a later pass uses an answer, call `mark_human_input_consumed` and record the answer and outcome once in Reflection.
 
 ## Finalizer And Notifications
 

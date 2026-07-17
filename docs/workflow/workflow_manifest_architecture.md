@@ -29,6 +29,7 @@ The backend struct lives in [workflow_manifest.go](../../agent_go/cmd/server/wor
 ```json
 {
   "schema_version": 1,
+  "version": "1.0.11",
   "id": "wf_ab12cd34",
   "label": "Customer onboarding",
   "objective": "Optional workflow-level objective",
@@ -171,9 +172,11 @@ Two optional top-level fields configure hard behavioral gates the auto-improveme
 | Field | Values | Default | Purpose |
 |---|---|---|---|
 | `oversight_mode` | `manual` \| `supervised` \| `autonomous` | `supervised` | Controls when human approval is required for high-risk framework changes. Hard gate. |
-| `decision_log_mutability` | `append_only` \| `append_only_strict` | `append_only` | `append_only_strict` forbids any edit to a structured improve.md decision entry, even corrective. Used by compliance workflows. Hard gate. |
+| `decision_log_mutability` | `append_only` \| `append_only_strict` | `append_only` | `append_only_strict` forbids rewriting a dated decision entry in `builder/improve.html`, even for correction. Used by compliance workflows. Hard gate. |
 
-**The workflow's profile** — typology (deterministic / exploratory / contextual), plan stability, runtime mode (single / dual explore-exploit), and whether it accumulates business context — lives as **prose in `builder/improve.md`** under a `## Workflow Profile` section. The agent reads improve.md on every improvement turn and adjusts behavior accordingly. Real workflows mix axes a single enum can't express (e.g. social-media is exploratory + dual-mode + accumulating-context all at once); prose captures the nuance, and the framework no longer hard-gates on a workflow_type value.
+`schema_version` controls the JSON shape. `version` controls product-managed workflow behavior. The current `1.0.11` contract upgrades `builder/improve.html` to the schema-2 Pulse history format before a scheduled workflow runs. The scheduler verifies the resulting HTML and writes the version through its trusted manifest writer.
+
+The stable Goal lives only in `soul/soul.md`. `/define-success` records operating-model reasoning as a dated Reflection / Hansei entry in `builder/improve.html`; there is no permanent Workflow Profile card that can silently become an immutable constraint.
 
 For the design rationale and worked examples, see [auto_improvement_framework.md](./auto_improvement_framework.md).
 
@@ -205,8 +208,8 @@ These still live alongside it:
 - `planning/output_plan.json`
 - `variables/variables.json`
 - `evaluation/evaluation_plan.json`
-- `builder/improve.html` — the Pulse log: single source-of-truth entry point for auto-improvement narrative, verdict pills, the per-criterion goal card (the workflow's goal signal — the former `planning/metrics.json` numeric layer was removed 2026-07-01), open findings, decision cards, and links to older monthly `builder/improve-archive/YYYY-MM.html` details. See [auto_improvement_framework.md](./auto_improvement_framework.md).
-- `knowledgebase/rules/rules.md` and `knowledgebase/rules/examples/` — Type 3 business-rule store. User-supplied rules are captured through chat-intent rule capture. Excluded from `reorganize_knowledgebase` and `consolidate_knowledgebase` passes — never silently rewritten by the optimizer. Audit trail folded into structured `builder/improve.md` entries (filter to `source: user` + `trigger: capture-context`).
+- `builder/improve.html` — the schema-2, newest-first Pulse history for reviewer Signals, run/Q&A Reflection, Pulse Fixer changes, and Goal Advisor proposals/outcomes. Goal / Ikigai remains exclusively in `soul/soul.md` and is rendered directly by Runloop. Older detail can live in linked monthly `builder/improve-archive/YYYY-MM.html` files. See [auto_improvement_framework.md](./auto_improvement_framework.md).
+- `knowledgebase/rules/rules.md` and `knowledgebase/rules/examples/` — legacy business-rule storage when present. Current user-confirmed runtime context belongs in `knowledgebase/context/`; its audit trail is recorded in dated Reflection entries in `builder/improve.html`.
 
 `workflow.json` is the workflow-level definition file.
 The planning files are still the step graph and execution-plan files.

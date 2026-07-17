@@ -55,4 +55,4 @@ Return one compact review package containing:
 - exact proposed marks grouped as `clean`, `findings`, or `cursor-backfill`
 - any blocked entry that prevented further cursor advancement
 
-The parent Pulse Fixer/workshop agent validates this package, applies only bounded approved fixes, writes one compact Artifact Review item to `builder/improve.html`, advances the visible cursor, and calls `mark_changelog_artifact_reviewed` for only the exact verified entries. Do not edit or delete changelog JSON directly and do not create a second cursor or state file.
+The parent Pulse Fixer/workshop agent validates this package, applies only bounded approved fixes, writes one compact **Signals / Kizuki** Artifact Review item to `builder/improve.html` using `data-pulse-section="signals"` and `data-module="artifact_review"`, advances the visible cursor, and calls `mark_changelog_artifact_reviewed` for only the exact verified entries. Do not edit or delete changelog JSON directly and do not create a second cursor or state file.

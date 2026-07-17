@@ -23,6 +23,63 @@ func TestAllGuidanceTemplatesRender(t *testing.T) {
 	}
 }
 
+func TestManualPulseCommandsKeepRunSetupReviewAndFixBoundariesSeparate(t *testing.T) {
+	tests := map[string][]string{
+		"pulse": {
+			"MANUAL ONE-OFF PULSE",
+			"must not create, edit, enable",
+			"change `post_run_monitor`",
+			"record_pulse_worklist",
+			"call_generic_agent",
+			"only Pulse Fixer",
+		},
+		"pulse-setup": {
+			"Set up recurring workflow runs with dynamic Pulse",
+			"update_workflow_config(post_run_monitor=true)",
+			"Create or update one normal workshop Run-mode schedule",
+		},
+		"bug-review": {
+			"STANDALONE PULSE BUG REVIEW",
+			"without applying fixes",
+			"READ-ONLY REVIEW",
+			"`/pulse-fixer`",
+		},
+		"llm-ops-review": {
+			"STANDALONE LLM AND OPERATIONS REVIEW",
+			"must not edit files or config",
+			"before `/pulse-fixer` can apply them",
+		},
+		"pulse-fixer": {
+			"STANDALONE PULSE FIXER",
+			"does not rerun Pulse Gate or launch review agents",
+			"standalone command must not impersonate",
+		},
+	}
+
+	for kind, wants := range tests {
+		rendered, err := renderFromRegistry(kind, tmplData{}, allKinds)
+		if err != nil {
+			t.Fatalf("render %s: %v", kind, err)
+		}
+		for _, want := range wants {
+			if !strings.Contains(rendered, want) {
+				t.Fatalf("%s guidance missing %q", kind, want)
+			}
+		}
+	}
+
+	advisor, err := renderFromRegistry("goal-advisor", tmplData{}, allKinds)
+	if err != nil {
+		t.Fatalf("render goal-advisor: %v", err)
+	}
+	if !strings.Contains(advisor, "a user can also invoke it manually") {
+		t.Fatal("goal-advisor must describe its one-off manual path")
+	}
+	if strings.Contains(advisor, "update_workflow_config(post_run_monitor=true)") {
+		t.Fatal("goal-advisor must not configure recurring Pulse")
+	}
+}
+
 func TestEvaluationPlanGuidanceAcceptsSourceGroundedValidEmptyResults(t *testing.T) {
 	guidance, err := renderFromRegistry("evaluation-plan", tmplData{}, referenceKinds)
 	if err != nil {
@@ -109,27 +166,6 @@ func TestPulseGuidanceRequiresReviewedBaselineBeforeCadenceSkip(t *testing.T) {
 	}
 }
 
-func TestMigrateBrowserGuidanceIsScopedIdempotentAndNonExecuting(t *testing.T) {
-	rendered, err := renderFromRegistry("migrate-browser", tmplData{}, allKinds)
-	if err != nil {
-		t.Fatalf("render migrate-browser: %v", err)
-	}
-	for _, want := range []string{
-		"CURRENT workflow",
-		"Already migrated",
-		"migration-backups/browser-",
-		"browser_mode=\"auto\"",
-		"workspace_browser:agent_browser",
-		"Do not mechanically rename",
-		"do not claim success",
-		"no workflow or browser action was run",
-	} {
-		if !strings.Contains(rendered, want) {
-			t.Fatalf("migrate-browser guidance missing %q", want)
-		}
-	}
-}
-
 func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T) {
 	postRun, err := renderFromRegistry("post-run-monitor", tmplData{}, referenceKinds)
 	if err != nil {
@@ -182,7 +218,7 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 	if err != nil {
 		t.Fatalf("render review-improve-log: %v", err)
 	}
-	if !strings.Contains(reviewLog, "Every `.briefitem`, `.crit`, and important `.tile` needs a visible freshness label") {
+	if !strings.Contains(reviewLog, "Every important `.briefitem` and `.tile` needs a visible freshness label") {
 		t.Fatal("review-improve-log missing visible freshness contract")
 	}
 	for _, want := range []string{
@@ -196,6 +232,11 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 		"newest **20** timeline cards",
 		"Stage complete active and archive HTML documents",
 		`href="improve-archive/YYYY-MM.html"`,
+		"Goal — Ikigai",
+		"Signals — Kizuki",
+		"Reflection — Hansei",
+		"Improvements — Kaizen",
+		"Do not add a second active-question card",
 	} {
 		if !strings.Contains(reviewLog, want) {
 			t.Fatalf("review-improve-log missing archive contract %q", want)
@@ -209,13 +250,103 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 	if !strings.Contains(skeleton, `class="asof"`) || !strings.Contains(skeleton, ".tile .asof") {
 		t.Fatal("review-improve-log-skeleton missing visible tile freshness markup")
 	}
-	for _, want := range []string{`id="pulse-bug-verdict"`, `id="pulse-goal-verdict"`, `class="as"`, `class="assumptions"`, `class="technical"`, `class="agentlog"`, `id="pulse-agent-handoff"`, `Today's outcome`} {
+	for _, want := range []string{`data-pulse-schema="2"`, `id="pulse-bug-verdict"`, `id="pulse-goal-verdict"`, `class="as"`, `class="assumptions"`, `class="technical"`, `class="agentlog"`, `id="pulse-agent-handoff"`, `data-pulse-section="signals" data-module="bug_review"`, `data-pulse-section="reflection" data-module="run_summary"`, `data-pulse-section="improvements" data-module="goal_advisor"`, `Today's outcome`} {
 		if !strings.Contains(skeleton, want) {
 			t.Fatalf("review-improve-log-skeleton missing stable verdict markup %q", want)
 		}
 	}
 	if !strings.Contains(skeleton, `href="improve-archive/YYYY-MM.html"`) {
 		t.Fatal("review-improve-log-skeleton missing archive link example")
+	}
+	if strings.Contains(skeleton, `class="goalcard"`) || strings.Contains(skeleton, `data-status="open"`) {
+		t.Fatal("review-improve-log-skeleton must not duplicate the Goal or an active SQLite question")
+	}
+	for _, want := range []string{`data-pulse-section="reflection" data-module="goal_advisor"`, `data-status="answered"`, `Question + answer`} {
+		if !strings.Contains(skeleton, want) {
+			t.Fatalf("review-improve-log-skeleton missing historical question/answer contract %q", want)
+		}
+	}
+}
+
+func TestPulseRunsEveryDueReviewerAndWritesAttributedResults(t *testing.T) {
+	monitor, err := renderFromRegistry("post-run-monitor", tmplData{}, referenceKinds)
+	if err != nil {
+		t.Fatalf("render post-run-monitor: %v", err)
+	}
+	for _, want := range []string{
+		`one reviewer task for **every** due module`,
+		`Never rank the due worklist and run only a "top 3"`,
+		`one compact dated result card for every due module`,
+		`data-pulse-section`,
+		`data-module`,
+	} {
+		if !strings.Contains(monitor, want) {
+			t.Fatalf("post-run-monitor missing complete reviewer contract %q", want)
+		}
+	}
+
+	pulse, err := renderFromRegistry("pulse", tmplData{}, allKinds)
+	if err != nil {
+		t.Fatalf("render pulse: %v", err)
+	}
+	for _, want := range []string{`Never select only a`, `one explicitly attributed result card per due module`} {
+		if !strings.Contains(pulse, want) {
+			t.Fatalf("manual pulse missing complete reviewer contract %q", want)
+		}
+	}
+
+	setup, err := renderFromRegistry("pulse-setup", tmplData{}, allKinds)
+	if err != nil {
+		t.Fatalf("render pulse-setup: %v", err)
+	}
+	for _, want := range []string{
+		"evaluation health",
+		"LLM/operations review",
+		"builder/improve.html",
+		"only the current machine-readable scheduler/UI mirror",
+	} {
+		if !strings.Contains(setup, want) {
+			t.Fatalf("pulse-setup missing complete module/source-of-truth contract %q", want)
+		}
+	}
+
+	for _, kind := range []string{"bug-review", "llm-ops-review"} {
+		review, renderErr := renderFromRegistry(kind, tmplData{}, allKinds)
+		if renderErr != nil {
+			t.Fatalf("render %s: %v", kind, renderErr)
+		}
+		for _, want := range []string{"review-improve-log", "data-pulse-section", "data-module", "Do not truncate"} {
+			if !strings.Contains(review, want) {
+				t.Fatalf("%s missing standalone report contract %q", kind, want)
+			}
+		}
+	}
+}
+
+func TestPulseRelatedGuidanceUsesFourPartSectionOwnership(t *testing.T) {
+	cases := map[string][]string{
+		"design-plan":           {`data-pulse-section="signals"`, `data-module="goal_advisor"`, "never discard findings"},
+		"review-code":           {`data-pulse-section="signals"`, `data-module="bug_review"`, "every finding"},
+		"review-cost":           {`data-pulse-section="signals"`, `data-module="cost_llm_time"`, "every finding"},
+		"review-speed":          {`data-pulse-section="signals"`, `data-module="cost_llm_time"`, "every finding"},
+		"review-artifact-drift": {`data-pulse-section="signals"`, `data-module="artifact_review"`},
+		"improve-evaluation":    {`data-pulse-section="signals"`, `data-module="eval_health"`},
+		"define-success":        {`data-pulse-section="reflection"`, `data-module="run_summary"`, "do not copy the Goal"},
+		"pulse-setup":           {`data-pulse-section="improvements"`, `data-module="pulse_fixer"`, "do not seed or refresh a Goal/Profile card"},
+		"pulse-fixer":           {`data-pulse-section="improvements"`, `data-module="pulse_fixer"`},
+		"goal-advisor":          {`data-pulse-section="improvements"`, `data-module="goal_advisor"`, "do not duplicate the pending question"},
+	}
+
+	for kind, wants := range cases {
+		rendered, err := renderFromRegistry(kind, tmplData{}, allKinds)
+		if err != nil {
+			t.Fatalf("render %s: %v", kind, err)
+		}
+		for _, want := range wants {
+			if !strings.Contains(rendered, want) {
+				t.Fatalf("%s missing four-part Pulse contract %q", kind, want)
+			}
+		}
 	}
 }
 
@@ -281,7 +412,6 @@ func TestMaintenanceImproveGuidanceIsReadOnlyForPulseFixerHandoff(t *testing.T) 
 func TestImprovementAndPlanGuidanceIncludesAssumptionAudit(t *testing.T) {
 	for _, kind := range []string{
 		"design-plan",
-		"review-plan",
 		"review-code",
 		"review-artifact-drift",
 		"goal-advisor",
@@ -298,6 +428,25 @@ func TestImprovementAndPlanGuidanceIncludesAssumptionAudit(t *testing.T) {
 		if !strings.Contains(rendered, "assumption-audit") {
 			t.Fatalf("%s guidance does not include assumption-audit", kind)
 		}
+	}
+
+	designPlan, err := renderFromRegistry("design-plan", tmplData{}, allKinds)
+	if err != nil {
+		t.Fatalf("render design-plan: %v", err)
+	}
+	for _, want := range []string{
+		"Call `review_plan",
+		"dependent artifacts",
+		"VISUAL MAP",
+		"PRIORITIES",
+		"never discard findings",
+	} {
+		if !strings.Contains(designPlan, want) {
+			t.Fatalf("combined design-plan guidance missing %q", want)
+		}
+	}
+	if _, exists := allKinds["review-plan"]; exists {
+		t.Fatal("review-plan must remain merged into design-plan")
 	}
 	for _, kind := range []string{
 		"improve-evaluation",

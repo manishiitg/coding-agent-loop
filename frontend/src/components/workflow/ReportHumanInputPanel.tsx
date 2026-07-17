@@ -85,6 +85,9 @@ interface ReportHumanInputPanelProps {
 	className?: string
 	source?: string
 	workspaceLabel?: string
+	contentMode?: 'all' | 'pending' | 'history'
+	historyMode?: 'collapsed' | 'expanded'
+	historyLimit?: number
 	providedInputs?: ReportHumanInput[]
 	providedLoading?: boolean
 	providedError?: string | null
@@ -96,6 +99,9 @@ export function ReportHumanInputPanel({
 	className = '',
 	source,
 	workspaceLabel,
+	contentMode = 'all',
+	historyMode = 'collapsed',
+	historyLimit = 4,
 	providedInputs,
 	providedLoading,
 	providedError,
@@ -106,7 +112,7 @@ export function ReportHumanInputPanel({
   const [error, setError] = useState<string | null>(null)
   const [drafts, setDrafts] = useState<Record<string, ReportHumanInputDraft>>({})
   const [refreshNonce, setRefreshNonce] = useState(0)
-  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(historyMode === 'expanded')
   const [expandedHistoryIds, setExpandedHistoryIds] = useState<Record<string, boolean>>({})
   const [panelRef, sizeTier] = useContainerSizeTier(560, 900)
 	const compactOptions = sizeTier === 'phone'
@@ -147,7 +153,7 @@ export function ReportHumanInputPanel({
     return () => window.removeEventListener(WORKFLOW_LOG_REFRESH_EVENT, onRefresh)
 	}, [externallyManaged, loadInputs])
 
-	const waitingForPulse = visibleInputs.some(input => input.status === 'answered' || input.status === 'claimed')
+	const waitingForPulse = contentMode !== 'pending' && visibleInputs.some(input => input.status === 'answered' || input.status === 'claimed')
 	useEffect(() => {
 		if (externallyManaged || !waitingForPulse) return
     const timer = window.setInterval(() => { void loadInputs() }, 5000)
@@ -156,12 +162,12 @@ export function ReportHumanInputPanel({
 
   useEffect(() => {
     setDrafts({})
-    setHistoryOpen(false)
+    setHistoryOpen(historyMode === 'expanded')
     setExpandedHistoryIds({})
-  }, [workspacePath])
+  }, [historyMode, workspacePath])
 
-	const pending = visibleInputs.filter(input => input.status === 'pending')
-	const history = reportHumanInputHistory(visibleInputs)
+	const pending = contentMode === 'history' ? [] : visibleInputs.filter(input => input.status === 'pending')
+	const history = contentMode === 'pending' ? [] : reportHumanInputHistory(visibleInputs, historyLimit)
 	if (!visibleLoading && !visibleError && pending.length === 0 && history.length === 0) return null
 
 	const requestRefresh = () => {
@@ -197,7 +203,7 @@ export function ReportHumanInputPanel({
         note,
       })
       useChatStore.getState().addToast(`Answer saved for the next ${answerHandlerLabel(input)} run.`, 'success')
-      setHistoryOpen(false)
+		setHistoryOpen(historyMode === 'expanded')
 		requestRefresh()
     } catch (err) {
       useChatStore.getState().addToast(err instanceof Error ? err.message : 'Failed to save answer.', 'error')
@@ -211,7 +217,7 @@ export function ReportHumanInputPanel({
     try {
       await agentApi.dismissReportHumanInput(workspacePath, input.id)
       useChatStore.getState().addToast('Question dismissed.', 'success')
-      setHistoryOpen(false)
+		setHistoryOpen(historyMode === 'expanded')
 		requestRefresh()
     } catch (err) {
       useChatStore.getState().addToast(err instanceof Error ? err.message : 'Failed to dismiss question.', 'error')
@@ -223,7 +229,7 @@ export function ReportHumanInputPanel({
   const renderHistoryRows = () => (
     <div className="grid gap-1.5">
       {history.map(input => {
-        const expanded = Boolean(expandedHistoryIds[input.id])
+        const expanded = expandedHistoryIds[input.id] ?? historyMode === 'expanded'
         const answer = selectedOptionTitle(input)
         return (
           <div key={input.id} className="rounded-md bg-background/50 text-xs">
@@ -241,7 +247,7 @@ export function ReportHumanInputPanel({
                   : null}
               <span className={`shrink-0 font-medium ${statusTone(input)}`}>{reportHumanInputStatusLabel(input)}</span>
               <span className="shrink-0 text-muted-foreground">{inputTime(input.consumed_at || input.answered_at || input.dismissed_at || input.updated_at)}</span>
-              <span className="min-w-0 flex-1 truncate text-muted-foreground">{input.question}</span>
+              <span className={`min-w-0 flex-1 ${expanded ? 'whitespace-normal break-words leading-5 text-foreground' : 'truncate text-muted-foreground'}`}>{input.question}</span>
             </button>
             {expanded && (
               <div className="space-y-1.5 border-t border-border/50 px-3 py-2 text-muted-foreground">
@@ -346,12 +352,12 @@ export function ReportHumanInputPanel({
             <div className="text-sm font-semibold text-foreground">
               {pending.length > 0
                 ? `Needs your decision${workspaceLabel ? ` · ${workspaceLabel}` : ''}`
-                : `Recent decisions${workspaceLabel ? ` · ${workspaceLabel}` : ''}`}
+                : `Questions and answers${workspaceLabel ? ` · ${workspaceLabel}` : ''}`}
             </div>
             <div className="text-xs text-muted-foreground">
               {pending.length > 0
                 ? `Your answer will be used by the next ${source === 'chief_of_staff' ? 'Chief of Staff' : 'Pulse'} run.`
-                : 'Previous decisions and outcomes.'}
+                : 'Previous questions, your answers, and their outcomes.'}
             </div>
           </div>
         </div>
@@ -461,7 +467,7 @@ export function ReportHumanInputPanel({
             className="mb-1 flex w-full items-center justify-between gap-2 text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground hover:text-foreground"
             aria-expanded={historyOpen}
           >
-            <span>Recent decisions</span>
+            <span>Questions and answers</span>
             {historyOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
           </button>
           {historyOpen && renderHistoryRows()}

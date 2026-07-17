@@ -226,7 +226,7 @@ List workflows with ` + "`execute_shell_command(command: \"ls " + absWorkflow + 
 Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 
 **Planning & config:**
-- ` + "`soul/soul.md`" + ` — canonical stable workflow intent: ` + "`## Objective`" + `, ` + "`## Success Criteria`" + `, optional explicit user-approved constraints, and optional notification preferences. Read before review, improve, eval, harden, and ambiguous execution decisions. **Do not store architecture, current step design, provider/tool choices, implementation details, historical decisions, references, or agent-inferred assumptions in soul.md.** Those describe the revisable "how" and belong in plan/config/changelog/learnings/knowledgebase artifacts. **Stays Markdown — never create a ` + "`soul.html`" + `, a "readable mirror", or any HTML copy.** It is parsed as Markdown (the framework-health check and run-time objective injection read the ` + "`## Objective`" + ` / ` + "`## Success Criteria`" + ` headings); the Pulse log (` + "`builder/improve.html`" + `) is the only HTML surface, and it *pulls from* soul.md (the goal card). The Soul view already renders ` + "`soul.md`" + ` directly as styled markdown — there is **no readability reason** to make an HTML copy, and a copy is just a second file to keep in sync. soul.md is the single source; leave it Markdown.
+- ` + "`soul/soul.md`" + ` — canonical stable workflow intent: ` + "`## Objective`" + `, ` + "`## Success Criteria`" + `, optional explicit user-approved constraints, and optional notification preferences. Read before review, improve, eval, harden, and ambiguous execution decisions. **Do not store architecture, current step design, provider/tool choices, implementation details, historical decisions, references, or agent-inferred assumptions in soul.md.** Those describe the revisable "how" and belong in plan/config/changelog/learnings/knowledgebase artifacts. **Stays Markdown — never create a ` + "`soul.html`" + `, a "readable mirror", or any HTML copy.** It is parsed as Markdown (the framework-health check and run-time objective injection read the ` + "`## Objective`" + ` / ` + "`## Success Criteria`" + ` headings), and Runloop renders it directly in Goal / Ikigai. ` + "`builder/improve.html`" + ` stores time-based Signal, Reflection, and Improvement history; it may report evidence-stamped goal progress but must not copy a Goal/Profile card. soul.md is the single source; leave it Markdown.
 - ` + "`workflow.json`" + ` — workflow-level config: schedules, MCP servers, skills, LLM config, optional ` + "`run_retention_count`" + ` (backup iterations to keep; default 5). May carry legacy optional ` + "`objective`" + ` / ` + "`success_criteria`" + ` fallback values.
 - ` + "`planning/plan.json`" + ` — step definitions (IDs, titles, descriptions, dependencies, validation). It no longer owns root objective/success fields; use ` + "`soul/soul.md`" + ` for that.
 - ` + "`planning/step_config.json`" + ` — per-step settings. Each step's ` + "`agent_configs`" + ` object controls execution mode:
@@ -257,14 +257,14 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 
 **Interactive builder / workshop:**
 - ` + "`builder/conversation/YYYY-MM-DD/session-{id}-conversation.json`" + ` — workshop (interactive builder) conversation histories. These are JSON files with ` + "`conversation_history`" + ` entries. User messages have ` + "`Role`" + `=` + "`human`" + `/` + "`user`" + ` and text in ` + "`Parts[].Text`" + `; assistant replies have ` + "`Role`" + `=` + "`ai`" + `/` + "`assistant`" + `. Tool calls/results are interleaved and noisy, so scan from the end for the latest user/assistant text instead of assuming the final JSON entry is the latest user request. Used by workshop agents to avoid repeating failed approaches.
-- ` + "`builder/improve.html`" + ` — the workflow's single durable log and the user's primary window into it. Read on every improvement turn. One self-contained, human-readable HTML document, newest-on-top: current health, the Workflow Profile, a recent-run strip, an Archive Index, and a timeline of applied/proposed changes, review findings, monitor notes, Chief of Staff recommendations, and user rules. Chief of Staff recommendation cards are external findings: verify the cited evidence, then decide whether to harden, replan/refine, or mark no-action. Older detail moves to referenced ` + "`builder/improve-archive/YYYY-MM.html`" + ` files. Format: see the **Workflow log conventions**.
+- ` + "`builder/improve.html`" + ` — the workflow's single durable time-series log and the user's primary window into Pulse history. Read on every improvement turn. One self-contained, human-readable HTML document, newest-on-top: recent runs, Signals / Kizuki findings, Reflection / Hansei judgments and answered questions, Improvements / Kaizen fixes and Goal Advisor decisions, and an Archive Index. It must not duplicate the stable Goal/Profile rendered from ` + "`soul/soul.md`" + `. Chief of Staff recommendation cards are external findings: verify the cited evidence, then decide whether to fix, propose a plan change, or mark no-action. Older detail moves to referenced ` + "`builder/improve-archive/YYYY-MM.html`" + ` files. Format: see the **Workflow log conventions**.
 - ` + "`planning/changelog/changelog-YYYY-MM-DD-HH-MM-SS.json`" + ` — per-session log of every plan-mod tool call (` + "`update_*_step`" + `, ` + "`add_*_step`" + `, ` + "`delete_plan_steps`" + `, ` + "`*_todo_task_route`" + `, ` + "`update_validation_schema`" + `, ` + "`update_step_config`" + `). Each entry carries timestamp, tool, the mandatory ` + "`reason`" + ` you supplied at invocation, affected step ids, per-field old/new values, and full JSON of added/deleted steps for revert; Artifact Review later stamps inspected entries with ` + "`artifact_review.done=true`" + ` through ` + "`mark_changelog_artifact_reviewed`" + `. **Read this** before proposing plan edits to see what's already been tried this session and why; complements workflow-level history in ` + "`builder/improve.html`" + ` with per-session, per-mutation detail. Files rotate hourly. Read-only via shell — entries are written automatically by the plan-mod tools, never edit them by hand.
 
 **Pulse / Goal Advisor framework files (opt-in per workflow):**
 - ` + "`knowledgebase/context/context.md`" + ` and ` + "`knowledgebase/context/examples/`" + ` — user-supplied runtime business context: rules, preferences, constraints, assumptions, examples. Agents append captured context through the ` + "`capture_context`" + ` tool when the user confirms capture (see "Proactive business-context capture" below for the flow). **Excluded** from ` + "`reorganize_knowledgebase`" + ` and ` + "`consolidate_knowledgebase`" + ` passes — user-supplied content is never silently rewritten by the optimizer. Steps with ` + "`knowledgebase_access: read`" + ` (or ` + "`read-write`" + `) automatically have read access — context lives as a sub-section of the knowledgebase. Each capture is also recorded as a **User rule (authoritative)** entry in ` + "`builder/improve.html`" + ` so it's visible in the workflow log.
 
-**Workflow profile and oversight:**
-- The workflow's **profile** lives as prose in ` + "`builder/improve.html`" + ` under a "## Workflow Profile" section. It declares a primary type, optional secondary traits, plan stability, runtime mode, business-context accumulation, and improvement cadence. Read it on every improvement turn and adjust behavior accordingly. Real workflows don't fit a single enum (e.g. Twitter can be open metric optimization + dual-mode + contextual all at once); primary/secondary prose captures the nuance.
+**Operating model and oversight:**
+- ` + "`/define-success`" + ` records the confirmed operating-model assessment (primary type, secondary traits, plan stability, runtime mode, business-context accumulation, and cadence) as a dated Reflection / Hansei entry in ` + "`builder/improve.html`" + `. It is historical reasoning, not a permanent Goal/Profile card. Reassess it when evidence or user intent changes instead of treating an old classification as an immutable constraint.
 - ` + "`oversight_mode`" + ` (in ` + "`workflow.json`" + `) — ` + "`manual`" + ` (every change gated) | ` + "`supervised`" + ` (low-risk auto, high-risk gated) | ` + "`autonomous`" + ` (all auto). Default: ` + "`supervised`" + `. Hard gate: drives auto-vs-human-approval flow.
 - ` + "`run_retention_count`" + ` (in ` + "`workflow.json`" + `) — optional integer, 1-50. Number of backup run/eval iterations to keep, excluding active ` + "`iteration-0`" + `. Default: 5. Builder, harden, and optimizer agents may raise it when a workflow needs a wider evidence window.
 ### Log Layout (inside ` + "`runs/iteration-{N}/{group-name}/logs/{step-id}/`" + `)
@@ -326,14 +326,11 @@ Said simply: **plan defines the work and goal; eval plus run evidence shows wher
 - Pulse selects ` + "`bug_review`" + ` when the workflow path is basically right but prompts/config/validation/learnings/KB/db/report/eval wiring may need repair. The reviewer only returns evidence and recommendations; the parent Pulse Fixer applies bounded safe fixes.
 - Goal Advisor applies material plan changes only from approved ` + "`create_human_input_request`" + ` proposal cards, or during an explicit manual workshop improvement request. If the evidence is useful but not approved or not strong enough, it records a proposal or asks the user through ` + "`create_human_input_request`" + `.
 
-### Setup precondition: ` + "`/define-success`" + `
+### Goal readiness: ` + "`/define-success`" + `
 
-Before recurring improvement can do useful work, the workflow should have its **Workflow Profile** written into ` + "`builder/improve.html`" + `. The dedicated entry point is ` + "`/define-success`" + ` — a one-time setup command that:
+Recurring improvement needs a clear Goal in ` + "`soul/soul.md`" + `, not a permanent profile card in ` + "`builder/improve.html`" + `. ` + "`/define-success`" + ` confirms or repairs the objective and checkable success criteria, records the operating-model assessment as a dated Reflection / Hansei entry, and sets the structured ` + "`oversight_mode`" + ` gate.
 
-1. Classifies the workflow through conversation as one primary type plus optional secondary traits, then maps that to plan stability, runtime mode, business-context accumulation, and improvement cadence. Writes a "## Workflow Profile" section into ` + "`builder/improve.html`" + `. Sets ` + "`oversight_mode`" + ` in ` + "`workflow.json`" + ` (the one hard gate that stays structured).
-2. For workflows that accumulate business context, scaffolds ` + "`knowledgebase/context/context.md`" + ` with clear user-owned sections.
-
-When a user runs ` + "`/improve-evaluation`" + ` or ` + "`/goal-advisor`" + ` on a workflow that has not been set up yet (no Workflow Profile in improve.html), **stop and redirect them to ` + "`/define-success`" + ` first.** Do NOT bootstrap inline.
+When ` + "`/improve-evaluation`" + ` or ` + "`/goal-advisor`" + ` finds a missing or vague objective/success criteria in ` + "`soul/soul.md`" + `, redirect to ` + "`/define-success`" + `. Do not block merely because an old Workflow Profile card is absent.
 
 ### Tool: ` + "`get_workflow_command_guidance`" + `
 
@@ -345,9 +342,6 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
 
 **Kinds — match to intent:**
 
-  One-time migrations (apply only to the current workflow):
-    - migrate-browser        → replace active legacy browser wiring with managed agent-browser without executing the workflow
-
   Builder-mode audits:
     - design-plan            → design review: is the plan following best practices (step types, stores, validation, flow)
 
@@ -357,12 +351,16 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
     - review-cost            → cost analysis
     - review-code            → saved main.py vs step descriptions (drift + browser + dynamism)
     - review-artifact-drift  → plan-changelog-to-artifact drift audit
+    - bug-review             → one-off Pulse QA / logic-bug review; no fixes
+    - llm-ops-review         → one-off model, cost, latency, fallback, backup, publish, and notify review
 
   Improvements:
     - define-success           → one-time framework bootstrap
     - improve-evaluation       → evaluation_plan changes
-    - goal-advisor-setup       → set up recurring run + Goal Advisor schedules
-    - goal-advisor             → scheduled expert strategy review / evidence-backed replan or proposal
+    - pulse                    → run one complete Pulse now against retained evidence; no workflow run or schedule change
+    - pulse-setup              → enable Pulse and configure the normal recurring run schedule
+    - pulse-fixer              → apply bounded safe fixes from existing review findings; does not rerun reviewers
+    - goal-advisor             → one-off expert strategy review / evidence-backed proposal; no schedule or Pulse-toggle change
     - improve-report           → report accuracy/live-data/layout improvements
 
 **Optional parameters:**
@@ -376,7 +374,7 @@ The returned text is your instructions for this turn — do not paraphrase or sk
 
 ### How improvement is split
 
-Pulse is the single broad maintenance path and owns routine Bug Review, bounded fixes, artifact review, and KB/learnings/db/report hygiene when evidence points there. Targeted ` + "`/improve-*`" + ` commands remain specialist reviews. ` + "`/goal-advisor`" + ` configures the strategy loop; Pulse selects it for Goal recovery or periodic healthy 10x/headroom review.
+Pulse is the single broad maintenance path and owns routine Bug Review, bounded fixes, artifact review, and KB/learnings/db/report hygiene when evidence points there. Targeted ` + "`/improve-*`" + ` commands remain specialist reviews. ` + "`/pulse`" + ` runs that complete path once, ` + "`/pulse-setup`" + ` configures recurring post-run Pulse, and ` + "`/goal-advisor`" + ` runs only the strategy module once. Automatic Pulse may select Goal Advisor for Goal recovery or periodic healthy 10x/headroom review.
 
 ### Resolution discipline
 
@@ -420,9 +418,9 @@ There is no slash command for context capture because it should happen naturally
 4. **Wire affected steps.** If an existing step must apply this context at runtime, update that step through the plan modification tools: set ` + "`knowledgebase_access`" + ` to ` + "`read`" + ` or ` + "`read-write`" + ` and add one sentence to the step description naming the relevant ` + "`knowledgebase/context/context.md`" + ` section/path. Do not copy the whole context file into the description; make the dependency explicit so the step agent knows to read and apply it.
 5. **Confirm.** Tell the user the section + context that was added, which step descriptions/configs were wired, and the User rule entry ` + "`capture_context`" + ` recorded in improve.html.
 
-**On workflows without business-context accumulation**: do NOT add context to ` + "`knowledgebase/context/`" + ` unless the workflow profile says it accumulates business context. If the user shares what looks like durable runtime context:
+**On workflows without confirmed business-context accumulation**: do NOT add context to ` + "`knowledgebase/context/`" + ` unless the user has confirmed that operating-model trait. If the user shares what looks like durable runtime context:
 - For deterministic/compliance-style workflows, the rule probably belongs in ` + "`soul.md`" + `, the eval plan, or a hardened validation check; offer that path.
-- For open optimization, monitoring, research, creative, or human-review workflows, tell the user that if durable context is becoming part of runtime behavior, the Workflow Profile in ` + "`builder/improve.html`" + ` should be updated to add ` + "`business_context_accumulating`" + ` as primary/secondary or set ` + "`Business context: accumulating`" + `.
+- For open optimization, monitoring, research, creative, or human-review workflows, ask whether durable context should become part of runtime behavior. If confirmed, record the operating-model change as a dated Reflection / Hansei entry and wire the relevant knowledgebase dependency; do not create a permanent Goal/Profile card.
 
 **Be conservative.** It's better to ask "should I capture that as a rule?" than to silently start writing to the user's context store. The user's context is their content; you write to it only with explicit OK.
 
@@ -833,7 +831,7 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 - Legacy finished-run prose: `+"`%s/reports/{group-name}/{timestamp}.md`"+` — supporting evidence when present, not the live dashboard contract
 - Evaluation reports: `+"`%s/evaluation/runs/{runFolder}/evaluation_report.json`"+`
 - Builder sessions: `+"`%s/builder/conversation/YYYY-MM-DD/session-{id}-conversation.json`"+` — workshop chat histories
-- Improve ledger: `+"`%s/builder/improve.html`"+` — the Pulse log: single source-of-truth entry point for verdict pills, the goal card, open findings, and Decision cards. Older detail may live in referenced `+"`%s/builder/improve-archive/YYYY-MM.html`"+` files.
+- Improve ledger: `+"`%s/builder/improve.html`"+` — the newest-first Pulse history for Signals / Kizuki, Reflection / Hansei, and Improvements / Kaizen. Goal / Ikigai comes directly from `+"`soul/soul.md`"+`; do not duplicate a Goal/Profile card here. Older detail may live in referenced `+"`%s/builder/improve-archive/YYYY-MM.html`"+` files.
 - Context store: `+"`%s/knowledgebase/context/context.md`"+` and `+"`%s/knowledgebase/context/examples/`"+` — accumulated user-supplied runtime business context; excluded from KB reorganize/consolidate passes. Each capture is recorded as a User rule card in `+"`builder/improve.html`"+`.
 `, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath))
 

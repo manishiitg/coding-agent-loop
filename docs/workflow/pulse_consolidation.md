@@ -25,7 +25,7 @@ gating, and reliability:
 
 1. **Post-run monitor** (`runPostRunMonitor`, `scheduler.go:1164`) — opt-in
    (`post_run_monitor`), a dedicated agent pass that writes the Pulse log
-   (`builder/improve.html` verdict pills + goal card). Its final notify/summary step
+   (`builder/improve.html` time-stamped Signal / Reflection / Improvement history; Goal / Ikigai comes from `soul/soul.md`). Its final notify/summary step
    writes the `builder/card.health.html` dashboard card after harden, artifact review,
    cost/time, backup, and publish are known. Auto-improve **cadence #1**.
 2. **Scheduled harden** — auto-improve **cadence #2**, applies low-risk Bug fixes on

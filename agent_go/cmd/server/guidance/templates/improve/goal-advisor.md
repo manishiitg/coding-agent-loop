@@ -17,14 +17,14 @@ Do not launch nested maintenance reviewers. If you find operational breakage, st
 SOURCE-OF-TRUTH HIERARCHY
 1. `soul/soul.md` defines stable intent: objective, success criteria, and only explicit user-approved constraints. Architecture, implementation choices, and agent-inferred assumptions found there are not automatically authoritative; challenge them and keep the current "how" in plan/config artifacts.
 2. Retained runs and evals prove reality: actual outputs, tool logs, validation, costs, timing, and evaluation reports.
-3. `builder/improve.html` carries the shared Pulse/Goal Advisor history: Maintenance Radar, Bug/Goal verdicts, decisions, open findings, human-input cards, and queued Chief of Staff recommendations.
+3. `builder/improve.html` carries the shared Pulse/Goal Advisor history: Maintenance Radar, Bug/Goal verdicts, decisions, open findings, answered question outcomes, and queued Chief of Staff recommendations. Pending questions remain in SQLite and are rendered separately by Runloop.
 4. `planning/plan.json` is the current attempt, not proof that the approach is right.
 5. Reports and dashboards are user-facing measurement surfaces. Treat them as evidence only when their data is live and supported.
 
 OPENING
 1. Read `soul/soul.md` and extract objective + success criteria.
-2. Read `builder/improve.html`: current goal card, Maintenance Radar, recent Bug/Goal verdicts, open findings, prior Goal Advisor decisions, human-input cards, queued Chief of Staff recommendations (`.cos-rec`, especially `data-status="queued_goal_advisor"`), and any `.advisor-experiment` card. Treat `builder/improve.html` as the durable experiment source of truth; SQLite is only the operational question/module-state mirror.
-3. Read answered human input from the scheduler-provided preface when present. After using an answer, call `mark_human_input_consumed` and remove or replace the matching visible question card in `builder/improve.html` so it no longer appears as an active ask.
+2. Read `builder/improve.html`: Maintenance Radar, recent Bug/Goal verdicts, open findings, prior Goal Advisor decisions, answered question outcomes, queued Chief of Staff recommendations (`.cos-rec`, especially `data-status="queued_goal_advisor"`), and any `.advisor-experiment` card. Read the Goal itself only from `soul/soul.md`. Treat `builder/improve.html` as the durable experiment source of truth; SQLite is only the operational question/module-state mirror.
+3. Read answered human input from the scheduler-provided preface when present. After using an answer, call `mark_human_input_consumed` and add/update one compact Reflection / Hansei question-and-answer outcome card; there is no active-question card in the HTML.
 4. Read `planning/plan.json`, `planning/changelog/`, and `evaluation/evaluation_plan.json`.
 5. Read `variables/variables.json` and scope evidence to the configured group names when provided.
 6. Build a bounded evidence window from retained runs:
@@ -193,7 +193,7 @@ Action:
   create a separate metrics framework
 - keep the scope to what the user approved unless new evidence reveals the proposal is unsafe or stale
 - call `mark_human_input_consumed` with the concrete outcome after applying, rejecting as stale, or deferring
-- remove or replace the matching visible question card in `builder/improve.html` with a short outcome so the Pulse HTML no longer shows it as active
+- add or update a compact Reflection / Hansei question-and-answer outcome card with `data-pulse-section="reflection"`, the actual answer, and the applied result
 - update the matching `.advisor-experiment` card in place to `data-status="running"`, preserve its stable experiment id, and retain the baseline, metric, guardrails, review checkpoint, and rollback condition
 
 2. `eval_update`
@@ -214,7 +214,7 @@ Action:
 Use when an expert strategy idea is high leverage but needs user/business judgment or stronger evidence before changing the plan. Operational correctness and deterministic eval wiring are never advisor proposals.
 Action:
 - log proposal-only as `Decision - Goal Advisor - Proposed`
-- if a decision is needed, call `create_human_input_request(workspace_path="<current workflow>", source="goal_advisor", input_id="plan-proposal-<stable-slug>", options=[approve,reject,defer], context="<proposal + exact intended plan/config/eval/report edits + metric definition and regular measurement-step contract when needed + rationale + expected impact + risk + evidence>")`
+- if a decision is needed, call `create_human_input_request(workspace_path="<current workflow>", source="goal_advisor", input_id="plan-proposal-<stable-slug>", options=[approve,reject,defer], context="<proposal + exact intended plan/config/eval/report edits + metric definition and regular measurement-step contract when needed + rationale + expected impact + risk + evidence>")`; do not duplicate the pending question in HTML
 - do not change the plan until a later Pulse run sees the approved answer
 - create or update exactly one `.advisor-experiment` card using the HTML contract below; the card and human-input request must share the same stable slug
 
@@ -236,6 +236,7 @@ PHASE 4 - APPLY BOUNDS
 
 CLOSE-OUT
 Update `builder/improve.html` before finishing. Follow `get_reference_doc(kind="review-improve-log")`.
+- Every Goal Advisor timeline card uses `data-pulse-section="improvements"` and `data-module="goal_advisor"`. Historical question-and-answer outcomes use `data-pulse-section="reflection"` with `data-module="goal_advisor"`.
 - Refresh the top `Assumptions challenged` section: keep at most three active consequential assumptions, remove resolved ones, and never present an explicit user constraint as merely inferred.
 - Use `Decision - Goal Advisor - Applied` for applied plan/eval/report measurement changes.
 - Use `Decision - Goal Advisor - Proposed` for proposal-only advisor ideas.

@@ -12,7 +12,9 @@ import { WORKFLOW_LOG_REFRESH_EVENT } from './workflowEvents'
 // document gets a data-theme attribute on <html> (the skeleton's CSS keys its
 // dark palette on it); a legacy bare fragment gets wrapped in a minimal themed
 // shell so it's at least readable in dark mode.
-function applyThemeToLog(content: string, isDark: boolean): string {
+// Exported for focused renderer tests; this module also owns the production viewer.
+// eslint-disable-next-line react-refresh/only-export-components
+export function applyThemeToLog(content: string, isDark: boolean): string {
   const themeAttr = isDark ? 'dark' : 'light'
   const trimmed = content.trimStart()
   if (/^<(!doctype|html)/i.test(trimmed)) {
@@ -175,15 +177,13 @@ export function LogViewer({ workspacePath }: LogViewerProps) {
   if (exists === false || !content.trim()) {
     return (
       <div className="h-full w-full overflow-y-auto overscroll-y-contain bg-muted/30 [scrollbar-gutter:stable] dark:bg-black/20">
-        <ReportHumanInputPanel workspacePath={workspacePath} className="m-3 mb-2" />
+        <ReportHumanInputPanel workspacePath={workspacePath} contentMode="pending" className="m-3 mb-2" />
         <div className="flex min-h-full items-center justify-center p-6 text-center">
           <div className="max-w-md text-sm text-muted-foreground">
-            No Pulse log yet. Run <code className="rounded bg-muted px-1">/goal-advisor</code> to set
-            up recurring runs + Goal Advisor — scheduled runs, Pulse, and advisor decisions record
-            entries here, and it seeds the success criteria along the way. (The post-run monitor also
-            records here after any scheduled run;{' '}
-            <code className="rounded bg-muted px-1">/define-success</code> just seeds the criteria on
-            its own.)
+            No Pulse log yet. Run <code className="rounded bg-muted px-1">/pulse</code> for a one-off review,
+            or <code className="rounded bg-muted px-1">/pulse-setup</code> to enable recurring Pulse after scheduled runs.
+            Use <code className="rounded bg-muted px-1">/define-success</code> first when the workflow still lacks
+            an objective and measurable success criteria.
           </div>
         </div>
       </div>
@@ -195,7 +195,7 @@ export function LogViewer({ workspacePath }: LogViewerProps) {
   // full-screen Pulse look artificially narrow.
   return (
     <div className="h-full w-full overflow-y-auto overscroll-y-contain bg-muted/30 [scrollbar-gutter:stable] dark:bg-black/20">
-      <ReportHumanInputPanel workspacePath={workspacePath} className="m-3 mb-2" />
+      <ReportHumanInputPanel workspacePath={workspacePath} contentMode="pending" className="m-3 mb-2" />
       {archivePath && (
         <div className="flex h-10 items-center gap-2 border-b border-border px-3 text-xs text-muted-foreground">
           <button

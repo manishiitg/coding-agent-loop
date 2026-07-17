@@ -1,18 +1,21 @@
-import { useEffect, useRef, useState, type SyntheticEvent } from 'react';
+import { useEffect, useRef, useState, type Ref, type SyntheticEvent } from 'react';
 
 interface HtmlRendererProps {
   content: string;
   onLinkClick?: (href: string) => boolean;
   autoHeight?: boolean;
+  initialHeight?: number;
+  iframeRef?: Ref<HTMLIFrameElement>;
+  onFrameLoad?: (frame: HTMLIFrameElement) => void;
 }
 
-export function HtmlRenderer({ content, onLinkClick, autoHeight = false }: HtmlRendererProps) {
-  const [frameHeight, setFrameHeight] = useState(600);
+export function HtmlRenderer({ content, onLinkClick, autoHeight = false, initialHeight = 600, iframeRef, onFrameLoad }: HtmlRendererProps) {
+  const [frameHeight, setFrameHeight] = useState(initialHeight);
   const frameCleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    if (autoHeight) setFrameHeight(600);
-  }, [autoHeight, content]);
+    if (autoHeight) setFrameHeight(initialHeight);
+  }, [autoHeight, content, initialHeight]);
 
   useEffect(() => () => frameCleanupRef.current?.(), []);
 
@@ -70,11 +73,13 @@ export function HtmlRenderer({ content, onLinkClick, autoHeight = false }: HtmlR
       resizeObserver?.disconnect();
       window.cancelAnimationFrame(animationFrame);
     };
+    onFrameLoad?.(event.currentTarget);
   };
 
   return (
     <div className={autoHeight ? 'w-full' : 'w-full h-full flex flex-col'}>
       <iframe
+        ref={iframeRef}
         srcDoc={content}
         className={autoHeight ? 'block w-full border-0' : 'flex-1 w-full border-0'}
         style={autoHeight ? { height: `${frameHeight}px` } : undefined}

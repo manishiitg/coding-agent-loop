@@ -1,8 +1,6 @@
 package server
 
 import (
-	"fmt"
-	"log"
 	"reflect"
 	"sort"
 	"strings"
@@ -10,8 +8,8 @@ import (
 	"time"
 )
 
-// RuntimePhase is the coordinator's normalized lifecycle vocabulary. Phase 1
-// observes and compares this state only; existing stores remain authoritative.
+// RuntimePhase is the coordinator's normalized lifecycle vocabulary exposed by
+// every session-facing runtime API.
 type RuntimePhase string
 
 const (
@@ -55,8 +53,8 @@ type RuntimeTerminalSnapshot struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-// RuntimeSnapshot is an immutable, revisioned observer view assembled from the
-// existing runtime stores. Callers always receive deep copies.
+// RuntimeSnapshot is the immutable, revisioned session lifecycle read model.
+// It is assembled from the domain stores and callers always receive deep copies.
 type RuntimeSnapshot struct {
 	SessionID        string                      `json:"session_id"`
 	Generation       uint64                      `json:"generation"`
@@ -79,12 +77,14 @@ type RuntimeSnapshot struct {
 }
 
 type runtimeCoordinatorRecord struct {
-	snapshot              RuntimeSnapshot
-	lastMismatchSignature string
+	snapshot            RuntimeSnapshot
+	terminalBoundary    bool
+	generationStartedAt time.Time
 }
 
-// RuntimeCoordinator stores observer snapshots. It deliberately has no
-// transition APIs that mutate the existing runtime stores in Phase 1.
+// RuntimeCoordinator is the authoritative read model for session lifecycle.
+// Runtime stores still own their domain mutations; all session-facing reads are
+// normalized through this immutable, revisioned snapshot.
 type RuntimeCoordinator struct {
 	mu           sync.RWMutex
 	records      map[string]runtimeCoordinatorRecord
@@ -103,6 +103,18 @@ func (c *RuntimeCoordinator) Observe(candidate RuntimeSnapshot) (RuntimeSnapshot
 	defer c.mu.Unlock()
 
 	previous, exists := c.records[candidate.SessionID]
+	if exists && candidate.Generation > 0 && candidate.Generation < previous.snapshot.Generation {
+		return cloneRuntimeSnapshot(previous.snapshot), false
+	}
+	if exists && previous.terminalBoundary {
+		return cloneRuntimeSnapshot(previous.snapshot), false
+	}
+	if exists && !previous.generationStartedAt.IsZero() {
+		evidenceAt := latestRuntimeTime(candidate.StartedAt, candidate.LastProgressAt)
+		if evidenceAt.IsZero() || evidenceAt.Before(previous.generationStartedAt) {
+			return cloneRuntimeSnapshot(previous.snapshot), false
+		}
+	}
 	candidate.Generation = runtimeSnapshotGeneration(previous.snapshot, candidate, exists)
 	if exists && runtimeSnapshotsSemanticallyEqual(previous.snapshot, candidate) {
 		return cloneRuntimeSnapshot(previous.snapshot), false
@@ -114,6 +126,79 @@ func (c *RuntimeCoordinator) Observe(candidate RuntimeSnapshot) (RuntimeSnapshot
 	previous.snapshot = cloneRuntimeSnapshot(candidate)
 	c.records[candidate.SessionID] = previous
 	return cloneRuntimeSnapshot(candidate), true
+}
+
+// MarkTerminalBoundary makes Stop/failure authoritative immediately. Late
+// observations from the previous generation cannot reopen the session; only
+// StartGeneration clears this boundary.
+func (c *RuntimeCoordinator) MarkTerminalBoundary(sessionID string, phase RuntimePhase, reason string) (RuntimeSnapshot, bool) {
+	if c == nil || strings.TrimSpace(sessionID) == "" || !runtimePhaseIsTerminal(phase) {
+		return RuntimeSnapshot{}, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	record := c.records[sessionID]
+	if record.terminalBoundary {
+		return cloneRuntimeSnapshot(record.snapshot), false
+	}
+	snapshot := cloneRuntimeSnapshot(record.snapshot)
+	snapshot.SessionID = sessionID
+	if snapshot.Generation == 0 {
+		snapshot.Generation = 1
+	}
+	c.nextRevision++
+	snapshot.Revision = c.nextRevision
+	snapshot.Phase = phase
+	snapshot.Reason = strings.TrimSpace(reason)
+	snapshot.ForegroundTurn.Busy = false
+	snapshot.ForegroundTurn.HasCancel = false
+	snapshot.ForegroundTurn.CanSteer = false
+	snapshot.BackgroundLive = false
+	snapshot.TerminalBusy = false
+	snapshot.WaitingForUser = false
+	snapshot.WaitingMessage = ""
+	now := time.Now().UTC()
+	snapshot.LastProgressAt = latestRuntimeTime(snapshot.LastProgressAt, now)
+	snapshot.CompletedAt = &now
+	snapshot.ObservedAt = now
+	record.snapshot = cloneRuntimeSnapshot(snapshot)
+	record.terminalBoundary = true
+	c.records[sessionID] = record
+	return cloneRuntimeSnapshot(snapshot), true
+}
+
+// StartGeneration explicitly reopens a stopped session for a new user turn.
+// It is the only operation that clears an explicit terminal boundary.
+func (c *RuntimeCoordinator) StartGeneration(sessionID, reason string) (RuntimeSnapshot, bool) {
+	if c == nil || strings.TrimSpace(sessionID) == "" {
+		return RuntimeSnapshot{}, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	record := c.records[sessionID]
+	snapshot := cloneRuntimeSnapshot(record.snapshot)
+	snapshot.SessionID = sessionID
+	if snapshot.Generation == 0 {
+		snapshot.Generation = 1
+	} else {
+		snapshot.Generation++
+	}
+	c.nextRevision++
+	snapshot.Revision = c.nextRevision
+	snapshot.Phase = runtimePhaseStarting
+	snapshot.Reason = strings.TrimSpace(reason)
+	snapshot.StartedAt = time.Time{}
+	snapshot.LastProgressAt = time.Time{}
+	snapshot.CompletedAt = nil
+	now := time.Now().UTC()
+	snapshot.ObservedAt = now
+	record.snapshot = cloneRuntimeSnapshot(snapshot)
+	record.terminalBoundary = false
+	record.generationStartedAt = now
+	c.records[sessionID] = record
+	return cloneRuntimeSnapshot(snapshot), true
 }
 
 func (c *RuntimeCoordinator) Snapshot(sessionID string) (RuntimeSnapshot, bool) {
@@ -129,9 +214,8 @@ func (c *RuntimeCoordinator) Snapshot(sessionID string) (RuntimeSnapshot, bool) 
 	return cloneRuntimeSnapshot(record.snapshot), true
 }
 
-// Evict removes observer state when the authoritative session retention window
-// expires. The coordinator is non-authoritative, so it must never outlive the
-// session it mirrors.
+// Evict removes runtime state when the authoritative session retention window
+// expires, so the read model never outlives the session it represents.
 func (c *RuntimeCoordinator) Evict(sessionID string) {
 	if c == nil || strings.TrimSpace(sessionID) == "" {
 		return
@@ -139,36 +223,6 @@ func (c *RuntimeCoordinator) Evict(sessionID string) {
 	c.mu.Lock()
 	delete(c.records, sessionID)
 	c.mu.Unlock()
-}
-
-func (c *RuntimeCoordinator) CompareLegacy(snapshot RuntimeSnapshot, legacy SessionDisplayStatus) {
-	if c == nil || snapshot.SessionID == "" {
-		return
-	}
-	observerDisplay := runtimePhaseDisplayStatus(snapshot.Phase)
-	signature := ""
-	if observerDisplay != legacy.Status || snapshot.ForegroundTurn.CanSteer != legacy.CanSteer ||
-		snapshot.BackgroundLive != legacy.HasRunningBackgroundAgents {
-		signature = fmt.Sprintf("phase=%s display=%s legacy=%s steer=%t/%t bg=%t/%t",
-			snapshot.Phase, observerDisplay, legacy.Status,
-			snapshot.ForegroundTurn.CanSteer, legacy.CanSteer,
-			snapshot.BackgroundLive, legacy.HasRunningBackgroundAgents)
-	}
-
-	c.mu.Lock()
-	record, ok := c.records[snapshot.SessionID]
-	if !ok || record.snapshot.Revision != snapshot.Revision || record.lastMismatchSignature == signature {
-		c.mu.Unlock()
-		return
-	}
-	record.lastMismatchSignature = signature
-	c.records[snapshot.SessionID] = record
-	c.mu.Unlock()
-
-	if signature != "" {
-		log.Printf("[RUNTIME_OBSERVER] mismatch session=%s generation=%d revision=%d %s reason=%q",
-			snapshot.SessionID, snapshot.Generation, snapshot.Revision, signature, snapshot.Reason)
-	}
 }
 
 func runtimeSnapshotGeneration(previous, candidate RuntimeSnapshot, exists bool) uint64 {
@@ -234,6 +288,10 @@ func runtimePhaseIsTerminal(phase RuntimePhase) bool {
 	return phase == runtimePhaseCompleted || phase == runtimePhaseFailed || phase == runtimePhaseCanceled
 }
 
+func runtimePhaseIsLive(phase RuntimePhase) bool {
+	return phase == runtimePhaseStarting || phase == runtimePhaseRunning || phase == runtimePhaseWaiting
+}
+
 func sortRuntimeSnapshot(snapshot *RuntimeSnapshot) {
 	sort.Slice(snapshot.ChildExecutions, func(i, j int) bool {
 		return snapshot.ChildExecutions[i].ExecutionID < snapshot.ChildExecutions[j].ExecutionID
@@ -246,15 +304,55 @@ func sortRuntimeSnapshot(snapshot *RuntimeSnapshot) {
 	})
 }
 
-func (api *StreamingAPI) observeRuntimeSnapshot(sessionID string, legacy *SessionDisplayStatus) (RuntimeSnapshot, bool) {
+func (api *StreamingAPI) observeRuntimeSnapshot(sessionID string) (RuntimeSnapshot, bool) {
 	if api == nil || api.runtimeCoordinator == nil || strings.TrimSpace(sessionID) == "" {
 		return RuntimeSnapshot{}, false
 	}
 	snapshot, changed := api.runtimeCoordinator.Observe(api.collectRuntimeSnapshot(sessionID))
-	if legacy != nil {
-		api.runtimeCoordinator.CompareLegacy(snapshot, *legacy)
-	}
 	return snapshot, changed
+}
+
+// authoritativeRuntimeSnapshot is the sole lifecycle read entry point. It
+// refreshes the normalized snapshot from current domain stores and returns the
+// coordinator-owned immutable revision.
+func (api *StreamingAPI) authoritativeRuntimeSnapshot(sessionID string) (RuntimeSnapshot, bool) {
+	if api == nil || strings.TrimSpace(sessionID) == "" {
+		return RuntimeSnapshot{}, false
+	}
+	if api.runtimeCoordinator == nil {
+		return api.collectRuntimeSnapshot(sessionID), true
+	}
+	snapshot, _ := api.runtimeCoordinator.Observe(api.collectRuntimeSnapshot(sessionID))
+	return snapshot, true
+}
+
+// authoritativeRuntimeSnapshotForSession supplies lifecycle metadata when a
+// historical/event-backed execution tree has no in-memory active-session row.
+func (api *StreamingAPI) authoritativeRuntimeSnapshotForSession(session *ActiveSessionInfo) (RuntimeSnapshot, bool) {
+	if session == nil || strings.TrimSpace(session.SessionID) == "" {
+		return RuntimeSnapshot{}, false
+	}
+	candidate := api.collectRuntimeSnapshot(session.SessionID)
+	if candidate.RawSessionStatus == "" {
+		candidate.RawSessionStatus = session.Status
+		candidate.StartedAt = earliestRuntimeTime(candidate.StartedAt, session.CreatedAt)
+		candidate.LastProgressAt = latestRuntimeTime(candidate.LastProgressAt, session.LastActivity)
+		candidate.WaitingForUser = session.NeedsUserInput
+		candidate.WaitingMessage = session.WaitingMessage
+		candidate.Phase, candidate.Reason = deriveRuntimePhase(candidate, time.Now().UTC())
+		if runtimePhaseIsTerminal(candidate.Phase) {
+			completedAt := candidate.LastProgressAt
+			if completedAt.IsZero() {
+				completedAt = time.Now().UTC()
+			}
+			candidate.CompletedAt = &completedAt
+		}
+	}
+	if api.runtimeCoordinator == nil {
+		return candidate, true
+	}
+	snapshot, _ := api.runtimeCoordinator.Observe(candidate)
+	return snapshot, true
 }
 
 func (api *StreamingAPI) collectRuntimeSnapshot(sessionID string) RuntimeSnapshot {
@@ -268,6 +366,11 @@ func (api *StreamingAPI) collectRuntimeSnapshot(sessionID string) RuntimeSnapsho
 		snapshot.WaitingForUser = active.NeedsUserInput
 		snapshot.WaitingMessage = active.WaitingMessage
 		snapshot.ForegroundTurn.Synthetic = active.IsSyntheticTurn
+	}
+	if api.eventStore != nil {
+		waiting, _, _, message := api.deriveSessionUserInputState(sessionID)
+		snapshot.WaitingForUser = waiting
+		snapshot.WaitingMessage = message
 	}
 
 	snapshot.ForegroundTurn.Busy = api.isSessionBusy(sessionID)

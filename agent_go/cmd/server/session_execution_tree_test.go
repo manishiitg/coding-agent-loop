@@ -194,6 +194,33 @@ func TestBuildSessionExecutionTreeKeepsOldRunningBackgroundAgentActive(t *testin
 	}
 }
 
+func TestHistoricalChildCompletionDoesNotStopRunningParent(t *testing.T) {
+	now := time.Now().UTC()
+	const sessionID = "session-with-history"
+	completedAt := now.Add(-time.Minute)
+	api := &StreamingAPI{
+		runtimeCoordinator: NewRuntimeCoordinator(),
+		bgAgentRegistry:    NewBackgroundAgentRegistry(),
+		activeSessions: map[string]*ActiveSessionInfo{
+			sessionID: {SessionID: sessionID, Status: "running", CreatedAt: now.Add(-time.Hour), LastActivity: now.Add(-time.Minute)},
+		},
+		trackedWorkflowExecutions: map[string]*TrackedWorkflowExecution{
+			"old-child": {
+				ExecutionID: "old-child", SessionID: sessionID, Kind: "workflow_step",
+				Status: trackedExecutionStatusCompleted, StartedAt: now.Add(-2 * time.Minute), CompletedAt: &completedAt,
+			},
+		},
+	}
+
+	tree := api.buildSessionExecutionTree(api.activeSessions[sessionID])
+	if tree.Summary.CompletedCount != 1 {
+		t.Fatalf("completed history count = %d, want 1", tree.Summary.CompletedCount)
+	}
+	if tree.Summary.DisplayStatus != sessionExecutionDisplayIdle || tree.RuntimeState.Phase != runtimePhaseIdle {
+		t.Fatalf("historical child stopped parent: display=%q runtime=%q", tree.Summary.DisplayStatus, tree.RuntimeState.Phase)
+	}
+}
+
 func TestBuildSessionExecutionTreeIgnoresStreamingLifecycleEvents(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	defer store.Stop()

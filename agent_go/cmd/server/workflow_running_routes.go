@@ -82,6 +82,9 @@ func (api *StreamingAPI) handleGetRunningWorkflow(w http.ResponseWriter, r *http
 		http.Error(w, `{"error":"running workflow not found"}`, http.StatusNotFound)
 		return
 	}
+	if snapshot, ok := api.authoritativeRuntimeSnapshot(sessionID); ok {
+		out.RuntimeState = &snapshot
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
 }
@@ -148,6 +151,9 @@ func (api *StreamingAPI) handleUpdateRunningWorkflow(w http.ResponseWriter, r *h
 	}
 	out := trackedExecutionToActive(exec)
 	api.trackedWorkflowExecutionsMux.Unlock()
+	if snapshot, ok := api.authoritativeRuntimeSnapshot(sessionID); ok {
+		out.RuntimeState = &snapshot
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)

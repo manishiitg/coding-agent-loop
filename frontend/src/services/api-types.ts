@@ -555,6 +555,52 @@ export type PollingEvent = PollingEventSchema & {
 // Re-export the EventTypeString for convenience
 export type { EventTypeString }
 
+export type RuntimePhase = 'starting' | 'running' | 'waiting' | 'idle' | 'completed' | 'failed' | 'canceled'
+
+export interface RuntimeSnapshot {
+  session_id: string
+  generation: number
+  revision: number
+  phase: RuntimePhase
+  reason?: string
+  raw_session_status?: string
+  foreground_turn: {
+    busy: boolean
+    has_cancel: boolean
+    can_steer: boolean
+    synthetic: boolean
+  }
+  child_executions?: Array<{
+    execution_id: string
+    kind?: string
+    status: string
+    started_at: string
+    completed_at?: string
+  }>
+  background_agents?: Array<{
+    agent_id: string
+    status: string
+    created_at: string
+    completed_at?: string
+  }>
+  background_live: boolean
+  terminals?: Array<{
+    terminal_id: string
+    execution_id?: string
+    state: string
+    active: boolean
+    has_tmux: boolean
+    updated_at: string
+  }>
+  terminal_busy: boolean
+  waiting_for_user: boolean
+  waiting_message?: string
+  last_progress_at: string
+  started_at: string
+  completed_at?: string
+  observed_at: string
+}
+
 export interface GetEventsResponse {
   events: PollingEvent[]
   has_more: boolean
@@ -565,6 +611,7 @@ export interface GetEventsResponse {
   has_running_background_agents?: boolean // Whether background agents are still running for this session
   is_synthetic_turn?: boolean // True when running auto-notification turn (input remains locked as normal)
   can_steer?: boolean // True when a live foreground agent can accept steer injection
+  runtime_state?: RuntimeSnapshot
 }
 
 export interface TerminalSnapshot {
@@ -648,6 +695,7 @@ export interface TerminalStatus {
 export interface ListTerminalsResponse {
   terminals: TerminalSnapshot[]
   total: number
+  runtime_states?: Record<string, RuntimeSnapshot>
 }
 
 // Observer APIs removed - no longer needed
@@ -678,6 +726,9 @@ export interface ActiveSessionInfo {
   waiting_message?: string
   waiting_since?: string
   runtime?: ChatHistoryAgentRuntime
+  display_status?: 'busy' | 'idle' | 'stopped'
+  can_steer?: boolean
+  runtime_state?: RuntimeSnapshot
 }
 
 export interface GetActiveSessionsResponse {
@@ -704,6 +755,7 @@ export interface SessionStatusResponse {
   query?: string
   can_steer?: boolean
   has_retained_tmux_session?: boolean
+  runtime_state?: RuntimeSnapshot
 }
 
 export interface SessionExecutionTreeNode {
@@ -739,6 +791,7 @@ export interface SessionExecutionTreeResponse {
   session_id: string
   root: SessionExecutionTreeNode
   summary: SessionExecutionTreeSummary
+  runtime_state?: RuntimeSnapshot
 }
 
 // Define MCPServerConfig type to match backend
@@ -1095,6 +1148,7 @@ export interface SSEEventMessage {
   has_running_background_agents?: boolean
   is_synthetic_turn?: boolean
   can_steer?: boolean
+  runtime_state?: RuntimeSnapshot
 }
 
 export interface SSEStatusMessage {
@@ -1103,6 +1157,7 @@ export interface SSEStatusMessage {
   has_running_background_agents?: boolean
   is_synthetic_turn?: boolean
   can_steer?: boolean
+  runtime_state?: RuntimeSnapshot
 }
 
 export interface CreateChatSessionRequest {

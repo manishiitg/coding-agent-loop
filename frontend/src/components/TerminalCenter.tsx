@@ -6,7 +6,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { agentApi } from '../services/api'
 import { reconcileTerminalSnapshots } from '../utils/terminalSnapshotIdentity'
-import type { PollingEvent, TerminalSnapshot } from '../services/api-types'
+import type { PollingEvent, RuntimeSnapshot, TerminalSnapshot } from '../services/api-types'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { normalizeEventViewMode, useChatStore } from '../stores/useChatStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
@@ -26,6 +26,7 @@ import {
 } from '../utils/terminalRailOrganization'
 import { MarkdownRenderer } from './ui/MarkdownRenderer'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
+import { runtimeDisplayStatus } from '../utils/runtimeActivity'
 
 // Module-level ansi_up singleton for synthetic/structured terminal rows.
 // Real tmux panes render raw ANSI through xterm.js.
@@ -2849,6 +2850,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
   // without leaking terminals from other chat tabs / unrelated workflows.
   const viewAll = false
   const [terminals, setTerminals] = useState<TerminalSnapshot[]>([])
+  const [runtimeStatesBySession, setRuntimeStatesBySession] = useState<Record<string, RuntimeSnapshot>>({})
   // archivedTurnContents caches `:turn-N` snapshot bodies so we can stitch
   // prior turns into the live synthetic terminal's scrollback without
   // refetching on every render. Archived turns are immutable once written,
@@ -3024,6 +3026,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
 
   useEffect(() => {
     setTerminals([])
+    setRuntimeStatesBySession({})
     setSelectedID(null)
     setUserSelectedID(null)
     selectedTerminalIDRef.current = null
@@ -3246,6 +3249,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
 
       const nextTerminals = dedupeTerminalsByID(visibleTerminals)
       if (fetchRequestSeqRef.current !== requestSeq) return
+      setRuntimeStatesBySession(response.runtime_states || {})
       setTerminals(current => {
         const currentMatchesScope = (
           viewAll ||
@@ -3990,6 +3994,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     (() => {
       const preValidationChip = terminalPreValidationChip(terminal, terminalTheme)
       const state = terminalState(terminal)
+      const sessionLifecycle = runtimeDisplayStatus(runtimeStatesBySession[terminal.session_id])
       const isRunning = state === 'running'
       const railAge = formatRailAge(terminal)
       const railTransport = formatRailTransportChip(terminal)
@@ -4101,6 +4106,9 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
             )}
             {state === 'closing' && (
               <span className={`shrink-0 ${terminalTheme.warningText}`}>· {terminalStateLabel(terminal)}</span>
+            )}
+            {isMainAgentTerminal(terminal) && sessionLifecycle && (
+              <span className="shrink-0 text-neutral-500">· session {sessionLifecycle}</span>
             )}
           </div>
           )}

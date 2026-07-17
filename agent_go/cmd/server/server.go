@@ -210,34 +210,37 @@ type ServerConfig struct {
 
 // ActiveSessionInfo represents an active session for page refresh recovery
 type ActiveSessionInfo struct {
-	SessionID                   string     `json:"session_id"`
-	AgentMode                   string     `json:"agent_mode"`
-	Status                      string     `json:"status"` // "running", "paused", "completed"
-	LastActivity                time.Time  `json:"last_activity"`
-	CreatedAt                   time.Time  `json:"created_at"`
-	Query                       string     `json:"query,omitempty"`
-	Title                       string     `json:"title,omitempty"`
-	WorkflowName                string     `json:"workflow_name,omitempty"`
-	WorkflowLabel               string     `json:"workflow_label,omitempty"`
-	WorkspacePath               string     `json:"workspace_path,omitempty"`
-	PresetName                  string     `json:"preset_name,omitempty"`
-	PresetQueryID               string     `json:"preset_query_id,omitempty"`
-	PhaseID                     string     `json:"phase_id,omitempty"`
-	WorkshopMode                string     `json:"workshop_mode,omitempty"`
-	BotPlatform                 string     `json:"bot_platform,omitempty"`
-	TriggeredBy                 string     `json:"triggered_by,omitempty"`
-	LLMGuidance                 string     `json:"llm_guidance,omitempty"` // LLM guidance message for this session
-	ChatsFolder                 string     `json:"chats_folder,omitempty"` // Per-user Chats folder (default: _users/<userID>/Chats)
-	UserID                      string     `json:"-"`                      // User ID for session isolation (not exposed in JSON)
-	IsSyntheticTurn             bool       `json:"is_synthetic_turn"`      // True when running an auto-notification turn (not user-initiated)
-	HasRunningBackgroundAgents  bool       `json:"has_running_background_agents,omitempty"`
-	RunningBackgroundAgentCount int        `json:"running_background_agent_count,omitempty"`
-	HasRetainedTmuxSession      bool       `json:"has_retained_tmux_session,omitempty"`
-	CurrentExecutionName        string     `json:"current_execution_name,omitempty"`
-	NeedsUserInput              bool       `json:"needs_user_input,omitempty"`
-	WaitingEventType            string     `json:"waiting_event_type,omitempty"`
-	WaitingMessage              string     `json:"waiting_message,omitempty"`
-	WaitingSince                *time.Time `json:"waiting_since,omitempty"`
+	SessionID                   string           `json:"session_id"`
+	AgentMode                   string           `json:"agent_mode"`
+	Status                      string           `json:"status"` // "running", "paused", "completed"
+	LastActivity                time.Time        `json:"last_activity"`
+	CreatedAt                   time.Time        `json:"created_at"`
+	Query                       string           `json:"query,omitempty"`
+	Title                       string           `json:"title,omitempty"`
+	WorkflowName                string           `json:"workflow_name,omitempty"`
+	WorkflowLabel               string           `json:"workflow_label,omitempty"`
+	WorkspacePath               string           `json:"workspace_path,omitempty"`
+	PresetName                  string           `json:"preset_name,omitempty"`
+	PresetQueryID               string           `json:"preset_query_id,omitempty"`
+	PhaseID                     string           `json:"phase_id,omitempty"`
+	WorkshopMode                string           `json:"workshop_mode,omitempty"`
+	BotPlatform                 string           `json:"bot_platform,omitempty"`
+	TriggeredBy                 string           `json:"triggered_by,omitempty"`
+	LLMGuidance                 string           `json:"llm_guidance,omitempty"` // LLM guidance message for this session
+	ChatsFolder                 string           `json:"chats_folder,omitempty"` // Per-user Chats folder (default: _users/<userID>/Chats)
+	UserID                      string           `json:"-"`                      // User ID for session isolation (not exposed in JSON)
+	IsSyntheticTurn             bool             `json:"is_synthetic_turn"`      // True when running an auto-notification turn (not user-initiated)
+	HasRunningBackgroundAgents  bool             `json:"has_running_background_agents,omitempty"`
+	RunningBackgroundAgentCount int              `json:"running_background_agent_count,omitempty"`
+	HasRetainedTmuxSession      bool             `json:"has_retained_tmux_session,omitempty"`
+	CurrentExecutionName        string           `json:"current_execution_name,omitempty"`
+	NeedsUserInput              bool             `json:"needs_user_input,omitempty"`
+	WaitingEventType            string           `json:"waiting_event_type,omitempty"`
+	WaitingMessage              string           `json:"waiting_message,omitempty"`
+	WaitingSince                *time.Time       `json:"waiting_since,omitempty"`
+	DisplayStatus               string           `json:"display_status,omitempty"`
+	CanSteer                    bool             `json:"can_steer,omitempty"`
+	RuntimeState                *RuntimeSnapshot `json:"runtime_state,omitempty"`
 }
 
 // StreamingAPI represents the streaming API server
@@ -3781,7 +3784,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				api.setSyntheticTurn(sessionID, false)
 				api.setSessionBusy(sessionID, false)
 			}
-			api.observeRuntimeSnapshot(sessionID, nil)
+			api.observeRuntimeSnapshot(sessionID)
 			if queryInputLaneRelease != nil {
 				queryInputLaneRelease()
 			}
@@ -6238,7 +6241,7 @@ func (api *StreamingAPI) updateSessionStatus(sessionID, status string) {
 		log.Printf("[ACTIVE_SESSION] Updated session %s status to: %s", sessionID, status)
 	}
 	api.activeSessionsMux.Unlock()
-	api.observeRuntimeSnapshot(sessionID, nil)
+	api.observeRuntimeSnapshot(sessionID)
 }
 
 // removeSessionQueryID removes a completed workflow query from the session ->
@@ -6541,6 +6544,10 @@ func cloneActiveSessionInfo(session *ActiveSessionInfo) *ActiveSessionInfo {
 		waitingSince := *session.WaitingSince
 		copy.WaitingSince = &waitingSince
 	}
+	if session.RuntimeState != nil {
+		runtimeState := cloneRuntimeSnapshot(*session.RuntimeState)
+		copy.RuntimeState = &runtimeState
+	}
 	return &copy
 }
 
@@ -6560,9 +6567,8 @@ func (api *StreamingAPI) getAllActiveSessions() []*ActiveSessionInfo {
 
 	for _, session := range snapshots {
 		if normalizeSessionLifecycleStatus(session.Status) == sessionLifecycleRunning {
-			hasBg := api.bgAgentRegistry != nil && api.bgAgentRegistry.HasRunningAgents(session.SessionID)
-			hasRunningWork := api.sessionHasRunningWork(session.SessionID, hasBg, api.canSteerSession(session.SessionID))
-			if now.Sub(session.LastActivity) < inactivityTimeout || hasRunningWork {
+			runtimeState, _ := api.authoritativeRuntimeSnapshot(session.SessionID)
+			if now.Sub(session.LastActivity) < inactivityTimeout || runtimePhaseIsLive(runtimeState.Phase) {
 				sessions = append(sessions, session)
 			}
 			continue
@@ -6633,8 +6639,8 @@ func (api *StreamingAPI) cleanupInactiveSessionsAt(now time.Time) {
 		api.pendingMu.RLock()
 		hasPending := len(api.pendingCompletions[candidate.sessionID]) > 0 || api.completionRetryScheduled[candidate.sessionID]
 		api.pendingMu.RUnlock()
-		hasBg := api.bgAgentRegistry != nil && api.bgAgentRegistry.HasRunningAgents(candidate.sessionID)
-		if !hasPending && !api.sessionHasRunningWork(candidate.sessionID, hasBg, api.canSteerSession(candidate.sessionID)) {
+		runtimeState, _ := api.authoritativeRuntimeSnapshot(candidate.sessionID)
+		if !hasPending && !runtimePhaseIsLive(runtimeState.Phase) {
 			markInactive[candidate.sessionID] = candidate.lastActivity
 		}
 	}
@@ -6672,7 +6678,7 @@ func (api *StreamingAPI) cleanupInactiveSessionsAt(now time.Time) {
 	api.activeSessionsMux.Unlock()
 
 	for _, sessionID := range sessionsMarkedInactive {
-		api.observeRuntimeSnapshot(sessionID, nil)
+		api.observeRuntimeSnapshot(sessionID)
 	}
 
 	for _, sessionID := range sessionsToEvictRuntime {

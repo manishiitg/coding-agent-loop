@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { agentApi } from '../services/api'
 import type { SessionExecutionTreeResponse } from '../services/api-types'
+import { executionTreeRuntimeStatus } from '../utils/runtimeActivity'
 
 function getHttpStatus(error: unknown): number | undefined {
   if (!error || typeof error !== 'object') return undefined
@@ -17,7 +18,7 @@ export function useSessionExecutionTree(sessionId?: string | null, enabled: bool
       if (getHttpStatus(query.state.error) === 404) return false
       const data = query.state.data
       if (!data) return 3000
-      return data.summary.display_status === 'busy' ? 4000 : false
+      return executionTreeRuntimeStatus(data) === 'busy' ? 4000 : false
     },
     staleTime: 1000,
     retry: false,

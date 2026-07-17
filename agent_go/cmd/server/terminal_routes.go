@@ -63,8 +63,9 @@ var runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (st
 var forceCompleteCodingAgentTmuxSession = llmproviders.ForceCompleteCodingAgentTmuxSession
 
 type listTerminalsResponse struct {
-	Terminals []terminals.Snapshot `json:"terminals"`
-	Total     int                  `json:"total"`
+	Terminals     []terminals.Snapshot       `json:"terminals"`
+	Total         int                        `json:"total"`
+	RuntimeStates map[string]RuntimeSnapshot `json:"runtime_states,omitempty"`
 }
 
 type sendTerminalInputRequest struct {
@@ -147,9 +148,17 @@ func (api *StreamingAPI) handleListTerminals(w http.ResponseWriter, r *http.Requ
 		api.terminalPipeRecorder.ObserveSnapshots(filtered)
 	}
 
+	runtimeStates := make(map[string]RuntimeSnapshot)
+	for _, terminal := range filtered {
+		if _, exists := runtimeStates[terminal.SessionID]; exists {
+			continue
+		}
+		if snapshot, ok := api.authoritativeRuntimeSnapshot(terminal.SessionID); ok {
+			runtimeStates[terminal.SessionID] = snapshot
+		}
+	}
 	_ = json.NewEncoder(w).Encode(listTerminalsResponse{
-		Terminals: filtered,
-		Total:     len(filtered),
+		Terminals: filtered, Total: len(filtered), RuntimeStates: runtimeStates,
 	})
 }
 

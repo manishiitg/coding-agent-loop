@@ -4,7 +4,28 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 )
+
+func TestRuntimeCoordinatorDerivesWaitingForUserFromEventStore(t *testing.T) {
+	store := events.NewEventStore(10)
+	defer store.Stop()
+	const sessionID = "waiting-session"
+	now := time.Now().UTC()
+	store.AddEvent(sessionID, events.Event{ID: "question", Type: "request_human_feedback", SessionID: sessionID, Timestamp: now})
+	api := &StreamingAPI{
+		runtimeCoordinator: NewRuntimeCoordinator(), eventStore: store,
+		activeSessions: map[string]*ActiveSessionInfo{
+			sessionID: {SessionID: sessionID, Status: "running", CreatedAt: now.Add(-time.Minute), LastActivity: now},
+		},
+	}
+
+	snapshot, _ := api.authoritativeRuntimeSnapshot(sessionID)
+	if snapshot.Phase != runtimePhaseWaiting || !snapshot.WaitingForUser {
+		t.Fatalf("waiting event produced runtime state %#v", snapshot)
+	}
+}
 
 func TestRuntimeCoordinatorSnapshotsAreImmutableAndDeduplicated(t *testing.T) {
 	coordinator := NewRuntimeCoordinator()
@@ -54,7 +75,7 @@ func TestRuntimeCoordinatorEvictsRetainedSnapshot(t *testing.T) {
 	}
 }
 
-func TestSessionDisplayStatusDoesNotObserveOnRead(t *testing.T) {
+func TestSessionDisplayStatusReadsAuthoritativeCoordinator(t *testing.T) {
 	coordinator := NewRuntimeCoordinator()
 	api := &StreamingAPI{
 		runtimeCoordinator: coordinator,
@@ -69,13 +90,8 @@ func TestSessionDisplayStatusDoesNotObserveOnRead(t *testing.T) {
 	if status.Status != sessionExecutionDisplayBusy {
 		t.Fatalf("display status = %q, want busy", status.Status)
 	}
-	if _, ok := coordinator.Snapshot("session-1"); ok {
-		t.Fatal("display-status read performed an expensive runtime observation")
-	}
-
-	api.observeRuntimeSnapshot("session-1", &status)
 	if _, ok := coordinator.Snapshot("session-1"); !ok {
-		t.Fatal("explicit status-cadence observation was not recorded")
+		t.Fatal("display-status read did not update the authoritative runtime snapshot")
 	}
 }
 
@@ -101,6 +117,82 @@ func TestRuntimeCoordinatorStartsNewGenerationAfterIdle(t *testing.T) {
 
 	if idle.Generation != 1 || running.Generation != 2 || stillRunning.Generation != 2 {
 		t.Fatalf("unexpected generations: idle=%d running=%d progressed=%d", idle.Generation, running.Generation, stillRunning.Generation)
+	}
+}
+
+func TestRuntimeCoordinatorTerminalBoundaryRejectsStaleStateUntilExplicitRestart(t *testing.T) {
+	coordinator := NewRuntimeCoordinator()
+	startedAt := time.Now().Add(-time.Minute).UTC()
+	running, _ := coordinator.Observe(RuntimeSnapshot{
+		SessionID: "session-1", Phase: runtimePhaseRunning, StartedAt: startedAt,
+		ForegroundTurn: RuntimeForegroundSnapshot{Busy: true, HasCancel: true, CanSteer: true},
+		BackgroundLive: true, TerminalBusy: true, WaitingForUser: true,
+	})
+	stopped, changed := coordinator.MarkTerminalBoundary("session-1", runtimePhaseCanceled, "stopped by user")
+	if !changed || stopped.Phase != runtimePhaseCanceled || stopped.Generation != running.Generation {
+		t.Fatalf("terminal boundary = %#v changed=%t; running generation=%d", stopped, changed, running.Generation)
+	}
+	if stopped.ForegroundTurn.Busy || stopped.ForegroundTurn.HasCancel || stopped.ForegroundTurn.CanSteer ||
+		stopped.BackgroundLive || stopped.TerminalBusy || stopped.WaitingForUser {
+		t.Fatalf("terminal boundary retained live signals: %#v", stopped)
+	}
+
+	stale, changed := coordinator.Observe(RuntimeSnapshot{
+		SessionID: "session-1", Phase: runtimePhaseRunning, StartedAt: startedAt,
+		Reason: "late completion from old turn",
+	})
+	if changed || stale.Phase != runtimePhaseCanceled || stale.Revision != stopped.Revision {
+		t.Fatalf("stale observation reopened terminal generation: %#v changed=%t", stale, changed)
+	}
+
+	restarted, changed := coordinator.StartGeneration("session-1", "new user turn")
+	if !changed || restarted.Phase != runtimePhaseStarting || restarted.Generation != stopped.Generation+1 {
+		t.Fatalf("explicit restart = %#v changed=%t", restarted, changed)
+	}
+	staleAfterRestart, changed := coordinator.Observe(RuntimeSnapshot{
+		SessionID: "session-1", Phase: runtimePhaseRunning, StartedAt: startedAt,
+		LastProgressAt: startedAt.Add(30 * time.Second),
+	})
+	if changed || staleAfterRestart.Phase != runtimePhaseStarting || staleAfterRestart.Revision != restarted.Revision {
+		t.Fatalf("old generation overwrote restart boundary: %#v changed=%t", staleAfterRestart, changed)
+	}
+	staleCompletion, changed := coordinator.Observe(RuntimeSnapshot{
+		SessionID: "session-1", Phase: runtimePhaseCompleted, StartedAt: startedAt,
+		LastProgressAt: startedAt.Add(45 * time.Second),
+	})
+	if changed || staleCompletion.Phase != runtimePhaseStarting || staleCompletion.Revision != restarted.Revision {
+		t.Fatalf("old completion overwrote restart boundary: %#v changed=%t", staleCompletion, changed)
+	}
+	newProgressAt := time.Now().UTC().Add(time.Second)
+	resumed, changed := coordinator.Observe(RuntimeSnapshot{
+		SessionID: "session-1", Phase: runtimePhaseRunning, StartedAt: newProgressAt,
+		LastProgressAt: newProgressAt,
+	})
+	if !changed || resumed.Phase != runtimePhaseRunning || resumed.Generation != restarted.Generation {
+		t.Fatalf("new generation did not accept running observation: %#v changed=%t", resumed, changed)
+	}
+}
+
+func TestMarkSessionStoppedAsPreservesExplicitFailureOutcome(t *testing.T) {
+	coordinator := NewRuntimeCoordinator()
+	api := &StreamingAPI{
+		runtimeCoordinator: coordinator,
+		stoppedSessions:    map[string]bool{},
+	}
+	coordinator.Observe(RuntimeSnapshot{
+		SessionID: "failed-session",
+		Phase:     runtimePhaseRunning,
+		StartedAt: time.Now().Add(-time.Minute).UTC(),
+	})
+
+	api.markSessionStoppedAs("failed-session", runtimePhaseFailed, "terminal exited unexpectedly")
+
+	snapshot, ok := coordinator.Snapshot("failed-session")
+	if !ok || snapshot.Phase != runtimePhaseFailed || snapshot.Reason != "terminal exited unexpectedly" {
+		t.Fatalf("explicit failure cancellation = %#v, present=%t", snapshot, ok)
+	}
+	if !api.isSessionMarkedStopped("failed-session") {
+		t.Fatal("explicit failure did not set the hard stopped guard")
 	}
 }
 
@@ -144,7 +236,7 @@ func TestRuntimeCoordinatorCollectsExistingRuntimeStoresWithoutMutatingThem(t *t
 		},
 	}
 
-	snapshot, changed := api.observeRuntimeSnapshot("session-1", nil)
+	snapshot, changed := api.observeRuntimeSnapshot("session-1")
 	if !changed || snapshot.Phase != runtimePhaseRunning || len(snapshot.ChildExecutions) != 1 {
 		t.Fatalf("running aggregate = %#v changed=%t", snapshot, changed)
 	}
@@ -159,30 +251,8 @@ func TestRuntimeCoordinatorCollectsExistingRuntimeStoresWithoutMutatingThem(t *t
 	api.trackedWorkflowExecutions["child-1"].Status = trackedExecutionStatusCompleted
 	api.trackedWorkflowExecutions["child-1"].CompletedAt = &completedAt
 
-	completed, changed := api.observeRuntimeSnapshot("session-1", nil)
+	completed, changed := api.observeRuntimeSnapshot("session-1")
 	if !changed || completed.Phase != runtimePhaseCompleted || completed.CompletedAt == nil {
 		t.Fatalf("completed aggregate = %#v changed=%t", completed, changed)
-	}
-}
-
-func TestRuntimeCoordinatorLegacyMismatchIsDeduplicatedAndCleared(t *testing.T) {
-	coordinator := NewRuntimeCoordinator()
-	snapshot, _ := coordinator.Observe(RuntimeSnapshot{SessionID: "session-1", Phase: runtimePhaseRunning})
-	mismatch := SessionDisplayStatus{Status: sessionExecutionDisplayIdle}
-	coordinator.CompareLegacy(snapshot, mismatch)
-
-	record := coordinator.records["session-1"]
-	if record.lastMismatchSignature == "" {
-		t.Fatal("expected mismatch signature")
-	}
-	signature := record.lastMismatchSignature
-	coordinator.CompareLegacy(snapshot, mismatch)
-	if coordinator.records["session-1"].lastMismatchSignature != signature {
-		t.Fatal("identical mismatch was not deduplicated")
-	}
-
-	coordinator.CompareLegacy(snapshot, SessionDisplayStatus{Status: sessionExecutionDisplayBusy})
-	if coordinator.records["session-1"].lastMismatchSignature != "" {
-		t.Fatal("matching legacy state did not clear mismatch signature")
 	}
 }

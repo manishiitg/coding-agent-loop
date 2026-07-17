@@ -53,9 +53,10 @@ type SessionExecutionTreeSummary struct {
 }
 
 type SessionExecutionTreeResponse struct {
-	SessionID string                      `json:"session_id"`
-	Root      *SessionExecutionTreeNode   `json:"root"`
-	Summary   SessionExecutionTreeSummary `json:"summary"`
+	SessionID    string                      `json:"session_id"`
+	Root         *SessionExecutionTreeNode   `json:"root"`
+	Summary      SessionExecutionTreeSummary `json:"summary"`
+	RuntimeState *RuntimeSnapshot            `json:"runtime_state,omitempty"`
 }
 
 func cloneSessionExecutionMetadata(meta map[string]string) map[string]string {
@@ -570,18 +571,18 @@ func (api *StreamingAPI) buildSessionExecutionTree(session *ActiveSessionInfo) *
 		}
 	}
 
-	hasRunningWork := summary.HasRunningMainAgent || summary.HasRunningBackgroundAgents ||
-		summary.HasRunningTrackedExecutions || summary.IsSessionBusy || api.canSteerSession(session.SessionID)
-	isStopped := summary.CompletedCount > 0 || summary.FailedCount > 0 || summary.CanceledCount > 0 ||
-		isStoppedSessionStatus(session.Status)
-	summary.DisplayStatus = deriveSessionDisplayStatus(hasRunningWork, isStopped)
+	runtimeState, _ := api.authoritativeRuntimeSnapshotForSession(session)
+	runtimeStatus := sessionDisplayStatusFromRuntime(runtimeState)
+	summary.DisplayStatus = runtimeStatus.Status
+	summary.HasRunningBackgroundAgents = runtimeStatus.HasRunningBackgroundAgents
 
 	sortSessionExecutionTree(root)
 
 	return &SessionExecutionTreeResponse{
-		SessionID: session.SessionID,
-		Root:      root,
-		Summary:   summary,
+		SessionID:    session.SessionID,
+		Root:         root,
+		Summary:      summary,
+		RuntimeState: &runtimeState,
 	}
 }
 

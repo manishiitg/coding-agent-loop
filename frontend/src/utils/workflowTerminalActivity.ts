@@ -135,7 +135,6 @@ export function activeSessionFromWorkflowTerminal(
     preset_name: options.preset?.label,
     preset_query_id: options.preset?.id,
     has_retained_tmux_session: Boolean(terminal.tmux_session?.trim()),
-    has_running_background_agents: terminal.active === true || ['running', 'active', 'in_progress'].includes(status),
     current_execution_name: terminal.step_name || terminal.display_title || terminal.label,
   }
 }

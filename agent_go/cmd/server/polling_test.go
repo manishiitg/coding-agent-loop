@@ -1,11 +1,46 @@
 package server
 
 import (
+	"encoding/json"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
 )
+
+func TestActiveSessionsIncludesTrackedWorkflowWithoutChatRow(t *testing.T) {
+	const sessionID = "workflow-after-restart"
+	startedAt := time.Now().Add(-time.Minute).UTC()
+	api := &StreamingAPI{
+		runtimeCoordinator: NewRuntimeCoordinator(),
+		activeSessions:     map[string]*ActiveSessionInfo{},
+		trackedWorkflowExecutions: map[string]*TrackedWorkflowExecution{
+			"workflow-1": {
+				ExecutionID: "workflow-1", SessionID: sessionID,
+				Source: trackedExecutionSourceWorkflowRun, Kind: "workflow", Status: trackedExecutionStatusRunning,
+				PresetName: "Daily QA", WorkspacePath: "Workflow/daily-qa", StartedAt: startedAt,
+			},
+		},
+	}
+
+	recorder := httptest.NewRecorder()
+	api.handleGetActiveSessions(recorder, httptest.NewRequest("GET", "/api/sessions/active", nil))
+	var response GetActiveSessionsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode active sessions: %v", err)
+	}
+	if len(response.ActiveSessions) != 1 {
+		t.Fatalf("active sessions = %#v, want one tracked workflow", response.ActiveSessions)
+	}
+	session := response.ActiveSessions[0]
+	if session.SessionID != sessionID || session.WorkflowName != "Daily QA" || session.RuntimeState == nil {
+		t.Fatalf("tracked workflow was not synthesized into runtime index: %#v", session)
+	}
+	if session.RuntimeState.Phase != runtimePhaseRunning || session.DisplayStatus != sessionExecutionDisplayBusy {
+		t.Fatalf("synthesized runtime state = %#v display=%q", session.RuntimeState, session.DisplayStatus)
+	}
+}
 
 func TestBuildActiveSessionInfoSummaryKeepsCompletedStatusForBackgroundAgents(t *testing.T) {
 	const sessionID = "session-bg-completed"

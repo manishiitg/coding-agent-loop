@@ -215,13 +215,21 @@ func TestRuntimeEndpointsUseSameDisplayStatus(t *testing.T) {
 	const sessionID = "session-busy"
 	now := time.Now()
 	api := &StreamingAPI{
-		eventStore:      store,
-		bgAgentRegistry: NewBackgroundAgentRegistry(),
+		runtimeCoordinator: NewRuntimeCoordinator(),
+		eventStore:         store,
+		bgAgentRegistry:    NewBackgroundAgentRegistry(),
 		activeSessions: map[string]*ActiveSessionInfo{
 			sessionID: {SessionID: sessionID, Status: "running", CreatedAt: now, LastActivity: now},
 		},
 		sessionBusy:      map[string]bool{sessionID: true},
 		sessionBusySince: map[string]time.Time{sessionID: now},
+		trackedWorkflowExecutions: map[string]*TrackedWorkflowExecution{
+			"workflow-1": {
+				ExecutionID: "workflow-1", SessionID: sessionID,
+				Source: trackedExecutionSourceWorkflowRun, Kind: "workflow", Status: trackedExecutionStatusRunning,
+				StartedAt: now,
+			},
+		},
 	}
 
 	eventsRequest := httptest.NewRequest("GET", "/api/sessions/"+sessionID+"/events?since=0", nil)
@@ -238,17 +246,52 @@ func TestRuntimeEndpointsUseSameDisplayStatus(t *testing.T) {
 	statusResponse := httptest.NewRecorder()
 	api.handleGetSessionStatus(statusResponse, statusRequest)
 	var statusBody struct {
-		DisplayStatus string `json:"display_status"`
+		DisplayStatus string          `json:"display_status"`
+		RuntimeState  RuntimeSnapshot `json:"runtime_state"`
 	}
 	if err := json.Unmarshal(statusResponse.Body.Bytes(), &statusBody); err != nil {
 		t.Fatalf("decode status response: %v", err)
 	}
 
+	activeRequest := httptest.NewRequest("GET", "/api/sessions/active", nil)
+	activeResponse := httptest.NewRecorder()
+	api.handleGetActiveSessions(activeResponse, activeRequest)
+	var activeBody GetActiveSessionsResponse
+	if err := json.Unmarshal(activeResponse.Body.Bytes(), &activeBody); err != nil {
+		t.Fatalf("decode active-session response: %v", err)
+	}
+	if len(activeBody.ActiveSessions) != 1 || activeBody.ActiveSessions[0].RuntimeState == nil {
+		t.Fatalf("active-session runtime state missing: %#v", activeBody.ActiveSessions)
+	}
+
+	tree := api.buildSessionExecutionTree(api.activeSessions[sessionID])
+	if tree == nil || tree.RuntimeState == nil {
+		t.Fatal("execution-tree runtime state missing")
+	}
+	runningWorkflows := api.listRunningWorkflowExecutions(GetDefaultUserID())
+	if len(runningWorkflows) != 1 || runningWorkflows[0].RuntimeState == nil {
+		t.Fatalf("running-workflow runtime state missing: %#v", runningWorkflows)
+	}
+
 	if pollingBody.DisplayStatus != sessionExecutionDisplayBusy || statusBody.DisplayStatus != pollingBody.DisplayStatus {
 		t.Fatalf("display status mismatch: polling=%q status=%q", pollingBody.DisplayStatus, statusBody.DisplayStatus)
 	}
-	sseBody := sseStatusMessage{DisplayStatus: api.sessionDisplayStatus(sessionID).Status}
+	wantRevision := pollingBody.RuntimeState.Revision
+	if wantRevision == 0 || statusBody.RuntimeState.Revision != wantRevision ||
+		activeBody.ActiveSessions[0].RuntimeState.Revision != wantRevision || tree.RuntimeState.Revision != wantRevision ||
+		runningWorkflows[0].RuntimeState.Revision != wantRevision {
+		t.Fatalf("runtime revision mismatch: polling=%d status=%d active=%d tree=%d workflow=%d",
+			wantRevision, statusBody.RuntimeState.Revision,
+			activeBody.ActiveSessions[0].RuntimeState.Revision, tree.RuntimeState.Revision,
+			runningWorkflows[0].RuntimeState.Revision)
+	}
+	sseRuntime, _ := api.authoritativeRuntimeSnapshot(sessionID)
+	sseStatus := sessionDisplayStatusFromRuntime(sseRuntime)
+	sseBody := sseStatusMessage{DisplayStatus: sseStatus.Status, RuntimeState: &sseRuntime}
 	if sseBody.DisplayStatus != pollingBody.DisplayStatus {
 		t.Fatalf("SSE display status=%q, polling=%q", sseBody.DisplayStatus, pollingBody.DisplayStatus)
+	}
+	if sseBody.RuntimeState.Revision != wantRevision {
+		t.Fatalf("SSE runtime revision=%d, want %d", sseBody.RuntimeState.Revision, wantRevision)
 	}
 }

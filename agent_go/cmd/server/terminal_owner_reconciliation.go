@@ -35,7 +35,7 @@ func (api *StreamingAPI) reconcileUnexpectedTerminalExit(snapshot terminals.Snap
 		}
 		log.Printf("[TERMINAL RECONCILE] failing main session=%s terminal=%s reason=%q", snapshot.SessionID, snapshot.TerminalID, reason)
 		api.updateSessionStatus(snapshot.SessionID, "error")
-		api.cancelSessionRuntimeWork(snapshot.SessionID, reason)
+		api.cancelSessionRuntimeWork(snapshot.SessionID, reason, runtimePhaseFailed)
 		return true
 	}
 
@@ -82,7 +82,7 @@ func (api *StreamingAPI) failTrackedExecutionOwnedByTerminal(snapshot terminals.
 	sessionID := exec.SessionID
 	api.pruneTrackedExecutionsLocked(now)
 	api.trackedWorkflowExecutionsMux.Unlock()
-	api.observeRuntimeSnapshot(sessionID, nil)
+	api.observeRuntimeSnapshot(sessionID)
 	return true
 }
 

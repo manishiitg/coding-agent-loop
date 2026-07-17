@@ -5,11 +5,10 @@ import { useModeStore } from '../stores/useModeStore'
 import { useChatStore } from '../stores'
 import type { ChatTab } from '../stores/useChatStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
-import type { ActiveSessionInfo, RunningWorkflowInfo } from '../services/api-types'
-import { agentApi } from '../services/api'
+import type { ActiveSessionInfo } from '../services/api-types'
 import { activateTab } from '../utils/activateTab'
 import { openActiveSession, openWorkflowPresetPage, pickWorkflowActiveSession, workflowSessionBotPlatform } from '../utils/workflowSessionRestore'
-import { activeSessionsFromLiveWorkflowTerminals } from '../utils/workflowTerminalActivity'
+import { runtimeHasBackgroundAgents, runtimeNeedsUserInput, sessionRuntimeStatus } from '../utils/runtimeActivity'
 
 interface QuickSwitcherProps {
   isOpen: boolean
@@ -26,7 +25,6 @@ interface WorkflowItem {
   lastAccessedAt: number
   preset: CustomPreset | PredefinedPreset
   activeSession?: ActiveSessionInfo
-  runningWorkflow?: RunningWorkflowInfo
 }
 
 interface ChatTabItem {
@@ -48,7 +46,6 @@ interface ActiveWorkItem {
   isActive: boolean
   lastAccessedAt: number
   session: ActiveSessionInfo
-  runningWorkflow?: RunningWorkflowInfo
   tabId?: string
   mode: 'workflow' | 'multi-agent'
 }
@@ -71,17 +68,8 @@ const isWorkflowSession = (session: ActiveSessionInfo): boolean => {
 }
 
 const isVisibleActiveSession = (session: ActiveSessionInfo): boolean => {
-  const status = (session.status || '').toLowerCase()
-  return status === 'running' ||
-    status === 'active' ||
-    status === 'in_progress' ||
-    status === 'paused' ||
-    status === 'waiting' ||
-    status === 'waiting_feedback' ||
-    status === 'idle' ||
-    !!session.needs_user_input ||
-    session.has_running_background_agents === true ||
-    (session.running_background_agent_count ?? 0) > 0
+  const status = sessionRuntimeStatus(session)
+  return status === 'busy' || status === 'idle' || runtimeNeedsUserInput(session) || runtimeHasBackgroundAgents(session)
 }
 
 const activeSessionLabel = (session: ActiveSessionInfo): string => {
@@ -96,45 +84,12 @@ const activeSessionLabel = (session: ActiveSessionInfo): string => {
   return session.title || session.query || 'Chat'
 }
 
-const runningWorkflowFallbackName = (workflow: RunningWorkflowInfo): string => {
-  return workflow.preset_name ||
-    workflow.title ||
-    workflow.workspace_path?.split('/').filter(Boolean).pop() ||
-    workflow.query ||
-    'Automation'
-}
-
-const sessionFromRunningWorkflow = (workflow: RunningWorkflowInfo): ActiveSessionInfo => {
-  const timestamp = workflow.started_at || new Date().toISOString()
-  const label = runningWorkflowFallbackName(workflow)
-  return {
-    session_id: workflow.session_id,
-    observer_id: '',
-    agent_mode: 'workflow',
-    status: workflow.status || 'running',
-    last_activity: timestamp,
-    created_at: timestamp,
-    query: workflow.query || label,
-    title: workflow.title || label,
-    workflow_name: label,
-    workflow_label: label,
-    workspace_path: workflow.workspace_path,
-    preset_name: workflow.preset_name,
-    preset_query_id: workflow.preset_query_id,
-    triggered_by: workflow.triggered_by,
-    current_execution_name: workflow.current_step_title || workflow.phase_name || workflow.title,
-    needs_user_input: workflow.needs_user_input,
-    waiting_message: workflow.waiting_message,
-    waiting_since: workflow.waiting_since,
-  }
-}
-
 const activeSessionStatusLabel = (session: ActiveSessionInfo): string => {
-  if (session.needs_user_input) return 'waiting for input'
+  if (runtimeNeedsUserInput(session)) return 'waiting for input'
   const bgCount = session.running_background_agent_count ?? 0
   if (bgCount > 0) return `${bgCount} bg agent${bgCount === 1 ? '' : 's'}`
-  if (session.has_running_background_agents) return 'bg agents running'
-  return (session.status || 'active').replace(/_/g, ' ')
+  if (runtimeHasBackgroundAgents(session)) return 'bg agents running'
+  return sessionRuntimeStatus(session)
 }
 
 const sessionShortId = (sessionId: string): string => sessionId.slice(0, 8)
@@ -194,7 +149,6 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
 }) => {
   const [query, setQuery] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
-  const [runningWorkflowsBySession, setRunningWorkflowsBySession] = useState<Record<string, RunningWorkflowInfo>>({})
   const searchInputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -210,7 +164,6 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
   const workflowPresets = useGlobalPresetStore(state => (isOpen ? state.workflowPresets : EMPTY_WORKFLOW_PRESETS))
   const recentPresetOrder = useGlobalPresetStore(state => (isOpen ? state.recentPresetOrder : EMPTY_RECENT_PRESET_ORDER))
   const recentPresetAccessedAt = useGlobalPresetStore(state => (isOpen ? state.recentPresetAccessedAt : EMPTY_RECENT_PRESET_ACCESSED_AT))
-  const [terminalBackedSessions, setTerminalBackedSessions] = useState<ActiveSessionInfo[]>([])
 
   // Track Shift key state to show "minimize" hint on selected item
   const [shiftHeld, setShiftHeld] = useState(false)
@@ -232,33 +185,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       setQuery(initialQuery)
       setSelectedIndex(0)
       void useChatStore.getState().getActiveSessions(true)
-      Promise.allSettled([
-        agentApi.listRunningWorkflows(),
-        agentApi.listTerminals(undefined, 'none', { activeOnly: true }),
-      ])
-        .then(([runningResult, terminalsResult]) => {
-          if (runningResult.status !== 'fulfilled') {
-            setRunningWorkflowsBySession({})
-          } else {
-            const response = runningResult.value
-            setRunningWorkflowsBySession(Object.fromEntries(
-              (response.running || [])
-                .filter(workflow => workflow.session_id)
-                .map(workflow => [workflow.session_id, workflow]),
-            ))
-          }
-          setTerminalBackedSessions(terminalsResult.status === 'fulfilled'
-            ? activeSessionsFromLiveWorkflowTerminals(terminalsResult.value.terminals || [], workflowPresets)
-            : [])
-        })
-        .catch(() => {
-          setRunningWorkflowsBySession({})
-          setTerminalBackedSessions([])
-        })
       setTimeout(() => searchInputRef.current?.focus(), 50)
-    } else {
-      setRunningWorkflowsBySession({})
-      setTerminalBackedSessions([])
     }
   }, [isOpen, initialQuery, workflowPresets])
 
@@ -269,41 +196,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     const allTabs = Object.values(chatTabs)
     const activeSessionsByID = new Map<string, ActiveSessionInfo>()
     for (const session of activeSessions.filter(isVisibleActiveSession)) {
-      const workflow = runningWorkflowsBySession[session.session_id]
-      activeSessionsByID.set(session.session_id, workflow
-        ? {
-            ...session,
-            status: workflow.status || session.status,
-            preset_query_id: session.preset_query_id || workflow.preset_query_id,
-            preset_name: session.preset_name || workflow.preset_name,
-            workspace_path: session.workspace_path || workflow.workspace_path,
-            workflow_name: session.workflow_name || workflow.preset_name || workflow.title,
-            workflow_label: session.workflow_label || workflow.preset_name || workflow.title,
-            triggered_by: session.triggered_by || workflow.triggered_by,
-            current_execution_name: session.current_execution_name || workflow.current_step_title || workflow.phase_name || workflow.title,
-            needs_user_input: session.needs_user_input || workflow.needs_user_input,
-            waiting_message: session.waiting_message || workflow.waiting_message,
-            waiting_since: session.waiting_since || workflow.waiting_since,
-          }
-        : session)
-    }
-    for (const workflow of Object.values(runningWorkflowsBySession)) {
-      if (!activeSessionsByID.has(workflow.session_id)) {
-        activeSessionsByID.set(workflow.session_id, sessionFromRunningWorkflow(workflow))
-      }
-    }
-    for (const session of terminalBackedSessions) {
-      const existing = activeSessionsByID.get(session.session_id)
-      if (!existing) {
-        activeSessionsByID.set(session.session_id, session)
-        continue
-      }
-      activeSessionsByID.set(session.session_id, {
-        ...existing,
-        ...session,
-        has_retained_tmux_session: existing.has_retained_tmux_session || session.has_retained_tmux_session,
-        has_running_background_agents: existing.has_running_background_agents || session.has_running_background_agents,
-      })
+      activeSessionsByID.set(session.session_id, session)
     }
     const visibleActiveSessions = Array.from(activeSessionsByID.values()).filter(isVisibleActiveSession)
 
@@ -335,7 +228,6 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       .map(p => {
         const matchingActiveSessions = visibleActiveSessions.filter(session => workflowSessionMatchesPreset(session, p, chatTabs))
         const activeSession = pickWorkflowActiveSession(matchingActiveSessions, p, chatTabs)
-        const runningWorkflow = activeSession ? runningWorkflowsBySession[activeSession.session_id] : undefined
         const workflowTab = allTabs.find(tab => tab.metadata?.mode === 'workflow' && tab.metadata?.presetQueryId === p.id)
         const activeCountSuffix = matchingActiveSessions.length > 1 ? ` · ${matchingActiveSessions.length} active runs` : ''
         return {
@@ -350,7 +242,6 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
           })(),
           preset: p,
           activeSession,
-          runningWorkflow,
         }
       })
 
@@ -377,7 +268,6 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
           isActive: !!tab && tab.tabId === activeTabId,
           lastAccessedAt: tab?.lastAccessedAt || tab?.createdAt || Date.parse(session.last_activity || session.created_at || '') || 0,
           session,
-          runningWorkflow: runningWorkflowsBySession[session.session_id],
           tabId: tab?.tabId,
           mode: workflow ? 'workflow' : 'multi-agent',
         }
@@ -398,7 +288,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       if (a.type !== b.type) return itemTypeRank(a) - itemTypeRank(b)
       return a.label.localeCompare(b.label)
     })
-  }, [isOpen, isWorkflowMode, isChatMode, activePresetId, chatTabs, activeSessions, runningWorkflowsBySession, terminalBackedSessions, activeTabId, workflowPresets, recentPresetOrder, recentPresetAccessedAt])
+  }, [isOpen, isWorkflowMode, isChatMode, activePresetId, chatTabs, activeSessions, activeTabId, workflowPresets, recentPresetOrder, recentPresetAccessedAt])
 
   // Filter and sort
   const filteredItems = useMemo<QuickSwitcherItem[]>(() => {
@@ -474,7 +364,6 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       // Shared path with the header activity monitor so opening the same session
       // behaves identically from either surface.
       await openActiveSession(item.session, {
-        runningWorkflow: item.runningWorkflow,
         title: item.label,
         source: 'quick-switcher',
       })
@@ -505,7 +394,6 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
 
     await openWorkflowPresetPage(item.preset, {
       activeSession: item.activeSession,
-      runningWorkflow: item.runningWorkflow,
       title: item.label,
       source: 'quick-switcher',
     })

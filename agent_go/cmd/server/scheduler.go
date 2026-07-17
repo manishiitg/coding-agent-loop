@@ -1204,7 +1204,7 @@ func (s *SchedulerService) stopRunningJob(runtimeKey, scheduleID string) {
 	if isScheduledSession(sessionID) {
 		s.api.markSessionTurnInterrupted(sessionID)
 	}
-	s.cancelScheduledSessionWork(sessionID, "scheduled job stopped by user")
+	s.cancelScheduledSessionWork(sessionID, "scheduled job stopped by user", runtimePhaseCanceled)
 
 	scheduleLogf("[SCHEDULER] Stopped job %s (session: %s)", scheduleID, sessionID)
 }
@@ -1213,11 +1213,11 @@ func (s *SchedulerService) stopRunningJob(runtimeKey, scheduleID string) {
 // owned by a scheduled session without changing the schedule's recorded run
 // result. Pulse timeout recovery uses this before continuing finalization in a
 // fresh session.
-func (s *SchedulerService) cancelScheduledSessionWork(sessionID, closeReason string) {
+func (s *SchedulerService) cancelScheduledSessionWork(sessionID, closeReason string, terminalPhase RuntimePhase) {
 	if s == nil || s.api == nil || strings.TrimSpace(sessionID) == "" {
 		return
 	}
-	s.api.cancelSessionRuntimeWork(sessionID, closeReason)
+	s.api.cancelSessionRuntimeWork(sessionID, closeReason, terminalPhase)
 }
 
 // triggerSchedule is called by the tick loop when a schedule is due.
@@ -1874,7 +1874,7 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 			}
 		}
 		if result.outcome != postRunMonitorStepStartFailed {
-			s.cancelScheduledSessionWork(oldSessionID, reason)
+			s.cancelScheduledSessionWork(oldSessionID, reason, runtimePhaseFailed)
 		}
 		recoveryNotes = append(recoveryNotes, reason)
 		if needsFollowup {

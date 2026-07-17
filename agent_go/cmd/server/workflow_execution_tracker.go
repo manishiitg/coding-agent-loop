@@ -203,7 +203,7 @@ func (api *StreamingAPI) trackExecutionStart(exec *TrackedWorkflowExecution) {
 	api.trackedWorkflowExecutions[exec.ExecutionID] = exec
 	api.pruneTrackedExecutionsLocked(time.Now().UTC())
 	api.trackedWorkflowExecutionsMux.Unlock()
-	api.observeRuntimeSnapshot(exec.SessionID, nil)
+	api.observeRuntimeSnapshot(exec.SessionID)
 }
 
 func (api *StreamingAPI) trackWorkflowRunStart(exec *ActiveWorkflowExecution) {
@@ -284,7 +284,7 @@ func (api *StreamingAPI) completeTrackedExecution(executionID, status, errorMess
 	}
 	api.pruneTrackedExecutionsLocked(now)
 	api.trackedWorkflowExecutionsMux.Unlock()
-	api.observeRuntimeSnapshot(sessionID, nil)
+	api.observeRuntimeSnapshot(sessionID)
 }
 
 func (api *StreamingAPI) cancelTrackedExecutionsForSession(sessionID string) {
@@ -304,7 +304,7 @@ func (api *StreamingAPI) cancelTrackedExecutionsForSession(sessionID string) {
 	}
 	api.pruneTrackedExecutionsLocked(now)
 	api.trackedWorkflowExecutionsMux.Unlock()
-	api.observeRuntimeSnapshot(sessionID, nil)
+	api.observeRuntimeSnapshot(sessionID)
 }
 
 func (api *StreamingAPI) finalizeTrackedExecutionIfRunning(executionID, status, errorMessage string) {
@@ -329,7 +329,7 @@ func (api *StreamingAPI) finalizeTrackedExecutionIfRunning(executionID, status, 
 	}
 	api.pruneTrackedExecutionsLocked(now)
 	api.trackedWorkflowExecutionsMux.Unlock()
-	api.observeRuntimeSnapshot(sessionID, nil)
+	api.observeRuntimeSnapshot(sessionID)
 }
 
 // runningWorkflowExecutionBySessionLocked returns the latest running top-level workflow execution.
@@ -402,6 +402,9 @@ func (api *StreamingAPI) listRunningWorkflowExecutions(userID string) []ActiveWo
 		list[i].NeedsUserInput = needsInput
 		list[i].WaitingMessage = waitingMessage
 		list[i].WaitingSince = waitingSince
+		if snapshot, ok := api.authoritativeRuntimeSnapshot(list[i].SessionID); ok {
+			list[i].RuntimeState = &snapshot
+		}
 	}
 
 	sort.Slice(list, func(i, j int) bool {

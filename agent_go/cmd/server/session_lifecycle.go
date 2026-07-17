@@ -64,11 +64,11 @@ func (api *StreamingAPI) handleCancelCurrentTurn(w http.ResponseWriter, r *http.
 // stopped guard prevents in-flight goroutines from spawning more work after
 // cancellation; callers remain responsible for recording whether the terminal
 // lifecycle is stopped, failed, or another final state.
-func (api *StreamingAPI) cancelSessionRuntimeWork(sessionID, closeReason string) {
+func (api *StreamingAPI) cancelSessionRuntimeWork(sessionID, closeReason string, terminalPhase RuntimePhase) {
 	if api == nil || strings.TrimSpace(sessionID) == "" {
 		return
 	}
-	api.markSessionStopped(sessionID)
+	api.markSessionStoppedAs(sessionID, terminalPhase, closeReason)
 
 	api.agentCancelMux.Lock()
 	if cancelFunc, exists := api.agentCancelFuncs[sessionID]; exists {

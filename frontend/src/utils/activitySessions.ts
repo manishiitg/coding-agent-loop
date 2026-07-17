@@ -1,4 +1,5 @@
 import type { ActiveSessionInfo } from '../services/api-types'
+import { runtimeHasBackgroundAgents, sessionRuntimeStatus } from './runtimeActivity'
 
 export function normalizedActivityStatus(status?: string): string {
   return (status || '').toLowerCase().trim()
@@ -15,11 +16,11 @@ export function isTerminalActivityStatus(status?: string): boolean {
 }
 
 export function hasLiveBackgroundAgents(
-  session: Pick<ActiveSessionInfo, 'status' | 'has_running_background_agents' | 'running_background_agent_count'>,
+  session: Pick<ActiveSessionInfo, 'status' | 'runtime_state' | 'display_status' | 'has_running_background_agents' | 'running_background_agent_count'>,
 ): boolean {
+  if (session.runtime_state) return runtimeHasBackgroundAgents(session)
   if (isTerminalActivityStatus(session.status)) return false
-  return session.has_running_background_agents === true ||
-    (session.running_background_agent_count ?? 0) > 0
+  return runtimeHasBackgroundAgents(session)
 }
 
 const ACTIVE_SESSION_WORK_STATUSES = new Set([
@@ -32,9 +33,10 @@ const ACTIVE_SESSION_WORK_STATUSES = new Set([
 ])
 
 export function hasActiveSessionWork(
-  session?: Pick<ActiveSessionInfo, 'status' | 'needs_user_input' | 'has_running_background_agents' | 'running_background_agent_count'> | null,
+  session?: Pick<ActiveSessionInfo, 'status' | 'runtime_state' | 'display_status' | 'needs_user_input' | 'has_running_background_agents' | 'running_background_agent_count'> | null,
 ): boolean {
-  if (!session || isTerminalActivityStatus(session.status)) return false
+  if (!session || sessionRuntimeStatus(session) === 'stopped') return false
+  if (session.runtime_state) return sessionRuntimeStatus(session) === 'busy' || session.runtime_state.waiting_for_user || runtimeHasBackgroundAgents(session)
   return ACTIVE_SESSION_WORK_STATUSES.has(normalizedActivityStatus(session.status)) ||
     session.needs_user_input === true ||
     hasLiveBackgroundAgents(session)

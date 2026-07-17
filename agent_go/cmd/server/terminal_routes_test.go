@@ -178,7 +178,7 @@ func TestTerminalSizeHintSkipsLiveAttachSessions(t *testing.T) {
 
 func TestListTerminalsExposesStatusLineCreatedLiveTerminal(t *testing.T) {
 	store := terminals.NewStore()
-	api := &StreamingAPI{terminalStore: store}
+	api := &StreamingAPI{terminalStore: store, runtimeCoordinator: NewRuntimeCoordinator()}
 	sessionID := "session-statusline-live-terminal"
 	tmuxSession := "mlp-pi-cli-int-statusline"
 
@@ -219,6 +219,11 @@ func TestListTerminalsExposesStatusLineCreatedLiveTerminal(t *testing.T) {
 	}
 	if terminal.Status.ProviderLabel != "pi-cli · google/gemini-3.5-flash" || terminal.Status.InputTokens != 321 {
 		t.Fatalf("status not exposed: %+v", terminal.Status)
+	}
+	runtimeState, ok := response.RuntimeStates[sessionID]
+	if !ok || runtimeState.Revision == 0 || len(runtimeState.Terminals) != 1 ||
+		!runtimeState.Terminals[0].Active || runtimeState.BackgroundLive {
+		t.Fatalf("terminal runtime state = %#v, present=%t", runtimeState, ok)
 	}
 }
 

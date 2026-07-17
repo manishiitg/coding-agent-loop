@@ -778,7 +778,7 @@ func (api *StreamingAPI) setSessionBusy(sessionID string, busy bool) {
 	}
 	api.sessionBusy[sessionID] = busy
 	api.sessionBusyMu.Unlock()
-	api.observeRuntimeSnapshot(sessionID, nil)
+	api.observeRuntimeSnapshot(sessionID)
 }
 
 func (api *StreamingAPI) hasActiveTurnCancel(sessionID string) bool {
@@ -888,9 +888,29 @@ func (api *StreamingAPI) autoNotificationSessionUnreachable(sessionID string) bo
 // stops are the common case; fatal runtime cancellation also uses this guard
 // while preserving an error lifecycle status.
 func (api *StreamingAPI) markSessionStopped(sessionID string) {
+	phase := runtimePhaseCanceled
+	reason := "session stopped"
+	if active, ok := api.getActiveSession(sessionID); ok && active != nil {
+		switch normalizeSessionLifecycleStatus(active.Status) {
+		case sessionLifecycleFailed:
+			phase, reason = runtimePhaseFailed, "session failed"
+		case sessionLifecycleCompleted:
+			phase, reason = runtimePhaseCompleted, "session completed"
+		}
+	}
+	api.markSessionStoppedAs(sessionID, phase, reason)
+}
+
+// markSessionStoppedAs records both the hard stopped guard and the explicit
+// terminal lifecycle outcome. Cancellation callers must use this when the
+// outcome is known so a runtime failure cannot be misreported as a user stop.
+func (api *StreamingAPI) markSessionStoppedAs(sessionID string, phase RuntimePhase, reason string) {
 	api.stoppedSessionsMu.Lock()
 	api.stoppedSessions[sessionID] = true
 	api.stoppedSessionsMu.Unlock()
+	if api.runtimeCoordinator != nil {
+		api.runtimeCoordinator.MarkTerminalBoundary(sessionID, phase, reason)
+	}
 }
 
 // clearSessionStopped removes the stopped guard so the session can accept new queries.
@@ -899,6 +919,9 @@ func (api *StreamingAPI) clearSessionStopped(sessionID string) {
 	api.stoppedSessionsMu.Lock()
 	delete(api.stoppedSessions, sessionID)
 	api.stoppedSessionsMu.Unlock()
+	if api.runtimeCoordinator != nil {
+		api.runtimeCoordinator.StartGeneration(sessionID, "new user turn started")
+	}
 }
 
 // isSessionMarkedStopped returns true while the session has a hard cancellation

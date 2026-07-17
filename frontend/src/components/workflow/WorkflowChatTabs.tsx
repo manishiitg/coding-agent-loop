@@ -9,6 +9,7 @@ import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { TreeViewAlphaDialog, shouldShowTreeViewAlphaWarning } from '../TreeViewAlphaDialog'
+import { executionTreeRuntimeStatus } from '../../utils/runtimeActivity'
 
 // ---------------------------------------------------------------------------
 // WorkflowTabItem — per-tab component with narrow store subscriptions
@@ -95,11 +96,11 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
   // local streaming flags so "busy" shows immediately, before the tree catches up.
   const { data: execTree } = useSessionExecutionTree(
     tab.sessionId,
-    !!tab.sessionId && isActive && normalizeEventViewMode(tab.viewMode) === 'tree',
+    !!tab.sessionId && isActive,
   )
-  const treeStatus = execTree?.summary.display_status
+  const treeStatus = executionTreeRuntimeStatus(execTree)
   const status: 'busy' | 'idle' | 'stopped' =
-    tab.isStreaming || tab.hasRunningBgAgents || treeStatus === 'busy'
+    treeStatus === 'busy' || (!execTree?.runtime_state && (tab.isStreaming || tab.hasRunningBgAgents))
       ? 'busy'
       : treeStatus === 'stopped'
         ? 'stopped'

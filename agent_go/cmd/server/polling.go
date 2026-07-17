@@ -83,15 +83,16 @@ func (api *StreamingAPI) hasRunningTrackedExecutionForSession(sessionID string) 
 
 // GetEventsResponse represents the response for event polling
 type GetEventsResponse struct {
-	Events                     []events.Event `json:"events"`
-	HasMore                    bool           `json:"has_more"`
-	SessionID                  string         `json:"session_id"`
-	SessionStatus              string         `json:"session_status,omitempty"`                // Session status: "running", "completed", "error", "stopped", "inactive"
-	DisplayStatus              string         `json:"display_status,omitempty"`                // Consolidated live status: "busy", "idle", "stopped"
-	LastProcessedIndex         int            `json:"last_processed_index"`                    // Last index processed in unfiltered array (for correct sinceIndex tracking)
-	HasRunningBackgroundAgents bool           `json:"has_running_background_agents,omitempty"` // Whether background agents are still running for this session
-	IsSyntheticTurn            bool           `json:"is_synthetic_turn,omitempty"`             // True when running auto-notification turn (frontend should not block input)
-	CanSteer                   bool           `json:"can_steer,omitempty"`                     // True when a live foreground agent can accept steer injection
+	Events                     []events.Event   `json:"events"`
+	HasMore                    bool             `json:"has_more"`
+	SessionID                  string           `json:"session_id"`
+	SessionStatus              string           `json:"session_status,omitempty"`                // Session status: "running", "completed", "error", "stopped", "inactive"
+	DisplayStatus              string           `json:"display_status,omitempty"`                // Consolidated live status: "busy", "idle", "stopped"
+	LastProcessedIndex         int              `json:"last_processed_index"`                    // Last index processed in unfiltered array (for correct sinceIndex tracking)
+	HasRunningBackgroundAgents bool             `json:"has_running_background_agents,omitempty"` // Whether background agents are still running for this session
+	IsSyntheticTurn            bool             `json:"is_synthetic_turn,omitempty"`             // True when running auto-notification turn (frontend should not block input)
+	CanSteer                   bool             `json:"can_steer,omitempty"`                     // True when a live foreground agent can accept steer injection
+	RuntimeState               *RuntimeSnapshot `json:"runtime_state,omitempty"`
 }
 
 // --- POLLING API HANDLERS ---
@@ -187,7 +188,8 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 		api.updateSessionStatus(sessionID, "completed")
 		sessionStatus = "completed"
 	}
-	runtimeStatus := api.sessionDisplayStatus(sessionID)
+	runtimeState, _ := api.authoritativeRuntimeSnapshot(sessionID)
+	runtimeStatus := sessionDisplayStatusFromRuntime(runtimeState)
 	canSteer := runtimeStatus.CanSteer
 	hasRunningBackgroundAgents = runtimeStatus.HasRunningBackgroundAgents
 
@@ -204,6 +206,7 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 			LastProcessedIndex:         -1,
 			HasRunningBackgroundAgents: hasRunningBackgroundAgents,
 			CanSteer:                   canSteer,
+			RuntimeState:               &runtimeState,
 		}
 		if err := json.NewEncoder(w).Encode(response); err != nil {
 			http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
@@ -243,6 +246,7 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 		LastProcessedIndex:         lastProcessedIndex,
 		HasRunningBackgroundAgents: hasRunningBackgroundAgents,
 		CanSteer:                   canSteer,
+		RuntimeState:               &runtimeState,
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -297,16 +301,41 @@ func (api *StreamingAPI) handleGetActiveSessions(w http.ResponseWriter, r *http.
 
 	// Filter sessions by user ID for isolation
 	activeSessions := make([]*ActiveSessionInfo, 0, len(allActiveSessions))
+	seenSessionIDs := make(map[string]struct{}, len(allActiveSessions))
 	for _, session := range allActiveSessions {
 		// Include session if it belongs to this user (or if UserID is empty for backwards compat)
 		if session.UserID == "" || session.UserID == currentUserID {
 			activeSessions = append(activeSessions, api.buildActiveSessionInfoSummary(session))
+			seenSessionIDs[session.SessionID] = struct{}{}
 		}
 	}
 
-	// Sessions are in-memory only now — if activeSessions is empty after a
-	// server restart, there are no durable sessions to restore. Workflow
-	// restarts are handled independently via the /api/workflow/running API.
+	// The active-session response is the complete frontend runtime index. A
+	// tracked workflow can outlive its chat row after restart, so synthesize the
+	// missing metadata here instead of making every UI surface merge three APIs.
+	for _, workflow := range api.listRunningWorkflowExecutions(currentUserID) {
+		if _, exists := seenSessionIDs[workflow.SessionID]; exists {
+			continue
+		}
+		label := workflow.PresetName
+		if label == "" {
+			label = workflow.Title
+		}
+		if label == "" {
+			label = workflowNameFromWorkspacePath(workflow.WorkspacePath)
+		}
+		synthetic := &ActiveSessionInfo{
+			SessionID: workflow.SessionID, AgentMode: "workflow", Status: workflow.Status,
+			CreatedAt: workflow.StartedAt, LastActivity: workflow.StartedAt,
+			Query: workflow.Query, Title: workflow.Title, WorkspacePath: workflow.WorkspacePath,
+			PresetName: workflow.PresetName, PresetQueryID: workflow.PresetQueryID,
+			WorkflowName: label, WorkflowLabel: label, TriggeredBy: workflow.TriggeredBy,
+			NeedsUserInput: workflow.NeedsUserInput, WaitingMessage: workflow.WaitingMessage,
+			WaitingSince: workflow.WaitingSince,
+		}
+		activeSessions = append(activeSessions, api.buildActiveSessionInfoSummary(synthetic))
+		seenSessionIDs[workflow.SessionID] = struct{}{}
+	}
 
 	response := GetActiveSessionsResponse{
 		ActiveSessions: activeSessions,
@@ -418,7 +447,13 @@ func (api *StreamingAPI) buildActiveSessionInfoSummary(session *ActiveSessionInf
 	if api.shouldCompleteIdleForegroundSession(session.SessionID, enriched.Status, enriched.HasRunningBackgroundAgents) {
 		enriched.Status = "completed"
 	}
-
+	if snapshot, ok := api.authoritativeRuntimeSnapshot(session.SessionID); ok {
+		enriched.RuntimeState = &snapshot
+		runtimeStatus := sessionDisplayStatusFromRuntime(snapshot)
+		enriched.DisplayStatus = runtimeStatus.Status
+		enriched.CanSteer = runtimeStatus.CanSteer
+		enriched.HasRunningBackgroundAgents = runtimeStatus.HasRunningBackgroundAgents
+	}
 	return &enriched
 }
 
@@ -540,7 +575,8 @@ func (api *StreamingAPI) handleGetSessionStatus(w http.ResponseWriter, r *http.R
 		api.updateSessionStatus(sessionID, "completed")
 		status = "completed"
 	}
-	runtimeStatus := api.sessionDisplayStatus(sessionID)
+	runtimeState, _ := api.authoritativeRuntimeSnapshot(sessionID)
+	runtimeStatus := sessionDisplayStatusFromRuntime(runtimeState)
 	canSteer := runtimeStatus.CanSteer
 	response := map[string]interface{}{
 		"session_id":                activeSession.SessionID,
@@ -552,6 +588,7 @@ func (api *StreamingAPI) handleGetSessionStatus(w http.ResponseWriter, r *http.R
 		"query":                     activeSession.Query,
 		"can_steer":                 canSteer,
 		"has_retained_tmux_session": hasRetainedTmuxSession,
+		"runtime_state":             runtimeState,
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {

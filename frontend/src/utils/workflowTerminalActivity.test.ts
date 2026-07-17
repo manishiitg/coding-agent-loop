@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { TerminalSnapshot } from '../services/api-types'
-import { isLiveWorkflowTerminal } from './workflowTerminalActivity'
+import { activeSessionFromWorkflowTerminal, isLiveWorkflowTerminal } from './workflowTerminalActivity'
 
 function terminal(overrides: Partial<TerminalSnapshot>): TerminalSnapshot {
   return {
@@ -41,5 +41,15 @@ describe('isLiveWorkflowTerminal', () => {
       state: 'stale',
       tmux_session: 'mlp-claude-code-session',
     }))).toBe(false)
+  })
+
+  it('does not misreport foreground terminal activity as a background agent', () => {
+    const session = activeSessionFromWorkflowTerminal(terminal({
+      active: true,
+      state: 'running',
+      tmux_session: 'mlp-codex-cli-session',
+    }))
+    expect(session.has_running_background_agents).toBeUndefined()
+    expect(session.has_retained_tmux_session).toBe(true)
   })
 })

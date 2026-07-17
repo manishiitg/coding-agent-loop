@@ -402,9 +402,7 @@ The TodoTaskOrchestratorAgent uses the **execution LLM** (same as the regular Or
 
 ### LLM Selection Implementation
 
-All orchestrator and control agents (TodoTaskOrchestrator, OrchestrationOrchestrator, ConditionalAgent) use the shared `selectExecutionLLM` helper function. This keeps execution model selection consistent with the main workflow runtime.
-
-For conditional agents, there's an additional priority check for `ConditionalLLM` before falling back to `selectExecutionLLM`.
+All orchestrator and execution agents use the shared `selectExecutionLLM` helper function. This keeps execution model selection consistent with the main workflow runtime.
 
 ### LLM Selection Priority
 
@@ -412,12 +410,6 @@ For conditional agents, there's an additional priority check for `ConditionalLLM
 1. **Step-specific execution LLM** (`agent_configs.execution_llm`)
 2. **Preset default execution LLM** (`presetExecutionLLM`)
 3. **Orchestrator default LLM** (fallback)
-
-**Conditional agents:**
-1. **Step-specific conditional LLM** (`agent_configs.conditional_llm`)
-2. **Step-specific execution LLM** (`agent_configs.execution_llm`)
-3. **Preset default execution LLM** (`presetExecutionLLM`)
-4. **Orchestrator default LLM** (fallback)
 
 This is consistent with how the regular orchestration orchestrator selects its LLM.
 

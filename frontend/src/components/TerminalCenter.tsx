@@ -19,6 +19,7 @@ import { normalizeAnsiForEmbeddedXterm } from '../utils/ansiSanitize'
 import { preserveTerminalContinuity } from '../utils/terminalContinuity'
 import { isMainAgentTerminal } from '../utils/terminalIdentity'
 import {
+  hiddenSelectedTerminalRailGroup,
   organizeTerminalRail,
   terminalRailGroupSearchText,
   type TerminalRailLogicalGroup,
@@ -1238,8 +1239,6 @@ function StepTypeIcon({ stepType, labelPrefix }: { stepType?: string; labelPrefi
   let icon = <Terminal className={iconClass} />
   if (type === 'routing') {
     icon = <GitBranch className={iconClass} />
-  } else if (type === 'conditional') {
-    icon = <Braces className={iconClass} />
   } else if (type === 'todo_task') {
     icon = <Check className={iconClass} />
   } else if (type === 'message_sequence') {
@@ -3338,13 +3337,20 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
       isMainAgent: isMainAgentTerminal,
     })
     const normalizedSearch = terminalRailSearch.trim().toLowerCase()
-    const visibleGroups = logicalGroups.filter(group => {
+    let visibleGroups = logicalGroups.filter(group => {
       const matchesFilter = terminalRailFilter === 'all' ||
         (terminalRailFilter === 'running' && group.section === 'active') ||
         (terminalRailFilter === 'attention' && group.section === 'attention') ||
         (terminalRailFilter === 'non-running' && group.section !== 'active' && group.section !== 'attention')
       return matchesFilter && (!normalizedSearch || terminalRailGroupSearchText(group).includes(normalizedSearch))
     })
+    const selectedRailTerminal = allTerminals.find(terminal => terminalPaneKey(terminal) === selectedID)
+    const hiddenSelectedGroup = hiddenSelectedTerminalRailGroup(logicalGroups, visibleGroups, selectedRailTerminal)
+    if (hiddenSelectedGroup) {
+      const visibleKeys = new Set(visibleGroups.map(group => group.key))
+      visibleKeys.add(hiddenSelectedGroup.key)
+      visibleGroups = logicalGroups.filter(group => visibleKeys.has(group.key))
+    }
     const sectionCounts = logicalGroups.reduce<Record<TerminalRailSection, number>>((counts, group) => {
       counts[group.section] += 1
       return counts
@@ -3358,7 +3364,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
       visibleGroups,
       sectionCounts,
     }
-  }, [terminals, terminalRailFilter, terminalRailSearch])
+  }, [terminals, terminalRailFilter, terminalRailSearch, selectedID])
   const terminalFocusActive = activeEventViewMode === 'terminal'
   const currentMainTerminal = useMemo(
     () => groupedTerminals.currentTerminals.find(terminal => isMainAgentTerminal(terminal)) || null,

@@ -1382,11 +1382,6 @@ export interface ExecutionOptions {
   selected_run_folder?: string;
   execution_strategy: string;
   resume_from_step?: number;  // 1-based step number (for top-level steps)
-  resume_from_branch_step?: {  // For resuming from branch steps
-    parent_step_index: number;  // 0-based index of conditional step
-    branch_type: 'if_true' | 'if_false';  // Which branch
-    branch_step_index: number;  // 0-based index within the branch
-  };
   plan_change_action?: 'keep_old_progress' | 'delete_old_progress';
   
   // Validation response persistence
@@ -1524,14 +1519,6 @@ export interface TodoTaskLog {
   all_tasks_complete?: boolean;
 }
 
-export interface ConditionalLog {
-  condition_result: boolean;
-  condition_reason: string;
-  condition_question: string;
-  timestamp: string;
-  branch_executed: string;
-}
-
 export interface LearningLog {
   type: string;
   step_path: string;
@@ -1551,7 +1538,6 @@ export interface ArchivedLogEntry {
   executions: ExecutionAttemptLog[];
   orchestration?: OrchestrationLog[];
   todo_task?: TodoTaskLog[];
-  conditionals?: ConditionalLog[];
   learnings?: LearningLog[];
 }
 
@@ -1588,7 +1574,6 @@ export interface StepExecutionLogs {
   executions: ExecutionAttemptLog[];
   orchestration?: OrchestrationLog[];
   todo_task?: TodoTaskLog[];
-  conditionals?: ConditionalLog[];
   learnings?: LearningLog[];
   archived_logs?: ArchivedLogEntry[];  // Logs from previous runs
   archived_executions?: ArchivedExecutionEntry[];  // Archived execution outputs from previous routing

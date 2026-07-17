@@ -67,7 +67,6 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
   event,
   isCollapsed,
   eventCount,
-  onToggleCollapse,
   toolCallCount,
   latestToolLabel,
 }) => {
@@ -98,7 +97,6 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
   const isSequenceWork = isSequenceWorkEvent(event)
   const isWorkflowStepExecution = isWorkflowStepExecutionEvent(event)
   const isWorkshopStep = agentType?.startsWith('workshop-')
-  const isBackgroundAgent = agentType === 'workshop-background-task'
   const isWorkshopStepExecution = agentType === 'workshop-step-execution'
   const workshopGroup = event.input_data?.group_name
   const workshopIteration = formatWorkshopIteration(event.iteration, event.input_data?.iteration)
@@ -128,7 +126,6 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
     if (agentType === 'validation') return 'Validation Agent'
     if (agentType === 'organizer') return 'Organizer Agent'
     if (agentType === 'plan_breakdown') return 'Plan Breakdown Agent'
-    if (agentType === 'conditional') return 'Conditional LLM'
     return 'Agent'
   }
 
@@ -155,7 +152,6 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
     if (agentType === 'execution') return '⚡'
     if (agentType === 'validation') return '✅'
     if (agentType === 'organizer') return '🗂️'
-    if (agentType === 'conditional') return '🔀'
     return '🤖'
   }
 
@@ -175,7 +171,6 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
     if (agentType === 'execution') return 'purple'
     if (agentType === 'validation') return 'emerald'
     if (agentType === 'organizer') return 'orange'
-    if (agentType === 'conditional') return 'indigo'
     return 'yellow'
   }
 
@@ -350,19 +345,6 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
         <div className="mt-3 space-y-3">
           {/* Objective is always shown above; only show here if inputs are expanded for full height */}
 
-          {/* Context for conditional agents - show prominently after objective */}
-          {(event as unknown as { agent_type?: string })?.agent_type === 'conditional' && event.input_data?.context && (
-            <div>
-              <div className={`text-xs font-medium ${colors.textSecondary} mb-2`}>Context:</div>
-              <div className={`${colors.bg} rounded p-3 text-sm border ${colors.border}`}>
-                <ConversationMarkdownRenderer 
-                  content={event.input_data.context} 
-                  maxHeight="400px" 
-                />
-              </div>
-            </div>
-          )}
-
           {/* System Prompt */}
           {hasSystemPrompt && (
             <div>
@@ -405,7 +387,7 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
                   </div>
                 )}
                 {Object.entries(event.input_data || {})
-                  .filter(([key]) => key !== 'step_number' && key !== 'context') // Exclude context from general input data for conditional agents
+                  .filter(([key]) => key !== 'step_number' && key !== 'context')
                   .filter(([, value]) => {
                     // Filter out empty values: null, undefined, empty string
                     if (value === null || value === undefined || value === '') return false;

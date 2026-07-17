@@ -262,7 +262,7 @@ function PulseStatusRow({ label, description, status, runId, nextCheck, selected
 interface WorkflowToolbarProps {
   status: WorkflowExecutionStatus
   hasPlan: boolean
-  plan?: PlanningResponse | null  // Plan data for identifying conditional steps and branches
+  plan?: PlanningResponse | null  // Plan data used by toolbar actions
   currentPhase?: string
   workspacePath?: string | null
   presetQueryId?: string | null  // Used to persist settings per workflow

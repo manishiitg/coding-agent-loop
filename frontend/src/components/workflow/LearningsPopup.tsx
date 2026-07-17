@@ -1,8 +1,8 @@
 import { useEffect, useState, useCallback } from 'react'
-import { X, BookOpen, Lock, Unlock, Loader2, AlertCircle, ChevronDown, ChevronRight, Code, FileText, Trash2, Search, Globe, Hash, RefreshCw, Eye, Edit2, Save, Ban, Check, Copy, GitBranch, Bot, Terminal, CheckCircle2 } from 'lucide-react'
+import { X, BookOpen, Lock, Unlock, Loader2, AlertCircle, ChevronDown, ChevronRight, Code, FileText, Trash2, Search, Globe, Hash, RefreshCw, Eye, Edit2, Save, Ban, Check, Copy, GitBranch, Bot, Terminal } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { PlanningResponse, PlanStep } from '../../utils/stepConfigMatching'
-import { isConditionalStep, isTodoTaskStep } from '../../utils/stepConfigMatching'
+import { isTodoTaskStep } from '../../utils/stepConfigMatching'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 import type { PlannerFile } from '../../services/api-types'
 import ConfirmationDialog from '../ui/ConfirmationDialog'
@@ -119,16 +119,6 @@ const normalizeGlobalSkillRelPath = (filepath: string): string => {
     .join('/')
 }
 
-const getMarkdownLinkedGlobalPaths = (content: string): Set<string> => {
-  const linked = new Set<string>()
-  for (const match of content.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)) {
-    const href = match[1]?.trim()
-    if (!href || href.startsWith('#') || href.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(href)) continue
-    linked.add(normalizeGlobalSkillRelPath(href))
-  }
-  return linked
-}
-
 const isPatchArtifactPath = (filepath: string): boolean => {
   const normalized = normalizeGlobalSkillRelPath(filepath).toLowerCase()
   return normalized.endsWith('.orig') || normalized.endsWith('.rej')
@@ -142,15 +132,6 @@ function getStepTitle(plan: PlanningResponse | null, stepId: string): string {
   const findStep = (steps: PlanStep[], id: string): PlanStep | null => {
     for (const step of steps) {
       if (step.id === id) return step
-      // Check branch steps for conditional steps
-      if ('if_true_steps' in step && step.if_true_steps) {
-        const found = findStep(step.if_true_steps, id)
-        if (found) return found
-      }
-      if ('if_false_steps' in step && step.if_false_steps) {
-        const found = findStep(step.if_false_steps, id)
-        if (found) return found
-      }
       // Check todo_task predefined_routes
       if ('predefined_routes' in step && step.predefined_routes) {
         for (const route of step.predefined_routes) {
@@ -208,7 +189,6 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
   const [fileContentCache, setFileContentCache] = useState<Record<string, string>>({})
 
   // Per-step inline editors for the new access/objective controls.
-  const [editingAccessStepId, setEditingAccessStepId] = useState<string | null>(null)
   const [editingObjectiveStepId, setEditingObjectiveStepId] = useState<string | null>(null)
   const [objectiveDraft, setObjectiveDraft] = useState<string>('')
   const [savingConfigStepIds, setSavingConfigStepIds] = useState<Set<string>>(new Set())
@@ -325,7 +305,6 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
         walk(files)
 
         // Pull SKILL.md first for the featured markdown view.
-        let skillText = ''
         const skill = flatFiles.find(f => {
           const rel = relFromGlobal(f.filepath || '')
           return rel === 'SKILL.md'
@@ -339,7 +318,6 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
               const endIdx = text.indexOf('\n---', 3)
               if (endIdx !== -1) text = text.slice(endIdx + 4).trim()
             }
-            skillText = text
             setGlobalSkillContent(text)
           }
         }
@@ -347,7 +325,6 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
         // Every other file (excluding SKILL.md + .learning_metadata.json + anything
         // that somehow resolved outside _global/). Grouped by directory for display;
         // content fetched on demand.
-        const linkedGlobalPaths = getMarkdownLinkedGlobalPaths(skillText)
         const dedupedByRelPath = new Map<string, { relPath: string; rawPath: string }>()
         for (const file of flatFiles) {
           const rawPath = file.filepath || ''
@@ -357,8 +334,6 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
           if (relPath.endsWith('.learning_metadata.json')) continue
           if (isPatchArtifactPath(relPath)) continue
           if (relPath.endsWith('/')) continue
-          // Keep linked files visible in Additional files explorer so they are always browseable.
-          // if (linkedGlobalPaths.has(relPath)) continue
           // Safety: only include files we can place under _global/. If relFromGlobal
           // didn't strip a /_global/ prefix AND the raw path doesn't look relative
           // (e.g. it's a sibling workflow folder), skip it — the listing probably
@@ -452,7 +427,6 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
       await agentApi.updateStepConfig(workspacePath, stepId, merged)
       const response = await agentApi.getAllStepLearnings(workspacePath)
       if (response.success) setLearnings(parseLearningsResponse(response.learnings || {}))
-      setEditingAccessStepId(null)
       setEditingObjectiveStepId(null)
       setObjectiveDraft('')
     } catch (err: unknown) {
@@ -655,7 +629,7 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
       // Fetch markdown content
       if (mdFile) {
         const rawPath = mdFile.filepath || mdFile.name
-        let filePath = rawPath ? resolveAbsPath(rawPath) : ''
+        const filePath = rawPath ? resolveAbsPath(rawPath) : ''
         if (filePath) {
           const response = await agentApi.getPlannerFileContent(filePath)
           if (response.success && response.data && response.data.content) {
@@ -711,7 +685,7 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
 
       if (codeFile) {
         const rawCodeFilePath = codeFile.filepath || codeFile.name
-        let codeFilePath = rawCodeFilePath ? resolveAbsPath(rawCodeFilePath) : ''
+        const codeFilePath = rawCodeFilePath ? resolveAbsPath(rawCodeFilePath) : ''
         if (codeFilePath) {
           codeFileName = codeFilePath.split('/').pop() || 'code'
           const codeResponse = await agentApi.getPlannerFileContent(codeFilePath)
@@ -771,13 +745,13 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
   }
 
   // Collect all step IDs in execution order from plan with metadata
-  const getStepsInExecutionOrder = useCallback((): Array<{ stepId: string; stepNumber: number; stepType: string; branchType?: string; parentStepId?: string }> => {
+  const getStepsInExecutionOrder = useCallback((): Array<{ stepId: string; stepNumber: number; stepType: string; relationType?: string; parentStepId?: string }> => {
     if (!plan || !plan.steps) return []
 
-    const stepsWithMetadata: Array<{ stepId: string; stepNumber: number; stepType: string; branchType?: string; parentStepId?: string }> = []
+    const stepsWithMetadata: Array<{ stepId: string; stepNumber: number; stepType: string; relationType?: string; parentStepId?: string }> = []
     let stepCounter = 0
 
-    const collectSteps = (steps: PlanStep[], branchType?: string) => {
+    const collectSteps = (steps: PlanStep[]) => {
       steps.forEach((step) => {
         if (step.id) {
           stepCounter++
@@ -785,19 +759,8 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
           stepsWithMetadata.push({
             stepId: step.id,
             stepNumber: stepCounter,
-            stepType,
-            branchType
+            stepType
           })
-        }
-
-        // Handle conditional steps - collect branch steps
-        if (isConditionalStep(step)) {
-          if (step.if_true_steps && step.if_true_steps.length > 0) {
-            collectSteps(step.if_true_steps, 'true')
-          }
-          if (step.if_false_steps && step.if_false_steps.length > 0) {
-            collectSteps(step.if_false_steps, 'false')
-          }
         }
 
         // Handle todo_task steps - collect sub-agent step IDs from predefined_routes
@@ -810,7 +773,7 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                   stepId: route.sub_agent_step.id,
                   stepNumber: stepCounter,
                   stepType: 'todo_sub_agent',
-                  branchType: `todo-sub-agent-${route.route_id || routeIdx}`,
+                  relationType: `todo-sub-agent-${route.route_id || routeIdx}`,
                   parentStepId: step.id // Track parent for nesting
                 })
               }
@@ -1130,7 +1093,7 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
 
           {!isLoading && !error && stepsWithLearnings.length > 0 && (
             <div className="space-y-3">
-              {stepsWithLearnings.map(({ stepId, stepNumber, stepType, branchType }) => {
+              {stepsWithLearnings.map(({ stepId, stepNumber, stepType, relationType }) => {
                 const metadata = learnings[stepId]
                 // Lock state comes only from step_config.json (merged by the backend
                 // into metadata.lock_learnings for this API response). Metadata is
@@ -1146,7 +1109,6 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                 const hashRuns = metadata?.description_hash_runs ?? 0
                 const successfulRuns = getSuccessfulRuns(metadata)
                 const progressRuns = hashRuns > 0 ? hashRuns : successfulRuns
-                const progress = (progressRuns / 3) * 100
                 const access = effectiveAccess(metadata || null)
                 const accessExplicit = metadata?.learnings_access === 'read' ||
                   metadata?.learnings_access === 'read-write' ||
@@ -1163,22 +1125,18 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                 // Determine step type label and badge color
                 const getStepTypeLabel = () => {
                   if (stepType === 'global') return 'Global'
-                  if (branchType === 'true') return 'If True'
-                  if (branchType === 'false') return 'If False'
                   // Use same "Sub-Agent" label for both orchestration and todo_task sub-agents
-                  if (branchType?.startsWith('todo-sub-agent') || stepType === 'todo_sub_agent') return 'Sub-Agent'
-                  if (branchType?.startsWith('sub-agent') || stepType === 'sub_agent') return 'Sub-Agent'
+                  if (relationType?.startsWith('todo-sub-agent') || stepType === 'todo_sub_agent') return 'Sub-Agent'
+                  if (relationType?.startsWith('sub-agent') || stepType === 'sub_agent') return 'Sub-Agent'
                   if (stepType === 'decision_inner') return 'Decision'
                   return stepType.charAt(0).toUpperCase() + stepType.slice(1)
                 }
 
                 const getStepTypeBadgeColor = () => {
                   if (stepType === 'global') return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-                  if (branchType === 'true') return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
-                  if (branchType === 'false') return 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
                   // Use same orange color for both orchestration and todo_task sub-agents
-                  if (branchType?.startsWith('todo-sub-agent') || stepType === 'todo_sub_agent') return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
-                  if (branchType?.startsWith('sub-agent') || stepType === 'sub_agent') return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
+                  if (relationType?.startsWith('todo-sub-agent') || stepType === 'todo_sub_agent') return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
+                  if (relationType?.startsWith('sub-agent') || stepType === 'sub_agent') return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
                   if (stepType === 'decision_inner') return 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400'
                   return 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
                 }

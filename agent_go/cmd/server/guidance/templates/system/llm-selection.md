@@ -47,7 +47,7 @@ Set via `update_step_config(step_id, ...)`:
 ### Choosing — a short decision framework
 
 1. **Start with a provider profile, not pins.** Let the coding-agent provider supply sensible role defaults. Use explicit mode only when the workflow needs a deliberate cross-provider or model-specific allocation.
-2. **Don't force a cheaper tier before reliability is proven.** Drop a step to `medium`/`low` only after it's stable with eval/run evidence at target — premature downgrading trades correctness for cost.
+2. **Don't force a cheaper tier before reliability and goal quality are proven.** When a material workflow goal is below target, keep the current model/reasoning tier for outcome-bearing, planning, judgment, diagnostic, recovery, eval, and verification steps. Drop a step to `medium`/`low` only after representative eval/run evidence is at target and proves equivalent output and downstream outcomes. A strictly mechanical deterministic non-bottleneck step may be trialed cheaper only with that evidence, explicit approval, and rollback. Missing evidence means do not downgrade.
 3. **Use `execution_tier` for "usually cheaper/faster", `execution_llm` for "must be this exact model".** Don't hardcode a model when a tier expresses the intent.
 4. **Trial before committing.** Use `execute_step(..., tier="...")` or `test_llm` to validate a model on a real run before making it persistent.
 5. **Match tier to the work.** Subjective/ambiguous judgment → high; routine checks → medium; deterministic/file-shape → low.

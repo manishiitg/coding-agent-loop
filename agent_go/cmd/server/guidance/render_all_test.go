@@ -47,11 +47,16 @@ func TestManualPulseCommandsKeepRunSetupReviewAndFixBoundariesSeparate(t *testin
 		"llm-ops-review": {
 			"STANDALONE LLM AND OPERATIONS REVIEW",
 			"must not edit files or config",
+			"material goal criterion is below target",
+			"Missing evidence means keep the tier",
 			"before `/pulse-fixer` can apply them",
 		},
 		"pulse-fixer": {
 			"STANDALONE PULSE FIXER",
 			"does not rerun Pulse Gate or launch review agents",
+			"post-change evidence boundary",
+			"changed_unverified",
+			"awaiting_next_valid_run",
 			"standalone command must not impersonate",
 		},
 	}
@@ -182,7 +187,29 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 		"mark_pulse_final_command_result",
 		"not automatically due every Pulse",
 		"Parallel Review Team And Single Fixer",
-		"call_generic_agent` calls in the same tool-call batch",
+		"parallel batches of at most four reviewers",
+		"under 3000 characters",
+		"in-turn review ledger",
+		".pulse-fixer-recovery",
+		"blindly reapply",
+		"fixed_verified",
+		"normal user-facing cards once",
+		"conflict map grouped by target key",
+		"explicit user-approved decisions and constraints",
+		"mark only the affected",
+		"finding-id manifest",
+		"every finding id must have",
+		"global finding-ID reconciliation",
+		"Do not claim",
+		"approval revalidation",
+		"Unrelated drift",
+		"stale_not_applied",
+		"Never silently rebase or broaden",
+		"post-change evidence boundary",
+		"baseline only, never proof",
+		"mtime alone",
+		"changed_unverified",
+		"awaiting_next_valid_run",
 		"Do not use `run_in_background`",
 		"READ-ONLY REVIEW",
 		"same parent Pulse turn",
@@ -198,6 +225,12 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 		"runs/<run_folder>/logs/<step>/execution/execution-attempt-*.json",
 		"runs/<run_folder>/execution/<step>/session.json",
 		"Never silently drop a concern",
+		"Off-track goals tighten Bug Review cadence",
+		"below target",
+		"declining, or stalled",
+		"no exploratory QA checkpoint was completed after the latest observed goal",
+		"does not justify a long calendar cooldown",
+		"finding-free reviews over unchanged runtime paths may widen",
 		"Observable execution-trace review",
 		"semantic execution defects",
 		"execution/execution-attempt-*-iteration-*-conversation.json",
@@ -208,6 +241,11 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 		"Route `efficiency_or_coaching` findings",
 		"successful step may have chosen the wrong",
 		"prior Bug Review recorded `efficiency_or_coaching` trace evidence",
+		"Backup risk: local only",
+		"no verified destination is off-device",
+		"Never describe this state as healthy",
+		"warning in every Pulse",
+		"notification until off-device protection is verified",
 	} {
 		if !strings.Contains(postRun, want) {
 			t.Fatalf("post-run-monitor missing %q", want)
@@ -264,6 +302,72 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 	for _, want := range []string{`data-pulse-section="reflection" data-module="goal_advisor"`, `data-status="answered"`, `Question + answer`} {
 		if !strings.Contains(skeleton, want) {
 			t.Fatalf("review-improve-log-skeleton missing historical question/answer contract %q", want)
+		}
+	}
+}
+
+func TestPulseGuidanceRejudgesActiveExperimentCadenceFromCurrentEvidence(t *testing.T) {
+	postRun, err := renderFromRegistry("post-run-monitor", tmplData{}, referenceKinds)
+	if err != nil {
+		t.Fatalf("render post-run-monitor: %v", err)
+	}
+	for _, want := range []string{
+		"Every Gate must re-judge current goal evidence",
+		"planned evidence boundary, not a lock",
+		"reachable in the real runtime control",
+		"not received a fair test",
+		"implementation/control-path evidence",
+		"real business or strategy",
+	} {
+		if !strings.Contains(postRun, want) {
+			t.Fatalf("post-run monitor missing active-experiment cadence contract %q", want)
+		}
+	}
+
+	advisor, err := renderFromRegistry("goal-advisor", tmplData{}, allKinds)
+	if err != nil {
+		t.Fatalf("render goal-advisor: %v", err)
+	}
+	for _, want := range []string{
+		"verify its fair-test state from current evidence",
+		"actual runtime control",
+		"zero valid outcome-bearing runs is not a fair test",
+		"repair, unblock, or revise the same experiment in place",
+		"runtime-path",
+	} {
+		if !strings.Contains(advisor, want) {
+			t.Fatalf("goal advisor missing active-experiment lifecycle contract %q", want)
+		}
+	}
+}
+
+func TestTierGuidanceProtectsQualityWhileGoalsAreBelowTarget(t *testing.T) {
+	cases := map[string][]string{
+		"post-run-monitor": {
+			"Goal quality outranks tier savings",
+			"material success criterion is",
+			"not evidence for a downgrade",
+		},
+		"llm-selection": {
+			"material workflow goal is below target",
+			"representative eval/run evidence is at target",
+			"Missing evidence means do not downgrade",
+		},
+		"optimize-playbook": {
+			"material goals are below target",
+			"proven quality-equivalent outputs",
+			"explicitly approved reversible downgrade trial",
+		},
+	}
+	for kind, wants := range cases {
+		rendered, err := renderFromRegistry(kind, tmplData{}, referenceKinds)
+		if err != nil {
+			t.Fatalf("render %s: %v", kind, err)
+		}
+		for _, want := range wants {
+			if !strings.Contains(rendered, want) {
+				t.Fatalf("%s missing goal-quality tier guard %q", kind, want)
+			}
 		}
 	}
 }

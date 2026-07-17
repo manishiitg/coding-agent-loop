@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	baseevents "github.com/manishiitg/mcpagent/events"
 	orchestrator_events "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
+	baseevents "github.com/manishiitg/mcpagent/events"
 )
 
 type recordingExecutionNotifier struct {
@@ -114,8 +114,8 @@ func TestWorkflowProgressBridgeNotifiesCompletionWithoutStart(t *testing.T) {
 		Type:      orchestrator_events.OrchestratorAgentEnd,
 		Timestamp: time.Now(),
 		Data: &orchestrator_events.OrchestratorAgentEndEvent{
-			AgentType: "conditional",
-			AgentName: "route-by-mode",
+			AgentType: "generic_execution",
+			AgentName: "prepare-route-input",
 			StepIndex: 1,
 			Error:     "route failed",
 			Success:   false,

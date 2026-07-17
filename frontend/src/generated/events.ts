@@ -977,8 +977,8 @@ export interface PreValidationCompletedEvent {
   failed_checks?: number;
   files_checked?: FileCheckResultForEvent[];
   hierarchy_level?: number;
-  is_branch_step?: boolean;
   is_end_event?: boolean;
+  is_nested_execution?: boolean;
   metadata?: {
     [k: string]: unknown;
   };

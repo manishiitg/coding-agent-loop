@@ -82,4 +82,21 @@ describe('new chat confirmation policy', () => {
 
     expect(findBlockingMultiAgentSession([retained, matching], 'session-1')).toBe(matching)
   })
+
+  it('does not let a Chief of Staff schedule block or get reset by New Chat', () => {
+    const schedule = activeSession({
+      session_id: 'schedule-cron--org-pulse_123',
+      status: 'running',
+      triggered_by: 'cron',
+    })
+    const scheduleTab = {
+      ...baseTab,
+      sessionId: schedule.session_id,
+      metadata: { mode: 'multi-agent' as const, isScheduledRun: true },
+      isStreaming: true,
+    }
+
+    expect(findBlockingMultiAgentSession([schedule])).toBeNull()
+    expect(shouldConfirmNewMultiAgentChat(scheduleTab, schedule)).toBe(false)
+  })
 })

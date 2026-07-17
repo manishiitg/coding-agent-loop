@@ -57,7 +57,7 @@ func BuildStepFilesListing(folderPath string) string {
 }
 
 // PromptSections holds pre-built prompt sections that can be injected into any agent's
-// system prompt. All agent types (execution, todo task, conditional, evaluation) should
+// system prompt. All agent types (execution, todo task, evaluation) should
 // use these common builders for consistency.
 type PromptSections struct {
 	CodeExecution string // Code execution or tool search mode instructions

@@ -47,7 +47,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 
 	// Emit step_started event
 	routingStepPath := fmt.Sprintf("step-%d", stepIndex+1)
-	hcpo.emitStepStartedEvent(ctx, step, stepIndex, routingStepPath, false)
+	hcpo.emitStepStartedEvent(ctx, step, stepIndex, routingStepPath)
 
 	// Calculate run number
 	runNumber := 1
@@ -129,7 +129,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 	}
 
 	// Emit step_finished event
-	hcpo.emitStepFinishedEvent(ctx, step, stepIndex, routingStepPath, false)
+	hcpo.emitStepFinishedEvent(ctx, step, stepIndex, routingStepPath)
 
 	return selectedRouteID, "", nil
 }

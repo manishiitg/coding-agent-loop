@@ -189,7 +189,6 @@ The main log families are:
 - pre-validation JSON
 - learning execution JSONL
 - learning conversation JSON
-- conditional evaluation JSON
 - orchestration execution JSONL
 - todo-task execution JSONL
 
@@ -209,7 +208,6 @@ Common files:
 - `logs/{step-folder}/pre_validation.json`
 - `logs/{step-folder}/learning-execution.json`
 - `logs/{step-folder}/learning-conversation.json`
-- `logs/{step-folder}/conditional-evaluation.json`
 - `logs/{step-folder}/orchestration-execution.json`
 - `logs/{step-folder}/todo-task-execution.json`
 
@@ -255,7 +253,6 @@ This is why the execution log popup can show:
 - per-step execution attempts
 - validation history
 - learning traces
-- conditional results
 - orchestration and todo-task traces
 
 The implementation is in [workflow.go](../../agent_go/cmd/server/workflow.go).

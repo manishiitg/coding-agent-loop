@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/manishiitg/mcpagent/events"
 	orchestrator_events "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
+	"github.com/manishiitg/mcpagent/events"
 )
 
 // BlockingEventCallback is called when a blocking event is received.
@@ -586,7 +586,6 @@ func isWorkflowStepAgent(agentType, agentName string) bool {
 
 	return strings.Contains(agentType, "step") ||
 		strings.Contains(agentType, "execution") ||
-		strings.Contains(agentType, "conditional") ||
 		strings.Contains(agentType, "routing")
 }
 

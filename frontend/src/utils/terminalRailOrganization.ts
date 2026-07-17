@@ -170,3 +170,20 @@ export function organizeTerminalRail(
     }
   }).sort(compareGroups)
 }
+
+// The rail defaults to active-only, but the pane can remain on a child after
+// that child completes. Identify that one hidden group so the caller can keep
+// it in its normal section until the user selects another terminal.
+export function hiddenSelectedTerminalRailGroup(
+  groups: TerminalRailLogicalGroup[],
+  visibleGroups: TerminalRailLogicalGroup[],
+  selectedTerminal?: TerminalSnapshot | null,
+): TerminalRailLogicalGroup | null {
+  if (!selectedTerminal) return null
+  const selectedGroup = groups.find(group => group.terminals.some(terminal => (
+    terminal.terminal_id === selectedTerminal.terminal_id &&
+    (terminal.tmux_session || '') === (selectedTerminal.tmux_session || '')
+  )))
+  if (!selectedGroup || visibleGroups.some(group => group.key === selectedGroup.key)) return null
+  return selectedGroup
+}

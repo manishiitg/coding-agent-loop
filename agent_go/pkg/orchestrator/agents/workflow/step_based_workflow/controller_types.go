@@ -5,16 +5,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 	baseevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 )
-
-// BranchStepProgress tracks branch execution progress for conditional steps
-type BranchStepProgress struct {
-	BranchExecuted string   `json:"branch_executed"` // "if_true" or "if_false"
-	CompletedSteps []string `json:"completed_steps"` // e.g., ["step-3-if-true-0", "step-3-if-true-1"]
-}
 
 // RoutingEvaluationCount tracks how many times a specific route has been selected
 // Key format: "{stepID}:{routeID}"
@@ -31,32 +25,23 @@ type OrchestrationRoute struct {
 
 // StepProgress tracks which steps have been completed
 type StepProgress struct {
-	CompletedStepIndices    []int                      `json:"completed_step_indices"` // 0-based indices
-	TotalSteps              int                        `json:"total_steps"`
-	LastUpdated             time.Time                  `json:"last_updated"`
-	BranchSteps             map[int]BranchStepProgress `json:"branch_steps,omitempty"`        // key is step index (0-based)
-	ValidationFailures      map[string]int             `json:"validation_failures,omitempty"` // key is step path, value is failure count
-	RoutingEvaluationCounts RoutingEvaluationCount     `json:"-"`                             // in-memory only: tracks routing step evaluations to prevent infinite loops (not persisted)
-	JumpCounts              map[string]int             `json:"-"`                             // in-memory only: counts identical "source->target" next_step_id jumps to prevent infinite loops (not persisted)
-	ArchivalCounts          map[int]int                `json:"archival_counts,omitempty"`     // key is stepNumber (1-based), value is archive run count
-}
-
-// BranchStepResumeTarget represents a branch step to resume from
-type BranchStepResumeTarget struct {
-	ParentStepIndex int    `json:"parent_step_index"` // 0-based index of conditional step
-	BranchType      string `json:"branch_type"`       // "if_true" or "if_false"
-	BranchStepIndex int    `json:"branch_step_index"` // 0-based index within the branch
+	CompletedStepIndices    []int                  `json:"completed_step_indices"` // 0-based indices
+	TotalSteps              int                    `json:"total_steps"`
+	LastUpdated             time.Time              `json:"last_updated"`
+	ValidationFailures      map[string]int         `json:"validation_failures,omitempty"` // key is step path, value is failure count
+	RoutingEvaluationCounts RoutingEvaluationCount `json:"-"`                             // in-memory only: tracks routing step evaluations to prevent infinite loops (not persisted)
+	JumpCounts              map[string]int         `json:"-"`                             // in-memory only: counts identical "source->target" next_step_id jumps to prevent infinite loops (not persisted)
+	ArchivalCounts          map[int]int            `json:"archival_counts,omitempty"`     // key is stepNumber (1-based), value is archive run count
 }
 
 // ExecutionOptions represents user-selected execution options from frontend
 // When provided, backend will use these options instead of asking interactively
 type ExecutionOptions struct {
-	RunMode              string                  `json:"run_mode"`                          // "use_same_run" or "create_new_runs_always"
-	SelectedRunFolder    string                  `json:"selected_run_folder,omitempty"`     // If use_same_run and user selected specific folder
-	ExecutionStrategy    string                  `json:"execution_strategy"`                // Execution strategy (see constants below)
-	ResumeFromStep       int                     `json:"resume_from_step,omitempty"`        // 1-based step number to resume from (for top-level steps)
-	ResumeFromBranchStep *BranchStepResumeTarget `json:"resume_from_branch_step,omitempty"` // For resuming from branch steps
-	PlanChangeAction     string                  `json:"plan_change_action,omitempty"`      // "keep_old_progress" or "delete_old_progress"
+	RunMode           string `json:"run_mode"`                      // "use_same_run" or "create_new_runs_always"
+	SelectedRunFolder string `json:"selected_run_folder,omitempty"` // If use_same_run and user selected specific folder
+	ExecutionStrategy string `json:"execution_strategy"`            // Execution strategy (see constants below)
+	ResumeFromStep    int    `json:"resume_from_step,omitempty"`    // 1-based step number to resume from (for top-level steps)
+	PlanChangeAction  string `json:"plan_change_action,omitempty"`  // "keep_old_progress" or "delete_old_progress"
 
 	// Variable group execution options (for batch execution with multiple groups)
 	EnabledGroupNames []string `json:"enabled_group_names,omitempty"` // Group names to execute (if empty, uses groups' enabled flags)
@@ -87,13 +72,12 @@ type BatchExecutionProgress struct {
 // ExecutionContext represents immutable execution configuration
 // Created once at execution start and passed through the call chain
 type ExecutionContext struct {
-	SkipHumanInput    bool                    // Whether to skip human feedback requests (auto-approve steps)
-	RunSingleStepOnly bool                    // Whether to run only a single step and stop
-	SingleStepTarget  int                     // Target step index to run (0-based)
-	SavedScriptOnly   bool                    // Whether to run only saved learnings/{step-id}/main.py with no LLM fallback
-	ResumeBranchStep  *BranchStepResumeTarget // For resuming from a specific branch step (nil if not resuming from branch)
-	IsEvaluationMode  bool                    // Whether we're running evaluation steps
-	StepPathOverride  string                  // If set, overrides the default "step-{N}" path for the target step (used for inner steps in workshop)
+	SkipHumanInput    bool   // Whether to skip human feedback requests (auto-approve steps)
+	RunSingleStepOnly bool   // Whether to run only a single step and stop
+	SingleStepTarget  int    // Target step index to run (0-based)
+	SavedScriptOnly   bool   // Whether to run only saved learnings/{step-id}/main.py with no LLM fallback
+	IsEvaluationMode  bool   // Whether we're running evaluation steps
+	StepPathOverride  string // If set, overrides the default "step-{N}" path for the target step (used for inner steps in workshop)
 
 	// ArtifactFolderNameOverride writes execution artifacts/logs to this folder
 	// instead of the stable step ID folder. Logical step ID lookup for configs,

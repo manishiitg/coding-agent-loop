@@ -120,7 +120,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 			CompletedStepIndices:    []int{},
 			TotalSteps:              len(breakdownSteps),
 			LastUpdated:             time.Now(),
-			BranchSteps:             make(map[int]BranchStepProgress),
 			ValidationFailures:      make(map[string]int),
 			RoutingEvaluationCounts: make(RoutingEvaluationCount),
 		}

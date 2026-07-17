@@ -83,8 +83,8 @@ common.SetSessionWorkingDir(hcpo.httpSessionID, "Workflow/HRMS/runs/run-001/exec
 common.SetSessionWorkingDir(orch.httpSessionID, "Workflow/HRMS/runs/run-001/execution")
 ```
 
-After this point, all shell commands (execution agents, learning agents, conditional agents,
-todotask agents) default to `Workflow/HRMS/runs/run-001/execution`.
+After this point, all shell commands (execution agents, learning agents, and todo-task agents)
+default to `Workflow/HRMS/runs/run-001/execution`.
 
 ---
 

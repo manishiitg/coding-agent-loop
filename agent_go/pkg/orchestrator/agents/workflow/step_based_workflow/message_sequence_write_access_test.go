@@ -119,6 +119,66 @@ func TestMessageSequenceWriteAccess_EmptyOK(t *testing.T) {
 	}
 }
 
+func TestMessageSequenceItemInheritsStepWriteAccess(t *testing.T) {
+	hcpo := newMessageSequenceClosingTestOrchestrator(t)
+	hcpo.useKnowledgebase = true
+	config := &AgentConfigs{
+		DBAccess:                 DBAccessReadWrite,
+		KnowledgebaseAccess:      KBAccessReadWrite,
+		KnowledgebaseWriteMethod: KBWriteMethodDirect,
+		LearningsAccess:          LearningsAccessReadWrite,
+	}
+
+	got := hcpo.resolveMessageSequenceItemWriteAccess(config, MessageSequenceItem{
+		ID:   "plain-turn",
+		Type: "user_message",
+	})
+	if !got.DB || !got.Knowledgebase || !got.Learnings {
+		t.Fatalf("plain sequence turn should inherit all step-level writes, got: %+v", got)
+	}
+}
+
+func TestMessageSequenceItemOverrideNarrowsStepWriteAccess(t *testing.T) {
+	hcpo := newMessageSequenceClosingTestOrchestrator(t)
+	hcpo.useKnowledgebase = true
+	config := &AgentConfigs{
+		DBAccess:                 DBAccessReadWrite,
+		KnowledgebaseAccess:      KBAccessReadWrite,
+		KnowledgebaseWriteMethod: KBWriteMethodDirect,
+		LearningsAccess:          LearningsAccessReadWrite,
+	}
+
+	got := hcpo.resolveMessageSequenceItemWriteAccess(config, MessageSequenceItem{
+		ID:          "db-only-turn",
+		Type:        "user_message",
+		WriteAccess: MessageSequenceWriteAccess{DB: true},
+	})
+	if !got.DB || got.Knowledgebase || got.Learnings {
+		t.Fatalf("non-empty item override should narrow inherited writes to db only, got: %+v", got)
+	}
+}
+
+func TestMessageSequenceItemCannotEscalateStepWriteAccess(t *testing.T) {
+	hcpo := newMessageSequenceClosingTestOrchestrator(t)
+	hcpo.useKnowledgebase = true
+	config := &AgentConfigs{
+		DBAccess:            DBAccessRead,
+		KnowledgebaseAccess: KBAccessRead,
+		LearningsAccess:     LearningsAccessRead,
+	}
+
+	got := hcpo.resolveMessageSequenceItemWriteAccess(config, MessageSequenceItem{
+		ID:   "attempted-escalation",
+		Type: "user_message",
+		WriteAccess: MessageSequenceWriteAccess{
+			DB: true, Knowledgebase: true, Learnings: true,
+		},
+	})
+	if got != (MessageSequenceWriteAccess{}) {
+		t.Fatalf("item override must not escalate read-only step permissions, got: %+v", got)
+	}
+}
+
 func TestMessageSequenceTemplateVarsReflectItemWriteAccess(t *testing.T) {
 	docsRoot := t.TempDir()
 	t.Setenv("WORKSPACE_DOCS_PATH", docsRoot)

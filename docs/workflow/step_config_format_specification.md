@@ -61,10 +61,6 @@ Both frontend and backend **read and write** only the object format with `steps`
         "execution_max_turns": 25,
         "validation_max_turns": 10,
         "learning_max_turns": 5,
-        "conditional_llm": {
-          "provider": "openai",
-          "model_id": "gpt-4o-mini"
-        },
         "use_code_execution_mode": true,
         "disable_validation": false,
         "llm_validation_mode": "skip",
@@ -163,7 +159,6 @@ content, err := json.MarshalIndent(file, "", "  ")
 |-------|------|---------|---------|
 | `execution_llm` | `object` | Preset default | LLM config for execution agent (`{ provider: string, model_id: string }`) |
 | `validation_llm` | `object` | Preset default | LLM config for validation agent |
-| `conditional_llm` | `object` | Preset default | Step-specific conditional LLM for conditional step evaluation |
 
 ### Max Turns Configuration
 

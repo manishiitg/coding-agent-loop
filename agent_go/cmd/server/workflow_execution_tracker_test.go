@@ -69,3 +69,35 @@ func TestRunningWorkflowListKeepsInternalWorkflowStepsOut(t *testing.T) {
 		t.Fatalf("running len = %d, want 0 for internal workflow step", len(running))
 	}
 }
+
+func TestFindRunningTrackedExecutionForWorkspaceWhereDoesNotLetNewerScheduleHideBuilder(t *testing.T) {
+	now := time.Now().UTC()
+	api := &StreamingAPI{
+		trackedWorkflowExecutions: map[string]*TrackedWorkflowExecution{
+			"builder": {
+				ExecutionID:   "builder",
+				SessionID:     "chat-session",
+				WorkspacePath: "Workflow/demo",
+				PhaseID:       "workflow-builder",
+				Status:        trackedExecutionStatusRunning,
+				StartedAt:     now.Add(-time.Minute),
+			},
+			"schedule": {
+				ExecutionID:   "schedule",
+				SessionID:     "schedule-cron--demo_1",
+				WorkspacePath: "Workflow/demo",
+				PhaseID:       "execute-workflow",
+				Status:        trackedExecutionStatusRunning,
+				TriggeredBy:   "cron",
+				StartedAt:     now,
+			},
+		},
+	}
+
+	found := api.findRunningTrackedExecutionForWorkspaceWhere("Workflow/demo", func(exec *TrackedWorkflowExecution) bool {
+		return exec.PhaseID == "workflow-builder"
+	})
+	if found == nil || found.SessionID != "chat-session" {
+		t.Fatalf("builder lookup = %#v, want chat-session", found)
+	}
+}

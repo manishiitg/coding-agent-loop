@@ -19,6 +19,11 @@ Fix focus: {{.Focus}}.{{end}}
    contradictory, unsafe to verify, or no longer reproducible, record that
    disposition instead of forcing a change.
 
+Before each mutation, establish a **post-change evidence boundary**: record the
+mutation start time, canonical target identity, pre-change hash or version, and
+the latest relevant pre-change run/artifact ids. Old artifacts are baseline
+only, never proof that the new change works.
+
 ## Apply safely
 
 - Apply operational correctness, stale-path, validation, current-run binding,
@@ -33,13 +38,22 @@ Fix focus: {{.Focus}}.{{end}}
   to verify a repair.
 - Run targeted side-effect-free validation after every change. Verify the real
   runtime consumer reads the changed canonical store; a successful write alone
-  is not proof.
+  is not proof. Accept verification only from a deterministic check executed
+  after the mutation against that real consumer path, or from a fresh execution,
+  eval, or report artifact with matching run, step, target, and provenance.
+  File existence, mtime alone, or rereading an older successful artifact is not
+  proof.
+- If verification requires an externally side-effecting run or the next
+  scheduled producing run, do not trigger it merely to verify. Record
+  `changed_unverified` with reason `awaiting_next_valid_run`, the exact next
+  evidence boundary, and do not claim the finding is fixed.
 
 ## Close out
 
 Update `builder/improve.html` once after all selected fixes. Preserve each
-original finding and add `Resolved`, `Partially resolved`, `Blocked`, or
-`Invalid` with date, exact fix, verification, and remaining risk. Do not call
+original finding and add `Resolved`, `Partially resolved - changed_unverified`,
+`Blocked`, or `Invalid` with date, exact fix, verification, and remaining risk.
+Do not call
 `record_pulse_worklist`, `mark_pulse_module_result`, or final-command status
 tools: this standalone command must not impersonate or complete an automatic
 Pulse run.

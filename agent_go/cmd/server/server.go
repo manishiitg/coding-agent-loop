@@ -2746,9 +2746,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	if req.AgentMode == "workflow_phase" &&
 		req.PhaseID == workflowtypes.WorkflowStatusWorkflowBuilder &&
 		strings.TrimSpace(req.SelectedFolder) != "" {
-		if running := api.findRunningTrackedExecutionForWorkspace(req.SelectedFolder); running != nil &&
-			running.SessionID != sessionID &&
-			running.PhaseID == workflowtypes.WorkflowStatusWorkflowBuilder {
+		if running := api.findRunningTrackedExecutionForWorkspaceWhere(req.SelectedFolder, func(exec *TrackedWorkflowExecution) bool {
+			return exec.PhaseID == workflowtypes.WorkflowStatusWorkflowBuilder
+		}); running != nil && running.SessionID != sessionID {
 			logfWithContext(queryLogCtx, "[WORKFLOW_BUSY] Rejected workflow_builder chat for workspace %q: running session %s started %s (triggered_by=%s)", req.SelectedFolder, running.SessionID, running.StartedAt.Format(time.RFC3339), running.TriggeredBy)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict)
@@ -2771,6 +2771,32 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Chief of Staff has one interactive chat lane. Scheduled Chief of Staff
+	// work is a separate lane and may coexist with it, but a second interactive
+	// session must not race through from another browser/tab.
+	claimedChiefOfStaffChat := false
+	if req.AgentMode == "multi-agent" &&
+		!req.IsAutoNotification &&
+		!isScheduledSessionIdentity(sessionID, req.TriggeredBy) &&
+		strings.TrimSpace(req.BotPlatform) == "" {
+		if blocking := api.claimChiefOfStaffChatSession(sessionID, currentUserID, req.Query, req.TriggeredBy); blocking != nil {
+			logfWithContext(queryLogCtx, "[CHIEF_OF_STAFF_BUSY] Rejected second interactive chat: running session %s", blocking.SessionID)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":   "chief_of_staff_busy",
+				"message": "A Chief of Staff chat is already active. Stop it or use New Chat before starting another.",
+				"running": map[string]interface{}{
+					"session_id":    blocking.SessionID,
+					"status":        blocking.Status,
+					"last_activity": blocking.LastActivity,
+				},
+			})
+			return
+		}
+		claimedChiefOfStaffChat = true
+	}
+
 	// Chat sessions are in-memory only — tracked via activeSessions map
 	// below. No persistent session metadata.
 
@@ -2787,7 +2813,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Track active session for page refresh recovery (no observer needed)
-	api.trackActiveSession(sessionID, req.AgentMode, req.Query, currentUserID, req.BotPlatform, req.TriggeredBy)
+	if !claimedChiefOfStaffChat {
+		api.trackActiveSession(sessionID, req.AgentMode, req.Query, currentUserID, req.BotPlatform, req.TriggeredBy)
+	}
 	api.activeSessionsMux.Lock()
 	if sess, ok := api.activeSessions[sessionID]; ok {
 		if strings.TrimSpace(req.PresetQueryID) != "" {
@@ -5900,6 +5928,69 @@ func createLLMLogger() loggerv2.Logger {
 }
 
 // --- ACTIVE SESSION MANAGEMENT ---
+
+func isScheduledSessionIdentity(sessionID, triggeredBy string) bool {
+	trigger := strings.ToLower(strings.TrimSpace(triggeredBy))
+	id := strings.ToLower(strings.TrimSpace(sessionID))
+	return trigger == "cron" ||
+		strings.Contains(trigger, "schedule") ||
+		strings.HasPrefix(id, "schedule-") ||
+		strings.Contains(id, "-schedule-")
+}
+
+func chiefOfStaffSessionBlocksNewChat(session *ActiveSessionInfo, userID string) bool {
+	if session == nil || session.UserID != userID || normalizeAgentMode(session.AgentMode) != "multi-agent" {
+		return false
+	}
+	if isScheduledSessionIdentity(session.SessionID, session.TriggeredBy) || strings.TrimSpace(session.BotPlatform) != "" {
+		return false
+	}
+	return normalizeSessionLifecycleStatus(session.Status) == sessionLifecycleRunning ||
+		session.HasRetainedTmuxSession ||
+		session.HasRunningBackgroundAgents ||
+		session.NeedsUserInput
+}
+
+// claimChiefOfStaffChatSession atomically checks and reserves the user's one
+// interactive Chief of Staff chat lane. The same session may continue sending
+// follow-up messages; a different session is rejected while the lane is live.
+func (api *StreamingAPI) claimChiefOfStaffChatSession(sessionID, userID, query, triggeredBy string) *ActiveSessionInfo {
+	if api.eventStore != nil {
+		api.eventStore.SetSessionOwner(sessionID, userID)
+	}
+
+	api.activeSessionsMux.Lock()
+	defer api.activeSessionsMux.Unlock()
+
+	for existingID, existing := range api.activeSessions {
+		if existingID == sessionID {
+			continue
+		}
+		if chiefOfStaffSessionBlocksNewChat(existing, userID) {
+			return cloneActiveSessionInfo(existing)
+		}
+	}
+
+	now := time.Now()
+	createdAt := now
+	if existing := api.activeSessions[sessionID]; existing != nil && !existing.CreatedAt.IsZero() {
+		createdAt = existing.CreatedAt
+		if strings.TrimSpace(triggeredBy) == "" {
+			triggeredBy = existing.TriggeredBy
+		}
+	}
+	api.activeSessions[sessionID] = &ActiveSessionInfo{
+		SessionID:    sessionID,
+		AgentMode:    "multi-agent",
+		Status:       "running",
+		LastActivity: now,
+		CreatedAt:    createdAt,
+		Query:        query,
+		UserID:       userID,
+		TriggeredBy:  triggeredBy,
+	}
+	return nil
+}
 
 // trackActiveSession tracks a new active session
 func (api *StreamingAPI) trackActiveSession(sessionID, agentMode, query, userID, botPlatform, triggeredBy string) {

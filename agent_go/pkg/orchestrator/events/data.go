@@ -202,12 +202,6 @@ type TodoStep struct {
 	FailurePatterns     []string `json:"failure_patterns,omitempty"` // what failed (includes tools to avoid)
 }
 
-// BranchStepProgress tracks branch execution progress for conditional steps
-type BranchStepProgress struct {
-	BranchExecuted string   `json:"branch_executed"` // "if_true" or "if_false"
-	CompletedSteps []string `json:"completed_steps"` // e.g., ["step-3-if-true-0", "step-3-if-true-1"]
-}
-
 // StepTokenUsageEvent represents token usage summary for a workflow step
 type StepTokenUsageEvent struct {
 	events.BaseEventData
@@ -285,8 +279,7 @@ type LearningSkippedEvent struct {
 	StepID        string `json:"step_id"`        // Step ID from plan
 	StepIndex     int    `json:"step_index"`     // 0-based step index
 	StepTitle     string `json:"step_title"`     // Step title
-	StepPath      string `json:"step_path"`      // Step path (e.g., "step-1" or "step-1-if-true-0")
-	IsBranchStep  bool   `json:"is_branch_step"` // Whether this is a branch step
+	StepPath      string `json:"step_path"`      // Step path (e.g., "step-1" or "step-2-sub-login")
 	Reason        string `json:"reason"`         // Reason for skipping
 	RunFolder     string `json:"run_folder"`     // Run folder name (e.g., "iteration-1")
 	WorkspacePath string `json:"workspace_path"` // Workspace path

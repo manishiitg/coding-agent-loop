@@ -21,6 +21,7 @@ import { prepareDomForPdfExport } from "./utils/pdfExport";
 import { convertToSlackMarkdown } from "./utils/slackMarkdown";
 import { isDiffFilePath, looksLikeDiffContent } from "./utils/diff";
 import { findBlockingMultiAgentSession, shouldConfirmForSessionStatus, shouldConfirmNewMultiAgentChat } from "./utils/newChatConfirmation";
+import { isScheduledSession } from "./utils/workflowSessionKinds";
 import { Edit, Save, X, Loader2, Download, Link, Github, PanelRightClose, PanelRightOpen, Smartphone, Laptop } from "lucide-react";
 import { WorkflowLayout } from "./components/workflow";
 import { ModePresetBar } from "./components/ModePresetBar";
@@ -86,6 +87,17 @@ const isRecentExplicitReadOnlyWorkflowTab = (tab: ChatTab | null | undefined): t
     typeof restoredAt === 'number' &&
     Date.now() - restoredAt <= READ_ONLY_WORKFLOW_RESTORE_SELECTION_WINDOW_MS
 }
+
+const isChiefOfStaffScheduleTab = (tab: ChatTab): boolean =>
+  tab.metadata?.mode === 'multi-agent' && (
+    tab.metadata?.isScheduledRun === true ||
+    isScheduledSession({ sessionId: tab.sessionId })
+  )
+
+const isInteractiveChiefOfStaffTab = (tab: ChatTab): boolean =>
+  tab.metadata?.mode === 'multi-agent' &&
+  tab.metadata?.isOrganizationAssistant !== true &&
+  !isChiefOfStaffScheduleTab(tab)
 
 const hasOpenWorkspaceCollapsingPopup = () => {
   if (typeof document === 'undefined') return false
@@ -1078,9 +1090,7 @@ function App() {
       }
 
       const chatStore = useChatStore.getState()
-      const modeTabs = Object.values(chatStore.chatTabs).filter(tab =>
-        tab.metadata?.mode === selectedModeCategory
-      )
+      const modeTabs = Object.values(chatStore.chatTabs).filter(isInteractiveChiefOfStaffTab)
 
       // If tabs already exist for this mode, skip
       if (modeTabs.length > 0) {
@@ -1206,26 +1216,27 @@ function App() {
 
       const chatStore = useChatStore.getState()
 
-      // Single-tab invariant: older sessions may have persisted multiple
-      // multi-agent tabs. Collapse them to the most-recently-accessed one and
-      // close the rest so multi-agent chat always shows exactly one tab.
+      // Chief of Staff has two independent lanes: one interactive chat and one
+      // read-only schedule. Collapse duplicates within each lane, never across
+      // lanes, so opening a schedule cannot replace the chat.
       const multiAgentTabs = Object.values(chatStore.chatTabs).filter(tab =>
         tab.metadata?.mode === 'multi-agent' &&
         tab.metadata?.isOrganizationAssistant !== true
       )
-      if (multiAgentTabs.length > 1) {
-        const keep = multiAgentTabs.reduce((best, t) =>
-          (t.lastAccessedAt ?? t.createdAt ?? 0) > (best.lastAccessedAt ?? best.createdAt ?? 0) ? t : best
-        , multiAgentTabs[0])
-        for (const tab of multiAgentTabs) {
+      const lanes = [
+        multiAgentTabs.filter(isInteractiveChiefOfStaffTab),
+        multiAgentTabs.filter(isChiefOfStaffScheduleTab),
+      ]
+      for (const laneTabs of lanes) {
+        if (laneTabs.length <= 1) continue
+        const keep = laneTabs.reduce((best, tab) =>
+          (tab.lastAccessedAt ?? tab.createdAt ?? 0) > (best.lastAccessedAt ?? best.createdAt ?? 0) ? tab : best
+        , laneTabs[0])
+        for (const tab of laneTabs) {
           if (tab.tabId !== keep.tabId) {
-            // keepEvents=false, stopSession=false: discard the extra tab's UI
-            // state without killing its backend session.
             await chatStore.closeTab(tab.tabId, false)
           }
         }
-        chatStore.switchTab(keep.tabId)
-        return
       }
 
       const activeTabId = chatStore.activeTabId
@@ -1236,8 +1247,11 @@ function App() {
         activeTab.metadata?.mode === selectedModeCategory &&
         activeTab.metadata?.isOrganizationAssistant !== true
 
-      if (!hasValidActiveTab && multiAgentTabs.length === 1) {
-        chatStore.switchTab(multiAgentTabs[0].tabId)
+      if (!hasValidActiveTab && multiAgentTabs.length > 0) {
+        const interactiveTab = multiAgentTabs
+          .filter(isInteractiveChiefOfStaffTab)
+          .sort((a, b) => workflowTabSortTimestamp(b) - workflowTabSortTimestamp(a))[0]
+        chatStore.switchTab((interactiveTab || multiAgentTabs[0]).tabId)
       }
     }
 
@@ -1350,24 +1364,32 @@ function App() {
     setWorkspaceMinimized(!workspaceMinimized)
   }, [workspaceMinimized, setWorkspaceMinimized])
 
-  // Multi-agent chat is single-tab: "New Chat" resets the current chat in
-  // place (clears the conversation + starts a fresh backend session) instead
-  // of opening another tab. Confirm first so the running session isn't lost
-  // by accident.
+  // "New Chat" resets the one interactive Chief of Staff lane in place. A
+  // concurrently running schedule remains in its separate read-only lane.
   const [showNewChatConfirm, setShowNewChatConfirm] = useState(false)
   const newChatCheckInFlightRef = useRef(false)
+  const pendingNewChiefOfStaffTabIdRef = useRef<string | null>(null)
   const requestNewMultiAgentChat = useCallback(() => {
     if (newChatCheckInFlightRef.current) return
 
-    const startFreshChat = () => {
-      void chatAreaRef.current?.handleNewChat()
+    const startFreshChat = (tabId: string) => {
+      useChatStore.getState().switchTab(tabId)
+      void chatAreaRef.current?.handleNewChat(tabId)
     }
 
     const checkAndRoute = async () => {
       newChatCheckInFlightRef.current = true
       try {
         const chatStore = useChatStore.getState()
-        const activeTab = chatStore.activeTabId ? chatStore.getTab(chatStore.activeTabId) : null
+        let activeTab: ChatTab | null = Object.values(chatStore.chatTabs)
+          .filter(isInteractiveChiefOfStaffTab)
+          .sort((a, b) => workflowTabSortTimestamp(b) - workflowTabSortTimestamp(a))[0] || null
+        if (!activeTab) {
+          const tabId = await chatStore.createChatTab('Chief of Staff', { mode: 'multi-agent' })
+          activeTab = chatStore.getTab(tabId) || null
+        }
+        if (!activeTab) return
+        pendingNewChiefOfStaffTabIdRef.current = activeTab.tabId
 
         if (shouldConfirmNewMultiAgentChat(activeTab)) {
           setShowNewChatConfirm(true)
@@ -1397,7 +1419,7 @@ function App() {
         }
 
         if (!activeTab?.sessionId) {
-          startFreshChat()
+          startFreshChat(activeTab.tabId)
           return
         }
 
@@ -1407,11 +1429,11 @@ function App() {
             setShowNewChatConfirm(true)
             return
           }
-          startFreshChat()
+          startFreshChat(activeTab.tabId)
         } catch (statusError) {
           console.warn('[NewChat] Failed to check session status before resetting chat:', statusError)
           if (activeSessionsChecked && !activeSessionFound) {
-            startFreshChat()
+            startFreshChat(activeTab.tabId)
             return
           }
           setShowNewChatConfirm(true)
@@ -1425,9 +1447,10 @@ function App() {
   }, [])
   const confirmNewMultiAgentChat = useCallback(() => {
     setShowNewChatConfirm(false)
-    // handleNewChat clears the backend session and resetTabChat's the single
-    // multi-agent tab in place (see ChatArea.handleNewChat).
-    void chatAreaRef.current?.handleNewChat()
+    const tabId = pendingNewChiefOfStaffTabIdRef.current
+    if (!tabId) return
+    useChatStore.getState().switchTab(tabId)
+    void chatAreaRef.current?.handleNewChat(tabId)
   }, [])
 
   // After Ctrl+1/Ctrl+2 mode switch, restore the most recently-accessed

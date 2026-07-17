@@ -39,14 +39,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeHumanInputStep(
 	if humanInputStep.Question == "" {
 		return nil, fmt.Errorf("human input step %d (%s) is missing required question field", stepIndex+1, step.GetTitle())
 	}
-	// NextStepID is required as fallback, but conditional routing can override it
+	// NextStepID is required as fallback, but response-specific routes can override it.
 	if humanInputStep.NextStepID == "" && humanInputStep.IfYesNextStepID == "" && humanInputStep.IfNoNextStepID == "" && len(humanInputStep.OptionRoutes) == 0 {
 		return nil, fmt.Errorf("human input step %d (%s) must have at least one of: next_step_id, if_yes_next_step_id/if_no_next_step_id (for yesno), or option_routes (for multiple_choice)", stepIndex+1, step.GetTitle())
 	}
 
 	// Emit step_started event
 	stepPath := fmt.Sprintf("step-%d", stepIndex+1)
-	hcpo.emitStepStartedEvent(ctx, step, stepIndex, stepPath, false)
+	hcpo.emitStepStartedEvent(ctx, step, stepIndex, stepPath)
 
 	// Determine execution workspace path
 	runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
@@ -317,7 +317,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeHumanInputStep(
 	}
 
 	// Emit step_finished event
-	hcpo.emitStepFinishedEvent(ctx, step, stepIndex, stepPath, false)
+	hcpo.emitStepFinishedEvent(ctx, step, stepIndex, stepPath)
 
 	// Mark step as completed
 	hcpo.addCompletedStepIndex(progress, stepIndex)
@@ -340,7 +340,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) getNextStepIDForHumanInput(
 ) string {
 	switch responseType {
 	case "yesno":
-		// Check conditional routing for yes/no
+		// Check response-specific routing for yes/no.
 		if response == "yes" && humanInputStep.IfYesNextStepID != "" {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔗 Using if_yes_next_step_id: %s", humanInputStep.IfYesNextStepID))
 			return humanInputStep.IfYesNextStepID

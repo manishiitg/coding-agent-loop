@@ -887,6 +887,10 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		"bounded exploratory QA checkpoint",
 		"QA has never completed",
 		"previously recorded risk checkpoint",
+		"tighten Bug Review cadence even if all steps completed",
+		"no exploratory QA checkpoint completed after the latest observed miss",
+		"cannot justify a long calendar cooldown",
+		"finding-free reviews over unchanged runtime paths may widen",
 		"Do not run exploratory QA on every high-frequency Pulse",
 		"targeted observable trace review",
 		"ignored or misinterpreted returned evidence",
@@ -897,10 +901,23 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
+		"OFF-TRACK GOAL QA",
+		"material goal is below target, declining, or stalled",
+		"distinguish a correctness bug from a strategy limitation",
+		"Do not equate successful execution with correct or goal-effective behavior",
+	} {
+		if !strings.Contains(bugReview, want) {
+			t.Fatalf("bug-review step missing off-track QA contract %q:\n%s", want, bugReview)
+		}
+	}
+	for _, want := range []string{
 		"efficiency_or_coaching execution-trace findings",
 		"avoidable model/tool overkill",
 		"unnecessary retries or brittle execution shape",
 		"must not reclassify a correctness defect as coaching",
+		"material goal criterion is below target",
+		"quality-equivalent output",
+		"missing quality evidence means keep the tier",
 	} {
 		if !strings.Contains(llmOps, want) {
 			t.Fatalf("llm-ops step missing trace coaching handoff %q:\n%s", want, llmOps)
@@ -911,7 +928,29 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 			"PULSE CONSOLIDATED REVIEW PROTOCOL",
 			`get_reference_doc(kind="post-run-monitor")`,
 			"READ-ONLY REVIEW",
-			"one parallel tool-call batch",
+			"parallel batches of at most four",
+			"under 3000 characters",
+			"bounded in-turn review ledger",
+			".pulse-fixer-recovery",
+			"without blindly reapplying",
+			"fixed_verified/no_change/blocked/failed",
+			"write user-facing cards once",
+			"conflict map grouped by target key",
+			"explicit user approval, correctness/data integrity, preserved goal meaning",
+			"block only affected modules",
+			"finding-id-manifest",
+			"reconciles every reviewer finding id",
+			"global finding-ID reconciliation",
+			"Never claim Pulse completed",
+			"recorded approval basis",
+			"Unrelated drift is acceptable",
+			"stale_not_applied",
+			"Never silently broaden or rebase",
+			"POST-CHANGE EVIDENCE BOUNDARY",
+			"Old artifacts are baseline only, never proof",
+			"mtime alone",
+			"changed_unverified",
+			"awaiting_next_valid_run",
 			"Pulse Fixer",
 			"only writer",
 			"Use review-artifact-drift",
@@ -939,6 +978,10 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		"use Goal Advisor's measurement-design path instead of claiming a miss",
 		"A correct abstention or green eval is execution evidence, not goal progress",
 		"mark both bug_review and goal_advisor due when appropriate",
+		"tighten Bug Review cadence even if all steps completed",
+		"no exploratory QA checkpoint completed after the latest observed miss",
+		"cannot justify a long calendar cooldown",
+		"finding-free reviews over unchanged runtime paths may widen",
 		"Do not use 'wait for a clean run' as an indefinite strategy cooldown",
 		"retained cross-run goal evidence",
 		"Meeting a target is not a permanent skip",
@@ -951,6 +994,11 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		"Once that headroom or plan-design checkpoint arrives",
 		"Never allow more than one active advisor experiment",
 		"data-review-after",
+		"Every Gate must re-judge current goal evidence",
+		"checkpoint is a planned evidence boundary, not a lock",
+		"Zero valid outcome-bearing runs means the experiment has not received a fair test",
+		"implementation/control-path evidence",
+		"repair or advance that same experiment",
 		"explicitly inspect every executed step/item's compact final result",
 		"CONCERNS:",
 		"execution/execution-final-summary.json execution_result",
@@ -1151,6 +1199,10 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		"once every run",
 		"Bug/Goal state",
 		"backup/publish status",
+		"Backup risk: local only",
+		"no verified destination is off-device",
+		"never call it healthy or fully backed up",
+		"every notification until off-device protection is verified",
 		"dashboard URL when live",
 		"notify_user",
 	} {
@@ -2819,13 +2871,13 @@ func TestPostRunMonitorStepClassificationSupportsTimeoutRecovery(t *testing.T) {
 	}
 }
 
-func TestRunningWorkflowScheduleInSetLockedFindsOtherRunningSchedule(t *testing.T) {
+func TestRunningScheduleInSetLockedFindsOtherRunningSchedule(t *testing.T) {
 	states := map[string]*ScheduleRuntimeState{
 		"daily":     {LastStatus: "running", LastSessionID: "session-daily"},
 		"optimizer": {LastStatus: "success", LastSessionID: "session-optimizer"},
 	}
 
-	id, sessionID := runningWorkflowScheduleInSetLocked(states, []string{"current", "daily", "optimizer"}, "current")
+	id, sessionID := runningScheduleInSetLocked(states, []string{"current", "daily", "optimizer"}, "current")
 	if id != "daily" {
 		t.Fatalf("running schedule id = %q, want daily", id)
 	}
@@ -2834,12 +2886,12 @@ func TestRunningWorkflowScheduleInSetLockedFindsOtherRunningSchedule(t *testing.
 	}
 }
 
-func TestRunningWorkflowScheduleInSetLockedIgnoresCurrentSchedule(t *testing.T) {
+func TestRunningScheduleInSetLockedIgnoresCurrentSchedule(t *testing.T) {
 	states := map[string]*ScheduleRuntimeState{
 		"current": {LastStatus: "running", LastSessionID: "session-current"},
 	}
 
-	id, sessionID := runningWorkflowScheduleInSetLocked(states, []string{"current"}, "current")
+	id, sessionID := runningScheduleInSetLocked(states, []string{"current"}, "current")
 	if id != "" || sessionID != "" {
 		t.Fatalf("running schedule = (%q, %q), want empty", id, sessionID)
 	}

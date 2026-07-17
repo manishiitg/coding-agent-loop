@@ -2,7 +2,7 @@ import { useMemo, useRef, useEffect } from 'react'
 import type { Node, Edge } from '@xyflow/react'
 import dagre from 'dagre'
 import type { PlanStep, PlanningResponse, AgentLLMConfig, ValidationSchema, RoutingRoute, MessageSequenceItem } from '../../../utils/stepConfigMatching'
-import { isConditionalStep, isHumanInputStep, isTodoTaskStep, isRoutingStep, isMessageSequenceStep } from '../../../utils/stepConfigMatching'
+import { isHumanInputStep, isTodoTaskStep, isRoutingStep, isMessageSequenceStep } from '../../../utils/stepConfigMatching'
 import type { ChangeType, PlanChanges } from './usePlanData'
 import type { VariablesManifest, EvaluationStep } from '../../../services/api-types'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
@@ -32,22 +32,6 @@ export interface StepNodeData extends Record<string, unknown> {
   parentOrchestratorTitle?: string  // Title of parent orchestrator node (for sub-agents)
   routeName?: string  // Route name from orchestration_routes (for sub-agents)
   routeCondition?: string  // Condition from orchestration_routes (for sub-agents)
-  isOrphan?: boolean  // True for orphan steps (workshop-only, not in main execution flow)
-}
-
-export interface ConditionalNodeData extends Record<string, unknown> {
-  id: string
-  title: string
-  description?: string
-  condition_question?: string
-  condition_context?: string
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'evaluating' | 'decided_true' | 'decided_false'
-  stepIndex: number
-  step: PlanStep
-  changeType?: ChangeType  // Highlight type for visual feedback
-  workspacePath?: string | null  // Workspace path for file opening
-  selectedRunFolder?: string  // Selected iteration folder for file opening
-  validation_schema?: ValidationSchema  // Validation schema from plan.json
   isOrphan?: boolean  // True for orphan steps (workshop-only, not in main execution flow)
 }
 
@@ -165,7 +149,7 @@ export interface WorkflowArtifactNodeData extends Record<string, unknown> {
   detail?: string
 }
 
-export type WorkflowNodeData = StepNodeData | ConditionalNodeData | TodoTaskNodeData | HumanInputNodeData | RoutingStepNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData | EvaluationStepNodeData | WorkflowArtifactNodeData
+export type WorkflowNodeData = StepNodeData | TodoTaskNodeData | HumanInputNodeData | RoutingStepNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData | EvaluationStepNodeData | WorkflowArtifactNodeData
 
 // Node and edge types
 export type WorkflowNode = Node<WorkflowNodeData>
@@ -196,7 +180,7 @@ const getDagreConfig = (direction: 'LR' | 'TB') => ({
   // For LR: nodesep = vertical spacing, ranksep = horizontal spacing
   // For TB: nodesep = horizontal spacing, ranksep = vertical spacing
   // TB nodesep is the MINIMUM horizontal gap between sibling nodes; dagre adds
-  // more automatically so each branch gets room proportional to its own subtree.
+  // more automatically so each route gets room proportional to its own subtree.
   // Keep this a modest floor and let dagre drive the dynamic, per-subtree spread.
   nodesep: direction === 'LR' ? 200 : 160,
   ranksep: direction === 'LR' ? 150 : 220,
@@ -207,7 +191,6 @@ const getDagreConfig = (direction: 'LR' | 'TB') => ({
 // Node dimensions for layout calculation (base dimensions) - smaller since content is simplified
 const NODE_DIMENSIONS = {
   step: { width: 280, height: 120 },
-  conditional: { width: 240, height: 100 },
   routing: { width: 280, height: 200 },
   message_sequence: { width: 320, height: 240 },
   todo_task: { width: 300, height: 120 },
@@ -224,12 +207,6 @@ const SUB_AGENT_LAYOUT = {
   cellGap: 32,
   cellWidth: Math.max(NODE_DIMENSIONS.step.width, NODE_DIMENSIONS.todo_task.width),
   cellHeight: NODE_DIMENSIONS.step.height
-}
-
-const ROUTING_TREE_LAYOUT = {
-  parentGap: 120,
-  laneGap: 180,
-  minLaneWidth: NODE_DIMENSIONS.routing.width
 }
 
 function getSubAgentGridMetrics(count: number, direction: 'LR' | 'TB') {
@@ -291,7 +268,7 @@ function estimateNodeHeight(node: WorkflowNode): number {
   let estimatedHeight = baseDimensions.height
 
   // Get node data
-  const data = node.data as StepNodeData | ConditionalNodeData | Record<string, unknown>
+  const data = node.data as StepNodeData | Record<string, unknown>
 
   // Base height components (header, padding, footer) - simplified
   const headerHeight = 60 // Header with buttons
@@ -521,369 +498,6 @@ function getNodeFootprintDimensions(
   }
 }
 
-function getRoutingChildren(nodeId: string, nodes: WorkflowNode[], edges: WorkflowEdge[]): string[] {
-  const node = nodes.find(candidate => candidate.id === nodeId)
-  if (node?.type === 'routing') {
-    const step = (node.data as RoutingStepNodeData).step
-    if (step && isRoutingStep(step)) {
-      const stepIdToNodeId = new Map<string, string>()
-      nodes.forEach(candidate => {
-        const candidateStep = (candidate.data as { step?: PlanStep }).step
-        if (candidateStep?.id) {
-          stepIdToNodeId.set(candidateStep.id, candidate.id)
-        }
-      })
-
-      const seenTargets = new Set<string>()
-      return step.routes
-        .map(route => stepIdToNodeId.get(route.next_step_id))
-        .filter((targetId): targetId is string => {
-          if (!targetId || seenTargets.has(targetId)) return false
-          seenTargets.add(targetId)
-          return true
-        })
-    }
-  }
-
-  const children: string[] = []
-  const seen = new Set<string>()
-
-  edges.forEach(edge => {
-    if (
-      edge.source === nodeId &&
-      typeof edge.sourceHandle === 'string' &&
-      edge.sourceHandle.startsWith('route-') &&
-      edge.target !== 'end' &&
-      !seen.has(edge.target)
-    ) {
-      seen.add(edge.target)
-      children.push(edge.target)
-    }
-  })
-
-  return children
-}
-
-function getWorkflowBranchFootprint(
-  nodeId: string,
-  nodes: WorkflowNode[],
-  edges: WorkflowEdge[],
-  todoParentIds: Set<string>,
-  visited: Set<string> = new Set()
-): { width: number; height: number } {
-  const node = nodes.find(candidate => candidate.id === nodeId)
-  if (!node || visited.has(nodeId)) {
-    return { width: 0, height: 0 }
-  }
-
-  const nextVisited = new Set(visited)
-  nextVisited.add(nodeId)
-  const ownFootprint = getNodeFootprintDimensions(node, nodes, todoParentIds, 'TB')
-  if (node.type !== 'routing') {
-    return ownFootprint
-  }
-
-  const childFootprints = getRoutingChildren(node.id, nodes, edges)
-    .map(childId => getWorkflowBranchFootprint(childId, nodes, edges, todoParentIds, nextVisited))
-    .filter(footprint => footprint.width > 0 && footprint.height > 0)
-
-  if (childFootprints.length === 0) {
-    return ownFootprint
-  }
-
-  const childrenWidth = childFootprints.reduce((sum, footprint) => sum + footprint.width, 0) +
-    Math.max(0, childFootprints.length - 1) * SUB_AGENT_LAYOUT.cellGap
-  const childrenHeight = Math.max(...childFootprints.map(footprint => footprint.height))
-
-  return {
-    width: Math.max(ownFootprint.width, childrenWidth),
-    height: ownFootprint.height + SUB_AGENT_LAYOUT.parentGap + childrenHeight
-  }
-}
-
-function applyVerticalRoutingTreeLayout(nodes: WorkflowNode[], edges: WorkflowEdge[]): WorkflowNode[] {
-  const positionedNodes = nodes.map(node => ({ ...node, position: { ...node.position } }))
-  const nodeIndexById = new Map(positionedNodes.map((node, index) => [node.id, index]))
-  const nodeById = new Map(positionedNodes.map(node => [node.id, node]))
-  const todoParentIds = new Set(positionedNodes.filter(node => node.type === 'todo_task').map(node => node.id))
-  const incomingEdgesByTarget = new Map<string, WorkflowEdge[]>()
-  const outgoingEdgesBySource = new Map<string, WorkflowEdge[]>()
-
-  edges.forEach(edge => {
-    const incomingEdges = incomingEdgesByTarget.get(edge.target) || []
-    incomingEdges.push(edge)
-    incomingEdgesByTarget.set(edge.target, incomingEdges)
-
-    const outgoingEdges = outgoingEdgesBySource.get(edge.source) || []
-    outgoingEdges.push(edge)
-    outgoingEdgesBySource.set(edge.source, outgoingEdges)
-  })
-
-  const routedTargets = new Set(
-    positionedNodes
-      .filter(node => node.type === 'routing')
-      .flatMap(node => getRoutingChildren(node.id, positionedNodes, edges))
-  )
-
-  const setNodePosition = (nodeId: string, x: number, y: number) => {
-    const nodeIndex = nodeIndexById.get(nodeId)
-    if (nodeIndex === undefined) return
-    const nextNode = {
-      ...positionedNodes[nodeIndex],
-      position: { x, y }
-    }
-    positionedNodes[nodeIndex] = nextNode
-    nodeById.set(nodeId, nextNode)
-  }
-
-  const isSimpleRoutingTreeRoot = (nodeId: string, visited: Set<string> = new Set()): boolean => {
-    if (visited.has(nodeId)) return false
-    const node = nodeById.get(nodeId)
-    if (!node || node.type !== 'routing') return false
-
-    const nextVisited = new Set(visited)
-    nextVisited.add(nodeId)
-    const childIds = getRoutingChildren(nodeId, positionedNodes, edges)
-    if (childIds.length === 0) return false
-
-    return childIds.every(childId => {
-      const child = nodeById.get(childId)
-      if (!child) return false
-
-      const nonParentIncomingEdges = (incomingEdgesByTarget.get(childId) || [])
-        .filter(edge => edge.source !== nodeId)
-      if (nonParentIncomingEdges.length > 0) {
-        return false
-      }
-
-      const nonEndOutgoingEdges = (outgoingEdgesBySource.get(childId) || [])
-        .filter(edge => edge.target !== 'end')
-
-      if (child.type === 'routing') {
-        return isSimpleRoutingTreeRoot(childId, nextVisited)
-      }
-
-      return nonEndOutgoingEdges.length === 0
-    })
-  }
-
-  const placeBranch = (nodeId: string, left: number, top: number, visited: Set<string> = new Set()) => {
-    const nodeIndex = nodeIndexById.get(nodeId)
-    if (nodeIndex === undefined || visited.has(nodeId)) return
-
-    const node = positionedNodes[nodeIndex]
-    const nextVisited = new Set(visited)
-    nextVisited.add(nodeId)
-    const footprint = getWorkflowBranchFootprint(nodeId, positionedNodes, edges, todoParentIds, visited)
-    const ownFootprint = getNodeFootprintDimensions(node, positionedNodes, todoParentIds, 'TB')
-    const ownDimensions = getNodeLayoutDimensions(node)
-    const nodeLeft = left + (footprint.width - ownFootprint.width) / 2 + (ownFootprint.width - ownDimensions.width) / 2
-    setNodePosition(nodeId, nodeLeft, top)
-
-    if (node.type !== 'routing') return
-
-    const childIds = getRoutingChildren(node.id, positionedNodes, edges)
-    if (childIds.length === 0) return
-
-    const childFootprints = childIds.map(childId =>
-      getWorkflowBranchFootprint(childId, positionedNodes, edges, todoParentIds, nextVisited)
-    )
-    const totalChildrenWidth = childFootprints.reduce((sum, childFootprint) => sum + childFootprint.width, 0) +
-      Math.max(0, childFootprints.length - 1) * SUB_AGENT_LAYOUT.cellGap
-    let childLeft = left + (footprint.width - totalChildrenWidth) / 2
-    const childTop = top + ownFootprint.height + SUB_AGENT_LAYOUT.parentGap
-
-    childIds.forEach((childId, index) => {
-      placeBranch(childId, childLeft, childTop, nextVisited)
-      childLeft += childFootprints[index].width + SUB_AGENT_LAYOUT.cellGap
-    })
-  }
-
-  positionedNodes
-    .filter(node => (
-      node.type === 'routing' &&
-      !routedTargets.has(node.id) &&
-      isSimpleRoutingTreeRoot(node.id)
-    ))
-    .forEach(node => {
-      const footprint = getWorkflowBranchFootprint(node.id, positionedNodes, edges, todoParentIds)
-      const nodeDimensions = getNodeLayoutDimensions(node)
-      const left = node.position.x + (nodeDimensions.width / 2) - (footprint.width / 2)
-      placeBranch(node.id, left, node.position.y)
-    })
-
-  const syncNodeById = (nodeId: string) => {
-    const nodeIndex = nodeIndexById.get(nodeId)
-    if (nodeIndex === undefined) return
-    nodeById.set(nodeId, positionedNodes[nodeIndex])
-  }
-
-  const getControlOutgoingEdges = (nodeId: string): WorkflowEdge[] => (
-    (outgoingEdgesBySource.get(nodeId) || []).filter(edge => (
-      edge.target !== 'end' &&
-      edge.target !== 'start' &&
-      edge.target !== 'variables' &&
-      !edge.id.startsWith('dep-') &&
-      nodeById.has(edge.target)
-    ))
-  )
-
-  const collectReachableControlNodes = (startId: string): Set<string> => {
-    const reachable = new Set<string>()
-    const stack = [startId]
-
-    while (stack.length > 0) {
-      const nodeId = stack.pop()
-      if (!nodeId || reachable.has(nodeId) || !nodeById.has(nodeId)) continue
-
-      reachable.add(nodeId)
-      getControlOutgoingEdges(nodeId).forEach(edge => {
-        if (!reachable.has(edge.target)) {
-          stack.push(edge.target)
-        }
-      })
-    }
-
-    return reachable
-  }
-
-  const getBoundsForIds = (nodeIds: string[]) => {
-    if (nodeIds.length === 0) return null
-
-    let left = Number.POSITIVE_INFINITY
-    let top = Number.POSITIVE_INFINITY
-    let right = Number.NEGATIVE_INFINITY
-    let bottom = Number.NEGATIVE_INFINITY
-
-    nodeIds.forEach(nodeId => {
-      const node = nodeById.get(nodeId)
-      if (!node) return
-      const dimensions = getNodeLayoutDimensions(node)
-      left = Math.min(left, node.position.x)
-      top = Math.min(top, node.position.y)
-      right = Math.max(right, node.position.x + dimensions.width)
-      bottom = Math.max(bottom, node.position.y + dimensions.height)
-    })
-
-    if (!Number.isFinite(left) || !Number.isFinite(top) || !Number.isFinite(right) || !Number.isFinite(bottom)) {
-      return null
-    }
-
-    return {
-      left,
-      top,
-      right,
-      bottom,
-      width: right - left,
-      height: bottom - top
-    }
-  }
-
-  const shiftNodes = (nodeIds: string[], dx: number, dy: number) => {
-    if (dx === 0 && dy === 0) return
-
-    nodeIds.forEach(nodeId => {
-      const nodeIndex = nodeIndexById.get(nodeId)
-      if (nodeIndex === undefined) return
-
-      positionedNodes[nodeIndex] = {
-        ...positionedNodes[nodeIndex],
-        position: {
-          x: positionedNodes[nodeIndex].position.x + dx,
-          y: positionedNodes[nodeIndex].position.y + dy
-        }
-      }
-      syncNodeById(nodeId)
-    })
-  }
-
-  positionedNodes
-    .filter(node => node.type === 'routing')
-    .sort((a, b) => a.position.y - b.position.y)
-    .forEach(routingNode => {
-      const currentRoutingNode = nodeById.get(routingNode.id) || routingNode
-      const routeChildIds = getRoutingChildren(currentRoutingNode.id, positionedNodes, edges)
-        .filter(childId => nodeById.has(childId))
-      if (routeChildIds.length <= 1) return
-
-      const reachableByRoute = routeChildIds.map(childId => ({
-        childId,
-        nodeIds: collectReachableControlNodes(childId)
-      }))
-      const routeCountByNode = new Map<string, number>()
-
-      reachableByRoute.forEach(route => {
-        route.nodeIds.forEach(nodeId => {
-          routeCountByNode.set(nodeId, (routeCountByNode.get(nodeId) || 0) + 1)
-        })
-      })
-
-      const lanes = reachableByRoute
-        .map(route => {
-          const privateNodeIds = Array.from(route.nodeIds)
-            .filter(nodeId => routeCountByNode.get(nodeId) === 1 && nodeId !== currentRoutingNode.id)
-            .sort((a, b) => {
-              const nodeA = nodeById.get(a)
-              const nodeB = nodeById.get(b)
-              if (!nodeA || !nodeB) return 0
-              if (Math.abs(nodeA.position.y - nodeB.position.y) > 8) {
-                return nodeA.position.y - nodeB.position.y
-              }
-              return nodeA.position.x - nodeB.position.x
-            })
-          const bounds = getBoundsForIds(privateNodeIds)
-
-          if (!bounds) return null
-
-          return {
-            childId: route.childId,
-            nodeIds: privateNodeIds,
-            bounds,
-            laneWidth: Math.max(bounds.width, ROUTING_TREE_LAYOUT.minLaneWidth)
-          }
-        })
-        .filter((lane): lane is NonNullable<typeof lane> => Boolean(lane))
-
-      if (lanes.length <= 1) return
-
-      const routingDimensions = getNodeLayoutDimensions(currentRoutingNode)
-      const routingCenterX = currentRoutingNode.position.x + routingDimensions.width / 2
-      const routingBottom = currentRoutingNode.position.y + routingDimensions.height
-      const totalLaneWidth = lanes.reduce((sum, lane) => sum + lane.laneWidth, 0) +
-        Math.max(0, lanes.length - 1) * ROUTING_TREE_LAYOUT.laneGap
-      let laneLeft = routingCenterX - totalLaneWidth / 2
-      const childTop = routingBottom + ROUTING_TREE_LAYOUT.parentGap
-
-      if (import.meta.env.DEV) {
-        console.log('[WorkflowRouteTreeLayout] routing lanes', {
-          routingNodeId: currentRoutingNode.id,
-          routeChildIds,
-          childTop,
-          totalLaneWidth,
-          lanes: lanes.map(lane => ({
-            childId: lane.childId,
-            nodeIds: lane.nodeIds,
-            laneWidth: lane.laneWidth,
-            bounds: lane.bounds
-          }))
-        })
-      }
-
-      lanes.forEach(lane => {
-        const childNode = nodeById.get(lane.childId)
-        if (!childNode) return
-
-        const targetLeft = laneLeft + (lane.laneWidth - lane.bounds.width) / 2
-        const dx = targetLeft - lane.bounds.left
-        const dy = childTop - childNode.position.y
-        shiftNodes(lane.nodeIds, dx, dy)
-        laneLeft += lane.laneWidth + ROUTING_TREE_LAYOUT.laneGap
-      })
-    })
-
-  return positionedNodes
-}
-
 /**
  * Calculate topology metrics to adjust layout spacing
  */
@@ -914,313 +528,6 @@ function calculateTopologyMetrics(nodes: WorkflowNode[]): { hasOrchestrator: boo
   return { hasOrchestrator, maxOrchestratorDepth, maxOrchestratorSubAgents, maxRoutingBranches }
 }
 
-/**
- * Reposition branch nodes for conditional and decision nodes
- * Uses Subtree Translation: Moves the entire branch structure together to preserve relative layout.
- * - Finds the branch root (e.g. -true-0)
- * - Calculates delta to move root to desired position
- * - Applies delta to ALL nodes in that branch (descendants)
- */
-function positionBranchNodes(nodes: WorkflowNode[], direction: 'LR' | 'TB'): WorkflowNode[] {
-  const adjustedNodes = [...nodes]
-  const nodeMap = new Map(adjustedNodes.map((n, i) => [n.id, i]))
-
-  // Find branching nodes (conditional/decision)
-  const branchingNodes = adjustedNodes.filter(n =>
-    n.type === 'conditional'
-  )
-
-  branchingNodes.forEach(parent => {
-    // Get up-to-date parent node
-    const parentIndex = nodeMap.get(parent.id)
-    if (parentIndex === undefined) return
-    const currentParent = adjustedNodes[parentIndex]
-
-    const parentDims = NODE_DIMENSIONS[currentParent.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
-    const parentCenterX = currentParent.position.x + parentDims.width / 2
-    const parentCenterY = currentParent.position.y + parentDims.height / 2
-
-    // Check for todo_task nodes in branches to determine spacing
-    // We look at all nodes in the branch to be safe, or just direct children?
-    // Looking at all nodes in branch is better for spacing safety.
-    const trueBranchPrefix = `${currentParent.id}-true-`
-    const falseBranchPrefix = `${currentParent.id}-false-`
-    
-    const trueHasOrchestrator = adjustedNodes.some(n => n.id.startsWith(trueBranchPrefix) && n.type === 'todo_task')
-    const falseHasOrchestrator = adjustedNodes.some(n => n.id.startsWith(falseBranchPrefix) && n.type === 'todo_task')
-
-    // Base offset
-    let branchOffset = 200
-    if (trueHasOrchestrator || falseHasOrchestrator) {
-      branchOffset = 350
-    }
-
-    // Helper to shift a branch subtree
-    const shiftBranch = (prefix: string, offsetMult: number) => {
-      // Find root of the branch (index 0)
-      const rootId = `${prefix}0`
-      const rootIndex = nodeMap.get(rootId)
-      
-      if (rootIndex !== undefined) {
-        const rootNode = adjustedNodes[rootIndex]
-        const rootDims = NODE_DIMENSIONS[rootNode.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
-        
-        let dx = 0, dy = 0
-        
-        if (direction === 'LR') {
-          // LR: Shift Y. Target Y is parentCenter +/- offset
-          const targetY = parentCenterY + (branchOffset * offsetMult) - (rootDims.height / 2)
-          dy = targetY - rootNode.position.y
-        } else {
-          // TB: Shift X. Target X is parentCenter +/- offset
-          const targetX = parentCenterX + (branchOffset * offsetMult) - (rootDims.width / 2)
-          dx = targetX - rootNode.position.x
-        }
-        
-        // Apply shift to ALL nodes in this branch
-        if (dx !== 0 || dy !== 0) {
-          adjustedNodes.forEach((n, i) => {
-            if (n.id.startsWith(prefix)) {
-              adjustedNodes[i] = {
-                ...n,
-                position: {
-                  x: n.position.x + dx,
-                  y: n.position.y + dy
-                }
-              }
-            }
-          })
-        }
-    }
-    }
-
-    // Shift True Branch (Offset Multiplier: -1 for Top/Left)
-    shiftBranch(trueBranchPrefix, -1)
-
-    // Shift False Branch (Offset Multiplier: 1 for Bottom/Right)
-    shiftBranch(falseBranchPrefix, 1)
-  })
-
-  return adjustedNodes
-}
-
-/**
- * Global collision detection and resolution
- * Detects overlaps between all nodes and resolves them by shifting nodes
- * This handles overlaps from todo_task sub-agents, conditional branches, loops, etc.
- * For LR layout: prefer vertical shifts. For TB layout: prefer horizontal shifts.
- */
-function detectAndResolveCollisions(nodes: WorkflowNode[], direction: 'LR' | 'TB'): WorkflowNode[] {
-  const MIN_SEPARATION = 40 // Restored to 40 to prevent overlaps
-  const adjustedNodes = [...nodes]
-
-  // Get bounding box for a node (using estimated height based on content)
-  const getBounds = (node: WorkflowNode): { left: number; right: number; top: number; bottom: number } => {
-    const dimensions = getNodeLayoutDimensions(node)
-    return {
-      left: node.position.x,
-      right: node.position.x + dimensions.width,
-      top: node.position.y,
-      bottom: node.position.y + dimensions.height
-    }
-  }
-
-  // Check if two bounding boxes overlap (with minimum separation)
-  const boxesOverlap = (
-    a: { left: number; right: number; top: number; bottom: number },
-    b: { left: number; right: number; top: number; bottom: number }
-  ): boolean => {
-    // Calculate overlap area (positive if overlapping, negative if separated)
-    const horizontalOverlap = Math.min(a.right, b.right) - Math.max(a.left, b.left)
-    const verticalOverlap = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)
-
-    // Overlap if both dimensions have positive overlap (boxes intersect)
-    // Also check if they're too close (within MIN_SEPARATION)
-    if (horizontalOverlap > 0 && verticalOverlap > 0) {
-      return true // Full overlap
-    }
-
-    // Check if boxes are too close (within MIN_SEPARATION) even if not overlapping
-    const hDistance = horizontalOverlap < 0 ? -horizontalOverlap : 0
-    const vDistance = verticalOverlap < 0 ? -verticalOverlap : 0
-
-    // If boxes are close horizontally and vertically, they need more separation
-    return (hDistance < MIN_SEPARATION && vDistance < MIN_SEPARATION) ||
-      (horizontalOverlap > 0 && vDistance < MIN_SEPARATION) ||
-      (verticalOverlap > 0 && hDistance < MIN_SEPARATION)
-  }
-
-  // Calculate how much to shift node 'a' to resolve overlap with node 'b'
-  // For LR layout: prefer vertical shifts. For TB layout: prefer horizontal shifts.
-  const calculateShift = (
-    a: { left: number; right: number; top: number; bottom: number },
-    b: { left: number; right: number; top: number; bottom: number }
-  ): { dx: number; dy: number } => {
-    // Calculate actual overlap amounts (positive = overlapping, negative = separated)
-    const horizontalOverlap = Math.min(a.right, b.right) - Math.max(a.left, b.left)
-    const verticalOverlap = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)
-
-    // Calculate distances if separated
-    const hDistance = horizontalOverlap < 0 ? -horizontalOverlap : 0
-    const vDistance = verticalOverlap < 0 ? -verticalOverlap : 0
-
-    // Determine which dimension has the most overlap or needs the most separation
-    const hOverlapAmount = horizontalOverlap > 0 ? horizontalOverlap : 0
-    const vOverlapAmount = verticalOverlap > 0 ? verticalOverlap : 0
-
-    // If fully overlapping (both dimensions overlap), prefer perpendicular shift to flow direction
-    if (hOverlapAmount > 0 && vOverlapAmount > 0) {
-      if (direction === 'LR') {
-        // LR layout - prefer vertical shift (perpendicular to horizontal flow)
-        const shiftY = a.top < b.top
-          ? -(vOverlapAmount + MIN_SEPARATION)  // Move a up
-          : (vOverlapAmount + MIN_SEPARATION)   // Move a down
-        return { dx: 0, dy: shiftY }
-      } else {
-        // TB layout - prefer horizontal shift (perpendicular to vertical flow)
-        const shiftX = a.left < b.left
-          ? -(hOverlapAmount + MIN_SEPARATION)  // Move a left
-          : (hOverlapAmount + MIN_SEPARATION)   // Move a right
-        return { dx: shiftX, dy: 0 }
-    }
-    }
-
-    // Partial overlap or too close - determine best direction based on overlap axis
-    // Ideally, we want to separate in the direction that they are closest/overlapping to preserve alignment
-    
-    // Case 1: Overlapping/aligned horizontally (share X range), but separated vertically
-    // We should separate them vertically to maintain column/stack alignment
-    // ONLY if they are too close vertically
-    if (hOverlapAmount > 0 && vDistance < MIN_SEPARATION) {
-      const shiftY = a.top < b.top
-        ? -(MIN_SEPARATION - vDistance) // Shift only by needed amount
-        : (MIN_SEPARATION - vDistance)
-      return { dx: 0, dy: shiftY }
-    } 
-    
-    // Case 2: Overlapping/aligned vertically (share Y range), but separated horizontally
-    // We should separate them horizontally to maintain row alignment
-    // ONLY if they are too close horizontally
-    else if (vOverlapAmount > 0 && hDistance < MIN_SEPARATION) {
-      const shiftX = a.left < b.left
-        ? -(MIN_SEPARATION - hDistance) // Shift only by needed amount
-        : (MIN_SEPARATION - hDistance)
-      return { dx: shiftX, dy: 0 }
-    } 
-    
-    // Case 3: Corner-to-corner (too close diagonally)
-    // Use layout preference to decide separation direction
-    else if (hDistance < MIN_SEPARATION && vDistance < MIN_SEPARATION) {
-      if (direction === 'LR') {
-        // LR layout - prefer vertical separation
-        const shiftY = a.top < b.top
-          ? -(MIN_SEPARATION - vDistance)
-          : (MIN_SEPARATION - vDistance)
-        return { dx: 0, dy: shiftY }
-      } else {
-        // TB layout - prefer horizontal separation
-        const shiftX = a.left < b.left
-          ? -(MIN_SEPARATION - hDistance)
-          : (MIN_SEPARATION - hDistance)
-        return { dx: shiftX, dy: 0 }
-      }
-    }
-
-    return { dx: 0, dy: 0 }
-  }
-
-  // Sort nodes by position (top to bottom, then left to right)
-  const sortedNodes = [...adjustedNodes].sort((a, b) => {
-    const aBounds = getBounds(a)
-    const bBounds = getBounds(b)
-    if (Math.abs(aBounds.top - bBounds.top) > 10) {
-      return aBounds.top - bBounds.top
-    }
-    return aBounds.left - bBounds.left
-  })
-
-  // Track cumulative shifts for each node
-  const shifts = new Map<string, { dx: number; dy: number }>()
-  adjustedNodes.forEach(node => {
-    shifts.set(node.id, { dx: 0, dy: 0 })
-  })
-
-  // Check each node against all previous nodes
-  for (let i = 0; i < sortedNodes.length; i++) {
-    const currentNode = sortedNodes[i]
-    const currentBounds = getBounds(currentNode)
-
-    // Apply any existing shifts to current bounds
-    const currentShift = shifts.get(currentNode.id) || { dx: 0, dy: 0 }
-    let adjustedCurrentBounds = {
-      left: currentBounds.left + currentShift.dx,
-      right: currentBounds.right + currentShift.dx,
-      top: currentBounds.top + currentShift.dy,
-      bottom: currentBounds.bottom + currentShift.dy
-    }
-
-    // Check against all previous nodes
-    for (let j = 0; j < i; j++) {
-      const otherNode = sortedNodes[j]
-      const otherBounds = getBounds(otherNode)
-
-      // Apply any existing shifts to other bounds
-      const otherShift = shifts.get(otherNode.id) || { dx: 0, dy: 0 }
-      const adjustedOtherBounds = {
-        left: otherBounds.left + otherShift.dx,
-        right: otherBounds.right + otherShift.dx,
-        top: otherBounds.top + otherShift.dy,
-        bottom: otherBounds.bottom + otherShift.dy
-    }
-
-      // Check for overlap
-      if (boxesOverlap(adjustedCurrentBounds, adjustedOtherBounds)) {
-        const shift = calculateShift(adjustedCurrentBounds, adjustedOtherBounds)
-
-        if (shift.dx !== 0 || shift.dy !== 0) {
-          // Log collision details for debugging
-
-          // Update shift for current node
-          const currentShiftValue = shifts.get(currentNode.id) || { dx: 0, dy: 0 }
-          shifts.set(currentNode.id, {
-            dx: currentShiftValue.dx + shift.dx,
-            dy: currentShiftValue.dy + shift.dy
-          })
-
-          // Update adjusted bounds for next checks
-          adjustedCurrentBounds = {
-            left: adjustedCurrentBounds.left + shift.dx,
-            right: adjustedCurrentBounds.right + shift.dx,
-            top: adjustedCurrentBounds.top + shift.dy,
-            bottom: adjustedCurrentBounds.bottom + shift.dy
-          }
-        }
-      }
-    }
-  }
-
-
-  // Apply all shifts to nodes
-  const shiftedNodes = adjustedNodes.map(node => {
-    const shift = shifts.get(node.id)
-    if (shift && (shift.dx !== 0 || shift.dy !== 0)) {
-      return {
-        ...node,
-        position: {
-          x: node.position.x + shift.dx,
-          y: node.position.y + shift.dy
-        }
-      }
-    }
-    return node
-  })
-
-  return shiftedNodes
-}
-
-/**
- * Auto-layout nodes using Dagre algorithm
- */
 function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[], direction: 'LR' | 'TB'): { nodes: WorkflowNode[], edges: WorkflowEdge[] } {
   // Calculate topology metrics to determine spacing requirements
   const { maxOrchestratorSubAgents, maxRoutingBranches } = calculateTopologyMetrics(nodes)
@@ -1378,11 +685,7 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[], direction
     }
   })
 
-  // Position branch nodes based on direction:
-  // LR: TRUE above, FALSE below
-  // TB: TRUE left, FALSE right
-  // Dagre owns layout (including branch separation); the manual branch
-  // repositioning pass is disabled — see the dagre-only simplification.
+  // Dagre owns route separation; manual repositioning is unnecessary.
   return { nodes: layoutedNodes, edges }
 }
 
@@ -1403,17 +706,13 @@ function getChangeType(stepId: string, changes?: PlanChanges | null): ChangeType
 function stepToNode(
   step: PlanStep,
   stepIndex: number,
-  parentId?: string,
-  branchType?: 'true' | 'false',
   changes?: PlanChanges | null,
   stepStatusMap?: Map<string, 'pending' | 'running' | 'completed' | 'failed'>,
   workspacePath?: string | null,
   selectedRunFolder?: string,
   completedStepIds?: Set<string> // Set of completed step IDs (converted from indices for step_id-based matching)
 ): WorkflowNode {
-  const nodeId = parentId
-    ? `${parentId}-${branchType}-${stepIndex}`
-    : step.id || `step-${stepIndex}`
+  const nodeId = step.id || `step-${stepIndex}`
 
   // Determine change type for highlighting
   const changeType = getChangeType(step.id || nodeId, changes)
@@ -1425,22 +724,15 @@ function stepToNode(
   // Primary: Check stepStatusMap (from events) - this is the most up-to-date and uses step_id
   if (stepStatusMap && stepStatusMap.has(stepId)) {
     status = stepStatusMap.get(stepId)!
-  } else if (!parentId && completedStepIds && completedStepIds.has(stepId)) {
+  } else if (completedStepIds && completedStepIds.has(stepId)) {
     // Primary: Check completedStepIds (converted from completedStepIndices) - uses step_id for matching
-    // Only for main plan steps, not nested branches (nested steps are tracked differently)
     status = 'completed' as const
   } else {
     // Default: pending
     status = 'pending' as const
   }
 
-  // For conditional nodes, use condition_question as title if step.title is missing
-  // For other steps, use step.title or fallback to "Step N"
   const getStepTitle = () => {
-    if (isConditionalStep(step)) {
-      // For conditional nodes, prefer condition_question over generic "Step N"
-      return step.title || step.condition_question || `Condition ${stepIndex + 1}`
-    }
     if (isTodoTaskStep(step)) {
       // For todo task nodes, use step title or fallback
       return step.title || `Todo Task ${stepIndex + 1}`
@@ -1448,12 +740,6 @@ function stepToNode(
     if (isHumanInputStep(step)) {
       // For human input nodes, prefer question over generic title
       return step.title || step.question || `Human Input ${stepIndex + 1}`
-    }
-    // For regular steps, use step.title or fallback
-    // For nested branch steps, use a more descriptive fallback
-    if (parentId) {
-      // This is a step inside a branch
-      return step.title || `Branch Step ${stepIndex + 1}`
     }
     return step.title || `Step ${stepIndex + 1}`
   }
@@ -1470,20 +756,6 @@ function stepToNode(
     workspacePath,
     selectedRunFolder,
     validation_schema: step.validation_schema
-  }
-
-  if (isConditionalStep(step)) {
-    return {
-      id: nodeId,
-      type: 'conditional',
-      position: { x: 0, y: 0 },
-      data: {
-        ...baseData,
-        condition_question: step.condition_question,
-        condition_context: step.condition_context
-        // Note: status is inherited from baseData (computed based on completedStepIndices)
-      } as ConditionalNodeData
-    }
   }
 
   if (isRoutingStep(step)) {
@@ -1567,17 +839,14 @@ function createValidationLearningNodes(
 }
 
 /**
- * Process steps recursively to handle nested branches
+ * Process top-level steps and their routed sub-agents.
  */
 function processSteps(
   steps: PlanStep[],
-  parentId: string | undefined,
-  branchType: 'true' | 'false' | undefined,
   changes: PlanChanges | null | undefined,
   presetUseCodeExecutionMode: boolean,
   presetLLMConfig: AgentLLMConfig | undefined,
   availableLLMs: Array<{ provider: string; model: string; label: string }>,
-  completedStepIndices: number[] = [],
   stepStatusMap?: Map<string, 'pending' | 'running' | 'completed' | 'failed'>,
   workspacePath?: string | null,
   selectedRunFolder?: string,
@@ -1588,33 +857,24 @@ function processSteps(
   const edges: WorkflowEdge[] = []
 
   // Track the last "exit" node ID for edge connections
-  // Can be a single node ID, array of branch exit nodes, or null
-  let lastExitNodeId: string | string[] | null = null
-  // Track conditional nodes with empty branches for label purposes
-  const conditionalEmptyBranches = new Map<string, { trueEmpty: boolean; falseEmpty: boolean }>()
+  let lastExitNodeId: string | null = null
 
-  // Nodes reached by an explicit branch/route edge (routing routes, conditional
-  // if_true/if_false, human-input yes/no, todo next_step_id). These are entered
-  // ONLY via their branch edge, so they must NOT also receive an array-order
-  // sequential edge — otherwise sibling routes get cross-linked into one cramped
-  // linear chain instead of fanning out as distinct branches under the router.
-  const explicitBranchTargetNodeIds = new Set<string>()
-  const addBranchTarget = (stepId?: string) => {
+  // Nodes reached by an explicit route edge (routing routes, human-input choices,
+  // or todo next_step_id). These are entered only via that route, so they must not
+  // receive an array-order sequential edge.
+  const explicitRouteTargetNodeIds = new Set<string>()
+  const addRouteTarget = (stepId?: string) => {
     if (!stepId || stepId === 'end') return
     const targetNodeId = stepIdToNodeIdMap?.get(stepId)
-    if (targetNodeId) explicitBranchTargetNodeIds.add(targetNodeId)
+    if (targetNodeId) explicitRouteTargetNodeIds.add(targetNodeId)
   }
   steps.forEach(s => {
-    if (isRoutingStep(s) && s.routes) s.routes.forEach(r => addBranchTarget(r.next_step_id))
-    if (isConditionalStep(s)) {
-      addBranchTarget(s.if_true_next_step_id)
-      addBranchTarget(s.if_false_next_step_id)
-    }
+    if (isRoutingStep(s) && s.routes) s.routes.forEach(r => addRouteTarget(r.next_step_id))
     if (isHumanInputStep(s)) {
-      addBranchTarget(s.if_yes_next_step_id)
-      addBranchTarget(s.if_no_next_step_id)
+      addRouteTarget(s.if_yes_next_step_id)
+      addRouteTarget(s.if_no_next_step_id)
     }
-    if (isTodoTaskStep(s)) addBranchTarget(s.next_step_id)
+    if (isTodoTaskStep(s)) addRouteTarget(s.next_step_id)
   })
 
   const buildTodoTaskSubAgentGraph = (
@@ -1847,317 +1107,30 @@ function processSteps(
   }
 
   steps.forEach((step, index) => {
-    const node = stepToNode(step, index, parentId, branchType, changes, stepStatusMap, workspacePath, selectedRunFolder, completedStepIds)
+    const node = stepToNode(step, index, changes, stepStatusMap, workspacePath, selectedRunFolder, completedStepIds)
     nodes.push(node)
 
-    // Create edge from previous step's exit node (sequential flow).
-    // Skip when this node is an explicit branch/route target — it already has an
-    // incoming edge from its router/branch, and an extra array-order edge would
-    // cross-link sibling routes into a single cramped chain.
-    // If lastExitNodeId is an array, it means we're connecting from multiple branch exits
-    if (lastExitNodeId && !explicitBranchTargetNodeIds.has(node.id)) {
-      if (Array.isArray(lastExitNodeId)) {
-        // Connect from all branch exit nodes to this step
-        lastExitNodeId.forEach((exitNodeId, i) => {
-          if (exitNodeId) {
-            // Check if this exit node is a conditional with empty branches
-            const emptyInfo = conditionalEmptyBranches.get(exitNodeId)
-            const isConditionalWithEmptyBranch = emptyInfo && (emptyInfo.trueEmpty || emptyInfo.falseEmpty)
-
-            edges.push({
-              id: `${exitNodeId}-to-${node.id}-${i}`,
-              source: exitNodeId,
-              target: node.id,
-              type: 'smoothstep',
-              animated: false,
-              style: {
-                stroke: isConditionalWithEmptyBranch ? (emptyInfo?.trueEmpty ? '#22c55e' : '#ef4444') : '#6b7280',
-                strokeWidth: 2
-              },
-              label: isConditionalWithEmptyBranch ? (emptyInfo?.trueEmpty ? 'Yes' : 'No') : undefined,
-              labelStyle: isConditionalWithEmptyBranch ? {
-                fill: emptyInfo?.trueEmpty ? '#22c55e' : '#ef4444',
-                fontWeight: 600,
-                fontSize: 11
-              } : undefined,
-              labelBgStyle: isConditionalWithEmptyBranch ? {
-                fill: emptyInfo?.trueEmpty ? '#f0fdf4' : '#fef2f2',
-                fillOpacity: 0.9
-              } : undefined,
-              labelBgPadding: isConditionalWithEmptyBranch ? [4, 4] as [number, number] : undefined,
-              labelBgBorderRadius: isConditionalWithEmptyBranch ? 4 : undefined
-            })
-          }
-        })
-      } else {
-        // Single exit node (normal sequential flow)
-        // Check if this exit node is a conditional with empty branches
-        const emptyInfo = conditionalEmptyBranches.get(lastExitNodeId)
-        const isConditionalWithEmptyBranch = emptyInfo && (emptyInfo.trueEmpty || emptyInfo.falseEmpty)
-
-        edges.push({
-          id: `${lastExitNodeId}-to-${node.id}`,
-          source: lastExitNodeId,
-          target: node.id,
-          type: 'smoothstep',
-          animated: false,
-          style: {
-            stroke: isConditionalWithEmptyBranch ? (emptyInfo?.trueEmpty ? '#22c55e' : '#ef4444') : '#6b7280',
-            strokeWidth: 2
-          },
-          label: isConditionalWithEmptyBranch ? (emptyInfo?.trueEmpty ? 'Yes' : 'No') : undefined,
-          labelStyle: isConditionalWithEmptyBranch ? {
-            fill: emptyInfo?.trueEmpty ? '#22c55e' : '#ef4444',
-            fontWeight: 600,
-            fontSize: 11
-          } : undefined,
-          labelBgStyle: isConditionalWithEmptyBranch ? {
-            fill: emptyInfo?.trueEmpty ? '#f0fdf4' : '#fef2f2',
-            fillOpacity: 0.9
-          } : undefined,
-          labelBgPadding: isConditionalWithEmptyBranch ? [4, 4] as [number, number] : undefined,
-          labelBgBorderRadius: isConditionalWithEmptyBranch ? 4 : undefined
-        })
-      }
+    // Array order supplies the normal sequential edge. Explicit route targets
+    // already receive an edge from routing, human input, or a todo task.
+    if (lastExitNodeId && !explicitRouteTargetNodeIds.has(node.id)) {
+      edges.push({
+        id: `${lastExitNodeId}-to-${node.id}`,
+        source: lastExitNodeId,
+        target: node.id,
+        type: 'smoothstep',
+        animated: false,
+        style: { stroke: '#6b7280', strokeWidth: 2 }
+      })
     }
 
-    // Add validation/learning nodes for non-conditional and non-human-input steps
-    // Decision steps also have validation/learning for their inner step execution
-    // Human input steps don't have validation/learning (they just ask questions)
-    if (!isConditionalStep(step) && !isHumanInputStep(step)) {
-      const vlResult = createValidationLearningNodes(
-        node.id
-      )
+    if (!isHumanInputStep(step)) {
+      const vlResult = createValidationLearningNodes(node.id)
       nodes.push(...vlResult.nodes)
       edges.push(...vlResult.edges)
       lastExitNodeId = vlResult.exitNodeId
     } else {
-      // For conditional nodes, track branch exit nodes to reconnect to next step
-      lastExitNodeId = null
+      lastExitNodeId = node.id
     }
-
-    // Handle conditional branches
-    if (isConditionalStep(step)) {
-      const branchExitNodes: string[] = []
-
-      // Process if_true_steps
-      let trueBranchExitNodeId: string | null = null
-      if (step.if_true_steps && step.if_true_steps.length > 0) {
-        const trueBranch = processSteps(
-          step.if_true_steps,
-          node.id,
-          'true',
-          changes,
-          presetUseCodeExecutionMode,
-          presetLLMConfig,
-          availableLLMs,
-          completedStepIndices,
-          stepStatusMap,
-          workspacePath,
-          selectedRunFolder,
-          stepIdToNodeIdMap,
-          completedStepIds
-        )
-        nodes.push(...trueBranch.nodes)
-        edges.push(...trueBranch.edges)
-
-        // Connect conditional to first true branch step
-        if (trueBranch.nodes.length > 0) {
-          edges.push({
-            id: `${node.id}-true-branch`,
-            source: node.id,
-            target: trueBranch.nodes[0].id,
-            type: 'smoothstep',
-            label: 'Yes',
-            labelStyle: { fill: '#22c55e', fontWeight: 600, fontSize: 11 },
-            labelBgStyle: { fill: '#f0fdf4', fillOpacity: 0.9 },
-            labelBgPadding: [4, 4] as [number, number],
-            labelBgBorderRadius: 4,
-            style: { stroke: '#22c55e', strokeWidth: 2 },
-            animated: false
-          })
-
-          // Find the last node in the true branch (exit node)
-          // This could be a step, validation, or learning node
-          const lastTrueNode = trueBranch.nodes[trueBranch.nodes.length - 1]
-          if (lastTrueNode) {
-            trueBranchExitNodeId = lastTrueNode.id
-            branchExitNodes.push(lastTrueNode.id)
-          }
-        }
-      } else {
-        // No true branch steps - conditional node itself is an exit
-        // We'll create an edge to the next step below (either via next_step_id or sequential)
-        trueBranchExitNodeId = node.id
-        branchExitNodes.push(node.id)
-        // Track that true branch is empty
-        const emptyInfo = conditionalEmptyBranches.get(node.id) || { trueEmpty: false, falseEmpty: false }
-        emptyInfo.trueEmpty = true
-        conditionalEmptyBranches.set(node.id, emptyInfo)
-      }
-
-      // Process if_false_steps
-      let falseBranchExitNodeId: string | null = null
-      if (step.if_false_steps && step.if_false_steps.length > 0) {
-        const falseBranch = processSteps(
-          step.if_false_steps,
-          node.id,
-          'false',
-          changes,
-          presetUseCodeExecutionMode,
-          presetLLMConfig,
-          availableLLMs,
-          completedStepIndices,
-          stepStatusMap,
-          workspacePath,
-          selectedRunFolder,
-          stepIdToNodeIdMap,
-          completedStepIds
-        )
-        nodes.push(...falseBranch.nodes)
-        edges.push(...falseBranch.edges)
-
-        // Connect conditional to first false branch step
-        if (falseBranch.nodes.length > 0) {
-          edges.push({
-            id: `${node.id}-false-branch`,
-            source: node.id,
-            target: falseBranch.nodes[0].id,
-            type: 'smoothstep',
-            label: 'No',
-            labelStyle: { fill: '#ef4444', fontWeight: 600, fontSize: 11 },
-            labelBgStyle: { fill: '#fef2f2', fillOpacity: 0.9 },
-            labelBgPadding: [4, 4] as [number, number],
-            labelBgBorderRadius: 4,
-            style: { stroke: '#ef4444', strokeWidth: 2 },
-            animated: false
-          })
-
-          // Find the last node in the false branch (exit node)
-          const lastFalseNode = falseBranch.nodes[falseBranch.nodes.length - 1]
-          if (lastFalseNode) {
-            falseBranchExitNodeId = lastFalseNode.id
-            branchExitNodes.push(lastFalseNode.id)
-          }
-        }
-      } else {
-        // No false branch steps - conditional node itself is an exit (if not already added)
-        if (!branchExitNodes.includes(node.id)) {
-          falseBranchExitNodeId = node.id
-          branchExitNodes.push(node.id)
-        }
-        // Track that false branch is empty
-        const emptyInfo = conditionalEmptyBranches.get(node.id) || { trueEmpty: false, falseEmpty: false }
-        emptyInfo.falseEmpty = true
-        conditionalEmptyBranches.set(node.id, emptyInfo)
-      }
-
-      // Handle next_step_id connections
-      // Check if_true_next_step_id and if_false_next_step_id to create explicit connections
-      const nextStepEdges: WorkflowEdge[] = []
-
-      // Handle true branch next_step_id
-      if (trueBranchExitNodeId) {
-        if (step.if_true_next_step_id) {
-          // Explicit next_step_id provided
-          const targetNodeId = stepIdToNodeIdMap?.get(step.if_true_next_step_id)
-          if (targetNodeId) {
-            // Create edge from true branch exit node to target
-            nextStepEdges.push({
-              id: `${trueBranchExitNodeId}-to-${targetNodeId}-true-next`,
-              source: trueBranchExitNodeId,
-              target: targetNodeId,
-              type: 'smoothstep',
-              label: step.if_true_steps && step.if_true_steps.length > 0 ? undefined : 'Yes', // Show "Yes" label if branch is empty
-              labelStyle: step.if_true_steps && step.if_true_steps.length > 0 ? undefined : { fill: '#22c55e', fontWeight: 600, fontSize: 11 },
-              labelBgStyle: step.if_true_steps && step.if_true_steps.length > 0 ? undefined : { fill: '#f0fdf4', fillOpacity: 0.9 },
-              labelBgPadding: step.if_true_steps && step.if_true_steps.length > 0 ? undefined : [4, 4] as [number, number],
-              labelBgBorderRadius: step.if_true_steps && step.if_true_steps.length > 0 ? undefined : 4,
-              style: { stroke: '#22c55e', strokeWidth: 2, strokeDasharray: step.if_true_steps && step.if_true_steps.length > 0 ? '5,5' : undefined },
-              animated: false
-            })
-          } else if (step.if_true_next_step_id === 'end') {
-            // Connect to end node
-            nextStepEdges.push({
-              id: `${trueBranchExitNodeId}-to-end-true-next`,
-              source: trueBranchExitNodeId,
-              target: 'end',
-              type: 'smoothstep',
-              label: step.if_true_steps && step.if_true_steps.length > 0 ? undefined : 'Yes', // Show "Yes" label if branch is empty
-              labelStyle: step.if_true_steps && step.if_true_steps.length > 0 ? undefined : { fill: '#22c55e', fontWeight: 600, fontSize: 11 },
-              labelBgStyle: step.if_true_steps && step.if_true_steps.length > 0 ? undefined : { fill: '#f0fdf4', fillOpacity: 0.9 },
-              labelBgPadding: step.if_true_steps && step.if_true_steps.length > 0 ? undefined : [4, 4] as [number, number],
-              labelBgBorderRadius: step.if_true_steps && step.if_true_steps.length > 0 ? undefined : 4,
-              style: { stroke: '#22c55e', strokeWidth: 2, strokeDasharray: step.if_true_steps && step.if_true_steps.length > 0 ? '5,5' : undefined },
-              animated: false
-            })
-          }
-        }
-        // If no explicit next_step_id and branch is empty, we'll use default sequential flow (handled below)
-      }
-
-      // Handle false branch next_step_id
-      if (falseBranchExitNodeId) {
-        if (step.if_false_next_step_id) {
-          // Explicit next_step_id provided
-          const targetNodeId = stepIdToNodeIdMap?.get(step.if_false_next_step_id)
-          if (targetNodeId) {
-            // Create edge from false branch exit node to target
-            nextStepEdges.push({
-              id: `${falseBranchExitNodeId}-to-${targetNodeId}-false-next`,
-              source: falseBranchExitNodeId,
-              target: targetNodeId,
-              type: 'smoothstep',
-              label: step.if_false_steps && step.if_false_steps.length > 0 ? undefined : 'No', // Show "No" label if branch is empty
-              labelStyle: step.if_false_steps && step.if_false_steps.length > 0 ? undefined : { fill: '#ef4444', fontWeight: 600, fontSize: 11 },
-              labelBgStyle: step.if_false_steps && step.if_false_steps.length > 0 ? undefined : { fill: '#fef2f2', fillOpacity: 0.9 },
-              labelBgPadding: step.if_false_steps && step.if_false_steps.length > 0 ? undefined : [4, 4] as [number, number],
-              labelBgBorderRadius: step.if_false_steps && step.if_false_steps.length > 0 ? undefined : 4,
-              style: { stroke: '#ef4444', strokeWidth: 2, strokeDasharray: step.if_false_steps && step.if_false_steps.length > 0 ? '5,5' : undefined },
-              animated: false
-            })
-          } else if (step.if_false_next_step_id === 'end') {
-            // Connect to end node
-            nextStepEdges.push({
-              id: `${falseBranchExitNodeId}-to-end-false-next`,
-              source: falseBranchExitNodeId,
-              target: 'end',
-              type: 'smoothstep',
-              label: step.if_false_steps && step.if_false_steps.length > 0 ? undefined : 'No', // Show "No" label if branch is empty
-              labelStyle: step.if_false_steps && step.if_false_steps.length > 0 ? undefined : { fill: '#ef4444', fontWeight: 600, fontSize: 11 },
-              labelBgStyle: step.if_false_steps && step.if_false_steps.length > 0 ? undefined : { fill: '#fef2f2', fillOpacity: 0.9 },
-              labelBgPadding: step.if_false_steps && step.if_false_steps.length > 0 ? undefined : [4, 4] as [number, number],
-              labelBgBorderRadius: step.if_false_steps && step.if_false_steps.length > 0 ? undefined : 4,
-              style: { stroke: '#ef4444', strokeWidth: 2, strokeDasharray: step.if_false_steps && step.if_false_steps.length > 0 ? '5,5' : undefined },
-              animated: false
-            })
-          }
-        }
-        // If no explicit next_step_id and branch is empty, we'll use default sequential flow (handled below)
-      }
-
-      // Add next_step_id edges if any were created
-      edges.push(...nextStepEdges)
-
-      // Set lastExitNodeId to array of branch exit nodes (or single node if only one branch)
-      // Only use this for sequential flow if next_step_id is not provided
-      // If next_step_id is provided, we've already created explicit edges above
-      if (step.if_true_next_step_id || step.if_false_next_step_id) {
-        // Explicit next_step_id provided - don't set lastExitNodeId (edges already created)
-        lastExitNodeId = null
-      } else {
-        // No explicit next_step_id - use default sequential flow
-        if (branchExitNodes.length === 1) {
-          lastExitNodeId = branchExitNodes[0]
-        } else if (branchExitNodes.length > 1) {
-          lastExitNodeId = branchExitNodes
-        } else {
-          // No branches at all - conditional node itself is the exit
-          lastExitNodeId = node.id
-        }
-      }
-    }
-
     // Handle routing step edge routing
     // Routing steps evaluate a question and route to one of N possible next steps
     if (isRoutingStep(step)) {
@@ -2422,8 +1395,8 @@ function processSteps(
 /**
  * Check if a node is a step-type node (has step data)
  */
-function isStepTypeNode(node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | TodoTaskNodeData | HumanInputNodeData | MessageSequenceNodeData } {
-  return node.type === 'step' || node.type === 'conditional' || node.type === 'todo_task' || node.type === 'human_input' || node.type === 'message_sequence'
+function isStepTypeNode(node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | TodoTaskNodeData | HumanInputNodeData | MessageSequenceNodeData } {
+  return node.type === 'step' || node.type === 'todo_task' || node.type === 'human_input' || node.type === 'message_sequence'
 }
 
 /**
@@ -2567,24 +1540,11 @@ export function usePlanToFlow(
     // Create step ID to node ID map for next_step_id lookups
     // First pass: create all nodes to build the map
     const stepIdToNodeIdMap = new Map<string, string>()
-    const buildStepIdMap = (steps: PlanStep[], parentId?: string, branchType?: 'true' | 'false') => {
+    const buildStepIdMap = (steps: PlanStep[]) => {
       steps.forEach((step, index) => {
-        const nodeId = parentId
-          ? `${parentId}-${branchType}-${index}`
-          : step.id || `step-${index}`
+        const nodeId = step.id || `step-${index}`
         if (step.id) {
           stepIdToNodeIdMap.set(step.id, nodeId)
-        }
-        // Recursively process branch steps
-        if (isConditionalStep(step)) {
-          if (isConditionalStep(step)) {
-            if (step.if_true_steps) {
-              buildStepIdMap(step.if_true_steps, nodeId, 'true')
-            }
-            if (step.if_false_steps) {
-              buildStepIdMap(step.if_false_steps, nodeId, 'false')
-            }
-          }
         }
       })
     }
@@ -2603,13 +1563,10 @@ export function usePlanToFlow(
     // Process all steps to create nodes and sequential edges (with change highlighting)
     const { nodes: processedNodes, edges: sequentialEdges } = processSteps(
       plan.steps,
-      undefined,
-      undefined,
       changes,
       presetUseCodeExecutionMode,
       presetLLMConfig,
       availableLLMs,
-      completedStepIndices,
       stepStatusMapAsMap,
       options.workspacePath,
       options.selectedRunFolder,
@@ -2622,13 +1579,10 @@ export function usePlanToFlow(
     if (plan.orphan_steps && plan.orphan_steps.length > 0) {
       const { nodes: orphanProcessedNodes } = processSteps(
         plan.orphan_steps,
-        undefined,
-        undefined,
         changes,
         presetUseCodeExecutionMode,
         presetLLMConfig,
         availableLLMs,
-        [],  // no completed step indices for orphan steps
         stepStatusMapAsMap,
         options.workspacePath,
         options.selectedRunFolder,
@@ -2754,131 +1708,19 @@ export function usePlanToFlow(
       edges.push(...dependencyEdges)
     }
 
-    // Find last node to connect to end (could be step, validation, or learning node)
-    // We want the actual last node in the sequence (considering validation/learning nodes)
-    const topLevelNodes = processedNodes.filter(n => !n.id.includes('-true-') && !n.id.includes('-false-'))
-    if (topLevelNodes.length > 0) {
-      // Find the last node - could be learning, validation, or step
-      const lastNode = topLevelNodes[topLevelNodes.length - 1]
-
-      // Check if it's a step-type node and if it has a condition
-      const isStepType = isStepTypeNode(lastNode)
-      const hasCondition = isStepType && isConditionalStep(lastNode.data.step)
-
-      if (!hasCondition) {
-        // Regular step - connect to end
+    // Connect a terminal step to End only when no explicit routing edge already
+    // leaves it. Routing, human-input, todo-task, and message-sequence steps own
+    // their deterministic next-step edges.
+    if (processedNodes.length > 0) {
+      const lastNode = processedNodes[processedNodes.length - 1]
+      const hasOutgoingEdge = edges.some(edge => edge.source === lastNode.id)
+      if (!hasOutgoingEdge) {
         edges.push({
           id: 'last-to-end',
           source: lastNode.id,
           target: 'end',
           type: 'smoothstep',
           style: { stroke: '#6b7280', strokeWidth: 2 }
-        })
-      } else {
-        // Conditional step - check if branch exit nodes need to connect to end
-        const conditionalStep = lastNode.data.step as PlanStep
-        const stepId = conditionalStep.id || lastNode.id
-
-        // Check which edges already exist to "end" (from explicit next_step_id)
-        const existingEndEdges = edges.filter(e => e.target === 'end' && (
-          e.id.includes(stepId) ||
-          e.id.includes(lastNode.id) ||
-          e.source === lastNode.id
-        ))
-
-        // Find branch exit nodes that need connection to end
-        // These are nodes that don't already have an edge to "end" or to another step
-        const branchExitNodes: string[] = []
-
-        // Check true branch
-        if (isConditionalStep(conditionalStep) && conditionalStep.if_true_steps && conditionalStep.if_true_steps.length > 0) {
-          // Branch has steps - find the last node in the branch
-          const trueBranchNodes = processedNodes.filter(n =>
-            n.id.startsWith(`${lastNode.id}-true-`) &&
-            !n.id.includes('-false-')
-          )
-          if (trueBranchNodes.length > 0) {
-            const lastTrueNode = trueBranchNodes[trueBranchNodes.length - 1]
-            // Check if this node already has an edge to end or to another step
-            const hasConnection = edges.some(e =>
-              e.source === lastTrueNode.id && (e.target === 'end' || !e.target.includes('-true-') && !e.target.includes('-false-'))
-            )
-            if (!hasConnection && (!isConditionalStep(conditionalStep) || !conditionalStep.if_true_next_step_id)) {
-              branchExitNodes.push(lastTrueNode.id)
-            }
-          }
-        } else {
-          // Empty true branch - conditional node itself is the exit
-          const hasConnection = existingEndEdges.some(e =>
-            e.id.includes('true') || (e.source === lastNode.id && e.id.includes('true'))
-          )
-          if (!hasConnection && (!isConditionalStep(conditionalStep) || !conditionalStep.if_true_next_step_id)) {
-            branchExitNodes.push(lastNode.id)
-          }
-        }
-
-        // Check false branch
-        if (isConditionalStep(conditionalStep) && conditionalStep.if_false_steps && conditionalStep.if_false_steps.length > 0) {
-          // Branch has steps - find the last node in the branch
-          const falseBranchNodes = processedNodes.filter(n =>
-            n.id.startsWith(`${lastNode.id}-false-`) &&
-            !n.id.includes('-true-')
-          )
-          if (falseBranchNodes.length > 0) {
-            const lastFalseNode = falseBranchNodes[falseBranchNodes.length - 1]
-            // Check if this node already has an edge to end or to another step
-            const hasConnection = edges.some(e =>
-              e.source === lastFalseNode.id && (e.target === 'end' || !e.target.includes('-true-') && !e.target.includes('-false-'))
-            )
-            if (!hasConnection && (!isConditionalStep(conditionalStep) || !conditionalStep.if_false_next_step_id)) {
-              branchExitNodes.push(lastFalseNode.id)
-            }
-          }
-        } else {
-          // Empty false branch - conditional node itself is the exit (if not already added)
-          if (!branchExitNodes.includes(lastNode.id)) {
-            const hasConnection = existingEndEdges.some(e =>
-              e.id.includes('false') || (e.source === lastNode.id && e.id.includes('false'))
-            )
-            if (!hasConnection && (!isConditionalStep(conditionalStep) || !conditionalStep.if_false_next_step_id)) {
-              branchExitNodes.push(lastNode.id)
-            }
-          }
-        }
-
-        // Connect branch exit nodes to end
-        branchExitNodes.forEach((exitNodeId, index) => {
-          // Determine label based on which branch this is
-          const isTrueBranch = isConditionalStep(conditionalStep) && conditionalStep.if_true_steps && conditionalStep.if_true_steps.length === 0 && exitNodeId === lastNode.id
-            ? true
-            : exitNodeId.includes('-true-') || (exitNodeId === lastNode.id && isConditionalStep(conditionalStep) && conditionalStep.if_true_steps && conditionalStep.if_true_steps.length === 0)
-          const isFalseBranch = !isTrueBranch && (
-            exitNodeId.includes('-false-') ||
-            (exitNodeId === lastNode.id && isConditionalStep(conditionalStep) && conditionalStep.if_false_steps && conditionalStep.if_false_steps.length === 0)
-          )
-
-          edges.push({
-            id: `${exitNodeId}-to-end-conditional-${index}`,
-            source: exitNodeId,
-            target: 'end',
-            type: 'smoothstep',
-            label: isTrueBranch ? 'Yes' : isFalseBranch ? 'No' : undefined,
-            labelStyle: isTrueBranch || isFalseBranch ? {
-              fill: isTrueBranch ? '#22c55e' : '#ef4444',
-              fontWeight: 600,
-              fontSize: 11
-            } : undefined,
-            labelBgStyle: isTrueBranch || isFalseBranch ? {
-              fill: isTrueBranch ? '#f0fdf4' : '#fef2f2',
-              fillOpacity: 0.9
-            } : undefined,
-            labelBgPadding: isTrueBranch || isFalseBranch ? [4, 4] as [number, number] : undefined,
-            labelBgBorderRadius: isTrueBranch || isFalseBranch ? 4 : undefined,
-            style: {
-              stroke: isTrueBranch ? '#22c55e' : isFalseBranch ? '#ef4444' : '#6b7280',
-              strokeWidth: 2
-            }
-          })
         })
       }
     }
@@ -2939,12 +1781,11 @@ export function usePlanToFlow(
 
       // Calculate where the workflow should start (after the header row)
       const headerRowEndX = varsPos.x + variablesDims.width
-      const headerRowBottom = HEADER_Y + maxHeaderHeight
 
       // Find the first step node (step-0 or the first non-header node connected to variables)
       const firstStepNode = layoutedResult.nodes.find(n =>
         n.id === 'step-0' ||
-        (isStepTypeNode(n) && !n.id.includes('-true-') && !n.id.includes('-false-') && !n.id.includes('-sub-agent-'))
+        (isStepTypeNode(n) && !n.id.includes('-sub-agent-'))
       )
 
       if (firstStepNode) {
@@ -3038,12 +1879,12 @@ export function usePlanToFlow(
       }
     }
 
-    // Routing branches are spread by dagre (subtree-aware), not the manual
+    // Routing paths are spread by dagre (subtree-aware), not the manual
     // lane layout — disabled as part of the dagre-only simplification.
 
     // Position sub-agents relative to their parent todo_task nodes.
     // TB is the active canvas layout: children form a vertical tree, with
-    // sibling branches spread horizontally by their recursive footprint.
+    // sibling routes spread horizontally by their recursive footprint.
     const parentNodeMap = new Map<string, { nodeIndex: number; subAgentIndices: number[] }>()
 
     // Pass 1: Find all todo task nodes first to initialize map
@@ -3337,7 +2178,7 @@ export function usePlanToFlow(
     // Inject read-only context into step-type nodes.
     // Also make validation, learning, and evaluation nodes non-draggable
     layoutedResult.nodes = layoutedResult.nodes.map(node => {
-      if (node.type === 'step' || node.type === 'conditional' || node.type === 'human_input' || node.type === 'todo_task') {
+      if (node.type === 'step' || node.type === 'human_input' || node.type === 'todo_task') {
         return {
           ...node,
           data: {

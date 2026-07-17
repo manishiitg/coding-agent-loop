@@ -19,7 +19,6 @@ export interface AgentLLMConfig {
 export interface AgentConfigs {
   execution_llm?: AgentLLMConfig;
   execution_tier?: 'high' | 'medium' | 'low';
-  conditional_llm?: AgentLLMConfig;
   execution_max_turns?: number;
   validation_max_turns?: number;
   learning_max_turns?: number;
@@ -53,7 +52,7 @@ export interface AgentConfigs {
   orchestrator_llm?: AgentLLMConfig;          // Direct LLM override for orchestrator (works in both tiered and manual modes)
   sub_agent_llm?: AgentLLMConfig;             // Direct LLM override for ALL sub-agents spawned by this step (works in both tiered and manual modes)
   disable_parallel_tool_execution?: boolean;  // Disable parallel tool execution (default: enabled)
-  disable_tier_optimization?: boolean;        // If true, execution/conditional agents always use Tier 1 (high reasoning)
+  disable_tier_optimization?: boolean;        // If true, execution agents always use Tier 1 (high reasoning)
   global_skill_objective?: string;            // Objective for the global skill — what domain knowledge should it capture
   knowledgebase_access?: 'read' | 'write' | 'read-write' | 'none';
   knowledgebase_contribution?: string;
@@ -78,16 +77,6 @@ export interface TodoStepWithConfigs {
   loop_condition?: string;
   max_iterations?: number;
   loop_description?: string;
-  // Conditional branching fields
-  has_condition?: boolean;
-  condition_question?: string;
-  condition_context?: string;
-  if_true_steps?: TodoStepWithConfigs[];
-  if_false_steps?: TodoStepWithConfigs[];
-  if_true_next_step_id?: string;
-  if_false_next_step_id?: string;
-  condition_result?: boolean;
-  condition_reason?: string;
   next_step_id?: string;
   // Human input step fields (asks question to human and blocks for input)
   has_human_input?: boolean;
@@ -203,19 +192,6 @@ export interface RegularPlanStep extends CommonStepFields {
   loop_description?: string;
 }
 
-// Conditional step with branches
-export interface ConditionalPlanStep extends CommonStepFields {
-  type: 'conditional';
-  condition_question?: string;
-  condition_context?: string;
-  if_true_steps?: PlanStep[];
-  if_false_steps?: PlanStep[];
-  if_true_next_step_id?: string;      // ID of step to connect to after true branch completes (or "end" to end workflow)
-  if_false_next_step_id?: string;     // ID of step to connect to after false branch completes (or "end" to end workflow)
-  condition_result?: boolean;
-  condition_reason?: string;
-}
-
 // Todo task step (orchestrator with todo list management + predefined routes + generic agent)
 // Fields from the former inner todo_task_step are now flattened onto this level:
 //   description, success_criteria, context_dependencies, context_output, validation_schema
@@ -273,7 +249,7 @@ export interface HumanInputPlanStep extends CommonStepFields {
   variable_name?: string;                // Optional: store response in variable
   response_type?: string;                // "text" (default), "yesno", "multiple_choice"
   options?: string[];                    // For multiple_choice type
-  next_step_id?: string;                 // Default: where to go after response (or "end") - used if conditional routing not specified
+  next_step_id?: string;                 // Default destination after response (or "end")
   if_yes_next_step_id?: string;         // Optional: for yesno type when response is "yes"
   if_no_next_step_id?: string;          // Optional: for yesno type when response is "no"
   option_routes?: Record<string, string>; // Optional: for multiple_choice type - maps option index (as string "0", "1", etc.) or option value to next_step_id
@@ -297,7 +273,7 @@ export interface RoutingPlanStep extends CommonStepFields {
 }
 
 // Discriminated union type for all step types
-export type PlanStep = RegularPlanStep | ConditionalPlanStep | HumanInputPlanStep | TodoTaskPlanStep | MessageSequencePlanStep | RoutingPlanStep;
+export type PlanStep = RegularPlanStep | HumanInputPlanStep | TodoTaskPlanStep | MessageSequencePlanStep | RoutingPlanStep;
 
 // PlanRoutingRoute represents a possible route/sub-agent for planning
 export interface PlanRoutingRoute {
@@ -320,10 +296,6 @@ export interface PlanningResponse {
 // Type guard functions for discriminated union
 export function isRegularStep(step: PlanStep): step is RegularPlanStep {
   return step.type === 'regular';
-}
-
-export function isConditionalStep(step: PlanStep): step is ConditionalPlanStep {
-  return step.type === 'conditional';
 }
 
 export function isHumanInputStep(step: PlanStep): step is HumanInputPlanStep {

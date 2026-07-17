@@ -265,16 +265,16 @@ func (iwm *InteractiveWorkshopManager) ensureWorkshopBootstrapFilesExist(ctx con
 
 // WorkshopStepInfo describes a step in the plan, including its position in the hierarchy.
 type WorkshopStepInfo struct {
-	Step       PlanStepInterface
-	ParentID   string // empty for top-level steps
-	ParentType StepType
-	BranchName string // e.g. "if_true", "if_false", "route:route-id", "todo_task_step"
-	TopIndex   int    // 1-based index of the top-level step this belongs to (-1 if inner)
-	IsOrphan   bool   // true for orphan steps (workshop-only, not in main execution flow)
+	Step           PlanStepInterface
+	ParentID       string // empty for top-level steps
+	ParentType     StepType
+	NestedLocation string // e.g. "route:route-id" or "todo_task_step"
+	TopIndex       int    // 1-based index of the top-level step this belongs to (-1 if inner)
+	IsOrphan       bool   // true for orphan steps (workshop-only, not in main execution flow)
 }
 
 // collectAllSteps returns a flat list of all steps in the plan, including inner steps
-// from conditional branches, orchestration routes, and todo task sub-agents.
+// from todo task routes and sub-agents.
 func collectAllSteps(steps []PlanStepInterface) []WorkshopStepInfo {
 	var result []WorkshopStepInfo
 	for i, step := range steps {
@@ -299,7 +299,7 @@ func collectInnerSteps(step PlanStepInterface) []WorkshopStepInfo {
 			if route.SubAgentStep != nil {
 				result = append(result, WorkshopStepInfo{
 					Step: route.SubAgentStep, ParentID: parentID, ParentType: parentType,
-					BranchName: fmt.Sprintf("route:%s", route.RouteID), TopIndex: -1,
+					NestedLocation: fmt.Sprintf("route:%s", route.RouteID), TopIndex: -1,
 				})
 				result = append(result, collectInnerSteps(route.SubAgentStep)...)
 			}
@@ -1198,7 +1198,7 @@ func (iwm *InteractiveWorkshopManager) SetToolCallQuery(mainSessionID string, qu
 //   - System tools: always included (shell, workspace, non-blocking human notification, virtual tools)
 //   - Workshop execution tools: execute_step, query_step, send_step_message, stop, list, run_in_background
 //   - Step config/tools: update_step_config, review_step_code
-//   - Plan modification tools: add/update/delete steps, branches, routes
+//   - Plan modification tools: add/update/delete steps and routes
 //   - Variable/config tools: update_variable, groups, workflow config
 //   - Schedule tools: list/create/update/delete schedules
 //   - Skill tools: list/search/install/uninstall skills
@@ -2245,7 +2245,7 @@ Read-only review commands such as `+"`/review-plan`"+` are available if the user
 {{if .StepSummary}}### Plan Steps
 {{.StepSummary}}
 {{end}}
-{{if .PlanJSON}}`+"```json\n{{.PlanJSON}}\n```"+`{{else}}Do NOT dump the full `+"`planning/plan.json`"+` by default. Read it precisely with targeted `+"`jq`"+` queries. The structure is: root `+"`steps[]`"+` for top-level steps, with nested step containers in `+"`if_true_steps`"+`, `+"`if_false_steps`"+`, `+"`todo_task_step`"+`, `+"`predefined_routes[].sub_agent_step`"+`, `+"`predefined_routes[].orphan_step_ref`"+`, and `+"`routes[].next_step_id`"+` (routing). Reusable orphan definitions live under `+"`orphan_steps[]`"+` and may expose `+"`shared_with.orchestrator_ids`"+` to allow specific todo_task steps to reuse them.
+{{if .PlanJSON}}`+"```json\n{{.PlanJSON}}\n```"+`{{else}}Do NOT dump the full `+"`planning/plan.json`"+` by default. Read it precisely with targeted `+"`jq`"+` queries. The structure is: root `+"`steps[]`"+` for top-level steps, nested sub-agents in `+"`predefined_routes[].sub_agent_step`"+`, reusable definitions through `+"`predefined_routes[].orphan_step_ref`"+`, and deterministic transitions through `+"`routes[].next_step_id`"+` plus step-level `+"`next_step_id`"+`. Reusable orphan definitions live under `+"`orphan_steps[]`"+` and may expose `+"`shared_with.orchestrator_ids`"+` to allow specific todo_task steps to reuse them.
 
 Use `+"`execute_shell_command`"+` with focused queries like:
 - **Top-level overview only**: `+"`jq '[.steps[] | {id, title, type}]' planning/plan.json`"+`
@@ -2550,7 +2550,7 @@ func resolveWorkshopStepID(controller *StepBasedWorkflowOrchestrator, inputID st
 	for _, info := range allSteps {
 		label := fmt.Sprintf("%q (step %d)", info.Step.GetID(), info.TopIndex)
 		if info.TopIndex <= 0 {
-			label = fmt.Sprintf("%q (inner, parent=%s, branch=%s)", info.Step.GetID(), info.ParentID, info.BranchName)
+			label = fmt.Sprintf("%q (inner, parent=%s, location=%s)", info.Step.GetID(), info.ParentID, info.NestedLocation)
 		}
 		ids = append(ids, label)
 	}
@@ -4910,20 +4910,16 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			var result strings.Builder
 			hasUserMessage := false // Track if user message was already included from prompts.json
 
-			// Read system prompt and user message from prompts.json (saved pre-execution and updated post-execution)
-			// Try execution-step prompts first, then other agent type prompts
+			// Read system prompt and user message from prompts.json (saved pre-execution and updated post-execution).
+			// Todo-task orchestrators use a stable non-attempt filename.
 			promptsPath := fmt.Sprintf("%s/%s-prompts.json", logDir, filenameBase)
 			promptsContent, err := iwm.controller.ReadWorkspaceFile(ctx, promptsPath)
 			if err != nil {
-				// Try other prompt file types (todo_task, conditional, decision, routing)
-				for _, altName := range []string{"todo-task-prompts.json", "conditional-prompts.json", "decision-prompts.json", "routing-prompts.json"} {
-					altPath := fmt.Sprintf("%s/%s", logDir, altName)
-					if tc, te := iwm.controller.ReadWorkspaceFile(ctx, altPath); te == nil {
-						promptsContent = tc
-						err = nil
-						promptsPath = altPath
-						break
-					}
+				altPath := fmt.Sprintf("%s/todo-task-prompts.json", logDir)
+				if tc, te := iwm.controller.ReadWorkspaceFile(ctx, altPath); te == nil {
+					promptsContent = tc
+					err = nil
+					promptsPath = altPath
 				}
 			}
 			if err != nil {

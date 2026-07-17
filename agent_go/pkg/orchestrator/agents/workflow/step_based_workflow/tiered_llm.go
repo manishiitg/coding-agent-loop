@@ -141,11 +141,6 @@ func (tr *TierResolver) ResolveForLearning() (*orchestrator.LLMConfig, TierLevel
 
 // Note: Phase agents use presetPhaseLLM which is independently configured (not part of tiered allocation).
 
-// ResolveForConditional returns the default LLM tier for conditional agents (Tier 1 / High).
-func (tr *TierResolver) ResolveForConditional() (*orchestrator.LLMConfig, TierLevel) {
-	return tr.ResolveTier(TierHigh), TierHigh
-}
-
 // GetTier1Config returns the Tier 1 AgentLLMConfig (for populating preset fields in backward-compatible way)
 func (tr *TierResolver) GetTier1Config() *AgentLLMConfig {
 	return tr.config.Tier1

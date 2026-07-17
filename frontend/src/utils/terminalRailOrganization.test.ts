@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { TerminalSnapshot } from '../services/api-types'
 import {
+  hiddenSelectedTerminalRailGroup,
   organizeTerminalRail,
   terminalRailLogicalKey,
   terminalRailTitle,
@@ -117,5 +118,29 @@ describe('terminal rail organization', () => {
       'Evaluation Health Reviewer': 'review',
       'Learning health': 'review',
     })
+  })
+
+  it('identifies only the selected completed child hidden by the active filter', () => {
+    const active = terminal('active', {
+      active: true,
+      state: 'running',
+      step_id: 'collect-price',
+      step_name: 'Collect Price',
+    })
+    const selectedDone = terminal('selected-done', {
+      step_id: 'score',
+      step_name: 'Score Ideas',
+      tmux_session: 'tmux-score',
+    })
+    const otherDone = terminal('other-done', {
+      step_id: 'deliver',
+      step_name: 'Deliver Briefing',
+    })
+    const groups = organize([active, selectedDone, otherDone])
+    const visible = groups.filter(group => group.section === 'active')
+
+    expect(hiddenSelectedTerminalRailGroup(groups, visible, selectedDone)?.title).toBe('Score Ideas')
+    expect(hiddenSelectedTerminalRailGroup(groups, visible, otherDone)?.title).toBe('Deliver Briefing')
+    expect(hiddenSelectedTerminalRailGroup(groups, groups, selectedDone)).toBeNull()
   })
 })

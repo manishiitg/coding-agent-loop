@@ -1465,7 +1465,7 @@ export interface PreValidationCompletedEvent {
   step_index?: number;
   step_title?: string;
   step_path?: string;
-  is_branch_step?: boolean;
+  is_nested_execution?: boolean;
   overall_pass?: boolean;
   total_checks?: number;
   passed_checks?: number;

@@ -121,7 +121,7 @@ export const HumanInputNode = memo(({ data, selected }: HumanInputNodeProps) => 
         {statusIcon && <div className="flex-shrink-0">{statusIcon}</div>}
       </div>
 
-      {/* Bottom handles - multiple for conditional routing */}
+      {/* Bottom handles - one per response-specific route. */}
       {response_type === 'yesno' && (
         <>
           <Handle

@@ -1,7 +1,6 @@
 import React from 'react';
 import type { OrchestratorAgentEndEvent } from '../../../generated/events';
 import { ConversationMarkdownRenderer } from '../../ui/MarkdownRenderer';
-import { formatDuration } from '../../../utils/duration';
 import { isEvaluationAgentEvent } from './eventDisplayUtils';
 
 function isMessageSequenceItemEvent(event: OrchestratorAgentEndEvent): boolean {
@@ -57,7 +56,6 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
     if (t === 'validation') return 'Validation Agent'
     if (t === 'organizer') return 'Organizer Agent'
     if (t === 'plan_breakdown') return 'Plan Breakdown Agent'
-    if (t === 'conditional') return 'Conditional LLM'
     return 'Agent'
   }
 
@@ -71,7 +69,6 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
     if (t === 'execution') return '⚡'
     if (t === 'validation') return '✅'
     if (t === 'organizer') return '🗂️'
-    if (t === 'conditional') return '🔀'
     return '🤖'
   }
 
@@ -85,7 +82,6 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
     if (t === 'execution') return 'purple'
     if (t === 'validation') return 'emerald'
     if (t === 'organizer') return 'orange'
-    if (t === 'conditional') return 'indigo'
     return 'yellow'
   }
 

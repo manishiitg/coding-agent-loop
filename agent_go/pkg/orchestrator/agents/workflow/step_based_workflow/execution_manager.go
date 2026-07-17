@@ -83,98 +83,70 @@ func (em *ExecutionManager) PrepareExecution(
 	// === Resume Strategies ===
 	// All resume strategies (including deprecated aliases) map here
 	case "resume_from_step", "resume_from_step_no_human", "fast_resume_from_step":
-		// Check if resuming from branch step
-		if opts.ResumeFromBranchStep != nil {
-			// Resuming from branch step - start from parent conditional step
-			setup.Mode = ExecutionModeResumeFromStep
-			setup.StartFromStep = opts.ResumeFromBranchStep.ParentStepIndex // Already 0-based
-			setup.Cleanup = CleanupScope{
-				UpdateProgress: true,
-				CleanFromStep:  opts.ResumeFromBranchStep.ParentStepIndex + 1, // Convert to 1-based for cleanup
-				NewTotalSteps:  totalSteps,
+		resumeStep := opts.ResumeFromStep // 1-based
+		// Normalize resume_from_step=0 to 1 (start from step 1)
+		if resumeStep == 0 {
+			resumeStep = 1
+		}
+		if resumeStep < 0 {
+			// CRITICAL: resume_from_step < 0 is invalid!
+			// Request blocking human feedback approval before proceeding
+			orch.GetLogger().Error(fmt.Sprintf("🚨 CRITICAL: Resume strategy selected but resume_from_step=%d (invalid)! This would delete all completed steps.", resumeStep), fmt.Errorf("invalid resume_from_step=%d", resumeStep))
+
+			// Build context message showing what would be deleted
+			var contextMsg strings.Builder
+			contextMsg.WriteString("⚠️ **CRITICAL WARNING: Invalid Resume Step Detected**\n\n")
+			contextMsg.WriteString(fmt.Sprintf("You selected a resume strategy but `resume_from_step=%d` is invalid.\n\n", resumeStep))
+
+			if existingProgress != nil && len(existingProgress.CompletedStepIndices) > 0 {
+				contextMsg.WriteString(fmt.Sprintf("**This would DELETE all %d completed steps and start from the beginning!**\n\n", len(existingProgress.CompletedStepIndices)))
+				contextMsg.WriteString("Completed steps that would be deleted:\n")
+				for _, idx := range existingProgress.CompletedStepIndices {
+					contextMsg.WriteString(fmt.Sprintf("- Step %d\n", idx+1))
+				}
+				contextMsg.WriteString("\n")
+			} else {
+				contextMsg.WriteString("**This would start execution from the beginning.**\n\n")
 			}
-			setup.Context.SkipHumanInput = true
-			setup.Context.ResumeBranchStep = opts.ResumeFromBranchStep
-			orch.GetLogger().Info(fmt.Sprintf("🔀 Resuming from branch step: parent=%d, branch=%s, step=%d",
-				opts.ResumeFromBranchStep.ParentStepIndex+1, opts.ResumeFromBranchStep.BranchType, opts.ResumeFromBranchStep.BranchStepIndex+1))
-		} else {
-			// Regular step resume
-			resumeStep := opts.ResumeFromStep // 1-based
-			// Normalize resume_from_step=0 to 1 (start from step 1)
-			if resumeStep == 0 {
-				resumeStep = 1
+
+			contextMsg.WriteString("**Options:**\n")
+			contextMsg.WriteString("1. **Approve & Continue**: Use next incomplete step (if available) or start from beginning\n")
+			contextMsg.WriteString("2. **Reject**: Cancel execution - fix the resume step selection in the frontend\n")
+
+			// Request blocking human feedback
+			requestID := fmt.Sprintf("resume_step_validation_%d", time.Now().UnixNano())
+			question := fmt.Sprintf("⚠️ Invalid Resume Step Detected (resume_from_step=%d)\n\nDo you want to proceed? This will delete all completed steps and start from the beginning.", resumeStep)
+
+			approved, _, err := orch.RequestHumanFeedback(
+				ctx,
+				requestID,
+				question,
+				contextMsg.String(),
+				orch.getSessionID(),
+				orch.getWorkflowID(),
+			)
+
+			if err != nil {
+				orch.GetLogger().Error(fmt.Sprintf("❌ Failed to request human feedback for resume step validation: %v", err), err)
+				return nil, fmt.Errorf("failed to request approval for invalid resume step: %w", err)
 			}
-			if resumeStep < 0 {
-				// CRITICAL: resume_from_step < 0 is invalid!
-				// Request blocking human feedback approval before proceeding
-				orch.GetLogger().Error(fmt.Sprintf("🚨 CRITICAL: Resume strategy selected but resume_from_step=%d (invalid)! This would delete all completed steps.", resumeStep), fmt.Errorf("invalid resume_from_step=%d", resumeStep))
 
-				// Build context message showing what would be deleted
-				var contextMsg strings.Builder
-				contextMsg.WriteString("⚠️ **CRITICAL WARNING: Invalid Resume Step Detected**\n\n")
-				contextMsg.WriteString(fmt.Sprintf("You selected a resume strategy but `resume_from_step=%d` is invalid.\n\n", resumeStep))
+			if !approved {
+				orch.GetLogger().Info("❌ User rejected proceeding with invalid resume step - canceling execution")
+				return nil, fmt.Errorf("execution canceled: user rejected proceeding with invalid resume_from_step=%d", resumeStep)
+			}
 
-				if existingProgress != nil && len(existingProgress.CompletedStepIndices) > 0 {
-					contextMsg.WriteString(fmt.Sprintf("**This would DELETE all %d completed steps and start from the beginning!**\n\n", len(existingProgress.CompletedStepIndices)))
-					contextMsg.WriteString("Completed steps that would be deleted:\n")
-					for _, idx := range existingProgress.CompletedStepIndices {
-						contextMsg.WriteString(fmt.Sprintf("- Step %d\n", idx+1))
-					}
-					contextMsg.WriteString("\n")
+			// User approved - proceed with fallback logic
+			orch.GetLogger().Info("✅ User approved proceeding with invalid resume step - using fallback logic")
+
+			if existingProgress != nil {
+				nextIncomplete := findNextIncompleteStep(existingProgress)
+				if nextIncomplete < totalSteps {
+					resumeStep = nextIncomplete + 1 // Convert to 1-based
+					orch.GetLogger().Info(fmt.Sprintf("✅ Using next incomplete step %d instead", resumeStep))
 				} else {
-					contextMsg.WriteString("**This would start execution from the beginning.**\n\n")
-				}
-
-				contextMsg.WriteString("**Options:**\n")
-				contextMsg.WriteString("1. **Approve & Continue**: Use next incomplete step (if available) or start from beginning\n")
-				contextMsg.WriteString("2. **Reject**: Cancel execution - fix the resume step selection in the frontend\n")
-
-				// Request blocking human feedback
-				requestID := fmt.Sprintf("resume_step_validation_%d", time.Now().UnixNano())
-				question := fmt.Sprintf("⚠️ Invalid Resume Step Detected (resume_from_step=%d)\n\nDo you want to proceed? This will delete all completed steps and start from the beginning.", resumeStep)
-
-				approved, _, err := orch.RequestHumanFeedback(
-					ctx,
-					requestID,
-					question,
-					contextMsg.String(),
-					orch.getSessionID(),
-					orch.getWorkflowID(),
-				)
-
-				if err != nil {
-					orch.GetLogger().Error(fmt.Sprintf("❌ Failed to request human feedback for resume step validation: %v", err), err)
-					return nil, fmt.Errorf("failed to request approval for invalid resume step: %w", err)
-				}
-
-				if !approved {
-					orch.GetLogger().Info("❌ User rejected proceeding with invalid resume step - canceling execution")
-					return nil, fmt.Errorf("execution canceled: user rejected proceeding with invalid resume_from_step=%d", resumeStep)
-				}
-
-				// User approved - proceed with fallback logic
-				orch.GetLogger().Info("✅ User approved proceeding with invalid resume step - using fallback logic")
-
-				if existingProgress != nil {
-					nextIncomplete := findNextIncompleteStep(existingProgress)
-					if nextIncomplete < totalSteps {
-						resumeStep = nextIncomplete + 1 // Convert to 1-based
-						orch.GetLogger().Info(fmt.Sprintf("✅ Using next incomplete step %d instead", resumeStep))
-					} else {
-						// All steps complete - fallback to start from beginning
-						orch.GetLogger().Warn(fmt.Sprintf("⚠️ All steps are complete, falling back to start from beginning"))
-						setup.Mode = ExecutionModeFresh
-						setup.Cleanup = CleanupScope{
-							DeleteProgress:    true,
-							InitFreshProgress: true,
-							CleanAllSteps:     true,
-							NewTotalSteps:     totalSteps,
-						}
-						return setup, nil
-					}
-				} else {
-					// No existing progress - fallback to start from beginning
-					orch.GetLogger().Warn(fmt.Sprintf("⚠️ No existing progress found, falling back to start from beginning"))
+					// All steps complete - fallback to start from beginning
+					orch.GetLogger().Warn(fmt.Sprintf("⚠️ All steps are complete, falling back to start from beginning"))
 					setup.Mode = ExecutionModeFresh
 					setup.Cleanup = CleanupScope{
 						DeleteProgress:    true,
@@ -184,16 +156,27 @@ func (em *ExecutionManager) PrepareExecution(
 					}
 					return setup, nil
 				}
+			} else {
+				// No existing progress - fallback to start from beginning
+				orch.GetLogger().Warn(fmt.Sprintf("⚠️ No existing progress found, falling back to start from beginning"))
+				setup.Mode = ExecutionModeFresh
+				setup.Cleanup = CleanupScope{
+					DeleteProgress:    true,
+					InitFreshProgress: true,
+					CleanAllSteps:     true,
+					NewTotalSteps:     totalSteps,
+				}
+				return setup, nil
 			}
-			setup.Mode = ExecutionModeResumeFromStep
-			setup.StartFromStep = resumeStep - 1 // Convert to 0-based
-			setup.Cleanup = CleanupScope{
-				UpdateProgress: true,
-				CleanFromStep:  resumeStep, // Delete step-N and all after
-				NewTotalSteps:  totalSteps,
-			}
-			setup.Context.SkipHumanInput = true
 		}
+		setup.Mode = ExecutionModeResumeFromStep
+		setup.StartFromStep = resumeStep - 1 // Convert to 0-based
+		setup.Cleanup = CleanupScope{
+			UpdateProgress: true,
+			CleanFromStep:  resumeStep, // Delete step-N and all after
+			NewTotalSteps:  totalSteps,
+		}
+		setup.Context.SkipHumanInput = true
 
 	// === Single Step Execution ===
 
@@ -392,7 +375,7 @@ func (em *ExecutionManager) ApplyCleanup(ctx context.Context, setup *ExecutionSe
 		if err := orch.deleteStepProgress(ctx); err != nil {
 			orch.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete progress: %v (continuing)", err))
 		} else {
-			orch.GetLogger().Info(fmt.Sprintf("🗑️ Cleared persisted progress state (including all branch progress and decision evaluation counts)"))
+			orch.GetLogger().Info("🗑️ Cleared persisted workflow progress state")
 		}
 	}
 
@@ -474,107 +457,6 @@ func (em *ExecutionManager) ApplyCleanup(ctx context.Context, setup *ExecutionSe
 
 			progress.CompletedStepIndices = newCompleted
 
-			// Handle branch progress cleanup
-			branchStepsRemoved := 0
-			if progress.BranchSteps != nil {
-				// Special handling for resuming from branch step
-				if setup.Context != nil && setup.Context.ResumeBranchStep != nil {
-					orch.GetLogger().Info(fmt.Sprintf("🔀 Branch step resume mode: parent=%d, branch=%s, branch_step=%d",
-						setup.Context.ResumeBranchStep.ParentStepIndex+1, setup.Context.ResumeBranchStep.BranchType, setup.Context.ResumeBranchStep.BranchStepIndex+1))
-					// We're resuming from a branch step - keep the parent step's branch progress
-					// but remove completed branch steps within that branch that are >= resume point
-					parentStepIdx := setup.Context.ResumeBranchStep.ParentStepIndex
-					branchType := setup.Context.ResumeBranchStep.BranchType
-					resumeBranchStepIdx := setup.Context.ResumeBranchStep.BranchStepIndex
-
-					if branchProgress, exists := progress.BranchSteps[parentStepIdx]; exists {
-						// Keep the branch progress but remove completed steps >= resume point
-						branchExecutedStr := map[string]string{"if_true": "if-true", "if_false": "if-false"}[branchType]
-						newCompletedSteps := []string{}
-
-						for _, completedPath := range branchProgress.CompletedSteps {
-							// Parse the path: "step-{N}-{if-true/if-false}-{idx}"
-							// Only keep paths where the branch step index < resume point
-							// Format: step-{parentStep+1}-{branchExecutedStr}-{branchStepIdx}
-							expectedPrefix := fmt.Sprintf("step-%d-%s-", parentStepIdx+1, branchExecutedStr)
-							if strings.HasPrefix(completedPath, expectedPrefix) {
-								// Extract branch step index from path
-								suffix := strings.TrimPrefix(completedPath, expectedPrefix)
-								var branchStepIdx int
-								if _, err := fmt.Sscanf(suffix, "%d", &branchStepIdx); err == nil {
-									if branchStepIdx < resumeBranchStepIdx {
-										// Keep this completed step (before resume point)
-										newCompletedSteps = append(newCompletedSteps, completedPath)
-									}
-									// Otherwise, skip it (>= resume point, will be removed)
-								} else {
-									// Can't parse - keep it to be safe
-									newCompletedSteps = append(newCompletedSteps, completedPath)
-								}
-							} else {
-								// Not a branch step path for this branch - keep it
-								newCompletedSteps = append(newCompletedSteps, completedPath)
-							}
-						}
-
-						removedFromBranch := len(branchProgress.CompletedSteps) - len(newCompletedSteps)
-						if removedFromBranch > 0 {
-							orch.GetLogger().Info(fmt.Sprintf("🧹 Removing %d completed branch steps from step %d branch (keeping %d, resuming from branch step %d)",
-								removedFromBranch, parentStepIdx+1, len(newCompletedSteps), resumeBranchStepIdx+1))
-							branchProgress.CompletedSteps = newCompletedSteps
-							progress.BranchSteps[parentStepIdx] = branchProgress
-							branchStepsRemoved = removedFromBranch
-						} else {
-							orch.GetLogger().Info(fmt.Sprintf("ℹ️ No branch steps to remove from step %d branch (all steps are before resume point)", parentStepIdx+1))
-						}
-
-						// Remove branch progress for steps AFTER the parent step
-						branchStepsToRemove := make([]int, 0)
-						for stepIdx := range progress.BranchSteps {
-							if stepIdx > parentStepIdx {
-								branchStepsToRemove = append(branchStepsToRemove, stepIdx)
-							}
-						}
-						if len(branchStepsToRemove) > 0 {
-							orch.GetLogger().Info(fmt.Sprintf("🧹 Removing branch progress for %d step(s) after parent step %d: %v",
-								len(branchStepsToRemove), parentStepIdx+1, branchStepsToRemove))
-						}
-						for _, stepIdx := range branchStepsToRemove {
-							delete(progress.BranchSteps, stepIdx)
-							branchStepsRemoved++
-						}
-					} else {
-						// No existing branch progress for parent step - this shouldn't happen when resuming
-						orch.GetLogger().Warn(fmt.Sprintf("⚠️ Resuming from branch step but no branch progress found for parent step %d", parentStepIdx+1))
-					}
-				} else {
-					// Regular resume - remove branch progress for steps >= StartFromStep
-					orch.GetLogger().Info(fmt.Sprintf("🔄 Regular resume mode: removing branch progress for steps >= %d (0-based: %d)", setup.StartFromStep+1, setup.StartFromStep))
-					branchStepsToRemove := make([]int, 0)
-					for stepIdx := range progress.BranchSteps {
-						if stepIdx >= setup.StartFromStep {
-							branchStepsToRemove = append(branchStepsToRemove, stepIdx)
-						}
-					}
-					if len(branchStepsToRemove) > 0 {
-						orch.GetLogger().Info(fmt.Sprintf("🧹 Removing branch progress for %d step(s): %v", len(branchStepsToRemove), branchStepsToRemove))
-						for _, stepIdx := range branchStepsToRemove {
-							if branchProgress, exists := progress.BranchSteps[stepIdx]; exists {
-								orch.GetLogger().Info(fmt.Sprintf("  - Step %d: branch_executed=%s, completed_steps=%d",
-									stepIdx+1, branchProgress.BranchExecuted, len(branchProgress.CompletedSteps)))
-							}
-							delete(progress.BranchSteps, stepIdx)
-							branchStepsRemoved++
-						}
-						orch.GetLogger().Info(fmt.Sprintf("✅ Removed %d branch step progress entries from step %d onward", branchStepsRemoved, setup.StartFromStep+1))
-					} else {
-						orch.GetLogger().Info(fmt.Sprintf("ℹ️ No branch progress entries to remove (all branch steps are before step %d)", setup.StartFromStep+1))
-					}
-				}
-			} else {
-				orch.GetLogger().Info(fmt.Sprintf("ℹ️ No branch progress entries found in progress file"))
-			}
-
 			// Ensure TotalSteps is preserved (use existing value, or fallback to NewTotalSteps if 0)
 			if progress.TotalSteps == 0 && scope.NewTotalSteps > 0 {
 				progress.TotalSteps = scope.NewTotalSteps
@@ -583,8 +465,8 @@ func (em *ExecutionManager) ApplyCleanup(ctx context.Context, setup *ExecutionSe
 			if err := orch.saveStepProgress(ctx, progress); err != nil {
 				orch.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update progress: %v", err))
 			} else {
-				orch.GetLogger().Info(fmt.Sprintf("📝 Updated progress: removed %d completed steps and %d branch progress entries >= step-%d, preserved TotalSteps=%d",
-					removedCount, branchStepsRemoved, setup.StartFromStep+1, progress.TotalSteps))
+				orch.GetLogger().Info(fmt.Sprintf("📝 Updated progress: removed %d completed steps >= step-%d, preserved TotalSteps=%d",
+					removedCount, setup.StartFromStep+1, progress.TotalSteps))
 			}
 		} else {
 			// Progress is nil (shouldn't happen if loadStepProgress succeeded, but handle it)
@@ -789,24 +671,6 @@ func (em *ExecutionManager) CleanupForResumeFromStep(ctx context.Context, resume
 			}
 		}
 		progress.CompletedStepIndices = newCompleted
-
-		// Remove branch progress for steps >= startFromStep
-		branchStepsRemoved := 0
-		if progress.BranchSteps != nil {
-			branchStepsToRemove := make([]int, 0)
-			for stepIdx := range progress.BranchSteps {
-				if stepIdx >= startFromStep {
-					branchStepsToRemove = append(branchStepsToRemove, stepIdx)
-				}
-			}
-			for _, stepIdx := range branchStepsToRemove {
-				delete(progress.BranchSteps, stepIdx)
-				branchStepsRemoved++
-			}
-			if branchStepsRemoved > 0 {
-				orch.GetLogger().Info(fmt.Sprintf("🧹 Removed %d branch step progress entries from step %d onward", branchStepsRemoved, resumeStep))
-			}
-		}
 
 		// Preserve TotalSteps - use existing value, or fallback to provided totalSteps if 0
 		if progress.TotalSteps == 0 && totalSteps > 0 {

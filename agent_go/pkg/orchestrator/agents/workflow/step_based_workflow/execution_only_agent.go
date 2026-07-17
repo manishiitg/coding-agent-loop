@@ -135,7 +135,7 @@ You are running as an **evaluation agent** — your job is to **verify and asses
 ## Completion
 **IMPORTANT**: Do NOT stop with a text message mid-task. Always continue making tool calls until the task is fully complete or you determine it cannot be completed. Only generate a final text response when you are done.
 
-**If the framework blocks you** — a file write is denied by the folder guard / permissions, a required tool is unavailable, or required input/access is missing — do NOT keep retrying or silently work around it. Stop and end with STATUS: FAILED, naming the exact blocker and what would unblock it. Example: "STATUS: FAILED — cannot write the session_health table in db/db.sqlite: this item has no db write access; grant write_access.db on the item." A write you are not allowed to perform is a terminal failure to report, not something to loop on.
+**If the framework blocks you** — a file write is denied by the folder guard / permissions, a required tool is unavailable, or required input/access is missing — do NOT keep retrying or silently work around it. Stop and end with STATUS: FAILED, naming the exact blocker and what would unblock it. Example: "STATUS: FAILED — cannot write the session_health table in db/db.sqlite: this step is read-only or this turn explicitly narrows writes away from db/." A write you are not allowed to perform is a terminal failure to report, not something to loop on.
 
 If the step COMPLETED but you hit **non-fatal concerns** worth flagging — a learnings or knowledgebase write that didn't go through, a partial/failed read from db/learnings/kb, stale or conflicting data, or anything the next step or operator should know — add one Markdown line immediately before the STATUS line in this exact form: `+"`"+`CONCERNS: <brief evidence-backed concern; include the affected artifact or operation>`+"`"+`. Use it only for unresolved or consequential run evidence, not routine progress. The step still counts as completed; this surfaces the concern in the completion notification and the durable run summary instead of it being lost.
 
@@ -205,7 +205,7 @@ type WorkflowExecutionOnlyTemplate struct {
 	VariableValues           string // Variable names with actual values ({{VAR_NAME}} = value)
 	LearningHistory          string // Formatted learning conversation history (REQUIRED for execution-only mode)
 	LearningFilePaths        string // Learning file paths (when KeepLearningFull is false)
-	StepNumber               string // Step identifier (e.g., "step-8" or "step-3-if-true-0")
+	StepNumber               string // Step identifier (e.g., "step-8" or "step-3-sub-fetch")
 	StepExecutionPath        string // Full execution folder path (e.g., "execution/step-8")
 	PreviousStepsSummary     string // Summary of previous completed steps (titles, descriptions, outputs)
 	WorkshopHumanInput       string // Operator input supplied via execute_step(human_input=...)
@@ -306,7 +306,7 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 	// Feature flag: KeepLearningFull (set by controller with priority: step config > env var > default false)
 	keepLearningFullStr := templateVars["KeepLearningFull"]
 	keepLearningFull := keepLearningFullStr == "true"
-	stepNumber := templateVars["StepNumber"]               // e.g., "step-8" or "step-3-if-true-0"
+	stepNumber := templateVars["StepNumber"]               // e.g., "step-8" or "step-3-sub-fetch"
 	stepExecutionPath := templateVars["StepExecutionPath"] // e.g., "execution/step-8"
 	previousStepsSummary := templateVars["PreviousStepsSummary"]
 	knowledgebasePath := templateVars["KnowledgebasePath"] // Knowledgebase folder path (persistent files across runs)
@@ -390,7 +390,7 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"KBGuidanceBlock":           templateVars["KBGuidanceBlock"],           // Pre-built KB guidance block — non-empty only when KbWriteMethod == "direct"
 		"FolderGuardReadPaths":      folderGuardReadPaths,                      // Folder guard read paths for agent guidance
 		"FolderGuardWritePaths":     folderGuardWritePaths,                     // Folder guard write paths for agent guidance
-		"MessageSequenceAccessNote": templateVars["MessageSequenceAccessNote"], // Per-item write_access note for message_sequence turns
+		"MessageSequenceAccessNote": templateVars["MessageSequenceAccessNote"], // Effective inherited/narrowed access for message_sequence turns
 		"IsEvaluationMode":          templateVars["IsEvaluationMode"],          // Evaluation mode flag
 		"IsScriptedMode":            templateVars["IsScriptedMode"],            // Learn code mode flag (validation schema shown in scripted section instead)
 		"WorkflowRoot":              templateVars["WorkflowRoot"],              // Workflow root path for absolute cwd display

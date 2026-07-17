@@ -141,7 +141,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	}
 
 	// Emit step_started event
-	hcpo.emitStepStartedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
+	hcpo.emitStepStartedEvent(ctx, step, stepIndex, todoTaskStepPath)
 
 	// Keep only the latest iteration conversation history in-memory.
 	// Todo-task state should come from current files (outputs, tool results),
@@ -241,7 +241,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		if fastResult.RanScript && fastResult.Success {
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ [orchestrator_learn_code] Fast path succeeded for step %d — 0 LLM tokens", stepIndex+1))
 			hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, 1, nil, "scripted: builder-authored script executed and validated", todoTaskStep.NextStepID)
-			hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
+			hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath)
 			return true, todoTaskStep.NextStepID, nil
 		}
 
@@ -429,7 +429,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 					return false, "", fmt.Errorf("todo task completion summary failed: %w", summaryErr)
 				}
 				hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, 1, nil, "Pre-validation passed", todoTaskStep.NextStepID)
-				hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
+				hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath)
 				return true, todoTaskStep.NextStepID, nil
 			}
 
@@ -464,7 +464,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 			return false, "", fmt.Errorf("todo task completion summary failed: %w", summaryErr)
 		}
 		hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, 1, nil, "Execution completed", todoTaskStep.NextStepID)
-		hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
+		hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath)
 		return true, todoTaskStep.NextStepID, nil
 	}
 
@@ -1164,7 +1164,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 		SkipHumanInput:             true, // Generic agents don't request human feedback
 		RunSingleStepOnly:          false,
 		SingleStepTarget:           -1,
-		ResumeBranchStep:           nil,
 		IsEvaluationMode:           false,
 		ArtifactFolderNameOverride: genericStepPath,
 		ConversationHistoryCapture: &capturedHistory,
@@ -1222,7 +1221,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 		0,               // iteration
 		[]string{},      // previousContextFiles - empty for generic tasks
 		progress,        // progress
-		true,            // isBranchStep = true (generic task is like a branch step)
+		true,            // nested execution: parent todo_task owns top-level progress
 		execCtx,         // execCtx
 		allSteps,        // allSteps
 		true,            // isSubAgent = true (sub-agents never request human feedback)
@@ -1462,7 +1461,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 		SkipHumanInput:             true, // Sub-agents don't request human feedback
 		RunSingleStepOnly:          false,
 		SingleStepTarget:           -1,
-		ResumeBranchStep:           nil,
 		IsEvaluationMode:           false,
 		ArtifactFolderNameOverride: subAgentStepPath,
 		ConversationHistoryCapture: &capturedHistory,
@@ -1905,7 +1903,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskPreValidation(
 	}
 
 	// Emit pre-validation completed event
-	hcpo.emitPreValidationCompletedEvent(ctx, step, stepIndex, stepPath, false, workspaceResults)
+	hcpo.emitPreValidationCompletedEvent(ctx, step, stepIndex, stepPath, true, workspaceResults)
 
 	// Persist pre-validation results for Pulse Bug Review and diagnostics.
 	if hcpo.selectedRunFolder != "" {

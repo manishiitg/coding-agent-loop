@@ -707,16 +707,9 @@ type RunFoldersResponse struct {
 
 // StepProgress represents the progress of workflow execution
 type StepProgress struct {
-	CompletedStepIndices []int                      `json:"completed_step_indices"`
-	TotalSteps           int                        `json:"total_steps"`
-	LastUpdated          time.Time                  `json:"last_updated"`
-	BranchSteps          map[int]BranchStepProgress `json:"branch_steps,omitempty"`
-}
-
-// BranchStepProgress tracks which branch was executed for conditional steps
-type BranchStepProgress struct {
-	BranchExecuted string   `json:"branch_executed"`
-	CompletedSteps []string `json:"completed_steps"`
+	CompletedStepIndices []int     `json:"completed_step_indices"`
+	TotalSteps           int       `json:"total_steps"`
+	LastUpdated          time.Time `json:"last_updated"`
 }
 
 // ExecutionOptions represents user-selected execution options from frontend
@@ -1835,7 +1828,7 @@ func (api *StreamingAPI) handleDeleteStepLearnings(w http.ResponseWriter, r *htt
 	json.NewEncoder(w).Encode(response)
 }
 
-// collectAllStepIDs recursively collects all step IDs from a plan, including branch steps
+// collectAllStepIDs collects top-level and nested sub-agent step IDs from a plan.
 func collectAllStepIDs(steps []todo_creation_human.PlanStepInterface) []string {
 	var stepIDs []string
 
@@ -2039,8 +2032,6 @@ type AddStepRequest struct {
 	WorkspacePath     string                 `json:"workspace_path"`
 	Step              map[string]interface{} `json:"step"`
 	InsertAfterStepID string                 `json:"insert_after_step_id,omitempty"`
-	ParentStepID      string                 `json:"parent_step_id,omitempty"`
-	BranchType        string                 `json:"branch_type,omitempty"` // "if_true" or "if_false"
 }
 
 // readPlanFromWorkspace reads plan.json from workspace using workspace API
@@ -2443,7 +2434,7 @@ func updateNestedStepInPlan(plan *todo_creation_human.PlanningResponse, path []i
 					return nil
 				}
 				// Deeper nesting in sub_agent_step
-				return updateNestedStepInPlanRecursive([]todo_creation_human.PlanStepInterface{s.PredefinedRoutes[routeIndex].SubAgentStep}, nil, path[2:], updatedStep)
+				return updateNestedStepInPlanRecursive(s.PredefinedRoutes[routeIndex].SubAgentStep, path[3:], updatedStep)
 			}
 		}
 	}
@@ -2451,64 +2442,29 @@ func updateNestedStepInPlan(plan *todo_creation_human.PlanningResponse, path []i
 	return fmt.Errorf("failed to update nested step")
 }
 
-// updateNestedStepInPlanRecursive recursively updates nested steps
-func updateNestedStepInPlanRecursive(ifTrueSteps, ifFalseSteps []todo_creation_human.PlanStepInterface, path []int, updatedStep todo_creation_human.PlanStepInterface) error {
-	if len(path) == 0 {
-		return fmt.Errorf("empty path")
+// updateNestedStepInPlanRecursive follows nested todo-task route markers. A
+// route marker is encoded as [-4, routeIndex], matching the update API path.
+func updateNestedStepInPlanRecursive(current todo_creation_human.PlanStepInterface, path []int, updatedStep todo_creation_human.PlanStepInterface) error {
+	if len(path) < 2 || path[0] != -4 {
+		return fmt.Errorf("invalid nested sub-agent path")
 	}
-
-	index := path[0]
-
-	// Try if_true_steps first
-	if index >= 0 && index < len(ifTrueSteps) {
-		if len(path) == 1 {
-			ifTrueSteps[index] = updatedStep
-			return nil
-		}
-		// Deeper nesting
-		step := ifTrueSteps[index]
-		switch s := step.(type) {
-		case *todo_creation_human.TodoTaskPlanStep:
-			if len(path) >= 3 && path[1] == -4 {
-				routeIndex := path[2]
-				if routeIndex >= 0 && routeIndex < len(s.PredefinedRoutes) {
-					if len(path) == 3 {
-						s.PredefinedRoutes[routeIndex].SubAgentStep = updatedStep
-						return nil
-					}
-					return updateNestedStepInPlanRecursive([]todo_creation_human.PlanStepInterface{s.PredefinedRoutes[routeIndex].SubAgentStep}, nil, path[3:], updatedStep)
-				}
-			}
-		}
+	todo, ok := current.(*todo_creation_human.TodoTaskPlanStep)
+	if !ok {
+		return fmt.Errorf("nested path traverses non-todo step %T", current)
 	}
-
-	// Try if_false_steps
-	if ifFalseSteps != nil {
-		adjustedIndex := index - len(ifTrueSteps)
-		if adjustedIndex >= 0 && adjustedIndex < len(ifFalseSteps) {
-			if len(path) == 1 {
-				ifFalseSteps[adjustedIndex] = updatedStep
-				return nil
-			}
-			// Deeper nesting
-			step := ifFalseSteps[adjustedIndex]
-			switch s := step.(type) {
-			case *todo_creation_human.TodoTaskPlanStep:
-				if len(path) >= 3 && path[1] == -4 {
-					routeIndex := path[2]
-					if routeIndex >= 0 && routeIndex < len(s.PredefinedRoutes) {
-						if len(path) == 3 {
-							s.PredefinedRoutes[routeIndex].SubAgentStep = updatedStep
-							return nil
-						}
-						return updateNestedStepInPlanRecursive([]todo_creation_human.PlanStepInterface{s.PredefinedRoutes[routeIndex].SubAgentStep}, nil, path[3:], updatedStep)
-					}
-				}
-			}
-		}
+	routeIndex := path[1]
+	if routeIndex < 0 || routeIndex >= len(todo.PredefinedRoutes) {
+		return fmt.Errorf("nested route index %d is out of bounds", routeIndex)
 	}
-
-	return fmt.Errorf("failed to find step at path")
+	if len(path) == 2 {
+		todo.PredefinedRoutes[routeIndex].SubAgentStep = updatedStep
+		return nil
+	}
+	nested := todo.PredefinedRoutes[routeIndex].SubAgentStep
+	if nested == nil {
+		return fmt.Errorf("nested route %d has no sub-agent step", routeIndex)
+	}
+	return updateNestedStepInPlanRecursive(nested, path[2:], updatedStep)
 }
 
 // handleUpdatePlanStep handles updating a plan step
@@ -3100,9 +3056,6 @@ func (api *StreamingAPI) handleAddStep(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-	} else if req.ParentStepID != "" {
-		http.Error(w, "Nested step insertion via parent_step_id is no longer supported", http.StatusBadRequest)
-		return
 	} else {
 		// Add to end
 		plan.Steps = append(plan.Steps, newStep)
@@ -3227,7 +3180,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 			Steps []map[string]interface{} `json:"steps"`
 		}
 		if err := json.Unmarshal([]byte(planContent), &planDef); err == nil {
-			populateStepMetadata(planDef.Steps, "", stepMetadata)
+			populateStepMetadata(planDef.Steps, stepMetadata)
 		}
 	}
 
@@ -3372,12 +3325,10 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 				"artifacts":                  []map[string]interface{}{},
 				"validations":                []map[string]interface{}{},
 				"executions":                 []map[string]interface{}{},
-				"decisions":                  []map[string]interface{}{},
 				"orchestration":              []map[string]interface{}{},
-				"conditionals":               []map[string]interface{}{},
 				"learnings":                  []map[string]interface{}{},
 				"archived_logs":              []map[string]interface{}{}, // Archived logs from previous runs
-				"archived_executions":        []map[string]interface{}{}, // Archived execution outputs from decision step routing
+				"archived_executions":        []map[string]interface{}{},
 			}
 		}
 		return stepsLogs[stepId]
@@ -3461,46 +3412,6 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 								}
 							}
 							entry["learnings"] = learningLogs
-						}
-
-						if !childIsDir && childName == "conditional-evaluation.json" {
-							logPath := child.FilePath
-							if processedPaths[logPath] {
-								continue
-							}
-							processedPaths[logPath] = true
-
-							entry := getStepEntry(stepId)
-							conditionals, _ := entry["conditionals"].([]map[string]interface{})
-
-							content, exists, _ := readFileFromWorkspace(r.Context(), logPath)
-							var condData map[string]interface{}
-							if exists {
-								json.Unmarshal([]byte(content), &condData)
-							}
-
-							conditionals = append(conditionals, condData)
-							entry["conditionals"] = conditionals
-						}
-
-						if !childIsDir && childName == "decision-evaluation.json" {
-							logPath := child.FilePath
-							if processedPaths[logPath] {
-								continue
-							}
-							processedPaths[logPath] = true
-
-							entry := getStepEntry(stepId)
-							decisions, _ := entry["decisions"].([]map[string]interface{})
-
-							content, exists, _ := readFileFromWorkspace(r.Context(), logPath)
-							var decisionData map[string]interface{}
-							if exists {
-								json.Unmarshal([]byte(content), &decisionData)
-							}
-
-							decisions = append(decisions, decisionData)
-							entry["decisions"] = decisions
 						}
 
 						if !childIsDir && childName == "orchestration-execution.json" {
@@ -4094,8 +4005,6 @@ func isExecutionLogStepFolder(
 		}
 		if strings.HasPrefix(childName, "validation") ||
 			childName == "learning-execution.json" ||
-			childName == "conditional-evaluation.json" ||
-			childName == "decision-evaluation.json" ||
 			childName == "orchestration-execution.json" ||
 			childName == "todo-task-execution.json" {
 			return true
@@ -4262,7 +4171,7 @@ func (api *StreamingAPI) handleGetEvaluationReports(w http.ResponseWriter, r *ht
 }
 
 // populateStepMetadata recursively traverses the plan to build a mapping from step IDs/paths to human-readable metadata
-func populateStepMetadata(steps []map[string]interface{}, prefix string, metadata map[string]map[string]string) {
+func populateStepMetadata(steps []map[string]interface{}, metadata map[string]map[string]string) {
 	for i, step := range steps {
 		id, _ := step["id"].(string)
 		stepType, _ := step["type"].(string)
@@ -4289,17 +4198,7 @@ func populateStepMetadata(steps []map[string]interface{}, prefix string, metadat
 		}
 
 		// Calculate step key (folder name pattern)
-		var stepKey string
-		resolvedType := stepType
-		if prefix == "" {
-			stepKey = fmt.Sprintf("step-%d", i+1)
-		} else {
-			// Prefix is like "step-1-true-" or "step-1-false-"
-			stepKey = fmt.Sprintf("%s%d", prefix, i)
-			if strings.Contains(prefix, "-true-") || strings.Contains(prefix, "-false-") {
-				resolvedType = "branch"
-			}
-		}
+		stepKey := fmt.Sprintf("step-%d", i+1)
 
 		// Get context_output for the step (the output file name)
 		// Handle both string and array formats
@@ -4319,7 +4218,7 @@ func populateStepMetadata(steps []map[string]interface{}, prefix string, metadat
 			"description":                desc,
 			"success_criteria":           criteria,
 			"original_id":                id,
-			"type":                       resolvedType,
+			"type":                       stepType,
 			"context_output":             strings.Join(contextOutputs, ","), // Store as comma-separated string for simplicity in meta
 			"learning_objective":         learningObjective,
 			"learnings_access":           learningsAccess,
@@ -4334,18 +4233,8 @@ func populateStepMetadata(steps []map[string]interface{}, prefix string, metadat
 			metadata[id] = meta
 		}
 
-		// Recurse into conditional/branch steps
-		if trueSteps, ok := step["if_true_steps"].([]interface{}); ok {
-			populateStepMetadata(convertToMapList(trueSteps), stepKey+"-true-", metadata)
-			populateStepMetadata(convertToMapList(trueSteps), stepKey+"-if-true-", metadata)
-		}
-		if falseSteps, ok := step["if_false_steps"].([]interface{}); ok {
-			populateStepMetadata(convertToMapList(falseSteps), stepKey+"-false-", metadata)
-			populateStepMetadata(convertToMapList(falseSteps), stepKey+"-if-false-", metadata)
-		}
-
 		// Recurse into orchestration routes
-		if routes, ok := step["orchestration_routes"].([]interface{}); ok {
+		if routes, ok := step["predefined_routes"].([]interface{}); ok {
 			for j, r := range routes {
 				if route, ok := r.(map[string]interface{}); ok {
 					if subStep, ok := route["sub_agent_step"].(map[string]interface{}); ok {
@@ -4384,17 +4273,6 @@ func stringFromStepOrAgentConfig(step map[string]interface{}, agentConfigs map[s
 		return value
 	}
 	return ""
-}
-
-// convertToMapList converts a list of interfaces to a list of maps
-func convertToMapList(items []interface{}) []map[string]interface{} {
-	res := make([]map[string]interface{}, 0, len(items))
-	for _, item := range items {
-		if m, ok := item.(map[string]interface{}); ok {
-			res = append(res, m)
-		}
-	}
-	return res
 }
 
 // writeRawFileToWorkspace writes raw string content to a file in the workspace API

@@ -1,7 +1,7 @@
 import React from 'react'
 import { 
   Loader2, CheckCircle, XCircle, ArrowRight, 
-  Code, GitBranch, Repeat, Zap, Lock, SkipForward, ShieldCheck,
+  Code, GitBranch, Repeat, Lock, SkipForward, ShieldCheck,
   HelpCircle
 } from 'lucide-react'
 import {
@@ -21,17 +21,8 @@ export const WorkflowLegend: React.FC = () => {
     { icon: <Lock className="w-3.5 h-3.5 text-purple-500" />, label: "Learnings Locked" },
     { icon: <SkipForward className="w-3.5 h-3.5 text-indigo-500" />, label: "LLM Validation Skipped" },
     { icon: <ShieldCheck className="w-3.5 h-3.5 text-orange-500" />, label: "Validation Disabled" },
-    { icon: <GitBranch className="w-3.5 h-3.5 text-purple-500" />, label: "Conditional Step" },
     { icon: <Repeat className="w-3.5 h-3.5 text-indigo-500" />, label: "Loop Step" },
-    { icon: <Zap className="w-3.5 h-3.5 text-indigo-500" />, label: "Decision Step" },
-          { icon: <GitBranch className="w-3.5 h-3.5 text-indigo-500" />, label: "Orchestrator Step" },    { 
-      icon: <div className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-[8px] font-semibold bg-green-500/20 text-green-700 dark:text-green-400">Y</div>, 
-      label: "True/Yes Branch" 
-    },
-    { 
-      icon: <div className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-[8px] font-semibold bg-red-500/20 text-red-700 dark:text-red-400">N</div>, 
-      label: "False/No Branch" 
-    },
+    { icon: <GitBranch className="w-3.5 h-3.5 text-indigo-500" />, label: "Orchestrator Step" },
     { 
       icon: <div className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-[8px] font-semibold bg-indigo-500/20 text-indigo-700 dark:text-indigo-400">S</div>, 
       label: "Sub-Agent" 

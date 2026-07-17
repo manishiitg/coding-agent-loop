@@ -140,9 +140,8 @@ else → error (not a valid route for this router)
 | `routing.md` guidance | Rewritten: routing is a deterministic switch; judgment goes in an upstream step or the caller; document the file contract and `route_selections`. |
 | active workflow plans | Migrated active `upwork`, `social-media`, `linkedin`, `HRMS`, and `citymall-exploit-hacker` plans away from routing-step LLM classification. Variable-mode routers now expect caller `route_selections`; judgment routers consume producer-owned `route_selection.json`. |
 
-`conditional_agent.go` still contains the old routing helper code for now, but runtime
-workflow routing no longer calls it. That cleanup can be done separately after any
-direct helper tests or legacy references are removed.
+The old conditional-agent helper has been removed. Runtime workflow routing resolves
+only deterministic route files, explicit caller selections, or declared defaults.
 
 The loop-guard in `controller_execution.go` (a route may be selected at most twice
 before an "infinite loop" error) is unaffected and still bounds backward-jump loops.
@@ -328,8 +327,6 @@ the new runtime code and migrated local plan JSON.
 1. Migrate callers/schedules that currently pass routing variables (for example
    `FLOW_MODE`, `RUN_MODE`, or `WORKFLOW_MODE`) to `route_selections`.
 2. Collapse pure all-routes-to-`end` terminators where they add no real branch.
-3. Optionally remove the now-unused routing LLM helper path from `conditional_agent.go`
-   after checking direct tests and legacy callers.
 
 ## Example (end to end)
 

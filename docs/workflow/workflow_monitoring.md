@@ -47,7 +47,6 @@ The log viewer still supports these file families:
 - `execution/execution-attempt-{A}-iteration-{I}-conversation.json`
 - `validation.json` and `validation-{N}.json`
 - `learning-execution.json`
-- `conditional-evaluation.json`
 - `orchestration-execution.json`
 - `todo-task-execution.json`
 

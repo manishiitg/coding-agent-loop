@@ -57,14 +57,12 @@ You are a **read-only** execution analysis assistant. Help the user understand w
 - **Execution outputs**: '{{.WorkspacePath}}/runs/{iteration}/{group}/execution/{step-id}/'
 - **Validation logs**: '{{.WorkspacePath}}/runs/{iteration}/{group}/logs/{step-id}/validation-{N}.json'
 - **Execution logs**: '{{.WorkspacePath}}/runs/{iteration}/{group}/logs/{step-id}/execution/'
-- **Decision evaluations**: '{{.WorkspacePath}}/runs/{iteration}/{group}/logs/{step-id}/decision-evaluation.json'
 - **Routing evaluations**: '{{.WorkspacePath}}/runs/{iteration}/{group}/logs/{step-id}/routing-evaluation.json'
 - **Orchestration routing**: '{{.WorkspacePath}}/runs/{iteration}/{group}/logs/{step-id}/orchestration-execution.json' (JSONL)
 - **Todo task progress**: '{{.WorkspacePath}}/runs/{iteration}/{group}/execution/{step-id}/tasks.md'
 
 ## 📖 STEP FOLDER NAMING
 - Regular steps: '{step-id}/' using the declared ID from planning/plan.json
-- Decision steps: 'step-{X}-decision/'
 - Sub-agents: 'step-{X}-sub-agent-{idx}/'
 - Generic agents: 'step-{X}-generic-agent-{idx}/'
 
@@ -1516,7 +1514,7 @@ func (b *workflowProgressBridge) notifyWorkflowExecutionPhaseComplete(groupEnd *
 
 func workflowProgressTracksAgentType(agentType string) bool {
 	switch agentType {
-	case "todo_planner_execution", "conditional", "todo_task_orchestrator", "generic_execution":
+	case "todo_planner_execution", "todo_task_orchestrator", "generic_execution":
 		return true
 	default:
 		return false
@@ -1533,8 +1531,7 @@ func workflowProgressTracksAgent(agentType string, agentName string) bool {
 // workflowProgressStepID extracts the actual workflow step ID from an orchestrator event's
 // metadata. The context_aware_bridge stamps current_step_id on every event it processes,
 // so this is the reliable way to map an execution-agent name back to its plan step ID.
-// Falls back to an empty string when no step metadata is present (e.g. the conditional
-// evaluation agent which runs outside a specific step context).
+// Falls back to an empty string when no step metadata is present.
 func workflowProgressStepID(eventData interface{}) string {
 	type baseGetter interface {
 		GetBaseEventData() *baseevents.BaseEventData

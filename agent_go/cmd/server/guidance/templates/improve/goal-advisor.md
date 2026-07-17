@@ -191,6 +191,25 @@ Before inventing a new idea, inspect `.advisor-experiment` cards in
    forward merely because the workflow is healthy; perform the review, then set
    the next checkpoint after the result.
 
+Before returning `no_action` because an active experiment is waiting for a
+future checkpoint, verify its fair-test state from current evidence:
+
+- the approved change is applied and reachable in the actual runtime control
+  path, not only present in a plan or non-canonical file
+- primary and diagnostic measurements are fresh and persisted
+- meaningful valid outcome-bearing runs or exposures have occurred since the
+  change; zero valid outcome-bearing runs is not a fair test
+- no bug, blocker, artifact drift, or plan drift is preventing the intended
+  behavior or measurement
+- the checkpoint is still proportional to workflow cadence and exposure, and
+  no newer evidence warrants an earlier review
+
+If any check fails, repair, unblock, or revise the same experiment in place.
+Do not create a competing experiment. State the experiment id, runtime-path
+proof, valid evidence count, latest goal measurement and freshness, and the
+next evidence boundary in the result so the Pulse Fixer can preserve it in
+`builder/improve.html`.
+
 PHASE 2 - EXPERT ADVISOR SCAN
 Run this even if the current plan is technically healthy.
 0. Apply a 10x counterfactual as a thinking lens, not a promise: if incremental
@@ -229,11 +248,23 @@ Choose exactly one primary outcome for this module run.
 1. `approved_plan_change`
 Use only when the scheduler-provided answered human inputs include an approved Goal Advisor proposal (`input_id` prefixed with `plan-proposal-`, answer option `approve`) whose context names the exact plan/config/eval/report edits to apply.
 Action:
+- first revalidate the proposal's approval basis against current target ids and
+  runtime control path, relevant artifact hashes or versions, goal/success-
+  criterion meaning, active experiment id, metric evidence and risks, newer user
+  decisions, and the Pulse conflict map
+- unrelated drift is acceptable; changed semantics, missing/replaced targets,
+  superseding decisions, invalidated assumptions, or materially changed evidence
+  makes the approval stale
+- if stale, do not apply or broaden it; consume the answer with outcome
+  `stale_not_applied`, record the exact reason in Reflection, and either retire
+  the experiment if obsolete or preserve its id as `blocked` while creating one
+  refreshed exact proposal with a new input id
 - apply the approved change with the normal plan/config/eval/report tools; never patch `planning/plan.json` directly
 - when approval includes a missing measurement contract, add or update the
   bounded normal `regular` measurement step described in the proposal; do not
   create a separate metrics framework
-- keep the scope to what the user approved unless new evidence reveals the proposal is unsafe or stale
+- keep the scope exactly to what the user approved; new evidence that makes the
+  proposal unsafe or stale requires the stale path above, not a silent rebase
 - call `mark_human_input_consumed` with the concrete outcome after applying, rejecting as stale, or deferring
 - add or update a compact Reflection / Hansei question-and-answer outcome card with `data-pulse-section="reflection"`, the actual answer, and the applied result
 - update the matching `.advisor-experiment` card in place to `data-status="running"`, preserve its stable experiment id, and retain the baseline, metric, guardrails, review checkpoint, and rollback condition
@@ -256,7 +287,7 @@ Action:
 Use when an expert strategy idea is high leverage but needs user/business judgment or stronger evidence before changing the plan. Operational correctness and deterministic eval wiring are never advisor proposals.
 Action:
 - log proposal-only as `Decision - Goal Advisor - Proposed`
-- if a decision is needed, call `create_human_input_request(workspace_path="<current workflow>", source="goal_advisor", input_id="plan-proposal-<stable-slug>", options=[approve,reject,defer], context="<proposal + exact intended plan/config/eval/report edits + metric definition and regular measurement-step contract when needed + rationale + expected impact + risk + evidence>")`; do not duplicate the pending question in HTML
+- if a decision is needed, call `create_human_input_request(workspace_path="<current workflow>", source="goal_advisor", input_id="plan-proposal-<stable-slug>", options=[approve,reject,defer], context="<proposal + exact intended plan/config/eval/report edits + metric definition and regular measurement-step contract when needed + approval basis: Pulse/run/date, experiment id, target ids, relevant hashes/versions, success-criterion meaning, metric evidence as-of, assumptions + rationale + expected impact + risk + evidence>")`; do not duplicate the pending question in HTML
 - do not change the plan until a later Pulse run sees the approved answer
 - create or update exactly one `.advisor-experiment` card using the HTML contract below; the card and human-input request must share the same stable slug
 

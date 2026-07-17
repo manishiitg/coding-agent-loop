@@ -6,6 +6,22 @@ import (
 	"testing"
 )
 
+func TestPlanningResponseRejectsLegacyConditionalStep(t *testing.T) {
+	const legacyPlan = `{"steps":[{
+		"type":"conditional","id":"legacy-branch","title":"Legacy branch"
+	}]}`
+
+	var plan PlanningResponse
+	err := json.Unmarshal([]byte(legacyPlan), &plan)
+	if err == nil {
+		t.Fatal("expected legacy conditional step to be rejected")
+	}
+	if !strings.Contains(err.Error(), `unknown step type "conditional"`) ||
+		!strings.Contains(err.Error(), "regular, human_input, todo_task, routing, or message_sequence") {
+		t.Fatalf("unexpected legacy conditional error: %v", err)
+	}
+}
+
 func TestPlanValidationRejectsNestedMissingAndDuplicateIDs(t *testing.T) {
 	const missingNestedID = `{"steps":[{
 		"type":"todo_task","id":"orchestrator","title":"Orchestrator","description":"d",

@@ -244,97 +244,50 @@ func isValidationFailure(validationResponse *ValidationResponse) bool {
 	return validationResponse.ExecutionStatus == "FAILED"
 }
 
-// StepPathInfo contains parsed information from a stepPath
+// StepPathInfo contains the top-level owner and whether a path belongs to a
+// nested execution such as a todo route or sub-agent.
 type StepPathInfo struct {
-	ParentStepNumber int    // 1-based step number (for regular steps) or parent step number (for branch steps)
-	BranchType       string // "true", "false", or "" (empty for regular steps)
-	BranchIndex      int    // Branch step index (0-based) or -1 for regular steps
-	IsBranchStep     bool   // True if this is a branch step
+	ParentStepNumber  int  // 1-based top-level owner step number
+	IsNestedExecution bool // True for child route/sub-agent execution paths
 }
 
-// parseStepPath parses a stepPath string to extract step and branch information
+// parseStepPath extracts the top-level owner from current execution paths.
 // Examples:
-//   - "step-1" -> {ParentStepNumber: 1, BranchType: "", BranchIndex: -1, IsBranchStep: false}
-//   - "step-3-if-true-0" -> {ParentStepNumber: 3, BranchType: "true", BranchIndex: 0, IsBranchStep: true}
-//   - "step-3-if-false-1" -> {ParentStepNumber: 3, BranchType: "false", BranchIndex: 1, IsBranchStep: true}
-//   - "step-2-decision" -> {ParentStepNumber: 2, BranchType: "", BranchIndex: -1, IsBranchStep: false} (decision step inner step)
-//   - "step-2-sub-agent-1" -> {ParentStepNumber: 2, BranchType: "", BranchIndex: -1, IsBranchStep: true} (sub-agent step)
-//   - "step-2-sub-login" -> {ParentStepNumber: 2, BranchType: "", BranchIndex: -1, IsBranchStep: true} (todo_task route sub-agent step)
+//   - "step-1" -> {ParentStepNumber: 1, IsNestedExecution: false}
+//   - "step-2-sub-agent-1" -> {ParentStepNumber: 2, IsNestedExecution: true}
+//   - "step-2-sub-login" -> {ParentStepNumber: 2, IsNestedExecution: true}
 func parseStepPath(stepPath string) StepPathInfo {
 	// Regular step pattern: "step-{number}"
 	regularStepRegex := regexp.MustCompile(`^step-(\d+)$`)
-	// Branch step pattern: "step-{number}-if-{true|false}-{index}"
-	branchStepRegex := regexp.MustCompile(`^step-(\d+)-if-(true|false)-(\d+)$`)
-	// Decision step inner step pattern: "step-{number}-decision"
-	decisionStepRegex := regexp.MustCompile(`^step-(\d+)-decision$`)
 	// Sub-agent step pattern: "step-{number}-sub-agent-{index}" or "step-{number}-sub-agent-{index}-i-{iteration}"
 	subAgentStepRegex := regexp.MustCompile(`^step-(\d+)-sub-agent-(\d+)(?:-i-(\d+))?$`)
 	// Todo-task route sub-agent step pattern: "step-{number}-sub-{routeId}"
 	todoTaskSubAgentStepRegex := regexp.MustCompile(`^step-(\d+)-sub-.+$`)
 
-	if matches := branchStepRegex.FindStringSubmatch(stepPath); matches != nil {
-		// Branch step
-		parentStepNumber := 0
-		branchIndex := -1
-		fmt.Sscanf(matches[1], "%d", &parentStepNumber)
-		fmt.Sscanf(matches[3], "%d", &branchIndex)
-		return StepPathInfo{
-			ParentStepNumber: parentStepNumber,
-			BranchType:       matches[2], // "true" or "false"
-			BranchIndex:      branchIndex,
-			IsBranchStep:     true,
-		}
-	} else if matches := subAgentStepRegex.FindStringSubmatch(stepPath); matches != nil {
-		// Sub-agent step - treat as branch step
+	if matches := subAgentStepRegex.FindStringSubmatch(stepPath); matches != nil {
 		parentStepNumber := 0
 		fmt.Sscanf(matches[1], "%d", &parentStepNumber)
 		return StepPathInfo{
-			ParentStepNumber: parentStepNumber,
-			BranchType:       "",
-			BranchIndex:      -1,
-			IsBranchStep:     true,
+			ParentStepNumber:  parentStepNumber,
+			IsNestedExecution: true,
 		}
 	} else if matches := todoTaskSubAgentStepRegex.FindStringSubmatch(stepPath); matches != nil {
-		// Todo-task route sub-agent step - treat as a dedicated sub-agent step.
 		parentStepNumber := 0
 		fmt.Sscanf(matches[1], "%d", &parentStepNumber)
 		return StepPathInfo{
-			ParentStepNumber: parentStepNumber,
-			BranchType:       "",
-			BranchIndex:      -1,
-			IsBranchStep:     true,
-		}
-	} else if matches := decisionStepRegex.FindStringSubmatch(stepPath); matches != nil {
-		// Decision step inner step - treat as regular step but use parent step number
-		stepNumber := 0
-		fmt.Sscanf(matches[1], "%d", &stepNumber)
-		return StepPathInfo{
-			ParentStepNumber: stepNumber,
-			BranchType:       "",
-			BranchIndex:      -1,
-			IsBranchStep:     false,
+			ParentStepNumber:  parentStepNumber,
+			IsNestedExecution: true,
 		}
 	} else if matches := regularStepRegex.FindStringSubmatch(stepPath); matches != nil {
-		// Regular step
 		stepNumber := 0
 		fmt.Sscanf(matches[1], "%d", &stepNumber)
-		return StepPathInfo{
-			ParentStepNumber: stepNumber,
-			BranchType:       "",
-			BranchIndex:      -1,
-			IsBranchStep:     false,
-		}
+		return StepPathInfo{ParentStepNumber: stepNumber}
 	}
 
 	// Fallback: try to extract just the step number
 	stepNumber := 0
 	fmt.Sscanf(stepPath, "step-%d", &stepNumber)
-	return StepPathInfo{
-		ParentStepNumber: stepNumber,
-		BranchType:       "",
-		BranchIndex:      -1,
-		IsBranchStep:     false,
-	}
+	return StepPathInfo{ParentStepNumber: stepNumber}
 }
 
 const maxInlineFileSize = 15 * 1024  // 15 KB — inline small text files into LLM prompt
@@ -777,7 +730,7 @@ func getExecutionFolderPathForLogs(validationWorkspacePath string, stepID string
 const finalExecutionSummaryFilename = "execution-final-summary.json"
 
 // getLearningFolderPathByStepID returns the RELATIVE learning folder path using step ID.
-// All steps (regular, branch, sub-agent, evaluation) share the "learnings/{stepID}/"
+// All steps (regular, nested sub-agent, evaluation) share the "learnings/{stepID}/"
 // namespace; validateCrossPlanStepIDUniqueness guarantees no collision between
 // plan.json and evaluation_plan.json step IDs.
 // Returns a RELATIVE path for use with workspace functions — they auto-prepend workspacePath.
@@ -1245,17 +1198,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildPreviousStepsSummary(allSteps []
 }
 
 // executeSingleStep executes a single step with full functionality (execution, validation, learning, human feedback)
-// This is a reusable function extracted from runExecutionPhase to support both regular steps and branch steps
+// This is a reusable function for top-level steps and nested executions.
 func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 	ctx context.Context,
 	step PlanStepInterface,
 	stepIndex int,
-	stepPath string, // e.g., "step-1" or "step-1-if-true-0" for branch steps
+	stepPath string, // e.g., "step-1" or "step-2-sub-login"
 	totalSteps int,
 	iteration int,
 	previousContextFiles []string,
 	progress *StepProgress,
-	isBranchStep bool, // true if this is a branch step (affects progress tracking)
+	isNestedExecution bool, // nested executions do not advance top-level progress
 	execCtx *ExecutionContext, // Execution context with flags (skipHumanInput, etc.)
 	allSteps []PlanStepInterface, // All steps in the plan
 	isSubAgent bool, // true if this is a sub-agent from an orchestration step (never requests human feedback)
@@ -1268,8 +1221,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 	artifactStepID, artifactStepPath := getExecutionArtifactIdentity(step.GetID(), stepPath, execCtx)
 
 	// Emit step_started event (also emits step progress with status="start")
-	// Note: Conditional steps emit their own step_started event in executeConditionalStep before calling executeSingleStep for branch steps
-	hcpo.emitStepStartedEvent(ctx, step, stepIndex, stepPath, isBranchStep)
+	hcpo.emitStepStartedEvent(ctx, step, stepIndex, stepPath)
 
 	// Guarantee the step leaves "running" on EVERY return path. This function has
 	// many early returns between here and the bottom (scripted fast-path failures,
@@ -1281,9 +1233,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 	defer func() {
 		emitCtx := context.WithoutCancel(ctx)
 		if err != nil {
-			hcpo.emitStepFailedEvent(emitCtx, step, stepIndex, stepPath, isBranchStep, err.Error())
+			hcpo.emitStepFailedEvent(emitCtx, step, stepIndex, stepPath, err.Error())
 		} else {
-			hcpo.emitStepFinishedEvent(emitCtx, step, stepIndex, stepPath, isBranchStep)
+			hcpo.emitStepFinishedEvent(emitCtx, step, stepIndex, stepPath)
 		}
 	}()
 
@@ -1508,7 +1460,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			"KnowledgebaseContribution": kbContributionForPrompt(agentConfigs),                                                                               // Author's contribution instruction (direct mode surfaces it to the step)
 			"KBGuidanceBlock":           BuildStepKBGuidanceWithTarget(kbAccess, kbWriteMethod, kbContributionForPrompt(agentConfigs), kbNotesPathForPrompt), // Direct-mode-only KB contribution guidance
 			"IsCodeExecutionMode":       fmt.Sprintf("%v", isCodeExecutionMode),                                                                              // Code execution mode flag (step-specific or preset)
-			"StepNumber":                stepPath,                                                                                                            // Step identifier (e.g., "step-8" or "step-3-if-true-0")
+			"StepNumber":                stepPath,                                                                                                            // Step identifier (e.g., "step-8" or "step-3-sub-fetch")
 			"StepExecutionPath":         toAbsPath(stepExecutionPath),                                                                                        // Absolute step execution folder path
 			"FolderGuardReadPaths":      strings.Join(toAbsPathSlice(folderGuardReadPaths), ", "),                                                            // Absolute folder guard read paths
 			"FolderGuardWritePaths":     strings.Join(toAbsPathSlice(folderGuardWritePaths), ", "),                                                           // Absolute folder guard write paths
@@ -1904,7 +1856,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						executionAgent = nil
 					}
 
-					// Pass stepPath to createExecutionOnlyAgent - it will determine the correct execution folder (supports branch and sub-agent steps)
+					// Pass stepPath to createExecutionOnlyAgent so nested sub-agent folders resolve correctly.
 					// For learnings / metadata selection, use the concrete step ID so sub-agents align with their own learnings folder.
 					// allSteps is already []PlanStepInterface - no conversion needed
 					executionAgent, err = hcpo.createExecutionOnlyAgent(executionAgentCtx, "execution_only", stepPath, executionAgentName, agentConfigs, step.GetID(), getExecutionArtifactFolderOverride(execCtx), evaluationDBWrite)
@@ -2377,7 +2329,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					hcpo.GetLogger().Info(fmt.Sprintf("Pre-validation skipped for step %d (no validation schema)", stepIndex+1))
 				}
 				learnCodePreValidationResultsOverride = nil
-				hcpo.emitPreValidationCompletedEvent(ctx, step, stepIndex, stepPath, isBranchStep, preValidationResults)
+				hcpo.emitPreValidationCompletedEvent(ctx, step, stepIndex, stepPath, isNestedExecution, preValidationResults)
 				preValidationStatus := workflowContinuationStatusCompleted
 				preValidationError := ""
 				if preValidationResults != nil && !preValidationResults.OverallPass {
@@ -2787,8 +2739,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 		if approved {
 			// User approved - mark step as completed and exit outer loop
-			// Only update progress if this is not a branch step
-			if !isBranchStep {
+			// Nested executions belong to their parent and do not advance top-level progress.
+			if !isNestedExecution {
 				hcpo.addCompletedStepIndex(progress, stepIndex)
 				// Always save progress after marking a step as completed (both fast and normal mode)
 				if err := hcpo.saveStepProgress(ctx, progress); err != nil {
@@ -2809,7 +2761,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				hcpo.EmitStepTokenUsage(ctx, "execution", stepIndex, stepID, stepTitle, false) // Don't clear - keep for potential future queries
 				// Note: Token usage is now persisted in real-time on each token_usage event, not just at step completion
 			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("✅ Branch step %d completed (not updating main progress)", stepIndex+1))
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ Nested execution %d completed (not updating top-level progress)", stepIndex+1))
 			}
 			stepCompleted = true
 		} else {
@@ -3053,7 +3005,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 	}
 
 	// Track execution results in memory (instead of reading from files)
-	// This allows conditional steps to use execution results directly
+	// Keep prior outputs available to subsequent steps without rereading logs.
 	previousExecutionResults := make([]string, 0)
 
 	// If starting from a step > 0 or running a single step, load execution results from logs for previous steps
@@ -3131,7 +3083,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			if prevIdx < len(breakdownSteps) {
 				contextOutput := breakdownSteps[prevIdx].GetContextOutput().String()
 				if contextOutput != "" {
-					// Resolve variables in context output (consistent with conditional steps)
+					// Resolve variables in context output.
 					resolvedOutput := ResolveVariables(contextOutput, hcpo.variableValues)
 					previousContextFiles = append(previousContextFiles, resolvedOutput)
 				} else {
@@ -3348,11 +3300,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 				hcpo.SetRunSingleStepMode(false, -1)
 				break
 			}
-			// Honor next_step_id so a branch converges to its shared downstream step
-			// (skipping the sibling branches that sit after it in the list) instead of
+			// Honor next_step_id so a route converges to its shared downstream step
+			// (skipping sibling route targets that sit after it in the list) instead of
 			// falling through in list order. Without this, after a router selected one
-			// branch the selected branch ran but then execution spilled into the next
-			// (non-selected) branch — see routing convergence.
+			// route the selected route ran but execution then spilled into the next
+			// non-selected route target.
 			if seqStep, ok := step.(*MessageSequencePlanStep); ok && strings.TrimSpace(seqStep.NextStepID) != "" {
 				outcome, navErr := hcpo.navigateToNextStepID(ctx, step.GetID(), seqStep.NextStepID, breakdownSteps, progress, &i, &startFromStep, maxLLMJumpRepeats)
 				if navErr != nil {
@@ -3447,7 +3399,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 				break
 			}
 
-			// Determine next step based on conditional routing (computed during execution)
+			// Determine the next step from the human response route computed during execution.
 			humanInputStep, ok := step.(*HumanInputPlanStep)
 			if !ok {
 				return fmt.Errorf("step %d is not a HumanInputPlanStep", i+1)
@@ -3478,13 +3430,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 
 		// Execute regular step using executeSingleStep
 		// Note: previousContextFiles is still needed for executeSingleStep (for context dependencies)
-		// But for conditional steps, we use previousExecutionResults instead
+		// Previous execution outputs are kept in memory for downstream context.
 		previousContextFiles = make([]string, 0)
 		for prevIdx := 0; prevIdx < i; prevIdx++ {
 			if prevIdx < len(breakdownSteps) {
 				contextOutput := breakdownSteps[prevIdx].GetContextOutput().String()
 				if contextOutput != "" {
-					// Resolve variables in context output (consistent with conditional steps)
+					// Resolve variables in context output.
 					resolvedOutput := ResolveVariables(contextOutput, hcpo.variableValues)
 					previousContextFiles = append(previousContextFiles, resolvedOutput)
 				}
@@ -3510,7 +3462,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			iteration,
 			previousContextFiles,
 			progress,
-			false, // isBranchStep = false
+			false, // isNestedExecution = false
 			execCtx,
 			breakdownSteps,           // allSteps
 			false,                    // isSubAgent = false (regular step)
@@ -3539,13 +3491,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 		// Log execution result (for debugging)
 		hcpo.GetLogger().Info(fmt.Sprintf("✅ Step %d execution completed (result length: %d chars)", i+1, len(executionResult)))
 
-		// Track execution result in memory for use by subsequent conditional steps
+		// Track execution result in memory for downstream steps.
 		// Ensure slice is large enough (pad with empty strings if needed)
 		for len(previousExecutionResults) <= i {
 			previousExecutionResults = append(previousExecutionResults, "")
 		}
 		previousExecutionResults[i] = executionResult
-		hcpo.GetLogger().Info(fmt.Sprintf("💾 Stored execution result for step %d (will be used by subsequent conditional steps)", i+1))
+		hcpo.GetLogger().Info(fmt.Sprintf("💾 Stored execution result for downstream steps after step %d", i+1))
 
 		// Check if we're in single step mode and should stop
 		if hcpo.runSingleStepOnly && i == hcpo.singleStepTarget {

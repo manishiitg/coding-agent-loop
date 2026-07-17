@@ -160,7 +160,7 @@ In tiered mode, prefer a persistent `execution_tier` when a step should usually 
 - **Use `execution_llm` only when you need an exact model**: this pins a specific provider/model and overrides tier selection entirely.
 - **Use `execute_step(step_id, group_name, tier="...")` for one-off trials**: this is for testing a single run without changing the step's persistent config.
 - **Prefer `execution_tier` over exact-model pinning for mature steps**: if the goal is "this step can usually run on medium/low", set the tier, don't hardcode a model.
-- **Do not force a cheaper tier too early**: first make the step reliable with a clear description, good validation, and stable learnings. Then downgrade deliberately.
+- **Do not force a cheaper tier while material goals are below target**: preserve the current model/reasoning tier for outcome-bearing, planning, judgment, diagnostic, recovery, eval, and verification work. First make the workflow reliable and achieve representative at-target evidence. Only a mechanical deterministic non-bottleneck step with proven quality-equivalent outputs and no downstream outcome loss may be proposed as an explicitly approved reversible downgrade trial.
 - **If a step has `execution_llm` set, `execution_tier` is ignored** until the exact-model override is cleared.
 
 ### 5. Step Description Optimization

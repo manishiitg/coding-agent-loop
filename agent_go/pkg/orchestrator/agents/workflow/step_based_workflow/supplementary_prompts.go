@@ -15,8 +15,7 @@ import (
 
 // appendSupplementaryPrompts injects skills, secrets, browser isolation,
 // and browser instructions into the agent's system prompt.
-// This is the standard post-setup injection used by all workflow agent types
-// (execution, todo task orchestrator, conditional) to ensure consistent prompts.
+// This is the standard post-setup injection used by execution and todo-task agents.
 func (hcpo *StepBasedWorkflowOrchestrator) appendSupplementaryPrompts(
 	ctx context.Context,
 	mcpAgent *mcpagent.Agent,

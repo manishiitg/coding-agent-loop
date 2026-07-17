@@ -361,12 +361,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	// Set folder guard paths:
 	// READ: execution folder (to read previous step results) + soul north-star file + builder review/improve logs
 	// + global and step-specific learnings (if mode grants read) + knowledgebase folder (if mode grants read)
-	// WRITE: only the specific step folder (execution/step-{X}/ or execution/step-{X}-{branch}/) + execution/Downloads folder to prevent writing to other steps
+	// WRITE: only the specific step folder (including nested sub-agent folders) plus execution/Downloads.
 	// NOTE: under kbWriteMethod=direct we add knowledgebase/notes/ to writePaths so the
 	// step can write per-topic markdown with diff_patch_workspace_file. Under
 	// kbWriteMethod=agent we add nothing — notes/ is only writable by the post-step KB
 	// update agent (setupKBUpdateFolderGuard, triggered by a non-empty knowledgebase_contribution).
-	// Use getExecutionFolderPath to support both regular and branch steps
+	// Use getExecutionFolderPath to support top-level and nested executions.
 	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepID, stepPath)
 	downloadsPath := fmt.Sprintf("%s/Downloads", executionWorkspacePath)
 	soulPath := fmt.Sprintf("%s/soul", baseWorkspacePath)
@@ -1137,7 +1137,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyPostSetupToAgent(agent agents.Or
 // ============================================================================
 
 // createExecutionOnlyAgent creates an execution-only agent that receives pre-discovered learning history.
-// stepPath: Step path identifier (e.g., "step-1" for regular steps, "step-3-if-true-0" for branch steps, "step-2-sub-agent-1" for sub-agents)
+// stepPath: Step path identifier (for example, "step-1" or "step-2-sub-agent-1").
 // stepIDOverride: Optional explicit step ID to use for learnings / metadata selection (e.g., sub-agent step ID).
 // artifactFolderNameOverride: Optional execution/log folder name. This keeps logical step ID stable while isolating per-call artifacts.
 //

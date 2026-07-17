@@ -300,16 +300,13 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   };
 
   // Helper to get preset default LLM for an agent type
-  const getPresetDefaultLLM = (agentType: 'execution' | 'validation' | 'conditional'): LLMOption | null => {
+  const getPresetDefaultLLM = (agentType: 'execution'): LLMOption | null => {
     if (!presetLLMConfig) {
       return null;
     }
     let config: AgentLLMConfig | undefined;
     if (agentType === 'execution') {
       config = presetLLMConfig.tiered_config?.tier_1 || presetLLMConfig.builder_llm;
-    } else if (agentType === 'conditional') {
-      // Conditional LLM uses the same default as the workflow preset default.
-      config = presetLLMConfig.builder_llm || presetLLMConfig.tiered_config?.tier_1;
     }
     if (config) {
       return llmConfigToOption(config);
@@ -478,14 +475,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     setAgentConfigs((prev) => ({
       ...prev,
       execution_llm: optionToLLMConfig(llm),
-    }));
-  };
-
-  // Update conditional LLM
-  const handleConditionalLLMSelect = (llm: LLMOption) => {
-    setAgentConfigs((prev) => ({
-      ...prev,
-      conditional_llm: optionToLLMConfig(llm),
     }));
   };
 
@@ -1311,183 +1300,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                   Learning disabled for this step
                 </div>
               )}
-            </div>
-
-            {/* Conditional Branching Configuration */}
-            <div className="border-t border-gray-200 dark:border-gray-700 pt-3 mt-3">
-              <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide mb-2">
-                Conditional Branching
-              </div>
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    id={`has-condition-${stepIndex}`}
-                    checked={step.has_condition || false}
-                    disabled={true}
-                    className="w-4 h-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500 disabled:opacity-50"
-                  />
-                  <label
-                    htmlFor={`has-condition-${stepIndex}`}
-                    className="text-xs text-gray-600 dark:text-gray-400 cursor-pointer flex-1"
-                  >
-                    Enable Conditional Branching
-                    <span className="text-gray-500 dark:text-gray-500 ml-1">
-                      (Use planning tools to convert step to conditional)
-                    </span>
-                  </label>
-                </div>
-                
-                {step.has_condition && (
-                  <div className="ml-6 space-y-3 p-2 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-700 rounded">
-                    <div>
-                      <div className="text-xs font-medium text-purple-700 dark:text-purple-400 mb-1">
-                        Condition Question:
-                      </div>
-                      <div className="text-xs text-gray-700 dark:text-gray-300">
-                        {step.condition_question || '(Not set)'}
-                      </div>
-                    </div>
-                    
-                    {/* Conditional Agent Configuration */}
-                    <div className="space-y-2">
-                      <div className="text-xs font-semibold text-purple-700 dark:text-purple-400 uppercase tracking-wide mb-2">
-                        Conditional Agent
-                      </div>
-                      
-                      {/* Conditional LLM Configuration */}
-                      <div>
-                        <div className="text-xs font-medium text-purple-700 dark:text-purple-400 mb-1">
-                          Conditional LLM:
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <LLMSelectionDropdown
-                            availableLLMs={availableLLMs}
-                            selectedLLM={llmConfigToOption(agentConfigs.conditional_llm) || getPresetDefaultLLM('conditional') || getCurrentLLMOption()}
-                            onLLMSelect={handleConditionalLLMSelect}
-                            onRefresh={loadDefaultsFromBackend}
-                            inModal={false}
-                            openDirection="down"
-                          />
-                        </div>
-                        <div className="text-[10px] text-gray-500 dark:text-gray-500 mt-1">
-                          LLM used to evaluate the condition. Defaults to execution LLM if not specified.
-                        </div>
-                      </div>
-                      
-                      {/* Conditional Agent Code Execution Mode Toggle */}
-                      <div>
-                        <div className="text-xs font-medium text-purple-700 dark:text-purple-400 mb-1">
-                          Execution Mode:
-                        </div>
-                        <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-md overflow-hidden">
-                          <TooltipProvider>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    console.log('[StepEditPanel] Setting conditional agent use_code_execution_mode to false');
-                                    setAgentConfigs((prev) => ({
-                                      ...prev,
-                                      use_code_execution_mode: false,
-                                    }));
-                                  }}
-                                  className={`px-2 py-1 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
-                                    agentConfigs.use_code_execution_mode === false || 
-                                    (agentConfigs.use_code_execution_mode === undefined && !presetUseCodeExecutionMode)
-                                      ? 'agent-mode-selected rounded-l-md rounded-r-none'
-                                      : 'agent-mode-unselected rounded-none'
-                                  }`}
-                                >
-                                  <Sparkles className="w-3 h-3 inline mr-1" />
-                                  Simple
-                                </button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p>Simple mode - Direct MCP tool access for conditional agent</p>
-                              </TooltipContent>
-                            </Tooltip>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    console.log('[StepEditPanel] Setting conditional agent use_code_execution_mode to true');
-                                    setAgentConfigs((prev) => ({
-                                      ...prev,
-                                      use_code_execution_mode: true,
-                                    }));
-                                  }}
-                                  className={`px-2 py-1 text-xs font-medium transition-colors ${
-                                    agentConfigs.use_code_execution_mode === true ||
-                                    (agentConfigs.use_code_execution_mode === undefined && presetUseCodeExecutionMode)
-                                      ? 'agent-mode-selected rounded-r-md rounded-l-none'
-                                      : 'agent-mode-unselected rounded-none'
-                                  }`}
-                                >
-                                  <Code2 className="w-3 h-3 inline mr-1" />
-                                  Code Exec
-                                </button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p>Code Exec mode - MCP tools accessed via generated Go code for conditional agent</p>
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                        </div>
-                        <div className="text-[10px] text-gray-500 dark:text-gray-500 mt-1">
-                          Execution mode for the conditional agent. Controls how MCP tools are accessed.
-                        </div>
-                      </div>
-                    </div>
-                    
-                    {step.condition_context && (
-                      <>
-                        <div className="text-xs font-medium text-purple-700 dark:text-purple-400 mt-2">
-                          Condition Context:
-                        </div>
-                        <div className="text-xs text-gray-600 dark:text-gray-400">
-                          {step.condition_context}
-                        </div>
-                      </>
-                    )}
-                    
-                    {step.if_true_steps && step.if_true_steps.length > 0 && (
-                      <div className="mt-2">
-                        <div className="text-xs font-medium text-green-700 dark:text-green-400">
-                          ✅ If True Branch: {step.if_true_steps.length} step(s)
-                        </div>
-                      </div>
-                    )}
-                    
-                    {step.if_false_steps && step.if_false_steps.length > 0 && (
-                      <div className="mt-2">
-                        <div className="text-xs font-medium text-red-700 dark:text-red-400">
-                          ❌ If False Branch: {step.if_false_steps.length} step(s)
-                        </div>
-                      </div>
-                    )}
-                    
-                    {step.condition_result !== undefined && (
-                      <div className={`mt-2 p-1 rounded text-xs ${step.condition_result ? 'bg-green-50 dark:bg-green-900/20' : 'bg-red-50 dark:bg-red-900/20'}`}>
-                        <div className="font-medium">
-                          {step.condition_result ? '✅ Decision: TRUE' : '❌ Decision: FALSE'}
-                        </div>
-                        {step.condition_reason && (
-                          <div className="text-gray-600 dark:text-gray-400 mt-1 italic text-xs">
-                            {step.condition_reason}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    
-                    <div className="text-xs text-gray-500 dark:text-gray-500 mt-2 italic">
-                      Note: Use planning agent tools (convert_step_to_conditional, add_branch_steps, etc.) to manage conditional steps and branches. All planning tools now use step IDs (from the step's id field) instead of titles for identification.
-                    </div>
-                  </div>
-                )}
-              </div>
             </div>
 
             {/* Loop Configuration (only shown if has_loop is true) */}

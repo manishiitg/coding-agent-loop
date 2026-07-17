@@ -37,22 +37,22 @@ Deterministic code is not a sequence item. Put code in a standalone `regular` st
       "type": "user_message",
       "message": "Repair every verified gap, update the proof record, and double-check the complete report against the sources.",
       "write_access": { "db": true }
-    },
-    {
-      "id": "validate-proof",
-      "type": "prevalidation",
-      "validation_schema": {
-        "files": [
-          {"file_name": "report.json", "required": true, "validation_type": "json"},
-          {"file_name": "report_proof.json", "required": true, "validation_type": "json"}
-        ]
-      }
     }
-  ]
+  ],
+  "validation_schema": {
+    "files": [
+      {"file_name": "report.json", "required": true, "validation_type": "json"},
+      {"file_name": "report_proof.json", "required": true, "validation_type": "json"}
+    ]
+  }
 }
 ```
 
 The step `description` is turn 0. Items are turns 1 through N.
+
+The top-level `validation_schema` is the sequence's final contract. When it is present, the runtime automatically runs it after the configured work turns and before synthetic learning/knowledge closing turns. A failed gate is returned to the same conversation as a repair turn and retried. Explicit `prevalidation` items are only needed for intermediate checkpoints; a final explicit gate with the same schema is not run twice.
+
+Every agent turn is persisted through the normal execution-log pipeline, including its conversation, tool and LLM calls, model, timing, token usage, and failure details. The sequence also writes the standard final execution summary after all turns and final validation complete, so Pulse and cost analysis read it like any regular step.
 
 ## Foreach
 
@@ -72,7 +72,9 @@ Use `foreach` when every selected database row must receive the same conversatio
 
 ## Write Access
 
-Reads from workflow execution outputs, `db/`, `knowledgebase/`, and learnings are available. Writes are item-scoped and off by default.
+Reads and writes inherit the step-level DB, knowledgebase, and learnings configuration, matching regular execution steps. Most items require no access declaration.
+
+Use a non-empty item override only to narrow a turn to selected stores:
 
 ```json
 {
@@ -84,7 +86,7 @@ Reads from workflow execution outputs, `db/`, `knowledgebase/`, and learnings ar
 }
 ```
 
-Write access is folder-level. Per-file path lists are rejected because they create a misleading security boundary.
+The override cannot grant access that the step does not have. Write access is folder-level. Per-file path lists are rejected because they create a misleading security boundary.
 
 ## Deterministic Fetching Before Agentic Processing
 
@@ -122,7 +124,7 @@ The runtime also rejects any remaining code item with a precise v1.0.10 upgrade 
 
 - Keep each user message focused on one outcome.
 - Use the same conversation only when shared context is valuable.
-- Use explicit prevalidation for deterministic acceptance checks that should trigger same-conversation repair, not for subjective review.
+- Put the final deterministic acceptance contract in the top-level `validation_schema`. Use explicit prevalidation items only for intermediate checks, not subjective review.
 - Use `foreach` only with bounded, read-only queries.
 - Put all deterministic code in standalone scripted regular steps.
 - Put fixed API/SDK/CLI fetching, pagination, stable parsing/normalization, and mechanical persistence in coherent scripted fetchers; feed their durable outputs to large message sequences.

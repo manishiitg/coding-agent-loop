@@ -3,10 +3,12 @@ package step_based_workflow
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 
-	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
 // Validates sequence-unification Stage 3: a todo_task's `messages` (old
@@ -105,6 +107,140 @@ func TestMessageSequenceClosingItems(t *testing.T) {
 	}
 	if got := hcpo.messageSequenceClosingItems(context.Background(), kbReadOnly, 0); len(got) != 0 {
 		t.Errorf("expected no KB item when access is read-only, got %d", len(got))
+	}
+}
+
+func TestAppendMessageSequenceFinalValidation(t *testing.T) {
+	topLevel := &ValidationSchema{Files: []FileValidationRule{{FileName: "result.json", MustExist: true}}}
+	other := &ValidationSchema{Files: []FileValidationRule{{FileName: "intermediate.json", MustExist: true}}}
+
+	tests := []struct {
+		name        string
+		items       []MessageSequenceItem
+		schema      *ValidationSchema
+		wantLen     int
+		wantAdded   bool
+		wantFinalID string
+	}{
+		{
+			name:      "no top-level schema",
+			items:     []MessageSequenceItem{{ID: "work", Type: "user_message"}},
+			wantLen:   1,
+			wantAdded: false,
+		},
+		{
+			name:      "adds final gate",
+			items:     []MessageSequenceItem{{ID: "work", Type: "user_message"}},
+			schema:    topLevel,
+			wantLen:   2,
+			wantAdded: true,
+		},
+		{
+			name: "final gate falls back to top-level schema",
+			items: []MessageSequenceItem{
+				{ID: "work", Type: "user_message"},
+				{ID: "verify", Type: "prevalidation"},
+			},
+			schema:      topLevel,
+			wantLen:     2,
+			wantAdded:   false,
+			wantFinalID: "verify",
+		},
+		{
+			name: "final gate has equal item schema",
+			items: []MessageSequenceItem{
+				{ID: "work", Type: "user_message"},
+				{ID: "verify", Type: "prevalidation", ValidationSchema: topLevel},
+			},
+			schema:      topLevel,
+			wantLen:     2,
+			wantAdded:   false,
+			wantFinalID: "verify",
+		},
+		{
+			name: "different intermediate gate does not replace final gate",
+			items: []MessageSequenceItem{
+				{ID: "work", Type: "user_message"},
+				{ID: "verify-intermediate", Type: "prevalidation", ValidationSchema: other},
+			},
+			schema:    topLevel,
+			wantLen:   3,
+			wantAdded: true,
+		},
+		{
+			name: "synthetic id avoids configured collision",
+			items: []MessageSequenceItem{
+				{ID: "__automatic_final_validation__", Type: "user_message"},
+			},
+			schema:      topLevel,
+			wantLen:     2,
+			wantAdded:   true,
+			wantFinalID: "__automatic_final_validation_2__",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			originalLen := len(tt.items)
+			got := appendMessageSequenceFinalValidation(tt.items, tt.schema)
+			if len(got) != tt.wantLen {
+				t.Fatalf("len = %d, want %d: %+v", len(got), tt.wantLen, got)
+			}
+			if len(tt.items) != originalLen {
+				t.Fatalf("input items mutated: len = %d, want %d", len(tt.items), originalLen)
+			}
+			if len(got) == 0 {
+				return
+			}
+			final := got[len(got)-1]
+			if tt.wantAdded {
+				if final.Type != "prevalidation" || !equalValidationSchemas(final.ValidationSchema, tt.schema) {
+					t.Fatalf("final item is not the automatic top-level gate: %+v", final)
+				}
+			}
+			if tt.wantFinalID != "" && final.ID != tt.wantFinalID {
+				t.Fatalf("final id = %q, want %q", final.ID, tt.wantFinalID)
+			}
+		})
+	}
+}
+
+func TestMessageSequenceFinalValidationPrecedesClosingItems(t *testing.T) {
+	hcpo := newMessageSequenceClosingTestOrchestrator(t)
+	step := &MessageSequencePlanStep{
+		CommonStepFields: CommonStepFields{
+			ID:               "work-and-learn",
+			Description:      "do the work",
+			ValidationSchema: &ValidationSchema{Files: []FileValidationRule{{FileName: "result.json", MustExist: true}}},
+		},
+		Items: []MessageSequenceItem{{ID: "work", Type: "user_message", Message: "Produce result.json"}},
+		AgentConfigs: &AgentConfigs{
+			LearningsAccess:   LearningsAccessReadWrite,
+			LearningObjective: "Capture the durable pattern",
+		},
+	}
+
+	planned := appendMessageSequenceFinalValidation(step.Items, step.ValidationSchema)
+	planned = append(planned, hcpo.messageSequenceClosingItems(context.Background(), step, 0)...)
+	if len(planned) != 3 {
+		t.Fatalf("planned len = %d, want 3: %+v", len(planned), planned)
+	}
+	if planned[1].Type != "prevalidation" || planned[2].Kind != "learning" {
+		t.Fatalf("expected work -> final validation -> learning, got %+v", planned)
+	}
+}
+
+func TestFormatMessageSequenceTurnLogResult(t *testing.T) {
+	item := MessageSequenceItem{ID: "review", Type: "user_message"}
+	if got := formatMessageSequenceTurnLogResult(item, "STATUS: COMPLETED\nReport updated", nil); got != "Message sequence item: review (user_message)\nSTATUS: COMPLETED\nReport updated" {
+		t.Fatalf("success log result = %q", got)
+	}
+
+	got := formatMessageSequenceTurnLogResult(item, "partial output", fmt.Errorf("provider disconnected"))
+	for _, want := range []string{"Message sequence item: review (user_message)", "STATUS: FAILED", "provider disconnected", "partial output"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("failure log result %q missing %q", got, want)
+		}
 	}
 }
 

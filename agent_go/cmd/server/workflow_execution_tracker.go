@@ -443,7 +443,10 @@ func (api *StreamingAPI) listRunningWorkflowExecutionsForWorkspace(workspacePath
 	return list
 }
 
-func (api *StreamingAPI) findRunningTrackedExecutionForWorkspace(workspacePath string) *TrackedWorkflowExecution {
+func (api *StreamingAPI) findRunningTrackedExecutionForWorkspaceWhere(
+	workspacePath string,
+	matches func(*TrackedWorkflowExecution) bool,
+) *TrackedWorkflowExecution {
 	normalizedWorkspace := normalizeTrackedWorkspacePath(workspacePath)
 	if normalizedWorkspace == "" {
 		return nil
@@ -455,6 +458,9 @@ func (api *StreamingAPI) findRunningTrackedExecutionForWorkspace(workspacePath s
 	var best *TrackedWorkflowExecution
 	for _, exec := range api.trackedWorkflowExecutions {
 		if exec == nil || exec.Status != trackedExecutionStatusRunning || exec.WorkspacePath != normalizedWorkspace {
+			continue
+		}
+		if matches != nil && !matches(exec) {
 			continue
 		}
 		if best == nil || exec.StartedAt.After(best.StartedAt) {

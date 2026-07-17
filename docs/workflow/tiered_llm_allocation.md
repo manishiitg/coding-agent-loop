@@ -22,7 +22,6 @@ The current resolver lives in `agent_go/pkg/orchestrator/agents/workflow/step_ba
 |---|---|
 | Execution | Tier 1 (High) |
 | Learning | Tier 2 (Medium) |
-| Conditional | Tier 1 (High) |
 
 Regular execution steps can adapt from High to Medium after three successful
 runs with the same step-description hash. Tier selection does not inspect the
@@ -34,8 +33,7 @@ and the controller carries the failure into the final `CONCERNS:` summary for
 Pulse. Persistent model/tier changes belong to Pulse `llm_ops_review` and the
 existing approval flow.
 
-`disable_tier_optimization=true` still forces execution and conditional agents
-to Tier 1.
+`disable_tier_optimization=true` still forces execution agents to Tier 1.
 
 ## Selection Priority
 
@@ -63,13 +61,6 @@ Current priority in `selectLearningLLM()`:
 1. tiered learning resolution
 2. workflow primary model fallback
 3. no valid config => error
-
-### Conditional agents
-
-Conditional agents use the tier resolver directly:
-
-1. `disable_tier_optimization=true` => Tier 1
-2. otherwise default conditional tier (Tier 1)
 
 ## Phase LLM
 

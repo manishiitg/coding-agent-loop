@@ -7,7 +7,7 @@ export { EventViewer } from './EventViewer'
 export { WorkflowCanvas, WorkflowToolbar } from './canvas'
 
 // Custom nodes
-export { StepNode, ConditionalNode, StartNode, EndNode, nodeTypes } from './nodes'
+export { StepNode, StartNode, EndNode, nodeTypes } from './nodes'
 
 // Hooks
 export {
@@ -20,7 +20,6 @@ export {
 export type {
   UsePlanDataReturn,
   StepNodeData,
-  ConditionalNodeData,
   WorkflowNodeData,
   WorkflowNode,
   WorkflowEdge,

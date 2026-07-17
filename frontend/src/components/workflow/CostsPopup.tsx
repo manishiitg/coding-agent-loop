@@ -81,7 +81,7 @@ interface RunCosts {
       learning: number
       evaluation: number
       knowledgebase: number   // kb_update / kb_reorganize / kb_consolidate
-      routing: number         // conditional_evaluation / todo_task orchestration
+      routing: number         // deterministic routing / todo_task orchestration
       workshop: number        // review_step_code / goal advisor / other workshop agents
       other: number
     }
@@ -217,7 +217,7 @@ const getRunFolderDisplayName = (runFolder: string) => {
 // Order matters: check specific prefixes before falling through to includes().
 // Known phases (see comment in calculateCostSummary):
 //   execution_only, success_learning, failure_learning,
-//   conditional_evaluation, todo_task, kb_update, kb_reorganize,
+//   routing, todo_task, kb_update, kb_reorganize,
 //   kb_consolidate, review_step_code,
 //   Goal Advisor proposal/application work, evaluation_scoring.
 type StageBucket = 'execution' | 'learning' | 'evaluation' | 'knowledgebase' | 'routing' | 'workshop' | 'other'
@@ -226,7 +226,7 @@ const classifyPhase = (phase: string): StageBucket => {
   if (phase === 'success_learning' || phase === 'failure_learning' || phase.includes('learning')) return 'learning'
   if (phase === 'evaluation_scoring' || phase.startsWith('evaluation')) return 'evaluation'
   if (phase.startsWith('kb_')) return 'knowledgebase'
-  if (phase === 'conditional_evaluation' || phase === 'todo_task' || phase === 'routing' || phase.includes('routing')) return 'routing'
+  if (phase === 'todo_task' || phase === 'routing' || phase.includes('routing')) return 'routing'
   if (phase === 'review_step_code' || phase === 'goal_advisor' || phase === 'plan_change' || phase === 'replan_workflow_from_results') return 'workshop'
   return 'other'
 }
@@ -463,7 +463,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
 
         // Stage dispatch — must stay in sync with the Go phases that actually emit
         // token usage. See controller_execution.go (execution_only), controller_learning.go
-        // (success_learning/failure_learning), controller_conditional.go (conditional_evaluation),
+        // (success_learning/failure_learning), deterministic routing,
         // controller_todo_task.go (todo_task), controller_kb_update.go (kb_*),
         // interactive_workshop_manager.go (review_step_code /
         // Goal Advisor proposal/application work), evaluation_scoring agents.
@@ -1056,7 +1056,17 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
     })
 
     return Array.from(byDate.values())
-      .map(({ runKeys: _runKeys, ...entry }) => entry)
+      .map((entry): CombinedDailyCostSummaryEntry => ({
+        date: entry.date,
+        executionCost: entry.executionCost,
+        evaluationCost: entry.evaluationCost,
+        builderCost: entry.builderCost,
+        totalCost: entry.totalCost,
+        totalTokens: entry.totalTokens,
+        totalLLMCalls: entry.totalLLMCalls,
+        runCount: entry.runCount,
+        updatedAt: entry.updatedAt,
+      }))
       .sort((a, b) => b.date.localeCompare(a.date))
   }, [phaseDailyCostSummaries, runDailyCostSummaries])
 
@@ -1971,7 +1981,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                                                 if (phase === 'execution_only') { phaseLabel = 'Execution' }
                                                 else if (phase.includes('learning')) { phaseLabel = 'Learning' }
                                                 else if (phase.startsWith('kb_')) { phaseLabel = 'Knowledgebase' }
-                                                else if (phase === 'conditional_evaluation' || phase === 'todo_task') { phaseLabel = 'Routing' }
+                                                else if (phase === 'routing' || phase === 'todo_task') { phaseLabel = 'Routing' }
                                                 else if (phase === 'review_step_code' || phase === 'goal_advisor' || phase === 'plan_change' || phase === 'replan_workflow_from_results') { phaseLabel = 'Workshop' }
                                                 else if (phase === 'evaluation_scoring' || phase.startsWith('evaluation')) { phaseLabel = 'Evaluation' }
                                                 else { phaseLabel = phase }

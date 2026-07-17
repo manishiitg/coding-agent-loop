@@ -1,4 +1,5 @@
 import type { ActiveSessionInfo, SessionStatusResponse } from '../services/api-types'
+import { isScheduledSession } from './workflowSessionKinds'
 
 export type NewChatConfirmationTabState = {
   tabId: string
@@ -9,6 +10,7 @@ export type NewChatConfirmationTabState = {
   metadata?: {
     mode?: 'workflow' | 'multi-agent'
     isOrganizationAssistant?: boolean
+    isScheduledRun?: boolean
   }
 }
 
@@ -45,6 +47,11 @@ export function findBlockingMultiAgentSession(
 ): ActiveSessionInfo | null {
   const blockingSessions = (sessions || []).filter(session =>
     normalizeStatus(session.agent_mode) === 'multi-agent' &&
+    !isScheduledSession({
+      sessionId: session.session_id,
+      triggeredBy: session.triggered_by,
+      botPlatform: session.bot_platform,
+    }) &&
     shouldConfirmForActiveSession(session)
   )
 
@@ -65,6 +72,7 @@ export function shouldConfirmNewMultiAgentChat(
 ): boolean {
   if (!tab) return false
   if (tab.metadata?.mode !== 'multi-agent') return false
+  if (tab.metadata?.isScheduledRun) return false
 
   if (tab.isStreaming || tab.hasRunningBgAgents || tab.isSyntheticTurn) {
     return true

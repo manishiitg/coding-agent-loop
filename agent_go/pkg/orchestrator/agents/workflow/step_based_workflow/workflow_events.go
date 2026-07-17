@@ -3,8 +3,8 @@ package step_based_workflow
 import (
 	"time"
 
-	baseevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
+	baseevents "github.com/manishiitg/mcpagent/events"
 )
 
 // RoutingResponseEvent represents the routing response data for events
@@ -125,19 +125,19 @@ func (e *IndependentStepsSelectedEvent) GetEventType() baseevents.EventType {
 // PreValidationCompletedEvent represents the event when pre-validation completes
 type PreValidationCompletedEvent struct {
 	baseevents.BaseEventData
-	StepID        string                    `json:"step_id"`          // Step ID from plan
-	StepIndex     int                       `json:"step_index"`       // 0-based step index
-	StepTitle     string                    `json:"step_title"`       // Step title
-	StepPath      string                    `json:"step_path"`        // Step path (e.g., "step-1" or "step-1-if-true-0")
-	IsBranchStep  bool                      `json:"is_branch_step"`   // Whether this is a branch step
-	OverallPass   bool                      `json:"overall_pass"`     // Whether pre-validation passed
-	TotalChecks   int                       `json:"total_checks"`     // Total number of checks performed
-	PassedChecks  int                       `json:"passed_checks"`    // Number of checks that passed
-	FailedChecks  int                       `json:"failed_checks"`    // Number of checks that failed
-	FilesChecked  []FileCheckResultForEvent `json:"files_checked"`    // Results for each file checked
-	Errors        []ValidationErrorForEvent `json:"errors,omitempty"` // Validation errors if any
-	RunFolder     string                    `json:"run_folder"`       // Run folder name (e.g., "iteration-1")
-	WorkspacePath string                    `json:"workspace_path"`   // Workspace path for file operations
+	StepID            string                    `json:"step_id"`             // Step ID from plan
+	StepIndex         int                       `json:"step_index"`          // 0-based step index
+	StepTitle         string                    `json:"step_title"`          // Step title
+	StepPath          string                    `json:"step_path"`           // Step path (e.g., "step-1" or "step-2-sub-login")
+	IsNestedExecution bool                      `json:"is_nested_execution"` // Whether this belongs to a nested route/sub-agent
+	OverallPass       bool                      `json:"overall_pass"`        // Whether pre-validation passed
+	TotalChecks       int                       `json:"total_checks"`        // Total number of checks performed
+	PassedChecks      int                       `json:"passed_checks"`       // Number of checks that passed
+	FailedChecks      int                       `json:"failed_checks"`       // Number of checks that failed
+	FilesChecked      []FileCheckResultForEvent `json:"files_checked"`       // Results for each file checked
+	Errors            []ValidationErrorForEvent `json:"errors,omitempty"`    // Validation errors if any
+	RunFolder         string                    `json:"run_folder"`          // Run folder name (e.g., "iteration-1")
+	WorkspacePath     string                    `json:"workspace_path"`      // Workspace path for file operations
 }
 
 // FileCheckResultForEvent is a simplified version of FileCheckResult for events

@@ -868,7 +868,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 
 	// Determine if user wants to resume or start from beginning
 	// Frontend always sends either: start from beginning (selectedStartPoint = 0) or resume from step X
-	var startFromStep int = 0 // 0-based index, 0 means start from beginning
+	var startFromStep int // 0-based index; the zero value means start from beginning
 	var existingProgress *StepProgress
 	isResuming := false
 
@@ -880,7 +880,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 		isResumeStrategy := execOpts.ExecutionStrategy == ExecutionStrategyResumeFromStepNoHuman ||
 			execOpts.ExecutionStrategy == ExecutionStrategyRunSingleStep
 
-		if execOpts.ResumeFromStep > 0 || execOpts.ResumeFromBranchStep != nil || isResumeStrategy {
+		if execOpts.ResumeFromStep > 0 || isResumeStrategy {
 			isResuming = true
 			hcpo.GetLogger().Info(fmt.Sprintf("🎯 User chose to resume from step (ResumeFromStep=%d, strategy=%s)", execOpts.ResumeFromStep, execOpts.ExecutionStrategy))
 		}
@@ -994,17 +994,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 				nextIncompleteStep = existingProgress.TotalSteps + 1
 			}
 
-			// Use resume_from_step or resume_from_branch_step from frontend
-			// Frontend always sends one of these when resuming
+			// Use resume_from_step from the frontend when resuming.
 			if execOpts != nil {
-				if execOpts.ResumeFromBranchStep != nil {
-					// Resume from branch step - handled in execution_manager.go
-					hcpo.GetLogger().Info(fmt.Sprintf("🎯 Resuming from branch step: parent=%d, branch=%s, step=%d",
-						execOpts.ResumeFromBranchStep.ParentStepIndex,
-						execOpts.ResumeFromBranchStep.BranchType,
-						execOpts.ResumeFromBranchStep.BranchStepIndex))
-					// startFromStep will be set in execution_manager.go
-				} else if execOpts.ResumeFromStep > 0 {
+				if execOpts.ResumeFromStep > 0 {
 					// Use explicit step from frontend
 					startFromStep = execOpts.ResumeFromStep - 1 // Convert to 0-based
 					hcpo.GetLogger().Info(fmt.Sprintf("🎯 Resuming from step %d (from frontend)", execOpts.ResumeFromStep))
@@ -1039,9 +1031,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 		}
 	}
 
-	// Apply cleanup if explicitly resuming from a step or branch step
+	// Apply cleanup if explicitly resuming from a step.
 	// This ensures step N and all subsequent steps are cleaned up before execution
-	// Handles both regular step resume (ResumeFromStep) and branch step resume (ResumeFromBranchStep)
 	// CRITICAL: Also call PrepareExecution when resume strategy is selected even if ResumeFromStep=0
 	// This allows validation to catch invalid resume_from_step=0 and request human feedback
 	isResumeStrategy := false
@@ -1052,9 +1043,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 
 	// Call PrepareExecution if:
 	// 1. Resume strategy is selected (even if ResumeFromStep=0, so validation can catch it), OR
-	// 2. ResumeFromStep > 0, OR
-	// 3. ResumeFromBranchStep is set
-	if execOpts != nil && (isResumeStrategy || execOpts.ResumeFromStep > 0 || execOpts.ResumeFromBranchStep != nil) {
+	// 2. ResumeFromStep > 0
+	if execOpts != nil && (isResumeStrategy || execOpts.ResumeFromStep > 0) {
 		execManager := hcpo.GetExecutionManager()
 
 		// Use ExecutionManager to prepare execution setup (includes cleanup scope)
@@ -1349,7 +1339,7 @@ func isCliProviderForPrompt(provider string) bool {
 }
 
 // preSavePromptsJSON saves a prompts.json file before agent execution so get_step_prompts works in real time.
-// filename: e.g. "todo-task-prompts.json", "conditional-prompts.json", etc.
+// filename: e.g. "todo-task-prompts.json".
 func (hcpo *StepBasedWorkflowOrchestrator) preSavePromptsJSON(stepIndex int, stepID, stepPath, agentType, systemPrompt, userMessage, _ string, filename string) {
 	go func() {
 		var vwp string

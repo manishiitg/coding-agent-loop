@@ -14,6 +14,7 @@ import { useAppStore } from '../../stores/useAppStore'
 import { sanitizeDisplayNameForFolder } from '../../utils/workflowUtils'
 import { logger } from '../../utils/logger'
 import { startRestoredTransportTerminal } from '../../utils/restoredTerminal'
+import { isExternalReadOnlyWorkflowSession } from '../../utils/workflowSessionKinds'
 import {
   PreviousChatHistoryPanel,
   chatHistoryConversationPath,
@@ -215,30 +216,18 @@ function isRunningWorkflowEntry(entry: RunningWorkflowInfo): boolean {
 }
 
 function isExternalReadOnlyWorkflowEntry(entry: RunningWorkflowInfo): boolean {
-  const trigger = (entry.triggered_by || '').toLowerCase()
-  const sessionId = (entry.session_id || '').toLowerCase()
-  return trigger.includes('schedule') ||
-    trigger === 'cron' ||
-    trigger.includes('bot') ||
-    trigger.includes('whatsapp') ||
-    trigger.includes('slack') ||
-    sessionId.startsWith('schedule-') ||
-    sessionId.includes('-schedule-')
+  return isExternalReadOnlyWorkflowSession({
+    sessionId: entry.session_id,
+    triggeredBy: entry.triggered_by,
+  })
 }
 
 function isExternalReadOnlyActiveWorkflowSession(session: ActiveSessionInfo): boolean {
-  const trigger = (session.triggered_by || '').toLowerCase()
-  const sessionId = (session.session_id || '').toLowerCase()
-  const botPlatform = (session.bot_platform || '').toLowerCase()
-  return trigger.includes('schedule') ||
-    trigger === 'cron' ||
-    trigger.includes('bot') ||
-    trigger.includes('whatsapp') ||
-    trigger.includes('slack') ||
-    botPlatform !== '' ||
-    sessionId.startsWith('schedule-') ||
-    sessionId.includes('-schedule-') ||
-    sessionId.startsWith('bot-')
+  return isExternalReadOnlyWorkflowSession({
+    sessionId: session.session_id,
+    triggeredBy: session.triggered_by,
+    botPlatform: session.bot_platform,
+  })
 }
 
 function runningWorkflowBelongsToPreset(
@@ -428,6 +417,9 @@ function shouldBlockWorkflowNewChatForSession(
   workspacePath?: string | null,
   terminals?: TerminalSnapshot[],
 ): boolean {
+  // The one-chat rule applies only to interactive builder chats. Schedules and
+  // bot runs have their own read-only tabs and are allowed to keep running.
+  if (isExternalReadOnlyActiveWorkflowSession(session)) return false
   if (!isLiveWorkflowSessionForPreset(session, presetId, workspacePath)) return false
 
   if (
@@ -2143,6 +2135,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       if (terminalsResult.status === 'fulfilled' && terminalsResult.value) {
         const runningTerminal = terminalsResult.value.terminals?.find(terminal =>
           terminal.session_id !== activeSessionId &&
+          !isExternalReadOnlyWorkflowSession({ sessionId: terminal.session_id }) &&
           isLiveWorkflowTerminalForPath(terminal, workspacePath)
         )
         if (runningTerminal && !blockingSessionIds.includes(runningTerminal.session_id)) {
@@ -2174,7 +2167,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     setShowWorkspacePane(true)
     setFocusedPane('chat')
     chatAreaRef.current?.handleNewChat()
-  }, [activePresetId, activeSessionId, createFreshWorkflowBuilderTab, forceMobilePreview, setFocusedPane, setShowWorkspacePane, setWorkflowWorkspaceView, workspacePath])
+  }, [activePresetId, activeSessionId, createFreshWorkflowBuilderTab, forceMobilePreview, setFocusedPane, setShowChatArea, setShowWorkspacePane, setWorkflowWorkspaceView, workspacePath])
 
   const handleKillAndStart = useCallback(async () => {
     if (!activePresetId) {

@@ -11,7 +11,6 @@ import {
   Clock,
   Terminal,
   MessageSquare,
-  GitBranch,
   Network,
   Bot,
   User,
@@ -23,10 +22,9 @@ import {
   ListTodo,
   Archive,
   Search,
-  Trash2
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
-import type { ExecutionLogsResponse } from '../../services/api-types'
+import type { ExecutionLogsResponse, StepExecutionLogs } from '../../services/api-types'
 import { formatStartedAt } from '../../utils/duration'
 import { ConversationViewer } from './ConversationViewer'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
@@ -98,14 +96,10 @@ const getStepIcon = (type: string) => {
       return <Network className="w-4 h-4 text-purple-500" />
     case 'todo_task':
       return <ListTodo className="w-4 h-4 text-purple-500" />
-    case 'conditional':
-      return <GitBranch className="w-4 h-4 text-indigo-500" />
     case 'human_input':
       return <User className="w-4 h-4 text-orange-500" />
     case 'sub-agent':
       return <Bot className="w-4 h-4 text-indigo-500" />
-    case 'branch':
-      return <Split className="w-4 h-4 text-indigo-500" />
     case 'message_sequence':
       return <MessageSquare className="w-4 h-4 text-teal-500" />
     case 'regular':
@@ -117,21 +111,20 @@ const getStepIcon = (type: string) => {
 
 // Parse step ID into sortable segments
 // step-1 → [1]
-// step-1-true-0 → [1, 'true', 0]
 // step-8-sub-agent-2 → [8, 'sub-agent', 2]
-// step-1-true-0-sub-agent-1 → [1, 'true', 0, 'sub-agent', 1]
+// step-8-sub-agent-2-sub-agent-1 → [8, 'sub-agent', 2, 'sub-agent', 1]
 const parseStepId = (stepId: string): (string | number)[] => {
   const segments: (string | number)[] = []
 
   // Remove 'step-' prefix and split by patterns
   const withoutPrefix = stepId.replace(/^step-/, '')
 
-  // Match: number, or 'true', or 'false', or 'sub-agent', or 'sub', or 'generic'
-  const pattern = /(\d+|true|false|sub-agent|sub|generic)/g
+  // Match nested sub-agent and route identifiers.
+  const pattern = /(\d+|sub-agent|sub|generic)/g
   let match
   while ((match = pattern.exec(withoutPrefix)) !== null) {
     const val = match[1]
-    if (val === 'true' || val === 'false' || val === 'sub-agent' || val === 'sub' || val === 'generic') {
+    if (val === 'sub-agent' || val === 'sub' || val === 'generic') {
       segments.push(val)
     } else {
       segments.push(parseInt(val, 10))
@@ -222,7 +215,7 @@ const getStepFirstActivityMs = (stepLogs: unknown): number => {
     })
   }
 
-  ;['learnings', 'todo_task', 'orchestration', 'conditionals', 'validations'].forEach(key => {
+  ;['learnings', 'todo_task', 'orchestration', 'validations'].forEach(key => {
     const items = stepRecord[key]
     if (!Array.isArray(items)) return
     items.forEach(item => {
@@ -256,7 +249,7 @@ const getStepNestingLevel = (stepId: string): number => {
   let level = 0
 
   for (const seg of segments) {
-    if (seg === 'true' || seg === 'false' || seg === 'sub-agent' || seg === 'sub' || seg === 'generic') {
+    if (seg === 'sub-agent' || seg === 'sub' || seg === 'generic') {
       level++
     }
   }
@@ -265,21 +258,11 @@ const getStepNestingLevel = (stepId: string): number => {
 }
 
 // Determine the nesting context (what type of parent this is nested under)
-const getStepNestingContext = (stepId: string): 'none' | 'branch' | 'sub-agent' => {
-  // Check the last nesting indicator in the ID
-  const lastBranchIndex = Math.max(stepId.lastIndexOf('-true-'), stepId.lastIndexOf('-false-'), stepId.lastIndexOf('-decision-'))
+const getStepNestingContext = (stepId: string): 'none' | 'sub-agent' => {
   const lastSubIndex = Math.max(stepId.lastIndexOf('-sub-'), stepId.lastIndexOf('-generic-'))
   const lastSubAgentIndex = Math.max(stepId.lastIndexOf('-sub-agent-'), lastSubIndex)
 
-  if (lastBranchIndex === -1 && lastSubAgentIndex === -1) {
-    return 'none'
-  }
-
-  // Return whichever comes last (most immediate parent)
-  if (lastSubAgentIndex > lastBranchIndex) {
-    return 'sub-agent'
-  }
-  return 'branch'
+  return lastSubAgentIndex === -1 ? 'none' : 'sub-agent'
 }
 
 // Get the indentation style for a step based on its nesting level
@@ -295,8 +278,6 @@ const getStepNestingClass = (stepId: string): string => {
   switch (context) {
     case 'sub-agent':
       return 'border-l-4 border-l-purple-500/50'
-    case 'branch':
-      return 'border-l-4 border-l-indigo-500/50'
     default:
       return ''
   }
@@ -460,14 +441,10 @@ const getStepTypeLabel = (type: string): string => {
       return 'Orchestration'
     case 'todo_task':
       return 'Todo Task'
-    case 'conditional':
-      return 'Conditional'
     case 'human_input':
       return 'Human Input'
     case 'sub-agent':
       return 'Sub-Agent'
-    case 'branch':
-      return 'Branch'
     case 'message_sequence':
       return 'Message Sequence'
     case 'regular':
@@ -482,9 +459,6 @@ const getStepTypeBadgeStyle = (type: string): string => {
       return 'bg-purple-500/10 text-purple-600 border-purple-500/20 dark:bg-purple-500/20 dark:text-purple-300'
     case 'todo_task':
       return 'bg-fuchsia-500/10 text-fuchsia-600 border-fuchsia-500/20 dark:bg-fuchsia-500/20 dark:text-fuchsia-300'
-    case 'conditional':
-    case 'branch':
-      return 'bg-indigo-500/10 text-indigo-600 border-indigo-500/20 dark:bg-indigo-500/20 dark:text-indigo-300'
     case 'human_input':
       return 'bg-orange-500/10 text-orange-600 border-orange-500/20 dark:bg-orange-500/20 dark:text-orange-300'
     case 'sub-agent':
@@ -498,12 +472,10 @@ const getStepTypeBadgeStyle = (type: string): string => {
 }
 
 // Helper to determine the overall real-time status of a step
-const getStepStatus = (stepLogs: any): 'completed' | 'failed' | 'running' | 'pending' => {
+const getStepStatus = (stepLogs: StepExecutionLogs): 'completed' | 'failed' | 'running' | 'pending' => {
   const validations = stepLogs.validations || []
   const executions = stepLogs.executions || []
   const orchestration = stepLogs.orchestration || []
-  const conditionals = stepLogs.conditionals || []
-  const decisions = stepLogs.decisions || []
   const todoTask = stepLogs.todo_task || []
 
   if (stepLogs.type === 'message_sequence') {
@@ -515,7 +487,7 @@ const getStepStatus = (stepLogs: any): 'completed' | 'failed' | 'running' | 'pen
 
   // Check validations first for finality
   if (validations.length > 0) {
-    if (validations.some((v: any) => v.content?.execution_status === 'FAILED')) {
+    if (validations.some(v => v.content?.execution_status === 'FAILED')) {
       return 'failed'
     }
     const latestVal = validations[validations.length - 1]
@@ -536,8 +508,8 @@ const getStepStatus = (stepLogs: any): 'completed' | 'failed' | 'running' | 'pen
     return 'running'
   }
 
-  // If orchestration, conditionals, decisions, or todo tasks exist, they are completed.
-  if (orchestration.length > 0 || conditionals.length > 0 || decisions.length > 0 || todoTask.length > 0) {
+  // Orchestration and todo-task routing records are emitted after their work completes.
+  if (orchestration.length > 0 || todoTask.length > 0) {
     return 'completed'
   }
 
@@ -586,7 +558,6 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
   // Update selected run folder when prop changes
   useEffect(() => {
     setSelectedRunFolder(getDefaultRunFolder(initialRunFolder, localRunFolders))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialRunFolder, localRunFolders, isOpen])
 
   useEffect(() => {
@@ -616,67 +587,6 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
     return () => window.clearInterval(intervalId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, workspacePath, selectedRunFolder])
-
-  const handleDeleteFolder = async (folderName: string) => {
-    if (!workspacePath) return
-    if (!window.confirm(`Are you sure you want to delete all logs for run "${folderName}"? This cannot be undone.`)) {
-      return
-    }
-
-    try {
-      setLoading(true)
-      const res = await agentApi.deleteRunFolder(workspacePath, folderName)
-      if (res.success) {
-        // Fetch updated list of run folders
-        const foldersRes = await agentApi.getRunFolders(workspacePath)
-        const updatedFolders = (foldersRes.folders || []).map(f => f.name)
-        setLocalRunFolders(updatedFolders)
-
-        // If the deleted folder was the active one, select another
-        if (selectedRunFolder === folderName) {
-          const nextFolder = updatedFolders[0] || ''
-          setSelectedRunFolder(nextFolder)
-          if (!nextFolder) {
-            setLogs(null)
-          }
-        }
-      } else {
-        alert(`Failed to delete run folder: ${res.message || 'Unknown error'}`)
-      }
-    } catch (err) {
-      console.error('Error deleting run folder:', err)
-      alert('Failed to delete run folder')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleDeleteAllFolders = async () => {
-    if (!workspacePath || localRunFolders.length === 0) return
-    if (!window.confirm(`Are you sure you want to delete ALL execution logs across all ${localRunFolders.length} runs? This will permanently wipe all logs and cannot be undone.`)) {
-      return
-    }
-
-    try {
-      setLoading(true)
-      // Delete folders in parallel
-      const promises = localRunFolders.map(folder => agentApi.deleteRunFolder(workspacePath, folder))
-      await Promise.all(promises)
-
-      // Fetch updated list (should be empty)
-      const foldersRes = await agentApi.getRunFolders(workspacePath)
-      const updatedFolders = (foldersRes.folders || []).map(f => f.name)
-      setLocalRunFolders(updatedFolders)
-      
-      setSelectedRunFolder('')
-      setLogs(null)
-    } catch (err) {
-      console.error('Error deleting all run folders:', err)
-      alert('Failed to delete some or all run folders')
-    } finally {
-      setLoading(false)
-    }
-  }
 
   const loadLogs = async (options?: { silent?: boolean }) => {
     if (!workspacePath || !selectedRunFolder) return
@@ -1644,33 +1554,6 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
               </div>
             </div>
           )}
-          {/* Conditionals Section */}
-          {stepLogs.conditionals && stepLogs.conditionals.filter(matchesSearch).length > 0 && (
-            <div className="p-4 bg-muted/30 border-t border-border">
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
-                <GitBranch className="w-4 h-4" /> Conditional Logs
-              </h4>
-              <div className="space-y-3">
-                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                {stepLogs.conditionals.filter(matchesSearch).map((cond: any, idx: number) => (
-                  <div key={idx} className="bg-background rounded border border-border p-3 text-sm">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${cond.condition_result ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/30' : 'bg-amber-500/10 text-amber-600 border-amber-500/20 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30'}`}>
-                        Result: {cond.condition_result ? 'True' : 'False'}
-                      </span>
-                      <span className="text-xs text-muted-foreground ml-auto">{new Date(cond.timestamp).toLocaleTimeString()}</span>
-                    </div>
-                    <div className="font-medium text-foreground mb-1">{cond.condition_question}</div>
-                    <p className="text-muted-foreground text-xs italic">{cond.condition_reason}</p>
-                    <div className="mt-2 text-xs text-muted-foreground">
-                        <span className="font-semibold">Branch:</span> {cond.branch_executed}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Archived Logs Section (Previous Runs) */}
           {stepLogs.archived_logs && stepLogs.archived_logs.filter(matchesSearch).length > 0 && (
             <div className="p-4 bg-amber-500/5 border-t border-amber-500/20">
@@ -1683,8 +1566,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                   const archiveId = `${stepId}-archive-${archiveIdx}`
                   const isArchiveExpanded = expandedArchived.has(archiveId)
                   const totalLogs = (archive.validations?.length || 0) + (archive.executions?.length || 0) +
-                                   (archive.learnings?.length || 0) + (archive.orchestration?.length || 0) +
-                                   (archive.conditionals?.length || 0)
+                                   (archive.learnings?.length || 0) + (archive.orchestration?.length || 0)
 
                   // Format timestamp for display (20260106-115300 -> 2026-01-06 11:53:00)
                   const formatArchiveTimestamp = (ts: string) => {
@@ -1878,26 +1760,6 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                             </div>
                           )}
 
-                          {/* Archived Conditionals */}
-                          {archive.conditionals && archive.conditionals.length > 0 && (
-                            <div>
-                              <div className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1">
-                                <GitBranch className="w-3 h-3" /> Conditionals ({archive.conditionals.length})
-                              </div>
-                              {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                              {archive.conditionals.map((cond: any, idx: number) => (
-                                <div key={idx} className="text-xs bg-background border border-border rounded p-2 mb-1">
-                                  <div className="flex items-center gap-2">
-                                    <span className={`px-1.5 py-0.5 rounded text-xs border ${cond.condition_result ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/30' : 'bg-amber-500/10 text-amber-600 border-amber-500/20 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30'}`}>
-                                      {cond.condition_result ? 'True' : 'False'}
-                                    </span>
-                                    <span className="text-muted-foreground truncate">{cond.condition_question}</span>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-
                         </div>
                       )}
                     </div>
@@ -1907,7 +1769,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
             </div>
           )}
 
-          {/* Archived Execution Runs Section (from decision step routing) */}
+          {/* Archived execution outputs from deterministic routing. */}
           {stepLogs.archived_executions && stepLogs.archived_executions.filter(matchesSearch).length > 0 && (
             <div className="p-4 bg-indigo-500/[0.03] border-t border-indigo-500/15">
               <h4 className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider mb-3 flex items-center gap-2">
@@ -2129,11 +1991,6 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                 .map(([stepId, stepLogs]) => {
                   const isExpanded = expandedSteps.has(stepId)
                   const displayId = stepLogs.original_id || stepId
-                  const hasCustomTitle = !!stepLogs.title && 
-                                         stepLogs.title !== displayId && 
-                                         stepLogs.title !== stepId &&
-                                         !stepLogs.title.toLowerCase().includes(displayId.toLowerCase()) &&
-                                         !stepLogs.title.toLowerCase().includes(stepId.toLowerCase())
                   const displayTitle = (stepLogs.title && stepLogs.title.trim()) ? stepLogs.title : displayId
                   const description = stepLogs.description || ''
                   const nestingLevel = getStepNestingLevel(stepId)

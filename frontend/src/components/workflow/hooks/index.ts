@@ -4,7 +4,6 @@ export type { UsePlanDataReturn, ChangeType, PlanChanges } from './usePlanData'
 export { usePlanToFlow } from './usePlanToFlow'
 export type { 
   StepNodeData, 
-  ConditionalNodeData, 
   ValidationNodeData,
   LearningNodeData,
   WorkflowNodeData,

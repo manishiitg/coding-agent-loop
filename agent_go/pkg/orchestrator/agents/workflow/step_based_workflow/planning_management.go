@@ -93,7 +93,7 @@ func validatePlanStepIDs(steps []PlanStepInterface) error {
 	return validatePlanStepIDsAtPath(steps, "steps")
 }
 
-// collectStepIDsRecursive walks steps (and any nested branch steps) and records
+// collectStepIDsRecursive walks steps and nested todo-task sub-agents and records
 // each ID against the location where it was first seen. Returns a duplicate error
 // on the first collision it encounters. Empty IDs are skipped — presence is the
 // job of validatePlanStepIDs.
@@ -123,7 +123,7 @@ func collectStepIDsRecursive(steps []PlanStepInterface, pathPrefix string, seen 
 }
 
 // validateStepIDUniqueness enforces that every step ID is unique across the plan —
-// main steps, orphan steps, and nested branch steps share the same namespace
+// main steps, orphan steps, and nested sub-agent steps share the same namespace
 // because step IDs are used as learnings/{stepID}/ folder names and collisions
 // silently clobber saved scripts and metadata.
 func validateStepIDUniqueness(plan *PlanningResponse) error {
@@ -169,8 +169,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) checkExistingPlan(ctx context.Context
 	// the plan without invoking the existing validator chain that the
 	// fresh-plan write path (writePlanToFile) and the canonical load
 	// path (loadPlanFromFile) both call. This let duplicate step IDs,
-	// dangling routing.next_step_id, and ambiguous conditional
-	// branch+next_step_id combinations through to LLM execution —
+	// dangling routing.next_step_id and ambiguous human-response route
+	// combinations through to LLM execution —
 	// every per-step artifact then collides under the colliding ID
 	// and writes silently clobber prior content. Re-enabling the
 	// validator at this seam catches the violations at plan load.
@@ -319,9 +319,8 @@ func ValidatePlanStructure(plan *PlanningResponse) error {
 // real step ID in the plan.
 const nextStepIDSentinelEnd = "end"
 
-// collectKnownStepIDs walks the plan tree (main steps, nested branch
-// steps inside conditionals, orphan steps, sub-agent steps inside
-// todo_task predefined routes) and returns the set of every step ID
+// collectKnownStepIDs walks main steps, orphan steps, and sub-agent steps
+// inside todo_task predefined routes, returning every declared step ID
 // the plan declares. The set is the legal universe for any
 // next_step_id reference; anything outside it (other than the "end"
 // sentinel) is a dangling reference that would surface at runtime
@@ -354,10 +353,10 @@ func collectKnownStepIDs(plan *PlanningResponse) map[string]struct{} {
 }
 
 // validateNextStepIDReferences enforces that every next_step_id
-// emitted by routing routes and conditional branches references a
+// emitted by deterministic routes references a
 // step that actually exists in the plan (or is the "end" sentinel).
 // Without this, a typo in plan.json silently goes to LLM execution;
-// the routing/conditional LLM call gets billed; the workflow then
+// the routing call gets billed; the workflow then
 // dies trying to look up the missing successor with a runtime error
 // that is hard to attribute back to the original mistake.
 func validateNextStepIDReferences(plan *PlanningResponse) error {
@@ -416,7 +415,7 @@ func validateNextStepIDReferences(plan *PlanningResponse) error {
 }
 
 // validateHumanInputStepFieldsTyped enforces that a human_input step's
-// conditional-routing configuration is internally consistent. The runtime
+// response-routing configuration is internally consistent. The runtime
 // (resolveHumanInputNextStep) never fails on a misconfigured step — an
 // unmatched option falls back to the default next_step_id and then to the
 // next sequential step — so a bad config doesn't error at execution, it

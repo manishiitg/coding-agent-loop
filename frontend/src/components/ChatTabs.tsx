@@ -18,6 +18,7 @@ import MultiAgentSchedulesPopup from './scheduler/MultiAgentSchedulesPopup'
 import { schedulerApi } from '../api/scheduler'
 import { agentApi } from '../services/api'
 import { hasActiveSessionWork } from '../utils/activitySessions'
+import { isScheduledSession } from '../utils/workflowSessionKinds'
 
 interface ChatTabsProps {
   // For multi-agent mode: callback when starting a new chat (reset-in-place)
@@ -34,9 +35,8 @@ function shortModelName(modelId: string): string {
   return name.length > 18 ? `${name.slice(0, 18)}…` : name
 }
 
-// Multi-agent chat is single-tab: this bar is a slim header for the one chat
-// tab (title + view controls + New Chat). It is not a tab switcher anymore.
-// Workflow mode renders its own tabs (WorkflowChatTabs) inside the chat panel.
+// Chief of Staff exposes two bounded lanes: one interactive chat and one
+// read-only schedule. Workflow mode renders its own tabs (WorkflowChatTabs).
 export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onToggleAutoScroll, onSubmitOrgCommand }) => {
   const [pendingTreeViewTabId, setPendingTreeViewTabId] = useState<string | null>(null)
   const [showCostDashboard, setShowCostDashboard] = useState(false)
@@ -123,6 +123,17 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
     // Never match by tab name — that can hide normal chat tabs.
     return tab.metadata?.isOrganizationAssistant === true
   }, [])
+
+  const isScheduleTab = useCallback((tab: ChatTab) =>
+    tab.metadata?.isScheduledRun === true || isScheduledSession({ sessionId: tab.sessionId }), [])
+
+  const chiefOfStaffTabs = useMemo(() => Object.values(chatTabs)
+    .filter(tab => tab.metadata?.mode === 'multi-agent' && !isHiddenOrganizationTab(tab))
+    .sort((a, b) => {
+      const laneOrder = Number(isScheduleTab(a)) - Number(isScheduleTab(b))
+      if (laneOrder !== 0) return laneOrder
+      return (b.lastAccessedAt ?? b.createdAt ?? 0) - (a.lastAccessedAt ?? a.createdAt ?? 0)
+    }), [chatTabs, isHiddenOrganizationTab, isScheduleTab])
 
   const availableServers = useMemo(
     () => [...new Set(
@@ -285,7 +296,7 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
     multiAgentScheduleCount,
   ])
 
-  // Auto-select the single multi-agent tab if none is active (e.g. after refresh)
+  // Select the interactive Chief of Staff lane by default after refresh.
   useEffect(() => {
     if (selectedModeCategory !== 'multi-agent' || showWorkflowsOverview) return
 
@@ -300,14 +311,12 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
       }
     }
 
-    const visibleTabs = Object.values(chatTabs).filter(tab =>
-      tab.metadata?.mode === 'multi-agent' && !isHiddenOrganizationTab(tab)
-    )
+    const visibleTabs = chiefOfStaffTabs
     if (visibleTabs.length > 0) {
       const sorted = [...visibleTabs].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
       switchTab(sorted[0].tabId)
     }
-  }, [activeTabId, chatTabs, selectedModeCategory, showWorkflowsOverview, switchTab, isHiddenOrganizationTab])
+  }, [activeTabId, chatTabs, chiefOfStaffTabs, selectedModeCategory, showWorkflowsOverview, switchTab, isHiddenOrganizationTab])
 
   // Only render in multi-agent mode (workflow tabs live in WorkflowChatTabs).
   const shouldShowHeader = selectedModeCategory === 'multi-agent' && !showWorkflowsOverview
@@ -317,19 +326,33 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
 
   const showHeaderContent =
     !!activeTab && activeTab.metadata?.mode === 'multi-agent' && !isHiddenOrganizationTab(activeTab)
-  // The multi-agent chat is the user's "chief of staff" (single-tab — this is a
-  // header label, not a tab switcher). Always the chief-of-staff label: deriving
-  // the title from the (often long, raw) first user message made a resumed chat
-  // show a messy message at the top, which read like a fresh terminal start.
-  const chatTitle = 'Chief of Staff'
-
   return (
     <>
     <div className="relative flex-shrink-0 flex items-center gap-2 bg-gray-50 dark:bg-gray-800 px-3 py-1.5 border-b border-gray-200 dark:border-gray-700">
-      {/* Single-chat title */}
-      <span className="min-w-0 max-w-[min(360px,34vw)] truncate whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
-        {chatTitle}
-      </span>
+      <div className="flex min-w-0 items-center gap-1" role="tablist" aria-label="Chief of Staff sessions">
+        {chiefOfStaffTabs.map(tab => {
+          const schedule = isScheduleTab(tab)
+          const selected = tab.tabId === activeTabId
+          return (
+            <button
+              key={tab.tabId}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              onClick={() => switchTab(tab.tabId)}
+              className={`flex h-7 min-w-0 max-w-[min(240px,28vw)] items-center gap-1.5 rounded px-2 text-sm transition-colors ${
+                selected
+                  ? 'bg-gray-200 font-medium text-gray-900 dark:bg-gray-700 dark:text-gray-100'
+                  : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-gray-700/60 dark:hover:text-gray-200'
+              }`}
+              title={schedule ? (tab.metadata?.scheduledJobName || 'Running schedule') : 'Chief of Staff chat'}
+            >
+              {schedule && <CalendarClock className="h-3.5 w-3.5 shrink-0" />}
+              <span className="truncate">{schedule ? 'Schedule' : 'Chief of Staff'}</span>
+            </button>
+          )
+        })}
+      </div>
 
       {hasActiveWork && activeTab?.sessionId && (
         <Tooltip>

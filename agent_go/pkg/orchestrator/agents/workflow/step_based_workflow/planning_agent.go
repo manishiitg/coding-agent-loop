@@ -250,7 +250,7 @@ type AgentConfigs struct {
 	// unmarshal. Workflow execution now uses tmux for CLI providers; old
 	// "structured"/"json" values are ignored at runtime.
 	Transport                   string `json:"transport,omitempty"`
-	DisableTierOptimization     *bool  `json:"disable_tier_optimization,omitempty"`      // If true, execution and conditional agents always use Tier 1 (high reasoning)
+	DisableTierOptimization     *bool  `json:"disable_tier_optimization,omitempty"`      // If true, execution agents always use Tier 1 (high reasoning)
 	SuccessfulRuns              *int   `json:"successful_runs,omitempty"`                // System-managed counter. Written by syncSuccessfulRunsToStepConfig after each successful validation; mirrors the authoritative count in learning metadata. Read by the readiness checklist to gauge optimization progress (3+ = ready). Agents must NOT set this directly.
 	ScriptedMaxFixIter          *int   `json:"learn_code_max_fix_iterations,omitempty"`  // Max LLM fix iterations when main.py execution fails (default: 5)
 	DeclaredExecutionMode       string `json:"declared_execution_mode,omitempty"`        // Required mode decision for the step: "scripted" or "agentic" (legacy values "learn_code" / "code_exec" are still accepted on read)
@@ -412,7 +412,7 @@ type HumanInputPlanStep struct {
 	VariableName       string            `json:"variable_name,omitempty"`       // Optional: store response in variable
 	ResponseType       string            `json:"response_type,omitempty"`       // "text" (default), "yesno", "multiple_choice"
 	Options            []string          `json:"options,omitempty"`             // For multiple_choice type
-	NextStepID         string            `json:"next_step_id"`                  // Default: where to go after response (or "end") - used if conditional routing not specified
+	NextStepID         string            `json:"next_step_id"`                  // Default: where to go after response (or "end") when no response-specific route matches
 	IfYesNextStepID    string            `json:"if_yes_next_step_id,omitempty"` // Optional: for yesno type when response is "yes"
 	IfNoNextStepID     string            `json:"if_no_next_step_id,omitempty"`  // Optional: for yesno type when response is "no"
 	OptionRoutes       map[string]string `json:"option_routes,omitempty"`       // Optional: for multiple_choice type - maps option index (as string "0", "1", etc.) or option value to next_step_id
@@ -439,8 +439,9 @@ func (h *HumanInputPlanStep) MarshalJSON() ([]byte, error) {
 	return json.Marshal((*Alias)(h))
 }
 
-// MessageSequenceWriteAccess controls temporary write access for a single sequence item.
-// Read access to KB, DB, and global learnings is always available for the whole sequence.
+// MessageSequenceWriteAccess optionally narrows store writes for one sequence item.
+// When it is empty, the item inherits the step-level DB, KB, and learnings access.
+// Read access remains governed by the step-level configuration.
 type MessageSequenceWriteAccess struct {
 	Knowledgebase bool `json:"knowledgebase,omitempty"`
 	DB            bool `json:"db,omitempty"`
@@ -1031,7 +1032,7 @@ func getDeletePlanStepsSchema() string {
 			"deleted_step_ids": {
 				"type": "array",
 				"items": { "type": "string" },
-				"description": "IDs of steps to delete from the plan. Use the step's id field from the plan. The deletion is atomic and will be rejected if any remaining route, next_step_id, human-input branch, or message sequence still targets a deleted ID; reroute those references first, then retry."
+				"description": "IDs of steps to delete from the plan. Use the step's id field from the plan. The deletion is atomic and will be rejected if any remaining route, next_step_id, human-input response route, or message sequence still targets a deleted ID; reroute those references first, then retry."
 			},
 			"reason": {
 				"type": "string",
@@ -1143,18 +1144,18 @@ func getAddMessageSequenceStepSchema() string {
 			"context_output": {"type": "string", "description": "OPTIONAL: Summary/result file for later steps. Omit when the step writes its result to the db (validate via validation_schema.db)."},
 			"items": {
 				"type": "array",
-				"description": "REQUIRED: Ordered queue of follow-up turns (turns 1..N; the step description is turn 0). Prefer multiple short user_message items over one large prompt. Use prevalidation items between turns as hard gates. Deterministic code must be a standalone regular scripted step, never a sequence item. Use kind=\"learning\" or write_access.learnings=true only for an intentional in-sequence learning write to learnings/_global/; the normal learning phase still runs only after the whole step based on step_config.",
+				"description": "REQUIRED: Ordered queue of follow-up turns (turns 1..N; the step description is turn 0). Turn 0 should own the complete coherent outcome, including its routine sub-actions. Add a user_message only for evidence-based verification, critique, repair, new external input, or a real phase change; do not create one item per checklist line or tool call. Use explicit prevalidation items only for intermediate gates; the top-level validation_schema runs automatically after the final work turn. Deterministic code must be a standalone regular scripted step, never a sequence item. Plain turns inherit step-level DB/KB/learnings writes. Use kind or a non-empty write_access only to narrow a turn to selected stores.",
 				"items": {
 					"type": "object",
 					"properties": {
 						"id": {"type": "string"},
 						"type": {"type": "string", "enum": ["user_message", "prevalidation", "foreach"], "description": "user_message, prevalidation, or foreach"},
-						"kind": {"type": "string", "description": "Drives item-scoped write access. One of: learning, knowledgebase, or db. Omit for a plain user_message item with no extra write access. Explicit write_access overrides kind."},
+						"kind": {"type": "string", "description": "Optional shorthand that narrows this turn's inherited writes to one store: learning, knowledgebase, or db. Explicit non-empty write_access overrides kind."},
 						"title": {"type": "string"},
 						"message": {"type": "string", "description": "For user_message items: a follow-up instruction run in the same persistent conversation. Prefer evidence-seeking validation/repair turns (e.g. \"Re-open the output. Did you actually satisfy every criterion? Quote the evidence, then fix every unsupported or incomplete item.\") over routine subtask instructions. For foreach items: a Go text/template rendered once per row of source, with the row bound to '.' (e.g. 'Process {{.id}}: {{.task}}')."},
 						"write_access": {
 							"type": "object",
-							"description": "Item-scoped writes only. Reads for kb/db/learnings are always open. Folder-level booleans only — NO per-file path scoping (a \"paths\" list is rejected); db:true grants the whole db/ folder. Use learnings:true sparingly for deliberate in-sequence writes to learnings/_global/; prefer normal step-level learning for automatic post-step extraction.",
+							"description": "Optional item-scoped narrowing. Omit it to inherit the step-level DB/KB/learnings write permissions. A non-empty object limits this turn to the selected stores and can never exceed step-level access. Folder-level booleans only — NO per-file path scoping (a \"paths\" list is rejected).",
 							"properties": {
 								"knowledgebase": {"type": "boolean"},
 								"db": {"type": "boolean"},
@@ -1171,7 +1172,7 @@ func getAddMessageSequenceStepSchema() string {
 			},
 			"next_step_id": {"type": "string", "description": "Optional next step ID or end."},
 			"insert_after_step_id": {"type": "string", "description": "REQUIRED: Existing step ID to insert after, or empty string to insert first."},
-			"validation_schema": {"type": "object"},
+			"validation_schema": {"type": "object", "description": "OPTIONAL: Step-level final validation contract. When present, the runtime automatically runs it after the configured work turns and before learning/knowledge closing turns. Validation failures are sent back to the same conversation for repair and retried."},
 			"reason": {"type": "string", "description": "REQUIRED: One-sentence rationale for why this sequence step is being added."}
 		},
 		"required": ["id", "title", "description", "context_dependencies","items", "insert_after_step_id", "reason"]
@@ -1377,7 +1378,7 @@ func getAddHumanInputStepSchema() string {
 			},
 			"next_step_id": {
 				"type": "string",
-				"description": "REQUIRED: The ID of the next step to execute after receiving the response, or 'end' to terminate the workflow. This is used as the default routing for 'text' response type, or as fallback if conditional routing is not specified."
+				"description": "REQUIRED: The ID of the next step to execute after receiving the response, or 'end' to terminate the workflow. This is the default for text responses and the fallback when no response-specific route matches."
 			},
 			"if_yes_next_step_id": {
 				"type": "string",
@@ -3626,7 +3627,7 @@ func createDeletePlanStepsExecutor(workspacePath string, logger loggerv2.Logger,
 // createCleanupOrphanStepConfigsExecutor creates the executor for the
 // cleanup_orphan_step_configs tool. Reads planning/step_config.json, computes
 // the set of step IDs that no longer exist in plan.json (top-level Steps +
-// OrphanSteps, recursing into nested sub_agent_step / conditional branches),
+// OrphanSteps, recursing into nested sub_agent_step definitions),
 // and rewrites step_config.json without those orphan entries.
 func createCleanupOrphanStepConfigsExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, _ map[string]interface{}) (string, error) {
@@ -4592,16 +4593,13 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"add_message_sequence_step",
-		"Add a message_sequence step to the plan. Use it when one agentic step should consume persisted evidence, own a coherent reasoning outcome, and then validate, critique, or repair that work in the same conversation. Put the whole reasoning outcome in the opening description; add follow-up items only for decision-useful assurance, a real intermediate gate, new external input, or foreach iteration—not one item per routine subtask or tool call. Fixed API/SDK/CLI calls, data fetching, known pagination, stable parsing/normalization, and mechanical writes belong in upstream standalone regular scripted steps; the sequence reads their validated DB rows or artifacts. Use explicit prevalidation items when deterministic failures must trigger same-conversation repair. As a todo_task predefined route, use message_sequence when the orchestrator should reuse the same specialist conversation for critique, test feedback, validation feedback, or follow-up work; restart is controlled at execution time with message_sequence_restart. Reads for KB/db/learnings are always open; writes remain item-scoped through write_access.",
+		"Add a message_sequence step to the plan. Use it when one agentic step should consume persisted evidence, own a coherent reasoning outcome, and then validate, critique, or repair that work in the same conversation. Put the whole reasoning outcome in the opening description; add follow-up items only for decision-useful assurance, a real intermediate gate, new external input, or foreach iteration—not one item per routine subtask or tool call. Fixed API/SDK/CLI calls, data fetching, known pagination, stable parsing/normalization, and mechanical writes belong in upstream standalone regular scripted steps; the sequence reads their validated DB rows or artifacts. The top-level validation_schema is automatically enforced after the final work turn with same-conversation repair retries. As a todo_task predefined route, use message_sequence when the orchestrator should reuse the same specialist conversation for critique, test feedback, validation feedback, or follow-up work; restart is controlled at execution time with message_sequence_restart. Plain turns inherit step-level DB/KB/learnings permissions; kind or non-empty write_access can narrow one turn.",
 		messageSequenceParams,
 		createAddMessageSequenceStepExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
 		"workflow",
 	); err != nil {
 		return fmt.Errorf("failed to register add_message_sequence_step tool: %w", err)
 	}
-
-	// NOTE: add_conditional_step tool removed (deprecated in favor of decision/routing).
-	// Schema, executor, and execution code kept for backward compatibility with existing workflows.
 
 	// NOTE: add_orchestration_step tool removed (deprecated in favor of todo_task).
 	// Schema, executor, and execution code kept for backward compatibility with existing workflows.
@@ -4680,11 +4678,6 @@ func registerPlanModificationTools(
 	); err != nil {
 		return fmt.Errorf("failed to register update_message_sequence_step tool: %w", err)
 	}
-
-	// NOTE: conditional branch tools removed (deprecated in favor of decision/routing).
-	// Tools removed: convert_step_to_conditional, add_branch_steps, update_branch_steps,
-	// delete_branch_steps, convert_conditional_to_regular.
-	// Schema, executor, and execution code kept for backward compatibility with existing workflows.
 
 	// NOTE: add/update/delete_orchestration_route tools removed (deprecated in favor of todo_task).
 

@@ -180,8 +180,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 	isMessageSequenceResume := isMessageSequence && opts != nil && strings.TrimSpace(opts.HumanInput) != "" && !opts.MessageSequenceRestart
 	isMessageSequenceStart := isMessageSequence && !isMessageSequenceResume
 	if isInnerStep {
-		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Executing INNER step %q (parent=%s, branch=%s, runFolder=%s)",
-			stepID, stepInfo.ParentID, stepInfo.BranchName, hcpo.selectedRunFolder))
+		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Executing INNER step %q (parent=%s, location=%s, runFolder=%s)",
+			stepID, stepInfo.ParentID, stepInfo.NestedLocation, hcpo.selectedRunFolder))
 	}
 
 	// For inner steps, we execute them standalone as a single-step plan.
@@ -301,7 +301,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 		}
 	}
 
-	// 6. Run via standard execution pipeline (handles all step types: regular, conditional, routing, etc.)
+	// 6. Run via the standard execution pipeline.
 	execErr := hcpo.runExecutionPhase(ctx, breakdownSteps, 1, progress, setup.StartFromStep, setup.Context)
 
 	// 7. Read execution result from logs (runExecutionPhase writes results to log files)
@@ -565,10 +565,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) loadStepResultFromLogsByPath(ctx cont
 	return "", false
 }
 
-// resolveInnerStepPath computes the correct execution folder path for an inner step
-// based on its parent step's position and branch info. This matches the naming convention
+// resolveInnerStepPath computes the execution folder path for a nested step
+// based on its parent step's position and nested location. This matches the naming convention
 // used by the normal execution pipeline:
-//   - Branch steps: "step-{N}-if-true-{idx}" / "step-{N}-if-false-{idx}"
 //   - Sub-agent routes: "step-{N}-sub-{route_id}"
 //   - Todo task step: "step-{N}-todo-task"
 func resolveInnerStepPath(topLevelSteps []PlanStepInterface, info *WorkshopStepInfo) string {
@@ -585,16 +584,12 @@ func resolveInnerStepPath(topLevelSteps []PlanStepInterface, info *WorkshopStepI
 		return fmt.Sprintf("step-inner-%s", info.Step.GetID())
 	}
 
-	branch := info.BranchName
+	location := info.NestedLocation
 	switch {
-	case branch == "if_true":
-		return fmt.Sprintf("step-%d-if-true-0", parentNum)
-	case branch == "if_false":
-		return fmt.Sprintf("step-%d-if-false-0", parentNum)
-	case branch == "todo_task_step":
+	case location == "todo_task_step":
 		return fmt.Sprintf("step-%d-todo-task", parentNum)
-	case strings.HasPrefix(branch, "route:"):
-		routeID := strings.TrimPrefix(branch, "route:")
+	case strings.HasPrefix(location, "route:"):
+		routeID := strings.TrimPrefix(location, "route:")
 		return fmt.Sprintf("step-%d-sub-%s", parentNum, routeID)
 	default:
 		return fmt.Sprintf("step-%d-inner-%s", parentNum, info.Step.GetID())

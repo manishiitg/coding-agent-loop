@@ -4250,7 +4250,7 @@
         "step_path": {
           "type": "string"
         },
-        "is_branch_step": {
+        "is_nested_execution": {
           "type": "boolean"
         },
         "overall_pass": {

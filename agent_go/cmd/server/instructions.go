@@ -271,7 +271,6 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 - ` + "`validation-{N}.json`" + ` — validation attempts for the step
 - ` + "`execution/execution-attempt-{A}-iteration-{I}.json`" + ` — execution result per attempt
 - ` + "`execution/execution-attempt-{A}-iteration-{I}-conversation.json`" + ` — full LLM conversation for that attempt
-- ` + "`conditional-evaluation.json`" + ` — conditional-step branch results
 - ` + "`routing-evaluation.json`" + ` — routing-step results
 - ` + "`orchestration-execution.json`" + ` — JSONL log for orchestration / todo_task steps (one line per iteration)
 
@@ -887,14 +886,12 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 	// 7. Step folder naming conventions and log file guide
 	parts = append(parts, `**Step Folder Naming (inside execution/ and logs/):**
 - Regular steps: `+"`{step-id}/`"+` using the declared ID from `+"`planning/plan.json`"+`
-- Conditional branches: `+"`step-{X}-if-true-{idx}/`"+`, `+"`step-{X}-if-false-{idx}/`"+`
 - Sub-agents (orchestration/todo_task): `+"`step-{X}-sub-agent-{idx}/`"+`
 - Generic agents (todo_task only): `+"`step-{X}-generic-agent-{idx}/`"+`
 
 **Key Log Files Per Step:**
 - All steps: `+"`logs/{step-id}/validation-{N}.json`"+` (validation attempts), `+"`logs/{step-id}/execution/execution-attempt-{A}-iteration-{I}.json`"+` (execution result)
 - Full LLM conversation: `+"`logs/{step-id}/execution/execution-attempt-{A}-iteration-{I}-conversation.json`"+`
-- Conditional: `+"`logs/{step-id}/conditional-evaluation.json`"+` — condition_result, condition_reason, branch_executed
 - Orchestration/TodoTask: `+"`logs/{step-id}/orchestration-execution.json`"+` (JSONL, one line per iteration)
 
 **How to Investigate:**

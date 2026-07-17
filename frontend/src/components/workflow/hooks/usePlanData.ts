@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { agentApi } from '../../../services/api'
 import type { PlanStep, PlanningResponse, StepConfig, AgentConfigs } from '../../../utils/stepConfigMatching'
-import { isConditionalStep, isTodoTaskStep } from '../../../utils/stepConfigMatching'
+import { isTodoTaskStep } from '../../../utils/stepConfigMatching'
 
 // Module-level cache to dedupe loadPlan calls across multiple hook instances
 // and to preserve per-workspace data across workflow switches.
@@ -127,15 +127,6 @@ function mergeStepConfigs(
       ...(config ? { agent_configs: config } : {})
     }
     
-    // Handle nested branch steps
-    if (isConditionalStep(step)) {
-      mergedStep = {
-        ...mergedStep,
-        if_true_steps: step.if_true_steps ? mergeIntoSteps(step.if_true_steps) : undefined,
-        if_false_steps: step.if_false_steps ? mergeIntoSteps(step.if_false_steps) : undefined,
-      } as PlanStep
-    }
-    
     // Handle todo task step - configs are now flat on the step itself
     if (isTodoTaskStep(step)) {
       mergedStep = {
@@ -170,14 +161,6 @@ function resolveOrphanStepRefs(plan: PlanningResponse): PlanningResponse {
   const cloneStep = (step: PlanStep): PlanStep => JSON.parse(JSON.stringify(step)) as PlanStep
 
   const resolveStep = (step: PlanStep, orphanChain: string[] = []): PlanStep => {
-    if (isConditionalStep(step)) {
-      return {
-        ...step,
-        if_true_steps: step.if_true_steps?.map(branchStep => resolveStep(branchStep, orphanChain)),
-        if_false_steps: step.if_false_steps?.map(branchStep => resolveStep(branchStep, orphanChain)),
-      }
-    }
-
     if (isTodoTaskStep(step)) {
       return {
         ...step,
@@ -294,7 +277,7 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     }
 
     return null
-  }, [getPlanFilePath, getStepConfigFilePath, workspacePath])
+  }, [getPlanFilePath, getStepConfigFilePath])
 
   // Load plan from workspace with caching to prevent duplicate API calls
   const loadPlan = useCallback(async (): Promise<void> => {

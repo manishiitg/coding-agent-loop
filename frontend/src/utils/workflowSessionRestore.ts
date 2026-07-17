@@ -10,6 +10,7 @@ import { useRunningWorkflowsStore } from '../stores/useRunningWorkflowsStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import { liveWorkflowTerminalSessionForPreset } from './workflowTerminalActivity'
+import { isScheduledSession } from './workflowSessionKinds'
 
 type RestoreWorkflowSessionOptions = {
   preset?: CustomPreset | PredefinedPreset
@@ -638,6 +639,31 @@ export async function openActiveSession(
     } else {
       await restoreWorkflowSessionChat(session, { preset: options.preset, runningWorkflow: options.runningWorkflow })
     }
+    return
+  }
+
+  const isChiefOfStaffSchedule = (session.agent_mode || '').toLowerCase().includes('multi-agent') &&
+    isScheduledSession({
+      sessionId: session.session_id,
+      triggeredBy: session.triggered_by,
+      botPlatform: session.bot_platform,
+    })
+
+  if (isChiefOfStaffSchedule) {
+    const tabId = await restoreSession(session.session_id, {
+      title: options.title || session.preset_name || session.title || 'Schedule',
+      source: options.source,
+    })
+    const chatStore = useChatStore.getState()
+    chatStore.setTabMetadata(tabId, {
+      mode: 'multi-agent',
+      isViewOnly: true,
+      isScheduledRun: true,
+      scheduledJobName: session.preset_name || session.title || options.title || 'Scheduled task',
+      readOnlyRestoredAt: Date.now(),
+    })
+    activateTab(tabId)
+    requestChatScrollToBottom()
     return
   }
 

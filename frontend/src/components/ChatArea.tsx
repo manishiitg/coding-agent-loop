@@ -421,7 +421,7 @@ interface ChatAreaProps {
 
 // Ref interface for ChatArea component
 export interface ChatAreaRef {
-  handleNewChat: () => void
+  handleNewChat: (targetTabId?: string) => void
   resetChatState: () => void
   refreshWorkflowPresets: () => Promise<void>
   submitQuery: (query: string, executionOptions?: ExecutionOptions) => Promise<void>
@@ -2981,13 +2981,19 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // Handle new chat for the active tab. Keep this scoped: workflow and
   // multi-agent tabs can coexist, so starting a fresh conversation in one tab
   // must not clear every tab/event/SSE connection in the app.
-  const handleNewChat = useCallback(async () => {
+  const handleNewChat = useCallback(async (targetTabId?: string) => {
     const chatStore = useChatStore.getState()
+    const targetTab = targetTabId ? chatStore.getTab(targetTabId) : activeTab
     // Stop the previous backend session first (if it exists). This closes any
     // tmux-backed CLI owner before the tab rotates to a fresh Chief of Staff
     // session, preventing two pi-cli sessions from sharing the Chats cwd.
     const currentSessionId = getSessionId()
-    const sessionIdToClear = activeTab?.sessionId || currentSessionId
+    // An explicitly targeted empty chat must not fall back to the globally
+    // selected session ID: that ID may belong to the concurrently viewed
+    // Chief of Staff schedule.
+    const sessionIdToClear = targetTabId !== undefined
+      ? targetTab?.sessionId
+      : (targetTab?.sessionId || currentSessionId)
     if (sessionIdToClear) {
       try {
         const activeSessions = await getActiveSessions(true)
@@ -3012,9 +3018,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       clearWorkflowState()
     }
     
-    if (activeTab) {
-      chatStore.resetTabChat(activeTab.tabId)
-      chatStore.setTabConfig(activeTab.tabId, {
+    if (targetTab) {
+      chatStore.switchTab(targetTab.tabId)
+      chatStore.resetTabChat(targetTab.tabId)
+      chatStore.setTabConfig(targetTab.tabId, {
         queuedMessages: [],
         isQueueProcessing: false,
       })
@@ -3035,7 +3042,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     processedCompletionEventsRef.current.clear()
     
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clearWorkflowState, resetChatState, onNewChat, activeTab?.sessionId, activeTab?.tabId, selectedModeCategory, selectedWorkflowPreset, setCurrentWorkflowPhase, setLastEventIndex, getActiveSessions])
+  }, [clearWorkflowState, resetChatState, onNewChat, activeTab, selectedModeCategory, selectedWorkflowPreset, setCurrentWorkflowPhase, setLastEventIndex, getActiveSessions])
 
   // Refresh workflow presets function
   const refreshWorkflowPresets = useCallback(async () => {

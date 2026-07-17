@@ -2396,10 +2396,10 @@
         "hierarchy_level": {
           "type": "integer"
         },
-        "is_branch_step": {
+        "is_end_event": {
           "type": "boolean"
         },
-        "is_end_event": {
+        "is_nested_execution": {
           "type": "boolean"
         },
         "metadata": {

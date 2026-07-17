@@ -10,14 +10,9 @@ import type {
   AgentQueryResponse,
   GetEventsResponse,
   MCPServerConfig,
-  ChatSession,
   ChatHistoryConversation,
   ChatHistorySession,
   ChatHistoryCleanupResult,
-  ListChatSessionsResponse,
-  GetSessionEventsResponse,
-  CreateChatSessionRequest,
-  UpdateChatSessionRequest,
   WorkflowStatusResponse,
   WorkflowConstantsResponse,
   WorkflowSelectedOptions,
@@ -49,15 +44,9 @@ import type {
   ExecutionLogsResponse,
   EvaluationReportsResponse,
   WorkflowReviewDataResponse,
-  TokenUsageFile,
   WorkflowCostsResponse,
   WorkspaceStateResponse,
   CapabilitiesResponse,
-  UserCostsResponse,
-  SessionCostDetail,
-  DelegationLogsResponse,
-  AllDelegationLogsResponse,
-  PollingEvent,
   SimulatorMessage,
   SimulatorSendResponse,
   SimulatorThreadInfo,
@@ -2064,16 +2053,12 @@ export const agentApi = {
     step: Omit<PlanStep, 'agent_configs'>,
     options?: {
       insertAfterStepId?: string
-      parentStepId?: string
-      branchType?: 'if_true' | 'if_false'
     }
   ): Promise<{ success: boolean; message: string; data?: { step: PlanStep } }> => {
     const response = await api.post('/api/workflow/plan/add-step', {
       workspace_path: workspacePath,
       step: step,
-      insert_after_step_id: options?.insertAfterStepId,
-      parent_step_id: options?.parentStepId,
-      branch_type: options?.branchType
+      insert_after_step_id: options?.insertAfterStepId
     })
     return response.data
   },

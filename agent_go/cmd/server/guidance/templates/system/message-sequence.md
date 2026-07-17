@@ -54,17 +54,21 @@ Do not use it when:
 
 ## WRITE ACCESS
 
-Items can read execution outputs, `db/`, knowledgebase, learnings, and soul. Writes are disabled by default and must be declared per item:
+Items inherit the step-level DB, knowledgebase, and learnings permissions, matching a regular execution step. Usually no item-level access declaration is needed.
+
+Use a non-empty `write_access` object, or `kind`, only when one turn should be narrowed to selected stores:
 
 - database writes: `"write_access": {"db": true}` or `"kind": "db"`
 - knowledgebase writes: `"write_access": {"knowledgebase": true}` or `"kind": "knowledgebase"`
 - learning writes: `"write_access": {"learnings": true}` or `"kind": "learning"`
 
-Write access is folder-level. Per-file path lists are rejected. Use learning writes sparingly; normal step-level learning runs after the complete step.
+An item override can narrow but never exceed the step-level permissions. Write access is folder-level and per-file path lists are rejected. Use direct learning writes sparingly; normal step-level learning runs after the complete step.
 
 ## PREVALIDATION
 
-Place a `prevalidation` item immediately after the conversational turn whose artifacts it checks. Use a final prevalidation item when deterministic acceptance failures must be sent back to the same conversation for correction. On a normal validation failure, the runtime sends concrete failures back to the same conversation and retries the gate. Infrastructure failures stop the step.
+The step-level `validation_schema` is always the final gate. The runtime runs it automatically after the configured work turns and before synthetic learning/knowledge closing turns. On a normal validation failure, it sends concrete failures back to the same conversation for correction and retries the gate. Infrastructure failures stop the step.
+
+Add an explicit `prevalidation` item only when an intermediate artifact must pass before later work turns proceed. If the final configured item already validates the same step-level schema, the runtime does not add a duplicate final gate.
 
 ```json
 {
@@ -94,7 +98,7 @@ Use `foreach` when every selected database row must get one conversational turn:
 }
 ```
 
-`source_sql` must be read-only. Each result row is bound to `.` in the Go template. Add one static prevalidation after the loop when the aggregate result needs a same-conversation repair gate.
+`source_sql` must be read-only. Each result row is bound to `.` in the Go template. The step-level `validation_schema` automatically gates the final aggregate result; add a static prevalidation after the loop only when later items must not run unless that intermediate aggregate passes.
 
 ## ROUTE PATTERNS
 
@@ -119,7 +123,7 @@ For a todo_task route, use `message_sequence` when the orchestrator should prese
 - Keep each user-message item focused on one outcome.
 - Use explicit durable files or DB rows for cross-step handoff.
 - Declare item write access before execution.
-- Keep the step-level `validation_schema` strict, and use explicit prevalidation items whenever a deterministic failure must trigger same-conversation repair.
+- Put the final deterministic acceptance contract in the step-level `validation_schema`; use explicit prevalidation items only for intermediate checks.
 - Create another large sequence only when its context should be intentionally isolated, and record the boundary rationale in the plan description/review.
 - Keep code, its retries, permissions, logs, and costs in standalone scripted regular steps.
 - Never add a legacy code item. If an old plan contains one, require the v1.0.10 workflow preflight migration.

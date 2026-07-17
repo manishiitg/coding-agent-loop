@@ -348,7 +348,7 @@ func MatchStepConfigs(newSteps []PlanStepInterface, oldConfigs []StepConfig) (ma
 	return result, nil
 }
 
-// MatchStepConfigByID matches a step config by ID (for branch steps)
+// MatchStepConfigByID matches a nested step config by its stable ID.
 // stepID: the step ID to match (from plan.json)
 // Returns the matched AgentConfigs or nil if not found
 func MatchStepConfigByID(stepID string, oldConfigs []StepConfig) *AgentConfigs {

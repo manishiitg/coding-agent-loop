@@ -82,8 +82,8 @@ func TestMessageSequenceStepPathForStepMatchesFreshRerunPaths(t *testing.T) {
 			want:       false,
 		},
 		{
-			name:       "branch folder is not a message sequence route root",
-			stepPath:   "step-3-if-true-0",
+			name:       "unrelated nested naming is not a message sequence route root",
+			stepPath:   "step-3-route-login",
 			stepNumber: 3,
 			want:       false,
 		},

@@ -46,12 +46,15 @@ Example:
 
 		client := &codingAgentChatE2EClient{
 			baseURL:        strings.TrimRight(codingAgentBackgroundE2EFlags.serverURL, "/"),
-			token:          os.Getenv("MCP_API_TOKEN"),
+			token:          os.Getenv("AGENTWORKS_AUTH_TOKEN"),
 			http:           &http.Client{Timeout: 30 * time.Second},
 			agentMode:      "simple",
 			selectedFolder: codingAgentBackgroundE2EFlags.selectedFolder,
 			enabledServers: "api-bridge",
 			timeout:        codingAgentBackgroundE2EFlags.timeout,
+		}
+		if err := client.ensureUserAuth(ctx); err != nil {
+			return err
 		}
 
 		provider := strings.TrimSpace(codingAgentBackgroundE2EFlags.provider)

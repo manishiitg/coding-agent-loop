@@ -69,8 +69,11 @@ Example:
 
 		client := &codingAgentChatE2EClient{
 			baseURL: strings.TrimRight(agentBrowseE2EFlags.serverURL, "/"),
-			token:   os.Getenv("MCP_API_TOKEN"),
+			token:   os.Getenv("AGENTWORKS_AUTH_TOKEN"),
 			http:    &http.Client{Timeout: 30 * time.Second},
+		}
+		if err := client.ensureUserAuth(ctx); err != nil {
+			return err
 		}
 		defer func() {
 			stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)

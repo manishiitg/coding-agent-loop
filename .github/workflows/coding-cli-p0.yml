@@ -15,14 +15,9 @@ on:
   workflow_dispatch:
     inputs:
       providers:
-        description: "Comma-separated real CLI providers, or all"
+        description: "Comma-separated live CLI providers, or all"
         required: false
         default: "all"
-      run_real:
-        description: "Run authenticated CLI and workflow P0 E2Es on the self-hosted macOS runner"
-        type: boolean
-        required: false
-        default: false
   schedule:
     - cron: "30 20 * * *"
 
@@ -30,8 +25,8 @@ permissions:
   contents: read
 
 jobs:
-  fast-contract:
-    name: P0 contract (fast)
+  deterministic-contracts:
+    name: Coding CLI deterministic contracts
     runs-on: ubuntu-latest
     steps:
       - name: Checkout coding-agent-loop
@@ -66,14 +61,28 @@ jobs:
       - name: Install frontend test dependencies
         run: npm ci --prefix coding-agent-loop/frontend
 
-      - name: Verify P0 registry and compile workflow gate
+      - name: Verify coding CLI registry
         working-directory: coding-agent-loop
-        run: ./scripts/run-coding-cli-p0.sh
+        run: >-
+          go -C ../multi-llm-provider-go test .
+          -run 'TestActiveCodingAgentProvidersSatisfyP0Contract|TestCodingAgentCertificationReferencesExistingTests'
+          -count=1
+
+      - name: Verify deterministic delivery and notification contracts
+        working-directory: coding-agent-loop
+        run: >-
+          go -C agent_go test ./cmd/server
+          -run 'Test(HandleLiveInputMessageBusyCodingAgentDeliversExactlyOnce|HandleLiveInputMessageCompletionBoundaryChoosesExactlyOneRoute|StartNextTurnFromLiveInputAcknowledgesBeforeQueuedTurnRuns|WorkflowStepCompletionAutoNotificationCarriesCleanFinalMessage)$'
+          -count=1
+
+      - name: Verify frontend live-input submission contract
+        working-directory: coding-agent-loop
+        run: npm --prefix frontend test -- src/utils/liveInputSubmission.test.ts
 
   real-contract:
-    name: P0 real CLI + workflow
+    name: P0 live CLI + MCP bridge + workflow
     if: >-
-      (github.event_name == 'workflow_dispatch' && inputs.run_real) ||
+      github.event_name == 'workflow_dispatch' ||
       github.event_name == 'schedule'
     runs-on: [self-hosted, macOS, agentworks-coding-cli]
     timeout-minutes: 240
@@ -114,13 +123,14 @@ jobs:
       - name: Run authenticated P0 matrix
         working-directory: coding-agent-loop
         env:
-          RUN_CODING_CLI_P0_REAL: "1"
-          CODING_CLI_P0_PROVIDERS: ${{ github.event_name == 'workflow_dispatch' && inputs.providers != 'all' && inputs.providers || 'claude-code,codex-cli,cursor-cli,pi-cli' }}
-          WORKSPACE_API_URL: ${{ vars.CODING_CLI_P0_WORKSPACE_API_URL }}
-          WORKSPACE_DOCS_PATH: ${{ vars.CODING_CLI_P0_WORKSPACE_DOCS_PATH }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           CODEX_API_KEY: ${{ secrets.CODEX_API_KEY }}
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
           PI_API_KEY: ${{ secrets.PI_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-        run: ./scripts/run-coding-cli-p0.sh
+        run: >-
+          ./scripts/run-coding-cli-p0.sh
+          --providers "${{ github.event_name == 'workflow_dispatch' && inputs.providers != 'all' && inputs.providers || 'claude-code,codex-cli,cursor-cli,pi-cli' }}"
+          --server-url "${{ vars.CODING_CLI_P0_SERVER_URL || 'http://localhost:18743' }}"
+          --workspace-api "${{ vars.CODING_CLI_P0_WORKSPACE_API_URL || 'http://127.0.0.1:18744' }}"
+          --workspace-docs "${{ vars.CODING_CLI_P0_WORKSPACE_DOCS_PATH || format('{0}/coding-agent-loop/workspace-docs', github.workspace) }}"

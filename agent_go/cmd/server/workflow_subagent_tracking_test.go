@@ -484,6 +484,57 @@ func TestWorkflowStepStartAndCompletionNotifyMainAgent(t *testing.T) {
 	}
 }
 
+func TestWorkflowStepCompletionAutoNotificationCarriesCleanFinalMessage(t *testing.T) {
+	const (
+		sessionID = "session-p0-clean-final-notification"
+		execID    = "workflow-full-p0-step-1"
+		finalText = "P0_FIRST_COMPLETED P0_BRIDGE_FIRST_CODEX_CLI\nSTATUS: COMPLETED"
+	)
+	registry := NewBackgroundAgentRegistry()
+	api := &StreamingAPI{bgAgentRegistry: registry}
+	agent := &BackgroundAgent{
+		ID:        execID,
+		Name:      "Step -> p0-first",
+		SessionID: sessionID,
+		Kind:      "workflow_step",
+		Status:    BGAgentRunning,
+		CreatedAt: time.Now(),
+		Metadata: map[string]string{
+			"execution_type": "workflow-step",
+			"step_id":        "p0-first",
+		},
+	}
+	registry.Register(sessionID, agent)
+
+	notifier := &workshopExecutionBgNotifier{api: api, sessionID: sessionID}
+	notifier.OnExecutionComplete(execID, agent.Name, finalText, agent.Metadata, nil)
+
+	snap := agent.GetSnapshot()
+	if snap.Status != BGAgentCompleted {
+		t.Fatalf("status = %q, want completed", snap.Status)
+	}
+	if snap.Result != finalText {
+		t.Fatalf("stored completion result = %q, want exact final assistant message %q", snap.Result, finalText)
+	}
+	message := api.buildAutoNotificationMessage(sessionID, snap)
+	if !strings.Contains(message, "Result: "+finalText) {
+		t.Fatalf("auto-notification did not carry exact final assistant message:\n%s", message)
+	}
+	for _, forbidden := range []string{
+		"api-bridge.",
+		"api_bridge_",
+		"execute_shell_command(",
+		`"command":`,
+		`"stdout":`,
+		"ctrl+o to expand",
+		"Called\n└",
+	} {
+		if strings.Contains(message, forbidden) {
+			t.Fatalf("auto-notification leaked MCP/TUI trail %q:\n%s", forbidden, message)
+		}
+	}
+}
+
 // Pin the compact start auto-notification trailer.
 func TestWorkflowStartAutoNotificationTrailerIsCompact(t *testing.T) {
 	singleAgent := buildBackgroundAgentStartSyntheticMessage("session-x", []string{

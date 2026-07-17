@@ -76,7 +76,7 @@ Example:
 
 		client := &codingAgentChatE2EClient{
 			baseURL:        strings.TrimRight(codingAgentChatE2EFlags.serverURL, "/"),
-			token:          os.Getenv("MCP_API_TOKEN"),
+			token:          os.Getenv("AGENTWORKS_AUTH_TOKEN"),
 			http:           &http.Client{Timeout: 30 * time.Second},
 			agentMode:      codingAgentChatE2EFlags.agentMode,
 			selectedFolder: codingAgentChatE2EFlags.selectedFolder,
@@ -85,6 +85,9 @@ Example:
 			workshopMode:   codingAgentChatE2EFlags.workshopMode,
 			enabledServers: codingAgentChatE2EFlags.enabledServers,
 			timeout:        codingAgentChatE2EFlags.timeout,
+		}
+		if err := client.ensureUserAuth(ctx); err != nil {
+			return err
 		}
 
 		provider := strings.TrimSpace(codingAgentChatE2EFlags.provider)
@@ -276,6 +279,28 @@ type codingAgentChatE2EClient struct {
 	workshopMode   string
 	enabledServers string
 	timeout        time.Duration
+}
+
+// ensureUserAuth obtains the JWT required by /api routes. MCP_API_TOKEN is a
+// different credential used only by per-tool bridge endpoints and must never
+// be sent as the application bearer token. Single-user servers expose the
+// public login route without requiring credentials; multi-user test runs can
+// supply AGENTWORKS_AUTH_TOKEN explicitly.
+func (c *codingAgentChatE2EClient) ensureUserAuth(ctx context.Context) error {
+	if strings.TrimSpace(c.token) != "" {
+		return nil
+	}
+	var resp struct {
+		Token string `json:"token"`
+	}
+	if err := c.doJSON(ctx, http.MethodPost, "/api/auth/login", "", map[string]interface{}{}, &resp); err != nil {
+		return fmt.Errorf("authenticate live E2E client: %w (set AGENTWORKS_AUTH_TOKEN for multi-user servers)", err)
+	}
+	if strings.TrimSpace(resp.Token) == "" {
+		return fmt.Errorf("authenticate live E2E client: server returned an empty token")
+	}
+	c.token = strings.TrimSpace(resp.Token)
+	return nil
 }
 
 func defaultCodingAgentE2EModel(provider string) string {

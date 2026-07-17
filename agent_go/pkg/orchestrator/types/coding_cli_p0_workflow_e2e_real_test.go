@@ -1,7 +1,12 @@
+//go:build coding_cli_p0_live
+
 package types
 
 import (
 	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,20 +19,26 @@ import (
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 
+	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 	stepworkflow "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
 
+var (
+	codingCLIP0ProvidersFlag     = flag.String("coding-cli-p0-providers", "claude-code,codex-cli,cursor-cli,pi-cli", "comma-separated live coding CLI providers")
+	codingCLIP0WorkspaceAPIFlag  = flag.String("coding-cli-p0-workspace-api", "http://127.0.0.1:18744", "live workspace API URL")
+	codingCLIP0WorkspaceDocsFlag = flag.String("coding-cli-p0-workspace-docs", "", "absolute workspace-docs path")
+)
+
 // TestCodingCLIWorkflowP0CompletionAdvancesNextStep is the application-level
 // P0 contract. Adapter tests prove that a CLI can finish a turn; this test
-// proves AgentWorks observes that completion, persists it, and starts the next
-// workflow step. A provider is not workflow-certified if this test fails.
+// proves AgentWorks observes that completion, persists only the final assistant
+// message, and starts the next workflow step. Both steps must perform real file
+// operations through mcpagent's api-bridge; a tool-less CLI run is not P0
+// workflow evidence because coding CLIs render and complete differently while
+// MCP calls are active. A provider is not workflow-certified if this test fails.
 func TestCodingCLIWorkflowP0CompletionAdvancesNextStep(t *testing.T) {
-	if os.Getenv("RUN_CODING_CLI_WORKFLOW_P0_E2E") == "" {
-		t.Skip("set RUN_CODING_CLI_WORKFLOW_P0_E2E=1 to run the real coding-CLI workflow P0 matrix")
-	}
-
 	providers := codingCLIP0Providers(t)
 	requested := requestedCodingCLIP0Providers(t, providers)
 	for _, provider := range requested {
@@ -119,7 +130,7 @@ func codingCLIP0Providers(t *testing.T) map[string]codingCLIP0Provider {
 
 func requestedCodingCLIP0Providers(t *testing.T, providers map[string]codingCLIP0Provider) []codingCLIP0Provider {
 	t.Helper()
-	requested := strings.TrimSpace(os.Getenv("CODING_CLI_P0_PROVIDERS"))
+	requested := strings.TrimSpace(*codingCLIP0ProvidersFlag)
 	if requested == "" || requested == "all" {
 		requested = "claude-code,codex-cli,cursor-cli,pi-cli"
 	}
@@ -129,7 +140,7 @@ func requestedCodingCLIP0Providers(t *testing.T, providers map[string]codingCLIP
 		name = strings.ToLower(strings.TrimSpace(name))
 		provider, ok := providers[name]
 		if !ok {
-			t.Fatalf("unknown CODING_CLI_P0_PROVIDERS entry %q", name)
+			t.Fatalf("unknown -coding-cli-p0-providers entry %q", name)
 		}
 		if _, err := exec.LookPath(provider.requiredBin); err != nil {
 			if provider.name == "pi-cli" {
@@ -158,15 +169,12 @@ func runCodingCLIWorkflowP0(t *testing.T, provider codingCLIP0Provider) {
 	}
 	requireLocalMCPBridgeForPiWorkflowE2E(t)
 
-	wsAPI := strings.TrimSpace(os.Getenv("WORKSPACE_API_URL"))
-	if wsAPI == "" {
-		wsAPI = "http://127.0.0.1:18744"
-		t.Setenv("WORKSPACE_API_URL", wsAPI)
-	}
+	wsAPI := strings.TrimSpace(*codingCLIP0WorkspaceAPIFlag)
+	t.Setenv("WORKSPACE_API_URL", wsAPI)
 	if err := requireWorkspaceAPIReachable(wsAPI); err != nil {
 		t.Fatalf("P0 workspace API at %s is unreachable: %v", wsAPI, err)
 	}
-	wsRoot := strings.TrimSpace(os.Getenv("WORKSPACE_DOCS_PATH"))
+	wsRoot := strings.TrimSpace(*codingCLIP0WorkspaceDocsFlag)
 	if wsRoot == "" {
 		wsRoot = "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs"
 	}
@@ -183,6 +191,14 @@ func runCodingCLIWorkflowP0(t *testing.T, provider codingCLIP0Provider) {
 	if err := os.MkdirAll(filepath.Join(workspaceDisk, "variables"), 0o755); err != nil {
 		t.Fatalf("mkdir variables: %v", err)
 	}
+	firstBridgeToken := "P0_BRIDGE_FIRST_" + strings.ToUpper(strings.ReplaceAll(provider.name, "-", "_"))
+	secondBridgeToken := "P0_BRIDGE_SECOND_" + strings.ToUpper(strings.ReplaceAll(provider.name, "-", "_"))
+	// Workflow shell writes are intentionally scoped to the active step output
+	// folder. The following step may read the shared execution tree, but it may
+	// only write inside its own output folder. Keep the P0 proof inside those
+	// production folder-guard boundaries.
+	firstBridgeFile := filepath.Join(workspaceDisk, "runs", "iteration-0", "default", "execution", "p0-first", "p0-bridge-first.txt")
+	secondBridgeFile := filepath.Join(workspaceDisk, "runs", "iteration-0", "default", "execution", "p0-second", "p0-bridge-second.txt")
 	if err := writeJSON(filepath.Join(workspaceDisk, "variables", "variables.json"), map[string]interface{}{
 		"variables":       []interface{}{},
 		"groups":          []map[string]interface{}{{"name": "default", "values": map[string]string{}, "enabled": true}},
@@ -194,17 +210,35 @@ func runCodingCLIWorkflowP0(t *testing.T, provider codingCLIP0Provider) {
 		"steps": []map[string]interface{}{
 			{
 				"type": "regular", "id": "p0-first", "title": "First P0 turn",
-				"description":          "Reply with exactly P0_FIRST_COMPLETED on one line, then stop.",
-				"context_dependencies": []string{}, "context_output": "first.json", "next_step_id": "p0-second",
+				"description":          fmt.Sprintf("Use the declared MCP bridge shell tool (api-bridge.execute_shell_command / api_bridge_execute_shell_command), never a built-in shell or file tool, to run this exact file operation:\nprintf '%%s\\n' '%s' > '%s' && cat '%s'\nAfter the bridge call succeeds, return only this completion summary and status—do not reproduce the tool name, arguments, command, or output envelope:\nP0_FIRST_COMPLETED %s\nSTATUS: COMPLETED", firstBridgeToken, firstBridgeFile, firstBridgeFile, firstBridgeToken),
+				"context_dependencies": []string{}, "context_output": "p0-bridge-first.txt", "next_step_id": "p0-second",
 			},
 			{
 				"type": "regular", "id": "p0-second", "title": "Second P0 turn",
-				"description":          "Reply with exactly P0_SECOND_STARTED_AFTER_FIRST on one line, then stop.",
-				"context_dependencies": []string{"p0-first"}, "context_output": "second.json", "next_step_id": "end",
+				"description":          fmt.Sprintf("Use the declared MCP bridge shell tool (api-bridge.execute_shell_command / api_bridge_execute_shell_command), never a built-in shell or file tool, to verify the prior file and create the next one:\ntest \"$(cat '%s')\" = '%s' && printf '%%s\\n' '%s' > '%s' && cat '%s'\nAfter the bridge call succeeds, return only this completion summary and status—do not reproduce the tool name, arguments, command, or output envelope:\nP0_SECOND_STARTED_AFTER_FIRST %s\nSTATUS: COMPLETED", firstBridgeFile, firstBridgeToken, secondBridgeToken, secondBridgeFile, secondBridgeFile, secondBridgeToken),
+				"context_dependencies": []string{"p0-bridge-first.txt"}, "context_output": "p0-bridge-second.txt", "next_step_id": "end",
 			},
 		},
 	}); err != nil {
 		t.Fatalf("write plan: %v", err)
+	}
+	if err := writeJSON(filepath.Join(workspaceDisk, "planning", "step_config.json"), map[string]interface{}{
+		"steps": []map[string]interface{}{
+			{
+				"id": "p0-first",
+				"agent_configs": map[string]interface{}{
+					"enabled_custom_tools": []string{"workspace_advanced:execute_shell_command"},
+				},
+			},
+			{
+				"id": "p0-second",
+				"agent_configs": map[string]interface{}{
+					"enabled_custom_tools": []string{"workspace_advanced:execute_shell_command"},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("write step config: %v", err)
 	}
 
 	model := &workflowtypes.AgentLLMConfig{Provider: string(provider.provider), ModelID: provider.model}
@@ -217,7 +251,15 @@ func runCodingCLIWorkflowP0(t *testing.T, provider codingCLIP0Provider) {
 		Primary: orchestrator.LLMModel{Provider: string(provider.provider), ModelID: provider.model},
 		APIKeys: provider.apiKeys,
 	}
-	wo, err := NewWorkflowOrchestrator("", 0.2, "workflow", loggerv2.NewNoop(), nil, nil, nil, nil, false, nil, map[string]interface{}{}, workflowLLM, 6, map[string]string{}, preset)
+	// Match production workflow construction: every execution agent receives the
+	// workspace registry, then step_config narrows it to the one bridge tool this
+	// P0 contract exercises. Passing nil tools here makes provider behavior decide
+	// whether the test works and does not test AgentWorks' actual MCP contract.
+	workspaceTools, workspaceExecutors, workspaceCategories, _ := virtualtools.CreateWorkspaceToolRegistryUntyped(virtualtools.WorkspaceToolRegistryConfig{
+		WorkspaceAPIURL: wsAPI,
+		SessionID:       "coding-cli-p0-" + provider.name,
+	})
+	wo, err := NewWorkflowOrchestrator("", 0.2, "workflow", loggerv2.NewNoop(), nil, nil, nil, nil, false, workspaceTools, workspaceExecutors, workflowLLM, 6, workspaceCategories, preset)
 	if err != nil {
 		t.Fatalf("NewWorkflowOrchestrator: %v", err)
 	}
@@ -232,7 +274,57 @@ func runCodingCLIWorkflowP0(t *testing.T, provider codingCLIP0Provider) {
 	if _, err := wo.Execute(ctx, "Run the two-step coding CLI P0 completion contract.", relWorkspace, map[string]interface{}{"workflowStatus": workflowtypes.WorkflowStatusPreVerification}); err != nil {
 		t.Fatalf("workflow did not advance after %s completion: %v", provider.name, err)
 	}
-	assertStepExecutionResultContains(t, workspaceDisk, "p0-first", "P0_FIRST_COMPLETED")
-	assertStepExecutionResultContains(t, workspaceDisk, "p0-second", "P0_SECOND_STARTED_AFTER_FIRST")
-	t.Logf("P0 workflow advance passed for %s/%s", provider.name, provider.model)
+	assertStepExecutionResultContains(t, workspaceDisk, "p0-first", "P0_FIRST_COMPLETED "+firstBridgeToken)
+	assertStepExecutionResultContains(t, workspaceDisk, "p0-second", "P0_SECOND_STARTED_AFTER_FIRST "+secondBridgeToken)
+	assertCodingCLIP0BridgeFile(t, firstBridgeFile, firstBridgeToken)
+	assertCodingCLIP0BridgeFile(t, secondBridgeFile, secondBridgeToken)
+	assertCodingCLIP0CleanStepResult(t, workspaceDisk, "p0-first")
+	assertCodingCLIP0CleanStepResult(t, workspaceDisk, "p0-second")
+	t.Logf("P0 workflow bridge/final-result/advance contract passed for %s/%s", provider.name, provider.model)
+}
+
+func assertCodingCLIP0BridgeFile(t *testing.T, path, want string) {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("MCP bridge file operation did not create %s: %v", path, err)
+	}
+	if strings.TrimSpace(string(body)) != want {
+		t.Fatalf("MCP bridge file %s = %q, want %q", path, strings.TrimSpace(string(body)), want)
+	}
+}
+
+func assertCodingCLIP0CleanStepResult(t *testing.T, workspaceDisk, stepID string) {
+	t.Helper()
+	matches := executionAttemptResultLogs(filepath.Join(workspaceDisk, "runs", "*", "*", "logs", stepID, "execution", "execution-attempt-*-iteration-*.json"))
+	if len(matches) == 0 {
+		t.Fatalf("%s: no execution result log found", stepID)
+	}
+	body, err := os.ReadFile(matches[len(matches)-1])
+	if err != nil {
+		t.Fatalf("%s: read execution result: %v", stepID, err)
+	}
+	var entry struct {
+		ExecutionResult string `json:"execution_result"`
+	}
+	if err := json.Unmarshal(body, &entry); err != nil {
+		t.Fatalf("%s: parse execution result: %v", stepID, err)
+	}
+	if strings.TrimSpace(entry.ExecutionResult) == "" {
+		t.Fatalf("%s: empty execution result", stepID)
+	}
+	for _, forbidden := range []string{
+		"api-bridge.",
+		"api_bridge_",
+		"execute_shell_command(",
+		`"command":`,
+		`"stdout":`,
+		"ctrl+o to expand",
+		"Called\n└",
+		"Calling api-bridge",
+	} {
+		if strings.Contains(entry.ExecutionResult, forbidden) {
+			t.Fatalf("%s: persisted final result leaked MCP/TUI trail %q:\n%s", stepID, forbidden, entry.ExecutionResult)
+		}
+	}
 }

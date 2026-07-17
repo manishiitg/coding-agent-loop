@@ -1,11 +1,49 @@
 package testing
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	stdtesting "testing"
 
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/vertex"
 )
+
+func TestCodingAgentE2EClientObtainsUserJWTSeparatelyFromMCPToken(st *stdtesting.T) {
+	st.Setenv("MCP_API_TOKEN", "must-not-be-used-as-user-jwt")
+	var loginAuthorization string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/auth/login":
+			loginAuthorization = r.Header.Get("Authorization")
+			_ = json.NewEncoder(w).Encode(map[string]string{"token": "live-user-jwt"})
+		case "/api/protected":
+			if got := r.Header.Get("Authorization"); got != "Bearer live-user-jwt" {
+				st.Errorf("protected Authorization = %q, want user JWT", got)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := &codingAgentChatE2EClient{baseURL: server.URL, http: server.Client()}
+	if err := client.ensureUserAuth(context.Background()); err != nil {
+		st.Fatalf("ensureUserAuth: %v", err)
+	}
+	if loginAuthorization != "" {
+		st.Fatalf("login request unexpectedly sent Authorization %q", loginAuthorization)
+	}
+	if client.token != "live-user-jwt" {
+		st.Fatalf("client token = %q, want user JWT", client.token)
+	}
+	if err := client.doJSON(context.Background(), http.MethodGet, "/api/protected", "session", nil, nil); err != nil {
+		st.Fatalf("protected request: %v", err)
+	}
+}
 
 func TestDefaultCodingAgentE2EModelIncludesCodingCLIProviders(st *stdtesting.T) {
 	tests := map[string]string{

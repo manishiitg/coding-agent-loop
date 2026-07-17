@@ -31,16 +31,17 @@ var workflowAutoNotificationE2ECmd = &cobra.Command{
 
 This test:
 1. Creates a real temporary workflow under workspace-docs/Workflow.
-2. Starts a real multi-agent chat turn and asks that agent to call run_workflow.
-3. Polls /api/sessions/{session_id}/events until a [AUTO-NOTIFICATION]
-   user_message for workflow start appears.
-4. Stops the chat session with cancelAgents=true.
+2. Starts a real workflow Run-mode turn and asks it to call run_full_workflow.
+3. Polls /api/sessions/{session_id}/events until the typed
+   background_agent_started event proves the workflow launched.
+4. Runs a real plan step that writes and reads a file through api-bridge.
+5. Waits for the step-completion [AUTO-NOTIFICATION] and verifies that it
+   carries only the final assistant result, never the MCP call/output trail.
+6. Stops the chat session with cancelAgents=true.
 
 It intentionally does not call runWorkflowInternal directly and does not use
 the private session-scoped custom-tool HTTP endpoint.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		token := strings.TrimSpace(os.Getenv("MCP_API_TOKEN"))
-
 		provider := strings.TrimSpace(workflowAutoNotificationE2EFlags.provider)
 		model := strings.TrimSpace(workflowAutoNotificationE2EFlags.model)
 		if model == "" {
@@ -66,44 +67,59 @@ the private session-scoped custom-tool HTTP endpoint.`,
 		if err != nil {
 			return err
 		}
-		relWorkflow, cleanup, err := createWorkflowAutoNotificationFixture(workspaceDocs, workflowAutoNotificationE2EFlags.keepFixture, provider, model)
+		fixture, cleanup, err := createWorkflowAutoNotificationFixture(workspaceDocs, workflowAutoNotificationE2EFlags.keepFixture, provider, model)
 		if err != nil {
 			return err
 		}
 		defer cleanup()
+		relWorkflow := fixture.relWorkflow
 
 		client := &codingAgentChatE2EClient{
 			baseURL:        strings.TrimRight(workflowAutoNotificationE2EFlags.serverURL, "/"),
-			token:          token,
+			token:          strings.TrimSpace(os.Getenv("AGENTWORKS_AUTH_TOKEN")),
 			http:           &http.Client{Timeout: 90 * time.Second},
-			agentMode:      "multi-agent",
-			selectedFolder: "_users/default/Chats",
+			agentMode:      "workflow_phase",
+			selectedFolder: fixture.relWorkflow,
+			presetQueryID:  fixture.presetID,
+			phaseID:        "workflow-builder",
+			workshopMode:   "run",
 			enabledServers: "api-bridge",
 			timeout:        timeout,
+		}
+		if err := client.ensureUserAuth(ctx); err != nil {
+			return err
 		}
 
 		fmt.Printf("Running workflow auto-notification e2e provider=%s model=%s session=%s workflow=%s\n", provider, model, sessionID, relWorkflow)
 
-		query := fmt.Sprintf(`Use the MCP api-bridge execute_shell_command tool exactly once to run this exact curl command:
-
-curl -sS -X POST "$MCP_API_URL/tools/custom/run_workflow" -H "Authorization: Bearer $MCP_API_TOKEN" -H "Content-Type: application/json" -d '{"workflow_path":%q,"group_name":"default","instructions":"E2E workflow start auto-notification check. Keep this run minimal."}'
-
-After the command returns, reply exactly RUN_WORKFLOW_TOOL_STARTED. Do not call any other workflow tool. Do not ask a question.`, relWorkflow)
+		query := `Call run_full_workflow exactly once with group_name="default". Do not call execute_step or use shell/curl to start the workflow. After run_full_workflow returns, reply exactly RUN_WORKFLOW_TOOL_STARTED. Do not ask a question.`
 		queryID, err := client.startQuery(ctx, sessionID, provider, model, query)
 		if err != nil {
 			return fmt.Errorf("start main agent run_workflow turn: %w", err)
 		}
-		fmt.Printf("Started main agent query=%s; waiting for workflow AUTO notification\n", queryID)
+		fmt.Printf("Started main agent query=%s; waiting for workflow start event\n", queryID)
 
-		agentID, err := client.waitForWorkflowStartAutoNotification(ctx, sessionID, relWorkflow, 3*time.Minute)
+		agentID, err := client.waitForWorkflowStartEvidence(ctx, sessionID, 3*time.Minute)
 		if err != nil {
 			return err
 		}
 		fmt.Printf("Observed workflow start for agent_id=%s\n", agentID)
 
+		if err := client.waitForWorkflowCompletionAutoNotification(ctx, sessionID, fixture.completionToken, 5*time.Minute); err != nil {
+			return err
+		}
+		proof, err := os.ReadFile(fixture.bridgeProofPath)
+		if err != nil {
+			return fmt.Errorf("workflow plan step did not create MCP bridge proof %s: %w", fixture.bridgeProofPath, err)
+		}
+		if strings.TrimSpace(string(proof)) != fixture.completionToken {
+			return fmt.Errorf("MCP bridge proof = %q, want %q", strings.TrimSpace(string(proof)), fixture.completionToken)
+		}
+		fmt.Println("Observed clean workflow completion AUTO notification after MCP bridge file operation")
+
 		_ = client.stopSession(ctx, sessionID)
 
-		fmt.Println("PASS workflow auto-notification e2e")
+		fmt.Println("PASS workflow MCP-bridge completion auto-notification e2e")
 		return nil
 	},
 }
@@ -142,10 +158,29 @@ func resolveWorkflowAutoNotificationWorkspaceDocs() (string, error) {
 	return "", fmt.Errorf("workspace-docs not found; pass --workspace-docs or set WORKSPACE_DOCS_PATH")
 }
 
-func createWorkflowAutoNotificationFixture(workspaceDocs string, keep bool, provider, model string) (string, func(), error) {
+type workflowAutoNotificationFixture struct {
+	relWorkflow     string
+	presetID        string
+	completionToken string
+	bridgeProofPath string
+}
+
+func createWorkflowAutoNotificationFixture(workspaceDocs string, keep bool, provider, model string) (workflowAutoNotificationFixture, func(), error) {
 	shortID := strings.ReplaceAll(uuid.NewString(), "-", "")[:10]
 	relWorkflow := "Workflow/_e2e_auto_notification_" + shortID
 	absWorkflow := filepath.Join(workspaceDocs, filepath.FromSlash(relWorkflow))
+	completionToken := "WORKFLOW_AUTO_NOTIFICATION_STEP_OK_" + shortID
+	presetID := "wf_auto_notification_" + shortID
+	// A real workflow step may write only inside its execution folder (plus its
+	// workflow DB). Keeping the proof there exercises the production folder
+	// guard instead of asking the agent to bypass it.
+	bridgeProofPath := filepath.Join(absWorkflow, "runs", "iteration-0", "default", "execution", "step-auto-notification", "mcp-bridge-proof.txt")
+	fixture := workflowAutoNotificationFixture{
+		relWorkflow:     relWorkflow,
+		presetID:        presetID,
+		completionToken: completionToken,
+		bridgeProofPath: bridgeProofPath,
+	}
 	cleanup := func() {}
 	if !keep {
 		cleanup = func() {
@@ -154,10 +189,10 @@ func createWorkflowAutoNotificationFixture(workspaceDocs string, keep bool, prov
 	}
 
 	if err := os.MkdirAll(filepath.Join(absWorkflow, "planning"), 0o755); err != nil {
-		return "", cleanup, err
+		return workflowAutoNotificationFixture{}, cleanup, err
 	}
 	if err := os.MkdirAll(filepath.Join(absWorkflow, "variables"), 0o755); err != nil {
-		return "", cleanup, err
+		return workflowAutoNotificationFixture{}, cleanup, err
 	}
 
 	noGlobalSecrets := []string{}
@@ -168,7 +203,7 @@ func createWorkflowAutoNotificationFixture(workspaceDocs string, keep bool, prov
 	}
 	manifest := map[string]interface{}{
 		"schema_version": 1,
-		"id":             "wf_auto_notification_" + shortID,
+		"id":             presetID,
 		"label":          "E2E Auto Notification Workflow",
 		"objective":      "Exercise workflow start auto-notification wiring.",
 		"capabilities": map[string]interface{}{
@@ -208,7 +243,7 @@ func createWorkflowAutoNotificationFixture(workspaceDocs string, keep bool, prov
 				"type":                 "regular",
 				"id":                   "step-auto-notification",
 				"title":                "Auto notification smoke step",
-				"description":          "Reply exactly WORKFLOW_AUTO_NOTIFICATION_STEP_OK and stop.",
+				"description":          fmt.Sprintf("Use the declared MCP api-bridge execute_shell_command tool, never a built-in shell/file tool, to run exactly this command:\nprintf '%%s\\n' %s > %s && cat %s\nAfter the bridge call succeeds, return exactly these two lines and nothing else. Do not include the tool name, arguments, command, or output envelope:\n%s\nSTATUS: COMPLETED", shellSingleQuoteE2E(completionToken), shellSingleQuoteE2E(bridgeProofPath), shellSingleQuoteE2E(bridgeProofPath), completionToken),
 				"context_dependencies": []string{},
 				"context_output":       "auto_notification.json",
 			},
@@ -222,17 +257,21 @@ func createWorkflowAutoNotificationFixture(workspaceDocs string, keep bool, prov
 
 	if err := writeJSONFile(filepath.Join(absWorkflow, "workflow.json"), manifest); err != nil {
 		cleanup()
-		return "", cleanup, err
+		return workflowAutoNotificationFixture{}, cleanup, err
 	}
 	if err := writeJSONFile(filepath.Join(absWorkflow, "planning", "plan.json"), plan); err != nil {
 		cleanup()
-		return "", cleanup, err
+		return workflowAutoNotificationFixture{}, cleanup, err
 	}
 	if err := writeJSONFile(filepath.Join(absWorkflow, "variables", "variables.json"), variables); err != nil {
 		cleanup()
-		return "", cleanup, err
+		return workflowAutoNotificationFixture{}, cleanup, err
 	}
-	return relWorkflow, cleanup, nil
+	return fixture, cleanup, nil
+}
+
+func shellSingleQuoteE2E(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func writeJSONFile(path string, value interface{}) error {
@@ -244,7 +283,7 @@ func writeJSONFile(path string, value interface{}) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-func (c *codingAgentChatE2EClient) waitForWorkflowStartAutoNotification(ctx context.Context, sessionID, workflowPath string, timeout time.Duration) (string, error) {
+func (c *codingAgentChatE2EClient) waitForWorkflowStartEvidence(ctx context.Context, sessionID string, timeout time.Duration) (string, error) {
 	start := time.Now()
 	deadline := e2eDeadline(ctx, timeout)
 	since := 0
@@ -266,38 +305,13 @@ func (c *codingAgentChatE2EClient) waitForWorkflowStartAutoNotification(ctx cont
 			case "background_agent_started":
 				agentID := strings.TrimSpace(eventPayloadString(event, "agent_id"))
 				if agentID != "" {
-					startedAgentID = agentID
+					fmt.Printf("Observed workflow background start: agent_id=%s\n", agentID)
+					return agentID, nil
 				}
 				continue
-			case "user_message":
 			default:
 				continue
 			}
-
-			content := eventPayloadString(event, "content")
-			trimmed := strings.TrimSpace(content)
-			if !strings.HasPrefix(trimmed, "[AUTO-NOTIFICATION]") {
-				continue
-			}
-			if !strings.Contains(strings.ToLower(content), "started") {
-				return startedAgentID, fmt.Errorf("workflow auto-notification did not say started: %s", truncateE2E(content, 1500))
-			}
-			workflowSpace := filepath.Base(filepath.Clean(workflowPath))
-			if !strings.Contains(content, workflowPath) && !strings.Contains(content, workflowSpace) {
-				return startedAgentID, fmt.Errorf("workflow auto-notification did not include workflow path %s: %s", workflowPath, truncateE2E(content, 1500))
-			}
-			notificationAgentID := extractWorkflowAutoNotificationAgentID(content)
-			if startedAgentID != "" && notificationAgentID != "" && notificationAgentID != startedAgentID {
-				return startedAgentID, fmt.Errorf("workflow start event agent_id %s did not match AUTO notification agent_id %s: %s", startedAgentID, notificationAgentID, truncateE2E(content, 1500))
-			}
-			if startedAgentID == "" {
-				startedAgentID = notificationAgentID
-			}
-			if startedAgentID == "" {
-				return "", fmt.Errorf("workflow AUTO notification did not include an agent ID: %s", truncateE2E(content, 1500))
-			}
-			fmt.Printf("Observed workflow AUTO notification: %s\n", truncateE2E(content, 800))
-			return startedAgentID, nil
 		}
 		// Some CLI-backed turns can briefly report the HTTP session as completed
 		// before the provider finishes dispatching tool calls. Keep the workflow
@@ -311,19 +325,66 @@ func (c *codingAgentChatE2EClient) waitForWorkflowStartAutoNotification(ctx cont
 			return startedAgentID, err
 		}
 	}
-	return startedAgentID, fmt.Errorf("timed out after %s waiting for workflow start AUTO notification; started_agent_id=%s raw=%s", time.Since(start).Round(time.Millisecond), startedAgentID, truncateE2E(lastRaw, 2500))
+	return startedAgentID, fmt.Errorf("timed out after %s waiting for workflow background_agent_started event; raw=%s", time.Since(start).Round(time.Millisecond), truncateE2E(lastRaw, 2500))
 }
 
-func extractWorkflowAutoNotificationAgentID(content string) string {
-	const marker = "(ID:"
-	idx := strings.Index(content, marker)
-	if idx < 0 {
-		return ""
+func (c *codingAgentChatE2EClient) waitForWorkflowCompletionAutoNotification(ctx context.Context, sessionID, completionToken string, timeout time.Duration) error {
+	start := time.Now()
+	deadline := e2eDeadline(ctx, timeout)
+	since := 0
+	var lastRaw string
+	for time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		resp, raw, err := c.getEventsSince(ctx, sessionID, since)
+		if err != nil {
+			return err
+		}
+		lastRaw = raw
+		since = advanceE2ECursor(since, resp.LastProcessedIndex)
+		for _, event := range resp.Events {
+			if fmt.Sprint(event["type"]) != "user_message" {
+				continue
+			}
+			content := eventPayloadString(event, "content")
+			trimmed := strings.TrimSpace(content)
+			if !strings.HasPrefix(trimmed, "[AUTO-NOTIFICATION]") {
+				continue
+			}
+			isTargetStep := strings.Contains(content, "step=step-auto-notification") || strings.Contains(content, "Step -> step-auto-notification")
+			if !isTargetStep && !strings.Contains(content, completionToken) {
+				continue
+			}
+			if !strings.Contains(content, "status=completed") {
+				return fmt.Errorf("workflow step AUTO notification was not completed: %s", truncateE2E(content, 2000))
+			}
+			wantResult := "Result: " + completionToken + "\nSTATUS: COMPLETED"
+			if !strings.Contains(content, wantResult) {
+				return fmt.Errorf("workflow step AUTO notification did not carry exact final result %q: %s", wantResult, truncateE2E(content, 2500))
+			}
+			for _, forbidden := range []string{
+				"api-bridge.",
+				"api_bridge_",
+				"execute_shell_command(",
+				`"command":`,
+				`"stdout":`,
+				"ctrl+o to expand",
+				"Called\n└",
+				"Calling api-bridge",
+			} {
+				if strings.Contains(content, forbidden) {
+					return fmt.Errorf("workflow step AUTO notification leaked MCP/TUI trail %q: %s", forbidden, truncateE2E(content, 2500))
+				}
+			}
+			return nil
+		}
+		if resp.SessionStatus == "error" || resp.SessionStatus == "stopped" {
+			return fmt.Errorf("session ended with status %s before workflow completion AUTO notification; raw=%s", resp.SessionStatus, truncateE2E(lastRaw, 2500))
+		}
+		if err := sleepContext(ctx, time.Second); err != nil {
+			return err
+		}
 	}
-	rest := content[idx+len(marker):]
-	end := strings.Index(rest, ")")
-	if end < 0 {
-		return strings.TrimSpace(rest)
-	}
-	return strings.TrimSpace(rest[:end])
+	return fmt.Errorf("timed out after %s waiting for clean workflow completion AUTO notification token=%s; raw=%s", time.Since(start).Round(time.Millisecond), completionToken, truncateE2E(lastRaw, 3000))
 }

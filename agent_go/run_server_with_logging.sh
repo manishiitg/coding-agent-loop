@@ -106,6 +106,21 @@ if [ "$MCP_SERVER_API_TOKEN_ARG_SET" = true ]; then
     export MCP_SERVER_API_TOKEN="$MCP_SERVER_API_TOKEN_ARG"
 fi
 
+# Every server launched by this script owns an isolated tmux socket. Coding
+# agent session names are process-global otherwise, and shutdown cleanup from
+# one dev/test server can kill sessions belonging to the desktop app or a
+# second server. TMUX_TMPDIR is inherited by the Go server and all CLI adapter
+# subprocesses, so ordinary tmux commands continue to work without extra flags.
+if [ -z "${TMUX_TMPDIR:-}" ]; then
+    TMUX_TMPDIR="${TMPDIR:-/tmp}/agentworks-tmux-$$"
+    AGENTWORKS_AUTO_TMUX_TMPDIR=true
+else
+    AGENTWORKS_AUTO_TMUX_TMPDIR=false
+fi
+mkdir -p "$TMUX_TMPDIR"
+chmod 700 "$TMUX_TMPDIR"
+export TMUX_TMPDIR
+
 FRONTEND_PORT_EXPLICIT="${FRONTEND_PORT:-}"
 LOCALHOST_BASE_URL="${LOCALHOST_BASE_URL:-http://127.0.0.1}"
 FRONTEND_HOST="${FRONTEND_HOST:-}"
@@ -207,7 +222,7 @@ $sessions
 EOF
 
     if [ "$count" -gt 0 ]; then
-        echo "🧹 Cleaned up $count coding-agent tmux session(s)"
+        echo "🧹 Cleaned up $count coding-agent tmux session(s) from $TMUX_TMPDIR"
     fi
 }
 
@@ -1129,6 +1144,9 @@ cleanup_on_exit() {
         stop_frontend_dev
         stop_agent_server
         stop_native_workspace
+    fi
+    if [ "$AGENTWORKS_AUTO_TMUX_TMPDIR" = true ]; then
+        rm -rf "$TMUX_TMPDIR"
     fi
 }
 

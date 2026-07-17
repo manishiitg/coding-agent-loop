@@ -370,6 +370,86 @@ func TestHandleLiveInputMessageBusyCodingAgentDeliversExactlyOnce(t *testing.T) 
 	}
 }
 
+func TestSyntheticTurnRunningAgentRegistrationDeliversLiveInputAndPreservesReplacement(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	defer store.Stop()
+
+	const sessionID = "synthetic-codex-live-input"
+	const message = "apply this while the synthetic turn is processing"
+	syntheticAgent := &mcpagent.Agent{ModelID: "gpt-5.6-sol"}
+	syntheticAgent.SetProvider(llm.ProviderCodexCLI)
+	var deliveryCalls atomic.Int32
+	var nextTurnCalls atomic.Int32
+
+	api := &StreamingAPI{
+		eventStore:       store,
+		runningAgents:    map[string]*mcpagent.Agent{},
+		runningAgentsMux: sync.RWMutex{},
+		// executeSyntheticTurn installs this cancel handle before registering
+		// the stored agent, so live-input treats it as the active turn.
+		agentCancelFuncs: map[string]context.CancelFunc{sessionID: func() {}},
+		agentCancelMux:   sync.RWMutex{},
+		internalUserMessageDeliveryHandler: func(_ context.Context, gotAgent *mcpagent.Agent, req mcpagent.UserMessageDeliveryRequest) (mcpagent.UserMessageDeliveryResult, error) {
+			deliveryCalls.Add(1)
+			if gotAgent != syntheticAgent {
+				t.Fatalf("delivery agent = %p, want synthetic agent %p", gotAgent, syntheticAgent)
+			}
+			if req.SessionID != sessionID || req.Message != message || req.Intent != mcpagent.UserMessageDeliveryIntentLiveInput {
+				t.Fatalf("delivery request = %#v", req)
+			}
+			return mcpagent.UserMessageDeliveryResult{
+				Provider:       llm.ProviderCodexCLI,
+				DeliveryStatus: mcpagent.UserMessageDeliveryStatusSentToCLI,
+				Transport:      llm.CodingAgentTransportTmux,
+			}, nil
+		},
+		internalQueryHandler: func(http.ResponseWriter, *http.Request) {
+			nextTurnCalls.Add(1)
+		},
+	}
+
+	cleanupSyntheticRegistration := api.registerRunningAgentForTurn(sessionID, syntheticAgent)
+	body := bytes.NewBufferString(`{"message":"` + message + `"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/live-input", body)
+	req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
+	rr := httptest.NewRecorder()
+
+	api.handleLiveInputMessage(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var response LiveInputResponse
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.DeliveryStatus != "sent_to_cli" {
+		t.Fatalf("delivery_status = %q, want sent_to_cli", response.DeliveryStatus)
+	}
+	if got := deliveryCalls.Load(); got != 1 {
+		t.Fatalf("delivery calls = %d, want exactly 1", got)
+	}
+	if got := nextTurnCalls.Load(); got != 0 {
+		t.Fatalf("next-turn calls = %d, want 0", got)
+	}
+
+	// Reproduce the completion-boundary race: a newer turn replaces the map
+	// entry before the synthetic turn's deferred cleanup runs. Old cleanup must
+	// leave the newer agent registered.
+	newerAgent := &mcpagent.Agent{ModelID: "gpt-5.6-sol"}
+	newerAgent.SetProvider(llm.ProviderCodexCLI)
+	api.runningAgentsMux.Lock()
+	api.runningAgents[sessionID] = newerAgent
+	api.runningAgentsMux.Unlock()
+	cleanupSyntheticRegistration()
+
+	api.runningAgentsMux.RLock()
+	gotAgent := api.runningAgents[sessionID]
+	api.runningAgentsMux.RUnlock()
+	if gotAgent != newerAgent {
+		t.Fatalf("synthetic cleanup removed/replaced newer agent: got %p, want %p", gotAgent, newerAgent)
+	}
+}
+
 func TestHandleLiveInputMessageCompletionBoundaryChoosesExactlyOneRoute(t *testing.T) {
 	t.Run("completion during confirmed delivery stays live-only", func(t *testing.T) {
 		store := internalevents.NewEventStore(10)

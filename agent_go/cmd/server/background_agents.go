@@ -2000,6 +2000,31 @@ func botPlatformFromSessionID(sessionID string) string {
 	return strings.ToLower(strings.TrimSpace(platform))
 }
 
+// registerRunningAgentForTurn exposes an agent to live-input delivery for the
+// lifetime of a foreground or synthetic turn. The returned cleanup is
+// identity-safe: an older turn cannot remove a newer turn's agent if their
+// completion boundaries overlap.
+func (api *StreamingAPI) registerRunningAgentForTurn(sessionID string, runningAgent *mcpagent.Agent) func() {
+	if runningAgent == nil {
+		return func() {}
+	}
+
+	api.runningAgentsMux.Lock()
+	if api.runningAgents == nil {
+		api.runningAgents = make(map[string]*mcpagent.Agent)
+	}
+	api.runningAgents[sessionID] = runningAgent
+	api.runningAgentsMux.Unlock()
+
+	return func() {
+		api.runningAgentsMux.Lock()
+		if api.runningAgents[sessionID] == runningAgent {
+			delete(api.runningAgents, sessionID)
+		}
+		api.runningAgentsMux.Unlock()
+	}
+}
+
 // executeSyntheticTurn drives the stored agent directly with a synthetic message.
 // Instead of creating an internal HTTP request and re-building the entire agent/tools/history,
 // it reuses the agent stored after the last plan-mode turn via StreamWithEvents().
@@ -2067,6 +2092,12 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) bo
 	api.agentCancelFuncs[sessionID] = agentCancel
 	api.agentCancelMux.Unlock()
 
+	// Synthetic turns reuse the stored agent directly instead of entering the
+	// normal /api/query setup path. Register the underlying agent explicitly so
+	// /live-input can deliver user messages to the active coding CLI rather than
+	// incorrectly queueing them as a later turn.
+	unregisterRunningAgent := api.registerRunningAgentForTurn(sessionID, llmAgent.GetUnderlyingAgent())
+
 	log.Printf("[BG AGENT] Executing synthetic turn for session %s via stored agent", sessionID)
 
 	// Start the stream SYNCHRONOUSLY so the bool we return reflects whether the
@@ -2080,6 +2111,7 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) bo
 	if err != nil {
 		log.Printf("[BG AGENT] StreamWithEvents error for synthetic turn on session %s: %v", sessionID, err)
 		agentCancel()
+		unregisterRunningAgent()
 		api.agentCancelMux.Lock()
 		delete(api.agentCancelFuncs, sessionID)
 		api.agentCancelMux.Unlock()
@@ -2092,6 +2124,8 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) bo
 
 	go func() {
 		defer func() {
+			unregisterRunningAgent()
+
 			// Clean up cancel function
 			api.agentCancelMux.Lock()
 			delete(api.agentCancelFuncs, sessionID)

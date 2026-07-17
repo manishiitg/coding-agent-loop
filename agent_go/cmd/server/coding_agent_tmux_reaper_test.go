@@ -144,60 +144,67 @@ func TestCleanupStaleCodingAgentTmuxSessionsClosesStoppedSessionImmediately(t *t
 }
 
 func TestCleanupBoundedTmuxKeepsDismissedSnapshotUntilDisplayDeadline(t *testing.T) {
-	now := time.Now()
-	store := terminals.NewStore()
-	sessionID := "bounded-session"
-	tmuxSession := "mlp-cursor-cli-int-bounded"
-	terminalID := sessionID + ":workflow-step:review-plan"
-	store.HandleEvent(sessionID, codingAgentTmuxReaperChunkEvent(now, sessionID, "workflow-step:review-plan", tmuxSession))
-	store.HandleEvent(sessionID, storeevents.Event{
-		Type:          "streaming_end",
-		Timestamp:     now,
-		SessionID:     sessionID,
-		ExecutionID:   "workflow-step:review-plan",
-		ExecutionKind: "workflow_step",
-		Data: &agentevents.AgentEvent{
-			Type: agentevents.StreamingEnd,
-			Data: &agentevents.StreamingEndEvent{
-				BaseEventData: agentevents.BaseEventData{Metadata: map[string]interface{}{
-					"kind":                       "terminal",
-					"tmux_session":               tmuxSession,
-					"terminal_retention_seconds": 1800,
-				}},
-			},
-		},
-	})
-	if !store.Dismiss(terminalID) {
-		t.Fatal("expected snapshot dismissal")
-	}
-	api := &StreamingAPI{
-		terminalStore: store,
-		activeSessions: map[string]*ActiveSessionInfo{
-			sessionID: {SessionID: sessionID, Status: "running"},
-		},
-	}
-	gotArgs := stubTerminalTmuxCommand(t)
+	for _, providerPrefix := range []string{"mlp-claude-code-int", "mlp-codex-cli-int", "mlp-cursor-cli-int", "mlp-pi-cli-int", "mlp-agy-cli-int"} {
+		providerPrefix := providerPrefix
+		t.Run(providerPrefix, func(t *testing.T) {
+			now := time.Now()
+			store := terminals.NewStore()
+			sessionID := "bounded-session-" + providerPrefix
+			tmuxSession := providerPrefix + "-bounded"
+			terminalID := sessionID + ":workflow-step:review-plan"
+			store.HandleEvent(sessionID, codingAgentTmuxReaperChunkEvent(now, sessionID, "workflow-step:review-plan", tmuxSession))
+			store.HandleEvent(sessionID, storeevents.Event{
+				Type:          "streaming_end",
+				Timestamp:     now,
+				SessionID:     sessionID,
+				ExecutionID:   "workflow-step:review-plan",
+				ExecutionKind: "workflow_step",
+				Data: &agentevents.AgentEvent{
+					Type: agentevents.StreamingEnd,
+					Data: &agentevents.StreamingEndEvent{
+						BaseEventData: agentevents.BaseEventData{Metadata: map[string]interface{}{
+							"kind":                       "terminal",
+							"tmux_session":               tmuxSession,
+							"terminal_retention_seconds": 1800,
+						}},
+					},
+				},
+			})
+			if !store.Dismiss(terminalID) {
+				t.Fatal("expected snapshot dismissal")
+			}
+			api := &StreamingAPI{
+				terminalStore: store,
+				activeSessions: map[string]*ActiveSessionInfo{
+					sessionID: {SessionID: sessionID, Status: "running"},
+				},
+			}
+			gotArgs := stubTerminalTmuxCommand(t)
 
-	closed := api.cleanupStaleCodingAgentTmuxSessions(now.Add(31 * time.Second))
-
-	if closed != 1 {
-		t.Fatalf("closed = %d, want 1", closed)
-	}
-	if got := strings.Join(*gotArgs, " "); got != "kill-session -t "+tmuxSession {
-		t.Fatalf("tmux args = %q, want kill-session", got)
-	}
-	raw, ok := store.GetRaw(terminalID)
-	if !ok {
-		t.Fatal("process cleanup deleted retained snapshot")
-	}
-	if raw.TmuxSession != "" || raw.ProcessState != "closed" || raw.SnapshotKind != "archived" {
-		t.Fatalf("raw tmux/process/kind = %q/%q/%q", raw.TmuxSession, raw.ProcessState, raw.SnapshotKind)
-	}
-	if raw.ClosesAt == nil || !raw.ClosesAt.After(now.Add(20*time.Minute)) {
-		t.Fatalf("snapshot display deadline was not retained: %v", raw.ClosesAt)
-	}
-	if _, visible := store.Get(terminalID); visible {
-		t.Fatal("dismissed snapshot became visible during cleanup")
+			if closed := api.cleanupStaleCodingAgentTmuxSessions(now.Add(29 * time.Second)); closed != 0 {
+				t.Fatalf("closed before shared process deadline = %d, want 0", closed)
+			}
+			closed := api.cleanupStaleCodingAgentTmuxSessions(now.Add(31 * time.Second))
+			if closed != 1 {
+				t.Fatalf("closed = %d, want 1", closed)
+			}
+			if got := strings.Join(*gotArgs, " "); got != "kill-session -t "+tmuxSession {
+				t.Fatalf("tmux args = %q, want kill-session", got)
+			}
+			raw, ok := store.GetRaw(terminalID)
+			if !ok {
+				t.Fatal("process cleanup deleted retained snapshot")
+			}
+			if raw.TmuxSession != "" || raw.ProcessState != "closed" || raw.SnapshotKind != "archived" {
+				t.Fatalf("raw tmux/process/kind = %q/%q/%q", raw.TmuxSession, raw.ProcessState, raw.SnapshotKind)
+			}
+			if raw.ClosesAt == nil || !raw.ClosesAt.After(now.Add(20*time.Minute)) {
+				t.Fatalf("snapshot display deadline was not retained: %v", raw.ClosesAt)
+			}
+			if _, visible := store.Get(terminalID); visible {
+				t.Fatal("dismissed snapshot became visible during cleanup")
+			}
+		})
 	}
 }
 

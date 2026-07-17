@@ -72,13 +72,19 @@ func (api *StreamingAPI) reapRateLimitedCodingSessionsOnce(streak map[string]cod
 		watchdogKey := tmux
 		switch inspectCodingTmuxPaneState(tmux) {
 		case codingTmuxPaneMissing:
-			api.terminalStore.MarkStale(snap.TerminalID)
+			reason := "tmux pane disappeared unexpectedly"
+			if snap.Active {
+				api.terminalStore.MarkFailed(snap.TerminalID)
+				api.reconcileUnexpectedTerminalExit(snap, reason)
+			}
+			api.terminalStore.MarkProcessClosed(snap.TerminalID, reason)
 			if registry := api.ensureTerminalLeaseRegistry(); registry != nil {
-				registry.MarkClosed(tmux, "tmux pane missing", time.Now())
+				registry.MarkClosed(tmux, reason, time.Now())
 			}
 			delete(streak, watchdogKey)
 			continue
 		case codingTmuxPaneDead:
+			reason := "tmux pane exited unexpectedly"
 			killCtx, cancel := context.WithTimeout(context.Background(), terminalTmuxActionTimeout)
 			killErr := runTmuxKill(killCtx, tmux)
 			cancel()
@@ -86,12 +92,13 @@ func (api *StreamingAPI) reapRateLimitedCodingSessionsOnce(streak map[string]cod
 				log.Printf("[CODING_WATCHDOG] dead pane cleanup failed session=%s tmux=%s: %v", sessionID, tmux, killErr)
 				continue
 			}
-			if snap.Active || !strings.EqualFold(strings.TrimSpace(snap.State), "completed") {
-				api.terminalStore.MarkCompleted(snap.TerminalID)
+			if snap.Active {
+				api.terminalStore.MarkFailed(snap.TerminalID)
+				api.reconcileUnexpectedTerminalExit(snap, reason)
 			}
-			api.terminalStore.MarkProcessClosed(snap.TerminalID, "tmux pane exited")
+			api.terminalStore.MarkProcessClosed(snap.TerminalID, reason)
 			if registry := api.ensureTerminalLeaseRegistry(); registry != nil {
-				registry.MarkClosed(tmux, "tmux pane exited", time.Now())
+				registry.MarkClosed(tmux, reason, time.Now())
 			}
 			delete(streak, watchdogKey)
 			continue
@@ -124,8 +131,7 @@ func (api *StreamingAPI) reapRateLimitedCodingSessionsOnce(streak map[string]cod
 				sessionID, tmux)
 			// Persist failure before closing panes: stream goroutines may unwind as
 			// soon as cancellation starts and must not overwrite this as completed.
-			api.updateSessionStatus(sessionID, "error")
-			api.cancelSessionRuntimeWork(sessionID, "provider usage/rate limit reached")
+			api.reconcileUnexpectedTerminalExit(snap, "provider usage/rate limit reached")
 			delete(streak, watchdogKey)
 			continue
 		} else {
@@ -138,6 +144,7 @@ func (api *StreamingAPI) reapRateLimitedCodingSessionsOnce(streak map[string]cod
 		cancel()
 		api.terminalStore.MarkFailed(snap.TerminalID)
 		api.terminalStore.MarkProcessClosed(snap.TerminalID, "provider usage/rate limit reached")
+		api.reconcileUnexpectedTerminalExit(snap, "provider usage/rate limit reached")
 		if registry := api.ensureTerminalLeaseRegistry(); registry != nil {
 			registry.MarkClosed(tmux, "provider usage/rate limit reached", time.Now())
 		}
@@ -205,6 +212,14 @@ func inspectCodingTmuxPaneState(tmuxSession string) codingTmuxPaneState {
 	case "1":
 		return codingTmuxPaneDead
 	default:
+		// tmux display-message can return exit 0 with an empty expansion for a
+		// missing target while another tmux server/session is alive. Confirm the
+		// target explicitly so a disappeared pane cannot remain "unknown" forever.
+		if strings.TrimSpace(out) == "" {
+			if _, err := runTerminalTmuxOutputCommand(ctx, "has-session", "-t", tmuxSession); isMissingTmuxTargetError(err) {
+				return codingTmuxPaneMissing
+			}
+		}
 		return codingTmuxPaneUnknown
 	}
 }

@@ -15,6 +15,7 @@ import (
 
 	"github.com/gorilla/mux"
 	agentevents "github.com/manishiitg/mcpagent/events"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/tmuxinput"
 
 	storeevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
@@ -864,11 +865,17 @@ func TestTerminalRoutesCompleteTerminalSignalsProviderWaitLoop(t *testing.T) {
 
 func TestTerminalRoutesFailTerminalMarksSnapshotFailed(t *testing.T) {
 	store := terminals.NewStore()
-	api := &StreamingAPI{terminalStore: store}
 	sessionID := "session-terminal-fail"
+	executionID := "workflow-step:review-plan"
 	terminalID := sessionID + ":workflow-step:review-plan"
+	api := &StreamingAPI{
+		terminalStore: store,
+		trackedWorkflowExecutions: map[string]*TrackedWorkflowExecution{
+			executionID: {ExecutionID: executionID, SessionID: sessionID, Status: trackedExecutionStatusRunning, StartedAt: time.Now().Add(-time.Second)},
+		},
+	}
 
-	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", "mlp-claude-test", "still working", 12))
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, executionID, "mlp-claude-test", "still working", 12))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/terminals/"+terminalID+"/fail", nil)
 	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
@@ -884,6 +891,9 @@ func TestTerminalRoutesFailTerminalMarksSnapshotFailed(t *testing.T) {
 	}
 	if response.Terminal.Active || response.Terminal.State != "failed" {
 		t.Fatalf("terminal active/state = %v/%q, want false/failed", response.Terminal.Active, response.Terminal.State)
+	}
+	if tracked := api.trackedWorkflowExecutions[executionID]; tracked.Status != trackedExecutionStatusFailed || tracked.LastError != "failed by operator" {
+		t.Fatalf("tracked execution status/error = %q/%q, want failed/operator reason", tracked.Status, tracked.LastError)
 	}
 }
 
@@ -1257,11 +1267,17 @@ func TestTerminalRoutesGetTerminalRecapturesCompletedActiveTmuxPane(t *testing.T
 
 func TestTerminalRoutesKillTerminalKillsTmuxAndMarksFailed(t *testing.T) {
 	store := terminals.NewStore()
-	api := &StreamingAPI{terminalStore: store}
 	sessionID := "session-terminal-kill"
+	executionID := "workflow-step:review-plan"
 	terminalID := sessionID + ":workflow-step:review-plan"
 	tmuxSession := "mlp-claude-code-exp-test"
-	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, "pane", 2))
+	api := &StreamingAPI{
+		terminalStore: store,
+		trackedWorkflowExecutions: map[string]*TrackedWorkflowExecution{
+			executionID: {ExecutionID: executionID, SessionID: sessionID, Status: trackedExecutionStatusRunning, StartedAt: time.Now().Add(-time.Second)},
+		},
+	}
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, executionID, tmuxSession, "pane", 2))
 
 	var gotArgs []string
 	oldRun := runTerminalTmuxCommand
@@ -1287,6 +1303,9 @@ func TestTerminalRoutesKillTerminalKillsTmuxAndMarksFailed(t *testing.T) {
 	}
 	if response.Terminal.Active || response.Terminal.State != "failed" {
 		t.Fatalf("terminal active/state = %v/%q, want false/failed", response.Terminal.Active, response.Terminal.State)
+	}
+	if tracked := api.trackedWorkflowExecutions[executionID]; tracked.Status != trackedExecutionStatusFailed || tracked.LastError != "killed by operator" {
+		t.Fatalf("tracked execution status/error = %q/%q, want failed/operator reason", tracked.Status, tracked.LastError)
 	}
 }
 
@@ -1550,6 +1569,46 @@ func TestTerminalRoutesSendCtrlOKeyUsesTmuxSendKeys(t *testing.T) {
 	}
 	if got := strings.Join(gotArgs, " "); got != "send-keys -t "+tmuxSession+" C-o" {
 		t.Fatalf("tmux args = %q, want ctrl-o", got)
+	}
+}
+
+func TestTerminalRoutesSendDownBypassesStartupReadinessForCompletedLivePane(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-completed-live"
+	executionID := "main:" + sessionID
+	terminalID := sessionID + ":" + executionID
+	tmuxSession := "mlp-codex-cli-int-completed-live"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, executionID, tmuxSession, "Codex prompt", 1))
+	store.MarkCompleted(terminalID)
+
+	snapshot, ok := store.Get(terminalID)
+	if !ok || snapshot.State != "completed" || snapshot.TmuxSession == "" {
+		t.Fatalf("fixture state = %#v, want completed terminal with live tmux", snapshot)
+	}
+
+	// Reproduce the retained startup gate that used to swallow normal-priority
+	// debug keys (Down/Up/Tab/Enter) until the HTTP request timed out.
+	tmuxinput.MarkStarting(tmuxSession)
+	t.Cleanup(func() { tmuxinput.RemoveReadiness(tmuxSession) })
+
+	var gotArgs []string
+	oldRun := runTerminalTmuxCommand
+	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
+		gotArgs = append([]string(nil), args...)
+		return nil
+	}
+	t.Cleanup(func() { runTerminalTmuxCommand = oldRun })
+
+	req := httptest.NewRequest(http.MethodPost, "/api/terminals/"+terminalID+"/key", strings.NewReader(`{"key":"down"}`))
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
+	rec := httptest.NewRecorder()
+	api.handleSendTerminalKey(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("send Down status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	if got := strings.Join(gotArgs, " "); got != "send-keys -t "+tmuxSession+" Down" {
+		t.Fatalf("tmux args = %q, want Down delivered to completed live pane", got)
 	}
 }
 

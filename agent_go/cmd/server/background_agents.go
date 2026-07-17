@@ -157,6 +157,27 @@ func (a *BackgroundAgent) SetError(errMsg string) {
 	a.CompletedAt = &now
 }
 
+// FailAndCancel records an unexpected runtime failure before canceling the
+// worker context. This preserves failed (rather than canceled) semantics when a
+// provider process disappears underneath a running background execution.
+func (a *BackgroundAgent) FailAndCancel(errMsg string) bool {
+	a.mu.Lock()
+	if a.Status != BGAgentRunning {
+		a.mu.Unlock()
+		return false
+	}
+	a.Error = errMsg
+	a.Status = BGAgentFailed
+	now := time.Now()
+	a.CompletedAt = &now
+	cancel := a.cancel
+	a.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	return true
+}
+
 // SetCanceled marks the agent as canceled
 func (a *BackgroundAgent) SetCanceled() {
 	a.mu.Lock()

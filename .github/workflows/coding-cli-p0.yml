@@ -61,6 +61,9 @@ jobs:
       - name: Install frontend test dependencies
         run: npm ci --prefix coding-agent-loop/frontend
 
+      - name: Install tmux for hermetic lifecycle contracts
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
       - name: Verify coding CLI registry
         working-directory: coding-agent-loop
         run: >-
@@ -68,11 +71,17 @@ jobs:
           -run 'TestActiveCodingAgentProvidersSatisfyP0Contract|TestCodingAgentCertificationReferencesExistingTests'
           -count=1
 
+      - name: Verify provider cleanup and terminal metadata contracts
+        working-directory: coding-agent-loop
+        run: |
+          go -C ../multi-llm-provider-go test ./pkg/adapters/picli -run '^TestPiBoundedCleanupUsesSharedTmuxKillDelay$' -count=1
+          go -C ../mcpagent test ./agent -run '^TestFinishStreamingTerminalEndIncludesRetentionMetadata$' -count=1
+
       - name: Verify deterministic delivery and notification contracts
         working-directory: coding-agent-loop
         run: >-
           go -C agent_go test ./cmd/server
-          -run 'Test(HandleLiveInputMessageBusyCodingAgentDeliversExactlyOnce|HandleLiveInputMessageCompletionBoundaryChoosesExactlyOneRoute|StartNextTurnFromLiveInputAcknowledgesBeforeQueuedTurnRuns|WorkflowStepCompletionAutoNotificationCarriesCleanFinalMessage)$'
+          -run 'Test(HandleLiveInputMessageBusyCodingAgentDeliversExactlyOnce|HandleLiveInputMessageCompletionBoundaryChoosesExactlyOneRoute|StartNextTurnFromLiveInputAcknowledgesBeforeQueuedTurnRuns|WorkflowStepCompletionAutoNotificationCarriesCleanFinalMessage|CodingCLILifecycleMatrixHermeticTmux|TerminalOwnerReconciliationRejectsStaleGeneration|TerminalSnapshotExpiryMatrix|CleanupBoundedTmuxKeepsDismissedSnapshotUntilDisplayDeadline|HandleStopSessionCancelsActiveWorkAndPreventsPaneReuse|ResolveLiveAttachRestartRecoveryRequiresMatchingTmuxOwner|TerminalRoutesCompleteTerminalSignalsProviderWaitLoop|TerminalRoutesFailTerminalMarksSnapshotFailed|TerminalRoutesKillTerminalKillsTmuxAndMarksFailed|TerminalRoutesSendDownBypassesStartupReadinessForCompletedLivePane)$'
           -count=1
 
       - name: Verify frontend live-input submission contract

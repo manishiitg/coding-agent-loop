@@ -35,6 +35,8 @@ Operator actions follow these semantics:
 - **Fail** closes the process and records a failed archived capture.
 - **Kill** force-closes the process and records a failed archived capture.
 
-SSE event buffers are retained for 30 minutes after a session reaches a terminal
-state. Session identity remains available for 24 hours so chat history can be
-resumed without retaining the full event stream.
+SSE event buffers and session identity are retained for 24 hours after a session
+reaches a terminal state so reconnect/resume keeps its event cursor and chat
+context consistent. The event store's per-session count limit bounds memory;
+terminal process cleanup and terminal snapshot retention remain independent of
+this session-resume window.

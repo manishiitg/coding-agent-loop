@@ -69,8 +69,8 @@ func TestCodingTmuxWatchdogReconcilesFromActualPaneState(t *testing.T) {
 		wantTmux   bool
 	}{
 		{name: "live pane stays active", paneState: "0\n", wantActive: true, wantState: "running", wantTmux: true},
-		{name: "dead pane completes", paneState: "1\n", wantActive: false, wantState: "completed", wantTmux: false},
-		{name: "missing session becomes stale", paneErr: errors.New("can't find session: mlp-test"), wantActive: false, wantState: "stale", wantTmux: false},
+		{name: "dead active pane fails", paneState: "1\n", wantActive: false, wantState: "failed", wantTmux: false},
+		{name: "missing active pane fails", paneErr: errors.New("can't find session: mlp-test"), wantActive: false, wantState: "failed", wantTmux: false},
 		{name: "unknown failure stays active", paneErr: errors.New("temporary tmux failure"), wantActive: true, wantState: "running", wantTmux: true},
 	}
 

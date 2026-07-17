@@ -492,6 +492,7 @@ func (api *StreamingAPI) handleFailTerminal(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Terminal not found", http.StatusNotFound)
 		return
 	}
+	api.reconcileUnexpectedTerminalExit(before, "failed by operator")
 	if before.Active && strings.TrimSpace(before.TmuxSession) != "" {
 		if closeCodingAgentTmuxSessionByName(before.TmuxSession, "failed by operator") {
 			if registry := api.ensureTerminalLeaseRegistry(); registry != nil {
@@ -501,6 +502,9 @@ func (api *StreamingAPI) handleFailTerminal(w http.ResponseWriter, r *http.Reque
 				snapshot = archived
 			}
 		}
+	}
+	if current, exists := api.terminalStore.Get(before.TerminalID); exists {
+		snapshot = current
 	}
 	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot)})
 }
@@ -572,11 +576,15 @@ func (api *StreamingAPI) handleKillTerminal(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Terminal not found", http.StatusNotFound)
 		return
 	}
+	api.reconcileUnexpectedTerminalExit(snapshot, "killed by operator")
 	if registry := api.ensureTerminalLeaseRegistry(); registry != nil {
 		registry.MarkClosed(snapshot.TmuxSession, "killed by operator", time.Now())
 	}
 	if archived, archivedOK := api.terminalStore.MarkProcessClosed(snapshot.TerminalID, "killed by operator"); archivedOK {
 		updated = archived
+	}
+	if current, exists := api.terminalStore.Get(snapshot.TerminalID); exists {
+		updated = current
 	}
 	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), updated)})
 }
@@ -897,8 +905,9 @@ func deliverTerminalInput(ctx context.Context, tmuxSession, text string, submit,
 		return fmt.Errorf("tmux session is required")
 	}
 	_, err := tmuxinput.Default.Do(ctx, tmuxinput.Request{
-		SessionID: tmuxSession,
-		Source:    source,
+		SessionID:       tmuxSession,
+		Source:          source,
+		BypassReadiness: true,
 	}, func(ctx context.Context) error {
 		if text != "" {
 			if err := pasteTerminalTextUnserialized(ctx, tmuxSession, text, readable); err != nil {
@@ -1143,9 +1152,10 @@ func sendTerminalKey(ctx context.Context, tmuxSession, key string) error {
 		return fmt.Errorf("tmux session is required")
 	}
 	_, err := tmuxinput.Default.Do(ctx, tmuxinput.Request{
-		SessionID: tmuxSession,
-		Source:    "terminal-key",
-		Priority:  tmuxinput.PriorityForKey(key),
+		SessionID:       tmuxSession,
+		Source:          "terminal-key",
+		Priority:        tmuxinput.PriorityForKey(key),
+		BypassReadiness: true,
 	}, func(ctx context.Context) error {
 		return sendTerminalKeyUnserialized(ctx, tmuxSession, key)
 	})

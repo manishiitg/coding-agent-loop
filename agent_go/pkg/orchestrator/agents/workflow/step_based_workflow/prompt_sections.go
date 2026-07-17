@@ -219,6 +219,33 @@ func BuildBrowserAuthoringRules() string {
 	return sb.String()
 }
 
+// BuildBrowserLearningRules is the single selector-persistence contract used by
+// both the active direct-learning continuation and the legacy learning agent.
+// Keep execution mechanics in BuildBrowserAuthoringRules; this block only
+// describes the durable HOW knowledge that may be saved across runs.
+func BuildBrowserLearningRules() string {
+	var sb strings.Builder
+	sb.WriteString("## Browser automation learnings (required when this step used agent_browser)\n\n")
+	sb.WriteString("Save reusable browser HOW under `references/site-profile.md`, `references/selectors.md`, or another linked topic file. A snapshot is runtime evidence, not reusable configuration.\n\n")
+	sb.WriteString("1. **Never persist snapshot refs.** Values such as `@e1`, `e68`, or a tool-generated `ref` are valid only for the snapshot/session that produced them. Re-snapshot and resolve a fresh ref for each interaction.\n")
+	sb.WriteString("2. **Record the stable-hook inventory once per site.** Include the framework if known and whether the site exposes `data-testid`/`data-test`, hand-written `id` or `name`, `aria-label`, labels/placeholders, and stable roles/names. Explicitly list generated ID/class patterns to avoid.\n")
+	sb.WriteString("3. **Record semantic action recipes, not a raw selector dump.** For each important action, save the action name and purpose, page/state precondition, primary durable locator, one or two fallbacks, expected postcondition, and timing/auth/modal quirks. Example:\n")
+	sb.WriteString("```yaml\n")
+	sb.WriteString("action: login.fill_user_id\n")
+	sb.WriteString("precondition: login form visible\n")
+	sb.WriteString("primary: {by: id, value: panAdhaarUserId}\n")
+	sb.WriteString("fallbacks:\n")
+	sb.WriteString("  - {by: placeholder, value: PAN/ Aadhaar/ Other User ID}\n")
+	sb.WriteString("  - {by: role+name_contains, role: textbox, name: User ID}\n")
+	sb.WriteString("postcondition: Continue becomes enabled\n")
+	sb.WriteString("```\n")
+	sb.WriteString("4. **Use this locator priority:** test attributes (`data-testid`, `data-test`, `data-cy`, `data-qa`) > hand-written semantic `id`/`name` > `aria-label` > role + accessible name > label/placeholder/stable visible text > structural CSS/XPath. Store classes only when verified hand-written and stable across runs; never store generated framework/build classes or long class chains.\n")
+	sb.WriteString("5. **Capture behavior that DOM inspection cannot explain.** Preserve login/CDP requirements, redirects, disabled-until-valid controls, portal/popover behavior, confirmation dialogs, OTP/captcha branches, polling conditions, and known false controls.\n")
+	sb.WriteString("6. **Keep confidence honest.** Save only locators actually used or verified in this run. Mark unverified fallbacks as candidates. If a saved locator failed, replace or qualify it and retain the failure signature in the known-bad section.\n")
+	sb.WriteString("7. **Do not save sensitive values.** Selector recipes may describe field identity, but never persist entered credentials, account identifiers, tokens, cookies, or user data.\n")
+	return sb.String()
+}
+
 // browserCapabilityProvider is the minimal interface BuildBrowserAuthoringRules helpers
 // need from the orchestrator/controller to decide whether to emit browser rules.
 // We check HasBrowserCapability (not GetBrowserMode) because empty browserMode means

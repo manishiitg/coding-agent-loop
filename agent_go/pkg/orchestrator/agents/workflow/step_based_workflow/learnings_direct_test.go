@@ -5,11 +5,11 @@ import (
 	"strings"
 	"testing"
 
-	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 type fakeDirectLearningAgent struct {
@@ -52,6 +52,37 @@ func TestBuildLearningsContributionTurnRequiresPatchToolForAllWrites(t *testing.
 		if strings.Contains(msg, forbidden) {
 			t.Fatalf("learning prompt still contains stale write guidance %q:\n%s", forbidden, msg)
 		}
+	}
+}
+
+func TestBuildLearningsContributionTurnIncludesDurableBrowserSelectorContract(t *testing.T) {
+	msg := BuildLearningsContributionTurnWithTargetAndBrowser(
+		"post-update",
+		"Publish an update through the authenticated browser.",
+		"Capture the durable compose and publish flow.",
+		false,
+		"/tmp/workspace-docs/Workflow/demo/learnings/_global",
+		true,
+	)
+	for _, want := range []string{
+		"Never persist snapshot refs",
+		"stable-hook inventory",
+		"semantic action recipes",
+		"hand-written semantic `id`/`name`",
+		"role + accessible name",
+		"Store classes only when verified hand-written and stable",
+		"Mark unverified fallbacks as candidates",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("browser learning prompt missing %q:\n%s", want, msg)
+		}
+	}
+}
+
+func TestBuildLearningsContributionTurnOmitsBrowserContractWithoutCapability(t *testing.T) {
+	msg := BuildLearningsContributionTurn("fetch-api", "Fetch API data.", "Capture retry behavior.", false)
+	if strings.Contains(msg, "stable-hook inventory") {
+		t.Fatalf("non-browser learning prompt contains browser-only contract:\n%s", msg)
 	}
 }
 

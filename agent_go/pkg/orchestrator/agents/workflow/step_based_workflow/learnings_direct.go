@@ -92,7 +92,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) directLearningsPromptTargetPath() str
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) buildLearningsContributionTurn(stepID, stepDescription, learningObjective string, isScriptedMode bool) string {
-	return BuildLearningsContributionTurnWithTarget(stepID, stepDescription, learningObjective, isScriptedMode, hcpo.directLearningsPromptTargetPath())
+	return BuildLearningsContributionTurnWithTargetAndBrowser(stepID, stepDescription, learningObjective, isScriptedMode, hcpo.directLearningsPromptTargetPath(), hcpo.HasBrowserCapability())
 }
 
 // BuildLearningsContributionTurn returns the scripted user message that fires
@@ -121,6 +121,12 @@ func BuildLearningsContributionTurn(stepID, stepDescription, learningObjective s
 }
 
 func BuildLearningsContributionTurnWithTarget(stepID, stepDescription, learningObjective string, isScriptedMode bool, targetPath string) string {
+	return BuildLearningsContributionTurnWithTargetAndBrowser(stepID, stepDescription, learningObjective, isScriptedMode, targetPath, false)
+}
+
+// BuildLearningsContributionTurnWithTargetAndBrowser adds browser-specific
+// persistence guidance only when the workflow exposes agent_browser/CDP.
+func BuildLearningsContributionTurnWithTargetAndBrowser(stepID, stepDescription, learningObjective string, isScriptedMode bool, targetPath string, hasBrowserAccess bool) string {
 	_ = isScriptedMode // retained in the signature in case future behavior diverges by mode; not currently referenced
 	description := strings.TrimSpace(stepDescription)
 	objective := strings.TrimSpace(learningObjective)
@@ -181,6 +187,10 @@ func BuildLearningsContributionTurnWithTarget(stepID, stepDescription, learningO
 	b.WriteString("6. **Merge with existing knowledge, don't duplicate.** If the lesson you'd write overlaps with a pattern another step already captured in an existing references file, extend that file (append a new section, refine an existing one) rather than creating a second place for the same knowledge.\n")
 	b.WriteString("7. **No ephemeral refs.** Do not save session-local browser handles (`@e1`, `e68`, etc.) — they are useless across runs.\n")
 	b.WriteString("8. **No fabrication.** Capture only patterns you actually used in this execution. If you're unsure whether a pattern is reliable, say so explicitly in the note.\n\n")
+	if hasBrowserAccess {
+		b.WriteString(BuildBrowserLearningRules())
+		b.WriteString("\n")
+	}
 
 	b.WriteString("**Objective for this step's contribution (the contract):**\n")
 	b.WriteString(objective)

@@ -38,34 +38,7 @@ Every piece of knowledge you capture should contribute toward this objective. As
 3. **Accumulate & Merge**: Each step contributes new knowledge. Merge with existing content. Never discard previous knowledge unless proven wrong.
 4. **Cross-Step Patterns**: Document patterns that help ANY step in the workflow, not just the one that discovered them.
 
-{{if .HasBrowserAccess}}## BROWSER-AUTOMATION STEPS — REQUIRED LEARNINGS SHAPE
-This workflow has agent_browser configured. For steps that used a browser tool, the skill MUST include — typically as `+"`"+`references/site-profile.md`+"`"+` and `+"`"+`references/selectors.md`+"`"+`:
-
-1. **Site access preconditions**: Anything required BEFORE navigation works. Examples: "site blocks headless browsers — use CDP attach", "Cloudflare interstitial on apex domain, use subdomain X", "native alert() must be dismissed via dialog handler". Capture the failure signature ("Permission Denied" text, blank page, frozen browser) so future steps can detect-and-switch automatically.
-
-2. **Stable-hook inventory (once per site)**: One-time profile of what durable attributes exist site-wide. Example shape:
-   `+"```"+`
-   Site: eportal.incometax.gov.in — Angular Material app
-   data-testid: 0    aria-label: 38    hand-written ids: yes (panAdhaarUserId, loginPasswordField, ...)
-   Avoid: mat-mdc-* auto-generated ids — rotate across rebuilds.
-   Strategy: prefer hand-written id → aria-label → role+name.
-   `+"```"+`
-   This tells every future step on this site which locator priority to use without re-probing.
-
-3. **Per-action intents, not raw selectors alone**: For each significant interaction, record the *semantic identity* plus 1-2 alternates, so a fix loop can re-derive the locator if the primary rots. Example:
-   `+"```"+`
-   Step [login.fill_user_id]
-     intent: {by: "id", value: "panAdhaarUserId"}
-     alt:    {by: "placeholder", value: "PAN/ Aadhaar/ Other User ID"}
-     alt:    {by: "role+name_contains", role: "textbox", name: "User ID"}
-     notes:  Continue button stays disabled until input has a value.
-   `+"```"+`
-
-4. **Behavioral quirks**: Multi-step flows (User ID → Continue → Password), cross-domain redirects (e-Filing → TRACES), disabled-until-valid gates, secondary confirmation modals, OTP/captcha branches, phantom controls (a `+"`"+`#btn`+"`"+` that looks like Proceed but does nothing — the real action is a link below). These are the highest-value learnings because they are not derivable from the DOM.
-
-5. **Known-bad selector patterns**: Explicit "do NOT use" list for this site — auto-generated id shapes, dynamic class chains, any selector that seemed to work but broke on the next run. Future steps consult this list before picking a locator.
-
-**Never save ephemeral refs (`+"`"+`@e1`+"`"+`, `+"`"+`e68`+"`"+`, etc.) into learnings.** They are session-local and useless across runs.
+{{if .HasBrowserAccess}}{{.BrowserLearningRules}}
 {{end}}
 {{if .SkillCreatorPath}}
 ## SKILL WRITING GUIDE (CRITICAL — READ FIRST)
@@ -290,6 +263,7 @@ func (agent *WorkflowLearningAgent) learningSystemPromptProcessor(templateVars m
 		"StepScriptsPath":           templateVars["StepScriptsPath"],
 		"LearningObjectivesBlock":   templateVars["LearningObjectivesBlock"],
 		"HasBrowserAccess":          templateVars["HasBrowserAccess"] == "true",
+		"BrowserLearningRules":      BuildBrowserLearningRules(),
 	}); err != nil {
 		panic(fmt.Sprintf("learning system prompt template execution failed: %v", err))
 	}

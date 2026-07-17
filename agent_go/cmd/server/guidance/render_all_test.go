@@ -548,3 +548,235 @@ func TestGoalAdvisorMetricsFlowUsesPlanAndReportHandoff(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanReviewAndGoalAdvisorPreferCoherentAgenticSteps(t *testing.T) {
+	checks := map[string][]string{
+		"design-plan": {
+			"Modern agents can own a substantial end-to-end outcome in one step",
+			"Validation sequence, not micro-steps",
+			"first work turn the complete outcome",
+			"one-message-per-routine-action sequences",
+		},
+		"goal-advisor": {
+			"Modern agentic models can own a substantial end-to-end outcome",
+			"fewest durable steps",
+			"give the first work turn the whole outcome",
+			"Do not replace regular-step fragmentation",
+		},
+		"plan-design": {
+			"Give the work turn the complete outcome",
+			"do not create one item per checklist line",
+			"re-open the evidence and verify every success criterion",
+			"tiny routine instructions",
+			"one coherent agentic outcome",
+		},
+	}
+
+	for kind, wants := range checks {
+		registry := allKinds
+		if kind == "plan-design" {
+			registry = referenceKinds
+		}
+		rendered, err := renderFromRegistry(kind, tmplData{}, registry)
+		if err != nil {
+			t.Fatalf("render %s: %v", kind, err)
+		}
+		for _, want := range wants {
+			if !strings.Contains(rendered, want) {
+				t.Fatalf("%s missing coherent-agentic-step guidance %q", kind, want)
+			}
+		}
+	}
+}
+
+func TestDeterministicFetchersFeedLargeAgenticProcessors(t *testing.T) {
+	checks := map[string]struct {
+		registry map[string]kindMeta
+		wants    []string
+	}{
+		"design-plan": {
+			registry: allKinds,
+			wants: []string{
+				"Scripted acquisition, agentic processing",
+				"batch related calls",
+				"feed the durable rows/artifacts into a large message sequence",
+				"10+-run evidence bar is only for *freezing*",
+			},
+		},
+		"goal-advisor": {
+			registry: allKinds,
+			wants: []string{
+				"Separate deterministic acquisition from agentic processing",
+				"fetcher steps with explicit outputs",
+				"large downstream `message_sequence`",
+				"Do not keep fixed API/CLI retrieval inside LLM turns",
+			},
+		},
+		"plan-design": {
+			registry: referenceKinds,
+			wants: []string{
+				"Deterministic fetcher → agentic processor",
+				"do not create one step per endpoint or command",
+				"scripted regular step executes it",
+				"Consume deterministic evidence; do not fetch it conversationally",
+			},
+		},
+		"regular": {
+			registry: referenceKinds,
+			wants: []string{
+				"Declare these steps `scripted` from initial design",
+				"No run-history threshold is required",
+				"regular scripted fetcher(s) → message_sequence processor",
+			},
+		},
+		"message-sequence": {
+			registry: referenceKinds,
+			wants: []string{
+				"fetch-and-normalize-authoritative-data",
+				"Do not use one step per endpoint",
+				"execute-request-spec",
+			},
+		},
+		"step-config": {
+			registry: referenceKinds,
+			wants: []string{
+				"Scripts are the default for DETERMINISTIC execution",
+				"Use coherent scripted fetchers, not micro-scripts",
+				"10+ representative-run threshold applies only before freezing",
+			},
+		},
+	}
+
+	for kind, check := range checks {
+		rendered, err := renderFromRegistry(kind, tmplData{}, check.registry)
+		if err != nil {
+			t.Fatalf("render %s: %v", kind, err)
+		}
+		for _, want := range check.wants {
+			if !strings.Contains(rendered, want) {
+				t.Fatalf("%s missing deterministic-fetcher guidance %q", kind, want)
+			}
+		}
+	}
+
+	stale := map[string]struct {
+		registry map[string]kindMeta
+		text     string
+	}{
+		"planning-steps":    {registry: referenceKinds, text: "one atomic action with no"},
+		"optimize-playbook": {registry: referenceKinds, text: "add a separate step after it that reads the output"},
+		"workflow-patterns": {registry: referenceKinds, text: "`regular`(action) → `regular`(verify"},
+		"todo-task":         {registry: referenceKinds, text: "manages multiple discrete tasks"},
+	}
+	for kind, check := range stale {
+		rendered, err := renderFromRegistry(kind, tmplData{}, check.registry)
+		if err != nil {
+			t.Fatalf("render %s: %v", kind, err)
+		}
+		if strings.Contains(rendered, check.text) {
+			t.Fatalf("%s retains stale micro-step guidance %q", kind, check.text)
+		}
+	}
+}
+
+func TestSharedContextSpansOwnProofValidationAndRepair(t *testing.T) {
+	checks := map[string]struct {
+		registry map[string]kindMeta
+		wants    []string
+	}{
+		"planning-steps": {
+			registry: referenceKinds,
+			wants: []string{
+				"one large `message_sequence` per shared-context span",
+				"proof/provenance output",
+				"Use multiple large sequences when their contexts should not be shared",
+				"The builder must decide this from",
+			},
+		},
+		"plan-design": {
+			registry: referenceKinds,
+			wants: []string{
+				"one large `message_sequence` for each coherent shared-context span",
+				"proof/evidence contract",
+				"Multiple large sequences are correct when their contexts should not be shared",
+				"builder must decide this from the workflow semantics",
+			},
+		},
+		"goal-advisor": {
+			registry: allKinds,
+			wants: []string{
+				"one large `message_sequence` per coherent shared-context span",
+				"run-specific proof/provenance fields",
+				"desire for more validation is not by itself",
+				"Multiple large sequences are appropriate when context should be isolated",
+			},
+		},
+		"optimize-playbook": {
+			registry: referenceKinds,
+			wants: []string{
+				"keep it in the same shared context",
+				"repair/double-check turn",
+				"Strengthen before splitting",
+				"Validate in context",
+			},
+		},
+		"workflow-patterns": {
+			registry: referenceKinds,
+			wants: []string{
+				"one large `message_sequence` owns",
+				"re-read the system of record and prove the effect",
+				"start with one large `message_sequence` per shared-context span",
+			},
+		},
+	}
+
+	for kind, check := range checks {
+		rendered, err := renderFromRegistry(kind, tmplData{}, check.registry)
+		if err != nil {
+			t.Fatalf("render %s: %v", kind, err)
+		}
+		for _, want := range check.wants {
+			if !strings.Contains(rendered, want) {
+				t.Fatalf("%s missing shared-context proof guidance %q", kind, want)
+			}
+		}
+	}
+}
+
+func TestWorkflowPatternsUseCurrentRuntimeAndStoreContracts(t *testing.T) {
+	rendered, err := renderFromRegistry("workflow-patterns", tmplData{}, referenceKinds)
+	if err != nil {
+		t.Fatalf("render workflow-patterns: %v", err)
+	}
+
+	for _, want := range []string{
+		"already supplied by the user, launch variables",
+		"one large `message_sequence` to investigate and produce the proof-bearing deliverable",
+		"scripted `regular` for deterministic API/CLI/DB/auth/connectivity checks",
+		"another large `message_sequence` only when adaptive post-approval judgment",
+		"knowledgebase/notes/",
+		"learnings/_global/SKILL.md",
+		"HTML reports read report-facing rows live with `window.report.query`",
+		"read-only `source_sql`",
+		"message_sequence.items[]",
+		"todo_task.messages[]",
+		"processed-versus-selected counts",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("workflow-patterns missing current contract %q", want)
+		}
+	}
+
+	for _, stale := range []string{
+		"writes a JSON array to `db/<file>.json`",
+		"KB SKILL.md update",
+		"`regular`(draft / propose / select)",
+		"Skipping the `human_input`",
+		"First `regular` step is a cheap probe",
+		"consumer's `source` must point",
+	} {
+		if strings.Contains(rendered, stale) {
+			t.Fatalf("workflow-patterns retains stale contract %q", stale)
+		}
+	}
+}

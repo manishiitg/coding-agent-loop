@@ -29,9 +29,9 @@ PART 1 — VISUAL MAP
 Draw the plan so the user sees it at a glance. Annotate each step with its **type**, what it **persists** (db tables and/or `context_output`), how it's **gated** (db check / file check / none), and its **stores access** (db / kb / learnings). Routing nodes show their branches and where they converge.
 
 ```
-step-1 ingest_emails   [regular]   → db: emails           gate: db(min_rows≥1)
-step-2 classify_intent [regular]   → db: emails.intent    gate: db(no null intents)
-step-3 route_by_intent [routing]   → buyer | seller | spam   (all → step-7 normalize)
+step-1 fetch_normalize_emails [regular, scripted] → db: emails        gate: provenance + freshness
+step-2 classify_prove_repair  [message_sequence]  → db: intent/proof  gate: no null intents + evidence
+step-3 route_by_intent        [routing]           → buyer | seller | spam
 ```
 
 PART 2 — INTEGRITY CHECKS (structural; severity CRITICAL/WARNING/INFO + one-line fix)
@@ -47,9 +47,9 @@ PART 2 — INTEGRITY CHECKS (structural; severity CRITICAL/WARNING/INFO + one-li
 PART 3 — STEP-TYPE FITNESS (how to use each; cite the step it applies to)
 For each step, confirm it's the right type, and flag mis-modeling:
 
-- **regular** — one durable unit of work (fetch/parse/transform/write/verify). The default. Persist results to the db; gate with a db check; keep `context_output` only for a real consumer.
+- **regular** — one coherent outcome with one final gate. Declare it **scripted from initial design** when it performs deterministic API/SDK calls, CLI commands, data fetching, parsing, normalization, or mechanical db/file writes; batch related calls behind one output/retry contract. Use agentic regular only for one-turn judgment that needs no same-context verify-and-fix follow-up. Persist results to the db; gate with a db check; keep `context_output` only for a real consumer.
 - **routing** — a DETERMINISTIC N-way switch: no agent, **no description**, decided upstream (a prior regular step writes `route_selection.json`, or the caller passes `route_selections`); `default_route_id` is the missing-file fallback. **Every branch must converge** to the shared downstream step via `next_step_id` (or end). "Loop/if in a description" is not routing.
-- **message_sequence** — same-context conversational work or a re-entrant specialist: ordered `items` (user_message / prevalidation / foreach), sharing one conversation. Deterministic code is a separate regular scripted step with explicit inputs and outputs. Reach for a sequence when turns depend on transient reasoning; as a top-level step the queue runs once, and as a todo_task route it can be re-entered during the same run.
+- **message_sequence** — one substantial same-context reasoning job plus focused validation/critique/repair follow-ups, or a re-entrant specialist. Its ordered `items` (user_message / prevalidation / foreach) share one conversation; they are not a checklist of routine sub-actions and should not issue fixed API/CLI calls or parse stable response shapes. Feed it persisted results from upstream scripted fetchers. Reach for a sequence when follow-up turns depend on transient reasoning; as a top-level step the queue runs once, and as a todo_task route it can be re-entered during the same run.
 - **todo_task (orchestrator)** — a dynamic agentic loop / delegation over a list the orchestrator can't enumerate at design time. It delegates real work to **sub-agent routes** (regular / message_sequence / one nested todo_task); it does not do the work inline. If you're writing detailed task instructions inside the orchestrator description, that task should be a sub-agent route. One nested orchestrator layer max.
 - **orphan** — a reusable plan-local definition or manual utility agent (data checks, env validation, one-off investigations, or a shared sub-agent several orchestrators reuse). Reuse is explicit: `shared_with.orchestrator_ids` + a route's `orphan_step_ref`.
 
@@ -67,12 +67,13 @@ PART 5 — GROUPS
 Variable groups (e.g. per-account/per-client) run the SAME plan with different variable values. The plan must NOT branch on group identity in prose ("for Saurabh do X, for Anika do Y") — that's either a variable (`$VAR_*`) or, if the flow genuinely differs, a routing step. Flag descriptions that hardcode per-group logic. Check that group-specific values are variables, not literals.
 
 PART 6 — DESIGN LENSES (recommend the better shape, even when nothing is broken)
-- **Durable-boundary fit** — a step is a durable boundary, not a tool-call boundary. Split only when it mixes distinct outputs, gates, retry/failure domains, tool/security contexts, downstream contracts, stores, human approvals, or routing. Combine adjacent steps that share an objective/output and only create pass-through artifacts.
-- **Collapse sequential turns** — 2+ regular steps that reread the same context and need each other's transient reasoning → one `message_sequence`, unless the boundary buys validation, retry isolation, auditability, reuse, a persistent artifact, or tool/security separation.
+- **Agentic span / durable-boundary fit** — start with one large `message_sequence` per coherent shared-context span. Modern agents can own a substantial end-to-end outcome in one step. Put proof/provenance requirements, top-level validation, evidence-based double-checking, and repair inside that sequence; never split by tool call, source, screen action, checklist item, proof check, or routine subtask. Multiple large sequences are correct when contexts should not be shared because of credentials/security, independent outputs/retries, clean-room independence, human/routing boundaries, or context contamination. Require the plan to state that boundary. Combine adjacent steps that share a context/objective/output and only create pass-through artifacts.
+- **Validation sequence, not micro-steps** — 2+ regular steps that reread the same context and need each other's transient reasoning → one `message_sequence`. Split only when the context should not be shared or the boundary buys independently rerunnable validation/retry isolation, clean-room auditability, a downstream artifact, or tool/security separation. Give its first work turn the complete outcome, then add only evidence-based verification/critique/repair turns or genuine intermediate gates; flag one-message-per-routine-action sequences too.
+- **Scripted acquisition, agentic processing** — fixed API/SDK calls, CLI commands, deterministic pagination, fetch/parse/normalize logic, and mechanical persistence belong in scripted regular steps. Batch related fetching under one source/auth/retry/output contract, validate freshness/provenance/errors, then feed the durable rows/artifacts into a large message sequence for judgment. Flag plans that repeatedly spend LLM turns on deterministic retrieval or parsing.
 - **Gate everything** — every produces-output step needs a `validation_schema`; prefer db checks on the source of truth. A gate catches drift the moment it lands, not three steps downstream.
 - **Human gates** — consequential actions (sending messages, spending, medical/legal/irreversible decisions) without a `human_input` step are usually under-gated. Ask whether one belongs.
 - **Naming** — "process_data"/"do_step" are generic; "classify_emails_by_buyer_intent" makes the plan self-documenting.
-- **Mode** — new executable steps default to **agentic**; don't flip a step to scripted on your own. But if the **user explicitly asks** for a scripted step (e.g. to build and test it), set `scripted` — that's their call, and they need it scripted to gather run evidence. The 10+-run determinism bar is for *freezing* it (`lock_code`) / Workshop trusting it as the stable fast path, not for honoring a user's request to create one.
+- **Mode** — deterministic API/CLI/SDK/data-fetch/parse/transform steps start **scripted** and should have `main.py` authored and tested in Workshop. Judgment, synthesis, adaptive discovery, and browser/UI work stay **agentic**. The 10+-run evidence bar is only for *freezing* a proven script with `lock_code`, not for declaring an obviously deterministic step scripted.
 
 For each recommendation give: **what's there now** (one quoted sentence), **what to consider** (better shape + concrete example), **why** (which practice it serves).
 

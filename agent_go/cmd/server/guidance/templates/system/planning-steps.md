@@ -17,34 +17,39 @@ first and plan to repair the graph afterward.
 
 ## Step composition defaults
 
-**Default to `message_sequence`.** Modern agents do a lot in a single
-turn and run for a long time, so the strongest shape is one
-shared-context conversation that does the work and then **verifies it in
-follow-up items** — e.g. `[do the task] → [verify the result against the
-success criteria] → [fix what verification caught]`. Building the
-verification in as later messages of the same sequence keeps the agent's
-full working context instead of forcing a fresh `regular` step to
-reconstruct it from artifacts. Every step still needs a
+**Default to one large `message_sequence` per shared-context span.** Modern
+agents can own many actions and long tool sessions, so the strongest shape is
+one conversation that completes the coherent span and then proves it in
+follow-up items: `[do the whole span] → [re-open evidence and prove every
+criterion] → [repair gaps and double-check]`. Improve the description,
+run-specific proof/provenance output, top-level `validation_schema`, and
+verify/repair turns before adding another step. A request for more checking is
+not itself a step boundary.
+
+Use multiple large sequences when their contexts should not be shared: distinct
+credentials/security exposure, independent durable outputs or retries,
+clean-room independence, human/routing boundaries, or unrelated context that
+would distract or contaminate the next agent. The builder must decide this from
+the workflow semantics and be able to state the boundary. Use `regular` for a
+coherent one-turn outcome with no same-context repair loop, or for deterministic
+work that must be scripted. Every producing step still needs a
 `validation_schema`; context flow stays forward-only via
 `context_dependencies` → `context_output`.
 
-Use `regular` only when the step is genuinely **one atomic action with no
-verify-and-fix follow-up**, or when a turn needs its own **durable
-artifact, hard validation gate, retry/failure domain, different
-tool/security context, or a distinct downstream consumer** — those are
-the real reasons to split into separate steps.
-
 For fixed branch choices the user already gave the builder, prefer a
 deterministic `routing` step and pass `route_selections` when running.
-Use `todo_task` when the step manages multiple discrete tasks or needs
-sub-agent delegation. Do not add a `human_input` step just to ask the
-same branch choice again.
+Use `todo_task` only when independent sub-agent delegation itself adds value;
+several known actions in one shared context are not enough. Do not add a
+`human_input` step just to ask the same branch choice again.
 
 ## Step types
 
-- **`message_sequence`** (default) — ordered turns sharing one
-  conversation: do the work, then verify/fix in follow-up user messages
-- **`regular`** — single atomic action with no verify-and-fix follow-up
+- **`message_sequence`** (default for reasoning) — one substantial outcome
+  sharing one conversation: process persisted evidence, then verify/fix in
+  focused follow-up user messages
+- **`regular`** — one coherent output and final gate. Deterministic API/SDK/CLI
+  fetching, parsing, normalization, and mechanical persistence should be
+  scripted regular steps; batch related calls rather than making micro-steps
 - **`todo_task`** — orchestrator with `predefined_routes`; each route
   is `message_sequence` / `regular` / nested `todo_task` (1 level
   deep only)

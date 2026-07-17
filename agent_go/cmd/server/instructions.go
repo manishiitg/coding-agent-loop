@@ -529,41 +529,90 @@ Step definitions. **Required field**: ` + "`steps`" + ` (array, at least 1 step)
   "steps": [
     {
       "type": "regular",
-      "id": "step-one",
-      "title": "Human readable step title",
-      "description": "Detailed instructions for the worker — self-contained, assume no memory of the chat",
+      "id": "fetch-authoritative-data",
+      "title": "Fetch authoritative data",
+      "description": "Deterministically call the configured API/SDK/CLI source, follow known pagination and retry rules, normalize the stable response shape, record provenance and freshness, fail closed on source errors, and write the authoritative result.",
       "context_dependencies": [],
-      "context_output": "step_one_output.json"
+      "context_output": "fetched_data.json",
+      "validation_schema": {
+        "files": [{
+          "file_name": "fetched_data.json",
+          "must_exist": true,
+          "json_checks": [
+            {"path": "$.status", "must_exist": true},
+            {"path": "$.fetched_at", "must_exist": true},
+            {"path": "$.source", "must_exist": true}
+          ]
+        }]
+      }
     },
     {
-      "type": "regular",
-      "id": "step-two",
-      "title": "Next step",
-      "description": "Depends on step-one's output",
-      "context_dependencies": ["step_one_output.json"],
-      "context_output": "final_report.json"
+      "type": "message_sequence",
+      "id": "analyze-and-verify",
+      "title": "Analyze and verify the result",
+      "description": "Read fetched_data.json and complete the full judgment-heavy analysis. Write final_analysis.md plus analysis_proof.json containing run-specific source references, a check for every criterion, and any repaired gaps.",
+      "items": [
+        {
+          "id": "verify-evidence",
+          "type": "user_message",
+          "message": "Re-open the authoritative source evidence and final output. Verify every success criterion, identify unsupported or incomplete claims, and record run-specific evidence for each conclusion in analysis_proof.json."
+        },
+        {
+          "id": "repair-gaps",
+          "type": "user_message",
+          "message": "Repair every verified gap, then recheck the complete output before finishing."
+        }
+      ],
+      "context_dependencies": ["fetched_data.json"],
+      "context_output": ["final_analysis.md", "analysis_proof.json"],
+      "validation_schema": {
+        "files": [
+          {"file_name": "final_analysis.md", "must_exist": true},
+          {
+            "file_name": "analysis_proof.json",
+            "must_exist": true,
+            "json_checks": [
+              {"path": "$.status", "must_exist": true},
+              {"path": "$.source_references", "must_exist": true},
+              {"path": "$.criterion_checks", "must_exist": true},
+              {"path": "$.double_checked_at", "must_exist": true}
+            ]
+          }
+        ]
+      }
     }
   ]
 }
 ` + "```" + `
 
-**Step types** (use ` + "`regular`" + ` by default; only use others when needed):
-- ` + "`regular`" + ` — LLM-driven execution step (the common case).
-- ` + "`conditional`" + ` — Evaluate only, no execution, branch. Needs ` + "`condition_question`" + `, ` + "`if_true_next_step_id`" + `, ` + "`if_false_next_step_id`" + `.
+**Plan-shape rule — use this for every new workflow:**
+- Start with one large ` + "`message_sequence`" + ` per coherent shared-context span. It should complete that span, re-open the evidence, prove every criterion, repair gaps, and double-check the final result.
+- Improve its description, proof/provenance output, top-level ` + "`validation_schema`" + `, and verify/repair turns before adding more steps. Do not create one step per tool call, source, screen action, checklist item, endpoint, command, proof check, or tiny transform.
+- Fixed API/SDK calls, CLI commands, known pagination, deterministic fetching, stable parsing/normalization, and mechanical persistence belong in one or a few coherent ` + "`regular`" + ` fetcher steps, batched by source/auth/retry/output contract.
+- Feed those fetchers' validated DB rows or artifacts into one large ` + "`message_sequence`" + ` for reasoning, synthesis, evidence-based verification, and repair. Do not have the sequence reissue known calls or parse stable response shapes.
+- If call selection requires judgment, use an agentic request-specification step, then a deterministic executor, then an agentic interpretation sequence.
+- Use multiple large sequences when their contexts should not be shared: different credentials/security exposure, independent durable outputs or retries, clean-room independence, human/routing boundaries, or unrelated context that would distract or contaminate the next agent. Split only when the builder can name that boundary; a desire to validate the same output is not enough.
+
+**Execution-mode handoff:** ` + "`plan.json`" + ` stores structure, not per-step execution mode. After ` + "`create_workflow`" + ` returns, tell the user to open the workflow in Workshop. Before the first production run, Workshop must declare deterministic fetch/parse/persist steps ` + "`scripted`" + ` with ` + "`update_step_config`" + `, author and test ` + "`learnings/<step-id>/main.py`" + `, and keep judgment/message-sequence/browser work ` + "`agentic`" + `. The 10-run bar applies only before ` + "`lock_code=true`" + ` freezes a script, not before selecting scripted mode.
+
+**Step types**:
+- ` + "`message_sequence`" + ` — the default for substantial same-context reasoning: complete the outcome, verify it against evidence, then repair gaps in focused follow-up messages.
+- ` + "`regular`" + ` — one coherent output and final gate. Use scripted regular for deterministic API/CLI/data work; use agentic regular only for one-turn judgment with no same-context verify-and-fix follow-up.
 - ` + "`routing`" + ` — N-way branching. Needs ` + "`routing_question`" + ` and a ` + "`routes`" + ` array (each with ` + "`route_id`" + `, ` + "`route_name`" + `, ` + "`condition`" + `, ` + "`next_step_id`" + `).
 - ` + "`human_input`" + ` — Pause for user response. Needs ` + "`question`" + `, ` + "`response_type`" + ` (` + "`text`" + `/` + "`yesno`" + `/` + "`multiple_choice`" + `), ` + "`next_step_id`" + `, and (for yesno) ` + "`if_yes_next_step_id`" + `/` + "`if_no_next_step_id`" + `.
-- ` + "`todo_task`" + ` — Dynamic task orchestrator with ` + "`predefined_routes`" + `.
+- ` + "`todo_task`" + ` — Dynamic task orchestrator with ` + "`predefined_routes`" + `; use only when runtime delegation/task discovery is genuinely needed, not merely because a coherent job has several actions.
 
 **Step field reference**:
 - ` + "`context_dependencies`" + ` — array of file names this step reads (produced by earlier steps)
 - ` + "`context_output`" + ` — file name (string) or array of file names this step writes
-- ` + "`validation_schema`" + ` — optional JSONPath-based output validation (` + "`files[].json_checks`" + `)
+- ` + "`validation_schema`" + ` — required for every output-producing step; validate the authoritative DB rows or artifact, including freshness/provenance/error state for fetchers
 - Steps chain via ` + "`context_dependencies`" + ` / ` + "`context_output`" + `, or via explicit ` + "`next_step_id`" + ` on branching types.
 
 ### Rules When Creating a Workflow
 - **Use ` + "`create_workflow`" + `, not shell commands.** Sub-agents cannot write under ` + "`Workflow/`" + ` via ` + "`execute_shell_command`" + ` — they'll hit a folder-guard error. Build the two JSON objects in your reasoning, then call the tool directly from your own turn. No delegation needed for this step.
 - **Both JSON objects must be well-formed** — the tool will re-marshal them on write. If you produce invalid structures (missing required fields, wrong types, duplicate step ids, non-kebab-case step ids) the tool returns an error describing the problem and nothing gets written.
 - **Pick capabilities smartly** from the current chat's context: include only the servers, skills, and LLM tiers actually needed for the workflow's steps. Don't blindly copy every currently-enabled server.
+- **Apply the plan-shape rule before calling the tool.** The atomic creator validates graph integrity, but it cannot infer that an LLM-heavy plan should have used a scripted fetcher or that several micro-steps should have been merged. Build the correct scripted-fetcher → large-message-sequence structure up front, include validation on every producing step, and explicitly report the Workshop execution-mode/script handoff.
 - **Don't overwrite existing workflows.** ` + "`create_workflow`" + ` is for *new* workflows only — it refuses if the target folder already exists. To modify an existing workflow's **cron schedules**, use the workflow_schedule tools (see "Modifying Existing Workflows" above). For LLM config, MCP servers, skills, or plan steps, direct the user to the workflow builder / canvas.
 - After creation, report the folder path (returned by the tool) to the user and tell them they can activate it from the workflow picker.
 

@@ -13,19 +13,21 @@ reference.
 
 ## When to use todo_task
 
-A todo_task step is right when the step **manages multiple discrete
-tasks**, especially:
+A todo_task step is right when the step must **manage independently delegated
+tasks whose contexts should be isolated**, especially:
 
 - The set of tasks is dynamic — discovered at runtime — and each must be
   executed
 - Progress tracking matters — the UI shows which tasks are done,
   pending, failed, with retry counts
 - Tasks may need different sub-agents per route
-- One step should iterate over a list / dataset / set of items
+- Tasks should run in parallel or need independent retries and progress
 
 **Don't use todo_task when:**
 
 - The flow is a single linear conversation — use `message_sequence`
+- Several known actions share one objective, context, and output/retry contract — keep them in one large `message_sequence`
+- A list/dataset can be processed in one shared conversation — use a `foreach` item inside `message_sequence`
 - The next step depends on a binary or N-way decision — use `routing`
 - It's a single focused task with one tool/output — use `regular`
   (agentic) or `scripted`
@@ -78,11 +80,12 @@ A todo_task plan step has two big parts:
 
 A route's `sub_agent_step` can be:
 
-- **`regular`** (the common case) — stateless one-off work per task.
-- **`message_sequence`** — a stateful specialist conversation. Use when
-  the sub-agent needs to remember prior turns across the orchestrator's
-  invocations of this route (e.g., a reviewer that builds up critique
-  context across iterations).
+- **`message_sequence`** (the default for agentic route work) — one large
+  shared-context specialist span with its own proof, double-check, repair, and
+  validation. It can also remember prior turns across the orchestrator's
+  invocations of this route.
+- **`regular`** — stateless one-off work that genuinely needs no same-context
+  proof/repair follow-up, or deterministic scripted route work.
 - **`todo_task`** (nested) — one nested orchestration layer for a route
   whose work itself decomposes into multiple sub-tasks.
 

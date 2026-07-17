@@ -46,14 +46,14 @@ func (api *StreamingAPI) registerWorkflowCreatorTool(underlyingAgent *mcpagent.A
 			},
 			"plan_json": map[string]interface{}{
 				"type":                 "object",
-				"description":          "The full plan.json object. Required field: steps (array, at least 1 step). Each step needs type, id (kebab-case, unique), and title. Every route and explicit next_step_id must target a declared step or end; the complete graph is validated atomically before the workflow is created. Include steps/reporting/evaluation that capture the evidence needed by any linked org goal in pulse/goals.html.",
+				"description":          "The full plan.json object. Required field: steps (array, at least 1 step). Start with one large message_sequence per coherent shared-context span; put run-specific proof/provenance, evidence-based double-check and repair turns, and the final validation_schema inside that step. Use multiple large sequences only when contexts should not be shared because of security/credentials, independent outputs/retries, clean-room independence, human/routing boundaries, or context contamination. Fixed API/SDK/CLI calls, deterministic fetching/pagination/parsing/normalization, and mechanical persistence belong in coherent regular fetcher steps batched by source/auth/retry/output contract. Do not create one step per endpoint/tool/checklist/proof item. Every output-producing step needs validation_schema. Each step needs type, id (kebab-case, unique), and title. Every route and explicit next_step_id must target a declared step or end; the complete graph is validated atomically before creation. plan.json cannot store execution mode, so after creation explicitly hand off deterministic steps to Workshop for declared_execution_mode=scripted plus authored/tested main.py before the first production run.",
 				"additionalProperties": true,
 			},
 		},
 		"required": []string{"folder_name", "workflow_json", "plan_json"},
 	}
 
-	description := "Create a new workflow at Workflow/<folder_name>/ with the given workflow.json and planning/plan.json. This is the ONLY way to write under Workflow/ — the multi-agent chat folder guard blocks direct shell writes there. folder_name must be kebab-case (shell-safe); the human-readable display name goes in workflow_json.label and can be any string. Before creating a workflow for an org goal, read pulse/goals.html and make the workflow's objective, success criteria, reports, and evaluation evidence align to that goal. The tool validates the complete plan graph before writing anything and refuses dangling route/next_step_id targets or overwriting an existing workflow. Returns the folder path on success."
+	description := "Create a new workflow at Workflow/<folder_name>/ with the given workflow.json and planning/plan.json. Use one large message_sequence per shared-context span, with proof/provenance, evidence-based double-checking, repair, and final validation inside it; create another large sequence only when its context should be isolated. Put deterministic API/SDK/CLI/data-fetch/parse/persist work in coherent scripted-fetcher candidates with authoritative validated outputs. Never use one regular step per endpoint, routine action, or proof check. This tool writes structure only; after creation tell the user to open Workshop so deterministic steps are declared scripted and main.py is authored/tested before production. The tool validates the complete plan graph before writing anything and refuses dangling targets or overwrite."
 
 	return underlyingAgent.RegisterCustomTool(
 		"create_workflow",
@@ -188,7 +188,8 @@ func (api *StreamingAPI) handleWorkflowCreatorTool(ctx context.Context, args map
 		"objective":     workflowMap["objective"],
 		"step_count":    stepSummary.count,
 		"steps":         stepSummary.items,
-		"message":       fmt.Sprintf("Workflow Workflow/%s/ created. The user can activate it from the workflow picker.", folderName),
+		"next_action":   fmt.Sprintf("Open Workflow/%s/ in Workshop before the first production run. Declare deterministic API/SDK/CLI/fetch/parse/persist steps scripted, then author and test each learnings/<step-id>/main.py; keep judgment, message-sequence, and browser work agentic.", folderName),
+		"message":       fmt.Sprintf("Workflow Workflow/%s/ created. The user can activate it from the workflow picker; scripted-step setup must be completed in Workshop before the first production run.", folderName),
 	}
 
 	resultJSON, marshalErr := json.MarshalIndent(result, "", "  ")

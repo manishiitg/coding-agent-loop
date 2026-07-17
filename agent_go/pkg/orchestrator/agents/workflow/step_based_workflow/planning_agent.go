@@ -1138,7 +1138,7 @@ func getAddMessageSequenceStepSchema() string {
 		"properties": {
 			"id": {"type": "string", "description": "REQUIRED: Stable URL-friendly step ID."},
 			"title": {"type": "string", "description": "REQUIRED: Short title for the message sequence step."},
-			"description": {"type": "string", "description": "REQUIRED: The opening instruction AND objective. This IS EXECUTED as the first user turn (turn 0): it leads items[0] inside the same conversation — identical to how a todo_task's description is its first turn. Write it as an actionable opening instruction, not throwaway metadata (anything you put here runs). Then split the follow-up work into items[] (turns 1..N)."},
+			"description": {"type": "string", "description": "REQUIRED: The opening instruction AND complete coherent outcome. This IS EXECUTED as the first user turn (turn 0): it leads items[0] inside the same conversation — identical to how a todo_task's description is its first turn. Write it as an actionable work instruction, not throwaway metadata (anything you put here runs). Keep routine sub-actions here; reserve items[] (turns 1..N) for decision-useful validation, critique, repair, new input, or real phase changes."},
 			"context_dependencies": {"type": "array", "items": {"type": "string"}, "description": "REQUIRED: Prior context files this sequence depends on. Use [] if none."},
 			"context_output": {"type": "string", "description": "OPTIONAL: Summary/result file for later steps. Omit when the step writes its result to the db (validate via validation_schema.db)."},
 			"items": {
@@ -1151,7 +1151,7 @@ func getAddMessageSequenceStepSchema() string {
 						"type": {"type": "string", "enum": ["user_message", "prevalidation", "foreach"], "description": "user_message, prevalidation, or foreach"},
 						"kind": {"type": "string", "description": "Drives item-scoped write access. One of: learning, knowledgebase, or db. Omit for a plain user_message item with no extra write access. Explicit write_access overrides kind."},
 						"title": {"type": "string"},
-						"message": {"type": "string", "description": "For user_message items: concise instruction for one turn, run in the same persistent conversation. Use plain work turns, or self-validation/interrogation turns (e.g. \"Did you actually call X? Quote its exact output. Did you actually produce Y?\") to make the step check its own work before a prevalidation gate. For foreach items: a Go text/template rendered once per row of source, with the row bound to '.' (e.g. 'Process {{.id}}: {{.task}}')."},
+						"message": {"type": "string", "description": "For user_message items: a follow-up instruction run in the same persistent conversation. Prefer evidence-seeking validation/repair turns (e.g. \"Re-open the output. Did you actually satisfy every criterion? Quote the evidence, then fix every unsupported or incomplete item.\") over routine subtask instructions. For foreach items: a Go text/template rendered once per row of source, with the row bound to '.' (e.g. 'Process {{.id}}: {{.task}}')."},
 						"write_access": {
 							"type": "object",
 							"description": "Item-scoped writes only. Reads for kb/db/learnings are always open. Folder-level booleans only — NO per-file path scoping (a \"paths\" list is rejected); db:true grants the whole db/ folder. Use learnings:true sparingly for deliberate in-sequence writes to learnings/_global/; prefer normal step-level learning for automatic post-step extraction.",
@@ -4577,7 +4577,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"add_regular_step",
-		"Add a regular execution step to the plan. Use this for standard steps that execute once and produce output. Provide all required fields: id, title, description, context_output, insert_after_step_id. The plan.json file is updated immediately when this tool is called.",
+		"Add a regular execution step to the plan. Use one coherent regular step for deterministic API/SDK calls, CLI commands, data fetching, known pagination, stable parsing/normalization/transforms, or mechanical persistence that share a source/auth/retry/output contract; do not create one step per endpoint or command. After adding such a step, immediately declare it scripted with update_step_config and author/test learnings/<step-id>/main.py. Give it an authoritative DB or explicit file output with freshness/provenance, fail-closed errors, idempotency where relevant, and deterministic validation. Feed that output to a large message_sequence for judgment-heavy processing. A regular step may also hold one-turn agentic judgment when no same-context verify-and-fix follow-up is needed. The plan.json file is updated immediately.",
 		regularParams,
 		createAddRegularStepExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
 		"workflow",
@@ -4592,7 +4592,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"add_message_sequence_step",
-		"Add a message_sequence step to the plan. Use this only when the user asks for a persistent single-agent conversation with an ordered queue of short user messages, optional foreach turns, and optional prevalidation gates. Deterministic code belongs in a standalone regular scripted step. As a todo_task predefined route, use message_sequence when the orchestrator should reuse the same specialist conversation for critique, test feedback, validation feedback, or follow-up work; restart is controlled at execution time with message_sequence_restart. Reads for KB/db/learnings are always open; writes are item-scoped through write_access. Prefer small focused user messages, and add reference-check, hallucination-check, critique, or self-validation messages where helpful.",
+		"Add a message_sequence step to the plan. Use it when one agentic step should consume persisted evidence, own a coherent reasoning outcome, and then validate, critique, or repair that work in the same conversation. Put the whole reasoning outcome in the opening description; add follow-up items only for decision-useful assurance, a real intermediate gate, new external input, or foreach iteration—not one item per routine subtask or tool call. Fixed API/SDK/CLI calls, data fetching, known pagination, stable parsing/normalization, and mechanical writes belong in upstream standalone regular scripted steps; the sequence reads their validated DB rows or artifacts. Use explicit prevalidation items when deterministic failures must trigger same-conversation repair. As a todo_task predefined route, use message_sequence when the orchestrator should reuse the same specialist conversation for critique, test feedback, validation feedback, or follow-up work; restart is controlled at execution time with message_sequence_restart. Reads for KB/db/learnings are always open; writes remain item-scoped through write_access.",
 		messageSequenceParams,
 		createAddMessageSequenceStepExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
 		"workflow",

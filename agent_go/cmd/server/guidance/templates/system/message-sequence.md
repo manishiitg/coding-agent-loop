@@ -1,6 +1,10 @@
 ## MESSAGE SEQUENCE — SAME-CONTEXT CONVERSATIONAL WORK
 
-Use `message_sequence` for one persistent conversation where later turns need the earlier turns' reasoning, tool output, critique, or context. The step `description` is turn 0; `items[]` are turns 1..N.
+Use `message_sequence` for one persistent conversation where later turns need the earlier turns' reasoning, tool output, critique, or context. Design one large sequence per coherent shared-context span. The step `description` is turn 0; `items[]` are turns 1..N.
+
+The default shape is `[complete the whole shared-context span] → [re-open authoritative evidence and prove every criterion] → [repair gaps and double-check]`, followed by the top-level deterministic validation gate. Require run-specific proof/provenance in the output so validation cannot pass a stale or self-asserted success. Do not create separate workflow steps for these checks.
+
+Use multiple large sequences when contexts should not be shared: different credentials/security exposure, independently rerunnable outputs or failure domains, clean-room reviewer independence, human/routing boundaries, or unrelated context that would distract or contaminate the next agent. The builder should decide this from workflow semantics and be able to state the isolation reason.
 
 Supported item types:
 
@@ -10,13 +14,16 @@ Supported item types:
 
 `type: "code"` was removed in workflow contract v1.0.10. Deterministic code must be a standalone `regular` step configured with `declared_execution_mode: "scripted"`, with its script at `learnings/<step-id>/main.py`. Connect conversational and scripted steps through explicit `context_dependencies`, `context_output`, database contracts, and validation.
 
-Preferred split when deterministic work is needed:
+Preferred split when deterministic data is needed:
 
 ```text
-message_sequence: collect-and-clarify
-  -> regular scripted: normalize-inputs
-  -> message_sequence: review-normalized-results
+regular scripted: fetch-and-normalize-authoritative-data
+  -> message_sequence: analyze-verify-and-repair-from-fetched-data
 ```
+
+Batch related API/SDK calls or CLI commands into the fetcher when they share credentials, retry/rate-limit behavior, source, and output contract. The fetcher owns pagination, stable parsing, provenance/freshness, idempotency, fail-closed errors, and deterministic DB/file validation. Do not use one step per endpoint, and do not spend sequence turns reissuing known requests or parsing stable response shapes.
+
+When the request itself needs judgment, use `message_sequence: decide-and-write-request-spec -> regular scripted: execute-request-spec -> message_sequence: interpret-and-verify-result`.
 
 Do not hide durable computation, side effects, retries, or file handoffs inside conversation state.
 
@@ -31,8 +38,9 @@ Use it when:
 
 Do not use it when:
 
-- A phase has an independent artifact, validation gate, retry domain, model, credential, or downstream consumer.
+- A phase has an independent artifact, independently rerunnable validation/failure domain, model, credential, downstream consumer, or context that should be isolated.
 - Work is deterministic code; use a scripted regular step.
+- Work is a fixed API/SDK call, CLI command, data fetch, stable parse/normalize operation, or mechanical write; use a scripted regular step and consume its durable result here.
 - The workflow needs deterministic branching; use `routing`.
 - Work should be delegated independently; use `todo_task` routes.
 
@@ -56,7 +64,7 @@ Write access is folder-level. Per-file path lists are rejected. Use learning wri
 
 ## PREVALIDATION
 
-Place a `prevalidation` item immediately after the conversational turn whose artifacts it checks. On a normal validation failure, the runtime sends concrete failures back to the same conversation for correction and retries the gate. Infrastructure failures stop the step.
+Place a `prevalidation` item immediately after the conversational turn whose artifacts it checks. Use a final prevalidation item when deterministic acceptance failures must be sent back to the same conversation for correction. On a normal validation failure, the runtime sends concrete failures back to the same conversation and retries the gate. Infrastructure failures stop the step.
 
 ```json
 {
@@ -86,7 +94,7 @@ Use `foreach` when every selected database row must get one conversational turn:
 }
 ```
 
-`source_sql` must be read-only. Each result row is bound to `.` in the Go template. Add one static prevalidation after the loop when the aggregate result needs a gate.
+`source_sql` must be read-only. Each result row is bound to `.` in the Go template. Add one static prevalidation after the loop when the aggregate result needs a same-conversation repair gate.
 
 ## ROUTE PATTERNS
 
@@ -106,9 +114,12 @@ For a todo_task route, use `message_sequence` when the orchestrator should prese
 ## AUTHORING RULES
 
 - Write the real opening instruction in `description`.
+- Make turn 0 own the whole shared-context outcome; do not turn routine phases into separate items.
+- Require run-specific proof/provenance, then add a turn that re-opens authoritative evidence and proves every criterion, followed by repair and double-checking.
 - Keep each user-message item focused on one outcome.
 - Use explicit durable files or DB rows for cross-step handoff.
 - Declare item write access before execution.
-- Use prevalidation for deterministic acceptance checks.
+- Keep the step-level `validation_schema` strict, and use explicit prevalidation items whenever a deterministic failure must trigger same-conversation repair.
+- Create another large sequence only when its context should be intentionally isolated, and record the boundary rationale in the plan description/review.
 - Keep code, its retries, permissions, logs, and costs in standalone scripted regular steps.
 - Never add a legacy code item. If an old plan contains one, require the v1.0.10 workflow preflight migration.

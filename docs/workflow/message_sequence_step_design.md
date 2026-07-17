@@ -2,7 +2,9 @@
 
 ## Purpose
 
-A `message_sequence` is a persistent, ordered conversation with one coding agent. Use it when later turns must retain the reasoning and tool context from earlier turns.
+A `message_sequence` is a persistent, ordered conversation with one coding agent. Use one large sequence per coherent shared-context span, when later turns must retain the reasoning and tool context from earlier turns.
+
+The preferred shape is: complete the whole span, re-open authoritative evidence and prove every criterion, repair verified gaps, then double-check before the top-level validation gate. Require run-specific proof/provenance in the output. Use multiple large sequences only when contexts should not be shared because of security/credentials, independently rerunnable outputs or failure domains, clean-room independence, human/routing boundaries, or context contamination.
 
 Supported item types:
 
@@ -23,28 +25,26 @@ Deterministic code is not a sequence item. Put code in a standalone `regular` st
   "context_dependencies": [
     "runs/iteration-0/default/execution/generate/report.json"
   ],
+  "context_output": ["report.json", "report_proof.json"],
   "items": [
     {
-      "id": "critique",
+      "id": "prove",
       "type": "user_message",
-      "message": "Identify factual gaps and unsupported conclusions."
+      "message": "Re-open authoritative evidence, prove every criterion, identify unsupported conclusions, and write run-specific source references and criterion checks to report_proof.json."
     },
     {
-      "id": "correct",
+      "id": "repair-and-double-check",
       "type": "user_message",
-      "message": "Apply the verified corrections to the report.",
+      "message": "Repair every verified gap, update the proof record, and double-check the complete report against the sources.",
       "write_access": { "db": true }
     },
     {
-      "id": "verify",
+      "id": "validate-proof",
       "type": "prevalidation",
       "validation_schema": {
         "files": [
-          {
-            "file_name": "report.json",
-            "required": true,
-            "validation_type": "json"
-          }
+          {"file_name": "report.json", "required": true, "validation_type": "json"},
+          {"file_name": "report_proof.json", "required": true, "validation_type": "json"}
         ]
       }
     }
@@ -86,17 +86,18 @@ Reads from workflow execution outputs, `db/`, `knowledgebase/`, and learnings ar
 
 Write access is folder-level. Per-file path lists are rejected because they create a misleading security boundary.
 
-## Deterministic Work Between Conversations
+## Deterministic Fetching Before Agentic Processing
 
 Use explicit plan steps:
 
 ```text
-message_sequence: collect-and-clarify
-  -> regular scripted: normalize-inputs
-  -> message_sequence: review-normalized-results
+regular scripted: fetch-and-normalize-authoritative-data
+  -> message_sequence: analyze-verify-and-repair-from-fetched-data
 ```
 
-The scripted step owns `learnings/normalize-inputs/main.py`, declares durable input files in `context_dependencies`, declares output files in `context_output`, and has backend validation. This makes failures, retries, permissions, logs, and costs visible at the workflow-step level.
+The scripted step owns `learnings/fetch-and-normalize-authoritative-data/main.py`, batches related deterministic API/SDK calls or CLI commands under one source/auth/retry/output contract, and writes validated DB rows or an explicit output artifact with provenance and freshness. This makes failures, retries, permissions, logs, and costs visible at the workflow-step level. The message sequence consumes those results for judgment, synthesis, semantic verification, and repair; it does not re-fetch or re-parse stable response shapes conversationally.
+
+When call selection requires judgment, use an agentic request-specification step before the scripted executor and a later message sequence to interpret the result. Do not create one scripted step per endpoint or tiny transform.
 
 ## Workflow Contract v1.0.10
 
@@ -121,7 +122,8 @@ The runtime also rejects any remaining code item with a precise v1.0.10 upgrade 
 
 - Keep each user message focused on one outcome.
 - Use the same conversation only when shared context is valuable.
-- Use prevalidation for deterministic acceptance checks, not subjective review.
+- Use explicit prevalidation for deterministic acceptance checks that should trigger same-conversation repair, not for subjective review.
 - Use `foreach` only with bounded, read-only queries.
 - Put all deterministic code in standalone scripted regular steps.
+- Put fixed API/SDK/CLI fetching, pagination, stable parsing/normalization, and mechanical persistence in coherent scripted fetchers; feed their durable outputs to large message sequences.
 - Pass data between steps through declared files or the workflow database, never hidden in terminal context.

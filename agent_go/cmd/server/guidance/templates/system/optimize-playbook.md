@@ -18,7 +18,7 @@ When helping users optimize steps, follow these principles:
 Step-level `success_criteria` is no longer part of the recommended step design. Put semantic completion guidance into `description`, and put machine-checkable requirements into `validation_schema`.
 - **validation_schema**: Check login_status.json has login_success=boolean, pan=string, dashboard_url=string (pattern: /dashboard/), account_name=string (min_length: 1)
 
-If a step needs **semantic/LLM-based validation** (e.g., "verify the summary is accurate"), add a separate step after it that reads the output and validates it — don't try to encode semantic checks in validation_schema.
+If a step needs **semantic/LLM-based validation** (e.g., "verify the summary is accurate"), keep it in the same shared context: use or convert to one large `message_sequence`, add a focused user-message turn that re-opens the real evidence and proves the criteria, then a repair/double-check turn. Keep machine-checkable proof/provenance in the top-level `validation_schema`. Add a separate validation step only for genuine clean-room independence, different permissions/tools, or an independently rerunnable artifact/failure domain.
 
 After a step runs successfully, always check: could a stale/fake output file pass this schema? If yes, tighten it.
 
@@ -67,7 +67,7 @@ Mature workflows accumulate three kinds of state that you can freeze independent
 
 **Hallucination prevention**: A step can report success while its output is *ungrounded* — fabricated values, an action claimed with no backing tool call/artifact, numbers that contradict the run trace, or a generic/templated result that ignores this run's real inputs. That is a reliability bug even when the step “passed.” Repair a hallucination-prone step by making fabrication hard to pass:
 - **Demand evidence in `validation_schema`** — require real, run-specific fields (IDs, URLs, timestamps, counts that must trace to this run) and anti-staleness checks, not a bare `success: true`, so a made-up or leftover output can't validate.
-- **Add a verification step** after it that reads the output and reconciles it against the actual artifacts / tool results / source data, failing if they don't match.
+- **Add verification inside the owning message sequence**: a follow-up turn re-opens actual artifacts/tool results/source data, reconciles every claim, and repairs mismatches before the top-level gate. Use a separate verifier only when clean-room independence or a different execution boundary is materially required.
 - **Require grounding in the description** — instruct the step to derive values only from real tool output / fetched data and to cite where each value came from, never to infer or fill them in.
 Trust output you can trace back to real evidence, not a self-reported success.
 
@@ -210,10 +210,11 @@ After running a step, review it for optimization — but follow this priority or
 **Priority 3 — Efficiency (fix only after fundamentals are solid):**
 - **Tool Calls** — Redundant reads, repeated searches, wasted API calls. Usually a symptom of a vague description — fix the description first, then check if tool waste drops.
 - **Workflow Structure** — Merge, split, delete, add, or reorder steps for a more optimal overall workflow:
-  - **Merge**: Two sequential steps with same tools/context might be better as one
-  - **Split**: A step that's too complex (high failure rate, too many turns) should be broken up
+  - **Merge**: Sequential steps with the same context/objective/output should usually become one large `message_sequence`
+  - **Strengthen before splitting**: Improve the description, proof/provenance output, validation schema, retry instructions, and verify/repair turns first
+  - **Split**: Use multiple large sequences only when contexts should not be shared or an output/retry/security/human/routing boundary must be independent
   - **Delete**: A step whose output is never consumed downstream is dead weight
-  - **Add**: If output needs semantic validation, add a separate validation step
+  - **Validate in context**: If output needs semantic validation, add evidence-based proof, double-check, and repair turns inside the owning sequence
   - **Reorder**: If dependencies aren't ready, step ordering may need adjustment
 
 When the user runs a step, briefly note the highest-priority improvement needed. Don't dump all dimensions at once — focus on what matters most right now.
@@ -222,17 +223,17 @@ When the user runs a step, briefly note the highest-priority improvement needed.
 
 Steps have two execution modes — set via **update_step_config(step_id, use_code_execution_mode=true, declared_execution_mode="scripted"|"agentic")**:
 
-- **Scripted mode** (declared_execution_mode="scripted"): Agent writes a reusable `main.py` that is saved and tried first on future runs (0 LLM tokens when stable). If the saved script fails, the LLM repairs it. **Do not make this the default optimization path, and never flip a step to scripted on your own initiative.** But when the **user explicitly asks** for a scripted step (e.g. to build and test it), set it — they need the step scripted to even gather run evidence, so don't block a user-requested scripted step behind a run count. The 10+-scenario-covering-runs evidence gates *trusting the script long-term and freezing it* (`lock_code`), not the act of creating it.
+- **Scripted mode** (declared_execution_mode="scripted"): Agent writes a reusable `main.py` that is saved and tried first on future runs (0 LLM tokens when stable). If the saved script fails, the LLM repairs it. This is the default execution mode for deterministic API/SDK calls, CLI commands, known pagination, data fetching, stable parsing/normalization/transforms, and mechanical persistence. Create or move that work to scripted immediately; no run-count gate applies to mode selection. The 10+-scenario-covering-runs evidence gates only *trusting and freezing* the script with `lock_code`.
 
-  **Keep scripted steps SMALL, single-purpose, and simple — not large logic.** A good scripted step does ONE focused deterministic job: one source → one transform → one output/table, a handful of operations. A big script with lots of branching logic, or a whole pipeline crammed into one `main.py`, is brittle (one upstream change breaks everything) and hard for the repair loop to fix. Split deterministic work into **small scripted steps that coordinate through the db** (the shared bus), and keep large or adaptive logic **agentic**. ("Small" = small scope / simple logic — a small step can still bundle a few API calls into one script; it just shouldn't carry a big decision tree.)
+  **Keep scripted steps coherent, not microscopic.** A good scripted fetcher owns one source/auth/retry/output contract and may batch several related endpoints, CLI commands, pagination passes, and transforms before writing its authoritative rows/artifact. Do not create one script per endpoint or tiny transform. Do not cram adaptive judgment or a branching business workflow into `main.py`; feed the validated deterministic output to one large agentic `message_sequence` instead.
 
   Good candidates for scripted (each kept small):
-  - One source pulled and written to one table (e.g. a single API → parse → `db` upsert)
+  - One coherent source fetched and written to its canonical tables (e.g. related API endpoints + pagination → parse/normalize → idempotent `db` upserts)
   - Deterministic data processing: iterating rows, matching columns, extracting/transforming — a tight Python loop in one shot, no per-row "thinking"
   - A focused transform that benefits from Python libraries (parsing, calculations, formatting)
-- **Agentic mode** (declared_execution_mode="agentic"): the default. The LLM acts each turn — it picks tools, can run inline shell/Python via `execute_shell_command` when consolidating multiple operations is useful, and can also just call MCP tools directly when one tool call is enough. No persistent script is saved. Use this mode when the work varies between runs, when adaptive reasoning is needed, or when the step is a single tool call where writing a script would be overkill. Browser/UI steps should generally stay here unless the user explicitly wants scripted browser automation and 10+ scenario-covering successful runs prove the flow is stable enough to freeze into `main.py`. If an agentic step has leftover `learnings/{step-id}/main.py`, delete it; that file is stale mode debt and should not be patched.
+- **Agentic mode** (declared_execution_mode="agentic"): the LLM acts each turn and no persistent script is saved. Use it for judgment, synthesis, fuzzy extraction, adaptive discovery, or action selection that genuinely varies with live evidence. A fixed API/CLI call is scripted even when it is only one call; simplicity is a reason to make the script small, not a reason to spend an LLM turn on it. Browser/UI steps should generally stay agentic unless the user explicitly wants scripted browser automation and representative evidence proves the flow stable enough. If an agentic step has leftover `learnings/{step-id}/main.py`, delete it; that file is stale mode debt and should not be patched.
 
-**Promotion rule:** Workshop-created steps arrive as `agentic`, and you should never auto-promote to `scripted` on your own initiative — that judgment is the user's. On an **explicit user request**, set `scripted` right away so they can build and test the script (don't gate that on a run count — they can't accumulate runs without it). Treat 10+ scenario-covering successful runs (with eval/run evidence at target) as the bar for **trusting the saved script as the stable fast path and freezing it with `lock_code`** — not as a precondition for the user creating a scripted step. Keep `lock_code=false` until that evidence exists even when the mode is already `scripted`, so the repair loop can still fix drift. Absent a user ask, keep `agentic` and improve descriptions, validation, learnings, or tool usage instead.
+**Mode-selection rule:** Create or convert deterministic API/CLI/SDK/data-fetch/parse/transform/persist work as `scripted` on Workshop's own initiative; this is architecture selection, not freezing. Treat 10+ scenario-covering successful runs (with eval/run evidence at target) as the bar only for **freezing the saved script with `lock_code`**. Keep `lock_code=false` until that evidence exists so the repair loop can fix drift. Keep judgment, adaptive discovery, and browser/UI work agentic.
 
 **Mode declaration is required**: Every executable step should store:
 - `declared_execution_mode`
@@ -278,19 +279,20 @@ When the user asks to enable scripted execution for a step, use: update_step_con
 - `mode="cross_step"`: use this after several contributing steps have run and the work needs a holistic view. The agent receives every step's `knowledgebase_contribution` plus step output folders from the selected run. Examples: *"reconcile company/organization naming drift across step contributions"*, *"write pattern notes for repeated shapes across per-account steps"*, *"surface contested employee-count values where two steps disagree"*.
 - Boundary: if you can describe the instruction as one concrete file/topic transformation, use `targeted`. If the justification depends on comparing multiple steps, runs, or topic files, use `cross_step`.
 
-### 9. Orchestrator (Sub-Workflow / Pipeline) — The Preferred Multi-Step Pattern
-**Default to todo_task** when a step involves multiple distinct sub-tasks. Users may call this an "orchestrator", "sub-workflow", or "pipeline" — it's the most powerful step type, giving each sub-task (sub-agent) independent learnings, tools, skills, and debugging.
+### 9. Orchestrator (Sub-Workflow / Pipeline) — For Dynamic Delegation
+Use `todo_task` when runtime work genuinely needs dynamic task discovery, independent specialist agents, parallel delegation, or separately recoverable task domains. Several routine actions do not by themselves justify an orchestrator.
 
-**When to use todo_task (prefer this over a single large regular step):**
-- The step has **3+ distinct actions** (e.g., "login, extract data, generate report") — each becomes a sub-agent
+**When to use todo_task:**
+- Runtime evidence determines which or how many specialist tasks are needed
 - Sub-tasks need **different tools/skills/servers** (e.g., browser for login, code-exec for processing)
 - Sub-tasks should **learn independently** — a login pattern shouldn't be mixed with data extraction learnings
 - You want **parallel execution** — todo_task supports running sub-agents in parallel
 - You need **granular debugging** — each sub-agent can be individually re-run and hardened
 
 **When NOT to use todo_task:**
-- Simple steps with a **single focused task** (one tool call, one output file) — use regular step
-- The task is **dynamic/unpredictable** — depends entirely on runtime context that can't be anticipated
+- Fixed API/SDK/CLI/data acquisition and stable transforms — use coherent scripted regular fetchers
+- One substantial reasoning outcome with same-context verification and repair — use one large message_sequence
+- A known linear checklist whose items share one output/retry boundary — keep it inside the owning step rather than delegating micro-tasks
 - The task is **trivial** — a one-line action that doesn't benefit from learning
 
 **Sub-agent design:**
@@ -298,11 +300,11 @@ When the user asks to enable scripted execution for a step, use: update_step_con
 - Each sub-agent has its own **learning files**, **server/tool scoping**, **skills (via enabled_skills in step_config)**, and **validation schemas**
 - Sub-agents can be **individually debugged, re-run, and hardened** via the workshop tools
 - The orchestrator stays lean — it manages task flow, while sub-agents handle execution details
-- If one route still has **multiple known sub-tasks**, make that route's **sub_agent_step** another **todo_task** instead of forcing a single overloaded regular step — but stop at one nested layer. A nested todo_task should break work into regular sub-agents, not another todo_task.
+- If one route still needs **multiple independently delegated sub-tasks with isolated contexts**, its **sub_agent_step** may be another **todo_task** — but stop at one nested layer. A known checklist or several same-context actions stay inside one large route `message_sequence`.
 
-**Design principle:** If you find yourself writing a step description with "First do X, then do Y, then do Z", convert it to a todo_task with sub-agents for X, Y, and Z. Each sub-agent gets its own learnings, tools, and optimization lifecycle.
+**Design principle:** Split by durable control boundary, not action count. A scripted fetcher may perform many related calls/transforms under one source/auth/retry/output contract, and a message sequence may perform a large reasoning job plus verification/repair. Use todo_task only when independent delegation itself adds value.
 
-**Rule of thumb:** When planning a new workflow, start by identifying the distinct tasks, then group related tasks into todo_task steps with sub-agents. Only use regular steps for truly simple, single-purpose tasks.
+**Rule of thumb:** For data workflows start with scripted fetcher(s) → durable DB/file evidence → one large agentic message sequence. Add routing, human gates, or todo_task only for real control boundaries.
 
 ### 9a. Orchestrator scripted mode (deterministic delegation, 0 LLM tokens)
 

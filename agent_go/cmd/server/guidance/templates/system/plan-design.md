@@ -6,35 +6,42 @@ When a user describes what they want to automate, design and create the best-pra
 
 Modern agents can handle long context and many tool calls. Do not make one workflow step per tool call, screen action, file read, or small transformation. A step is a durable workflow boundary: it has an output contract, validation gate, retry behavior, and persistent-store responsibilities.
 
-Split into separate steps when a boundary buys something concrete:
+Start with **one large `message_sequence` for each coherent shared-context span**. It should complete that span's agentic outcome, then prove and repair it without discarding conversation context. Strengthen the step with machine-checkable evidence/provenance fields, a top-level `validation_schema`, and focused verify-and-repair turns before adding another workflow step. A reviewer must be able to name the context or execution boundary that the extra step protects.
+
+Split into separate steps only when a boundary buys something concrete that cannot live safely inside that large step:
 - Distinct durable output or downstream contract
-- Independent validation gate
+- Independent validation/retry gate that must succeed, fail, or rerun separately
 - Independent retry/failure domain
 - Different tool, security, credential, or runtime context
 - Downstream consumer needs the intermediate artifact
 - Different persistent-store contract (learnings HOW, KB WHAT, database structured state, report data)
 - Human decision, approval, or routing checkpoint
+- Deterministic execution versus agentic judgment: fixed API/SDK calls, CLI commands, data fetching, parsing, normalization, and mechanical writes belong in scripted regular steps; reasoning over their results belongs in a message sequence
 
 Combine actions into one step when they share one objective and output contract, use the same tools/security context, fail and retry together, produce only scratch intermediates, and one validation schema can verify the result.
 
-**Rule of thumb**: Many tool calls can belong in one step. Many durable contracts should not.
+**Rule of thumb**: one large validated step per shared-context span unless a hard boundary proves otherwise. Many tool calls, internal phases, proof checks, and corrections can belong in that step; contexts that should not be shared or genuinely independent durable contracts may use separate large sequences.
 
 ### Step 2: Choose the Right Step Type
 
 | Scenario | Step Type | Why |
 |----------|-----------|-----|
 | Agent does work, then verifies/fixes it against the success criteria (the common case) | **Message Sequence** (default) | One shared conversation: do → verify → fix, as ordered items. Keeps the agent's full working context instead of handoff artifacts between regular steps |
-| One atomic action with **no** verify-and-fix follow-up | **Regular** | Simplest type — one agent, one output; use when there's nothing to check in-context afterward |
-| Task has multiple known sub-tasks that repeat | **Todo Task** (sub-workflow/pipeline) with sub-agents | Each sub-task gets its own learning, validation, and tools |
+| One coherent agentic outcome with **no** same-context verify-and-fix follow-up | **Regular** | One agent, one output, one final gate; the outcome may still require many routine actions and tool calls |
+| Runtime needs independently delegated tasks with isolated context, tools, retries, or parallel progress | **Todo Task** (sub-workflow/pipeline) with sub-agents | Delegation itself creates value; a known checklist in one shared context stays in one message sequence |
 | Need to branch based on prior step output or context | **Routing** | Supported branch primitive — reads `route_selection.json` and picks a route |
 | Need user input before proceeding | **Human Input** | Blocks until user responds |
 | User already told the builder which fixed branch to run | **Routing** | The builder/caller passes `route_selections` to `run_workflow` / `run_full_workflow`; do not add a `human_input` step just to ask the same choice again. |
 | The running workflow must ask a human before it can continue | **Human Input** | Use only when the answer is not already known at launch. If the answer branches, use `option_routes` for a small in-run menu or feed a later deterministic router. |
 | Utility/debug tool available but not auto-run | **Orphan** (is_orphan: true) | Not in main flow; manual execution from workshop only |
 
-**Default to Message Sequence.** Modern agents do a lot in a single long-running turn, so the strongest default is one shared-context conversation that does the work and then verifies it in follow-up items (`[do the task] → [verify against the success criteria] → [fix what verification caught]`). Use **Regular** only for a single atomic action with no verify-and-fix follow-up, or when a turn needs its own durable artifact, hard validation gate, retry/failure domain, or different tool/security context. Use **Todo Task** for multiple discrete repeating sub-tasks or sub-agent delegation, and **Routing** for fixed branch choices.
+**Default to one large Message Sequence per shared context.** Modern agents do a lot in a single long-running turn, so begin with one shared-context conversation for each coherent agentic span: `[do the whole span] → [re-open source evidence and prove every criterion] → [repair every gap and double-check the final result]`. Improve its description, proof/evidence contract, top-level `validation_schema`, and verify/repair turns before considering more steps. Multiple large sequences are correct when their contexts should not be shared—for example because they have different credentials/security exposure, independent outputs/retries, clean-room independence, human or routing boundaries, or unrelated context that would distract or contaminate the next agent. The builder must decide this from the workflow semantics and state the boundary. Use **Regular** when one coherent agentic outcome genuinely needs no same-context verify-and-fix follow-up, or when deterministic work must be scripted. Use **Todo Task** only when independent delegation itself is required, and **Routing** only for real fixed branch choices.
 
-**For recurring multi-step shapes** (Phase Router, Scoped Investigation, Linear Pipeline, Fan-out & Consolidate, Verification Gate, Pre-flight Probe, Human Checkpoint, Critique Loop, Persistence Tail), call `get_reference_doc(kind="workflow-patterns")` — load when starting a new plan or restructuring an existing one.
+**Deterministic fetcher → agentic processor is the default data architecture.** Put fixed API/SDK requests, CLI commands, pagination with known rules, parsing, normalization, and mechanical database/file writes in one or a few `regular` steps declared `scripted`. Batch related calls when they share credentials, retry policy, source, and output contract; do not create one step per endpoint or command. Give each fetcher an explicit authoritative output (prefer canonical rows in `db/db.sqlite`, otherwise a compact JSON artifact), provenance/freshness fields, fail-closed error handling, idempotency where relevant, and deterministic validation. Then let one large `message_sequence` read those persisted results and perform the judgment-heavy analysis, synthesis, critique, and repair. Do not spend an LLM turn reissuing a known request or parsing a stable response shape.
+
+If selecting the next call genuinely requires live judgment, keep the decision agentic but isolate deterministic execution: the message sequence produces an explicit request/specification, a scripted regular step executes it, and a later message sequence interprets the result. Browser/UI navigation remains agentic unless it is genuinely stable and the user explicitly wants a scripted browser path. Human approval still precedes consequential side effects even when the approved API/CLI action itself is deterministic.
+
+**For recurring workflow shapes** (Phase Router, Scoped Investigation, coherent scripted pipeline, Fan-out & Consolidate, In-Context Verification Gate, Pre-flight Probe, Human Checkpoint, Critique Loop, Persistence Tail, SQL-driven foreach), call `get_reference_doc(kind="workflow-patterns")` — load when starting a new plan or restructuring an existing one.
 
 **Whenever you change an existing plan** — add / remove / reorder a step, or change a step's output contract, db writes, or behavior — run `get_reference_doc(kind="plan-change-impact")` before treating it as done and reconcile the blast radius (downstream steps, evals, report dashboard, db, learnings, KB). A step change ripples into everything that reads it; don't leave silent breakage behind.
 
@@ -51,8 +58,8 @@ Every step reads from prior steps and writes for downstream steps:
 
 **Note:** Users may refer to todo_task steps as "Orchestrators", "orchestrators", "sub-workflows", or "pipelines", and to the routes/sub-agent steps within them as "sub-agents". These are all the same concept — the internal type name is todo_task.
 
-**Use todo_task when the step manages MULTIPLE discrete tasks**, especially when:
-- The tasks are **known in advance** and will run each time (e.g., "process each form field", "check each compliance item")
+**Use todo_task only when the step must manage independently delegated tasks**, especially when:
+- Runtime evidence determines which or how many independent tasks must run
 - Different tasks need **different tools or servers** (e.g., one sub-agent uses browser, another uses API)
 - Tasks benefit from **independent learning** — each sub-agent accumulates its own patterns
 - You need **progress tracking** — todo_task shows which tasks are done, pending, failed
@@ -70,20 +77,22 @@ Use a `message_sequence` route when the parent orchestrator should be able to ca
 - **Dynamic** — unpredictable at design time
 - **Trivial** — too simple for a dedicated sub-agent
 
-**Example**: A step that "processes tax form pages" should have sub-agents for known page types (income, deductions, credits) rather than one generic agent handling all pages.
+**Non-example**: A known list such as "process the income, deductions, and credits pages" is not enough to justify three sub-agents. Keep it in one large message sequence unless those pages require independent tools, retry domains, outputs, or runtime delegation.
 
 ### Step 5: When to Use Message Sequence
 
 `message_sequence` is the **default** step type (see Step 2). Use it whenever ordered agent turns share the same working context and build on each other, and the boundary between turns is not a durable workflow boundary — which is most agentic work, since the natural shape is **do the task, then verify and fix it in follow-up items of the same conversation**. This is better than several regular steps that re-read the same files, need each other's transient reasoning, and produce only one final output.
 
-- **Make verification a follow-up item, not a separate step.** A typical sequence is `[do the task] → [verify the output against the success criteria, list any gaps] → [fix the gaps]`. The verifier turn has the full context of what was just done, so it catches more than a fresh regular step reconstructing from artifacts.
-- Break one large task into small user_message items: one instruction per turn.
+- **Give the work turn the complete outcome.** Let the agent perform all routine sub-actions, tool calls, and internal checks needed for that outcome in one substantial turn; do not create one item per checklist line, source, or tool call.
+- **Consume deterministic evidence; do not fetch it conversationally.** Fixed API/SDK/CLI acquisition and stable parsing belong in an upstream scripted regular step. The sequence reads the resulting DB rows/artifacts and spends its turns on judgment, synthesis, semantic validation, and repair.
+- **Make verification a follow-up item, not a separate step.** A typical sequence is `[complete the outcome] → [re-open the evidence and verify every success criterion; identify anything unsupported or incomplete] → [repair every verified gap and recheck]`. The verifier turn has the full context of what was just done, so it catches more than a fresh regular step reconstructing from artifacts.
+- Add a separate sequence item only when it changes the agent's job: validation or critique, correction from observed evidence, a real intermediate gate, new external input, or a deliberate role/perspective change. A sequence of tiny routine instructions recreates the same fragmentation as too many regular steps.
 - Prefer it when turns share the same inputs, tools, credentials, runtime, and security context; fail/retry together; and can be validated as one unit.
-- Keep separate regular steps when each turn has its own durable artifact, validation gate, retry/failure domain, tool/security context, or downstream consumer.
+- Keep separate regular steps only when an item has its own durable artifact, independently rerunnable validation/failure domain, tool/security context, or downstream consumer. A desire to double-check the same final output is not a separate-step reason.
 - Add learning / knowledgebase / db update items as user messages at the exact point they should happen.
 - Add explicit reference-check, hallucination-check, critique, or self-validation items when reliability needs it.
-- Reads for KB, db, and learnings are always available. Writes are off by default, per item — **any item that writes db/KB/learnings must declare it** (`write_access: {"db": true}` etc., or `kind`), or the runtime folder guard blocks the write. See `get_reference_doc(kind="message-sequence")`.
-- Python `code` items are for deterministic parsing/transforms. On success, the next user_message gets script path, output paths, and summarized logs as prepended context.
+- Plain items inherit the step-level KB, DB, and learnings permissions, just like regular steps. Use a non-empty `write_access` object or `kind` only to narrow a particular turn; an item can never escalate beyond the step configuration. See `get_reference_doc(kind="message-sequence")`.
+- Deterministic execution is never a sequence item. Put API/CLI/SDK calls, data fetching, parsing, transforms, and mechanical writes in standalone scripted regular steps with explicit inputs, outputs, and validation.
 - As a todo_task predefined route, a message_sequence behaves like a reusable specialist sub-agent: reuse the same route for critique, test feedback, validation feedback, or follow-up work that should keep prior context; restart only when the prior conversation is stale, wrong, or contaminated.
 - For row/item iteration, use a `foreach` item inside message_sequence when one shared conversation should process every row. Use todo_task when each item needs independent sub-agent delegation.
 
@@ -101,20 +110,21 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 - Check file existence, required fields, value types, patterns, and lengths
 - Include enough checks that stale/leftover files from previous runs can't pass
 - For todo_task steps: validation passing IS the completion signal
+- For message_sequence steps: keep the step-level schema strict and add explicit prevalidation items wherever deterministic failures must trigger same-conversation repair.
 
 Step-level `success_criteria` is deprecated. Rely on a strong `description` plus `validation_schema` instead.
 
 ### Step 8: Think About Failure Modes
 
 - If a step might fail due to external factors (login, API), add clear error handling in the description
-- If a step's output needs semantic validation (not just structural), add a verification item right after it in the `message_sequence` (the default) — reach for a separate validation step only when the check needs its own durable artifact, different tools, or its own failure domain
-- If a step is flaky, add explicit retry/polling instructions inside the step or split the unstable part into a dedicated regular step with strong validation
+- If a step's output needs semantic validation (not just structural), add proof, verification, and repair items inside its `message_sequence` — use a separate validation sequence only when the context must be isolated for clean-room independence, different permissions/tools, or its own rerunnable artifact/failure domain
+- If a step is flaky, first add explicit retry/polling and proof checks inside the step; split the unstable part only when it needs independent retries or isolation
 
 ### Design Anti-Patterns to Avoid
 
 - **Monster boundaries**: A single step owns unrelated durable outputs, validation gates, failure domains, or persistent stores — split at those boundaries. Many tool calls alone are not a reason to split.
 - **Trivial steps**: A step that just reads a file and passes it through — merge with the consumer
-- **Over-splitting same-context turns**: Several regular steps mostly reread the same context and depend on each other's transient reasoning. Collapse into a `message_sequence` unless separate durable artifacts, validation gates, retry boundaries, or tool/security contexts are needed.
+- **Over-splitting same-context turns**: Several regular steps mostly reread the same context and depend on each other's transient reasoning. Collapse into one `message_sequence`; verification, critique, double-checking, and repair belong inside it unless a check truly needs an independent durable artifact, retry domain, or tool/security context.
 - **Missing validation**: No validation_schema means no automated quality gate
 - **Vague descriptions**: "Process the data appropriately" — be specific about WHAT, HOW, and WHERE
 - **Over-sequencing**: Steps that don't depend on each other can potentially run in parallel via independent step groups
@@ -122,8 +132,8 @@ Step-level `success_criteria` is deprecated. Rely on a strong `description` plus
 
 ### Step Types Reference
 
-- **Message Sequence** (type: "message_sequence") — **the default for conversational work**: a single-agent ordered conversation with `items`. Do the work, then **verify and fix it in follow-up user_message items** in the same context. Supports short user_message items, foreach turns, and prevalidation gates. Deterministic code is always a separate regular scripted step with explicit file dependencies and outputs. As a top-level step the queue runs once; as a todo_task route it can be re-entered during the same workflow run and receive new instructions without replaying the queue.
-- **Regular** (type: "regular"): one atomic action with no verify-and-fix follow-up. Executes an agent that produces a context_output file.
+- **Message Sequence** (type: "message_sequence") — **the default for conversational work**: a single-agent ordered conversation with `items`. Do the whole coherent job, then **verify and fix it in focused follow-up user_message items** in the same context. Supports foreach turns and explicit prevalidation gates that can return deterministic failures to the same conversation for repair. Deterministic code is always a separate regular scripted step with explicit file dependencies and outputs. As a top-level step the queue runs once; as a todo_task route it can be re-entered during the same workflow run and receive new instructions without replaying the queue.
+- **Regular** (type: "regular"): one coherent agentic outcome with no same-context verify-and-fix follow-up. It may perform many routine actions and tool calls before producing its durable output and passing its final gate.
 - **Orchestrator / Todo Task / Sub-Workflow** (type: "todo_task"): Also called "orchestrator" by users. Manages a dynamic todo list. Has a **todo_task_step** (orchestrator) and **predefined_routes**. Each route can either define an inline **sub_agent_step** or reuse a plan-local orphan definition via **orphan_step_ref**. Route sub-agents default to **message_sequence** (specialist conversation with re-entry/restart memory), can be a **regular** step for stateless one-off work, and can be another **todo_task** (nested orchestrator) when that route needs its own nested orchestration. Only one nested todo_task layer is allowed: top-level todo_task -> nested todo_task is valid, but a nested todo_task must not contain another nested todo_task.
 - **Routing** (type: "routing"): N-way deterministic branching. Reads `route_selection.json` (or caller `route_selections`) and picks exactly one **routes[]** entry. Each route has **route_id**, **condition**, and **next_step_id** (pointer to an existing step). Optional **default_route_id** is a missing-file fallback. Optional **route_source_file** points at a prior step's route file.
 - **Human Input** (type: "human_input"): Asks a question to the user and blocks until response. Supports: 'text', 'yesno', 'multiple_choice'. Can route based on response.

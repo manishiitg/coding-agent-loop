@@ -1,8 +1,9 @@
-## regular — Single-Action Worker
+## regular — Single-Outcome Worker
 
 A `regular` step is one agent doing one unit of work in a single execution (with a
-validation-driven retry loop). It is the **single-action** type — reach for it only when a step
-is **one atomic action with no verify-and-fix follow-up**. The **default** step type is
+validation-driven retry loop). It owns one coherent output and final gate; that output may
+require many deterministic calls or transformations. Use it when the step has **no
+same-context semantic verify-and-fix follow-up**. The default conversational type is
 **`message_sequence`**: instead of splitting work into several smaller regular steps that hand
 off context through intermediate `.md`/`.json` files, prefer one larger `message_sequence` that
 does the work and then uses **verification user-message turns** to confirm everything is done
@@ -12,9 +13,9 @@ input (`human_input`).
 
 ## When to use
 
-- Deterministic, self-contained work: fetch, parse, transform, write, verify.
+- Deterministic, self-contained work: fixed API/SDK calls, CLI commands, data fetching, known pagination, parse, normalize, transform, write, and mechanically verify. Declare these steps `scripted` from initial design and batch related calls that share one source/auth/retry/output contract.
 - One clear objective expressible as a `description` plus a `validation_schema`.
-- The building block of the **Linear Pipeline** pattern (see `get_reference_doc(kind="workflow-patterns")`).
+- A coherent scripted boundary inside the **Linear Pipeline** pattern (see `get_reference_doc(kind="workflow-patterns")`), not one step per pipeline action.
 
 If the work fans out over items, branches on a decision, needs several turns that
 share one conversation, or needs a specialist that remembers across calls, it is
@@ -36,10 +37,12 @@ share one conversation, or needs a specialist that remembers across calls, it is
 
 ## Execution modes
 
-- **Tool/agent mode** (default): the agent runs tools/shell to produce its outputs.
-- **Code-execution / learn_code**: the agent authors a `main.py` saved under
+- **Agentic mode**: use for one-turn judgment, adaptive discovery, or work whose next action depends on ambiguous live evidence. Browser/UI work normally stays here.
+- **Scripted / code-execution mode**: required for deterministic API/SDK/CLI fetchers, stable parsing/normalization/transforms, and mechanical persistence. The agent authors a `main.py` saved under
   `learnings/{step-id}/` and re-runs it on later runs (scripted fast path). Use for
-  deterministic, repeatable compute. See `get_reference_doc(kind="code-authoring")`.
+  deterministic, repeatable execution. No run-history threshold is required to declare an obviously deterministic step scripted; 10+ representative successful runs are required only before `lock_code=true` freezes it. See `get_reference_doc(kind="code-authoring")`.
+
+Preferred data shape: `regular scripted fetcher(s) → message_sequence processor`. Fetchers own credentials, calls, retries/rate limits, provenance, freshness, idempotency, response parsing, and authoritative DB/file output. The message sequence reads that output and owns semantic analysis, synthesis, critique, and repair.
 
 ## When NOT to use (redirects)
 

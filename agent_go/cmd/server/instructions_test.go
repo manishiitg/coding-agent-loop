@@ -21,3 +21,36 @@ func TestWorkspaceMapForbidsWebFetchForLocalArtifacts(t *testing.T) {
 		}
 	}
 }
+
+func TestNewWorkflowInstructionsUseModernPlanShape(t *testing.T) {
+	out := GetWorkspaceReference("/tmp/workspace-docs", "_users/default/Chats")
+
+	for _, want := range []string{
+		"Plan-shape rule — use this for every new workflow",
+		"one large `message_sequence` per coherent shared-context span",
+		"prove every criterion, repair gaps, and double-check",
+		"Use multiple large sequences when their contexts should not be shared",
+		"fetch-authoritative-data",
+		`"type": "message_sequence"`,
+		"analysis_proof.json",
+		"scripted-fetcher → large-message-sequence structure",
+		"Before the first production run",
+		"10-run bar applies only before",
+		"validation_schema` — required for every output-producing step",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("new-workflow instructions missing %q", want)
+		}
+	}
+
+	for _, stale := range []string{
+		"use `regular` by default",
+		"single atomic action with no verify-and-fix follow-up",
+		"one step per proof check",
+		`"id": "step-one"`,
+	} {
+		if strings.Contains(out, stale) {
+			t.Fatalf("new-workflow instructions retain stale plan guidance %q", stale)
+		}
+	}
+}

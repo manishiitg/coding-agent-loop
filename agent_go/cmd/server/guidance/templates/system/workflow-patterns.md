@@ -16,7 +16,7 @@ The builder's primitives referenced below: `regular`, `todo_task`, `routing`, `h
 
 **Layout**:
 - Top-level `routing` step on a mode/flag (e.g., `$RUN_MODE`) → 2–N branches
-- Each branch is its own subgraph (chain of `regular`, or a `todo_task`, or another routing)
+- Each branch uses one large `message_sequence` per shared-context span, coherent scripted deterministic boundaries where needed, or a `todo_task` only for independent delegation
 - Optional small terminate `routing` near the end of each branch to converge or end cleanly
 
 **When to use**: one logical workflow has distinct entry modes (dry-run vs apply, learn vs execute, daily vs weekly). Avoids two near-duplicate plans.
@@ -35,15 +35,15 @@ The builder's primitives referenced below: `regular`, `todo_task`, `routing`, `h
 **Trigger phrases**: "investigate X", "do an RCA", "audit Y", "recon this system", "find the root cause".
 
 **Layout**:
-- `human_input` (text or multiple_choice) collects the scope, target, or hypothesis
-- `todo_task` orchestrator investigates — sub-agents per source / per hypothesis / per attack surface
-- Final `regular` step composes the deliverable (report, root-cause doc, audit findings)
+- Use scope, target, and hypotheses already supplied by the user, launch variables, or upstream durable context. Add `human_input` only when the running workflow genuinely cannot proceed without missing scope.
+- Use one large `message_sequence` to investigate and produce the proof-bearing deliverable when the work shares one context.
+- Use a `todo_task` only when independently delegated sources, hypotheses, or attack surfaces need isolated contexts, parallel progress, or independent retries; then feed their durable outputs to one large final `message_sequence` that consolidates, proves each finding, and repairs gaps.
 
 **When to use**: the scope cannot be known at design time and the investigation has to fan out across angles the orchestrator decides at runtime.
 
 **Pitfalls**:
 - Pre-defining too many routes in the `todo_task` — for investigations, the generic agent often handles dynamic sub-tasks better than fixed routes.
-- Skipping the `human_input` and letting the orchestrator guess the scope — produces unfocused output.
+- Asking for scope again when it is already present in the request or variables. If required scope is truly absent at runtime, use `human_input`; never let the orchestrator invent it.
 - Putting report-writing inside the `todo_task` instead of after it — splits the report across runs and breaks consolidation.
 
 ---
@@ -55,15 +55,16 @@ The builder's primitives referenced below: `regular`, `todo_task`, `routing`, `h
 **Trigger phrases**: "login, then download, then parse, then upload", "step-by-step automation", "fetch and process", "scrape and update sheet".
 
 **Layout**:
-- Pure `regular` chain: credential read → login → fetch/download → parse → transform → upload → verify
+- One coherent scripted `regular` owns related deterministic credential/API/CLI/fetch/parse/transform/persist work under one source/auth/retry/output contract
+- If judgment is required, its validated output feeds one large `message_sequence` that completes the semantic outcome, proves it from evidence, and repairs gaps
 - No `routing`, no `todo_task`, no fan-out
-- Each step has a strict `validation_schema` so failures stop the chain
+- Each producing step has a strict `validation_schema`; the script or sequence performs its own evidence-based double-check before completion
 
 **When to use**: sequential, deterministic automation where each step depends on the previous and there is no real branching. Common for bank statements, document parsing, GST/tax audits, scheduled imports.
 
 **Pitfalls**:
-- Merging too many actions into one step — split at durable-output boundaries (different file, different store, different failure domain).
-- Skipping the verify step before the next mutation — see pattern #5 (Verification Gate).
+- Splitting login, fetch, parse, transform, and persistence merely because they are separate actions even though they share one deterministic execution contract.
+- Creating a separate verify step when the owning script or message sequence can re-read the authoritative system and prove the result in the same retry domain — see pattern #5.
 - Forcing a `todo_task` when the work is genuinely linear — adds orchestration overhead with no gain.
 
 ---
@@ -76,8 +77,8 @@ The builder's primitives referenced below: `regular`, `todo_task`, `routing`, `h
 
 **Layout**:
 - One or more `todo_task` steps with predefined routes per item type (or generic agent for unknowns)
-- Followed by a `regular` consolidator/synthesizer step that reads each route's output
-- Often paired with #5 (Verification Gate) on the consolidator
+- Followed by one large `message_sequence` consolidator/synthesizer that reads every route output, proves coverage and consistency, and repairs the final deliverable
+- The consolidator owns its verification and top-level validation unless an independent clean-room boundary is required
 
 **When to use**: N independent sub-tasks share the same orchestrator goal and need to be combined into one deliverable.
 
@@ -88,23 +89,23 @@ The builder's primitives referenced below: `regular`, `todo_task`, `routing`, `h
 
 ---
 
-### 5. Verification Gate
+### 5. In-Context Verification Gate
 
 **Industry alignment**: Lite *Evaluator-Optimizer* — evaluator without the optimizer loop (hard gate, not iterative).
 
 **Trigger phrases**: "verify the upload succeeded", "check the data landed", "confirm before continuing", "make sure X is right before doing Y".
 
 **Layout**:
-- `regular`(action) → `regular`(verify with strict `validation_schema`) → next step
-- The verify step typically re-reads the system of record (sheet, db, API) and asserts the action's effect
-- Verify step's `validation_schema` is strong enough that a stale or absent write fails it
+- Agentic work: one `message_sequence` with `[perform the action] → [re-read the system of record and prove the effect] → [repair or retry, then double-check]`
+- Deterministic work: one scripted `regular` performs the mutation and independently re-reads/asserts the authoritative state before returning
+- The owning step's `validation_schema` requires run-specific proof/provenance so a stale or absent write fails it
 
 **When to use**: after any mutation that downstream steps depend on (upload, write, publish, submit). Cheaper than discovering corruption three steps later.
 
 **Pitfalls**:
 - Using the action step's own output to "verify" itself — that just confirms the step ran, not that the mutation landed. Re-read from the system of record.
 - Weak `validation_schema` (just file-existence) — must check that values match what was written.
-- Adding verification gates everywhere — only gate the steps whose effects others depend on.
+- Adding a separate verifier merely to get a double-check. Keep it in the same sequence/script unless different credentials/tools, clean-room independence, or an independently rerunnable failure domain is required.
 
 ---
 
@@ -115,16 +116,16 @@ The builder's primitives referenced below: `regular`, `todo_task`, `routing`, `h
 **Trigger phrases**: "check if logged in first", "make sure CDP is up", "verify access before running", "abort if X is not ready".
 
 **Layout**:
-- First `regular` step is a cheap probe (auth status, connectivity, access token, browser session, DB reachable)
+- Use one coherent probe boundary: a scripted `regular` for deterministic API/CLI/DB/auth/connectivity checks, or a `message_sequence` for adaptive browser/session inspection that needs same-context remediation and proof
 - Immediately followed by a `routing` step that aborts / re-auths / continues based on the probe's output
-- Probe's `context_output` is small (just a status JSON) and read by the routing step
+- The probe writes a small validated status or `route_selection.json` contract with run-specific freshness/provenance; the routing step consumes that declared output
 
 **When to use**: when the rest of the plan is expensive or destructive and an early environmental failure would waste a run. Critical for browser-driven flows, cloud SSO, third-party APIs.
 
 **Pitfalls**:
 - Probe step doing too much — it should be cheap and fail fast.
 - No bailout path — if the probe just logs failure and continues, downstream steps will fail confusingly.
-- Probing things the validation_schema could check — only probe what can't be expressed as a schema.
+- Adding a probe when the owning step's `validation_schema` can fail directly and no branch decision is needed. A probe earns a separate boundary only when its result controls routing, avoids material cost/risk, or requires isolated credentials/runtime.
 
 ---
 
@@ -135,7 +136,9 @@ The builder's primitives referenced below: `regular`, `todo_task`, `routing`, `h
 **Trigger phrases**: "let me approve before publishing", "I want to pick the topic", "ask me before doing X", "confirm with the operator", "let me review the draft".
 
 **Layout**:
-- `regular`(draft / propose / select) → `human_input`(approve / pick / edit) → `regular`(publish / execute)
+- One large `message_sequence` drafts/proposes, re-opens evidence, proves the approval package, and repairs it before the human boundary
+- `human_input` approves, selects, or edits; this is an intentional context boundary because new external information enters the run
+- After approval, use a scripted `regular` for a fixed API/CLI publish/execute action with authoritative read-back verification, or another large `message_sequence` only when adaptive post-approval judgment needs its own shared context
 - Or `human_input` directly inside a `todo_task` route when the orchestrator should pause per item
 - Different from pattern #2's seed: this `human_input` sits mid-pipeline, not at the start
 
@@ -155,14 +158,14 @@ The builder's primitives referenced below: `regular`, `todo_task`, `routing`, `h
 **Trigger phrases**: "review and improve", "self-correct", "critique the draft", "iterate until good", "find issues in the output".
 
 **Layout**:
-- `regular`(execute) → `regular`(critique with explicit rubric) → optional `routing` back to execute, or forward to publish
-- The critique step has its own learnings/KB so review standards accumulate over runs
-- A todo_task variant: maker route + reviewer route, with the orchestrator alternating between them
+- Default: one large `message_sequence` owns `[execute] → [re-open evidence and critique with an explicit rubric] → [repair and double-check]`
+- When genuine clean-room independence matters, use separate large maker and reviewer sequences with intentionally isolated context, then an explicit repair handoff
+- A todo_task variant is reserved for independently delegated maker/reviewer work, not ordinary self-checking
 
 **When to use**: outputs where quality matters and the critic can spot issues the maker missed (reports, code, strategy proposals, content).
 
 **Pitfalls**:
-- Critic and maker share the same context — the critic just rubber-stamps. Give the critic an independent rubric and isolated tools.
+- Assuming every critic needs a new step. Same-context proof and correction belong in the owning sequence; isolate the reviewer only when independence is a real requirement, then give it an independent rubric and tools.
 - Infinite loop — bound iterations or require the critique to converge (e.g., "if score ≥ 8 or iteration ≥ 3, exit").
 - Using a critique loop when a `validation_schema` would do — schemas catch structural problems for free; reserve the critic for semantic judgment.
 
@@ -175,15 +178,15 @@ The builder's primitives referenced below: `regular`, `todo_task`, `routing`, `h
 **Trigger phrases**: "update the dashboard", "log to db", "save findings to KB", "record the run", "sync to the report".
 
 **Layout**:
-- Last 1–2 `regular` steps in the plan, decoupled from the main work
-- Typical writes: `db/db.sqlite` table upsert, KB SKILL.md update, dashboard score, report data
-- Each tail step has its own `validation_schema` and is independently re-runnable (idempotent)
+- Prefer one coherent scripted `regular` persistence step for related deterministic `db/db.sqlite` upserts and `db/assets/` writes that share one transaction/retry contract. HTML reports read report-facing rows live with `window.report.query`.
+- Workflow-discovered domain knowledge belongs in `knowledgebase/notes/` through the owning agentic step's declared knowledgebase contribution; reusable execution HOW belongs in `learnings/_global/SKILL.md` through the dedicated learning flow. Neither is generic report-data persistence.
+- Split tails only when stores have genuinely independent permissions, transactions, retries, or failure semantics; every producing tail has a strict `validation_schema` and is idempotent
 
-**When to use**: when the workflow has downstream consumers (dashboards, weekly reports, accumulated learnings) that need to be updated after every run.
+**When to use**: when downstream workflows or live reports need durable structured rows/assets updated after every run, and those writes should be independently rerunnable from the main agentic result.
 
 **Pitfalls**:
 - Tail step couples to the main work — if the tail fails, the user thinks the workflow failed. Keep tail steps idempotent and clearly named.
-- Writing to too many stores in one tail step — split per store so failures are localized.
+- Splitting per store automatically even when the writes form one atomic contract; conversely, do not merge stores whose permissions or failure semantics must remain isolated.
 - Forgetting `db/README.md` schema declaration before writing to `db/` — see `get_reference_doc(kind="stores")`.
 
 ---
@@ -195,16 +198,16 @@ The builder's primitives referenced below: `regular`, `todo_task`, `routing`, `h
 **Trigger phrases**: "for every row a prior step found", "process each record in the db", "one pass per item in the list", "drain the queue".
 
 **Layout**:
-- A producer step (any type) writes a JSON array to `db/<file>.json`
-- A consumer step with a `foreach` item/entry over that file: `message_sequence` foreach (one agent handles each row) or `todo_task` foreach (orchestrator can delegate per row). The runtime sends one turn per row; the row is bound to `.` in the message template.
-- Optional verify/`prevalidation` gate after the loop
+- A producer step writes canonical rows to `db/db.sqlite`, normally with an idempotent scripted upsert and a documented table contract
+- A consumer uses a `foreach` entry with read-only `source_sql`: `message_sequence.items[]` when one agent should retain shared context across rows, or `todo_task.messages[]` when the orchestrator should decide independent delegation. The runtime sends one turn per SQL result row, bound to `.` in the message template.
+- The owning step's top-level `validation_schema` proves complete processing. Add an explicit `prevalidation` only when an intermediate aggregate must pass before later items run.
 
-**When to use**: an earlier step produces a list and **every** row must be processed. The loop lives in code, so nothing is skipped — the key advantage over telling an orchestrator "process all rows" (which can miss some). This is the reliable form of producer/consumer fan-out when the item set is already materialized in `db/`.
+**When to use**: an earlier step materializes rows and **every** selected row must receive a conversational turn. Runtime SQL expansion enumerates the result deterministically instead of trusting an LLM to remember the list. Validate processed-versus-selected counts so caps, failures, or filtered rows cannot look complete.
 
 **Pitfalls**:
-- Reaching for #4 (Fan-out & Consolidate) when the items are already a db array — `foreach` enumerates deterministically; an orchestrator might not.
-- Unbounded rows blowing up cost — set `max_iterations`; the shared conversation is bounded by auto-summarization but each row is still an LLM turn.
-- Producer/consumer path mismatch — the consumer's `source` must point at exactly where the producer wrote.
+- Reaching for #4 (Fan-out & Consolidate) when the rows already exist in SQLite and one shared-context sequence can process them with `source_sql`.
+- Unbounded rows blowing up cost — set `max_iterations`, but remember that excess rows are skipped and logged; the final validation must fail when the workflow promised to process every row.
+- Producer/consumer schema mismatch — the consumer's `source_sql` must query the documented table/columns and group/run scope that the producer actually wrote.
 
 ---
 
@@ -216,4 +219,4 @@ The builder's primitives referenced below: `regular`, `todo_task`, `routing`, `h
 - *Swarm* / *Shared Scratchpad* (LangGraph) — this builder does not support peer agents with a shared scratchpad. Use #2 (Scoped Investigation) or #4 (Fan-out) instead.
 - *Long-running autonomous agent* — use `message_sequence` if this is genuinely what the user needs.
 
-**When in doubt**: a workflow is almost always **#3 Linear Pipeline** with one or two of #5, #6, #7, #9 attached. Start there. Reach for #1, #2, #4, #8 only when the structure demands it.
+**When in doubt**: start with one large `message_sequence` per shared-context span and put proof, double-checking, and repair inside it. Add coherent scripted deterministic boundaries where needed. Reach for routing, human gates, fan-out, isolated critics, or persistence tails only when the workflow semantics create those boundaries.

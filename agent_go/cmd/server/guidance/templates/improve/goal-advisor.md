@@ -88,6 +88,48 @@ For each configured group with evidence:
 PHASE 1A - MEASUREMENT DESIGN
 Goal Advisor owns the strategic choice of what should be measured. It does not revive a generic metrics subsystem or ask the dashboard to manufacture values.
 
+Before proposing a structural plan change, apply this plan-shape standard:
+
+- Modern agentic models can own a substantial end-to-end outcome. Start with
+  one large `message_sequence` per coherent shared-context span, and prefer the
+  fewest durable steps that preserve contexts that should not be shared,
+  distinct output contracts, independently rerunnable validation/retry domains,
+  tool/security boundaries, stores, human approvals, or routes.
+- Do not add a regular step per source, tool call, screen action, checklist
+  item, or routine subtask. Merge pass-through steps that only reconstruct the
+  same context and contribute to one final outcome.
+- When one coherent outcome needs stronger assurance, prefer one
+  `message_sequence`: give the first work turn the whole outcome, then use only
+  evidence-based verification, critique, and repair turns (for example, ask it
+  to re-open the result, prove every success criterion, and fix any gap).
+- Improve that sequence before changing topology: strengthen its description,
+  require run-specific proof/provenance fields in its output, tighten the
+  top-level `validation_schema`, and add an evidence-based double-check plus
+  repair turn. A desire for more validation is not by itself a reason to add a
+  separate workflow step.
+- Multiple large sequences are appropriate when context should be isolated—for
+  example different credentials/security exposure, independent durable
+  outputs/retries, clean-room independence, human/routing boundaries, or
+  unrelated context that would distract or contaminate the next agent. Require
+  the plan to name that boundary rather than split by action count.
+- Do not replace regular-step fragmentation with one tiny sequence message per
+  action. Split only where the boundary provides independent control or durable
+  value.
+- Separate deterministic acquisition from agentic processing. Fixed API/SDK
+  requests, CLI commands, known pagination, data fetching, stable parsing and
+  normalization, and mechanical persistence should be batched into scripted
+  regular fetcher steps with explicit outputs, provenance/freshness, retries,
+  idempotency where relevant, fail-closed errors, and deterministic validation.
+  A large downstream `message_sequence` should read those durable results and
+  own the judgment-heavy analysis, synthesis, critique, and repair.
+- If call selection requires judgment, let an agentic step produce an explicit
+  request/specification, execute it in a scripted step, and interpret the result
+  agentically afterward. Do not keep fixed API/CLI retrieval inside LLM turns.
+
+Treat unnecessary fragmentation as strategy debt: it loses context, creates
+pass-through artifacts and failure points, adds latency/cost, and can cap the
+workflow even when every individual step looks locally reasonable.
+
 1. For each material goal gap or active experiment, decide whether the workflow
    has enough persisted evidence to answer both: `Did the business outcome move?`
    and `Why did it move or stay flat?`

@@ -16,6 +16,10 @@ type testUserNotificationConnector struct {
 	ch   chan *services.NotificationDestination
 }
 
+type testFeedbackNotificationConnector struct {
+	ch chan string
+}
+
 type capturedHumanFeedbackEvent struct {
 	requestID string
 	question  string
@@ -51,6 +55,13 @@ func (c *testUserNotificationConnector) SendNotification(context.Context, string
 func (c *testUserNotificationConnector) SendUserNotification(ctx context.Context, message, contextMsg string, dest *services.NotificationDestination) (string, error) {
 	c.ch <- dest
 	return "msg-1", nil
+}
+
+func (c *testFeedbackNotificationConnector) Name() string    { return "test_human_feedback_fanout" }
+func (c *testFeedbackNotificationConnector) IsEnabled() bool { return true }
+func (c *testFeedbackNotificationConnector) SendNotification(_ context.Context, uniqueID, _, _ string, _ *services.ButtonOptions, _ *services.NotificationDestination) (string, error) {
+	c.ch <- uniqueID
+	return "feedback-msg-1", nil
 }
 
 func resetHumanToolTestState() {
@@ -130,6 +141,11 @@ func TestHumanFeedbackStoreListsPendingRequestsIndependentlyOfSessionEvents(t *t
 func TestHandleHumanFeedbackWaitsForDirectHumanResponseWithoutParentRelay(t *testing.T) {
 	resetHumanToolTestState()
 	t.Cleanup(resetHumanToolTestState)
+	feedbackNotifications := make(chan string, 1)
+	feedbackConnector := &testFeedbackNotificationConnector{ch: feedbackNotifications}
+	manager := services.GetNotificationManager()
+	manager.RegisterConnector(feedbackConnector)
+	t.Cleanup(func() { manager.UnregisterConnector(feedbackConnector.Name()) })
 
 	RegisterParentChat("workflow-session", &ParentChatContext{
 		SessionID:    "builder-session",
@@ -174,6 +190,12 @@ func TestHandleHumanFeedbackWaitsForDirectHumanResponseWithoutParentRelay(t *tes
 		}
 	case <-time.After(time.Second):
 		t.Fatal("human_feedback did not emit blocking UI event")
+	}
+
+	select {
+	case uniqueID := <-feedbackNotifications:
+		t.Fatalf("human_feedback unexpectedly fanned out through notification connectors: %s", uniqueID)
+	case <-time.After(100 * time.Millisecond):
 	}
 
 	deadline := time.Now().Add(time.Second)

@@ -24,7 +24,7 @@ func CreateHumanTools() []llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "human_feedback",
-			Description: "Request urgent, short-lived input that only a human can provide, such as an OTP/2FA code, CAPTCHA completion, explicit approval, a subjective decision, private information, or an explicit test of the human-feedback channel. This tool pauses only the calling agent turn until the human answers directly in the AgentWorks UI and immediately alerts enabled notification channels. Do not use it for an ordinary Builder/chat question, something another agent can answer, or something that may wait hours or days. Choose the shortest realistic timeout_seconds; use an expiry shown by the external service when available. The tool returns the human's response as text. Bridge-only coding CLIs invoking the HTTP endpoint through execute_shell_command must keep curl in the foreground and wait for the same call to return; never use nohup, append &, delegate/background it, write the result to a temporary file, poll for completion, or ask the user to send another message after responding. Do not set the shell timeout shorter than timeout_seconds. Cursor CLI has an approximately 60-second silent MCP-call ceiling, so Cursor agents must set timeout_seconds to at most 45 seconds and may retry after an explicit expiry only when the input is still required.",
+			Description: "Request urgent, short-lived input that only a human can provide, such as an OTP/2FA code, CAPTCHA completion, explicit approval, a subjective decision, private information, or an explicit test of the human-feedback channel. This tool pauses only the calling agent turn until the human answers directly in the AgentWorks UI. It never sends through notify_user, Gmail, workflow webhooks, or account-level notification connectors. Do not use it for an ordinary Builder/chat question, something another agent can answer, or something that may wait hours or days. Choose the shortest realistic timeout_seconds; use an expiry shown by the external service when available. The tool returns the human's response as text. Bridge-only coding CLIs invoking the HTTP endpoint through execute_shell_command must keep curl in the foreground and wait for the same call to return; never use nohup, append &, delegate/background it, write the result to a temporary file, poll for completion, or ask the user to send another message after responding. Do not set the shell timeout shorter than timeout_seconds. Cursor CLI has an approximately 60-second silent MCP-call ceiling, so Cursor agents must set timeout_seconds to at most 45 seconds and may retry after an explicit expiry only when the input is still required.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -417,18 +417,8 @@ func handleHumanFeedback(ctx context.Context, args map[string]interface{}) (stri
 		}
 	}
 
-	// Build button options for notifications (Slack, etc.)
-	var buttonOptions *services.ButtonOptions
-	if len(options) > 0 {
-		buttonOptions = &services.ButtonOptions{
-			Options: options,
-		}
-	}
-
 	// Get global feedback store
 	feedbackStore := GetHumanFeedbackStore()
-
-	dest := NotificationDestinationFromContext(ctx)
 
 	// Register the request before emitting UI/notification events so an immediate
 	// Electron response can never race the store registration.
@@ -452,10 +442,6 @@ func handleHumanFeedback(ctx context.Context, args map[string]interface{}) (stri
 		hasOptions := len(options) > 0
 		emitter.EmitBlockingHumanFeedback(uniqueID, messageForUser, expiryContext, hasOptions, "", "", options...)
 	}
-
-	// Human-only interruptions are urgent and short-lived, so notify immediately
-	// rather than using the normal two-minute reminder delay.
-	feedbackStore.ScheduleNotificationAfter(ctx, uniqueID, messageForUser, "", buttonOptions, dest, 0)
 
 	// Wait only for the bounded duration selected by the agent.
 	response, err := feedbackStore.WaitForResponse(uniqueID, waitTimeout)
@@ -530,17 +516,6 @@ func NotificationDestinationFromContext(ctx context.Context) *services.Notificat
 		return nil
 	}
 	return dest
-}
-
-func ScheduleHumanFeedbackNotification(ctx context.Context, requestID, message, contextMsg string, buttonOptions *services.ButtonOptions) {
-	GetHumanFeedbackStore().ScheduleNotification(ctx, requestID, message, contextMsg, buttonOptions, NotificationDestinationFromContext(ctx))
-}
-
-// ScheduleHumanFeedbackNotificationAfter sends a correlated human-input
-// notification after the requested delay. Direct, short-lived human actions
-// use zero; legacy reminder flows can keep using ScheduleHumanFeedbackNotification.
-func ScheduleHumanFeedbackNotificationAfter(ctx context.Context, requestID, message, contextMsg string, buttonOptions *services.ButtonOptions, delay time.Duration) {
-	GetHumanFeedbackStore().ScheduleNotificationAfter(ctx, requestID, message, contextMsg, buttonOptions, NotificationDestinationFromContext(ctx), delay)
 }
 
 func cloneNotificationDestination(dest *services.NotificationDestination) *services.NotificationDestination {

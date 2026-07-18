@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 	baseevents "github.com/manishiitg/mcpagent/events"
@@ -33,9 +32,9 @@ func (bo *BaseOrchestrator) RequestHumanFeedback(
 		return false, "", fmt.Errorf("failed to create feedback request: %w", err)
 	}
 
-	// Human input is answered directly through the UI/connector request. The
-	// Workflow Builder is not used as a relay or automatic decision-maker.
-	virtualtools.ScheduleHumanFeedbackNotificationAfter(ctx, requestID, question, context, nil, 0)
+	// Human input is answered directly through AgentWorks. The Workflow Builder
+	// is not used as a relay, and notification connectors are intentionally not
+	// used for blocking feedback requests.
 
 	feedbackEvent := &events.BlockingHumanFeedbackEvent{
 		BaseEventData: baseevents.BaseEventData{Timestamp: time.Now()},
@@ -115,12 +114,6 @@ func (bo *BaseOrchestrator) RequestYesNoFeedback(
 		return false, fmt.Errorf("failed to create feedback request: %w", err)
 	}
 
-	virtualtools.ScheduleHumanFeedbackNotificationAfter(ctx, requestID, question, context, &services.ButtonOptions{
-		YesNoOnly: true,
-		YesLabel:  yesLabel,
-		NoLabel:   noLabel,
-	}, 0)
-
 	feedbackEventYN := &events.BlockingHumanFeedbackEvent{
 		BaseEventData: baseevents.BaseEventData{Timestamp: time.Now()},
 		Question:      question,
@@ -187,10 +180,6 @@ func (bo *BaseOrchestrator) RequestMultipleChoiceFeedback(
 	if err := feedbackStore.CreateRequestWithoutNotification(requestID, question); err != nil {
 		return "", fmt.Errorf("failed to create feedback request: %w", err)
 	}
-
-	virtualtools.ScheduleHumanFeedbackNotificationAfter(ctx, requestID, question, context, &services.ButtonOptions{
-		Options: options,
-	}, 0)
 
 	feedbackEventMC := &events.BlockingHumanFeedbackEvent{
 		BaseEventData: baseevents.BaseEventData{Timestamp: time.Now()},

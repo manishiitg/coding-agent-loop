@@ -57,3 +57,23 @@ func TestResolveWorkflowSlackNotificationState(t *testing.T) {
 		})
 	}
 }
+
+func TestEffectiveNotificationStateInheritsReadyAccountChannel(t *testing.T) {
+	notConfigured := resolveWorkflowSlackNotificationState(notificationTestManifest(""), "", false)
+	gmail := []WorkflowNotificationAccountChannelInfo{{ID: "gmail", State: "ready"}}
+	if got := effectiveNotificationState(notConfigured, gmail); got != workflowNotificationStateReady {
+		t.Fatalf("effective state = %q, want ready from inherited Gmail", got)
+	}
+}
+
+func TestEffectiveNotificationStateSurfacesBrokenExplicitDestination(t *testing.T) {
+	broken := resolveWorkflowSlackNotificationState(
+		notificationTestManifest("SLACK_NOTIFICATION_WEBHOOK_URL", "SLACK_NOTIFICATION_WEBHOOK_URL"),
+		"",
+		false,
+	)
+	gmail := []WorkflowNotificationAccountChannelInfo{{ID: "gmail", State: "ready"}}
+	if got := effectiveNotificationState(broken, gmail); got != workflowNotificationStateMissingSecret {
+		t.Fatalf("effective state = %q, want missing_secret despite inherited Gmail", got)
+	}
+}

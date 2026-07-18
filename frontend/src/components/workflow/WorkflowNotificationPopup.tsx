@@ -48,8 +48,13 @@ const summaryFor = (info: WorkflowNotificationInfo, scopeKind: 'workflow' | 'chi
   const destination = scopeKind === 'chief-of-staff' ? 'Chief of Staff’s Slack webhook' : 'this workflow’s Slack webhook'
   const unconfigured = scopeKind === 'chief-of-staff' ? 'Chief of Staff Slack destination' : 'workflow-specific Slack destination'
   switch (info.effectiveState) {
-    case 'ready':
-      return `The agent can decide when a notification is useful. Every notify_user call is delivered to ${destination} by the backend.`
+    case 'ready': {
+      const readyDestinations = [
+        info.slackWebhook.state === 'ready' ? destination : null,
+        info.gmail?.state === 'ready' ? 'the inherited Gmail account channel' : null,
+      ].filter((value): value is string => Boolean(value))
+      return `The agent can decide when a notification is useful. The backend delivers notify_user calls through ${readyDestinations.join(' and ') || 'the enabled notification channels'}.`
+    }
     case 'missing_secret':
       return 'A Slack webhook is referenced, but its selected encrypted secret is missing. Use /notify to repair or replace it.'
     case 'invalid_secret':

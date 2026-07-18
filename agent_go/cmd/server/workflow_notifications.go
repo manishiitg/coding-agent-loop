@@ -114,6 +114,27 @@ func notificationAccountChannels(ctx context.Context) []WorkflowNotificationAcco
 	return accountChannels
 }
 
+// effectiveNotificationState reports whether notify_user has at least one
+// usable delivery path for this scope. Account-level channels such as Gmail
+// are inherited automatically; a workflow does not need a redundant Gmail
+// field in workflow.json. A broken explicitly configured Slack destination
+// still wins so the UI does not hide a configuration problem merely because
+// an inherited fallback is available.
+func effectiveNotificationState(scopeDestination WorkflowNotificationDestinationInfo, accountChannels []WorkflowNotificationAccountChannelInfo) string {
+	switch scopeDestination.State {
+	case workflowNotificationStateMissingSecret, workflowNotificationStateInvalidSecret:
+		return scopeDestination.State
+	case workflowNotificationStateReady:
+		return workflowNotificationStateReady
+	}
+	for _, channel := range accountChannels {
+		if strings.EqualFold(strings.TrimSpace(channel.State), workflowNotificationStateReady) {
+			return workflowNotificationStateReady
+		}
+	}
+	return workflowNotificationStateNotConfigured
+}
+
 func (api *StreamingAPI) handleGetWorkflowNotifications(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusOK)
@@ -153,15 +174,16 @@ func (api *StreamingAPI) handleGetWorkflowNotifications(w http.ResponseWriter, r
 		}
 	}
 	slack := resolveWorkflowSlackNotificationState(manifest, secretValue, secretResolved)
+	accountChannels := notificationAccountChannels(r.Context())
 
 	response := WorkflowNotificationInfoResponse{
 		Success:         true,
 		Agentic:         true,
 		ScopeLabel:      manifest.Label,
 		WorkflowLabel:   manifest.Label,
-		EffectiveState:  slack.State,
+		EffectiveState:  effectiveNotificationState(slack, accountChannels),
 		Destinations:    []WorkflowNotificationDestinationInfo{slack},
-		AccountChannels: notificationAccountChannels(r.Context()),
+		AccountChannels: accountChannels,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)

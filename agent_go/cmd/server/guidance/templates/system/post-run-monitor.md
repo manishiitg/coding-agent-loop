@@ -820,6 +820,7 @@ Do not ask only in email or raw chat. Runloop renders the structured request fir
 ## Finalizer And Notifications
 
 Pulse sends one summary every run unless the user's `soul/soul.md ## Notifications` section explicitly says not to notify.
+Enabled account-level notification channels (for example Gmail) are inherited automatically and count as enabled for this workflow. Do not skip notification merely because the workflow has no dedicated Slack webhook, and do not write a redundant Gmail setting into `workflow.json`.
 
 Before finalizing, read `get_pulse_module_state` and confirm every module marked
 due for this `pulse_run_id` has a terminal module result. If any due result is

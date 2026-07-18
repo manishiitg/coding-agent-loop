@@ -76,14 +76,15 @@ func (api *StreamingAPI) handleGetOrgNotifications(w http.ResponseWriter, r *htt
 		secretValue,
 		secretResolved,
 	)
+	accountChannels := notificationAccountChannels(r.Context())
 
 	response := WorkflowNotificationInfoResponse{
 		Success:         true,
 		Agentic:         true,
 		ScopeLabel:      chiefOfStaffNotificationLabel,
-		EffectiveState:  slack.State,
+		EffectiveState:  effectiveNotificationState(slack, accountChannels),
 		Destinations:    []WorkflowNotificationDestinationInfo{slack},
-		AccountChannels: notificationAccountChannels(r.Context()),
+		AccountChannels: accountChannels,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(response)

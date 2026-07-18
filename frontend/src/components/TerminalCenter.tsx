@@ -11,7 +11,7 @@ import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { normalizeEventViewMode, useChatStore } from '../stores/useChatStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { TERMINAL_REFRESH_REQUEST_EVENT } from '../utils/terminalRefresh'
-import { terminalReconnectDelayMs, terminalSnapshotCanReconnect } from '../utils/terminalReconnect'
+import { GEOMETRY_RECONNECT_AFTER_CLOSE, planGeometryChange, planLiveAttachClose, terminalGridNeedsReconnect, terminalReconnectDelayMs, terminalSnapshotCanReconnect, type GeometryChangeStep } from '../utils/terminalReconnect'
 import { terminalPayloadHasVisibleContent } from '../utils/terminalVisibleContent'
 import { useTheme } from '../hooks/useTheme'
 import type { Theme } from '../contexts/ThemeContext'
@@ -119,8 +119,18 @@ const TERMINAL_FAST_POLL_INTERVAL_MS = 750
 const TERMINAL_FAST_POLL_DURATION_MS = 5000
 const LIVE_ATTACH_RESEED_DEBOUNCE_MS = 150
 const LIVE_ATTACH_RESEED_MIN_INTERVAL_MS = 2500
-const LIVE_ATTACH_SEED_TIMEOUT_MS = 5000
+// Must stay ABOVE the backend's own seed deadline (terminalTmuxActionTimeout,
+// 5s). When the two are equal, a backend seed that legitimately runs long under
+// load loses the race: the client gives up and reconnects, adding another seed
+// to a box that is already slow. The client should only ever time out a seed
+// the server has genuinely abandoned.
+const LIVE_ATTACH_SEED_TIMEOUT_MS = 8000
 const LIVE_ATTACH_SNAPSHOT_LINES = 200
+// Mirrors liveAttachSupersededCloseCode in agent_go/cmd/server/terminal_live_attach.go.
+// The backend sends this when another window took the terminal over; it is the
+// ONLY signal that distinguishes eviction from an ordinary disconnect, and the
+// only thing preventing two open tabs from evicting each other in a loop.
+const LIVE_ATTACH_SUPERSEDED_CLOSE_CODE = 4001
 const TERMINAL_SETTLED_CAPTURE_INTERVAL_MS = 400
 const TERMINAL_SETTLED_CAPTURE_MIN_WINDOW_MS = 1200
 const TERMINAL_SETTLED_CAPTURE_STABLE_SAMPLES = 2
@@ -527,6 +537,21 @@ function normalizeVisibleScreenSeed(content: string): string {
 
 function buildVisibleScreenReseed(content: string): string {
   return `\x1b[0m\x1b[H\x1b[2J${normalizeVisibleScreenSeed(content)}\x1b[0m\x1b[J`
+}
+
+// Reseed for a SETTLED pane, whose content prop is the full aggregated capture
+// rather than just the visible screen.
+//
+// ED(2) erases the viewport in place without pushing to scrollback, so it does
+// not clear what is already there. When the content is taller than the
+// viewport, painting it scrolls the excess into scrollback — and a settled pane
+// that keeps getting new content stacks a near-duplicate copy on every reseed.
+// ED(3) drops the scrollback first, which is lossless HERE precisely because
+// the content being painted already carries the history. Do NOT use this for
+// the disconnected-snapshot path: that content is visible-screen-only, so
+// clearing scrollback would destroy history the user can still scroll back to.
+function buildSettledScreenReseed(content: string): string {
+  return `\x1b[0m\x1b[H\x1b[2J\x1b[3J${normalizeVisibleScreenSeed(content)}\x1b[0m\x1b[J`
 }
 
 function measureRawXtermCellMetrics(el: HTMLElement): { charWidth: number; lineHeight: number } | null {
@@ -1645,11 +1670,11 @@ const ColoredText: React.FC<{ rawText: string; className?: string }> = ({ rawTex
 //
 // The xterm stays display-only (disableStdin, no onData -> WS): input keeps
 // flowing through the EXISTING chat live-input / send-keys path into the tmux
-// session and returns as %output over this same WS. Resize is FitAddon -> a JSON
-// {type:'resize'} frame; the backend pins tmux to window-size manual and calls
-// resize-window so tmux and xterm share one grid. Running sessions reconnect on
-// socket close; the backend re-runs the current-screen backfill, so recovery
-// needs no client replay.
+// session and returns as %output over this same WS. A connection keeps one fixed
+// terminal grid. Layout changes reconnect with the new dimensions so the backend
+// resizes tmux before producing a fresh in-band seed; this prevents bytes wrapped
+// for an old width from being interpreted by an already-resized xterm. Running
+// sessions also reconnect on socket close, so recovery needs no client replay.
 const LiveAttachXtermPaneInner: React.FC<{
   terminalId: string
   tmuxSession?: string
@@ -1664,7 +1689,10 @@ const LiveAttachXtermPaneInner: React.FC<{
   onScrollToBottomReady?: (handler: (() => void) | null) => void
   onOutputText?: (text: string) => void
 }> = ({ terminalId, tmuxSession, sessionId, className, contentRef, xtermTheme, authoritativeContent, authoritativeVersion, reconnectOnClose, onViewportStickChange, onScrollToBottomReady, onOutputText }) => {
-  const [connectionState, setConnectionState] = useState<'connecting' | 'connected' | 'reconnecting' | 'snapshot' | 'settled'>('connecting')
+  const [connectionState, setConnectionState] = useState<'connecting' | 'connected' | 'reconnecting' | 'snapshot' | 'settled' | 'superseded'>('connecting')
+  // Set inside the socket effect so the superseded badge's "Take over" button
+  // can re-attach this pane without remounting it.
+  const takeOverRef = useRef<(() => void) | null>(null)
   const mountRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<XTerm | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
@@ -1728,18 +1756,11 @@ const LiveAttachXtermPaneInner: React.FC<{
       term.rows >= RAW_XTERM_MIN_FIT_ROWS
     )
 
-    const sendResize = () => {
-      if (!hasUsableGrid()) return
-      const ws = wsRef.current
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
-      }
-    }
-    const resizeDisposable = term.onResize(() => sendResize())
     // The app's pane is a React/flex container that sizes after mount and on later
     // layout changes, so a ResizeObserver (fires post-layout with the real size) is
     // required to fit the xterm correctly — unlike the static-page PoC whose
-    // container is sized immediately by CSS. Debounced so only the settled size fits.
+    // container is sized immediately by CSS. Debounced so only the settled size
+    // starts a geometry reconnect.
     // WebSocket lifecycle with reconnect for live sessions. The backend sends a
     // reset + current-screen backfill on every (re)connect, so a dropped socket
     // recovers without any client-side replay/seed state.
@@ -1749,6 +1770,8 @@ const LiveAttachXtermPaneInner: React.FC<{
     let failedAttempts = 0
     let snapshotInFlight = false
     let seedTimer: number | undefined
+    let resizeReconnectPending = false
+    let superseded = false
 
     const clearSeedTimer = () => {
       if (seedTimer !== undefined) {
@@ -1844,14 +1867,15 @@ const LiveAttachXtermPaneInner: React.FC<{
       // never clears the user's selection.
       let seedPending = true
       ws.onopen = () => {
-        // Correct the backend's seed geometry to the real fitted grid immediately.
-        sendResize()
         clearSeedTimer()
         seedTimer = window.setTimeout(() => {
           if (wsRef.current === ws && seedPending) ws.close()
         }, LIVE_ATTACH_SEED_TIMEOUT_MS)
       }
       ws.onmessage = ev => {
+        // Once a new grid is requested, discard bytes from the old-width socket.
+        // Its replacement starts with an authoritative reset + seed.
+        if (resizeReconnectPending || wsRef.current !== ws) return
         const data = ev.data
         if (seedPending) {
           seedPending = false
@@ -1886,11 +1910,50 @@ const LiveAttachXtermPaneInner: React.FC<{
           onOutputTextRef.current?.(data)
         }
       }
-      ws.onclose = () => {
+      ws.onclose = event => {
         clearSeedTimer()
-        if (wsRef.current === ws) wsRef.current = null
-        if (closed) return
-        if (!reconnectOnCloseRef.current) return
+        const wasCurrentSocket = wsRef.current === ws
+        if (wasCurrentSocket) wsRef.current = null
+        const action = planLiveAttachClose({
+          code: event.code,
+          paneClosed: closed,
+          wasCurrentSocket,
+          resizeReconnectPending,
+          reconnectOnClose: reconnectOnCloseRef.current,
+          supersededCloseCode: LIVE_ATTACH_SUPERSEDED_CLOSE_CODE,
+        })
+        if (action === 'ignore') return
+        if (action === 'superseded') {
+          // The backend evicted this viewer: the terminal was opened in another
+          // window. Reconnecting would evict whoever replaced us and start a
+          // ping-pong that never converges, so this is TERMINAL — show the last
+          // snapshot and wait for an explicit take-over.
+          resizeReconnectPending = false
+          superseded = true
+          void showDisconnectedSnapshot().then(() => {
+            if (!closed) setConnectionState('superseded')
+          })
+          return
+        }
+        if (action === 'geometry-reconnect') {
+          resizeReconnectPending = false
+          try {
+            if (!hasUsableTerminalFitBox(contentRef.current || mount)) {
+              scheduleReconnect()
+              return
+            }
+            setConnectionState('reconnecting')
+            for (const step of GEOMETRY_RECONNECT_AFTER_CLOSE) {
+              if (!runGeometryStep(step)) {
+                scheduleReconnect()
+                return
+              }
+            }
+          } catch {
+            scheduleReconnect()
+          }
+          return
+        }
         void recoverAfterDisconnect()
       }
       ws.onerror = () => {
@@ -1902,13 +1965,79 @@ const LiveAttachXtermPaneInner: React.FC<{
       }
     }
 
+    // Explicit user re-attach after being superseded. Resets the backoff and
+    // re-fits first, so the take-over seeds at this pane's real grid (and in
+    // turn supersedes whoever holds the terminal now).
+    takeOverRef.current = () => {
+      if (closed) return
+      superseded = false
+      failedAttempts = 0
+      setConnectionState('reconnecting')
+      try {
+        if (hasUsableTerminalFitBox(contentRef.current || mount)) {
+          fitRawXtermToVisibleGrid(fit)
+        }
+      } catch {
+        // Fall through: connect() re-checks the grid and retries if unusable.
+      }
+      connect()
+    }
+
+    // Executes one planned geometry step. The ORDER comes from
+    // planGeometryChange (pure, unit-tested); this only performs the effects.
+    const runGeometryStep = (step: GeometryChangeStep): boolean => {
+      switch (step) {
+        case 'suspend-output':
+          // Stop feeding xterm from the old-width socket BEFORE anything
+          // resizes; its replacement starts with an authoritative reset + seed.
+          resizeReconnectPending = true
+          setConnectionState('reconnecting')
+          return true
+        case 'close-socket': {
+          const ws = wsRef.current
+          if (!ws) return false
+          try {
+            ws.close(1000, 'terminal geometry changed')
+          } catch {
+            resizeReconnectPending = false
+            void recoverAfterDisconnect()
+            return false
+          }
+          return true
+        }
+        case 'fit':
+          fitRawXtermToVisibleGrid(fit)
+          return true
+        case 'open-socket':
+          if (!hasUsableGrid()) return false
+          connect()
+          return true
+      }
+    }
+
     const fitTerminal = () => {
       try {
         if (!hasUsableTerminalFitBox(contentRef.current || mount)) return
-        fitRawXtermToVisibleGrid(fit)
-        if (!hasUsableGrid()) return
-        if (!hasConnected) connect()
-        else sendResize()
+        if (!hasConnected) {
+          fitRawXtermToVisibleGrid(fit)
+          if (hasUsableGrid()) connect()
+          return
+        }
+
+        const needsReconnect = terminalGridNeedsReconnect(
+          { cols: term.cols, rows: term.rows },
+          fit.proposeDimensions(),
+          { cols: RAW_XTERM_MIN_FIT_COLS, rows: RAW_XTERM_MIN_FIT_ROWS },
+        )
+        const steps = planGeometryChange({
+          hasSocket: Boolean(wsRef.current),
+          alreadyPending: resizeReconnectPending,
+          needsReconnect,
+          superseded,
+        })
+        for (const step of steps) {
+          if (!runGeometryStep(step)) break
+        }
       } catch {
         // Fit can fail during unmount or while the pane is display:none.
       }
@@ -1929,7 +2058,6 @@ const LiveAttachXtermPaneInner: React.FC<{
     return () => {
       closed = true
       scrollDisposable.dispose()
-      resizeDisposable.dispose()
       resizeObserver.disconnect()
       if (fitTimer !== undefined) window.clearTimeout(fitTimer)
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer)
@@ -1944,6 +2072,7 @@ const LiveAttachXtermPaneInner: React.FC<{
           // ignore
         }
       }
+      takeOverRef.current = null
       onScrollToBottomReady?.(null)
       terminalRef.current = null
       term.dispose()
@@ -1999,7 +2128,7 @@ const LiveAttachXtermPaneInner: React.FC<{
 
       lastVisibleReseedRef.current = { content, at: Date.now() }
       clearXtermSelection(currentTerm)
-      currentTerm.write(buildVisibleScreenReseed(content), () => {
+      currentTerm.write(buildSettledScreenReseed(content), () => {
         currentTerm.scrollToBottom()
         onViewportStickChangeRef.current?.(true)
       })
@@ -2031,14 +2160,26 @@ const LiveAttachXtermPaneInner: React.FC<{
       style={{ backgroundColor: xtermTheme.background }}
     >
       {connectionState !== 'connected' && (
-        <div className="pointer-events-none absolute right-2 top-2 z-10 inline-flex items-center gap-1.5 rounded border border-neutral-700/80 bg-neutral-950/90 px-2 py-1 font-mono text-[10px] text-neutral-300 shadow-sm">
+        <div className={`absolute right-2 top-2 z-10 inline-flex items-center gap-1.5 rounded border border-neutral-700/80 bg-neutral-950/90 px-2 py-1 font-mono text-[10px] text-neutral-300 shadow-sm ${connectionState === 'superseded' ? '' : 'pointer-events-none'}`}>
           {(connectionState === 'connecting' || connectionState === 'reconnecting') && <RefreshCw className="h-3 w-3 animate-spin" />}
           <span>
             {connectionState === 'connecting' && 'Connecting terminal...'}
             {connectionState === 'reconnecting' && 'Reconnecting terminal...'}
             {connectionState === 'snapshot' && 'Showing latest snapshot · connecting'}
             {connectionState === 'settled' && 'Terminal session ended'}
+            {connectionState === 'superseded' && 'Open in another window · showing snapshot'}
           </span>
+          {connectionState === 'superseded' && (
+            // Deliberately explicit: taking over evicts the other window, so it
+            // must be a user action rather than an automatic reconnect.
+            <button
+              type="button"
+              onClick={() => takeOverRef.current?.()}
+              className="rounded border border-neutral-600/80 px-1.5 py-0.5 text-neutral-200 hover:border-neutral-400 hover:text-neutral-50"
+            >
+              Take over
+            </button>
+          )}
         </div>
       )}
       <div

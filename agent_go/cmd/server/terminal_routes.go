@@ -31,6 +31,26 @@ const terminalMaxCaptureLines = 20000
 const terminalMinResizeCols = 40
 const terminalMinResizeRows = 10
 
+// Upper bound for an operator-supplied grid. Requests arrive from the browser,
+// so an absurd value would otherwise become a real resize-window and make every
+// later capture-pane proportionally huge. Shared with the live-attach transport
+// (see clampLiveAttachGeometry) so both paths agree on the supported range.
+const terminalMaxResizeCols = liveAttachMaxCols
+const terminalMaxResizeRows = liveAttachMaxRows
+
+// clampTerminalResize bounds a requested grid to the supported range. Callers
+// validate the minimum themselves (it is a hard reject); oversized values are
+// clamped so an odd client still gets a usable pane.
+func clampTerminalResize(cols, rows int) (int, int) {
+	if cols > terminalMaxResizeCols {
+		cols = terminalMaxResizeCols
+	}
+	if rows > terminalMaxResizeRows {
+		rows = terminalMaxResizeRows
+	}
+	return cols, rows
+}
+
 var runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
 	cmd := exec.CommandContext(ctx, "tmux", args...)
 	if stdin != "" {
@@ -689,6 +709,7 @@ func (api *StreamingAPI) handleTerminalSizeHint(w http.ResponseWriter, r *http.R
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "resized": 0, "ignored": true})
 		return
 	}
+	req.Cols, req.Rows = clampTerminalResize(req.Cols, req.Rows)
 	llmproviders.SetCodingAgentTmuxSize(req.Cols, req.Rows)
 	resized := api.resizeLiveTerminalWindowsForSession(r.Context(), r, req.SessionID, req.Cols, req.Rows)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "resized": resized})
@@ -699,6 +720,7 @@ func (api *StreamingAPI) resizeLiveTerminalWindowsForSession(ctx context.Context
 	if sessionID == "" || api.terminalStore == nil || cols < terminalMinResizeCols || rows < terminalMinResizeRows {
 		return 0
 	}
+	cols, rows = clampTerminalResize(cols, rows)
 	snapshots := api.terminalStore.List(sessionID)
 	if len(snapshots) == 0 {
 		return 0
@@ -767,6 +789,7 @@ func (api *StreamingAPI) handleResizeTerminal(w http.ResponseWriter, r *http.Req
 		http.Error(w, "cols and rows below minimum terminal size", http.StatusBadRequest)
 		return
 	}
+	req.Cols, req.Rows = clampTerminalResize(req.Cols, req.Rows)
 	// Always update the preferred size so newly-launched sessions adopt the
 	// operator's viewport even if THIS terminal has no live tmux window.
 	llmproviders.SetCodingAgentTmuxSize(req.Cols, req.Rows)

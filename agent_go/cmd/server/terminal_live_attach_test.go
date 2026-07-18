@@ -2,7 +2,9 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -220,7 +223,7 @@ func TestLiveAttachAddViewerSeedsAndStreams(t *testing.T) {
 	))
 	m := newLiveAttachManager()
 
-	st, ch, seed, err := m.addViewer(context.Background(), "sessA", 100, 40)
+	st, viewer, seed, err := m.addViewer(context.Background(), "sessA", 100, 40)
 	if err != nil {
 		t.Fatalf("addViewer: %v", err)
 	}
@@ -248,7 +251,7 @@ func TestLiveAttachAddViewerSeedsAndStreams(t *testing.T) {
 	// Live bytes broadcast after the splice reach the viewer.
 	st.broadcast([]byte("live"))
 	select {
-	case b := <-ch:
+	case b := <-viewer.ch:
 		if string(b) != "live" {
 			t.Fatalf("got %q, want live", string(b))
 		}
@@ -256,7 +259,7 @@ func TestLiveAttachAddViewerSeedsAndStreams(t *testing.T) {
 		t.Fatal("viewer did not receive live bytes")
 	}
 
-	st.unsubscribe(ch)
+	st.unsubscribe(viewer)
 	waitStreamDone(t, st)
 }
 
@@ -280,7 +283,7 @@ func TestLiveAttachSeedWaitsForResizeRepaintGrace(t *testing.T) {
 		}
 	})
 	m := newLiveAttachManager()
-	st, ch, seed, err := m.addViewer(context.Background(), "resizeGrace", 117, 35)
+	st, viewer, seed, err := m.addViewer(context.Background(), "resizeGrace", 117, 35)
 	if err != nil {
 		t.Fatalf("addViewer: %v", err)
 	}
@@ -293,7 +296,7 @@ func TestLiveAttachSeedWaitsForResizeRepaintGrace(t *testing.T) {
 	if !strings.Contains(string(seed), "repainted-screen") {
 		t.Fatalf("seed = %q, want repainted screen", string(seed))
 	}
-	st.unsubscribe(ch)
+	st.unsubscribe(viewer)
 	waitStreamDone(t, st)
 }
 
@@ -314,12 +317,12 @@ func TestLiveAttachForceViewerRepaintSignalsPaneWithoutResize(t *testing.T) {
 	t.Cleanup(func() { signalLiveAttachPaneProcess = originalSignal })
 
 	m := newLiveAttachManager()
-	st, ch, _, err := m.addViewer(context.Background(), "repaint-all-providers", 117, 35)
+	st, viewer, _, err := m.addViewer(context.Background(), "repaint-all-providers", 117, 35)
 	if err != nil {
 		t.Fatalf("addViewer: %v", err)
 	}
 	defer func() {
-		st.unsubscribe(ch)
+		st.unsubscribe(viewer)
 		waitStreamDone(t, st)
 	}()
 
@@ -389,7 +392,7 @@ func TestLiveAttachSeedSpliceExcludesPreSeedOutput(t *testing.T) {
 	m := newLiveAttachManager()
 	stRef = m.stream("sessB", 100, 40)
 
-	st, ch, seed, err := m.addViewer(context.Background(), "sessB", 100, 40)
+	st, viewer, seed, err := m.addViewer(context.Background(), "sessB", 100, 40)
 	if err != nil {
 		t.Fatalf("addViewer: %v", err)
 	}
@@ -397,14 +400,14 @@ func TestLiveAttachSeedSpliceExcludesPreSeedOutput(t *testing.T) {
 		t.Fatalf("seed missing screen: %q", string(seed))
 	}
 	select {
-	case b := <-ch:
+	case b := <-viewer.ch:
 		t.Fatalf("viewer received pre-seed output %q; must be dropped (already in the capture)", string(b))
 	default:
 	}
 
 	st.broadcast([]byte("post-seed"))
 	select {
-	case b := <-ch:
+	case b := <-viewer.ch:
 		if string(b) != "post-seed" {
 			t.Fatalf("got %q, want post-seed", string(b))
 		}
@@ -412,19 +415,28 @@ func TestLiveAttachSeedSpliceExcludesPreSeedOutput(t *testing.T) {
 		t.Fatal("viewer did not receive post-seed bytes")
 	}
 
-	st.unsubscribe(ch)
+	st.unsubscribe(viewer)
 	waitStreamDone(t, st)
 }
 
-func TestLiveAttachManagerSharesStreamAcrossViewers(t *testing.T) {
+// TestLiveAttachManagerSupersedesPreviousViewer pins the single-viewer rule.
+// tmux has ONE window size, so two viewers on different grids can never both
+// render correctly: whichever seeds last resizes the window, and the incumbent
+// is left rendering bytes wrapped for a width its xterm never had. The newest
+// viewer wins and the incumbent is evicted, marked so its WebSocket closes with
+// liveAttachSupersededCloseCode rather than a generic going-away.
+func TestLiveAttachManagerSupersedesPreviousViewer(t *testing.T) {
 	installFakeAttach(t, seedResponder(nil, []string{"screen"}, "0,0"))
 	m := newLiveAttachManager()
 
-	st1, ch1, _, err := m.addViewer(context.Background(), "sessC", 100, 40)
+	st1, first, _, err := m.addViewer(context.Background(), "sessC", 120, 36)
 	if err != nil {
 		t.Fatalf("first addViewer: %v", err)
 	}
-	st2, ch2, _, err := m.addViewer(context.Background(), "sessC", 100, 40)
+	// A second viewer at a DIFFERENT grid — the case that used to corrupt the
+	// incumbent silently, because resizeToThen recorded the new size before
+	// %layout-change arrived and the reconcile then saw a valid self-resize.
+	st2, second, _, err := m.addViewer(context.Background(), "sessC", 80, 24)
 	if err != nil {
 		t.Fatalf("second addViewer: %v", err)
 	}
@@ -432,32 +444,39 @@ func TestLiveAttachManagerSharesStreamAcrossViewers(t *testing.T) {
 		t.Fatal("second viewer created a new stream for the same session")
 	}
 
-	st1.broadcast([]byte("hello"))
-	for i, ch := range []chan []byte{ch1, ch2} {
-		select {
-		case b := <-ch:
-			if string(b) != "hello" {
-				t.Fatalf("sub %d got %q, want %q", i, b, "hello")
-			}
-		case <-time.After(time.Second):
-			t.Fatalf("sub %d did not receive broadcast", i)
-		}
+	if !viewerClosed(t, first.ch) {
+		t.Fatal("incumbent viewer survived a new attach at a different grid")
+	}
+	if !first.wasSuperseded() {
+		t.Fatal("evicted viewer not marked superseded; its socket would close as going-away and the client would reconnect (livelock)")
 	}
 
-	// Unsubscribing one viewer keeps the stream alive.
-	st1.unsubscribe(ch1)
-	if _, open := <-ch1; open {
-		t.Fatal("ch1 should be closed after unsubscribe")
+	// The newest viewer owns the stream and still receives live bytes.
+	if second.wasSuperseded() {
+		t.Fatal("newest viewer must not be marked superseded")
 	}
+	st1.broadcast([]byte("hello"))
+	select {
+	case b, ok := <-second.ch:
+		if !ok {
+			t.Fatal("newest viewer channel closed")
+		}
+		if string(b) != "hello" {
+			t.Fatalf("got %q, want hello", b)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("newest viewer did not receive broadcast")
+	}
+
 	m.mu.Lock()
 	_, stillThere := m.sessions["sessC"]
 	m.mu.Unlock()
 	if !stillThere {
-		t.Fatal("stream removed while a subscriber remains")
+		t.Fatal("stream removed while the newest viewer is still attached")
 	}
 
 	// Unsubscribing the last viewer stops the stream and removes it.
-	st2.unsubscribe(ch2)
+	st2.unsubscribe(second)
 	waitStreamDone(t, st2)
 	m.mu.Lock()
 	_, gone := m.sessions["sessC"]
@@ -517,7 +536,7 @@ func TestLiveAttachManagerRejectsUnsafeSession(t *testing.T) {
 func TestLiveAttachBroadcastDropsSlowViewerEntirely(t *testing.T) {
 	installFakeAttach(t, seedResponder(nil, []string{"screen"}, "0,0"))
 	m := newLiveAttachManager()
-	st, ch, _, err := m.addViewer(context.Background(), "sessE", 80, 24)
+	st, viewer, _, err := m.addViewer(context.Background(), "sessE", 80, 24)
 	if err != nil {
 		t.Fatalf("addViewer: %v", err)
 	}
@@ -529,7 +548,7 @@ func TestLiveAttachBroadcastDropsSlowViewerEntirely(t *testing.T) {
 		st.broadcast([]byte("x"))
 	}
 	received := 0
-	for range ch {
+	for range viewer.ch {
 		received++
 	}
 	if received > liveAttachSubBuffer {
@@ -541,7 +560,7 @@ func TestLiveAttachBroadcastDropsSlowViewerEntirely(t *testing.T) {
 func TestLiveAttachSetSizeDedupsAndSendsInBand(t *testing.T) {
 	fake := installFakeAttach(t, seedResponder(nil, []string{"screen"}, "0,0"))
 	m := newLiveAttachManager()
-	st, ch, _, err := m.addViewer(context.Background(), "sessF", 120, 36)
+	st, viewer, _, err := m.addViewer(context.Background(), "sessF", 120, 36)
 	if err != nil {
 		t.Fatalf("addViewer: %v", err)
 	}
@@ -561,7 +580,7 @@ func TestLiveAttachSetSizeDedupsAndSendsInBand(t *testing.T) {
 			t.Fatalf("timed out waiting for second resize; commands = %#v", commands)
 		}
 	}
-	st.unsubscribe(ch)
+	st.unsubscribe(viewer)
 	waitStreamDone(t, st)
 
 	var resizes []string
@@ -768,11 +787,11 @@ func TestBuildLiveAttachSeedOmitsHistoryJoinArtifacts(t *testing.T) {
 	// full-width gray bars in scrollback).
 	fake := installFakeAttach(t, seedResponder([]string{"h"}, []string{"s"}, "0,0"))
 	m := newLiveAttachManager()
-	st, ch, _, err := m.addViewer(context.Background(), "sessG", 80, 24)
+	st, viewer, _, err := m.addViewer(context.Background(), "sessG", 80, 24)
 	if err != nil {
 		t.Fatalf("addViewer: %v", err)
 	}
-	st.unsubscribe(ch)
+	st.unsubscribe(viewer)
 	waitStreamDone(t, st)
 
 	for {
@@ -945,5 +964,341 @@ func TestParseLiveAttachCursor(t *testing.T) {
 		if x != tc.wantX || y != tc.wantY || ok != tc.wantOK {
 			t.Errorf("parseLiveAttachCursor(%+v) = (%d,%d,%v), want (%d,%d,%v)", tc.reply, x, y, ok, tc.wantX, tc.wantY, tc.wantOK)
 		}
+	}
+}
+
+// windowSizeResponder answers the layout-change reconcile query with the given
+// geometry, delegating everything else to the standard seed responder.
+func windowSizeResponder(cols, rows int, screen []string) func(string) liveattach.Reply {
+	seed := seedResponder(nil, screen, "0,0")
+	return func(cmd string) liveattach.Reply {
+		if strings.Contains(cmd, "#{window_width}") {
+			return liveattach.Reply{Lines: []string{fmt.Sprintf("%d,%d", cols, rows)}}
+		}
+		return seed(cmd)
+	}
+}
+
+func viewerClosed(t *testing.T, ch chan []byte) bool {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				return true
+			}
+			// Drain any live bytes and keep waiting for the close.
+		case <-deadline:
+			return false
+		}
+	}
+}
+
+func TestLiveAttachLayoutChangeDropsViewersOnExternalResize(t *testing.T) {
+	// tmux reports a window size this stream never applied: something else
+	// (an operator, an adapter, another client) resized the window. Bytes are
+	// now wrapped for a width the viewer's xterm does not have, so the viewer
+	// must be dropped to force a reconnect + re-seed at the real geometry.
+	installFakeAttach(t, windowSizeResponder(80, 24, []string{"screen"}))
+	m := newLiveAttachManager()
+	st, viewer, _, err := m.addViewer(context.Background(), "sessLayout", 120, 36)
+	if err != nil {
+		t.Fatalf("addViewer: %v", err)
+	}
+
+	st.handleLayoutChange()
+
+	if !viewerClosed(t, viewer.ch) {
+		t.Fatal("viewer channel still open after an external geometry change")
+	}
+	st.mu.Lock()
+	appliedCols, appliedRows := st.appliedCols, st.appliedRows
+	st.mu.Unlock()
+	// The applied-size cache must be invalidated too: otherwise the next seed
+	// takes resizeToThen's same-size fast path and skips the resize-window it
+	// now needs, re-seeding at the wrong geometry.
+	if appliedCols != 0 || appliedRows != 0 {
+		t.Fatalf("applied geometry = %dx%d, want invalidated (0x0)", appliedCols, appliedRows)
+	}
+	waitStreamDone(t, st)
+}
+
+func TestLiveAttachLayoutChangeIgnoresSelfInflictedResize(t *testing.T) {
+	// Our OWN resize-window also emits %layout-change. tmux completes a command
+	// before flushing notifications, so appliedCols already matches by the time
+	// the reconcile query is answered — the viewer must survive, or every
+	// connect would immediately drop and reconnect itself.
+	installFakeAttach(t, windowSizeResponder(120, 36, []string{"screen"}))
+	m := newLiveAttachManager()
+	st, viewer, _, err := m.addViewer(context.Background(), "sessSelf", 120, 36)
+	if err != nil {
+		t.Fatalf("addViewer: %v", err)
+	}
+
+	st.handleLayoutChange()
+
+	// Give the reconcile query time to round-trip, then prove the viewer is
+	// still spliced into the broadcast.
+	time.Sleep(200 * time.Millisecond)
+	st.broadcast([]byte("still-live"))
+	select {
+	case b, ok := <-viewer.ch:
+		if !ok {
+			t.Fatal("viewer dropped by a self-inflicted layout change")
+		}
+		if string(b) != "still-live" {
+			t.Fatalf("got %q, want still-live", string(b))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("viewer did not receive live bytes after layout change")
+	}
+	st.mu.Lock()
+	appliedCols := st.appliedCols
+	st.mu.Unlock()
+	if appliedCols != 120 {
+		t.Fatalf("applied cols = %d, want 120 preserved", appliedCols)
+	}
+
+	st.unsubscribe(viewer)
+	waitStreamDone(t, st)
+}
+
+func TestClampLiveAttachGeometry(t *testing.T) {
+	if _, _, ok := clampLiveAttachGeometry(20, 8); ok {
+		t.Fatal("below-minimum geometry must be rejected")
+	}
+	cols, rows, ok := clampLiveAttachGeometry(120, 36)
+	if !ok || cols != 120 || rows != 36 {
+		t.Fatalf("in-range geometry = %dx%d ok=%v, want 120x36 ok=true", cols, rows, ok)
+	}
+	// An absurd client grid becomes a real resize-window and makes every later
+	// capture-pane proportionally huge; clamp instead of trusting it.
+	cols, rows, ok = clampLiveAttachGeometry(5000, 2000)
+	if !ok || cols != liveAttachMaxCols || rows != liveAttachMaxRows {
+		t.Fatalf("oversized geometry = %dx%d ok=%v, want %dx%d ok=true",
+			cols, rows, ok, liveAttachMaxCols, liveAttachMaxRows)
+	}
+}
+
+func TestLiveAttachInitialSizeClampsOversizedGeometry(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/stream?cols=5000&rows=2000", nil)
+	cols, rows := liveAttachInitialSize(req)
+	if cols != liveAttachMaxCols || rows != liveAttachMaxRows {
+		t.Fatalf("initial size = %dx%d, want clamp to %dx%d", cols, rows, liveAttachMaxCols, liveAttachMaxRows)
+	}
+}
+
+func TestLiveAttachRawInputChunksLargePaste(t *testing.T) {
+	// Each byte becomes its own send-keys -H argument, so a large paste must be
+	// split across commands or the argv blows past ARG_MAX and never reaches
+	// the pane.
+	var mu sync.Mutex
+	var calls [][]string
+	origRun := runTerminalTmuxCommand
+	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		calls = append(calls, append([]string(nil), args...))
+		return nil
+	}
+	t.Cleanup(func() { runTerminalTmuxCommand = origRun })
+
+	api := &StreamingAPI{}
+	payload := bytes.Repeat([]byte("a"), liveAttachRawInputChunkBytes*2+7)
+	api.liveAttachRawInput(context.Background(), "sessPaste", payload)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(calls) != 3 {
+		t.Fatalf("send-keys call count = %d, want 3 chunks", len(calls))
+	}
+	var got []byte
+	for _, args := range calls {
+		if len(args) < 5 || args[0] != "send-keys" || args[3] != "-H" {
+			t.Fatalf("unexpected send-keys argv: %#v", args[:min(len(args), 6)])
+		}
+		if hexBytes := len(args) - 4; hexBytes > liveAttachRawInputChunkBytes {
+			t.Fatalf("chunk carried %d bytes, want <= %d", hexBytes, liveAttachRawInputChunkBytes)
+		}
+		for _, h := range args[4:] {
+			var b byte
+			if _, err := fmt.Sscanf(h, "%02x", &b); err != nil {
+				t.Fatalf("bad hex argument %q: %v", h, err)
+			}
+			got = append(got, b)
+		}
+	}
+	// Chunking must be transparent: the pane sees the exact original bytes.
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("reassembled payload (%d bytes) != original (%d bytes)", len(got), len(payload))
+	}
+}
+
+// TestLiveAttachRealTmuxExternalResizeDropsViewer covers the SCANNER WIRING for
+// %layout-change, which the fake control channel cannot exercise: it replaces
+// runControlMode wholesale, so nothing there ever classifies a real
+// notification line. Here a genuine `tmux resize-window` from outside the
+// transport must reach runControlMode's event branch and drop the viewer.
+func TestLiveAttachRealTmuxExternalResizeDropsViewer(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), terminalTmuxActionTimeout)
+	ok, _ := liveAttachTmuxSupported(ctx)
+	cancel()
+	if !ok {
+		t.Skip("tmux unavailable or too old")
+	}
+
+	session := "live-attach-resize-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	script := `while true; do echo tick; sleep 0.05; done`
+	if err := exec.Command("tmux", "new-session", "-d", "-s", session, "-x", "100", "-y", "30", "sh", "-c", script).Run(); err != nil {
+		t.Skipf("cannot create tmux session: %v", err)
+	}
+	t.Cleanup(func() { _ = exec.Command("tmux", "kill-session", "-t", session).Run() })
+	time.Sleep(300 * time.Millisecond)
+
+	m := newLiveAttachManager()
+	st, viewer, seed, err := m.addViewer(context.Background(), session, 100, 30)
+	if err != nil {
+		t.Fatalf("addViewer: %v", err)
+	}
+	if len(seed) == 0 {
+		t.Fatal("empty seed")
+	}
+	t.Cleanup(func() { st.stop() })
+
+	// Something other than this transport changes the window. tmux now wraps
+	// output at 80 columns while the viewer's xterm is still on a 100-column
+	// grid — the desync that must not survive.
+	if err := exec.Command("tmux", "resize-window", "-t", session, "-x", "80", "-y", "24").Run(); err != nil {
+		t.Skipf("cannot resize tmux window: %v", err)
+	}
+
+	if !viewerClosed(t, viewer.ch) {
+		t.Fatal("viewer survived an external tmux resize; %layout-change was not reconciled")
+	}
+}
+
+// TestHandleTerminalStreamSupersededCloseCode is the end-to-end half of the
+// single-viewer rule: the evicted socket must close with the DISTINGUISHABLE
+// code, because that code is the only thing telling the frontend not to
+// reconnect. A generic going-away here would make two open tabs evict each
+// other in a ~500ms loop (a successful seed resets the client's backoff), each
+// round re-seeding the full scrollback.
+func TestHandleTerminalStreamSupersededCloseCode(t *testing.T) {
+	installFakeAttach(t, seedResponder(nil, []string{"screen"}, "0,0"))
+
+	store := terminals.NewStore()
+	sessionID := "session-live-attach-supersede"
+	terminalID := sessionID + ":main:" + sessionID
+	tmuxSession := "tmux-live-attach-supersede"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "main:"+sessionID, tmuxSession, "pane", 1))
+	api := &StreamingAPI{terminalStore: store, liveAttach: newLiveAttachManager()}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r = mux.SetURLVars(r, map[string]string{"terminal_id": terminalID})
+		api.handleTerminalStream(w, r)
+	}))
+	defer server.Close()
+	base := "ws" + strings.TrimPrefix(server.URL, "http") + "/stream"
+
+	first, _, err := websocket.DefaultDialer.Dial(base+"?cols=120&rows=36", nil)
+	if err != nil {
+		t.Fatalf("dial first viewer: %v", err)
+	}
+	defer first.Close()
+	_ = first.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if _, _, err := first.ReadMessage(); err != nil {
+		t.Fatalf("first viewer seed: %v", err)
+	}
+
+	gotCode := make(chan int, 1)
+	first.SetCloseHandler(func(code int, text string) error {
+		gotCode <- code
+		return nil
+	})
+
+	// A second tab opens the same terminal at a different grid.
+	second, _, err := websocket.DefaultDialer.Dial(base+"?cols=80&rows=24", nil)
+	if err != nil {
+		t.Fatalf("dial second viewer: %v", err)
+	}
+	defer second.Close()
+	_ = second.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if _, _, err := second.ReadMessage(); err != nil {
+		t.Fatalf("second viewer seed: %v", err)
+	}
+
+	// Draining the first connection surfaces the close frame to its handler.
+	go func() {
+		for {
+			if _, _, err := first.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}()
+
+	select {
+	case code := <-gotCode:
+		if code != liveAttachSupersededCloseCode {
+			t.Fatalf("close code = %d, want %d (superseded)", code, liveAttachSupersededCloseCode)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("evicted viewer never received a close frame")
+	}
+}
+
+// TestLiveAttachResizeSettlesUnderContinuousOutput pins the busy-repaint path.
+// A CLI streaming without pause never produces a quiet window, so the seed used
+// to wait the full liveAttachResizeMaxWait on EVERY geometry reconnect — which
+// is now an ordinary layout change, not a rare event.
+func TestLiveAttachResizeSettlesUnderContinuousOutput(t *testing.T) {
+	st := &liveAttachStream{
+		tmuxSession: "busy",
+		subs:        make(map[*liveAttachViewer]struct{}),
+		done:        make(chan struct{}),
+		writeCh:     make(chan *liveAttachCmd, 4),
+	}
+	t.Cleanup(func() { close(st.done) })
+
+	// A writer that never stops: lastOutputAt keeps advancing, so the quiet
+	// window can never be reached.
+	stopNoise := make(chan struct{})
+	defer close(stopNoise)
+	go func() {
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopNoise:
+				return
+			case <-ticker.C:
+				st.mu.Lock()
+				st.lastOutputAt = time.Now()
+				st.mu.Unlock()
+			}
+		}
+	}()
+
+	resizeStartedAt := time.Now()
+	time.Sleep(20 * time.Millisecond) // let output post-date the resize
+	done := make(chan time.Duration, 1)
+	started := time.Now()
+	go st.waitForResizeRepaint(resizeStartedAt, func() { done <- time.Since(started) })
+
+	select {
+	case waited := <-done:
+		if waited >= liveAttachResizeMaxWait {
+			t.Fatalf("waited %v under continuous output; want release near %v, not the %v ceiling",
+				waited, liveAttachResizeBusyRepaintWait, liveAttachResizeMaxWait)
+		}
+		if waited < liveAttachResizeBusyRepaintWait-40*time.Millisecond {
+			t.Fatalf("released after %v; want at least ~%v so the CLI has repainted",
+				waited, liveAttachResizeBusyRepaintWait)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("resize settle never completed")
 	}
 }

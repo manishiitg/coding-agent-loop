@@ -57,11 +57,27 @@ const (
 	liveAttachScannerInitial = 1 << 16
 	liveAttachDefaultCols    = 120
 	liveAttachDefaultRows    = 36
+	// Upper geometry bound for the attach. The browser grid is authoritative,
+	// but it arrives as client-supplied query params / control frames, so it
+	// must be clamped: an absurd grid becomes a real resize-window, and every
+	// seed then captures rows x cols cells of ANSI. These sit far above any
+	// real display while keeping a single seed bounded.
+	liveAttachMaxCols = 500
+	liveAttachMaxRows = 200
 	// Bounded history seeded into xterm's native scrollback on connect. The
 	// current visible pane is still painted separately after a viewport clear,
 	// so old spinner/status redraws remain scrollback-only and cannot corrupt
 	// the live screen.
-	liveAttachBackfillHistoryLines = 2000
+	//
+	// Every (re)connect — including a geometry reconnect from an ordinary
+	// layout change — starts with a RIS and rebuilds xterm's buffer from this
+	// slice alone, so this value IS the user's surviving scrollback depth. It
+	// is matched to the frontend xterm scrollback and the adapters' tmux
+	// history-limit (both 20000) at half depth: deep enough that a sidebar
+	// toggle does not visibly truncate history, shallow enough that a seed
+	// stays well inside the transcript cap. Raising it costs a proportionally
+	// larger capture on EVERY connect, not just the first.
+	liveAttachBackfillHistoryLines = 10000
 	// A resize reply only confirms that tmux changed the pane geometry; the CLI
 	// still needs a brief event-loop turn to handle SIGWINCH and repaint. Seeding
 	// before that repaint captures the previous width and permanently replays
@@ -69,6 +85,14 @@ const (
 	liveAttachResizeNoOutputGrace = 180 * time.Millisecond
 	liveAttachResizeQuietWindow   = 75 * time.Millisecond
 	liveAttachResizeMaxWait       = 600 * time.Millisecond
+	// A CLI that streams continuously (a build log, a ticker, a busy agent)
+	// never produces a quiet window, so waiting for one always burned the full
+	// liveAttachResizeMaxWait — 600ms added to EVERY geometry reconnect, which
+	// is now an ordinary layout change rather than a rare event. Once repaint
+	// output has actually been observed after the resize, the CLI has handled
+	// SIGWINCH and is emitting at the new width; that is the signal the seed
+	// needs. Waiting past it only buys a tidier frame boundary.
+	liveAttachResizeBusyRepaintWait = 150 * time.Millisecond
 	// Minimum tmux version for the control-mode attach transport. `window-size`
 	// window-size was added in tmux 2.9. The live transport uses explicit
 	// resize-window plus window-size manual; control mode (-CC) has existed since
@@ -182,13 +206,49 @@ type liveAttachCmd struct {
 	done    chan liveattach.Reply
 }
 
+// liveAttachSupersededCloseCode is the WebSocket close code sent to a viewer
+// that was evicted because another viewer took the terminal over. It sits in
+// the 4000-4999 private range. The frontend treats it as TERMINAL — it shows
+// the last snapshot and does not auto-reconnect — which is what makes the
+// single-viewer rule livelock-free: an evicted viewer that reconnected on its
+// own would immediately evict the viewer that replaced it, and the two would
+// ping-pong forever (a successful seed resets the client's backoff, so there
+// would not even be a growing delay between rounds).
+const liveAttachSupersededCloseCode = 4001
+
+// liveAttachViewer is one attached WebSocket's subscription. tmux has a single
+// window size, so two viewers on different grids can never both render
+// correctly; the product rule is one viewer per terminal, and this type carries
+// the eviction bookkeeping that enforces it.
+type liveAttachViewer struct {
+	ch chan []byte
+
+	mu sync.Mutex
+	// superseded records that this viewer was evicted by a newer one, so the
+	// WebSocket handler can close with liveAttachSupersededCloseCode instead of
+	// the generic going-away used for a dying stream.
+	superseded bool
+}
+
+func (v *liveAttachViewer) markSuperseded() {
+	v.mu.Lock()
+	v.superseded = true
+	v.mu.Unlock()
+}
+
+func (v *liveAttachViewer) wasSuperseded() bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.superseded
+}
+
 // liveAttachStream is a single `tmux -CC attach` control-mode client.
 type liveAttachStream struct {
 	mgr         *liveAttachManager
 	tmuxSession string
 
 	mu           sync.Mutex
-	subs         map[chan []byte]struct{}
+	subs         map[*liveAttachViewer]struct{}
 	cancel       context.CancelFunc
 	done         chan struct{}
 	appliedCols  int
@@ -198,6 +258,13 @@ type liveAttachStream struct {
 	// idle-stop logic does not kill the attach under a viewer that has not
 	// reached the subs map yet.
 	seeding int
+	// geometryEpoch increments whenever an external resize invalidates the
+	// applied geometry. A seed in flight records the epoch at entry and
+	// refuses to splice if it changed, so a resize that lands DURING the seed
+	// window cannot hand the viewer a capture taken at a width its xterm was
+	// never told about — the case dropping live viewers alone cannot cover,
+	// because the racing viewer is not in subs yet.
+	geometryEpoch int
 
 	// In-band command plumbing. sendCommand enqueues onto writeCh; a single
 	// writer pump (started when the control stdin exists) appends each command
@@ -249,7 +316,7 @@ func (m *liveAttachManager) stream(tmuxSession string, cols, rows int) *liveAtta
 		st = &liveAttachStream{
 			mgr:         m,
 			tmuxSession: tmuxSession,
-			subs:        make(map[chan []byte]struct{}),
+			subs:        make(map[*liveAttachViewer]struct{}),
 			done:        make(chan struct{}),
 			writeCh:     make(chan *liveAttachCmd, 64),
 			cols:        cols,
@@ -272,7 +339,7 @@ func (m *liveAttachManager) stream(tmuxSession string, cols, rows int) *liveAtta
 // history + current screen + cursor). The seed is captured IN-BAND: the viewer
 // channel is spliced into the broadcast set at the seed's %end, inside the
 // scanner goroutine, so seed and stream can neither overlap nor gap.
-func (m *liveAttachManager) addViewer(ctx context.Context, tmuxSession string, cols, rows int) (*liveAttachStream, chan []byte, []byte, error) {
+func (m *liveAttachManager) addViewer(ctx context.Context, tmuxSession string, cols, rows int) (*liveAttachStream, *liveAttachViewer, []byte, error) {
 	// Validate before ANY in-band command is built: control-mode command lines
 	// are string-parsed by tmux, so an unsafe session name must never reach
 	// the queue.
@@ -283,11 +350,11 @@ func (m *liveAttachManager) addViewer(ctx context.Context, tmuxSession string, c
 	if st == nil {
 		return nil, nil, nil, fmt.Errorf("empty tmux session name")
 	}
-	ch, seed, err := st.seedViewer(ctx, cols, rows)
+	viewer, seed, err := st.seedViewer(ctx, cols, rows)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	return st, ch, seed, nil
+	return st, viewer, seed, nil
 }
 
 func (st *liveAttachStream) isDone() bool {
@@ -312,9 +379,9 @@ func (m *liveAttachManager) dropStream(st *liveAttachStream) {
 	m.mu.Unlock()
 
 	st.mu.Lock()
-	for ch := range st.subs {
-		delete(st.subs, ch)
-		close(ch)
+	for v := range st.subs {
+		delete(st.subs, v)
+		close(v.ch)
 	}
 	st.mu.Unlock()
 }
@@ -345,12 +412,15 @@ func (st *liveAttachStream) stop() {
 }
 
 // unsubscribe removes a viewer and stops the attach client on the last one.
-func (st *liveAttachStream) unsubscribe(ch chan []byte) {
+func (st *liveAttachStream) unsubscribe(v *liveAttachViewer) {
+	if v == nil {
+		return
+	}
 	st.mu.Lock()
-	_, ok := st.subs[ch]
+	_, ok := st.subs[v]
 	if ok {
-		delete(st.subs, ch)
-		close(ch)
+		delete(st.subs, v)
+		close(v.ch)
 	}
 	last := ok && len(st.subs) == 0 && st.seeding == 0
 	st.mu.Unlock()
@@ -372,12 +442,12 @@ func (st *liveAttachStream) broadcast(b []byte) {
 	dropped := false
 	st.mu.Lock()
 	st.lastOutputAt = time.Now()
-	for ch := range st.subs {
+	for v := range st.subs {
 		select {
-		case ch <- cp:
+		case v.ch <- cp:
 		default:
-			delete(st.subs, ch)
-			close(ch)
+			delete(st.subs, v)
+			close(v.ch)
 			dropped = true
 			log.Printf("[live-attach] session=%s dropped slow viewer (buffer full)", st.tmuxSession)
 		}
@@ -457,7 +527,12 @@ func (st *liveAttachStream) deliverReply(reply liveattach.Reply) {
 		log.Printf("[live-attach] session=%s unmatched command reply (number=%s err=%v)", st.tmuxSession, reply.Number, reply.Err)
 		return
 	}
-	if reply.Err {
+	if reply.Overflow {
+		// Protocol corruption, not a failed tmux command: the block never
+		// terminated and was abandoned. The errored reply fails this command,
+		// which unwinds the seed and closes the viewer so it reconnects.
+		log.Printf("[live-attach] session=%s reply block for %q exceeded %d bytes; abandoning block", st.tmuxSession, cmd.text, liveattach.MaxReplyBlockBytes)
+	} else if reply.Err {
 		log.Printf("[live-attach] session=%s command failed: %q -> %s", st.tmuxSession, cmd.text, strings.Join(reply.Lines, " / "))
 	}
 	if cmd.onReply != nil {
@@ -481,10 +556,28 @@ func (st *liveAttachStream) setSizeThen(cols, rows int, ready func()) {
 	_ = st.resizeToThen(cols, rows, ready)
 }
 
+// clampLiveAttachGeometry bounds a requested grid to the supported range. It
+// reports ok=false when the request is below the usable minimum (the caller
+// then leaves the current geometry alone); an oversized request is clamped
+// rather than rejected so a stale/odd client still gets a working pane.
+func clampLiveAttachGeometry(cols, rows int) (int, int, bool) {
+	if cols < terminalMinResizeCols || rows < terminalMinResizeRows {
+		return cols, rows, false
+	}
+	if cols > liveAttachMaxCols {
+		cols = liveAttachMaxCols
+	}
+	if rows > liveAttachMaxRows {
+		rows = liveAttachMaxRows
+	}
+	return cols, rows, true
+}
+
 // resizeToThen applies one real tmux geometry change. Same-size browser resize
 // events retain the fast path and never disturb the running TUI.
 func (st *liveAttachStream) resizeToThen(cols, rows int, ready func()) error {
-	if cols < terminalMinResizeCols || rows < terminalMinResizeRows {
+	cols, rows, ok := clampLiveAttachGeometry(cols, rows)
+	if !ok {
 		if ready != nil {
 			go ready()
 		}
@@ -518,6 +611,76 @@ func (st *liveAttachStream) resizeToThen(cols, rows int, ready func()) error {
 		return err
 	}
 	return nil
+}
+
+// handleLayoutChange reacts to a %layout-change notification by verifying that
+// tmux's window still matches the geometry this stream applied.
+//
+// The browser grid is authoritative, but it is not the only writer: an operator
+// running resize-window by hand, an adapter re-asserting its launch size, or a
+// second client can all change the window underneath a viewer. tmux then emits
+// bytes wrapped for the new width into an xterm still on the old grid — the
+// same scrambling the client-side geometry reconnect exists to prevent, just
+// arriving from the other direction, and it persists until an unrelated socket
+// drop. Dropping the viewers makes the frontend reconnect and re-seed at the
+// real geometry, which is the one recovery path already known to be correct.
+//
+// The size is re-queried rather than trusted from the event because our OWN
+// resize-window also emits %layout-change; tmux completes a command before
+// flushing its notifications, so by the time this query's reply arrives the
+// resize's own reply has already recorded appliedCols/appliedRows and a
+// self-inflicted change compares equal. appliedCols is zeroed on a real
+// mismatch so the next seed cannot take resizeToThen's same-size fast path and
+// skip the resize-window it now needs.
+func (st *liveAttachStream) handleLayoutChange() {
+	st.mu.Lock()
+	watching := len(st.subs) > 0 || st.seeding > 0
+	st.mu.Unlock()
+	if !watching {
+		return
+	}
+	_, err := st.sendCommand(
+		fmt.Sprintf("display-message -p -t %s '#{window_width},#{window_height}'", st.tmuxSession),
+		func(reply liveattach.Reply) {
+			cols, rows, ok := parseLiveAttachPair(reply)
+			if !ok {
+				return
+			}
+			st.mu.Lock()
+			// appliedCols == 0 means this stream has not applied a geometry yet
+			// (or already invalidated one); there is nothing to compare against.
+			mismatch := st.appliedCols != 0 && (cols != st.appliedCols || rows != st.appliedRows)
+			if mismatch {
+				st.appliedCols, st.appliedRows = 0, 0
+				st.geometryEpoch++
+			}
+			st.mu.Unlock()
+			if mismatch {
+				log.Printf("[live-attach] session=%s external geometry change to %dx%d; dropping viewers to re-seed", st.tmuxSession, cols, rows)
+				st.dropViewersForGeometryChange()
+			}
+		},
+	)
+	if err != nil {
+		return // stream dying; nothing to reconcile
+	}
+}
+
+// dropViewersForGeometryChange closes every viewer channel so each WebSocket
+// closes and the frontend reconnects against the current geometry. Mirrors the
+// slow-viewer drop in broadcast: a viewer is removed whole, never fed a stream
+// with holes, and the attach stops if that leaves it with nobody watching.
+func (st *liveAttachStream) dropViewersForGeometryChange() {
+	st.mu.Lock()
+	for v := range st.subs {
+		delete(st.subs, v)
+		close(v.ch)
+	}
+	idle := st.seeding == 0
+	st.mu.Unlock()
+	if idle {
+		st.stop()
+	}
 }
 
 // forceViewerRepaint repairs the state gap inherent in attaching an emulator
@@ -581,7 +744,12 @@ func (st *liveAttachStream) waitForResizeRepaint(resizeStartedAt time.Time, read
 
 		elapsed := time.Since(started)
 		sawRepaint := lastOutputAt.After(resizeStartedAt)
-		if (sawRepaint && time.Since(lastOutputAt) >= liveAttachResizeQuietWindow) ||
+		// Settled: output went quiet after the repaint (the tidiest boundary).
+		quiet := sawRepaint && time.Since(lastOutputAt) >= liveAttachResizeQuietWindow
+		// Busy: output never goes quiet, but the repaint is demonstrably under
+		// way, so the pane is already emitting at the new width.
+		busy := sawRepaint && elapsed >= liveAttachResizeBusyRepaintWait
+		if quiet || busy ||
 			(!sawRepaint && elapsed >= liveAttachResizeNoOutputGrace) ||
 			elapsed >= liveAttachResizeMaxWait {
 			ready()
@@ -597,9 +765,10 @@ func (st *liveAttachStream) waitForResizeRepaint(resizeStartedAt time.Time, read
 
 // seedViewer captures the seed in-band and splices the viewer channel into the
 // broadcast set at the final reply's %end (inside the scanner goroutine).
-func (st *liveAttachStream) seedViewer(ctx context.Context, cols, rows int) (ch chan []byte, seed []byte, err error) {
+func (st *liveAttachStream) seedViewer(ctx context.Context, cols, rows int) (viewer *liveAttachViewer, seed []byte, err error) {
 	st.mu.Lock()
 	st.seeding++
+	startEpoch := st.geometryEpoch
 	st.mu.Unlock()
 	seeded := false
 	defer func() {
@@ -617,7 +786,7 @@ func (st *liveAttachStream) seedViewer(ctx context.Context, cols, rows int) (ch 
 	if err := liveAttachValidTarget(st.tmuxSession); err != nil {
 		return nil, nil, err
 	}
-	ch = make(chan []byte, liveAttachSubBuffer)
+	viewer = &liveAttachViewer{ch: make(chan []byte, liveAttachSubBuffer)}
 	var seedMu sync.Mutex
 	abandoned := false
 	resultCh := make(chan []byte, 1)
@@ -667,8 +836,37 @@ func (st *liveAttachStream) seedViewer(ctx context.Context, cols, rows int) (ch 
 		// Splice before the scanner classifies any further line: every %output
 		// after this instant post-dates the screen capture.
 		st.mu.Lock()
-		st.subs[ch] = struct{}{}
+		// An external resize during the seed window makes this capture's width
+		// unknowable to the viewer's xterm; refuse to splice and let the client
+		// reconnect against the settled geometry instead.
+		stale := st.geometryEpoch != startEpoch
+		var evicted []*liveAttachViewer
+		if !stale {
+			// Single viewer per terminal. tmux has ONE window size, and this
+			// viewer's seed was just captured at ITS grid — every viewer already
+			// attached is, by construction, now looking at a window that may
+			// have been resized out from under it (seedViewer resizes before
+			// capturing). Evict them here, at the splice, rather than at seed
+			// start: if this seed had failed we would have killed the incumbent
+			// for nothing.
+			for other := range st.subs {
+				delete(st.subs, other)
+				other.markSuperseded()
+				evicted = append(evicted, other)
+			}
+			st.subs[viewer] = struct{}{}
+		}
 		st.mu.Unlock()
+		for _, other := range evicted {
+			close(other.ch)
+		}
+		if len(evicted) > 0 {
+			log.Printf("[live-attach] session=%s superseded %d viewer(s) by a new attach at %dx%d", st.tmuxSession, len(evicted), cols, rows)
+		}
+		if stale {
+			resultCh <- nil
+			return
+		}
 		resultCh <- buildLiveAttachSeed(history, screen, cursor)
 	}
 	startSeed := func() {
@@ -718,7 +916,7 @@ func (st *liveAttachStream) seedViewer(ctx context.Context, cols, rows int) (ch 
 		// If the splice raced ahead of the abandon flag, undo it.
 		select {
 		case <-resultCh:
-			st.unsubscribe(ch)
+			st.unsubscribe(viewer)
 		default:
 		}
 	}
@@ -727,8 +925,13 @@ func (st *liveAttachStream) seedViewer(ctx context.Context, cols, rows int) (ch 
 	defer timeout.Stop()
 	select {
 	case seed := <-resultCh:
+		// nil is finish()'s stale-geometry sentinel (buildLiveAttachSeed always
+		// returns at least the RIS, so it can never be nil legitimately).
+		if seed == nil {
+			return nil, nil, fmt.Errorf("live-attach seed for %s raced an external geometry change", st.tmuxSession)
+		}
 		seeded = true
-		return ch, seed, nil
+		return viewer, seed, nil
 	case <-st.done:
 		return nil, nil, fmt.Errorf("live-attach stream for %s closed during seed", st.tmuxSession)
 	case <-ctx.Done():
@@ -789,10 +992,16 @@ func buildLiveAttachSeed(history, screen, cursor liveattach.Reply) []byte {
 
 // parseLiveAttachCursor reads the "#{cursor_x},#{cursor_y}" reply.
 func parseLiveAttachCursor(cursor liveattach.Reply) (int, int, bool) {
-	if cursor.Err || len(cursor.Lines) == 0 {
+	return parseLiveAttachPair(cursor)
+}
+
+// parseLiveAttachPair reads a reply whose first line is two comma-separated
+// non-negative integers (the cursor query and the window-size query).
+func parseLiveAttachPair(reply liveattach.Reply) (int, int, bool) {
+	if reply.Err || len(reply.Lines) == 0 {
 		return 0, 0, false
 	}
-	parts := strings.Split(strings.TrimSpace(cursor.Lines[0]), ",")
+	parts := strings.Split(strings.TrimSpace(reply.Lines[0]), ",")
 	if len(parts) != 2 {
 		return 0, 0, false
 	}
@@ -878,9 +1087,18 @@ func (st *liveAttachStream) runControlMode(ctx context.Context) {
 				log.Printf("[live-attach] session=%s control exit: %s", st.tmuxSession, pl.Raw)
 				return
 			}
-			// %layout-change / %window-renamed / %session-changed / … : routed
-			// here, never into the pane stream. No per-event handling needed;
-			// reconnect re-seeds cover layout changes.
+			// %layout-change means the window geometry may have moved out from
+			// under our viewers; reconcile it (self-inflicted changes compare
+			// equal and are ignored). Sending the probe from the scanner
+			// goroutine is safe: sendCommand only enqueues onto writeCh, which
+			// the writer pump drains, so this never blocks the scanner.
+			if pl.Event == "%layout-change" {
+				st.handleLayoutChange()
+				continue
+			}
+			// %window-renamed / %session-changed / … : routed here, never into
+			// the pane stream. No per-event handling needed; reconnect re-seeds
+			// cover the rest.
 		default:
 			// LineEmpty / LineStray / LineReplyBody: ignore.
 		}
@@ -950,12 +1168,12 @@ func (api *StreamingAPI) handleTerminalStream(w http.ResponseWriter, r *http.Req
 	// gap. If the attach dies during seeding this returns an error and the
 	// WebSocket closes, prompting the frontend to reconnect against the
 	// latest terminal snapshot.
-	st, ch, seed, err := api.liveAttach.addViewer(connCtx, snapshot.TmuxSession, cols, rows)
+	st, viewer, seed, err := api.liveAttach.addViewer(connCtx, snapshot.TmuxSession, cols, rows)
 	if err != nil {
 		log.Printf("[live-attach] seed terminal=%s session=%s: %v", snapshot.TerminalID, snapshot.TmuxSession, err)
 		return
 	}
-	defer st.unsubscribe(ch)
+	defer st.unsubscribe(viewer)
 	transcript := &liveAttachTranscript{}
 	persistTranscript := func() {
 		api.persistLiveAttachTranscript(snapshot.TerminalID, transcript.content())
@@ -977,7 +1195,7 @@ func (api *StreamingAPI) handleTerminalStream(w http.ResponseWriter, r *http.Req
 	var writeMu sync.Mutex
 	go func() {
 		defer persistTranscript()
-		for b := range ch {
+		for b := range viewer.ch {
 			transcript.append(b)
 			writeMu.Lock()
 			err := conn.WriteMessage(websocket.BinaryMessage, b)
@@ -986,10 +1204,18 @@ func (api *StreamingAPI) handleTerminalStream(w http.ResponseWriter, r *http.Req
 				return
 			}
 		}
+		// Distinguish eviction from stream death. A superseded viewer must NOT
+		// come back on its own — the frontend keys off this code to stop
+		// reconnecting, which is what keeps two tabs from evicting each other
+		// in a loop.
+		closeCode, closeText := websocket.CloseGoingAway, "tmux stream closed"
+		if viewer.wasSuperseded() {
+			closeCode, closeText = liveAttachSupersededCloseCode, "terminal opened in another window"
+		}
 		writeMu.Lock()
 		_ = conn.WriteControl(
 			websocket.CloseMessage,
-			websocket.FormatCloseMessage(websocket.CloseGoingAway, "tmux stream closed"),
+			websocket.FormatCloseMessage(closeCode, closeText),
 			time.Now().Add(time.Second),
 		)
 		writeMu.Unlock()
@@ -1008,6 +1234,16 @@ func (api *StreamingAPI) handleTerminalStream(w http.ResponseWriter, r *http.Req
 	// Reader: WebSocket -> tmux, via the EXISTING input path.
 	//   binary frame -> raw byte passthrough (send-keys -H)
 	//   text frame   -> JSON control: resize | input | key
+	//
+	// NOTE: the app's xterm pane is display-only (disableStdin, no onData->WS)
+	// and drives geometry by reconnecting rather than by sending a resize
+	// frame, so TODAY no shipped client writes to this socket — chat live-input
+	// reaches tmux over POST /input and /key instead. The reader is kept
+	// because it is the transport's documented contract and the natural path
+	// for a future writable pane (or a non-browser client); it is reachable
+	// only after AuthMiddleware + requireAccessibleTerminal + the origin check.
+	// If that stops being true, delete this loop rather than letting an
+	// unreachable input-injection surface drift.
 	for {
 		mt, data, err := conn.ReadMessage()
 		if err != nil {
@@ -1139,11 +1375,20 @@ func unwrapResponseWriter(w http.ResponseWriter) http.ResponseWriter {
 func liveAttachInitialSize(r *http.Request) (int, int) {
 	cols, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("cols")))
 	rows, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("rows")))
-	if cols < terminalMinResizeCols || rows < terminalMinResizeRows {
+	cols, rows, ok := clampLiveAttachGeometry(cols, rows)
+	if !ok {
 		return liveAttachDefaultCols, liveAttachDefaultRows
 	}
 	return cols, rows
 }
+
+// liveAttachRawInputChunkBytes bounds how many input bytes go into a single
+// `send-keys -H` argv. Each byte becomes its own two-character argument, so an
+// unchunked paste would build an argv of len(data) entries and fail at ARG_MAX
+// (or the platform's per-argument limits) instead of reaching the pane. All
+// chunks run inside ONE broker transaction, so a split payload can still never
+// interleave with other input.
+const liveAttachRawInputChunkBytes = 512
 
 // liveAttachRawInput forwards raw terminal input bytes faithfully via
 // `send-keys -H` (hex), so Enter (0d), Ctrl-C (03), arrows, and pastes all pass
@@ -1151,11 +1396,6 @@ func liveAttachInitialSize(r *http.Request) (int, int) {
 func (api *StreamingAPI) liveAttachRawInput(ctx context.Context, tmuxSession string, data []byte) {
 	if len(data) == 0 {
 		return
-	}
-	args := make([]string, 0, len(data)+4)
-	args = append(args, "send-keys", "-t", tmuxSession, "-H")
-	for _, b := range data {
-		args = append(args, fmt.Sprintf("%02x", b))
 	}
 	cctx, cancel := context.WithTimeout(ctx, terminalTmuxActionTimeout)
 	defer cancel()
@@ -1170,7 +1410,22 @@ func (api *StreamingAPI) liveAttachRawInput(ctx context.Context, tmuxSession str
 		Source:    "terminal-live-raw",
 		Priority:  priority,
 	}, func(ctx context.Context) error {
-		return runTerminalTmuxCommand(ctx, "", args...)
+		for start := 0; start < len(data); start += liveAttachRawInputChunkBytes {
+			end := start + liveAttachRawInputChunkBytes
+			if end > len(data) {
+				end = len(data)
+			}
+			chunk := data[start:end]
+			args := make([]string, 0, len(chunk)+4)
+			args = append(args, "send-keys", "-t", tmuxSession, "-H")
+			for _, b := range chunk {
+				args = append(args, fmt.Sprintf("%02x", b))
+			}
+			if err := runTerminalTmuxCommand(ctx, "", args...); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		log.Printf("[live-attach] raw input session=%s: %v", tmuxSession, err)

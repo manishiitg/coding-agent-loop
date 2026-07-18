@@ -282,3 +282,51 @@ func TestProtocolEmptyReplyAndCRTrim(t *testing.T) {
 		t.Fatalf("attach handshake reply = %+v", reply)
 	}
 }
+
+func TestProtocolAbandonsUnterminatedBlock(t *testing.T) {
+	p := &Protocol{}
+	p.Feed("%begin 1700000000 9 1")
+
+	// A block whose %end never arrives (torn/malformed guard) must not swallow
+	// the stream forever: without the cap, every line below — including pane
+	// output — is absorbed into the open block and the pane silently freezes.
+	line := strings.Repeat("x", 1<<20)
+	var overflow *Reply
+	for i := 0; i < (MaxReplyBlockBytes/len(line))+2; i++ {
+		if _, reply := p.Feed(line); reply != nil {
+			overflow = reply
+			break
+		}
+	}
+	if overflow == nil {
+		t.Fatal("unterminated block was never abandoned")
+	}
+	if !overflow.Err || !overflow.Overflow || overflow.Number != "9" {
+		t.Fatalf("overflow reply = %+v, want errored overflow for command 9", overflow)
+	}
+
+	// Having abandoned the block, the protocol resumes normal classification so
+	// the transport recovers by failing the command and re-seeding.
+	pl, _ := p.Feed("%output %1 back-to-normal")
+	if pl.Kind != LinePaneOutput || string(pl.Data) != "back-to-normal" {
+		t.Fatalf("post-overflow line = %+v, want pane output", pl)
+	}
+}
+
+func TestProtocolBlockByteBudgetResetsPerBlock(t *testing.T) {
+	p := &Protocol{}
+	half := strings.Repeat("y", MaxReplyBlockBytes/2)
+
+	// Two consecutive blocks that are each individually under the cap must both
+	// complete: the budget is per-block, not per-Protocol-lifetime.
+	for _, number := range []string{"1", "2"} {
+		p.Feed("%begin 1700000000 " + number + " 1")
+		if _, reply := p.Feed(half); reply != nil {
+			t.Fatalf("block %s overflowed on a single under-cap line", number)
+		}
+		_, reply := p.Feed("%end 1700000000 " + number + " 1")
+		if reply == nil || reply.Err || reply.Overflow || reply.Number != number {
+			t.Fatalf("block %s reply = %+v, want clean completion", number, reply)
+		}
+	}
+}

@@ -20,6 +20,19 @@ import "strings"
 // realistic single line while still bounding memory for a runaway producer.
 const MaxControlLineBytes = 4 << 20 // 4 MiB
 
+// MaxReplyBlockBytes caps the body a single %begin..%end block may accumulate.
+// Without it, a torn or malformed guard line (a truncated %begin, a lost %end)
+// puts Protocol into block mode permanently: every subsequent line — including
+// all pane output — is swallowed into p.lines, so the pane silently freezes
+// while memory grows without bound. Exceeding the cap instead aborts the block
+// and surfaces an errored Reply, which fails the pending command and closes the
+// stream, so the viewer reconnects and re-seeds.
+//
+// The largest legitimate block is the seed's history capture (bounded by the
+// manager's backfill line budget at the pane width), which stays far below
+// this; treat the cap as a corruption backstop, not a tuning knob.
+const MaxReplyBlockBytes = 32 << 20 // 32 MiB
+
 // dcsControlModePrefix is the DCS string tmux writes once at the very start of
 // the control-mode stream (ESC P 1000 p). It must be stripped before a line is
 // classified, otherwise the first real line is misread.
@@ -137,6 +150,11 @@ type Reply struct {
 	Lines []string
 	// Err is true when the block ended with %error instead of %end.
 	Err bool
+	// Overflow is true when the block was abandoned because it exceeded
+	// MaxReplyBlockBytes (a torn/never-terminated guard). Err is always set
+	// too; Overflow distinguishes protocol corruption from a tmux command that
+	// legitimately failed, which callers may want to log differently.
+	Overflow bool
 }
 
 // Protocol is a stateful control-mode line reader that frames command replies.
@@ -149,6 +167,19 @@ type Protocol struct {
 	inBlock bool
 	number  string
 	lines   []string
+	// bytes tracks the accumulated body size of the open block so a block that
+	// never terminates cannot grow unbounded. See MaxReplyBlockBytes.
+	bytes int
+}
+
+// resetBlock clears the open-block state and returns the collected lines.
+func (p *Protocol) resetBlock() []string {
+	lines := p.lines
+	p.inBlock = false
+	p.number = ""
+	p.lines = nil
+	p.bytes = 0
+	return lines
 }
 
 // Feed consumes one raw control-mode line. It returns the line classification
@@ -161,13 +192,22 @@ func (p *Protocol) Feed(raw string) (ParsedLine, *Reply) {
 		if kind, num := parseBlockGuard(line); num == p.number {
 			switch kind {
 			case "%end", "%error":
-				reply := &Reply{Number: p.number, Lines: p.lines, Err: kind == "%error"}
-				p.inBlock = false
-				p.number = ""
-				p.lines = nil
+				number, err := p.number, kind == "%error"
+				reply := &Reply{Number: number, Lines: p.resetBlock(), Err: err}
 				return ParsedLine{Kind: LineReplyBody, Raw: line}, reply
 			}
 		}
+		// Corruption backstop: abandon a block that outgrows MaxReplyBlockBytes
+		// and report it as an error reply, rather than swallowing the rest of
+		// the stream forever. Truncated is fine — the caller's recovery is to
+		// fail the command and re-seed, not to salvage the body.
+		if p.bytes+len(line) > MaxReplyBlockBytes {
+			number := p.number
+			p.resetBlock()
+			reply := &Reply{Number: number, Err: true, Overflow: true}
+			return ParsedLine{Kind: LineReplyBody, Raw: line}, reply
+		}
+		p.bytes += len(line)
 		p.lines = append(p.lines, line)
 		return ParsedLine{Kind: LineReplyBody, Raw: line}, nil
 	}
@@ -178,6 +218,7 @@ func (p *Protocol) Feed(raw string) (ParsedLine, *Reply) {
 			p.inBlock = true
 			p.number = num
 			p.lines = nil
+			p.bytes = 0
 			return ParsedLine{Kind: LineReplyBody, Raw: pl.Raw}, nil
 		}
 	}

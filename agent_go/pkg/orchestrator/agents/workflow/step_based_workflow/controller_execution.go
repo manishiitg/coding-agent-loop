@@ -2980,6 +2980,28 @@ func getRegularPlanStep(step PlanStepInterface) *RegularPlanStep {
 	return nil
 }
 
+func validateRegularStepExecutionModes(steps []PlanStepInterface) error {
+	unsupported := make([]string, 0)
+	for _, step := range steps {
+		for _, regular := range collectRegularPlanSteps(step) {
+			if !isScriptedExecutionModeConfig(regular.AgentConfigs) {
+				stepID := strings.TrimSpace(regular.GetID())
+				if stepID == "" {
+					stepID = strings.TrimSpace(regular.GetTitle())
+				}
+				unsupported = append(unsupported, stepID)
+			}
+		}
+	}
+	if len(unsupported) == 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"unsupported agentic regular step(s): %s; agentic regular execution has been removed. Migrate conversational steps to message_sequence and deterministic steps to scripted regular before running the workflow",
+		strings.Join(unsupported, ", "),
+	)
+}
+
 // runExecutionPhase executes the plan steps one by one
 func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 	ctx context.Context,
@@ -2992,6 +3014,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 	// Run folder should already be resolved early (after plan approval)
 	if hcpo.selectedRunFolder == "" {
 		return fmt.Errorf(fmt.Sprintf("run folder not resolved - this should have been set after plan approval"), nil)
+	}
+	if err := validateRegularStepExecutionModes(breakdownSteps); err != nil {
+		return err
 	}
 
 	// Route conversations (msgSeqRoutes) are scoped to this execution phase.
@@ -3267,13 +3292,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			continue
 		}
 
-		sequenceExecutionStep := step
-		if shouldAdaptRegularStepToMessageSequence(step) {
-			sequenceExecutionStep = regularStepAsMessageSequence(step.(*RegularPlanStep))
-			hcpo.GetLogger().Info(fmt.Sprintf("💬 Running legacy agentic regular step %q through the one-turn message-sequence compatibility path", step.GetID()))
-		}
-		if isMessageSequenceStep(sequenceExecutionStep) {
-			hcpo.GetLogger().Info(fmt.Sprintf("💬 Starting message sequence step execution: %s", sequenceExecutionStep.GetTitle()))
+		if isMessageSequenceStep(step) {
+			hcpo.GetLogger().Info(fmt.Sprintf("💬 Starting message sequence step execution: %s", step.GetTitle()))
 			stepPath := fmt.Sprintf("step-%d", i+1)
 			callOptions := messageSequenceCallOptions{
 				Source: "configured_queue",
@@ -3285,7 +3305,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 					callOptions.ReentryMessage = execCtx.WorkshopHumanInput
 				}
 			}
-			executionResult, _, err := hcpo.executeMessageSequenceStep(ctx, sequenceExecutionStep, i, stepPath, progress, execCtx, breakdownSteps, callOptions)
+			executionResult, _, err := hcpo.executeMessageSequenceStep(ctx, step, i, stepPath, progress, execCtx, breakdownSteps, callOptions)
 			if err != nil {
 				if isWorkflowCancellationErr(ctx, err) {
 					hcpo.GetLogger().Info(fmt.Sprintf("Message sequence step %d canceled", i+1))
@@ -3310,7 +3330,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			// falling through in list order. Without this, after a router selected one
 			// route the selected route ran but execution then spilled into the next
 			// non-selected route target.
-			if seqStep, ok := sequenceExecutionStep.(*MessageSequencePlanStep); ok && strings.TrimSpace(seqStep.NextStepID) != "" {
+			if seqStep, ok := step.(*MessageSequencePlanStep); ok && strings.TrimSpace(seqStep.NextStepID) != "" {
 				outcome, navErr := hcpo.navigateToNextStepID(ctx, step.GetID(), seqStep.NextStepID, breakdownSteps, progress, &i, &startFromStep, maxLLMJumpRepeats)
 				if navErr != nil {
 					return navErr

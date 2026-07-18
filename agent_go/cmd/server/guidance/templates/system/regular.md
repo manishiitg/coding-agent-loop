@@ -3,9 +3,8 @@
 A `regular` step is the scripted boundary for one deterministic unit of work. It owns one
 coherent output and deterministic final gate and runs through the saved `main.py` path.
 Do not create an agentic regular step: every new conversational or judgment-heavy step uses
-**`message_sequence`**, even when it needs only one work turn. Existing non-scripted regular
-steps remain compatible because runtime adapts them to a one-turn message sequence without
-rewriting the saved plan. See `get_reference_doc(kind="message-sequence")`.
+**`message_sequence`**, even when it needs only one work turn. Non-scripted regular steps are
+rejected at runtime; migrate them before execution. See `get_reference_doc(kind="message-sequence")`.
 Use the others for branching (`routing`), sub-agent coordination (`todo_task`), or operator
 input (`human_input`).
 

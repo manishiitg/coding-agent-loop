@@ -70,35 +70,6 @@ type messageSequenceCallOptions struct {
 	Restart        bool
 }
 
-const legacyRegularSequenceItemID = "execute-and-verify"
-
-// regularStepAsMessageSequence keeps old agentic regular steps executable while
-// consolidating conversational execution on the message-sequence runtime. The
-// plan remains unchanged on disk. Explicit scripted regular steps never use
-// this adapter because they retain the saved main.py execution path.
-func regularStepAsMessageSequence(step *RegularPlanStep) *MessageSequencePlanStep {
-	if step == nil {
-		return nil
-	}
-	return &MessageSequencePlanStep{
-		Type:             StepTypeMessageSeq,
-		CommonStepFields: step.CommonStepFields,
-		Items: []MessageSequenceItem{{
-			ID:   legacyRegularSequenceItemID,
-			Type: "user_message",
-			Kind: "execution",
-			Message: "Complete the step described above. Re-open the produced evidence, verify the result against every stated requirement, " +
-				"repair any gap you find, and finish only when the step is complete.",
-		}},
-		AgentConfigs: step.AgentConfigs,
-	}
-}
-
-func shouldAdaptRegularStepToMessageSequence(step PlanStepInterface) bool {
-	regular, ok := step.(*RegularPlanStep)
-	return ok && !isScriptedExecutionModeConfig(regular.AgentConfigs)
-}
-
 // messageSequenceClosingItems builds synthetic trailing items so a standalone
 // message_sequence honors its step-level learning_objective and
 // knowledgebase_contribution — the same post-step learnings/KB a regular step

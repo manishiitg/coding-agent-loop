@@ -1348,17 +1348,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutedSubAgentStep(
 		return "Nested todo task completed successfully", capturedHistory, nil
 	}
 
-	sequenceExecutionStep := stepToExecute
-	if shouldAdaptRegularStepToMessageSequence(stepToExecute) {
-		sequenceExecutionStep = regularStepAsMessageSequence(stepToExecute.(*RegularPlanStep))
-		hcpo.GetLogger().Info(fmt.Sprintf("💬 Running routed legacy agentic regular step %q through the one-turn message-sequence compatibility path", stepToExecute.GetID()))
+	if err := validateRegularStepExecutionModes([]PlanStepInterface{stepToExecute}); err != nil {
+		return "", capturedHistory, err
 	}
-	if isMessageSequenceStep(sequenceExecutionStep) {
-		reentryMessage := strings.TrimSpace(sequenceExecutionStep.GetDescription())
+	if isMessageSequenceStep(stepToExecute) {
+		reentryMessage := strings.TrimSpace(stepToExecute.GetDescription())
 		messageSequenceRestart, _ := ctx.Value(virtualtools.SubAgentMessageSequenceRestartKey).(bool)
 		executionResult, capturedHistory, err := hcpo.executeMessageSequenceStep(
 			ctx,
-			sequenceExecutionStep,
+			stepToExecute,
 			stepIndex,
 			subAgentStepPath,
 			progress,

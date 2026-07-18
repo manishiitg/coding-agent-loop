@@ -1,6 +1,9 @@
 package step_based_workflow
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestScriptedToolNamesArePlanMutationsAndLegacyNamesAreNot(t *testing.T) {
 	for _, name := range []string{"add_scripted_step", "update_scripted_step"} {
@@ -37,48 +40,54 @@ func TestValidateScriptedStepUpdateTarget(t *testing.T) {
 	}
 }
 
-func TestRegularStepAsMessageSequencePreservesExecutionContract(t *testing.T) {
-	validation := &ValidationSchema{}
-	config := &AgentConfigs{DeclaredExecutionMode: StepModeAgentic, DBAccess: "read"}
+func TestLegacyAgenticRegularStepIsRejected(t *testing.T) {
 	regular := &RegularPlanStep{
-		Type: StepTypeRegular,
-		CommonStepFields: CommonStepFields{
-			ID:                  "analyze-results",
-			Title:               "Analyze results",
-			Description:         "Analyze the saved evidence and explain the result.",
-			ContextDependencies: []string{"fetch.json"},
-			ContextOutput:       FlexibleContextOutput("analysis.json"),
-			ValidationSchema:    validation,
-		},
-		AgentConfigs: config,
+		Type:             StepTypeRegular,
+		CommonStepFields: CommonStepFields{ID: "analyze-results", Title: "Analyze results"},
+		AgentConfigs:     &AgentConfigs{DeclaredExecutionMode: StepModeAgentic},
 	}
 
-	if !shouldAdaptRegularStepToMessageSequence(regular) {
-		t.Fatal("expected an agentic regular step to use the compatibility adapter")
+	err := validateRegularStepExecutionModes([]PlanStepInterface{regular})
+	if err == nil {
+		t.Fatal("agentic regular step must be rejected")
 	}
-	sequence := regularStepAsMessageSequence(regular)
-	if sequence == nil || sequence.StepType() != StepTypeMessageSeq {
-		t.Fatalf("expected message_sequence adapter, got %#v", sequence)
-	}
-	if sequence.ID != regular.ID || sequence.Title != regular.Title || sequence.Description != regular.Description {
-		t.Fatalf("adapter changed step identity or instructions: %#v", sequence)
-	}
-	if sequence.ContextOutput != regular.ContextOutput || sequence.ValidationSchema != validation || sequence.AgentConfigs != config {
-		t.Fatal("adapter did not preserve output, validation, or agent configuration")
-	}
-	if len(sequence.Items) != 1 || sequence.Items[0].ID != legacyRegularSequenceItemID || sequence.Items[0].Type != "user_message" {
-		t.Fatalf("expected one compatibility work turn, got %#v", sequence.Items)
+	if got := err.Error(); got == "" || !containsAll(got, "analyze-results", "message_sequence", "scripted regular") {
+		t.Fatalf("unexpected rejection error: %q", got)
 	}
 }
 
-func TestScriptedRegularStepDoesNotUseMessageSequenceAdapter(t *testing.T) {
+func TestScriptedRegularStepRemainsSupported(t *testing.T) {
 	regular := &RegularPlanStep{
 		CommonStepFields: CommonStepFields{ID: "fetch-data"},
 		AgentConfigs:     &AgentConfigs{DeclaredExecutionMode: StepModeScripted},
 	}
-	if shouldAdaptRegularStepToMessageSequence(regular) {
-		t.Fatal("scripted regular step must retain the saved-script execution path")
+	if err := validateRegularStepExecutionModes([]PlanStepInterface{regular}); err != nil {
+		t.Fatalf("scripted regular step was rejected: %v", err)
 	}
+}
+
+func TestNestedLegacyAgenticRegularStepIsRejected(t *testing.T) {
+	nested := &RegularPlanStep{
+		CommonStepFields: CommonStepFields{ID: "nested-analysis"},
+		AgentConfigs:     nil,
+	}
+	root := &TodoTaskPlanStep{
+		CommonStepFields: CommonStepFields{ID: "orchestrate"},
+		PredefinedRoutes: []PlanOrchestrationRoute{{RouteID: "analyze", SubAgentStep: nested}},
+	}
+	err := validateRegularStepExecutionModes([]PlanStepInterface{root})
+	if err == nil || !containsAll(err.Error(), "nested-analysis", "message_sequence") {
+		t.Fatalf("nested agentic regular rejection = %v", err)
+	}
+}
+
+func containsAll(value string, needles ...string) bool {
+	for _, needle := range needles {
+		if !strings.Contains(value, needle) {
+			return false
+		}
+	}
+	return true
 }
 
 func TestUpsertNewScriptedRegularStepConfig(t *testing.T) {

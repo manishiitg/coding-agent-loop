@@ -387,7 +387,13 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const [showAccessPopup, setShowAccessPopup] = useState(false)
   const [showWorkflowSchedulesPanel, setShowWorkflowSchedulesPanel] = useState(false)
   const [workflowScheduleStats, setWorkflowScheduleStats] = useState<WorkflowScheduleStats>(EMPTY_WORKFLOW_SCHEDULE_STATS)
+  const [workflowScheduleStatsScope, setWorkflowScheduleStatsScope] = useState<string | null>(null)
   const [manualPulseStarting, setManualPulseStarting] = useState(false)
+
+  const workflowScheduleScope = useMemo(
+    () => `${presetQueryId || ''}:${normalizeWorkspacePath(workspacePath)}`,
+    [presetQueryId, workspacePath]
+  )
 
   const runWorkflowPulseNow = useCallback(async () => {
     if (!workspacePath || manualPulseStarting) return
@@ -568,11 +574,13 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       missed: matchingJobs.filter(job => job.enabled && (job.missed_run_count ?? 0) > 0).length,
       issues: matchingJobs.filter(job => job.last_status === 'error').length,
     })
-  }, [workspacePath, presetQueryId])
+    setWorkflowScheduleStatsScope(workflowScheduleScope)
+  }, [workspacePath, presetQueryId, workflowScheduleScope])
 
   const refreshWorkflowScheduleStats = useCallback(async () => {
     if (!workspacePath && !presetQueryId) {
       setWorkflowScheduleStats(EMPTY_WORKFLOW_SCHEDULE_STATS)
+      setWorkflowScheduleStatsScope(null)
       return
     }
 
@@ -584,12 +592,14 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       updateWorkflowScheduleStats(resp.jobs || [])
     } catch {
       setWorkflowScheduleStats(EMPTY_WORKFLOW_SCHEDULE_STATS)
+      setWorkflowScheduleStatsScope(null)
     }
   }, [workspacePath, presetQueryId, updateWorkflowScheduleStats])
 
   useEffect(() => {
-    refreshWorkflowScheduleStats()
-  }, [refreshWorkflowScheduleStats])
+    setWorkflowScheduleStatsScope(null)
+    void refreshWorkflowScheduleStats()
+  }, [refreshWorkflowScheduleStats, workflowScheduleScope])
 
   // Lightweight backup-status poll so the toolbar dot reflects health at a glance.
   const refreshBackupState = useCallback(async () => {
@@ -863,22 +873,24 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 <TooltipContent side="bottom"><p>Pulse status and module cadence</p></TooltipContent>
               </Tooltip>
               <span className="h-4 w-px bg-border" aria-hidden="true" />
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={runWorkflowPulseNow}
-                    disabled={!canWriteWorkflow || manualPulseStarting}
-                    className="flex h-full w-8 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                    aria-label="Run workflow and Pulse now"
-                  >
-                    {manualPulseStarting
-                      ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                      : <Play className="h-3.5 w-3.5" />}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom"><p>Run workflow + Pulse now</p></TooltipContent>
-              </Tooltip>
+              {workflowScheduleStatsScope === workflowScheduleScope && workflowScheduleStats.total === 0 && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={runWorkflowPulseNow}
+                      disabled={!canWriteWorkflow || manualPulseStarting}
+                      className="flex h-full w-8 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                      aria-label="Run workflow and Pulse now"
+                    >
+                      {manualPulseStarting
+                        ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                        : <Play className="h-3.5 w-3.5" />}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom"><p>Run workflow + Pulse now</p></TooltipContent>
+                </Tooltip>
+              )}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button

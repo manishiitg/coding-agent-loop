@@ -3267,8 +3267,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			continue
 		}
 
-		if isMessageSequenceStep(step) {
-			hcpo.GetLogger().Info(fmt.Sprintf("💬 Starting message sequence step execution: %s", step.GetTitle()))
+		sequenceExecutionStep := step
+		if shouldAdaptRegularStepToMessageSequence(step) {
+			sequenceExecutionStep = regularStepAsMessageSequence(step.(*RegularPlanStep))
+			hcpo.GetLogger().Info(fmt.Sprintf("💬 Running legacy agentic regular step %q through the one-turn message-sequence compatibility path", step.GetID()))
+		}
+		if isMessageSequenceStep(sequenceExecutionStep) {
+			hcpo.GetLogger().Info(fmt.Sprintf("💬 Starting message sequence step execution: %s", sequenceExecutionStep.GetTitle()))
 			stepPath := fmt.Sprintf("step-%d", i+1)
 			callOptions := messageSequenceCallOptions{
 				Source: "configured_queue",
@@ -3280,7 +3285,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 					callOptions.ReentryMessage = execCtx.WorkshopHumanInput
 				}
 			}
-			executionResult, _, err := hcpo.executeMessageSequenceStep(ctx, step, i, stepPath, progress, execCtx, breakdownSteps, callOptions)
+			executionResult, _, err := hcpo.executeMessageSequenceStep(ctx, sequenceExecutionStep, i, stepPath, progress, execCtx, breakdownSteps, callOptions)
 			if err != nil {
 				if isWorkflowCancellationErr(ctx, err) {
 					hcpo.GetLogger().Info(fmt.Sprintf("Message sequence step %d canceled", i+1))
@@ -3305,7 +3310,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			// falling through in list order. Without this, after a router selected one
 			// route the selected route ran but execution then spilled into the next
 			// non-selected route target.
-			if seqStep, ok := step.(*MessageSequencePlanStep); ok && strings.TrimSpace(seqStep.NextStepID) != "" {
+			if seqStep, ok := sequenceExecutionStep.(*MessageSequencePlanStep); ok && strings.TrimSpace(seqStep.NextStepID) != "" {
 				outcome, navErr := hcpo.navigateToNextStepID(ctx, step.GetID(), seqStep.NextStepID, breakdownSteps, progress, &i, &startFromStep, maxLLMJumpRepeats)
 				if navErr != nil {
 					return navErr

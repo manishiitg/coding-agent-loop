@@ -1,0 +1,158 @@
+package step_based_workflow
+
+import "testing"
+
+func TestScriptedToolNamesArePlanMutationsAndLegacyNamesAreNot(t *testing.T) {
+	for _, name := range []string{"add_scripted_step", "update_scripted_step"} {
+		if !IsPlanModificationTool(name) {
+			t.Fatalf("expected %q to be recognized as a plan mutation", name)
+		}
+	}
+	for _, name := range []string{"add_regular_step", "update_regular_step"} {
+		if IsPlanModificationTool(name) {
+			t.Fatalf("legacy authoring tool %q must not remain callable", name)
+		}
+	}
+}
+
+func TestValidateScriptedStepUpdateTarget(t *testing.T) {
+	plan := &PlanningResponse{Steps: []PlanStepInterface{
+		&RegularPlanStep{CommonStepFields: CommonStepFields{ID: "scripted"}},
+		&RegularPlanStep{CommonStepFields: CommonStepFields{ID: "legacy-agentic"}},
+		&MessageSequencePlanStep{CommonStepFields: CommonStepFields{ID: "sequence"}},
+	}}
+	configs := []StepConfig{{
+		ID:           "scripted",
+		AgentConfigs: &AgentConfigs{DeclaredExecutionMode: StepModeScripted},
+	}}
+
+	if err := validateScriptedStepUpdateTarget(plan, configs, "scripted"); err != nil {
+		t.Fatalf("declared scripted step was rejected: %v", err)
+	}
+	if err := validateScriptedStepUpdateTarget(plan, configs, "legacy-agentic"); err == nil {
+		t.Fatal("legacy agentic regular step must not be editable through update_scripted_step")
+	}
+	if err := validateScriptedStepUpdateTarget(plan, configs, "sequence"); err == nil {
+		t.Fatal("message_sequence must use its type-specific update tool")
+	}
+}
+
+func TestRegularStepAsMessageSequencePreservesExecutionContract(t *testing.T) {
+	validation := &ValidationSchema{}
+	config := &AgentConfigs{DeclaredExecutionMode: StepModeAgentic, DBAccess: "read"}
+	regular := &RegularPlanStep{
+		Type: StepTypeRegular,
+		CommonStepFields: CommonStepFields{
+			ID:                  "analyze-results",
+			Title:               "Analyze results",
+			Description:         "Analyze the saved evidence and explain the result.",
+			ContextDependencies: []string{"fetch.json"},
+			ContextOutput:       FlexibleContextOutput("analysis.json"),
+			ValidationSchema:    validation,
+		},
+		AgentConfigs: config,
+	}
+
+	if !shouldAdaptRegularStepToMessageSequence(regular) {
+		t.Fatal("expected an agentic regular step to use the compatibility adapter")
+	}
+	sequence := regularStepAsMessageSequence(regular)
+	if sequence == nil || sequence.StepType() != StepTypeMessageSeq {
+		t.Fatalf("expected message_sequence adapter, got %#v", sequence)
+	}
+	if sequence.ID != regular.ID || sequence.Title != regular.Title || sequence.Description != regular.Description {
+		t.Fatalf("adapter changed step identity or instructions: %#v", sequence)
+	}
+	if sequence.ContextOutput != regular.ContextOutput || sequence.ValidationSchema != validation || sequence.AgentConfigs != config {
+		t.Fatal("adapter did not preserve output, validation, or agent configuration")
+	}
+	if len(sequence.Items) != 1 || sequence.Items[0].ID != legacyRegularSequenceItemID || sequence.Items[0].Type != "user_message" {
+		t.Fatalf("expected one compatibility work turn, got %#v", sequence.Items)
+	}
+}
+
+func TestScriptedRegularStepDoesNotUseMessageSequenceAdapter(t *testing.T) {
+	regular := &RegularPlanStep{
+		CommonStepFields: CommonStepFields{ID: "fetch-data"},
+		AgentConfigs:     &AgentConfigs{DeclaredExecutionMode: StepModeScripted},
+	}
+	if shouldAdaptRegularStepToMessageSequence(regular) {
+		t.Fatal("scripted regular step must retain the saved-script execution path")
+	}
+}
+
+func TestUpsertNewScriptedRegularStepConfig(t *testing.T) {
+	configs := []StepConfig{{ID: "fetch-data", AgentConfigs: nil}}
+	configs = upsertNewScriptedRegularStepConfig(configs, "fetch-data", "Fetch data")
+	if len(configs) != 1 {
+		t.Fatalf("expected existing config to be updated, got %d entries", len(configs))
+	}
+	cfg := configs[0]
+	if cfg.Title != "Fetch data" || cfg.AgentConfigs == nil {
+		t.Fatalf("missing updated scripted config: %#v", cfg)
+	}
+	if cfg.AgentConfigs.DeclaredExecutionMode != StepModeScripted {
+		t.Fatalf("expected scripted mode, got %q", cfg.AgentConfigs.DeclaredExecutionMode)
+	}
+	if cfg.AgentConfigs.UseCodeExecutionMode == nil || !*cfg.AgentConfigs.UseCodeExecutionMode {
+		t.Fatal("scripted mode did not enable code execution")
+	}
+
+	configs = upsertNewScriptedRegularStepConfig(configs, "normalize-data", "Normalize data")
+	if len(configs) != 2 || configs[1].ID != "normalize-data" || configs[1].AgentConfigs == nil {
+		t.Fatalf("expected a new scripted config entry, got %#v", configs)
+	}
+}
+
+func TestCollectRegularPlanStepsIncludesNestedTodoRoutes(t *testing.T) {
+	regular := &RegularPlanStep{CommonStepFields: CommonStepFields{ID: "fetch-data", Title: "Fetch data"}}
+	sequence := &MessageSequencePlanStep{CommonStepFields: CommonStepFields{ID: "analyze-data"}}
+	nested := &TodoTaskPlanStep{
+		CommonStepFields: CommonStepFields{ID: "nested"},
+		PredefinedRoutes: []PlanOrchestrationRoute{
+			{RouteID: "fetch-data", SubAgentStep: regular},
+			{RouteID: "analyze-data", SubAgentStep: sequence},
+		},
+	}
+	root := &TodoTaskPlanStep{
+		CommonStepFields: CommonStepFields{ID: "root"},
+		PredefinedRoutes: []PlanOrchestrationRoute{{RouteID: "nested", SubAgentStep: nested}},
+	}
+
+	got := collectRegularPlanSteps(root)
+	if len(got) != 1 || got[0] != regular {
+		t.Fatalf("expected only the nested regular boundary, got %#v", got)
+	}
+}
+
+func TestTodoTaskRejectsIncompleteMessageSequenceRoute(t *testing.T) {
+	step := &TodoTaskPlanStep{
+		CommonStepFields: CommonStepFields{
+			ID:          "orchestrate",
+			Title:       "Orchestrate",
+			Description: "Delegate work.",
+		},
+		NextStepID: "end",
+		PredefinedRoutes: []PlanOrchestrationRoute{{
+			RouteID:   "analyze",
+			RouteName: "Analyze",
+			SubAgentStep: &MessageSequencePlanStep{CommonStepFields: CommonStepFields{
+				ID:          "analyze",
+				Title:       "Analyze",
+				Description: "Analyze the evidence.",
+			}},
+		}},
+	}
+
+	if err := validateTodoTaskStepFieldsTyped(step); err == nil {
+		t.Fatal("expected an empty message_sequence route to fail validation")
+	}
+	step.PredefinedRoutes[0].SubAgentStep.(*MessageSequencePlanStep).Items = []MessageSequenceItem{{
+		ID:      "analyze",
+		Type:    "user_message",
+		Message: "Analyze the evidence and save the result.",
+	}}
+	if err := validateTodoTaskStepFieldsTyped(step); err != nil {
+		t.Fatalf("expected a complete message_sequence route to pass validation: %v", err)
+	}
+}

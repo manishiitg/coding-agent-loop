@@ -596,7 +596,7 @@ Step definitions. **Required field**: ` + "`steps`" + ` (array, at least 1 step)
 
 **Step types**:
 - ` + "`message_sequence`" + ` — the default for substantial same-context reasoning: complete the outcome, verify it against evidence, then repair gaps in focused follow-up messages.
-- ` + "`regular`" + ` — one coherent output and final gate. Use scripted regular for deterministic API/CLI/data work; use agentic regular only for one-turn judgment with no same-context verify-and-fix follow-up.
+- ` + "`regular`" + ` — scripted deterministic API/CLI/data work only. New conversational or judgment-heavy work always uses ` + "`message_sequence`" + `, even for one turn.
 - ` + "`routing`" + ` — N-way branching. Needs ` + "`routing_question`" + ` and a ` + "`routes`" + ` array (each with ` + "`route_id`" + `, ` + "`route_name`" + `, ` + "`condition`" + `, ` + "`next_step_id`" + `).
 - ` + "`human_input`" + ` — Pause for user response. Needs ` + "`question`" + `, ` + "`response_type`" + ` (` + "`text`" + `/` + "`yesno`" + `/` + "`multiple_choice`" + `), ` + "`next_step_id`" + `, and (for yesno) ` + "`if_yes_next_step_id`" + `/` + "`if_no_next_step_id`" + `.
 - ` + "`todo_task`" + ` — Dynamic task orchestrator with ` + "`predefined_routes`" + `; use only when runtime delegation/task discovery is genuinely needed, not merely because a coherent job has several actions.

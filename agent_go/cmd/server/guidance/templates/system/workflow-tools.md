@@ -42,8 +42,8 @@ returns the live JSON schema for the tool.
 
 ## Plan Modification (Workshop mode)
 
-- **Create steps**: `create_plan`, `add_regular_step`, `add_message_sequence_step`, `add_human_input_step`, `add_todo_task_step`, `add_routing_step`, `delete_plan_steps`, `cleanup_orphan_step_configs`.
-- **Update steps**: `update_regular_step`, `update_message_sequence_step`, `update_human_input_step`, `update_routing_step`, `update_todo_task_step`.
+- **Create steps**: `create_plan`, `add_scripted_step`, `add_message_sequence_step`, `add_human_input_step`, `add_todo_task_step`, `add_routing_step`, `delete_plan_steps`, `cleanup_orphan_step_configs`.
+- **Update steps**: `update_scripted_step`, `update_message_sequence_step`, `update_human_input_step`, `update_routing_step`, `update_todo_task_step`.
 - **Todo task routes**: `add_todo_task_route`, `update_todo_task_route`, `delete_todo_task_route`. For todo_task routes, choose one pattern per route: inline `sub_agent_step` for a route-specific agent, or `orphan_step_ref` to reuse a shared orphan step already allowlisted via `shared_with.orchestrator_ids`. Do not set both.
 - **Validation**: `update_validation_schema`.
 - **Graph integrity is atomic**: every plan mutation validates all routing routes, todo/message-sequence `next_step_id` fields, and human-input branches before saving. `PLAN_GRAPH_INVALID` means nothing was saved. Repair every reference listed in the error with the appropriate `update_*_step` tool (target an existing step ID or `end`), then retry the original mutation. In particular, reroute inbound references before deleting their target step.

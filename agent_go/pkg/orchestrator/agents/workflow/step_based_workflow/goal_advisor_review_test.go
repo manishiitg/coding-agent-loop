@@ -109,7 +109,7 @@ func TestGoalAdvisorToolAllowlistsSeparateReadOnlyAndFinalizerActions(t *testing
 		assertToolListContains(t, approved, tool)
 	}
 
-	for _, tool := range []string{"mark_human_input_consumed", "update_regular_step", "update_step_config", "update_validation_schema"} {
+	for _, tool := range []string{"mark_human_input_consumed", "update_scripted_step", "update_step_config", "update_validation_schema"} {
 		assertToolListDoesNotContain(t, readOnly, tool)
 		assertToolListDoesNotContain(t, proposal, tool)
 		assertToolListContains(t, approved, tool)

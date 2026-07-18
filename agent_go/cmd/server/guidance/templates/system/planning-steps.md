@@ -47,9 +47,10 @@ several known actions in one shared context are not enough. Do not add a
 - **`message_sequence`** (default for reasoning) — one substantial outcome
   sharing one conversation: process persisted evidence, then verify/fix in
   focused follow-up user messages
-- **`regular`** — one coherent output and final gate. Deterministic API/SDK/CLI
-  fetching, parsing, normalization, and mechanical persistence should be
-  scripted regular steps; batch related calls rather than making micro-steps
+- **`regular`** — a scripted deterministic boundary for API/SDK/CLI fetching,
+  parsing, normalization, and mechanical persistence; batch related calls
+  rather than making micro-steps. Conversational work uses `message_sequence`,
+  even for one turn
 - **`todo_task`** — orchestrator with `predefined_routes`; each route
   is `message_sequence` / `regular` / nested `todo_task` (1 level
   deep only)

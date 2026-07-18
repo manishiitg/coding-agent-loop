@@ -176,7 +176,7 @@ The step **description** in plan.json is the primary instruction the execution a
 - **Incorporate patterns from learnings**: If learnings consistently capture the same pattern (e.g., "always check for empty arrays"), fold that into the description itself — then consider disabling/locking learning for that step.
 - **Keep the boundary coherent**: The description may include many tool calls or sub-actions, but it should still serve one durable output contract. If it starts mixing unrelated outputs, validation gates, retry domains, stores, or approval/routing decisions, split at those boundaries.
 
-**How to update**: Use the plan modification tools (`update_regular_step`, `update_message_sequence_step`, `update_todo_task_step`, `update_todo_task_route`, `update_routing_step`, `update_human_input_step`, or `update_validation_schema`) to update step descriptions and validation. Do not patch `planning/plan.json` directly; it is system-managed and guarded. The change takes effect on the next execution.
+**How to update**: Use the plan modification tools (`update_scripted_step`, `update_message_sequence_step`, `update_todo_task_step`, `update_todo_task_route`, `update_routing_step`, `update_human_input_step`, or `update_validation_schema`) to update step descriptions and validation. Do not patch `planning/plan.json` directly; it is system-managed and guarded. The change takes effect on the next execution.
 
 **Description review bookkeeping is required**: After you change or approve a description, immediately call `update_step_config` to record:
 - `description_reviewed` + `review_notes`

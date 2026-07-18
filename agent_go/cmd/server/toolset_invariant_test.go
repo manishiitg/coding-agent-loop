@@ -25,9 +25,9 @@ func knownWorkshopRegisteredToolNamesOutsideWorkflowPool() map[string]string {
 	add("auto-improvement context tools", "capture_context")
 	add("workshop plan tools",
 		"create_plan", "migrate_message_sequence_code_items",
-		"add_regular_step", "add_message_sequence_step", "add_routing_step",
+		"add_scripted_step", "add_message_sequence_step", "add_routing_step",
 		"add_human_input_step", "add_todo_task_step", "add_todo_task_route",
-		"update_regular_step", "update_message_sequence_step", "update_routing_step",
+		"update_scripted_step", "update_message_sequence_step", "update_routing_step",
 		"update_human_input_step", "update_todo_task_step", "update_todo_task_route",
 		"delete_todo_task_route", "delete_plan_steps", "cleanup_orphan_step_configs",
 		"update_validation_schema",
@@ -154,8 +154,8 @@ func TestToolSetInvariants(t *testing.T) {
 		workshop[n] = true
 	}
 	for _, n := range []string{
-		"create_plan", "migrate_message_sequence_code_items", "add_regular_step", "add_routing_step", "add_human_input_step",
-		"update_regular_step", "delete_plan_steps",
+		"create_plan", "migrate_message_sequence_code_items", "add_scripted_step", "add_routing_step", "add_human_input_step",
+		"update_scripted_step", "delete_plan_steps",
 		"execute_step", "create_human_input_request",
 		"update_workflow_config", "update_step_config", "get_report_plan",
 		"list_schedules", "update_schedule", "get_schedule_runs",
@@ -170,6 +170,11 @@ func TestToolSetInvariants(t *testing.T) {
 	for _, removed := range []string{"improve_learnings", "improve_kb", "improve_db", "review_artifact_sync"} {
 		if workshop[removed] {
 			t.Fatalf("workshop allow-list still exposes removed dedicated maintenance tool %q", removed)
+		}
+	}
+	for _, renamed := range []string{"add_regular_step", "update_regular_step"} {
+		if workshop[renamed] {
+			t.Fatalf("workshop allow-list still exposes ambiguous legacy tool name %q", renamed)
 		}
 	}
 

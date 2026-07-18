@@ -630,7 +630,7 @@ The existing `use_knowledgebase` toggle in `PresetModal.tsx` stays as the workfl
 
 Because `db/` is a single workspace-level store shared by all groups and reruns (see section 1), the builder is the only place where the full picture — which steps write which files, which widgets read them — exists. When the builder adds or updates a step that writes to `db/`, it must also declare the schema for each output file: primary key, group coexistence, merge rule.
 
-This is part of the same builder flow that produces `report_plan.md`, since the write side (step) and read side (widget) reference the same `db/` file. Implies either a new plan-modification tool (`set_db_schema`) or an extension to `add_regular_step` / `update_regular_step` so the schema note is persisted alongside the step's db output declaration rather than left to the step agent to infer at runtime.
+This is part of the same builder flow that produces `report_plan.md`, since the write side (step) and read side (widget) reference the same `db/` file. Implies either a new plan-modification tool (`set_db_schema`) or an extension to `add_scripted_step` / `update_scripted_step` so the schema note is persisted alongside the step's db output declaration rather than left to the step agent to infer at runtime.
 
 ### Key implementation touchpoints
 

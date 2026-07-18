@@ -2,7 +2,7 @@
 
 A routing step is a deterministic switch. It reads `route_selection.json`, resolves the selected value to one of its `routes[]`, and branches to that route's `next_step_id`.
 
-Use routing when the workflow must run **exactly one** of N existing downstream steps. The common case is a fixed branch selected from the user's request to the builder; the builder/caller passes that choice as `route_selections` when starting the workflow. Do not put judgment inside the routing step itself; put judgment in an earlier regular step or caller-provided `route_selections`. If an agent decision is needed, add a regular step before routing that writes `route_selection.json` in its own output folder.
+Use routing when the workflow must run **exactly one** of N existing downstream steps. The common case is a fixed branch selected from the user's request to the builder; the builder/caller passes that choice as `route_selections` when starting the workflow. Do not put judgment inside the routing step itself; put judgment in an earlier message sequence or caller-provided `route_selections`. If an agent decision is needed, add a message sequence before routing that writes `route_selection.json` in its own output folder.
 
 ### When to use routing
 
@@ -36,7 +36,7 @@ Routing steps never execute agents. Leave `description` and `context_output` emp
 
 When an agent/probe/classifier must decide the route, model it as:
 
-- prior `regular` step: performs the probe/classification and writes `route_selection.json`
+- prior `message_sequence` step: performs the probe/classification and writes `route_selection.json`
 - routing step: declares `route_source_file` or `context_dependencies: ["route_selection.json"]` and branches from that file
 
 ### Route structure
@@ -94,6 +94,6 @@ Each `next_step_id` must already exist as a step in the plan.
 
 - Routing with only one route, or with a generic catch-all route that should be normal step logic.
 - Asking the routing step to infer the route from prose without writing `route_selection.json`.
-- Setting `description` on a routing step. Use a prior regular step for probe/judgment work.
+- Setting `description` on a routing step. Use a prior message sequence for probe/judgment work.
 - `next_step_id` pointing to a step that does not exist yet.
 - Routing with no caller `route_selections`, no `route_source_file`, no `route_selection.json` dependency, and no `default_route_id`.

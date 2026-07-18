@@ -102,7 +102,7 @@ Use `foreach` when every selected database row must get one conversational turn:
 
 ## ROUTE PATTERNS
 
-Route sub-agents can be `regular` for stateless one-off work or `message_sequence` for a stateful specialist conversation. Use these patterns when designing or repairing todo_task predefined routes.
+Conversational route sub-agents use `message_sequence`, including stateless one-turn work. Use `regular` only for an explicitly scripted deterministic route. Use these patterns when designing or repairing todo_task predefined routes.
 
 For a todo_task route, use `message_sequence` when the orchestrator should preserve specialist memory. As a todo_task predefined route, a message_sequence behaves like a reusable specialist sub-agent: Normal repeated calls reuse the route conversation and each call is delivered as a re-entry user message. Set `message_sequence_restart=true` to restart only when the prior conversation is stale, wrong, or contaminated.
 

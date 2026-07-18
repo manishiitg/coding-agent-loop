@@ -320,14 +320,14 @@ func (bo *BaseOrchestrator) wrapWorkspaceToolsWithPaths(snapshotReadPaths, snaps
 
 			// Block write tools from modifying system-managed planning files.
 			// plan.json, step_config.json, and workflow_layout.json must only be modified
-			// via dedicated tools (update_regular_step, update_step_config, etc.) that
+			// via dedicated tools (update_scripted_step, update_step_config, etc.) that
 			// serialize the full struct to JSON. Raw file writes (diff_patch)
 			// can corrupt these files — e.g. when diff hunks fail to match and the
 			// fallback appends fragments, producing invalid JSON.
 			if isWriteCopy {
 				for _, paramName := range paramsToValidateCopy {
 					if pathStr, ok := args[paramName].(string); ok && isProtectedPlanningPath(pathStr) {
-						return "", fmt.Errorf("ACCESS DENIED: %q is a system-managed planning file. Use the dedicated plan/step update tools (update_regular_step, update_step_config, etc.) instead of %s. For workflow objective + success criteria, write to soul/soul.md directly — it is the canonical source, not plan.json", pathStr, toolNameCopy)
+						return "", fmt.Errorf("ACCESS DENIED: %q is a system-managed planning file. Use the dedicated plan/step update tools (update_scripted_step, update_step_config, etc.) instead of %s. For workflow objective + success criteria, write to soul/soul.md directly — it is the canonical source, not plan.json", pathStr, toolNameCopy)
 					}
 				}
 			}

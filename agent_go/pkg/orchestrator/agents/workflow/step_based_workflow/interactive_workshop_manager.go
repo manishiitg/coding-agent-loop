@@ -1257,9 +1257,9 @@ func GetToolsForWorkshopMode(mode string) []string {
 	planMod := []string{
 		"create_plan",
 		"migrate_message_sequence_code_items",
-		"add_regular_step", "add_message_sequence_step", "add_routing_step",
+		"add_scripted_step", "add_message_sequence_step", "add_routing_step",
 		"add_human_input_step", "add_todo_task_step", "add_todo_task_route",
-		"update_regular_step", "update_message_sequence_step", "update_routing_step",
+		"update_scripted_step", "update_message_sequence_step", "update_routing_step",
 		"update_human_input_step", "update_todo_task_step", "update_todo_task_route",
 		"delete_todo_task_route", "delete_plan_steps", "cleanup_orphan_step_configs",
 		"update_validation_schema",
@@ -1461,9 +1461,9 @@ func goalAdvisorFinalizerApprovedToolAgentAllowedToolNames() []string {
 		// Strategic plan/config/eval changes are only available when code has
 		// verified an approved plan-proposal answer and a critic approve verdict.
 		"create_plan",
-		"add_regular_step", "add_message_sequence_step", "add_routing_step",
+		"add_scripted_step", "add_message_sequence_step", "add_routing_step",
 		"add_human_input_step", "add_todo_task_step", "add_todo_task_route",
-		"update_regular_step", "update_message_sequence_step", "update_routing_step",
+		"update_scripted_step", "update_message_sequence_step", "update_routing_step",
 		"update_human_input_step", "update_todo_task_step", "update_todo_task_route",
 		"delete_todo_task_route", "delete_plan_steps", "cleanup_orphan_step_configs",
 		"update_step_config", "update_validation_schema", "validate_evaluation_plan",
@@ -2258,7 +2258,7 @@ Use `+"`cat planning/plan.json`"+` only when you genuinely need the entire file.
 {{if eq .WorkshopMode "workshop"}}
 ## Planning steps
 
-Take action by default: design and create the best-practice plan from available context. Ask only for blocking choices that materially change behavior, safety, credentials, schedules, external side effects, or irreversible actions; state reasonable assumptions briefly and proceed. For fixed branch choices the user already gave in chat, use deterministic `+"`routing`"+` and pass `+"`route_selections`"+` when running; do not add `+"`human_input`"+` just to ask the same branch choice again. Start with one large `+"`message_sequence`"+` per coherent shared-context span. It should complete that span, require run-specific proof/provenance, re-open the evidence, prove every criterion, repair gaps, and double-check the result. Improve its description, top-level `+"`validation_schema`"+`, and verify/repair turns before adding steps. Use multiple large sequences when their contexts should not be shared because of credentials/security, independent outputs/retries, clean-room independence, human/routing boundaries, or context contamination; the builder must be able to state the boundary. Use `+"`regular`"+` scripted steps for deterministic API/SDK calls, CLI commands, data fetching, stable parsing/normalization, and mechanical persistence; batch related calls under one source/auth/retry/output contract. Feed their validated DB rows or artifacts into the relevant large sequence for judgment, synthesis, evidence-based verification, and repair. Use agentic `+"`regular`"+` only when judgment fits one turn and one final gate. Do not create one regular step per endpoint, proof check, or routine subtask. Every step needs `+"`validation_schema`"+`. Context flow forward-only via `+"`context_dependencies`"+` → `+"`context_output`"+`. Step types: `+"`regular`"+` · `+"`todo_task`"+` · `+"`routing`"+` · `+"`human_input`"+` · `+"`message_sequence`"+` · orphan.
+Take action by default: design and create the best-practice plan from available context. Ask only for blocking choices that materially change behavior, safety, credentials, schedules, external side effects, or irreversible actions; state reasonable assumptions briefly and proceed. For fixed branch choices the user already gave in chat, use deterministic `+"`routing`"+` and pass `+"`route_selections`"+` when running; do not add `+"`human_input`"+` just to ask the same branch choice again. Start with one large `+"`message_sequence`"+` per coherent shared-context span. It should complete that span, require run-specific proof/provenance, re-open the evidence, prove every criterion, repair gaps, and double-check the result. Improve its description, top-level `+"`validation_schema`"+`, and verify/repair turns before adding steps. Use multiple large sequences when their contexts should not be shared because of credentials/security, independent outputs/retries, clean-room independence, human/routing boundaries, or context contamination; the builder must be able to state the boundary. Every new conversational or judgment-heavy step uses `+"`message_sequence`"+`, even when it needs only one work turn. Use `+"`add_scripted_step`"+` only for deterministic API/SDK calls, CLI commands, data fetching, stable parsing/normalization, and mechanical persistence; it stores the internal `+"`regular`"+` JSON type and configures it as scripted automatically. Batch related calls under one source/auth/retry/output contract and feed their validated DB rows or artifacts into the relevant sequence for judgment, synthesis, evidence-based verification, and repair. Do not create one scripted step per endpoint, proof check, or routine subtask. Every step needs `+"`validation_schema`"+`. Context flow forward-only via `+"`context_dependencies`"+` → `+"`context_output`"+`. Step types: `+"`message_sequence`"+` · scripted (`+"`regular`"+` internally) · `+"`todo_task`"+` · `+"`routing`"+` · `+"`human_input`"+` · orphan.
 
 `+"`message_sequence`"+` pattern catalog (named so you know what to ask for; full details in the `+"`message-sequence`"+` reference doc): Stateful Specialist · Test/Fix Loop · Maker+Reviewer · Panel · Clean-Room Retry · HITL Re-entry · Scripted Conversation.
 
@@ -7773,7 +7773,7 @@ This is a **read-only review**:
 
 Modern agents can handle long context and many tool calls. Do not flag a step merely because it performs many actions, tool calls, screen interactions, or small transformations. A step is a durable workflow boundary: it has an output contract, validation gate, retry behavior, and persistent-store responsibilities.
 
-Start from one large `+"`message_sequence`"+` per coherent shared-context span. Prefer the fewest durable steps that preserve real control boundaries. One agentic step may own a substantial end-to-end outcome when the work shares one objective, context, tool/security envelope, output contract, retry domain, and final validation gate. Do not require a separate regular step for each subtask, checklist item, source, tool, proof check, double-check, or intermediate thought.
+Start from one large `+"`message_sequence`"+` per coherent shared-context span. Prefer the fewest durable steps that preserve real control boundaries. One agentic step may own a substantial end-to-end outcome when the work shares one objective, context, tool/security envelope, output contract, retry domain, and final validation gate. Do not require a separate scripted step for each subtask, checklist item, source, tool, proof check, double-check, or intermediate thought.
 
 When that coherent outcome needs staged assurance, prefer one `+"`message_sequence`"+` over several regular steps. Give the first work turn the whole outcome; add only decision-useful follow-up turns that inspect evidence, challenge completion, and repair gaps (for example: `+"`re-open the result, verify every success criterion, and fix anything unsupported or incomplete`"+`). Do not turn a large task into one tiny sequence item per routine action.
 

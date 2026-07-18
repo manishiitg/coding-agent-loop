@@ -95,7 +95,7 @@ Before proposing a structural plan change, apply this plan-shape standard:
   fewest durable steps that preserve contexts that should not be shared,
   distinct output contracts, independently rerunnable validation/retry domains,
   tool/security boundaries, stores, human approvals, or routes.
-- Do not add a regular step per source, tool call, screen action, checklist
+- Do not add a scripted step per source, tool call, screen action, checklist
   item, or routine subtask. Merge pass-through steps that only reconstruct the
   same context and contribute to one final outcome.
 - When one coherent outcome needs stronger assurance, prefer one

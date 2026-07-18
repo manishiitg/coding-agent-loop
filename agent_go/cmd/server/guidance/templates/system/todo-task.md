@@ -29,8 +29,8 @@ tasks whose contexts should be isolated**, especially:
 - Several known actions share one objective, context, and output/retry contract — keep them in one large `message_sequence`
 - A list/dataset can be processed in one shared conversation — use a `foreach` item inside `message_sequence`
 - The next step depends on a binary or N-way decision — use `routing`
-- It's a single focused task with one tool/output — use `regular`
-  (agentic) or `scripted`
+- It's a single focused conversational task with one output — use
+  `message_sequence`; use `regular` only for a deterministic script
 - The orchestrator description grows into detailed instructions for ONE
   specific task — that task should be its own sub-agent route instead
 
@@ -84,7 +84,7 @@ A route's `sub_agent_step` can be:
   shared-context specialist span with its own proof, double-check, repair, and
   validation. It can also remember prior turns across the orchestrator's
   invocations of this route.
-- **`regular`** — stateless one-off work that genuinely needs no same-context
+- **`regular`** — an explicitly scripted deterministic route that needs no same-context
   proof/repair follow-up, or deterministic scripted route work.
 - **`todo_task`** (nested) — one nested orchestration layer for a route
   whose work itself decomposes into multiple sub-tasks.

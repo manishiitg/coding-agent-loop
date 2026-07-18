@@ -145,7 +145,7 @@ coding CLI -> mcpbridge -> local agent_go -> embedded guidance template
 
 ### Plan Editing Tools
 
-`create_plan`, `add_regular_step`, `update_regular_step`,
+`create_plan`, `add_scripted_step`, `update_scripted_step`,
 `delete_plan_steps`, route tools, validation tools, and `update_step_config`
 should keep executing in local `agent_go`.
 
@@ -376,7 +376,7 @@ real workflows.
 
 ### Plan And Protected Files
 
-- Edit a step with `update_regular_step`; confirm only the server-side
+- Edit a deterministic step with `update_scripted_step`; confirm only the server-side
   `Workflow/<name>/planning/plan.json` changes.
 - Try raw `diff_patch_workspace_file`, shell redirect, or direct write against
   `planning/plan.json`; it must be blocked.

@@ -7,6 +7,8 @@ import {
   DollarSign,
   Cloud,
   Globe,
+  LoaderCircle,
+  Play,
   Database,
   Table2,
   ShieldCheck,
@@ -385,6 +387,31 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const [showAccessPopup, setShowAccessPopup] = useState(false)
   const [showWorkflowSchedulesPanel, setShowWorkflowSchedulesPanel] = useState(false)
   const [workflowScheduleStats, setWorkflowScheduleStats] = useState<WorkflowScheduleStats>(EMPTY_WORKFLOW_SCHEDULE_STATS)
+  const [manualPulseStarting, setManualPulseStarting] = useState(false)
+
+  const runWorkflowPulseNow = useCallback(async () => {
+    if (!workspacePath || manualPulseStarting) return
+    const confirmed = window.confirm(
+      'Run this automation now? This performs the workflow version preflight, executes the real workflow, then runs Pulse. External actions in the workflow may occur.'
+    )
+    if (!confirmed) return
+
+    setManualPulseStarting(true)
+    try {
+      await schedulerApi.runWorkflowPulse(workspacePath)
+      useChatStore.getState().addToast('Workflow + Pulse started', 'success')
+    } catch (error) {
+      const responseData = (error as { response?: { data?: unknown } })?.response?.data
+      const detail = typeof responseData === 'string'
+        ? responseData
+        : error instanceof Error
+          ? error.message
+          : 'Unable to start workflow + Pulse'
+      useChatStore.getState().addToast(detail.trim() || 'Unable to start workflow + Pulse', 'error')
+    } finally {
+      setManualPulseStarting(false)
+    }
+  }, [manualPulseStarting, workspacePath])
 
   useEffect(() => {
     setActivePulseTimeline(null)
@@ -836,6 +863,22 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 <TooltipContent side="bottom"><p>Pulse status and module cadence</p></TooltipContent>
               </Tooltip>
               <span className="h-4 w-px bg-border" aria-hidden="true" />
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={runWorkflowPulseNow}
+                    disabled={!canWriteWorkflow || manualPulseStarting}
+                    className="flex h-full w-8 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                    aria-label="Run workflow and Pulse now"
+                  >
+                    {manualPulseStarting
+                      ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                      : <Play className="h-3.5 w-3.5" />}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom"><p>Run workflow + Pulse now</p></TooltipContent>
+              </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button

@@ -34,8 +34,13 @@ type ScheduleContext struct {
 	UserID        string // Set for multi-agent schedules (derived from _users/{userID}/ path)
 	SourceType    string // "workflow" or "multi-agent"
 	TriggerSource string // "cron" (default) or "manual"; encoded into the session ID
-	CalendarItem  *CalendarScheduleItem
+	// ForcePostRunMonitor is used by the toolbar's one-off Run workflow + Pulse
+	// action. It reuses the scheduled-run pipeline without enabling recurring Pulse.
+	ForcePostRunMonitor bool
+	CalendarItem        *CalendarScheduleItem
 }
+
+const manualWorkflowPulseScheduleID = "manual-pulse"
 
 const scheduleScopeSeparator = "\x1f"
 
@@ -485,6 +490,13 @@ func buildScheduleContext(workspacePath string, manifest *WorkflowManifest, sche
 		Capabilities:  manifest.Capabilities,
 		SourceType:    "workflow",
 	}
+}
+
+func shouldRunPostRunMonitor(sctx *ScheduleContext, manifest *WorkflowManifest) bool {
+	if manifest == nil {
+		return false
+	}
+	return manifest.MonitorEnabled() || (sctx != nil && sctx.ForcePostRunMonitor)
 }
 
 // buildMultiAgentScheduleContext creates a ScheduleContext for a multi-agent schedule.
@@ -1104,6 +1116,87 @@ func (s *SchedulerService) TriggerNow(workspacePath string, scheduleID string) (
 	return "triggered", nil
 }
 
+// TriggerWorkflowPulseNow runs the same version-preflight -> workflow -> Pulse
+// pipeline as a workflow schedule, without creating or changing a saved schedule.
+func (s *SchedulerService) TriggerWorkflowPulseNow(workspacePath string) (string, error) {
+	ctx := context.Background()
+	workspacePath = filepath.Clean(strings.TrimSpace(workspacePath))
+	if workspacePath == "." || workspacePath == "" {
+		return "", errors.New("workspace_path is required")
+	}
+
+	manifest, found, err := ReadWorkflowManifest(ctx, workspacePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read manifest from %s: %w", workspacePath, err)
+	}
+	if !found {
+		return "", fmt.Errorf("workflow manifest not found at %s", workspacePath)
+	}
+
+	sched := WorkflowSchedule{
+		ID:             manualWorkflowPulseScheduleID,
+		Name:           "Run workflow + Pulse",
+		Description:    "One-off toolbar run; not persisted as a schedule",
+		ScheduleType:   "cron",
+		CronExpression: "",
+		Timezone:       "UTC",
+		Mode:           "workshop",
+		WorkshopMode:   "run",
+	}
+	sctx := buildScheduleContext(workspacePath, manifest, sched)
+	sctx.TriggerSource = "manual"
+	sctx.ForcePostRunMonitor = true
+	startTime := time.Now().UTC()
+
+	// One interactive builder chat may coexist with this run, matching normal
+	// schedule behavior. Another workflow/schedule execution may not.
+	if activeExec := s.findActiveNonBuilderExecutionForWorkspace(workspacePath); activeExec != nil {
+		triggeredBy := strings.TrimSpace(activeExec.TriggeredBy)
+		if triggeredBy == "" {
+			triggeredBy = "unknown"
+		}
+		return "", fmt.Errorf("workflow already has an active %s run (session: %s)", triggeredBy, activeExec.SessionID)
+	}
+
+	runtimeKey := workflowScheduleRuntimeKey(workspacePath, sched.ID)
+	workflowRuntimeKeys := make([]string, 0, len(manifest.Schedules)+1)
+	for i := range manifest.Schedules {
+		workflowRuntimeKeys = append(workflowRuntimeKeys, workflowScheduleRuntimeKey(workspacePath, manifest.Schedules[i].ID))
+	}
+	workflowRuntimeKeys = append(workflowRuntimeKeys, runtimeKey)
+	runID := uuid.NewString()
+	s.runtimeStatesMu.Lock()
+	state := s.getRuntimeStateLocked(runtimeKey)
+	if state.LastStatus == "running" {
+		s.runtimeStatesMu.Unlock()
+		return "", fmt.Errorf("workflow + Pulse run is already active (session: %s)", state.LastSessionID)
+	}
+	if _, otherSession := runningScheduleInSetLocked(s.runtimeStates, workflowRuntimeKeys, runtimeKey); otherSession != "" {
+		s.runtimeStatesMu.Unlock()
+		return "", fmt.Errorf("another schedule is already running (session: %s)", otherSession)
+	}
+	previousState := *state
+	runCtx := s.activateScheduleRunLocked(state, runID, startTime)
+	s.runtimeStatesMu.Unlock()
+
+	if err := s.claimScheduleRun(ctx, sctx, runID, startTime); err != nil {
+		s.rollbackScheduleRunActivation(runtimeKey, runID, previousState)
+		return "", err
+	}
+	if s.abortCanceledScheduleRunBeforeStart(runCtx, sctx, runtimeKey, runID) {
+		return "", context.Canceled
+	}
+
+	go func() {
+		defer s.cleanupRemovedScheduleRuntimeState(runtimeKey)
+		if _, runErr := s.runJob(runCtx, sctx, runID); runErr != nil {
+			scheduleLogf("[SCHEDULER] One-off workflow + Pulse run failed for %s: %v", workspacePath, runErr)
+		}
+	}()
+
+	return runID, nil
+}
+
 // TriggerMultiAgentNow triggers a multi-agent schedule immediately.
 func (s *SchedulerService) TriggerMultiAgentNow(userID string, scheduleID string) (string, error) {
 	ctx := context.Background()
@@ -1589,7 +1682,7 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 		// optimizer/improvement pass (there's no fresh run output to scan there).
 		// Never affects the run's recorded result.
 		if !userInterrupted && runFolder != "" && sctx.Schedule.WorkshopMode != "optimizer" {
-			if manifest, found, mErr := ReadWorkflowManifest(ctx, sctx.WorkspacePath); mErr == nil && found && manifest.MonitorEnabled() {
+			if manifest, found, mErr := ReadWorkflowManifest(ctx, sctx.WorkspacePath); mErr == nil && found && shouldRunPostRunMonitor(sctx, manifest) {
 				// Pass the run's sessionID so Pulse resumes the SAME chat (not a fresh one).
 				s.transitionScheduleRun(ctx, sctx, schedulerstate.Transition{
 					RunID: runID, To: schedulerstate.StatePulseGate, Reason: "Pulse enabled for workflow", SessionID: sessionID, SessionKind: "pulse", At: time.Now().UTC(),

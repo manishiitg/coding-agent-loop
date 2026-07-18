@@ -124,7 +124,7 @@ func (api *StreamingAPI) registerSecretManagementTools(agent *mcpagent.Agent, us
 					"source":    "per-user encrypted store",
 					"names":     userNames,
 				},
-				"note": "Secret VALUES are never returned by any tool; they are injected as SECRET_<name> env vars at step execution time.",
+				"note": "Secret VALUES are never returned by any tool. In a workflow builder, attach an existing name with update_workflow_config(add_secrets=[...]); it is then available immediately to the builder shell and workflow steps as SECRET_<name>.",
 			}, "", "  ")
 			return string(out), nil
 		},

@@ -733,7 +733,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 				return "", err
 			}
 			setCDPActiveTab(cdpPort, selectedTab)
-			log.Printf("[BROWSER] CDP: explicitly selected tab %q before %q", selectedTab, command)
+			log.Printf("[BROWSER] CDP: verified target tab %q before %q", selectedTab, command)
 		}
 	}
 
@@ -838,7 +838,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 						return "", selectErr
 					}
 					setCDPActiveTab(cdpPort, selectedTab)
-					log.Printf("[BROWSER] CDP: re-selected tab %q before retrying %q", selectedTab, command)
+					log.Printf("[BROWSER] CDP: re-verified target tab %q before retrying %q", selectedTab, command)
 				}
 			}
 			output, err = e.Client.ExecuteCommand(ctx, cmdArgs, commandOpts)
@@ -1058,6 +1058,32 @@ func (e *Executor) selectCDPTabForCommand(ctx context.Context, session, cdpURL s
 	if aliasTabID := getCDPTabAlias(port, ownerID, tab); aliasTabID != "" {
 		tab = aliasTabID
 	}
+
+	// Selecting a tab through agent-browser can bring the visible CDP Chrome
+	// window to the foreground on macOS. Inspect the real browser state first;
+	// when the requested tab is already active, keep using it without issuing a
+	// redundant tab switch. The surrounding per-port lock prevents another
+	// AgentWorks workflow from switching tabs between this check and the action.
+	if listed, listErr := e.listCDPTabs(ctx, session, cdpURL, executeOptionsWithTimeout(opts, cdpTabListTimeout)); listErr == nil {
+		if tabs, parseErr := parseCDPTabs(listed); parseErr == nil {
+			if current, found := findCDPTabByRef(tabs, tab); found && current.Active {
+				resolvedTab := strings.TrimSpace(current.TabID)
+				if resolvedTab == "" {
+					resolvedTab = tab
+				}
+				setCDPTabAlias(port, ownerID, requestedTab, resolvedTab)
+				setCDPTabSelection(port, ownerID, resolvedTab)
+				setCDPActiveTab(port, resolvedTab)
+				log.Printf("[BROWSER] CDP: tab %q already active before %q; preserving OS focus", resolvedTab, command)
+				return resolvedTab, nil
+			}
+		} else {
+			log.Printf("[BROWSER] CDP: could not parse tab state before %q; falling back to explicit selection: %v", command, parseErr)
+		}
+	} else {
+		log.Printf("[BROWSER] CDP: could not inspect tab state before %q; falling back to explicit selection: %v", command, listErr)
+	}
+
 	output, err := e.selectCDPTab(ctx, session, tab, cdpURL, opts)
 	if err == nil {
 		if tabID := findCDPTabID(output, tab); tabID != "" {

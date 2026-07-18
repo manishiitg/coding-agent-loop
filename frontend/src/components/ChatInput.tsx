@@ -31,6 +31,7 @@ import { CHAT_TOOL_COMMAND_EVENT, chatToolCommandFromEvent } from '../utils/chat
 import { resolveDelegationMainModel } from '../utils/workflowLLMTierDefaults'
 import { hasActiveSessionWork } from '../utils/activitySessions'
 import { shouldClearAcceptedChatDraft } from '../utils/chatSubmissionDraft'
+import { liveTerminalControlKey } from '../utils/liveTerminalKeys'
 
 const removePasteMarkersFromText = (text: string, markers: string[]) => {
   return markers.reduce((next, marker) => {
@@ -1730,13 +1731,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [activeTabId, setTabConfig])
 
-  // Route ESC to the tmux pane when a live coding-agent CLI is running.
-  // Returns true if the key was delivered to the CLI; false (or thrown) means
-  // the caller should fall back to onStopStreaming() to cancel the agent
-  // context the old way.
+  // Route a control/navigation key to the coding-agent tmux pane. Terminal
+  // process liveness is authoritative on the backend: an interactive CLI can
+  // remain usable after its current agent turn has stopped streaming.
   const escSentinelRef = useRef(false)
   const sendLiveCodingAgentControlKey = useCallback(async (key: string, options?: { showToast?: boolean }): Promise<boolean> => {
-    if (!isStreaming || !supportsLiveCodingAgentInput || !canSteer || !tabSessionId) return false
+    if (!supportsLiveCodingAgentInput || !tabSessionId) return false
     if (key === 'Escape') {
       if (escSentinelRef.current) return true // debounce rapid double-presses
       escSentinelRef.current = true
@@ -1758,7 +1758,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
       return false
     }
-  }, [activeTabId, addToast, canSteer, effectiveProviderForSteer, isStreaming, supportsLiveCodingAgentInput, tabSessionId])
+  }, [activeTabId, addToast, effectiveProviderForSteer, supportsLiveCodingAgentInput, tabSessionId])
 
   const ensureMultiAgentTabReady = useCallback(async (): Promise<boolean> => {
     if (!isMultiAgentMode || showWorkflowsOverview) return false
@@ -2548,47 +2548,24 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
     }
 
-    // Handle Escape key when streaming. For tmux-transport CLI providers
-    // (claude-code, codex-cli, cursor-cli, pi-cli) ESC is forwarded into
-    // the CLI's own tmux pane so the CLI interrupts its current turn but the
-    // session stays alive — matching the native CLI UX. For non-tmux
-    // non-tmux/API providers it falls back to cancelling the agent context
-    // as before. The toolbar Stop button is the
-    // unconditional escape hatch.
-    if (e.key === 'Escape' && isStreaming) {
+    // With an empty input, route prompt/menu keys into the coding-agent pane.
+    // Do not gate this on isStreaming/canSteer: a completed agent turn can leave
+    // its interactive tmux process alive and waiting for keyboard input.
+    const liveCliKey = liveTerminalControlKey(e, queryToSubmit)
+    if (liveCliKey && supportsLiveCodingAgentInput && tabSessionId) {
       e.preventDefault()
-      if (supportsLiveCodingAgentInput && canSteer && tabSessionId) {
-        void sendLiveCodingAgentControlKey('Escape').then((delivered) => {
-          if (!delivered) onStopStreaming()
-        })
-      } else {
-        onStopStreaming()
-      }
+      void sendLiveCodingAgentControlKey(liveCliKey, { showToast: false }).then((delivered) => {
+        // Escape retains its old non-tmux cancellation fallback while a turn is
+        // streaming. Other navigation keys have no meaningful chat fallback.
+        if (!delivered && liveCliKey === 'Escape' && isStreaming) onStopStreaming()
+      })
       return
     }
 
-    // With an empty input, route common CLI prompt/menu keys into the live
-    // coding-agent pane. Enter is deliberately special: typed text still submits
-    // as a chat message, while bare Enter confirms the CLI prompt.
-    const liveCliKey =
-      e.key === 'Enter' ? 'Enter' :
-      e.key === 'ArrowUp' ? 'Up' :
-      e.key === 'ArrowDown' ? 'Down' :
-      ''
-    if (
-      liveCliKey &&
-      isStreaming &&
-      supportsLiveCodingAgentInput &&
-      canSteer &&
-      tabSessionId &&
-      !e.shiftKey &&
-      !e.ctrlKey &&
-      !e.metaKey &&
-      !e.altKey &&
-      !(queryToSubmit?.trim())
-    ) {
+    // Non-tmux/API providers retain the previous Escape behavior.
+    if (e.key === 'Escape' && isStreaming) {
       e.preventDefault()
-      void sendLiveCodingAgentControlKey(liveCliKey, { showToast: false })
+      onStopStreaming()
       return
     }
 
@@ -2619,7 +2596,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [showFileDialog, showCommandDialog, showWorkflowDialog, showResumeDialog, showSkillPopup, showServerPopup, isStreaming, onStopStreaming, queryToSubmit, executeSlashCommandFromQuery, tabSessionId, routeSubmit, supportsLiveCodingAgentInput, canSteer, sendLiveCodingAgentControlKey, inputText, setLocalInputText])
+  }, [showFileDialog, showCommandDialog, showWorkflowDialog, showResumeDialog, showSkillPopup, showServerPopup, isStreaming, onStopStreaming, queryToSubmit, executeSlashCommandFromQuery, tabSessionId, routeSubmit, supportsLiveCodingAgentInput, sendLiveCodingAgentControlKey, inputText, setLocalInputText])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
@@ -3755,7 +3732,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                               <div className="flex flex-wrap items-center justify-between gap-3">
                                 <div>
                                   <p className="text-sm font-medium">Local Chrome connection</p>
-                                  <p className="mt-0.5 text-xs text-muted-foreground">CDP drives visible Chrome and can bring it to the foreground.</p>
+                                  <p className="mt-0.5 text-xs text-muted-foreground">CDP keeps normal actions in the background; creating or switching tabs may bring visible Chrome forward.</p>
                                 </div>
                                 <div className="flex items-center gap-2">
                                   <label className="text-xs text-muted-foreground">Port</label>

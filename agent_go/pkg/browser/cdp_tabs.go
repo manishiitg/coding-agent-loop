@@ -502,6 +502,19 @@ func findCDPTabID(output, tab string) string {
 	return ""
 }
 
+func findCDPTabByRef(tabs []cdpTabInfo, ref string) (cdpTabInfo, bool) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return cdpTabInfo{}, false
+	}
+	for _, tab := range tabs {
+		if strings.TrimSpace(tab.TabID) == ref || strings.TrimSpace(tab.Label) == ref {
+			return tab, true
+		}
+	}
+	return cdpTabInfo{}, false
+}
+
 func parseCDPTabs(output string) ([]cdpTabInfo, error) {
 	var parsed cdpTabListOutput
 	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &parsed); err != nil {
@@ -627,12 +640,17 @@ func (e *Executor) reuseCDPTabForNew(ctx context.Context, session, cdpURL string
 	if tabID == "" {
 		return "", false, nil
 	}
-	selectedOutput, err := e.selectCDPTab(ctx, session, tabID, cdpURL, opts)
-	if err != nil {
-		return "", false, fmt.Errorf("reuse existing CDP tab %s: %w", tabID, err)
-	}
-	if resolved := findCDPTabID(selectedOutput, tabID); resolved != "" {
-		tabID = resolved
+	// `agent-browser tab <id>` activates the visible Chrome window on macOS.
+	// The real reuse-check above already tells us whether this tab is active, so
+	// do not switch it again when no switch is needed.
+	if !candidate.Active {
+		selectedOutput, err := e.selectCDPTab(ctx, session, tabID, cdpURL, opts)
+		if err != nil {
+			return "", false, fmt.Errorf("reuse existing CDP tab %s: %w", tabID, err)
+		}
+		if resolved := findCDPTabID(selectedOutput, tabID); resolved != "" {
+			tabID = resolved
+		}
 	}
 	candidate.TabID = tabID
 

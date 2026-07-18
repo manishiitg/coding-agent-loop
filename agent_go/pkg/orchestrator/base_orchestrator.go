@@ -339,12 +339,27 @@ func (bo *BaseOrchestrator) GetMCPSessionID() string {
 // This allows SetMCPSessionID to update MCP_API_URL and MCP_SESSION_ID in-place
 // so that code execution mode shell commands automatically use the correct session URL.
 // The env map is the same reference used by workspace.Client.ExtraEnv (Go maps are reference types).
+//
+// Secrets may be loaded before the workspace executor is created (notably for
+// workflow-builder sessions). Backfill them here so initialization order cannot
+// leave the builder shell without SECRET_* variables that are already attached
+// to the workflow.
 func (bo *BaseOrchestrator) SetWorkspaceEnvRef(env map[string]string) {
+	bo.workspaceEnvMu.Lock()
 	common.PopulateMCPBridgeShortEnv(env)
 	bo.workspaceEnvRef = env
 	if env != nil {
-		bo.logger.Info(fmt.Sprintf("🔗 Stored workspace env ref (keys: %v, MCP_API_URL=%s, MCP_SESSION_ID=%s)",
-			getMapKeys(env), env["MCP_API_URL"], env["MCP_SESSION_ID"]))
+		for _, secret := range bo.secrets {
+			if secret.Name == "" {
+				continue
+			}
+			env["SECRET_"+secret.Name] = secret.Value
+		}
+	}
+	bo.workspaceEnvMu.Unlock()
+	if env != nil {
+		bo.logger.Info(fmt.Sprintf("🔗 Stored workspace env ref (keys: %v, MCP_API_URL=%s, MCP_SESSION_ID=%s, secrets=%d)",
+			getMapKeys(env), env["MCP_API_URL"], env["MCP_SESSION_ID"], len(bo.secrets)))
 	}
 }
 

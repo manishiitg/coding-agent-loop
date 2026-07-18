@@ -40,6 +40,9 @@ func TestBuildLearningsContributionTurnRequiresPatchToolForAllWrites(t *testing.
 		"`execute_shell_command` for read-only inspection",
 		"cat '/tmp/workspace-docs/Workflow/social-media/learnings/_global/SKILL.md'",
 		"do not rely on your shell working directory",
+		// Negative store boundary: learnings hold HOW, not discovered facts/results.
+		"HOW only — not facts or results",
+		"never in learnings",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("learning prompt missing %q:\n%s", want, msg)

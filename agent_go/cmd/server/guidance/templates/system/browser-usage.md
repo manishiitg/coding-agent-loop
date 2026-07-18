@@ -100,8 +100,10 @@ For exhaustive command docs call `browser("skills", ["get", "core", "--full"])`.
 - Never call the top-level `close` command in CDP mode; it can disrupt the user's real Chrome session.
 - At normal workflow completion, leave workflow-created labeled tabs open for review. The backend automatically closes only their registered real `tN` ids one hour after the final run releases its browser lease; it never includes pre-existing or exact-URL-reused user tabs.
 - Use `browser("tab", ["close", "<owned-label>"])` only when the user explicitly requests immediate cleanup or the workflow must replace one of its own labeled tabs. Never close a pre-existing user tab.
-- Avoid actions that bring Chrome to the foreground while the user is typing
-  (navigation, tab switching, large screenshots). For unattended schedules,
+- The backend avoids a redundant tab switch when the requested CDP tab is
+  already active, so normal actions should not repeatedly steal OS focus.
+  Creating or genuinely switching tabs can still bring Chrome forward; avoid
+  unnecessary tab changes while the user is typing. For unattended schedules,
   prefer headless mode.
 - Keep diagnostics inside `agent_browser`; raw CDP bypasses the shared-tab
   lock and is not allowed for normal navigation or debugging.

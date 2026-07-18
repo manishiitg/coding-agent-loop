@@ -18,7 +18,7 @@ Secrets are credentials (API keys, tokens, passwords). They may come from three 
 
 1. Call `list_secrets` first to check if the name already exists and which bucket owns it.
 2. In a workflow builder/workshop chat, prefer `set_workflow_secret(name, value)` for workflow-only credentials. Use `set_user_secret(name, value)` only when the same credential should be reusable across workflows.
-3. If the request is for a workflow, attach the stored/existing secret to that workflow with the workflow config tool (for example `update_workflow_config(add_secrets=["NAME"])`). Storing without attaching leaves runtime `$SECRET_<NAME>` unavailable to steps.
+3. In a workflow-builder session, `set_workflow_secret` and `set_user_secret` automatically attach and inject a newly stored value. For an already-stored secret, attach it with the workflow config tool (for example `update_workflow_config(add_secrets=["NAME"])`). The attached value becomes immediately available to the builder shell and workflow steps as `$SECRET_<NAME>` without revealing plaintext to the model.
 4. Confirm success. Do NOT echo the plaintext value back to the user — acknowledge by name only.
 
 ### Safety rules

@@ -20,16 +20,25 @@ func TestRegisterStepSessionShellEnvProvidesBridgeParity(t *testing.T) {
 	sessionID := "eval-shell-env-test"
 	defer common.ClearSessionShellConfig(sessionID)
 
-	registerStepSessionShellEnv(sessionID, "/workspace/eval/step", "/workspace/eval", "/workspace/db/db.sqlite")
+	registerStepSessionShellEnv(sessionID, "/workspace/eval/step", "/workspace/eval", "/workspace/db/db.sqlite", map[string]string{
+		"VAR_LOGIN_EMAIL":       "configured@example.com",
+		"SECRET_LOGIN_PASSWORD": "password",
+		"MCP_SESSION_ID":        "stale-parent-session",
+	})
 	env := common.GetSessionShellEnv(sessionID)
 	for key, want := range map[string]string{
-		"STEP_OUTPUT_DIR":    "/workspace/eval/step",
-		"STEP_EXECUTION_DIR": "/workspace/eval",
-		"DB_PATH":            "/workspace/db/db.sqlite",
+		"STEP_OUTPUT_DIR":       "/workspace/eval/step",
+		"STEP_EXECUTION_DIR":    "/workspace/eval",
+		"DB_PATH":               "/workspace/db/db.sqlite",
+		"VAR_LOGIN_EMAIL":       "configured@example.com",
+		"SECRET_LOGIN_PASSWORD": "password",
 	} {
 		if got := env[key]; got != want {
 			t.Fatalf("%s: expected %q, got %q", key, want, got)
 		}
+	}
+	if _, exists := env["MCP_SESSION_ID"]; exists {
+		t.Fatal("step session env must not inherit stale MCP_SESSION_ID")
 	}
 }
 
@@ -338,6 +347,11 @@ func TestInjectStepEnvIntoShellExecutor_OverridesStaleMCPSessionEnv(t *testing.T
 		"/tmp/workflow/execution",
 		"/tmp/workflow/db/db.sqlite",
 		"step-session-123",
+		map[string]string{
+			"VAR_LOGIN_EMAIL":       "configured@example.com",
+			"SECRET_LOGIN_PASSWORD": "password",
+			"MCP_SESSION_ID":        "stale-runtime-session",
+		},
 	)
 
 	execFn, ok := executors["execute_shell_command"].(func(context.Context, map[string]interface{}) (string, error))
@@ -381,6 +395,12 @@ func TestInjectStepEnvIntoShellExecutor_OverridesStaleMCPSessionEnv(t *testing.T
 	}
 	if got := rawExtraEnv["MCP_AUTH"]; got != "Authorization: Bearer step-token" {
 		t.Fatalf("expected MCP_AUTH, got %#v", got)
+	}
+	if got := rawExtraEnv["VAR_LOGIN_EMAIL"]; got != "configured@example.com" {
+		t.Fatalf("expected resolved workflow variable, got %#v", got)
+	}
+	if got := rawExtraEnv["SECRET_LOGIN_PASSWORD"]; got != "password" {
+		t.Fatalf("expected workflow secret, got %#v", got)
 	}
 }
 

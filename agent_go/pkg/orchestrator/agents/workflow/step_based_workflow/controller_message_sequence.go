@@ -922,23 +922,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) getMessageSequenceRuntime(ctx context
 	return session.runtime, agentCtx, nil
 }
 
-// setMessageSequenceShellEnv exports the per-step shell env (DB_PATH,
-// STEP_OUTPUT_DIR, STEP_EXECUTION_DIR) onto the session so the server-side bridge
-// shell (api-bridge.execute_shell_command) resolves "$DB_PATH" the same way the
-// in-process built-in executor does. Without this, message-sequence items routed
-// to the bridge shell run with an unset $DB_PATH and every sqlite3 "$DB_PATH"
-// write fails (falling back to the read-only relative db path).
+// setMessageSequenceShellEnv exports the resolved workflow runtime environment
+// plus per-step paths onto the session. This gives server-side bridge shell calls
+// (api-bridge.execute_shell_command) parity with the in-process executor for
+// VAR_*, SECRET_*, DB_PATH, STEP_OUTPUT_DIR, and STEP_EXECUTION_DIR.
 func (hcpo *StepBasedWorkflowOrchestrator) setMessageSequenceShellEnv(sessionID, stepPath, stepID string) {
 	if strings.TrimSpace(sessionID) == "" {
 		return
 	}
 	stepOutputAbs := hcpo.messageSequenceAbsPath(hcpo.messageSequenceExecutionRelPath(stepPath, stepID))
 	dbAbs := filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), DBFolderName, "db.sqlite")
-	common.SetSessionShellEnv(sessionID, map[string]string{
-		"DB_PATH":            dbAbs,
-		"STEP_OUTPUT_DIR":    stepOutputAbs,
-		"STEP_EXECUTION_DIR": filepath.Dir(stepOutputAbs),
-	})
+	registerStepSessionShellEnv(
+		sessionID,
+		stepOutputAbs,
+		filepath.Dir(stepOutputAbs),
+		dbAbs,
+		hcpo.snapshotWorkspaceEnv(),
+	)
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceRuntimeSessionID(stepPath string, stepID string) string {

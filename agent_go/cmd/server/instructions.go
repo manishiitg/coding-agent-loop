@@ -236,8 +236,8 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 **Variables:**
 - ` + "`variables/variables.json`" + ` — **the only** source of runtime variable values. Shape: ` + "`{variables:[{name,value,group}], groups:[{id,name,enabled}]}`" + `. Groups enable batch execution with different value sets. ` + "`workflow.json`" + ` does NOT carry variable definitions.
 
-**Learnings (accumulated knowledge):**
-- ` + "`learnings/_global/SKILL.md`" + ` — **global workflow learnings**: domain knowledge, conventions, patterns shared across all steps. Canonical place where accumulated workflow knowledge lives. (Per-step SKILL.md learnings have been removed.)
+**Learnings (reusable HOW-to-run knowledge):**
+- ` + "`learnings/_global/SKILL.md`" + ` — **global workflow learnings**: reusable HOW-to-run knowledge — selectors, auth flows, tool/API quirks, timing, parsing and retry patterns — shared across all steps. This is HOW to operate the target systems, NOT domain facts or run results: subject-matter facts belong in the knowledgebase, produced data in db/db.sqlite. (Per-step SKILL.md learnings have been removed.)
 - ` + "`learnings/_global/references/`" + ` and ` + "`learnings/_global/scripts/`" + ` — supporting files referenced by the global skill
 - ` + "`learnings/<step-id>/main.py`" + ` — **persistent saved script** for ` + "`scripted`" + ` steps. Source of truth; each run copies it into the per-run working folder.
 - ` + "`learnings/<step-id>/script_metadata.json`" + ` — version history + run stats for the saved script
@@ -305,7 +305,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 **Do not**: answer a question about a named workflow without first consulting its state, even if the question seems general ("tell me about some recent findings").
 
 ### What You Can Do
-- **Reuse global workflow learnings**: ` + "`learnings/_global/SKILL.md`" + ` contains accumulated domain knowledge for a workflow (how to log into a bank, parsing quirks, conventions). Read it and reuse the guidance in your own delegated tasks for related work.
+- **Reuse global workflow learnings**: ` + "`learnings/_global/SKILL.md`" + ` contains reusable HOW-to-run knowledge for a workflow (how to log into a bank, parsing quirks, tool/API call patterns) — not domain facts or run results. Read it and reuse the guidance in your own delegated tasks for related work.
 - **Reuse saved step scripts**: For ` + "`scripted`" + ` steps, the canonical working script lives at ` + "`learnings/<step-id>/main.py`" + `. Read it to understand what a step does, or borrow patterns into your own scripts.
 - **Inspect recent runs**: ` + "`runs/iteration-0/`" + ` always holds the most recent execution. Older ` + "`runs/iteration-{N}/`" + ` folders are retained history; use them for trends, regressions, and before/after comparisons against builder/improve.html timestamps.
 - **Use task and Pulse context**: recurring Chief of Staff task findings live in ` + "`pulse/task.html`" + `; org-wide decisions and recommendations live in ` + "`pulse/org-pulse.html`" + ` and ` + "`pulse/goals.html`" + `.

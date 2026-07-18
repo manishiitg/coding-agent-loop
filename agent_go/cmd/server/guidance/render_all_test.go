@@ -106,15 +106,30 @@ func TestPulseGuidanceTracesStateChangesToRuntimeConsumers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render post-run-monitor: %v", err)
 	}
+	// Gate keeps the failure-mode flags visible (via the bug_review pointer) so
+	// it can classify a suspect signal; the full reachability method lives in
+	// pulse-bug-review, loaded only when bug_review is due.
+	for _, want := range []string{
+		"wrong_store_write",
+		"shadow_store_drift",
+		"successful write to a plausible table is",
+	} {
+		if !strings.Contains(postRun, want) {
+			t.Fatalf("post-run monitor missing control-path contract %q", want)
+		}
+	}
+	bugReview, err := renderFromRegistry("pulse-bug-review", tmplData{}, referenceKinds)
+	if err != nil {
+		t.Fatalf("render pulse-bug-review: %v", err)
+	}
 	for _, want := range []string{
 		"control-path reachability check",
 		"wrong_store_write",
 		"shadow_store_drift",
-		"successful write to a plausible table is",
 		"prove which persisted value it consumed",
 	} {
-		if !strings.Contains(postRun, want) {
-			t.Fatalf("post-run monitor missing control-path contract %q", want)
+		if !strings.Contains(bugReview, want) {
+			t.Fatalf("pulse-bug-review missing control-path contract %q", want)
 		}
 	}
 
@@ -206,8 +221,6 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 		"stale_not_applied",
 		"Never silently rebase or broaden",
 		"post-change evidence boundary",
-		"baseline only, never proof",
-		"mtime alone",
 		"changed_unverified",
 		"awaiting_next_valid_run",
 		"Do not use `run_in_background`",
@@ -231,14 +244,9 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 		"no exploratory QA checkpoint was completed after the latest observed goal",
 		"does not justify a long calendar cooldown",
 		"finding-free reviews over unchanged runtime paths may widen",
-		"Observable execution-trace review",
-		"semantic execution defects",
-		"execution/execution-attempt-*-iteration-*-conversation.json",
-		"Judge observable decisions and evidence, not hidden chain-of-thought",
 		"`correctness_bug`",
 		"`efficiency_or_coaching`",
 		"`insufficient_evidence`",
-		"Route `efficiency_or_coaching` findings",
 		"successful step may have chosen the wrong",
 		"prior Bug Review recorded `efficiency_or_coaching` trace evidence",
 		"Backup risk: local only",
@@ -249,6 +257,76 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 	} {
 		if !strings.Contains(postRun, want) {
 			t.Fatalf("post-run-monitor missing %q", want)
+		}
+	}
+
+	// The deep Bug Review mechanics were extracted out of the Gate-loaded
+	// post-run-monitor doc into pulse-bug-review, loaded only when bug_review
+	// is due. Guard against re-inlining them into the frequent Gate turn.
+	for _, moved := range []string{
+		"Observable execution-trace review",
+		"semantic execution defects",
+		"execution/execution-attempt-*-iteration-*-conversation.json",
+		"Judge observable decisions and evidence, not hidden chain-of-thought",
+		"Route `efficiency_or_coaching` findings",
+		"Exploratory QA contract",
+	} {
+		if strings.Contains(postRun, moved) {
+			t.Fatalf("post-run-monitor should not re-inline extracted Bug Review contract %q", moved)
+		}
+	}
+	if !strings.Contains(postRun, `get_reference_doc(kind="pulse-bug-review")`) {
+		t.Fatal("post-run-monitor missing pointer to pulse-bug-review")
+	}
+
+	// The fix-verification contract is single-sourced: post-run-monitor and
+	// pulse-fixer reference it instead of restating the detail. Guard against
+	// the detail drifting back into the Gate-loaded post-run-monitor doc.
+	if !strings.Contains(postRun, `get_reference_doc(kind="fix-verification")`) {
+		t.Fatal("post-run-monitor missing pointer to fix-verification")
+	}
+	for _, moved := range []string{"baseline only, never proof", "mtime alone"} {
+		if strings.Contains(postRun, moved) {
+			t.Fatalf("post-run-monitor should reference fix-verification, not restate %q", moved)
+		}
+	}
+	fixVerify, err := renderFromRegistry("fix-verification", tmplData{}, referenceKinds)
+	if err != nil {
+		t.Fatalf("render fix-verification: %v", err)
+	}
+	for _, want := range []string{
+		"post-change evidence boundary",
+		"baseline only, never proof",
+		"real runtime consumer",
+		"a successful write alone is not proof",
+		"mtime alone",
+		"changed_unverified",
+		"awaiting_next_valid_run",
+	} {
+		if !strings.Contains(fixVerify, want) {
+			t.Fatalf("fix-verification missing %q", want)
+		}
+	}
+
+	bugReview, err := renderFromRegistry("pulse-bug-review", tmplData{}, referenceKinds)
+	if err != nil {
+		t.Fatalf("render pulse-bug-review: %v", err)
+	}
+	for _, want := range []string{
+		"Exploratory QA contract",
+		"control-path reachability",
+		"wrong_store_write",
+		"Observable execution-trace review",
+		"semantic execution defects",
+		"execution/execution-attempt-*-iteration-*-conversation.json",
+		"Judge observable decisions and evidence, not hidden chain-of-thought",
+		"`correctness_bug`",
+		"`efficiency_or_coaching`",
+		"`insufficient_evidence`",
+		"Route `efficiency_or_coaching` findings",
+	} {
+		if !strings.Contains(bugReview, want) {
+			t.Fatalf("pulse-bug-review missing %q", want)
 		}
 	}
 

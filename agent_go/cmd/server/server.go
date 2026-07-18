@@ -7272,9 +7272,9 @@ func (api *StreamingAPI) startNextTurnFromLiveInput(w http.ResponseWriter, r *ht
 }
 
 // handleControlKey injects a tmux control key (e.g. "Escape", "Enter", "Up",
-// "Down") into a running coding-agent session. Used by the chat UI to route
-// interrupt/navigation/confirmation keys to the foreground CLI pane instead of
-// always canceling the agent's Go context.
+// "Down") into a coding-agent session. The foreground Agent is preferred while
+// a turn is running. Between turns, the interactive tmux process can remain
+// alive after runningAgents has been cleared, so fall back to the terminal store.
 func (api *StreamingAPI) handleControlKey(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
@@ -7307,11 +7307,6 @@ func (api *StreamingAPI) handleControlKey(w http.ResponseWriter, r *http.Request
 	runningAgent, exists := api.runningAgents[sessionID]
 	api.runningAgentsMux.RUnlock()
 
-	if !exists || runningAgent == nil {
-		http.Error(w, "No running agent for this session", http.StatusNotFound)
-		return
-	}
-
 	if err := r.Context().Err(); err != nil {
 		log.Printf("[CONTROL] Request canceled before delivery for session %s: %v", sessionID, err)
 		return
@@ -7319,6 +7314,28 @@ func (api *StreamingAPI) handleControlKey(w http.ResponseWriter, r *http.Request
 
 	ctlCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentInputTimeout)
 	defer cancel()
+	if !exists || runningAgent == nil {
+		provider, tmuxSession, err := api.deliverControlKeyToLiveMainTerminal(ctlCtx, sessionID, key)
+		if err != nil {
+			log.Printf("[CONTROL] Terminal fallback key %q unavailable for session %s tmux=%s: %v", key, sessionID, tmuxSession, err)
+			http.Error(w, fmt.Sprintf("Control key unavailable: %v", err), http.StatusConflict)
+			return
+		}
+		if tmuxSession == "" {
+			http.Error(w, "No live coding-agent terminal for this session", http.StatusNotFound)
+			return
+		}
+		log.Printf("[CONTROL] Delivered control key %q to completed live terminal session %s tmux=%s", key, sessionID, tmuxSession)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(ControlKeyResponse{
+			Success:  true,
+			Message:  "Control key delivered to live terminal",
+			Provider: provider,
+			Key:      key,
+		})
+		return
+	}
+
 	result, err := runningAgent.DeliverControlKey(ctlCtx, mcpagent.ControlKeyDeliveryRequest{
 		SessionID: sessionID,
 		Key:       key,
@@ -7342,6 +7359,33 @@ func (api *StreamingAPI) handleControlKey(w http.ResponseWriter, r *http.Request
 		Provider: provider,
 		Key:      key,
 	})
+}
+
+// deliverControlKeyToLiveMainTerminal bridges the between-turn gap where the
+// agent object is no longer registered but its interactive CLI pane is still
+// alive. ListRaw retains process ownership independently of UI visibility.
+func (api *StreamingAPI) deliverControlKeyToLiveMainTerminal(ctx context.Context, sessionID, key string) (provider, tmuxSession string, err error) {
+	if api == nil || api.terminalStore == nil {
+		return "", "", nil
+	}
+	for _, snapshot := range api.terminalStore.ListRaw(sessionID) {
+		if !codingAgentSnapshotIsMainAgent(snapshot) {
+			continue
+		}
+		tmuxSession = strings.TrimSpace(snapshot.TmuxSession)
+		if tmuxSession == "" {
+			continue
+		}
+		processState := strings.ToLower(strings.TrimSpace(snapshot.ProcessState))
+		if processState == "closed" || processState == "stale" {
+			continue
+		}
+		if err := sendTerminalKey(ctx, tmuxSession, key); err != nil {
+			return "", tmuxSession, err
+		}
+		return strings.TrimSpace(snapshot.Status.ProviderLabel), tmuxSession, nil
+	}
+	return "", "", nil
 }
 
 func (api *StreamingAPI) recordLiveCodingAgentUserMessage(sessionID, message, provider, messageID, deliveryStatus string) {

@@ -9,7 +9,8 @@ Fix focus: {{.Focus}}.{{end}}
 ## Select work
 
 1. Load `get_reference_doc(kind="post-run-monitor")`,
-   `get_reference_doc(kind="review-improve-log")`, and the specialist guidance
+   `get_reference_doc(kind="review-improve-log")`,
+   `get_reference_doc(kind="fix-verification")`, and the specialist guidance
    named by each selected finding.
 2. Read open findings and decisions in `builder/improve.html`. Select only
    findings with precise evidence and a bounded recommended fix. If the user
@@ -19,10 +20,10 @@ Fix focus: {{.Focus}}.{{end}}
    contradictory, unsafe to verify, or no longer reproducible, record that
    disposition instead of forcing a change.
 
-Before each mutation, establish a **post-change evidence boundary**: record the
-mutation start time, canonical target identity, pre-change hash or version, and
-the latest relevant pre-change run/artifact ids. Old artifacts are baseline
-only, never proof that the new change works.
+Before each mutation, establish a **post-change evidence boundary** per
+`get_reference_doc(kind="fix-verification")`: record the mutation start time,
+canonical target identity, pre-change hash or version, and the latest relevant
+pre-change run/artifact ids. Old artifacts are baseline only, never proof.
 
 ## Apply safely
 
@@ -36,13 +37,9 @@ only, never proof that the new change works.
 - Use normal direct plan/config/file/report/eval tools. Do not delegate mutation
   to another agent and do not run an externally side-effecting workflow merely
   to verify a repair.
-- Run targeted side-effect-free validation after every change. Verify the real
-  runtime consumer reads the changed canonical store; a successful write alone
-  is not proof. Accept verification only from a deterministic check executed
-  after the mutation against that real consumer path, or from a fresh execution,
-  eval, or report artifact with matching run, step, target, and provenance.
-  File existence, mtime alone, or rereading an older successful artifact is not
-  proof.
+- Run targeted side-effect-free validation after every change and accept it only
+  under the `fix-verification` contract: verify the real runtime consumer reads
+  the changed canonical store; a successful write alone is not proof.
 - If verification requires an externally side-effecting run or the next
   scheduled producing run, do not trigger it merely to verify. Record
   `changed_unverified` with reason `awaiting_next_valid_run`, the exact next

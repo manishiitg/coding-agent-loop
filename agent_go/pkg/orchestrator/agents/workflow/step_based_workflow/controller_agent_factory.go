@@ -191,7 +191,28 @@ func buildSessionScopedMCPAPIURL(sessionID string) string {
 	return strings.TrimRight(baseURL, "/") + "/s/" + sessionID
 }
 
-func injectStepEnvIntoShellExecutor(executors map[string]interface{}, stepOutputAbsPath, stepExecutionAbsPath, dbAbsPath string, mcpSessionID string) {
+// stepRuntimeEnv returns the workflow runtime environment that is safe to copy
+// into a step-scoped shell. Session/path/MCP values are deliberately excluded:
+// they are execution-specific and are set below after the shared environment is
+// merged. This keeps resolved VAR_* values and SECRET_* values available to
+// coding-agent bridge calls without leaking stale parent-session routing.
+func stepRuntimeEnv(workspaceEnv map[string]string) map[string]string {
+	if len(workspaceEnv) == 0 {
+		return nil
+	}
+	result := make(map[string]string, len(workspaceEnv))
+	for key, value := range workspaceEnv {
+		switch key {
+		case "STEP_OUTPUT_DIR", "STEP_EXECUTION_DIR", "DB_PATH",
+			"MCP_SESSION_ID", "MCP_API_URL", "MCP_CUSTOM", "MCP_AUTH", "MCP_VIRTUAL":
+			continue
+		}
+		result[key] = value
+	}
+	return result
+}
+
+func injectStepEnvIntoShellExecutor(executors map[string]interface{}, stepOutputAbsPath, stepExecutionAbsPath, dbAbsPath string, mcpSessionID string, workspaceEnv map[string]string) {
 	if len(executors) == 0 || strings.TrimSpace(stepOutputAbsPath) == "" {
 		return
 	}
@@ -207,10 +228,12 @@ func injectStepEnvIntoShellExecutor(executors map[string]interface{}, stepOutput
 		// with their working directory set to the step's execution folder (not the
 		// workflow root), so a relative "db/db.sqlite" would resolve to the wrong place
 		// ("unable to open database file"). Steps must use "$DB_PATH".
-		mergedEnv := map[string]interface{}{
-			"STEP_OUTPUT_DIR":    stepOutputAbsPath,
-			"STEP_EXECUTION_DIR": stepExecutionAbsPath,
+		mergedEnv := make(map[string]interface{})
+		for key, value := range stepRuntimeEnv(workspaceEnv) {
+			mergedEnv[key] = value
 		}
+		mergedEnv["STEP_OUTPUT_DIR"] = stepOutputAbsPath
+		mergedEnv["STEP_EXECUTION_DIR"] = stepExecutionAbsPath
 		if strings.TrimSpace(dbAbsPath) != "" {
 			mergedEnv["DB_PATH"] = dbAbsPath
 		}
@@ -255,15 +278,17 @@ func injectStepEnvIntoShellExecutor(executors map[string]interface{}, stepOutput
 	}
 }
 
-func registerStepSessionShellEnv(sessionID, stepOutputAbsPath, stepExecutionAbsPath, dbAbsPath string) {
+func registerStepSessionShellEnv(sessionID, stepOutputAbsPath, stepExecutionAbsPath, dbAbsPath string, workspaceEnv map[string]string) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return
 	}
-	env := map[string]string{
-		"STEP_OUTPUT_DIR":    stepOutputAbsPath,
-		"STEP_EXECUTION_DIR": stepExecutionAbsPath,
+	env := stepRuntimeEnv(workspaceEnv)
+	if env == nil {
+		env = make(map[string]string)
 	}
+	env["STEP_OUTPUT_DIR"] = stepOutputAbsPath
+	env["STEP_EXECUTION_DIR"] = stepExecutionAbsPath
 	if strings.TrimSpace(dbAbsPath) != "" {
 		env["DB_PATH"] = dbAbsPath
 	}
@@ -1282,8 +1307,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 		stepOutputAbsPath := filepath.Join(GetPromptDocsRoot(), stepExecutionPath)
 		stepExecutionAbsPath := filepath.Dir(stepOutputAbsPath)
 		dbAbsPath := filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), DBFolderName, "db.sqlite")
-		registerStepSessionShellEnv(config.MCPSessionID, stepOutputAbsPath, stepExecutionAbsPath, dbAbsPath)
-		injectStepEnvIntoShellExecutor(executorsToUse, stepOutputAbsPath, stepExecutionAbsPath, dbAbsPath, config.MCPSessionID)
+		workspaceEnv := hcpo.snapshotWorkspaceEnv()
+		registerStepSessionShellEnv(config.MCPSessionID, stepOutputAbsPath, stepExecutionAbsPath, dbAbsPath, workspaceEnv)
+		injectStepEnvIntoShellExecutor(executorsToUse, stepOutputAbsPath, stepExecutionAbsPath, dbAbsPath, config.MCPSessionID, workspaceEnv)
 		hcpo.GetLogger().Info(fmt.Sprintf("📂 Injecting step shell env into execute_shell_command for %s: STEP_OUTPUT_DIR=%s MCP_SESSION_ID=%s", stepID, stepOutputAbsPath, config.MCPSessionID))
 	}
 
@@ -1605,7 +1631,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 		// Browser reuse is bound separately above, so this session override narrows
 		// filesystem scope without breaking shared browser behavior with the builder.
 		dbAbsPath := filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), DBFolderName, "db.sqlite")
-		injectStepEnvIntoShellExecutor(executorsToUse, stepOutputAbsPath, stepExecutionAbsPath, dbAbsPath, config.MCPSessionID)
+		workspaceEnv := hcpo.snapshotWorkspaceEnv()
+		registerStepSessionShellEnv(config.MCPSessionID, stepOutputAbsPath, stepExecutionAbsPath, dbAbsPath, workspaceEnv)
+		injectStepEnvIntoShellExecutor(executorsToUse, stepOutputAbsPath, stepExecutionAbsPath, dbAbsPath, config.MCPSessionID, workspaceEnv)
 		hcpo.GetLogger().Info(fmt.Sprintf("📂 Injecting step shell env into execute_shell_command for todo task %s: STEP_OUTPUT_DIR=%s MCP_SESSION_ID=%s", stepID, stepOutputAbsPath, config.MCPSessionID))
 	}
 

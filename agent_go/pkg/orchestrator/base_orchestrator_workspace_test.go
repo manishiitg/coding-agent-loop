@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
 func TestReadWorkspaceFileAcceptsExistingEmptyFile(t *testing.T) {
@@ -23,5 +24,23 @@ func TestReadWorkspaceFileAcceptsExistingEmptyFile(t *testing.T) {
 	}
 	if content != "" {
 		t.Fatalf("expected empty content, got %q", content)
+	}
+}
+
+func TestSetWorkspaceEnvRefBackfillsSecretsLoadedBeforeExecutor(t *testing.T) {
+	bo := &BaseOrchestrator{logger: loggerv2.NewDefault()}
+	bo.SetSecrets([]SecretEntry{
+		{Name: "USERNAME", Value: "account@example.test"},
+		{Name: "PASSWORD", Value: "private-value"},
+	})
+
+	env := map[string]string{"MCP_API_URL": "http://example.test/s/session-1"}
+	bo.SetWorkspaceEnvRef(env)
+
+	if got := env["SECRET_USERNAME"]; got != "account@example.test" {
+		t.Fatalf("SECRET_USERNAME = %q, want attached workflow secret", got)
+	}
+	if got := env["SECRET_PASSWORD"]; got != "private-value" {
+		t.Fatalf("SECRET_PASSWORD = %q, want attached workflow secret", got)
 	}
 }

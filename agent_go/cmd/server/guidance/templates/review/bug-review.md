@@ -8,10 +8,12 @@ Focus especially on: {{.Focus}}.{{end}}{{if .RunFolder}}
 Use `{{.RunFolder}}` as the primary run folder.{{end}}
 
 1. Load `get_reference_doc(kind="post-run-monitor")`,
+   `get_reference_doc(kind="pulse-bug-review")`,
    `get_reference_doc(kind="assumption-audit")`, and
-   `get_reference_doc(kind="review-improve-log")`. Use the `bug_review`,
-   Exploratory QA, observable execution-trace, and control-path reachability
-   sections as the audit contract. These references belong to the parent. Do
+   `get_reference_doc(kind="review-improve-log")`. Use the `bug_review` triggers
+   from `post-run-monitor` plus the Exploratory QA, observable execution-trace,
+   and control-path reachability contract in `pulse-bug-review` as the audit
+   contract. These references belong to the parent. Do
    not pass HTML style, skeleton, CSS, migration, or card-formatting work to the
    reviewer.
 2. Choose the latest meaningful retained run when no run folder was supplied.

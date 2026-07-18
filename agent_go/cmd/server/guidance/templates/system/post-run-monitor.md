@@ -154,9 +154,10 @@ evidence guidance only; do not execute their nested-agent calls.
    reference guidance, and a compact non-HTML response contract: module,
    verdict, next-check condition, findings, evidence, bounded recommended fix,
    verification, and whether user judgment is required with a reason.
-   For Bug Review, also include the suspect step ids/attempts and the observable
-   execution-trace contract below whenever Gate evidence points to a specific
-   step.
+   For Bug Review, also include the suspect step ids/attempts and tell the
+   reviewer to load `get_reference_doc(kind="pulse-bug-review")` for the
+   Exploratory QA and observable execution-trace contract whenever Gate evidence
+   points to a specific step.
    Explicitly forbid file edits, config or plan changes, publishing,
    notification, user questions, mutation tools, `builder/improve.html` writes,
    and `mark_pulse_module_result`.
@@ -173,11 +174,12 @@ evidence guidance only; do not execute their nested-agent calls.
    `call_generic_agent` appends and enforces its own authoritative final marker.
    The tool rejects a provider pane snapshot that does not contain that marker
    and retries one incomplete result once.
-   Use the existing specialist guidance as the reviewer brief: learning health
-   uses `improve-learnings`, KB health uses `improve-knowledge`, DB health uses
-   `improve-database`, report health uses `improve-report`, and eval health uses
-   `improve-evaluation`. These improve prompts are read-only reviewers in Pulse;
-   they return fixer instructions rather than applying them.
+   Use the existing specialist guidance as the reviewer brief: bug review uses
+   `pulse-bug-review`, learning health uses `improve-learnings`, KB health uses
+   `improve-knowledge`, DB health uses `improve-database`, report health uses
+   `improve-report`, and eval health uses `improve-evaluation`. These reference
+   docs are read-only reviewer briefs in Pulse; they return fixer instructions
+   rather than applying them.
    Do not give a reviewer `html-output`, the Pulse skeleton, CSS migration, or
    card-formatting work. Reviewers may read only the matching semantic regions
    of `builder/improve.html`; the parent owns presentation and the consolidated
@@ -218,13 +220,9 @@ evidence guidance only; do not execute their nested-agent calls.
    set only that recovery row to `fixing` and record the intended files/actions,
    mutation start time, canonical target ids, pre-change hashes or versions,
    and latest relevant pre-change run/artifact ids. This is the
-   **post-change evidence boundary**: old artifacts are baseline only, never proof that the
-   mutation works. Verification is valid only when either (a) a side-effect-free
-   deterministic check runs after the mutation and exercises the changed
-   canonical state through its real runtime consumer path, or (b) a fresh
-   execution, eval, or report artifact created after the mutation carries
-   matching run, step, target, and provenance. File existence, mtime alone, a
-   successful write, or rereading an older successful artifact is not proof.
+   **post-change evidence boundary**; verify the fix against the single contract
+   in `get_reference_doc(kind="fix-verification")` — a successful write is never
+   proof, and everything produced before the boundary is baseline only.
 
    Immediately after bounded verification, atomically set the row to
    `fixed_verified`, `no_change`, `changed_unverified`, `blocked`, or `failed`,
@@ -424,125 +422,19 @@ runs, elapsed business time, or a material change. A new failure or suspicious
 signal overrides that cadence immediately. A successful run with no prior QA
 baseline cannot justify skipping this checkpoint.
 
-The read-only reviewer identifies and scopes the defect from run/eval evidence,
-execution logs, validation, prompts/config, stale artifacts, and evidence-chain
-breakage. It returns exact findings and verification steps. The Pulse Fixer
-applies and verifies the bounded repair directly.
-
-#### Exploratory QA contract
-
-Act like a careful human QA engineer, but remain read-only and side-effect safe:
-
-1. Derive a concise **behavioral contract** from `soul/soul.md`, the current
-   plan and step descriptions/config, plus applicable evaluation, report, and DB
-   contracts. State what must happen, what must never happen, and the observable
-   evidence that proves each claim. Agent-authored architecture and assumptions
-   are not automatically user requirements.
-2. Build a small risk-ranked test matrix. Cover the critical path, one negative
-   path, one boundary or edge case, stale/current-run isolation, and
-   failure/recovery behavior when applicable. Prefer high-impact counterexamples
-   over broad low-value coverage.
-3. Execute only tests proven side-effect-free. Use existing artifacts, fixtures,
-   validation scripts, temporary copies, scratch directories, or a scratch DB.
-   Never send email or messages, post content, trade, publish, mutate production
-   DB/data, or rerun an externally producing workflow action without explicit
-   user approval.
-4. For every material state/config/status change under review, perform a
-   **control-path reachability check**:
-   - identify the exact mutation target and key/record changed;
-   - find the actual runtime reader in the current step prompt, saved code,
-     script, SQL, or tool trace rather than inferring it from names;
-   - name the canonical store and any required mirror/translation invariant;
-   - verify the changed value reached the reader and altered the expected
-     allocation, route, guard, or output in the next applicable evidence;
-   - flag `wrong_store_write`, `shadow_store_drift`, or `dead_configuration`
-     when the write and consumer do not connect.
-   Never accept “the row changed” as sufficient verification. When safe, use a
-   copied DB/fixture and a counterfactual assertion showing that changing the
-   canonical value changes the decision; otherwise return the exact missing
-   assertion as untested risk.
-5. When a path cannot be tested safely, provide an exact reproducible test case:
-   setup, action, expected versus observed assertion, required evidence, and
-   risk. Do not claim it passed.
-6. Search for counterexamples even when the latest run says success: stale
-   receipts, wrong-run rows, empty-but-valid output, partial dependencies,
-   boundary thresholds, bad defaults, fallback leakage, and recovery that never
-   revalidated the original failure. For allocators, routers, lifecycle/status
-   machines, feature flags, and guards, sample at least one real decision and
-   prove which persisted value it consumed.
-7. Return `QA coverage`, `expected versus observed`, exact evidence, confidence,
-   and `untested risk` alongside the normal ordered findings. Coverage is not a
-   percentage unless a real denominator exists.
-
-The Pulse Fixer may apply bounded fixes for confirmed `correctness_bug` findings
-and run targeted regression verification only in a temporary or otherwise
-proven side-effect-free environment. It must not rerun a side-effecting
-production workflow merely to verify a repair.
-
-#### Observable execution-trace review
-
-Bug Review is responsible for semantic execution defects, not only explicit
-runtime errors. When compact evidence makes a step suspicious, inspect that
-step's latest applicable observable trace:
-
-- regular and todo-task steps:
-  `runs/<run_folder>/logs/<step>/execution/execution-attempt-*-iteration-*-conversation.json`
-  (`conversation_history`, `tool_calls`, and `llm_calls`)
-- message-sequence steps:
-  `runs/<run_folder>/execution/<step>/session.json` (`conversation_history`,
-  item entries, and their summaries), plus a targeted item artifact when needed
-
-This is targeted escalation, not a mandatory audit of every conversation. Start
-from Gate evidence and open only the step/attempt needed to test the suspected
-problem. Valid triggers include:
-
-- evaluation, validation, report, DB, or artifact evidence contradicts the
-  step's claimed success
-- the final result is empty, unsupported, stale, from the wrong run/group, or
-  inconsistent with a dependency
-- a `CONCERNS:` marker names a tool, source, route, fallback, or decision problem
-- a route/fallback choice is inconsistent with its configured condition
-- a producing step changed behavior after a plan/config/tool/model change
-- repeated retries, surprising tool usage, or an implausibly low-evidence
-  conclusion may have affected correctness
-
-Judge observable decisions and evidence, not hidden chain-of-thought. For the
-selected trace, check whether the agent:
-
-- chose a tool/source appropriate for the step objective and authoritative data
-- supplied the correct workspace, run folder, group, table, endpoint, ids,
-  filters, time window, and side-effect destination
-- used current dependency artifacts instead of stale or unrelated evidence
-- interpreted tool results correctly rather than ignoring, contradicting, or
-  inventing facts beyond them
-- followed configured routing, fallback, retry, validation, and stop conditions
-- gathered enough evidence before stopping or claiming success
-- verified a recovery/fallback actually repaired the original problem
-- grounded its final conclusion and produced artifacts in the observable results
-
-Return each trace finding with: `classification`, step/item id, attempt, the
-observable decision/tool call, exact result/evidence, impact, bounded fix, and
-verification. Use exactly these classifications:
-
-- `correctness_bug` — wrong tool/source/arguments/route/interpretation/fallback,
-  stale evidence, unsupported conclusion, or wrong side effect that can change
-  the workflow outcome
-- `efficiency_or_coaching` — outcome remains correct, but tool choice, retries,
-  model/tier use, or execution shape wastes cost/time or is unnecessarily brittle
-- `no_issue` — the trace supports the result, including a recovered transient
-  failure whose final evidence is sound
-- `insufficient_evidence` — the observable trace cannot establish whether the
-  decision was wrong; name the missing evidence and do not invent a defect
-
-The Pulse Fixer may repair and verify only `correctness_bug` findings under Bug
-Review. It must not rewrite a step merely because another tool might have been
-faster or stylistically preferable. Route `efficiency_or_coaching` findings to
-the `llm_ops_review` evidence set: if that module is due in the current worklist,
-pass the finding to its reviewer; otherwise record one deduplicated evidence
-pointer and next-check trigger in `builder/improve.html` so the next Gate makes
-LLM/Ops due. Record `no_issue` as reviewed with no action. Keep
-`insufficient_evidence` visible only when it is consequential, with a concrete
-way to obtain the missing evidence.
+The read-only reviewer scopes the defect from run/eval evidence, execution logs,
+validation, prompts/config, stale artifacts, and evidence-chain breakage, then
+returns exact findings and verification steps; the Pulse Fixer applies and
+verifies the bounded repair directly. The reviewer and Pulse Fixer load
+`get_reference_doc(kind="pulse-bug-review")` for the full read-only contract:
+the Exploratory QA behavioral-contract and risk-matrix method, the control-path
+reachability check (`wrong_store_write`, `shadow_store_drift`,
+`dead_configuration`), the observable execution-trace review, and the finding
+classifications (`correctness_bug`, `efficiency_or_coaching`, `no_issue`,
+`insufficient_evidence`). The Pulse Fixer repairs only confirmed
+`correctness_bug` findings and routes `efficiency_or_coaching` to the
+`llm_ops_review` evidence set. Gate does not load that doc; it decides only
+whether bug_review is due from the triggers above.
 
 ### artifact_review
 

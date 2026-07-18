@@ -209,12 +209,9 @@ Secrets are credentials (API keys, tokens, passwords) injected into step agents 
 - **User secrets** — per-user, encrypted server-side, reusable across workflows.
 - **Global secrets** — operator-managed via `GLOBAL_SECRET_*` env vars on the server. Read-only from chat.
 
-**Adding a secret is a TWO-STEP flow. Doing only step 2 is a common silent-failure trap: the name gets attached but `$SECRET_<NAME>` is empty at runtime.**
+**Storing a new secret is one step.** `set_workflow_secret(name="BUFFER_API_KEY", value="<plaintext>")` stores, attaches, and injects the value into the active builder shell and future workflow steps. Use `set_user_secret` only when the same credential should be reusable across workflows; it also auto-attaches in a workflow-builder session.
 
-1. **Store the value**: prefer `set_workflow_secret(name="BUFFER_API_KEY", value="<plaintext>")` for workflow-only credentials. Use `set_user_secret` only when the same credential should be reusable across workflows.
-2. **Attach to this workflow**: `update_workflow_config(add_secrets=["BUFFER_API_KEY"])`. This step validates that a value exists (workflow store, user store, or global); attaching an orphan name is rejected with an error pointing to step 1.
-
-**When the user asks you to add/save/set a secret for this workflow, complete both steps in the same turn.** Do not stop after `set_workflow_secret` or `set_user_secret`; immediately call `update_workflow_config(add_secrets=[...])` so the next step run receives `$SECRET_<NAME>`. If the user only gives a name and no value, call `list_secrets` first and attach an existing available secret if present; otherwise ask for the value. If the user pastes a value in chat, store it and then refer to it by name only.
+**Attaching an already-stored secret is a separate operation.** Call `list_secrets`, then `update_workflow_config(add_secrets=["BUFFER_API_KEY"])`. The builder can use it immediately as `$SECRET_BUFFER_API_KEY`; no restart or new chat is required. If the requested name does not exist, ask for the value and store it. Never claim that a stored secret is unusable merely because its plaintext cannot be returned—the builder should consume it through the injected environment without displaying it.
 
 Do **not** give boilerplate advice like `"rotate this secret"` after a normal user-requested save. Recommend rotation only when there is a concrete exposure reason: the value was printed into logs/output, committed to a file, sent to the wrong channel, or the user explicitly asks for security remediation.
 
@@ -225,4 +222,4 @@ Do **not** give boilerplate advice like `"rotate this secret"` after a normal us
 - **Delete from store**: `delete_workflow_secret(name)` or `delete_user_secret(name)`. Workflow attachments are separate — also run `update_workflow_config(remove_secrets=["NAME"])` to detach.
 - **Detach only (keep value)**: `update_workflow_config(remove_secrets=["NAME"])`.
 
-Secret VALUES are never rendered into prompts, logs, or tool outputs. Step agents read them only from `$SECRET_<NAME>` in `execute_shell_command`. Never echo, print, or hardcode a secret value in descriptions, learnings, or `main.py`.
+Secret VALUES are never rendered into prompts, logs, or tool outputs. Builder and step agents consume them only through `$SECRET_<NAME>` in `execute_shell_command`. Never echo, print, or hardcode a secret value in descriptions, learnings, or `main.py`.

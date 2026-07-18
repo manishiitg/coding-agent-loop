@@ -186,7 +186,8 @@ func BuildLearningsContributionTurnWithTargetAndBrowser(stepID, stepDescription,
 	b.WriteString("5. **Reconcile stale guidance.** Compare the existing reference content you touch against the current step description above, current step behavior, and this step's learning objective. If an old note clearly describes a previous step description, obsolete selector/API path, or behavior contradicted by this successful run, remove or replace that stale note in the same patch. Do not delete unrelated shared guidance just because this step didn't use it.\n")
 	b.WriteString("6. **Merge with existing knowledge, don't duplicate.** If the lesson you'd write overlaps with a pattern another step already captured in an existing references file, extend that file (append a new section, refine an existing one) rather than creating a second place for the same knowledge.\n")
 	b.WriteString("7. **No ephemeral refs.** Do not save session-local browser handles (`@e1`, `e68`, etc.) — they are useless across runs.\n")
-	b.WriteString("8. **No fabrication.** Capture only patterns you actually used in this execution. If you're unsure whether a pattern is reliable, say so explicitly in the note.\n\n")
+	b.WriteString("8. **No fabrication.** Capture only patterns you actually used in this execution. If you're unsure whether a pattern is reliable, say so explicitly in the note.\n")
+	b.WriteString("9. **HOW only — not facts or results.** Capture reusable execution technique (selectors, API/tool call shapes, auth flows, timing, parsing/retry patterns). Do NOT record subject-matter facts the workflow discovered, run results, current values, user preferences, or status — those belong in the knowledgebase (`notes/` for discovered domain facts, `context/` for user-supplied context) or `db/db.sqlite` (produced data), never in learnings. Never write secret values here.\n\n")
 	if hasBrowserAccess {
 		b.WriteString(BuildBrowserLearningRules())
 		b.WriteString("\n")

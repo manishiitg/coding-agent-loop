@@ -76,12 +76,14 @@ endpoint and argument form for the active session.
 
 ## Shared CDP tab lifecycle
 
-One visible Chrome is shared safely by selecting and acting under a per-port
+One visible Chrome is shared safely by verifying and acting under a per-port
 lock. A workflow must not assume that the tab selected during its previous tool
 call is still active: the user, the website, or another workflow may have
-changed Chrome in the meantime. The backend therefore explicitly reselects the
-resolved real `tN` tab immediately before every page action while it holds the
-shared lock.
+changed Chrome in the meantime. The backend therefore reads the real tab state
+immediately before every page action while it holds the shared lock. It keeps
+using the requested real `tN` when that tab is already active, and switches only
+when another tab is active. This avoids repeatedly bringing Chrome to the
+foreground on macOS without allowing one workflow to act in another tab.
 
 The normal flow is:
 
@@ -116,7 +118,7 @@ Tab management is intentionally compact:
 |---|---|
 | Explicit `tab` list | At most 20 compact lines; labels, titles, and URLs are individually truncated. |
 | Select one tab | A short selected-tab message, not the raw tab list. |
-| Automatic selection before a page action | Nothing extra; the internal selection response is discarded. |
+| Automatic active-tab verification before a page action | Nothing extra; the internal tab-state/selection response is discarded. |
 | Atomic reuse check before `tab new` | Nothing extra; only the reused/created tab summary is returned. |
 
 Consequently, a large Chrome window does not add every tab to context on every
@@ -188,7 +190,8 @@ This handoff applies to both headless and CDP modes.
 | Finding | User-visible symptom | Current fix |
 |---|---|---|
 | A tab label was sometimes stored as though it were a real tab ID. | Delayed cleanup called `tab close <label>`, failed, and tabs remained open. | Parse both direct `tab new` and tab-list JSON, persist the returned real `tN`, and treat missing-label errors as already cleaned. |
-| Cached backend active-tab state was trusted between calls. | A page action could affect the wrong tab after Chrome changed externally. | Explicitly select the resolved `tN` before every page action under the shared lock. |
+| Cached backend active-tab state was trusted between calls. | A page action could affect the wrong tab after Chrome changed externally. | Read the real active tab before every page action under the shared lock; select the resolved `tN` only when it is not already active. |
+| The resolved `tN` was explicitly selected before every action even when already active. | Visible Chrome repeatedly stole macOS focus while the user typed in another app. | Preserve the current tab when the real state confirms it is already active; tab creation or a genuine tab change may still foreground Chrome once. |
 | Agents could request `tab new` without a fresh reuse decision. | Repeated workflows accumulated duplicate tabs. | Perform an atomic owned-tab/exact-URL reuse check; fail closed when listing is unavailable. |
 | Flexible or malformed `tab new` argument ordering could reach the CLI. | A new tab sometimes opened an unintended URL. | Validate an absolute URL and canonicalize the command before execution. |
 | Raw tab output was suspected of entering context on every selection. | Concern about context growth with many Chrome tabs. | Return tab lists only for explicit list calls, cap them at 20 compact entries, and discard internal selection/reuse responses. |
@@ -217,7 +220,7 @@ overlapping requests. It verifies:
 - changing Chrome's active tab externally cannot redirect the next managed
   action;
 - selecting one tab returns a compact response rather than the all-tabs JSON;
-- parallel page actions are re-selected onto each workflow's own `tN` tab;
+- parallel page actions verify and, only when needed, switch onto each workflow's own `tN` tab;
 - uploads from two newly granted, disjoint workspace trees cross an older daemon
   sandbox while preserving both filename and file content;
 - cross-workflow upload reads and artifact writes are rejected by FolderGuard;

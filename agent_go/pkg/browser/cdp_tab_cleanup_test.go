@@ -244,7 +244,7 @@ func TestAgentBrowserTabNewRefusesCreationWhenReuseCheckIsInvalid(t *testing.T) 
 	}
 }
 
-func TestAgentBrowserExplicitlySelectsRealTabBeforeEveryPageAction(t *testing.T) {
+func TestAgentBrowserPreservesFocusWhenRealTabIsAlreadyActive(t *testing.T) {
 	resetCDPRegistryForTest(t)
 	t.Setenv("CDP_HOST", "localhost")
 	const (
@@ -253,7 +253,7 @@ func TestAgentBrowserExplicitlySelectsRealTabBeforeEveryPageAction(t *testing.T)
 	)
 	setCDPTabAlias(port, owner, "workflow-tab", "t7")
 	setCDPTabSelection(port, owner, "t7")
-	setCDPActiveTab(port, "t7") // Cached state must not suppress a real select.
+	setCDPActiveTab(port, "t7")
 
 	var commands []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -279,8 +279,49 @@ func TestAgentBrowserExplicitlySelectsRealTabBeforeEveryPageAction(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(commands) != 2 || !strings.Contains(commands[0], "tab t7") || !strings.Contains(commands[1], "snapshot") {
-		t.Fatalf("commands = %#v, want explicit real-tab select followed by snapshot", commands)
+	if len(commands) != 2 || strings.Contains(commands[0], "tab t7") || !strings.Contains(commands[0], " tab ") || !strings.Contains(commands[1], "snapshot") {
+		t.Fatalf("commands = %#v, want focus-preserving tab-state check followed by snapshot", commands)
+	}
+}
+
+func TestAgentBrowserSelectsRealTabWhenAnotherTabIsActive(t *testing.T) {
+	resetCDPRegistryForTest(t)
+	t.Setenv("CDP_HOST", "localhost")
+	const (
+		port  = 29226
+		owner = "inactive-tab-owner"
+	)
+	setCDPTabAlias(port, owner, "workflow-tab", "t7")
+	setCDPTabSelection(port, owner, "t7")
+
+	var commands []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request ShellExecuteRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		commands = append(commands, request.Command)
+		stdout := `{"success":true,"data":{"tabs":[{"active":false,"label":"workflow-tab","tabId":"t7","url":"https://example.com/"},{"active":true,"label":"other","tabId":"t8","url":"https://other.example/"}]}}`
+		if strings.Contains(request.Command, "tab t7") {
+			stdout = `{"success":true,"data":{"active":true,"label":"workflow-tab","tabId":"t7","url":"https://example.com/"}}`
+		} else if strings.Contains(request.Command, "snapshot") {
+			stdout = `{"success":true,"data":{"snapshot":"ok"}}`
+		}
+		_ = json.NewEncoder(w).Encode(APIResponse{Success: true, Data: ShellExecuteResponse{Stdout: stdout, ExitCode: 0}})
+	}))
+	defer server.Close()
+
+	ctx := context.WithValue(context.Background(), common.ChatSessionIDKey, owner)
+	_, err := NewExecutor(NewClient(server.URL), WithCdpPort(port)).HandleAgentBrowser(ctx, map[string]interface{}{
+		"command": "snapshot",
+		"args":    []string{"--cdp", "http://localhost:29226", "tab", "workflow-tab", "-i"},
+		"session": "agent-session",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 3 || !strings.Contains(commands[1], "tab t7") || !strings.Contains(commands[2], "snapshot") {
+		t.Fatalf("commands = %#v, want state check, required tab select, then snapshot", commands)
 	}
 }
 

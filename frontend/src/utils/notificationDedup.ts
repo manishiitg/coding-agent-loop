@@ -6,6 +6,7 @@
 const NOTIFIED_KEY = 'mcp_notified_request_ids'
 const SUBMITTED_FEEDBACK_KEY = 'mcp_submitted_feedback'
 const SUBMITTED_QUESTIONS_KEY = 'mcp_submitted_questions'
+export const HUMAN_FEEDBACK_SUBMITTED_EVENT = 'agentworks:human-feedback-submitted'
 // Entries older than 1 hour are purged
 const MAX_AGE_MS = 60 * 60 * 1000
 
@@ -71,6 +72,11 @@ export function markFeedbackSubmitted(requestId: string): void {
   const map = loadMap<boolean>(SUBMITTED_FEEDBACK_KEY)
   map.set(requestId, { value: true, ts: Date.now() })
   saveMap(SUBMITTED_FEEDBACK_KEY, map)
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(HUMAN_FEEDBACK_SUBMITTED_EVENT, {
+      detail: { requestId },
+    }))
+  }
 }
 
 // --- Submitted questions cache (persisted across page reloads) ---

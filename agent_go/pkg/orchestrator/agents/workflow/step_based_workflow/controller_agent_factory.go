@@ -1620,7 +1620,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 		for _, tool := range toolsToRegister {
 			// Check if this tool is a human tool by looking at its category
 			if hcpo.ToolCategories != nil {
-				if category, exists := hcpo.ToolCategories[tool.Function.Name]; exists && category == "human" {
+				if category, exists := hcpo.ToolCategories[tool.Function.Name]; exists && virtualtools.IsHumanToolCategory(category) {
 					// Skip human tools in "no human" mode
 					hcpo.GetLogger().Info(fmt.Sprintf("🔧 Excluding human tool '%s' from todo task orchestrator agent (no human mode)", tool.Function.Name))
 					continue

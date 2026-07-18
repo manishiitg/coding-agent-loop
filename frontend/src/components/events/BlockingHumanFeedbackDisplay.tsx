@@ -32,6 +32,7 @@ interface BlockingHumanFeedbackDisplayProps {
   onSubmitFeedback?: (requestId: string, feedback: string) => void
   onFeedbackSubmitted?: () => void
   isApproving?: boolean  // Loading state
+  surfaceNotifications?: boolean
 }
 
 export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplayProps> = ({
@@ -39,12 +40,14 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
   onApprove,
   onSubmitFeedback,
   onFeedbackSubmitted,
-  isApproving = false
+  isApproving = false,
+  surfaceNotifications = true,
 }) => {
   const cachedSubmission = event.data.request_id ? hasSubmittedFeedback(event.data.request_id) : false
   const [feedback, setFeedback] = useState<string>('')
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false)
   const [hasSubmitted, setHasSubmitted] = useState(cachedSubmission)
+  const [submitError, setSubmitError] = useState('')
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default')
   const electronAPI = (window as unknown as {
     electronAPI?: { setDockBadge?: (badge: string) => void }
@@ -61,6 +64,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
 
   // Request notification permission on component mount
   React.useEffect(() => {
+    if (!surfaceNotifications) return
     if ('Notification' in window) {
       setNotificationPermission(Notification.permission)
 
@@ -73,19 +77,21 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
       }
     }
 
-  }, [])
+  }, [surfaceNotifications])
 
   // Keep the Electron dock badge in sync with the pending request.
   React.useEffect(() => {
+    if (!surfaceNotifications) return
     if (!electronAPI?.setDockBadge) return
     electronAPI.setDockBadge(hasSubmitted ? '' : '1')
     return () => electronAPI.setDockBadge?.('')
-  }, [electronAPI, hasSubmitted])
+  }, [electronAPI, hasSubmitted, surfaceNotifications])
 
   // Human feedback is short-lived, so notify as soon as the direct response
   // card is available. Keep potentially sensitive question text out of the OS
   // notification preview; the user sees it after opening AgentWorks.
   React.useEffect(() => {
+    if (!surfaceNotifications) return
     const requestId = event.data.request_id || ''
     const enabled = localStorage.getItem('mcp_notifications_enabled') !== 'false'
     // Skip if already submitted, already notified (e.g. page refresh), or notifications disabled
@@ -127,7 +133,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
       clearTimeout(timer)
       notificationRef?.close()
     }
-  }, [event.data.request_id, hasSubmitted, notificationPermission])
+  }, [event.data.request_id, hasSubmitted, notificationPermission, surfaceNotifications])
 
   const triggerScrollCallback = () => {
     if (onFeedbackSubmitted) {
@@ -138,6 +144,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
   const handleSubmitFeedback = async () => {
     if (event.data.request_id && feedback.trim() && onSubmitFeedback) {
       setIsSubmittingFeedback(true)
+      setSubmitError('')
       try {
         await onSubmitFeedback(event.data.request_id, feedback.trim())
         if (event.data.request_id) markFeedbackSubmitted(event.data.request_id)
@@ -146,6 +153,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
         triggerScrollCallback()
       } catch (error) {
         console.error('Failed to submit feedback:', error)
+        setSubmitError('The response could not be delivered. The request may have expired; please retry if it is still active.')
       } finally {
         setIsSubmittingFeedback(false)
       }
@@ -155,6 +163,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
   const handleApprove = async () => {
     if (event.data.request_id) {
       setIsSubmittingFeedback(true)
+      setSubmitError('')
       try {
         if (onSubmitFeedback) {
           await onSubmitFeedback(event.data.request_id, "Approve")
@@ -166,6 +175,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
         triggerScrollCallback()
       } catch (error) {
         console.error('Failed to approve:', error)
+        setSubmitError('The response could not be delivered. The request may have expired; please retry if it is still active.')
       } finally {
         setIsSubmittingFeedback(false)
       }
@@ -175,6 +185,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
   const handleReject = async () => {
     if (event.data.request_id) {
       setIsSubmittingFeedback(true)
+      setSubmitError('')
       try {
         if (onSubmitFeedback) {
           await onSubmitFeedback(event.data.request_id, "Reject")
@@ -186,6 +197,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
         triggerScrollCallback()
       } catch (error) {
         console.error('Failed to reject:', error)
+        setSubmitError('The response could not be delivered. The request may have expired; please retry if it is still active.')
       } finally {
         setIsSubmittingFeedback(false)
       }
@@ -195,6 +207,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
   const handleOption = async (index: number) => {
     if (event.data.request_id && onSubmitFeedback) {
       setIsSubmittingFeedback(true)
+      setSubmitError('')
       try {
         // Send the actual option label text so the LLM clearly understands the user's choice
         const optionLabel = options[index] || `option${index}`
@@ -204,6 +217,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
         triggerScrollCallback()
       } catch (error) {
         console.error(`Failed to select option ${index}:`, error)
+        setSubmitError('The response could not be delivered. The request may have expired; please retry if it is still active.')
       } finally {
         setIsSubmittingFeedback(false)
       }
@@ -351,6 +365,11 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
             <MarkdownRenderer content={context} className="text-xs" />
           </div>
         </details>
+      )}
+      {submitError && (
+        <p className="mt-2 rounded border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300" role="alert">
+          {submitError}
+        </p>
       )}
     </div>
   )

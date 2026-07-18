@@ -3,6 +3,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useEffect, useCallback, useRef, useState, forwardRef, lazy, Suspense } from "react";
 import { ThemeProvider } from "./contexts/ThemeContext.tsx";
 import { UpdateProgressToast } from "./components/UpdateProgressToast";
+import { GlobalHumanFeedbackPrompt } from "./components/GlobalHumanFeedbackPrompt";
 import Workspace from "./components/Workspace.tsx";
 import { ChiefTasksPanel, OrgGoalsPanel, OrgPulsePanel } from "./components/org/OrgHtmlPanels";
 import { ORG_HTML_PREVIEW_PREFERENCE_CHANGED_EVENT, getOrgHtmlPreviewDevice, setOrgHtmlPreviewDevice as persistOrgHtmlPreviewDevice, type OrgHtmlPreviewDevice } from "./components/org/orgHtmlPreview";
@@ -1693,6 +1694,7 @@ function App() {
         <AuthWrapper>
         <TooltipProvider>
         <UpdateProgressToast />
+        <GlobalHumanFeedbackPrompt />
         <div className="h-screen bg-background flex">
           {/* Main Content Area - WorkflowLayout (workflow mode) or ChatArea (other modes).
               The former left sidebar was removed; its controls now live in the top bar

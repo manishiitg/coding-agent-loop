@@ -16,6 +16,26 @@ type testUserNotificationConnector struct {
 	ch   chan *services.NotificationDestination
 }
 
+type capturedHumanFeedbackEvent struct {
+	requestID string
+	question  string
+	context   string
+	options   []string
+}
+
+type testHumanFeedbackEmitter struct {
+	events chan capturedHumanFeedbackEvent
+}
+
+func (e *testHumanFeedbackEmitter) EmitBlockingHumanFeedback(requestID, question, context string, _ bool, _, _ string, options ...string) {
+	e.events <- capturedHumanFeedbackEvent{
+		requestID: requestID,
+		question:  question,
+		context:   context,
+		options:   append([]string(nil), options...),
+	}
+}
+
 func (c *testUserNotificationConnector) Name() string {
 	if c.name != "" {
 		return c.name
@@ -49,6 +69,64 @@ func resetHumanToolTestState() {
 	store.mu.Unlock()
 }
 
+func TestHumanFeedbackDescriptionRequiresForegroundBridgeWait(t *testing.T) {
+	var description string
+	for _, tool := range CreateHumanTools() {
+		if tool.Function != nil && tool.Function.Name == "human_feedback" {
+			description = tool.Function.Description
+			break
+		}
+	}
+	for _, want := range []string{
+		"curl in the foreground",
+		"never use nohup",
+		"poll for completion",
+		"shell timeout shorter than timeout_seconds",
+		"at most 45 seconds",
+	} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("human_feedback description missing %q:\n%s", want, description)
+		}
+	}
+}
+
+func TestHumanFeedbackStoreListsPendingRequestsIndependentlyOfSessionEvents(t *testing.T) {
+	resetHumanToolTestState()
+	t.Cleanup(resetHumanToolTestState)
+
+	store := GetHumanFeedbackStore()
+	if err := store.CreatePendingRequest(
+		"captcha-1",
+		"Complete the CAPTCHA.",
+		"This request expires in 45 seconds.",
+		"workflow-step-1",
+		[]string{"done", "submitted"},
+		false,
+		45*time.Second,
+	); err != nil {
+		t.Fatalf("create pending request: %v", err)
+	}
+
+	pending := store.ListPending(time.Now())
+	if len(pending) != 1 {
+		t.Fatalf("pending requests = %d, want 1", len(pending))
+	}
+	got := pending[0]
+	if got.UniqueID != "captcha-1" || got.SessionID != "workflow-step-1" || got.MessageForUser != "Complete the CAPTCHA." {
+		t.Fatalf("unexpected pending request: %#v", got)
+	}
+	if got.UserResponse != "" || len(got.Options) != 2 {
+		t.Fatalf("unsafe or incomplete pending projection: %#v", got)
+	}
+
+	if err := store.SubmitResponse("captcha-1", "done"); err != nil {
+		t.Fatalf("submit pending response: %v", err)
+	}
+	if got := store.ListPending(time.Now()); len(got) != 0 {
+		t.Fatalf("completed request remained pending: %#v", got)
+	}
+}
+
 func TestHandleHumanFeedbackWaitsForDirectHumanResponseWithoutParentRelay(t *testing.T) {
 	resetHumanToolTestState()
 	t.Cleanup(resetHumanToolTestState)
@@ -65,7 +143,9 @@ func TestHandleHumanFeedbackWaitsForDirectHumanResponseWithoutParentRelay(t *tes
 		return nil
 	})
 
+	emitter := &testHumanFeedbackEmitter{events: make(chan capturedHumanFeedbackEvent, 1)}
 	ctx := context.WithValue(context.Background(), BGAgentSessionIDKey, "workflow-session")
+	ctx = context.WithValue(ctx, SessionEventEmitterKey, SessionEventEmitter(emitter))
 	type result struct {
 		answer string
 		err    error
@@ -80,6 +160,21 @@ func TestHandleHumanFeedbackWaitsForDirectHumanResponseWithoutParentRelay(t *tes
 		})
 		done <- result{answer: answer, err: err}
 	}()
+
+	select {
+	case event := <-emitter.events:
+		if event.requestID != "req-1" || event.question != "Review the drafted cover letter." {
+			t.Fatalf("unexpected blocking event: %#v", event)
+		}
+		if !strings.Contains(event.context, "expires in 30 seconds") {
+			t.Fatalf("blocking event missing expiry context: %#v", event)
+		}
+		if len(event.options) != 2 || event.options[0] != "approve" || event.options[1] != "decline" {
+			t.Fatalf("blocking event options = %#v", event.options)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("human_feedback did not emit blocking UI event")
+	}
 
 	deadline := time.Now().Add(time.Second)
 	for {
@@ -122,6 +217,19 @@ func TestHandleHumanFeedbackWaitsForDirectHumanResponseWithoutParentRelay(t *tes
 	GetHumanFeedbackStore().mu.RUnlock()
 	if requestRetained || waiterRetained {
 		t.Fatalf("consumed human response remained in memory: request=%v waiter=%v", requestRetained, waiterRetained)
+	}
+}
+
+func TestHumanToolCategoryIsCanonical(t *testing.T) {
+	for _, category := range []string{"human_tools", " human_tools "} {
+		if !IsHumanToolCategory(category) {
+			t.Fatalf("expected %q to be recognized as a human tool category", category)
+		}
+	}
+	for _, category := range []string{"", "human", "delegation_tools", "workspace_advanced", "workflow"} {
+		if IsHumanToolCategory(category) {
+			t.Fatalf("did not expect %q to be recognized as a human tool category", category)
+		}
 	}
 }
 

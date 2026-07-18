@@ -193,7 +193,7 @@ func run(ctx context.Context, log loggerv2.Logger) error {
 	}
 	log.Info("Tools registered")
 
-	// Register a dummy "human" category tool to test that custom tools appear
+	// Register a dummy human tool to test that custom tools appear
 	// in the tool index when UseCodeExecutionMode is true.
 	if err := agent.RegisterCustomTool(
 		"human_feedback",
@@ -213,11 +213,11 @@ func run(ctx context.Context, log loggerv2.Logger) error {
 			fmt.Fprintf(os.Stderr, "\n>>> HUMAN_FEEDBACK TOOL CALLED! question=%q <<<\n", question)
 			return fmt.Sprintf(`{"status":"ok","feedback":"This is a dummy human feedback response to: %s"}`, question), nil
 		},
-		"human",
+		"human_tools",
 	); err != nil {
 		return fmt.Errorf("register human_feedback tool: %w", err)
 	}
-	log.Info("Registered dummy human_feedback tool (category: human)")
+	log.Info("Registered dummy human_feedback tool (category: human_tools)")
 
 	// Step 12: Register CLI event listener (shows tool calls in terminal)
 	agent.AddEventListener(&cliEventListener{})

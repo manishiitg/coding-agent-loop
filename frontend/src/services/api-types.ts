@@ -326,6 +326,21 @@ export interface HumanFeedbackResponse {
   message?: string
 }
 
+export interface PendingHumanFeedbackRequest {
+  unique_id: string
+  message_for_user: string
+  context?: string
+  session_id?: string
+  options?: string[]
+  allow_feedback: boolean
+  created_at: string
+  expires_at: string
+}
+
+export interface PendingHumanFeedbackResponse {
+  requests: PendingHumanFeedbackRequest[]
+}
+
 export interface ReportHumanInputOption {
   id: string
   title: string

@@ -148,6 +148,9 @@ func TestWorkshopCLIPromptUsesProjectedWorkspaceToolReference(t *testing.T) {
 		"Never call `api-bridge.list_executions`",
 		`get_api_spec(server_name="workflow", tool_name="<name>")`,
 		"$MCP_MCP",
+		"foreground curl",
+		"Never use `nohup`",
+		"foreground response resumes the agent automatically",
 	} {
 		if !strings.Contains(prompt, routingContract) {
 			t.Fatalf("coding-CLI workshop prompt is missing bridge routing contract %q", routingContract)
@@ -166,6 +169,9 @@ func TestWorkflowToolsReferenceDistinguishesLogicalFromNativeBridgeTools(t *test
 		"`api-bridge.list_executions`",
 		`get_api_spec(server_name="workflow", tool_name="<name>")`,
 		"$MCP_MCP`/`$MCP_CUSTOM",
+		"foreground curl",
+		"Never use `nohup`",
+		"foreground response resumes the agent automatically",
 	} {
 		if !strings.Contains(body, routingContract) {
 			t.Fatalf("workflow-tools reference is missing bridge routing contract %q", routingContract)

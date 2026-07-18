@@ -11,12 +11,11 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-// GetDelegationToolCategory returns the category name for delegation tools
-// Using "human" category makes the tool directly available (not a code tool) in:
-// - Code execution mode: human category tools are always directly callable
-// - Tool search mode: human category tools are immediately available without searching
+// GetDelegationToolCategory returns the category name for delegation tools.
+// Delegation remains directly available without being conflated with actual
+// human interaction tools.
 func GetDelegationToolCategory() string {
-	return "human"
+	return "delegation_tools"
 }
 
 // Context keys for delegation tool execution

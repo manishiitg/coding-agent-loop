@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"sync"
 	"time"
 
@@ -12,11 +13,16 @@ import (
 
 // HumanFeedbackRequest represents a pending feedback request
 type HumanFeedbackRequest struct {
-	UniqueID       string
-	MessageForUser string
-	UserResponse   string
-	IsCompleted    bool
-	CreatedAt      time.Time
+	UniqueID       string    `json:"unique_id"`
+	MessageForUser string    `json:"message_for_user"`
+	Context        string    `json:"context,omitempty"`
+	SessionID      string    `json:"session_id,omitempty"`
+	Options        []string  `json:"options,omitempty"`
+	AllowFeedback  bool      `json:"allow_feedback"`
+	UserResponse   string    `json:"-"`
+	IsCompleted    bool      `json:"-"`
+	CreatedAt      time.Time `json:"created_at"`
+	ExpiresAt      time.Time `json:"expires_at"`
 }
 
 // BotSessionCheckerFunc checks if a given session ID belongs to a bot session.
@@ -61,6 +67,13 @@ func (s *HumanFeedbackStore) CreateRequest(uniqueID, message string) error {
 // CreateRequestWithoutNotification creates a new feedback request without sending any notifications
 // This is used for blocking_human_feedback events that should only appear in the frontend UI
 func (s *HumanFeedbackStore) CreateRequestWithoutNotification(uniqueID, message string) error {
+	return s.CreatePendingRequest(uniqueID, message, "", "", nil, true, defaultHumanFeedbackTimeout)
+}
+
+// CreatePendingRequest registers the authoritative UI-visible state for a
+// blocking human request. Frontends list this store directly instead of
+// relying on whether the originating session's event stream is mounted.
+func (s *HumanFeedbackStore) CreatePendingRequest(uniqueID, message, contextMsg, sessionID string, options []string, allowFeedback bool, timeout time.Duration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -83,13 +96,38 @@ func (s *HumanFeedbackStore) CreateRequestWithoutNotification(uniqueID, message 
 	s.requests[uniqueID] = &HumanFeedbackRequest{
 		UniqueID:       uniqueID,
 		MessageForUser: message,
+		Context:        contextMsg,
+		SessionID:      sessionID,
+		Options:        append([]string(nil), options...),
+		AllowFeedback:  allowFeedback,
 		IsCompleted:    false,
 		CreatedAt:      time.Now(),
+		ExpiresAt:      time.Now().Add(timeout),
 	}
 
 	s.waiters[uniqueID] = make(chan string, 1)
 
 	return nil
+}
+
+// ListPending returns safe copies of currently answerable requests. Responses
+// are deliberately never included because they can contain OTPs or secrets.
+func (s *HumanFeedbackStore) ListPending(now time.Time) []HumanFeedbackRequest {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	pending := make([]HumanFeedbackRequest, 0, len(s.requests))
+	for _, request := range s.requests {
+		if request == nil || request.IsCompleted || (!request.ExpiresAt.IsZero() && now.After(request.ExpiresAt)) {
+			continue
+		}
+		copy := *request
+		copy.Options = append([]string(nil), request.Options...)
+		copy.UserResponse = ""
+		pending = append(pending, copy)
+	}
+	sort.Slice(pending, func(i, j int) bool { return pending[i].CreatedAt.Before(pending[j].CreatedAt) })
+	return pending
 }
 
 // CreateRequestWithNotification creates a new feedback request and sends a notification

@@ -123,7 +123,7 @@ func TestToolSetInvariants(t *testing.T) {
 			t.Fatalf("mode=%s: allow-listed tool %q is neither in workflow pool nor known workshop/virtual registrations", mode, n)
 		}
 
-		// 3. Non-blocking human/report tools must be usable in both modes.
+		// 3. Human interaction/notification/report tools must be usable in both modes.
 		for _, n := range virtualtools.WorkshopHumanToolNames() {
 			if !pool[n] || cats[n] != "human_tools" {
 				t.Fatalf("workflow pool missing workshop human tool %q (in_pool=%v cat=%q)", n, pool[n], cats[n])
@@ -132,8 +132,8 @@ func TestToolSetInvariants(t *testing.T) {
 				t.Fatalf("mode=%s: expected %q in allow-list", mode, n)
 			}
 		}
-		if allowSet["human_feedback"] {
-			t.Fatalf("mode=%s: blocking human_feedback must not be exposed to the workflow builder; ask in chat or use workflow runtime human-input steps instead", mode)
+		if !allowSet["human_feedback"] {
+			t.Fatalf("mode=%s: blocking human_feedback must be exposed for explicit tests and urgent short-lived input", mode)
 		}
 	}
 

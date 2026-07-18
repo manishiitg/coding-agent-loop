@@ -86,8 +86,8 @@ var mcpBridgeCustomToolCategories = map[string]bool{
 	"workspace_image":      true,
 	"workspace_image_gen":  true,
 	"workspace_image_edit": true,
-	"human":                true,
 	"human_tools":          true,
+	"delegation_tools":     true,
 	"workflow":             true,
 	"workflow_creator":     true,
 	"knowledgebase_tools":  true,
@@ -1655,6 +1655,7 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Human Feedback API
 	apiRouter.HandleFunc("/human-feedback/submit", api.handleSubmitHumanFeedback).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/human-feedback/pending", api.handleListPendingHumanFeedback).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/report-human-inputs", api.handleListReportHumanInputs).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/report-human-inputs/aggregate", api.handleListReportHumanInputsAggregate).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/report-human-inputs", api.handleCreateReportHumanInput).Methods("POST", "OPTIONS")
@@ -4638,7 +4639,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 							// Wrap human tools to inject SessionEventEmitter for blocking events (feedback/questions)
 							registrationFunc := execFunc
-							if toolCategory == virtualtools.GetHumanToolCategory() {
+							if virtualtools.IsHumanToolCategory(toolCategory) {
 								originalExec := execFunc
 								registrationFunc = func(ctx context.Context, args map[string]interface{}) (string, error) {
 									ctx = context.WithValue(ctx, virtualtools.SessionEventEmitterKey, &sessionEventEmitter{
@@ -6407,7 +6408,7 @@ func (e *sessionEventEmitter) EmitBlockingHumanFeedback(requestID, question, con
 		Options:       options,
 	}
 	event := events.Event{
-		ID:        fmt.Sprintf("%s_plan_approval_%d", e.sessionID, now.UnixNano()),
+		ID:        fmt.Sprintf("%s_human_feedback_%d", e.sessionID, now.UnixNano()),
 		Type:      "blocking_human_feedback",
 		Timestamp: now,
 		SessionID: e.sessionID,
@@ -6420,7 +6421,7 @@ func (e *sessionEventEmitter) EmitBlockingHumanFeedback(requestID, question, con
 		},
 	}
 	e.eventStore.AddEvent(e.sessionID, event)
-	log.Printf("[PLAN APPROVAL] Emitted blocking_human_feedback event for plan approval (request_id: %s, session: %s)", requestID, e.sessionID)
+	log.Printf("[HUMAN_FEEDBACK] Emitted blocking_human_feedback event (request_id: %s, session: %s)", requestID, e.sessionID)
 }
 
 func sanitizeTierModel(model *virtualtools.TierModel) *virtualtools.TierModel {
@@ -7412,6 +7413,20 @@ func (api *StreamingAPI) handleSubmitHumanFeedback(w http.ResponseWriter, r *htt
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// handleListPendingHumanFeedback exposes the authoritative in-memory queue so
+// urgent prompts are visible even when their background session/tree is not
+// currently mounted in the frontend.
+func (api *StreamingAPI) handleListPendingHumanFeedback(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"requests": virtualtools.GetHumanFeedbackStore().ListPending(time.Now()),
+	})
 }
 
 // buildWorkshopGroupInfo builds a human-readable summary of available variable groups

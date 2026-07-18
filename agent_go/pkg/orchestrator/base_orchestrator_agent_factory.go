@@ -354,7 +354,7 @@ func (bo *BaseOrchestrator) registerCustomToolsForAgent(
 				// Without this, human_feedback tools called from workflow agents
 				// would silently skip event emission (no emitter in context) and time out.
 				finalExecutor := toolExecutor
-				if toolCategory == virtualtools.GetHumanToolCategory() && bo.GetContextAwareBridge() != nil {
+				if virtualtools.IsHumanToolCategory(toolCategory) && bo.GetContextAwareBridge() != nil {
 					emitter := &BridgeSessionEventEmitter{Bridge: bo.GetContextAwareBridge()}
 					origExec := toolExecutor
 					finalExecutor = func(ctx context.Context, args map[string]interface{}) (string, error) {

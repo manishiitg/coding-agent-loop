@@ -24,7 +24,7 @@ func CreateHumanTools() []llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "human_feedback",
-			Description: "Request short-lived input that only a human can provide, such as an OTP/2FA code, CAPTCHA completion, explicit approval, a subjective decision, or private information. This tool pauses only the calling workflow until the human answers directly in the AgentWorks UI; it does not route the question through the Workflow Builder. Do not use it for questions another agent can answer or for questions that may wait hours or days. Choose the shortest realistic timeout_seconds; use an expiry shown by the external service when available. The tool returns the human's response as text.",
+			Description: "Request urgent, short-lived input that only a human can provide, such as an OTP/2FA code, CAPTCHA completion, explicit approval, a subjective decision, private information, or an explicit test of the human-feedback channel. This tool pauses only the calling agent turn until the human answers directly in the AgentWorks UI and immediately alerts enabled notification channels. Do not use it for an ordinary Builder/chat question, something another agent can answer, or something that may wait hours or days. Choose the shortest realistic timeout_seconds; use an expiry shown by the external service when available. The tool returns the human's response as text. Bridge-only coding CLIs invoking the HTTP endpoint through execute_shell_command must keep curl in the foreground and wait for the same call to return; never use nohup, append &, delegate/background it, write the result to a temporary file, poll for completion, or ask the user to send another message after responding. Do not set the shell timeout shorter than timeout_seconds. Cursor CLI has an approximately 60-second silent MCP-call ceiling, so Cursor agents must set timeout_seconds to at most 45 seconds and may retry after an explicit expiry only when the input is still required.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -273,7 +273,13 @@ func normalizeNotifyEmailList(values []string) []string {
 
 // GetToolCategory returns the category name for human tools
 func GetHumanToolCategory() string {
-	return "human"
+	return "human_tools"
+}
+
+// IsHumanToolCategory checks the single canonical category used by tool
+// registration, workflow configuration, filtering, and context injection.
+func IsHumanToolCategory(category string) bool {
+	return strings.TrimSpace(category) == GetHumanToolCategory()
 }
 
 // WorkshopHumanToolNames is the SINGLE SOURCE OF TRUTH for which human tools a
@@ -282,13 +288,14 @@ func GetHumanToolCategory() string {
 // registered by createCustomTools(workflowMode=true) — so the allow-list can never
 // drift from what's actually registered (the drift that made notify_user invisible).
 //
-// human_feedback is intentionally excluded: the builder is already in a chat and
-// asks the user directly rather than blocking. notify_user is the non-blocking
-// outbound push (Slack/WhatsApp/Gmail). create_human_input_request and
+// human_feedback is available for explicit channel tests and truly urgent,
+// short-lived human-only input; ordinary builder questions stay in chat.
+// notify_user is the non-blocking outbound push (Slack/WhatsApp/Gmail).
+// create_human_input_request and
 // mark_human_input_consumed are non-blocking Pulse/report questions stored in
 // the workflow-local db/db.sqlite.
 func WorkshopHumanToolNames() []string {
-	return []string{"notify_user", "create_human_input_request", "mark_human_input_consumed"}
+	return []string{"human_feedback", "notify_user", "create_human_input_request", "mark_human_input_consumed"}
 }
 
 // CreateHumanToolExecutors creates the execution functions for human tools
@@ -425,7 +432,17 @@ func handleHumanFeedback(ctx context.Context, args map[string]interface{}) (stri
 
 	// Register the request before emitting UI/notification events so an immediate
 	// Electron response can never race the store registration.
-	if err := feedbackStore.CreateRequestWithoutNotification(uniqueID, messageForUser); err != nil {
+	expiryContext := fmt.Sprintf("This request expires in %d seconds.", int(waitTimeout/time.Second))
+	sessionID, _ := ctx.Value(BGAgentSessionIDKey).(string)
+	if err := feedbackStore.CreatePendingRequest(
+		uniqueID,
+		messageForUser,
+		expiryContext,
+		sessionID,
+		options,
+		len(options) == 0,
+		waitTimeout,
+	); err != nil {
 		return "", fmt.Errorf("failed to create feedback request: %w", err)
 	}
 
@@ -433,7 +450,6 @@ func handleHumanFeedback(ctx context.Context, args map[string]interface{}) (stri
 	// The expiry is informational here; the store owns the authoritative timer.
 	if emitter, ok := ctx.Value(SessionEventEmitterKey).(SessionEventEmitter); ok && emitter != nil {
 		hasOptions := len(options) > 0
-		expiryContext := fmt.Sprintf("This request expires in %d seconds.", int(waitTimeout/time.Second))
 		emitter.EmitBlockingHumanFeedback(uniqueID, messageForUser, expiryContext, hasOptions, "", "", options...)
 	}
 

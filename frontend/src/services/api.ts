@@ -23,6 +23,7 @@ import type {
   LLMGuidanceResponse,
   LLMGuidanceRequest,
   HumanFeedbackResponse,
+  PendingHumanFeedbackResponse,
   SummarizeConversationRequest,
   SummarizeConversationResponse,
   CompactContextRequest,
@@ -1120,6 +1121,11 @@ export const agentApi = {
       unique_id: uniqueId,
       response: response
     })
+    return apiResponse.data
+  },
+
+  getPendingHumanFeedback: async (): Promise<PendingHumanFeedbackResponse> => {
+    const apiResponse = await api.get('/api/human-feedback/pending', { timeout: 10000 })
     return apiResponse.data
   },
 

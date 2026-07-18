@@ -1083,6 +1083,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
         onSubmitFeedback={onSubmitFeedback}
         onFeedbackSubmitted={onFeedbackSubmitted}
         isApproving={isApproving}
+        surfaceNotifications={false}
       />
     )
   }

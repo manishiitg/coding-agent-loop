@@ -297,8 +297,22 @@ func TestLiveAttachSeedWaitsForResizeRepaintGrace(t *testing.T) {
 	waitStreamDone(t, st)
 }
 
-func TestLiveAttachForceViewerRepaintNudgesAndRestoresGeometry(t *testing.T) {
-	fake := installFakeAttach(t, seedResponder(nil, []string{"screen-with-working-spinner"}, "0,0"))
+func TestLiveAttachForceViewerRepaintSignalsPaneWithoutResize(t *testing.T) {
+	seed := seedResponder(nil, []string{"screen-with-working-spinner"}, "0,0")
+	fake := installFakeAttach(t, func(cmd string) liveattach.Reply {
+		if strings.Contains(cmd, "#{pane_pid}") {
+			return liveattach.Reply{Lines: []string{"4242"}}
+		}
+		return seed(cmd)
+	})
+	originalSignal := signalLiveAttachPaneProcess
+	signaledPID := 0
+	signalLiveAttachPaneProcess = func(pid int) error {
+		signaledPID = pid
+		return nil
+	}
+	t.Cleanup(func() { signalLiveAttachPaneProcess = originalSignal })
+
 	m := newLiveAttachManager()
 	st, ch, _, err := m.addViewer(context.Background(), "repaint-all-providers", 117, 35)
 	if err != nil {
@@ -311,39 +325,41 @@ func TestLiveAttachForceViewerRepaintNudgesAndRestoresGeometry(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if err := st.forceViewerRepaint(ctx, 117, 35); err != nil {
+	// Ignore the initial seed commands; repaint itself must not resize.
+	for {
+		select {
+		case <-fake.commands:
+		default:
+			goto seededCommandsDrained
+		}
+	}
+
+seededCommandsDrained:
+	if err := st.forceViewerRepaint(ctx); err != nil {
 		t.Fatalf("forceViewerRepaint: %v", err)
 	}
 
-	var resizeCommands []string
+	var repaintCommands []string
 	for {
 		select {
 		case cmd := <-fake.commands:
-			if strings.HasPrefix(cmd, "resize-window") {
-				resizeCommands = append(resizeCommands, cmd)
-			}
+			repaintCommands = append(repaintCommands, cmd)
 		default:
 			goto drained
 		}
 	}
 
 drained:
-	if len(resizeCommands) < 3 {
-		// Initial seed geometry, followed by the forced nudge and restore.
-		t.Fatalf("resize commands = %q, want initial resize plus repaint nudge/restore", resizeCommands)
+	if signaledPID != 4242 {
+		t.Fatalf("signaled pid = %d, want 4242", signaledPID)
 	}
-	lastTwo := resizeCommands[len(resizeCommands)-2:]
-	if !strings.Contains(lastTwo[0], "-x 116 -y 35") {
-		t.Fatalf("repaint nudge = %q, want 116x35", lastTwo[0])
+	if len(repaintCommands) != 1 || !strings.Contains(repaintCommands[0], "#{pane_pid}") {
+		t.Fatalf("repaint commands = %q, want only pane pid lookup", repaintCommands)
 	}
-	if !strings.Contains(lastTwo[1], "-x 117 -y 35") {
-		t.Fatalf("repaint restore = %q, want 117x35", lastTwo[1])
-	}
-	st.mu.Lock()
-	gotCols, gotRows := st.appliedCols, st.appliedRows
-	st.mu.Unlock()
-	if gotCols != 117 || gotRows != 35 {
-		t.Fatalf("applied geometry = %dx%d, want restored 117x35", gotCols, gotRows)
+	for _, cmd := range repaintCommands {
+		if strings.HasPrefix(cmd, "resize-window") {
+			t.Fatalf("same-size repaint unexpectedly changed geometry: %q", cmd)
+		}
 	}
 }
 

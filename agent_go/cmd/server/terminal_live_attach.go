@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/creack/pty"
@@ -75,6 +76,14 @@ const (
 	liveAttachMinTmuxMajor = 2
 	liveAttachMinTmuxMinor = 9
 )
+
+var signalLiveAttachPaneProcess = func(pid int) error {
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return process.Signal(syscall.SIGWINCH)
+}
 
 // liveAttachEnabled reports whether the live-attach transport is turned on.
 // Live-attach is now the only transport for the selected terminal, so this is
@@ -469,14 +478,12 @@ func (st *liveAttachStream) setSize(cols, rows int) {
 // asynchronous so the control-mode scanner remains free to consume repaint
 // output while the settle detector waits.
 func (st *liveAttachStream) setSizeThen(cols, rows int, ready func()) {
-	_ = st.resizeToThen(cols, rows, false, ready)
+	_ = st.resizeToThen(cols, rows, ready)
 }
 
-// resizeToThen applies one tmux geometry change. When force is true the
-// command is sent even when tmux is already recorded at that geometry. The
-// forced form is used by the late-attach repaint handshake below; normal
-// browser resizes retain the same-size fast path.
-func (st *liveAttachStream) resizeToThen(cols, rows int, force bool, ready func()) error {
+// resizeToThen applies one real tmux geometry change. Same-size browser resize
+// events retain the fast path and never disturb the running TUI.
+func (st *liveAttachStream) resizeToThen(cols, rows int, ready func()) error {
 	if cols < terminalMinResizeCols || rows < terminalMinResizeRows {
 		if ready != nil {
 			go ready()
@@ -484,7 +491,7 @@ func (st *liveAttachStream) resizeToThen(cols, rows int, force bool, ready func(
 		return nil
 	}
 	st.mu.Lock()
-	if !force && st.appliedCols == cols && st.appliedRows == rows {
+	if st.appliedCols == cols && st.appliedRows == rows {
 		st.mu.Unlock()
 		if ready != nil {
 			go ready()
@@ -520,38 +527,47 @@ func (st *liveAttachStream) resizeToThen(cols, rows int, force bool, ready func(
 // Cursor and Pi/dev Working spinners) can then append instead of replacing the
 // status row.
 //
-// A one-column resize followed by restoration sends SIGWINCH to the pane and
-// makes the CLI emit one complete repaint over the already-spliced live byte
-// stream. This is intentionally provider-independent and runs once per viewer
-// connection/reconnection. The caller writes the seed to the WebSocket and
-// starts its byte writer before invoking this method, preserving seed ->
-// repaint -> incremental-output ordering.
-func (st *liveAttachStream) forceViewerRepaint(ctx context.Context, cols, rows int) error {
-	if cols < terminalMinResizeCols || rows < terminalMinResizeRows {
-		return nil
-	}
-	nudgeCols := cols - 1
-	if nudgeCols < terminalMinResizeCols {
-		nudgeCols = cols + 1
-	}
-	waitForResize := func(nextCols int) error {
-		ready := make(chan struct{})
-		if err := st.resizeToThen(nextCols, rows, true, func() { close(ready) }); err != nil {
-			return err
-		}
-		select {
-		case <-ready:
-			return nil
-		case <-st.done:
-			return fmt.Errorf("live-attach stream for %s closed during repaint", st.tmuxSession)
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	if err := waitForResize(nudgeCols); err != nil {
+// A same-size SIGWINCH asks the pane process to emit a complete repaint over
+// the already-spliced live byte stream. Unlike the previous one-column
+// resize/restore handshake, this never reflows the terminal or makes the UI
+// visibly jump. It runs once per viewer connection/reconnection after the seed
+// and live writer are installed.
+func (st *liveAttachStream) forceViewerRepaint(ctx context.Context) error {
+	cmd, err := st.sendCommand(
+		fmt.Sprintf("display-message -p -t %s '#{pane_pid}'", st.tmuxSession),
+		nil,
+	)
+	if err != nil {
 		return err
 	}
-	return waitForResize(cols)
+
+	var reply liveattach.Reply
+	select {
+	case reply = <-cmd.done:
+	case <-st.done:
+		return fmt.Errorf("live-attach stream for %s closed during repaint", st.tmuxSession)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if reply.Err {
+		return fmt.Errorf("resolve pane pid for %s: %s", st.tmuxSession, strings.Join(reply.Lines, " / "))
+	}
+
+	pidText := ""
+	for i := len(reply.Lines) - 1; i >= 0; i-- {
+		if candidate := strings.TrimSpace(reply.Lines[i]); candidate != "" {
+			pidText = candidate
+			break
+		}
+	}
+	pid, err := strconv.Atoi(pidText)
+	if err != nil || pid <= 0 {
+		return fmt.Errorf("resolve pane pid for %s: invalid pid %q", st.tmuxSession, pidText)
+	}
+	if err := signalLiveAttachPaneProcess(pid); err != nil {
+		return fmt.Errorf("signal pane process %d for %s repaint: %w", pid, st.tmuxSession, err)
+	}
+	return nil
 }
 
 func (st *liveAttachStream) waitForResizeRepaint(resizeStartedAt time.Time, ready func()) {
@@ -985,7 +1001,7 @@ func (api *StreamingAPI) handleTerminalStream(w http.ResponseWriter, r *http.Req
 	// one post-seed repaint while the writer is already forwarding pane bytes.
 	// This prevents incremental Cursor/Pi/Codex/Claude spinner frames from
 	// accumulating as separate rows after a late attach or reconnect.
-	if err := st.forceViewerRepaint(connCtx, cols, rows); err != nil && connCtx.Err() == nil && !st.isDone() {
+	if err := st.forceViewerRepaint(connCtx); err != nil && connCtx.Err() == nil && !st.isDone() {
 		log.Printf("[live-attach] post-seed repaint terminal=%s session=%s: %v", snapshot.TerminalID, snapshot.TmuxSession, err)
 	}
 

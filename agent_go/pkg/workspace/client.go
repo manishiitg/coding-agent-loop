@@ -190,6 +190,7 @@ func (c *Client) resolveEffectiveFolderGuard(ctx context.Context) *FolderGuardCo
 		if hasCtxReads && len(ctxReads) > 0 {
 			readPaths = deduplicateStrings(append(ctxReads, allowedWrites...))
 		}
+		log.Printf("[FOLDER_GUARD_RESOLVE] CtxAllowedWriteFolder for file op: session=%s WritePaths=%v", sessionID, allowedWrites)
 		return &FolderGuardConfig{
 			Enabled:           true,
 			WritePaths:        clonePathList(allowedWrites),
@@ -199,13 +200,16 @@ func (c *Client) resolveEffectiveFolderGuard(ctx context.Context) *FolderGuardCo
 		}
 	}
 
-	// 3. Context System 2: workflow orchestrator
+	// 3. Context System 2: workflow orchestrator (frozen per-agent snapshot)
 	if ctxWrites, ok := ctx.Value(common.FolderGuardWritePathsKey).([]string); ok {
 		ctxReads, hasCtxReads := ctx.Value(common.FolderGuardReadPathsKey).([]string)
 		readPaths := ctxWrites
 		if hasCtxReads && len(ctxReads) > 0 {
 			readPaths = deduplicateStrings(append(ctxReads, ctxWrites...))
 		}
+		// If this branch fires for a workflow step turn, the per-item session guard
+		// was missing/empty — the frozen creation-time snapshot decided instead.
+		log.Printf("[FOLDER_GUARD_RESOLVE] CtxSnapshot (session guard absent) for file op: session=%s WritePaths=%v", sessionID, ctxWrites)
 		return &FolderGuardConfig{
 			Enabled:           true,
 			WritePaths:        clonePathList(ctxWrites),
@@ -217,6 +221,7 @@ func (c *Client) resolveEffectiveFolderGuard(ctx context.Context) *FolderGuardCo
 
 	// 4. Client-level fallback
 	if c.FolderGuard != nil && c.FolderGuard.Enabled {
+		log.Printf("[FOLDER_GUARD_RESOLVE] ClientFallback for file op: session=%s WritePaths=%v", sessionID, c.FolderGuard.WritePaths)
 		return cloneFolderGuard(c.FolderGuard)
 	}
 
@@ -269,7 +274,14 @@ func (c *Client) ValidatePathWithContext(ctx context.Context, inputPath string, 
 	if guard == nil || !guard.Enabled {
 		return nil
 	}
-	return validatePathAgainstGuard(guard, inputPath, isWrite)
+	if err := validatePathAgainstGuard(guard, inputPath, isWrite); err != nil {
+		// Denial log pairs with the [FOLDER_GUARD_RESOLVE] line above it to show
+		// WHICH guard source (session / ctx snapshot / client fallback) denied.
+		log.Printf("[FOLDER_GUARD_DENY] session=%s isWrite=%v path=%q writePaths=%v err=%v",
+			c.sessionIDFromContext(ctx), isWrite, inputPath, guard.WritePaths, err)
+		return err
+	}
+	return nil
 }
 
 // HasEffectiveWriteGuard reports whether the current request/session context has

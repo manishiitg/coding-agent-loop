@@ -61,7 +61,10 @@ func TestTodoTaskMessagesDeserializeToUnifiedItem(t *testing.T) {
 func TestMessageSequenceClosingItems(t *testing.T) {
 	hcpo := newMessageSequenceClosingTestOrchestrator(t)
 
-	// Configured for BOTH learnings and KB writes -> both items appended, in order.
+	// Configured for BOTH learnings and KB writes (direct method) -> both items
+	// appended, in order. The KB closing turn exists ONLY for write_method=direct:
+	// under the default agent method the constraint layer strips KB from every
+	// item's guard, so the turn would be a guaranteed-denied write.
 	both := &MessageSequencePlanStep{
 		Type:             StepTypeMessageSeq,
 		CommonStepFields: CommonStepFields{ID: "extract-all", Description: "extract portfolio data"},
@@ -70,6 +73,7 @@ func TestMessageSequenceClosingItems(t *testing.T) {
 			LearningObjective:         "Capture how to extract MyCAMS portfolio data reliably",
 			KnowledgebaseAccess:       KBAccessReadWrite,
 			KnowledgebaseContribution: "Record portal-specific selectors and quirks",
+			KnowledgebaseWriteMethod:  KBWriteMethodDirect,
 		},
 	}
 	items := hcpo.messageSequenceClosingItems(context.Background(), both, 0)
@@ -107,6 +111,22 @@ func TestMessageSequenceClosingItems(t *testing.T) {
 	}
 	if got := hcpo.messageSequenceClosingItems(context.Background(), kbReadOnly, 0); len(got) != 0 {
 		t.Errorf("expected no KB item when access is read-only, got %d", len(got))
+	}
+
+	// KB write-capable but write_method=agent (the default when unset) -> NO KB
+	// closing item: notes/ is not writable by the step agent under agent mode, so
+	// the turn would be a guaranteed-denied write. The post-step KB update agent
+	// (maybeEnqueueKBUpdate, called from the message-sequence dispatch path) owns
+	// the contribution instead.
+	kbAgentMethod := &MessageSequencePlanStep{
+		CommonStepFields: CommonStepFields{ID: "w", Description: "d"},
+		AgentConfigs: &AgentConfigs{
+			KnowledgebaseAccess:       KBAccessReadWrite,
+			KnowledgebaseContribution: "note something",
+		},
+	}
+	if got := hcpo.messageSequenceClosingItems(context.Background(), kbAgentMethod, 0); len(got) != 0 {
+		t.Errorf("expected no KB closing item under write_method=agent (default), got %d", len(got))
 	}
 }
 

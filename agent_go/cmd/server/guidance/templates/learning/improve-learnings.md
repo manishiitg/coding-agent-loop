@@ -42,7 +42,7 @@ This command maintains reusable HOW-to-run knowledge such as selectors, tool/API
 BOUNDARIES
 
 1. Return a concrete recommended instruction and optional focus for the Pulse Fixer; there is no separate learning-maintenance tool.
-2. Work on `learnings/_global/` only. Do not edit `planning/`, `evaluation/`, `reports/`, `db/`, `knowledgebase/`, or per-step `learnings/{step-id}/main.py` from this command.
+2. Work on `learnings/_global/` only. Do not edit `planning/`, `evaluation/`, `reports/`, `db/`, `knowledgebase/`, or per-step `learnings/{step-id}/main.py` from this command. Never edit or delete `learnings/_global/_freshness.json` — it is a code-owned freshness ledger written by the runtime; read it, do not touch it.
 3. If you discover stale per-step scripts, bad `learning_objective`, wrong `learnings_access`, or lock issues, record/recommend them for the parent Pulse Fixer or an explicit manual fix. Eval rubric, coverage, or scoring issues belong to `/improve-evaluation`, not here.
 4. Keep WHAT-the-workflow-discovered out of learnings. User-supplied runtime context belongs in `knowledgebase/context/`; workflow-discovered subject-matter facts belong in `knowledgebase/notes/` or `db/db.sqlite`, not `learnings/_global/`.
 5. Enforce a lean index shape: `learnings/_global/SKILL.md` should stay under roughly 80-100 lines and act as an overview plus links to focused files under `learnings/_global/references/`. Detailed selectors, API quirks, auth flows, file-format notes, retry patterns, and step-specific HOW guidance belong in reference files, not in the root `SKILL.md`.
@@ -53,6 +53,17 @@ READ FIRST
 2. Read `planning/plan.json` and `planning/step_config.json` if present. Use them to understand current steps, `learnings_access`, `learning_objective`, `lock_learnings`, and `lock_code` decisions.
 3. Read `builder/improve.html` if present. Carry unresolved learning/code findings, prior cleanup attempts, recent Pulse fixes or Goal Advisor actions, and recent plan changes into the instruction.
 4. Read `learnings/_global/SKILL.md` and relevant files under `learnings/_global/references/`. Do not blindly load every large reference file; use the index and file names to pick relevant files.
+5. Read `learnings/_global/_freshness.json` if present (the code-owned confirmation ledger). Its store-level `last_confirmed_run` says how recently a run reviewed the whole store; its `items` map gives each reference file's own `last_confirmed_run` and `confirm_count`, so you can target the specific stale files rather than re-scanning everything. This is the input to the freshness pass below.
+
+FRESHNESS PASS (confirmation recency)
+
+When Gate marked this due on a freshness signal, judge learnings by whether recent runs still exercise them, not only by plan contradiction. HOW that no run has re-confirmed in a long interval is a re-verify candidate: check it against the latest run evidence (selectors/API shapes/auth flows actually used in `runs/iteration-0/`). Then, for each stale item:
+
+- **Refresh** it if the latest run shows the corrected HOW, and let the next run's confirmation re-stamp it.
+- **Demote** genuinely superseded HOW into a `## Superseded` section of its reference file (or an archived reference), keeping the last-confirmed context, rather than deleting it — a regression can resurrect it.
+- **Retire** only after a re-verify actually fails or the HOW is provably obsolete.
+
+Never delete learnings purely because they are old. Age is a reason to re-verify, not to discard. Confirmation recency, not calendar age, is the signal.
 
 WHEN TO USE EACH MODE
 

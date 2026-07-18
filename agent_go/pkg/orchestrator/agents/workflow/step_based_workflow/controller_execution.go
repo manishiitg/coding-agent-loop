@@ -2347,6 +2347,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 									hcpo.recordWorkflowContinuationPhase(context.Background(), artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseKBReview, workflowContinuationStatusFailed, reviewErr.Error(), executionAgent)
 								} else {
 									directKBReviewSummary = summarizeExecutionResultForNotification(reviewResult)
+									// Freshness: a KB-writing step reviewed the knowledgebase store this
+									// run, so Pulse can age out notes no run has re-confirmed. Code-owned
+									// ledger; best-effort. Use Background ctx (step ctx may be done).
+									if freshErr := hcpo.recordKnowledgebaseConfirmation(context.Background(), hcpo.selectedRunFolder, step.GetID()); freshErr != nil {
+										hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to record knowledgebase freshness for step %s: %v", step.GetID(), freshErr))
+									}
 									executionConversationHistory = updatedHistory
 									hcpo.GetLogger().Info(fmt.Sprintf("🧠 KB self-review completed for step %d (history=%d turns)", stepIndex+1, len(executionConversationHistory)))
 									hcpo.recordWorkflowContinuationPhase(context.Background(), artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseKBReview, workflowContinuationStatusCompleted, "", executionAgent)
@@ -2432,6 +2438,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 											// auto-locks learnings; builder/user decisions own lock_learnings.
 											directLearningPathIdentifier := getEffectiveLearningPathIdentifier(step.GetID(), stepPath, stepCfgForLearn)
 											hasNewLearning, directLearningReasoning, directLearningConfidence := inferHasNewLearningFromResult(learnResult)
+											// Freshness: record that this run re-confirmed the learnings store
+											// (updated vs reviewed-unchanged) so Pulse can age out HOW-knowledge
+											// no run has re-confirmed. Code-owned ledger; best-effort.
+											if freshErr := hcpo.recordLearningsConfirmation(context.Background(), hcpo.selectedRunFolder, step.GetID(), hasNewLearning); freshErr != nil {
+												hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to record learnings freshness for step %s: %v", step.GetID(), freshErr))
+											}
 											directLearningLLM := executionLLM
 											if metadataErr := hcpo.updateLearningMetadataWithTurnCount(
 												ctx,
@@ -3259,6 +3271,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
 				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after message sequence step: %v", err))
 			}
+			// KB write_method=agent: the sequence appends no KB closing turn (notes/
+			// is not writable by the step agent under agent mode), so the post-step
+			// KB update agent owns the contribution — same as the regular/todo path.
+			// maybeEnqueueKBUpdate self-gates (no-op for direct mode, empty
+			// contribution, KB disabled, or workflow-level lock).
+			hcpo.maybeEnqueueKBUpdate(i, stepPath, sequenceExecutionStep)
 			if hcpo.runSingleStepOnly && i == hcpo.singleStepTarget {
 				hcpo.GetLogger().Info(fmt.Sprintf("🎯 Single step mode: completed target step %d, stopping execution", i+1))
 				hcpo.SetRunSingleStepMode(false, -1)

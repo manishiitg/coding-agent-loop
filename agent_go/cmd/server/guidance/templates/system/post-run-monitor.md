@@ -33,6 +33,9 @@ Gate uses a **progressive evidence scan**. Start with compact state and metadata
 - `db/README.md` and a compact DB schema summary
 - a compact KB note index; `knowledgebase/context` remains read-only user context
 - per-step learning metadata and whether global learnings changed
+- the code-owned store freshness ledgers `learnings/_global/_freshness.json` and
+  `knowledgebase/_freshness.json` (`last_confirmed_run`, `last_confirmed_at`,
+  `confirm_count`) — how recently an actual run re-confirmed each store
 - open and answered report human inputs in `db/db.sqlite`
 - Chief of Staff recommendation cards in `builder/improve.html`
 - compact cost/timing availability and change signals when present
@@ -501,6 +504,13 @@ Mark due when workflow behavior changed or learning state may be stale:
 - mature stable learnings should be locked with evidence
 - a run discovered reusable HOW-to knowledge worth capturing
 - selectors/API quirks changed
+- **freshness (confirmation recency):** `learnings/_global/` has content but
+  `_freshness.json.last_confirmed_run` is many runs / a long business interval
+  behind the current run — no current step re-confirms it, so the HOW-knowledge
+  may have silently gone stale even though nothing has contradicted it. Existing
+  learnings with **no** `_freshness.json` means there is no freshness baseline
+  yet; mark due to establish one. When fresh (recently confirmed this run or
+  last), record the confirmation cadence and skip with a next-check.
 
 The read-only reviewer identifies stale learning content and lock/unlock changes.
 The Pulse Fixer applies bounded learning and step-config edits directly. Use
@@ -512,6 +522,12 @@ Load `assumption-audit`: reusable HOW must not preserve business policy, fixed s
 ### knowledgebase_health
 
 Mark due when KB notes or KB config are missing, duplicated, stale, contradictory, or no longer aligned with the plan.
+
+Also mark due on a **freshness (confirmation recency)** signal: `knowledgebase/notes/`
+has content but `knowledgebase/_freshness.json.last_confirmed_run` is many runs / a
+long business interval behind the current run, so notes may have silently gone stale
+without any run contradicting them. A missing `_freshness.json` beside existing notes
+means no freshness baseline yet — mark due to establish one.
 
 `knowledgebase/context` is user-owned runtime business context. Read it for
 evidence, but do not rewrite it. The read-only reviewer proposes precise note or

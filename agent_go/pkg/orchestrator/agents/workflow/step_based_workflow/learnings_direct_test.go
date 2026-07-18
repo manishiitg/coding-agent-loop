@@ -195,3 +195,53 @@ func testContainsString(values []string, target string) bool {
 	}
 	return false
 }
+
+// Regression for the message_sequence learnings-write sandbox denial: the reused
+// execution agent freezes its workspace-write guard at creation, so the snapshot
+// is built from the step's FULL granted write scope (messageSequenceStepFullWriteAccess)
+// — not the first item's — or the learnings/KB closing turns are denied. This guards
+// that a learnings-read-write step yields Learnings=true (→ learnings/_global in the
+// frozen snapshot) while a read-only step does not.
+func TestMessageSequenceStepFullWriteAccessGrantsLearningsForRWStep(t *testing.T) {
+	base, err := orchestrator.NewBaseOrchestrator(
+		loggerv2.NewNoop(), nil, orchestrator.OrchestratorTypeWorkflow, "", 0, "",
+		[]string{"test-server"}, nil, false, &orchestrator.LLMConfig{}, 1, nil, nil, nil,
+	)
+	if err != nil {
+		t.Fatalf("NewBaseOrchestrator: %v", err)
+	}
+	base.SetWorkspacePath("Workflow/confida-qa-testing")
+	hcpo := &StepBasedWorkflowOrchestrator{BaseOrchestrator: base}
+
+	rwStep := &MessageSequencePlanStep{
+		CommonStepFields: CommonStepFields{ID: "survey-app-and-refresh-knowledge"},
+		AgentConfigs:     &AgentConfigs{LearningsAccess: LearningsAccessReadWrite, LearningObjective: "capture the refresh flow"},
+	}
+	if !hcpo.messageSequenceStepFullWriteAccess(rwStep).Learnings {
+		t.Fatal("learnings-read-write step must grant Learnings in the frozen snapshot scope")
+	}
+
+	roStep := &MessageSequencePlanStep{
+		CommonStepFields: CommonStepFields{ID: "survey"},
+		AgentConfigs:     &AgentConfigs{LearningsAccess: LearningsAccessRead},
+	}
+	if hcpo.messageSequenceStepFullWriteAccess(roStep).Learnings {
+		t.Fatal("learnings-read step must not grant Learnings write")
+	}
+}
+
+// The learnings contribution turn fires after every learnings-writing step, so its
+// fixed instruction overhead is per-step token cost. Guard against silent re-bloat;
+// budgets carry modest headroom over the current trimmed size. If a genuinely needed
+// rule pushes past budget, trim redundant rationale elsewhere rather than raising it.
+func TestLearningsContributionTurnStaysWithinSizeBudget(t *testing.T) {
+	tp := "/tmp/workspace-docs/Workflow/wf/learnings/_global"
+	base := BuildLearningsContributionTurnWithTargetAndBrowser("s", "Do the thing.", "Capture the flow.", false, tp, false)
+	brow := BuildLearningsContributionTurnWithTargetAndBrowser("s", "Do the thing.", "Capture the flow.", false, tp, true)
+	if len(base) > 4800 {
+		t.Fatalf("learnings turn (no browser) grew to %d chars (budget 4800) — trim before adding", len(base))
+	}
+	if len(brow) > 7100 {
+		t.Fatalf("learnings turn (browser) grew to %d chars (budget 7100) — trim before adding", len(brow))
+	}
+}

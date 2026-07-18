@@ -130,8 +130,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceClosingItems(ctx conte
 		}
 	}
 
-	// Knowledgebase: write-capable access + a non-empty contribution instruction.
-	if contribution := strings.TrimSpace(kbContributionForPrompt(cfg)); contribution != "" && kbAccessAllowsWrite(cfg.KnowledgebaseAccess) {
+	// Knowledgebase: resolved write-capable access + a non-empty contribution
+	// instruction + DIRECT write method. Under write_method=agent the constraint
+	// layer strips KB from every item's guard (notes/ is only writable by the
+	// post-step KB update agent), so appending this turn would create a
+	// guaranteed-denied write: the prompt promises access enforcement refuses.
+	// Agent-mode contributions are handled by maybeEnqueueKBUpdate after the
+	// sequence completes (see the message-sequence dispatch path).
+	if contribution := strings.TrimSpace(kbContributionForPrompt(cfg)); contribution != "" &&
+		kbAccessAllowsWrite(resolveKnowledgebaseAccess(cfg, hcpo.UseKnowledgebase())) &&
+		resolveKnowledgebaseWriteMethod(cfg) == KBWriteMethodDirect {
 		var b strings.Builder
 		b.WriteString("## Knowledgebase Contribution (dedicated turn)\n\n")
 		b.WriteString("The sequence is complete. In this turn you have WRITE access to the knowledgebase. Fulfill this step's knowledgebase contribution, then stop.\n\n")
@@ -768,6 +776,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceUserMessage(ctx
 		restoreDirectLearningTurn := hcpo.prepareDirectLearningTurn(runtime.Agent, []string{filepath.Join(hcpo.GetWorkspacePath(), LearningsFolderName, GlobalLearningID)})
 		defer restoreDirectLearningTurn()
 	}
+	// The dedicated learnings closing turn diff_patches the SHARED
+	// learnings/_global files. Serialize it against every other direct-learnings
+	// writer (regular steps hold the same mutex across their learnings turn —
+	// see controller_execution.go — and learnings_direct.go documents the
+	// contract). Without this, parallel message_sequence steps race on SKILL.md.
+	// Scoped to Kind=="learning" only: locking every learnings-writable work
+	// turn would serialize whole parallel sequences.
+	if strings.TrimSpace(item.Kind) == "learning" && writeAccess.Learnings {
+		learningsGlobalFileMutex.Lock()
+		defer learningsGlobalFileMutex.Unlock()
+	}
 
 	message := strings.TrimSpace(item.Message)
 	if session.LastRuntimeContext != "" {
@@ -823,7 +842,30 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceUserMessage(ctx
 	}
 	session.ConversationHistory = history
 	session.LastRuntimeContext = ""
-	return strings.TrimSpace(result), nil
+	trimmedResult := strings.TrimSpace(result)
+	// Freshness: message_sequence is the primary execution path, so its synthetic
+	// learnings/KB closing turns are where store confirmation is recorded (the
+	// regular-step hooks in controller_execution.go rarely fire now). Best-effort.
+	hcpo.recordMessageSequenceStoreFreshness(item, step.GetID(), trimmedResult)
+	return trimmedResult, nil
+}
+
+// recordMessageSequenceStoreFreshness stamps the code-owned freshness ledger when
+// a learnings/KB contribution closing turn completes: a run reviewed the store and
+// left it current this run. Learnings distinguishes updated vs reviewed-unchanged
+// from the turn result; KB records a review. Never fails the run.
+func (hcpo *StepBasedWorkflowOrchestrator) recordMessageSequenceStoreFreshness(item MessageSequenceItem, stepID, result string) {
+	switch strings.TrimSpace(item.Kind) {
+	case "learning":
+		updated, _, _ := inferHasNewLearningFromResult(result)
+		if err := hcpo.recordLearningsConfirmation(context.Background(), hcpo.selectedRunFolder, stepID, updated); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to record learnings freshness for message_sequence step %s: %v", stepID, err))
+		}
+	case "knowledgebase":
+		if err := hcpo.recordKnowledgebaseConfirmation(context.Background(), hcpo.selectedRunFolder, stepID); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to record knowledgebase freshness for message_sequence step %s: %v", stepID, err))
+		}
+	}
 }
 
 func formatMessageSequenceTurnLogResult(item MessageSequenceItem, result string, err error) string {
@@ -890,7 +932,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) getMessageSequenceRuntime(ctx context
 	hcpo.configureSubAgentSessionGuard(sessionID, "message-sequence", step.GetID(), readPaths, writePaths)
 	hcpo.setMessageSequenceShellEnv(sessionID, stepPath, step.GetID())
 
-	folderOverride := &messageSequenceFolderGuardOverride{ReadPaths: readPaths, WritePaths: writePaths}
+	// The message_sequence execution agent is created ONCE and reused for every
+	// item, and the workspace-write tools (diff_patch_workspace_file) enforce a
+	// folder-guard snapshot FROZEN into the agent at creation (createExecutionOnlyAgent
+	// -> config.FolderGuardWritePaths, which the wrapper captures by value and never
+	// re-reads). So the snapshot must cover every store the sequence's synthetic
+	// closing turns will write — the learnings and KB contribution turns — not just
+	// the first item's scope, or those later turns are denied their granted access
+	// (their diff_patch to learnings/_global fails even though the step is configured
+	// for it). Widen ONLY the frozen tool snapshot to the step's full granted write
+	// scope; shell writes stay per-item via the session guard set above. This mirrors
+	// what regular steps get, since a regular step's learnings turn enforces through
+	// the per-item session guard rather than a reused frozen snapshot.
+	_, snapshotWrite := hcpo.setupMessageSequenceFolderGuard(stepPath, step.GetID(), getAgentConfigs(step), hcpo.messageSequenceStepFullWriteAccess(step))
+	folderOverride := &messageSequenceFolderGuardOverride{ReadPaths: readPaths, WritePaths: snapshotWrite}
 	sessionOverride := &messageSequenceRuntimeSessionOverride{SessionID: sessionID, KeepAlive: true}
 	agentCtx := context.WithValue(ctx, messageSequenceFolderGuardOverrideKey{}, folderOverride)
 	agentCtx = context.WithValue(agentCtx, messageSequenceRuntimeSessionOverrideKey{}, sessionOverride)
@@ -1037,6 +1092,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveMessageSequenceItemWriteAccess
 		return hcpo.constrainMessageSequenceWriteAccess(stepConfig, requested)
 	}
 
+	kbAccess := resolveKnowledgebaseAccess(stepConfig, hcpo.UseKnowledgebase())
+	return MessageSequenceWriteAccess{
+		DB:            resolveDBAccess(stepConfig) == DBAccessReadWrite,
+		Knowledgebase: kbAccessAllowsWrite(kbAccess) && resolveKnowledgebaseWriteMethod(stepConfig) == KBWriteMethodDirect,
+		Learnings:     resolveLearningsAccess(stepConfig) == LearningsAccessReadWrite,
+	}
+}
+
+// messageSequenceStepFullWriteAccess is the step's maximal granted write scope
+// (the no-override resolution). The reused execution agent's frozen tool guard is
+// built from this so every synthetic closing turn (learnings/KB) can write what the
+// step is configured for, regardless of which item created the agent.
+func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceStepFullWriteAccess(step *MessageSequencePlanStep) MessageSequenceWriteAccess {
+	stepConfig := getAgentConfigs(step)
 	kbAccess := resolveKnowledgebaseAccess(stepConfig, hcpo.UseKnowledgebase())
 	return MessageSequenceWriteAccess{
 		DB:            resolveDBAccess(stepConfig) == DBAccessReadWrite,

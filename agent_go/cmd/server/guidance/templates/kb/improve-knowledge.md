@@ -31,7 +31,7 @@ Apply the parent-provided `assumption-audit` KB-notes lens within this command's
 
 BOUNDARIES
 
-1. Work only on `knowledgebase/notes/` and `knowledgebase/notes/_index.json`.
+1. Work only on `knowledgebase/notes/` and `knowledgebase/notes/_index.json`. Never edit or delete `knowledgebase/_freshness.json` — it is a code-owned freshness ledger written by the runtime; read it, do not touch it.
 2. Never read or write `knowledgebase/context/`. That folder is user-owned runtime business context, not maintenance-owned notes.
 3. Do not edit planning files, eval files, report files, learnings, or db files unless the user explicitly asks outside this command.
 4. This review is available in Workshop because KB shape can be part of workflow design or Pulse cleanup. It is not available in Run mode.
@@ -44,6 +44,17 @@ READ FIRST
 4. Read `knowledgebase/notes/_index.json` before opening topic files.
 5. Read only topic markdown files relevant to the requested cleanup or consolidation. Do not glob or load every `knowledgebase/notes/*.md` file.
 6. If the focus is broad, names a step, or says to optimize for the plan, inspect the matching plan step(s) and recent iteration-0 outputs enough to understand what durable knowledge was produced.
+7. Read `knowledgebase/_freshness.json` if present (the code-owned confirmation ledger). Its store-level `last_confirmed_run` says how recently a run reviewed the notes store; its `items` map gives each topic note's own `last_confirmed_run` and `confirm_count`, so you can target the specific stale notes rather than re-scanning everything.
+
+FRESHNESS PASS (confirmation recency)
+
+When Gate marked this due on a freshness signal, judge notes by whether recent runs still re-confirm them, not only by plan contradiction. A durable fact no run has re-confirmed in a long interval is a re-verify candidate — check it against the latest run evidence. Then, for each stale note or section:
+
+- **Refresh** it if the latest run shows the fact changed, and let the next run re-stamp confirmation.
+- **Demote** a superseded point-in-time observation into the note's `## Historical context` block (the same condensation used for size-based compaction), keeping its date, instead of deleting it.
+- **Retire** a topic only when it is provably no longer valid.
+
+Never delete a note purely because it is old. Time-boxed observations decay and get demoted; durable facts persist. Confirmation recency, not calendar age, is the signal.
 
 WHEN TO USE EACH MODE
 

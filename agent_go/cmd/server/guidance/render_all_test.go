@@ -1037,3 +1037,52 @@ func TestWorkflowPatternsUseCurrentRuntimeAndStoreContracts(t *testing.T) {
 		}
 	}
 }
+
+// The store freshness mechanism: Gate reads the code-owned _freshness ledgers and
+// marks learning_health / knowledgebase_health due on a confirmation-recency
+// signal; the reviewer docs gain a re-verify -> demote pass and protect the
+// code-owned ledger from edits.
+func TestPulseStoreFreshnessTriggerAndReviewerPass(t *testing.T) {
+	postRun, err := renderFromRegistry("post-run-monitor", tmplData{}, referenceKinds)
+	if err != nil {
+		t.Fatalf("render post-run-monitor: %v", err)
+	}
+	for _, want := range []string{
+		"learnings/_global/_freshness.json",
+		"knowledgebase/_freshness.json",
+		"last_confirmed_run",
+		"freshness (confirmation recency)",
+	} {
+		if !strings.Contains(postRun, want) {
+			t.Fatalf("post-run-monitor missing freshness trigger %q", want)
+		}
+	}
+
+	learn, err := renderFromRegistry("improve-learnings", tmplData{}, allKinds)
+	if err != nil {
+		t.Fatalf("render improve-learnings: %v", err)
+	}
+	for _, want := range []string{
+		"FRESHNESS PASS (confirmation recency)",
+		"Confirmation recency, not calendar age",
+		"code-owned freshness ledger",
+	} {
+		if !strings.Contains(learn, want) {
+			t.Fatalf("improve-learnings missing freshness pass %q", want)
+		}
+	}
+
+	kb, err := renderFromRegistry("improve-knowledge", tmplData{}, allKinds)
+	if err != nil {
+		t.Fatalf("render improve-knowledge: %v", err)
+	}
+	for _, want := range []string{
+		"FRESHNESS PASS (confirmation recency)",
+		"Confirmation recency, not calendar age",
+		"code-owned freshness ledger",
+	} {
+		if !strings.Contains(kb, want) {
+			t.Fatalf("improve-knowledge missing freshness pass %q", want)
+		}
+	}
+}

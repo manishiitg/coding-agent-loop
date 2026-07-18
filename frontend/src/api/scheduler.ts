@@ -56,7 +56,7 @@ export const schedulerApi = {
   triggerJob: (id: string) =>
     api.post<{ session_id: string }>(`/api/scheduler/jobs/${id}/trigger`).then(r => r.data),
 
-  runWorkflowPulse: (workspacePath: string) =>
+  runPulse: (workspacePath: string) =>
     api.post<{ run_id: string }>('/api/scheduler/workflows/pulse-run', {
       workspace_path: workspacePath,
     }).then(r => r.data),

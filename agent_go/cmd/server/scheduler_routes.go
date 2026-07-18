@@ -91,7 +91,7 @@ type UpdateScheduleRequest struct {
 	ResumePrevious *bool                  `json:"resume_previous,omitempty"` // Coding-agent CLI only: explicit true resumes latest prior thread; nil/false starts fresh
 }
 
-type TriggerWorkflowPulseRequest struct {
+type TriggerPulseRequest struct {
 	WorkspacePath string `json:"workspace_path"`
 }
 
@@ -355,7 +355,7 @@ func triggerWorkflowPulseHandler(svc *SchedulerService) http.HandlerFunc {
 			return
 		}
 
-		var req TriggerWorkflowPulseRequest
+		var req TriggerPulseRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -365,7 +365,7 @@ func triggerWorkflowPulseHandler(svc *SchedulerService) http.HandlerFunc {
 			return
 		}
 
-		runID, err := svc.TriggerWorkflowPulseNow(req.WorkspacePath)
+		runID, err := svc.TriggerPulseNow(req.WorkspacePath)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return

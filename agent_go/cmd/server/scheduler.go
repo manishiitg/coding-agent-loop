@@ -34,10 +34,16 @@ type ScheduleContext struct {
 	UserID        string // Set for multi-agent schedules (derived from _users/{userID}/ path)
 	SourceType    string // "workflow" or "multi-agent"
 	TriggerSource string // "cron" (default) or "manual"; encoded into the session ID
-	// ForcePostRunMonitor is used by the toolbar's one-off Run workflow + Pulse
-	// action. It reuses the scheduled-run pipeline without enabling recurring Pulse.
+	// ForcePostRunMonitor is used by the toolbar's one-off Pulse action. It
+	// reuses the scheduled-run pipeline without enabling recurring Pulse.
 	ForcePostRunMonitor bool
-	CalendarItem        *CalendarScheduleItem
+	// PulseOnly suppresses the normal workflow message for the toolbar's one-off
+	// Pulse action. Version preflight still runs before Pulse, which reviews the
+	// latest retained workflow evidence and then executes the normal finalizer.
+	PulseOnly              bool
+	PulseEvidenceRunFolder string
+	PulseEvidenceRunStatus string
+	CalendarItem           *CalendarScheduleItem
 }
 
 const manualWorkflowPulseScheduleID = "manual-pulse"
@@ -1124,9 +1130,10 @@ func (s *SchedulerService) TriggerNow(workspacePath string, scheduleID string) (
 	return "triggered", nil
 }
 
-// TriggerWorkflowPulseNow runs the same version-preflight -> workflow -> Pulse
-// pipeline as a workflow schedule, without creating or changing a saved schedule.
-func (s *SchedulerService) TriggerWorkflowPulseNow(workspacePath string) (string, error) {
+// TriggerPulseNow runs version-preflight -> Pulse against the latest
+// retained workflow evidence. It does not execute the workflow or change a saved
+// schedule.
+func (s *SchedulerService) TriggerPulseNow(workspacePath string) (string, error) {
 	ctx := context.Background()
 	workspacePath = filepath.Clean(strings.TrimSpace(workspacePath))
 	if workspacePath == "." || workspacePath == "" {
@@ -1143,8 +1150,8 @@ func (s *SchedulerService) TriggerWorkflowPulseNow(workspacePath string) (string
 
 	sched := WorkflowSchedule{
 		ID:             manualWorkflowPulseScheduleID,
-		Name:           "Run workflow + Pulse",
-		Description:    "One-off toolbar run; not persisted as a schedule",
+		Name:           "Run Pulse",
+		Description:    "One-off Pulse review of the latest retained run; not persisted as a schedule",
 		ScheduleType:   "cron",
 		CronExpression: "",
 		Timezone:       "UTC",
@@ -1154,6 +1161,8 @@ func (s *SchedulerService) TriggerWorkflowPulseNow(workspacePath string) (string
 	sctx := buildScheduleContext(workspacePath, manifest, sched)
 	sctx.TriggerSource = "manual"
 	sctx.ForcePostRunMonitor = true
+	sctx.PulseOnly = true
+	sctx.PulseEvidenceRunFolder, sctx.PulseEvidenceRunStatus = latestRetainedPulseEvidence(ctx, workspacePath)
 	startTime := time.Now().UTC()
 
 	// One interactive builder chat may coexist with this run, matching normal
@@ -1177,7 +1186,7 @@ func (s *SchedulerService) TriggerWorkflowPulseNow(workspacePath string) (string
 	state := s.getRuntimeStateLocked(runtimeKey)
 	if state.LastStatus == "running" {
 		s.runtimeStatesMu.Unlock()
-		return "", fmt.Errorf("workflow + Pulse run is already active (session: %s)", state.LastSessionID)
+		return "", fmt.Errorf("Pulse run is already active (session: %s)", state.LastSessionID)
 	}
 	if _, otherSession := runningScheduleInSetLocked(s.runtimeStates, workflowRuntimeKeys, runtimeKey); otherSession != "" {
 		s.runtimeStatesMu.Unlock()
@@ -1198,11 +1207,51 @@ func (s *SchedulerService) TriggerWorkflowPulseNow(workspacePath string) (string
 	go func() {
 		defer s.cleanupRemovedScheduleRuntimeState(runtimeKey)
 		if _, runErr := s.runJob(runCtx, sctx, runID); runErr != nil {
-			scheduleLogf("[SCHEDULER] One-off workflow + Pulse run failed for %s: %v", workspacePath, runErr)
+			scheduleLogf("[SCHEDULER] One-off Pulse run failed for %s: %v", workspacePath, runErr)
 		}
 	}()
 
 	return runID, nil
+}
+
+func latestRetainedPulseEvidence(ctx context.Context, workspacePath string) (string, string) {
+	runs, err := ReadScheduleRuns(ctx, workspacePath)
+	if err == nil {
+		if runFolder, status, ok := latestRetainedPulseEvidenceFromRuns(runs); ok {
+			return runFolder, status
+		}
+	}
+
+	// iteration-0 is the active retained slot even before schedule history has
+	// been written. Pulse can still review plan/config/report evidence when the
+	// folder has no completed run artifacts yet.
+	return "iteration-0", "unknown"
+}
+
+func latestRetainedPulseEvidenceFromRuns(runs []ScheduleRunEntry) (string, string, bool) {
+	fallbackFolder := ""
+	fallbackStatus := ""
+	for _, run := range runs {
+		if run.ScheduleID == manualWorkflowPulseScheduleID || strings.TrimSpace(run.RunFolder) == "" {
+			continue
+		}
+		status := strings.TrimSpace(run.Status)
+		if status == "" {
+			status = "unknown"
+		}
+		if status == "running" {
+			if fallbackFolder == "" {
+				fallbackFolder = strings.TrimSpace(run.RunFolder)
+				fallbackStatus = status
+			}
+			continue
+		}
+		return strings.TrimSpace(run.RunFolder), status, true
+	}
+	if fallbackFolder != "" {
+		return fallbackFolder, fallbackStatus, true
+	}
+	return "", "", false
 }
 
 // TriggerMultiAgentNow triggers a multi-agent schedule immediately.
@@ -1609,10 +1658,14 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 			s.logf(sctx, "[SCHEDULER] Failed to create run entry for %s: %v", schedID, err)
 		}
 	}
+	startReason := "workflow execution starting"
+	if sctx.PulseOnly {
+		startReason = "Pulse version preflight starting; workflow execution is skipped"
+	}
 	s.transitionScheduleRun(ctx, sctx, schedulerstate.Transition{
 		RunID:  runID,
 		To:     schedulerstate.StateWorkflowRunning,
-		Reason: "workflow execution starting",
+		Reason: startReason,
 		At:     time.Now().UTC(),
 	})
 
@@ -1642,12 +1695,18 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 	} else {
 		s.sessionLogf(sctx, sessionID, "[SCHEDULER] %s completed in %dms, session: %s, folder: %s", schedID, durationMs, sessionID, runFolder)
 	}
+	finishedReason := "workflow execution finished with status " + status
+	finishedSessionKind := "workflow"
+	if sctx.PulseOnly {
+		finishedReason = "Pulse version preflight finished with status " + status + "; workflow execution was skipped"
+		finishedSessionKind = "pulse"
+	}
 	s.transitionScheduleRun(ctx, sctx, schedulerstate.Transition{
 		RunID:        runID,
 		To:           schedulerstate.StateWorkflowFinished,
-		Reason:       "workflow execution finished with status " + status,
+		Reason:       finishedReason,
 		SessionID:    sessionID,
-		SessionKind:  "workflow",
+		SessionKind:  finishedSessionKind,
 		RunFolder:    runFolder,
 		ErrorMessage: errMsg,
 		At:           time.Now().UTC(),
@@ -1691,11 +1750,15 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 		// Never affects the run's recorded result.
 		if !userInterrupted && runFolder != "" && sctx.Schedule.WorkshopMode != "optimizer" {
 			if manifest, found, mErr := ReadWorkflowManifest(ctx, sctx.WorkspacePath); mErr == nil && found && shouldRunPostRunMonitor(sctx, manifest) {
+				pulseEvidenceStatus := status
+				if sctx.PulseOnly && strings.TrimSpace(sctx.PulseEvidenceRunStatus) != "" {
+					pulseEvidenceStatus = sctx.PulseEvidenceRunStatus
+				}
 				// Pass the run's sessionID so Pulse resumes the SAME chat (not a fresh one).
 				s.transitionScheduleRun(ctx, sctx, schedulerstate.Transition{
 					RunID: runID, To: schedulerstate.StatePulseGate, Reason: "Pulse enabled for workflow", SessionID: sessionID, SessionKind: "pulse", At: time.Now().UTC(),
 				})
-				pulseResult = s.runPostRunMonitor(ctx, sctx, manifest, status, runFolder, sessionID, runID)
+				pulseResult = s.runPostRunMonitor(ctx, sctx, manifest, pulseEvidenceStatus, runFolder, sessionID, runID)
 			}
 		}
 	}
@@ -1724,6 +1787,12 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 			overallError = "Pulse completed partially"
 		}
 	}
+	if sctx.PulseOnly {
+		durationMs = time.Since(startTime).Milliseconds()
+		if err := UpdateScheduleRun(ctx, sctx.WorkspacePath, runID, overallStatus, overallError, &durationMs, runFolder, sessionID); err != nil {
+			s.sessionLogf(sctx, sessionID, "[PULSE] failed to finalize one-off Pulse run history: %v", err)
+		}
+	}
 	s.updateRuntimeState(runtimeKey, func(state *ScheduleRuntimeState) {
 		state.ActiveRunID = ""
 		state.LastStatus = overallStatus
@@ -1737,9 +1806,13 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 			state.ConsecutiveFailures = 0
 		}
 	})
+	terminalReason := "scheduled run finished with status " + status
+	if sctx.PulseOnly {
+		terminalReason = "one-off Pulse finished with status " + overallStatus + "; workflow execution was skipped"
+	}
 	s.transitionScheduleRun(ctx, sctx, schedulerstate.Transition{
-		RunID: runID, To: terminalState, Reason: "scheduled run finished with status " + status,
-		SessionID: sessionID, ErrorMessage: errMsg, At: time.Now().UTC(),
+		RunID: runID, To: terminalState, Reason: terminalReason,
+		SessionID: sessionID, ErrorMessage: overallError, At: time.Now().UTC(),
 	})
 	s.cleanupRemovedScheduleRuntimeState(runtimeKey)
 
@@ -1946,13 +2019,17 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 	if answeredHumanInputs != "" {
 		humanInputNote = "\n\n" + answeredHumanInputs
 	}
+	pulseContext := "A scheduled run of this workflow just finished"
+	if sctx.PulseOnly {
+		pulseContext = "This is a manual Pulse-only review of the latest retained workflow evidence. The workflow was not executed by this action"
+	}
 	intro := fmt.Sprintf(
-		"You are Pulse, the post-run steward. A scheduled run of this workflow just finished: workspace_path=%q, status=%q, run_folder=%q. "+
+		"You are Pulse, the post-run steward. %s: workspace_path=%q, evidence_status=%q, run_folder=%q. "+
 			"Call get_reference_doc(kind=\"post-run-monitor\") and follow it. Write builder/improve.html in simple user-facing language and priority order: Needs your decision first in Runloop, then active Assumptions challenged, Today's outcome, goal progress, recent activity, and collapsed technical detail. Keep the first screen compact, do not duplicate the latest-run narrative, put the takeaway first, use short labeled detail, and put raw evidence paths last. "+
 			"If you need user input, call create_human_input_request(workspace_path=%q, source=\"pulse\", ...) instead of hand-editing request state in HTML. "+
 			"For strategic plan-change approval, Goal Advisor must use that same existing report interaction flow: create_human_input_request(source=\"goal_advisor\", input_id=\"plan-proposal-...\", options approve/reject/defer, context=\"proposal + exact plan edits + evidence\"). "+
 			"We'll go one step at a time — do ONLY the step in each message, finish it, then stop and wait for the next.%s",
-		sctx.WorkspacePath, runStatus, runFolder, sctx.WorkspacePath, humanInputNote)
+		pulseContext, sctx.WorkspacePath, runStatus, runFolder, sctx.WorkspacePath, humanInputNote)
 
 	upgradeSteps := postRunMonitorUpgradeStepsForManifest(manifest)
 	s.sessionLogf(sctx, sessionID, "[PULSE] starting pulse for %s (run_folder=%s status=%s, upgrades=%d)", sctx.Schedule.ID, runFolder, runStatus, len(upgradeSteps))
@@ -2515,6 +2592,18 @@ func scheduledWorkshopTurns(manifest *WorkflowManifest, messages []string) ([]sc
 	return turns, nil
 }
 
+func scheduledWorkshopMessages(sctx *ScheduleContext) []string {
+	if sctx == nil {
+		return nil
+	}
+	messages := compactScheduleMessages(sctx.Schedule.Messages)
+	isOptimizer := strings.EqualFold(strings.TrimSpace(sctx.Schedule.WorkshopMode), "optimizer")
+	if len(messages) == 0 && !isOptimizer && !sctx.PulseOnly {
+		return []string{"Run the full workflow using run_full_workflow tool. " + scheduledBackgroundNoPollingInstruction}
+	}
+	return messages
+}
+
 // executeJob builds a session request from the manifest and runs it.
 // Returns (sessionID, runFolder, error).
 func (s *SchedulerService) executeJob(ctx context.Context, sctx *ScheduleContext, runID string) (string, string, error) {
@@ -2532,7 +2621,7 @@ func (s *SchedulerService) executeJob(ctx context.Context, sctx *ScheduleContext
 
 // executeWorkshopJob runs a workflow via the workshop builder path (workflow_phase mode).
 func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *ScheduleContext, runID string) (string, string, error) {
-	messages := compactScheduleMessages(sctx.Schedule.Messages)
+	messages := scheduledWorkshopMessages(sctx)
 	isOptimizer := strings.EqualFold(strings.TrimSpace(sctx.Schedule.WorkshopMode), "optimizer")
 	if isOptimizer {
 		if isLegacyOrEmptyOptimizerSchedule(messages) {
@@ -2546,10 +2635,11 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 			}
 			return sessionID, runFolder, nil
 		}
-	} else if len(messages) == 0 {
-		messages = []string{"Run the full workflow using run_full_workflow tool. " + scheduledBackgroundNoPollingInstruction}
 	}
 	runFolder := "iteration-0"
+	if sctx.PulseOnly && strings.TrimSpace(sctx.PulseEvidenceRunFolder) != "" {
+		runFolder = strings.TrimSpace(sctx.PulseEvidenceRunFolder)
+	}
 
 	sessionID := s.newScheduleSessionID(sctx)
 
@@ -2561,8 +2651,8 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 		_ = UpdateScheduleRun(ctx, sctx.WorkspacePath, runID, "running", "", nil, runFolder, sessionID)
 	}
 
-	s.sessionLogf(sctx, sessionID, "[SCHEDULER] Workshop mode: executing %d messages for %s (session=%s workspace=%s run_folder=%s)",
-		len(messages), sctx.Schedule.ID, sessionID, sctx.WorkspacePath, runFolder)
+	s.sessionLogf(sctx, sessionID, "[SCHEDULER] Workshop mode: executing %d messages for %s (session=%s workspace=%s run_folder=%s pulse_only=%t)",
+		len(messages), sctx.Schedule.ID, sessionID, sctx.WorkspacePath, runFolder, sctx.PulseOnly)
 
 	baseReqMap := s.buildWorkshopRequest(ctx, sctx)
 

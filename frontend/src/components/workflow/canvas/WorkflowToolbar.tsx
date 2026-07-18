@@ -398,25 +398,25 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     [presetQueryId, workspacePath]
   )
 
-  const runWorkflowPulseNow = useCallback(async () => {
+  const runPulseNow = useCallback(async () => {
     if (!workspacePath || manualPulseStarting) return
     const confirmed = window.confirm(
-      'Run this automation now? This performs the workflow version preflight, executes the real workflow, then runs Pulse. External actions in the workflow may occur.'
+      'Run Pulse now? This performs the workflow version preflight, reviews the latest retained run, applies eligible fixes, and runs configured backup, publish, and notification actions. It does not execute the workflow.'
     )
     if (!confirmed) return
 
     setManualPulseStarting(true)
     try {
-      await schedulerApi.runWorkflowPulse(workspacePath)
-      useChatStore.getState().addToast('Workflow + Pulse started', 'success')
+      await schedulerApi.runPulse(workspacePath)
+      useChatStore.getState().addToast('Pulse started', 'success')
     } catch (error) {
       const responseData = (error as { response?: { data?: unknown } })?.response?.data
       const detail = typeof responseData === 'string'
         ? responseData
         : error instanceof Error
           ? error.message
-          : 'Unable to start workflow + Pulse'
-      useChatStore.getState().addToast(detail.trim() || 'Unable to start workflow + Pulse', 'error')
+          : 'Unable to start Pulse'
+      useChatStore.getState().addToast(detail.trim() || 'Unable to start Pulse', 'error')
     } finally {
       setManualPulseStarting(false)
     }
@@ -876,24 +876,22 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 <TooltipContent side="bottom"><p>Pulse status and module cadence</p></TooltipContent>
               </Tooltip>
               <span className="h-4 w-px bg-border" aria-hidden="true" />
-              {workflowScheduleStatsScope === workflowScheduleScope && workflowScheduleStats.total === 0 && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={runWorkflowPulseNow}
-                      disabled={!canWriteWorkflow || manualPulseStarting}
-                      className="flex h-full w-8 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                      aria-label="Run workflow and Pulse now"
-                    >
-                      {manualPulseStarting
-                        ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                        : <Play className="h-3.5 w-3.5" />}
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom"><p>Run workflow + Pulse now</p></TooltipContent>
-                </Tooltip>
-              )}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={runPulseNow}
+                    disabled={!canWriteWorkflow || manualPulseStarting}
+                    className="flex h-full w-8 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                    aria-label="Run Pulse now"
+                  >
+                    {manualPulseStarting
+                      ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                      : <Play className="h-3.5 w-3.5" />}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom"><p>Run Pulse on the latest retained run</p></TooltipContent>
+              </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button

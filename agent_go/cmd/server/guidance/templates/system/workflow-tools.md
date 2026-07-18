@@ -9,6 +9,19 @@ If you need to confirm an exact parameter shape that isn't documented
 here, call `get_api_spec(server_name="workflow", tool_name="...")` — that
 returns the live JSON schema for the tool.
 
+### Coding-CLI bridge routing
+
+The function-style names in this catalog are logical workflow tool names;
+they do not mean every tool is exposed natively by `api-bridge`. In a coding
+CLI, the native bridge exposes only `execute_shell_command`,
+`diff_patch_workspace_file`, `agent_browser`, and `get_api_spec`. Never try
+`api-bridge.list_executions`, `api-bridge.query_step`, or another catalog name
+as a native bridge call. For every non-native tool, call
+`get_api_spec(server_name="workflow", tool_name="<name>")` first, then use
+`execute_shell_command` to invoke the endpoint it returns with the supplied
+`$MCP_MCP`/`$MCP_CUSTOM` route and `$MCP_AUTH`. Do not guess or hardcode an
+HTTP URL.
+
 ## Step Execution & Inspection
 
 - **`execute_step(step_id, group_name, instructions?, human_input?, tier?, message_sequence_restart?)`** — Start a single step in the background; returns `execution_id`. In Workshop mode this is the primary way to test one step after adding or editing it. Execution uses `iteration-0`. A standalone `message_sequence` always starts its configured queue from the beginning; `human_input` adds opening context, not durable resume. Only a message-sequence route inside an active todo-task run has in-memory re-entry. For `human_input` steps, `human_input` is used as the response. For other executable steps, `human_input` is high-priority custom context.

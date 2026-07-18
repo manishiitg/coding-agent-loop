@@ -469,19 +469,27 @@ func (st *liveAttachStream) setSize(cols, rows int) {
 // asynchronous so the control-mode scanner remains free to consume repaint
 // output while the settle detector waits.
 func (st *liveAttachStream) setSizeThen(cols, rows int, ready func()) {
+	_ = st.resizeToThen(cols, rows, false, ready)
+}
+
+// resizeToThen applies one tmux geometry change. When force is true the
+// command is sent even when tmux is already recorded at that geometry. The
+// forced form is used by the late-attach repaint handshake below; normal
+// browser resizes retain the same-size fast path.
+func (st *liveAttachStream) resizeToThen(cols, rows int, force bool, ready func()) error {
 	if cols < terminalMinResizeCols || rows < terminalMinResizeRows {
 		if ready != nil {
 			go ready()
 		}
-		return
+		return nil
 	}
 	st.mu.Lock()
-	if st.appliedCols == cols && st.appliedRows == rows {
+	if !force && st.appliedCols == cols && st.appliedRows == rows {
 		st.mu.Unlock()
 		if ready != nil {
 			go ready()
 		}
-		return
+		return nil
 	}
 	st.mu.Unlock()
 	resizeStartedAt := time.Now()
@@ -500,7 +508,50 @@ func (st *liveAttachStream) setSizeThen(cols, rows int, ready func()) {
 		if ready != nil {
 			go ready()
 		}
+		return err
 	}
+	return nil
+}
+
+// forceViewerRepaint repairs the state gap inherent in attaching an emulator
+// midway through a full-screen/inline TUI. capture-pane gives the browser the
+// visible cells and cursor, but it cannot reproduce every terminal mode the
+// CLI established before the viewer existed. Incremental redraws (notably the
+// Cursor and Pi/dev Working spinners) can then append instead of replacing the
+// status row.
+//
+// A one-column resize followed by restoration sends SIGWINCH to the pane and
+// makes the CLI emit one complete repaint over the already-spliced live byte
+// stream. This is intentionally provider-independent and runs once per viewer
+// connection/reconnection. The caller writes the seed to the WebSocket and
+// starts its byte writer before invoking this method, preserving seed ->
+// repaint -> incremental-output ordering.
+func (st *liveAttachStream) forceViewerRepaint(ctx context.Context, cols, rows int) error {
+	if cols < terminalMinResizeCols || rows < terminalMinResizeRows {
+		return nil
+	}
+	nudgeCols := cols - 1
+	if nudgeCols < terminalMinResizeCols {
+		nudgeCols = cols + 1
+	}
+	waitForResize := func(nextCols int) error {
+		ready := make(chan struct{})
+		if err := st.resizeToThen(nextCols, rows, true, func() { close(ready) }); err != nil {
+			return err
+		}
+		select {
+		case <-ready:
+			return nil
+		case <-st.done:
+			return fmt.Errorf("live-attach stream for %s closed during repaint", st.tmuxSession)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if err := waitForResize(nudgeCols); err != nil {
+		return err
+	}
+	return waitForResize(cols)
 }
 
 func (st *liveAttachStream) waitForResizeRepaint(resizeStartedAt time.Time, ready func()) {
@@ -928,6 +979,15 @@ func (api *StreamingAPI) handleTerminalStream(w http.ResponseWriter, r *http.Req
 		writeMu.Unlock()
 		_ = conn.Close()
 	}()
+
+	// A capture-pane seed reconstructs cells, not the complete emulator state
+	// that an interactive TUI established before this viewer attached. Force
+	// one post-seed repaint while the writer is already forwarding pane bytes.
+	// This prevents incremental Cursor/Pi/Codex/Claude spinner frames from
+	// accumulating as separate rows after a late attach or reconnect.
+	if err := st.forceViewerRepaint(connCtx, cols, rows); err != nil && connCtx.Err() == nil && !st.isDone() {
+		log.Printf("[live-attach] post-seed repaint terminal=%s session=%s: %v", snapshot.TerminalID, snapshot.TmuxSession, err)
+	}
 
 	// Reader: WebSocket -> tmux, via the EXISTING input path.
 	//   binary frame -> raw byte passthrough (send-keys -H)

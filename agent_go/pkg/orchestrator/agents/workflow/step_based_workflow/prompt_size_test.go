@@ -142,6 +142,35 @@ func TestWorkshopCLIPromptUsesProjectedWorkspaceToolReference(t *testing.T) {
 			t.Fatalf("coding-CLI workshop prompt still embeds projected catalog marker %q", duplicatedCatalogMarker)
 		}
 	}
+	for _, routingContract := range []string{
+		"exposes only `execute_shell_command`",
+		"logical HTTP-backed tools",
+		"Never call `api-bridge.list_executions`",
+		`get_api_spec(server_name="workflow", tool_name="<name>")`,
+		"$MCP_MCP",
+	} {
+		if !strings.Contains(prompt, routingContract) {
+			t.Fatalf("coding-CLI workshop prompt is missing bridge routing contract %q", routingContract)
+		}
+	}
+}
+
+func TestWorkflowToolsReferenceDistinguishesLogicalFromNativeBridgeTools(t *testing.T) {
+	body, err := guidance.RenderReferenceKindForTest("workflow-tools", "workshop")
+	if err != nil {
+		t.Fatalf("render workflow-tools reference: %v", err)
+	}
+	for _, routingContract := range []string{
+		"logical workflow tool names",
+		"Never try",
+		"`api-bridge.list_executions`",
+		`get_api_spec(server_name="workflow", tool_name="<name>")`,
+		"$MCP_MCP`/`$MCP_CUSTOM",
+	} {
+		if !strings.Contains(body, routingContract) {
+			t.Fatalf("workflow-tools reference is missing bridge routing contract %q", routingContract)
+		}
+	}
 }
 
 func TestPhaseChatWorkshopSelectsWorkspaceToolGuidanceByTransport(t *testing.T) {
